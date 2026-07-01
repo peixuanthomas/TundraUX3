@@ -1,5 +1,5 @@
-#[cfg(not(windows))]
-compile_error!("TundraUX3 phase 0 supports Windows 11 only.");
+#[cfg(not(any(windows, target_os = "macos")))]
+compile_error!("TundraUX3 supports Windows and macOS only.");
 
 use std::env;
 use std::fmt;
@@ -16,28 +16,38 @@ pub struct AppPaths {
 }
 
 impl AppPaths {
-    pub const CONFIG_TEMPLATE: &'static str = r"%APPDATA%\TundraUX3\config.toml";
-    pub const DATA_TEMPLATE: &'static str = r"%LOCALAPPDATA%\TundraUX3\state\";
-    pub const CACHE_TEMPLATE: &'static str = r"%LOCALAPPDATA%\TundraUX3\cache\";
+    pub const CONFIG_TEMPLATE: &'static str = "<binary-dir>/TundraUX3/config.toml";
+    pub const DATA_TEMPLATE: &'static str = "<binary-dir>/TundraUX3/state";
+    pub const CACHE_TEMPLATE: &'static str = "<binary-dir>/TundraUX3/cache";
 
     pub fn from_environment() -> Result<Self, PathResolutionError> {
-        let appdata = required_env_path("APPDATA")?;
-        let localappdata = required_env_path("LOCALAPPDATA")?;
-
-        Self::from_roots(appdata, localappdata)
+        Self::from_current_exe()
     }
 
-    pub fn from_roots(
-        appdata: impl Into<PathBuf>,
-        localappdata: impl Into<PathBuf>,
-    ) -> Result<Self, PathResolutionError> {
-        let appdata = require_absolute("APPDATA", appdata.into())?;
-        let localappdata = require_absolute("LOCALAPPDATA", localappdata.into())?;
+    pub fn from_current_exe() -> Result<Self, PathResolutionError> {
+        let executable_path =
+            env::current_exe().map_err(|error| PathResolutionError::CurrentExe {
+                message: error.to_string(),
+            })?;
+        let binary_dir =
+            executable_path
+                .parent()
+                .ok_or_else(|| PathResolutionError::MissingParent {
+                    name: "current executable",
+                    value: executable_path.clone(),
+                })?;
+
+        Self::from_binary_dir(binary_dir)
+    }
+
+    pub fn from_binary_dir(binary_dir: impl Into<PathBuf>) -> Result<Self, PathResolutionError> {
+        let binary_dir = require_absolute("binary directory", binary_dir.into())?;
+        let app_dir = binary_dir.join("TundraUX3");
 
         Ok(Self {
-            config_path: appdata.join("TundraUX3").join("config.toml"),
-            data_path: localappdata.join("TundraUX3").join("state"),
-            cache_path: localappdata.join("TundraUX3").join("cache"),
+            config_path: app_dir.join("config.toml"),
+            data_path: app_dir.join("state"),
+            cache_path: app_dir.join("cache"),
         })
     }
 
@@ -56,18 +66,26 @@ impl AppPaths {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PathResolutionError {
-    MissingEnv { name: &'static str },
-    EmptyEnv { name: &'static str },
     RelativePath { name: &'static str, value: PathBuf },
+    CurrentExe { message: String },
+    MissingParent { name: &'static str, value: PathBuf },
 }
 
 impl fmt::Display for PathResolutionError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::MissingEnv { name } => write!(formatter, "%{name}% is not set"),
-            Self::EmptyEnv { name } => write!(formatter, "%{name}% is empty"),
             Self::RelativePath { name, value } => {
-                write!(formatter, "%{name}% is not absolute: {}", value.display())
+                write!(formatter, "{name} is not absolute: {}", value.display())
+            }
+            Self::CurrentExe { message } => {
+                write!(formatter, "cannot locate current executable: {message}")
+            }
+            Self::MissingParent { name, value } => {
+                write!(
+                    formatter,
+                    "{name} has no parent directory: {}",
+                    value.display()
+                )
             }
         }
     }
@@ -89,6 +107,7 @@ pub fn classify_windows_build(build: u32) -> WindowsBuildClass {
     }
 }
 
+#[cfg(windows)]
 pub fn current_windows_build() -> Result<u32, String> {
     let mut version: RtlOsVersionInfoW = unsafe { std::mem::zeroed() };
     version.dw_os_version_info_size = std::mem::size_of::<RtlOsVersionInfoW>() as u32;
@@ -159,8 +178,8 @@ impl DoctorReport {
 }
 
 pub fn run_doctor() -> Result<DoctorReport, PathResolutionError> {
-    let app_paths = AppPaths::from_environment()?;
-    let environment_checks = vec![check_windows_version(), check_terminal()];
+    let app_paths = AppPaths::from_current_exe()?;
+    let environment_checks = vec![check_platform(), check_terminal()];
     let path_checks = vec![
         check_file_parent_read_write("Config parent", app_paths.config_path()),
         check_directory_read_write("Data path", app_paths.data_path()),
@@ -300,6 +319,21 @@ fn check_file_parent_read_write(label: impl Into<String>, file_path: &Path) -> P
     }
 }
 
+#[cfg(windows)]
+fn check_platform() -> EnvironmentCheck {
+    check_windows_version()
+}
+
+#[cfg(target_os = "macos")]
+fn check_platform() -> EnvironmentCheck {
+    EnvironmentCheck {
+        label: "Platform".to_string(),
+        status: CheckStatus::Pass,
+        message: "macOS platform supported".to_string(),
+    }
+}
+
+#[cfg(windows)]
 fn check_windows_version() -> EnvironmentCheck {
     match current_windows_build() {
         Ok(build) if classify_windows_build(build) == WindowsBuildClass::Windows11OrNewer => {
@@ -322,6 +356,7 @@ fn check_windows_version() -> EnvironmentCheck {
     }
 }
 
+#[cfg(windows)]
 fn check_terminal() -> EnvironmentCheck {
     if is_windows_terminal_session(env::var("WT_SESSION").ok().as_deref()) {
         EnvironmentCheck {
@@ -338,11 +373,12 @@ fn check_terminal() -> EnvironmentCheck {
     }
 }
 
-fn required_env_path(name: &'static str) -> Result<PathBuf, PathResolutionError> {
-    match env::var_os(name) {
-        Some(value) if value.as_os_str().is_empty() => Err(PathResolutionError::EmptyEnv { name }),
-        Some(value) => require_absolute(name, PathBuf::from(value)),
-        None => Err(PathResolutionError::MissingEnv { name }),
+#[cfg(target_os = "macos")]
+fn check_terminal() -> EnvironmentCheck {
+    EnvironmentCheck {
+        label: "Terminal".to_string(),
+        status: CheckStatus::Pass,
+        message: "macOS terminal session supported".to_string(),
     }
 }
 
@@ -421,6 +457,7 @@ fn timestamp_nanos() -> u128 {
         .unwrap_or(0)
 }
 
+#[cfg(windows)]
 #[repr(C)]
 struct RtlOsVersionInfoW {
     dw_os_version_info_size: u32,
@@ -431,6 +468,7 @@ struct RtlOsVersionInfoW {
     sz_csd_version: [u16; 128],
 }
 
+#[cfg(windows)]
 #[link(name = "ntdll")]
 unsafe extern "system" {
     fn RtlGetVersion(version_information: *mut RtlOsVersionInfoW) -> i32;

@@ -1,5 +1,5 @@
-#[cfg(not(windows))]
-compile_error!("TundraUX3 phase 0 supports Windows 11 only.");
+#[cfg(not(any(windows, target_os = "macos")))]
+compile_error!("TundraUX3 phase 0 supports Windows and macOS only; Linux is unsupported.");
 
 use std::fmt;
 use std::io::Write;
@@ -85,7 +85,7 @@ where
 fn run_paths<Stdout: Write, Stderr: Write>(stdout: &mut Stdout, stderr: &mut Stderr) -> i32 {
     write_path_templates(stdout);
 
-    match AppPaths::from_environment() {
+    match AppPaths::from_current_exe() {
         Ok(paths) => {
             let _ = writeln!(stdout);
             let _ = writeln!(stdout, "Resolved:");
@@ -154,7 +154,7 @@ fn write_help(output: &mut impl Write) -> std::io::Result<()> {
     writeln!(output, "Usage: tundra-cli <doctor|explain|paths>")?;
     writeln!(
         output,
-        "  doctor  Check Windows 11, terminal, and app path readiness"
+        "  doctor  Check Windows/macOS, terminal, and app path readiness"
     )?;
     writeln!(
         output,
@@ -169,7 +169,7 @@ fn write_explain(output: &mut impl Write) -> std::io::Result<()> {
     writeln!(output, "Startup flow:")?;
     writeln!(
         output,
-        "  1. User starts tundra-cli or tundra-shell from Windows Terminal."
+        "  1. User starts tundra-cli or tundra-shell from a crossterm-compatible terminal."
     )?;
     writeln!(
         output,
@@ -187,7 +187,7 @@ fn write_explain(output: &mut impl Write) -> std::io::Result<()> {
     writeln!(output, "Kernel boundary:")?;
     writeln!(
         output,
-        "  - tundra-platform is the Windows boundary for OS facts, paths, terminal checks, and future Win32 calls."
+        "  - tundra-platform is the platform boundary for OS facts, paths, terminal checks, and future platform API calls."
     )?;
     writeln!(
         output,
@@ -195,7 +195,7 @@ fn write_explain(output: &mut impl Write) -> std::io::Result<()> {
     )?;
     writeln!(
         output,
-        "  - UI and app code must call these crates instead of touching Windows APIs or storage paths directly."
+        "  - UI and app code must call these crates instead of touching platform APIs or storage paths directly."
     )?;
     writeln!(output)?;
     writeln!(output, "UI boundary:")?;
@@ -205,7 +205,7 @@ fn write_explain(output: &mut impl Write) -> std::io::Result<()> {
     )?;
     writeln!(
         output,
-        "  - UI code consumes view state and commands; it should not create AppData paths or call Win32 directly."
+        "  - UI code consumes view state and commands; it should not create platform-specific paths or call platform APIs directly."
     )
 }
 

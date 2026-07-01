@@ -8,11 +8,18 @@ use tundra_shell::{
 #[test]
 fn startup_lines_state_phase_zero_boundaries() {
     let lines = startup_lines();
+    let output = lines.join("\n");
 
     assert!(lines.iter().any(|line| line.contains("TundraUX3 shell")));
     assert!(lines.iter().any(|line| line.contains("Phase 0")));
-    assert!(lines.iter().any(|line| line.contains("Windows 11")));
-    assert!(lines.iter().any(|line| line.contains("Windows Terminal")));
+    assert!(lines.iter().any(|line| line.contains("Supported")));
+    assert!(
+        lines
+            .iter()
+            .any(|line| line.to_ascii_lowercase().contains("terminal"))
+    );
+    assert!(!output.contains("Windows 11"));
+    assert!(!output.contains("Windows Terminal"));
 }
 
 #[test]

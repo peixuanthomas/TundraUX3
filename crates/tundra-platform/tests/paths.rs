@@ -1,4 +1,4 @@
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use tundra_platform::{
@@ -7,42 +7,76 @@ use tundra_platform::{
 };
 
 #[test]
-fn app_paths_use_fixed_windows_locations() {
-    let paths = AppPaths::from_roots(
-        PathBuf::from(r"C:\Users\Ada\AppData\Roaming"),
-        PathBuf::from(r"C:\Users\Ada\AppData\Local"),
-    )
-    .expect("absolute fake Windows paths should resolve");
+fn app_paths_are_scoped_to_binary_directory() {
+    let base = unique_temp_root("binary-dir");
+    let binary_dir = base.join("bin");
+    std::fs::create_dir_all(&binary_dir).expect("binary directory should be creatable");
+
+    let paths = AppPaths::from_binary_dir(&binary_dir)
+        .expect("absolute fake binary directory should resolve");
 
     assert_eq!(
         paths.config_path(),
-        Path::new(r"C:\Users\Ada\AppData\Roaming\TundraUX3\config.toml")
+        binary_dir.join("TundraUX3").join("config.toml").as_path()
     );
     assert_eq!(
         paths.data_path(),
-        Path::new(r"C:\Users\Ada\AppData\Local\TundraUX3\state")
+        binary_dir.join("TundraUX3").join("state").as_path()
     );
     assert_eq!(
         paths.cache_path(),
-        Path::new(r"C:\Users\Ada\AppData\Local\TundraUX3\cache")
+        binary_dir.join("TundraUX3").join("cache").as_path()
     );
-    assert_eq!(
-        AppPaths::CONFIG_TEMPLATE,
-        r"%APPDATA%\TundraUX3\config.toml"
-    );
-    assert_eq!(AppPaths::DATA_TEMPLATE, r"%LOCALAPPDATA%\TundraUX3\state\");
-    assert_eq!(AppPaths::CACHE_TEMPLATE, r"%LOCALAPPDATA%\TundraUX3\cache\");
+    assert_binary_dir_template(AppPaths::CONFIG_TEMPLATE, "config.toml");
+    assert_binary_dir_template(AppPaths::DATA_TEMPLATE, "state");
+    assert_binary_dir_template(AppPaths::CACHE_TEMPLATE, "cache");
+
+    std::fs::remove_dir_all(base).expect("test directory should be removable");
 }
 
 #[test]
-fn app_paths_reject_relative_roots() {
-    let error = AppPaths::from_roots(
-        PathBuf::from(r"relative\Roaming"),
-        PathBuf::from(r"C:\Users\Ada\AppData\Local"),
-    )
-    .expect_err("relative APPDATA root should fail");
+fn app_paths_reject_relative_binary_directory() {
+    let error = AppPaths::from_binary_dir(PathBuf::from("relative-bin"))
+        .expect_err("relative binary directory should fail");
 
-    assert!(error.to_string().contains("APPDATA"));
+    let message = error.to_string().to_ascii_lowercase();
+    assert!(message.contains("absolute"));
+    assert!(
+        message.contains("binary") || message.contains("executable"),
+        "error should name the binary or executable directory: {message}"
+    );
+    assert!(!message.contains("appdata"));
+    assert!(!message.contains("localappdata"));
+}
+
+#[test]
+fn binary_dir_backed_path_checks_pass_and_cleanup_created_app_directory() {
+    let base = unique_temp_root("binary-dir-path-checks");
+    let binary_dir = base.join("bin");
+    std::fs::create_dir_all(&binary_dir).expect("binary directory should be creatable");
+    let paths = AppPaths::from_binary_dir(&binary_dir)
+        .expect("absolute fake binary directory should resolve");
+    let app_dir = binary_dir.join("TundraUX3");
+
+    let config_check = check_directory_read_write(
+        "Config parent",
+        paths
+            .config_path()
+            .parent()
+            .expect("config path has parent"),
+    );
+    let data_check = check_directory_read_write("Data path", paths.data_path());
+    let cache_check = check_directory_read_write("Cache path", paths.cache_path());
+
+    assert_eq!(config_check.status, CheckStatus::Pass);
+    assert_eq!(config_check.path, app_dir);
+    assert_eq!(data_check.status, CheckStatus::Pass);
+    assert_eq!(data_check.path, paths.data_path());
+    assert_eq!(cache_check.status, CheckStatus::Pass);
+    assert_eq!(cache_check.path, paths.cache_path());
+    assert!(!app_dir.exists());
+
+    std::fs::remove_dir_all(base).expect("test directory should be removable");
 }
 
 #[test]
@@ -132,4 +166,19 @@ fn unique_temp_root(case: &str) -> PathBuf {
         std::process::id(),
         nanos
     ))
+}
+
+fn assert_binary_dir_template(template: &str, leaf: &str) {
+    let normalized = template.replace('\\', "/");
+
+    assert!(
+        normalized.contains("<binary-dir>") || normalized.contains("<executable-dir>"),
+        "template should identify the binary or executable directory: {template}"
+    );
+    assert!(
+        normalized.ends_with(&format!("/TundraUX3/{leaf}")),
+        "template should end in the TundraUX3 app path: {template}"
+    );
+    assert!(!template.contains("APPDATA"));
+    assert!(!template.contains("LOCALAPPDATA"));
 }

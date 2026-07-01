@@ -1,5 +1,5 @@
-#[cfg(not(windows))]
-compile_error!("TundraUX3 phase 0 supports Windows 11 only.");
+#[cfg(not(any(windows, target_os = "macos")))]
+compile_error!("TundraUX3 phase 0 supports Windows and macOS only; Linux is unsupported.");
 
 pub const SCHEMA_VERSION: u32 = 1;
 

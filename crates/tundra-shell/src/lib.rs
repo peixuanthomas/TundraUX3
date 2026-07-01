@@ -1,5 +1,5 @@
-#[cfg(not(windows))]
-compile_error!("TundraUX3 phase 0 supports Windows 11 only.");
+#[cfg(not(any(windows, target_os = "macos")))]
+compile_error!("TundraUX3 phase 0 supports Windows and macOS only; Linux is unsupported.");
 
 use tundra_storage::{CONFIG_DESCRIPTOR, SCHEMA_VERSION};
 
@@ -1843,8 +1843,8 @@ where
 pub fn startup_lines() -> Vec<String> {
     vec![
         "TundraUX3 shell - Phase 0 smoke".to_string(),
-        "Supported OS: Windows 11 only".to_string(),
-        "Target terminal: Windows Terminal; conhost is best-effort only".to_string(),
+        "Supported OS: Windows and macOS".to_string(),
+        "Target terminal: crossterm-compatible terminal".to_string(),
         format!(
             "Config format: {} (schema v{})",
             CONFIG_DESCRIPTOR.file_name, SCHEMA_VERSION
@@ -1999,10 +1999,12 @@ fn write_smoke_loop_message(output: &mut impl Write) -> io::Result<()> {
     writeln!(output, "Entering smoke loop")
 }
 
+#[cfg(windows)]
 struct ConsoleControlHandler {
     installed: bool,
 }
 
+#[cfg(windows)]
 impl ConsoleControlHandler {
     fn install() -> Self {
         let installed =
@@ -2012,6 +2014,7 @@ impl ConsoleControlHandler {
     }
 }
 
+#[cfg(windows)]
 impl Drop for ConsoleControlHandler {
     fn drop(&mut self) {
         if self.installed {
@@ -2022,6 +2025,7 @@ impl Drop for ConsoleControlHandler {
     }
 }
 
+#[cfg(windows)]
 unsafe extern "system" fn handle_console_control(control_type: u32) -> i32 {
     match control_type {
         CTRL_C_EVENT | CTRL_BREAK_EVENT | CTRL_CLOSE_EVENT | CTRL_LOGOFF_EVENT
@@ -2033,11 +2037,26 @@ unsafe extern "system" fn handle_console_control(control_type: u32) -> i32 {
     }
 }
 
+#[cfg(windows)]
 const CTRL_C_EVENT: u32 = 0;
+#[cfg(windows)]
 const CTRL_BREAK_EVENT: u32 = 1;
+#[cfg(windows)]
 const CTRL_CLOSE_EVENT: u32 = 2;
+#[cfg(windows)]
 const CTRL_LOGOFF_EVENT: u32 = 5;
+#[cfg(windows)]
 const CTRL_SHUTDOWN_EVENT: u32 = 6;
+
+#[cfg(not(windows))]
+struct ConsoleControlHandler;
+
+#[cfg(not(windows))]
+impl ConsoleControlHandler {
+    fn install() -> Self {
+        Self
+    }
+}
 
 #[cfg(test)]
 mod tests {
@@ -2172,6 +2191,7 @@ mod tests {
     }
 }
 
+#[cfg(windows)]
 #[link(name = "kernel32")]
 unsafe extern "system" {
     fn SetConsoleCtrlHandler(
