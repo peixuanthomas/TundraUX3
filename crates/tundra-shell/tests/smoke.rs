@@ -1,8 +1,8 @@
 use tundra_shell::{
     ENTER_FULLSCREEN_SEQUENCE, EXIT_FULLSCREEN_SEQUENCE, HomeModeOverride, ShellArgError,
     ShellLaunchConfig, ShellTerminalMode, banner_lines, parse_shell_args, render_static_banner,
-    run_fullscreen_once_without_animation, run_not_fullscreen_without_animation,
-    run_without_animation, startup_lines,
+    run_fullscreen_once_without_animation, run_not_fullscreen,
+    run_not_fullscreen_without_animation, run_without_animation, startup_lines,
 };
 
 #[test]
@@ -158,4 +158,23 @@ fn notfullscreen_mode_does_not_write_alternate_screen_sequences() {
     assert!(!output.contains(ENTER_FULLSCREEN_SEQUENCE));
     assert!(!output.contains(EXIT_FULLSCREEN_SEQUENCE));
     assert!(output.contains("Entering smoke loop"));
+}
+
+#[test]
+fn notfullscreen_accepts_debug_config_without_alternate_screen_sequences() {
+    let mut output = Vec::new();
+
+    run_not_fullscreen(
+        &mut output,
+        ShellLaunchConfig {
+            terminal_mode: ShellTerminalMode::NotFullscreen,
+            home_mode_override: HomeModeOverride::Debug,
+        },
+    )
+    .expect("notfullscreen debug render should complete");
+
+    let output = String::from_utf8(output).expect("notfullscreen output should be utf8");
+    assert!(!output.contains(ENTER_FULLSCREEN_SEQUENCE));
+    assert!(!output.contains(EXIT_FULLSCREEN_SEQUENCE));
+    assert!(output.contains("TundraUX3 shell - Phase 0 smoke"));
 }

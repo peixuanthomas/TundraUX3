@@ -4,7 +4,10 @@ compile_error!("TundraUX3 phase 0 supports Windows 11 only.");
 use tundra_storage::{CONFIG_DESCRIPTOR, SCHEMA_VERSION};
 
 use crossterm::cursor::{Hide, Show};
-use crossterm::event::{DisableMouseCapture, EnableMouseCapture};
+use crossterm::event::{
+    self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEvent, KeyModifiers,
+    MouseEvent, MouseEventKind,
+};
 use crossterm::execute;
 use crossterm::terminal::{
     EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
@@ -453,6 +456,52 @@ fn build_mode_label() -> &'static str {
     }
 }
 
+fn key_event_to_label(key_event: KeyEvent) -> String {
+    match key_event.code {
+        KeyCode::Char('c' | 'C') if key_event.modifiers.contains(KeyModifiers::CONTROL) => {
+            "Ctrl+C".to_string()
+        }
+        KeyCode::Char(character) => character.to_string(),
+        KeyCode::Enter => "Enter".to_string(),
+        KeyCode::Esc => "Esc".to_string(),
+        KeyCode::Backspace => "Backspace".to_string(),
+        KeyCode::Tab => "Tab".to_string(),
+        KeyCode::BackTab => "Shift+Tab".to_string(),
+        KeyCode::Left => "Left".to_string(),
+        KeyCode::Right => "Right".to_string(),
+        KeyCode::Up => "Up".to_string(),
+        KeyCode::Down => "Down".to_string(),
+        other => format!("{other:?}"),
+    }
+}
+
+fn mouse_event_to_input(mouse_event: MouseEvent) -> ShellInput {
+    let coordinates = Some((mouse_event.column, mouse_event.row));
+    let (summary, scroll_direction) = match mouse_event.kind {
+        MouseEventKind::Down(button) => (format!("Mouse Down {button:?}"), None),
+        MouseEventKind::Up(button) => (format!("Mouse Up {button:?}"), None),
+        MouseEventKind::Drag(button) => (format!("Mouse Drag {button:?}"), None),
+        MouseEventKind::Moved => ("Mouse Moved".to_string(), None),
+        MouseEventKind::ScrollDown => mouse_scroll_summary("Down"),
+        MouseEventKind::ScrollUp => mouse_scroll_summary("Up"),
+        MouseEventKind::ScrollLeft => mouse_scroll_summary("Left"),
+        MouseEventKind::ScrollRight => mouse_scroll_summary("Right"),
+    };
+
+    ShellInput::Mouse {
+        summary,
+        coordinates,
+        scroll_direction,
+    }
+}
+
+fn mouse_scroll_summary(direction: &str) -> (String, Option<String>) {
+    (
+        format!("Mouse Scroll {direction}"),
+        Some(direction.to_string()),
+    )
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ShellArgError {
     UnknownArgument(String),
@@ -589,26 +638,65 @@ pub fn run_fullscreen_once_without_animation(output: &mut impl Write) -> io::Res
 
 pub fn run_fullscreen_blocking(
     output: &mut impl Write,
-    _config: ShellLaunchConfig,
+    config: ShellLaunchConfig,
 ) -> io::Result<()> {
     SHELL_RUNNING.store(true, Ordering::SeqCst);
+    install_panic_restore_hook();
     let _handler = ConsoleControlHandler::install();
+    let mut guard = TerminalGuard::enter(output)?;
+    let initial_size = crossterm::terminal::size().unwrap_or((80, 24));
+    let mut state = ShellState::new(config, initial_size);
+    let tick_rate = Duration::from_millis(250);
+    let theme = tundra_ui::TundraTheme::default_dark();
 
-    with_fullscreen(output, |output| {
-        display_banner(output)?;
-        write_smoke_loop_message(output)?;
-        writeln!(
-            output,
-            "Fullscreen smoke loop is active. Start with -notfullscreen for the non-fullscreen smoke path."
-        )?;
-        output.flush()?;
+    loop {
+        let chrome = state.to_shell_chrome_view_model();
+        let home = state.to_home_view_model();
+        let active_screen = state.active_screen();
+        let exit_confirmation = tundra_ui::ExitConfirmViewModel::new();
 
-        while SHELL_RUNNING.load(Ordering::SeqCst) {
-            thread::sleep(Duration::from_millis(250));
+        guard.terminal_mut().draw(|frame| {
+            let area = frame.area();
+            tundra_ui::render_home(frame, area, &chrome, &home, &theme);
+
+            if active_screen == ShellScreen::ExitConfirm {
+                tundra_ui::render_exit_confirmation(frame, area, &exit_confirmation, &theme);
+            }
+        })?;
+
+        if !SHELL_RUNNING.load(Ordering::SeqCst) {
+            state.apply_input(ShellInput::Shutdown);
+        }
+        if state.shutdown_requested() {
+            break;
         }
 
-        Ok(())
-    })
+        let action = if event::poll(tick_rate)? {
+            match event::read()? {
+                Event::Key(key_event) => {
+                    let label = key_event_to_label(key_event);
+                    if label == "Ctrl+C" {
+                        state.apply_input(ShellInput::Shutdown)
+                    } else {
+                        state.apply_input(ShellInput::Key(label))
+                    }
+                }
+                Event::Mouse(mouse_event) => state.apply_input(mouse_event_to_input(mouse_event)),
+                Event::Resize(width, height) => {
+                    state.apply_input(ShellInput::Resize { width, height })
+                }
+                Event::FocusGained | Event::FocusLost | Event::Paste(_) => continue,
+            }
+        } else {
+            state.apply_input(ShellInput::Tick)
+        };
+
+        if action == ShellAction::Exit {
+            break;
+        }
+    }
+
+    guard.restore()
 }
 
 fn with_fullscreen<W, T>(
@@ -677,6 +765,134 @@ const CTRL_BREAK_EVENT: u32 = 1;
 const CTRL_CLOSE_EVENT: u32 = 2;
 const CTRL_LOGOFF_EVENT: u32 = 5;
 const CTRL_SHUTDOWN_EVENT: u32 = 6;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crossterm::event::{
+        KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
+    };
+
+    #[test]
+    fn key_event_to_label_maps_requested_keys() {
+        let cases = [
+            (
+                KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL),
+                "Ctrl+C",
+            ),
+            (KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE), "x"),
+            (KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE), "Enter"),
+            (KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE), "Esc"),
+            (
+                KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE),
+                "Backspace",
+            ),
+            (KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE), "Tab"),
+            (
+                KeyEvent::new(KeyCode::BackTab, KeyModifiers::SHIFT),
+                "Shift+Tab",
+            ),
+            (KeyEvent::new(KeyCode::Left, KeyModifiers::NONE), "Left"),
+            (KeyEvent::new(KeyCode::Right, KeyModifiers::NONE), "Right"),
+            (KeyEvent::new(KeyCode::Up, KeyModifiers::NONE), "Up"),
+            (KeyEvent::new(KeyCode::Down, KeyModifiers::NONE), "Down"),
+            (KeyEvent::new(KeyCode::F(5), KeyModifiers::NONE), "F(5)"),
+        ];
+
+        for (event, expected) in cases {
+            assert_eq!(key_event_to_label(event), expected);
+        }
+    }
+
+    #[test]
+    fn mouse_event_to_input_maps_button_motion_and_scroll_events() {
+        let down = mouse_event_to_input(MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: 12,
+            row: 7,
+            modifiers: KeyModifiers::NONE,
+        });
+        let drag = mouse_event_to_input(MouseEvent {
+            kind: MouseEventKind::Drag(MouseButton::Right),
+            column: 13,
+            row: 8,
+            modifiers: KeyModifiers::NONE,
+        });
+        let moved = mouse_event_to_input(MouseEvent {
+            kind: MouseEventKind::Moved,
+            column: 14,
+            row: 9,
+            modifiers: KeyModifiers::NONE,
+        });
+        let scroll_up = mouse_event_to_input(MouseEvent {
+            kind: MouseEventKind::ScrollUp,
+            column: 15,
+            row: 10,
+            modifiers: KeyModifiers::NONE,
+        });
+
+        assert_eq!(
+            down,
+            ShellInput::Mouse {
+                summary: "Mouse Down Left".to_string(),
+                coordinates: Some((12, 7)),
+                scroll_direction: None,
+            }
+        );
+        assert_eq!(
+            drag,
+            ShellInput::Mouse {
+                summary: "Mouse Drag Right".to_string(),
+                coordinates: Some((13, 8)),
+                scroll_direction: None,
+            }
+        );
+        assert_eq!(
+            moved,
+            ShellInput::Mouse {
+                summary: "Mouse Moved".to_string(),
+                coordinates: Some((14, 9)),
+                scroll_direction: None,
+            }
+        );
+        assert_eq!(
+            scroll_up,
+            ShellInput::Mouse {
+                summary: "Mouse Scroll Up".to_string(),
+                coordinates: Some((15, 10)),
+                scroll_direction: Some("Up".to_string()),
+            }
+        );
+    }
+
+    #[test]
+    fn mouse_event_to_input_uses_required_scroll_direction_labels() {
+        let cases = [
+            (MouseEventKind::ScrollDown, "Down"),
+            (MouseEventKind::ScrollUp, "Up"),
+            (MouseEventKind::ScrollLeft, "Left"),
+            (MouseEventKind::ScrollRight, "Right"),
+        ];
+
+        for (kind, expected_direction) in cases {
+            let input = mouse_event_to_input(MouseEvent {
+                kind,
+                column: 1,
+                row: 2,
+                modifiers: KeyModifiers::NONE,
+            });
+
+            assert_eq!(
+                input,
+                ShellInput::Mouse {
+                    summary: format!("Mouse Scroll {expected_direction}"),
+                    coordinates: Some((1, 2)),
+                    scroll_direction: Some(expected_direction.to_string()),
+                }
+            );
+        }
+    }
+}
 
 #[link(name = "kernel32")]
 unsafe extern "system" {
