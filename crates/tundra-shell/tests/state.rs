@@ -213,6 +213,24 @@ fn debug_state_builds_debug_home_view_model() {
 }
 
 #[test]
+fn terminal_flags_are_visible_in_debug_view_model() {
+    let state = ShellState::new(debug_config(), (120, 40));
+
+    let home = state.to_home_view_model();
+
+    let diagnostics = home.diagnostics().expect("debug diagnostics");
+    assert_eq!(
+        diagnostics.terminal_flags,
+        vec![
+            "raw mode: enabled".to_string(),
+            "alternate screen: enabled".to_string(),
+            "mouse capture: enabled".to_string(),
+            "cursor restore: enabled".to_string(),
+        ]
+    );
+}
+
+#[test]
 fn user_state_builds_user_home_view_model() {
     let state =
         ShellState::new_for_home_mode(build_default_config(), (120, 40), ShellHomeMode::User);

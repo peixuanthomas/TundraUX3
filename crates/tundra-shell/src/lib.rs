@@ -3,6 +3,14 @@ compile_error!("TundraUX3 phase 0 supports Windows 11 only.");
 
 use tundra_storage::{CONFIG_DESCRIPTOR, SCHEMA_VERSION};
 
+use crossterm::cursor::{Hide, Show};
+use crossterm::event::{DisableMouseCapture, EnableMouseCapture};
+use crossterm::execute;
+use crossterm::terminal::{
+    EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
+};
+use ratatui::Terminal;
+use ratatui::backend::CrosstermBackend;
 use std::io::{self, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
@@ -13,6 +21,7 @@ pub const ENTER_FULLSCREEN_SEQUENCE: &str = "\x1B[?1049h\x1B[?25l\x1B[2J\x1B[H";
 pub const EXIT_FULLSCREEN_SEQUENCE: &str = "\x1B[?25h\x1B[?1049l";
 
 static SHELL_RUNNING: AtomicBool = AtomicBool::new(true);
+static PANIC_RESTORE_HOOK_INSTALLED: AtomicBool = AtomicBool::new(false);
 
 const BANNER_LINES: &[&str] = &[
     r#"ooooooooooooo                               .o8                     ooooo     ooo ooooooo  ooooo   .oooo.   "#,
@@ -109,6 +118,74 @@ impl ShellTerminalFlags {
             cursor_restore_enabled: true,
         }
     }
+}
+
+pub struct TerminalGuard<W: Write> {
+    terminal: Terminal<CrosstermBackend<W>>,
+    restored: bool,
+}
+
+impl<W: Write> TerminalGuard<W> {
+    pub fn enter(mut output: W) -> io::Result<Self> {
+        install_panic_restore_hook();
+
+        enable_raw_mode()?;
+        if let Err(error) = execute!(output, EnterAlternateScreen, EnableMouseCapture, Hide) {
+            let _ = disable_raw_mode();
+            return Err(error);
+        }
+
+        let terminal = Terminal::new(CrosstermBackend::new(output))?;
+
+        Ok(Self {
+            terminal,
+            restored: false,
+        })
+    }
+
+    pub fn terminal_mut(&mut self) -> &mut Terminal<CrosstermBackend<W>> {
+        &mut self.terminal
+    }
+
+    pub fn restore(&mut self) -> io::Result<()> {
+        if self.restored {
+            return Ok(());
+        }
+
+        execute!(
+            self.terminal.backend_mut(),
+            Show,
+            DisableMouseCapture,
+            LeaveAlternateScreen
+        )?;
+        disable_raw_mode()?;
+        self.restored = true;
+
+        Ok(())
+    }
+}
+
+impl<W: Write> Drop for TerminalGuard<W> {
+    fn drop(&mut self) {
+        let _ = self.restore();
+    }
+}
+
+fn install_panic_restore_hook() {
+    if PANIC_RESTORE_HOOK_INSTALLED
+        .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+        .is_err()
+    {
+        return;
+    }
+
+    let previous_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |panic_info| {
+        let _ = disable_raw_mode();
+        let mut stderr = io::stderr();
+        let _ = execute!(stderr, Show, DisableMouseCapture, LeaveAlternateScreen);
+        previous_hook(panic_info);
+    }));
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -353,16 +430,16 @@ fn terminal_flag_labels(flags: ShellTerminalFlags) -> Vec<String> {
     let mut labels = Vec::new();
 
     if flags.raw_mode {
-        labels.push("raw-mode".to_string());
+        labels.push("raw mode: enabled".to_string());
     }
     if flags.alternate_screen {
-        labels.push("alternate-screen".to_string());
+        labels.push("alternate screen: enabled".to_string());
     }
     if flags.mouse_capture {
-        labels.push("mouse-capture".to_string());
+        labels.push("mouse capture: enabled".to_string());
     }
     if flags.cursor_restore_enabled {
-        labels.push("cursor-restore".to_string());
+        labels.push("cursor restore: enabled".to_string());
     }
 
     labels

@@ -449,6 +449,8 @@ version = "0.1.0"
 name = "tundra-shell"
 version = "0.1.0"
 dependencies = [
+ "crossterm",
+ "ratatui",
  "tundra-storage",
  "tundra-ui",
 ]
