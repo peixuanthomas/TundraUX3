@@ -1,6 +1,3 @@
-#[cfg(not(any(windows, target_os = "macos")))]
-compile_error!("TundraUX3 phase 0 supports Windows and macOS only; Linux is unsupported.");
-
 use std::fmt;
 use std::io::Write;
 

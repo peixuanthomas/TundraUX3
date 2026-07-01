@@ -1,6 +1,3 @@
-#[cfg(not(any(windows, target_os = "macos")))]
-compile_error!("TundraUX3 phase 1 supports Windows and macOS only; Linux is unsupported.");
-
 mod command;
 mod focus;
 mod hit_test;

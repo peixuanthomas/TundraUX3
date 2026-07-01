@@ -1,6 +1,3 @@
-#[cfg(not(any(windows, target_os = "macos")))]
-compile_error!("TundraUX3 supports Windows and macOS only.");
-
 use std::env;
 use std::fmt;
 use std::fs;
