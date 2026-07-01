@@ -10,6 +10,13 @@ fn debug_config() -> ShellLaunchConfig {
     }
 }
 
+fn build_default_config() -> ShellLaunchConfig {
+    ShellLaunchConfig {
+        terminal_mode: ShellTerminalMode::Fullscreen,
+        home_mode_override: HomeModeOverride::BuildDefault,
+    }
+}
+
 #[test]
 fn debug_override_selects_debug_home() {
     let state = ShellState::new(debug_config(), (120, 40));
@@ -35,10 +42,38 @@ fn debug_override_selects_debug_home() {
 }
 
 #[test]
+fn build_default_selects_expected_home_for_build_profile() {
+    let state = ShellState::new(build_default_config(), (120, 40));
+    let expected = if cfg!(debug_assertions) {
+        ShellHomeMode::Debug
+    } else {
+        ShellHomeMode::User
+    };
+
+    assert_eq!(state.home_mode(), expected);
+}
+
+#[test]
 fn q_opens_exit_confirmation_from_home() {
     let mut state = ShellState::new(debug_config(), (120, 40));
 
     let action = state.apply_input(ShellInput::Key("q".to_string()));
+
+    assert_eq!(action, ShellAction::Redraw);
+    assert_eq!(state.active_screen(), ShellScreen::ExitConfirm);
+    assert_eq!(state.status(), "Confirm exit");
+    assert_eq!(
+        state.screen_stack(),
+        &[ShellScreen::Home, ShellScreen::ExitConfirm][..]
+    );
+    assert!(!state.shutdown_requested());
+}
+
+#[test]
+fn escape_opens_exit_confirmation_from_home() {
+    let mut state = ShellState::new(debug_config(), (120, 40));
+
+    let action = state.apply_input(ShellInput::Key("Esc".to_string()));
 
     assert_eq!(action, ShellAction::Redraw);
     assert_eq!(state.active_screen(), ShellScreen::ExitConfirm);
@@ -74,6 +109,36 @@ fn enter_confirms_exit_confirmation() {
     assert_eq!(action, ShellAction::Exit);
     assert_eq!(state.active_screen(), ShellScreen::ExitConfirm);
     assert!(state.shutdown_requested());
+}
+
+#[test]
+fn y_and_uppercase_y_confirm_exit_confirmation() {
+    for key in ["y", "Y"] {
+        let mut state = ShellState::new(debug_config(), (120, 40));
+        state.apply_input(ShellInput::Key("q".to_string()));
+
+        let action = state.apply_input(ShellInput::Key(key.to_string()));
+
+        assert_eq!(action, ShellAction::Exit);
+        assert_eq!(state.active_screen(), ShellScreen::ExitConfirm);
+        assert!(state.shutdown_requested());
+    }
+}
+
+#[test]
+fn n_and_uppercase_n_cancel_exit_confirmation() {
+    for key in ["n", "N"] {
+        let mut state = ShellState::new(debug_config(), (120, 40));
+        state.apply_input(ShellInput::Key("q".to_string()));
+
+        let action = state.apply_input(ShellInput::Key(key.to_string()));
+
+        assert_eq!(action, ShellAction::Redraw);
+        assert_eq!(state.active_screen(), ShellScreen::Home);
+        assert_eq!(state.status(), "Ready");
+        assert_eq!(state.screen_stack(), &[ShellScreen::Home][..]);
+        assert!(!state.shutdown_requested());
+    }
 }
 
 #[test]
