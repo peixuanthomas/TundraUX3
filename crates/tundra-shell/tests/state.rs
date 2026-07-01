@@ -2,6 +2,7 @@ use tundra_shell::{
     HomeModeOverride, ShellAction, ShellHomeMode, ShellInput, ShellLaunchConfig, ShellScreen,
     ShellState, ShellTerminalMode,
 };
+use tundra_ui::HomeDisplayMode;
 
 fn debug_config() -> ShellLaunchConfig {
     ShellLaunchConfig {
@@ -195,4 +196,62 @@ fn shutdown_input_exits_immediately() {
 
     assert_eq!(action, ShellAction::Exit);
     assert!(state.shutdown_requested());
+}
+
+#[test]
+fn debug_state_builds_debug_home_view_model() {
+    let mut state = ShellState::new(debug_config(), (120, 40));
+    state.apply_input(ShellInput::Key("x".to_string()));
+    state.apply_input(ShellInput::Tick);
+
+    let home = state.to_home_view_model();
+
+    assert_eq!(home.display_mode(), HomeDisplayMode::Debug);
+    let diagnostics = home.diagnostics().expect("debug diagnostics");
+    assert_eq!(diagnostics.tick_count, 1);
+    assert_eq!(diagnostics.last_key_event.as_deref(), Some("x"));
+}
+
+#[test]
+fn user_state_builds_user_home_view_model() {
+    let state =
+        ShellState::new_for_home_mode(build_default_config(), (120, 40), ShellHomeMode::User);
+
+    let home = state.to_home_view_model();
+
+    assert_eq!(home.display_mode(), HomeDisplayMode::User);
+    assert_eq!(home.diagnostics(), None);
+    assert_eq!(home.entries().len(), 5);
+    assert!(
+        home.entries()
+            .iter()
+            .any(|entry| entry.label == "Diagnostics")
+    );
+}
+
+#[test]
+fn state_builds_shell_chrome_view_model() {
+    let mut state = ShellState::new(debug_config(), (120, 40));
+    state.apply_input(ShellInput::Key("q".to_string()));
+
+    let chrome = state.to_shell_chrome_view_model();
+
+    assert_eq!(chrome.app_name, "TundraUX 3");
+    assert_eq!(
+        chrome.build_mode,
+        if cfg!(debug_assertions) {
+            "debug"
+        } else {
+            "release"
+        }
+    );
+    assert_eq!(chrome.display_mode, HomeDisplayMode::Debug);
+    assert_eq!(chrome.terminal_size, (120, 40));
+    assert_eq!(
+        chrome.screen_stack,
+        vec!["Home".to_string(), "ExitConfirm".to_string()]
+    );
+    assert_eq!(chrome.status.status, "Confirm exit");
+    assert_eq!(chrome.status.toast, None);
+    assert_eq!(chrome.status.error, None);
 }

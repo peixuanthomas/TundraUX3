@@ -6,7 +6,7 @@ use tundra_storage::{CONFIG_DESCRIPTOR, SCHEMA_VERSION};
 use std::io::{self, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 pub const BANNER_DISPLAY_DURATION: Duration = Duration::from_secs(2);
 pub const ENTER_FULLSCREEN_SEQUENCE: &str = "\x1B[?1049h\x1B[?25l\x1B[2J\x1B[H";
@@ -118,7 +118,9 @@ pub struct ShellState {
     terminal_size: (u16, u16),
     terminal_flags: ShellTerminalFlags,
     tick_count: u64,
-    status: String,
+    status_message: String,
+    toast_message: Option<String>,
+    error_message: Option<String>,
     shutdown_requested: bool,
     last_key_event: Option<String>,
     last_mouse_event: Option<String>,
@@ -146,13 +148,63 @@ impl ShellState {
             terminal_size,
             terminal_flags: ShellTerminalFlags::enabled(),
             tick_count: 0,
-            status: "Ready".to_string(),
+            status_message: "Ready".to_string(),
+            toast_message: None,
+            error_message: None,
             shutdown_requested: false,
             last_key_event: None,
             last_mouse_event: None,
             last_resize_event: None,
             mouse_coordinates: None,
             mouse_scroll_direction: None,
+        }
+    }
+
+    pub fn new_for_home_mode(
+        launch_config: ShellLaunchConfig,
+        terminal_size: (u16, u16),
+        home_mode: ShellHomeMode,
+    ) -> Self {
+        let mut state = Self::new(launch_config, terminal_size);
+        state.home_mode = home_mode;
+        state
+    }
+
+    pub fn to_home_view_model(&self) -> tundra_ui::HomeViewModel {
+        match self.home_mode {
+            ShellHomeMode::Debug => {
+                tundra_ui::HomeViewModel::debug(tundra_ui::DebugDiagnosticsViewModel {
+                    tick_count: self.tick_count,
+                    last_key_event: self.last_key_event.clone(),
+                    last_mouse_event: self.last_mouse_event.clone(),
+                    last_resize_event: self.last_resize_event.clone(),
+                    mouse_coordinates: self.mouse_coordinates,
+                    scroll_direction: self.mouse_scroll_direction.clone(),
+                    terminal_flags: terminal_flag_labels(self.terminal_flags),
+                })
+            }
+            ShellHomeMode::User => {
+                tundra_ui::HomeViewModel::user("Guest", current_time_label(), user_home_entries())
+            }
+        }
+    }
+
+    pub fn to_shell_chrome_view_model(&self) -> tundra_ui::ShellChromeViewModel {
+        tundra_ui::ShellChromeViewModel {
+            app_name: "TundraUX 3".to_string(),
+            build_mode: build_mode_label().to_string(),
+            display_mode: self.home_display_mode(),
+            terminal_size: self.terminal_size,
+            screen_stack: self
+                .screen_stack
+                .iter()
+                .map(|screen| format!("{screen:?}"))
+                .collect(),
+            status: tundra_ui::StatusViewModel {
+                status: self.status_message.clone(),
+                toast: self.toast_message.clone(),
+                error: self.error_message.clone(),
+            },
         }
     }
 
@@ -229,7 +281,7 @@ impl ShellState {
     }
 
     pub fn status(&self) -> &str {
-        &self.status
+        &self.status_message
     }
 
     pub fn terminal_flags(&self) -> ShellTerminalFlags {
@@ -240,11 +292,18 @@ impl ShellState {
         self.mouse_scroll_direction.as_deref()
     }
 
+    fn home_display_mode(&self) -> tundra_ui::HomeDisplayMode {
+        match self.home_mode {
+            ShellHomeMode::Debug => tundra_ui::HomeDisplayMode::Debug,
+            ShellHomeMode::User => tundra_ui::HomeDisplayMode::User,
+        }
+    }
+
     fn apply_key(&mut self, key: String) -> ShellAction {
         match self.active_screen() {
             ShellScreen::Home if key == "q" || key == "Esc" => {
                 self.screen_stack.push(ShellScreen::ExitConfirm);
-                self.status = "Confirm exit".to_string();
+                self.status_message = "Confirm exit".to_string();
                 ShellAction::Redraw
             }
             ShellScreen::ExitConfirm if key == "y" || key == "Y" || key == "Enter" => {
@@ -253,7 +312,7 @@ impl ShellState {
             }
             ShellScreen::ExitConfirm if key == "n" || key == "N" || key == "Esc" => {
                 self.pop_to_home();
-                self.status = "Ready".to_string();
+                self.status_message = "Ready".to_string();
                 ShellAction::Redraw
             }
             _ => {
@@ -268,6 +327,52 @@ impl ShellState {
         if self.screen_stack.is_empty() {
             self.screen_stack.push(ShellScreen::Home);
         }
+    }
+}
+
+fn current_time_label() -> String {
+    let seconds = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_secs())
+        .unwrap_or(0);
+
+    format!("unix:{seconds}")
+}
+
+fn user_home_entries() -> Vec<tundra_ui::ShellEntry> {
+    vec![
+        tundra_ui::ShellEntry::new("Explorer", "Browse files"),
+        tundra_ui::ShellEntry::new("Launcher", "Open apps and commands"),
+        tundra_ui::ShellEntry::new("Editor", "Edit text files"),
+        tundra_ui::ShellEntry::new("Settings", "Adjust TundraUX"),
+        tundra_ui::ShellEntry::new("Diagnostics", "Inspect system readiness"),
+    ]
+}
+
+fn terminal_flag_labels(flags: ShellTerminalFlags) -> Vec<String> {
+    let mut labels = Vec::new();
+
+    if flags.raw_mode {
+        labels.push("raw-mode".to_string());
+    }
+    if flags.alternate_screen {
+        labels.push("alternate-screen".to_string());
+    }
+    if flags.mouse_capture {
+        labels.push("mouse-capture".to_string());
+    }
+    if flags.cursor_restore_enabled {
+        labels.push("cursor-restore".to_string());
+    }
+
+    labels
+}
+
+fn build_mode_label() -> &'static str {
+    if cfg!(debug_assertions) {
+        "debug"
+    } else {
+        "release"
     }
 }
 
