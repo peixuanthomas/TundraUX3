@@ -14,6 +14,7 @@ fn debug_home_exposes_diagnostics_and_no_entries() {
         last_resize_event: Some("100x30".to_string()),
         mouse_coordinates: Some((12, 7)),
         scroll_direction: Some("up".to_string()),
+        drag_direction: Some("Right".to_string()),
         terminal_flags: vec!["alternate-screen".to_string(), "mouse-capture".to_string()],
     };
 

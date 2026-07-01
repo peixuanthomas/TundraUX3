@@ -3,3 +3,5 @@
 /.worktrees/
 /worktrees/
 /TundraUX3/target/
+/.vscode
+/.agents

@@ -44,6 +44,7 @@ pub struct DebugDiagnosticsViewModel {
     pub last_resize_event: Option<String>,
     pub mouse_coordinates: Option<(u16, u16)>,
     pub scroll_direction: Option<String>,
+    pub drag_direction: Option<String>,
     pub terminal_flags: Vec<String>,
 }
 

@@ -1,6 +1,9 @@
+use std::time::{Duration, Instant};
+
 use tundra_shell::{
-    HomeModeOverride, ShellAction, ShellHomeMode, ShellInput, ShellLaunchConfig, ShellScreen,
-    ShellState, ShellTerminalMode,
+    ClickKind, HomeModeOverride, InputEvent, PointerButton, ScrollDirection, ShellAction,
+    ShellCommand, ShellComponent, ShellHomeMode, ShellLaunchConfig, ShellScreen, ShellState,
+    ShellTerminalMode, default_shell_shortcuts, detect_shortcut_conflicts,
 };
 use tundra_ui::HomeDisplayMode;
 
@@ -33,6 +36,16 @@ fn debug_override_selects_debug_home() {
     assert_eq!(state.last_resize_event(), None);
     assert_eq!(state.mouse_coordinates(), None);
     assert_eq!(state.mouse_scroll_direction(), None);
+    assert_eq!(state.mouse_drag_direction(), None);
+    assert_eq!(state.focused_component(), ShellComponent::Home);
+    assert_eq!(state.hovered_component(), None);
+    assert_eq!(state.active_popup(), None);
+    assert_eq!(state.hit_target_at((1, 1)), Some(ShellComponent::TopBar));
+    assert_eq!(state.hit_target_at((1, 4)), Some(ShellComponent::Home));
+    assert_eq!(
+        state.hit_target_at((1, 38)),
+        Some(ShellComponent::StatusBar)
+    );
     assert!(!state.shutdown_requested());
 
     let terminal_flags = state.terminal_flags();
@@ -58,7 +71,7 @@ fn build_default_selects_expected_home_for_build_profile() {
 fn q_opens_exit_confirmation_from_home() {
     let mut state = ShellState::new(debug_config(), (120, 40));
 
-    let action = state.apply_input(ShellInput::Key("q".to_string()));
+    let action = state.apply_input(InputEvent::from_key_label("q"));
 
     assert_eq!(action, ShellAction::Redraw);
     assert_eq!(state.active_screen(), ShellScreen::ExitConfirm);
@@ -74,7 +87,7 @@ fn q_opens_exit_confirmation_from_home() {
 fn escape_opens_exit_confirmation_from_home() {
     let mut state = ShellState::new(debug_config(), (120, 40));
 
-    let action = state.apply_input(ShellInput::Key("Esc".to_string()));
+    let action = state.apply_input(InputEvent::from_key_label("Esc"));
 
     assert_eq!(action, ShellAction::Redraw);
     assert_eq!(state.active_screen(), ShellScreen::ExitConfirm);
@@ -89,9 +102,9 @@ fn escape_opens_exit_confirmation_from_home() {
 #[test]
 fn escape_cancels_exit_confirmation() {
     let mut state = ShellState::new(debug_config(), (120, 40));
-    state.apply_input(ShellInput::Key("q".to_string()));
+    state.apply_input(InputEvent::from_key_label("q"));
 
-    let action = state.apply_input(ShellInput::Key("Esc".to_string()));
+    let action = state.apply_input(InputEvent::from_key_label("Esc"));
 
     assert_eq!(action, ShellAction::Redraw);
     assert_eq!(state.active_screen(), ShellScreen::Home);
@@ -103,9 +116,9 @@ fn escape_cancels_exit_confirmation() {
 #[test]
 fn enter_confirms_exit_confirmation() {
     let mut state = ShellState::new(debug_config(), (120, 40));
-    state.apply_input(ShellInput::Key("q".to_string()));
+    state.apply_input(InputEvent::from_key_label("q"));
 
-    let action = state.apply_input(ShellInput::Key("Enter".to_string()));
+    let action = state.apply_input(InputEvent::from_key_label("Enter"));
 
     assert_eq!(action, ShellAction::Exit);
     assert_eq!(state.active_screen(), ShellScreen::ExitConfirm);
@@ -116,9 +129,9 @@ fn enter_confirms_exit_confirmation() {
 fn y_and_uppercase_y_confirm_exit_confirmation() {
     for key in ["y", "Y"] {
         let mut state = ShellState::new(debug_config(), (120, 40));
-        state.apply_input(ShellInput::Key("q".to_string()));
+        state.apply_input(InputEvent::from_key_label("q"));
 
-        let action = state.apply_input(ShellInput::Key(key.to_string()));
+        let action = state.apply_input(InputEvent::from_key_label(key));
 
         assert_eq!(action, ShellAction::Exit);
         assert_eq!(state.active_screen(), ShellScreen::ExitConfirm);
@@ -130,9 +143,9 @@ fn y_and_uppercase_y_confirm_exit_confirmation() {
 fn n_and_uppercase_n_cancel_exit_confirmation() {
     for key in ["n", "N"] {
         let mut state = ShellState::new(debug_config(), (120, 40));
-        state.apply_input(ShellInput::Key("q".to_string()));
+        state.apply_input(InputEvent::from_key_label("q"));
 
-        let action = state.apply_input(ShellInput::Key(key.to_string()));
+        let action = state.apply_input(InputEvent::from_key_label(key));
 
         assert_eq!(action, ShellAction::Redraw);
         assert_eq!(state.active_screen(), ShellScreen::Home);
@@ -146,42 +159,193 @@ fn n_and_uppercase_n_cancel_exit_confirmation() {
 fn other_key_is_recorded() {
     let mut state = ShellState::new(debug_config(), (120, 40));
 
-    let action = state.apply_input(ShellInput::Key("Tab".to_string()));
+    let action = state.apply_input(InputEvent::from_key_label("x"));
 
     assert_eq!(action, ShellAction::Redraw);
     assert_eq!(state.active_screen(), ShellScreen::Home);
-    assert_eq!(state.last_key_event(), Some("Tab"));
+    assert_eq!(state.last_key_event(), Some("x"));
 }
 
 #[test]
 fn mouse_and_resize_events_are_recorded() {
     let mut state = ShellState::new(debug_config(), (120, 40));
 
-    let mouse_action = state.apply_input(ShellInput::Mouse {
-        summary: "left press".to_string(),
-        coordinates: Some((12, 7)),
-        scroll_direction: Some("down".to_string()),
-    });
-    let resize_action = state.apply_input(ShellInput::Resize {
+    let mouse_action = state.apply_input(InputEvent::mouse_scroll(ScrollDirection::Down, (12, 7)));
+    let resize_action = state.apply_input(InputEvent::Resize {
         width: 80,
         height: 24,
     });
 
     assert_eq!(mouse_action, ShellAction::Redraw);
     assert_eq!(resize_action, ShellAction::Redraw);
-    assert_eq!(state.last_mouse_event(), Some("left press"));
+    assert_eq!(state.last_mouse_event(), Some("Mouse Scroll Down"));
     assert_eq!(state.mouse_coordinates(), Some((12, 7)));
-    assert_eq!(state.mouse_scroll_direction(), Some("down"));
+    assert_eq!(state.mouse_scroll_direction(), Some("Down"));
     assert_eq!(state.terminal_size(), (80, 24));
     assert_eq!(state.last_resize_event(), Some("80x24"));
+}
+
+#[test]
+fn mouse_drag_direction_updates_from_each_drag_delta() {
+    let mut state = ShellState::new(debug_config(), (120, 40));
+
+    state.apply_input(InputEvent::mouse_down(PointerButton::Left, (10, 10)));
+
+    state.apply_input(InputEvent::mouse_drag(PointerButton::Left, (13, 10)));
+    assert_eq!(state.last_mouse_event(), Some("Mouse Drag Left to Right"));
+    assert_eq!(state.mouse_drag_direction(), Some("Right"));
+
+    state.apply_input(InputEvent::mouse_drag(PointerButton::Left, (11, 10)));
+    assert_eq!(state.last_mouse_event(), Some("Mouse Drag Left to Left"));
+    assert_eq!(state.mouse_drag_direction(), Some("Left"));
+
+    state.apply_input(InputEvent::mouse_drag(PointerButton::Left, (11, 8)));
+    assert_eq!(state.last_mouse_event(), Some("Mouse Drag Left to Up"));
+    assert_eq!(state.mouse_drag_direction(), Some("Up"));
+
+    state.apply_input(InputEvent::mouse_drag(PointerButton::Left, (11, 12)));
+    assert_eq!(state.last_mouse_event(), Some("Mouse Drag Left to Down"));
+    assert_eq!(state.mouse_drag_direction(), Some("Down"));
+
+    state.apply_input(InputEvent::mouse_up(PointerButton::Left, (11, 12)));
+    assert_eq!(state.mouse_drag_direction(), None);
+}
+
+#[test]
+fn tab_and_shift_tab_route_to_focus_commands() {
+    let mut state = ShellState::new(debug_config(), (120, 40));
+
+    state.apply_input(InputEvent::from_key_label("Tab"));
+    assert_eq!(state.focused_component(), ShellComponent::StatusBar);
+    assert_eq!(state.last_command(), Some(&ShellCommand::FocusNext));
+
+    state.apply_input(InputEvent::from_key_label("Shift+Tab"));
+    assert_eq!(state.focused_component(), ShellComponent::Home);
+    assert_eq!(state.last_command(), Some(&ShellCommand::FocusPrevious));
+}
+
+#[test]
+fn mouse_move_updates_hover_from_hit_map() {
+    let mut state = ShellState::new(debug_config(), (120, 40));
+
+    state.apply_input(InputEvent::mouse_moved((2, 1)));
+
+    assert_eq!(state.hovered_component(), Some(ShellComponent::TopBar));
+    assert_eq!(
+        state.last_command(),
+        Some(&ShellCommand::Hover(Some(ShellComponent::TopBar)))
+    );
+}
+
+#[test]
+fn right_click_opens_context_menu_popup_on_hit_target() {
+    let mut state = ShellState::new(debug_config(), (120, 40));
+
+    state.apply_input(InputEvent::mouse_down(PointerButton::Right, (4, 4)));
+
+    assert_eq!(
+        state.active_popup().map(|popup| popup.owner),
+        Some(Some(ShellComponent::Home))
+    );
+    assert_eq!(state.focused_component(), ShellComponent::ContextMenu);
+    assert_eq!(
+        state.last_command(),
+        Some(&ShellCommand::OpenContextMenu {
+            target: Some(ShellComponent::Home),
+            coordinates: (4, 4),
+        })
+    );
+    assert_eq!(
+        state.hit_target_at((4, 4)),
+        Some(ShellComponent::ContextMenu)
+    );
+}
+
+#[test]
+fn popup_closes_on_outside_click_without_activating_underlying_target() {
+    let mut state = ShellState::new(debug_config(), (120, 40));
+    state.apply_input(InputEvent::mouse_down(PointerButton::Right, (4, 4)));
+
+    let action = state.apply_input(InputEvent::mouse_down(PointerButton::Left, (80, 20)));
+
+    assert_eq!(action, ShellAction::Redraw);
+    assert_eq!(state.active_popup(), None);
+    assert_eq!(state.last_command(), Some(&ShellCommand::ClosePopup));
+    assert_eq!(state.status(), "Ready");
+}
+
+#[test]
+fn modal_captures_mouse_without_closing_or_activating_home() {
+    let mut state = ShellState::new(debug_config(), (120, 40));
+    state.apply_input(InputEvent::from_key_label("q"));
+
+    let action = state.apply_input(InputEvent::mouse_down(PointerButton::Left, (2, 4)));
+
+    assert_eq!(action, ShellAction::Redraw);
+    assert_eq!(state.active_screen(), ShellScreen::ExitConfirm);
+    assert_eq!(state.focused_component(), ShellComponent::ExitDialog);
+    assert_eq!(
+        state.last_command(),
+        Some(&ShellCommand::CaptureOverlayInput)
+    );
+    assert_eq!(state.shutdown_requested(), false);
+}
+
+#[test]
+fn double_click_is_detected_for_same_component_and_nearby_cell() {
+    let mut state = ShellState::new(debug_config(), (120, 40));
+    let started_at = Instant::now();
+
+    state.route_input_at(
+        InputEvent::mouse_down(PointerButton::Left, (10, 5)),
+        started_at,
+    );
+
+    let routed = state.route_input_at(
+        InputEvent::mouse_down(PointerButton::Left, (11, 6)),
+        started_at + Duration::from_millis(100),
+    );
+
+    assert_eq!(
+        routed.command,
+        ShellCommand::Activate {
+            target: ShellComponent::Home,
+            coordinates: (11, 6),
+            click: ClickKind::Double,
+        }
+    );
+}
+
+#[test]
+fn resize_refreshes_hit_map_and_keeps_not_fullscreen_unrelated_state_untouched() {
+    let mut state = ShellState::new(debug_config(), (120, 40));
+    let initial_generation = state.hit_map_generation();
+
+    state.apply_input(InputEvent::Resize {
+        width: 40,
+        height: 10,
+    });
+
+    assert!(state.hit_map_generation() > initial_generation);
+    assert_eq!(state.terminal_size(), (40, 10));
+    assert_eq!(
+        state.hit_target_at((1, 1)),
+        Some(ShellComponent::CompactHome)
+    );
+    assert_eq!(state.focused_component(), ShellComponent::CompactHome);
+}
+
+#[test]
+fn default_shortcuts_have_no_conflicts() {
+    assert!(detect_shortcut_conflicts(&default_shell_shortcuts()).is_empty());
 }
 
 #[test]
 fn tick_increments_count() {
     let mut state = ShellState::new(debug_config(), (120, 40));
 
-    let first_action = state.apply_input(ShellInput::Tick);
-    let second_action = state.apply_input(ShellInput::Tick);
+    let first_action = state.apply_input(InputEvent::Tick);
+    let second_action = state.apply_input(InputEvent::Tick);
 
     assert_eq!(first_action, ShellAction::Redraw);
     assert_eq!(second_action, ShellAction::Redraw);
@@ -192,7 +356,7 @@ fn tick_increments_count() {
 fn shutdown_input_exits_immediately() {
     let mut state = ShellState::new(debug_config(), (120, 40));
 
-    let action = state.apply_input(ShellInput::Shutdown);
+    let action = state.apply_input(InputEvent::Shutdown);
 
     assert_eq!(action, ShellAction::Exit);
     assert!(state.shutdown_requested());
@@ -201,8 +365,8 @@ fn shutdown_input_exits_immediately() {
 #[test]
 fn debug_state_builds_debug_home_view_model() {
     let mut state = ShellState::new(debug_config(), (120, 40));
-    state.apply_input(ShellInput::Key("x".to_string()));
-    state.apply_input(ShellInput::Tick);
+    state.apply_input(InputEvent::from_key_label("x"));
+    state.apply_input(InputEvent::Tick);
 
     let home = state.to_home_view_model();
 
@@ -273,7 +437,7 @@ fn explicit_user_mode_shows_product_entries_without_diagnostics() {
 #[test]
 fn state_builds_shell_chrome_view_model() {
     let mut state = ShellState::new(debug_config(), (120, 40));
-    state.apply_input(ShellInput::Key("q".to_string()));
+    state.apply_input(InputEvent::from_key_label("q"));
 
     let chrome = state.to_shell_chrome_view_model();
 

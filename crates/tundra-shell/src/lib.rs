@@ -5,8 +5,8 @@ use tundra_storage::{CONFIG_DESCRIPTOR, SCHEMA_VERSION};
 
 use crossterm::cursor::{Hide, Show};
 use crossterm::event::{
-    self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEvent, KeyModifiers,
-    MouseEvent, MouseEventKind,
+    self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEvent, KeyEventKind,
+    KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
 };
 use crossterm::execute;
 use crossterm::terminal::{
@@ -14,6 +14,7 @@ use crossterm::terminal::{
 };
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
+use ratatui::layout::Rect;
 use std::io::{self, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
@@ -82,20 +83,557 @@ pub enum ShellScreen {
     ExitConfirm,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ShellInput {
-    Key(String),
-    Mouse {
-        summary: String,
-        coordinates: Option<(u16, u16)>,
-        scroll_direction: Option<String>,
+pub const DOUBLE_CLICK_INTERVAL: Duration = Duration::from_millis(500);
+const DOUBLE_CLICK_CELL_TOLERANCE: u16 = 1;
+
+pub type CellPosition = (u16, u16);
+pub type ShellInput = InputEvent;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub struct InputModifiers {
+    pub shift: bool,
+    pub control: bool,
+    pub alt: bool,
+}
+
+impl InputModifiers {
+    pub const fn none() -> Self {
+        Self {
+            shift: false,
+            control: false,
+            alt: false,
+        }
+    }
+}
+
+impl From<KeyModifiers> for InputModifiers {
+    fn from(modifiers: KeyModifiers) -> Self {
+        Self {
+            shift: modifiers.contains(KeyModifiers::SHIFT),
+            control: modifiers.contains(KeyModifiers::CONTROL),
+            alt: modifiers.contains(KeyModifiers::ALT),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum InputKey {
+    Character(char),
+    Enter,
+    Escape,
+    Backspace,
+    Tab,
+    BackTab,
+    Left,
+    Right,
+    Up,
+    Down,
+    Delete,
+    Insert,
+    Home,
+    End,
+    PageUp,
+    PageDown,
+    Function(u8),
+    Other(String),
+}
+
+impl InputKey {
+    fn label(&self) -> String {
+        match self {
+            Self::Character(character) => character.to_string(),
+            Self::Enter => "Enter".to_string(),
+            Self::Escape => "Esc".to_string(),
+            Self::Backspace => "Backspace".to_string(),
+            Self::Tab => "Tab".to_string(),
+            Self::BackTab => "Shift+Tab".to_string(),
+            Self::Left => "Left".to_string(),
+            Self::Right => "Right".to_string(),
+            Self::Up => "Up".to_string(),
+            Self::Down => "Down".to_string(),
+            Self::Delete => "Delete".to_string(),
+            Self::Insert => "Insert".to_string(),
+            Self::Home => "Home".to_string(),
+            Self::End => "End".to_string(),
+            Self::PageUp => "PageUp".to_string(),
+            Self::PageDown => "PageDown".to_string(),
+            Self::Function(number) => format!("F({number})"),
+            Self::Other(label) => label.clone(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum InputPhase {
+    Press,
+    Repeat,
+    Release,
+}
+
+impl InputPhase {
+    const fn is_press_like(self) -> bool {
+        matches!(self, Self::Press | Self::Repeat)
+    }
+}
+
+impl From<KeyEventKind> for InputPhase {
+    fn from(kind: KeyEventKind) -> Self {
+        match kind {
+            KeyEventKind::Press => Self::Press,
+            KeyEventKind::Repeat => Self::Repeat,
+            KeyEventKind::Release => Self::Release,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct KeyInput {
+    pub key: InputKey,
+    pub modifiers: InputModifiers,
+    pub phase: InputPhase,
+}
+
+impl KeyInput {
+    pub fn new(key: InputKey, modifiers: InputModifiers, phase: InputPhase) -> Self {
+        Self {
+            key,
+            modifiers,
+            phase,
+        }
+    }
+
+    pub fn from_label(label: impl AsRef<str>) -> Self {
+        let label = label.as_ref();
+        let (key, modifiers) = match label {
+            "Ctrl+C" => (
+                InputKey::Character('c'),
+                InputModifiers {
+                    control: true,
+                    ..InputModifiers::none()
+                },
+            ),
+            "Enter" => (InputKey::Enter, InputModifiers::none()),
+            "Esc" => (InputKey::Escape, InputModifiers::none()),
+            "Backspace" => (InputKey::Backspace, InputModifiers::none()),
+            "Tab" => (InputKey::Tab, InputModifiers::none()),
+            "Shift+Tab" => (
+                InputKey::BackTab,
+                InputModifiers {
+                    shift: true,
+                    ..InputModifiers::none()
+                },
+            ),
+            "Left" => (InputKey::Left, InputModifiers::none()),
+            "Right" => (InputKey::Right, InputModifiers::none()),
+            "Up" => (InputKey::Up, InputModifiers::none()),
+            "Down" => (InputKey::Down, InputModifiers::none()),
+            single if single.chars().count() == 1 => (
+                InputKey::Character(single.chars().next().expect("single char")),
+                InputModifiers::none(),
+            ),
+            other => (InputKey::Other(other.to_string()), InputModifiers::none()),
+        };
+
+        Self::new(key, modifiers, InputPhase::Press)
+    }
+
+    pub fn label(&self) -> String {
+        if matches!(&self.key, InputKey::BackTab) {
+            return "Shift+Tab".to_string();
+        }
+
+        if self.modifiers.control {
+            if let InputKey::Character(character) = &self.key {
+                return format!("Ctrl+{}", character.to_ascii_uppercase());
+            }
+        }
+
+        let mut parts = Vec::new();
+        if self.modifiers.control {
+            parts.push("Ctrl");
+        }
+        if self.modifiers.alt {
+            parts.push("Alt");
+        }
+        if self.modifiers.shift {
+            parts.push("Shift");
+        }
+
+        let key = self.key.label();
+        if parts.is_empty() {
+            key
+        } else {
+            parts.push(key.as_str());
+            parts.join("+")
+        }
+    }
+
+    fn is_ctrl_c(&self) -> bool {
+        matches!(&self.key, InputKey::Character('c' | 'C')) && self.modifiers.control
+    }
+
+    fn is_character(&self, expected: char) -> bool {
+        matches!(&self.key, InputKey::Character(character) if *character == expected)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum PointerButton {
+    Left,
+    Right,
+    Middle,
+}
+
+impl PointerButton {
+    const fn label(self) -> &'static str {
+        match self {
+            Self::Left => "Left",
+            Self::Right => "Right",
+            Self::Middle => "Middle",
+        }
+    }
+}
+
+impl From<MouseButton> for PointerButton {
+    fn from(button: MouseButton) -> Self {
+        match button {
+            MouseButton::Left => Self::Left,
+            MouseButton::Right => Self::Right,
+            MouseButton::Middle => Self::Middle,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ScrollDirection {
+    Down,
+    Up,
+    Left,
+    Right,
+}
+
+impl ScrollDirection {
+    const fn label(self) -> &'static str {
+        match self {
+            Self::Down => "Down",
+            Self::Up => "Up",
+            Self::Left => "Left",
+            Self::Right => "Right",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum DragDirection {
+    Up,
+    Down,
+    Left,
+    Right,
+}
+
+impl DragDirection {
+    const fn label(self) -> &'static str {
+        match self {
+            Self::Up => "Up",
+            Self::Down => "Down",
+            Self::Left => "Left",
+            Self::Right => "Right",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum MouseInput {
+    Down {
+        button: PointerButton,
+        coordinates: CellPosition,
+        modifiers: InputModifiers,
     },
-    Resize {
+    Up {
+        button: PointerButton,
+        coordinates: CellPosition,
+        modifiers: InputModifiers,
+    },
+    Drag {
+        button: PointerButton,
+        coordinates: CellPosition,
+        modifiers: InputModifiers,
+    },
+    Moved {
+        coordinates: CellPosition,
+        modifiers: InputModifiers,
+    },
+    Scroll {
+        direction: ScrollDirection,
+        coordinates: CellPosition,
+        modifiers: InputModifiers,
+    },
+}
+
+impl MouseInput {
+    pub fn coordinates(self) -> CellPosition {
+        match self {
+            Self::Down { coordinates, .. }
+            | Self::Up { coordinates, .. }
+            | Self::Drag { coordinates, .. }
+            | Self::Moved { coordinates, .. }
+            | Self::Scroll { coordinates, .. } => coordinates,
+        }
+    }
+
+    pub fn scroll_direction(self) -> Option<ScrollDirection> {
+        match self {
+            Self::Scroll { direction, .. } => Some(direction),
+            _ => None,
+        }
+    }
+
+    pub fn summary(self) -> String {
+        match self {
+            Self::Down { button, .. } => format!("Mouse Down {}", button.label()),
+            Self::Up { button, .. } => format!("Mouse Up {}", button.label()),
+            Self::Drag { button, .. } => format!("Mouse Drag {}", button.label()),
+            Self::Moved { .. } => "Mouse Moved".to_string(),
+            Self::Scroll { direction, .. } => format!("Mouse Scroll {}", direction.label()),
+        }
+    }
+
+    fn down_button(self) -> Option<PointerButton> {
+        match self {
+            Self::Down { button, .. } => Some(button),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum InputEvent {
+    Key(KeyInput),
+    Mouse(MouseInput),
+    Resize { width: u16, height: u16 },
+    FocusGained,
+    FocusLost,
+    Paste(String),
+    Tick,
+    Shutdown,
+}
+
+impl InputEvent {
+    pub fn from_key_label(label: impl AsRef<str>) -> Self {
+        Self::Key(KeyInput::from_label(label))
+    }
+
+    pub fn mouse_down(button: PointerButton, coordinates: CellPosition) -> Self {
+        Self::Mouse(MouseInput::Down {
+            button,
+            coordinates,
+            modifiers: InputModifiers::none(),
+        })
+    }
+
+    pub fn mouse_up(button: PointerButton, coordinates: CellPosition) -> Self {
+        Self::Mouse(MouseInput::Up {
+            button,
+            coordinates,
+            modifiers: InputModifiers::none(),
+        })
+    }
+
+    pub fn mouse_drag(button: PointerButton, coordinates: CellPosition) -> Self {
+        Self::Mouse(MouseInput::Drag {
+            button,
+            coordinates,
+            modifiers: InputModifiers::none(),
+        })
+    }
+
+    pub fn mouse_moved(coordinates: CellPosition) -> Self {
+        Self::Mouse(MouseInput::Moved {
+            coordinates,
+            modifiers: InputModifiers::none(),
+        })
+    }
+
+    pub fn mouse_scroll(direction: ScrollDirection, coordinates: CellPosition) -> Self {
+        Self::Mouse(MouseInput::Scroll {
+            direction,
+            coordinates,
+            modifiers: InputModifiers::none(),
+        })
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ShellComponent {
+    CompactHome,
+    TopBar,
+    Home,
+    StatusBar,
+    ExitDialog,
+    ContextMenu,
+}
+
+impl ShellComponent {
+    const fn label(self) -> &'static str {
+        match self {
+            Self::CompactHome => "CompactHome",
+            Self::TopBar => "TopBar",
+            Self::Home => "Home",
+            Self::StatusBar => "StatusBar",
+            Self::ExitDialog => "ExitDialog",
+            Self::ContextMenu => "ContextMenu",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ClickKind {
+    Single,
+    Double,
+}
+
+// Shell-local stand-in until the UI foundation exports hit testing and overlay
+// ownership. Expected future imports: tundra_ui::{ComponentId, HitMap,
+// HitRegion, OverlayCapture, OverlayLayer}.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ShellHitRegion {
+    pub component: ShellComponent,
+    pub area: Rect,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ShellHitMap {
+    terminal_size: CellPosition,
+    generation: u64,
+    regions: Vec<ShellHitRegion>,
+}
+
+impl ShellHitMap {
+    fn new(terminal_size: CellPosition, generation: u64, regions: Vec<ShellHitRegion>) -> Self {
+        Self {
+            terminal_size,
+            generation,
+            regions,
+        }
+    }
+
+    fn empty(terminal_size: CellPosition) -> Self {
+        Self::new(terminal_size, 0, Vec::new())
+    }
+
+    pub fn generation(&self) -> u64 {
+        self.generation
+    }
+
+    pub fn terminal_size(&self) -> CellPosition {
+        self.terminal_size
+    }
+
+    pub fn regions(&self) -> &[ShellHitRegion] {
+        &self.regions
+    }
+
+    pub fn target_at(&self, coordinates: CellPosition) -> Option<ShellComponent> {
+        self.regions
+            .iter()
+            .rev()
+            .find(|region| rect_contains(region.area, coordinates))
+            .map(|region| region.component)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ShellPopup {
+    pub owner: Option<ShellComponent>,
+    pub anchor: CellPosition,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct DragTracker {
+    button: PointerButton,
+    last_coordinates: CellPosition,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ShellCommand {
+    Noop,
+    Tick,
+    Shutdown,
+    RequestExit,
+    ConfirmExit,
+    CancelExit,
+    FocusNext,
+    FocusPrevious,
+    Hover(Option<ShellComponent>),
+    Activate {
+        target: ShellComponent,
+        coordinates: CellPosition,
+        click: ClickKind,
+    },
+    OpenContextMenu {
+        target: Option<ShellComponent>,
+        coordinates: CellPosition,
+    },
+    ClosePopup,
+    CaptureOverlayInput,
+    RefreshHitMap {
         width: u16,
         height: u16,
     },
-    Tick,
-    Shutdown,
+    RecordInput,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RoutedTarget {
+    Global,
+    Component(ShellComponent),
+    Modal(ShellComponent),
+    Popup(ShellComponent),
+    OutsidePopup,
+    None,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RoutedEvent {
+    pub input: InputEvent,
+    pub target: RoutedTarget,
+    pub command: ShellCommand,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ShortcutScope {
+    Global,
+    Screen(ShellScreen),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct KeyBinding {
+    pub key: InputKey,
+    pub modifiers: InputModifiers,
+}
+
+impl From<&KeyInput> for KeyBinding {
+    fn from(input: &KeyInput) -> Self {
+        Self {
+            key: input.key.clone(),
+            modifiers: input.modifiers,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ShellShortcut {
+    pub scope: ShortcutScope,
+    pub binding: KeyBinding,
+    pub command: ShellCommand,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ShortcutConflict {
+    pub scope: ShortcutScope,
+    pub binding: KeyBinding,
+    pub first: ShellCommand,
+    pub second: ShellCommand,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -121,6 +659,13 @@ impl ShellTerminalFlags {
             cursor_restore_enabled: true,
         }
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct TimedClick {
+    target: Option<ShellComponent>,
+    coordinates: CellPosition,
+    at: Instant,
 }
 
 pub struct TerminalGuard<W: Write> {
@@ -197,16 +742,26 @@ pub struct ShellState {
     screen_stack: Vec<ShellScreen>,
     terminal_size: (u16, u16),
     terminal_flags: ShellTerminalFlags,
+    focused_component: ShellComponent,
+    hovered_component: Option<ShellComponent>,
+    active_popup: Option<ShellPopup>,
+    hit_map: ShellHitMap,
+    hit_map_generation: u64,
     tick_count: u64,
     status_message: String,
     toast_message: Option<String>,
     error_message: Option<String>,
     shutdown_requested: bool,
+    last_command: Option<ShellCommand>,
+    last_routed_target: Option<RoutedTarget>,
     last_key_event: Option<String>,
     last_mouse_event: Option<String>,
     last_resize_event: Option<String>,
     mouse_coordinates: Option<(u16, u16)>,
     mouse_scroll_direction: Option<String>,
+    mouse_drag_direction: Option<String>,
+    last_click: Option<TimedClick>,
+    drag_tracker: Option<DragTracker>,
 }
 
 impl ShellState {
@@ -222,22 +777,34 @@ impl ShellState {
             }
         };
 
-        Self {
+        let mut state = Self {
             home_mode,
             screen_stack: vec![ShellScreen::Home],
             terminal_size,
             terminal_flags: ShellTerminalFlags::enabled(),
+            focused_component: ShellComponent::Home,
+            hovered_component: None,
+            active_popup: None,
+            hit_map: ShellHitMap::empty(terminal_size),
+            hit_map_generation: 0,
             tick_count: 0,
             status_message: "Ready".to_string(),
             toast_message: None,
             error_message: None,
             shutdown_requested: false,
+            last_command: None,
+            last_routed_target: None,
             last_key_event: None,
             last_mouse_event: None,
             last_resize_event: None,
             mouse_coordinates: None,
             mouse_scroll_direction: None,
-        }
+            mouse_drag_direction: None,
+            last_click: None,
+            drag_tracker: None,
+        };
+        state.refresh_hit_map();
+        state
     }
 
     pub fn new_for_home_mode(
@@ -260,6 +827,7 @@ impl ShellState {
                     last_resize_event: self.last_resize_event.clone(),
                     mouse_coordinates: self.mouse_coordinates,
                     scroll_direction: self.mouse_scroll_direction.clone(),
+                    drag_direction: self.mouse_drag_direction.clone(),
                     terminal_flags: terminal_flag_labels(self.terminal_flags),
                 })
             }
@@ -288,32 +856,137 @@ impl ShellState {
         }
     }
 
-    pub fn apply_input(&mut self, input: ShellInput) -> ShellAction {
-        match input {
-            ShellInput::Key(key) => self.apply_key(key),
-            ShellInput::Mouse {
-                summary,
-                coordinates,
-                scroll_direction,
-            } => {
-                self.last_mouse_event = Some(summary);
-                self.mouse_coordinates = coordinates;
-                self.mouse_scroll_direction = scroll_direction;
-                ShellAction::Redraw
+    pub fn apply_input(&mut self, input: InputEvent) -> ShellAction {
+        let routed = self.route_input_at(input, Instant::now());
+        self.apply_routed_event(routed)
+    }
+
+    pub fn route_input_at(&mut self, input: InputEvent, received_at: Instant) -> RoutedEvent {
+        let (target, command) = match &input {
+            InputEvent::Shutdown => (RoutedTarget::Global, ShellCommand::Shutdown),
+            InputEvent::Tick => (RoutedTarget::Global, ShellCommand::Tick),
+            InputEvent::Resize { width, height } => (
+                RoutedTarget::Global,
+                ShellCommand::RefreshHitMap {
+                    width: *width,
+                    height: *height,
+                },
+            ),
+            InputEvent::Key(key) => {
+                let (target, command) = self.route_key_input(key);
+                (target, command)
             }
-            ShellInput::Resize { width, height } => {
-                self.terminal_size = (width, height);
-                self.last_resize_event = Some(format!("{width}x{height}"));
-                ShellAction::Redraw
+            InputEvent::Mouse(mouse) => {
+                let (target, command) = self.route_mouse_input(*mouse, received_at);
+                (target, command)
             }
-            ShellInput::Tick => {
-                self.tick_count = self.tick_count.saturating_add(1);
-                ShellAction::Redraw
+            InputEvent::FocusGained | InputEvent::FocusLost | InputEvent::Paste(_) => {
+                (RoutedTarget::Global, ShellCommand::RecordInput)
             }
-            ShellInput::Shutdown => {
+        };
+
+        RoutedEvent {
+            input,
+            target,
+            command,
+        }
+    }
+
+    fn apply_routed_event(&mut self, routed: RoutedEvent) -> ShellAction {
+        self.record_input_diagnostics(&routed);
+        self.last_routed_target = Some(routed.target);
+        self.last_command = Some(routed.command.clone());
+
+        match routed.command {
+            ShellCommand::Shutdown => {
                 self.shutdown_requested = true;
                 ShellAction::Exit
             }
+            ShellCommand::Tick => {
+                self.tick_count = self.tick_count.saturating_add(1);
+                ShellAction::Redraw
+            }
+            ShellCommand::RefreshHitMap { width, height } => {
+                self.terminal_size = (width, height);
+                self.last_resize_event = Some(format!("{width}x{height}"));
+                self.refresh_hit_map();
+                ShellAction::Redraw
+            }
+            ShellCommand::RequestExit => {
+                if self.active_screen() != ShellScreen::ExitConfirm {
+                    self.screen_stack.push(ShellScreen::ExitConfirm);
+                }
+                self.active_popup = None;
+                self.focused_component = ShellComponent::ExitDialog;
+                self.status_message = "Confirm exit".to_string();
+                self.refresh_hit_map();
+                ShellAction::Redraw
+            }
+            ShellCommand::ConfirmExit => {
+                self.shutdown_requested = true;
+                ShellAction::Exit
+            }
+            ShellCommand::CancelExit => {
+                self.pop_to_home();
+                self.active_popup = None;
+                self.status_message = "Ready".to_string();
+                self.refresh_hit_map();
+                ShellAction::Redraw
+            }
+            ShellCommand::FocusNext => {
+                self.move_focus(1);
+                self.status_message = format!("Focus: {}", self.focused_component.label());
+                ShellAction::Redraw
+            }
+            ShellCommand::FocusPrevious => {
+                self.move_focus(-1);
+                self.status_message = format!("Focus: {}", self.focused_component.label());
+                ShellAction::Redraw
+            }
+            ShellCommand::Hover(target) => {
+                self.hovered_component = target;
+                ShellAction::Redraw
+            }
+            ShellCommand::Activate {
+                target,
+                coordinates: _,
+                click,
+            } => {
+                self.focus_component(target);
+                let click_label = match click {
+                    ClickKind::Single => "single click",
+                    ClickKind::Double => "double click",
+                };
+                self.status_message = format!("{} activated by {click_label}", target.label());
+                ShellAction::Redraw
+            }
+            ShellCommand::OpenContextMenu {
+                target,
+                coordinates,
+            } => {
+                self.active_popup = Some(ShellPopup {
+                    owner: target,
+                    anchor: coordinates,
+                });
+                self.focused_component = ShellComponent::ContextMenu;
+                self.status_message = match target {
+                    Some(target) => format!("Context menu: {}", target.label()),
+                    None => "Context menu".to_string(),
+                };
+                self.refresh_hit_map();
+                ShellAction::Redraw
+            }
+            ShellCommand::ClosePopup => {
+                self.active_popup = None;
+                self.status_message = "Ready".to_string();
+                self.refresh_hit_map();
+                ShellAction::Redraw
+            }
+            ShellCommand::CaptureOverlayInput => {
+                self.status_message = "Overlay captured input".to_string();
+                ShellAction::Redraw
+            }
+            ShellCommand::RecordInput | ShellCommand::Noop => ShellAction::Redraw,
         }
     }
 
@@ -372,6 +1045,42 @@ impl ShellState {
         self.mouse_scroll_direction.as_deref()
     }
 
+    pub fn mouse_drag_direction(&self) -> Option<&str> {
+        self.mouse_drag_direction.as_deref()
+    }
+
+    pub fn focused_component(&self) -> ShellComponent {
+        self.focused_component
+    }
+
+    pub fn hovered_component(&self) -> Option<ShellComponent> {
+        self.hovered_component
+    }
+
+    pub fn active_popup(&self) -> Option<ShellPopup> {
+        self.active_popup
+    }
+
+    pub fn hit_map(&self) -> &ShellHitMap {
+        &self.hit_map
+    }
+
+    pub fn hit_map_generation(&self) -> u64 {
+        self.hit_map.generation()
+    }
+
+    pub fn hit_target_at(&self, coordinates: CellPosition) -> Option<ShellComponent> {
+        self.hit_map.target_at(coordinates)
+    }
+
+    pub fn last_command(&self) -> Option<&ShellCommand> {
+        self.last_command.as_ref()
+    }
+
+    pub fn last_routed_target(&self) -> Option<RoutedTarget> {
+        self.last_routed_target
+    }
+
     fn home_display_mode(&self) -> tundra_ui::HomeDisplayMode {
         match self.home_mode {
             ShellHomeMode::Debug => tundra_ui::HomeDisplayMode::Debug,
@@ -379,26 +1088,367 @@ impl ShellState {
         }
     }
 
-    fn apply_key(&mut self, key: String) -> ShellAction {
+    fn route_key_input(&self, key: &KeyInput) -> (RoutedTarget, ShellCommand) {
+        if !key.phase.is_press_like() {
+            return (RoutedTarget::Global, ShellCommand::Noop);
+        }
+
+        if key.is_ctrl_c() {
+            return (RoutedTarget::Global, ShellCommand::Shutdown);
+        }
+
+        if self.active_screen() == ShellScreen::ExitConfirm {
+            return self.route_exit_confirm_key(key);
+        }
+
+        if self.active_popup.is_some() {
+            return self.route_popup_key(key);
+        }
+
+        if matches!(&key.key, InputKey::BackTab)
+            || (matches!(&key.key, InputKey::Tab) && key.modifiers.shift)
+        {
+            return (RoutedTarget::Global, ShellCommand::FocusPrevious);
+        }
+        if matches!(&key.key, InputKey::Tab) {
+            return (RoutedTarget::Global, ShellCommand::FocusNext);
+        }
+
         match self.active_screen() {
-            ShellScreen::Home if key == "q" || key == "Esc" => {
-                self.screen_stack.push(ShellScreen::ExitConfirm);
-                self.status_message = "Confirm exit".to_string();
-                ShellAction::Redraw
+            ShellScreen::Home if key.is_character('q') || matches!(&key.key, InputKey::Escape) => {
+                (RoutedTarget::Global, ShellCommand::RequestExit)
             }
-            ShellScreen::ExitConfirm if key == "y" || key == "Y" || key == "Enter" => {
-                self.shutdown_requested = true;
-                ShellAction::Exit
+            _ => (
+                RoutedTarget::Component(self.focused_component),
+                ShellCommand::RecordInput,
+            ),
+        }
+    }
+
+    fn route_exit_confirm_key(&self, key: &KeyInput) -> (RoutedTarget, ShellCommand) {
+        let target = RoutedTarget::Modal(ShellComponent::ExitDialog);
+
+        if matches!(&key.key, InputKey::BackTab)
+            || (matches!(&key.key, InputKey::Tab) && key.modifiers.shift)
+        {
+            return (target, ShellCommand::FocusPrevious);
+        }
+        if matches!(&key.key, InputKey::Tab) {
+            return (target, ShellCommand::FocusNext);
+        }
+
+        if key.is_character('y') || key.is_character('Y') || matches!(&key.key, InputKey::Enter) {
+            return (target, ShellCommand::ConfirmExit);
+        }
+
+        if key.is_character('n') || key.is_character('N') || matches!(&key.key, InputKey::Escape) {
+            return (target, ShellCommand::CancelExit);
+        }
+
+        (target, ShellCommand::CaptureOverlayInput)
+    }
+
+    fn route_popup_key(&self, key: &KeyInput) -> (RoutedTarget, ShellCommand) {
+        let target = RoutedTarget::Popup(ShellComponent::ContextMenu);
+
+        if matches!(&key.key, InputKey::Escape) {
+            return (target, ShellCommand::ClosePopup);
+        }
+        if matches!(&key.key, InputKey::BackTab)
+            || (matches!(&key.key, InputKey::Tab) && key.modifiers.shift)
+        {
+            return (target, ShellCommand::FocusPrevious);
+        }
+        if matches!(&key.key, InputKey::Tab) {
+            return (target, ShellCommand::FocusNext);
+        }
+
+        (target, ShellCommand::CaptureOverlayInput)
+    }
+
+    fn route_mouse_input(
+        &mut self,
+        mouse: MouseInput,
+        received_at: Instant,
+    ) -> (RoutedTarget, ShellCommand) {
+        let coordinates = mouse.coordinates();
+        let hit_target = self.hit_map.target_at(coordinates);
+
+        if self.active_screen() == ShellScreen::ExitConfirm {
+            let routed_target = if hit_target == Some(ShellComponent::ExitDialog) {
+                RoutedTarget::Modal(ShellComponent::ExitDialog)
+            } else {
+                RoutedTarget::Modal(ShellComponent::ExitDialog)
+            };
+            return (routed_target, ShellCommand::CaptureOverlayInput);
+        }
+
+        if self.active_popup.is_some() {
+            return self.route_popup_mouse(mouse, hit_target, received_at);
+        }
+
+        match mouse {
+            MouseInput::Moved { .. } => (target_route(hit_target), ShellCommand::Hover(hit_target)),
+            MouseInput::Down {
+                button: PointerButton::Right,
+                ..
+            } => {
+                self.last_click = None;
+                (
+                    target_route(hit_target),
+                    ShellCommand::OpenContextMenu {
+                        target: hit_target,
+                        coordinates,
+                    },
+                )
             }
-            ShellScreen::ExitConfirm if key == "n" || key == "N" || key == "Esc" => {
-                self.pop_to_home();
-                self.status_message = "Ready".to_string();
-                ShellAction::Redraw
+            MouseInput::Down { button, .. } => {
+                if let Some(target) = hit_target {
+                    let click = self.register_click(hit_target, coordinates, button, received_at);
+                    (
+                        RoutedTarget::Component(target),
+                        ShellCommand::Activate {
+                            target,
+                            coordinates,
+                            click,
+                        },
+                    )
+                } else {
+                    (RoutedTarget::None, ShellCommand::RecordInput)
+                }
             }
-            _ => {
-                self.last_key_event = Some(key);
-                ShellAction::Redraw
+            _ => (target_route(hit_target), ShellCommand::RecordInput),
+        }
+    }
+
+    fn route_popup_mouse(
+        &mut self,
+        mouse: MouseInput,
+        hit_target: Option<ShellComponent>,
+        received_at: Instant,
+    ) -> (RoutedTarget, ShellCommand) {
+        let coordinates = mouse.coordinates();
+
+        if hit_target != Some(ShellComponent::ContextMenu) {
+            if mouse.down_button().is_some() {
+                return (RoutedTarget::OutsidePopup, ShellCommand::ClosePopup);
             }
+
+            return (
+                RoutedTarget::Popup(ShellComponent::ContextMenu),
+                ShellCommand::CaptureOverlayInput,
+            );
+        }
+
+        match mouse {
+            MouseInput::Moved { .. } => (
+                RoutedTarget::Popup(ShellComponent::ContextMenu),
+                ShellCommand::Hover(Some(ShellComponent::ContextMenu)),
+            ),
+            MouseInput::Down { button, .. } => {
+                let click = self.register_click(
+                    Some(ShellComponent::ContextMenu),
+                    coordinates,
+                    button,
+                    received_at,
+                );
+                (
+                    RoutedTarget::Popup(ShellComponent::ContextMenu),
+                    ShellCommand::Activate {
+                        target: ShellComponent::ContextMenu,
+                        coordinates,
+                        click,
+                    },
+                )
+            }
+            _ => (
+                RoutedTarget::Popup(ShellComponent::ContextMenu),
+                ShellCommand::CaptureOverlayInput,
+            ),
+        }
+    }
+
+    fn register_click(
+        &mut self,
+        target: Option<ShellComponent>,
+        coordinates: CellPosition,
+        button: PointerButton,
+        received_at: Instant,
+    ) -> ClickKind {
+        if button != PointerButton::Left {
+            self.last_click = None;
+            return ClickKind::Single;
+        }
+
+        let is_double_click = self
+            .last_click
+            .map(|last_click| {
+                last_click.target == target
+                    && coordinates_within_tolerance(last_click.coordinates, coordinates)
+                    && received_at
+                        .checked_duration_since(last_click.at)
+                        .map(|elapsed| elapsed <= DOUBLE_CLICK_INTERVAL)
+                        .unwrap_or(false)
+            })
+            .unwrap_or(false);
+
+        if is_double_click {
+            self.last_click = None;
+            ClickKind::Double
+        } else {
+            self.last_click = Some(TimedClick {
+                target,
+                coordinates,
+                at: received_at,
+            });
+            ClickKind::Single
+        }
+    }
+
+    fn record_input_diagnostics(&mut self, routed: &RoutedEvent) {
+        match &routed.input {
+            InputEvent::Key(key) => {
+                self.last_key_event = Some(key.label());
+            }
+            InputEvent::Mouse(mouse) => {
+                let mut summary = self.record_mouse_drag_diagnostics(*mouse);
+                if matches!(
+                    &routed.command,
+                    ShellCommand::Activate {
+                        click: ClickKind::Double,
+                        ..
+                    }
+                ) {
+                    if let MouseInput::Down { button, .. } = *mouse {
+                        summary = format!("Mouse DoubleClick {}", button.label());
+                    }
+                }
+
+                self.last_mouse_event = Some(summary);
+                self.mouse_coordinates = Some(mouse.coordinates());
+                self.mouse_scroll_direction = mouse
+                    .scroll_direction()
+                    .map(|direction| direction.label().to_string());
+            }
+            InputEvent::Resize { width, height } => {
+                self.last_resize_event = Some(format!("{width}x{height}"));
+            }
+            InputEvent::FocusGained => {
+                self.last_key_event = Some("FocusGained".to_string());
+            }
+            InputEvent::FocusLost => {
+                self.last_key_event = Some("FocusLost".to_string());
+            }
+            InputEvent::Paste(value) => {
+                self.last_key_event = Some(format!("Paste({} chars)", value.chars().count()));
+            }
+            InputEvent::Tick | InputEvent::Shutdown => {}
+        }
+    }
+
+    fn record_mouse_drag_diagnostics(&mut self, mouse: MouseInput) -> String {
+        match mouse {
+            MouseInput::Down {
+                button,
+                coordinates,
+                ..
+            } => {
+                self.drag_tracker = Some(DragTracker {
+                    button,
+                    last_coordinates: coordinates,
+                });
+                self.mouse_drag_direction = None;
+                mouse.summary()
+            }
+            MouseInput::Drag {
+                button,
+                coordinates,
+                ..
+            } => {
+                let previous = self
+                    .drag_tracker
+                    .filter(|tracker| tracker.button == button)
+                    .map(|tracker| tracker.last_coordinates);
+                let direction =
+                    previous.and_then(|previous| drag_direction_between(previous, coordinates));
+
+                self.drag_tracker = Some(DragTracker {
+                    button,
+                    last_coordinates: coordinates,
+                });
+                self.mouse_drag_direction =
+                    direction.map(|direction| direction.label().to_string());
+
+                if let Some(direction) = direction {
+                    format!("Mouse Drag {} to {}", button.label(), direction.label())
+                } else {
+                    mouse.summary()
+                }
+            }
+            MouseInput::Up { .. } | MouseInput::Moved { .. } | MouseInput::Scroll { .. } => {
+                self.drag_tracker = None;
+                self.mouse_drag_direction = None;
+                mouse.summary()
+            }
+        }
+    }
+
+    fn refresh_hit_map(&mut self) {
+        self.hit_map_generation = self.hit_map_generation.saturating_add(1);
+        self.hit_map = build_shell_hit_map(
+            self.terminal_size,
+            self.active_screen(),
+            self.active_popup,
+            self.hit_map_generation,
+        );
+
+        let focus_order = self.focus_order();
+        if !focus_order.contains(&self.focused_component) {
+            self.focused_component = focus_order.first().copied().unwrap_or(ShellComponent::Home);
+        }
+    }
+
+    fn focus_order(&self) -> Vec<ShellComponent> {
+        if self.active_screen() == ShellScreen::ExitConfirm {
+            return vec![ShellComponent::ExitDialog];
+        }
+        if self.active_popup.is_some() {
+            return vec![ShellComponent::ContextMenu];
+        }
+        if self
+            .hit_map
+            .regions()
+            .iter()
+            .any(|region| region.component == ShellComponent::CompactHome)
+        {
+            return vec![ShellComponent::CompactHome];
+        }
+
+        vec![
+            ShellComponent::Home,
+            ShellComponent::StatusBar,
+            ShellComponent::TopBar,
+        ]
+    }
+
+    fn move_focus(&mut self, direction: i8) {
+        let focus_order = self.focus_order();
+        if focus_order.is_empty() {
+            return;
+        }
+
+        let current_index = focus_order
+            .iter()
+            .position(|component| *component == self.focused_component)
+            .unwrap_or(0);
+        let len = focus_order.len() as isize;
+        let next_index = (current_index as isize + direction as isize).rem_euclid(len) as usize;
+        self.focused_component = focus_order[next_index];
+    }
+
+    fn focus_component(&mut self, component: ShellComponent) {
+        if self.focus_order().contains(&component) {
+            self.focused_component = component;
         }
     }
 
@@ -407,7 +1457,197 @@ impl ShellState {
         if self.screen_stack.is_empty() {
             self.screen_stack.push(ShellScreen::Home);
         }
+        self.focused_component = ShellComponent::Home;
     }
+}
+
+pub fn default_shell_shortcuts() -> Vec<ShellShortcut> {
+    vec![
+        ShellShortcut {
+            scope: ShortcutScope::Global,
+            binding: KeyBinding::from(&KeyInput::from_label("Ctrl+C")),
+            command: ShellCommand::Shutdown,
+        },
+        ShellShortcut {
+            scope: ShortcutScope::Global,
+            binding: KeyBinding::from(&KeyInput::from_label("Tab")),
+            command: ShellCommand::FocusNext,
+        },
+        ShellShortcut {
+            scope: ShortcutScope::Global,
+            binding: KeyBinding::from(&KeyInput::from_label("Shift+Tab")),
+            command: ShellCommand::FocusPrevious,
+        },
+        ShellShortcut {
+            scope: ShortcutScope::Screen(ShellScreen::Home),
+            binding: KeyBinding::from(&KeyInput::from_label("q")),
+            command: ShellCommand::RequestExit,
+        },
+        ShellShortcut {
+            scope: ShortcutScope::Screen(ShellScreen::Home),
+            binding: KeyBinding::from(&KeyInput::from_label("Esc")),
+            command: ShellCommand::RequestExit,
+        },
+        ShellShortcut {
+            scope: ShortcutScope::Screen(ShellScreen::ExitConfirm),
+            binding: KeyBinding::from(&KeyInput::from_label("y")),
+            command: ShellCommand::ConfirmExit,
+        },
+        ShellShortcut {
+            scope: ShortcutScope::Screen(ShellScreen::ExitConfirm),
+            binding: KeyBinding::from(&KeyInput::from_label("Y")),
+            command: ShellCommand::ConfirmExit,
+        },
+        ShellShortcut {
+            scope: ShortcutScope::Screen(ShellScreen::ExitConfirm),
+            binding: KeyBinding::from(&KeyInput::from_label("Enter")),
+            command: ShellCommand::ConfirmExit,
+        },
+        ShellShortcut {
+            scope: ShortcutScope::Screen(ShellScreen::ExitConfirm),
+            binding: KeyBinding::from(&KeyInput::from_label("n")),
+            command: ShellCommand::CancelExit,
+        },
+        ShellShortcut {
+            scope: ShortcutScope::Screen(ShellScreen::ExitConfirm),
+            binding: KeyBinding::from(&KeyInput::from_label("N")),
+            command: ShellCommand::CancelExit,
+        },
+        ShellShortcut {
+            scope: ShortcutScope::Screen(ShellScreen::ExitConfirm),
+            binding: KeyBinding::from(&KeyInput::from_label("Esc")),
+            command: ShellCommand::CancelExit,
+        },
+    ]
+}
+
+pub fn detect_shortcut_conflicts(shortcuts: &[ShellShortcut]) -> Vec<ShortcutConflict> {
+    let mut conflicts = Vec::new();
+
+    for (index, first) in shortcuts.iter().enumerate() {
+        for second in shortcuts.iter().skip(index + 1) {
+            if first.scope == second.scope
+                && first.binding == second.binding
+                && first.command != second.command
+            {
+                conflicts.push(ShortcutConflict {
+                    scope: first.scope.clone(),
+                    binding: first.binding.clone(),
+                    first: first.command.clone(),
+                    second: second.command.clone(),
+                });
+            }
+        }
+    }
+
+    conflicts
+}
+
+fn build_shell_hit_map(
+    terminal_size: CellPosition,
+    active_screen: ShellScreen,
+    active_popup: Option<ShellPopup>,
+    generation: u64,
+) -> ShellHitMap {
+    let (width, height) = terminal_size;
+    let area = Rect::new(0, 0, width, height);
+    let mut regions = Vec::new();
+
+    match tundra_ui::compute_shell_layout(area) {
+        tundra_ui::ShellLayout::Compact(compact) => {
+            regions.push(ShellHitRegion {
+                component: ShellComponent::CompactHome,
+                area: compact,
+            });
+        }
+        tundra_ui::ShellLayout::Full { top, main, status } => {
+            regions.push(ShellHitRegion {
+                component: ShellComponent::TopBar,
+                area: top,
+            });
+            regions.push(ShellHitRegion {
+                component: ShellComponent::Home,
+                area: main,
+            });
+            regions.push(ShellHitRegion {
+                component: ShellComponent::StatusBar,
+                area: status,
+            });
+        }
+    }
+
+    if let Some(popup) = active_popup {
+        regions.push(ShellHitRegion {
+            component: ShellComponent::ContextMenu,
+            area: popup_rect(terminal_size, popup.anchor),
+        });
+    }
+
+    if active_screen == ShellScreen::ExitConfirm {
+        regions.push(ShellHitRegion {
+            component: ShellComponent::ExitDialog,
+            area: centered_rect(area, width.min(46), height.min(7)),
+        });
+    }
+
+    ShellHitMap::new(terminal_size, generation, regions)
+}
+
+fn popup_rect(terminal_size: CellPosition, anchor: CellPosition) -> Rect {
+    let width = terminal_size.0.min(24);
+    let height = terminal_size.1.min(5);
+    let x = anchor.0.min(terminal_size.0.saturating_sub(width));
+    let y = anchor.1.min(terminal_size.1.saturating_sub(height));
+
+    Rect::new(x, y, width, height)
+}
+
+fn target_route(target: Option<ShellComponent>) -> RoutedTarget {
+    target.map_or(RoutedTarget::None, RoutedTarget::Component)
+}
+
+fn rect_contains(rect: Rect, coordinates: CellPosition) -> bool {
+    let (x, y) = coordinates;
+    x >= rect.x
+        && x < rect.x.saturating_add(rect.width)
+        && y >= rect.y
+        && y < rect.y.saturating_add(rect.height)
+}
+
+fn coordinates_within_tolerance(first: CellPosition, second: CellPosition) -> bool {
+    first.0.abs_diff(second.0) <= DOUBLE_CLICK_CELL_TOLERANCE
+        && first.1.abs_diff(second.1) <= DOUBLE_CLICK_CELL_TOLERANCE
+}
+
+fn drag_direction_between(previous: CellPosition, current: CellPosition) -> Option<DragDirection> {
+    let delta_x = current.0 as i32 - previous.0 as i32;
+    let delta_y = current.1 as i32 - previous.1 as i32;
+
+    if delta_x == 0 && delta_y == 0 {
+        return None;
+    }
+
+    if delta_x.abs() >= delta_y.abs() {
+        if delta_x > 0 {
+            Some(DragDirection::Right)
+        } else {
+            Some(DragDirection::Left)
+        }
+    } else if delta_y > 0 {
+        Some(DragDirection::Down)
+    } else {
+        Some(DragDirection::Up)
+    }
+}
+
+fn centered_rect(area: Rect, width: u16, height: u16) -> Rect {
+    Rect::new(
+        area.x.saturating_add(area.width.saturating_sub(width) / 2),
+        area.y
+            .saturating_add(area.height.saturating_sub(height) / 2),
+        width,
+        height,
+    )
 }
 
 fn current_time_label() -> String {
@@ -456,50 +1696,97 @@ fn build_mode_label() -> &'static str {
     }
 }
 
-fn key_event_to_label(key_event: KeyEvent) -> String {
-    match key_event.code {
-        KeyCode::Char('c' | 'C') if key_event.modifiers.contains(KeyModifiers::CONTROL) => {
-            "Ctrl+C".to_string()
-        }
-        KeyCode::Char(character) => character.to_string(),
-        KeyCode::Enter => "Enter".to_string(),
-        KeyCode::Esc => "Esc".to_string(),
-        KeyCode::Backspace => "Backspace".to_string(),
-        KeyCode::Tab => "Tab".to_string(),
-        KeyCode::BackTab => "Shift+Tab".to_string(),
-        KeyCode::Left => "Left".to_string(),
-        KeyCode::Right => "Right".to_string(),
-        KeyCode::Up => "Up".to_string(),
-        KeyCode::Down => "Down".to_string(),
-        other => format!("{other:?}"),
+pub fn crossterm_event_to_input(event: Event) -> InputEvent {
+    match event {
+        Event::Key(key_event) => InputEvent::Key(key_event_to_input(key_event)),
+        Event::Mouse(mouse_event) => mouse_event_to_input(mouse_event),
+        Event::Resize(width, height) => InputEvent::Resize { width, height },
+        Event::FocusGained => InputEvent::FocusGained,
+        Event::FocusLost => InputEvent::FocusLost,
+        Event::Paste(value) => InputEvent::Paste(value),
     }
 }
 
-fn mouse_event_to_input(mouse_event: MouseEvent) -> ShellInput {
-    let coordinates = Some((mouse_event.column, mouse_event.row));
-    let (summary, scroll_direction) = match mouse_event.kind {
-        MouseEventKind::Down(button) => (format!("Mouse Down {button:?}"), None),
-        MouseEventKind::Up(button) => (format!("Mouse Up {button:?}"), None),
-        MouseEventKind::Drag(button) => (format!("Mouse Drag {button:?}"), None),
-        MouseEventKind::Moved => ("Mouse Moved".to_string(), None),
-        MouseEventKind::ScrollDown => mouse_scroll_summary("Down"),
-        MouseEventKind::ScrollUp => mouse_scroll_summary("Up"),
-        MouseEventKind::ScrollLeft => mouse_scroll_summary("Left"),
-        MouseEventKind::ScrollRight => mouse_scroll_summary("Right"),
+fn key_event_to_input(key_event: KeyEvent) -> KeyInput {
+    let key = match key_event.code {
+        KeyCode::Char(character) => InputKey::Character(character),
+        KeyCode::Enter => InputKey::Enter,
+        KeyCode::Esc => InputKey::Escape,
+        KeyCode::Backspace => InputKey::Backspace,
+        KeyCode::Tab => InputKey::Tab,
+        KeyCode::BackTab => InputKey::BackTab,
+        KeyCode::Left => InputKey::Left,
+        KeyCode::Right => InputKey::Right,
+        KeyCode::Up => InputKey::Up,
+        KeyCode::Down => InputKey::Down,
+        KeyCode::Delete => InputKey::Delete,
+        KeyCode::Insert => InputKey::Insert,
+        KeyCode::Home => InputKey::Home,
+        KeyCode::End => InputKey::End,
+        KeyCode::PageUp => InputKey::PageUp,
+        KeyCode::PageDown => InputKey::PageDown,
+        KeyCode::F(number) => InputKey::Function(number),
+        other => InputKey::Other(format!("{other:?}")),
     };
 
-    ShellInput::Mouse {
-        summary,
-        coordinates,
-        scroll_direction,
-    }
+    KeyInput::new(
+        key,
+        InputModifiers::from(key_event.modifiers),
+        InputPhase::from(key_event.kind),
+    )
 }
 
-fn mouse_scroll_summary(direction: &str) -> (String, Option<String>) {
-    (
-        format!("Mouse Scroll {direction}"),
-        Some(direction.to_string()),
-    )
+#[cfg(test)]
+fn key_event_to_label(key_event: KeyEvent) -> String {
+    key_event_to_input(key_event).label()
+}
+
+fn mouse_event_to_input(mouse_event: MouseEvent) -> InputEvent {
+    let coordinates = (mouse_event.column, mouse_event.row);
+    let modifiers = InputModifiers::from(mouse_event.modifiers);
+    let mouse = match mouse_event.kind {
+        MouseEventKind::Down(button) => MouseInput::Down {
+            button: PointerButton::from(button),
+            coordinates,
+            modifiers,
+        },
+        MouseEventKind::Up(button) => MouseInput::Up {
+            button: PointerButton::from(button),
+            coordinates,
+            modifiers,
+        },
+        MouseEventKind::Drag(button) => MouseInput::Drag {
+            button: PointerButton::from(button),
+            coordinates,
+            modifiers,
+        },
+        MouseEventKind::Moved => MouseInput::Moved {
+            coordinates,
+            modifiers,
+        },
+        MouseEventKind::ScrollDown => MouseInput::Scroll {
+            direction: ScrollDirection::Down,
+            coordinates,
+            modifiers,
+        },
+        MouseEventKind::ScrollUp => MouseInput::Scroll {
+            direction: ScrollDirection::Up,
+            coordinates,
+            modifiers,
+        },
+        MouseEventKind::ScrollLeft => MouseInput::Scroll {
+            direction: ScrollDirection::Left,
+            coordinates,
+            modifiers,
+        },
+        MouseEventKind::ScrollRight => MouseInput::Scroll {
+            direction: ScrollDirection::Right,
+            coordinates,
+            modifiers,
+        },
+    };
+
+    InputEvent::Mouse(mouse)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -665,30 +1952,16 @@ pub fn run_fullscreen_blocking(
         })?;
 
         if !SHELL_RUNNING.load(Ordering::SeqCst) {
-            state.apply_input(ShellInput::Shutdown);
+            state.apply_input(InputEvent::Shutdown);
         }
         if state.shutdown_requested() {
             break;
         }
 
         let action = if event::poll(tick_rate)? {
-            match event::read()? {
-                Event::Key(key_event) => {
-                    let label = key_event_to_label(key_event);
-                    if label == "Ctrl+C" {
-                        state.apply_input(ShellInput::Shutdown)
-                    } else {
-                        state.apply_input(ShellInput::Key(label))
-                    }
-                }
-                Event::Mouse(mouse_event) => state.apply_input(mouse_event_to_input(mouse_event)),
-                Event::Resize(width, height) => {
-                    state.apply_input(ShellInput::Resize { width, height })
-                }
-                Event::FocusGained | Event::FocusLost | Event::Paste(_) => continue,
-            }
+            state.apply_input(crossterm_event_to_input(event::read()?))
         } else {
-            state.apply_input(ShellInput::Tick)
+            state.apply_input(InputEvent::Tick)
         };
 
         if action == ShellAction::Exit {
@@ -833,35 +2106,34 @@ mod tests {
 
         assert_eq!(
             down,
-            ShellInput::Mouse {
-                summary: "Mouse Down Left".to_string(),
-                coordinates: Some((12, 7)),
-                scroll_direction: None,
-            }
+            InputEvent::Mouse(MouseInput::Down {
+                button: PointerButton::Left,
+                coordinates: (12, 7),
+                modifiers: InputModifiers::none(),
+            })
         );
         assert_eq!(
             drag,
-            ShellInput::Mouse {
-                summary: "Mouse Drag Right".to_string(),
-                coordinates: Some((13, 8)),
-                scroll_direction: None,
-            }
+            InputEvent::Mouse(MouseInput::Drag {
+                button: PointerButton::Right,
+                coordinates: (13, 8),
+                modifiers: InputModifiers::none(),
+            })
         );
         assert_eq!(
             moved,
-            ShellInput::Mouse {
-                summary: "Mouse Moved".to_string(),
-                coordinates: Some((14, 9)),
-                scroll_direction: None,
-            }
+            InputEvent::Mouse(MouseInput::Moved {
+                coordinates: (14, 9),
+                modifiers: InputModifiers::none(),
+            })
         );
         assert_eq!(
             scroll_up,
-            ShellInput::Mouse {
-                summary: "Mouse Scroll Up".to_string(),
-                coordinates: Some((15, 10)),
-                scroll_direction: Some("Up".to_string()),
-            }
+            InputEvent::Mouse(MouseInput::Scroll {
+                direction: ScrollDirection::Up,
+                coordinates: (15, 10),
+                modifiers: InputModifiers::none(),
+            })
         );
     }
 
@@ -884,11 +2156,17 @@ mod tests {
 
             assert_eq!(
                 input,
-                ShellInput::Mouse {
-                    summary: format!("Mouse Scroll {expected_direction}"),
-                    coordinates: Some((1, 2)),
-                    scroll_direction: Some(expected_direction.to_string()),
-                }
+                InputEvent::Mouse(MouseInput::Scroll {
+                    direction: match expected_direction {
+                        "Down" => ScrollDirection::Down,
+                        "Up" => ScrollDirection::Up,
+                        "Left" => ScrollDirection::Left,
+                        "Right" => ScrollDirection::Right,
+                        _ => unreachable!("test direction"),
+                    },
+                    coordinates: (1, 2),
+                    modifiers: InputModifiers::none(),
+                })
             );
         }
     }

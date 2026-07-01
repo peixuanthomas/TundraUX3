@@ -173,6 +173,10 @@ fn debug_lines(home: &HomeViewModel) -> Vec<Line<'static>> {
             optional_text(&diagnostics.scroll_direction)
         )),
         Line::from(format!(
+            "Drag: {}",
+            optional_text(&diagnostics.drag_direction)
+        )),
+        Line::from(format!(
             "Flags: {}",
             if diagnostics.terminal_flags.is_empty() {
                 "none".to_string()
