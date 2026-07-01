@@ -32,23 +32,44 @@ pub fn banner_lines() -> &'static [&'static str] {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ShellLaunchMode {
+pub enum ShellTerminalMode {
     Fullscreen,
     NotFullscreen,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HomeModeOverride {
+    BuildDefault,
+    Debug,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ShellLaunchConfig {
+    pub terminal_mode: ShellTerminalMode,
+    pub home_mode_override: HomeModeOverride,
+}
+
+impl Default for ShellLaunchConfig {
+    fn default() -> Self {
+        Self {
+            terminal_mode: ShellTerminalMode::Fullscreen,
+            home_mode_override: HomeModeOverride::BuildDefault,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ShellArgError {
     UnknownArgument(String),
-    UnexpectedArgument(String),
+    DuplicateArgument(String),
 }
 
 impl std::fmt::Display for ShellArgError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::UnknownArgument(argument) => write!(formatter, "unknown argument: {argument}"),
-            Self::UnexpectedArgument(argument) => {
-                write!(formatter, "unexpected argument: {argument}")
+            Self::DuplicateArgument(argument) => {
+                write!(formatter, "duplicate argument: {argument}")
             }
         }
     }
@@ -56,26 +77,36 @@ impl std::fmt::Display for ShellArgError {
 
 impl std::error::Error for ShellArgError {}
 
-pub fn parse_shell_args<I, S>(args: I) -> Result<ShellLaunchMode, ShellArgError>
+pub fn parse_shell_args<I, S>(args: I) -> Result<ShellLaunchConfig, ShellArgError>
 where
     I: IntoIterator<Item = S>,
     S: AsRef<str>,
 {
-    let mut args = args.into_iter();
-    let Some(first) = args.next() else {
-        return Ok(ShellLaunchMode::Fullscreen);
-    };
+    let mut config = ShellLaunchConfig::default();
+    let mut seen_not_fullscreen = false;
+    let mut seen_debug = false;
 
-    if let Some(extra) = args.next() {
-        return Err(ShellArgError::UnexpectedArgument(
-            extra.as_ref().to_string(),
-        ));
+    for arg in args {
+        match arg.as_ref() {
+            "-notfullscreen" => {
+                if seen_not_fullscreen {
+                    return Err(ShellArgError::DuplicateArgument(arg.as_ref().to_string()));
+                }
+                seen_not_fullscreen = true;
+                config.terminal_mode = ShellTerminalMode::NotFullscreen;
+            }
+            "-debug" => {
+                if seen_debug {
+                    return Err(ShellArgError::DuplicateArgument(arg.as_ref().to_string()));
+                }
+                seen_debug = true;
+                config.home_mode_override = HomeModeOverride::Debug;
+            }
+            other => return Err(ShellArgError::UnknownArgument(other.to_string())),
+        }
     }
 
-    match first.as_ref() {
-        "-notfullscreen" => Ok(ShellLaunchMode::NotFullscreen),
-        other => Err(ShellArgError::UnknownArgument(other.to_string())),
-    }
+    Ok(config)
 }
 
 pub fn startup_lines() -> Vec<String> {
@@ -136,35 +167,44 @@ pub fn run_without_animation(output: &mut impl Write) -> io::Result<()> {
 
 pub fn run_not_fullscreen_without_animation(output: &mut impl Write) -> io::Result<()> {
     render_static_banner(output)?;
-    write_main_loop_placeholder(output)
+    write_smoke_loop_message(output)
 }
 
 pub fn run_with_banner_animation(output: &mut impl Write) -> io::Result<()> {
-    run_not_fullscreen(output)
+    run_not_fullscreen(
+        output,
+        ShellLaunchConfig {
+            terminal_mode: ShellTerminalMode::NotFullscreen,
+            ..ShellLaunchConfig::default()
+        },
+    )
 }
 
-pub fn run_not_fullscreen(output: &mut impl Write) -> io::Result<()> {
+pub fn run_not_fullscreen(output: &mut impl Write, _config: ShellLaunchConfig) -> io::Result<()> {
     display_banner(output)?;
-    write_main_loop_placeholder(output)
+    write_smoke_loop_message(output)
 }
 
 pub fn run_fullscreen_once_without_animation(output: &mut impl Write) -> io::Result<()> {
     with_fullscreen(output, |output| {
         render_static_banner(output)?;
-        write_main_loop_placeholder(output)
+        write_smoke_loop_message(output)
     })
 }
 
-pub fn run_fullscreen_blocking(output: &mut impl Write) -> io::Result<()> {
+pub fn run_fullscreen_blocking(
+    output: &mut impl Write,
+    _config: ShellLaunchConfig,
+) -> io::Result<()> {
     SHELL_RUNNING.store(true, Ordering::SeqCst);
     let _handler = ConsoleControlHandler::install();
 
     with_fullscreen(output, |output| {
         display_banner(output)?;
-        write_main_loop_placeholder(output)?;
+        write_smoke_loop_message(output)?;
         writeln!(
             output,
-            "Fullscreen main loop placeholder is active. Start with -notfullscreen for the non-fullscreen smoke path."
+            "Fullscreen smoke loop is active. Start with -notfullscreen for the non-fullscreen smoke path."
         )?;
         output.flush()?;
 
@@ -196,11 +236,11 @@ where
     }
 }
 
-fn write_main_loop_placeholder(output: &mut impl Write) -> io::Result<()> {
+fn write_smoke_loop_message(output: &mut impl Write) -> io::Result<()> {
     for line in startup_lines() {
         writeln!(output, "{line}")?;
     }
-    writeln!(output, "Entering main loop placeholder")
+    writeln!(output, "Entering smoke loop")
 }
 
 struct ConsoleControlHandler {
