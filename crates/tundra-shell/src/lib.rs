@@ -58,6 +58,219 @@ impl Default for ShellLaunchConfig {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ShellHomeMode {
+    Debug,
+    User,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ShellScreen {
+    Home,
+    ExitConfirm,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ShellInput {
+    Key(String),
+    Mouse {
+        summary: String,
+        coordinates: Option<(u16, u16)>,
+        scroll_direction: Option<String>,
+    },
+    Resize {
+        width: u16,
+        height: u16,
+    },
+    Tick,
+    Shutdown,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ShellAction {
+    Redraw,
+    Exit,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ShellTerminalFlags {
+    pub raw_mode: bool,
+    pub alternate_screen: bool,
+    pub mouse_capture: bool,
+    pub cursor_restore_enabled: bool,
+}
+
+impl ShellTerminalFlags {
+    const fn enabled() -> Self {
+        Self {
+            raw_mode: true,
+            alternate_screen: true,
+            mouse_capture: true,
+            cursor_restore_enabled: true,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ShellState {
+    home_mode: ShellHomeMode,
+    screen_stack: Vec<ShellScreen>,
+    terminal_size: (u16, u16),
+    terminal_flags: ShellTerminalFlags,
+    tick_count: u64,
+    status: String,
+    shutdown_requested: bool,
+    last_key_event: Option<String>,
+    last_mouse_event: Option<String>,
+    last_resize_event: Option<String>,
+    mouse_coordinates: Option<(u16, u16)>,
+    mouse_scroll_direction: Option<String>,
+}
+
+impl ShellState {
+    pub fn new(launch_config: ShellLaunchConfig, terminal_size: (u16, u16)) -> Self {
+        let home_mode = match launch_config.home_mode_override {
+            HomeModeOverride::Debug => ShellHomeMode::Debug,
+            HomeModeOverride::BuildDefault => {
+                if cfg!(debug_assertions) {
+                    ShellHomeMode::Debug
+                } else {
+                    ShellHomeMode::User
+                }
+            }
+        };
+
+        Self {
+            home_mode,
+            screen_stack: vec![ShellScreen::Home],
+            terminal_size,
+            terminal_flags: ShellTerminalFlags::enabled(),
+            tick_count: 0,
+            status: "Ready".to_string(),
+            shutdown_requested: false,
+            last_key_event: None,
+            last_mouse_event: None,
+            last_resize_event: None,
+            mouse_coordinates: None,
+            mouse_scroll_direction: None,
+        }
+    }
+
+    pub fn apply_input(&mut self, input: ShellInput) -> ShellAction {
+        match input {
+            ShellInput::Key(key) => self.apply_key(key),
+            ShellInput::Mouse {
+                summary,
+                coordinates,
+                scroll_direction,
+            } => {
+                self.last_mouse_event = Some(summary);
+                self.mouse_coordinates = coordinates;
+                self.mouse_scroll_direction = scroll_direction;
+                ShellAction::Redraw
+            }
+            ShellInput::Resize { width, height } => {
+                self.terminal_size = (width, height);
+                self.last_resize_event = Some(format!("{width}x{height}"));
+                ShellAction::Redraw
+            }
+            ShellInput::Tick => {
+                self.tick_count = self.tick_count.saturating_add(1);
+                ShellAction::Redraw
+            }
+            ShellInput::Shutdown => {
+                self.shutdown_requested = true;
+                ShellAction::Exit
+            }
+        }
+    }
+
+    pub fn active_screen(&self) -> ShellScreen {
+        self.screen_stack
+            .last()
+            .copied()
+            .unwrap_or(ShellScreen::Home)
+    }
+
+    pub fn home_mode(&self) -> ShellHomeMode {
+        self.home_mode
+    }
+
+    pub fn screen_stack(&self) -> &[ShellScreen] {
+        &self.screen_stack
+    }
+
+    pub fn terminal_size(&self) -> (u16, u16) {
+        self.terminal_size
+    }
+
+    pub fn tick_count(&self) -> u64 {
+        self.tick_count
+    }
+
+    pub fn last_key_event(&self) -> Option<&str> {
+        self.last_key_event.as_deref()
+    }
+
+    pub fn last_mouse_event(&self) -> Option<&str> {
+        self.last_mouse_event.as_deref()
+    }
+
+    pub fn last_resize_event(&self) -> Option<&str> {
+        self.last_resize_event.as_deref()
+    }
+
+    pub fn mouse_coordinates(&self) -> Option<(u16, u16)> {
+        self.mouse_coordinates
+    }
+
+    pub fn shutdown_requested(&self) -> bool {
+        self.shutdown_requested
+    }
+
+    pub fn status(&self) -> &str {
+        &self.status
+    }
+
+    pub fn terminal_flags(&self) -> ShellTerminalFlags {
+        self.terminal_flags
+    }
+
+    pub fn mouse_scroll_direction(&self) -> Option<&str> {
+        self.mouse_scroll_direction.as_deref()
+    }
+
+    fn apply_key(&mut self, key: String) -> ShellAction {
+        match self.active_screen() {
+            ShellScreen::Home if key == "q" || key == "Esc" => {
+                self.screen_stack.push(ShellScreen::ExitConfirm);
+                self.status = "Confirm exit".to_string();
+                ShellAction::Redraw
+            }
+            ShellScreen::ExitConfirm if key == "y" || key == "Y" || key == "Enter" => {
+                self.shutdown_requested = true;
+                ShellAction::Exit
+            }
+            ShellScreen::ExitConfirm if key == "n" || key == "N" || key == "Esc" => {
+                self.pop_to_home();
+                self.status = "Ready".to_string();
+                ShellAction::Redraw
+            }
+            _ => {
+                self.last_key_event = Some(key);
+                ShellAction::Redraw
+            }
+        }
+    }
+
+    fn pop_to_home(&mut self) {
+        self.screen_stack.truncate(1);
+        if self.screen_stack.is_empty() {
+            self.screen_stack.push(ShellScreen::Home);
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ShellArgError {
     UnknownArgument(String),
