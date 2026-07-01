@@ -4,6 +4,7 @@ members = [
     "crates/tundra-platform",
     "crates/tundra-shell",
     "crates/tundra-storage",
+    "crates/tundra-ui",
 ]
 resolver = "3"
 
