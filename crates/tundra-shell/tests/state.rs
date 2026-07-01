@@ -248,6 +248,29 @@ fn user_state_builds_user_home_view_model() {
 }
 
 #[test]
+fn explicit_user_mode_shows_product_entries_without_diagnostics() {
+    let config = ShellLaunchConfig {
+        terminal_mode: ShellTerminalMode::Fullscreen,
+        home_mode_override: HomeModeOverride::BuildDefault,
+    };
+    let state = ShellState::new_for_home_mode(config, (120, 35), ShellHomeMode::User);
+
+    let home = state.to_home_view_model();
+
+    assert_eq!(home.display_mode(), HomeDisplayMode::User);
+    assert_eq!(home.diagnostics(), None);
+    let labels: Vec<_> = home
+        .entries()
+        .iter()
+        .map(|entry| entry.label.as_str())
+        .collect();
+    assert_eq!(
+        labels,
+        vec!["Explorer", "Launcher", "Editor", "Settings", "Diagnostics"]
+    );
+}
+
+#[test]
 fn state_builds_shell_chrome_view_model() {
     let mut state = ShellState::new(debug_config(), (120, 40));
     state.apply_input(ShellInput::Key("q".to_string()));
