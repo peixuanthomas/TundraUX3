@@ -1,5 +1,6 @@
 [workspace]
 members = [
+    "crates/tundra-apps",
     "crates/tundra-cli",
     "crates/tundra-core",
     "crates/tundra-platform",

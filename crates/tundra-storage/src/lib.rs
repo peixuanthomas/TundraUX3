@@ -15,6 +15,7 @@ pub const SCHEMA_VERSION: u32 = 1;
 pub const USERS_SCHEMA_VERSION: u32 = 2;
 const USERS_V1_FILE_NAME: &str = "users.v1.json";
 const USERS_V2_FILE_NAME: &str = "users.v2.json";
+const TRASH_DIR_NAME: &str = "trash";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StorageFormat {
@@ -62,6 +63,12 @@ pub const VERSIONED_JSON_DESCRIPTORS: &[StorageDescriptor] = &[
         format: StorageFormat::VersionedJson,
         schema_version: SCHEMA_VERSION,
     },
+    StorageDescriptor {
+        name: "trash",
+        file_name: "trash.v1.json",
+        format: StorageFormat::VersionedJson,
+        schema_version: SCHEMA_VERSION,
+    },
 ];
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -76,30 +83,29 @@ pub struct StorageLayout {
     pub state_path: PathBuf,
     pub recent_files_path: PathBuf,
     pub sessions_path: PathBuf,
+    pub trash_path: PathBuf,
+    pub trash_manifest_path: PathBuf,
     pub audit_log_path: PathBuf,
 }
 
 impl StorageLayout {
     pub fn from_app_paths(app_paths: &AppPaths) -> Self {
+        let data_path = app_paths.data_path().to_path_buf();
+        let trash_path = data_path.join(TRASH_DIR_NAME);
+
         Self {
             config_path: app_paths.config_path().to_path_buf(),
-            data_path: app_paths.data_path().to_path_buf(),
+            data_path: data_path.clone(),
             cache_path: app_paths.cache_path().to_path_buf(),
             logs_path: app_paths.logs_path().to_path_buf(),
             temp_path: app_paths.temp_path().to_path_buf(),
-            users_path: app_paths
-                .data_path()
-                .join(VERSIONED_JSON_DESCRIPTORS[0].file_name),
-            legacy_users_path: app_paths.data_path().join(USERS_V1_FILE_NAME),
-            state_path: app_paths
-                .data_path()
-                .join(VERSIONED_JSON_DESCRIPTORS[1].file_name),
-            recent_files_path: app_paths
-                .data_path()
-                .join(VERSIONED_JSON_DESCRIPTORS[2].file_name),
-            sessions_path: app_paths
-                .data_path()
-                .join(VERSIONED_JSON_DESCRIPTORS[3].file_name),
+            users_path: data_path.join(VERSIONED_JSON_DESCRIPTORS[0].file_name),
+            legacy_users_path: data_path.join(USERS_V1_FILE_NAME),
+            state_path: data_path.join(VERSIONED_JSON_DESCRIPTORS[1].file_name),
+            recent_files_path: data_path.join(VERSIONED_JSON_DESCRIPTORS[2].file_name),
+            sessions_path: data_path.join(VERSIONED_JSON_DESCRIPTORS[3].file_name),
+            trash_manifest_path: trash_path.join(VERSIONED_JSON_DESCRIPTORS[4].file_name),
+            trash_path,
             audit_log_path: app_paths.logs_path().join("audit.v1.log"),
         }
     }
@@ -192,6 +198,14 @@ impl StorageManager {
         save_json_document(&self.layout.sessions_path, "sessions", sessions)
     }
 
+    pub fn load_trash(&self) -> Result<TrashDocument, StorageError> {
+        load_json_document(&self.layout.trash_manifest_path, "trash")
+    }
+
+    pub fn save_trash(&self, trash: &TrashDocument) -> Result<(), StorageError> {
+        save_json_document(&self.layout.trash_manifest_path, "trash", trash)
+    }
+
     pub fn append_audit_line(&self, line: &str) -> Result<(), StorageError> {
         let parent =
             self.layout
@@ -271,6 +285,12 @@ impl StorageManager {
             "sessions",
             &SessionsDocument::default(),
         )?;
+        self.ensure_json_document(
+            &mut report,
+            &self.layout.trash_manifest_path,
+            "trash",
+            &TrashDocument::default(),
+        )?;
 
         Ok(report)
     }
@@ -300,6 +320,11 @@ impl StorageManager {
             (
                 self.layout.sessions_path.as_path(),
                 "sessions",
+                StorageFormat::VersionedJson,
+            ),
+            (
+                self.layout.trash_manifest_path.as_path(),
+                "trash",
                 StorageFormat::VersionedJson,
             ),
         ];
@@ -367,6 +392,7 @@ impl StorageManager {
         create_dir(&self.layout.cache_path, "create cache directory")?;
         create_dir(&self.layout.logs_path, "create logs directory")?;
         create_dir(&self.layout.temp_path, "create temp directory")?;
+        create_dir(&self.layout.trash_path, "create trash directory")?;
 
         Ok(())
     }
@@ -761,6 +787,36 @@ impl VersionedDocument for SessionsDocument {
     fn schema_version(&self) -> u32 {
         self.schema_version
     }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TrashDocument {
+    pub schema_version: u32,
+    #[serde(default)]
+    pub records: Vec<TrashRecord>,
+}
+
+impl Default for TrashDocument {
+    fn default() -> Self {
+        Self {
+            schema_version: SCHEMA_VERSION,
+            records: Vec::new(),
+        }
+    }
+}
+
+impl VersionedDocument for TrashDocument {
+    fn schema_version(&self) -> u32 {
+        self.schema_version
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TrashRecord {
+    pub original_path: PathBuf,
+    pub trash_path: PathBuf,
+    pub actor: String,
+    pub timestamp_epoch_ms: u64,
 }
 
 pub trait VersionedDocument {

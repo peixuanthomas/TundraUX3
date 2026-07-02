@@ -1,16 +1,24 @@
 use std::ffi::{OsStr, OsString, c_void};
+use std::fs;
 use std::os::windows::ffi::{OsStrExt, OsStringExt};
+use std::os::windows::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 use std::ptr;
 
 use crate::{
-    AppPaths, Platform, PlatformCapabilities, PlatformError, PlatformKind, ProcessExit,
-    ProcessSpec, UserDirs, build_windows_app_paths,
+    AppPaths, FileAttributes, Platform, PlatformCapabilities, PlatformError, PlatformKind,
+    ProcessExit, ProcessSpec, UserDirs, build_windows_app_paths,
 };
 
 const SW_SHOWNORMAL: i32 = 1;
 const CF_UNICODETEXT: u32 = 13;
 const GMEM_MOVEABLE: u32 = 0x0002;
+const FILE_ATTRIBUTE_HIDDEN: u32 = 0x0002;
+const FILE_ATTRIBUTE_SYSTEM: u32 = 0x0004;
+const FILE_ATTRIBUTE_ARCHIVE: u32 = 0x0020;
+const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x0400;
+const IO_REPARSE_TAG_MOUNT_POINT: u32 = 0xA0000003;
+const IO_REPARSE_TAG_SYMLINK: u32 = 0xA000000C;
 
 #[derive(Debug, Clone, Copy, Default)]
 pub struct WindowsPlatform;
@@ -160,6 +168,27 @@ impl Platform for WindowsPlatform {
 
         Ok(())
     }
+
+    fn file_attributes(&self, path: &Path) -> Result<FileAttributes, PlatformError> {
+        let metadata = fs::symlink_metadata(path).map_err(|error| PlatformError::Io {
+            operation: "read file attributes",
+            path: Some(path.to_path_buf()),
+            message: error.to_string(),
+        })?;
+        let file_attributes = metadata.file_attributes();
+        let reparse_tag = reparse_tag(path);
+        let mut attributes = crate::default_file_attributes(path)?;
+
+        attributes.hidden = file_attributes & FILE_ATTRIBUTE_HIDDEN != 0;
+        attributes.system = file_attributes & FILE_ATTRIBUTE_SYSTEM != 0;
+        attributes.archive = file_attributes & FILE_ATTRIBUTE_ARCHIVE != 0;
+        attributes.reparse_point = file_attributes & FILE_ATTRIBUTE_REPARSE_POINT != 0;
+        attributes.symlink = attributes.symlink || reparse_tag == Some(IO_REPARSE_TAG_SYMLINK);
+        attributes.junction = reparse_tag == Some(IO_REPARSE_TAG_MOUNT_POINT);
+        attributes.shortcut = is_shortcut(path);
+
+        Ok(attributes)
+    }
 }
 
 pub fn current_windows_build() -> Result<u32, String> {
@@ -259,6 +288,31 @@ fn quote_windows_argument(value: &OsStr) -> String {
     format!("\"{}\"", text.replace('"', "\\\""))
 }
 
+fn reparse_tag(path: &Path) -> Option<u32> {
+    let path = to_wide(path.as_os_str());
+    let mut data: Win32FindDataW = unsafe { std::mem::zeroed() };
+    let handle = unsafe { FindFirstFileW(path.as_ptr(), &mut data) };
+    if handle as isize == -1 {
+        return None;
+    }
+
+    unsafe {
+        FindClose(handle);
+    }
+
+    if data.file_attributes & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+        Some(data.reserved0)
+    } else {
+        None
+    }
+}
+
+fn is_shortcut(path: &Path) -> bool {
+    path.extension()
+        .and_then(OsStr::to_str)
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("lnk"))
+}
+
 struct ClipboardGuard;
 
 impl ClipboardGuard {
@@ -298,6 +352,26 @@ struct Guid {
     data2: u16,
     data3: u16,
     data4: [u8; 8],
+}
+
+#[repr(C)]
+struct FileTime {
+    low_date_time: u32,
+    high_date_time: u32,
+}
+
+#[repr(C)]
+struct Win32FindDataW {
+    file_attributes: u32,
+    creation_time: FileTime,
+    last_access_time: FileTime,
+    last_write_time: FileTime,
+    file_size_high: u32,
+    file_size_low: u32,
+    reserved0: u32,
+    reserved1: u32,
+    file_name: [u16; 260],
+    alternate_file_name: [u16; 14],
 }
 
 const FOLDERID_DESKTOP: Guid = Guid {
@@ -389,6 +463,11 @@ unsafe extern "system" {
 
 #[link(name = "kernel32")]
 unsafe extern "system" {
+    fn FindFirstFileW(
+        lp_file_name: *const u16,
+        lp_find_file_data: *mut Win32FindDataW,
+    ) -> *mut c_void;
+    fn FindClose(h_find_file: *mut c_void) -> i32;
     fn GlobalAlloc(u_flags: u32, dw_bytes: usize) -> *mut c_void;
     fn GlobalLock(h_mem: *mut c_void) -> *mut c_void;
     fn GlobalUnlock(h_mem: *mut c_void) -> i32;

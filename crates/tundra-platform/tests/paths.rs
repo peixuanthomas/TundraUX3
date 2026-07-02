@@ -4,10 +4,11 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use tundra_platform::mock::{MockCall, MockPlatform, UnsupportedPlatform};
 use tundra_platform::{
-    AppPaths, CapabilityStatus, CheckStatus, Platform, PlatformError, PlatformKind, ProcessSpec,
-    UserDirs, build_binary_dir_app_paths, build_macos_app_paths, build_windows_app_paths,
-    check_directory_read_write, classify_windows_build, cleanup_temp_path, create_temp_dir,
-    create_temp_file, is_windows_terminal_session, run_doctor_with, validate_process_spec,
+    AppPaths, CapabilityStatus, CheckStatus, FileAttributes, Platform, PlatformError, PlatformKind,
+    ProcessSpec, UserDirs, build_binary_dir_app_paths, build_macos_app_paths,
+    build_windows_app_paths, check_directory_read_write, classify_windows_build, cleanup_temp_path,
+    create_temp_dir, create_temp_file, default_file_attributes, is_windows_terminal_session,
+    run_doctor_with, validate_process_spec,
 };
 
 #[test]
@@ -255,6 +256,89 @@ fn mock_platform_records_process_clipboard_and_open_calls() {
             MockCall::SpawnWait(spec),
         ]
     );
+}
+
+#[test]
+fn mock_platform_returns_injected_file_attributes() {
+    let base = unique_temp_root("mock-file-attributes");
+    let platform = mock_platform(&base);
+    let path = base.join("virtual.lnk");
+    let attributes = FileAttributes {
+        path: path.clone(),
+        is_file: true,
+        is_dir: false,
+        len: 42,
+        readonly: true,
+        modified: Some(UNIX_EPOCH),
+        hidden: true,
+        system: true,
+        archive: true,
+        symlink: true,
+        junction: true,
+        reparse_point: true,
+        shortcut: true,
+    };
+
+    platform.set_file_attributes(path.clone(), attributes.clone());
+
+    assert_eq!(
+        platform
+            .file_attributes(&path)
+            .expect("mock platform should return injected attributes"),
+        attributes
+    );
+}
+
+#[test]
+fn default_file_attributes_preserve_basic_metadata_and_dotfile_hidden() {
+    let base = unique_temp_root("default-file-attributes");
+    fs::create_dir_all(&base).expect("test directory should be creatable");
+    let path = base.join(".profile");
+    fs::write(&path, b"tux3").expect("test file should be writable");
+
+    let attributes =
+        default_file_attributes(&path).expect("default file attributes should read the test file");
+
+    assert_eq!(attributes.path, path);
+    assert!(attributes.is_file);
+    assert!(!attributes.is_dir);
+    assert_eq!(attributes.len, 4);
+    assert!(attributes.modified.is_some());
+    assert!(attributes.hidden);
+    assert!(!attributes.system);
+    assert!(!attributes.archive);
+    assert!(!attributes.symlink);
+    assert!(!attributes.junction);
+    assert!(!attributes.reparse_point);
+    assert!(!attributes.shortcut);
+
+    fs::remove_dir_all(base).expect("test directory should be removable");
+}
+
+#[cfg(unix)]
+#[test]
+fn default_file_attributes_detect_symlink_while_preserving_target_metadata() {
+    use std::os::unix::fs::symlink;
+
+    let base = unique_temp_root("default-file-attributes-symlink");
+    fs::create_dir_all(&base).expect("test directory should be creatable");
+    let target = base.join("target.txt");
+    let link = base.join("link.txt");
+    fs::write(&target, b"tundra").expect("target file should be writable");
+    symlink(&target, &link).expect("symlink should be creatable");
+
+    let attributes =
+        default_file_attributes(&link).expect("default file attributes should read the symlink");
+
+    assert_eq!(attributes.path, link);
+    assert!(attributes.is_file);
+    assert!(!attributes.is_dir);
+    assert_eq!(attributes.len, 6);
+    assert!(attributes.symlink);
+    assert!(!attributes.junction);
+    assert!(!attributes.reparse_point);
+
+    fs::remove_dir_all(base).expect("test directory should be removable");
 }
 
 #[test]

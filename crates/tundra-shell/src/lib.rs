@@ -1,3 +1,4 @@
+use tundra_apps::explorer::{ExplorerCommand, ExplorerController, ExplorerState};
 use tundra_core::{
     AuditOutcome, AuditService, AuthSession, CoreError, DebugPolicy, PermissionAction,
     PermissionService, SessionService, UserAccount, UserRole, UserService,
@@ -24,7 +25,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tundra_platform::{
-    AppPaths, CapabilityStatus, Platform, PlatformCapabilities, PlatformError, PlatformKind,
+    AppPaths, CapabilityStatus, FileAttributes, Platform, PlatformCapabilities, PlatformError,
+    PlatformKind,
 };
 
 pub const BANNER_DISPLAY_DURATION: Duration = Duration::from_secs(2);
@@ -89,6 +91,7 @@ pub enum ShellScreen {
     BootstrapAdmin,
     Login,
     Home,
+    Explorer,
     UserManagement,
     ExitConfirm,
 }
@@ -456,6 +459,7 @@ impl KeyInput {
             "Right" => (InputKey::Right, InputModifiers::none()),
             "Up" => (InputKey::Up, InputModifiers::none()),
             "Down" => (InputKey::Down, InputModifiers::none()),
+            "Delete" => (InputKey::Delete, InputModifiers::none()),
             single if single.chars().count() == 1 => (
                 InputKey::Character(single.chars().next().expect("single char")),
                 InputModifiers::none(),
@@ -701,6 +705,7 @@ pub enum ShellComponent {
     LoginPassword,
     BootstrapUsername,
     BootstrapPassword,
+    Explorer,
     UserManagement,
     StatusBar,
     ExitDialog,
@@ -717,6 +722,7 @@ impl ShellComponent {
             Self::LoginPassword => "LoginPassword",
             Self::BootstrapUsername => "BootstrapUsername",
             Self::BootstrapPassword => "BootstrapPassword",
+            Self::Explorer => "Explorer",
             Self::UserManagement => "UserManagement",
             Self::StatusBar => "StatusBar",
             Self::ExitDialog => "ExitDialog",
@@ -847,6 +853,15 @@ enum UserManagementMode {
     Password(UserManagementPasswordForm),
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ExplorerInputMode {
+    Browse,
+    Search,
+    NewFolder,
+    NewTextFile,
+    Rename,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ShellCommand {
     Noop,
@@ -861,6 +876,27 @@ pub enum ShellCommand {
     AuthBackspace,
     SubmitLogin,
     SubmitBootstrapAdmin,
+    OpenExplorer,
+    CloseExplorer,
+    ExplorerNext,
+    ExplorerPrevious,
+    ExplorerOpenSelected,
+    ExplorerOpenParent,
+    ExplorerToggleHidden,
+    ExplorerCopy,
+    ExplorerCut,
+    ExplorerPaste,
+    ExplorerDelete,
+    ExplorerConfirmDelete,
+    ExplorerSelectAt(CellPosition, ClickKind),
+    BeginExplorerSearch,
+    BeginExplorerNewFolder,
+    BeginExplorerNewTextFile,
+    BeginExplorerRename,
+    AppendExplorerChar(char),
+    ExplorerBackspace,
+    SubmitExplorerInput,
+    CancelExplorerInput,
     OpenUserManagement,
     CloseUserManagement,
     UserManagementNext,
@@ -1066,6 +1102,9 @@ pub struct ShellState {
     user_management_selected: usize,
     user_management_message: Option<String>,
     user_management_mode: UserManagementMode,
+    explorer_state: Option<ExplorerState>,
+    explorer_input_mode: ExplorerInputMode,
+    explorer_input: String,
     terminal_size: (u16, u16),
     terminal_flags: ShellTerminalFlags,
     focused_component: ShellComponent,
@@ -1137,6 +1176,9 @@ impl ShellState {
             user_management_selected: 0,
             user_management_message: None,
             user_management_mode: UserManagementMode::Browse,
+            explorer_state: None,
+            explorer_input_mode: ExplorerInputMode::Browse,
+            explorer_input: String::new(),
             terminal_size,
             terminal_flags: ShellTerminalFlags::enabled(),
             focused_component: initial_focus,
@@ -1289,6 +1331,71 @@ impl ShellState {
             self.can_manage_all_users(),
             self.user_management_form_view_model(),
         )
+    }
+
+    pub fn to_explorer_view_model(&self) -> tundra_ui::ExplorerViewModel {
+        let Some(state) = self.explorer_state.as_ref() else {
+            return tundra_ui::ExplorerViewModel::new("Explorer unavailable", Vec::new(), None);
+        };
+
+        let entries = state
+            .entries
+            .iter()
+            .enumerate()
+            .map(|(index, entry)| tundra_ui::ExplorerEntryViewModel {
+                name: entry.name.clone(),
+                kind: entry.kind.label().to_string(),
+                size: (entry.kind == tundra_apps::explorer::ExplorerEntryKind::File)
+                    .then(|| entry.size.to_string()),
+                modified: entry.modified.map(system_time_label),
+                attributes: explorer_attribute_labels(&entry.attributes),
+                selected: index == state.selected_index,
+            })
+            .collect::<Vec<_>>();
+        let selected_index = (!entries.is_empty()).then_some(state.selected_index);
+        let mut model = tundra_ui::ExplorerViewModel::new(
+            state.current_path.display().to_string(),
+            entries,
+            selected_index,
+        );
+        model.show_hidden = state.show_hidden;
+        model.message = state.message.clone();
+        model.error = state.error.clone();
+        model.search = if self.explorer_input_mode == ExplorerInputMode::Search {
+            Some(tundra_ui::ExplorerSearchViewModel::new(
+                self.explorer_input.clone(),
+                true,
+                Some(state.entries.len()),
+            ))
+        } else if !state.query.is_empty() {
+            Some(tundra_ui::ExplorerSearchViewModel::new(
+                state.query.clone(),
+                false,
+                Some(state.entries.len()),
+            ))
+        } else {
+            None
+        };
+        model.pending_dialog = state.pending_dialog.as_ref().map(|dialog| {
+            tundra_ui::ExplorerDialogViewModel::new(
+                dialog.title.clone(),
+                dialog.message.clone(),
+                "Y / Enter: move",
+                "N / Esc: cancel",
+            )
+        });
+
+        if self.explorer_input_mode != ExplorerInputMode::Browse
+            && self.explorer_input_mode != ExplorerInputMode::Search
+        {
+            model.message = Some(format!(
+                "{}: {}",
+                explorer_input_prompt(self.explorer_input_mode),
+                self.explorer_input
+            ));
+        }
+
+        model
     }
 
     fn can_manage_all_users(&self) -> bool {
@@ -1498,6 +1605,157 @@ impl ShellState {
             };
             self.refresh_hit_map();
         }
+    }
+
+    fn open_explorer(&mut self, platform: &dyn Platform) {
+        if self.auth_session.is_none() {
+            self.error_message = Some("Login required".to_string());
+            return;
+        }
+        let Some(storage) = self.storage_manager.clone() else {
+            self.error_message = Some("Storage unavailable".to_string());
+            return;
+        };
+
+        let show_hidden = storage
+            .load_config()
+            .map(|config| config.explorer.show_hidden)
+            .unwrap_or(false);
+        let start_path = platform
+            .user_dirs()
+            .map(|dirs| dirs.documents().to_path_buf())
+            .unwrap_or_else(|_| storage.layout().data_path.clone());
+        let start_path = if start_path.exists() {
+            start_path
+        } else {
+            storage.layout().data_path.clone()
+        };
+
+        self.explorer_state = Some(ExplorerState::new(start_path, show_hidden));
+        self.explorer_input_mode = ExplorerInputMode::Browse;
+        self.explorer_input.clear();
+        self.screen_stack.push(ShellScreen::Explorer);
+        self.focused_component = ShellComponent::Explorer;
+        self.status_message = "Explorer".to_string();
+        self.apply_explorer_command(ExplorerCommand::Refresh, platform);
+        self.refresh_hit_map();
+    }
+
+    fn close_explorer(&mut self) {
+        self.explorer_input_mode = ExplorerInputMode::Browse;
+        self.explorer_input.clear();
+        self.pop_to_home();
+        self.status_message = "Ready".to_string();
+    }
+
+    fn apply_explorer_command(&mut self, command: ExplorerCommand, platform: &dyn Platform) {
+        let Some(storage) = self.storage_manager.clone() else {
+            self.error_message = Some("Storage unavailable".to_string());
+            return;
+        };
+        let session = self.auth_session.clone();
+        let Some(state) = self.explorer_state.as_mut() else {
+            self.error_message = Some("Explorer unavailable".to_string());
+            return;
+        };
+
+        ExplorerController::default().apply(state, command, session.as_ref(), platform, &storage);
+        if let Some(error) = state.error.clone() {
+            self.error_message = Some(error);
+            self.status_message = "Explorer error".to_string();
+        } else {
+            self.error_message = None;
+            if let Some(message) = state.message.clone() {
+                self.status_message = message;
+            }
+        }
+    }
+
+    fn begin_explorer_input(&mut self, mode: ExplorerInputMode) {
+        self.explorer_input_mode = mode;
+        self.explorer_input = if mode == ExplorerInputMode::Rename {
+            self.explorer_state
+                .as_ref()
+                .and_then(|state| state.selected_entry())
+                .map(|entry| entry.name.clone())
+                .unwrap_or_default()
+        } else {
+            String::new()
+        };
+        self.status_message = explorer_input_prompt(mode).to_string();
+    }
+
+    fn append_explorer_char(&mut self, character: char) {
+        self.explorer_input.push(character);
+    }
+
+    fn explorer_backspace(&mut self) {
+        self.explorer_input.pop();
+    }
+
+    fn submit_explorer_input(&mut self, platform: &dyn Platform) {
+        let value = self.explorer_input.trim().to_string();
+        let command = match self.explorer_input_mode {
+            ExplorerInputMode::Browse => return,
+            ExplorerInputMode::Search => ExplorerCommand::Search(value),
+            ExplorerInputMode::NewFolder => ExplorerCommand::NewFolder(value),
+            ExplorerInputMode::NewTextFile => ExplorerCommand::NewTextFile(value),
+            ExplorerInputMode::Rename => ExplorerCommand::Rename(value),
+        };
+
+        self.explorer_input_mode = ExplorerInputMode::Browse;
+        self.explorer_input.clear();
+        self.apply_explorer_command(command, platform);
+    }
+
+    fn cancel_explorer_input(&mut self) {
+        if let Some(state) = self.explorer_state.as_mut()
+            && state.pending_dialog.is_some()
+        {
+            state.pending_dialog = None;
+            state.message = Some("Cancelled".to_string());
+            self.status_message = "Cancelled".to_string();
+            return;
+        }
+        self.explorer_input_mode = ExplorerInputMode::Browse;
+        self.explorer_input.clear();
+        self.status_message = "Explorer".to_string();
+    }
+
+    fn select_explorer_at(
+        &mut self,
+        coordinates: CellPosition,
+        click: ClickKind,
+        platform: &dyn Platform,
+    ) {
+        let Some(index) = self.explorer_index_at(coordinates) else {
+            return;
+        };
+        self.apply_explorer_command(ExplorerCommand::SelectIndex(index), platform);
+        if click == ClickKind::Double {
+            self.apply_explorer_command(ExplorerCommand::OpenSelected, platform);
+        }
+    }
+
+    fn explorer_index_at(&self, coordinates: CellPosition) -> Option<usize> {
+        let area = Rect::new(0, 0, self.terminal_size.0, self.terminal_size.1);
+        let tundra_ui::ShellLayout::Full { main, .. } = tundra_ui::compute_shell_layout(area)
+        else {
+            return None;
+        };
+        if !rect_contains(main, coordinates) {
+            return None;
+        }
+        let content_line = coordinates.1.checked_sub(main.y.saturating_add(1))? as usize;
+        let explorer = self.to_explorer_view_model();
+        let content_width = main.width.saturating_sub(2);
+        let first_entry_line =
+            tundra_ui::explorer_first_entry_content_line(&explorer, content_width);
+        let index = content_line.checked_sub(first_entry_line)?;
+        self.explorer_state
+            .as_ref()
+            .filter(|state| index < state.entries.len())
+            .map(|_| index)
     }
 
     fn refresh_user_management(&mut self) -> Result<(), CoreError> {
@@ -1846,8 +2104,17 @@ impl ShellState {
     }
 
     pub fn apply_input(&mut self, input: InputEvent) -> ShellAction {
+        let platform = tundra_platform::native_platform();
+        self.apply_input_with_platform(input, platform.as_ref())
+    }
+
+    pub fn apply_input_with_platform(
+        &mut self,
+        input: InputEvent,
+        platform: &dyn Platform,
+    ) -> ShellAction {
         let routed = self.route_input_at(input, Instant::now());
-        self.apply_routed_event(routed)
+        self.apply_routed_event(routed, platform)
     }
 
     pub fn route_input_at(&mut self, input: InputEvent, received_at: Instant) -> RoutedEvent {
@@ -1881,7 +2148,7 @@ impl ShellState {
         }
     }
 
-    fn apply_routed_event(&mut self, routed: RoutedEvent) -> ShellAction {
+    fn apply_routed_event(&mut self, routed: RoutedEvent, platform: &dyn Platform) -> ShellAction {
         self.record_input_diagnostics(&routed);
         self.last_routed_target = Some(routed.target);
         self.last_command = Some(routed.command.clone());
@@ -1946,6 +2213,90 @@ impl ShellState {
             }
             ShellCommand::SubmitBootstrapAdmin => {
                 self.submit_bootstrap_admin();
+                ShellAction::Redraw
+            }
+            ShellCommand::OpenExplorer => {
+                self.open_explorer(platform);
+                ShellAction::Redraw
+            }
+            ShellCommand::CloseExplorer => {
+                self.close_explorer();
+                ShellAction::Redraw
+            }
+            ShellCommand::ExplorerNext => {
+                self.apply_explorer_command(ExplorerCommand::SelectNext, platform);
+                ShellAction::Redraw
+            }
+            ShellCommand::ExplorerPrevious => {
+                self.apply_explorer_command(ExplorerCommand::SelectPrevious, platform);
+                ShellAction::Redraw
+            }
+            ShellCommand::ExplorerOpenSelected => {
+                self.apply_explorer_command(ExplorerCommand::OpenSelected, platform);
+                ShellAction::Redraw
+            }
+            ShellCommand::ExplorerOpenParent => {
+                self.apply_explorer_command(ExplorerCommand::OpenParent, platform);
+                ShellAction::Redraw
+            }
+            ShellCommand::ExplorerToggleHidden => {
+                self.apply_explorer_command(ExplorerCommand::ToggleHidden, platform);
+                ShellAction::Redraw
+            }
+            ShellCommand::ExplorerCopy => {
+                self.apply_explorer_command(ExplorerCommand::Copy, platform);
+                ShellAction::Redraw
+            }
+            ShellCommand::ExplorerCut => {
+                self.apply_explorer_command(ExplorerCommand::Cut, platform);
+                ShellAction::Redraw
+            }
+            ShellCommand::ExplorerPaste => {
+                self.apply_explorer_command(ExplorerCommand::Paste, platform);
+                ShellAction::Redraw
+            }
+            ShellCommand::ExplorerDelete => {
+                self.apply_explorer_command(ExplorerCommand::DeleteToTrash, platform);
+                ShellAction::Redraw
+            }
+            ShellCommand::ExplorerConfirmDelete => {
+                self.apply_explorer_command(ExplorerCommand::ConfirmDelete, platform);
+                ShellAction::Redraw
+            }
+            ShellCommand::ExplorerSelectAt(coordinates, click) => {
+                self.select_explorer_at(coordinates, click, platform);
+                ShellAction::Redraw
+            }
+            ShellCommand::BeginExplorerSearch => {
+                self.begin_explorer_input(ExplorerInputMode::Search);
+                ShellAction::Redraw
+            }
+            ShellCommand::BeginExplorerNewFolder => {
+                self.begin_explorer_input(ExplorerInputMode::NewFolder);
+                ShellAction::Redraw
+            }
+            ShellCommand::BeginExplorerNewTextFile => {
+                self.begin_explorer_input(ExplorerInputMode::NewTextFile);
+                ShellAction::Redraw
+            }
+            ShellCommand::BeginExplorerRename => {
+                self.begin_explorer_input(ExplorerInputMode::Rename);
+                ShellAction::Redraw
+            }
+            ShellCommand::AppendExplorerChar(character) => {
+                self.append_explorer_char(character);
+                ShellAction::Redraw
+            }
+            ShellCommand::ExplorerBackspace => {
+                self.explorer_backspace();
+                ShellAction::Redraw
+            }
+            ShellCommand::SubmitExplorerInput => {
+                self.submit_explorer_input(platform);
+                ShellAction::Redraw
+            }
+            ShellCommand::CancelExplorerInput => {
+                self.cancel_explorer_input();
                 ShellAction::Redraw
             }
             ShellCommand::OpenUserManagement => {
@@ -2025,9 +2376,14 @@ impl ShellState {
             }
             ShellCommand::Activate {
                 target,
-                coordinates: _,
+                coordinates,
                 click,
             } => {
+                if target == ShellComponent::Explorer {
+                    self.focus_component(target);
+                    self.select_explorer_at(coordinates, click, platform);
+                    return ShellAction::Redraw;
+                }
                 self.focus_component(target);
                 let click_label = match click {
                     ClickKind::Single => "single click",
@@ -2040,6 +2396,11 @@ impl ShellState {
                 target,
                 coordinates,
             } => {
+                if target == Some(ShellComponent::Explorer)
+                    && let Some(index) = self.explorer_index_at(coordinates)
+                {
+                    self.apply_explorer_command(ExplorerCommand::SelectIndex(index), platform);
+                }
                 self.active_popup = Some(ShellPopup {
                     owner: target,
                     anchor: coordinates,
@@ -2207,6 +2568,10 @@ impl ShellState {
             return self.route_popup_key(key);
         }
 
+        if self.active_screen() == ShellScreen::Explorer {
+            return self.route_explorer_key(key);
+        }
+
         if matches!(&key.key, InputKey::BackTab)
             || (matches!(&key.key, InputKey::Tab) && key.modifiers.shift)
         {
@@ -2217,6 +2582,9 @@ impl ShellState {
         }
 
         match self.active_screen() {
+            ShellScreen::Home if key.is_character('e') || key.is_character('E') => {
+                (RoutedTarget::Global, ShellCommand::OpenExplorer)
+            }
             ShellScreen::Home if key.is_character('u') || key.is_character('U') => {
                 (RoutedTarget::Global, ShellCommand::OpenUserManagement)
             }
@@ -2269,6 +2637,76 @@ impl ShellState {
         }
 
         (target, ShellCommand::RecordInput)
+    }
+
+    fn route_explorer_key(&self, key: &KeyInput) -> (RoutedTarget, ShellCommand) {
+        let target = RoutedTarget::Component(ShellComponent::Explorer);
+
+        if self
+            .explorer_state
+            .as_ref()
+            .and_then(|state| state.pending_dialog.as_ref())
+            .is_some()
+        {
+            return match &key.key {
+                InputKey::Enter => (target, ShellCommand::ExplorerConfirmDelete),
+                InputKey::Escape => (target, ShellCommand::CancelExplorerInput),
+                InputKey::Character(character) if matches!(character, 'y' | 'Y') => {
+                    (target, ShellCommand::ExplorerConfirmDelete)
+                }
+                InputKey::Character(character) if matches!(character, 'n' | 'N') => {
+                    (target, ShellCommand::CancelExplorerInput)
+                }
+                _ => (target, ShellCommand::CaptureOverlayInput),
+            };
+        }
+
+        if self.explorer_input_mode != ExplorerInputMode::Browse {
+            return match &key.key {
+                InputKey::Escape => (target, ShellCommand::CancelExplorerInput),
+                InputKey::Enter => (target, ShellCommand::SubmitExplorerInput),
+                InputKey::Backspace => (target, ShellCommand::ExplorerBackspace),
+                InputKey::Character(character) => {
+                    (target, ShellCommand::AppendExplorerChar(*character))
+                }
+                _ => (target, ShellCommand::RecordInput),
+            };
+        }
+
+        match &key.key {
+            InputKey::Escape => (RoutedTarget::Global, ShellCommand::CloseExplorer),
+            InputKey::Up => (target, ShellCommand::ExplorerPrevious),
+            InputKey::Down => (target, ShellCommand::ExplorerNext),
+            InputKey::Enter => (target, ShellCommand::ExplorerOpenSelected),
+            InputKey::Backspace => (target, ShellCommand::ExplorerOpenParent),
+            InputKey::Delete => (target, ShellCommand::ExplorerDelete),
+            InputKey::Character(character) if matches!(character, 'h' | 'H') => {
+                (target, ShellCommand::ExplorerToggleHidden)
+            }
+            InputKey::Character(character) if matches!(character, 'c' | 'C') => {
+                (target, ShellCommand::ExplorerCopy)
+            }
+            InputKey::Character(character) if matches!(character, 'x' | 'X') => {
+                (target, ShellCommand::ExplorerCut)
+            }
+            InputKey::Character(character) if matches!(character, 'v' | 'V') => {
+                (target, ShellCommand::ExplorerPaste)
+            }
+            InputKey::Character(character) if matches!(character, 'd' | 'D') => {
+                (target, ShellCommand::ExplorerDelete)
+            }
+            InputKey::Character(character) if matches!(character, 'n' | 'N' | 'f' | 'F') => {
+                (target, ShellCommand::BeginExplorerNewFolder)
+            }
+            InputKey::Character(character) if matches!(character, 't' | 'T') => {
+                (target, ShellCommand::BeginExplorerNewTextFile)
+            }
+            InputKey::Character(character) if matches!(character, 'r' | 'R') => {
+                (target, ShellCommand::BeginExplorerRename)
+            }
+            InputKey::Character('/') => (target, ShellCommand::BeginExplorerSearch),
+            _ => (target, ShellCommand::RecordInput),
+        }
     }
 
     fn route_user_management_key(&self, key: &KeyInput) -> (RoutedTarget, ShellCommand) {
@@ -2643,6 +3081,9 @@ impl ShellState {
         if self.active_screen() == ShellScreen::UserManagement {
             return vec![ShellComponent::UserManagement];
         }
+        if self.active_screen() == ShellScreen::Explorer {
+            return vec![ShellComponent::Explorer];
+        }
         if self.active_popup.is_some() {
             return vec![ShellComponent::ContextMenu];
         }
@@ -2839,6 +3280,12 @@ fn build_shell_hit_map(
                         area: main,
                     });
                 }
+                ShellScreen::Explorer => {
+                    regions.push(ShellHitRegion {
+                        component: ShellComponent::Explorer,
+                        area: main,
+                    });
+                }
                 _ => {
                     regions.push(ShellHitRegion {
                         component: ShellComponent::Home,
@@ -2946,6 +3393,52 @@ fn current_time_label() -> String {
         .unwrap_or(0);
 
     format!("unix:{seconds}")
+}
+
+fn system_time_label(value: SystemTime) -> String {
+    value
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| format!("unix:{}", duration.as_secs()))
+        .unwrap_or_else(|_| "unknown".to_string())
+}
+
+fn explorer_attribute_labels(attributes: &FileAttributes) -> Vec<String> {
+    let mut labels = Vec::new();
+    if attributes.readonly {
+        labels.push("readonly".to_string());
+    }
+    if attributes.hidden {
+        labels.push("hidden".to_string());
+    }
+    if attributes.system {
+        labels.push("system".to_string());
+    }
+    if attributes.archive {
+        labels.push("archive".to_string());
+    }
+    if attributes.symlink {
+        labels.push("symlink".to_string());
+    }
+    if attributes.junction {
+        labels.push("junction".to_string());
+    }
+    if attributes.reparse_point {
+        labels.push("reparse".to_string());
+    }
+    if attributes.shortcut {
+        labels.push("shortcut".to_string());
+    }
+    labels
+}
+
+fn explorer_input_prompt(mode: ExplorerInputMode) -> &'static str {
+    match mode {
+        ExplorerInputMode::Browse => "Explorer",
+        ExplorerInputMode::Search => "Search",
+        ExplorerInputMode::NewFolder => "New folder name",
+        ExplorerInputMode::NewTextFile => "New text file name",
+        ExplorerInputMode::Rename => "Rename to",
+    }
 }
 
 fn unix_millis() -> u64 {
@@ -3303,6 +3796,7 @@ pub fn run_fullscreen_blocking(
         let login = state.to_login_view_model();
         let bootstrap_admin = state.to_bootstrap_admin_view_model();
         let user_management = state.to_user_management_view_model();
+        let explorer = state.to_explorer_view_model();
         let active_screen = state.active_screen();
         let exit_confirmation = tundra_ui::ExitConfirmViewModel::new();
 
@@ -3330,6 +3824,9 @@ pub fn run_fullscreen_blocking(
                         &theme,
                     );
                 }
+                ShellScreen::Explorer => {
+                    tundra_ui::render_explorer(frame, area, &chrome, &explorer, &theme);
+                }
                 ShellScreen::Home | ShellScreen::ExitConfirm => {
                     tundra_ui::render_home(frame, area, &chrome, &home, &theme);
                 }
@@ -3341,16 +3838,19 @@ pub fn run_fullscreen_blocking(
         })?;
 
         if !SHELL_RUNNING.load(Ordering::SeqCst) {
-            state.apply_input(InputEvent::Shutdown);
+            state.apply_input_with_platform(InputEvent::Shutdown, platform.as_ref());
         }
         if state.shutdown_requested() {
             break;
         }
 
         let action = if event::poll(tick_rate)? {
-            state.apply_input(crossterm_event_to_input(event::read()?))
+            state.apply_input_with_platform(
+                crossterm_event_to_input(event::read()?),
+                platform.as_ref(),
+            )
         } else {
-            state.apply_input(InputEvent::Tick)
+            state.apply_input_with_platform(InputEvent::Tick, platform.as_ref())
         };
 
         if action == ShellAction::Exit {

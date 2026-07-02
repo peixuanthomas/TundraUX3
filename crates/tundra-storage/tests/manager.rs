@@ -10,7 +10,7 @@ use tundra_platform::{
 use tundra_storage::{
     ExplorerConfig, LauncherConfig, RecentFilesDocument, SCHEMA_VERSION, SecurityConfig,
     SessionsDocument, StateDocument, StorageConfig, StorageError, StorageLayout, StorageManager,
-    USERS_SCHEMA_VERSION, UserRecord, UsersDocument,
+    TrashDocument, TrashRecord, USERS_SCHEMA_VERSION, UserRecord, UsersDocument,
 };
 
 #[test]
@@ -31,7 +31,17 @@ fn first_open_creates_storage_directories_and_default_files() {
     assert!(layout.state_path.is_file());
     assert!(layout.recent_files_path.is_file());
     assert!(layout.sessions_path.is_file());
+    assert!(layout.trash_path.is_dir());
+    assert!(layout.trash_manifest_path.is_file());
     assert!(!layout.audit_log_path.exists());
+    assert_eq!(
+        opened
+            .manager
+            .load_trash()
+            .expect("default trash manifest")
+            .records,
+        Vec::<TrashRecord>::new()
+    );
     assert_eq!(
         sorted_paths(opened.report.created_files),
         sorted_paths(vec![
@@ -40,6 +50,7 @@ fn first_open_creates_storage_directories_and_default_files() {
             layout.state_path,
             layout.recent_files_path,
             layout.sessions_path,
+            layout.trash_manifest_path,
         ])
     );
     assert!(opened.report.migrated_files.is_empty());
@@ -129,6 +140,18 @@ fn toml_and_json_documents_round_trip() {
         sessions
     );
 
+    let trash = TrashDocument {
+        schema_version: SCHEMA_VERSION,
+        records: vec![TrashRecord {
+            original_path: PathBuf::from("C:/Projects/readme.md"),
+            trash_path: PathBuf::from("C:/TundraUX3/trash/readme.md"),
+            actor: "local-user".to_string(),
+            timestamp_epoch_ms: 42,
+        }],
+    };
+    manager.save_trash(&trash).expect("trash should save");
+    assert_eq!(manager.load_trash().expect("trash should reload"), trash);
+
     cleanup(&base);
 }
 
@@ -140,8 +163,10 @@ fn corrupt_toml_and_json_are_backed_up_and_replaced_with_defaults() {
     fs::create_dir_all(layout.config_path.parent().expect("config parent"))
         .expect("config parent should be writable");
     fs::create_dir_all(&layout.data_path).expect("data path should be writable");
+    fs::create_dir_all(&layout.trash_path).expect("trash path should be writable");
     fs::write(&layout.config_path, b"schema_version =\n").expect("corrupt TOML fixture");
     fs::write(&layout.users_path, b"{").expect("corrupt JSON fixture");
+    fs::write(&layout.trash_manifest_path, b"{").expect("corrupt trash fixture");
 
     let opened = StorageManager::open(paths).expect("storage should recover corrupt documents");
 
@@ -157,8 +182,16 @@ fn corrupt_toml_and_json_are_backed_up_and_replaced_with_defaults() {
             .users
             .is_empty()
     );
-    assert_eq!(opened.report.recovered_files.len(), 2);
-    assert_eq!(opened.report.warnings.len(), 2);
+    assert!(
+        opened
+            .manager
+            .load_trash()
+            .expect("default trash")
+            .records
+            .is_empty()
+    );
+    assert_eq!(opened.report.recovered_files.len(), 3);
+    assert_eq!(opened.report.warnings.len(), 3);
     for recovered in &opened.report.recovered_files {
         assert!(recovered.recovered_path.is_file());
         assert!(
@@ -170,6 +203,36 @@ fn corrupt_toml_and_json_are_backed_up_and_replaced_with_defaults() {
                 .contains(".corrupt.")
         );
     }
+
+    cleanup(&base);
+}
+
+#[test]
+fn future_trash_schema_errors_without_modifying_file() {
+    let base = unique_temp_root("future-trash");
+    let paths = app_paths(&base);
+    let layout = StorageLayout::from_app_paths(&paths);
+    fs::create_dir_all(&layout.trash_path).expect("trash path should be writable");
+    let original = "{\n  \"schema_version\": 2,\n  \"records\": []\n}\n";
+    fs::write(&layout.trash_manifest_path, original).expect("future trash fixture");
+
+    let error = StorageManager::open(paths).expect_err("future trash should fail");
+
+    assert!(matches!(
+        error,
+        StorageError::UnsupportedSchema {
+            document: "trash",
+            found: 2,
+            supported: SCHEMA_VERSION,
+            ..
+        }
+    ));
+    assert_eq!(
+        fs::read_to_string(&layout.trash_manifest_path)
+            .expect("future trash should remain readable"),
+        original
+    );
+    assert_no_corrupt_backups(&layout.trash_path);
 
     cleanup(&base);
 }

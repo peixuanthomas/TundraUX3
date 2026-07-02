@@ -4,11 +4,14 @@ use ratatui::text::Line;
 use ratatui::widgets::{Block, Borders, Clear, Paragraph, Wrap};
 
 use crate::{
-    AuthField, BootstrapAdminViewModel, ExitConfirmViewModel, HomeDisplayMode, HomeViewModel,
-    LoginViewModel, ShellChromeViewModel, ShellLayout, TundraTheme, UserManagementField,
-    UserManagementFormKind, UserManagementFormViewModel, UserManagementViewModel,
-    compute_shell_layout,
+    AuthField, BootstrapAdminViewModel, ExitConfirmViewModel, ExplorerDialogViewModel,
+    ExplorerEntryViewModel, ExplorerSearchViewModel, ExplorerViewModel, HomeDisplayMode,
+    HomeViewModel, LoginViewModel, ShellChromeViewModel, ShellLayout, TundraTheme,
+    UserManagementField, UserManagementFormKind, UserManagementFormViewModel,
+    UserManagementViewModel, compute_shell_layout,
 };
+
+pub const EXPLORER_HELP_LINE: &str = "Enter: open    Backspace: parent    N: folder    T: text file    R: rename    X/Delete: delete    C: copy    V: paste    /: search    H: hidden    Esc: back";
 
 pub fn render_home(
     frame: &mut Frame<'_>,
@@ -133,6 +136,27 @@ pub fn render_user_management(
     }
 }
 
+pub fn render_explorer(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    chrome: &ShellChromeViewModel,
+    model: &ExplorerViewModel,
+    theme: &TundraTheme,
+) {
+    match compute_shell_layout(area) {
+        ShellLayout::Compact(compact) => render_compact_home(frame, compact, theme),
+        ShellLayout::Full { top, main, status } => {
+            render_top(frame, top, chrome, theme);
+            render_explorer_main(frame, main, model, theme);
+            render_status(frame, status, chrome, theme);
+
+            if let Some(dialog) = &model.pending_dialog {
+                render_explorer_dialog(frame, main, dialog, theme);
+            }
+        }
+    }
+}
+
 fn user_management_form_lines(form: &UserManagementFormViewModel) -> Vec<Line<'static>> {
     let mut lines = vec![
         Line::from(form.title.clone()),
@@ -215,6 +239,50 @@ fn render_compact_home(frame: &mut Frame<'_>, area: Rect, theme: &TundraTheme) {
         .wrap(Wrap { trim: true });
 
     frame.render_widget(compact, area);
+}
+
+fn render_explorer_main(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    model: &ExplorerViewModel,
+    theme: &TundraTheme,
+) {
+    let main = Paragraph::new(explorer_lines(model, theme))
+        .block(
+            Block::default()
+                .title("Explorer")
+                .borders(Borders::ALL)
+                .style(theme.body_style()),
+        )
+        .wrap(Wrap { trim: true });
+
+    frame.render_widget(main, area);
+}
+
+fn render_explorer_dialog(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    model: &ExplorerDialogViewModel,
+    theme: &TundraTheme,
+) {
+    let dialog = centered_rect(area, area.width.min(56), area.height.min(7));
+    let lines = vec![
+        Line::from(model.message.clone()),
+        Line::from(""),
+        Line::from(format!("{}    {}", model.confirm_label, model.cancel_label)),
+    ];
+    let dialog_widget = Paragraph::new(lines)
+        .block(
+            Block::default()
+                .title(model.title.as_str())
+                .borders(Borders::ALL)
+                .style(theme.body_style()),
+        )
+        .alignment(Alignment::Center)
+        .wrap(Wrap { trim: true });
+
+    frame.render_widget(Clear, dialog);
+    frame.render_widget(dialog_widget, dialog);
 }
 
 fn render_top(
@@ -389,6 +457,152 @@ fn bootstrap_lines(model: &BootstrapAdminViewModel) -> Vec<Line<'static>> {
 
 fn focus_marker(focused: bool) -> &'static str {
     if focused { "> " } else { "  " }
+}
+
+fn explorer_lines(model: &ExplorerViewModel, theme: &TundraTheme) -> Vec<Line<'static>> {
+    let mut lines = vec![
+        Line::from(format!("Path: {}", model.current_path)),
+        Line::from(format!(
+            "Hidden files: {}",
+            if model.show_hidden { "shown" } else { "hidden" }
+        )),
+    ];
+    if let Some(search) = &model.search {
+        lines.push(Line::from(explorer_search_line(search)));
+    }
+    lines.push(Line::from(EXPLORER_HELP_LINE));
+    lines.push(Line::from(""));
+    lines.push(Line::styled("Entries", theme.title_style()));
+
+    if model.entries.is_empty() {
+        lines.push(Line::from("(empty directory)"));
+    } else {
+        for (index, entry) in model.entries.iter().enumerate() {
+            let line = explorer_entry_line(index, model.selected_index, entry);
+            if model.selected_index == Some(index) {
+                lines.push(Line::styled(line, theme.title_style()));
+            } else {
+                lines.push(Line::from(line));
+            }
+        }
+    }
+
+    let selected_names = selected_entry_names(model);
+    if !selected_names.is_empty() {
+        lines.push(Line::from(format!(
+            "Selected: {}",
+            selected_names.join(", ")
+        )));
+    }
+
+    lines.push(Line::from(""));
+    lines.push(Line::styled("Details", theme.title_style()));
+    match model.selected_entry() {
+        Some(entry) => {
+            lines.push(Line::from(format!("Name: {}", entry.name)));
+            lines.push(Line::from(format!("Type: {}", entry.kind)));
+            lines.push(Line::from(format!(
+                "Size: {}",
+                entry.size.as_deref().unwrap_or("-")
+            )));
+            lines.push(Line::from(format!(
+                "Modified: {}",
+                entry.modified.as_deref().unwrap_or("-")
+            )));
+            lines.push(Line::from(format!(
+                "Attributes: {}",
+                format_attributes(&entry.attributes)
+            )));
+        }
+        None => lines.push(Line::from("No entry selected")),
+    }
+
+    if let Some(message) = &model.message {
+        lines.push(Line::from(""));
+        lines.push(Line::styled(message.clone(), theme.muted_style()));
+    }
+    if let Some(error) = &model.error {
+        lines.push(Line::from(""));
+        lines.push(Line::styled(format!("Error: {error}"), theme.error_style()));
+    }
+
+    lines
+}
+
+pub fn explorer_first_entry_content_line(model: &ExplorerViewModel, content_width: u16) -> usize {
+    let width = usize::from(content_width.max(1));
+    let mut line = 0usize;
+    line += wrapped_line_count(&format!("Path: {}", model.current_path), width);
+    line += wrapped_line_count(
+        &format!(
+            "Hidden files: {}",
+            if model.show_hidden { "shown" } else { "hidden" }
+        ),
+        width,
+    );
+    if let Some(search) = &model.search {
+        line += wrapped_line_count(&explorer_search_line(search), width);
+    }
+    line += wrapped_line_count(EXPLORER_HELP_LINE, width);
+    line += 1;
+    line += wrapped_line_count("Entries", width);
+    line
+}
+
+fn wrapped_line_count(text: &str, width: usize) -> usize {
+    text.chars().count().max(1).div_ceil(width.max(1))
+}
+
+fn explorer_entry_line(
+    index: usize,
+    selected_index: Option<usize>,
+    entry: &ExplorerEntryViewModel,
+) -> String {
+    let cursor_marker = if selected_index == Some(index) {
+        ">"
+    } else {
+        " "
+    };
+    let selected_marker = if entry.selected { "*" } else { " " };
+    format!(
+        "{cursor_marker}{selected_marker} {} | {} | {} | {} | {}",
+        entry.name,
+        entry.kind,
+        entry.size.as_deref().unwrap_or("-"),
+        entry.modified.as_deref().unwrap_or("-"),
+        format_attributes(&entry.attributes)
+    )
+}
+
+fn explorer_search_line(search: &ExplorerSearchViewModel) -> String {
+    let query = if search.query.is_empty() {
+        "<empty>"
+    } else {
+        search.query.as_str()
+    };
+    let mode = if search.active { "active" } else { "inactive" };
+    match search.match_count {
+        Some(1) => format!("Search: {query} (1 match, {mode})"),
+        Some(count) => format!("Search: {query} ({count} matches, {mode})"),
+        None => format!("Search: {query} ({mode})"),
+    }
+}
+
+fn selected_entry_names(model: &ExplorerViewModel) -> Vec<String> {
+    model
+        .entries
+        .iter()
+        .filter(|entry| entry.selected)
+        .map(|entry| entry.name.clone())
+        .collect()
+}
+
+fn format_attributes(attributes: &[String]) -> String {
+    if attributes.is_empty() {
+        "none".to_string()
+    } else {
+        attributes.join(", ")
+    }
 }
 
 fn user_lines(home: &HomeViewModel) -> Vec<Line<'static>> {

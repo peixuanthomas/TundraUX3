@@ -146,6 +146,13 @@ pub struct FileAttributes {
     pub len: u64,
     pub readonly: bool,
     pub modified: Option<SystemTime>,
+    pub hidden: bool,
+    pub system: bool,
+    pub archive: bool,
+    pub symlink: bool,
+    pub junction: bool,
+    pub reparse_point: bool,
+    pub shortcut: bool,
 }
 
 pub trait Platform: Send + Sync {
@@ -299,6 +306,11 @@ pub fn default_file_attributes(path: &Path) -> Result<FileAttributes, PlatformEr
         path: Some(path.to_path_buf()),
         message: error.to_string(),
     })?;
+    let link_metadata = fs::symlink_metadata(path).map_err(|error| PlatformError::Io {
+        operation: "read file attributes",
+        path: Some(path.to_path_buf()),
+        message: error.to_string(),
+    })?;
 
     Ok(FileAttributes {
         path: path.to_path_buf(),
@@ -307,7 +319,23 @@ pub fn default_file_attributes(path: &Path) -> Result<FileAttributes, PlatformEr
         len: metadata.len(),
         readonly: metadata.permissions().readonly(),
         modified: metadata.modified().ok(),
+        hidden: is_dotfile(path),
+        system: false,
+        archive: false,
+        symlink: link_metadata.file_type().is_symlink(),
+        junction: false,
+        reparse_point: false,
+        shortcut: false,
     })
+}
+
+fn is_dotfile(path: &Path) -> bool {
+    path.file_name()
+        .map(|file_name| {
+            let file_name = file_name.to_string_lossy();
+            file_name.starts_with('.') && file_name != "." && file_name != ".."
+        })
+        .unwrap_or(false)
 }
 
 pub fn native_platform() -> Box<dyn Platform> {

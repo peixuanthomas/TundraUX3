@@ -177,6 +177,93 @@ impl UserManagementViewModel {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExplorerEntryViewModel {
+    pub name: String,
+    pub kind: String,
+    pub size: Option<String>,
+    pub modified: Option<String>,
+    pub attributes: Vec<String>,
+    pub selected: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExplorerSearchViewModel {
+    pub query: String,
+    pub active: bool,
+    pub match_count: Option<usize>,
+}
+
+impl ExplorerSearchViewModel {
+    pub fn new(query: impl Into<String>, active: bool, match_count: Option<usize>) -> Self {
+        Self {
+            query: query.into(),
+            active,
+            match_count,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExplorerDialogViewModel {
+    pub title: String,
+    pub message: String,
+    pub confirm_label: String,
+    pub cancel_label: String,
+}
+
+impl ExplorerDialogViewModel {
+    pub fn new(
+        title: impl Into<String>,
+        message: impl Into<String>,
+        confirm_label: impl Into<String>,
+        cancel_label: impl Into<String>,
+    ) -> Self {
+        Self {
+            title: title.into(),
+            message: message.into(),
+            confirm_label: confirm_label.into(),
+            cancel_label: cancel_label.into(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExplorerViewModel {
+    pub current_path: String,
+    pub entries: Vec<ExplorerEntryViewModel>,
+    pub selected_index: Option<usize>,
+    pub search: Option<ExplorerSearchViewModel>,
+    pub show_hidden: bool,
+    pub message: Option<String>,
+    pub error: Option<String>,
+    pub pending_dialog: Option<ExplorerDialogViewModel>,
+}
+
+impl ExplorerViewModel {
+    pub fn new(
+        current_path: impl Into<String>,
+        entries: Vec<ExplorerEntryViewModel>,
+        selected_index: Option<usize>,
+    ) -> Self {
+        Self {
+            current_path: current_path.into(),
+            entries,
+            selected_index,
+            search: None,
+            show_hidden: false,
+            message: None,
+            error: None,
+            pending_dialog: None,
+        }
+    }
+
+    pub fn selected_entry(&self) -> Option<&ExplorerEntryViewModel> {
+        self.selected_index
+            .and_then(|selected_index| self.entries.get(selected_index))
+    }
+}
+
 impl HomeViewModel {
     pub fn debug(diagnostics: DebugDiagnosticsViewModel) -> Self {
         Self {

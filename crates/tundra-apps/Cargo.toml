@@ -1,0 +1,12 @@
+[package]
+name = "tundra-apps"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+tundra-core = { path = "../tundra-core" }
+tundra-platform = { path = "../tundra-platform" }
+tundra-storage = { path = "../tundra-storage" }

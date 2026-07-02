@@ -18,7 +18,10 @@ fn stateful_data_uses_versioned_json() {
         .map(|descriptor| descriptor.name)
         .collect();
 
-    assert_eq!(names, vec!["users", "state", "recent-files", "sessions"]);
+    assert_eq!(
+        names,
+        vec!["users", "state", "recent-files", "sessions", "trash"]
+    );
     for descriptor in VERSIONED_JSON_DESCRIPTORS {
         assert_eq!(descriptor.format, StorageFormat::VersionedJson);
         let expected_schema = if descriptor.name == "users" {
