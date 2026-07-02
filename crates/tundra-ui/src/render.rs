@@ -184,6 +184,10 @@ fn debug_lines(home: &HomeViewModel) -> Vec<Line<'static>> {
                 diagnostics.terminal_flags.join(", ")
             }
         )),
+        Line::from(format!(
+            "Platform capabilities: {}",
+            diagnostics.platform_capability_summary
+        )),
     ]
 }
 

@@ -1,4 +1,6 @@
-use tundra_storage::{CONFIG_DESCRIPTOR, SCHEMA_VERSION};
+use tundra_storage::{
+    CONFIG_DESCRIPTOR, SCHEMA_VERSION, StorageError, StorageLoadReport, StorageManager,
+};
 
 use crossterm::cursor::{Hide, Show};
 use crossterm::event::{
@@ -13,9 +15,13 @@ use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
 use ratatui::layout::Rect;
 use std::io::{self, Write};
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use tundra_platform::{
+    AppPaths, CapabilityStatus, Platform, PlatformCapabilities, PlatformError, PlatformKind,
+};
 
 pub const BANNER_DISPLAY_DURATION: Duration = Duration::from_secs(2);
 pub const ENTER_FULLSCREEN_SEQUENCE: &str = "\x1B[?1049h\x1B[?25l\x1B[2J\x1B[H";
@@ -78,6 +84,214 @@ pub enum ShellHomeMode {
 pub enum ShellScreen {
     Home,
     ExitConfirm,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct ShellAppConfig {
+    pub home_mode: Option<ShellHomeMode>,
+}
+
+impl ShellAppConfig {
+    fn from_storage_config(_config: &tundra_storage::StorageConfig) -> Self {
+        Self::default()
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ShellStorageWarning {
+    RecoveredDefaults(String),
+}
+
+impl ShellStorageWarning {
+    pub fn recovered_defaults(message: impl Into<String>) -> Self {
+        Self::RecoveredDefaults(message.into())
+    }
+
+    fn is_recovery_warning(&self) -> bool {
+        matches!(self, Self::RecoveredDefaults(_))
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct ShellStorageReport {
+    pub app_paths: Option<AppPaths>,
+    pub warnings: Vec<ShellStorageWarning>,
+    pub created_files: Vec<PathBuf>,
+    pub migrated_files: Vec<PathBuf>,
+    pub recovered_files: Vec<ShellRecoveredStorageFile>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ShellRecoveredStorageFile {
+    pub original_path: PathBuf,
+    pub recovered_path: PathBuf,
+}
+
+impl ShellStorageReport {
+    pub fn clean(app_paths: Option<AppPaths>) -> Self {
+        Self {
+            app_paths,
+            warnings: Vec::new(),
+            created_files: Vec::new(),
+            migrated_files: Vec::new(),
+            recovered_files: Vec::new(),
+        }
+    }
+
+    pub fn recovered_defaults(app_paths: Option<AppPaths>) -> Self {
+        Self {
+            app_paths,
+            warnings: vec![ShellStorageWarning::recovered_defaults(
+                "storage recovered defaults",
+            )],
+            created_files: Vec::new(),
+            migrated_files: Vec::new(),
+            recovered_files: Vec::new(),
+        }
+    }
+
+    pub fn has_recovery_warnings(&self) -> bool {
+        self.warnings
+            .iter()
+            .any(ShellStorageWarning::is_recovery_warning)
+    }
+
+    fn from_storage_load_report(app_paths: Option<AppPaths>, report: StorageLoadReport) -> Self {
+        Self {
+            app_paths,
+            warnings: report
+                .warnings
+                .into_iter()
+                .map(ShellStorageWarning::RecoveredDefaults)
+                .collect(),
+            created_files: report.created_files,
+            migrated_files: report.migrated_files,
+            recovered_files: report
+                .recovered_files
+                .into_iter()
+                .map(|recovered| ShellRecoveredStorageFile {
+                    original_path: recovered.original_path,
+                    recovered_path: recovered.recovered_path,
+                })
+                .collect(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ShellRestoredSession {
+    pub active_screen: ShellScreen,
+    pub focused_component: ShellComponent,
+    pub display_mode: ShellHomeMode,
+    pub active_popup: Option<ShellPopup>,
+}
+
+impl ShellRestoredSession {
+    pub fn new(display_mode: ShellHomeMode, focused_component: ShellComponent) -> Self {
+        Self {
+            active_screen: ShellScreen::Home,
+            focused_component,
+            display_mode,
+            active_popup: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ShellStartupState {
+    pub app_config: ShellAppConfig,
+    pub storage_report: ShellStorageReport,
+    pub platform_kind: PlatformKind,
+    pub platform_capabilities: PlatformCapabilities,
+    pub restored_session: Option<ShellRestoredSession>,
+}
+
+impl ShellStartupState {
+    pub fn clean(platform_kind: PlatformKind, platform_capabilities: PlatformCapabilities) -> Self {
+        Self {
+            app_config: ShellAppConfig::default(),
+            storage_report: ShellStorageReport::default(),
+            platform_kind,
+            platform_capabilities,
+            restored_session: None,
+        }
+    }
+
+    fn current_process_defaults() -> Self {
+        let platform = tundra_platform::native_platform();
+        Self::clean(platform.kind(), platform.capabilities())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ShellStartupError {
+    Platform(PlatformError),
+    Storage(StorageError),
+}
+
+impl std::fmt::Display for ShellStartupError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Platform(error) => write!(formatter, "startup platform error: {error}"),
+            Self::Storage(error) => write!(formatter, "startup storage error: {error}"),
+        }
+    }
+}
+
+impl std::error::Error for ShellStartupError {}
+
+impl From<PlatformError> for ShellStartupError {
+    fn from(value: PlatformError) -> Self {
+        Self::Platform(value)
+    }
+}
+
+impl From<StorageError> for ShellStartupError {
+    fn from(value: StorageError) -> Self {
+        Self::Storage(value)
+    }
+}
+
+pub fn prepare_shell_startup(
+    platform: &dyn Platform,
+    launch_config: ShellLaunchConfig,
+) -> Result<ShellStartupState, ShellStartupError> {
+    let _ = launch_config;
+    let platform_kind = platform.kind();
+    let platform_capabilities = platform.capabilities();
+    let storage_open = StorageManager::open_from_platform(platform)?;
+    let app_paths = app_paths_from_storage_layout(storage_open.manager.layout())?;
+    let storage_config = storage_open.manager.load_config()?;
+    let sessions = storage_open.manager.load_sessions()?;
+    let storage_report =
+        ShellStorageReport::from_storage_load_report(Some(app_paths), storage_open.report);
+
+    Ok(ShellStartupState {
+        app_config: ShellAppConfig::from_storage_config(&storage_config),
+        storage_report,
+        platform_kind,
+        platform_capabilities,
+        restored_session: restored_session_from_storage(&sessions),
+    })
+}
+
+fn app_paths_from_storage_layout(
+    layout: &tundra_storage::StorageLayout,
+) -> Result<AppPaths, ShellStartupError> {
+    AppPaths::from_parts(
+        layout.config_path.clone(),
+        layout.data_path.clone(),
+        layout.cache_path.clone(),
+        layout.logs_path.clone(),
+        layout.temp_path.clone(),
+    )
+    .map_err(|error| ShellStartupError::Platform(PlatformError::PathResolution(error)))
+}
+
+fn restored_session_from_storage(
+    _sessions: &tundra_storage::SessionsDocument,
+) -> Option<ShellRestoredSession> {
+    None
 }
 
 pub const DOUBLE_CLICK_INTERVAL: Duration = Duration::from_millis(500);
@@ -757,22 +971,26 @@ pub struct ShellState {
     mouse_coordinates: Option<(u16, u16)>,
     mouse_scroll_direction: Option<String>,
     mouse_drag_direction: Option<String>,
+    platform_capability_summary: String,
     last_click: Option<TimedClick>,
     drag_tracker: Option<DragTracker>,
 }
 
 impl ShellState {
     pub fn new(launch_config: ShellLaunchConfig, terminal_size: (u16, u16)) -> Self {
-        let home_mode = match launch_config.home_mode_override {
-            HomeModeOverride::Debug => ShellHomeMode::Debug,
-            HomeModeOverride::BuildDefault => {
-                if cfg!(debug_assertions) {
-                    ShellHomeMode::Debug
-                } else {
-                    ShellHomeMode::User
-                }
-            }
-        };
+        Self::new_with_startup(
+            launch_config,
+            terminal_size,
+            ShellStartupState::current_process_defaults(),
+        )
+    }
+
+    pub fn new_with_startup(
+        launch_config: ShellLaunchConfig,
+        terminal_size: (u16, u16),
+        startup: ShellStartupState,
+    ) -> Self {
+        let home_mode = resolved_home_mode(launch_config, &startup);
 
         let mut state = Self {
             home_mode,
@@ -786,7 +1004,10 @@ impl ShellState {
             hit_map_generation: 0,
             tick_count: 0,
             status_message: "Ready".to_string(),
-            toast_message: None,
+            toast_message: startup
+                .storage_report
+                .has_recovery_warnings()
+                .then(|| "Storage recovered defaults".to_string()),
             error_message: None,
             shutdown_requested: false,
             last_command: None,
@@ -797,11 +1018,49 @@ impl ShellState {
             mouse_coordinates: None,
             mouse_scroll_direction: None,
             mouse_drag_direction: None,
+            platform_capability_summary: platform_capability_summary(
+                startup.platform_kind,
+                &startup.platform_capabilities,
+            ),
             last_click: None,
             drag_tracker: None,
         };
         state.refresh_hit_map();
+        if let Some(restored_session) = startup.restored_session.as_ref() {
+            state.apply_restored_session(restored_session);
+        }
         state
+    }
+
+    pub fn sanitized_session_state(&self) -> ShellRestoredSession {
+        let focused_component = if self.focus_order().contains(&self.focused_component) {
+            self.focused_component
+        } else {
+            self.focus_order()
+                .first()
+                .copied()
+                .unwrap_or(ShellComponent::Home)
+        };
+
+        ShellRestoredSession {
+            active_screen: ShellScreen::Home,
+            focused_component,
+            display_mode: self.home_mode,
+            active_popup: None,
+        }
+    }
+
+    fn legacy_default_home_mode(launch_config: ShellLaunchConfig) -> ShellHomeMode {
+        match launch_config.home_mode_override {
+            HomeModeOverride::Debug => ShellHomeMode::Debug,
+            HomeModeOverride::BuildDefault => {
+                if cfg!(debug_assertions) {
+                    ShellHomeMode::Debug
+                } else {
+                    ShellHomeMode::User
+                }
+            }
+        }
     }
 
     pub fn new_for_home_mode(
@@ -826,6 +1085,7 @@ impl ShellState {
                     scroll_direction: self.mouse_scroll_direction.clone(),
                     drag_direction: self.mouse_drag_direction.clone(),
                     terminal_flags: terminal_flag_labels(self.terminal_flags),
+                    platform_capability_summary: self.platform_capability_summary.clone(),
                 })
             }
             ShellHomeMode::User => {
@@ -1044,6 +1304,10 @@ impl ShellState {
 
     pub fn mouse_drag_direction(&self) -> Option<&str> {
         self.mouse_drag_direction.as_deref()
+    }
+
+    pub fn platform_capability_summary(&self) -> &str {
+        &self.platform_capability_summary
     }
 
     pub fn focused_component(&self) -> ShellComponent {
@@ -1449,6 +1713,19 @@ impl ShellState {
         }
     }
 
+    fn apply_restored_session(&mut self, session: &ShellRestoredSession) {
+        self.screen_stack = vec![ShellScreen::Home];
+        self.active_popup = None;
+
+        let focus_order = self.focus_order();
+        self.focused_component = if focus_order.contains(&session.focused_component) {
+            session.focused_component
+        } else {
+            focus_order.first().copied().unwrap_or(ShellComponent::Home)
+        };
+        self.refresh_hit_map();
+    }
+
     fn pop_to_home(&mut self) {
         self.screen_stack.truncate(1);
         if self.screen_stack.is_empty() {
@@ -1683,6 +1960,38 @@ fn terminal_flag_labels(flags: ShellTerminalFlags) -> Vec<String> {
     }
 
     labels
+}
+
+fn resolved_home_mode(
+    launch_config: ShellLaunchConfig,
+    startup: &ShellStartupState,
+) -> ShellHomeMode {
+    match launch_config.home_mode_override {
+        HomeModeOverride::Debug => ShellHomeMode::Debug,
+        HomeModeOverride::BuildDefault => startup
+            .restored_session
+            .as_ref()
+            .map(|session| session.display_mode)
+            .or(startup.app_config.home_mode)
+            .unwrap_or_else(|| ShellState::legacy_default_home_mode(launch_config)),
+    }
+}
+
+fn platform_capability_summary(kind: PlatformKind, capabilities: &PlatformCapabilities) -> String {
+    let (mut supported, mut best_effort, mut unsupported) = (0, 0, 0);
+
+    for (_, status) in capabilities.checks() {
+        match status {
+            CapabilityStatus::Supported => supported += 1,
+            CapabilityStatus::BestEffort => best_effort += 1,
+            CapabilityStatus::Unsupported => unsupported += 1,
+        }
+    }
+
+    format!(
+        "{}: {supported} supported, {best_effort} best-effort, {unsupported} unsupported",
+        kind.as_str()
+    )
 }
 
 fn build_mode_label() -> &'static str {
@@ -1925,11 +2234,14 @@ pub fn run_fullscreen_blocking(
     config: ShellLaunchConfig,
 ) -> io::Result<()> {
     SHELL_RUNNING.store(true, Ordering::SeqCst);
+    let platform = tundra_platform::native_platform();
+    let startup = prepare_shell_startup(platform.as_ref(), config)
+        .map_err(|error| io::Error::new(io::ErrorKind::Other, error))?;
     install_panic_restore_hook();
     let _handler = ConsoleControlHandler::install();
     let mut guard = TerminalGuard::enter(output)?;
     let initial_size = crossterm::terminal::size().unwrap_or((80, 24));
-    let mut state = ShellState::new(config, initial_size);
+    let mut state = ShellState::new_with_startup(config, initial_size, startup);
     let tick_rate = Duration::from_millis(250);
     let theme = tundra_ui::TundraTheme::default_dark();
 
@@ -2185,6 +2497,19 @@ mod tests {
                 })
             );
         }
+    }
+
+    #[test]
+    fn platform_capability_summary_counts_native_supported_capabilities() {
+        let summary = platform_capability_summary(
+            PlatformKind::Windows,
+            &PlatformCapabilities::native_supported(),
+        );
+
+        assert_eq!(
+            summary,
+            "Windows: 10 supported, 0 best-effort, 3 unsupported"
+        );
     }
 }
 

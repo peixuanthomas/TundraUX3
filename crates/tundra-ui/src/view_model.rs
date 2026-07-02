@@ -46,6 +46,7 @@ pub struct DebugDiagnosticsViewModel {
     pub scroll_direction: Option<String>,
     pub drag_direction: Option<String>,
     pub terminal_flags: Vec<String>,
+    pub platform_capability_summary: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

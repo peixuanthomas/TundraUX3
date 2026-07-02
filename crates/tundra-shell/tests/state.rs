@@ -1,8 +1,10 @@
 use std::time::{Duration, Instant};
 
+use tundra_platform::{CapabilityStatus, PlatformCapabilities, PlatformKind};
 use tundra_shell::{
     ClickKind, HomeModeOverride, InputEvent, PointerButton, ScrollDirection, ShellAction,
-    ShellCommand, ShellComponent, ShellHomeMode, ShellLaunchConfig, ShellScreen, ShellState,
+    ShellAppConfig, ShellCommand, ShellComponent, ShellHomeMode, ShellLaunchConfig,
+    ShellRestoredSession, ShellScreen, ShellStartupState, ShellState, ShellStorageReport,
     ShellTerminalMode, default_shell_shortcuts, detect_shortcut_conflicts,
 };
 use tundra_ui::HomeDisplayMode;
@@ -374,6 +376,15 @@ fn debug_state_builds_debug_home_view_model() {
     let diagnostics = home.diagnostics().expect("debug diagnostics");
     assert_eq!(diagnostics.tick_count, 1);
     assert_eq!(diagnostics.last_key_event.as_deref(), Some("x"));
+    assert_eq!(
+        diagnostics.platform_capability_summary,
+        state.platform_capability_summary()
+    );
+    assert!(
+        diagnostics
+            .platform_capability_summary
+            .contains("supported")
+    );
 }
 
 #[test]
@@ -459,4 +470,105 @@ fn state_builds_shell_chrome_view_model() {
     assert_eq!(chrome.status.status, "Confirm exit");
     assert_eq!(chrome.status.toast, None);
     assert_eq!(chrome.status.error, None);
+}
+
+#[test]
+fn new_with_startup_clean_storage_starts_ready_without_toast() {
+    let startup = ShellStartupState::clean(
+        PlatformKind::Windows,
+        PlatformCapabilities::native_supported(),
+    );
+
+    let state = ShellState::new_with_startup(debug_config(), (120, 40), startup);
+    let chrome = state.to_shell_chrome_view_model();
+
+    assert_eq!(state.status(), "Ready");
+    assert_eq!(chrome.status.toast, None);
+    assert_eq!(chrome.status.error, None);
+}
+
+#[test]
+fn new_with_startup_recovery_warning_surfaces_toast() {
+    let mut startup = ShellStartupState::clean(
+        PlatformKind::Windows,
+        PlatformCapabilities::native_supported(),
+    );
+    startup.storage_report = ShellStorageReport::recovered_defaults(None);
+
+    let state = ShellState::new_with_startup(debug_config(), (120, 40), startup);
+    let chrome = state.to_shell_chrome_view_model();
+
+    assert_eq!(state.status(), "Ready");
+    assert_eq!(
+        chrome.status.toast.as_deref(),
+        Some("Storage recovered defaults")
+    );
+}
+
+#[test]
+fn debug_diagnostics_use_injected_platform_summary() {
+    let mut capabilities = PlatformCapabilities::unsupported();
+    capabilities.app_paths = CapabilityStatus::Supported;
+    let startup = ShellStartupState::clean(PlatformKind::Macos, capabilities);
+
+    let state = ShellState::new_with_startup(debug_config(), (120, 40), startup);
+    let home = state.to_home_view_model();
+
+    let diagnostics = home.diagnostics().expect("debug diagnostics");
+    assert_eq!(
+        diagnostics.platform_capability_summary,
+        "macOS: 1 supported, 0 best-effort, 12 unsupported"
+    );
+}
+
+#[test]
+fn debug_override_wins_over_persisted_config_and_session() {
+    let startup = ShellStartupState {
+        app_config: ShellAppConfig {
+            home_mode: Some(ShellHomeMode::User),
+        },
+        storage_report: ShellStorageReport::default(),
+        platform_kind: PlatformKind::Windows,
+        platform_capabilities: PlatformCapabilities::native_supported(),
+        restored_session: Some(ShellRestoredSession::new(
+            ShellHomeMode::User,
+            ShellComponent::StatusBar,
+        )),
+    };
+
+    let state = ShellState::new_with_startup(debug_config(), (120, 40), startup);
+
+    assert_eq!(state.home_mode(), ShellHomeMode::Debug);
+}
+
+#[test]
+fn restored_session_is_sanitized_to_stable_home_state() {
+    let startup = ShellStartupState {
+        app_config: ShellAppConfig::default(),
+        storage_report: ShellStorageReport::default(),
+        platform_kind: PlatformKind::Windows,
+        platform_capabilities: PlatformCapabilities::native_supported(),
+        restored_session: Some(ShellRestoredSession {
+            active_screen: ShellScreen::ExitConfirm,
+            focused_component: ShellComponent::ExitDialog,
+            display_mode: ShellHomeMode::User,
+            active_popup: Some(tundra_shell::ShellPopup {
+                owner: Some(ShellComponent::Home),
+                anchor: (4, 4),
+            }),
+        }),
+    };
+
+    let state = ShellState::new_with_startup(build_default_config(), (120, 40), startup);
+    let saved = state.sanitized_session_state();
+
+    assert_eq!(state.home_mode(), ShellHomeMode::User);
+    assert_eq!(state.active_screen(), ShellScreen::Home);
+    assert_eq!(state.screen_stack(), &[ShellScreen::Home][..]);
+    assert_eq!(state.focused_component(), ShellComponent::Home);
+    assert_eq!(state.active_popup(), None);
+    assert_eq!(saved.active_screen, ShellScreen::Home);
+    assert_eq!(saved.focused_component, ShellComponent::Home);
+    assert_eq!(saved.display_mode, ShellHomeMode::User);
+    assert_eq!(saved.active_popup, None);
 }

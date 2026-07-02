@@ -1,8 +1,11 @@
+use ratatui::Terminal;
+use ratatui::backend::TestBackend;
 use ratatui::layout::Rect;
 use ratatui::style::Color;
 use tundra_ui::{
-    DebugDiagnosticsViewModel, ExitConfirmViewModel, HomeDisplayMode, HomeViewModel, ShellEntry,
-    ShellLayout, StatusViewModel, TundraTheme, compute_shell_layout,
+    DebugDiagnosticsViewModel, ExitConfirmViewModel, HomeDisplayMode, HomeViewModel,
+    ShellChromeViewModel, ShellEntry, ShellLayout, StatusViewModel, TundraTheme,
+    compute_shell_layout, render_home,
 };
 
 #[test]
@@ -16,6 +19,8 @@ fn debug_home_exposes_diagnostics_and_no_entries() {
         scroll_direction: Some("up".to_string()),
         drag_direction: Some("Right".to_string()),
         terminal_flags: vec!["alternate-screen".to_string(), "mouse-capture".to_string()],
+        platform_capability_summary: "Windows: 10 supported, 0 best-effort, 3 unsupported"
+            .to_string(),
     };
 
     let home = HomeViewModel::debug(diagnostics.clone());
@@ -23,6 +28,57 @@ fn debug_home_exposes_diagnostics_and_no_entries() {
     assert_eq!(home.display_mode(), HomeDisplayMode::Debug);
     assert_eq!(home.diagnostics(), Some(&diagnostics));
     assert!(home.entries().is_empty());
+}
+
+#[test]
+fn debug_home_renders_platform_capability_summary() {
+    let diagnostics = DebugDiagnosticsViewModel {
+        tick_count: 0,
+        last_key_event: None,
+        last_mouse_event: None,
+        last_resize_event: None,
+        mouse_coordinates: None,
+        scroll_direction: None,
+        drag_direction: None,
+        terminal_flags: Vec::new(),
+        platform_capability_summary: "Windows: 10 supported, 0 best-effort, 3 unsupported"
+            .to_string(),
+    };
+    let home = HomeViewModel::debug(diagnostics);
+    let chrome = ShellChromeViewModel {
+        app_name: "TundraUX 3".to_string(),
+        build_mode: "debug".to_string(),
+        display_mode: HomeDisplayMode::Debug,
+        terminal_size: (100, 30),
+        screen_stack: vec!["Home".to_string()],
+        status: StatusViewModel {
+            status: "Ready".to_string(),
+            toast: None,
+            error: None,
+        },
+    };
+    let mut terminal = Terminal::new(TestBackend::new(100, 30)).expect("test terminal");
+
+    terminal
+        .draw(|frame| {
+            render_home(
+                frame,
+                frame.area(),
+                &chrome,
+                &home,
+                &TundraTheme::default_dark(),
+            );
+        })
+        .expect("render home");
+
+    let output: String = terminal
+        .backend()
+        .buffer()
+        .content()
+        .iter()
+        .map(|cell| cell.symbol())
+        .collect();
+    assert!(output.contains("Platform capabilities: Windows: 10 supported"));
 }
 
 #[test]

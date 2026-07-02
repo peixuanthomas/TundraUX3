@@ -1,37 +1,105 @@
-use std::path::PathBuf;
+use std::fs;
+use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use tundra_platform::mock::{MockCall, MockPlatform, UnsupportedPlatform};
 use tundra_platform::{
-    AppPaths, CheckStatus, WindowsBuildClass, check_directory_read_write, classify_windows_build,
-    is_windows_terminal_session,
+    AppPaths, CapabilityStatus, CheckStatus, Platform, PlatformError, PlatformKind, ProcessSpec,
+    UserDirs, build_binary_dir_app_paths, build_macos_app_paths, build_windows_app_paths,
+    check_directory_read_write, classify_windows_build, cleanup_temp_path, create_temp_dir,
+    create_temp_file, is_windows_terminal_session, run_doctor_with, validate_process_spec,
 };
 
 #[test]
-fn app_paths_are_scoped_to_binary_directory() {
-    let base = unique_temp_root("binary-dir");
-    let binary_dir = base.join("bin");
-    std::fs::create_dir_all(&binary_dir).expect("binary directory should be creatable");
+fn windows_app_paths_follow_roaming_local_and_temp_roots() {
+    let base = unique_temp_root("windows-native-paths");
+    let roaming = base.join("Roaming");
+    let local = base.join("Local");
+    let temp = base.join("Temp");
 
-    let paths = AppPaths::from_binary_dir(&binary_dir)
-        .expect("absolute fake binary directory should resolve");
+    let paths = build_windows_app_paths(&roaming, &local, &temp)
+        .expect("absolute Windows roots should resolve");
 
     assert_eq!(
         paths.config_path(),
-        binary_dir.join("TundraUX3").join("config.toml").as_path()
+        roaming.join("TundraUX3").join("config.toml").as_path()
     );
     assert_eq!(
         paths.data_path(),
-        binary_dir.join("TundraUX3").join("state").as_path()
+        local.join("TundraUX3").join("state").as_path()
     );
     assert_eq!(
         paths.cache_path(),
-        binary_dir.join("TundraUX3").join("cache").as_path()
+        local.join("TundraUX3").join("cache").as_path()
     );
-    assert_binary_dir_template(AppPaths::CONFIG_TEMPLATE, "config.toml");
-    assert_binary_dir_template(AppPaths::DATA_TEMPLATE, "state");
-    assert_binary_dir_template(AppPaths::CACHE_TEMPLATE, "cache");
+    assert_eq!(
+        paths.logs_path(),
+        local.join("TundraUX3").join("logs").as_path()
+    );
+    assert_eq!(paths.temp_path(), temp.join("TundraUX3").as_path());
+}
 
-    std::fs::remove_dir_all(base).expect("test directory should be removable");
+#[test]
+fn macos_app_paths_follow_library_and_temp_roots() {
+    let base = unique_temp_root("macos-native-paths");
+    let home = base.join("Users").join("tundra");
+    let temp = base.join("Tmp");
+
+    let paths = build_macos_app_paths(&home, &temp).expect("absolute macOS roots should resolve");
+    let app_support = home
+        .join("Library")
+        .join("Application Support")
+        .join("TundraUX3");
+
+    assert_eq!(
+        paths.config_path(),
+        app_support.join("config.toml").as_path()
+    );
+    assert_eq!(paths.data_path(), app_support.join("state").as_path());
+    assert_eq!(
+        paths.cache_path(),
+        home.join("Library")
+            .join("Caches")
+            .join("TundraUX3")
+            .as_path()
+    );
+    assert_eq!(
+        paths.logs_path(),
+        home.join("Library")
+            .join("Logs")
+            .join("TundraUX3")
+            .as_path()
+    );
+    assert_eq!(paths.temp_path(), temp.join("TundraUX3").as_path());
+}
+
+#[test]
+fn native_path_builders_reject_relative_roots() {
+    let absolute = unique_temp_root("absolute-root");
+
+    let windows_error = build_windows_app_paths("relative-roaming", &absolute, &absolute)
+        .expect_err("relative roaming app data should fail");
+    assert_relative_error_mentions(windows_error, "roaming app data");
+
+    let macos_error = build_macos_app_paths("relative-home", &absolute)
+        .expect_err("relative home directory should fail");
+    assert_relative_error_mentions(macos_error, "home directory");
+}
+
+#[test]
+fn binary_dir_app_paths_remain_available_for_portable_mode() {
+    let base = unique_temp_root("binary-dir");
+    let binary_dir = base.join("bin");
+
+    let paths = build_binary_dir_app_paths(&binary_dir)
+        .expect("absolute fake binary directory should resolve");
+    let app_dir = binary_dir.join("TundraUX3");
+
+    assert_eq!(paths.config_path(), app_dir.join("config.toml").as_path());
+    assert_eq!(paths.data_path(), app_dir.join("state").as_path());
+    assert_eq!(paths.cache_path(), app_dir.join("cache").as_path());
+    assert_eq!(paths.logs_path(), app_dir.join("logs").as_path());
+    assert_eq!(paths.temp_path(), app_dir.join("temp").as_path());
 }
 
 #[test]
@@ -49,11 +117,272 @@ fn app_paths_reject_relative_binary_directory() {
     assert!(!message.contains("localappdata"));
 }
 
+#[cfg(windows)]
+#[test]
+fn app_path_templates_use_windows_native_placeholders() {
+    assert_eq!(
+        AppPaths::CONFIG_TEMPLATE,
+        r"%APPDATA%\TundraUX3\config.toml"
+    );
+    assert_eq!(AppPaths::DATA_TEMPLATE, r"%LOCALAPPDATA%\TundraUX3\state");
+    assert_eq!(AppPaths::CACHE_TEMPLATE, r"%LOCALAPPDATA%\TundraUX3\cache");
+    assert_eq!(AppPaths::LOGS_TEMPLATE, r"%LOCALAPPDATA%\TundraUX3\logs");
+    assert_eq!(AppPaths::TEMP_TEMPLATE, r"%TEMP%\TundraUX3");
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn app_path_templates_use_macos_native_locations() {
+    assert_eq!(
+        AppPaths::CONFIG_TEMPLATE,
+        "~/Library/Application Support/TundraUX3/config.toml"
+    );
+    assert_eq!(
+        AppPaths::DATA_TEMPLATE,
+        "~/Library/Application Support/TundraUX3/state"
+    );
+    assert_eq!(AppPaths::CACHE_TEMPLATE, "~/Library/Caches/TundraUX3");
+    assert_eq!(AppPaths::LOGS_TEMPLATE, "~/Library/Logs/TundraUX3");
+    assert_eq!(AppPaths::TEMP_TEMPLATE, "<temp-dir>/TundraUX3");
+}
+
+#[cfg(not(any(windows, target_os = "macos")))]
+#[test]
+fn app_path_templates_mark_unsupported_platforms() {
+    assert_eq!(
+        AppPaths::CONFIG_TEMPLATE,
+        "<unsupported>/TundraUX3/config.toml"
+    );
+    assert_eq!(AppPaths::DATA_TEMPLATE, "<unsupported>/TundraUX3/state");
+    assert_eq!(AppPaths::CACHE_TEMPLATE, "<unsupported>/TundraUX3/cache");
+    assert_eq!(AppPaths::LOGS_TEMPLATE, "<unsupported>/TundraUX3/logs");
+    assert_eq!(AppPaths::TEMP_TEMPLATE, "<unsupported>/TundraUX3/temp");
+}
+
+#[test]
+fn mock_platform_drives_doctor_path_checks() {
+    let base = unique_temp_root("mock-doctor");
+    let platform = mock_platform(&base).with_kind(PlatformKind::Macos);
+
+    let report = run_doctor_with(&platform).expect("mock platform doctor should run");
+
+    assert_eq!(report.platform_kind, PlatformKind::Macos);
+    assert_eq!(
+        report.app_paths,
+        build_windows_app_paths(base.join("Roaming"), base.join("Local"), base.join("Temp"))
+            .expect("fixture app paths should resolve")
+    );
+    assert_eq!(
+        report
+            .path_checks
+            .iter()
+            .map(|check| check.label.as_str())
+            .collect::<Vec<_>>(),
+        vec![
+            "Config parent",
+            "Data path",
+            "Cache path",
+            "Logs path",
+            "Temp path"
+        ]
+    );
+    assert!(
+        report
+            .path_checks
+            .iter()
+            .all(|check| check.status == CheckStatus::Pass),
+        "mock platform paths should all pass: {:?}",
+        report.path_checks
+    );
+    assert!(
+        report.environment_checks.iter().any(|check| {
+            check.label == "Capability: temp" && check.status == CheckStatus::Pass
+        }),
+        "doctor should report the mock temp capability"
+    );
+    assert!(!base.exists());
+}
+
+#[test]
+fn mock_platform_records_process_clipboard_and_open_calls() {
+    let base = unique_temp_root("mock-calls");
+    let platform = mock_platform(&base);
+    let target = base.join("target.txt");
+    let application = base.join("viewer.exe");
+    let spec = ProcessSpec::new(base.join("program.exe"))
+        .arg("--flag")
+        .env("TUNDRA_TEST", "1")
+        .current_dir(&base);
+
+    platform
+        .open_path(&target)
+        .expect("mock open_path should pass");
+    platform
+        .open_with(&target, &application)
+        .expect("mock open_with should pass");
+    platform
+        .open_uri("tundra://test")
+        .expect("mock open_uri should pass");
+    platform
+        .write_clipboard_text("copied")
+        .expect("mock clipboard write should pass");
+    assert_eq!(
+        platform
+            .read_clipboard_text()
+            .expect("mock clipboard read should pass"),
+        "copied"
+    );
+    platform
+        .spawn_detached(&spec)
+        .expect("mock detached spawn should pass");
+    let exit = platform
+        .spawn_wait(&spec)
+        .expect("mock wait spawn should pass");
+
+    assert_eq!(exit.code, Some(0));
+    assert_eq!(
+        platform.calls(),
+        vec![
+            MockCall::OpenPath(target.clone()),
+            MockCall::OpenWith {
+                path: target,
+                application,
+            },
+            MockCall::OpenUri("tundra://test".to_string()),
+            MockCall::WriteClipboardText("copied".to_string()),
+            MockCall::ReadClipboardText,
+            MockCall::SpawnDetached(spec.clone()),
+            MockCall::SpawnWait(spec),
+        ]
+    );
+}
+
+#[test]
+fn platform_temp_helpers_create_under_app_temp_path_and_cleanup() {
+    let base = unique_temp_root("platform-temp");
+    let platform = mock_platform(&base);
+    let temp_root = platform
+        .app_paths()
+        .expect("mock app paths should resolve")
+        .temp_path()
+        .to_path_buf();
+
+    let file = platform
+        .create_temp_file("mock")
+        .expect("platform should create temp file");
+    let dir = platform
+        .create_temp_dir("mock")
+        .expect("platform should create temp directory");
+
+    assert_eq!(file.parent(), Some(temp_root.as_path()));
+    assert_eq!(dir.parent(), Some(temp_root.as_path()));
+    assert!(file.is_file());
+    assert!(dir.is_dir());
+
+    platform
+        .cleanup_temp_path(&file)
+        .expect("platform should clean temp file");
+    platform
+        .cleanup_temp_path(&dir)
+        .expect("platform should clean temp directory");
+    assert!(!file.exists());
+    assert!(!dir.exists());
+
+    cleanup_temp_path(&base).expect("fixture root should be removable");
+}
+
+#[test]
+fn temp_file_and_dir_helpers_create_unique_paths_and_cleanup() {
+    let base = unique_temp_root("temp-helpers");
+    let temp_root = base.join("TundraUX3");
+
+    let first_file =
+        create_temp_file(&temp_root, "export").expect("first temp file should be created");
+    let second_file =
+        create_temp_file(&temp_root, "export").expect("second temp file should be created");
+    let temp_dir = create_temp_dir(&temp_root, "work").expect("temp directory should be created");
+
+    assert_ne!(first_file, second_file);
+    assert_temp_child(&first_file, &temp_root, "export", "tmp");
+    assert_temp_child(&second_file, &temp_root, "export", "tmp");
+    assert_temp_child(&temp_dir, &temp_root, "work", "dir");
+    assert!(first_file.is_file());
+    assert!(second_file.is_file());
+    assert!(temp_dir.is_dir());
+
+    cleanup_temp_path(&first_file).expect("first temp file should be removable");
+    cleanup_temp_path(&second_file).expect("second temp file should be removable");
+    cleanup_temp_path(&temp_dir).expect("temp directory should be removable");
+    cleanup_temp_path(&base).expect("temp fixture root should be removable");
+    assert!(!base.exists());
+}
+
+#[test]
+fn unsupported_platform_reports_unsupported_capabilities() {
+    let platform = UnsupportedPlatform;
+
+    assert_eq!(platform.kind(), PlatformKind::Unsupported);
+    assert!(
+        platform
+            .capabilities()
+            .checks()
+            .into_iter()
+            .all(|(_, status)| status == CapabilityStatus::Unsupported)
+    );
+
+    match platform
+        .app_paths()
+        .expect_err("unsupported platform should not resolve app paths")
+    {
+        PlatformError::Unsupported { capability } => assert_eq!(capability, "app_paths"),
+        error => panic!("expected unsupported app_paths error, got {error:?}"),
+    }
+}
+
+#[test]
+fn process_policy_rejects_windows_scripts_when_enabled() {
+    for extension in ["cmd", "BAT", "Ps1"] {
+        let spec = ProcessSpec::new(PathBuf::from(format!("script.{extension}")));
+
+        match validate_process_spec(&spec, true)
+            .expect_err("Windows scripts should be rejected when policy is enabled")
+        {
+            PlatformError::ProcessPolicy { message } => {
+                assert!(message.contains("refusing to launch script file"));
+                assert!(message.contains(&format!("script.{extension}")));
+            }
+            error => panic!("expected process policy error, got {error:?}"),
+        }
+    }
+}
+
+#[test]
+fn process_policy_allows_native_programs_and_optional_windows_scripts() {
+    validate_process_spec(&ProcessSpec::new(PathBuf::from("tool.exe")), true)
+        .expect("native program should be allowed");
+    validate_process_spec(&ProcessSpec::new(PathBuf::from("tool")), true)
+        .expect("programs without script extensions should be allowed");
+    validate_process_spec(&ProcessSpec::new(PathBuf::from("script.cmd")), false)
+        .expect("Windows script should be allowed when policy is disabled");
+}
+
+#[test]
+fn process_spec_rejects_empty_program() {
+    match validate_process_spec(&ProcessSpec::new(PathBuf::new()), false)
+        .expect_err("empty process program should fail")
+    {
+        PlatformError::InvalidInput { message } => {
+            assert!(message.contains("must not be empty"));
+        }
+        error => panic!("expected invalid input error, got {error:?}"),
+    }
+}
+
 #[test]
 fn binary_dir_backed_path_checks_pass_and_cleanup_created_app_directory() {
     let base = unique_temp_root("binary-dir-path-checks");
     let binary_dir = base.join("bin");
-    std::fs::create_dir_all(&binary_dir).expect("binary directory should be creatable");
+    fs::create_dir_all(&binary_dir).expect("binary directory should be creatable");
     let paths = AppPaths::from_binary_dir(&binary_dir)
         .expect("absolute fake binary directory should resolve");
     let app_dir = binary_dir.join("TundraUX3");
@@ -67,6 +396,8 @@ fn binary_dir_backed_path_checks_pass_and_cleanup_created_app_directory() {
     );
     let data_check = check_directory_read_write("Data path", paths.data_path());
     let cache_check = check_directory_read_write("Cache path", paths.cache_path());
+    let logs_check = check_directory_read_write("Logs path", paths.logs_path());
+    let temp_check = check_directory_read_write("Temp path", paths.temp_path());
 
     assert_eq!(config_check.status, CheckStatus::Pass);
     assert_eq!(config_check.path, app_dir);
@@ -74,24 +405,28 @@ fn binary_dir_backed_path_checks_pass_and_cleanup_created_app_directory() {
     assert_eq!(data_check.path, paths.data_path());
     assert_eq!(cache_check.status, CheckStatus::Pass);
     assert_eq!(cache_check.path, paths.cache_path());
+    assert_eq!(logs_check.status, CheckStatus::Pass);
+    assert_eq!(logs_check.path, paths.logs_path());
+    assert_eq!(temp_check.status, CheckStatus::Pass);
+    assert_eq!(temp_check.path, paths.temp_path());
     assert!(!app_dir.exists());
 
-    std::fs::remove_dir_all(base).expect("test directory should be removable");
+    fs::remove_dir_all(base).expect("test directory should be removable");
 }
 
 #[test]
 fn windows_11_requires_build_22000() {
     assert_eq!(
-        classify_windows_build(21_999),
-        WindowsBuildClass::UnsupportedWindows
+        format!("{:?}", classify_windows_build(21_999)),
+        "UnsupportedWindows"
     );
     assert_eq!(
-        classify_windows_build(22_000),
-        WindowsBuildClass::Windows11OrNewer
+        format!("{:?}", classify_windows_build(22_000)),
+        "Windows11OrNewer"
     );
     assert_eq!(
-        classify_windows_build(26_100),
-        WindowsBuildClass::Windows11OrNewer
+        format!("{:?}", classify_windows_build(26_100)),
+        "Windows11OrNewer"
     );
 }
 
@@ -118,13 +453,13 @@ fn directory_permission_check_creates_and_removes_probe_file() {
 fn directory_permission_check_preserves_preexisting_directory() {
     let base = unique_temp_root("preexisting");
     let target = base.join("state");
-    std::fs::create_dir_all(&target).expect("preexisting test directory should be creatable");
+    fs::create_dir_all(&target).expect("preexisting test directory should be creatable");
 
     let check = check_directory_read_write("State path", &target);
 
     assert_eq!(check.status, CheckStatus::Pass);
     assert!(target.is_dir());
-    let probe_files: Vec<_> = std::fs::read_dir(&target)
+    let probe_files: Vec<_> = fs::read_dir(&target)
         .expect("target should be readable")
         .filter_map(Result::ok)
         .filter(|entry| {
@@ -136,15 +471,15 @@ fn directory_permission_check_preserves_preexisting_directory() {
         .collect();
     assert!(probe_files.is_empty());
 
-    std::fs::remove_dir_all(base).expect("test directory should be removable");
+    fs::remove_dir_all(base).expect("test directory should be removable");
 }
 
 #[test]
 fn directory_permission_check_fails_when_target_is_a_file() {
     let base = unique_temp_root("file-target");
-    std::fs::create_dir_all(&base).expect("base test directory should be creatable");
+    fs::create_dir_all(&base).expect("base test directory should be creatable");
     let target = base.join("state");
-    std::fs::write(&target, b"not a directory").expect("file target should be writable");
+    fs::write(&target, b"not a directory").expect("file target should be writable");
 
     let check = check_directory_read_write("State path", &target);
 
@@ -152,7 +487,25 @@ fn directory_permission_check_fails_when_target_is_a_file() {
     assert!(check.message.contains("not a directory"));
     assert!(target.is_file());
 
-    std::fs::remove_dir_all(base).expect("test directory should be removable");
+    fs::remove_dir_all(base).expect("test directory should be removable");
+}
+
+fn mock_platform(base: &Path) -> MockPlatform {
+    let user_dirs = UserDirs::new(
+        base.join("Desktop"),
+        base.join("Documents"),
+        base.join("Downloads"),
+        base.join("Pictures"),
+        base.join("Videos"),
+        base.join("Music"),
+        base.join("Roaming"),
+    )
+    .expect("fixture user directories should resolve");
+    let app_paths =
+        build_windows_app_paths(base.join("Roaming"), base.join("Local"), base.join("Temp"))
+            .expect("fixture app paths should resolve");
+
+    MockPlatform::new(user_dirs, app_paths)
 }
 
 fn unique_temp_root(case: &str) -> PathBuf {
@@ -168,17 +521,29 @@ fn unique_temp_root(case: &str) -> PathBuf {
     ))
 }
 
-fn assert_binary_dir_template(template: &str, leaf: &str) {
-    let normalized = template.replace('\\', "/");
+fn assert_relative_error_mentions(error: tundra_platform::PathResolutionError, expected: &str) {
+    let message = error.to_string().to_ascii_lowercase();
 
+    assert!(message.contains("absolute"));
     assert!(
-        normalized.contains("<binary-dir>") || normalized.contains("<executable-dir>"),
-        "template should identify the binary or executable directory: {template}"
+        message.contains(expected),
+        "error should mention {expected}: {message}"
+    );
+}
+
+fn assert_temp_child(path: &Path, temp_root: &Path, prefix: &str, suffix: &str) {
+    assert_eq!(path.parent(), Some(temp_root));
+
+    let file_name = path
+        .file_name()
+        .expect("temp child should have file name")
+        .to_string_lossy();
+    assert!(
+        file_name.starts_with(&format!(".tundraux3-{prefix}-")),
+        "unexpected temp child name: {file_name}"
     );
     assert!(
-        normalized.ends_with(&format!("/TundraUX3/{leaf}")),
-        "template should end in the TundraUX3 app path: {template}"
+        file_name.ends_with(&format!("-{suffix}")),
+        "unexpected temp child name: {file_name}"
     );
-    assert!(!template.contains("APPDATA"));
-    assert!(!template.contains("LOCALAPPDATA"));
 }
