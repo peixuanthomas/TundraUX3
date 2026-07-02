@@ -32,5 +32,6 @@ pub use theme::TundraTheme;
 pub use view_model::{
     AuthField, BootstrapAdminViewModel, DebugDiagnosticsViewModel, ExitConfirmViewModel,
     HomeDisplayMode, HomeViewModel, LoginViewModel, ShellChromeViewModel, ShellEntry,
-    StatusViewModel, UserManagementUserViewModel, UserManagementViewModel,
+    StatusViewModel, UserManagementField, UserManagementFormKind, UserManagementFormViewModel,
+    UserManagementUserViewModel, UserManagementViewModel,
 };

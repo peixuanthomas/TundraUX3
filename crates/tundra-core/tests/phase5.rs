@@ -159,7 +159,24 @@ fn user_service_management_requires_admin_or_debug_session() {
         .expect("admin can create users");
     assert_eq!(created.role, UserRole::User);
 
-    let user_session = session("NormalUser", UserRole::User);
+    let mut normal_login = SessionService::new(manager.clone());
+    let user_session = normal_login
+        .login("NormalUser", "NormalPass123")
+        .expect("normal login");
+    let self_list = users
+        .list_accessible_users(&user_session)
+        .expect("user can list self");
+    assert_eq!(self_list.len(), 1);
+    assert_eq!(self_list[0].username, "NormalUser");
+
+    users
+        .update_user_info(&user_session, "NormalUser", "Updated Normal")
+        .expect("user can update own profile");
+    users
+        .set_user_password(&user_session, "NormalUser", "SelfPass123")
+        .expect("user can update own password");
+    assert!(normal_login.login("NormalUser", "SelfPass123").is_ok());
+
     assert!(matches!(
         users.create_user(
             &user_session,
@@ -170,14 +187,36 @@ fn user_service_management_requires_admin_or_debug_session() {
         ),
         Err(CoreError::PermissionDenied { .. })
     ));
+    assert!(matches!(
+        users.update_user_info(&user_session, "AdminUser", "Denied"),
+        Err(CoreError::PermissionDenied { .. })
+    ));
+    assert!(matches!(
+        users.delete_user(&user_session, "AdminUser"),
+        Err(CoreError::PermissionDenied { .. })
+    ));
 
     users
         .change_role(&admin, "NormalUser", UserRole::Debug)
         .expect("role changes");
+    let debug_session = SessionService::new(manager.clone())
+        .login("NormalUser", "SelfPass123")
+        .expect("debug login");
     users
-        .reset_password(&admin, "NormalUser", "ChangedPass123")
-        .expect("password reset");
-    users.disable_user(&admin, "NormalUser").expect("disable");
+        .create_user(
+            &debug_session,
+            "DebugCreated",
+            "Debug Created",
+            UserRole::User,
+            "DebugPass123",
+        )
+        .expect("debug can create users");
+    users
+        .reset_password(&debug_session, "DebugCreated", "ChangedPass123")
+        .expect("debug can reset password");
+    users
+        .disable_user(&debug_session, "DebugCreated")
+        .expect("debug can disable");
 
     let all = users.list_users(&admin).expect("list users");
     let normal = all
@@ -185,7 +224,92 @@ fn user_service_management_requires_admin_or_debug_session() {
         .find(|user| user.username == "NormalUser")
         .expect("normal user");
     assert_eq!(normal.role, UserRole::Debug);
-    assert!(!normal.enabled);
+    assert!(normal.enabled);
+    assert!(all.iter().any(|user| user.username == "DebugCreated"));
+}
+
+#[test]
+fn delete_user_removes_accounts_but_preserves_last_privileged_user() {
+    let fixture = FixtureRoot::new("delete-users");
+    let manager = storage(fixture.path());
+    let users = UserService::new(manager.clone());
+    users
+        .bootstrap_admin("AdminUser", "StrongPass123")
+        .expect("bootstrap");
+    let mut sessions = SessionService::new(manager.clone());
+    let admin = sessions.login("AdminUser", "StrongPass123").expect("login");
+
+    users
+        .create_user(
+            &admin,
+            "NormalUser",
+            "Normal User",
+            UserRole::User,
+            "NormalPass123",
+        )
+        .expect("admin can create normal");
+    users
+        .create_user(
+            &admin,
+            "SecondAdmin",
+            "Second Admin",
+            UserRole::Admin,
+            "SecondPass123",
+        )
+        .expect("admin can create second admin");
+    users
+        .create_user(
+            &admin,
+            "DebugManager",
+            "Debug Manager",
+            UserRole::Debug,
+            "DebugPass123",
+        )
+        .expect("admin can create debug manager");
+
+    users
+        .delete_user(&admin, "NormalUser")
+        .expect("admin can delete normal user");
+    assert!(
+        !users
+            .list_users(&admin)
+            .expect("users")
+            .iter()
+            .any(|user| user.username == "NormalUser")
+    );
+
+    users
+        .delete_user(&admin, "SecondAdmin")
+        .expect("another enabled admin remains");
+
+    let debug_session = SessionService::new(manager.clone())
+        .login("DebugManager", "DebugPass123")
+        .expect("debug login");
+    users
+        .delete_user(&debug_session, "AdminUser")
+        .expect("debug can delete the last admin when debug remains privileged");
+    assert!(matches!(
+        users.create_user(
+            &admin,
+            "StaleAdminUser",
+            "Stale Admin User",
+            UserRole::User,
+            "StalePass123"
+        ),
+        Err(CoreError::PermissionDenied { .. })
+    ));
+    assert!(matches!(
+        users.delete_user(&debug_session, "DebugManager"),
+        Err(CoreError::LastPrivilegedUserRequired)
+    ));
+    assert!(matches!(
+        users.disable_user(&debug_session, "DebugManager"),
+        Err(CoreError::LastPrivilegedUserRequired)
+    ));
+    assert!(matches!(
+        users.change_role(&debug_session, "DebugManager", UserRole::User),
+        Err(CoreError::LastPrivilegedUserRequired)
+    ));
 }
 
 #[test]

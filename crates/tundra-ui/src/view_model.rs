@@ -116,9 +116,35 @@ impl BootstrapAdminViewModel {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UserManagementUserViewModel {
     pub username: String,
+    pub display_name: String,
     pub role: String,
     pub enabled: bool,
     pub locked: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UserManagementField {
+    Username,
+    DisplayName,
+    Password,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UserManagementFormKind {
+    Create,
+    EditInfo,
+    Password,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UserManagementFormViewModel {
+    pub kind: UserManagementFormKind,
+    pub title: String,
+    pub username: String,
+    pub display_name: String,
+    pub role: String,
+    pub password_len: usize,
+    pub focused_field: UserManagementField,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -127,6 +153,8 @@ pub struct UserManagementViewModel {
     pub users: Vec<UserManagementUserViewModel>,
     pub selected_index: usize,
     pub message: Option<String>,
+    pub can_manage_all: bool,
+    pub form: Option<UserManagementFormViewModel>,
 }
 
 impl UserManagementViewModel {
@@ -135,12 +163,16 @@ impl UserManagementViewModel {
         users: Vec<UserManagementUserViewModel>,
         selected_index: usize,
         message: Option<String>,
+        can_manage_all: bool,
+        form: Option<UserManagementFormViewModel>,
     ) -> Self {
         Self {
             current_user: current_user.into(),
             users,
             selected_index,
             message,
+            can_manage_all,
+            form,
         }
     }
 }

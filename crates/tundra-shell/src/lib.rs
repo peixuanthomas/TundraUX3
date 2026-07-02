@@ -793,6 +793,60 @@ struct DragTracker {
     last_coordinates: CellPosition,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum UserManagementFormField {
+    Username,
+    DisplayName,
+    Password,
+}
+
+impl UserManagementFormField {
+    fn next(self) -> Self {
+        match self {
+            Self::Username => Self::DisplayName,
+            Self::DisplayName => Self::Password,
+            Self::Password => Self::Username,
+        }
+    }
+
+    fn previous(self) -> Self {
+        match self {
+            Self::Username => Self::Password,
+            Self::DisplayName => Self::Username,
+            Self::Password => Self::DisplayName,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct UserManagementCreateForm {
+    username: String,
+    display_name: String,
+    password: String,
+    role: UserRole,
+    focused_field: UserManagementFormField,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct UserManagementInfoForm {
+    username: String,
+    display_name: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct UserManagementPasswordForm {
+    username: String,
+    password: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum UserManagementMode {
+    Browse,
+    Create(UserManagementCreateForm),
+    EditInfo(UserManagementInfoForm),
+    Password(UserManagementPasswordForm),
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ShellCommand {
     Noop,
@@ -812,10 +866,18 @@ pub enum ShellCommand {
     UserManagementNext,
     UserManagementPrevious,
     CreateManagedUser(UserRole),
+    EditManagedUserInfo,
     DisableManagedUser,
     UnlockManagedUser,
     ResetManagedPassword,
     CycleManagedRole,
+    DeleteManagedUser,
+    AppendUserManagementChar(char),
+    UserManagementBackspace,
+    UserManagementFocusNext,
+    UserManagementFocusPrevious,
+    SubmitUserManagementForm,
+    CancelUserManagementForm,
     Hover(Option<ShellComponent>),
     Activate {
         target: ShellComponent,
@@ -1003,6 +1065,7 @@ pub struct ShellState {
     user_management_users: Vec<UserAccount>,
     user_management_selected: usize,
     user_management_message: Option<String>,
+    user_management_mode: UserManagementMode,
     terminal_size: (u16, u16),
     terminal_flags: ShellTerminalFlags,
     focused_component: ShellComponent,
@@ -1073,6 +1136,7 @@ impl ShellState {
             user_management_users: Vec::new(),
             user_management_selected: 0,
             user_management_message: None,
+            user_management_mode: UserManagementMode::Browse,
             terminal_size,
             terminal_flags: ShellTerminalFlags::enabled(),
             focused_component: initial_focus,
@@ -1211,6 +1275,7 @@ impl ShellState {
                 .iter()
                 .map(|user| tundra_ui::UserManagementUserViewModel {
                     username: user.username.clone(),
+                    display_name: user.display_name.clone(),
                     role: user.role.as_str().to_string(),
                     enabled: user.enabled,
                     locked: user
@@ -1221,7 +1286,49 @@ impl ShellState {
                 .collect(),
             self.user_management_selected,
             self.user_management_message.clone(),
+            self.can_manage_all_users(),
+            self.user_management_form_view_model(),
         )
+    }
+
+    fn can_manage_all_users(&self) -> bool {
+        matches!(
+            self.auth_session.as_ref().map(|session| session.role),
+            Some(UserRole::Admin | UserRole::Debug)
+        )
+    }
+
+    fn user_management_form_view_model(&self) -> Option<tundra_ui::UserManagementFormViewModel> {
+        match &self.user_management_mode {
+            UserManagementMode::Browse => None,
+            UserManagementMode::Create(form) => Some(tundra_ui::UserManagementFormViewModel {
+                kind: tundra_ui::UserManagementFormKind::Create,
+                title: "Create user".to_string(),
+                username: form.username.clone(),
+                display_name: form.display_name.clone(),
+                role: form.role.as_str().to_string(),
+                password_len: form.password.chars().count(),
+                focused_field: to_ui_user_management_field(form.focused_field),
+            }),
+            UserManagementMode::EditInfo(form) => Some(tundra_ui::UserManagementFormViewModel {
+                kind: tundra_ui::UserManagementFormKind::EditInfo,
+                title: "Edit user info".to_string(),
+                username: form.username.clone(),
+                display_name: form.display_name.clone(),
+                role: String::new(),
+                password_len: 0,
+                focused_field: tundra_ui::UserManagementField::DisplayName,
+            }),
+            UserManagementMode::Password(form) => Some(tundra_ui::UserManagementFormViewModel {
+                kind: tundra_ui::UserManagementFormKind::Password,
+                title: "Set password".to_string(),
+                username: form.username.clone(),
+                display_name: String::new(),
+                role: String::new(),
+                password_len: form.password.chars().count(),
+                focused_field: tundra_ui::UserManagementField::Password,
+            }),
+        }
     }
 
     pub fn to_shell_chrome_view_model(&self) -> tundra_ui::ShellChromeViewModel {
@@ -1376,37 +1483,19 @@ impl ShellState {
     }
 
     fn open_user_management(&mut self) {
-        let Some(session) = self.auth_session.clone() else {
+        if self.auth_session.is_none() {
             self.error_message = Some("Login required".to_string());
             return;
         };
-        let permission = PermissionService::new(self.debug_policy).authorize(
-            Some(&session),
-            PermissionAction::ManageUsers,
-            None,
-        );
-        if !permission.allowed {
-            let reason = permission
-                .reason
-                .clone()
-                .unwrap_or_else(|| "permission_denied".to_string());
-            if let Some(storage) = self.storage_manager.clone() {
-                let _ = AuditService::new(storage).record(
-                    Some(&session),
-                    PermissionAction::ManageUsers,
-                    None,
-                    AuditOutcome::Denied,
-                    Some(&reason),
-                );
-            }
-            self.error_message = Some(format!("ManageUsers denied: {reason}"));
-            return;
-        }
 
         if self.refresh_user_management().is_ok() {
             self.screen_stack.push(ShellScreen::UserManagement);
             self.focused_component = ShellComponent::UserManagement;
-            self.status_message = "User Management".to_string();
+            self.status_message = if self.can_manage_all_users() {
+                "User Management".to_string()
+            } else {
+                "User Profile".to_string()
+            };
             self.refresh_hit_map();
         }
     }
@@ -1420,8 +1509,8 @@ impl ShellState {
             self.error_message = Some("Login required".to_string());
             return Ok(());
         };
-        let users =
-            UserService::with_debug_policy(storage, self.debug_policy).list_users(session)?;
+        let users = UserService::with_debug_policy(storage, self.debug_policy)
+            .list_accessible_users(session)?;
         self.user_management_users = users;
         if self.user_management_users.is_empty() {
             self.user_management_selected = 0;
@@ -1442,52 +1531,63 @@ impl ShellState {
         self.user_management_selected = next as usize;
     }
 
-    fn create_managed_user(&mut self, role: UserRole) {
-        let Some(storage) = self.storage_manager.clone() else {
-            return;
-        };
-        let Some(session) = self.auth_session.as_ref() else {
-            return;
-        };
-        let index = self.user_management_users.len() + 1;
-        let prefix = match role {
-            UserRole::Admin => "admin",
-            UserRole::Debug => "debug",
-            UserRole::Guest | UserRole::User => "user",
-        };
-        let username = format!("{prefix}{index}");
-        let password = format!("{prefix}Pass{index}123!");
-        let result = UserService::with_debug_policy(storage, self.debug_policy)
-            .create_user(session, &username, &username, role, &password);
-        self.user_management_message = Some(match result {
-            Ok(_) => format!("Created {username}"),
-            Err(error) => format_core_error(&error),
+    fn begin_create_managed_user(&mut self, role: UserRole) {
+        self.user_management_mode = UserManagementMode::Create(UserManagementCreateForm {
+            username: String::new(),
+            display_name: String::new(),
+            password: String::new(),
+            role,
+            focused_field: UserManagementFormField::Username,
         });
-        let _ = self.refresh_user_management();
+        self.user_management_message = None;
+    }
+
+    fn begin_edit_selected_user_info(&mut self) {
+        if let Some(user) = self
+            .user_management_users
+            .get(self.user_management_selected)
+            .cloned()
+        {
+            self.user_management_mode = UserManagementMode::EditInfo(UserManagementInfoForm {
+                username: user.username,
+                display_name: user.display_name,
+            });
+            self.user_management_message = None;
+        }
+    }
+
+    fn begin_set_selected_password(&mut self) {
+        if let Some(username) = self.selected_managed_username() {
+            self.user_management_mode = UserManagementMode::Password(UserManagementPasswordForm {
+                username,
+                password: String::new(),
+            });
+            self.user_management_message = None;
+        }
     }
 
     fn disable_selected_user(&mut self) {
         if let Some(username) = self.selected_managed_username() {
-            self.run_selected_user_operation("Disabled", |service, session| {
+            let current_user = self.is_current_username(&username);
+            let disabled = self.run_selected_user_operation("Disabled", |service, session| {
                 service.disable_user(session, &username)
             });
+            if disabled && current_user {
+                self.return_to_login("Account disabled");
+            }
         }
     }
 
     fn unlock_selected_user(&mut self) {
         if let Some(username) = self.selected_managed_username() {
-            self.run_selected_user_operation("Unlocked", |service, session| {
-                service.unlock_user(session, &username)
+            self.run_selected_user_operation("Enabled/unlocked", |service, session| {
+                service.enable_user(session, &username)
             });
         }
     }
 
     fn reset_selected_password(&mut self) {
-        if let Some(username) = self.selected_managed_username() {
-            self.run_selected_user_operation("Reset password for", |service, session| {
-                service.reset_password(session, &username, "ResetPass123!")
-            });
-        }
+        self.begin_set_selected_password();
     }
 
     fn cycle_selected_role(&mut self) {
@@ -1501,9 +1601,14 @@ impl ShellState {
                     UserRole::Debug => UserRole::User,
                 })
                 .unwrap_or(UserRole::User);
-            self.run_selected_user_operation("Changed role for", |service, session| {
-                service.change_role(session, &username, next_role)
-            });
+            let changed = self
+                .run_selected_user_operation("Changed role for", |service, session| {
+                    service.change_role(session, &username, next_role)
+                });
+            if changed {
+                self.sync_current_session_role();
+                let _ = self.refresh_user_management();
+            }
         }
     }
 
@@ -1511,22 +1616,168 @@ impl ShellState {
         &mut self,
         success_prefix: &'static str,
         operation: impl FnOnce(UserService, &AuthSession) -> Result<(), CoreError>,
-    ) {
+    ) -> bool {
+        let Some(storage) = self.storage_manager.clone() else {
+            return false;
+        };
+        let Some(session) = self.auth_session.as_ref() else {
+            return false;
+        };
+        let username = self
+            .selected_managed_username()
+            .unwrap_or_else(|| "user".to_string());
+        let service = UserService::with_debug_policy(storage, self.debug_policy);
+        let succeeded = match operation(service, session) {
+            Ok(()) => {
+                self.user_management_message = Some(format!("{success_prefix} {username}"));
+                true
+            }
+            Err(error) => {
+                self.user_management_message = Some(format_core_error(&error));
+                false
+            }
+        };
+        let _ = self.refresh_user_management();
+        succeeded
+    }
+
+    fn submit_user_management_form(&mut self) {
         let Some(storage) = self.storage_manager.clone() else {
             return;
         };
         let Some(session) = self.auth_session.as_ref() else {
             return;
         };
-        let username = self
-            .selected_managed_username()
-            .unwrap_or_else(|| "user".to_string());
         let service = UserService::with_debug_policy(storage, self.debug_policy);
-        self.user_management_message = Some(match operation(service, session) {
-            Ok(()) => format!("{success_prefix} {username}"),
-            Err(error) => format_core_error(&error),
-        });
+        match self.user_management_mode.clone() {
+            UserManagementMode::Browse => {}
+            UserManagementMode::Create(form) => {
+                let username = form.username.trim().to_string();
+                let result = service.create_user(
+                    session,
+                    &form.username,
+                    &form.display_name,
+                    form.role,
+                    &form.password,
+                );
+                self.user_management_message = Some(match result {
+                    Ok(account) => {
+                        self.user_management_mode = UserManagementMode::Browse;
+                        format!("Created {}", account.username)
+                    }
+                    Err(error) => format_core_error(&error),
+                });
+                let _ = self.refresh_user_management();
+                if !username.is_empty() {
+                    self.select_managed_username(&username);
+                }
+                return;
+            }
+            UserManagementMode::EditInfo(form) => {
+                let result = service.update_user_info(session, &form.username, &form.display_name);
+                self.user_management_message = Some(match result {
+                    Ok(account) => {
+                        self.user_management_mode = UserManagementMode::Browse;
+                        format!("Updated {}", account.username)
+                    }
+                    Err(error) => format_core_error(&error),
+                });
+            }
+            UserManagementMode::Password(form) => {
+                let result = service.set_user_password(session, &form.username, &form.password);
+                self.user_management_message = Some(match result {
+                    Ok(()) => {
+                        self.user_management_mode = UserManagementMode::Browse;
+                        format!("Updated password for {}", form.username)
+                    }
+                    Err(error) => format_core_error(&error),
+                });
+            }
+        }
         let _ = self.refresh_user_management();
+    }
+
+    fn delete_selected_user(&mut self) {
+        let Some(username) = self.selected_managed_username() else {
+            return;
+        };
+        let Some(storage) = self.storage_manager.clone() else {
+            return;
+        };
+        let Some(session) = self.auth_session.as_ref() else {
+            return;
+        };
+        let deleting_current_user = self.is_current_username(&username);
+        let deleted = match UserService::with_debug_policy(storage, self.debug_policy)
+            .delete_user(session, &username)
+        {
+            Ok(()) => {
+                self.user_management_message = Some(format!("Deleted {username}"));
+                true
+            }
+            Err(error) => {
+                self.user_management_message = Some(format_core_error(&error));
+                false
+            }
+        };
+        if deleted && deleting_current_user {
+            self.return_to_login("Account deleted");
+            return;
+        }
+        let _ = self.refresh_user_management();
+    }
+
+    fn append_user_management_char(&mut self, character: char) {
+        match &mut self.user_management_mode {
+            UserManagementMode::Create(form) => match form.focused_field {
+                UserManagementFormField::Username => form.username.push(character),
+                UserManagementFormField::DisplayName => form.display_name.push(character),
+                UserManagementFormField::Password => form.password.push(character),
+            },
+            UserManagementMode::EditInfo(form) => form.display_name.push(character),
+            UserManagementMode::Password(form) => form.password.push(character),
+            UserManagementMode::Browse => {}
+        }
+    }
+
+    fn user_management_backspace(&mut self) {
+        match &mut self.user_management_mode {
+            UserManagementMode::Create(form) => match form.focused_field {
+                UserManagementFormField::Username => {
+                    form.username.pop();
+                }
+                UserManagementFormField::DisplayName => {
+                    form.display_name.pop();
+                }
+                UserManagementFormField::Password => {
+                    form.password.pop();
+                }
+            },
+            UserManagementMode::EditInfo(form) => {
+                form.display_name.pop();
+            }
+            UserManagementMode::Password(form) => {
+                form.password.pop();
+            }
+            UserManagementMode::Browse => {}
+        }
+    }
+
+    fn move_user_management_form_focus(&mut self, direction: i8) {
+        if let UserManagementMode::Create(form) = &mut self.user_management_mode {
+            form.focused_field = if direction < 0 {
+                form.focused_field.previous()
+            } else {
+                form.focused_field.next()
+            };
+        }
+    }
+
+    fn cancel_user_management_form(&mut self) {
+        if self.user_management_mode != UserManagementMode::Browse {
+            self.user_management_mode = UserManagementMode::Browse;
+            self.user_management_message = Some("Cancelled".to_string());
+        }
     }
 
     fn selected_managed_username(&self) -> Option<String> {
@@ -1535,15 +1786,60 @@ impl ShellState {
             .map(|user| user.username.clone())
     }
 
+    fn select_managed_username(&mut self, username: &str) {
+        if let Some(index) = self
+            .user_management_users
+            .iter()
+            .position(|user| user.username.eq_ignore_ascii_case(username))
+        {
+            self.user_management_selected = index;
+        }
+    }
+
+    fn is_current_username(&self, username: &str) -> bool {
+        self.auth_session
+            .as_ref()
+            .map(|session| session.username.eq_ignore_ascii_case(username))
+            .unwrap_or(false)
+    }
+
+    fn sync_current_session_role(&mut self) {
+        let Some(session) = self.auth_session.as_mut() else {
+            return;
+        };
+        if let Some(user) = self
+            .user_management_users
+            .iter()
+            .find(|user| user.username.eq_ignore_ascii_case(&session.username))
+        {
+            session.role = user.role;
+        }
+    }
+
+    fn return_to_login(&mut self, status: &str) {
+        self.auth_session = None;
+        self.user_management_users.clear();
+        self.user_management_selected = 0;
+        self.user_management_mode = UserManagementMode::Browse;
+        self.login_username.clear();
+        self.login_password.clear();
+        self.screen_stack = vec![ShellScreen::Login];
+        self.focused_component = ShellComponent::LoginUsername;
+        self.status_message = status.to_string();
+        self.refresh_hit_map();
+    }
+
     fn user_home_entries(&self) -> Vec<tundra_ui::ShellEntry> {
         let mut entries = user_home_entries();
-        if matches!(
-            self.auth_session.as_ref().map(|session| session.role),
-            Some(UserRole::Admin | UserRole::Debug)
-        ) {
+        if self.can_manage_all_users() {
             entries.push(tundra_ui::ShellEntry::new(
                 "User Management",
                 "Manage local TundraUX users",
+            ));
+        } else if self.auth_session.is_some() {
+            entries.push(tundra_ui::ShellEntry::new(
+                "User Profile",
+                "Manage your local TundraUX account",
             ));
         }
         entries
@@ -1657,6 +1953,7 @@ impl ShellState {
                 ShellAction::Redraw
             }
             ShellCommand::CloseUserManagement => {
+                self.user_management_mode = UserManagementMode::Browse;
                 self.pop_to_home();
                 self.status_message = "Ready".to_string();
                 self.refresh_hit_map();
@@ -1671,7 +1968,11 @@ impl ShellState {
                 ShellAction::Redraw
             }
             ShellCommand::CreateManagedUser(role) => {
-                self.create_managed_user(role);
+                self.begin_create_managed_user(role);
+                ShellAction::Redraw
+            }
+            ShellCommand::EditManagedUserInfo => {
+                self.begin_edit_selected_user_info();
                 ShellAction::Redraw
             }
             ShellCommand::DisableManagedUser => {
@@ -1688,6 +1989,34 @@ impl ShellState {
             }
             ShellCommand::CycleManagedRole => {
                 self.cycle_selected_role();
+                ShellAction::Redraw
+            }
+            ShellCommand::DeleteManagedUser => {
+                self.delete_selected_user();
+                ShellAction::Redraw
+            }
+            ShellCommand::AppendUserManagementChar(character) => {
+                self.append_user_management_char(character);
+                ShellAction::Redraw
+            }
+            ShellCommand::UserManagementBackspace => {
+                self.user_management_backspace();
+                ShellAction::Redraw
+            }
+            ShellCommand::UserManagementFocusNext => {
+                self.move_user_management_form_focus(1);
+                ShellAction::Redraw
+            }
+            ShellCommand::UserManagementFocusPrevious => {
+                self.move_user_management_form_focus(-1);
+                ShellAction::Redraw
+            }
+            ShellCommand::SubmitUserManagementForm => {
+                self.submit_user_management_form();
+                ShellAction::Redraw
+            }
+            ShellCommand::CancelUserManagementForm => {
+                self.cancel_user_management_form();
                 ShellAction::Redraw
             }
             ShellCommand::Hover(target) => {
@@ -1944,12 +2273,51 @@ impl ShellState {
 
     fn route_user_management_key(&self, key: &KeyInput) -> (RoutedTarget, ShellCommand) {
         let target = RoutedTarget::Component(ShellComponent::UserManagement);
+        if self.user_management_mode != UserManagementMode::Browse {
+            return match &key.key {
+                InputKey::Escape => (target, ShellCommand::CancelUserManagementForm),
+                InputKey::BackTab => (target, ShellCommand::UserManagementFocusPrevious),
+                InputKey::Tab if key.modifiers.shift => {
+                    (target, ShellCommand::UserManagementFocusPrevious)
+                }
+                InputKey::Tab | InputKey::Down => (target, ShellCommand::UserManagementFocusNext),
+                InputKey::Up => (target, ShellCommand::UserManagementFocusPrevious),
+                InputKey::Enter => (target, ShellCommand::SubmitUserManagementForm),
+                InputKey::Backspace => (target, ShellCommand::UserManagementBackspace),
+                InputKey::Character(character) => {
+                    (target, ShellCommand::AppendUserManagementChar(*character))
+                }
+                _ => (target, ShellCommand::RecordInput),
+            };
+        }
+
+        if !self.can_manage_all_users() {
+            return match &key.key {
+                InputKey::Escape => (RoutedTarget::Global, ShellCommand::CloseUserManagement),
+                InputKey::Up => (target, ShellCommand::UserManagementPrevious),
+                InputKey::Down => (target, ShellCommand::UserManagementNext),
+                InputKey::Character('e') | InputKey::Character('E') => {
+                    (target, ShellCommand::EditManagedUserInfo)
+                }
+                InputKey::Character('r') | InputKey::Character('R') => {
+                    (target, ShellCommand::ResetManagedPassword)
+                }
+                InputKey::Character('x') | InputKey::Character('X') | InputKey::Delete => {
+                    (target, ShellCommand::DeleteManagedUser)
+                }
+                _ => (target, ShellCommand::RecordInput),
+            };
+        }
+
         match &key.key {
             InputKey::Escape => (RoutedTarget::Global, ShellCommand::CloseUserManagement),
             InputKey::Up => (target, ShellCommand::UserManagementPrevious),
             InputKey::Down => (target, ShellCommand::UserManagementNext),
             InputKey::Character('n') | InputKey::Character('N') => {
                 (target, ShellCommand::CreateManagedUser(UserRole::User))
+            }
+            InputKey::Character('e') | InputKey::Character('E') => {
+                (target, ShellCommand::EditManagedUserInfo)
             }
             InputKey::Character('a') | InputKey::Character('A') => {
                 (target, ShellCommand::CreateManagedUser(UserRole::Admin))
@@ -1968,6 +2336,9 @@ impl ShellState {
             }
             InputKey::Character('c') | InputKey::Character('C') => {
                 (target, ShellCommand::CycleManagedRole)
+            }
+            InputKey::Character('x') | InputKey::Character('X') | InputKey::Delete => {
+                (target, ShellCommand::DeleteManagedUser)
             }
             _ => (target, ShellCommand::RecordInput),
         }
@@ -2595,10 +2966,22 @@ fn format_core_error(error: &CoreError) -> String {
         CoreError::BootstrapRequired => "Create the first admin account".to_string(),
         CoreError::DuplicateUsername => "Username already exists".to_string(),
         CoreError::InvalidUsername => "Invalid username".to_string(),
+        CoreError::InvalidUserInfo(reason) => format!("Invalid user info: {reason}"),
         CoreError::InvalidPassword(reason) => format!("Invalid password: {reason}"),
+        CoreError::LastPrivilegedUserRequired => {
+            "At least one enabled admin or debug user is required".to_string()
+        }
         CoreError::PermissionDenied { reason, .. } => format!("Permission denied: {reason}"),
         CoreError::UserNotFound => "User not found".to_string(),
         other => other.to_string(),
+    }
+}
+
+fn to_ui_user_management_field(field: UserManagementFormField) -> tundra_ui::UserManagementField {
+    match field {
+        UserManagementFormField::Username => tundra_ui::UserManagementField::Username,
+        UserManagementFormField::DisplayName => tundra_ui::UserManagementField::DisplayName,
+        UserManagementFormField::Password => tundra_ui::UserManagementField::Password,
     }
 }
 

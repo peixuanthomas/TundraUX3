@@ -116,7 +116,7 @@ fn restart_requires_login_and_bad_password_stays_on_login() {
 }
 
 #[test]
-fn admin_can_open_user_management_and_user_cannot() {
+fn admin_can_manage_users_and_user_can_only_open_own_profile() {
     let fixture = FixtureRoot::new("manage-users");
     let platform = mock_platform(fixture.path());
     bootstrap_with_shell(&platform);
@@ -128,6 +128,12 @@ fn admin_can_open_user_management_and_user_cannot() {
     assert_eq!(admin_state.active_screen(), ShellScreen::UserManagement);
 
     admin_state.apply_input(InputEvent::from_key_label("n"));
+    type_text(&mut admin_state, "user2");
+    admin_state.apply_input(InputEvent::from_key_label("Tab"));
+    type_text(&mut admin_state, "User Two");
+    admin_state.apply_input(InputEvent::from_key_label("Tab"));
+    type_text(&mut admin_state, "userPass2123!");
+    admin_state.apply_input(InputEvent::from_key_label("Enter"));
     assert_eq!(
         admin_state
             .to_user_management_view_model()
@@ -145,7 +151,64 @@ fn admin_can_open_user_management_and_user_cannot() {
     assert_eq!(user_state.home_mode(), ShellHomeMode::User);
 
     user_state.apply_input(InputEvent::from_key_label("u"));
-    assert_eq!(user_state.active_screen(), ShellScreen::Home);
+    assert_eq!(user_state.active_screen(), ShellScreen::UserManagement);
+    let profile = user_state.to_user_management_view_model();
+    assert!(!profile.can_manage_all);
+    assert_eq!(profile.users.len(), 1);
+    assert_eq!(profile.users[0].username, "user2");
+}
+
+#[test]
+fn user_management_forms_edit_password_and_delete_accounts() {
+    let fixture = FixtureRoot::new("user-management-forms");
+    let platform = mock_platform(fixture.path());
+    bootstrap_with_shell(&platform);
+
+    let startup = prepare_shell_startup(&platform, default_config()).expect("admin startup");
+    let mut state = ShellState::new_with_startup(default_config(), (120, 40), startup);
+    login(&mut state, "AdminUser", "StrongPass123");
+    state.apply_input(InputEvent::from_key_label("u"));
+
+    state.apply_input(InputEvent::from_key_label("n"));
+    type_text(&mut state, "deleteme");
+    state.apply_input(InputEvent::from_key_label("Tab"));
+    type_text(&mut state, "Delete Me");
+    state.apply_input(InputEvent::from_key_label("Tab"));
+    type_text(&mut state, "deletePass123!");
+    state.apply_input(InputEvent::from_key_label("Enter"));
+    assert!(
+        state
+            .to_user_management_view_model()
+            .users
+            .iter()
+            .any(|user| user.username == "deleteme")
+    );
+
+    state.apply_input(InputEvent::from_key_label("e"));
+    for _ in 0.."Delete Me".len() {
+        state.apply_input(InputEvent::from_key_label("Backspace"));
+    }
+    type_text(&mut state, "Deleted User");
+    state.apply_input(InputEvent::from_key_label("Enter"));
+    assert!(
+        state
+            .to_user_management_view_model()
+            .users
+            .iter()
+            .any(|user| user.username == "deleteme" && user.display_name == "Deleted User")
+    );
+
+    state.apply_input(InputEvent::from_key_label("r"));
+    type_text(&mut state, "ChangedPass123!");
+    state.apply_input(InputEvent::from_key_label("Enter"));
+    state.apply_input(InputEvent::from_key_label("x"));
+    assert!(
+        !state
+            .to_user_management_view_model()
+            .users
+            .iter()
+            .any(|user| user.username == "deleteme")
+    );
 }
 
 fn bootstrap_with_shell(platform: &MockPlatform) {

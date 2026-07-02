@@ -5,7 +5,8 @@ use ratatui::widgets::{Block, Borders, Clear, Paragraph, Wrap};
 
 use crate::{
     AuthField, BootstrapAdminViewModel, ExitConfirmViewModel, HomeDisplayMode, HomeViewModel,
-    LoginViewModel, ShellChromeViewModel, ShellLayout, TundraTheme, UserManagementViewModel,
+    LoginViewModel, ShellChromeViewModel, ShellLayout, TundraTheme, UserManagementField,
+    UserManagementFormKind, UserManagementFormViewModel, UserManagementViewModel,
     compute_shell_layout,
 };
 
@@ -91,6 +92,11 @@ pub fn render_user_management(
         ShellLayout::Full { top, main, status } => {
             render_top(frame, top, chrome, theme);
             let mut lines = vec![Line::from(format!("Current user: {}", model.current_user))];
+            lines.push(Line::from(if model.can_manage_all {
+                "N: new user    A: new admin    G: new debug    E: edit info    R: password    D: disable    U: enable/unlock    C: role    X/Delete: delete    Esc: back"
+            } else {
+                "E: edit info    R: password    X/Delete: delete account    Esc: back"
+            }));
             lines.push(Line::from(""));
             for (index, user) in model.users.iter().enumerate() {
                 let marker = if index == model.selected_index {
@@ -101,9 +107,13 @@ pub fn render_user_management(
                 let enabled = if user.enabled { "enabled" } else { "disabled" };
                 let locked = if user.locked { " locked" } else { "" };
                 lines.push(Line::from(format!(
-                    "{marker} {} | {} | {enabled}{locked}",
-                    user.username, user.role
+                    "{marker} {} ({}) | {} | {enabled}{locked}",
+                    user.username, user.display_name, user.role
                 )));
+            }
+            if let Some(form) = &model.form {
+                lines.push(Line::from(""));
+                lines.extend(user_management_form_lines(form));
             }
             if let Some(message) = &model.message {
                 lines.push(Line::from(""));
@@ -121,6 +131,50 @@ pub fn render_user_management(
             render_status(frame, status, chrome, theme);
         }
     }
+}
+
+fn user_management_form_lines(form: &UserManagementFormViewModel) -> Vec<Line<'static>> {
+    let mut lines = vec![
+        Line::from(form.title.clone()),
+        Line::from("Tab / Down: next    Shift+Tab / Up: previous    Enter: submit    Esc: cancel"),
+    ];
+    match form.kind {
+        UserManagementFormKind::Create => {
+            lines.push(Line::from(format!(
+                "{}Username: {}",
+                focus_marker(form.focused_field == UserManagementField::Username),
+                form.username
+            )));
+            lines.push(Line::from(format!(
+                "{}Display name: {}",
+                focus_marker(form.focused_field == UserManagementField::DisplayName),
+                form.display_name
+            )));
+            lines.push(Line::from(format!(
+                "{}Password: {}",
+                focus_marker(form.focused_field == UserManagementField::Password),
+                "*".repeat(form.password_len)
+            )));
+            lines.push(Line::from(format!("Role: {}", form.role)));
+        }
+        UserManagementFormKind::EditInfo => {
+            lines.push(Line::from(format!("Username: {}", form.username)));
+            lines.push(Line::from(format!(
+                "{}Display name: {}",
+                focus_marker(form.focused_field == UserManagementField::DisplayName),
+                form.display_name
+            )));
+        }
+        UserManagementFormKind::Password => {
+            lines.push(Line::from(format!("Username: {}", form.username)));
+            lines.push(Line::from(format!(
+                "{}Password: {}",
+                focus_marker(form.focused_field == UserManagementField::Password),
+                "*".repeat(form.password_len)
+            )));
+        }
+    }
+    lines
 }
 
 fn render_auth_screen(

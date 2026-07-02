@@ -58,6 +58,7 @@ pub enum PermissionAction {
     DeleteFile,
     MoveFile,
     OpenExternal,
+    ManageOwnUser,
     ManageUsers,
     ViewAuditLog,
     ChangeSettings,
@@ -74,6 +75,7 @@ impl PermissionAction {
             Self::DeleteFile => "DeleteFile",
             Self::MoveFile => "MoveFile",
             Self::OpenExternal => "OpenExternal",
+            Self::ManageOwnUser => "ManageOwnUser",
             Self::ManageUsers => "ManageUsers",
             Self::ViewAuditLog => "ViewAuditLog",
             Self::ChangeSettings => "ChangeSettings",
@@ -198,6 +200,7 @@ pub enum CoreError {
     Json(String),
     PasswordHash(String),
     InvalidUsername,
+    InvalidUserInfo(String),
     InvalidPassword(String),
     BootstrapAlreadyExists,
     BootstrapRequired,
@@ -212,6 +215,7 @@ pub enum CoreError {
         action: PermissionAction,
         reason: String,
     },
+    LastPrivilegedUserRequired,
     AuditIntegrity(String),
 }
 
@@ -222,6 +226,7 @@ impl fmt::Display for CoreError {
             Self::Json(message) => formatter.write_str(message),
             Self::PasswordHash(message) => formatter.write_str(message),
             Self::InvalidUsername => formatter.write_str("invalid username"),
+            Self::InvalidUserInfo(message) => write!(formatter, "invalid user info: {message}"),
             Self::InvalidPassword(message) => write!(formatter, "invalid password: {message}"),
             Self::BootstrapAlreadyExists => formatter.write_str("bootstrap admin already exists"),
             Self::BootstrapRequired => formatter.write_str("bootstrap admin is required"),
@@ -234,6 +239,9 @@ impl fmt::Display for CoreError {
             } => write!(formatter, "account locked until {locked_until_epoch_ms}"),
             Self::PermissionDenied { action, reason } => {
                 write!(formatter, "{action} denied: {reason}")
+            }
+            Self::LastPrivilegedUserRequired => {
+                formatter.write_str("at least one enabled admin or debug user is required")
             }
             Self::AuditIntegrity(message) => write!(formatter, "audit integrity error: {message}"),
         }
@@ -286,6 +294,10 @@ impl PermissionService {
             | PermissionAction::DeleteFile
             | PermissionAction::MoveFile
             | PermissionAction::OpenExternal => match role {
+                UserRole::User | UserRole::Admin | UserRole::Debug => Authorization::allow(),
+                UserRole::Guest => Authorization::deny("not_authenticated"),
+            },
+            PermissionAction::ManageOwnUser => match role {
                 UserRole::User | UserRole::Admin | UserRole::Debug => Authorization::allow(),
                 UserRole::Guest => Authorization::deny("not_authenticated"),
             },
@@ -382,6 +394,28 @@ impl UserService {
             .collect())
     }
 
+    pub fn list_accessible_users(
+        &self,
+        actor: &AuthSession,
+    ) -> Result<Vec<UserAccount>, CoreError> {
+        let document = self.storage.load_users()?;
+        if actor_can_manage_users(&document, actor) {
+            return Ok(document
+                .users
+                .iter()
+                .map(UserAccount::from_record)
+                .collect());
+        }
+
+        let Some(index) = find_authenticated_user_index(&document, actor) else {
+            return Err(CoreError::UserNotFound);
+        };
+        if !document.users[index].enabled {
+            return Err(CoreError::AccountDisabled);
+        }
+        Ok(vec![UserAccount::from_record(&document.users[index])])
+    }
+
     pub fn list_all_users_unchecked(&self) -> Result<Vec<UserAccount>, CoreError> {
         Ok(self
             .storage
@@ -405,16 +439,14 @@ impl UserService {
         validate_password(username, password)?;
         let mut document = self.storage.load_users()?;
         ensure_unique_username(&document, username)?;
+        let username = username.trim().to_string();
+        let display_name = normalize_display_name(display_name, &username)?;
 
         let now = unix_millis();
         let record = UserRecord {
             id: next_user_id(&document),
-            username: username.trim().to_string(),
-            display_name: if display_name.trim().is_empty() {
-                username.trim().to_string()
-            } else {
-                display_name.trim().to_string()
-            },
+            username,
+            display_name,
             role: role.as_str().to_string(),
             password_hash: hash_password(password)?,
             enabled: true,
@@ -436,16 +468,88 @@ impl UserService {
         Ok(UserAccount::from_record(&record))
     }
 
+    pub fn update_user_info(
+        &self,
+        actor: &AuthSession,
+        username: &str,
+        display_name: &str,
+    ) -> Result<UserAccount, CoreError> {
+        let mut document = self.storage.load_users()?;
+        let Some(index) = find_user_index(&document, username) else {
+            return Err(CoreError::UserNotFound);
+        };
+        let action =
+            self.authorize_user_data_operation(actor, &document.users[index], "update_user_info")?;
+        let display_name = normalize_display_name(display_name, &document.users[index].username)?;
+        let now = unix_millis();
+        document.users[index].display_name = display_name;
+        document.users[index].updated_at_epoch_ms = now;
+        let account = UserAccount::from_record(&document.users[index]);
+        self.storage.save_users(&document)?;
+        AuditService::new(self.storage.clone()).record(
+            Some(actor),
+            action,
+            Some(&account.username),
+            AuditOutcome::Success,
+            Some("update_user_info"),
+        )?;
+        Ok(account)
+    }
+
+    pub fn set_user_password(
+        &self,
+        actor: &AuthSession,
+        username: &str,
+        password: &str,
+    ) -> Result<(), CoreError> {
+        let mut document = self.storage.load_users()?;
+        let Some(index) = find_user_index(&document, username) else {
+            return Err(CoreError::UserNotFound);
+        };
+        let action =
+            self.authorize_user_data_operation(actor, &document.users[index], "set_user_password")?;
+        validate_password(&document.users[index].username, password)?;
+        let resource = document.users[index].username.clone();
+        let now = unix_millis();
+        document.users[index].password_hash = hash_password(password)?;
+        document.users[index].failed_login_attempts = 0;
+        document.users[index].locked_until_epoch_ms = None;
+        document.users[index].updated_at_epoch_ms = now;
+        self.storage.save_users(&document)?;
+        AuditService::new(self.storage.clone()).record(
+            Some(actor),
+            action,
+            Some(&resource),
+            AuditOutcome::Success,
+            Some("set_user_password"),
+        )?;
+        Ok(())
+    }
+
     pub fn disable_user(&self, actor: &AuthSession, username: &str) -> Result<(), CoreError> {
-        self.update_user(actor, username, "disable_user", |record, now| {
+        self.update_user(actor, username, "disable_user", |document, index, now| {
+            ensure_can_remove_enabled_privileged_user(document, index)?;
+            let record = &mut document.users[index];
             record.enabled = false;
             record.updated_at_epoch_ms = now;
             Ok(())
         })
     }
 
+    pub fn enable_user(&self, actor: &AuthSession, username: &str) -> Result<(), CoreError> {
+        self.update_user(actor, username, "enable_user", |document, index, now| {
+            let record = &mut document.users[index];
+            record.enabled = true;
+            record.failed_login_attempts = 0;
+            record.locked_until_epoch_ms = None;
+            record.updated_at_epoch_ms = now;
+            Ok(())
+        })
+    }
+
     pub fn unlock_user(&self, actor: &AuthSession, username: &str) -> Result<(), CoreError> {
-        self.update_user(actor, username, "unlock_user", |record, now| {
+        self.update_user(actor, username, "unlock_user", |document, index, now| {
+            let record = &mut document.users[index];
             record.failed_login_attempts = 0;
             record.locked_until_epoch_ms = None;
             record.updated_at_epoch_ms = now;
@@ -460,7 +564,8 @@ impl UserService {
         password: &str,
     ) -> Result<(), CoreError> {
         validate_password(username, password)?;
-        self.update_user(actor, username, "reset_password", |record, now| {
+        self.update_user(actor, username, "reset_password", |document, index, now| {
+            let record = &mut document.users[index];
             record.password_hash = hash_password(password)?;
             record.failed_login_attempts = 0;
             record.locked_until_epoch_ms = None;
@@ -475,11 +580,35 @@ impl UserService {
         username: &str,
         role: UserRole,
     ) -> Result<(), CoreError> {
-        self.update_user(actor, username, "change_role", |record, now| {
+        self.update_user(actor, username, "change_role", |document, index, now| {
+            if !matches!(role, UserRole::Admin | UserRole::Debug) {
+                ensure_can_remove_enabled_privileged_user(document, index)?;
+            }
+            let record = &mut document.users[index];
             record.role = role.as_str().to_string();
             record.updated_at_epoch_ms = now;
             Ok(())
         })
+    }
+
+    pub fn delete_user(&self, actor: &AuthSession, username: &str) -> Result<(), CoreError> {
+        let mut document = self.storage.load_users()?;
+        let Some(index) = find_user_index(&document, username) else {
+            return Err(CoreError::UserNotFound);
+        };
+        let action =
+            self.authorize_user_data_operation(actor, &document.users[index], "delete_user")?;
+        ensure_can_remove_enabled_privileged_user(&document, index)?;
+        let removed = document.users.remove(index);
+        self.storage.save_users(&document)?;
+        AuditService::new(self.storage.clone()).record(
+            Some(actor),
+            action,
+            Some(&removed.username),
+            AuditOutcome::Success,
+            Some("delete_user"),
+        )?;
+        Ok(())
     }
 
     fn update_user(
@@ -487,15 +616,15 @@ impl UserService {
         actor: &AuthSession,
         username: &str,
         operation: &'static str,
-        update: impl FnOnce(&mut UserRecord, u64) -> Result<(), CoreError>,
+        update: impl FnOnce(&mut UsersDocument, usize, u64) -> Result<(), CoreError>,
     ) -> Result<(), CoreError> {
         self.authorize_manage_users(actor, operation)?;
         let mut document = self.storage.load_users()?;
-        let Some(record) = find_user_mut(&mut document, username) else {
+        let Some(index) = find_user_index(&document, username) else {
             return Err(CoreError::UserNotFound);
         };
-        update(record, unix_millis())?;
-        let resource = record.username.clone();
+        let resource = document.users[index].username.clone();
+        update(&mut document, index, unix_millis())?;
         self.storage.save_users(&document)?;
         AuditService::new(self.storage.clone()).record(
             Some(actor),
@@ -505,6 +634,54 @@ impl UserService {
             Some(operation),
         )?;
         Ok(())
+    }
+
+    fn authorize_user_data_operation(
+        &self,
+        actor: &AuthSession,
+        target: &UserRecord,
+        operation: &'static str,
+    ) -> Result<PermissionAction, CoreError> {
+        if is_same_user(actor, target) {
+            if !target.enabled {
+                return Err(CoreError::AccountDisabled);
+            }
+            self.authorize_manage_own_user(actor, operation)?;
+            return Ok(PermissionAction::ManageOwnUser);
+        }
+
+        self.authorize_manage_users(actor, operation)?;
+        Ok(PermissionAction::ManageUsers)
+    }
+
+    fn authorize_manage_own_user(
+        &self,
+        actor: &AuthSession,
+        operation: &'static str,
+    ) -> Result<(), CoreError> {
+        let permission = PermissionService::new(self.debug_policy).authorize(
+            Some(actor),
+            PermissionAction::ManageOwnUser,
+            Some(operation),
+        );
+        if permission.allowed {
+            return Ok(());
+        }
+
+        let reason = permission
+            .reason
+            .unwrap_or_else(|| "permission_denied".to_string());
+        AuditService::new(self.storage.clone()).record(
+            Some(actor),
+            PermissionAction::ManageOwnUser,
+            Some(operation),
+            AuditOutcome::Denied,
+            Some(&reason),
+        )?;
+        Err(CoreError::PermissionDenied {
+            action: PermissionAction::ManageOwnUser,
+            reason,
+        })
     }
 
     fn authorize_manage_users(
@@ -517,13 +694,22 @@ impl UserService {
             PermissionAction::ManageUsers,
             Some(operation),
         );
-        if permission.allowed {
+        let document = self.storage.load_users()?;
+        if permission.allowed && actor_can_manage_users(&document, actor) {
             return Ok(());
         }
 
-        let reason = permission
-            .reason
-            .unwrap_or_else(|| "permission_denied".to_string());
+        let reason = if permission.allowed {
+            match find_authenticated_user_index(&document, actor) {
+                Some(index) if !document.users[index].enabled => "account_disabled".to_string(),
+                Some(_) => "insufficient_role".to_string(),
+                None => "stale_session".to_string(),
+            }
+        } else {
+            permission
+                .reason
+                .unwrap_or_else(|| "permission_denied".to_string())
+        };
         AuditService::new(self.storage.clone()).record(
             Some(actor),
             PermissionAction::ManageUsers,
@@ -905,8 +1091,38 @@ fn validate_username(username: &str) -> Result<(), CoreError> {
     Ok(())
 }
 
+fn normalize_display_name(display_name: &str, username: &str) -> Result<String, CoreError> {
+    let trimmed = display_name.trim();
+    if trimmed.len() > 128 {
+        return Err(CoreError::InvalidUserInfo(
+            "display_name_too_long".to_string(),
+        ));
+    }
+    if trimmed.chars().any(char::is_control) {
+        return Err(CoreError::InvalidUserInfo(
+            "display_name_has_control_chars".to_string(),
+        ));
+    }
+    if trimmed.is_empty() {
+        Ok(username.to_string())
+    } else {
+        Ok(trimmed.to_string())
+    }
+}
+
 fn normalize_username(username: &str) -> String {
     username.trim().to_ascii_lowercase()
+}
+
+fn actor_can_manage_users(document: &UsersDocument, actor: &AuthSession) -> bool {
+    matches!(actor.role, UserRole::Admin | UserRole::Debug)
+        && find_authenticated_user_index(document, actor)
+            .map(|index| is_enabled_privileged_user(&document.users[index]))
+            .unwrap_or(false)
+}
+
+fn is_same_user(actor: &AuthSession, record: &UserRecord) -> bool {
+    actor.user_id == record.id
 }
 
 fn ensure_unique_username(document: &UsersDocument, username: &str) -> Result<(), CoreError> {
@@ -929,15 +1145,38 @@ fn find_user_index(document: &UsersDocument, username: &str) -> Option<usize> {
         .position(|record| normalize_username(&record.username) == normalized)
 }
 
-fn find_user_mut<'a>(
-    document: &'a mut UsersDocument,
-    username: &str,
-) -> Option<&'a mut UserRecord> {
-    let normalized = normalize_username(username);
+fn find_authenticated_user_index(document: &UsersDocument, actor: &AuthSession) -> Option<usize> {
     document
         .users
-        .iter_mut()
-        .find(|record| normalize_username(&record.username) == normalized)
+        .iter()
+        .position(|record| is_same_user(actor, record))
+}
+
+fn ensure_can_remove_enabled_privileged_user(
+    document: &UsersDocument,
+    target_index: usize,
+) -> Result<(), CoreError> {
+    if !is_enabled_privileged_user(&document.users[target_index]) {
+        return Ok(());
+    }
+    let has_other_enabled_privileged_user = document
+        .users
+        .iter()
+        .enumerate()
+        .any(|(index, record)| index != target_index && is_enabled_privileged_user(record));
+    if has_other_enabled_privileged_user {
+        Ok(())
+    } else {
+        Err(CoreError::LastPrivilegedUserRequired)
+    }
+}
+
+fn is_enabled_privileged_user(record: &UserRecord) -> bool {
+    record.enabled
+        && matches!(
+            UserRole::from_storage(&record.role),
+            UserRole::Admin | UserRole::Debug
+        )
 }
 
 fn next_user_id(document: &UsersDocument) -> String {

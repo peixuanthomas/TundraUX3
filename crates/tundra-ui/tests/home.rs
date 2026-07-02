@@ -226,12 +226,15 @@ fn bootstrap_and_user_management_render_expected_content() {
         "AdminUser",
         vec![UserManagementUserViewModel {
             username: "user2".to_string(),
+            display_name: "User Two".to_string(),
             role: "User".to_string(),
             enabled: true,
             locked: false,
         }],
         0,
         Some("Created user2".to_string()),
+        true,
+        None,
     );
     terminal
         .draw(|frame| {
@@ -246,7 +249,7 @@ fn bootstrap_and_user_management_render_expected_content() {
         .expect("render user management");
     let output = terminal_output(&terminal);
     assert!(output.contains("Current user: AdminUser"));
-    assert!(output.contains("user2 | User | enabled"));
+    assert!(output.contains("user2 (User Two) | User | enabled"));
     assert!(output.contains("Created user2"));
 }
 
