@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 use std::fmt;
 use std::fs::{self, File, OpenOptions};
-use std::io::Write;
+use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::process;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -12,6 +12,9 @@ use serde::de::DeserializeOwned;
 use tundra_platform::{AppPaths, Platform};
 
 pub const SCHEMA_VERSION: u32 = 1;
+pub const USERS_SCHEMA_VERSION: u32 = 2;
+const USERS_V1_FILE_NAME: &str = "users.v1.json";
+const USERS_V2_FILE_NAME: &str = "users.v2.json";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StorageFormat {
@@ -37,9 +40,9 @@ pub const CONFIG_DESCRIPTOR: StorageDescriptor = StorageDescriptor {
 pub const VERSIONED_JSON_DESCRIPTORS: &[StorageDescriptor] = &[
     StorageDescriptor {
         name: "users",
-        file_name: "users.v1.json",
+        file_name: USERS_V2_FILE_NAME,
         format: StorageFormat::VersionedJson,
-        schema_version: SCHEMA_VERSION,
+        schema_version: USERS_SCHEMA_VERSION,
     },
     StorageDescriptor {
         name: "state",
@@ -69,6 +72,7 @@ pub struct StorageLayout {
     pub logs_path: PathBuf,
     pub temp_path: PathBuf,
     pub users_path: PathBuf,
+    pub legacy_users_path: PathBuf,
     pub state_path: PathBuf,
     pub recent_files_path: PathBuf,
     pub sessions_path: PathBuf,
@@ -86,6 +90,7 @@ impl StorageLayout {
             users_path: app_paths
                 .data_path()
                 .join(VERSIONED_JSON_DESCRIPTORS[0].file_name),
+            legacy_users_path: app_paths.data_path().join(USERS_V1_FILE_NAME),
             state_path: app_paths
                 .data_path()
                 .join(VERSIONED_JSON_DESCRIPTORS[1].file_name),
@@ -187,6 +192,55 @@ impl StorageManager {
         save_json_document(&self.layout.sessions_path, "sessions", sessions)
     }
 
+    pub fn append_audit_line(&self, line: &str) -> Result<(), StorageError> {
+        let parent =
+            self.layout
+                .audit_log_path
+                .parent()
+                .ok_or_else(|| StorageError::MissingParent {
+                    path: self.layout.audit_log_path.clone(),
+                })?;
+        create_dir(parent, "create audit log directory")?;
+
+        let mut file = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&self.layout.audit_log_path)
+            .map_err(|error| StorageError::Io {
+                operation: "open audit log",
+                path: self.layout.audit_log_path.clone(),
+                message: error.to_string(),
+            })?;
+        file.write_all(line.as_bytes())
+            .and_then(|_| file.write_all(b"\n"))
+            .and_then(|_| file.sync_all())
+            .map_err(|error| StorageError::Io {
+                operation: "append audit log",
+                path: self.layout.audit_log_path.clone(),
+                message: error.to_string(),
+            })
+    }
+
+    pub fn read_audit_lines(&self) -> Result<Vec<String>, StorageError> {
+        if !self.layout.audit_log_path.exists() {
+            return Ok(Vec::new());
+        }
+
+        let file = File::open(&self.layout.audit_log_path).map_err(|error| StorageError::Io {
+            operation: "open audit log",
+            path: self.layout.audit_log_path.clone(),
+            message: error.to_string(),
+        })?;
+        BufReader::new(file)
+            .lines()
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|error| StorageError::Io {
+                operation: "read audit log",
+                path: self.layout.audit_log_path.clone(),
+                message: error.to_string(),
+            })
+    }
+
     fn initialize(&self) -> Result<StorageLoadReport, StorageError> {
         let mut report = StorageLoadReport::default();
 
@@ -198,12 +252,7 @@ impl StorageManager {
             CONFIG_DESCRIPTOR.name,
             &StorageConfig::default(),
         )?;
-        self.ensure_json_document(
-            &mut report,
-            &self.layout.users_path,
-            "users",
-            &UsersDocument::default(),
-        )?;
+        self.ensure_users_document(&mut report)?;
         self.ensure_json_document(
             &mut report,
             &self.layout.state_path,
@@ -267,6 +316,40 @@ impl StorageManager {
             }
         }
 
+        Ok(())
+    }
+
+    fn ensure_users_document(&self, report: &mut StorageLoadReport) -> Result<(), StorageError> {
+        if self.layout.users_path.exists() {
+            return match validate_json_document::<UsersDocument>(&self.layout.users_path, "users") {
+                Ok(schema_version) => {
+                    migrate_v1_noop(report, &self.layout.users_path, "users", schema_version)
+                }
+                Err(error @ StorageError::UnsupportedSchema { .. }) => Err(error),
+                Err(error) => {
+                    recover_document(report, &self.layout.users_path, "users", error)?;
+                    save_json_document(
+                        &self.layout.users_path,
+                        "users",
+                        &UsersDocument::default(),
+                    )?;
+                    report.created_files.push(self.layout.users_path.clone());
+                    Ok(())
+                }
+            };
+        }
+
+        if self.layout.legacy_users_path.exists() {
+            let legacy =
+                load_json_document::<UsersV1Document>(&self.layout.legacy_users_path, "users")?;
+            let users = UsersDocument::from_legacy_v1(legacy);
+            save_json_document(&self.layout.users_path, "users", &users)?;
+            report.migrated_files.push(self.layout.users_path.clone());
+            return Ok(());
+        }
+
+        save_json_document(&self.layout.users_path, "users", &UsersDocument::default())?;
+        report.created_files.push(self.layout.users_path.clone());
         Ok(())
     }
 
@@ -493,6 +576,8 @@ pub struct StorageConfig {
     pub explorer: ExplorerConfig,
     #[serde(default)]
     pub launcher: LauncherConfig,
+    #[serde(default)]
+    pub security: SecurityConfig,
 }
 
 impl Default for StorageConfig {
@@ -503,6 +588,7 @@ impl Default for StorageConfig {
             shortcuts: BTreeMap::new(),
             explorer: ExplorerConfig::default(),
             launcher: LauncherConfig::default(),
+            security: SecurityConfig::default(),
         }
     }
 }
@@ -524,23 +610,88 @@ pub struct LauncherConfig {
     pub pinned_dirs: Vec<String>,
 }
 
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SecurityConfig {
+    pub allow_release_debug: bool,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct UsersDocument {
     pub schema_version: u32,
     #[serde(default)]
-    pub users: Vec<String>,
+    pub users: Vec<UserRecord>,
 }
 
 impl Default for UsersDocument {
     fn default() -> Self {
         Self {
-            schema_version: SCHEMA_VERSION,
+            schema_version: USERS_SCHEMA_VERSION,
             users: Vec::new(),
         }
     }
 }
 
 impl VersionedDocument for UsersDocument {
+    fn schema_version(&self) -> u32 {
+        self.schema_version
+    }
+}
+
+impl UsersDocument {
+    fn from_legacy_v1(legacy: UsersV1Document) -> Self {
+        let now = unix_millis();
+        let users = legacy
+            .users
+            .into_iter()
+            .enumerate()
+            .map(|(index, username)| {
+                let id = format!("legacy-user-{}", index + 1);
+                UserRecord {
+                    id,
+                    username: username.clone(),
+                    display_name: username,
+                    role: "User".to_string(),
+                    password_hash: String::new(),
+                    enabled: false,
+                    failed_login_attempts: 0,
+                    locked_until_epoch_ms: None,
+                    created_at_epoch_ms: now,
+                    updated_at_epoch_ms: now,
+                    last_login_at_epoch_ms: None,
+                }
+            })
+            .collect();
+
+        Self {
+            schema_version: USERS_SCHEMA_VERSION,
+            users,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct UserRecord {
+    pub id: String,
+    pub username: String,
+    pub display_name: String,
+    pub role: String,
+    pub password_hash: String,
+    pub enabled: bool,
+    pub failed_login_attempts: u32,
+    pub locked_until_epoch_ms: Option<u64>,
+    pub created_at_epoch_ms: u64,
+    pub updated_at_epoch_ms: u64,
+    pub last_login_at_epoch_ms: Option<u64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+struct UsersV1Document {
+    pub schema_version: u32,
+    #[serde(default)]
+    pub users: Vec<String>,
+}
+
+impl VersionedDocument for UsersV1Document {
     fn schema_version(&self) -> u32 {
         self.schema_version
     }
@@ -634,15 +785,16 @@ fn migrate_v1_noop(
     document: &'static str,
     schema_version: u32,
 ) -> Result<(), StorageError> {
+    let supported = supported_schema_version(document);
     match schema_version {
-        SCHEMA_VERSION => Ok(()),
+        found if found == supported => Ok(()),
         0 => Err(StorageError::InvalidSchemaVersion {
             document,
             path: path.to_path_buf(),
             found: schema_version,
-            supported: SCHEMA_VERSION,
+            supported,
         }),
-        found if found < SCHEMA_VERSION => {
+        found if found < supported => {
             report.migrated_files.push(path.to_path_buf());
             Ok(())
         }
@@ -650,7 +802,7 @@ fn migrate_v1_noop(
             document,
             path: path.to_path_buf(),
             found,
-            supported: SCHEMA_VERSION,
+            supported,
         }),
     }
 }
@@ -757,23 +909,24 @@ fn ensure_document_schema(
     path: &Path,
     schema_version: u32,
 ) -> Result<(), StorageError> {
-    if schema_version == SCHEMA_VERSION {
+    let supported = supported_schema_version(document);
+    if schema_version == supported {
         return Ok(());
     }
 
-    if schema_version > SCHEMA_VERSION {
+    if schema_version > supported {
         Err(StorageError::UnsupportedSchema {
             document,
             path: path.to_path_buf(),
             found: schema_version,
-            supported: SCHEMA_VERSION,
+            supported,
         })
     } else {
         Err(StorageError::InvalidSchemaVersion {
             document,
             path: path.to_path_buf(),
             found: schema_version,
-            supported: SCHEMA_VERSION,
+            supported,
         })
     }
 }
@@ -783,12 +936,13 @@ fn ensure_supported_schema(
     path: &Path,
     schema_version: u32,
 ) -> Result<(), StorageError> {
-    if schema_version > SCHEMA_VERSION {
+    let supported = supported_schema_version(document);
+    if schema_version > supported {
         return Err(StorageError::UnsupportedSchema {
             document,
             path: path.to_path_buf(),
             found: schema_version,
-            supported: SCHEMA_VERSION,
+            supported,
         });
     }
 
@@ -797,11 +951,18 @@ fn ensure_supported_schema(
             document,
             path: path.to_path_buf(),
             found: schema_version,
-            supported: SCHEMA_VERSION,
+            supported,
         });
     }
 
     Ok(())
+}
+
+fn supported_schema_version(document: &str) -> u32 {
+    match document {
+        "users" => USERS_SCHEMA_VERSION,
+        _ => SCHEMA_VERSION,
+    }
 }
 
 fn toml_schema_version(
@@ -986,6 +1147,15 @@ fn unix_nanos() -> u128 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_nanos())
+        .unwrap_or(0)
+}
+
+fn unix_millis() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_millis())
+        .ok()
+        .and_then(|millis| u64::try_from(millis).ok())
         .unwrap_or(0)
 }
 

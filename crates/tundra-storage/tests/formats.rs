@@ -1,5 +1,6 @@
 use tundra_storage::{
-    CONFIG_DESCRIPTOR, SCHEMA_VERSION, StorageFormat, VERSIONED_JSON_DESCRIPTORS,
+    CONFIG_DESCRIPTOR, SCHEMA_VERSION, StorageFormat, USERS_SCHEMA_VERSION,
+    VERSIONED_JSON_DESCRIPTORS,
 };
 
 #[test]
@@ -20,7 +21,12 @@ fn stateful_data_uses_versioned_json() {
     assert_eq!(names, vec!["users", "state", "recent-files", "sessions"]);
     for descriptor in VERSIONED_JSON_DESCRIPTORS {
         assert_eq!(descriptor.format, StorageFormat::VersionedJson);
-        assert_eq!(descriptor.schema_version, SCHEMA_VERSION);
+        let expected_schema = if descriptor.name == "users" {
+            USERS_SCHEMA_VERSION
+        } else {
+            SCHEMA_VERSION
+        };
+        assert_eq!(descriptor.schema_version, expected_schema);
         assert!(
             descriptor.file_name.ends_with(".json"),
             "{} should be a JSON file",

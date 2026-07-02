@@ -1,6 +1,8 @@
 use std::env;
 use std::fmt;
+use std::fs;
 use std::io::Write;
+use std::path::Path;
 
 use tundra_platform::{
     AppPaths, CapabilityStatus, CheckStatus, EnvironmentCheck, PathCheck, Platform, PlatformKind,
@@ -11,6 +13,7 @@ use tundra_storage::{StorageLayout, StorageManager};
 pub enum CliCommand {
     Doctor,
     Explain,
+    New,
     Paths,
     Help,
 }
@@ -51,6 +54,7 @@ where
     match command.as_ref() {
         "doctor" => Ok(CliCommand::Doctor),
         "explain" => Ok(CliCommand::Explain),
+        "new" => Ok(CliCommand::New),
         "paths" => Ok(CliCommand::Paths),
         "-h" | "--help" | "help" => Ok(CliCommand::Help),
         other => Err(CliError::UnknownCommand(other.to_string())),
@@ -89,12 +93,44 @@ where
             let _ = write_explain(stdout);
             0
         }
+        Ok(CliCommand::New) => run_new(platform, stdout, stderr),
         Ok(CliCommand::Paths) => run_paths(platform, stdout, stderr),
         Ok(CliCommand::Doctor) => run_doctor(platform, stdout, stderr),
         Err(error) => {
             let _ = writeln!(stderr, "ERROR: {error}");
             let _ = write_help(stderr);
             2
+        }
+    }
+}
+
+fn run_new<Stdout: Write, Stderr: Write>(
+    platform: &dyn Platform,
+    stdout: &mut Stdout,
+    stderr: &mut Stderr,
+) -> i32 {
+    match platform.app_paths() {
+        Ok(paths) => match reset_saved_content(&paths) {
+            Ok(report) => {
+                let _ = writeln!(stdout, "TundraUX3 storage reset");
+                let _ = writeln!(stdout, "Removed paths:");
+                for path in &report.removed_paths {
+                    let _ = writeln!(stdout, "  {}", path.display());
+                }
+                let _ = writeln!(stdout);
+                let _ = writeln!(stdout, "Recreated storage files:");
+                let layout = StorageLayout::from_app_paths(&paths);
+                write_storage_files(stdout, &layout);
+                0
+            }
+            Err(error) => {
+                let _ = writeln!(stderr, "ERROR: could not reset saved content: {error}");
+                1
+            }
+        },
+        Err(error) => {
+            let _ = writeln!(stderr, "ERROR: {error}");
+            1
         }
     }
 }
@@ -163,7 +199,7 @@ fn run_doctor<Stdout: Write, Stderr: Write>(
 
 fn write_help(output: &mut impl Write) -> std::io::Result<()> {
     writeln!(output, "TundraUX3 CLI")?;
-    writeln!(output, "Usage: tundra-cli <doctor|explain|paths>")?;
+    writeln!(output, "Usage: tundra-cli <doctor|explain|new|paths>")?;
     writeln!(
         output,
         "  doctor  Check Windows/macOS, terminal, and app path readiness"
@@ -171,6 +207,10 @@ fn write_help(output: &mut impl Write) -> std::io::Result<()> {
     writeln!(
         output,
         "  explain Show CLI startup flow and kernel/UI boundaries"
+    )?;
+    writeln!(
+        output,
+        "  new     Clear saved TundraUX3 data and recreate initial storage"
     )?;
     writeln!(output, "  paths   Print configured and resolved app paths")
 }
@@ -185,7 +225,7 @@ fn write_explain(output: &mut impl Write) -> std::io::Result<()> {
     )?;
     writeln!(
         output,
-        "  2. tundra-cli handles diagnostics and operator commands: doctor, paths, explain."
+        "  2. tundra-cli handles diagnostics and operator commands: doctor, paths, explain, new."
     )?;
     writeln!(
         output,
@@ -460,5 +500,60 @@ fn storage_warning_message(report: &tundra_storage::StorageLoadReport) -> String
         "storage initialized with warnings".to_string()
     } else {
         format!("storage initialized with warnings: {}", warnings.join("; "))
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ResetReport {
+    removed_paths: Vec<std::path::PathBuf>,
+}
+
+fn reset_saved_content(paths: &AppPaths) -> Result<ResetReport, std::io::Error> {
+    let candidates = [
+        paths.config_path(),
+        paths.data_path(),
+        paths.cache_path(),
+        paths.logs_path(),
+        paths.temp_path(),
+    ];
+    let mut removed_paths = Vec::new();
+
+    for path in candidates {
+        guard_reset_path(path)?;
+        if path.exists() {
+            remove_path(path)?;
+            removed_paths.push(path.to_path_buf());
+        }
+    }
+
+    StorageManager::open(paths.clone())
+        .map_err(|error| std::io::Error::new(std::io::ErrorKind::Other, error.to_string()))?;
+
+    Ok(ResetReport { removed_paths })
+}
+
+fn guard_reset_path(path: &Path) -> Result<(), std::io::Error> {
+    if !path.is_absolute() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            format!("refusing to reset non-absolute path {}", path.display()),
+        ));
+    }
+
+    if path.parent().is_none() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            format!("refusing to reset root path {}", path.display()),
+        ));
+    }
+
+    Ok(())
+}
+
+fn remove_path(path: &Path) -> Result<(), std::io::Error> {
+    if path.is_dir() {
+        fs::remove_dir_all(path)
+    } else {
+        fs::remove_file(path)
     }
 }

@@ -24,9 +24,13 @@ pub use input::{
     UiId,
 };
 pub use layout::{ShellLayout, compute_shell_layout};
-pub use render::{render_exit_confirmation, render_home};
+pub use render::{
+    render_bootstrap_admin, render_exit_confirmation, render_home, render_login,
+    render_user_management,
+};
 pub use theme::TundraTheme;
 pub use view_model::{
-    DebugDiagnosticsViewModel, ExitConfirmViewModel, HomeDisplayMode, HomeViewModel,
-    ShellChromeViewModel, ShellEntry, StatusViewModel,
+    AuthField, BootstrapAdminViewModel, DebugDiagnosticsViewModel, ExitConfirmViewModel,
+    HomeDisplayMode, HomeViewModel, LoginViewModel, ShellChromeViewModel, ShellEntry,
+    StatusViewModel, UserManagementUserViewModel, UserManagementViewModel,
 };

@@ -3,9 +3,11 @@ use ratatui::backend::TestBackend;
 use ratatui::layout::Rect;
 use ratatui::style::Color;
 use tundra_ui::{
-    DebugDiagnosticsViewModel, ExitConfirmViewModel, HomeDisplayMode, HomeViewModel,
-    ShellChromeViewModel, ShellEntry, ShellLayout, StatusViewModel, TundraTheme,
-    compute_shell_layout, render_home,
+    AuthField, BootstrapAdminViewModel, DebugDiagnosticsViewModel, ExitConfirmViewModel,
+    HomeDisplayMode, HomeViewModel, LoginViewModel, ShellChromeViewModel, ShellEntry, ShellLayout,
+    StatusViewModel, TundraTheme, UserManagementUserViewModel, UserManagementViewModel,
+    compute_shell_layout, render_bootstrap_admin, render_home, render_login,
+    render_user_management,
 };
 
 #[test]
@@ -164,4 +166,111 @@ fn status_view_model_exposes_status_toast_and_error() {
     assert_eq!(status.status, "Ready");
     assert_eq!(status.toast.as_deref(), Some("Saved"));
     assert_eq!(status.error.as_deref(), Some("Network unavailable"));
+}
+
+#[test]
+fn login_renderer_masks_password_length() {
+    let chrome = chrome_for("Login");
+    let model = LoginViewModel::new(
+        "AdminUser",
+        "StrongPass123".len(),
+        AuthField::Password,
+        Some("Invalid username or password".to_string()),
+    );
+    let mut terminal = Terminal::new(TestBackend::new(80, 24)).expect("test terminal");
+
+    terminal
+        .draw(|frame| {
+            render_login(
+                frame,
+                frame.area(),
+                &chrome,
+                &model,
+                &TundraTheme::default_dark(),
+            );
+        })
+        .expect("render login");
+
+    let output = terminal_output(&terminal);
+    assert!(output.contains("Tab / Down: password"));
+    assert!(output.contains("Enter on password: login"));
+    assert!(output.contains("Username: AdminUser"));
+    assert!(output.contains("Password: *************"));
+    assert!(!output.contains("StrongPass123"));
+    assert!(output.contains("Invalid username or password"));
+}
+
+#[test]
+fn bootstrap_and_user_management_render_expected_content() {
+    let chrome = chrome_for("BootstrapAdmin");
+    let bootstrap = BootstrapAdminViewModel::new("AdminUser", 10, AuthField::Username, None);
+    let mut terminal = Terminal::new(TestBackend::new(90, 24)).expect("test terminal");
+
+    terminal
+        .draw(|frame| {
+            render_bootstrap_admin(
+                frame,
+                frame.area(),
+                &chrome,
+                &bootstrap,
+                &TundraTheme::default_dark(),
+            );
+        })
+        .expect("render bootstrap");
+    let output = terminal_output(&terminal);
+    assert!(output.contains("Tab / Down: password"));
+    assert!(output.contains("Enter on password: create admin"));
+    assert!(output.contains("Admin username: AdminUser"));
+
+    let management = UserManagementViewModel::new(
+        "AdminUser",
+        vec![UserManagementUserViewModel {
+            username: "user2".to_string(),
+            role: "User".to_string(),
+            enabled: true,
+            locked: false,
+        }],
+        0,
+        Some("Created user2".to_string()),
+    );
+    terminal
+        .draw(|frame| {
+            render_user_management(
+                frame,
+                frame.area(),
+                &chrome,
+                &management,
+                &TundraTheme::default_dark(),
+            );
+        })
+        .expect("render user management");
+    let output = terminal_output(&terminal);
+    assert!(output.contains("Current user: AdminUser"));
+    assert!(output.contains("user2 | User | enabled"));
+    assert!(output.contains("Created user2"));
+}
+
+fn chrome_for(screen: &str) -> ShellChromeViewModel {
+    ShellChromeViewModel {
+        app_name: "TundraUX 3".to_string(),
+        build_mode: "debug".to_string(),
+        display_mode: HomeDisplayMode::Auth,
+        terminal_size: (80, 24),
+        screen_stack: vec![screen.to_string()],
+        status: StatusViewModel {
+            status: "Ready".to_string(),
+            toast: None,
+            error: None,
+        },
+    }
+}
+
+fn terminal_output(terminal: &Terminal<TestBackend>) -> String {
+    terminal
+        .backend()
+        .buffer()
+        .content()
+        .iter()
+        .map(|cell| cell.symbol())
+        .collect()
 }

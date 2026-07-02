@@ -2,6 +2,7 @@
 pub enum HomeDisplayMode {
     Debug,
     User,
+    Auth,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -56,6 +57,92 @@ pub struct HomeViewModel {
     pub(crate) current_user: Option<String>,
     pub(crate) current_time: Option<String>,
     entries: Vec<ShellEntry>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AuthField {
+    Username,
+    Password,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LoginViewModel {
+    pub username: String,
+    pub password_len: usize,
+    pub focused_field: AuthField,
+    pub error: Option<String>,
+}
+
+impl LoginViewModel {
+    pub fn new(
+        username: impl Into<String>,
+        password_len: usize,
+        focused_field: AuthField,
+        error: Option<String>,
+    ) -> Self {
+        Self {
+            username: username.into(),
+            password_len,
+            focused_field,
+            error,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BootstrapAdminViewModel {
+    pub username: String,
+    pub password_len: usize,
+    pub focused_field: AuthField,
+    pub error: Option<String>,
+}
+
+impl BootstrapAdminViewModel {
+    pub fn new(
+        username: impl Into<String>,
+        password_len: usize,
+        focused_field: AuthField,
+        error: Option<String>,
+    ) -> Self {
+        Self {
+            username: username.into(),
+            password_len,
+            focused_field,
+            error,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UserManagementUserViewModel {
+    pub username: String,
+    pub role: String,
+    pub enabled: bool,
+    pub locked: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UserManagementViewModel {
+    pub current_user: String,
+    pub users: Vec<UserManagementUserViewModel>,
+    pub selected_index: usize,
+    pub message: Option<String>,
+}
+
+impl UserManagementViewModel {
+    pub fn new(
+        current_user: impl Into<String>,
+        users: Vec<UserManagementUserViewModel>,
+        selected_index: usize,
+        message: Option<String>,
+    ) -> Self {
+        Self {
+            current_user: current_user.into(),
+            users,
+            selected_index,
+            message,
+        }
+    }
 }
 
 impl HomeViewModel {

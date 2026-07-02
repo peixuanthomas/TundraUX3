@@ -67,7 +67,7 @@ fn assert_storage_layout(storage: &StorageLayout, app_paths: &AppPaths) {
         &storage.data_path,
         "sessions.v1.json",
     );
-    assert_state_file(&storage.users_path, &storage.data_path, "users.v1.json");
+    assert_state_file(&storage.users_path, &storage.data_path, "users.v2.json");
 
     assert_eq!(
         storage.audit_log_path,

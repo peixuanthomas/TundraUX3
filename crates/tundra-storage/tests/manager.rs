@@ -8,8 +8,9 @@ use tundra_platform::{
     AppPaths, Platform, UserDirs, build_macos_app_paths, build_windows_app_paths, cleanup_temp_path,
 };
 use tundra_storage::{
-    ExplorerConfig, LauncherConfig, RecentFilesDocument, SCHEMA_VERSION, SessionsDocument,
-    StateDocument, StorageConfig, StorageError, StorageLayout, StorageManager, UsersDocument,
+    ExplorerConfig, LauncherConfig, RecentFilesDocument, SCHEMA_VERSION, SecurityConfig,
+    SessionsDocument, StateDocument, StorageConfig, StorageError, StorageLayout, StorageManager,
+    USERS_SCHEMA_VERSION, UserRecord, UsersDocument,
 };
 
 #[test]
@@ -65,6 +66,9 @@ fn toml_and_json_documents_round_trip() {
             pinned_apps: vec!["notepad.exe".to_string()],
             pinned_dirs: vec!["C:/Projects".to_string()],
         },
+        security: SecurityConfig {
+            allow_release_debug: true,
+        },
     };
     manager
         .save_config(&config)
@@ -72,8 +76,20 @@ fn toml_and_json_documents_round_trip() {
     assert_eq!(manager.load_config().expect("config should reload"), config);
 
     let users = UsersDocument {
-        schema_version: SCHEMA_VERSION,
-        users: vec!["local-user".to_string()],
+        schema_version: USERS_SCHEMA_VERSION,
+        users: vec![UserRecord {
+            id: "user-1".to_string(),
+            username: "local-user".to_string(),
+            display_name: "Local User".to_string(),
+            role: "User".to_string(),
+            password_hash: "$argon2id$placeholder".to_string(),
+            enabled: true,
+            failed_login_attempts: 0,
+            locked_until_epoch_ms: None,
+            created_at_epoch_ms: 1,
+            updated_at_epoch_ms: 1,
+            last_login_at_epoch_ms: None,
+        }],
     };
     manager.save_users(&users).expect("users should save");
     assert_eq!(manager.load_users().expect("users should reload"), users);
@@ -201,7 +217,7 @@ fn future_json_schema_errors_without_modifying_file() {
         "schema_version = 1\ntheme = \"dark\"\n\n[shortcuts]\n\n[explorer]\nshow_hidden = false\n\n[launcher]\npinned_apps = []\npinned_dirs = []\n",
     )
     .expect("current TOML fixture");
-    let original = "{\n  \"schema_version\": 2,\n  \"users\": [\"future-user\"]\n}\n";
+    let original = "{\n  \"schema_version\": 3,\n  \"users\": []\n}\n";
     fs::write(&layout.users_path, original).expect("future JSON fixture");
 
     let error = StorageManager::open(paths).expect_err("future JSON should fail");
@@ -210,8 +226,8 @@ fn future_json_schema_errors_without_modifying_file() {
         error,
         StorageError::UnsupportedSchema {
             document: "users",
-            found: 2,
-            supported: SCHEMA_VERSION,
+            found: 3,
+            supported: USERS_SCHEMA_VERSION,
             ..
         }
     ));
@@ -220,6 +236,56 @@ fn future_json_schema_errors_without_modifying_file() {
         original
     );
     assert_no_corrupt_backups(&layout.data_path);
+
+    cleanup(&base);
+}
+
+#[test]
+fn legacy_v1_users_are_migrated_to_disabled_v2_records() {
+    let base = unique_temp_root("legacy-users");
+    let paths = app_paths(&base);
+    let layout = StorageLayout::from_app_paths(&paths);
+    fs::create_dir_all(&layout.data_path).expect("data path should be writable");
+    fs::write(
+        &layout.legacy_users_path,
+        "{\n  \"schema_version\": 1,\n  \"users\": [\"Alice\", \"bob\"]\n}\n",
+    )
+    .expect("legacy users fixture");
+
+    let opened = StorageManager::open(paths).expect("storage should migrate legacy users");
+    let users = opened.manager.load_users().expect("migrated users");
+
+    assert_eq!(users.schema_version, USERS_SCHEMA_VERSION);
+    assert_eq!(users.users.len(), 2);
+    assert_eq!(users.users[0].username, "Alice");
+    assert_eq!(users.users[0].role, "User");
+    assert!(!users.users[0].enabled);
+    assert!(users.users[0].password_hash.is_empty());
+    assert_eq!(opened.report.migrated_files, vec![layout.users_path]);
+
+    cleanup(&base);
+}
+
+#[test]
+fn audit_lines_append_and_read_round_trip() {
+    let base = unique_temp_root("audit-lines");
+    let opened = StorageManager::open(app_paths(&base)).expect("storage should open");
+    let manager = opened.manager;
+
+    manager
+        .append_audit_line("{\"sequence\":1}")
+        .expect("first line should append");
+    manager
+        .append_audit_line("{\"sequence\":2}")
+        .expect("second line should append");
+
+    assert_eq!(
+        manager.read_audit_lines().expect("audit should read"),
+        vec![
+            "{\"sequence\":1}".to_string(),
+            "{\"sequence\":2}".to_string()
+        ]
+    );
 
     cleanup(&base);
 }

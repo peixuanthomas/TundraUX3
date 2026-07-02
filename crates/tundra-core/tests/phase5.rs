@@ -1,0 +1,300 @@
+use std::fs;
+use std::path::{Path, PathBuf};
+use std::time::{SystemTime, UNIX_EPOCH};
+
+use tundra_core::{
+    AuditOutcome, AuditService, CoreError, DebugPolicy, FAILED_LOGIN_LOCK_THRESHOLD,
+    PermissionAction, PermissionService, SessionService, UserRole, UserService, verify_password,
+};
+use tundra_platform::{AppPaths, cleanup_temp_path};
+use tundra_storage::{StorageManager, UserRecord};
+
+#[test]
+fn permission_matrix_matches_phase5_roles() {
+    let service = PermissionService::new(DebugPolicy {
+        debug_build: true,
+        allow_release_debug: false,
+    });
+    let user = session("user", UserRole::User);
+    let admin = session("admin", UserRole::Admin);
+    let debug = session("debug", UserRole::Debug);
+
+    assert!(
+        service
+            .authorize(None, PermissionAction::Login, None)
+            .allowed
+    );
+    assert!(
+        !service
+            .authorize(None, PermissionAction::ReadFile, None)
+            .allowed
+    );
+    assert!(
+        service
+            .authorize(Some(&user), PermissionAction::DeleteFile, None)
+            .allowed
+    );
+    assert!(
+        !service
+            .authorize(Some(&user), PermissionAction::ManageUsers, None)
+            .allowed
+    );
+    assert!(
+        service
+            .authorize(Some(&admin), PermissionAction::ViewAuditLog, None)
+            .allowed
+    );
+    assert!(
+        !service
+            .authorize(Some(&admin), PermissionAction::EnterDebugMode, None)
+            .allowed
+    );
+    assert!(
+        service
+            .authorize(Some(&debug), PermissionAction::EnterDebugMode, None)
+            .allowed
+    );
+}
+
+#[test]
+fn release_debug_policy_denies_debug_even_for_debug_role() {
+    let service = PermissionService::new(DebugPolicy {
+        debug_build: false,
+        allow_release_debug: false,
+    });
+    let debug = session("debug", UserRole::Debug);
+
+    let result = service.authorize(Some(&debug), PermissionAction::EnterDebugMode, None);
+
+    assert!(!result.allowed);
+    assert_eq!(result.reason.as_deref(), Some("debug_policy_denied"));
+}
+
+#[test]
+fn bootstrap_login_and_password_hashing_work_without_plaintext_storage() {
+    let fixture = FixtureRoot::new("auth");
+    let manager = storage(fixture.path());
+    let users = UserService::new(manager.clone());
+
+    let admin = users
+        .bootstrap_admin("AdminUser", "StrongPass123")
+        .expect("bootstrap should create admin");
+    assert_eq!(admin.role, UserRole::Admin);
+
+    let stored = manager.load_users().expect("users should load");
+    assert_eq!(stored.users.len(), 1);
+    assert_ne!(stored.users[0].password_hash, "StrongPass123");
+    assert!(stored.users[0].password_hash.starts_with("$argon2"));
+    assert!(verify_password(
+        "StrongPass123",
+        &stored.users[0].password_hash
+    ));
+
+    assert!(matches!(
+        users.bootstrap_admin("second", "StrongPass123"),
+        Err(CoreError::BootstrapAlreadyExists)
+    ));
+
+    let mut sessions = SessionService::new(manager);
+    let session = sessions
+        .login("adminuser", "StrongPass123")
+        .expect("case-insensitive login should work");
+    assert_eq!(session.username, "AdminUser");
+    assert_eq!(
+        sessions.current_session().map(|s| s.username.as_str()),
+        Some("AdminUser")
+    );
+
+    sessions.logout().expect("logout should audit");
+    assert!(sessions.current_session().is_none());
+}
+
+#[test]
+fn repeated_bad_passwords_lock_account_until_admin_unlocks() {
+    let fixture = FixtureRoot::new("lockout");
+    let manager = storage(fixture.path());
+    UserService::new(manager.clone())
+        .bootstrap_admin("AdminUser", "StrongPass123")
+        .expect("bootstrap should create admin");
+
+    let mut sessions = SessionService::new(manager.clone());
+    for _ in 0..FAILED_LOGIN_LOCK_THRESHOLD - 1 {
+        assert!(matches!(
+            sessions.login("AdminUser", "WrongPass123"),
+            Err(CoreError::InvalidCredentials)
+        ));
+    }
+    assert!(matches!(
+        sessions.login("AdminUser", "WrongPass123"),
+        Err(CoreError::AccountLocked { .. })
+    ));
+    assert!(matches!(
+        sessions.login("AdminUser", "StrongPass123"),
+        Err(CoreError::AccountLocked { .. })
+    ));
+
+    unlock_first_user_for_test(&manager);
+    assert!(sessions.login("AdminUser", "StrongPass123").is_ok());
+}
+
+#[test]
+fn user_service_management_requires_admin_or_debug_session() {
+    let fixture = FixtureRoot::new("manage-users");
+    let manager = storage(fixture.path());
+    let users = UserService::new(manager.clone());
+    users
+        .bootstrap_admin("AdminUser", "StrongPass123")
+        .expect("bootstrap");
+    let mut sessions = SessionService::new(manager.clone());
+    let admin = sessions.login("AdminUser", "StrongPass123").expect("login");
+
+    let created = users
+        .create_user(
+            &admin,
+            "NormalUser",
+            "Normal User",
+            UserRole::User,
+            "NormalPass123",
+        )
+        .expect("admin can create users");
+    assert_eq!(created.role, UserRole::User);
+
+    let user_session = session("NormalUser", UserRole::User);
+    assert!(matches!(
+        users.create_user(
+            &user_session,
+            "DeniedUser",
+            "Denied",
+            UserRole::User,
+            "DeniedPass123"
+        ),
+        Err(CoreError::PermissionDenied { .. })
+    ));
+
+    users
+        .change_role(&admin, "NormalUser", UserRole::Debug)
+        .expect("role changes");
+    users
+        .reset_password(&admin, "NormalUser", "ChangedPass123")
+        .expect("password reset");
+    users.disable_user(&admin, "NormalUser").expect("disable");
+
+    let all = users.list_users(&admin).expect("list users");
+    let normal = all
+        .iter()
+        .find(|user| user.username == "NormalUser")
+        .expect("normal user");
+    assert_eq!(normal.role, UserRole::Debug);
+    assert!(!normal.enabled);
+}
+
+#[test]
+fn audit_chain_verifies_and_detects_tampering() {
+    let fixture = FixtureRoot::new("audit");
+    let manager = storage(fixture.path());
+    let audit = AuditService::new(manager.clone());
+    let admin = session("admin", UserRole::Admin);
+
+    audit
+        .record(
+            Some(&admin),
+            PermissionAction::Login,
+            Some("admin"),
+            AuditOutcome::Success,
+            Some("login_success"),
+        )
+        .expect("first audit");
+    audit
+        .record(
+            Some(&admin),
+            PermissionAction::ManageUsers,
+            Some("user"),
+            AuditOutcome::Success,
+            Some("create_user"),
+        )
+        .expect("second audit");
+    audit.verify_chain().expect("chain should verify");
+    assert_eq!(
+        audit
+            .read_records(&admin)
+            .expect("admin can read audit")
+            .len(),
+        2
+    );
+
+    let user = session("user", UserRole::User);
+    assert!(matches!(
+        audit.read_records(&user),
+        Err(CoreError::PermissionDenied { .. })
+    ));
+
+    let mut contents = fs::read_to_string(manager.layout().audit_path()).expect("audit file");
+    contents = contents.replacen("login_success", "tampered", 1);
+    fs::write(manager.layout().audit_path(), contents).expect("tamper audit");
+
+    assert!(matches!(
+        audit.verify_chain(),
+        Err(CoreError::AuditIntegrity(_))
+    ));
+}
+
+fn session(username: &str, role: UserRole) -> tundra_core::AuthSession {
+    tundra_core::AuthSession {
+        session_id: format!("session-{username}"),
+        user_id: format!("id-{username}"),
+        username: username.to_string(),
+        role,
+        started_at_epoch_ms: 1,
+    }
+}
+
+fn storage(base: &Path) -> StorageManager {
+    StorageManager::open(
+        AppPaths::from_parts(
+            base.join("config").join("config.toml"),
+            base.join("state"),
+            base.join("cache"),
+            base.join("logs"),
+            base.join("temp"),
+        )
+        .expect("absolute fixture paths"),
+    )
+    .expect("storage open")
+    .manager
+}
+
+fn unlock_first_user_for_test(manager: &StorageManager) {
+    let mut users = manager.load_users().expect("users load");
+    let record: &mut UserRecord = users.users.first_mut().expect("first user");
+    record.failed_login_attempts = 0;
+    record.locked_until_epoch_ms = None;
+    manager.save_users(&users).expect("users save");
+}
+
+struct FixtureRoot {
+    path: PathBuf,
+}
+
+impl FixtureRoot {
+    fn new(case: &str) -> Self {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system time")
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!(
+            "tundra-core-test-{}-{nanos}-{case}",
+            std::process::id()
+        ));
+        Self { path }
+    }
+
+    fn path(&self) -> &Path {
+        &self.path
+    }
+}
+
+impl Drop for FixtureRoot {
+    fn drop(&mut self) {
+        let _ = cleanup_temp_path(&self.path);
+    }
+}

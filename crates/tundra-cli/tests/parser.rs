@@ -4,7 +4,10 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use tundra_cli::{CliCommand, CliError, parse_args, run, run_with_platform};
 use tundra_platform::mock::{MockPlatform, UnsupportedPlatform};
-use tundra_platform::{PlatformKind, UserDirs, build_macos_app_paths, build_windows_app_paths};
+use tundra_platform::{
+    Platform, PlatformKind, UserDirs, build_macos_app_paths, build_windows_app_paths,
+};
+use tundra_storage::{StorageLayout, StorageManager};
 
 #[test]
 fn no_args_dispatches_help() {
@@ -24,6 +27,11 @@ fn paths_arg_dispatches_paths() {
 #[test]
 fn explain_arg_dispatches_explain() {
     assert_eq!(parse_args(["explain"]), Ok(CliCommand::Explain));
+}
+
+#[test]
+fn new_arg_dispatches_new() {
+    assert_eq!(parse_args(["new"]), Ok(CliCommand::New));
 }
 
 #[test]
@@ -52,7 +60,8 @@ fn help_command_writes_usage_to_stdout() {
     assert_eq!(exit_code, 0);
     assert!(stderr.is_empty());
     let stdout = String::from_utf8(stdout).expect("help output should be utf8");
-    assert!(stdout.contains("Usage: tundra-cli <doctor|explain|paths>"));
+    assert!(stdout.contains("Usage: tundra-cli <doctor|explain|new|paths>"));
+    assert!(stdout.contains("new     Clear saved TundraUX3 data"));
     assert!(!stdout.contains("Windows 11"));
     assert!(!stdout.contains("Windows Terminal"));
 }
@@ -73,8 +82,54 @@ fn explain_command_prints_startup_and_boundary_notes() {
     assert!(stdout.contains("UI boundary"));
     assert!(stdout.contains("tundra-platform"));
     assert!(stdout.contains("tundra-shell"));
+    assert!(stdout.contains("doctor, paths, explain, new"));
     assert!(!stdout.contains("Windows 11"));
     assert!(!stdout.contains("Windows Terminal"));
+}
+
+#[test]
+fn new_command_clears_saved_content_and_recreates_default_storage() {
+    let mut stdout = Vec::new();
+    let mut stderr = Vec::new();
+    let tree = TempTree::new("new-reset");
+    let platform = mock_windows_platform(tree.path());
+    let app_paths = platform.app_paths().expect("mock paths should resolve");
+    let layout = StorageLayout::from_app_paths(&app_paths);
+
+    StorageManager::open(app_paths.clone()).expect("initial storage should open");
+    fs::write(&layout.config_path, "custom config").expect("custom config fixture");
+    fs::write(layout.data_path.join("extra-state.txt"), "state").expect("extra state fixture");
+    fs::write(layout.cache_path.join("cached.txt"), "cache").expect("cache fixture");
+    fs::write(layout.logs_path.join("audit.v1.log"), "audit").expect("audit fixture");
+    fs::write(layout.temp_path.join("temp.txt"), "temp").expect("temp fixture");
+
+    let exit_code = run_with_platform(["new"], &platform, &mut stdout, &mut stderr);
+
+    assert_eq!(exit_code, 0);
+    assert!(stderr.is_empty());
+    let stdout = String::from_utf8(stdout).expect("new output should be utf8");
+    assert!(stdout.contains("TundraUX3 storage reset"));
+    assert!(stdout.contains("Recreated storage files:"));
+    assert!(layout.config_path.is_file());
+    assert!(layout.users_path.is_file());
+    assert!(layout.state_path.is_file());
+    assert!(layout.recent_files_path.is_file());
+    assert!(layout.sessions_path.is_file());
+    assert!(!layout.data_path.join("extra-state.txt").exists());
+    assert!(!layout.cache_path.join("cached.txt").exists());
+    assert!(!layout.logs_path.join("audit.v1.log").exists());
+    assert!(!layout.temp_path.join("temp.txt").exists());
+
+    let manager = StorageManager::open(app_paths).expect("reset storage should reopen");
+    assert!(
+        manager
+            .manager
+            .load_users()
+            .expect("users")
+            .users
+            .is_empty()
+    );
+    assert_eq!(manager.manager.load_config().expect("config").theme, "dark");
 }
 
 #[test]
@@ -214,7 +269,7 @@ fn unknown_command_exits_two_and_writes_error_to_stderr() {
     assert!(stdout.is_empty());
     let stderr = String::from_utf8(stderr).expect("error output should be utf8");
     assert!(stderr.contains("ERROR: unknown command: repair"));
-    assert!(stderr.contains("Usage: tundra-cli <doctor|explain|paths>"));
+    assert!(stderr.contains("Usage: tundra-cli <doctor|explain|new|paths>"));
 }
 
 fn assert_path_labels(output: &str) {
@@ -250,7 +305,7 @@ fn assert_windows_storage_file_markers(output: &str) {
     assert!(normalized.contains("Local/TundraUX3/state/state.v1.json"));
     assert!(normalized.contains("Local/TundraUX3/state/recent-files.v1.json"));
     assert!(normalized.contains("Local/TundraUX3/state/sessions.v1.json"));
-    assert!(normalized.contains("Local/TundraUX3/state/users.v1.json"));
+    assert!(normalized.contains("Local/TundraUX3/state/users.v2.json"));
     assert!(normalized.contains("Local/TundraUX3/logs/audit.v1.log"));
 }
 
@@ -275,7 +330,7 @@ fn assert_macos_storage_file_markers(output: &str) {
     assert!(
         normalized.contains("Home/Library/Application Support/TundraUX3/state/sessions.v1.json")
     );
-    assert!(normalized.contains("Home/Library/Application Support/TundraUX3/state/users.v1.json"));
+    assert!(normalized.contains("Home/Library/Application Support/TundraUX3/state/users.v2.json"));
     assert!(normalized.contains("Home/Library/Logs/TundraUX3/audit.v1.log"));
 }
 

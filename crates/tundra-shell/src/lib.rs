@@ -1,3 +1,7 @@
+use tundra_core::{
+    AuditOutcome, AuditService, AuthSession, CoreError, DebugPolicy, PermissionAction,
+    PermissionService, SessionService, UserAccount, UserRole, UserService,
+};
 use tundra_storage::{
     CONFIG_DESCRIPTOR, SCHEMA_VERSION, StorageError, StorageLoadReport, StorageManager,
 };
@@ -82,7 +86,10 @@ pub enum ShellHomeMode {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ShellScreen {
+    BootstrapAdmin,
+    Login,
     Home,
+    UserManagement,
     ExitConfirm,
 }
 
@@ -204,6 +211,9 @@ pub struct ShellStartupState {
     pub platform_kind: PlatformKind,
     pub platform_capabilities: PlatformCapabilities,
     pub restored_session: Option<ShellRestoredSession>,
+    pub storage_manager: Option<StorageManager>,
+    pub auth_bootstrap_required: bool,
+    pub debug_policy: DebugPolicy,
 }
 
 impl ShellStartupState {
@@ -214,6 +224,9 @@ impl ShellStartupState {
             platform_kind,
             platform_capabilities,
             restored_session: None,
+            storage_manager: None,
+            auth_bootstrap_required: false,
+            debug_policy: DebugPolicy::default(),
         }
     }
 
@@ -262,9 +275,11 @@ pub fn prepare_shell_startup(
     let storage_open = StorageManager::open_from_platform(platform)?;
     let app_paths = app_paths_from_storage_layout(storage_open.manager.layout())?;
     let storage_config = storage_open.manager.load_config()?;
+    let users = storage_open.manager.load_users()?;
     let sessions = storage_open.manager.load_sessions()?;
     let storage_report =
         ShellStorageReport::from_storage_load_report(Some(app_paths), storage_open.report);
+    let debug_policy = DebugPolicy::current_build(storage_config.security.allow_release_debug);
 
     Ok(ShellStartupState {
         app_config: ShellAppConfig::from_storage_config(&storage_config),
@@ -272,6 +287,9 @@ pub fn prepare_shell_startup(
         platform_kind,
         platform_capabilities,
         restored_session: restored_session_from_storage(&sessions),
+        storage_manager: Some(storage_open.manager),
+        auth_bootstrap_required: users.users.is_empty(),
+        debug_policy,
     })
 }
 
@@ -679,6 +697,11 @@ pub enum ShellComponent {
     CompactHome,
     TopBar,
     Home,
+    LoginUsername,
+    LoginPassword,
+    BootstrapUsername,
+    BootstrapPassword,
+    UserManagement,
     StatusBar,
     ExitDialog,
     ContextMenu,
@@ -690,6 +713,11 @@ impl ShellComponent {
             Self::CompactHome => "CompactHome",
             Self::TopBar => "TopBar",
             Self::Home => "Home",
+            Self::LoginUsername => "LoginUsername",
+            Self::LoginPassword => "LoginPassword",
+            Self::BootstrapUsername => "BootstrapUsername",
+            Self::BootstrapPassword => "BootstrapPassword",
+            Self::UserManagement => "UserManagement",
             Self::StatusBar => "StatusBar",
             Self::ExitDialog => "ExitDialog",
             Self::ContextMenu => "ContextMenu",
@@ -775,6 +803,19 @@ pub enum ShellCommand {
     CancelExit,
     FocusNext,
     FocusPrevious,
+    AppendAuthChar(char),
+    AuthBackspace,
+    SubmitLogin,
+    SubmitBootstrapAdmin,
+    OpenUserManagement,
+    CloseUserManagement,
+    UserManagementNext,
+    UserManagementPrevious,
+    CreateManagedUser(UserRole),
+    DisableManagedUser,
+    UnlockManagedUser,
+    ResetManagedPassword,
+    CycleManagedRole,
     Hover(Option<ShellComponent>),
     Activate {
         target: ShellComponent,
@@ -951,6 +992,17 @@ fn install_panic_restore_hook() {
 pub struct ShellState {
     home_mode: ShellHomeMode,
     screen_stack: Vec<ShellScreen>,
+    storage_manager: Option<StorageManager>,
+    auth_session: Option<AuthSession>,
+    requested_debug_mode: bool,
+    debug_policy: DebugPolicy,
+    login_username: String,
+    login_password: String,
+    bootstrap_username: String,
+    bootstrap_password: String,
+    user_management_users: Vec<UserAccount>,
+    user_management_selected: usize,
+    user_management_message: Option<String>,
     terminal_size: (u16, u16),
     terminal_flags: ShellTerminalFlags,
     focused_component: ShellComponent,
@@ -991,13 +1043,39 @@ impl ShellState {
         startup: ShellStartupState,
     ) -> Self {
         let home_mode = resolved_home_mode(launch_config, &startup);
+        let auth_gate_enabled = startup.storage_manager.is_some();
+        let initial_screen = if auth_gate_enabled {
+            if startup.auth_bootstrap_required {
+                ShellScreen::BootstrapAdmin
+            } else {
+                ShellScreen::Login
+            }
+        } else {
+            ShellScreen::Home
+        };
+        let initial_focus = match initial_screen {
+            ShellScreen::BootstrapAdmin => ShellComponent::BootstrapUsername,
+            ShellScreen::Login => ShellComponent::LoginUsername,
+            _ => ShellComponent::Home,
+        };
 
         let mut state = Self {
             home_mode,
-            screen_stack: vec![ShellScreen::Home],
+            screen_stack: vec![initial_screen],
+            storage_manager: startup.storage_manager.clone(),
+            auth_session: None,
+            requested_debug_mode: launch_config.home_mode_override == HomeModeOverride::Debug,
+            debug_policy: startup.debug_policy,
+            login_username: String::new(),
+            login_password: String::new(),
+            bootstrap_username: String::new(),
+            bootstrap_password: String::new(),
+            user_management_users: Vec::new(),
+            user_management_selected: 0,
+            user_management_message: None,
             terminal_size,
             terminal_flags: ShellTerminalFlags::enabled(),
-            focused_component: ShellComponent::Home,
+            focused_component: initial_focus,
             hovered_component: None,
             active_popup: None,
             hit_map: ShellHitMap::empty(terminal_size),
@@ -1026,7 +1104,7 @@ impl ShellState {
             drag_tracker: None,
         };
         state.refresh_hit_map();
-        if let Some(restored_session) = startup.restored_session.as_ref() {
+        if !auth_gate_enabled && let Some(restored_session) = startup.restored_session.as_ref() {
             state.apply_restored_session(restored_session);
         }
         state
@@ -1089,12 +1167,77 @@ impl ShellState {
                 })
             }
             ShellHomeMode::User => {
-                tundra_ui::HomeViewModel::user("Guest", current_time_label(), user_home_entries())
+                let user = self
+                    .auth_session
+                    .as_ref()
+                    .map(|session| session.username.as_str())
+                    .unwrap_or("Guest");
+                tundra_ui::HomeViewModel::user(user, current_time_label(), self.user_home_entries())
             }
         }
     }
 
+    pub fn to_login_view_model(&self) -> tundra_ui::LoginViewModel {
+        tundra_ui::LoginViewModel::new(
+            self.login_username.clone(),
+            self.login_password.chars().count(),
+            match self.focused_component {
+                ShellComponent::LoginPassword => tundra_ui::AuthField::Password,
+                _ => tundra_ui::AuthField::Username,
+            },
+            self.error_message.clone(),
+        )
+    }
+
+    pub fn to_bootstrap_admin_view_model(&self) -> tundra_ui::BootstrapAdminViewModel {
+        tundra_ui::BootstrapAdminViewModel::new(
+            self.bootstrap_username.clone(),
+            self.bootstrap_password.chars().count(),
+            match self.focused_component {
+                ShellComponent::BootstrapPassword => tundra_ui::AuthField::Password,
+                _ => tundra_ui::AuthField::Username,
+            },
+            self.error_message.clone(),
+        )
+    }
+
+    pub fn to_user_management_view_model(&self) -> tundra_ui::UserManagementViewModel {
+        tundra_ui::UserManagementViewModel::new(
+            self.auth_session
+                .as_ref()
+                .map(|session| session.username.clone())
+                .unwrap_or_else(|| "Guest".to_string()),
+            self.user_management_users
+                .iter()
+                .map(|user| tundra_ui::UserManagementUserViewModel {
+                    username: user.username.clone(),
+                    role: user.role.as_str().to_string(),
+                    enabled: user.enabled,
+                    locked: user
+                        .locked_until_epoch_ms
+                        .map(|locked_until| locked_until > unix_millis())
+                        .unwrap_or(false),
+                })
+                .collect(),
+            self.user_management_selected,
+            self.user_management_message.clone(),
+        )
+    }
+
     pub fn to_shell_chrome_view_model(&self) -> tundra_ui::ShellChromeViewModel {
+        let status = if self.home_mode == ShellHomeMode::Debug
+            && self.active_screen() == ShellScreen::Home
+        {
+            format!(
+                "{} | Key: {} | Mouse: {} | Resize: {}",
+                self.status_message,
+                self.last_key_event.as_deref().unwrap_or("none"),
+                self.last_mouse_event.as_deref().unwrap_or("none"),
+                self.last_resize_event.as_deref().unwrap_or("none")
+            )
+        } else {
+            self.status_message.clone()
+        };
         tundra_ui::ShellChromeViewModel {
             app_name: "TundraUX 3".to_string(),
             build_mode: build_mode_label().to_string(),
@@ -1106,11 +1249,304 @@ impl ShellState {
                 .map(|screen| format!("{screen:?}"))
                 .collect(),
             status: tundra_ui::StatusViewModel {
-                status: self.status_message.clone(),
+                status,
                 toast: self.toast_message.clone(),
                 error: self.error_message.clone(),
             },
         }
+    }
+
+    fn append_auth_char(&mut self, character: char) {
+        match self.focused_component {
+            ShellComponent::LoginUsername => self.login_username.push(character),
+            ShellComponent::LoginPassword => self.login_password.push(character),
+            ShellComponent::BootstrapUsername => self.bootstrap_username.push(character),
+            ShellComponent::BootstrapPassword => self.bootstrap_password.push(character),
+            _ => {}
+        }
+        self.error_message = None;
+    }
+
+    fn auth_backspace(&mut self) {
+        match self.focused_component {
+            ShellComponent::LoginUsername => {
+                self.login_username.pop();
+            }
+            ShellComponent::LoginPassword => {
+                self.login_password.pop();
+            }
+            ShellComponent::BootstrapUsername => {
+                self.bootstrap_username.pop();
+            }
+            ShellComponent::BootstrapPassword => {
+                self.bootstrap_password.pop();
+            }
+            _ => {}
+        }
+        self.error_message = None;
+    }
+
+    fn submit_login(&mut self) {
+        let Some(storage) = self.storage_manager.clone() else {
+            self.error_message = Some("Storage unavailable".to_string());
+            return;
+        };
+        let mut sessions = SessionService::new(storage);
+        match sessions.login(&self.login_username, &self.login_password) {
+            Ok(session) => self.complete_login(session),
+            Err(error) => {
+                self.error_message = Some(format_core_error(&error));
+                self.status_message = "Login failed".to_string();
+            }
+        }
+    }
+
+    fn submit_bootstrap_admin(&mut self) {
+        let Some(storage) = self.storage_manager.clone() else {
+            self.error_message = Some("Storage unavailable".to_string());
+            return;
+        };
+        let users = UserService::with_debug_policy(storage.clone(), self.debug_policy);
+        match users.bootstrap_admin(&self.bootstrap_username, &self.bootstrap_password) {
+            Ok(_) => {
+                self.login_username = self.bootstrap_username.clone();
+                self.login_password = self.bootstrap_password.clone();
+                let mut sessions = SessionService::new(storage);
+                match sessions.login(&self.login_username, &self.login_password) {
+                    Ok(session) => self.complete_login(session),
+                    Err(error) => {
+                        self.error_message = Some(format_core_error(&error));
+                        self.status_message = "Login failed".to_string();
+                    }
+                }
+            }
+            Err(error) => {
+                self.error_message = Some(format_core_error(&error));
+                self.status_message = "Admin bootstrap failed".to_string();
+            }
+        }
+    }
+
+    fn complete_login(&mut self, session: AuthSession) {
+        self.auth_session = Some(session.clone());
+        self.login_password.clear();
+        self.bootstrap_password.clear();
+        self.error_message = None;
+        self.status_message = format!("Signed in as {}", session.username);
+        self.home_mode = ShellHomeMode::User;
+
+        if self.requested_debug_mode {
+            let permission = PermissionService::new(self.debug_policy).authorize(
+                Some(&session),
+                PermissionAction::EnterDebugMode,
+                None,
+            );
+            if let Some(storage) = self.storage_manager.clone() {
+                let audit = AuditService::new(storage);
+                if permission.allowed {
+                    self.home_mode = ShellHomeMode::Debug;
+                    let _ = audit.record(
+                        Some(&session),
+                        PermissionAction::EnterDebugMode,
+                        None,
+                        AuditOutcome::Success,
+                        Some("debug_entered"),
+                    );
+                } else {
+                    let reason = permission
+                        .reason
+                        .as_deref()
+                        .unwrap_or("debug_policy_denied");
+                    let _ = audit.record(
+                        Some(&session),
+                        PermissionAction::EnterDebugMode,
+                        None,
+                        AuditOutcome::Denied,
+                        Some(reason),
+                    );
+                    self.toast_message = Some("Debug mode denied".to_string());
+                }
+            }
+        }
+
+        self.screen_stack = vec![ShellScreen::Home];
+        self.focused_component = ShellComponent::Home;
+        self.active_popup = None;
+        self.refresh_hit_map();
+    }
+
+    fn open_user_management(&mut self) {
+        let Some(session) = self.auth_session.clone() else {
+            self.error_message = Some("Login required".to_string());
+            return;
+        };
+        let permission = PermissionService::new(self.debug_policy).authorize(
+            Some(&session),
+            PermissionAction::ManageUsers,
+            None,
+        );
+        if !permission.allowed {
+            let reason = permission
+                .reason
+                .clone()
+                .unwrap_or_else(|| "permission_denied".to_string());
+            if let Some(storage) = self.storage_manager.clone() {
+                let _ = AuditService::new(storage).record(
+                    Some(&session),
+                    PermissionAction::ManageUsers,
+                    None,
+                    AuditOutcome::Denied,
+                    Some(&reason),
+                );
+            }
+            self.error_message = Some(format!("ManageUsers denied: {reason}"));
+            return;
+        }
+
+        if self.refresh_user_management().is_ok() {
+            self.screen_stack.push(ShellScreen::UserManagement);
+            self.focused_component = ShellComponent::UserManagement;
+            self.status_message = "User Management".to_string();
+            self.refresh_hit_map();
+        }
+    }
+
+    fn refresh_user_management(&mut self) -> Result<(), CoreError> {
+        let Some(storage) = self.storage_manager.clone() else {
+            self.error_message = Some("Storage unavailable".to_string());
+            return Ok(());
+        };
+        let Some(session) = self.auth_session.as_ref() else {
+            self.error_message = Some("Login required".to_string());
+            return Ok(());
+        };
+        let users =
+            UserService::with_debug_policy(storage, self.debug_policy).list_users(session)?;
+        self.user_management_users = users;
+        if self.user_management_users.is_empty() {
+            self.user_management_selected = 0;
+        } else {
+            self.user_management_selected = self
+                .user_management_selected
+                .min(self.user_management_users.len() - 1);
+        }
+        Ok(())
+    }
+
+    fn select_user_management_row(&mut self, direction: i8) {
+        if self.user_management_users.is_empty() {
+            return;
+        }
+        let len = self.user_management_users.len() as isize;
+        let next = (self.user_management_selected as isize + direction as isize).rem_euclid(len);
+        self.user_management_selected = next as usize;
+    }
+
+    fn create_managed_user(&mut self, role: UserRole) {
+        let Some(storage) = self.storage_manager.clone() else {
+            return;
+        };
+        let Some(session) = self.auth_session.as_ref() else {
+            return;
+        };
+        let index = self.user_management_users.len() + 1;
+        let prefix = match role {
+            UserRole::Admin => "admin",
+            UserRole::Debug => "debug",
+            UserRole::Guest | UserRole::User => "user",
+        };
+        let username = format!("{prefix}{index}");
+        let password = format!("{prefix}Pass{index}123!");
+        let result = UserService::with_debug_policy(storage, self.debug_policy)
+            .create_user(session, &username, &username, role, &password);
+        self.user_management_message = Some(match result {
+            Ok(_) => format!("Created {username}"),
+            Err(error) => format_core_error(&error),
+        });
+        let _ = self.refresh_user_management();
+    }
+
+    fn disable_selected_user(&mut self) {
+        if let Some(username) = self.selected_managed_username() {
+            self.run_selected_user_operation("Disabled", |service, session| {
+                service.disable_user(session, &username)
+            });
+        }
+    }
+
+    fn unlock_selected_user(&mut self) {
+        if let Some(username) = self.selected_managed_username() {
+            self.run_selected_user_operation("Unlocked", |service, session| {
+                service.unlock_user(session, &username)
+            });
+        }
+    }
+
+    fn reset_selected_password(&mut self) {
+        if let Some(username) = self.selected_managed_username() {
+            self.run_selected_user_operation("Reset password for", |service, session| {
+                service.reset_password(session, &username, "ResetPass123!")
+            });
+        }
+    }
+
+    fn cycle_selected_role(&mut self) {
+        if let Some(username) = self.selected_managed_username() {
+            let next_role = self
+                .user_management_users
+                .get(self.user_management_selected)
+                .map(|user| match user.role {
+                    UserRole::User | UserRole::Guest => UserRole::Admin,
+                    UserRole::Admin => UserRole::Debug,
+                    UserRole::Debug => UserRole::User,
+                })
+                .unwrap_or(UserRole::User);
+            self.run_selected_user_operation("Changed role for", |service, session| {
+                service.change_role(session, &username, next_role)
+            });
+        }
+    }
+
+    fn run_selected_user_operation(
+        &mut self,
+        success_prefix: &'static str,
+        operation: impl FnOnce(UserService, &AuthSession) -> Result<(), CoreError>,
+    ) {
+        let Some(storage) = self.storage_manager.clone() else {
+            return;
+        };
+        let Some(session) = self.auth_session.as_ref() else {
+            return;
+        };
+        let username = self
+            .selected_managed_username()
+            .unwrap_or_else(|| "user".to_string());
+        let service = UserService::with_debug_policy(storage, self.debug_policy);
+        self.user_management_message = Some(match operation(service, session) {
+            Ok(()) => format!("{success_prefix} {username}"),
+            Err(error) => format_core_error(&error),
+        });
+        let _ = self.refresh_user_management();
+    }
+
+    fn selected_managed_username(&self) -> Option<String> {
+        self.user_management_users
+            .get(self.user_management_selected)
+            .map(|user| user.username.clone())
+    }
+
+    fn user_home_entries(&self) -> Vec<tundra_ui::ShellEntry> {
+        let mut entries = user_home_entries();
+        if matches!(
+            self.auth_session.as_ref().map(|session| session.role),
+            Some(UserRole::Admin | UserRole::Debug)
+        ) {
+            entries.push(tundra_ui::ShellEntry::new(
+                "User Management",
+                "Manage local TundraUX users",
+            ));
+        }
+        entries
     }
 
     pub fn apply_input(&mut self, input: InputEvent) -> ShellAction {
@@ -1198,6 +1634,60 @@ impl ShellState {
             ShellCommand::FocusPrevious => {
                 self.move_focus(-1);
                 self.status_message = format!("Focus: {}", self.focused_component.label());
+                ShellAction::Redraw
+            }
+            ShellCommand::AppendAuthChar(character) => {
+                self.append_auth_char(character);
+                ShellAction::Redraw
+            }
+            ShellCommand::AuthBackspace => {
+                self.auth_backspace();
+                ShellAction::Redraw
+            }
+            ShellCommand::SubmitLogin => {
+                self.submit_login();
+                ShellAction::Redraw
+            }
+            ShellCommand::SubmitBootstrapAdmin => {
+                self.submit_bootstrap_admin();
+                ShellAction::Redraw
+            }
+            ShellCommand::OpenUserManagement => {
+                self.open_user_management();
+                ShellAction::Redraw
+            }
+            ShellCommand::CloseUserManagement => {
+                self.pop_to_home();
+                self.status_message = "Ready".to_string();
+                self.refresh_hit_map();
+                ShellAction::Redraw
+            }
+            ShellCommand::UserManagementNext => {
+                self.select_user_management_row(1);
+                ShellAction::Redraw
+            }
+            ShellCommand::UserManagementPrevious => {
+                self.select_user_management_row(-1);
+                ShellAction::Redraw
+            }
+            ShellCommand::CreateManagedUser(role) => {
+                self.create_managed_user(role);
+                ShellAction::Redraw
+            }
+            ShellCommand::DisableManagedUser => {
+                self.disable_selected_user();
+                ShellAction::Redraw
+            }
+            ShellCommand::UnlockManagedUser => {
+                self.unlock_selected_user();
+                ShellAction::Redraw
+            }
+            ShellCommand::ResetManagedPassword => {
+                self.reset_selected_password();
+                ShellAction::Redraw
+            }
+            ShellCommand::CycleManagedRole => {
+                self.cycle_selected_role();
                 ShellAction::Redraw
             }
             ShellCommand::Hover(target) => {
@@ -1343,10 +1833,21 @@ impl ShellState {
     }
 
     fn home_display_mode(&self) -> tundra_ui::HomeDisplayMode {
+        if matches!(
+            self.active_screen(),
+            ShellScreen::Login | ShellScreen::BootstrapAdmin
+        ) {
+            return tundra_ui::HomeDisplayMode::Auth;
+        }
+
         match self.home_mode {
             ShellHomeMode::Debug => tundra_ui::HomeDisplayMode::Debug,
             ShellHomeMode::User => tundra_ui::HomeDisplayMode::User,
         }
+    }
+
+    pub fn auth_session(&self) -> Option<&AuthSession> {
+        self.auth_session.as_ref()
     }
 
     fn route_key_input(&self, key: &KeyInput) -> (RoutedTarget, ShellCommand) {
@@ -1360,6 +1861,17 @@ impl ShellState {
 
         if self.active_screen() == ShellScreen::ExitConfirm {
             return self.route_exit_confirm_key(key);
+        }
+
+        if matches!(
+            self.active_screen(),
+            ShellScreen::Login | ShellScreen::BootstrapAdmin
+        ) {
+            return self.route_auth_key(key);
+        }
+
+        if self.active_screen() == ShellScreen::UserManagement {
+            return self.route_user_management_key(key);
         }
 
         if self.active_popup.is_some() {
@@ -1376,6 +1888,9 @@ impl ShellState {
         }
 
         match self.active_screen() {
+            ShellScreen::Home if key.is_character('u') || key.is_character('U') => {
+                (RoutedTarget::Global, ShellCommand::OpenUserManagement)
+            }
             ShellScreen::Home if key.is_character('q') || matches!(&key.key, InputKey::Escape) => {
                 (RoutedTarget::Global, ShellCommand::RequestExit)
             }
@@ -1383,6 +1898,78 @@ impl ShellState {
                 RoutedTarget::Component(self.focused_component),
                 ShellCommand::RecordInput,
             ),
+        }
+    }
+
+    fn route_auth_key(&self, key: &KeyInput) -> (RoutedTarget, ShellCommand) {
+        let target = RoutedTarget::Component(self.focused_component);
+        if matches!(&key.key, InputKey::BackTab)
+            || (matches!(&key.key, InputKey::Tab) && key.modifiers.shift)
+        {
+            return (target, ShellCommand::FocusPrevious);
+        }
+        if matches!(&key.key, InputKey::Tab | InputKey::Down) {
+            return (target, ShellCommand::FocusNext);
+        }
+        if matches!(&key.key, InputKey::Up) {
+            return (target, ShellCommand::FocusPrevious);
+        }
+        if matches!(&key.key, InputKey::Escape) {
+            return (RoutedTarget::Global, ShellCommand::RequestExit);
+        }
+        if matches!(&key.key, InputKey::Enter) {
+            if matches!(
+                self.focused_component,
+                ShellComponent::LoginUsername | ShellComponent::BootstrapUsername
+            ) {
+                return (target, ShellCommand::FocusNext);
+            }
+            return (
+                target,
+                match self.active_screen() {
+                    ShellScreen::BootstrapAdmin => ShellCommand::SubmitBootstrapAdmin,
+                    _ => ShellCommand::SubmitLogin,
+                },
+            );
+        }
+        if matches!(&key.key, InputKey::Backspace) {
+            return (target, ShellCommand::AuthBackspace);
+        }
+        if let InputKey::Character(character) = &key.key {
+            return (target, ShellCommand::AppendAuthChar(*character));
+        }
+
+        (target, ShellCommand::RecordInput)
+    }
+
+    fn route_user_management_key(&self, key: &KeyInput) -> (RoutedTarget, ShellCommand) {
+        let target = RoutedTarget::Component(ShellComponent::UserManagement);
+        match &key.key {
+            InputKey::Escape => (RoutedTarget::Global, ShellCommand::CloseUserManagement),
+            InputKey::Up => (target, ShellCommand::UserManagementPrevious),
+            InputKey::Down => (target, ShellCommand::UserManagementNext),
+            InputKey::Character('n') | InputKey::Character('N') => {
+                (target, ShellCommand::CreateManagedUser(UserRole::User))
+            }
+            InputKey::Character('a') | InputKey::Character('A') => {
+                (target, ShellCommand::CreateManagedUser(UserRole::Admin))
+            }
+            InputKey::Character('g') | InputKey::Character('G') => {
+                (target, ShellCommand::CreateManagedUser(UserRole::Debug))
+            }
+            InputKey::Character('d') | InputKey::Character('D') => {
+                (target, ShellCommand::DisableManagedUser)
+            }
+            InputKey::Character('u') | InputKey::Character('U') => {
+                (target, ShellCommand::UnlockManagedUser)
+            }
+            InputKey::Character('r') | InputKey::Character('R') => {
+                (target, ShellCommand::ResetManagedPassword)
+            }
+            InputKey::Character('c') | InputKey::Character('C') => {
+                (target, ShellCommand::CycleManagedRole)
+            }
+            _ => (target, ShellCommand::RecordInput),
         }
     }
 
@@ -1673,6 +2260,18 @@ impl ShellState {
         if self.active_screen() == ShellScreen::ExitConfirm {
             return vec![ShellComponent::ExitDialog];
         }
+        if self.active_screen() == ShellScreen::Login {
+            return vec![ShellComponent::LoginUsername, ShellComponent::LoginPassword];
+        }
+        if self.active_screen() == ShellScreen::BootstrapAdmin {
+            return vec![
+                ShellComponent::BootstrapUsername,
+                ShellComponent::BootstrapPassword,
+            ];
+        }
+        if self.active_screen() == ShellScreen::UserManagement {
+            return vec![ShellComponent::UserManagement];
+        }
         if self.active_popup.is_some() {
             return vec![ShellComponent::ContextMenu];
         }
@@ -1732,6 +2331,7 @@ impl ShellState {
             self.screen_stack.push(ShellScreen::Home);
         }
         self.focused_component = ShellComponent::Home;
+        self.refresh_hit_map();
     }
 }
 
@@ -1839,10 +2439,42 @@ fn build_shell_hit_map(
                 component: ShellComponent::TopBar,
                 area: top,
             });
-            regions.push(ShellHitRegion {
-                component: ShellComponent::Home,
-                area: main,
-            });
+            match active_screen {
+                ShellScreen::Login => {
+                    let (username, password) = auth_field_rects(main);
+                    regions.push(ShellHitRegion {
+                        component: ShellComponent::LoginUsername,
+                        area: username,
+                    });
+                    regions.push(ShellHitRegion {
+                        component: ShellComponent::LoginPassword,
+                        area: password,
+                    });
+                }
+                ShellScreen::BootstrapAdmin => {
+                    let (username, password) = auth_field_rects(main);
+                    regions.push(ShellHitRegion {
+                        component: ShellComponent::BootstrapUsername,
+                        area: username,
+                    });
+                    regions.push(ShellHitRegion {
+                        component: ShellComponent::BootstrapPassword,
+                        area: password,
+                    });
+                }
+                ShellScreen::UserManagement => {
+                    regions.push(ShellHitRegion {
+                        component: ShellComponent::UserManagement,
+                        area: main,
+                    });
+                }
+                _ => {
+                    regions.push(ShellHitRegion {
+                        component: ShellComponent::Home,
+                        area: main,
+                    });
+                }
+            }
             regions.push(ShellHitRegion {
                 component: ShellComponent::StatusBar,
                 area: status,
@@ -1865,6 +2497,18 @@ fn build_shell_hit_map(
     }
 
     ShellHitMap::new(terminal_size, generation, regions)
+}
+
+fn auth_field_rects(main: Rect) -> (Rect, Rect) {
+    let x = main.x.saturating_add(1);
+    let width = main.width.saturating_sub(2);
+    let username_y = main.y.saturating_add(3);
+    let password_y = main.y.saturating_add(4);
+
+    (
+        Rect::new(x, username_y, width, 1),
+        Rect::new(x, password_y, width, 1),
+    )
 }
 
 fn popup_rect(terminal_size: CellPosition, anchor: CellPosition) -> Rect {
@@ -1931,6 +2575,31 @@ fn current_time_label() -> String {
         .unwrap_or(0);
 
     format!("unix:{seconds}")
+}
+
+fn unix_millis() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_millis())
+        .ok()
+        .and_then(|millis| u64::try_from(millis).ok())
+        .unwrap_or(0)
+}
+
+fn format_core_error(error: &CoreError) -> String {
+    match error {
+        CoreError::InvalidCredentials => "Invalid username or password".to_string(),
+        CoreError::AccountDisabled => "Account disabled".to_string(),
+        CoreError::AccountLocked { .. } => "Account locked".to_string(),
+        CoreError::BootstrapAlreadyExists => "Admin already exists".to_string(),
+        CoreError::BootstrapRequired => "Create the first admin account".to_string(),
+        CoreError::DuplicateUsername => "Username already exists".to_string(),
+        CoreError::InvalidUsername => "Invalid username".to_string(),
+        CoreError::InvalidPassword(reason) => format!("Invalid password: {reason}"),
+        CoreError::PermissionDenied { reason, .. } => format!("Permission denied: {reason}"),
+        CoreError::UserNotFound => "User not found".to_string(),
+        other => other.to_string(),
+    }
 }
 
 fn user_home_entries() -> Vec<tundra_ui::ShellEntry> {
@@ -2248,12 +2917,40 @@ pub fn run_fullscreen_blocking(
     loop {
         let chrome = state.to_shell_chrome_view_model();
         let home = state.to_home_view_model();
+        let login = state.to_login_view_model();
+        let bootstrap_admin = state.to_bootstrap_admin_view_model();
+        let user_management = state.to_user_management_view_model();
         let active_screen = state.active_screen();
         let exit_confirmation = tundra_ui::ExitConfirmViewModel::new();
 
         guard.terminal_mut().draw(|frame| {
             let area = frame.area();
-            tundra_ui::render_home(frame, area, &chrome, &home, &theme);
+            match active_screen {
+                ShellScreen::Login => {
+                    tundra_ui::render_login(frame, area, &chrome, &login, &theme);
+                }
+                ShellScreen::BootstrapAdmin => {
+                    tundra_ui::render_bootstrap_admin(
+                        frame,
+                        area,
+                        &chrome,
+                        &bootstrap_admin,
+                        &theme,
+                    );
+                }
+                ShellScreen::UserManagement => {
+                    tundra_ui::render_user_management(
+                        frame,
+                        area,
+                        &chrome,
+                        &user_management,
+                        &theme,
+                    );
+                }
+                ShellScreen::Home | ShellScreen::ExitConfirm => {
+                    tundra_ui::render_home(frame, area, &chrome, &home, &theme);
+                }
+            }
 
             if active_screen == ShellScreen::ExitConfirm {
                 tundra_ui::render_exit_confirmation(frame, area, &exit_confirmation, &theme);

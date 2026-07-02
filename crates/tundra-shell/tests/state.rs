@@ -406,6 +406,20 @@ fn terminal_flags_are_visible_in_debug_view_model() {
 }
 
 #[test]
+fn debug_status_bar_includes_recent_input_diagnostics() {
+    let mut state = ShellState::new(debug_config(), (120, 40));
+
+    state.apply_input(InputEvent::from_key_label("x"));
+    state.apply_input(InputEvent::mouse_scroll(ScrollDirection::Down, (12, 7)));
+
+    let chrome = state.to_shell_chrome_view_model();
+
+    assert!(chrome.status.status.contains("Key: x"));
+    assert!(chrome.status.status.contains("Mouse: Mouse Scroll Down"));
+    assert!(chrome.status.status.contains("Resize: none"));
+}
+
+#[test]
 fn user_state_builds_user_home_view_model() {
     let state =
         ShellState::new_for_home_mode(build_default_config(), (120, 40), ShellHomeMode::User);
@@ -534,6 +548,9 @@ fn debug_override_wins_over_persisted_config_and_session() {
             ShellHomeMode::User,
             ShellComponent::StatusBar,
         )),
+        storage_manager: None,
+        auth_bootstrap_required: false,
+        debug_policy: tundra_core::DebugPolicy::default(),
     };
 
     let state = ShellState::new_with_startup(debug_config(), (120, 40), startup);
@@ -557,6 +574,9 @@ fn restored_session_is_sanitized_to_stable_home_state() {
                 anchor: (4, 4),
             }),
         }),
+        storage_manager: None,
+        auth_bootstrap_required: false,
+        debug_policy: tundra_core::DebugPolicy::default(),
     };
 
     let state = ShellState::new_with_startup(build_default_config(), (120, 40), startup);

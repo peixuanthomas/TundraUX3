@@ -4,8 +4,9 @@ use ratatui::text::Line;
 use ratatui::widgets::{Block, Borders, Clear, Paragraph, Wrap};
 
 use crate::{
-    ExitConfirmViewModel, HomeDisplayMode, HomeViewModel, ShellChromeViewModel, ShellLayout,
-    TundraTheme, compute_shell_layout,
+    AuthField, BootstrapAdminViewModel, ExitConfirmViewModel, HomeDisplayMode, HomeViewModel,
+    LoginViewModel, ShellChromeViewModel, ShellLayout, TundraTheme, UserManagementViewModel,
+    compute_shell_layout,
 };
 
 pub fn render_home(
@@ -49,6 +50,103 @@ pub fn render_exit_confirmation(
 
     frame.render_widget(Clear, dialog);
     frame.render_widget(dialog_widget, dialog);
+}
+
+pub fn render_login(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    chrome: &ShellChromeViewModel,
+    model: &LoginViewModel,
+    theme: &TundraTheme,
+) {
+    render_auth_screen(frame, area, chrome, "Login", auth_lines(model), theme);
+}
+
+pub fn render_bootstrap_admin(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    chrome: &ShellChromeViewModel,
+    model: &BootstrapAdminViewModel,
+    theme: &TundraTheme,
+) {
+    render_auth_screen(
+        frame,
+        area,
+        chrome,
+        "Create Admin",
+        bootstrap_lines(model),
+        theme,
+    );
+}
+
+pub fn render_user_management(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    chrome: &ShellChromeViewModel,
+    model: &UserManagementViewModel,
+    theme: &TundraTheme,
+) {
+    match compute_shell_layout(area) {
+        ShellLayout::Compact(compact) => render_compact_home(frame, compact, theme),
+        ShellLayout::Full { top, main, status } => {
+            render_top(frame, top, chrome, theme);
+            let mut lines = vec![Line::from(format!("Current user: {}", model.current_user))];
+            lines.push(Line::from(""));
+            for (index, user) in model.users.iter().enumerate() {
+                let marker = if index == model.selected_index {
+                    ">"
+                } else {
+                    " "
+                };
+                let enabled = if user.enabled { "enabled" } else { "disabled" };
+                let locked = if user.locked { " locked" } else { "" };
+                lines.push(Line::from(format!(
+                    "{marker} {} | {} | {enabled}{locked}",
+                    user.username, user.role
+                )));
+            }
+            if let Some(message) = &model.message {
+                lines.push(Line::from(""));
+                lines.push(Line::from(message.clone()));
+            }
+            let main_widget = Paragraph::new(lines)
+                .block(
+                    Block::default()
+                        .title("User Management")
+                        .borders(Borders::ALL)
+                        .style(theme.body_style()),
+                )
+                .wrap(Wrap { trim: true });
+            frame.render_widget(main_widget, main);
+            render_status(frame, status, chrome, theme);
+        }
+    }
+}
+
+fn render_auth_screen(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    chrome: &ShellChromeViewModel,
+    title: &'static str,
+    lines: Vec<Line<'static>>,
+    theme: &TundraTheme,
+) {
+    match compute_shell_layout(area) {
+        ShellLayout::Compact(compact) => render_compact_home(frame, compact, theme),
+        ShellLayout::Full { top, main, status } => {
+            render_top(frame, top, chrome, theme);
+            let widget = Paragraph::new(lines)
+                .block(
+                    Block::default()
+                        .title(title)
+                        .borders(Borders::ALL)
+                        .style(theme.body_style()),
+                )
+                .wrap(Wrap { trim: true });
+            frame.render_widget(widget, main);
+            render_status(frame, status, chrome, theme);
+        }
+    }
 }
 
 fn render_compact_home(frame: &mut Frame<'_>, area: Rect, theme: &TundraTheme) {
@@ -102,7 +200,7 @@ fn render_top(
 fn render_main(frame: &mut Frame<'_>, area: Rect, home: &HomeViewModel, theme: &TundraTheme) {
     let lines = match home.display_mode() {
         HomeDisplayMode::Debug => debug_lines(home),
-        HomeDisplayMode::User => user_lines(home),
+        HomeDisplayMode::User | HomeDisplayMode::Auth => user_lines(home),
     };
     let main = Paragraph::new(lines)
         .block(
@@ -191,6 +289,54 @@ fn debug_lines(home: &HomeViewModel) -> Vec<Line<'static>> {
     ]
 }
 
+fn auth_lines(model: &LoginViewModel) -> Vec<Line<'static>> {
+    let mut lines = vec![
+        Line::from("Tab / Down: password    Enter on password: login    Esc: exit"),
+        Line::from(""),
+        Line::from(format!(
+            "{}Username: {}",
+            focus_marker(model.focused_field == AuthField::Username),
+            model.username
+        )),
+        Line::from(format!(
+            "{}Password: {}",
+            focus_marker(model.focused_field == AuthField::Password),
+            "*".repeat(model.password_len)
+        )),
+    ];
+    if let Some(error) = &model.error {
+        lines.push(Line::from(""));
+        lines.push(Line::from(error.clone()));
+    }
+    lines
+}
+
+fn bootstrap_lines(model: &BootstrapAdminViewModel) -> Vec<Line<'static>> {
+    let mut lines = vec![
+        Line::from("Tab / Down: password    Enter on password: create admin    Esc: exit"),
+        Line::from(""),
+        Line::from(format!(
+            "{}Admin username: {}",
+            focus_marker(model.focused_field == AuthField::Username),
+            model.username
+        )),
+        Line::from(format!(
+            "{}Admin password: {}",
+            focus_marker(model.focused_field == AuthField::Password),
+            "*".repeat(model.password_len)
+        )),
+    ];
+    if let Some(error) = &model.error {
+        lines.push(Line::from(""));
+        lines.push(Line::from(error.clone()));
+    }
+    lines
+}
+
+fn focus_marker(focused: bool) -> &'static str {
+    if focused { "> " } else { "  " }
+}
+
 fn user_lines(home: &HomeViewModel) -> Vec<Line<'static>> {
     let user = home.current_user.as_deref().unwrap_or("Unknown user");
     let time = home.current_time.as_deref().unwrap_or("Unknown time");
@@ -205,6 +351,10 @@ fn user_lines(home: &HomeViewModel) -> Vec<Line<'static>> {
             .iter()
             .map(|entry| Line::from(format!("{} - {}", entry.label, entry.description))),
     );
+    lines.push(Line::from(""));
+    lines.push(Line::from(
+        "Q / Esc: exit    U: user management when available",
+    ));
     lines
 }
 
