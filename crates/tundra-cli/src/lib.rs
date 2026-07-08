@@ -15,6 +15,7 @@ pub enum CliCommand {
     Explain,
     New,
     Paths,
+    Weathr,
     Help,
 }
 
@@ -56,6 +57,7 @@ where
         "explain" => Ok(CliCommand::Explain),
         "new" => Ok(CliCommand::New),
         "paths" => Ok(CliCommand::Paths),
+        "weathr" => Ok(CliCommand::Weathr),
         "-h" | "--help" | "help" => Ok(CliCommand::Help),
         other => Err(CliError::UnknownCommand(other.to_string())),
     }
@@ -84,6 +86,31 @@ where
     Stdout: Write,
     Stderr: Write,
 {
+    run_with_platform_and_weathr_launcher(
+        args,
+        platform,
+        stdout,
+        stderr,
+        tundra_weathr::run_default_blocking,
+    )
+}
+
+#[doc(hidden)]
+pub fn run_with_platform_and_weathr_launcher<I, S, Stdout, Stderr, Launcher, LaunchError>(
+    args: I,
+    platform: &dyn Platform,
+    stdout: &mut Stdout,
+    stderr: &mut Stderr,
+    weathr_launcher: Launcher,
+) -> i32
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<str>,
+    Stdout: Write,
+    Stderr: Write,
+    Launcher: FnOnce() -> Result<(), LaunchError>,
+    LaunchError: fmt::Display,
+{
     match parse_args(args) {
         Ok(CliCommand::Help) => {
             let _ = write_help(stdout);
@@ -96,10 +123,26 @@ where
         Ok(CliCommand::New) => run_new(platform, stdout, stderr),
         Ok(CliCommand::Paths) => run_paths(platform, stdout, stderr),
         Ok(CliCommand::Doctor) => run_doctor(platform, stdout, stderr),
+        Ok(CliCommand::Weathr) => run_weathr(stderr, weathr_launcher),
         Err(error) => {
             let _ = writeln!(stderr, "ERROR: {error}");
             let _ = write_help(stderr);
             2
+        }
+    }
+}
+
+fn run_weathr<Stderr, Launcher, LaunchError>(stderr: &mut Stderr, weathr_launcher: Launcher) -> i32
+where
+    Stderr: Write,
+    Launcher: FnOnce() -> Result<(), LaunchError>,
+    LaunchError: fmt::Display,
+{
+    match weathr_launcher() {
+        Ok(()) => 0,
+        Err(error) => {
+            let _ = writeln!(stderr, "ERROR: could not launch weathr: {error}");
+            1
         }
     }
 }
@@ -199,7 +242,10 @@ fn run_doctor<Stdout: Write, Stderr: Write>(
 
 fn write_help(output: &mut impl Write) -> std::io::Result<()> {
     writeln!(output, "TundraUX3 CLI")?;
-    writeln!(output, "Usage: tundra-cli <doctor|explain|new|paths>")?;
+    writeln!(
+        output,
+        "Usage: tundra-cli <doctor|explain|new|paths|weathr>"
+    )?;
     writeln!(
         output,
         "  doctor  Check Windows/macOS, terminal, and app path readiness"
@@ -212,7 +258,8 @@ fn write_help(output: &mut impl Write) -> std::io::Result<()> {
         output,
         "  new     Clear saved TundraUX3 data and recreate initial storage"
     )?;
-    writeln!(output, "  paths   Print configured and resolved app paths")
+    writeln!(output, "  paths   Print configured and resolved app paths")?;
+    writeln!(output, "  weathr  Launch the terminal weather scene")
 }
 
 fn write_explain(output: &mut impl Write) -> std::io::Result<()> {
@@ -225,7 +272,7 @@ fn write_explain(output: &mut impl Write) -> std::io::Result<()> {
     )?;
     writeln!(
         output,
-        "  2. tundra-cli handles diagnostics and operator commands: doctor, paths, explain, new."
+        "  2. tundra-cli handles diagnostics, operator commands, and launchers: doctor, paths, explain, new, weathr."
     )?;
     writeln!(
         output,

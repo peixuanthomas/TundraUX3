@@ -2,7 +2,9 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use tundra_cli::{CliCommand, CliError, parse_args, run, run_with_platform};
+use tundra_cli::{
+    CliCommand, CliError, parse_args, run, run_with_platform, run_with_platform_and_weathr_launcher,
+};
 use tundra_platform::mock::{MockPlatform, UnsupportedPlatform};
 use tundra_platform::{
     Platform, PlatformKind, UserDirs, build_macos_app_paths, build_windows_app_paths,
@@ -35,6 +37,11 @@ fn new_arg_dispatches_new() {
 }
 
 #[test]
+fn weathr_arg_dispatches_weathr() {
+    assert_eq!(parse_args(["weathr"]), Ok(CliCommand::Weathr));
+}
+
+#[test]
 fn unknown_arg_is_an_error() {
     assert_eq!(
         parse_args(["repair"]),
@@ -60,8 +67,9 @@ fn help_command_writes_usage_to_stdout() {
     assert_eq!(exit_code, 0);
     assert!(stderr.is_empty());
     let stdout = String::from_utf8(stdout).expect("help output should be utf8");
-    assert!(stdout.contains("Usage: tundra-cli <doctor|explain|new|paths>"));
+    assert!(stdout.contains("Usage: tundra-cli <doctor|explain|new|paths|weathr>"));
     assert!(stdout.contains("new     Clear saved TundraUX3 data"));
+    assert!(stdout.contains("weathr  Launch the terminal weather scene"));
     assert!(!stdout.contains("Windows 11"));
     assert!(!stdout.contains("Windows Terminal"));
 }
@@ -82,9 +90,50 @@ fn explain_command_prints_startup_and_boundary_notes() {
     assert!(stdout.contains("UI boundary"));
     assert!(stdout.contains("tundra-platform"));
     assert!(stdout.contains("tundra-shell"));
-    assert!(stdout.contains("doctor, paths, explain, new"));
+    assert!(stdout.contains("doctor, paths, explain, new, weathr"));
     assert!(!stdout.contains("Windows 11"));
     assert!(!stdout.contains("Windows Terminal"));
+}
+
+#[test]
+fn weathr_command_launches_injected_runner() {
+    let mut stdout = Vec::new();
+    let mut stderr = Vec::new();
+    let tree = TempTree::new("weathr-launch");
+    let platform = mock_windows_platform(tree.path());
+
+    let exit_code = run_with_platform_and_weathr_launcher(
+        ["weathr"],
+        &platform,
+        &mut stdout,
+        &mut stderr,
+        || Ok::<(), &'static str>(()),
+    );
+
+    assert_eq!(exit_code, 0);
+    assert!(stdout.is_empty());
+    assert!(stderr.is_empty());
+}
+
+#[test]
+fn weathr_command_reports_injected_runner_error() {
+    let mut stdout = Vec::new();
+    let mut stderr = Vec::new();
+    let tree = TempTree::new("weathr-launch-error");
+    let platform = mock_windows_platform(tree.path());
+
+    let exit_code = run_with_platform_and_weathr_launcher(
+        ["weathr"],
+        &platform,
+        &mut stdout,
+        &mut stderr,
+        || Err::<(), &'static str>("terminal unavailable"),
+    );
+
+    assert_eq!(exit_code, 1);
+    assert!(stdout.is_empty());
+    let stderr = String::from_utf8(stderr).expect("weathr error output should be utf8");
+    assert!(stderr.contains("ERROR: could not launch weathr: terminal unavailable"));
 }
 
 #[test]
@@ -269,7 +318,7 @@ fn unknown_command_exits_two_and_writes_error_to_stderr() {
     assert!(stdout.is_empty());
     let stderr = String::from_utf8(stderr).expect("error output should be utf8");
     assert!(stderr.contains("ERROR: unknown command: repair"));
-    assert!(stderr.contains("Usage: tundra-cli <doctor|explain|new|paths>"));
+    assert!(stderr.contains("Usage: tundra-cli <doctor|explain|new|paths|weathr>"));
 }
 
 fn assert_path_labels(output: &str) {
