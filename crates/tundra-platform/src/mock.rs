@@ -149,6 +149,21 @@ impl Platform for MockPlatform {
             crate::default_file_attributes(path)
         }
     }
+
+    fn external_open_policy(
+        &self,
+        path: &Path,
+        attributes: &FileAttributes,
+    ) -> crate::ExternalOpenPolicy {
+        match self.kind {
+            PlatformKind::Windows => {
+                crate::platform::windows_external_open_policy(path, attributes)
+            }
+            PlatformKind::Macos | PlatformKind::Unsupported => {
+                crate::default_external_open_policy(attributes)
+            }
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, Default)]

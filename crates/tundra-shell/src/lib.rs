@@ -26,14 +26,13 @@ use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tundra_platform::{
     AppPaths, CapabilityStatus, FileAttributes, Platform, PlatformCapabilities, PlatformError,
-    PlatformKind,
+    PlatformKind, TerminalControlHandler,
 };
 
-pub const BANNER_DISPLAY_DURATION: Duration = Duration::from_secs(2);
-pub const ENTER_FULLSCREEN_SEQUENCE: &str = "\x1B[?1049h\x1B[?25l\x1B[2J\x1B[H";
-pub const EXIT_FULLSCREEN_SEQUENCE: &str = "\x1B[?25h\x1B[?1049l";
+pub use tundra_platform::{ENTER_FULLSCREEN_SEQUENCE, EXIT_FULLSCREEN_SEQUENCE};
 
-static SHELL_RUNNING: AtomicBool = AtomicBool::new(true);
+pub const BANNER_DISPLAY_DURATION: Duration = Duration::from_secs(2);
+
 static PANIC_RESTORE_HOOK_INSTALLED: AtomicBool = AtomicBool::new(false);
 
 const BANNER_LINES: &[&str] = &[
@@ -3778,12 +3777,11 @@ pub fn run_fullscreen_blocking(
     output: &mut impl Write,
     config: ShellLaunchConfig,
 ) -> io::Result<()> {
-    SHELL_RUNNING.store(true, Ordering::SeqCst);
     let platform = tundra_platform::native_platform();
     let startup = prepare_shell_startup(platform.as_ref(), config)
         .map_err(|error| io::Error::new(io::ErrorKind::Other, error))?;
     install_panic_restore_hook();
-    let _handler = ConsoleControlHandler::install();
+    let terminal_control = TerminalControlHandler::install();
     let mut guard = TerminalGuard::enter(output)?;
     let initial_size = crossterm::terminal::size().unwrap_or((80, 24));
     let mut state = ShellState::new_with_startup(config, initial_size, startup);
@@ -3837,7 +3835,7 @@ pub fn run_fullscreen_blocking(
             }
         })?;
 
-        if !SHELL_RUNNING.load(Ordering::SeqCst) {
+        if terminal_control.shutdown_requested() {
             state.apply_input_with_platform(InputEvent::Shutdown, platform.as_ref());
         }
         if state.shutdown_requested() {
@@ -3868,17 +3866,7 @@ fn with_fullscreen<W, T>(
 where
     W: Write,
 {
-    write!(output, "{ENTER_FULLSCREEN_SEQUENCE}")?;
-    output.flush()?;
-
-    let body_result = body(output);
-    let exit_result = write!(output, "{EXIT_FULLSCREEN_SEQUENCE}").and_then(|_| output.flush());
-
-    match (body_result, exit_result) {
-        (Ok(value), Ok(())) => Ok(value),
-        (Err(error), _) => Err(error),
-        (Ok(_), Err(error)) => Err(error),
-    }
+    tundra_platform::with_terminal_fullscreen(output, body)
 }
 
 fn write_smoke_loop_message(output: &mut impl Write) -> io::Result<()> {
@@ -3886,65 +3874,6 @@ fn write_smoke_loop_message(output: &mut impl Write) -> io::Result<()> {
         writeln!(output, "{line}")?;
     }
     writeln!(output, "Entering smoke loop")
-}
-
-#[cfg(windows)]
-struct ConsoleControlHandler {
-    installed: bool,
-}
-
-#[cfg(windows)]
-impl ConsoleControlHandler {
-    fn install() -> Self {
-        let installed =
-            unsafe { SetConsoleCtrlHandler(Some(handle_console_control), true.into()) != 0 };
-
-        Self { installed }
-    }
-}
-
-#[cfg(windows)]
-impl Drop for ConsoleControlHandler {
-    fn drop(&mut self) {
-        if self.installed {
-            unsafe {
-                SetConsoleCtrlHandler(Some(handle_console_control), false.into());
-            }
-        }
-    }
-}
-
-#[cfg(windows)]
-unsafe extern "system" fn handle_console_control(control_type: u32) -> i32 {
-    match control_type {
-        CTRL_C_EVENT | CTRL_BREAK_EVENT | CTRL_CLOSE_EVENT | CTRL_LOGOFF_EVENT
-        | CTRL_SHUTDOWN_EVENT => {
-            SHELL_RUNNING.store(false, Ordering::SeqCst);
-            true.into()
-        }
-        _ => false.into(),
-    }
-}
-
-#[cfg(windows)]
-const CTRL_C_EVENT: u32 = 0;
-#[cfg(windows)]
-const CTRL_BREAK_EVENT: u32 = 1;
-#[cfg(windows)]
-const CTRL_CLOSE_EVENT: u32 = 2;
-#[cfg(windows)]
-const CTRL_LOGOFF_EVENT: u32 = 5;
-#[cfg(windows)]
-const CTRL_SHUTDOWN_EVENT: u32 = 6;
-
-#[cfg(not(windows))]
-struct ConsoleControlHandler;
-
-#[cfg(not(windows))]
-impl ConsoleControlHandler {
-    fn install() -> Self {
-        Self
-    }
 }
 
 #[cfg(test)]
@@ -4091,13 +4020,4 @@ mod tests {
             "Windows: 10 supported, 0 best-effort, 3 unsupported"
         );
     }
-}
-
-#[cfg(windows)]
-#[link(name = "kernel32")]
-unsafe extern "system" {
-    fn SetConsoleCtrlHandler(
-        handler_routine: Option<unsafe extern "system" fn(u32) -> i32>,
-        add: i32,
-    ) -> i32;
 }

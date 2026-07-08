@@ -230,6 +230,41 @@ fn lnk_files_are_blocked_before_platform_open() {
     assert_eq!(fixture.platform.calls(), Vec::<MockCall>::new());
 }
 
+#[test]
+fn windows_executables_are_blocked_by_platform_open_policy() {
+    let fixture = Fixture::new("blocked-exe");
+    let program = fixture.documents.join("tool.exe");
+    fs::write(&program, "program").expect("program fixture");
+    let storage = fixture.storage();
+    let controller = ExplorerController::default();
+    let mut state = ExplorerState::new(&fixture.documents, true);
+
+    controller.apply(
+        &mut state,
+        ExplorerCommand::Refresh,
+        Some(&session()),
+        &fixture.platform,
+        &storage,
+    );
+    select_name(&mut state, "tool.exe");
+    controller.apply(
+        &mut state,
+        ExplorerCommand::OpenSelected,
+        Some(&session()),
+        &fixture.platform,
+        &storage,
+    );
+
+    assert!(
+        state
+            .error
+            .as_deref()
+            .unwrap_or_default()
+            .contains("Windows")
+    );
+    assert_eq!(fixture.platform.calls(), Vec::<MockCall>::new());
+}
+
 fn select_name(state: &mut ExplorerState, name: &str) {
     state.selected_index = state
         .entries

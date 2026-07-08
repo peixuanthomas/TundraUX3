@@ -8,7 +8,7 @@ use tundra_platform::{
     ProcessSpec, UserDirs, build_binary_dir_app_paths, build_macos_app_paths,
     build_windows_app_paths, check_directory_read_write, classify_windows_build, cleanup_temp_path,
     create_temp_dir, create_temp_file, default_file_attributes, is_windows_terminal_session,
-    run_doctor_with, validate_process_spec,
+    run_doctor_with, terminal_environment_check_with, validate_process_spec,
 };
 
 #[test]
@@ -522,6 +522,43 @@ fn terminal_detection_uses_wt_session_value() {
 }
 
 #[test]
+fn terminal_environment_check_is_reported_by_platform_layer() {
+    let windows_terminal =
+        terminal_environment_check_with(PlatformKind::Windows, Some("session-id"));
+    let conhost = terminal_environment_check_with(PlatformKind::Windows, None);
+    let macos_terminal = terminal_environment_check_with(PlatformKind::Macos, None);
+
+    assert_eq!(windows_terminal.status, CheckStatus::Pass);
+    assert_eq!(windows_terminal.message, "Windows Terminal detected");
+    assert_eq!(conhost.status, CheckStatus::Warning);
+    assert!(conhost.message.contains("best-effort"));
+    assert_eq!(macos_terminal.status, CheckStatus::Pass);
+}
+
+#[test]
+fn mock_windows_platform_applies_windows_external_open_policy() {
+    let base = unique_temp_root("windows-external-open-policy");
+    let windows_platform = mock_platform(&base).with_kind(PlatformKind::Windows);
+    let macos_platform = mock_platform(&base).with_kind(PlatformKind::Macos);
+    let program = base.join("tool.exe");
+    let attributes = file_attributes(program.clone());
+
+    let windows_policy = windows_platform.external_open_policy(&program, &attributes);
+    let macos_policy = macos_platform.external_open_policy(&program, &attributes);
+
+    assert!(!windows_policy.is_allowed());
+    assert!(
+        windows_policy
+            .blocked_reason()
+            .unwrap_or_default()
+            .contains("Windows")
+    );
+    assert!(macos_policy.is_allowed());
+
+    cleanup_temp_path(&base).expect("fixture root should be removable");
+}
+
+#[test]
 fn directory_permission_check_creates_and_removes_probe_file() {
     let base = unique_temp_root("cleanup");
     let target = base.join("state");
@@ -630,4 +667,22 @@ fn assert_temp_child(path: &Path, temp_root: &Path, prefix: &str, suffix: &str) 
         file_name.ends_with(&format!("-{suffix}")),
         "unexpected temp child name: {file_name}"
     );
+}
+
+fn file_attributes(path: PathBuf) -> FileAttributes {
+    FileAttributes {
+        path,
+        is_file: true,
+        is_dir: false,
+        len: 0,
+        readonly: false,
+        modified: None,
+        hidden: false,
+        system: false,
+        archive: false,
+        symlink: false,
+        junction: false,
+        reparse_point: false,
+        shortcut: false,
+    }
 }

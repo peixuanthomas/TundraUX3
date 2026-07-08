@@ -1,4 +1,3 @@
-use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process;
@@ -18,12 +17,6 @@ pub fn classify_windows_build(build: u32) -> WindowsBuildClass {
     } else {
         WindowsBuildClass::UnsupportedWindows
     }
-}
-
-pub fn is_windows_terminal_session(wt_session: Option<&str>) -> bool {
-    wt_session
-        .map(|value| !value.trim().is_empty())
-        .unwrap_or(false)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -87,7 +80,7 @@ pub fn run_doctor_with(platform: &dyn Platform) -> Result<DoctorReport, Platform
     let app_paths = platform.app_paths()?;
     let mut environment_checks = Vec::new();
     environment_checks.push(platform_check(platform));
-    environment_checks.push(terminal_check(platform.kind()));
+    environment_checks.push(crate::terminal_environment_check(platform.kind()));
     environment_checks.extend(capability_checks(platform));
 
     let path_checks = vec![
@@ -277,37 +270,6 @@ fn windows_platform_check() -> EnvironmentCheck {
         label: "Platform".to_string(),
         status: CheckStatus::Fail,
         message: "Windows platform check is unavailable on this build".to_string(),
-    }
-}
-
-fn terminal_check(kind: PlatformKind) -> EnvironmentCheck {
-    match kind {
-        PlatformKind::Windows => {
-            if is_windows_terminal_session(env::var("WT_SESSION").ok().as_deref()) {
-                EnvironmentCheck {
-                    label: "Terminal".to_string(),
-                    status: CheckStatus::Pass,
-                    message: "Windows Terminal detected".to_string(),
-                }
-            } else {
-                EnvironmentCheck {
-                    label: "Terminal".to_string(),
-                    status: CheckStatus::Warning,
-                    message: "Windows Terminal not detected; conhost is best-effort only"
-                        .to_string(),
-                }
-            }
-        }
-        PlatformKind::Macos => EnvironmentCheck {
-            label: "Terminal".to_string(),
-            status: CheckStatus::Pass,
-            message: "macOS terminal session supported".to_string(),
-        },
-        PlatformKind::Unsupported => EnvironmentCheck {
-            label: "Terminal".to_string(),
-            status: CheckStatus::Warning,
-            message: "terminal support is unsupported on this platform".to_string(),
-        },
     }
 }
 

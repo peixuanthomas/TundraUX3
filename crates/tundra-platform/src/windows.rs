@@ -189,6 +189,14 @@ impl Platform for WindowsPlatform {
 
         Ok(attributes)
     }
+
+    fn external_open_policy(
+        &self,
+        path: &Path,
+        attributes: &FileAttributes,
+    ) -> crate::ExternalOpenPolicy {
+        crate::platform::windows_external_open_policy(path, attributes)
+    }
 }
 
 pub fn current_windows_build() -> Result<u32, String> {

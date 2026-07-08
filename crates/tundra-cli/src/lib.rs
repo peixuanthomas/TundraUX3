@@ -1,4 +1,3 @@
-use std::env;
 use std::fmt;
 use std::fs;
 use std::io::Write;
@@ -439,35 +438,7 @@ fn write_fallback_doctor_checks(
 }
 
 fn fallback_terminal_check(kind: PlatformKind) -> EnvironmentCheck {
-    match kind {
-        PlatformKind::Windows => {
-            if tundra_platform::is_windows_terminal_session(env::var("WT_SESSION").ok().as_deref())
-            {
-                EnvironmentCheck {
-                    label: "Terminal".to_string(),
-                    status: CheckStatus::Pass,
-                    message: "Windows Terminal detected".to_string(),
-                }
-            } else {
-                EnvironmentCheck {
-                    label: "Terminal".to_string(),
-                    status: CheckStatus::Warning,
-                    message: "Windows Terminal not detected; conhost is best-effort only"
-                        .to_string(),
-                }
-            }
-        }
-        PlatformKind::Macos => EnvironmentCheck {
-            label: "Terminal".to_string(),
-            status: CheckStatus::Pass,
-            message: "macOS terminal session supported".to_string(),
-        },
-        PlatformKind::Unsupported => EnvironmentCheck {
-            label: "Terminal".to_string(),
-            status: CheckStatus::Warning,
-            message: "terminal support is unsupported on this platform".to_string(),
-        },
-    }
+    tundra_platform::terminal_environment_check(kind)
 }
 
 fn fallback_capability_checks(platform: &dyn Platform) -> Vec<EnvironmentCheck> {

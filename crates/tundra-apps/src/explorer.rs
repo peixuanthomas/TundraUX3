@@ -415,7 +415,8 @@ impl ExplorerFileService {
             return Ok(());
         }
 
-        if is_blocked_external_open(entry) {
+        let external_open_policy = platform.external_open_policy(&entry.path, &entry.attributes);
+        if let Some(reason) = external_open_policy.blocked_reason() {
             self.audit(
                 storage,
                 session,
@@ -424,9 +425,7 @@ impl ExplorerFileService {
                 AuditOutcome::Denied,
                 "external_open_blocked",
             )?;
-            return Err(ExplorerError::BlockedPath(
-                "this file type is blocked until Launcher/Open With policy is available".into(),
-            ));
+            return Err(ExplorerError::BlockedPath(reason.to_string()));
         }
 
         self.authorize(
@@ -810,22 +809,6 @@ fn validate_child_name(name: &str) -> Result<(), ExplorerError> {
         )));
     }
     Ok(())
-}
-
-fn is_blocked_external_open(entry: &ExplorerEntry) -> bool {
-    if entry.attributes.shortcut || entry.attributes.reparse_point {
-        return true;
-    }
-
-    let extension = entry
-        .path
-        .extension()
-        .and_then(OsStr::to_str)
-        .map(|extension| extension.to_ascii_lowercase());
-    matches!(
-        extension.as_deref(),
-        Some("lnk" | "exe" | "bat" | "cmd" | "ps1")
-    )
 }
 
 fn copy_path(source: &Path, target: &Path) -> Result<(), ExplorerError> {

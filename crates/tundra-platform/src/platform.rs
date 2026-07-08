@@ -155,6 +155,33 @@ pub struct FileAttributes {
     pub shortcut: bool,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExternalOpenPolicy {
+    blocked_reason: Option<String>,
+}
+
+impl ExternalOpenPolicy {
+    pub fn allowed() -> Self {
+        Self {
+            blocked_reason: None,
+        }
+    }
+
+    pub fn blocked(reason: impl Into<String>) -> Self {
+        Self {
+            blocked_reason: Some(reason.into()),
+        }
+    }
+
+    pub fn is_allowed(&self) -> bool {
+        self.blocked_reason.is_none()
+    }
+
+    pub fn blocked_reason(&self) -> Option<&str> {
+        self.blocked_reason.as_deref()
+    }
+}
+
 pub trait Platform: Send + Sync {
     fn kind(&self) -> PlatformKind;
     fn capabilities(&self) -> PlatformCapabilities;
@@ -170,6 +197,11 @@ pub trait Platform: Send + Sync {
 
     fn file_attributes(&self, path: &Path) -> Result<FileAttributes, PlatformError> {
         default_file_attributes(path)
+    }
+
+    fn external_open_policy(&self, path: &Path, attributes: &FileAttributes) -> ExternalOpenPolicy {
+        let _ = path;
+        default_external_open_policy(attributes)
     }
 
     fn create_temp_file(&self, prefix: &str) -> Result<PathBuf, PlatformError> {
@@ -327,6 +359,47 @@ pub fn default_file_attributes(path: &Path) -> Result<FileAttributes, PlatformEr
         reparse_point: false,
         shortcut: false,
     })
+}
+
+pub fn default_external_open_policy(attributes: &FileAttributes) -> ExternalOpenPolicy {
+    if attributes.shortcut {
+        return ExternalOpenPolicy::blocked(
+            "shortcut files are blocked until Launcher/Open With policy is available",
+        );
+    }
+
+    if attributes.reparse_point {
+        return ExternalOpenPolicy::blocked(
+            "reparse point external opens are blocked until path policy is available",
+        );
+    }
+
+    ExternalOpenPolicy::allowed()
+}
+
+pub(crate) fn windows_external_open_policy(
+    path: &Path,
+    attributes: &FileAttributes,
+) -> ExternalOpenPolicy {
+    let default_policy = default_external_open_policy(attributes);
+    if !default_policy.is_allowed() {
+        return default_policy;
+    }
+
+    let extension = path
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .map(|extension| extension.to_ascii_lowercase());
+    if matches!(
+        extension.as_deref(),
+        Some("lnk" | "exe" | "bat" | "cmd" | "ps1")
+    ) {
+        return ExternalOpenPolicy::blocked(
+            "Windows executables, scripts, and shortcuts are blocked until Launcher/Open With policy is available",
+        );
+    }
+
+    ExternalOpenPolicy::allowed()
 }
 
 fn is_dotfile(path: &Path) -> bool {
