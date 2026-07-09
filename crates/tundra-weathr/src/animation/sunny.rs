@@ -13,21 +13,12 @@ use std::time::{Duration, Instant};
 
 const FRAME_DELAY: Duration = Duration::from_millis(500);
 
-const SUN_FRAMES: [&str; 2] = [
-    include_str!("assets/sun_0.txt"),
-    include_str!("assets/sun_1.txt"),
-];
-
 pub struct SunnyAnimation {
     frames: Vec<Vec<String>>,
 }
 
 impl SunnyAnimation {
-    pub fn new() -> Self {
-        let frames = SUN_FRAMES
-            .iter()
-            .map(|src| src.lines().map(|l| l.to_string()).collect())
-            .collect();
+    pub fn new(frames: Vec<Vec<String>>) -> Self {
         Self { frames }
     }
 }
@@ -46,12 +37,6 @@ impl Animation for SunnyAnimation {
     }
 }
 
-impl Default for SunnyAnimation {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 pub struct SunSystem {
     animation: SunnyAnimation,
     controller: AnimationController,
@@ -59,9 +44,9 @@ pub struct SunSystem {
 }
 
 impl SunSystem {
-    pub fn new() -> Self {
+    pub fn new(frames: Vec<Vec<String>>) -> Self {
         Self {
-            animation: SunnyAnimation::new(),
+            animation: SunnyAnimation::new(frames),
             controller: AnimationController::new(),
             last_frame_time: Instant::now(),
         }
@@ -115,12 +100,6 @@ impl SunSystem {
         } else {
             default_y
         }
-    }
-}
-
-impl Default for SunSystem {
-    fn default() -> Self {
-        Self::new()
     }
 }
 

@@ -94,6 +94,13 @@ impl AppState {
         self.weather_info_needs_update = true;
     }
 
+    pub fn clear_weather_for_offline(&mut self) {
+        self.current_weather = None;
+        self.weather_conditions = WeatherConditions::default();
+        self.is_offline = true;
+        self.weather_info_needs_update = true;
+    }
+
     pub fn set_offline_mode(&mut self, offline: bool) {
         self.is_offline = offline;
         self.weather_info_needs_update = true;
@@ -176,13 +183,15 @@ impl AppState {
         }
     }
 
-    pub fn weather_summary_text(&self) -> String {
-        if let Some(ref weather) = self.current_weather {
-            let (temp, temp_unit) = format_temperature(weather.temperature, self.units.temperature);
-            format!("{}  {:.1}{}", self.get_condition_text(), temp, temp_unit)
-        } else {
-            format!("Weather: Loading... {}", self.loading_state.current_char())
-        }
+    pub fn weather_summary_text(&self) -> Option<String> {
+        let weather = self.current_weather.as_ref()?;
+        let (temp, temp_unit) = format_temperature(weather.temperature, self.units.temperature);
+        Some(format!(
+            "{}  {:.1}{}",
+            self.get_condition_text(),
+            temp,
+            temp_unit
+        ))
     }
 
     pub fn update_cached_info(&mut self) {
@@ -508,6 +517,25 @@ mod tests {
 
         let summary = app.weather_summary_text();
 
-        assert_eq!(summary, "Clear  20.0°C");
+        assert_eq!(summary.as_deref(), Some("Clear  20.0°C"));
+    }
+
+    #[test]
+    fn clear_weather_for_offline_hides_weather_summary() {
+        let mut app = create_app_state_full(
+            34.0754,
+            -84.2941,
+            Some("Alpharetta".to_string()),
+            LocationDisplay::Mixed,
+        );
+
+        app.clear_weather_for_offline();
+
+        assert!(app.current_weather.is_none());
+        assert!(app.is_offline);
+        assert_eq!(app.weather_summary_text(), None);
+        assert!(!app.weather_conditions.is_raining);
+        assert!(!app.weather_conditions.is_snowing);
+        assert!(!app.weather_conditions.is_thunderstorm);
     }
 }

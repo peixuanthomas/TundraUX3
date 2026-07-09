@@ -9,7 +9,6 @@ use crate::{
     HomeViewModel, LoginField, LoginViewModel, SetupField, SetupStep, SetupViewModel,
     ShellChromeViewModel, ShellLayout, TundraTheme, UserManagementField, UserManagementFormKind,
     UserManagementFormViewModel, UserManagementViewModel, compute_shell_layout,
-    home_icon_for_label,
     timezone_map::{TimezoneMapWidget, boundary_id_for_timezone},
 };
 
@@ -1410,12 +1409,15 @@ fn render_user_main(frame: &mut Frame<'_>, area: Rect, home: &HomeViewModel, the
         } else {
             theme.body_style()
         };
-        let icon = home_icon_for_label(&entry.label);
-        let mut lines: Vec<Line<'static>> = icon
-            .lines
-            .iter()
-            .map(|line| Line::from((*line).to_string()))
-            .collect();
+        let mut lines: Vec<Line<'static>> = home
+            .home_icon_for_label(&entry.label)
+            .map(|icon| {
+                icon.lines
+                    .iter()
+                    .map(|line| Line::from(line.to_string()))
+                    .collect()
+            })
+            .unwrap_or_default();
         lines.push(Line::styled(entry.label.clone(), style));
         lines.push(Line::from(entry.description.clone()));
 

@@ -1,3 +1,5 @@
+use crate::home_icons::{AssetError, HomeIcon, HomeIconCatalog, RuntimeAsciiAssets};
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HomeDisplayMode {
     Debug,
@@ -50,15 +52,29 @@ pub struct DebugDiagnosticsViewModel {
     pub platform_capability_summary: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub struct HomeViewModel {
     display_mode: HomeDisplayMode,
     diagnostics: Option<DebugDiagnosticsViewModel>,
+    home_icon_assets: Option<RuntimeAsciiAssets>,
     pub(crate) current_user: Option<String>,
     pub(crate) current_time: Option<String>,
     entries: Vec<ShellEntry>,
     selected_entry_index: usize,
 }
+
+impl PartialEq for HomeViewModel {
+    fn eq(&self, other: &Self) -> bool {
+        self.display_mode == other.display_mode
+            && self.diagnostics == other.diagnostics
+            && self.current_user == other.current_user
+            && self.current_time == other.current_time
+            && self.entries == other.entries
+            && self.selected_entry_index == other.selected_entry_index
+    }
+}
+
+impl Eq for HomeViewModel {}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AuthField {
@@ -378,6 +394,7 @@ impl HomeViewModel {
         Self {
             display_mode: HomeDisplayMode::Debug,
             diagnostics: Some(diagnostics),
+            home_icon_assets: None,
             current_user: None,
             current_time: None,
             entries: Vec::new(),
@@ -399,6 +416,56 @@ impl HomeViewModel {
         entries: Vec<ShellEntry>,
         selected_entry_index: usize,
     ) -> Self {
+        Self::try_user_with_selection(current_user, current_time, entries, selected_entry_index)
+            .expect("default ASCII home icon assets must load")
+    }
+
+    pub fn try_user(
+        current_user: impl Into<String>,
+        current_time: impl Into<String>,
+        entries: Vec<ShellEntry>,
+    ) -> Result<Self, AssetError> {
+        Self::try_user_with_selection(current_user, current_time, entries, 0)
+    }
+
+    pub fn try_user_with_selection(
+        current_user: impl Into<String>,
+        current_time: impl Into<String>,
+        entries: Vec<ShellEntry>,
+        selected_entry_index: usize,
+    ) -> Result<Self, AssetError> {
+        let home_icon_assets = RuntimeAsciiAssets::load_default()?;
+        Ok(Self::user_with_selection_and_icon_assets(
+            current_user,
+            current_time,
+            entries,
+            selected_entry_index,
+            home_icon_assets,
+        ))
+    }
+
+    pub fn user_with_icon_assets(
+        current_user: impl Into<String>,
+        current_time: impl Into<String>,
+        entries: Vec<ShellEntry>,
+        home_icon_assets: RuntimeAsciiAssets,
+    ) -> Self {
+        Self::user_with_selection_and_icon_assets(
+            current_user,
+            current_time,
+            entries,
+            0,
+            home_icon_assets,
+        )
+    }
+
+    pub fn user_with_selection_and_icon_assets(
+        current_user: impl Into<String>,
+        current_time: impl Into<String>,
+        entries: Vec<ShellEntry>,
+        selected_entry_index: usize,
+        home_icon_assets: RuntimeAsciiAssets,
+    ) -> Self {
         let selected_entry_index = if entries.is_empty() {
             0
         } else {
@@ -408,6 +475,7 @@ impl HomeViewModel {
         Self {
             display_mode: HomeDisplayMode::User,
             diagnostics: None,
+            home_icon_assets: Some(home_icon_assets),
             current_user: Some(current_user.into()),
             current_time: Some(current_time.into()),
             entries,
@@ -425,6 +493,18 @@ impl HomeViewModel {
 
     pub fn entries(&self) -> &[ShellEntry] {
         &self.entries
+    }
+
+    pub fn home_icon_catalog(&self) -> Option<&HomeIconCatalog> {
+        self.home_icon_assets
+            .as_ref()
+            .map(RuntimeAsciiAssets::home_icon_catalog)
+    }
+
+    pub fn home_icon_for_label(&self, label: &str) -> Option<&HomeIcon> {
+        self.home_icon_assets
+            .as_ref()
+            .and_then(|assets| assets.home_icon_for_label(label))
     }
 
     pub fn selected_entry_index(&self) -> usize {

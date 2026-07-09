@@ -9,4 +9,8 @@ path = "src/lib.rs"
 [dependencies]
 geojson = "1.0"
 ratatui = "0.29"
+tundra-ascii-assets = { path = "../tundra-ascii-assets" }
 zip = { version = "6", default-features = false, features = ["deflate"] }
+
+[build-dependencies]
+tundra-ascii-assets = { path = "../tundra-ascii-assets" }

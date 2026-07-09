@@ -6,25 +6,6 @@ use crossterm::style::Color;
 
 use rand::{Rng, RngExt};
 use std::io;
-use std::sync::OnceLock;
-
-const CLOUD_SHAPE_SRCS: [&str; 4] = [
-    include_str!("assets/cloud_0.txt"),
-    include_str!("assets/cloud_1.txt"),
-    include_str!("assets/cloud_2.txt"),
-    include_str!("assets/cloud_3.txt"),
-];
-
-static CLOUD_SHAPES: OnceLock<Vec<Vec<String>>> = OnceLock::new();
-
-fn cloud_shapes() -> &'static Vec<Vec<String>> {
-    CLOUD_SHAPES.get_or_init(|| {
-        CLOUD_SHAPE_SRCS
-            .iter()
-            .map(|src| src.lines().map(|l| l.to_string()).collect())
-            .collect()
-    })
-}
 
 struct Cloud {
     x: f32,
@@ -37,6 +18,7 @@ struct Cloud {
 
 pub struct CloudSystem {
     clouds: Vec<Cloud>,
+    shapes: Vec<Vec<String>>,
     terminal_width: u16,
     terminal_height: u16,
     base_wind_x: f32,
@@ -66,7 +48,7 @@ impl CloudSystem {
 }
 
 impl CloudSystem {
-    pub fn new(terminal_width: u16, terminal_height: u16) -> Self {
+    pub fn new(terminal_width: u16, terminal_height: u16, shapes: Vec<Vec<String>>) -> Self {
         let mut rng = rand::rng();
         let base_wind_x = 0.15;
 
@@ -85,12 +67,14 @@ impl CloudSystem {
                 terminal_height,
                 Color::White,
                 base_wind_x,
+                &shapes,
                 &mut rng,
             ));
         }
 
         Self {
             clouds,
+            shapes,
             terminal_width,
             terminal_height,
             base_wind_x,
@@ -102,10 +86,9 @@ impl CloudSystem {
         height: u16,
         color: Color,
         base_wind_x: f32,
+        shapes: &[Vec<String>],
         rng: &mut (impl Rng + ?Sized),
     ) -> Cloud {
-        let shapes = cloud_shapes();
-
         let shape_idx = rng.random_range(0..shapes.len());
         let shape = shapes[shape_idx].clone();
 
@@ -160,8 +143,14 @@ impl CloudSystem {
         let spawn_chance = if is_clear { 0.002 } else { 0.005 };
 
         if self.clouds.len() < max_clouds && rng.random::<f32>() < spawn_chance {
-            let mut cloud =
-                Self::create_random_cloud(0.0, terminal_height, cloud_color, self.base_wind_x, rng);
+            let mut cloud = Self::create_random_cloud(
+                0.0,
+                terminal_height,
+                cloud_color,
+                self.base_wind_x,
+                &self.shapes,
+                rng,
+            );
             let cloud_width = cloud.shape.iter().map(|line| line.len()).max().unwrap_or(0) as f32;
 
             let drift_x = cloud.speed + cloud.wind_x;

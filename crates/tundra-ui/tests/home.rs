@@ -5,8 +5,8 @@ use ratatui::style::Color;
 use tundra_ui::{
     AuthField, BootstrapAdminViewModel, DebugDiagnosticsViewModel, ExitConfirmViewModel,
     HomeDisplayMode, HomeViewModel, LoginField, LoginUserOptionViewModel, LoginViewModel,
-    ShellChromeViewModel, ShellEntry, ShellLayout, StatusViewModel, TundraTheme,
-    UserManagementUserViewModel, UserManagementViewModel, compute_shell_layout,
+    RuntimeAsciiAssets, ShellChromeViewModel, ShellEntry, ShellLayout, StatusViewModel,
+    TundraTheme, UserManagementUserViewModel, UserManagementViewModel, compute_shell_layout,
     login_password_area, login_user_list_area, login_user_list_visible_rows,
     render_bootstrap_admin, render_home, render_login, render_user_management,
 };
@@ -104,12 +104,27 @@ fn user_home_hides_diagnostics_and_lists_five_entries_including_explorer() {
 
 #[test]
 fn home_icon_asset_exposes_known_ascii_icon_metadata() {
-    let icon = tundra_ui::home_icon_for_label("Explorer");
+    let assets = RuntimeAsciiAssets::load_default().expect("home icon assets should load");
+    let catalog = assets.home_icon_catalog();
+    let icon = catalog
+        .icon_for_label("Explorer")
+        .expect("catalog should expose Explorer by label");
+    let key: &str = icon.key.as_ref();
+    let icon_by_key = catalog
+        .icon_for_key(key)
+        .expect("catalog should expose the same icon by key");
 
-    assert_eq!(icon.key, "explorer");
-    assert_eq!(icon.width, 7);
-    assert_eq!(icon.height, 4);
-    assert!(icon.lines.iter().any(|line| line.contains("____")));
+    assert!(icon.width > 0);
+    assert!(icon.height > 0);
+    assert_eq!(icon.lines.len(), icon.height);
+    assert!(icon.lines.iter().all(|line| line.is_ascii()));
+    assert_eq!(icon_by_key.width, icon.width);
+    assert_eq!(icon_by_key.height, icon.height);
+    assert_eq!(icon_by_key.lines.len(), icon.lines.len());
+    assert_eq!(
+        first_non_blank_icon_line(icon_by_key),
+        first_non_blank_icon_line(icon)
+    );
 }
 
 #[test]
@@ -147,9 +162,13 @@ fn user_home_renders_ascii_entry_tiles_with_selected_accent() {
         .expect("render home");
 
     let output = terminal_output(&terminal);
+    let icon_line = first_non_blank_icon_line(
+        home.home_icon_for_label("Launcher")
+            .expect("home view model should carry loaded icon assets"),
+    );
     assert!(output.contains("User: Strix"));
     assert!(output.contains("Time: 2026-07-01 09:30"));
-    assert!(output.contains("_____"));
+    assert!(output.contains(icon_line));
     assert!(output.contains("Launcher"));
     assert!(output.contains("Open apps and commands"));
     assert!(output.contains("Arrows: select"));
@@ -394,6 +413,16 @@ fn terminal_output(terminal: &Terminal<TestBackend>) -> String {
         .iter()
         .map(|cell| cell.symbol())
         .collect()
+}
+
+fn first_non_blank_icon_line(icon: &tundra_ui::HomeIcon) -> &str {
+    icon.lines
+        .iter()
+        .find_map(|line| {
+            let line: &str = line.as_ref();
+            (!line.trim().is_empty()).then_some(line)
+        })
+        .expect("icon asset should contain visible content")
 }
 
 fn login_user(username: &str, display_name: &str, role: &str) -> LoginUserOptionViewModel {

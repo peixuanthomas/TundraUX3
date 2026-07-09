@@ -2,14 +2,18 @@ use crate::render::TerminalRenderer;
 use crate::scene::world::style::WorldSceneStyle;
 use std::io;
 
-const HOUSE_ASCII: &str = include_str!("assets/house.txt");
-
-pub struct House;
+pub struct House {
+    art: Vec<String>,
+}
 
 impl House {
     pub const WIDTH: u16 = 64;
     pub const HEIGHT: u16 = 10;
     pub const CHIMNEY_X_OFFSET: u16 = 12;
+
+    pub fn new(art: Vec<String>) -> Self {
+        Self { art }
+    }
 
     pub fn width(&self) -> u16 {
         Self::WIDTH
@@ -26,7 +30,7 @@ impl House {
         y: u16,
         style: &WorldSceneStyle,
     ) -> io::Result<()> {
-        for (i, line) in HOUSE_ASCII.lines().enumerate() {
+        for (i, line) in self.art.iter().enumerate() {
             let row = y + i as u16;
 
             match i {

@@ -1,7 +1,7 @@
 use std::fmt;
 use std::fs;
 use std::io::Write;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use tundra_platform::{
     AppPaths, CapabilityStatus, CheckStatus, EnvironmentCheck, PathCheck, Platform, PlatformKind,
@@ -220,6 +220,63 @@ where
     Launcher: FnOnce(LaunchOptions) -> Result<(), LaunchError>,
     LaunchError: fmt::Display,
 {
+    run_with_platform_and_weathr_launcher_and_asset_root(
+        args,
+        platform,
+        stdout,
+        stderr,
+        weathr_launcher,
+        None,
+    )
+}
+
+#[doc(hidden)]
+pub fn run_with_platform_and_asset_root<I, S, Stdout, Stderr>(
+    args: I,
+    platform: &dyn Platform,
+    stdout: &mut Stdout,
+    stderr: &mut Stderr,
+    asset_root: &Path,
+) -> i32
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<str>,
+    Stdout: Write,
+    Stderr: Write,
+{
+    run_with_platform_and_weathr_launcher_and_asset_root(
+        args,
+        platform,
+        stdout,
+        stderr,
+        tundra_weathr::run_blocking_with_options,
+        Some(asset_root),
+    )
+}
+
+fn run_with_platform_and_weathr_launcher_and_asset_root<
+    I,
+    S,
+    Stdout,
+    Stderr,
+    Launcher,
+    LaunchError,
+>(
+    args: I,
+    platform: &dyn Platform,
+    stdout: &mut Stdout,
+    stderr: &mut Stderr,
+    weathr_launcher: Launcher,
+    asset_root: Option<&Path>,
+) -> i32
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<str>,
+    Stdout: Write,
+    Stderr: Write,
+    Launcher: FnOnce(LaunchOptions) -> Result<(), LaunchError>,
+    LaunchError: fmt::Display,
+{
     match parse_args(args) {
         Ok(CliCommand::Config(action)) => run_config(platform, stdout, stderr, action),
         Ok(CliCommand::Help) => {
@@ -232,7 +289,7 @@ where
         }
         Ok(CliCommand::New) => run_new(platform, stdout, stderr),
         Ok(CliCommand::Paths) => run_paths(platform, stdout, stderr),
-        Ok(CliCommand::Doctor) => run_doctor(platform, stdout, stderr),
+        Ok(CliCommand::Doctor) => run_doctor(platform, stdout, stderr, asset_root),
         Ok(CliCommand::Weathr) => run_weathr(platform, stderr, weathr_launcher),
         Err(error) => {
             let _ = writeln!(stderr, "ERROR: {error}");
@@ -531,6 +588,7 @@ fn run_doctor<Stdout: Write, Stderr: Write>(
     platform: &dyn Platform,
     stdout: &mut Stdout,
     stderr: &mut Stderr,
+    asset_root: Option<&Path>,
 ) -> i32 {
     let _ = writeln!(stdout, "TundraUX3 doctor");
     let _ = writeln!(stdout, "Platform kind: {}", platform.kind().as_str());
@@ -547,6 +605,9 @@ fn run_doctor<Stdout: Write, Stderr: Write>(
 
             let storage_check = run_storage_check(&report.app_paths);
             write_storage_check(stdout, &storage_check);
+            let asset_theme_id = asset_theme_id_from_storage(storage_check.theme_id.as_deref());
+            let asset_check = run_asset_check(asset_root, &asset_theme_id);
+            write_asset_check(stdout, &asset_check);
 
             if report.has_failures() || storage_check.status == CheckStatus::Fail {
                 let _ = writeln!(stderr, "Doctor result: FAIL");
@@ -558,6 +619,8 @@ fn run_doctor<Stdout: Write, Stderr: Write>(
         }
         Err(error) => {
             write_fallback_doctor_checks(stdout, platform, &error);
+            let asset_check = run_asset_check(asset_root, tundra_ascii_assets::DEFAULT_THEME_ID);
+            write_asset_check(stdout, &asset_check);
             let _ = writeln!(stderr, "Doctor result: FAIL");
             1
         }
@@ -719,6 +782,21 @@ fn write_storage_check(output: &mut impl Write, check: &StorageCheck) {
     );
 }
 
+fn write_asset_check(output: &mut impl Write, check: &AsciiAssetCheck) {
+    let _ = writeln!(output);
+    let _ = writeln!(output, "Asset checks:");
+    let _ = writeln!(
+        output,
+        "[{}] Required ASCII assets (theme {}): {}",
+        check.status.as_str(),
+        check.theme_id,
+        check.message
+    );
+    for detail in &check.details {
+        let _ = writeln!(output, "  {detail}");
+    }
+}
+
 fn write_environment_check(output: &mut impl Write, check: &EnvironmentCheck) {
     let _ = writeln!(
         output,
@@ -808,30 +886,130 @@ struct StorageCheck {
     label: &'static str,
     status: CheckStatus,
     message: String,
+    theme_id: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct AsciiAssetCheck {
+    status: CheckStatus,
+    theme_id: String,
+    message: String,
+    details: Vec<String>,
 }
 
 fn run_storage_check(paths: &AppPaths) -> StorageCheck {
     match StorageManager::open(paths.clone()) {
-        Ok(opened)
-            if opened.report.warnings.is_empty() && opened.report.migrated_files.is_empty() =>
-        {
-            StorageCheck {
-                label: "Storage bootstrap",
-                status: CheckStatus::Pass,
-                message: "storage initialized and loaded cleanly".to_string(),
+        Ok(opened) => {
+            let theme_id = opened.manager.load_config().ok().map(|config| config.theme);
+            if opened.report.warnings.is_empty() && opened.report.migrated_files.is_empty() {
+                StorageCheck {
+                    label: "Storage bootstrap",
+                    status: CheckStatus::Pass,
+                    message: "storage initialized and loaded cleanly".to_string(),
+                    theme_id,
+                }
+            } else {
+                StorageCheck {
+                    label: "Storage bootstrap",
+                    status: CheckStatus::Warning,
+                    message: storage_warning_message(&opened.report),
+                    theme_id,
+                }
             }
         }
-        Ok(opened) => StorageCheck {
-            label: "Storage bootstrap",
-            status: CheckStatus::Warning,
-            message: storage_warning_message(&opened.report),
-        },
         Err(error) => StorageCheck {
             label: "Storage bootstrap",
             status: CheckStatus::Fail,
             message: error.to_string(),
+            theme_id: None,
         },
     }
+}
+
+fn run_asset_check(asset_root: Option<&Path>, theme_id: &str) -> AsciiAssetCheck {
+    let theme_id = normalized_asset_theme_id(theme_id);
+    let root = match asset_root {
+        Some(root) => Ok(root.to_path_buf()),
+        None => tundra_ascii_assets::asset_root_from_env_or_current_exe(),
+    };
+
+    let root = match root {
+        Ok(root) => root,
+        Err(error) => {
+            return AsciiAssetCheck {
+                status: CheckStatus::Warning,
+                theme_id,
+                message: format!("could not resolve asset root: {error}"),
+                details: Vec::new(),
+            };
+        }
+    };
+
+    let report = tundra_ascii_assets::check_required_assets(&root, &theme_id);
+    if report.is_ok() {
+        return AsciiAssetCheck {
+            status: CheckStatus::Pass,
+            theme_id,
+            message: format!(
+                "{} assets present and valid at {}",
+                report.checks.len(),
+                root.display()
+            ),
+            details: Vec::new(),
+        };
+    }
+
+    let missing = report.missing_assets();
+    let unreadable = report.unreadable_assets();
+    let invalid = report.invalid_assets();
+    let mut details = Vec::new();
+    for check in &missing {
+        details.push(format!("missing: {} ({})", check.key, check.path.display()));
+    }
+    for check in &unreadable {
+        details.push(format!(
+            "unreadable: {} ({})",
+            check.key,
+            check.path.display()
+        ));
+    }
+    for check in &invalid {
+        details.push(format!(
+            "invalid: {} ({}) - {}",
+            check.key,
+            check.path.display(),
+            check.message
+        ));
+    }
+
+    AsciiAssetCheck {
+        status: CheckStatus::Warning,
+        theme_id,
+        message: format!(
+            "{}; {}; {} at {}",
+            asset_count_message(missing.len(), "missing"),
+            asset_count_message(unreadable.len(), "unreadable"),
+            asset_count_message(invalid.len(), "invalid"),
+            root.display()
+        ),
+        details,
+    }
+}
+
+fn asset_theme_id_from_storage(theme_id: Option<&str>) -> String {
+    normalized_asset_theme_id(theme_id.unwrap_or(tundra_ascii_assets::DEFAULT_THEME_ID))
+}
+
+fn normalized_asset_theme_id(theme_id: &str) -> String {
+    match theme_id.trim() {
+        "" | "dark" | "light" => tundra_ascii_assets::DEFAULT_THEME_ID.to_string(),
+        other => other.to_string(),
+    }
+}
+
+fn asset_count_message(count: usize, label: &str) -> String {
+    let suffix = if count == 1 { "" } else { "s" };
+    format!("{count} {label} asset{suffix}")
 }
 
 fn storage_warning_message(report: &tundra_storage::StorageLoadReport) -> String {
@@ -852,7 +1030,7 @@ fn storage_warning_message(report: &tundra_storage::StorageLoadReport) -> String
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct ResetReport {
-    removed_paths: Vec<std::path::PathBuf>,
+    removed_paths: Vec<PathBuf>,
 }
 
 fn reset_saved_content(paths: &AppPaths) -> Result<ResetReport, std::io::Error> {
@@ -874,7 +1052,7 @@ fn reset_saved_content(paths: &AppPaths) -> Result<ResetReport, std::io::Error> 
     }
 
     StorageManager::open(paths.clone())
-        .map_err(|error| std::io::Error::new(std::io::ErrorKind::Other, error.to_string()))?;
+        .map_err(|error| std::io::Error::other(error.to_string()))?;
 
     Ok(ResetReport { removed_paths })
 }

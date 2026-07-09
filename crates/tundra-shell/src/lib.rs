@@ -33,24 +33,13 @@ use tundra_platform::{
 pub use tundra_platform::{ENTER_FULLSCREEN_SEQUENCE, EXIT_FULLSCREEN_SEQUENCE};
 
 pub const BANNER_DISPLAY_DURATION: Duration = Duration::from_secs(2);
+const BANNER_ASSET_KEY: &str = "tundraux3";
 
 static PANIC_RESTORE_HOOK_INSTALLED: AtomicBool = AtomicBool::new(false);
 
-const BANNER_LINES: &[&str] = &[
-    r#"ooooooooooooo                               .o8                     ooooo     ooo ooooooo  ooooo   .oooo.   "#,
-    r#"8'   888   `8                              "888                     `888'     `8'  `8888    d8'  .dP""Y88b  "#,
-    r#"     888      oooo  oooo  ooo. .oo.    .oooo888  oooo d8b  .oooo.    888       8     Y888..8P          ]8P' "#,
-    r#"     888      `888  `888  `888P"Y88b  d88' `888  `888""8P `P  )88b   888       8      `8888'         <88b.  "#,
-    r#"     888       888   888   888   888  888   888   888      .oP"888   888       8     .8PY888.         `88b. "#,
-    r#"     888       888   888   888   888  888   888   888     d8(  888   `88.    .8'    d8'  `888b   o.   .88P  "#,
-    r#"    o888o      `V88V"V8P' o888o o888o `Y8bod88P" d888b    `Y888""8o    `YbodP'    o888o  o88888o `8bd88P'   "#,
-    r#"                                                                                                            "#,
-    r#"                                                                                                            "#,
-    r#"                                                                                                            "#,
-];
-
-pub fn banner_lines() -> &'static [&'static str] {
-    BANNER_LINES
+pub fn banner_lines() -> Result<Vec<String>, tundra_ui::AssetError> {
+    let ascii_assets = tundra_ui::RuntimeAsciiAssets::load_default()?;
+    Ok(ascii_assets.banner_lines(BANNER_ASSET_KEY)?.to_vec())
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1182,6 +1171,7 @@ fn install_panic_restore_hook() {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ShellState {
     home_mode: ShellHomeMode,
+    ascii_assets: tundra_ui::RuntimeAsciiAssets,
     screen_stack: Vec<ShellScreen>,
     storage_manager: Option<StorageManager>,
     auth_session: Option<AuthSession>,
@@ -1245,10 +1235,46 @@ impl ShellState {
         )
     }
 
+    pub fn try_new(
+        launch_config: ShellLaunchConfig,
+        terminal_size: (u16, u16),
+    ) -> Result<Self, tundra_ui::AssetError> {
+        Self::try_new_with_startup(
+            launch_config,
+            terminal_size,
+            ShellStartupState::current_process_defaults(),
+        )
+    }
+
     pub fn new_with_startup(
         launch_config: ShellLaunchConfig,
         terminal_size: (u16, u16),
         startup: ShellStartupState,
+    ) -> Self {
+        let ascii_assets =
+            tundra_ui::RuntimeAsciiAssets::load_default().expect("default ASCII assets must load");
+        Self::new_with_startup_and_assets(launch_config, terminal_size, startup, ascii_assets)
+    }
+
+    pub fn try_new_with_startup(
+        launch_config: ShellLaunchConfig,
+        terminal_size: (u16, u16),
+        startup: ShellStartupState,
+    ) -> Result<Self, tundra_ui::AssetError> {
+        let ascii_assets = tundra_ui::RuntimeAsciiAssets::load_default()?;
+        Ok(Self::new_with_startup_and_assets(
+            launch_config,
+            terminal_size,
+            startup,
+            ascii_assets,
+        ))
+    }
+
+    pub fn new_with_startup_and_assets(
+        launch_config: ShellLaunchConfig,
+        terminal_size: (u16, u16),
+        startup: ShellStartupState,
+        ascii_assets: tundra_ui::RuntimeAsciiAssets,
     ) -> Self {
         let home_mode = resolved_home_mode(launch_config, &startup);
         let auth_gate_enabled = startup.storage_manager.is_some();
@@ -1276,6 +1302,7 @@ impl ShellState {
 
         let mut state = Self {
             home_mode,
+            ascii_assets,
             screen_stack: vec![initial_screen],
             storage_manager: startup.storage_manager.clone(),
             auth_session: None,
@@ -1404,11 +1431,12 @@ impl ShellState {
                     .as_ref()
                     .map(|session| session.username.as_str())
                     .unwrap_or("Guest");
-                tundra_ui::HomeViewModel::user_with_selection(
+                tundra_ui::HomeViewModel::user_with_selection_and_icon_assets(
                     user,
                     current_time_label(),
                     self.user_home_entries(),
                     self.selected_home_entry_index(),
+                    self.ascii_assets.clone(),
                 )
             }
         }
@@ -5176,7 +5204,18 @@ pub fn startup_lines() -> Vec<String> {
 }
 
 pub fn render_static_banner(output: &mut impl Write) -> io::Result<()> {
-    for line in BANNER_LINES {
+    let ascii_assets = tundra_ui::RuntimeAsciiAssets::load_default().map_err(asset_io_error)?;
+    render_static_banner_with_assets(output, &ascii_assets)
+}
+
+pub fn render_static_banner_with_assets(
+    output: &mut impl Write,
+    ascii_assets: &tundra_ui::RuntimeAsciiAssets,
+) -> io::Result<()> {
+    for line in ascii_assets
+        .banner_lines(BANNER_ASSET_KEY)
+        .map_err(asset_io_error)?
+    {
         writeln!(output, "{line}")?;
     }
 
@@ -5184,19 +5223,36 @@ pub fn render_static_banner(output: &mut impl Write) -> io::Result<()> {
 }
 
 pub fn display_banner(output: &mut impl Write) -> io::Result<()> {
-    display_animated_banner(output, BANNER_DISPLAY_DURATION)
+    let ascii_assets = tundra_ui::RuntimeAsciiAssets::load_default().map_err(asset_io_error)?;
+    display_animated_banner_with_assets(output, BANNER_DISPLAY_DURATION, &ascii_assets)
 }
 
 pub fn display_animated_banner(
     output: &mut impl Write,
     total_duration: Duration,
 ) -> io::Result<()> {
-    let started_at = Instant::now();
-    let frame_delay = total_duration / (BANNER_LINES.len() as u32 + 1);
+    let ascii_assets = tundra_ui::RuntimeAsciiAssets::load_default().map_err(asset_io_error)?;
+    display_animated_banner_with_assets(output, total_duration, &ascii_assets)
+}
 
-    for revealed_lines in 1..=BANNER_LINES.len() {
+pub fn display_animated_banner_with_assets(
+    output: &mut impl Write,
+    total_duration: Duration,
+    ascii_assets: &tundra_ui::RuntimeAsciiAssets,
+) -> io::Result<()> {
+    let banner_lines = ascii_assets
+        .banner_lines(BANNER_ASSET_KEY)
+        .map_err(asset_io_error)?;
+    if banner_lines.is_empty() {
+        return Ok(());
+    }
+
+    let started_at = Instant::now();
+    let frame_delay = total_duration / (banner_lines.len() as u32 + 1);
+
+    for revealed_lines in 1..=banner_lines.len() {
         write!(output, "\x1B[2J\x1B[H")?;
-        for line in BANNER_LINES.iter().take(revealed_lines) {
+        for line in banner_lines.iter().take(revealed_lines) {
             writeln!(output, "{line}")?;
         }
         output.flush()?;
@@ -5214,12 +5270,17 @@ pub fn display_animated_banner(
     Ok(())
 }
 
+fn asset_io_error(error: tundra_ui::AssetError) -> io::Error {
+    io::Error::other(error.to_string())
+}
+
 pub fn run_without_animation(output: &mut impl Write) -> io::Result<()> {
     run_not_fullscreen_without_animation(output)
 }
 
 pub fn run_not_fullscreen_without_animation(output: &mut impl Write) -> io::Result<()> {
-    render_static_banner(output)?;
+    let ascii_assets = tundra_ui::RuntimeAsciiAssets::load_default().map_err(asset_io_error)?;
+    render_static_banner_with_assets(output, &ascii_assets)?;
     write_smoke_loop_message(output)
 }
 
@@ -5234,13 +5295,15 @@ pub fn run_with_banner_animation(output: &mut impl Write) -> io::Result<()> {
 }
 
 pub fn run_not_fullscreen(output: &mut impl Write, _config: ShellLaunchConfig) -> io::Result<()> {
-    display_banner(output)?;
+    let ascii_assets = tundra_ui::RuntimeAsciiAssets::load_default().map_err(asset_io_error)?;
+    display_animated_banner_with_assets(output, BANNER_DISPLAY_DURATION, &ascii_assets)?;
     write_smoke_loop_message(output)
 }
 
 pub fn run_fullscreen_once_without_animation(output: &mut impl Write) -> io::Result<()> {
+    let ascii_assets = tundra_ui::RuntimeAsciiAssets::load_default().map_err(asset_io_error)?;
     with_fullscreen(output, |output| {
-        render_static_banner(output)?;
+        render_static_banner_with_assets(output, &ascii_assets)?;
         write_smoke_loop_message(output)
     })
 }
@@ -5249,13 +5312,13 @@ pub fn run_fullscreen_blocking(
     output: &mut impl Write,
     config: ShellLaunchConfig,
 ) -> io::Result<()> {
+    let ascii_assets = tundra_ui::RuntimeAsciiAssets::load_default().map_err(asset_io_error)?;
     let platform = tundra_platform::native_platform();
-    let startup = prepare_shell_startup(platform.as_ref(), config)
-        .map_err(|error| io::Error::new(io::ErrorKind::Other, error))?;
+    let startup = prepare_shell_startup(platform.as_ref(), config).map_err(io::Error::other)?;
     if should_show_startup_lockscreen(&startup) {
         let lockscreen_options = startup_lockscreen_launch_options(&startup);
         match tundra_weathr::run_shell_lockscreen_blocking_with_options(lockscreen_options)
-            .map_err(|error| io::Error::new(io::ErrorKind::Other, error))?
+            .map_err(io::Error::other)?
         {
             tundra_weathr::ShellLockscreenResult::Started => {}
             tundra_weathr::ShellLockscreenResult::Cancelled => return Ok(()),
@@ -5265,7 +5328,8 @@ pub fn run_fullscreen_blocking(
     let terminal_control = TerminalControlHandler::install();
     let mut guard = TerminalGuard::enter(output)?;
     let initial_size = crossterm::terminal::size().unwrap_or((80, 24));
-    let mut state = ShellState::new_with_startup(config, initial_size, startup);
+    let mut state =
+        ShellState::new_with_startup_and_assets(config, initial_size, startup, ascii_assets);
     let tick_rate = Duration::from_millis(250);
     let theme = tundra_ui::TundraTheme::default_dark();
 

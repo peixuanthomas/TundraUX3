@@ -21,7 +21,10 @@ pub use focus::{
     ModalTrap,
 };
 pub use hit_test::{HitKind, HitMap, HitTarget, HitTargetKind};
-pub use home_icons::{HomeIcon, home_icon_for_label};
+pub use home_icons::{
+    AsciiAssetStore, AssetError, HomeIcon, HomeIconCatalog, RuntimeAsciiAssets,
+    home_icon_for_label, try_home_icon_for_label,
+};
 pub use input::{
     InputEvent, Key, KeyCode, KeyEvent, KeyModifiers, KeyStroke, MouseAction, MouseButton,
     MouseEvent, MouseEventKind, Point, RouteTarget, RoutedEvent, RoutedTarget, ScrollDirection,

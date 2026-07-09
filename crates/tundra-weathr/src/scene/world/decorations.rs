@@ -1,13 +1,14 @@
+use crate::assets::WorldSceneAssets;
 use crate::render::TerminalRenderer;
 use crate::scene::world::style::WorldSceneStyle;
 use std::io;
 
-const TREE_ASCII: &str = include_str!("assets/tree.txt");
-const FENCE_ASCII: &str = include_str!("assets/fence.txt");
-const MAILBOX_ASCII: &str = include_str!("assets/mailbox.txt");
-const PINE_TREE_ASCII: &str = include_str!("assets/pine_tree.txt");
-
-pub struct Decorations;
+pub struct Decorations {
+    tree: Vec<String>,
+    fence: Vec<String>,
+    mailbox: Vec<String>,
+    pine_tree: Vec<String>,
+}
 
 pub struct DecorationLayout {
     pub horizon_y: u16,
@@ -17,6 +18,15 @@ pub struct DecorationLayout {
 }
 
 impl Decorations {
+    pub fn new(assets: &WorldSceneAssets) -> Self {
+        Self {
+            tree: assets.tree.clone(),
+            fence: assets.fence.clone(),
+            mailbox: assets.mailbox.clone(),
+            pine_tree: assets.pine_tree.clone(),
+        }
+    }
+
     pub fn render(
         &self,
         renderer: &mut TerminalRenderer,
@@ -44,9 +54,9 @@ impl Decorations {
         if tree_x == 0 {
             return Ok(());
         }
-        let line_count = TREE_ASCII.lines().count() as u16;
+        let line_count = self.tree.len() as u16;
         let tree_y = layout.horizon_y.saturating_sub(line_count);
-        render_art(renderer, TREE_ASCII, tree_x, tree_y, style.tree_foliage)
+        render_art(renderer, &self.tree, tree_x, tree_y, style.tree_foliage)
     }
 
     fn render_fence(
@@ -59,9 +69,9 @@ impl Decorations {
         if fence_x >= layout.width {
             return Ok(());
         }
-        let line_count = FENCE_ASCII.lines().count() as u16;
+        let line_count = self.fence.len() as u16;
         let fence_y = layout.horizon_y.saturating_sub(line_count);
-        render_art(renderer, FENCE_ASCII, fence_x, fence_y, style.fence)
+        render_art(renderer, &self.fence, fence_x, fence_y, style.fence)
     }
 
     fn render_mailbox(
@@ -77,9 +87,9 @@ impl Decorations {
         if mailbox_x >= layout.width {
             return Ok(());
         }
-        let line_count = MAILBOX_ASCII.lines().count() as u16;
+        let line_count = self.mailbox.len() as u16;
         let mailbox_y = layout.horizon_y.saturating_sub(line_count);
-        render_art(renderer, MAILBOX_ASCII, mailbox_x, mailbox_y, style.mailbox)
+        render_art(renderer, &self.mailbox, mailbox_x, mailbox_y, style.mailbox)
     }
 
     fn render_pine_tree(
@@ -92,11 +102,11 @@ impl Decorations {
         if pine_x + 10 >= layout.width {
             return Ok(());
         }
-        let line_count = PINE_TREE_ASCII.lines().count() as u16;
+        let line_count = self.pine_tree.len() as u16;
         let pine_y = layout.horizon_y.saturating_sub(line_count);
         render_art(
             renderer,
-            PINE_TREE_ASCII,
+            &self.pine_tree,
             pine_x,
             pine_y,
             style.tree_foliage,
@@ -106,12 +116,12 @@ impl Decorations {
 
 fn render_art(
     renderer: &mut TerminalRenderer,
-    ascii: &str,
+    art: &[String],
     x: u16,
     y: u16,
     color: crossterm::style::Color,
 ) -> io::Result<()> {
-    for (i, line) in ascii.lines().enumerate() {
+    for (i, line) in art.iter().enumerate() {
         for (j, ch) in line.chars().enumerate() {
             if ch != ' ' {
                 renderer.render_char(x + j as u16, y + i as u16, ch, color)?;

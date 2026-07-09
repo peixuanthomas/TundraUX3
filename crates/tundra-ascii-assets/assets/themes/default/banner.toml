@@ -1,0 +1,17 @@
+schema_version = 1
+name = "default-banners"
+
+[items.tundraux3]
+label = "TundraUX3"
+body = '''
+ooooooooooooo                               .o8                     ooooo     ooo ooooooo  ooooo   .oooo.   
+8'   888   `8                              "888                     `888'     `8'  `8888    d8'  .dP""Y88b  
+     888      oooo  oooo  ooo. .oo.    .oooo888  oooo d8b  .oooo.    888       8     Y888..8P          ]8P' 
+     888      `888  `888  `888P"Y88b  d88' `888  `888""8P `P  )88b   888       8      `8888'         <88b.  
+     888       888   888   888   888  888   888   888      .oP"888   888       8     .8PY888.         `88b. 
+     888       888   888   888   888  888   888   888     d8(  888   `88.    .8'    d8'  `888b   o.   .88P  
+    o888o      `V88V"V8P' o888o o888o `Y8bod88P" d888b    `Y888""8o    `YbodP'    o888o  o88888o `8bd88P'   
+                                                                                                            
+                                                                                                            
+                                                                                                            
+'''
