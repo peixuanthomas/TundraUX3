@@ -6,6 +6,22 @@ use crate::weather::{
 use std::time::Instant;
 
 pub const BOTTOM_HUD_QUIT_PROMPT: &str = "Press Space to quit";
+pub const BOTTOM_HUD_START_PROMPT: &str = "Press Space to start";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum BottomHudPrompt {
+    Quit,
+    Start,
+}
+
+impl BottomHudPrompt {
+    fn text(self) -> &'static str {
+        match self {
+            Self::Quit => BOTTOM_HUD_QUIT_PROMPT,
+            Self::Start => BOTTOM_HUD_START_PROMPT,
+        }
+    }
+}
 
 pub struct AppState {
     pub current_weather: Option<WeatherData>,
@@ -19,6 +35,7 @@ pub struct AppState {
     pub location_display: LocationDisplay,
     pub hide_location: bool,
     pub units: WeatherUnits,
+    bottom_hud_prompt: BottomHudPrompt,
 }
 
 impl AppState {
@@ -28,6 +45,24 @@ impl AppState {
         location_display: LocationDisplay,
         hide_location: bool,
         units: WeatherUnits,
+    ) -> Self {
+        Self::new_with_bottom_hud_prompt(
+            location,
+            city_name,
+            location_display,
+            hide_location,
+            units,
+            BottomHudPrompt::Quit,
+        )
+    }
+
+    pub(crate) fn new_with_bottom_hud_prompt(
+        location: WeatherLocation,
+        city_name: Option<String>,
+        location_display: LocationDisplay,
+        hide_location: bool,
+        units: WeatherUnits,
+        bottom_hud_prompt: BottomHudPrompt,
     ) -> Self {
         Self {
             current_weather: None,
@@ -41,6 +76,7 @@ impl AppState {
             location_display,
             hide_location,
             units,
+            bottom_hud_prompt,
         }
     }
 
@@ -129,13 +165,13 @@ impl AppState {
         let offline_indicator = if self.is_offline { "OFFLINE | " } else { "" };
 
         if location_str.is_empty() {
-            format!("{}{}", offline_indicator, BOTTOM_HUD_QUIT_PROMPT)
+            format!("{}{}", offline_indicator, self.bottom_hud_prompt.text())
         } else {
             format!(
                 "{}{} | {}",
                 offline_indicator,
                 location_str.trim_start_matches(" | "),
-                BOTTOM_HUD_QUIT_PROMPT
+                self.bottom_hud_prompt.text()
             )
         }
     }
@@ -249,6 +285,16 @@ mod tests {
         city: Option<String>,
         display: LocationDisplay,
     ) -> AppState {
+        create_app_state_full_with_prompt(lat, lon, city, display, BottomHudPrompt::Quit)
+    }
+
+    fn create_app_state_full_with_prompt(
+        lat: f64,
+        lon: f64,
+        city: Option<String>,
+        display: LocationDisplay,
+        prompt: BottomHudPrompt,
+    ) -> AppState {
         let location = WeatherLocation {
             latitude: lat,
             longitude: lon,
@@ -259,7 +305,8 @@ mod tests {
             wind_speed: WindSpeedUnit::Kmh,
             precipitation: PrecipitationUnit::Mm,
         };
-        let mut app = AppState::new(location, city, display, false, units);
+        let mut app =
+            AppState::new_with_bottom_hud_prompt(location, city, display, false, units, prompt);
 
         let weather = WeatherData {
             condition: WeatherCondition::Clear,
@@ -431,6 +478,23 @@ mod tests {
         assert!(!hud.contains("Wind:"));
         assert!(!hud.contains("Precip:"));
         assert!(!hud.contains("Press 'q' to quit"));
+    }
+
+    #[test]
+    fn bottom_hud_text_uses_start_prompt_when_requested() {
+        let app = create_app_state_full_with_prompt(
+            34.0754,
+            -84.2941,
+            Some("Alpharetta".to_string()),
+            LocationDisplay::Mixed,
+            BottomHudPrompt::Start,
+        );
+
+        let hud = app.bottom_hud_text();
+
+        assert!(hud.contains("Location: Alpharetta (34.08°N, 84.29°W)"));
+        assert!(hud.contains(BOTTOM_HUD_START_PROMPT));
+        assert!(!hud.contains(BOTTOM_HUD_QUIT_PROMPT));
     }
 
     #[test]

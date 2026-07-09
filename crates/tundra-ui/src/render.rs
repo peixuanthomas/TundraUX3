@@ -1,13 +1,13 @@
 use ratatui::Frame;
 use ratatui::layout::{Alignment, Constraint, Layout, Rect};
 use ratatui::text::Line;
-use ratatui::widgets::{Block, Borders, Clear, Paragraph, Wrap};
+use ratatui::widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph, Wrap};
 
 use crate::{
     AuthField, BootstrapAdminViewModel, ExitConfirmViewModel, ExplorerDialogViewModel,
     ExplorerEntryViewModel, ExplorerSearchViewModel, ExplorerViewModel, HomeDisplayMode,
-    HomeViewModel, LoginViewModel, SetupField, SetupStep, SetupViewModel, ShellChromeViewModel,
-    ShellLayout, TundraTheme, UserManagementField, UserManagementFormKind,
+    HomeViewModel, LoginField, LoginViewModel, SetupField, SetupStep, SetupViewModel,
+    ShellChromeViewModel, ShellLayout, TundraTheme, UserManagementField, UserManagementFormKind,
     UserManagementFormViewModel, UserManagementViewModel, compute_shell_layout,
     timezone_map::{TimezoneMapWidget, boundary_id_for_timezone},
 };
@@ -21,10 +21,23 @@ const SETUP_TIMEZONE_TOP_INDICATOR_HEIGHT: u16 = 1;
 const SETUP_TIMEZONE_BOTTOM_INDICATOR_HEIGHT: u16 = 1;
 const SETUP_TIMEZONE_FOOTER_HEIGHT: u16 = 3;
 const SETUP_LANGUAGE_LIST_LINE: u16 = 4;
-const SETUP_ADMIN_USERNAME_LINE: u16 = 2;
-const SETUP_ADMIN_PASSWORD_LINE: u16 = 3;
-const SETUP_ADMIN_HINT_LINE: u16 = 4;
-const SETUP_ADMIN_SUBMIT_LINE: u16 = 6;
+const SETUP_ADMIN_HEADER_HEIGHT: u16 = 3;
+const SETUP_ADMIN_FIELD_HEIGHT: u16 = 3;
+const LOGIN_USER_LIST_WIDTH: u16 = 30;
+const LOGIN_USERNAME_FIELD_HEIGHT: u16 = 5;
+const LOGIN_PASSWORD_FIELD_HEIGHT: u16 = 3;
+const LOGIN_FORM_GAP: u16 = 1;
+const SETUP_ADMIN_CHECKLIST_HEIGHT: u16 = 7;
+const SETUP_ADMIN_SIDE_CHECKLIST_MIN_WIDTH: u16 = 68;
+const SETUP_ADMIN_CHECKLIST_WIDTH: u16 = 32;
+const SETUP_ADMIN_COLUMN_GAP: u16 = 2;
+const SETUP_ADMIN_USERNAME_LINE: u16 = 3;
+const SETUP_ADMIN_PASSWORD_LINE: u16 = 7;
+const SETUP_ADMIN_CONFIRM_PASSWORD_LINE: u16 = 11;
+const SETUP_ADMIN_HINT_LINE: u16 = 15;
+const SETUP_ADMIN_SUBMIT_LINE: u16 = 19;
+const SETUP_ADMIN_ERROR_LINE: u16 = 21;
+const SETUP_ADMIN_STACKED_CHECKLIST_LINE: u16 = 21;
 
 pub fn render_home(
     frame: &mut Frame<'_>,
@@ -76,7 +89,14 @@ pub fn render_login(
     model: &LoginViewModel,
     theme: &TundraTheme,
 ) {
-    render_auth_screen(frame, area, chrome, "Login", auth_lines(model), theme);
+    match compute_shell_layout(area) {
+        ShellLayout::Compact(compact) => render_compact_home(frame, compact, theme),
+        ShellLayout::Full { top, main, status } => {
+            render_top(frame, top, chrome, theme);
+            render_login_main(frame, main, model, theme);
+            render_status(frame, status, chrome, theme);
+        }
+    }
 }
 
 pub fn render_bootstrap_admin(
@@ -229,6 +249,276 @@ fn user_management_form_lines(form: &UserManagementFormViewModel) -> Vec<Line<'s
         }
     }
     lines
+}
+
+fn render_login_main(
+    frame: &mut Frame<'_>,
+    main: Rect,
+    model: &LoginViewModel,
+    theme: &TundraTheme,
+) {
+    let outer = Block::default()
+        .title("Login")
+        .borders(Borders::ALL)
+        .style(theme.body_style());
+    frame.render_widget(outer, main);
+
+    let list_area = login_user_list_area(main);
+    let username_area = login_selected_username_area(main);
+    let password_area = login_password_area(main);
+    let form_area = login_form_area(main);
+
+    render_login_user_list(frame, list_area, model, theme);
+    render_login_username_field(frame, username_area, model, theme);
+    render_login_password_field(frame, password_area, model, theme);
+
+    let help_y = password_area
+        .y
+        .saturating_add(password_area.height)
+        .saturating_add(LOGIN_FORM_GAP);
+    let help_height = form_area
+        .y
+        .saturating_add(form_area.height)
+        .saturating_sub(help_y);
+    if help_height > 0 {
+        let help_area = Rect::new(form_area.x, help_y, form_area.width, help_height);
+        let mut lines = vec![
+            Line::from("Users: Up/Down/Home/End    Tab: password"),
+            Line::from("Enter on password: login    Esc: exit"),
+        ];
+        if let Some(error) = &model.error {
+            lines.push(Line::from(""));
+            lines.push(Line::styled(error.clone(), theme.error_style()));
+        }
+        frame.render_widget(
+            Paragraph::new(lines)
+                .style(theme.muted_style())
+                .wrap(Wrap { trim: true }),
+            help_area,
+        );
+    }
+}
+
+fn render_login_user_list(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    model: &LoginViewModel,
+    theme: &TundraTheme,
+) {
+    if area.width == 0 || area.height == 0 {
+        return;
+    }
+
+    let visible_rows = area.height.saturating_sub(2) as usize;
+    let (start, end) = login_user_window_bounds(model, visible_rows);
+    let items: Vec<ListItem<'static>> = if model.users.is_empty() {
+        vec![ListItem::new(Line::from("(no local users)"))]
+    } else {
+        model.users[start..end]
+            .iter()
+            .map(|user| {
+                let mut suffix = String::new();
+                if !user.enabled {
+                    suffix.push_str(" disabled");
+                }
+                if user.locked {
+                    suffix.push_str(" locked");
+                }
+                let label = if suffix.is_empty() {
+                    format!("{} ({})", user.username, user.role)
+                } else {
+                    format!("{} ({}) |{}", user.username, user.role, suffix)
+                };
+                ListItem::new(Line::from(label))
+            })
+            .collect()
+    };
+
+    let mut state = ListState::default();
+    if model.selected_index >= start && model.selected_index < end {
+        state.select(Some(model.selected_index - start));
+    }
+
+    let block_style = if model.focused_field == LoginField::UserList {
+        theme.title_style()
+    } else {
+        theme.body_style()
+    };
+    let list = List::new(items)
+        .block(
+            Block::default()
+                .title("Users")
+                .borders(Borders::ALL)
+                .style(block_style),
+        )
+        .highlight_symbol("> ")
+        .highlight_style(theme.title_style());
+    frame.render_stateful_widget(list, area, &mut state);
+}
+
+fn render_login_username_field(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    model: &LoginViewModel,
+    theme: &TundraTheme,
+) {
+    if area.width == 0 || area.height == 0 {
+        return;
+    }
+
+    let selected = model.selected_user();
+    let username = selected
+        .map(|user| user.username.clone())
+        .unwrap_or_else(|| "No user selected".to_string());
+    let display = selected
+        .map(|user| user.display_name.clone())
+        .unwrap_or_else(|| "Choose a local account".to_string());
+    let role = selected
+        .map(|user| user.role.clone())
+        .unwrap_or_else(|| "Unavailable".to_string());
+
+    let lines = vec![
+        Line::styled(username, theme.title_style()),
+        Line::from(display),
+        Line::styled(role, theme.muted_style()),
+    ];
+    frame.render_widget(
+        Paragraph::new(lines)
+            .block(
+                Block::default()
+                    .title("Selected User")
+                    .borders(Borders::ALL)
+                    .style(theme.body_style()),
+            )
+            .alignment(Alignment::Center)
+            .wrap(Wrap { trim: true }),
+        area,
+    );
+}
+
+fn render_login_password_field(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    model: &LoginViewModel,
+    theme: &TundraTheme,
+) {
+    if area.width == 0 || area.height == 0 {
+        return;
+    }
+
+    let block_style = if model.focused_field == LoginField::Password {
+        theme.title_style()
+    } else {
+        theme.body_style()
+    };
+    let password = if model.password_len == 0 {
+        "Enter password".to_string()
+    } else {
+        "*".repeat(model.password_len)
+    };
+    let password_style = if model.password_len == 0 {
+        theme.muted_style()
+    } else {
+        theme.body_style()
+    };
+    frame.render_widget(
+        Paragraph::new(password)
+            .style(password_style)
+            .block(
+                Block::default()
+                    .title("Password")
+                    .borders(Borders::ALL)
+                    .style(block_style),
+            )
+            .wrap(Wrap { trim: true }),
+        area,
+    );
+}
+
+pub fn login_user_list_area(main: Rect) -> Rect {
+    login_columns(main).0
+}
+
+pub fn login_selected_username_area(main: Rect) -> Rect {
+    let form = login_form_area(main);
+    let reserved_password_height = LOGIN_PASSWORD_FIELD_HEIGHT.saturating_add(LOGIN_FORM_GAP);
+    let height = if form.height > reserved_password_height {
+        form.height
+            .saturating_sub(reserved_password_height)
+            .min(LOGIN_USERNAME_FIELD_HEIGHT)
+    } else {
+        0
+    };
+
+    Rect::new(form.x, form.y, form.width, height)
+}
+
+pub fn login_password_area(main: Rect) -> Rect {
+    let form = login_form_area(main);
+    let username = login_selected_username_area(main);
+    let gap = if username.height > 0 {
+        LOGIN_FORM_GAP.min(form.height.saturating_sub(username.height))
+    } else {
+        0
+    };
+    let y = username
+        .y
+        .saturating_add(username.height)
+        .saturating_add(gap);
+    let max_height = form.y.saturating_add(form.height).saturating_sub(y);
+    Rect::new(
+        form.x,
+        y,
+        form.width,
+        max_height.min(LOGIN_PASSWORD_FIELD_HEIGHT),
+    )
+}
+
+pub fn login_user_list_visible_rows(main: Rect) -> usize {
+    login_user_list_area(main).height.saturating_sub(2) as usize
+}
+
+fn login_form_area(main: Rect) -> Rect {
+    login_columns(main).1
+}
+
+fn login_columns(main: Rect) -> (Rect, Rect) {
+    let inner = login_inner_area(main);
+    if inner.width <= LOGIN_USER_LIST_WIDTH.saturating_add(10) {
+        let [list, form] =
+            Layout::vertical([Constraint::Percentage(45), Constraint::Percentage(55)]).areas(inner);
+        return (list, form);
+    }
+
+    let [list, form] = Layout::horizontal([
+        Constraint::Length(LOGIN_USER_LIST_WIDTH),
+        Constraint::Min(30),
+    ])
+    .areas(inner);
+    (list, form)
+}
+
+fn login_inner_area(main: Rect) -> Rect {
+    Block::default().borders(Borders::ALL).inner(main)
+}
+
+fn login_user_window_bounds(model: &LoginViewModel, visible_rows: usize) -> (usize, usize) {
+    if model.users.is_empty() || visible_rows == 0 {
+        return (0, 0);
+    }
+
+    let selected = model.selected_index.min(model.users.len() - 1);
+    let max_start = model.users.len().saturating_sub(visible_rows);
+    let mut start = model.user_window_start.min(max_start);
+    if selected < start {
+        start = selected;
+    } else if selected >= start.saturating_add(visible_rows) {
+        start = selected.saturating_add(1).saturating_sub(visible_rows);
+    }
+    start = start.min(max_start);
+
+    let end = start.saturating_add(visible_rows).min(model.users.len());
+    (start, end)
 }
 
 fn render_auth_screen(
@@ -419,11 +709,75 @@ fn render_setup_admin_page(
     model: &SetupViewModel,
     theme: &TundraTheme,
 ) {
-    let controls = Paragraph::new(setup_admin_lines(model, theme))
-        .block(setup_block(theme))
-        .wrap(Wrap { trim: true });
+    frame.render_widget(setup_block(theme), area);
 
-    frame.render_widget(controls, area);
+    let content = setup_inner_area(area);
+    let header = Rect::new(
+        content.x,
+        content.y,
+        content.width,
+        SETUP_ADMIN_HEADER_HEIGHT.min(content.height),
+    );
+    frame.render_widget(
+        Paragraph::new(setup_admin_header_lines(model, theme)).wrap(Wrap { trim: true }),
+        header,
+    );
+
+    render_setup_admin_field(
+        frame,
+        area,
+        model,
+        SetupField::AdminUsername,
+        "Admin username",
+        model.admin_username.clone(),
+        "Enter admin username",
+        theme,
+    );
+    render_setup_admin_field(
+        frame,
+        area,
+        model,
+        SetupField::AdminPassword,
+        "Admin password",
+        "*".repeat(model.admin_password_len),
+        "Enter admin password",
+        theme,
+    );
+    render_setup_admin_field(
+        frame,
+        area,
+        model,
+        SetupField::AdminPasswordConfirm,
+        "Re-enter password",
+        "*".repeat(model.admin_password_confirm_len),
+        "Re-enter admin password",
+        theme,
+    );
+    render_setup_admin_field(
+        frame,
+        area,
+        model,
+        SetupField::PasswordHint,
+        "Password hint",
+        model.password_hint.clone(),
+        "Optional recovery hint, not the password",
+        theme,
+    );
+
+    render_setup_password_checklist(frame, area, model, theme);
+
+    frame.render_widget(
+        Paragraph::new(setup_submit_line(model, theme)),
+        setup_admin_field_area(area, SetupField::Submit),
+    );
+
+    if let Some(error) = &model.error {
+        frame.render_widget(
+            Paragraph::new(Line::styled(format!("Error: {error}"), theme.error_style()))
+                .wrap(Wrap { trim: true }),
+            setup_admin_error_area(area),
+        );
+    }
 }
 
 fn setup_block(theme: &TundraTheme) -> Block<'static> {
@@ -506,37 +860,97 @@ fn setup_timezone_footer_lines(model: &SetupViewModel, theme: &TundraTheme) -> V
     lines
 }
 
-fn setup_admin_lines(model: &SetupViewModel, theme: &TundraTheme) -> Vec<Line<'static>> {
-    let mut lines = vec![
+fn setup_admin_header_lines(model: &SetupViewModel, theme: &TundraTheme) -> Vec<Line<'static>> {
+    vec![
         Line::styled(
             format!("Step: {}", setup_step_label(model.step)),
             theme.title_style(),
         ),
-        Line::from(""),
-    ];
-    lines.push(setup_field_line(
-        model,
-        SetupField::AdminUsername,
-        format!("Admin username: {}", model.admin_username),
-        theme,
-    ));
-    lines.push(setup_field_line(
-        model,
-        SetupField::AdminPassword,
-        format!("Admin password: {}", "*".repeat(model.admin_password_len)),
-        theme,
-    ));
-    lines.push(setup_field_line(
-        model,
-        SetupField::PasswordHint,
-        format!("Password hint: {}", empty_placeholder(&model.password_hint)),
-        theme,
-    ));
-    lines.push(Line::from(""));
-    lines.push(setup_submit_line(model, theme));
-    append_setup_error(&mut lines, model, theme);
+        Line::from("Create the first administrator account."),
+        Line::styled(
+            "Tab / Down / Enter: next    Shift+Tab / Up: previous    Enter on submit: finish",
+            theme.muted_style(),
+        ),
+    ]
+}
 
-    lines
+fn render_setup_admin_field(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    model: &SetupViewModel,
+    field: SetupField,
+    title: &'static str,
+    value: String,
+    placeholder: &'static str,
+    theme: &TundraTheme,
+) {
+    let field_area = setup_admin_field_area(area, field);
+    if field_area.width == 0 || field_area.height == 0 {
+        return;
+    }
+
+    let focused = model.focused_field == field;
+    let box_style = if focused {
+        theme.title_style()
+    } else {
+        theme.body_style()
+    };
+    let block = Block::default()
+        .title(title)
+        .title_style(box_style)
+        .borders(Borders::ALL)
+        .style(box_style);
+    let inner = block.inner(field_area);
+    frame.render_widget(block, field_area);
+
+    if inner.width == 0 || inner.height == 0 {
+        return;
+    }
+
+    let is_placeholder = value.is_empty();
+    let display = if is_placeholder {
+        placeholder.to_string()
+    } else {
+        value
+    };
+    let text_style = if is_placeholder {
+        theme.muted_style()
+    } else {
+        theme.body_style()
+    };
+    frame.render_widget(
+        Paragraph::new(display).style(text_style),
+        Rect::new(inner.x, inner.y, inner.width, 1),
+    );
+}
+
+fn render_setup_password_checklist(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    model: &SetupViewModel,
+    theme: &TundraTheme,
+) {
+    let checklist_area = setup_admin_checklist_area(area);
+    if checklist_area.width == 0 || checklist_area.height == 0 {
+        return;
+    }
+
+    let block = Block::default()
+        .title("Password checklist")
+        .title_style(theme.title_style())
+        .borders(Borders::ALL)
+        .style(theme.body_style());
+    let inner = block.inner(checklist_area);
+    frame.render_widget(block, checklist_area);
+
+    if inner.width == 0 || inner.height == 0 {
+        return;
+    }
+
+    frame.render_widget(
+        Paragraph::new(setup_password_checklist_lines(model, theme)).wrap(Wrap { trim: true }),
+        inner,
+    );
 }
 
 fn append_setup_error(lines: &mut Vec<Line<'static>>, model: &SetupViewModel, theme: &TundraTheme) {
@@ -577,14 +991,87 @@ pub fn setup_language_list_area(main: Rect, language_count: usize) -> Rect {
 }
 
 pub fn setup_admin_field_area(main: Rect, field: SetupField) -> Rect {
-    let line = match field {
-        SetupField::AdminUsername => SETUP_ADMIN_USERNAME_LINE,
-        SetupField::AdminPassword => SETUP_ADMIN_PASSWORD_LINE,
-        SetupField::PasswordHint => SETUP_ADMIN_HINT_LINE,
-        SetupField::Submit => SETUP_ADMIN_SUBMIT_LINE,
-        SetupField::LanguageList | SetupField::TimezoneList => SETUP_ADMIN_USERNAME_LINE,
+    let (line, height) = match field {
+        SetupField::AdminUsername => (SETUP_ADMIN_USERNAME_LINE, SETUP_ADMIN_FIELD_HEIGHT),
+        SetupField::AdminPassword => (SETUP_ADMIN_PASSWORD_LINE, SETUP_ADMIN_FIELD_HEIGHT),
+        SetupField::AdminPasswordConfirm => {
+            (SETUP_ADMIN_CONFIRM_PASSWORD_LINE, SETUP_ADMIN_FIELD_HEIGHT)
+        }
+        SetupField::PasswordHint => (SETUP_ADMIN_HINT_LINE, SETUP_ADMIN_FIELD_HEIGHT),
+        SetupField::Submit => (SETUP_ADMIN_SUBMIT_LINE, 1),
+        SetupField::LanguageList | SetupField::TimezoneList => {
+            (SETUP_ADMIN_USERNAME_LINE, SETUP_ADMIN_FIELD_HEIGHT)
+        }
     };
-    setup_line_area(main, line, 1)
+    setup_admin_line_area(main, line, height)
+}
+
+fn setup_admin_form_area(area: Rect) -> Rect {
+    let content = setup_inner_area(area);
+    if content.width < SETUP_ADMIN_SIDE_CHECKLIST_MIN_WIDTH {
+        return content;
+    }
+
+    let reserved_checklist_width =
+        SETUP_ADMIN_CHECKLIST_WIDTH.saturating_add(SETUP_ADMIN_COLUMN_GAP);
+    Rect::new(
+        content.x,
+        content.y,
+        content.width.saturating_sub(reserved_checklist_width),
+        content.height,
+    )
+}
+
+fn setup_admin_checklist_area(area: Rect) -> Rect {
+    let content = setup_inner_area(area);
+    if content.width >= SETUP_ADMIN_SIDE_CHECKLIST_MIN_WIDTH {
+        let form = setup_admin_form_area(area);
+        let x = form
+            .x
+            .saturating_add(form.width)
+            .saturating_add(SETUP_ADMIN_COLUMN_GAP);
+        let width = content.x.saturating_add(content.width).saturating_sub(x);
+        let line = SETUP_ADMIN_PASSWORD_LINE;
+        return Rect::new(
+            x,
+            content.y.saturating_add(line),
+            width,
+            SETUP_ADMIN_CHECKLIST_HEIGHT.min(content.height.saturating_sub(line)),
+        );
+    }
+
+    setup_line_area(
+        area,
+        SETUP_ADMIN_STACKED_CHECKLIST_LINE,
+        SETUP_ADMIN_CHECKLIST_HEIGHT,
+    )
+}
+
+fn setup_admin_error_area(area: Rect) -> Rect {
+    let content = setup_inner_area(area);
+    if content.width >= SETUP_ADMIN_SIDE_CHECKLIST_MIN_WIDTH {
+        return setup_admin_line_area(area, SETUP_ADMIN_ERROR_LINE, 2);
+    }
+
+    setup_line_area(
+        area,
+        SETUP_ADMIN_STACKED_CHECKLIST_LINE.saturating_add(SETUP_ADMIN_CHECKLIST_HEIGHT),
+        2,
+    )
+}
+
+fn setup_admin_line_area(area: Rect, line: u16, desired_height: u16) -> Rect {
+    let form = setup_admin_form_area(area);
+    if line >= form.height || desired_height == 0 {
+        return Rect::new(form.x, form.y.saturating_add(form.height), form.width, 0);
+    }
+
+    Rect::new(
+        form.x,
+        form.y.saturating_add(line),
+        form.width,
+        desired_height.min(form.height.saturating_sub(line)),
+    )
 }
 
 fn setup_timezone_controls_area(main: Rect) -> Rect {
@@ -702,20 +1189,6 @@ fn setup_timezone_window_lines(
         .collect()
 }
 
-fn setup_field_line(
-    model: &SetupViewModel,
-    field: SetupField,
-    text: String,
-    theme: &TundraTheme,
-) -> Line<'static> {
-    let text = format!("{}{}", focus_marker(model.focused_field == field), text);
-    if model.focused_field == field {
-        Line::styled(text, theme.title_style())
-    } else {
-        Line::from(text)
-    }
-}
-
 fn setup_submit_line(model: &SetupViewModel, theme: &TundraTheme) -> Line<'static> {
     let label = if model.can_submit {
         "Submit: ready"
@@ -737,6 +1210,32 @@ fn setup_submit_line(model: &SetupViewModel, theme: &TundraTheme) -> Line<'stati
     }
 }
 
+fn setup_password_checklist_lines(
+    model: &SetupViewModel,
+    theme: &TundraTheme,
+) -> Vec<Line<'static>> {
+    if model.password_requirements.is_empty() {
+        return vec![Line::styled(
+            "No password rules available",
+            theme.muted_style(),
+        )];
+    }
+
+    model
+        .password_requirements
+        .iter()
+        .map(|requirement| {
+            let marker = if requirement.met { "[x]" } else { "[ ]" };
+            let style = if requirement.met {
+                theme.title_style()
+            } else {
+                theme.muted_style()
+            };
+            Line::styled(format!("{marker} {}", requirement.label), style)
+        })
+        .collect()
+}
+
 fn selected_language_summary(model: &SetupViewModel) -> String {
     model
         .selected_language()
@@ -756,10 +1255,6 @@ fn selected_timezone_description_summary(model: &SetupViewModel) -> String {
         .selected_timezone()
         .map(|timezone| format!("{} - {}", timezone.label, timezone.description))
         .unwrap_or_else(|| "No timezone selected".to_string())
-}
-
-fn empty_placeholder(value: &str) -> &str {
-    if value.is_empty() { "-" } else { value }
 }
 
 fn setup_step_label(step: SetupStep) -> &'static str {
@@ -942,28 +1437,6 @@ fn debug_lines(home: &HomeViewModel) -> Vec<Line<'static>> {
             diagnostics.platform_capability_summary
         )),
     ]
-}
-
-fn auth_lines(model: &LoginViewModel) -> Vec<Line<'static>> {
-    let mut lines = vec![
-        Line::from("Tab / Down: password    Enter on password: login    Esc: exit"),
-        Line::from(""),
-        Line::from(format!(
-            "{}Username: {}",
-            focus_marker(model.focused_field == AuthField::Username),
-            model.username
-        )),
-        Line::from(format!(
-            "{}Password: {}",
-            focus_marker(model.focused_field == AuthField::Password),
-            "*".repeat(model.password_len)
-        )),
-    ];
-    if let Some(error) = &model.error {
-        lines.push(Line::from(""));
-        lines.push(Line::from(error.clone()));
-    }
-    lines
 }
 
 fn bootstrap_lines(model: &BootstrapAdminViewModel) -> Vec<Line<'static>> {

@@ -65,27 +65,59 @@ pub enum AuthField {
     Password,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LoginField {
+    UserList,
+    Password,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LoginUserOptionViewModel {
+    pub username: String,
+    pub display_name: String,
+    pub role: String,
+    pub enabled: bool,
+    pub locked: bool,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LoginViewModel {
-    pub username: String,
+    pub users: Vec<LoginUserOptionViewModel>,
+    pub selected_index: usize,
+    pub user_window_start: usize,
     pub password_len: usize,
-    pub focused_field: AuthField,
+    pub focused_field: LoginField,
     pub error: Option<String>,
 }
 
 impl LoginViewModel {
     pub fn new(
-        username: impl Into<String>,
+        users: Vec<LoginUserOptionViewModel>,
+        selected_index: usize,
+        user_window_start: usize,
         password_len: usize,
-        focused_field: AuthField,
+        focused_field: LoginField,
         error: Option<String>,
     ) -> Self {
+        let selected_index = if users.is_empty() {
+            0
+        } else {
+            selected_index.min(users.len() - 1)
+        };
+        let user_window_start = user_window_start.min(selected_index);
+
         Self {
-            username: username.into(),
+            users,
+            selected_index,
+            user_window_start,
             password_len,
             focused_field,
             error,
         }
+    }
+
+    pub fn selected_user(&self) -> Option<&LoginUserOptionViewModel> {
+        self.users.get(self.selected_index)
     }
 }
 
@@ -126,6 +158,7 @@ pub enum SetupField {
     TimezoneList,
     AdminUsername,
     AdminPassword,
+    AdminPasswordConfirm,
     PasswordHint,
     Submit,
 }
@@ -145,6 +178,21 @@ pub struct SetupTimezoneOption {
     pub latitude: f64,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SetupPasswordRequirementViewModel {
+    pub label: String,
+    pub met: bool,
+}
+
+impl SetupPasswordRequirementViewModel {
+    pub fn new(label: impl Into<String>, met: bool) -> Self {
+        Self {
+            label: label.into(),
+            met,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct SetupViewModel {
     pub step: SetupStep,
@@ -155,6 +203,8 @@ pub struct SetupViewModel {
     pub timezone_window_start: usize,
     pub admin_username: String,
     pub admin_password_len: usize,
+    pub admin_password_confirm_len: usize,
+    pub password_requirements: Vec<SetupPasswordRequirementViewModel>,
     pub password_hint: String,
     pub focused_field: SetupField,
     pub can_submit: bool,

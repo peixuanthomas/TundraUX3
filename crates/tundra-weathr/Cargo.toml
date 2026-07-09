@@ -12,6 +12,7 @@ path = "src/lib.rs"
 [dependencies]
 async-trait = "0.1"
 chrono = { version = "0.4", features = ["serde"] }
+chrono-tz = "0.10"
 crossterm = "0.29"
 dirs = "6.0"
 rand = "0.10"

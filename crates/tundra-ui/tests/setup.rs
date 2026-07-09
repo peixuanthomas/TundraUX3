@@ -2,10 +2,12 @@ use std::collections::BTreeSet;
 
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
+use ratatui::layout::Rect;
 use ratatui::style::Color;
 use tundra_ui::{
-    HomeDisplayMode, SetupField, SetupStep, SetupTimezoneOption, SetupViewModel,
-    ShellChromeViewModel, StatusViewModel, TundraTheme, render_setup, setup_language_options,
+    HomeDisplayMode, SetupField, SetupPasswordRequirementViewModel, SetupStep, SetupTimezoneOption,
+    SetupViewModel, ShellChromeViewModel, ShellLayout, StatusViewModel, TundraTheme,
+    compute_shell_layout, render_setup, setup_admin_field_area, setup_language_options,
     setup_timezone_options,
 };
 
@@ -81,10 +83,22 @@ fn setup_admin_page_is_step_specific_and_masks_password() {
     let output = terminal_output(&terminal);
 
     assert!(output.contains("Step: Admin"));
-    assert!(output.contains("Admin username: AdminUser"));
-    assert!(output.contains("Admin password: *************"));
+    assert!(output.contains("Create the first administrator account."));
+    assert!(output.contains("Admin username"));
+    assert!(output.contains("AdminUser"));
+    assert!(output.contains("Admin password"));
+    assert!(output.contains("Re-enter password"));
+    assert!(output.contains("*************"));
     assert!(!output.contains("ActualPlaintext"));
-    assert!(output.contains("Password hint: Stored in 1Password"));
+    assert!(output.contains("Password hint"));
+    assert!(output.contains("Stored in 1Password"));
+    assert!(output.contains("Password checklist"));
+    assert!(output.contains("[x] At least 10 characters"));
+    assert!(output.contains("[x] Different from username"));
+    assert!(output.contains("[x] Passwords match"));
+    assert!(output.contains("Submit: ready"));
+    assert!(!output.contains("Admin username:"));
+    assert!(!output.contains("Admin password:"));
     assert!(!output.contains("Timezone Map"));
     assert!(!output.contains("Selected timezone"));
     assert!(!output.contains("Los Angeles"));
@@ -92,6 +106,37 @@ fn setup_admin_page_is_step_specific_and_masks_password() {
     assert!(!output.contains("Tokyo - Japan Standard Time"));
     assert!(!output.contains("English (en-US)"));
     assert!(!output.contains("简体中文"));
+}
+
+#[test]
+fn setup_admin_page_draws_empty_field_placeholders() {
+    let model = empty_admin_model();
+    let terminal = render_terminal(&model, 120, 34, TundraTheme::default_dark());
+    let output = terminal_output(&terminal);
+
+    assert!(output.contains("Enter admin username"));
+    assert!(output.contains("Enter admin password"));
+    assert!(output.contains("Re-enter admin password"));
+    assert!(output.contains("Optional recovery hint, not the password"));
+    assert!(output.contains("[ ] At least 10 characters"));
+    assert!(output.contains("[x] At most 256 characters"));
+    assert!(output.contains("[ ] Not blank"));
+    assert!(output.contains("[ ] Passwords match"));
+    assert!(output.contains("Submit: incomplete"));
+}
+
+#[test]
+fn setup_admin_page_highlights_focused_text_box() {
+    let theme = TundraTheme::default_dark();
+    let model = sample_model(SetupStep::Admin, None);
+    let terminal = render_terminal(&model, 120, 34, theme);
+    let main = setup_main_rect(120, 34);
+    let password_area = setup_admin_field_area(main, SetupField::AdminPassword);
+
+    assert!(
+        region_has_fg(&terminal, password_area, theme.accent),
+        "focused admin password box should use the accent style"
+    );
 }
 
 #[test]
@@ -278,6 +323,28 @@ fn sample_model(step: SetupStep, error: Option<String>) -> SetupViewModel {
     sample_model_with_timezone(step, "Asia/Tokyo", error)
 }
 
+fn empty_admin_model() -> SetupViewModel {
+    let mut model = sample_model(SetupStep::Admin, None);
+    model.admin_username.clear();
+    model.admin_password_len = 0;
+    model.admin_password_confirm_len = 0;
+    model.password_requirements = sample_password_requirements(false);
+    model.password_hint.clear();
+    model.focused_field = SetupField::AdminUsername;
+    model.can_submit = false;
+    model
+}
+
+fn sample_password_requirements(valid: bool) -> Vec<SetupPasswordRequirementViewModel> {
+    vec![
+        SetupPasswordRequirementViewModel::new("At least 10 characters", valid),
+        SetupPasswordRequirementViewModel::new("At most 256 characters", true),
+        SetupPasswordRequirementViewModel::new("Not blank", valid),
+        SetupPasswordRequirementViewModel::new("Different from username", valid),
+        SetupPasswordRequirementViewModel::new("Passwords match", valid),
+    ]
+}
+
 fn sample_model_with_timezone(
     step: SetupStep,
     timezone_id: &str,
@@ -299,6 +366,8 @@ fn sample_model_with_timezone(
         timezone_window_start: selected_timezone_index.saturating_sub(2),
         admin_username: "AdminUser".to_string(),
         admin_password_len: 13,
+        admin_password_confirm_len: 13,
+        password_requirements: sample_password_requirements(true),
         password_hint: "Stored in 1Password".to_string(),
         focused_field: SetupField::AdminPassword,
         can_submit: true,
@@ -368,6 +437,24 @@ fn terminal_output(terminal: &Terminal<TestBackend>) -> String {
         .iter()
         .map(|cell| cell.symbol())
         .collect()
+}
+
+fn setup_main_rect(width: u16, height: u16) -> Rect {
+    match compute_shell_layout(Rect::new(0, 0, width, height)) {
+        ShellLayout::Full { main, .. } => main,
+        ShellLayout::Compact(_) => panic!("setup render tests expect a full shell layout"),
+    }
+}
+
+fn region_has_fg(terminal: &Terminal<TestBackend>, area: Rect, fg: Color) -> bool {
+    let buffer = terminal.backend().buffer();
+    (area.y..area.y.saturating_add(area.height)).any(|y| {
+        (area.x..area.x.saturating_add(area.width)).any(|x| {
+            buffer
+                .cell((x, y))
+                .is_some_and(|cell| cell.fg == fg && cell.symbol() != " ")
+        })
+    })
 }
 
 fn map_test_theme() -> TundraTheme {

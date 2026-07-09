@@ -107,6 +107,7 @@ fn first_run_setup_enter_advances_language_timezone_admin_pages() {
         vec![
             ShellComponent::SetupAdminUsername,
             ShellComponent::SetupAdminPassword,
+            ShellComponent::SetupAdminPasswordConfirm,
             ShellComponent::SetupAdminHint,
             ShellComponent::SetupSubmit,
         ]
@@ -129,6 +130,7 @@ fn timezone_setup_page_exposes_only_timezone_shell_targets() {
     assert!(!setup_components.contains(&ShellComponent::SetupLanguage));
     assert!(!setup_components.contains(&ShellComponent::SetupAdminUsername));
     assert!(!setup_components.contains(&ShellComponent::SetupAdminPassword));
+    assert!(!setup_components.contains(&ShellComponent::SetupAdminPasswordConfirm));
     assert!(!setup_components.contains(&ShellComponent::SetupAdminHint));
     assert!(!setup_components.contains(&ShellComponent::SetupSubmit));
 }
@@ -221,6 +223,131 @@ fn timezone_mouse_click_selects_visible_row_from_hit_map() {
 }
 
 #[test]
+fn admin_setup_text_boxes_route_mouse_clicks_inside_box() {
+    let (_fixture, mut state) = fresh_setup_state("setup-admin-text-box-mouse");
+
+    state.apply_input(InputEvent::from_key_label("Enter"));
+    state.apply_input(InputEvent::from_key_label("Enter"));
+    assert_eq!(
+        state.to_setup_view_model().step,
+        tundra_ui::SetupStep::Admin
+    );
+
+    for component in [
+        ShellComponent::SetupAdminUsername,
+        ShellComponent::SetupAdminPassword,
+        ShellComponent::SetupAdminPasswordConfirm,
+        ShellComponent::SetupAdminHint,
+    ] {
+        assert_eq!(setup_hit_region_height(&state, component), 3);
+        let coordinates = setup_hit_map_row_coordinates(&state, component, 1);
+        assert_eq!(state.hit_target_at(coordinates), Some(component));
+
+        state.apply_input(InputEvent::mouse_down(PointerButton::Left, coordinates));
+
+        assert_eq!(state.focused_component(), component);
+        assert_eq!(
+            state.to_setup_view_model().focused_field,
+            setup_field_for_admin_component(component)
+        );
+    }
+}
+
+#[test]
+fn admin_setup_up_down_keys_move_between_fields() {
+    let (_fixture, mut state) = fresh_setup_state("setup-admin-up-down-focus");
+
+    state.apply_input(InputEvent::from_key_label("Enter"));
+    state.apply_input(InputEvent::from_key_label("Enter"));
+    assert_eq!(
+        state.focused_component(),
+        ShellComponent::SetupAdminUsername
+    );
+
+    state.apply_input(InputEvent::from_key_label("Down"));
+    assert_eq!(
+        state.focused_component(),
+        ShellComponent::SetupAdminPassword
+    );
+    state.apply_input(InputEvent::from_key_label("Down"));
+    assert_eq!(
+        state.focused_component(),
+        ShellComponent::SetupAdminPasswordConfirm
+    );
+    state.apply_input(InputEvent::from_key_label("Down"));
+    assert_eq!(state.focused_component(), ShellComponent::SetupAdminHint);
+    state.apply_input(InputEvent::from_key_label("Down"));
+    assert_eq!(state.focused_component(), ShellComponent::SetupSubmit);
+    state.apply_input(InputEvent::from_key_label("Up"));
+    assert_eq!(state.focused_component(), ShellComponent::SetupAdminHint);
+}
+
+#[test]
+fn admin_setup_password_checklist_updates_with_password_input() {
+    let (_fixture, mut state) = fresh_setup_state("setup-admin-password-checklist");
+
+    state.apply_input(InputEvent::from_key_label("Enter"));
+    state.apply_input(InputEvent::from_key_label("Enter"));
+    type_text(&mut state, "AdminUser");
+    state.apply_input(InputEvent::from_key_label("Down"));
+    type_text(&mut state, "short");
+
+    let requirements = state.to_setup_view_model().password_requirements;
+    assert_requirement(&requirements, "At least 10 characters", false);
+    assert_requirement(&requirements, "At most 256 characters", true);
+    assert_requirement(&requirements, "Not blank", true);
+    assert_requirement(&requirements, "Different from username", true);
+    assert_requirement(&requirements, "Passwords match", false);
+
+    for _ in 0..5 {
+        state.apply_input(InputEvent::from_key_label("Backspace"));
+    }
+    type_text(&mut state, "AdminUser");
+
+    let requirements = state.to_setup_view_model().password_requirements;
+    assert_requirement(&requirements, "At least 10 characters", false);
+    assert_requirement(&requirements, "Not blank", true);
+    assert_requirement(&requirements, "Different from username", false);
+    assert_requirement(&requirements, "Passwords match", false);
+
+    state.apply_input(InputEvent::from_key_label("Down"));
+    type_text(&mut state, "AdminUser");
+
+    let requirements = state.to_setup_view_model().password_requirements;
+    assert_requirement(&requirements, "Passwords match", true);
+}
+
+#[test]
+fn admin_setup_rejects_mismatched_reentered_password() {
+    let (_fixture, mut state) = fresh_setup_state("setup-admin-password-mismatch");
+
+    state.apply_input(InputEvent::from_key_label("Enter"));
+    state.apply_input(InputEvent::from_key_label("Enter"));
+    type_text(&mut state, "AdminUser");
+    state.apply_input(InputEvent::from_key_label("Enter"));
+    type_text(&mut state, "StrongPass123");
+    state.apply_input(InputEvent::from_key_label("Enter"));
+    type_text(&mut state, "DifferentPass123");
+    state.apply_input(InputEvent::from_key_label("Enter"));
+    state.apply_input(InputEvent::from_key_label("Enter"));
+    state.apply_input(InputEvent::from_key_label("Enter"));
+
+    let model = state.to_setup_view_model();
+    assert_eq!(state.active_screen(), ShellScreen::FirstRunSetup);
+    assert_eq!(
+        state.focused_component(),
+        ShellComponent::SetupAdminPasswordConfirm
+    );
+    assert_eq!(
+        model.focused_field,
+        tundra_ui::SetupField::AdminPasswordConfirm
+    );
+    assert!(!model.can_submit);
+    assert_eq!(model.error.as_deref(), Some("Passwords do not match"));
+    assert_requirement(&model.password_requirements, "Passwords match", false);
+}
+
+#[test]
 fn first_run_setup_routes_keys_focus_and_mouse_before_home_shortcuts() {
     let fixture = FixtureRoot::new("setup-routing");
     let platform = mock_platform(fixture.path());
@@ -282,6 +409,12 @@ fn first_run_setup_routes_keys_focus_and_mouse_before_home_shortcuts() {
     );
     type_text(&mut state, "StrongPass123");
     state.apply_input(InputEvent::from_key_label("Tab"));
+    assert_eq!(
+        state.focused_component(),
+        ShellComponent::SetupAdminPasswordConfirm
+    );
+    type_text(&mut state, "StrongPass123");
+    state.apply_input(InputEvent::from_key_label("Tab"));
     assert_eq!(state.focused_component(), ShellComponent::SetupAdminHint);
     type_text(&mut state, "hint");
     state.apply_input(InputEvent::from_key_label("Backspace"));
@@ -289,7 +422,7 @@ fn first_run_setup_routes_keys_focus_and_mouse_before_home_shortcuts() {
     state.apply_input(InputEvent::from_key_label("Shift+Tab"));
     assert_eq!(
         state.focused_component(),
-        ShellComponent::SetupAdminPassword
+        ShellComponent::SetupAdminPasswordConfirm
     );
     state.apply_input(InputEvent::mouse_down(
         PointerButton::Left,
@@ -331,17 +464,21 @@ fn restart_requires_login_and_bad_password_stays_on_login() {
     let mut state = ShellState::new_with_startup(default_config(), (120, 40), startup);
     assert_eq!(state.active_screen(), ShellScreen::Login);
 
-    type_text(&mut state, "AdminUser");
-    state.apply_input(InputEvent::from_key_label("Tab"));
+    select_login_user(&mut state, "AdminUser");
+    state.apply_input(InputEvent::from_key_label("Enter"));
     type_text(&mut state, "WrongPass123");
     state.apply_input(InputEvent::from_key_label("Enter"));
 
     assert_eq!(state.active_screen(), ShellScreen::Login);
     assert_eq!(state.auth_session(), None);
+    assert_eq!(
+        state.to_login_view_model().error.as_deref(),
+        Some("Password hint: Recovery hint")
+    );
 
     let startup = prepare_shell_startup(&platform, default_config()).expect("second restart");
     let mut state = ShellState::new_with_startup(default_config(), (120, 40), startup);
-    type_text(&mut state, "adminuser");
+    select_login_user(&mut state, "AdminUser");
     state.apply_input(InputEvent::from_key_label("Tab"));
     type_text(&mut state, "StrongPass123");
     state.apply_input(InputEvent::from_key_label("Enter"));
@@ -352,6 +489,29 @@ fn restart_requires_login_and_bad_password_stays_on_login() {
             .auth_session()
             .map(|session| session.username.as_str()),
         Some("AdminUser")
+    );
+}
+
+#[test]
+fn login_bad_password_without_hint_shows_invalid_credentials() {
+    let fixture = FixtureRoot::new("restart-login-no-hint");
+    let platform = mock_platform(fixture.path());
+    let startup = prepare_shell_startup(&platform, default_config()).expect("startup");
+    let mut state = ShellState::new_with_startup(default_config(), (120, 40), startup);
+    complete_first_run_setup(&mut state, 0, 0, "AdminUser", "StrongPass123", "");
+    assert_eq!(state.active_screen(), ShellScreen::Home);
+
+    let startup = prepare_shell_startup(&platform, default_config()).expect("restart startup");
+    let mut state = ShellState::new_with_startup(default_config(), (120, 40), startup);
+    select_login_user(&mut state, "AdminUser");
+    state.apply_input(InputEvent::from_key_label("Enter"));
+    type_text(&mut state, "WrongPass123");
+    state.apply_input(InputEvent::from_key_label("Enter"));
+
+    assert_eq!(state.active_screen(), ShellScreen::Login);
+    assert_eq!(
+        state.to_login_view_model().error.as_deref(),
+        Some("Invalid username or password")
     );
 }
 
@@ -396,6 +556,62 @@ fn admin_can_manage_users_and_user_can_only_open_own_profile() {
     assert!(!profile.can_manage_all);
     assert_eq!(profile.users.len(), 1);
     assert_eq!(profile.users[0].username, "user2");
+}
+
+#[test]
+fn login_mouse_click_selects_user_and_focuses_password() {
+    let fixture = FixtureRoot::new("login-mouse-user-select");
+    let platform = mock_platform(fixture.path());
+    bootstrap_with_shell(&platform);
+
+    let startup = prepare_shell_startup(&platform, default_config()).expect("admin startup");
+    let mut admin_state = ShellState::new_with_startup(default_config(), (120, 40), startup);
+    login(&mut admin_state, "AdminUser", "StrongPass123");
+    admin_state.apply_input(InputEvent::from_key_label("u"));
+    admin_state.apply_input(InputEvent::from_key_label("n"));
+    type_text(&mut admin_state, "user2");
+    admin_state.apply_input(InputEvent::from_key_label("Tab"));
+    type_text(&mut admin_state, "User Two");
+    admin_state.apply_input(InputEvent::from_key_label("Tab"));
+    type_text(&mut admin_state, "userPass2123!");
+    admin_state.apply_input(InputEvent::from_key_label("Enter"));
+
+    let startup = prepare_shell_startup(&platform, default_config()).expect("user startup");
+    let mut state = ShellState::new_with_startup(default_config(), (120, 40), startup);
+    assert_eq!(state.active_screen(), ShellScreen::Login);
+    assert_eq!(state.focused_component(), ShellComponent::LoginUserList);
+    assert_eq!(
+        state
+            .to_login_view_model()
+            .selected_user()
+            .map(|user| user.username.as_str()),
+        Some("AdminUser")
+    );
+
+    state.apply_input(InputEvent::mouse_down(
+        PointerButton::Left,
+        login_user_row_coordinates(&state, 1),
+    ));
+
+    assert_eq!(state.focused_component(), ShellComponent::LoginPassword);
+    assert_eq!(
+        state
+            .to_login_view_model()
+            .selected_user()
+            .map(|user| user.username.as_str()),
+        Some("user2")
+    );
+
+    type_text(&mut state, "userPass2123!");
+    state.apply_input(InputEvent::from_key_label("Enter"));
+
+    assert_eq!(state.active_screen(), ShellScreen::Home);
+    assert_eq!(
+        state
+            .auth_session()
+            .map(|session| session.username.as_str()),
+        Some("user2")
+    );
 }
 
 #[test]
@@ -466,10 +682,38 @@ fn bootstrap_with_shell(platform: &MockPlatform) {
 }
 
 fn login(state: &mut ShellState, username: &str, password: &str) {
-    type_text(state, username);
+    select_login_user(state, username);
     state.apply_input(InputEvent::from_key_label("Tab"));
     type_text(state, password);
     state.apply_input(InputEvent::from_key_label("Enter"));
+}
+
+fn select_login_user(state: &mut ShellState, username: &str) {
+    assert_eq!(state.active_screen(), ShellScreen::Login);
+    if state.focused_component() != ShellComponent::LoginUserList {
+        state.apply_input(InputEvent::from_key_label("Shift+Tab"));
+    }
+
+    let model = state.to_login_view_model();
+    let target = model
+        .users
+        .iter()
+        .position(|user| user.username.eq_ignore_ascii_case(username))
+        .unwrap_or_else(|| panic!("missing login user: {username}"));
+    while state.to_login_view_model().selected_index < target {
+        state.apply_input(InputEvent::from_key_label("Down"));
+    }
+    while state.to_login_view_model().selected_index > target {
+        state.apply_input(InputEvent::from_key_label("Up"));
+    }
+
+    assert_eq!(
+        state
+            .to_login_view_model()
+            .selected_user()
+            .map(|user| user.username.as_str()),
+        Some(username)
+    );
 }
 
 fn type_text(state: &mut ShellState, text: &str) {
@@ -490,6 +734,7 @@ fn assert_setup_admin_empty(state: &ShellState) {
     let model = state.to_setup_view_model();
     assert!(model.admin_username.is_empty());
     assert_eq!(model.admin_password_len, 0);
+    assert_eq!(model.admin_password_confirm_len, 0);
     assert!(model.password_hint.is_empty());
     assert!(!model.can_submit);
 }
@@ -513,6 +758,18 @@ fn assert_selected_timezone_visible(state: &ShellState) {
     );
 }
 
+fn assert_requirement(
+    requirements: &[tundra_ui::SetupPasswordRequirementViewModel],
+    label: &str,
+    expected: bool,
+) {
+    let requirement = requirements
+        .iter()
+        .find(|requirement| requirement.label == label)
+        .unwrap_or_else(|| panic!("missing password requirement: {label}"));
+    assert_eq!(requirement.met, expected, "{label}");
+}
+
 fn setup_hit_components(state: &ShellState) -> Vec<ShellComponent> {
     state
         .hit_map()
@@ -526,6 +783,7 @@ fn setup_hit_components(state: &ShellState) -> Vec<ShellComponent> {
                     | ShellComponent::SetupTimezone
                     | ShellComponent::SetupAdminUsername
                     | ShellComponent::SetupAdminPassword
+                    | ShellComponent::SetupAdminPasswordConfirm
                     | ShellComponent::SetupAdminHint
                     | ShellComponent::SetupSubmit
             )
@@ -567,6 +825,25 @@ fn setup_hit_map_row_coordinates(
     )
 }
 
+fn login_user_row_coordinates(state: &ShellState, row: u16) -> (u16, u16) {
+    let region = state
+        .hit_map()
+        .regions()
+        .iter()
+        .find(|region| region.component == ShellComponent::LoginUserList)
+        .expect("missing login user list hit region");
+    let content_height = region.area.height.saturating_sub(2);
+    assert!(
+        row < content_height,
+        "row {row} outside login user list content height {content_height}"
+    );
+
+    (
+        region.area.x.saturating_add(1),
+        region.area.y.saturating_add(1).saturating_add(row),
+    )
+}
+
 fn complete_first_run_setup(
     state: &mut ShellState,
     language_steps: usize,
@@ -585,6 +862,8 @@ fn complete_first_run_setup(
     }
     state.apply_input(InputEvent::from_key_label("Enter"));
     type_text(state, username);
+    state.apply_input(InputEvent::from_key_label("Enter"));
+    type_text(state, password);
     state.apply_input(InputEvent::from_key_label("Enter"));
     type_text(state, password);
     state.apply_input(InputEvent::from_key_label("Enter"));
@@ -623,12 +902,24 @@ fn setup_admin_coordinates(state: &ShellState, component: ShellComponent) -> (u1
     let field = match component {
         ShellComponent::SetupAdminUsername => tundra_ui::SetupField::AdminUsername,
         ShellComponent::SetupAdminPassword => tundra_ui::SetupField::AdminPassword,
+        ShellComponent::SetupAdminPasswordConfirm => tundra_ui::SetupField::AdminPasswordConfirm,
         ShellComponent::SetupAdminHint => tundra_ui::SetupField::PasswordHint,
         ShellComponent::SetupSubmit => tundra_ui::SetupField::Submit,
         other => panic!("unexpected setup component: {other:?}"),
     };
     let field_area = tundra_ui::setup_admin_field_area(main, field);
     (field_area.x, field_area.y)
+}
+
+fn setup_field_for_admin_component(component: ShellComponent) -> tundra_ui::SetupField {
+    match component {
+        ShellComponent::SetupAdminUsername => tundra_ui::SetupField::AdminUsername,
+        ShellComponent::SetupAdminPassword => tundra_ui::SetupField::AdminPassword,
+        ShellComponent::SetupAdminPasswordConfirm => tundra_ui::SetupField::AdminPasswordConfirm,
+        ShellComponent::SetupAdminHint => tundra_ui::SetupField::PasswordHint,
+        ShellComponent::SetupSubmit => tundra_ui::SetupField::Submit,
+        other => panic!("unexpected setup component: {other:?}"),
+    }
 }
 
 fn mock_platform(base: &Path) -> MockPlatform {

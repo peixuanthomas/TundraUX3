@@ -1,3 +1,5 @@
+use crate::app::AppRunOutcome;
+use crate::app_state::BottomHudPrompt;
 use crate::config::{Config, LocationDisplay};
 use crate::error::{ConfigError, TerminalError};
 use crate::render::TerminalRenderer;
@@ -12,15 +14,56 @@ use std::fmt;
 use std::io;
 use std::panic;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
+pub struct LaunchLocation {
+    pub latitude: f64,
+    pub longitude: f64,
+    pub city: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub struct LaunchOptions {
     pub prefer_config_location: bool,
+    pub location_override: Option<LaunchLocation>,
+    pub timezone_id: Option<String>,
 }
 
 impl Default for LaunchOptions {
     fn default() -> Self {
         Self {
             prefer_config_location: true,
+            location_override: None,
+            timezone_id: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ShellLockscreenResult {
+    Started,
+    Cancelled,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LaunchRunMode {
+    Cli,
+    ShellLockscreen,
+}
+
+impl LaunchRunMode {
+    fn bottom_hud_prompt(self) -> BottomHudPrompt {
+        match self {
+            Self::Cli => BottomHudPrompt::Quit,
+            Self::ShellLockscreen => BottomHudPrompt::Start,
+        }
+    }
+}
+
+impl From<AppRunOutcome> for ShellLockscreenResult {
+    fn from(value: AppRunOutcome) -> Self {
+        match value {
+            AppRunOutcome::Space => Self::Started,
+            AppRunOutcome::Cancelled => Self::Cancelled,
         }
     }
 }
@@ -74,16 +117,37 @@ impl From<TerminalError> for WeathrRunError {
 }
 
 pub fn run_default_blocking() -> Result<(), WeathrRunError> {
+    run_blocking_with_options(LaunchOptions::default())
+}
+
+pub fn run_blocking_with_options(options: LaunchOptions) -> Result<(), WeathrRunError> {
     install_panic_restore_hook();
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
         .map_err(WeathrRunError::Runtime)?;
 
-    runtime.block_on(run_with_options(LaunchOptions::default()))
+    runtime
+        .block_on(run_with_options(options, LaunchRunMode::Cli))
+        .map(|_| ())
 }
 
-async fn run_with_options(options: LaunchOptions) -> Result<(), WeathrRunError> {
+pub fn run_shell_lockscreen_blocking_with_options(
+    options: LaunchOptions,
+) -> Result<ShellLockscreenResult, WeathrRunError> {
+    install_panic_restore_hook();
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .map_err(WeathrRunError::Runtime)?;
+
+    runtime.block_on(run_with_options(options, LaunchRunMode::ShellLockscreen))
+}
+
+async fn run_with_options(
+    options: LaunchOptions,
+    mode: LaunchRunMode,
+) -> Result<ShellLockscreenResult, WeathrRunError> {
     let mut config = match Config::load() {
         Ok(config) => config,
         Err(error) => {
@@ -92,7 +156,8 @@ async fn run_with_options(options: LaunchOptions) -> Result<(), WeathrRunError> 
         }
     };
 
-    apply_launch_location(&mut config, options);
+    let timezone_id = options.timezone_id.clone();
+    apply_launch_location(&mut config, &options);
 
     let mut theme_registry = ThemeRegistry::new();
     let theme_id = config.normalized_theme();
@@ -107,23 +172,42 @@ async fn run_with_options(options: LaunchOptions) -> Result<(), WeathrRunError> 
     renderer.init()?;
 
     let (term_width, term_height) = renderer.get_size();
-    let mut app = app::App::new(&config, term_width, term_height, theme_registry);
+    let mut app = app::App::new_with_bottom_hud_prompt(
+        &config,
+        term_width,
+        term_height,
+        theme_registry,
+        timezone_id,
+        mode.bottom_hud_prompt(),
+    );
 
     let run_result = tokio::select! {
-        result = app.run(&mut renderer) => result.map_err(WeathrRunError::Run),
-        signal = tokio::signal::ctrl_c() => signal.map_err(WeathrRunError::Signal),
+        result = app.run_with_outcome(&mut renderer) => {
+            result.map(ShellLockscreenResult::from).map_err(WeathrRunError::Run)
+        },
+        signal = tokio::signal::ctrl_c() => {
+            signal
+                .map(|_| ShellLockscreenResult::Cancelled)
+                .map_err(WeathrRunError::Signal)
+        },
     };
     let cleanup_result = renderer.cleanup().map_err(WeathrRunError::Cleanup);
 
     match (run_result, cleanup_result) {
-        (Ok(()), Ok(())) => Ok(()),
+        (Ok(result), Ok(())) => Ok(result),
         (Err(error), _) => Err(error),
-        (Ok(()), Err(error)) => Err(error),
+        (Ok(_), Err(error)) => Err(error),
     }
 }
 
-fn apply_launch_location(config: &mut Config, options: LaunchOptions) {
-    let geo_loc = if options.prefer_config_location && !config.location.auto {
+fn apply_launch_location(config: &mut Config, options: &LaunchOptions) {
+    let geo_loc = if let Some(location) = &options.location_override {
+        geolocation::GeoLocation {
+            latitude: location.latitude,
+            longitude: location.longitude,
+            city: location.city.clone(),
+        }
+    } else if options.prefer_config_location && !config.location.auto {
         geolocation::GeoLocation {
             latitude: config.location.latitude,
             longitude: config.location.longitude,
@@ -152,4 +236,33 @@ fn install_panic_restore_hook() {
         let _ = execute!(io::stdout(), LeaveAlternateScreen, cursor::Show, ResetColor);
         default_hook(panic_info);
     }));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn shell_lockscreen_result_distinguishes_space_and_cancel() {
+        assert_eq!(
+            ShellLockscreenResult::from(AppRunOutcome::Space),
+            ShellLockscreenResult::Started
+        );
+        assert_eq!(
+            ShellLockscreenResult::from(AppRunOutcome::Cancelled),
+            ShellLockscreenResult::Cancelled
+        );
+    }
+
+    #[test]
+    fn launch_mode_selects_shell_start_prompt() {
+        assert_eq!(
+            LaunchRunMode::Cli.bottom_hud_prompt(),
+            BottomHudPrompt::Quit
+        );
+        assert_eq!(
+            LaunchRunMode::ShellLockscreen.bottom_hud_prompt(),
+            BottomHudPrompt::Start
+        );
+    }
 }

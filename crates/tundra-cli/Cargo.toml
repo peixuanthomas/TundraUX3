@@ -13,4 +13,5 @@ path = "src/main.rs"
 [dependencies]
 tundra-platform = { path = "../tundra-platform" }
 tundra-storage = { path = "../tundra-storage" }
+tundra-ui = { path = "../tundra-ui" }
 tundra-weathr = { path = "../tundra-weathr" }

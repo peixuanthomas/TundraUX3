@@ -1,10 +1,11 @@
 use tundra_apps::explorer::{ExplorerCommand, ExplorerController, ExplorerState};
 use tundra_core::{
-    AuditOutcome, AuditService, AuthSession, CoreError, DebugPolicy, PermissionAction,
-    PermissionService, SessionService, UserAccount, UserRole, UserService,
+    AuditOutcome, AuditService, AuthSession, CoreError, DebugPolicy, PASSWORD_MAX_LEN,
+    PASSWORD_MIN_LEN, PermissionAction, PermissionService, SessionService, UserAccount, UserRole,
+    UserService,
 };
 use tundra_storage::{
-    CONFIG_DESCRIPTOR, SCHEMA_VERSION, StorageError, StorageLoadReport, StorageManager,
+    CONFIG_DESCRIPTOR, SCHEMA_VERSION, StorageError, StorageLoadReport, StorageManager, UserRecord,
 };
 
 use crossterm::cursor::{Hide, Show};
@@ -208,6 +209,31 @@ impl ShellRestoredSession {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ShellLoginUser {
+    pub username: String,
+    pub display_name: String,
+    pub role: String,
+    pub enabled: bool,
+    pub password_hint: Option<String>,
+    pub locked_until_epoch_ms: Option<u64>,
+    pub last_login_at_epoch_ms: Option<u64>,
+}
+
+impl ShellLoginUser {
+    fn from_record(record: &UserRecord) -> Self {
+        Self {
+            username: record.username.clone(),
+            display_name: record.display_name.clone(),
+            role: record.role.clone(),
+            enabled: record.enabled,
+            password_hint: record.password_hint.clone(),
+            locked_until_epoch_ms: record.locked_until_epoch_ms,
+            last_login_at_epoch_ms: record.last_login_at_epoch_ms,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ShellStartupState {
     pub app_config: ShellAppConfig,
     pub storage_report: ShellStorageReport,
@@ -216,6 +242,7 @@ pub struct ShellStartupState {
     pub restored_session: Option<ShellRestoredSession>,
     pub storage_manager: Option<StorageManager>,
     pub auth_bootstrap_required: bool,
+    pub login_users: Vec<ShellLoginUser>,
     pub debug_policy: DebugPolicy,
 }
 
@@ -229,6 +256,7 @@ impl ShellStartupState {
             restored_session: None,
             storage_manager: None,
             auth_bootstrap_required: false,
+            login_users: Vec::new(),
             debug_policy: DebugPolicy::default(),
         }
     }
@@ -283,6 +311,11 @@ pub fn prepare_shell_startup(
     let storage_report =
         ShellStorageReport::from_storage_load_report(Some(app_paths), storage_open.report);
     let debug_policy = DebugPolicy::current_build(storage_config.security.allow_release_debug);
+    let login_users = users
+        .users
+        .iter()
+        .map(ShellLoginUser::from_record)
+        .collect::<Vec<_>>();
 
     Ok(ShellStartupState {
         app_config: ShellAppConfig::from_storage_config(&storage_config),
@@ -291,7 +324,8 @@ pub fn prepare_shell_startup(
         platform_capabilities,
         restored_session: restored_session_from_storage(&sessions),
         storage_manager: Some(storage_open.manager),
-        auth_bootstrap_required: users.users.is_empty(),
+        auth_bootstrap_required: login_users.is_empty(),
+        login_users,
         debug_policy,
     })
 }
@@ -705,12 +739,14 @@ pub enum ShellComponent {
     CompactHome,
     TopBar,
     Home,
+    LoginUserList,
     LoginUsername,
     LoginPassword,
     SetupLanguage,
     SetupTimezone,
     SetupAdminUsername,
     SetupAdminPassword,
+    SetupAdminPasswordConfirm,
     SetupAdminHint,
     SetupSubmit,
     BootstrapUsername,
@@ -728,12 +764,14 @@ impl ShellComponent {
             Self::CompactHome => "CompactHome",
             Self::TopBar => "TopBar",
             Self::Home => "Home",
+            Self::LoginUserList => "LoginUserList",
             Self::LoginUsername => "LoginUsername",
             Self::LoginPassword => "LoginPassword",
             Self::SetupLanguage => "SetupLanguage",
             Self::SetupTimezone => "SetupTimezone",
             Self::SetupAdminUsername => "SetupAdminUsername",
             Self::SetupAdminPassword => "SetupAdminPassword",
+            Self::SetupAdminPasswordConfirm => "SetupAdminPasswordConfirm",
             Self::SetupAdminHint => "SetupAdminHint",
             Self::SetupSubmit => "SetupSubmit",
             Self::BootstrapUsername => "BootstrapUsername",
@@ -890,6 +928,14 @@ pub enum ShellCommand {
     FocusPrevious,
     AppendAuthChar(char),
     AuthBackspace,
+    LoginPreviousUser,
+    LoginNextUser,
+    LoginPageUserUp,
+    LoginPageUserDown,
+    LoginFirstUser,
+    LoginLastUser,
+    LoginFocusUserList,
+    LoginFocusPassword,
     SubmitLogin,
     SubmitBootstrapAdmin,
     SetupPreviousLanguage,
@@ -907,6 +953,10 @@ pub enum ShellCommand {
     SetupAdminBackspace,
     SubmitSetup,
     ActivateSetup {
+        target: ShellComponent,
+        coordinates: CellPosition,
+    },
+    ActivateLogin {
         target: ShellComponent,
         coordinates: CellPosition,
     },
@@ -1128,6 +1178,9 @@ pub struct ShellState {
     auth_session: Option<AuthSession>,
     requested_debug_mode: bool,
     debug_policy: DebugPolicy,
+    login_users: Vec<ShellLoginUser>,
+    login_selected_user: usize,
+    login_user_window_start: usize,
     login_username: String,
     login_password: String,
     setup_step: tundra_ui::SetupStep,
@@ -1135,6 +1188,7 @@ pub struct ShellState {
     setup_selected_timezone_index: usize,
     setup_admin_username: String,
     setup_admin_password: String,
+    setup_admin_password_confirm: String,
     setup_admin_password_hint: String,
     setup_focused_field: tundra_ui::SetupField,
     setup_timezone_window_start: usize,
@@ -1200,9 +1254,15 @@ impl ShellState {
         let initial_focus = match initial_screen {
             ShellScreen::FirstRunSetup => ShellComponent::SetupLanguage,
             ShellScreen::BootstrapAdmin => ShellComponent::BootstrapUsername,
-            ShellScreen::Login => ShellComponent::LoginUsername,
+            ShellScreen::Login => ShellComponent::LoginUserList,
             _ => ShellComponent::Home,
         };
+        let login_users = startup.login_users.clone();
+        let login_selected_user = default_login_user_index(&login_users);
+        let login_username = login_users
+            .get(login_selected_user)
+            .map(|user| user.username.clone())
+            .unwrap_or_default();
 
         let mut state = Self {
             home_mode,
@@ -1211,13 +1271,17 @@ impl ShellState {
             auth_session: None,
             requested_debug_mode: launch_config.home_mode_override == HomeModeOverride::Debug,
             debug_policy: startup.debug_policy,
-            login_username: String::new(),
+            login_users,
+            login_selected_user,
+            login_user_window_start: 0,
+            login_username,
             login_password: String::new(),
             setup_step: tundra_ui::SetupStep::Language,
             setup_selected_language_index: 0,
             setup_selected_timezone_index: 0,
             setup_admin_username: String::new(),
             setup_admin_password: String::new(),
+            setup_admin_password_confirm: String::new(),
             setup_admin_password_hint: String::new(),
             setup_focused_field: tundra_ui::SetupField::LanguageList,
             setup_timezone_window_start: 0,
@@ -1336,11 +1400,25 @@ impl ShellState {
 
     pub fn to_login_view_model(&self) -> tundra_ui::LoginViewModel {
         tundra_ui::LoginViewModel::new(
-            self.login_username.clone(),
+            self.login_users
+                .iter()
+                .map(|user| tundra_ui::LoginUserOptionViewModel {
+                    username: user.username.clone(),
+                    display_name: user.display_name.clone(),
+                    role: user.role.clone(),
+                    enabled: user.enabled,
+                    locked: user
+                        .locked_until_epoch_ms
+                        .map(|locked_until| locked_until > unix_millis())
+                        .unwrap_or(false),
+                })
+                .collect(),
+            self.login_selected_user,
+            self.login_user_window_start,
             self.login_password.chars().count(),
             match self.focused_component {
-                ShellComponent::LoginPassword => tundra_ui::AuthField::Password,
-                _ => tundra_ui::AuthField::Username,
+                ShellComponent::LoginPassword => tundra_ui::LoginField::Password,
+                _ => tundra_ui::LoginField::UserList,
             },
             self.error_message.clone(),
         )
@@ -1359,6 +1437,16 @@ impl ShellState {
     }
 
     pub fn to_setup_view_model(&self) -> tundra_ui::SetupViewModel {
+        let password_requirements = setup_password_requirements(
+            &self.setup_admin_username,
+            &self.setup_admin_password,
+            &self.setup_admin_password_confirm,
+        );
+        let can_submit = !self.setup_admin_username.trim().is_empty()
+            && password_requirements
+                .iter()
+                .all(|requirement| requirement.met);
+
         tundra_ui::SetupViewModel {
             step: self.setup_step.clone(),
             languages: tundra_ui::setup_language_options(),
@@ -1368,10 +1456,11 @@ impl ShellState {
             timezone_window_start: self.setup_timezone_window_start,
             admin_username: self.setup_admin_username.clone(),
             admin_password_len: self.setup_admin_password.chars().count(),
+            admin_password_confirm_len: self.setup_admin_password_confirm.chars().count(),
+            password_requirements,
             password_hint: self.setup_admin_password_hint.clone(),
             focused_field: self.setup_focused_field.clone(),
-            can_submit: !self.setup_admin_username.trim().is_empty()
-                && !self.setup_admin_password.is_empty(),
+            can_submit,
             error: self.error_message.clone(),
         }
     }
@@ -1541,7 +1630,6 @@ impl ShellState {
 
     fn append_auth_char(&mut self, character: char) {
         match self.focused_component {
-            ShellComponent::LoginUsername => self.login_username.push(character),
             ShellComponent::LoginPassword => self.login_password.push(character),
             ShellComponent::BootstrapUsername => self.bootstrap_username.push(character),
             ShellComponent::BootstrapPassword => self.bootstrap_password.push(character),
@@ -1552,9 +1640,6 @@ impl ShellState {
 
     fn auth_backspace(&mut self) {
         match self.focused_component {
-            ShellComponent::LoginUsername => {
-                self.login_username.pop();
-            }
             ShellComponent::LoginPassword => {
                 self.login_password.pop();
             }
@@ -1567,6 +1652,128 @@ impl ShellState {
             _ => {}
         }
         self.error_message = None;
+    }
+
+    fn selected_login_username(&self) -> Option<&str> {
+        self.login_users
+            .get(self.login_selected_user)
+            .map(|user| user.username.as_str())
+    }
+
+    fn selected_login_password_hint(&self) -> Option<&str> {
+        self.login_users
+            .get(self.login_selected_user)?
+            .password_hint
+            .as_deref()
+    }
+
+    fn sync_login_selection(&mut self) {
+        if self.login_users.is_empty() {
+            self.login_selected_user = 0;
+            self.login_user_window_start = 0;
+            self.login_username.clear();
+            return;
+        }
+
+        self.login_selected_user = self.login_selected_user.min(self.login_users.len() - 1);
+        self.login_username = self.login_users[self.login_selected_user].username.clone();
+        self.sync_login_user_window();
+    }
+
+    fn sync_login_user_window(&mut self) {
+        let count = self.login_users.len();
+        if count == 0 {
+            self.login_user_window_start = 0;
+            return;
+        }
+
+        let visible_rows = self.login_user_visible_row_count().min(count).max(1);
+        let max_start = count.saturating_sub(visible_rows);
+        self.login_user_window_start = self.login_user_window_start.min(max_start);
+
+        if self.login_selected_user < self.login_user_window_start {
+            self.login_user_window_start = self.login_selected_user;
+        }
+
+        let window_end = self.login_user_window_start.saturating_add(visible_rows);
+        if self.login_selected_user >= window_end {
+            self.login_user_window_start = self
+                .login_selected_user
+                .saturating_add(1)
+                .saturating_sub(visible_rows)
+                .min(max_start);
+        }
+    }
+
+    fn login_user_visible_row_count(&self) -> usize {
+        login_user_visible_row_count(self.terminal_size).max(1)
+    }
+
+    fn select_login_user_delta(&mut self, delta: isize) {
+        if self.login_users.is_empty() {
+            self.sync_login_selection();
+            return;
+        }
+
+        let current = self.login_selected_user.min(self.login_users.len() - 1) as isize;
+        self.login_selected_user =
+            (current + delta).clamp(0, self.login_users.len() as isize - 1) as usize;
+        self.login_password.clear();
+        self.error_message = None;
+        self.sync_login_selection();
+    }
+
+    fn select_first_login_user(&mut self) {
+        self.login_selected_user = 0;
+        self.login_password.clear();
+        self.error_message = None;
+        self.sync_login_selection();
+    }
+
+    fn select_last_login_user(&mut self) {
+        if self.login_users.is_empty() {
+            self.sync_login_selection();
+            return;
+        }
+
+        self.login_selected_user = self.login_users.len() - 1;
+        self.login_password.clear();
+        self.error_message = None;
+        self.sync_login_selection();
+    }
+
+    fn select_login_user_at(&mut self, index: usize) {
+        if index >= self.login_users.len() {
+            return;
+        }
+
+        self.login_selected_user = index;
+        self.login_password.clear();
+        self.error_message = None;
+        self.sync_login_selection();
+    }
+
+    fn refresh_login_users_from_storage(&mut self) -> Result<(), StorageError> {
+        let Some(storage) = self.storage_manager.clone() else {
+            return Ok(());
+        };
+        let previous_username = self.selected_login_username().map(str::to_string);
+        let users = storage.load_users()?;
+        self.login_users = users
+            .users
+            .iter()
+            .map(ShellLoginUser::from_record)
+            .collect();
+        self.login_selected_user = previous_username
+            .as_deref()
+            .and_then(|username| {
+                self.login_users
+                    .iter()
+                    .position(|user| user.username.eq_ignore_ascii_case(username))
+            })
+            .unwrap_or_else(|| default_login_user_index(&self.login_users));
+        self.sync_login_selection();
+        Ok(())
     }
 
     fn setup_next_language(&mut self) {
@@ -1681,6 +1888,10 @@ impl ShellState {
                 ShellComponent::SetupAdminPassword,
             ),
             (
+                tundra_ui::SetupField::AdminPasswordConfirm,
+                ShellComponent::SetupAdminPasswordConfirm,
+            ),
+            (
                 tundra_ui::SetupField::PasswordHint,
                 ShellComponent::SetupAdminHint,
             ),
@@ -1734,6 +1945,9 @@ impl ShellState {
         match self.setup_focused_field {
             tundra_ui::SetupField::AdminUsername => self.setup_admin_username.push(character),
             tundra_ui::SetupField::AdminPassword => self.setup_admin_password.push(character),
+            tundra_ui::SetupField::AdminPasswordConfirm => {
+                self.setup_admin_password_confirm.push(character);
+            }
             tundra_ui::SetupField::PasswordHint => self.setup_admin_password_hint.push(character),
             _ => {}
         }
@@ -1747,6 +1961,9 @@ impl ShellState {
             }
             tundra_ui::SetupField::AdminPassword => {
                 self.setup_admin_password.pop();
+            }
+            tundra_ui::SetupField::AdminPasswordConfirm => {
+                self.setup_admin_password_confirm.pop();
             }
             tundra_ui::SetupField::PasswordHint => {
                 self.setup_admin_password_hint.pop();
@@ -1786,6 +2003,24 @@ impl ShellState {
         }
     }
 
+    fn activate_login(&mut self, target: ShellComponent, coordinates: CellPosition) {
+        match target {
+            ShellComponent::LoginUserList => {
+                if let Some(index) = self.login_user_index_at(coordinates) {
+                    self.select_login_user_at(index);
+                }
+                self.focused_component = ShellComponent::LoginPassword;
+            }
+            ShellComponent::LoginUsername => {
+                self.focused_component = ShellComponent::LoginUserList;
+            }
+            ShellComponent::LoginPassword => {
+                self.focused_component = ShellComponent::LoginPassword;
+            }
+            _ => {}
+        }
+    }
+
     fn setup_language_index_at(&self, coordinates: CellPosition) -> Option<usize> {
         let row = setup_language_list_row_at(self.terminal_size, coordinates)?;
         (row < tundra_ui::setup_language_options().len()).then_some(row)
@@ -1801,6 +2036,21 @@ impl ShellState {
         let visible_rows = self.setup_timezone_visible_row_count().min(count);
         let start = self
             .setup_timezone_window_start
+            .min(count.saturating_sub(visible_rows));
+        let index = start.saturating_add(row);
+        (row < visible_rows && index < count).then_some(index)
+    }
+
+    fn login_user_index_at(&self, coordinates: CellPosition) -> Option<usize> {
+        let row = login_user_list_row_at(self.terminal_size, coordinates)?;
+        let count = self.login_users.len();
+        if count == 0 {
+            return None;
+        }
+
+        let visible_rows = self.login_user_visible_row_count().min(count);
+        let start = self
+            .login_user_window_start
             .min(count.saturating_sub(visible_rows));
         let index = start.saturating_add(row);
         (row < visible_rows && index < count).then_some(index)
@@ -1823,12 +2073,19 @@ impl ShellState {
             self.error_message = Some("Storage unavailable".to_string());
             return;
         };
+        let Some(username) = self.selected_login_username().map(str::to_string) else {
+            self.error_message = Some("No user selected".to_string());
+            self.status_message = "Login failed".to_string();
+            return;
+        };
+        let password_hint = self.selected_login_password_hint().map(str::to_string);
         let mut sessions = SessionService::new(storage);
-        match sessions.login(&self.login_username, &self.login_password) {
+        match sessions.login(&username, &self.login_password) {
             Ok(session) => self.complete_login(session),
             Err(error) => {
-                self.error_message = Some(format_core_error(&error));
+                self.error_message = Some(login_error_message(&error, password_hint.as_deref()));
                 self.status_message = "Login failed".to_string();
+                let _ = self.refresh_login_users_from_storage();
             }
         }
     }
@@ -1867,6 +2124,14 @@ impl ShellState {
 
         let username = self.setup_admin_username.trim().to_string();
         let password = self.setup_admin_password.clone();
+        if password != self.setup_admin_password_confirm {
+            self.setup_focused_field = tundra_ui::SetupField::AdminPasswordConfirm;
+            self.focused_component = ShellComponent::SetupAdminPasswordConfirm;
+            self.error_message = Some("Passwords do not match".to_string());
+            self.status_message = "Setup incomplete".to_string();
+            return;
+        }
+
         let hint = self.setup_admin_password_hint.trim().to_string();
         let hint = (!hint.is_empty()).then_some(hint);
 
@@ -1893,10 +2158,12 @@ impl ShellState {
                 match sessions.login(&account.username, &password) {
                     Ok(session) => {
                         self.setup_admin_password.clear();
+                        self.setup_admin_password_confirm.clear();
                         self.complete_login(session);
                     }
                     Err(error) => {
                         self.setup_admin_password.clear();
+                        self.setup_admin_password_confirm.clear();
                         self.error_message = Some(format_core_error(&error));
                         self.status_message = "Login failed".to_string();
                     }
@@ -1911,9 +2178,11 @@ impl ShellState {
 
     fn complete_login(&mut self, session: AuthSession) {
         self.auth_session = Some(session.clone());
+        self.login_username = session.username.clone();
         self.login_password.clear();
         self.bootstrap_password.clear();
         self.setup_admin_password.clear();
+        self.setup_admin_password_confirm.clear();
         self.error_message = None;
         self.status_message = format!("Signed in as {}", session.username);
         self.home_mode = ShellHomeMode::User;
@@ -2448,10 +2717,10 @@ impl ShellState {
         self.user_management_users.clear();
         self.user_management_selected = 0;
         self.user_management_mode = UserManagementMode::Browse;
-        self.login_username.clear();
         self.login_password.clear();
+        let _ = self.refresh_login_users_from_storage();
         self.screen_stack = vec![ShellScreen::Login];
-        self.focused_component = ShellComponent::LoginUsername;
+        self.focused_component = ShellComponent::LoginUserList;
         self.status_message = status.to_string();
         self.refresh_hit_map();
     }
@@ -2537,6 +2806,9 @@ impl ShellState {
                 if self.active_screen() == ShellScreen::FirstRunSetup {
                     self.sync_setup_timezone_window();
                 }
+                if self.active_screen() == ShellScreen::Login {
+                    self.sync_login_user_window();
+                }
                 self.refresh_hit_map();
                 ShellAction::Redraw
             }
@@ -2577,6 +2849,40 @@ impl ShellState {
             }
             ShellCommand::AuthBackspace => {
                 self.auth_backspace();
+                ShellAction::Redraw
+            }
+            ShellCommand::LoginPreviousUser => {
+                self.select_login_user_delta(-1);
+                ShellAction::Redraw
+            }
+            ShellCommand::LoginNextUser => {
+                self.select_login_user_delta(1);
+                ShellAction::Redraw
+            }
+            ShellCommand::LoginPageUserUp => {
+                self.select_login_user_delta(-(self.login_user_visible_row_count() as isize));
+                ShellAction::Redraw
+            }
+            ShellCommand::LoginPageUserDown => {
+                self.select_login_user_delta(self.login_user_visible_row_count() as isize);
+                ShellAction::Redraw
+            }
+            ShellCommand::LoginFirstUser => {
+                self.select_first_login_user();
+                ShellAction::Redraw
+            }
+            ShellCommand::LoginLastUser => {
+                self.select_last_login_user();
+                ShellAction::Redraw
+            }
+            ShellCommand::LoginFocusUserList => {
+                self.focused_component = ShellComponent::LoginUserList;
+                self.error_message = None;
+                ShellAction::Redraw
+            }
+            ShellCommand::LoginFocusPassword => {
+                self.focused_component = ShellComponent::LoginPassword;
+                self.error_message = None;
                 ShellAction::Redraw
             }
             ShellCommand::SubmitLogin => {
@@ -2650,6 +2956,13 @@ impl ShellState {
                 coordinates,
             } => {
                 self.activate_setup(target, coordinates);
+                ShellAction::Redraw
+            }
+            ShellCommand::ActivateLogin {
+                target,
+                coordinates,
+            } => {
+                self.activate_login(target, coordinates);
                 ShellAction::Redraw
             }
             ShellCommand::OpenExplorer => {
@@ -2994,10 +3307,11 @@ impl ShellState {
             return self.route_setup_key(key);
         }
 
-        if matches!(
-            self.active_screen(),
-            ShellScreen::Login | ShellScreen::BootstrapAdmin
-        ) {
+        if self.active_screen() == ShellScreen::Login {
+            return self.route_login_key(key);
+        }
+
+        if self.active_screen() == ShellScreen::BootstrapAdmin {
             return self.route_auth_key(key);
         }
 
@@ -3036,6 +3350,40 @@ impl ShellState {
                 RoutedTarget::Component(self.focused_component),
                 ShellCommand::RecordInput,
             ),
+        }
+    }
+
+    fn route_login_key(&self, key: &KeyInput) -> (RoutedTarget, ShellCommand) {
+        let target = RoutedTarget::Component(self.focused_component);
+        if matches!(&key.key, InputKey::Escape) {
+            return (RoutedTarget::Global, ShellCommand::RequestExit);
+        }
+
+        match self.focused_component {
+            ShellComponent::LoginPassword => match &key.key {
+                InputKey::BackTab => (target, ShellCommand::LoginFocusUserList),
+                InputKey::Tab if key.modifiers.shift => (target, ShellCommand::LoginFocusUserList),
+                InputKey::Tab => (target, ShellCommand::LoginFocusUserList),
+                InputKey::Up => (target, ShellCommand::LoginFocusUserList),
+                InputKey::Enter => (target, ShellCommand::SubmitLogin),
+                InputKey::Backspace => (target, ShellCommand::AuthBackspace),
+                InputKey::Character(character) => {
+                    (target, ShellCommand::AppendAuthChar(*character))
+                }
+                _ => (target, ShellCommand::RecordInput),
+            },
+            _ => match &key.key {
+                InputKey::BackTab => (target, ShellCommand::LoginFocusPassword),
+                InputKey::Tab => (target, ShellCommand::LoginFocusPassword),
+                InputKey::Enter => (target, ShellCommand::LoginFocusPassword),
+                InputKey::Up => (target, ShellCommand::LoginPreviousUser),
+                InputKey::Down => (target, ShellCommand::LoginNextUser),
+                InputKey::PageUp => (target, ShellCommand::LoginPageUserUp),
+                InputKey::PageDown => (target, ShellCommand::LoginPageUserDown),
+                InputKey::Home => (target, ShellCommand::LoginFirstUser),
+                InputKey::End => (target, ShellCommand::LoginLastUser),
+                _ => (target, ShellCommand::RecordInput),
+            },
         }
     }
 
@@ -3109,6 +3457,8 @@ impl ShellState {
                 InputKey::BackTab => (target, ShellCommand::SetupFocusPrevious),
                 InputKey::Tab if key.modifiers.shift => (target, ShellCommand::SetupFocusPrevious),
                 InputKey::Tab => (target, ShellCommand::SetupFocusNext),
+                InputKey::Up => (target, ShellCommand::SetupFocusPrevious),
+                InputKey::Down => (target, ShellCommand::SetupFocusNext),
                 InputKey::Backspace if setup_admin_text_field(self.setup_focused_field) => {
                     (target, ShellCommand::SetupAdminBackspace)
                 }
@@ -3331,6 +3681,10 @@ impl ShellState {
             return self.route_setup_mouse(mouse, hit_target);
         }
 
+        if self.active_screen() == ShellScreen::Login {
+            return self.route_login_mouse(mouse, hit_target);
+        }
+
         if self.active_popup.is_some() {
             return self.route_popup_mouse(mouse, hit_target, received_at);
         }
@@ -3433,6 +3787,61 @@ impl ShellState {
                     return (
                         RoutedTarget::Component(target),
                         ShellCommand::ActivateSetup {
+                            target,
+                            coordinates,
+                        },
+                    );
+                }
+
+                (RoutedTarget::None, ShellCommand::RecordInput)
+            }
+            MouseInput::Down {
+                button: PointerButton::Right,
+                ..
+            } => {
+                self.last_click = None;
+                (target_route(hit_target), ShellCommand::CaptureOverlayInput)
+            }
+            _ => (target_route(hit_target), ShellCommand::RecordInput),
+        }
+    }
+
+    fn route_login_mouse(
+        &mut self,
+        mouse: MouseInput,
+        hit_target: Option<ShellComponent>,
+    ) -> (RoutedTarget, ShellCommand) {
+        let coordinates = mouse.coordinates();
+
+        match mouse {
+            MouseInput::Moved { .. } => (target_route(hit_target), ShellCommand::Hover(hit_target)),
+            MouseInput::Scroll {
+                direction: ScrollDirection::Up,
+                ..
+            } if hit_target == Some(ShellComponent::LoginUserList) => (
+                RoutedTarget::Component(ShellComponent::LoginUserList),
+                ShellCommand::LoginPreviousUser,
+            ),
+            MouseInput::Scroll {
+                direction: ScrollDirection::Down,
+                ..
+            } if hit_target == Some(ShellComponent::LoginUserList) => (
+                RoutedTarget::Component(ShellComponent::LoginUserList),
+                ShellCommand::LoginNextUser,
+            ),
+            MouseInput::Down {
+                button: PointerButton::Left,
+                ..
+            } => {
+                if let Some(
+                    target @ (ShellComponent::LoginUserList
+                    | ShellComponent::LoginUsername
+                    | ShellComponent::LoginPassword),
+                ) = hit_target
+                {
+                    return (
+                        RoutedTarget::Component(target),
+                        ShellCommand::ActivateLogin {
                             target,
                             coordinates,
                         },
@@ -3626,6 +4035,9 @@ impl ShellState {
 
     fn refresh_hit_map(&mut self) {
         self.hit_map_generation = self.hit_map_generation.saturating_add(1);
+        if self.active_screen() == ShellScreen::Login {
+            self.sync_login_selection();
+        }
         self.hit_map = build_shell_hit_map(
             self.terminal_size,
             self.active_screen(),
@@ -3654,13 +4066,14 @@ impl ShellState {
                 tundra_ui::SetupStep::Admin => vec![
                     ShellComponent::SetupAdminUsername,
                     ShellComponent::SetupAdminPassword,
+                    ShellComponent::SetupAdminPasswordConfirm,
                     ShellComponent::SetupAdminHint,
                     ShellComponent::SetupSubmit,
                 ],
             };
         }
         if self.active_screen() == ShellScreen::Login {
-            return vec![ShellComponent::LoginUsername, ShellComponent::LoginPassword];
+            return vec![ShellComponent::LoginUserList, ShellComponent::LoginPassword];
         }
         if self.active_screen() == ShellScreen::BootstrapAdmin {
             return vec![
@@ -3857,7 +4270,13 @@ fn build_shell_hit_map(
                     regions.extend(setup_hit_regions(main, setup_step));
                 }
                 ShellScreen::Login => {
-                    let (username, password) = auth_field_rects(main);
+                    let users = tundra_ui::login_user_list_area(main);
+                    let username = tundra_ui::login_selected_username_area(main);
+                    let password = tundra_ui::login_password_area(main);
+                    regions.push(ShellHitRegion {
+                        component: ShellComponent::LoginUserList,
+                        area: users,
+                    });
                     regions.push(ShellHitRegion {
                         component: ShellComponent::LoginUsername,
                         area: username,
@@ -3956,6 +4375,13 @@ fn setup_hit_regions(
                 area: tundra_ui::setup_admin_field_area(main, tundra_ui::SetupField::AdminPassword),
             },
             ShellHitRegion {
+                component: ShellComponent::SetupAdminPasswordConfirm,
+                area: tundra_ui::setup_admin_field_area(
+                    main,
+                    tundra_ui::SetupField::AdminPasswordConfirm,
+                ),
+            },
+            ShellHitRegion {
                 component: ShellComponent::SetupAdminHint,
                 area: tundra_ui::setup_admin_field_area(main, tundra_ui::SetupField::PasswordHint),
             },
@@ -3989,6 +4415,12 @@ fn setup_timezone_visible_row_count(terminal_size: CellPosition) -> usize {
         .unwrap_or(0)
 }
 
+fn login_user_visible_row_count(terminal_size: CellPosition) -> usize {
+    setup_main_rect(terminal_size)
+        .map(tundra_ui::login_user_list_visible_rows)
+        .unwrap_or(0)
+}
+
 fn setup_main_rect(terminal_size: CellPosition) -> Option<Rect> {
     let area = Rect::new(0, 0, terminal_size.0, terminal_size.1);
     let tundra_ui::ShellLayout::Full { main, .. } = tundra_ui::compute_shell_layout(area) else {
@@ -4006,12 +4438,39 @@ fn setup_row_at(rect: Rect, coordinates: CellPosition) -> Option<usize> {
     rect_contains(rect, coordinates).then(|| coordinates.1.saturating_sub(rect.y) as usize)
 }
 
+fn login_user_list_row_at(terminal_size: CellPosition, coordinates: CellPosition) -> Option<usize> {
+    let main = setup_main_rect(terminal_size)?;
+    let rect = tundra_ui::login_user_list_area(main);
+    if rect.height <= 2 || !rect_contains(rect, coordinates) {
+        return None;
+    }
+
+    let row = coordinates.1.checked_sub(rect.y.saturating_add(1))? as usize;
+    (row < rect.height.saturating_sub(2) as usize).then_some(row)
+}
+
+fn default_login_user_index(users: &[ShellLoginUser]) -> usize {
+    users
+        .iter()
+        .enumerate()
+        .filter_map(|(index, user)| {
+            user.last_login_at_epoch_ms
+                .map(|last_login| (index, last_login))
+        })
+        .max_by_key(|(_, last_login)| *last_login)
+        .map(|(index, _)| index)
+        .unwrap_or(0)
+}
+
 fn setup_field_for_component(component: ShellComponent) -> Option<tundra_ui::SetupField> {
     match component {
         ShellComponent::SetupLanguage => Some(tundra_ui::SetupField::LanguageList),
         ShellComponent::SetupTimezone => Some(tundra_ui::SetupField::TimezoneList),
         ShellComponent::SetupAdminUsername => Some(tundra_ui::SetupField::AdminUsername),
         ShellComponent::SetupAdminPassword => Some(tundra_ui::SetupField::AdminPassword),
+        ShellComponent::SetupAdminPasswordConfirm => {
+            Some(tundra_ui::SetupField::AdminPasswordConfirm)
+        }
         ShellComponent::SetupAdminHint => Some(tundra_ui::SetupField::PasswordHint),
         ShellComponent::SetupSubmit => Some(tundra_ui::SetupField::Submit),
         _ => None,
@@ -4024,6 +4483,7 @@ fn setup_component_for_field(field: tundra_ui::SetupField) -> ShellComponent {
         tundra_ui::SetupField::TimezoneList => ShellComponent::SetupTimezone,
         tundra_ui::SetupField::AdminUsername => ShellComponent::SetupAdminUsername,
         tundra_ui::SetupField::AdminPassword => ShellComponent::SetupAdminPassword,
+        tundra_ui::SetupField::AdminPasswordConfirm => ShellComponent::SetupAdminPasswordConfirm,
         tundra_ui::SetupField::PasswordHint => ShellComponent::SetupAdminHint,
         tundra_ui::SetupField::Submit => ShellComponent::SetupSubmit,
     }
@@ -4042,6 +4502,7 @@ fn setup_component_active_for_step(component: ShellComponent, step: tundra_ui::S
             tundra_ui::SetupStep::Admin,
             ShellComponent::SetupAdminUsername
                 | ShellComponent::SetupAdminPassword
+                | ShellComponent::SetupAdminPasswordConfirm
                 | ShellComponent::SetupAdminHint
                 | ShellComponent::SetupSubmit
         )
@@ -4053,8 +4514,38 @@ fn setup_admin_text_field(field: tundra_ui::SetupField) -> bool {
         field,
         tundra_ui::SetupField::AdminUsername
             | tundra_ui::SetupField::AdminPassword
+            | tundra_ui::SetupField::AdminPasswordConfirm
             | tundra_ui::SetupField::PasswordHint
     )
+}
+
+fn setup_password_requirements(
+    username: &str,
+    password: &str,
+    password_confirm: &str,
+) -> Vec<tundra_ui::SetupPasswordRequirementViewModel> {
+    let normalized_username = username.trim().to_ascii_lowercase();
+    let normalized_password = password.trim().to_ascii_lowercase();
+
+    vec![
+        tundra_ui::SetupPasswordRequirementViewModel::new(
+            format!("At least {PASSWORD_MIN_LEN} characters"),
+            password.len() >= PASSWORD_MIN_LEN,
+        ),
+        tundra_ui::SetupPasswordRequirementViewModel::new(
+            format!("At most {PASSWORD_MAX_LEN} characters"),
+            password.len() <= PASSWORD_MAX_LEN,
+        ),
+        tundra_ui::SetupPasswordRequirementViewModel::new("Not blank", !password.trim().is_empty()),
+        tundra_ui::SetupPasswordRequirementViewModel::new(
+            "Different from username",
+            normalized_username != normalized_password,
+        ),
+        tundra_ui::SetupPasswordRequirementViewModel::new(
+            "Passwords match",
+            !password.is_empty() && password == password_confirm,
+        ),
+    ]
 }
 
 fn setup_language_code_at(
@@ -4218,6 +4709,16 @@ fn format_core_error(error: &CoreError) -> String {
     }
 }
 
+fn login_error_message(error: &CoreError, password_hint: Option<&str>) -> String {
+    if matches!(error, CoreError::InvalidCredentials)
+        && let Some(hint) = password_hint.map(str::trim).filter(|hint| !hint.is_empty())
+    {
+        return format!("Password hint: {hint}");
+    }
+
+    format_core_error(error)
+}
+
 fn to_ui_user_management_field(field: UserManagementFormField) -> tundra_ui::UserManagementField {
     match field {
         UserManagementFormField::Username => tundra_ui::UserManagementField::Username,
@@ -4268,6 +4769,40 @@ fn resolved_home_mode(
             .or(startup.app_config.home_mode)
             .unwrap_or_else(|| ShellState::legacy_default_home_mode(launch_config)),
     }
+}
+
+fn should_show_startup_lockscreen(startup: &ShellStartupState) -> bool {
+    startup.storage_manager.is_some()
+        && !startup.auth_bootstrap_required
+        && !startup.login_users.is_empty()
+}
+
+fn startup_lockscreen_launch_options(startup: &ShellStartupState) -> tundra_weathr::LaunchOptions {
+    let Some(config) = startup
+        .storage_manager
+        .as_ref()
+        .and_then(|storage| storage.load_config().ok())
+    else {
+        return tundra_weathr::LaunchOptions::default();
+    };
+
+    let mut options = tundra_weathr::LaunchOptions {
+        timezone_id: Some(config.timezone.clone()),
+        ..tundra_weathr::LaunchOptions::default()
+    };
+
+    if let Some(timezone) = tundra_ui::setup_timezone_options()
+        .into_iter()
+        .find(|timezone| timezone.id == config.timezone)
+    {
+        options.location_override = Some(tundra_weathr::LaunchLocation {
+            latitude: timezone.latitude,
+            longitude: timezone.longitude,
+            city: Some(timezone.label),
+        });
+    }
+
+    options
 }
 
 fn platform_capability_summary(kind: PlatformKind, capabilities: &PlatformCapabilities) -> String {
@@ -4529,6 +5064,15 @@ pub fn run_fullscreen_blocking(
     let platform = tundra_platform::native_platform();
     let startup = prepare_shell_startup(platform.as_ref(), config)
         .map_err(|error| io::Error::new(io::ErrorKind::Other, error))?;
+    if should_show_startup_lockscreen(&startup) {
+        let lockscreen_options = startup_lockscreen_launch_options(&startup);
+        match tundra_weathr::run_shell_lockscreen_blocking_with_options(lockscreen_options)
+            .map_err(|error| io::Error::new(io::ErrorKind::Other, error))?
+        {
+            tundra_weathr::ShellLockscreenResult::Started => {}
+            tundra_weathr::ShellLockscreenResult::Cancelled => return Ok(()),
+        }
+    }
     install_panic_restore_hook();
     let terminal_control = TerminalControlHandler::install();
     let mut guard = TerminalGuard::enter(output)?;
@@ -4772,5 +5316,43 @@ mod tests {
             summary,
             "Windows: 10 supported, 0 best-effort, 3 unsupported"
         );
+    }
+
+    #[test]
+    fn startup_lockscreen_launch_options_use_storage_timezone_and_location() {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system time")
+            .as_nanos();
+        let base = std::env::temp_dir().join(format!(
+            "tundra-shell-lockscreen-options-{}-{nanos}",
+            std::process::id()
+        ));
+        let app_paths = tundra_platform::build_windows_app_paths(
+            base.join("Roaming"),
+            base.join("Local"),
+            base.join("Temp"),
+        )
+        .expect("app paths");
+        let opened = StorageManager::open(app_paths).expect("storage opens");
+        let mut config = opened.manager.load_config().expect("config loads");
+        config.timezone = "Asia/Shanghai".to_string();
+        opened.manager.save_config(&config).expect("config saves");
+
+        let mut startup = ShellStartupState::clean(
+            PlatformKind::Windows,
+            PlatformCapabilities::native_supported(),
+        );
+        startup.storage_manager = Some(opened.manager.clone());
+
+        let options = startup_lockscreen_launch_options(&startup);
+
+        assert_eq!(options.timezone_id.as_deref(), Some("Asia/Shanghai"));
+        let location = options.location_override.expect("mapped location");
+        assert_eq!(location.city.as_deref(), Some("Shanghai"));
+        assert!((location.latitude - 31.2304).abs() < 0.001);
+        assert!((location.longitude - 121.4737).abs() < 0.001);
+
+        let _ = std::fs::remove_dir_all(base);
     }
 }

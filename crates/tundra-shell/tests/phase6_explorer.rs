@@ -176,13 +176,33 @@ fn bootstrap_with_shell(platform: &MockPlatform) {
 fn logged_in_state(platform: &MockPlatform) -> ShellState {
     let startup = prepare_shell_startup(platform, default_config()).expect("startup");
     let mut state = ShellState::new_with_startup(default_config(), (120, 40), startup);
-    type_text(&mut state, platform, "AdminUser");
+    select_login_user(&mut state, platform, "AdminUser");
     state.apply_input_with_platform(InputEvent::from_key_label("Tab"), platform);
     type_text(&mut state, platform, "StrongPass123");
     state.apply_input_with_platform(InputEvent::from_key_label("Enter"), platform);
     assert_eq!(state.active_screen(), ShellScreen::Home);
     assert_eq!(state.home_mode(), ShellHomeMode::User);
     state
+}
+
+fn select_login_user(state: &mut ShellState, platform: &MockPlatform, username: &str) {
+    assert_eq!(state.active_screen(), ShellScreen::Login);
+    if state.focused_component() != ShellComponent::LoginUserList {
+        state.apply_input_with_platform(InputEvent::from_key_label("Shift+Tab"), platform);
+    }
+
+    let target = state
+        .to_login_view_model()
+        .users
+        .iter()
+        .position(|user| user.username.eq_ignore_ascii_case(username))
+        .unwrap_or_else(|| panic!("missing login user: {username}"));
+    while state.to_login_view_model().selected_index < target {
+        state.apply_input_with_platform(InputEvent::from_key_label("Down"), platform);
+    }
+    while state.to_login_view_model().selected_index > target {
+        state.apply_input_with_platform(InputEvent::from_key_label("Up"), platform);
+    }
 }
 
 fn type_text(state: &mut ShellState, platform: &MockPlatform, text: &str) {
@@ -203,6 +223,8 @@ fn complete_first_run_setup(
     state.apply_input_with_platform(InputEvent::from_key_label("Enter"), platform);
     state.apply_input_with_platform(InputEvent::from_key_label("Enter"), platform);
     type_text(state, platform, username);
+    state.apply_input_with_platform(InputEvent::from_key_label("Enter"), platform);
+    type_text(state, platform, password);
     state.apply_input_with_platform(InputEvent::from_key_label("Enter"), platform);
     type_text(state, platform, password);
     state.apply_input_with_platform(InputEvent::from_key_label("Enter"), platform);

@@ -18,3 +18,4 @@ tundra-apps = { path = "../tundra-apps" }
 tundra-core = { path = "../tundra-core" }
 tundra-storage = { path = "../tundra-storage" }
 tundra-ui = { path = "../tundra-ui" }
+tundra-weathr = { path = "../tundra-weathr" }

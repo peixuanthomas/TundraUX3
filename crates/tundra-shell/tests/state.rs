@@ -550,6 +550,7 @@ fn debug_override_wins_over_persisted_config_and_session() {
         )),
         storage_manager: None,
         auth_bootstrap_required: false,
+        login_users: Vec::new(),
         debug_policy: tundra_core::DebugPolicy::default(),
     };
 
@@ -576,6 +577,7 @@ fn restored_session_is_sanitized_to_stable_home_state() {
         }),
         storage_manager: None,
         auth_bootstrap_required: false,
+        login_users: Vec::new(),
         debug_policy: tundra_core::DebugPolicy::default(),
     };
 

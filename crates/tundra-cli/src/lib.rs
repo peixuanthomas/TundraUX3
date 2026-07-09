@@ -6,10 +6,12 @@ use std::path::Path;
 use tundra_platform::{
     AppPaths, CapabilityStatus, CheckStatus, EnvironmentCheck, PathCheck, Platform, PlatformKind,
 };
-use tundra_storage::{StorageLayout, StorageManager};
+use tundra_storage::{StorageConfig, StorageLayout, StorageManager};
+use tundra_weathr::{LaunchLocation, LaunchOptions};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CliCommand {
+    Config(ConfigAction),
     Doctor,
     Explain,
     New,
@@ -19,15 +21,54 @@ pub enum CliCommand {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ConfigAction {
+    Get(Option<ConfigField>),
+    Set(ConfigUpdate),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConfigField {
+    Theme,
+    Language,
+    Timezone,
+    Address,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ConfigUpdate {
+    Theme(String),
+    Language(String),
+    Timezone(String),
+    Address(String),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CliError {
+    ForbiddenConfigField(String),
+    MissingArgument(&'static str),
     UnknownCommand(String),
+    UnknownConfigCommand(String),
+    UnsupportedConfigField(String),
     UnexpectedArgument(String),
 }
 
 impl fmt::Display for CliError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::ForbiddenConfigField(field) => {
+                write!(
+                    formatter,
+                    "config field {field:?} is not exposed; username and password changes must use authenticated user management"
+                )
+            }
+            Self::MissingArgument(argument) => write!(formatter, "missing argument: {argument}"),
             Self::UnknownCommand(command) => write!(formatter, "unknown command: {command}"),
+            Self::UnknownConfigCommand(command) => {
+                write!(formatter, "unknown config command: {command}")
+            }
+            Self::UnsupportedConfigField(field) => {
+                write!(formatter, "unsupported config field: {field}")
+            }
             Self::UnexpectedArgument(argument) => {
                 write!(formatter, "unexpected argument: {argument}")
             }
@@ -42,23 +83,92 @@ where
     I: IntoIterator<Item = S>,
     S: AsRef<str>,
 {
-    let mut args = args.into_iter();
-    let Some(command) = args.next() else {
+    let mut args = args
+        .into_iter()
+        .map(|arg| arg.as_ref().to_string())
+        .collect::<Vec<_>>();
+    if args.is_empty() {
         return Ok(CliCommand::Help);
     };
+    let command = args.remove(0);
 
-    if let Some(extra) = args.next() {
-        return Err(CliError::UnexpectedArgument(extra.as_ref().to_string()));
-    }
-
-    match command.as_ref() {
-        "doctor" => Ok(CliCommand::Doctor),
-        "explain" => Ok(CliCommand::Explain),
-        "new" => Ok(CliCommand::New),
-        "paths" => Ok(CliCommand::Paths),
-        "weathr" => Ok(CliCommand::Weathr),
+    match command.as_str() {
+        "config" => parse_config_args(&args).map(CliCommand::Config),
+        "doctor" => parse_no_extra_args(&args, CliCommand::Doctor),
+        "explain" => parse_no_extra_args(&args, CliCommand::Explain),
+        "new" => parse_no_extra_args(&args, CliCommand::New),
+        "paths" => parse_no_extra_args(&args, CliCommand::Paths),
+        "weathr" => parse_no_extra_args(&args, CliCommand::Weathr),
         "-h" | "--help" | "help" => Ok(CliCommand::Help),
         other => Err(CliError::UnknownCommand(other.to_string())),
+    }
+}
+
+fn parse_no_extra_args(args: &[String], command: CliCommand) -> Result<CliCommand, CliError> {
+    if let Some(extra) = args.first() {
+        return Err(CliError::UnexpectedArgument(extra.clone()));
+    }
+
+    Ok(command)
+}
+
+fn parse_config_args(args: &[String]) -> Result<ConfigAction, CliError> {
+    let Some(command) = args.first().map(String::as_str) else {
+        return Ok(ConfigAction::Get(None));
+    };
+
+    match command {
+        "get" => parse_config_get(&args[1..]),
+        "set" => parse_config_set(&args[1..]),
+        other => Err(CliError::UnknownConfigCommand(other.to_string())),
+    }
+}
+
+fn parse_config_get(args: &[String]) -> Result<ConfigAction, CliError> {
+    match args {
+        [] => Ok(ConfigAction::Get(None)),
+        [field] => parse_config_field(field).map(|field| ConfigAction::Get(Some(field))),
+        [_, extra, ..] => Err(CliError::UnexpectedArgument(extra.clone())),
+    }
+}
+
+fn parse_config_set(args: &[String]) -> Result<ConfigAction, CliError> {
+    let field = args
+        .first()
+        .ok_or(CliError::MissingArgument("config field"))?;
+    let value = joined_config_value(&args[1..]).ok_or(CliError::MissingArgument("config value"))?;
+
+    match parse_config_field(field)? {
+        ConfigField::Theme => Ok(ConfigAction::Set(ConfigUpdate::Theme(value))),
+        ConfigField::Language => Ok(ConfigAction::Set(ConfigUpdate::Language(value))),
+        ConfigField::Timezone => Ok(ConfigAction::Set(ConfigUpdate::Timezone(value))),
+        ConfigField::Address => Ok(ConfigAction::Set(ConfigUpdate::Address(value))),
+    }
+}
+
+fn joined_config_value(args: &[String]) -> Option<String> {
+    if args.is_empty() {
+        return None;
+    }
+
+    let value = args.join(" ");
+    if value.trim().is_empty() {
+        None
+    } else {
+        Some(value)
+    }
+}
+
+fn parse_config_field(field: &str) -> Result<ConfigField, CliError> {
+    match field {
+        "theme" => Ok(ConfigField::Theme),
+        "language" | "locale" => Ok(ConfigField::Language),
+        "timezone" | "time-zone" | "tz" => Ok(ConfigField::Timezone),
+        "address" | "location" => Ok(ConfigField::Address),
+        "user" | "users" | "username" | "password" | "passwd" | "password_hint" => {
+            Err(CliError::ForbiddenConfigField(field.to_string()))
+        }
+        other => Err(CliError::UnsupportedConfigField(other.to_string())),
     }
 }
 
@@ -90,7 +200,7 @@ where
         platform,
         stdout,
         stderr,
-        tundra_weathr::run_default_blocking,
+        tundra_weathr::run_blocking_with_options,
     )
 }
 
@@ -107,10 +217,11 @@ where
     S: AsRef<str>,
     Stdout: Write,
     Stderr: Write,
-    Launcher: FnOnce() -> Result<(), LaunchError>,
+    Launcher: FnOnce(LaunchOptions) -> Result<(), LaunchError>,
     LaunchError: fmt::Display,
 {
     match parse_args(args) {
+        Ok(CliCommand::Config(action)) => run_config(platform, stdout, stderr, action),
         Ok(CliCommand::Help) => {
             let _ = write_help(stdout);
             0
@@ -122,7 +233,7 @@ where
         Ok(CliCommand::New) => run_new(platform, stdout, stderr),
         Ok(CliCommand::Paths) => run_paths(platform, stdout, stderr),
         Ok(CliCommand::Doctor) => run_doctor(platform, stdout, stderr),
-        Ok(CliCommand::Weathr) => run_weathr(stderr, weathr_launcher),
+        Ok(CliCommand::Weathr) => run_weathr(platform, stderr, weathr_launcher),
         Err(error) => {
             let _ = writeln!(stderr, "ERROR: {error}");
             let _ = write_help(stderr);
@@ -131,19 +242,233 @@ where
     }
 }
 
-fn run_weathr<Stderr, Launcher, LaunchError>(stderr: &mut Stderr, weathr_launcher: Launcher) -> i32
+fn run_weathr<Stderr, Launcher, LaunchError>(
+    platform: &dyn Platform,
+    stderr: &mut Stderr,
+    weathr_launcher: Launcher,
+) -> i32
 where
     Stderr: Write,
-    Launcher: FnOnce() -> Result<(), LaunchError>,
+    Launcher: FnOnce(LaunchOptions) -> Result<(), LaunchError>,
     LaunchError: fmt::Display,
 {
-    match weathr_launcher() {
+    match weathr_launcher(weathr_launch_options(platform)) {
         Ok(()) => 0,
         Err(error) => {
             let _ = writeln!(stderr, "ERROR: could not launch weathr: {error}");
             1
         }
     }
+}
+
+fn weathr_launch_options(platform: &dyn Platform) -> LaunchOptions {
+    let Some(config) = platform
+        .app_paths()
+        .ok()
+        .map(|paths| StorageLayout::from_app_paths(&paths))
+        .map(StorageManager::from_layout)
+        .and_then(|storage| storage.load_config().ok())
+    else {
+        return LaunchOptions::default();
+    };
+
+    let mut options = LaunchOptions {
+        timezone_id: Some(config.timezone.clone()),
+        ..LaunchOptions::default()
+    };
+
+    if let Some(timezone) = tundra_ui::setup_timezone_options()
+        .into_iter()
+        .find(|timezone| timezone.id == config.timezone)
+    {
+        options.location_override = Some(LaunchLocation {
+            latitude: timezone.latitude,
+            longitude: timezone.longitude,
+            city: Some(timezone.label),
+        });
+    }
+
+    options
+}
+
+fn run_config<Stdout: Write, Stderr: Write>(
+    platform: &dyn Platform,
+    stdout: &mut Stdout,
+    stderr: &mut Stderr,
+    action: ConfigAction,
+) -> i32 {
+    let storage = match config_storage(platform) {
+        Ok(storage) => storage,
+        Err(error) => {
+            let _ = writeln!(stderr, "ERROR: {error}");
+            return 1;
+        }
+    };
+
+    let mut config = match load_or_default_config(&storage) {
+        Ok(config) => config,
+        Err(error) => {
+            let _ = writeln!(stderr, "ERROR: could not load config: {error}");
+            return 1;
+        }
+    };
+
+    match action {
+        ConfigAction::Get(field) => {
+            write_config_value(stdout, &config, field);
+            0
+        }
+        ConfigAction::Set(update) => match apply_config_update(&mut config, update) {
+            Ok(message) => match storage.save_config(&config) {
+                Ok(()) => {
+                    let _ = writeln!(stdout, "{message}");
+                    0
+                }
+                Err(error) => {
+                    let _ = writeln!(stderr, "ERROR: could not save config: {error}");
+                    1
+                }
+            },
+            Err(error) => {
+                let _ = writeln!(stderr, "ERROR: {error}");
+                1
+            }
+        },
+    }
+}
+
+fn config_storage(platform: &dyn Platform) -> Result<StorageManager, String> {
+    platform
+        .app_paths()
+        .map(|paths| StorageManager::from_layout(StorageLayout::from_app_paths(&paths)))
+        .map_err(|error| error.to_string())
+}
+
+fn load_or_default_config(storage: &StorageManager) -> Result<StorageConfig, String> {
+    if storage.layout().config_path.exists() {
+        storage.load_config().map_err(|error| error.to_string())
+    } else {
+        Ok(StorageConfig::default())
+    }
+}
+
+fn write_config_value(output: &mut impl Write, config: &StorageConfig, field: Option<ConfigField>) {
+    match field {
+        Some(ConfigField::Theme) => {
+            let _ = writeln!(output, "theme = {}", config.theme);
+        }
+        Some(ConfigField::Language) => {
+            let _ = writeln!(output, "language = {}", config.language);
+        }
+        Some(ConfigField::Timezone) => {
+            let _ = writeln!(output, "timezone = {}", config.timezone);
+        }
+        Some(ConfigField::Address) => {
+            let _ = writeln!(output, "address = {}", config_address_summary(config));
+        }
+        None => {
+            let _ = writeln!(output, "theme = {}", config.theme);
+            let _ = writeln!(output, "language = {}", config.language);
+            let _ = writeln!(output, "timezone = {}", config.timezone);
+            let _ = writeln!(output, "address = {}", config_address_summary(config));
+        }
+    }
+}
+
+fn apply_config_update(config: &mut StorageConfig, update: ConfigUpdate) -> Result<String, String> {
+    match update {
+        ConfigUpdate::Theme(value) => {
+            let value = clean_config_value("theme", value)?;
+            config.theme = value.clone();
+            Ok(format!("Updated theme: {value}"))
+        }
+        ConfigUpdate::Language(value) => {
+            let language = resolve_language(&value)?;
+            config.language = language.code.clone();
+            Ok(format!(
+                "Updated language: {} ({})",
+                language.label, language.code
+            ))
+        }
+        ConfigUpdate::Timezone(value) => {
+            let timezone = resolve_timezone(&value)?;
+            config.timezone = timezone.id.clone();
+            Ok(format!(
+                "Updated timezone: {} ({})",
+                timezone.label, timezone.id
+            ))
+        }
+        ConfigUpdate::Address(value) => {
+            let timezone = resolve_timezone(&value)?;
+            config.timezone = timezone.id.clone();
+            Ok(format!("Updated address: {}", timezone_summary(&timezone)))
+        }
+    }
+}
+
+fn clean_config_value(name: &str, value: String) -> Result<String, String> {
+    let value = value.trim().to_string();
+    if value.is_empty() {
+        return Err(format!("{name} cannot be empty"));
+    }
+    if value.chars().any(char::is_control) {
+        return Err(format!("{name} cannot contain control characters"));
+    }
+
+    Ok(value)
+}
+
+fn resolve_language(value: &str) -> Result<tundra_ui::SetupLanguageOption, String> {
+    let value = clean_config_value("language", value.to_string())?;
+    tundra_ui::setup_language_options()
+        .into_iter()
+        .find(|language| {
+            language.code == value || language.label.eq_ignore_ascii_case(value.as_str())
+        })
+        .ok_or_else(|| {
+            format!(
+                "unsupported language {value:?}; available values: {}",
+                tundra_ui::setup_language_options()
+                    .into_iter()
+                    .map(|language| language.code)
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )
+        })
+}
+
+fn resolve_timezone(value: &str) -> Result<tundra_ui::SetupTimezoneOption, String> {
+    let value = clean_config_value("address", value.to_string())?;
+    tundra_ui::setup_timezone_options()
+        .into_iter()
+        .find(|timezone| {
+            timezone.id == value || timezone.label.eq_ignore_ascii_case(value.as_str())
+        })
+        .ok_or_else(|| {
+            format!(
+                "unsupported address/timezone {value:?}; available values: {}",
+                tundra_ui::setup_timezone_options()
+                    .into_iter()
+                    .map(|timezone| timezone.id)
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )
+        })
+}
+
+fn config_address_summary(config: &StorageConfig) -> String {
+    tundra_ui::setup_timezone_options()
+        .into_iter()
+        .find(|timezone| timezone.id == config.timezone)
+        .map(|timezone| timezone_summary(&timezone))
+        .unwrap_or_else(|| format!("unmapped timezone ({})", config.timezone))
+}
+
+fn timezone_summary(timezone: &tundra_ui::SetupTimezoneOption) -> String {
+    format!(
+        "{} ({}, {:.4}, {:.4})",
+        timezone.label, timezone.id, timezone.latitude, timezone.longitude
+    )
 }
 
 fn run_new<Stdout: Write, Stderr: Write>(
@@ -243,7 +568,11 @@ fn write_help(output: &mut impl Write) -> std::io::Result<()> {
     writeln!(output, "TundraUX3 CLI")?;
     writeln!(
         output,
-        "Usage: tundra-cli <doctor|explain|new|paths|weathr>"
+        "Usage: tundra-cli <config|doctor|explain|new|paths|weathr>"
+    )?;
+    writeln!(
+        output,
+        "  config  View or update user config: get [field], set <theme|language|timezone|address> <value>"
     )?;
     writeln!(
         output,
@@ -271,7 +600,7 @@ fn write_explain(output: &mut impl Write) -> std::io::Result<()> {
     )?;
     writeln!(
         output,
-        "  2. tundra-cli handles diagnostics, operator commands, and launchers: doctor, paths, explain, new, weathr."
+        "  2. tundra-cli handles diagnostics, operator commands, config, and launchers: doctor, paths, explain, new, weathr."
     )?;
     writeln!(
         output,

@@ -1,7 +1,8 @@
 use crate::animation_manager::AnimationManager;
-use crate::app_state::AppState;
+use crate::app_state::{AppState, BottomHudPrompt};
 use crate::config::{ClockFormat, Config, Provider};
 use crate::error::WeatherError;
+use crate::network_clock::{self, NetworkClock, TimeSyncResult};
 use crate::render::{TerminalRenderer, clock};
 use crate::scene::lockscreen::LockscreenScene;
 use crate::scene::overlay::OverlayRegistry;
@@ -14,7 +15,6 @@ use crate::weather::types::CelestialEvents;
 use crate::weather::{
     OpenMeteoProvider, WeatherClient, WeatherCondition, WeatherData, WeatherLocation,
 };
-use chrono::Local;
 use crossterm::event::{self, Event, KeyCode, KeyModifiers};
 use std::io;
 use std::sync::Arc;
@@ -25,6 +25,12 @@ const REFRESH_INTERVAL: Duration = Duration::from_secs(300);
 const INPUT_POLL_FPS: u64 = 30;
 const FRAME_DURATION: Duration = Duration::from_millis(1000 / INPUT_POLL_FPS);
 const DEFAULT_THEME_ID: &str = "default";
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum AppRunOutcome {
+    Space,
+    Cancelled,
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct ThemeBindings {
@@ -130,6 +136,8 @@ pub struct App {
     active_scene_id: &'static str,
     active_overlay_id: Option<&'static str>,
     weather_receiver: mpsc::Receiver<Result<WeatherData, WeatherError>>,
+    time_receiver: mpsc::Receiver<TimeSyncResult>,
+    clock: NetworkClock,
     clock_format: ClockFormat,
 }
 
@@ -146,19 +154,44 @@ fn render_centered_line(
 }
 
 impl App {
-    pub fn new(config: &Config, term_width: u16, term_height: u16, themes: ThemeRegistry) -> Self {
+    pub fn new(
+        config: &Config,
+        term_width: u16,
+        term_height: u16,
+        themes: ThemeRegistry,
+        timezone_id: Option<String>,
+    ) -> Self {
+        Self::new_with_bottom_hud_prompt(
+            config,
+            term_width,
+            term_height,
+            themes,
+            timezone_id,
+            BottomHudPrompt::Quit,
+        )
+    }
+
+    pub(crate) fn new_with_bottom_hud_prompt(
+        config: &Config,
+        term_width: u16,
+        term_height: u16,
+        themes: ThemeRegistry,
+        timezone_id: Option<String>,
+        bottom_hud_prompt: BottomHudPrompt,
+    ) -> Self {
         let location = WeatherLocation {
             latitude: config.location.latitude,
             longitude: config.location.longitude,
             elevation: None,
         };
 
-        let state = AppState::new(
+        let state = AppState::new_with_bottom_hud_prompt(
             location,
             config.location.city.clone(),
             config.location.display,
             config.location.hide,
             config.units,
+            bottom_hud_prompt,
         );
         let animations = AnimationManager::new(term_width, term_height, false);
 
@@ -188,6 +221,17 @@ impl App {
             }
         });
 
+        let (time_tx, time_rx) = mpsc::channel(1);
+        tokio::spawn(async move {
+            loop {
+                let result = network_clock::fetch_standard_time().await;
+                if time_tx.send(result).await.is_err() {
+                    break;
+                }
+                tokio::time::sleep(network_clock::TIME_SYNC_INTERVAL).await;
+            }
+        });
+
         Self {
             state,
             animations,
@@ -197,11 +241,20 @@ impl App {
             active_scene_id: bindings.scene_id,
             active_overlay_id: bindings.overlay_id,
             weather_receiver: rx,
+            time_receiver: time_rx,
+            clock: NetworkClock::new(timezone_id),
             clock_format: config.lockscreen.clock_format,
         }
     }
 
     pub async fn run(&mut self, renderer: &mut TerminalRenderer) -> io::Result<()> {
+        self.run_with_outcome(renderer).await.map(|_| ())
+    }
+
+    pub(crate) async fn run_with_outcome(
+        &mut self,
+        renderer: &mut TerminalRenderer,
+    ) -> io::Result<AppRunOutcome> {
         let mut rng = rand::rng();
         let mut attribution = "Awaiting weather data".to_string();
 
@@ -262,6 +315,14 @@ impl App {
                 }
             }
 
+            loop {
+                match self.time_receiver.try_recv() {
+                    Ok(result) => self.clock.apply_sync(result),
+                    Err(mpsc::error::TryRecvError::Empty) => break,
+                    Err(mpsc::error::TryRecvError::Disconnected) => break,
+                }
+            }
+
             renderer.clear()?;
 
             let theme = self.themes.active();
@@ -313,13 +374,13 @@ impl App {
                 &mut rng,
             )?;
 
-            let current = Local::now();
-            let time_text = clock::format_time(current.time(), self.clock_format);
+            let current = self.clock.current();
+            let time_text = clock::format_time(current.time, self.clock_format);
             let clock_lines = clock::ascii_lines(&time_text);
             let clock_layout =
                 clock::separator_anchored_layout(&time_text, &clock_lines, term_width, term_height);
 
-            let date_text = current.date_naive().format("%Y-%m-%d").to_string();
+            let date_text = current.date.format("%Y-%m-%d").to_string();
             render_centered_line(
                 renderer,
                 term_width,
@@ -361,12 +422,23 @@ impl App {
                 crossterm::style::Color::Cyan,
             )?;
 
+            let mut next_status_row = 0;
             if !attribution.is_empty() {
                 renderer.render_line_colored(
                     2,
                     0,
                     &attribution,
                     crossterm::style::Color::DarkGrey,
+                )?;
+                next_status_row = 1;
+            }
+
+            if let Some(warning) = current.warning {
+                renderer.render_line_colored(
+                    2,
+                    next_status_row,
+                    &warning,
+                    crossterm::style::Color::Yellow,
                 )?;
             }
 
@@ -380,11 +452,11 @@ impl App {
                         self.animations.on_resize(new_width, new_height);
                     }
                     Event::Key(key_event) => match key_event.code {
-                        KeyCode::Char(' ') => break,
+                        KeyCode::Char(' ') => return Ok(AppRunOutcome::Space),
                         KeyCode::Char('c')
                             if key_event.modifiers.contains(KeyModifiers::CONTROL) =>
                         {
-                            break;
+                            return Ok(AppRunOutcome::Cancelled);
                         }
                         _ => {}
                     },
@@ -392,8 +464,6 @@ impl App {
                 }
             }
         }
-
-        Ok(())
     }
 }
 

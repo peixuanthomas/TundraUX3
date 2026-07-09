@@ -4,10 +4,11 @@ use ratatui::layout::Rect;
 use ratatui::style::Color;
 use tundra_ui::{
     AuthField, BootstrapAdminViewModel, DebugDiagnosticsViewModel, ExitConfirmViewModel,
-    HomeDisplayMode, HomeViewModel, LoginViewModel, ShellChromeViewModel, ShellEntry, ShellLayout,
-    StatusViewModel, TundraTheme, UserManagementUserViewModel, UserManagementViewModel,
-    compute_shell_layout, render_bootstrap_admin, render_home, render_login,
-    render_user_management,
+    HomeDisplayMode, HomeViewModel, LoginField, LoginUserOptionViewModel, LoginViewModel,
+    ShellChromeViewModel, ShellEntry, ShellLayout, StatusViewModel, TundraTheme,
+    UserManagementUserViewModel, UserManagementViewModel, compute_shell_layout,
+    login_password_area, login_user_list_area, login_user_list_visible_rows,
+    render_bootstrap_admin, render_home, render_login, render_user_management,
 };
 
 #[test]
@@ -172,9 +173,15 @@ fn status_view_model_exposes_status_toast_and_error() {
 fn login_renderer_masks_password_length() {
     let chrome = chrome_for("Login");
     let model = LoginViewModel::new(
-        "AdminUser",
+        vec![
+            login_user("AdminUser", "Admin User", "Admin"),
+            login_user("Strix", "Local User", "User"),
+            login_user("debug", "Debug User", "Debug"),
+        ],
+        1,
+        0,
         "StrongPass123".len(),
-        AuthField::Password,
+        LoginField::Password,
         Some("Invalid username or password".to_string()),
     );
     let mut terminal = Terminal::new(TestBackend::new(80, 24)).expect("test terminal");
@@ -192,12 +199,27 @@ fn login_renderer_masks_password_length() {
         .expect("render login");
 
     let output = terminal_output(&terminal);
-    assert!(output.contains("Tab / Down: password"));
-    assert!(output.contains("Enter on password: login"));
-    assert!(output.contains("Username: AdminUser"));
-    assert!(output.contains("Password: *************"));
+    assert!(output.contains("Users"));
+    assert!(output.contains("AdminUser (Admin)"));
+    assert!(output.contains("Strix"));
+    assert!(output.contains("Local User"));
+    assert!(output.contains("Password"));
+    assert!(output.contains("*************"));
     assert!(!output.contains("StrongPass123"));
     assert!(output.contains("Invalid username or password"));
+
+    let main = main_rect(80, 24);
+    let list_area = login_user_list_area(main);
+    let password_area = login_password_area(main);
+    assert!(list_area.x < password_area.x);
+    assert_eq!(
+        login_user_list_visible_rows(main),
+        usize::from(list_area.height.saturating_sub(2))
+    );
+    assert!(
+        region_has_fg(&terminal, password_area, TundraTheme::default_dark().accent),
+        "focused password field should use the accent style"
+    );
 }
 
 #[test]
@@ -276,4 +298,32 @@ fn terminal_output(terminal: &Terminal<TestBackend>) -> String {
         .iter()
         .map(|cell| cell.symbol())
         .collect()
+}
+
+fn login_user(username: &str, display_name: &str, role: &str) -> LoginUserOptionViewModel {
+    LoginUserOptionViewModel {
+        username: username.to_string(),
+        display_name: display_name.to_string(),
+        role: role.to_string(),
+        enabled: true,
+        locked: false,
+    }
+}
+
+fn main_rect(width: u16, height: u16) -> Rect {
+    match compute_shell_layout(Rect::new(0, 0, width, height)) {
+        ShellLayout::Full { main, .. } => main,
+        ShellLayout::Compact(_) => panic!("home render tests expect a full shell layout"),
+    }
+}
+
+fn region_has_fg(terminal: &Terminal<TestBackend>, area: Rect, fg: Color) -> bool {
+    let buffer = terminal.backend().buffer();
+    (area.y..area.y.saturating_add(area.height)).any(|y| {
+        (area.x..area.x.saturating_add(area.width)).any(|x| {
+            buffer
+                .cell((x, y))
+                .is_some_and(|cell| cell.fg == fg && cell.symbol() != " ")
+        })
+    })
 }

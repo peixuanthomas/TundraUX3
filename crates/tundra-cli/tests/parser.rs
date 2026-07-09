@@ -3,13 +3,14 @@ use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use tundra_cli::{
-    CliCommand, CliError, parse_args, run, run_with_platform, run_with_platform_and_weathr_launcher,
+    CliCommand, CliError, ConfigAction, ConfigField, ConfigUpdate, parse_args, run,
+    run_with_platform, run_with_platform_and_weathr_launcher,
 };
 use tundra_platform::mock::{MockPlatform, UnsupportedPlatform};
 use tundra_platform::{
     Platform, PlatformKind, UserDirs, build_macos_app_paths, build_windows_app_paths,
 };
-use tundra_storage::{StorageLayout, StorageManager};
+use tundra_storage::{StorageConfig, StorageLayout, StorageManager};
 
 #[test]
 fn no_args_dispatches_help() {
@@ -42,6 +43,44 @@ fn weathr_arg_dispatches_weathr() {
 }
 
 #[test]
+fn config_args_parse_safe_get_and_set_commands() {
+    assert_eq!(
+        parse_args(["config"]),
+        Ok(CliCommand::Config(ConfigAction::Get(None)))
+    );
+    assert_eq!(
+        parse_args(["config", "get", "theme"]),
+        Ok(CliCommand::Config(ConfigAction::Get(Some(
+            ConfigField::Theme
+        ))))
+    );
+    assert_eq!(
+        parse_args(["config", "set", "theme", "light"]),
+        Ok(CliCommand::Config(ConfigAction::Set(ConfigUpdate::Theme(
+            "light".to_string()
+        ))))
+    );
+    assert_eq!(
+        parse_args(["config", "set", "address", "New", "York"]),
+        Ok(CliCommand::Config(ConfigAction::Set(
+            ConfigUpdate::Address("New York".to_string())
+        )))
+    );
+}
+
+#[test]
+fn config_args_reject_username_and_password_updates() {
+    assert_eq!(
+        parse_args(["config", "set", "username", "admin2"]),
+        Err(CliError::ForbiddenConfigField("username".to_string()))
+    );
+    assert_eq!(
+        parse_args(["config", "set", "password", "secret"]),
+        Err(CliError::ForbiddenConfigField("password".to_string()))
+    );
+}
+
+#[test]
 fn unknown_arg_is_an_error() {
     assert_eq!(
         parse_args(["repair"]),
@@ -67,7 +106,8 @@ fn help_command_writes_usage_to_stdout() {
     assert_eq!(exit_code, 0);
     assert!(stderr.is_empty());
     let stdout = String::from_utf8(stdout).expect("help output should be utf8");
-    assert!(stdout.contains("Usage: tundra-cli <doctor|explain|new|paths|weathr>"));
+    assert!(stdout.contains("Usage: tundra-cli <config|doctor|explain|new|paths|weathr>"));
+    assert!(stdout.contains("config  View or update user config"));
     assert!(stdout.contains("new     Clear saved TundraUX3 data"));
     assert!(stdout.contains("weathr  Launch the terminal weather scene"));
     assert!(!stdout.contains("Windows 11"));
@@ -107,7 +147,7 @@ fn weathr_command_launches_injected_runner() {
         &platform,
         &mut stdout,
         &mut stderr,
-        || Ok::<(), &'static str>(()),
+        |_options| Ok::<(), &'static str>(()),
     );
 
     assert_eq!(exit_code, 0);
@@ -127,13 +167,220 @@ fn weathr_command_reports_injected_runner_error() {
         &platform,
         &mut stdout,
         &mut stderr,
-        || Err::<(), &'static str>("terminal unavailable"),
+        |_options| Err::<(), &'static str>("terminal unavailable"),
     );
 
     assert_eq!(exit_code, 1);
     assert!(stdout.is_empty());
     let stderr = String::from_utf8(stderr).expect("weathr error output should be utf8");
     assert!(stderr.contains("ERROR: could not launch weathr: terminal unavailable"));
+}
+
+#[test]
+fn weathr_command_passes_setup_timezone_location_to_launcher() {
+    let mut stdout = Vec::new();
+    let mut stderr = Vec::new();
+    let tree = TempTree::new("weathr-launch-timezone");
+    let platform = mock_windows_platform(tree.path());
+    let app_paths = platform.app_paths().expect("mock app paths");
+    let opened = StorageManager::open(app_paths).expect("storage initializes");
+    let config = StorageConfig {
+        timezone: "Asia/Shanghai".to_string(),
+        ..StorageConfig::default()
+    };
+    opened.manager.save_config(&config).expect("config saves");
+
+    let mut captured = None;
+    let exit_code = run_with_platform_and_weathr_launcher(
+        ["weathr"],
+        &platform,
+        &mut stdout,
+        &mut stderr,
+        |options| {
+            captured = Some(options);
+            Ok::<(), &'static str>(())
+        },
+    );
+
+    assert_eq!(exit_code, 0);
+    assert!(stdout.is_empty());
+    assert!(stderr.is_empty());
+
+    let options = captured.expect("launcher receives options");
+    assert_eq!(options.timezone_id.as_deref(), Some("Asia/Shanghai"));
+    let location = options
+        .location_override
+        .expect("setup timezone should map to location");
+    assert_eq!(location.latitude, 31.2304);
+    assert_eq!(location.longitude, 121.4737);
+    assert_eq!(location.city.as_deref(), Some("Shanghai"));
+}
+
+#[test]
+fn weathr_command_uses_default_options_when_storage_config_is_missing() {
+    let mut stdout = Vec::new();
+    let mut stderr = Vec::new();
+    let tree = TempTree::new("weathr-launch-no-config");
+    let platform = mock_windows_platform(tree.path());
+
+    let mut captured = None;
+    let exit_code = run_with_platform_and_weathr_launcher(
+        ["weathr"],
+        &platform,
+        &mut stdout,
+        &mut stderr,
+        |options| {
+            captured = Some(options);
+            Ok::<(), &'static str>(())
+        },
+    );
+
+    assert_eq!(exit_code, 0);
+    assert!(stdout.is_empty());
+    assert!(stderr.is_empty());
+    assert_eq!(captured, Some(tundra_weathr::LaunchOptions::default()));
+}
+
+#[test]
+fn weathr_command_uses_default_options_when_storage_config_is_corrupt() {
+    let mut stdout = Vec::new();
+    let mut stderr = Vec::new();
+    let tree = TempTree::new("weathr-launch-corrupt-config");
+    let platform = mock_windows_platform(tree.path());
+    let app_paths = platform.app_paths().expect("mock app paths");
+    let config_parent = app_paths
+        .config_path()
+        .parent()
+        .expect("config path has parent");
+    fs::create_dir_all(config_parent).expect("config parent can be created");
+    fs::write(app_paths.config_path(), b"schema_version =\n").expect("corrupt config fixture");
+
+    let mut captured = None;
+    let exit_code = run_with_platform_and_weathr_launcher(
+        ["weathr"],
+        &platform,
+        &mut stdout,
+        &mut stderr,
+        |options| {
+            captured = Some(options);
+            Ok::<(), &'static str>(())
+        },
+    );
+
+    assert_eq!(exit_code, 0);
+    assert!(stdout.is_empty());
+    assert!(stderr.is_empty());
+    assert_eq!(captured, Some(tundra_weathr::LaunchOptions::default()));
+}
+
+#[test]
+fn config_set_theme_updates_config_without_changing_users() {
+    let mut stdout = Vec::new();
+    let mut stderr = Vec::new();
+    let tree = TempTree::new("config-set-theme");
+    let platform = mock_windows_platform(tree.path());
+    let app_paths = platform.app_paths().expect("mock app paths");
+    let opened = StorageManager::open(app_paths).expect("storage initializes");
+    let users_before = opened.manager.load_users().expect("users load");
+
+    let exit_code = run_with_platform(
+        ["config", "set", "theme", "light"],
+        &platform,
+        &mut stdout,
+        &mut stderr,
+    );
+
+    assert_eq!(exit_code, 0);
+    assert!(stderr.is_empty());
+    let stdout = String::from_utf8(stdout).expect("config output should be utf8");
+    assert!(stdout.contains("Updated theme: light"));
+    assert_eq!(opened.manager.load_config().expect("config").theme, "light");
+    assert_eq!(
+        opened.manager.load_users().expect("users reload"),
+        users_before
+    );
+}
+
+#[test]
+fn config_set_address_by_label_updates_timezone() {
+    let mut stdout = Vec::new();
+    let mut stderr = Vec::new();
+    let tree = TempTree::new("config-set-address");
+    let platform = mock_windows_platform(tree.path());
+    let app_paths = platform.app_paths().expect("mock app paths");
+    let opened = StorageManager::open(app_paths).expect("storage initializes");
+
+    let exit_code = run_with_platform(
+        ["config", "set", "address", "New", "York"],
+        &platform,
+        &mut stdout,
+        &mut stderr,
+    );
+
+    assert_eq!(exit_code, 0);
+    assert!(stderr.is_empty());
+    let stdout = String::from_utf8(stdout).expect("config output should be utf8");
+    assert!(stdout.contains("Updated address: New York (America/New_York"));
+    assert_eq!(
+        opened.manager.load_config().expect("config").timezone,
+        "America/New_York"
+    );
+}
+
+#[test]
+fn config_get_address_prints_resolved_location() {
+    let mut stdout = Vec::new();
+    let mut stderr = Vec::new();
+    let tree = TempTree::new("config-get-address");
+    let platform = mock_windows_platform(tree.path());
+    let app_paths = platform.app_paths().expect("mock app paths");
+    let opened = StorageManager::open(app_paths).expect("storage initializes");
+    let config = StorageConfig {
+        timezone: "Asia/Shanghai".to_string(),
+        ..StorageConfig::default()
+    };
+    opened.manager.save_config(&config).expect("config saves");
+
+    let exit_code = run_with_platform(
+        ["config", "get", "address"],
+        &platform,
+        &mut stdout,
+        &mut stderr,
+    );
+
+    assert_eq!(exit_code, 0);
+    assert!(stderr.is_empty());
+    let stdout = String::from_utf8(stdout).expect("config output should be utf8");
+    assert!(stdout.contains("address = Shanghai (Asia/Shanghai, 31.2304, 121.4737)"));
+}
+
+#[test]
+fn config_set_password_is_rejected_and_leaves_users_unchanged() {
+    let mut stdout = Vec::new();
+    let mut stderr = Vec::new();
+    let tree = TempTree::new("config-set-password-denied");
+    let platform = mock_windows_platform(tree.path());
+    let app_paths = platform.app_paths().expect("mock app paths");
+    let opened = StorageManager::open(app_paths).expect("storage initializes");
+    let users_before = opened.manager.load_users().expect("users load");
+
+    let exit_code = run_with_platform(
+        ["config", "set", "password", "new-password"],
+        &platform,
+        &mut stdout,
+        &mut stderr,
+    );
+
+    assert_eq!(exit_code, 2);
+    assert!(stdout.is_empty());
+    let stderr = String::from_utf8(stderr).expect("config error output should be utf8");
+    assert!(
+        stderr.contains("username and password changes must use authenticated user management")
+    );
+    assert_eq!(
+        opened.manager.load_users().expect("users reload"),
+        users_before
+    );
 }
 
 #[test]
@@ -318,7 +565,7 @@ fn unknown_command_exits_two_and_writes_error_to_stderr() {
     assert!(stdout.is_empty());
     let stderr = String::from_utf8(stderr).expect("error output should be utf8");
     assert!(stderr.contains("ERROR: unknown command: repair"));
-    assert!(stderr.contains("Usage: tundra-cli <doctor|explain|new|paths|weathr>"));
+    assert!(stderr.contains("Usage: tundra-cli <config|doctor|explain|new|paths|weathr>"));
 }
 
 fn assert_path_labels(output: &str) {
