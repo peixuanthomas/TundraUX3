@@ -596,6 +596,10 @@ pub struct StorageConfig {
     pub schema_version: u32,
     #[serde(default = "default_theme")]
     pub theme: String,
+    #[serde(default = "default_language")]
+    pub language: String,
+    #[serde(default = "default_timezone")]
+    pub timezone: String,
     #[serde(default)]
     pub shortcuts: BTreeMap<String, String>,
     #[serde(default)]
@@ -611,6 +615,8 @@ impl Default for StorageConfig {
         Self {
             schema_version: SCHEMA_VERSION,
             theme: default_theme(),
+            language: default_language(),
+            timezone: default_timezone(),
             shortcuts: BTreeMap::new(),
             explorer: ExplorerConfig::default(),
             launcher: LauncherConfig::default(),
@@ -678,6 +684,7 @@ impl UsersDocument {
                     display_name: username,
                     role: "User".to_string(),
                     password_hash: String::new(),
+                    password_hint: None,
                     enabled: false,
                     failed_login_attempts: 0,
                     locked_until_epoch_ms: None,
@@ -702,6 +709,8 @@ pub struct UserRecord {
     pub display_name: String,
     pub role: String,
     pub password_hash: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub password_hint: Option<String>,
     pub enabled: bool,
     pub failed_login_attempts: u32,
     pub locked_until_epoch_ms: Option<u64>,
@@ -825,6 +834,14 @@ pub trait VersionedDocument {
 
 fn default_theme() -> String {
     "dark".to_string()
+}
+
+fn default_language() -> String {
+    "en-US".to_string()
+}
+
+fn default_timezone() -> String {
+    "UTC".to_string()
 }
 
 fn create_dir(path: &Path, operation: &'static str) -> Result<(), StorageError> {

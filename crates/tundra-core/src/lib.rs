@@ -10,6 +10,7 @@ use tundra_storage::{StorageError, StorageManager, UserRecord, UsersDocument};
 
 pub const PASSWORD_MIN_LEN: usize = 10;
 pub const PASSWORD_MAX_LEN: usize = 256;
+pub const PASSWORD_HINT_MAX_LEN: usize = 128;
 pub const FAILED_LOGIN_LOCK_THRESHOLD: u32 = 5;
 pub const LOCKOUT_DURATION_MS: u64 = 5 * 60 * 1000;
 pub const AUDIT_SCHEMA_VERSION: u32 = 1;
@@ -125,6 +126,7 @@ pub struct UserAccount {
     pub enabled: bool,
     pub failed_login_attempts: u32,
     pub locked_until_epoch_ms: Option<u64>,
+    pub password_hint: Option<String>,
     pub created_at_epoch_ms: u64,
     pub updated_at_epoch_ms: u64,
     pub last_login_at_epoch_ms: Option<u64>,
@@ -140,6 +142,7 @@ impl UserAccount {
             enabled: record.enabled,
             failed_login_attempts: record.failed_login_attempts,
             locked_until_epoch_ms: record.locked_until_epoch_ms,
+            password_hint: record.password_hint.clone(),
             created_at_epoch_ms: record.created_at_epoch_ms,
             updated_at_epoch_ms: record.updated_at_epoch_ms,
             last_login_at_epoch_ms: record.last_login_at_epoch_ms,
@@ -350,6 +353,15 @@ impl UserService {
         username: &str,
         password: &str,
     ) -> Result<UserAccount, CoreError> {
+        self.bootstrap_admin_with_hint(username, password, None)
+    }
+
+    pub fn bootstrap_admin_with_hint(
+        &self,
+        username: &str,
+        password: &str,
+        password_hint: Option<&str>,
+    ) -> Result<UserAccount, CoreError> {
         let mut document = self.storage.load_users()?;
         if !document.users.is_empty() {
             return Err(CoreError::BootstrapAlreadyExists);
@@ -357,6 +369,7 @@ impl UserService {
 
         validate_username(username)?;
         validate_password(username, password)?;
+        let password_hint = normalize_password_hint(password_hint, password)?;
         let now = unix_millis();
         let record = UserRecord {
             id: "user-1".to_string(),
@@ -364,6 +377,7 @@ impl UserService {
             display_name: username.trim().to_string(),
             role: UserRole::Admin.as_str().to_string(),
             password_hash: hash_password(password)?,
+            password_hint,
             enabled: true,
             failed_login_attempts: 0,
             locked_until_epoch_ms: None,
@@ -449,6 +463,7 @@ impl UserService {
             display_name,
             role: role.as_str().to_string(),
             password_hash: hash_password(password)?,
+            password_hint: None,
             enabled: true,
             failed_login_attempts: 0,
             locked_until_epoch_ms: None,
@@ -1076,6 +1091,35 @@ pub fn validate_password(username: &str, password: &str) -> Result<(), CoreError
         return Err(CoreError::InvalidPassword("matches_username".to_string()));
     }
     Ok(())
+}
+
+fn normalize_password_hint(
+    password_hint: Option<&str>,
+    password: &str,
+) -> Result<Option<String>, CoreError> {
+    let Some(password_hint) = password_hint else {
+        return Ok(None);
+    };
+    let trimmed = password_hint.trim();
+    if trimmed.is_empty() {
+        return Ok(None);
+    }
+    if trimmed.len() > PASSWORD_HINT_MAX_LEN {
+        return Err(CoreError::InvalidUserInfo(
+            "password_hint_too_long".to_string(),
+        ));
+    }
+    if trimmed.chars().any(char::is_control) {
+        return Err(CoreError::InvalidUserInfo(
+            "password_hint_has_control_chars".to_string(),
+        ));
+    }
+    if trimmed == password || trimmed == password.trim() {
+        return Err(CoreError::InvalidUserInfo(
+            "password_hint_matches_password".to_string(),
+        ));
+    }
+    Ok(Some(trimmed.to_string()))
 }
 
 fn validate_username(username: &str) -> Result<(), CoreError> {

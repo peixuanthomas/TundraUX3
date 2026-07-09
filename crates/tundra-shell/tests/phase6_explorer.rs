@@ -163,10 +163,13 @@ fn delete_key_moves_selection_to_tundra_trash() {
 fn bootstrap_with_shell(platform: &MockPlatform) {
     let startup = prepare_shell_startup(platform, default_config()).expect("startup");
     let mut state = ShellState::new_with_startup(default_config(), (120, 40), startup);
-    type_text(&mut state, platform, "AdminUser");
-    state.apply_input_with_platform(InputEvent::from_key_label("Tab"), platform);
-    type_text(&mut state, platform, "StrongPass123");
-    state.apply_input_with_platform(InputEvent::from_key_label("Enter"), platform);
+    complete_first_run_setup(
+        &mut state,
+        platform,
+        "AdminUser",
+        "StrongPass123",
+        "Recovery hint",
+    );
     assert_eq!(state.active_screen(), ShellScreen::Home);
 }
 
@@ -187,6 +190,25 @@ fn type_text(state: &mut ShellState, platform: &MockPlatform, text: &str) {
         state
             .apply_input_with_platform(InputEvent::from_key_label(character.to_string()), platform);
     }
+}
+
+fn complete_first_run_setup(
+    state: &mut ShellState,
+    platform: &MockPlatform,
+    username: &str,
+    password: &str,
+    hint: &str,
+) {
+    assert_eq!(state.active_screen(), ShellScreen::FirstRunSetup);
+    state.apply_input_with_platform(InputEvent::from_key_label("Enter"), platform);
+    state.apply_input_with_platform(InputEvent::from_key_label("Enter"), platform);
+    type_text(state, platform, username);
+    state.apply_input_with_platform(InputEvent::from_key_label("Enter"), platform);
+    type_text(state, platform, password);
+    state.apply_input_with_platform(InputEvent::from_key_label("Enter"), platform);
+    type_text(state, platform, hint);
+    state.apply_input_with_platform(InputEvent::from_key_label("Enter"), platform);
+    state.apply_input_with_platform(InputEvent::from_key_label("Enter"), platform);
 }
 
 fn first_entry_coordinates(state: &ShellState) -> (u16, u16) {

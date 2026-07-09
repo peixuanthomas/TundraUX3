@@ -87,6 +87,7 @@ pub enum ShellHomeMode {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ShellScreen {
+    FirstRunSetup,
     BootstrapAdmin,
     Login,
     Home,
@@ -459,6 +460,10 @@ impl KeyInput {
             "Up" => (InputKey::Up, InputModifiers::none()),
             "Down" => (InputKey::Down, InputModifiers::none()),
             "Delete" => (InputKey::Delete, InputModifiers::none()),
+            "Home" => (InputKey::Home, InputModifiers::none()),
+            "End" => (InputKey::End, InputModifiers::none()),
+            "PageUp" => (InputKey::PageUp, InputModifiers::none()),
+            "PageDown" => (InputKey::PageDown, InputModifiers::none()),
             single if single.chars().count() == 1 => (
                 InputKey::Character(single.chars().next().expect("single char")),
                 InputModifiers::none(),
@@ -702,6 +707,12 @@ pub enum ShellComponent {
     Home,
     LoginUsername,
     LoginPassword,
+    SetupLanguage,
+    SetupTimezone,
+    SetupAdminUsername,
+    SetupAdminPassword,
+    SetupAdminHint,
+    SetupSubmit,
     BootstrapUsername,
     BootstrapPassword,
     Explorer,
@@ -719,6 +730,12 @@ impl ShellComponent {
             Self::Home => "Home",
             Self::LoginUsername => "LoginUsername",
             Self::LoginPassword => "LoginPassword",
+            Self::SetupLanguage => "SetupLanguage",
+            Self::SetupTimezone => "SetupTimezone",
+            Self::SetupAdminUsername => "SetupAdminUsername",
+            Self::SetupAdminPassword => "SetupAdminPassword",
+            Self::SetupAdminHint => "SetupAdminHint",
+            Self::SetupSubmit => "SetupSubmit",
             Self::BootstrapUsername => "BootstrapUsername",
             Self::BootstrapPassword => "BootstrapPassword",
             Self::Explorer => "Explorer",
@@ -875,6 +892,24 @@ pub enum ShellCommand {
     AuthBackspace,
     SubmitLogin,
     SubmitBootstrapAdmin,
+    SetupPreviousLanguage,
+    SetupNextLanguage,
+    SetupContinue,
+    SetupPreviousTimezone,
+    SetupNextTimezone,
+    SetupPageTimezoneUp,
+    SetupPageTimezoneDown,
+    SetupFirstTimezone,
+    SetupLastTimezone,
+    SetupFocusNext,
+    SetupFocusPrevious,
+    AppendSetupAdminChar(char),
+    SetupAdminBackspace,
+    SubmitSetup,
+    ActivateSetup {
+        target: ShellComponent,
+        coordinates: CellPosition,
+    },
     OpenExplorer,
     CloseExplorer,
     ExplorerNext,
@@ -1095,6 +1130,14 @@ pub struct ShellState {
     debug_policy: DebugPolicy,
     login_username: String,
     login_password: String,
+    setup_step: tundra_ui::SetupStep,
+    setup_selected_language_index: usize,
+    setup_selected_timezone_index: usize,
+    setup_admin_username: String,
+    setup_admin_password: String,
+    setup_admin_password_hint: String,
+    setup_focused_field: tundra_ui::SetupField,
+    setup_timezone_window_start: usize,
     bootstrap_username: String,
     bootstrap_password: String,
     user_management_users: Vec<UserAccount>,
@@ -1147,7 +1190,7 @@ impl ShellState {
         let auth_gate_enabled = startup.storage_manager.is_some();
         let initial_screen = if auth_gate_enabled {
             if startup.auth_bootstrap_required {
-                ShellScreen::BootstrapAdmin
+                ShellScreen::FirstRunSetup
             } else {
                 ShellScreen::Login
             }
@@ -1155,6 +1198,7 @@ impl ShellState {
             ShellScreen::Home
         };
         let initial_focus = match initial_screen {
+            ShellScreen::FirstRunSetup => ShellComponent::SetupLanguage,
             ShellScreen::BootstrapAdmin => ShellComponent::BootstrapUsername,
             ShellScreen::Login => ShellComponent::LoginUsername,
             _ => ShellComponent::Home,
@@ -1169,6 +1213,14 @@ impl ShellState {
             debug_policy: startup.debug_policy,
             login_username: String::new(),
             login_password: String::new(),
+            setup_step: tundra_ui::SetupStep::Language,
+            setup_selected_language_index: 0,
+            setup_selected_timezone_index: 0,
+            setup_admin_username: String::new(),
+            setup_admin_password: String::new(),
+            setup_admin_password_hint: String::new(),
+            setup_focused_field: tundra_ui::SetupField::LanguageList,
+            setup_timezone_window_start: 0,
             bootstrap_username: String::new(),
             bootstrap_password: String::new(),
             user_management_users: Vec::new(),
@@ -1304,6 +1356,24 @@ impl ShellState {
             },
             self.error_message.clone(),
         )
+    }
+
+    pub fn to_setup_view_model(&self) -> tundra_ui::SetupViewModel {
+        tundra_ui::SetupViewModel {
+            step: self.setup_step.clone(),
+            languages: tundra_ui::setup_language_options(),
+            timezones: tundra_ui::setup_timezone_options(),
+            selected_language_index: self.setup_selected_language_index,
+            selected_timezone_index: self.setup_selected_timezone_index,
+            timezone_window_start: self.setup_timezone_window_start,
+            admin_username: self.setup_admin_username.clone(),
+            admin_password_len: self.setup_admin_password.chars().count(),
+            password_hint: self.setup_admin_password_hint.clone(),
+            focused_field: self.setup_focused_field.clone(),
+            can_submit: !self.setup_admin_username.trim().is_empty()
+                && !self.setup_admin_password.is_empty(),
+            error: self.error_message.clone(),
+        }
     }
 
     pub fn to_user_management_view_model(&self) -> tundra_ui::UserManagementViewModel {
@@ -1499,6 +1569,255 @@ impl ShellState {
         self.error_message = None;
     }
 
+    fn setup_next_language(&mut self) {
+        let count = tundra_ui::setup_language_options().len();
+        if count == 0 {
+            return;
+        }
+        self.setup_selected_language_index = (self.setup_selected_language_index + 1) % count;
+        self.error_message = None;
+    }
+
+    fn setup_previous_language(&mut self) {
+        let count = tundra_ui::setup_language_options().len();
+        if count == 0 {
+            return;
+        }
+        self.setup_selected_language_index =
+            (self.setup_selected_language_index + count - 1) % count;
+        self.error_message = None;
+    }
+
+    fn setup_select_timezone_delta(&mut self, delta: isize) {
+        let count = tundra_ui::setup_timezone_options().len();
+        if count == 0 {
+            self.setup_timezone_window_start = 0;
+            return;
+        }
+
+        let current = self.setup_selected_timezone_index.min(count - 1) as isize;
+        let next = (current + delta).clamp(0, count as isize - 1) as usize;
+        self.setup_selected_timezone_index = next;
+        self.sync_setup_timezone_window();
+        self.error_message = None;
+    }
+
+    fn setup_select_first_timezone(&mut self) {
+        self.setup_selected_timezone_index = 0;
+        self.sync_setup_timezone_window();
+        self.error_message = None;
+    }
+
+    fn setup_select_last_timezone(&mut self) {
+        let count = tundra_ui::setup_timezone_options().len();
+        if count == 0 {
+            return;
+        }
+        self.setup_selected_timezone_index = count - 1;
+        self.sync_setup_timezone_window();
+        self.error_message = None;
+    }
+
+    fn sync_setup_timezone_window(&mut self) {
+        let count = tundra_ui::setup_timezone_options().len();
+        if count == 0 {
+            self.setup_selected_timezone_index = 0;
+            self.setup_timezone_window_start = 0;
+            return;
+        }
+
+        self.setup_selected_timezone_index = self.setup_selected_timezone_index.min(count - 1);
+        let visible_rows = self.setup_timezone_visible_row_count().min(count).max(1);
+        let max_start = count.saturating_sub(visible_rows);
+        self.setup_timezone_window_start = self.setup_timezone_window_start.min(max_start);
+
+        if self.setup_selected_timezone_index < self.setup_timezone_window_start {
+            self.setup_timezone_window_start = self.setup_selected_timezone_index;
+        }
+
+        let window_end = self
+            .setup_timezone_window_start
+            .saturating_add(visible_rows);
+        if self.setup_selected_timezone_index >= window_end {
+            self.setup_timezone_window_start = self
+                .setup_selected_timezone_index
+                .saturating_add(1)
+                .saturating_sub(visible_rows)
+                .min(max_start);
+        }
+    }
+
+    fn setup_timezone_visible_row_count(&self) -> usize {
+        setup_timezone_visible_row_count(self.terminal_size).max(1)
+    }
+
+    fn setup_continue(&mut self) {
+        match self.setup_step {
+            tundra_ui::SetupStep::Language => {
+                self.setup_step = tundra_ui::SetupStep::Timezone;
+                self.setup_focused_field = tundra_ui::SetupField::TimezoneList;
+                self.focused_component = ShellComponent::SetupTimezone;
+                self.sync_setup_timezone_window();
+            }
+            tundra_ui::SetupStep::Timezone => {
+                self.setup_step = tundra_ui::SetupStep::Admin;
+                self.setup_focused_field = tundra_ui::SetupField::AdminUsername;
+                self.focused_component = ShellComponent::SetupAdminUsername;
+            }
+            tundra_ui::SetupStep::Admin => {}
+        }
+        self.error_message = None;
+        self.refresh_hit_map();
+    }
+
+    fn move_setup_admin_focus(&mut self, direction: i8) {
+        let order = [
+            (
+                tundra_ui::SetupField::AdminUsername,
+                ShellComponent::SetupAdminUsername,
+            ),
+            (
+                tundra_ui::SetupField::AdminPassword,
+                ShellComponent::SetupAdminPassword,
+            ),
+            (
+                tundra_ui::SetupField::PasswordHint,
+                ShellComponent::SetupAdminHint,
+            ),
+            (tundra_ui::SetupField::Submit, ShellComponent::SetupSubmit),
+        ];
+        let next = match order
+            .iter()
+            .position(|(field, _)| *field == self.setup_focused_field)
+        {
+            Some(current) => {
+                (current as isize + direction as isize).rem_euclid(order.len() as isize) as usize
+            }
+            None if direction < 0 => order.len().saturating_sub(1),
+            None => 0,
+        };
+        let (field, component) = order[next as usize];
+        self.setup_focused_field = field;
+        self.focused_component = component;
+        self.error_message = None;
+    }
+
+    fn focus_setup_component(&mut self, component: ShellComponent) {
+        if !setup_component_active_for_step(component, self.setup_step) {
+            return;
+        }
+
+        let Some(field) = setup_field_for_component(component) else {
+            return;
+        };
+
+        self.setup_focused_field = field;
+        self.focused_component = component;
+    }
+
+    fn setup_active_key_component(&self) -> ShellComponent {
+        match self.setup_step {
+            tundra_ui::SetupStep::Language => ShellComponent::SetupLanguage,
+            tundra_ui::SetupStep::Timezone => ShellComponent::SetupTimezone,
+            tundra_ui::SetupStep::Admin => {
+                let component = setup_component_for_field(self.setup_focused_field);
+                if setup_component_active_for_step(component, self.setup_step) {
+                    component
+                } else {
+                    ShellComponent::SetupAdminUsername
+                }
+            }
+        }
+    }
+
+    fn append_setup_admin_char(&mut self, character: char) {
+        match self.setup_focused_field {
+            tundra_ui::SetupField::AdminUsername => self.setup_admin_username.push(character),
+            tundra_ui::SetupField::AdminPassword => self.setup_admin_password.push(character),
+            tundra_ui::SetupField::PasswordHint => self.setup_admin_password_hint.push(character),
+            _ => {}
+        }
+        self.error_message = None;
+    }
+
+    fn setup_admin_backspace(&mut self) {
+        match self.setup_focused_field {
+            tundra_ui::SetupField::AdminUsername => {
+                self.setup_admin_username.pop();
+            }
+            tundra_ui::SetupField::AdminPassword => {
+                self.setup_admin_password.pop();
+            }
+            tundra_ui::SetupField::PasswordHint => {
+                self.setup_admin_password_hint.pop();
+            }
+            _ => {}
+        }
+        self.error_message = None;
+    }
+
+    fn activate_setup(&mut self, target: ShellComponent, coordinates: CellPosition) {
+        match self.setup_step {
+            tundra_ui::SetupStep::Language => {
+                if target == ShellComponent::SetupLanguage
+                    && let Some(index) = self.setup_language_index_at(coordinates)
+                {
+                    self.setup_selected_language_index = index;
+                    self.error_message = None;
+                }
+                self.focus_setup_component(ShellComponent::SetupLanguage);
+            }
+            tundra_ui::SetupStep::Timezone => {
+                if target == ShellComponent::SetupTimezone
+                    && let Some(index) = self.setup_timezone_index_at(coordinates)
+                {
+                    self.setup_selected_timezone_index = index;
+                    self.sync_setup_timezone_window();
+                    self.error_message = None;
+                }
+                self.focus_setup_component(ShellComponent::SetupTimezone);
+            }
+            tundra_ui::SetupStep::Admin => {
+                self.focus_setup_component(target);
+                if target == ShellComponent::SetupSubmit {
+                    self.submit_first_run_setup();
+                }
+            }
+        }
+    }
+
+    fn setup_language_index_at(&self, coordinates: CellPosition) -> Option<usize> {
+        let row = setup_language_list_row_at(self.terminal_size, coordinates)?;
+        (row < tundra_ui::setup_language_options().len()).then_some(row)
+    }
+
+    fn setup_timezone_index_at(&self, coordinates: CellPosition) -> Option<usize> {
+        let row = setup_timezone_list_row_at(self.terminal_size, coordinates)?;
+        let count = tundra_ui::setup_timezone_options().len();
+        if count == 0 {
+            return None;
+        }
+
+        let visible_rows = self.setup_timezone_visible_row_count().min(count);
+        let start = self
+            .setup_timezone_window_start
+            .min(count.saturating_sub(visible_rows));
+        let index = start.saturating_add(row);
+        (row < visible_rows && index < count).then_some(index)
+    }
+
+    fn selected_setup_language_value(&self) -> String {
+        let options = tundra_ui::setup_language_options();
+        setup_language_code_at(&options, self.setup_selected_language_index)
+            .unwrap_or_else(|| "en-US".to_string())
+    }
+
+    fn selected_setup_timezone_value(&self) -> String {
+        let options = tundra_ui::setup_timezone_options();
+        setup_timezone_id_at(&options, self.setup_selected_timezone_index)
+            .unwrap_or_else(|| "UTC".to_string())
+    }
+
     fn submit_login(&mut self) {
         let Some(storage) = self.storage_manager.clone() else {
             self.error_message = Some("Storage unavailable".to_string());
@@ -1540,10 +1859,61 @@ impl ShellState {
         }
     }
 
+    fn submit_first_run_setup(&mut self) {
+        let Some(storage) = self.storage_manager.clone() else {
+            self.error_message = Some("Storage unavailable".to_string());
+            return;
+        };
+
+        let username = self.setup_admin_username.trim().to_string();
+        let password = self.setup_admin_password.clone();
+        let hint = self.setup_admin_password_hint.trim().to_string();
+        let hint = (!hint.is_empty()).then_some(hint);
+
+        let mut config = match storage.load_config() {
+            Ok(config) => config,
+            Err(error) => {
+                self.error_message = Some(error.to_string());
+                self.status_message = "Setup failed".to_string();
+                return;
+            }
+        };
+        config.language = self.selected_setup_language_value();
+        config.timezone = self.selected_setup_timezone_value();
+        if let Err(error) = storage.save_config(&config) {
+            self.error_message = Some(error.to_string());
+            self.status_message = "Setup failed".to_string();
+            return;
+        }
+
+        let users = UserService::with_debug_policy(storage.clone(), self.debug_policy);
+        match users.bootstrap_admin_with_hint(&username, &password, hint.as_deref()) {
+            Ok(account) => {
+                let mut sessions = SessionService::new(storage);
+                match sessions.login(&account.username, &password) {
+                    Ok(session) => {
+                        self.setup_admin_password.clear();
+                        self.complete_login(session);
+                    }
+                    Err(error) => {
+                        self.setup_admin_password.clear();
+                        self.error_message = Some(format_core_error(&error));
+                        self.status_message = "Login failed".to_string();
+                    }
+                }
+            }
+            Err(error) => {
+                self.error_message = Some(format_core_error(&error));
+                self.status_message = "Setup failed".to_string();
+            }
+        }
+    }
+
     fn complete_login(&mut self, session: AuthSession) {
         self.auth_session = Some(session.clone());
         self.login_password.clear();
         self.bootstrap_password.clear();
+        self.setup_admin_password.clear();
         self.error_message = None;
         self.status_message = format!("Signed in as {}", session.username);
         self.home_mode = ShellHomeMode::User;
@@ -2164,6 +2534,9 @@ impl ShellState {
             ShellCommand::RefreshHitMap { width, height } => {
                 self.terminal_size = (width, height);
                 self.last_resize_event = Some(format!("{width}x{height}"));
+                if self.active_screen() == ShellScreen::FirstRunSetup {
+                    self.sync_setup_timezone_window();
+                }
                 self.refresh_hit_map();
                 ShellAction::Redraw
             }
@@ -2182,7 +2555,7 @@ impl ShellState {
                 ShellAction::Exit
             }
             ShellCommand::CancelExit => {
-                self.pop_to_home();
+                self.cancel_exit_confirmation();
                 self.active_popup = None;
                 self.status_message = "Ready".to_string();
                 self.refresh_hit_map();
@@ -2212,6 +2585,71 @@ impl ShellState {
             }
             ShellCommand::SubmitBootstrapAdmin => {
                 self.submit_bootstrap_admin();
+                ShellAction::Redraw
+            }
+            ShellCommand::SetupPreviousLanguage => {
+                self.setup_previous_language();
+                ShellAction::Redraw
+            }
+            ShellCommand::SetupNextLanguage => {
+                self.setup_next_language();
+                ShellAction::Redraw
+            }
+            ShellCommand::SetupContinue => {
+                self.setup_continue();
+                ShellAction::Redraw
+            }
+            ShellCommand::SetupPreviousTimezone => {
+                self.setup_select_timezone_delta(-1);
+                ShellAction::Redraw
+            }
+            ShellCommand::SetupNextTimezone => {
+                self.setup_select_timezone_delta(1);
+                ShellAction::Redraw
+            }
+            ShellCommand::SetupPageTimezoneUp => {
+                self.setup_select_timezone_delta(
+                    -(self.setup_timezone_visible_row_count() as isize),
+                );
+                ShellAction::Redraw
+            }
+            ShellCommand::SetupPageTimezoneDown => {
+                self.setup_select_timezone_delta(self.setup_timezone_visible_row_count() as isize);
+                ShellAction::Redraw
+            }
+            ShellCommand::SetupFirstTimezone => {
+                self.setup_select_first_timezone();
+                ShellAction::Redraw
+            }
+            ShellCommand::SetupLastTimezone => {
+                self.setup_select_last_timezone();
+                ShellAction::Redraw
+            }
+            ShellCommand::SetupFocusNext => {
+                self.move_setup_admin_focus(1);
+                ShellAction::Redraw
+            }
+            ShellCommand::SetupFocusPrevious => {
+                self.move_setup_admin_focus(-1);
+                ShellAction::Redraw
+            }
+            ShellCommand::AppendSetupAdminChar(character) => {
+                self.append_setup_admin_char(character);
+                ShellAction::Redraw
+            }
+            ShellCommand::SetupAdminBackspace => {
+                self.setup_admin_backspace();
+                ShellAction::Redraw
+            }
+            ShellCommand::SubmitSetup => {
+                self.submit_first_run_setup();
+                ShellAction::Redraw
+            }
+            ShellCommand::ActivateSetup {
+                target,
+                coordinates,
+            } => {
+                self.activate_setup(target, coordinates);
                 ShellAction::Redraw
             }
             ShellCommand::OpenExplorer => {
@@ -2524,7 +2962,7 @@ impl ShellState {
     fn home_display_mode(&self) -> tundra_ui::HomeDisplayMode {
         if matches!(
             self.active_screen(),
-            ShellScreen::Login | ShellScreen::BootstrapAdmin
+            ShellScreen::FirstRunSetup | ShellScreen::Login | ShellScreen::BootstrapAdmin
         ) {
             return tundra_ui::HomeDisplayMode::Auth;
         }
@@ -2550,6 +2988,10 @@ impl ShellState {
 
         if self.active_screen() == ShellScreen::ExitConfirm {
             return self.route_exit_confirm_key(key);
+        }
+
+        if self.active_screen() == ShellScreen::FirstRunSetup {
+            return self.route_setup_key(key);
         }
 
         if matches!(
@@ -2636,6 +3078,52 @@ impl ShellState {
         }
 
         (target, ShellCommand::RecordInput)
+    }
+
+    fn route_setup_key(&self, key: &KeyInput) -> (RoutedTarget, ShellCommand) {
+        let target_component = self.setup_active_key_component();
+        let target = RoutedTarget::Component(target_component);
+
+        if matches!(&key.key, InputKey::Escape) {
+            return (RoutedTarget::Global, ShellCommand::RequestExit);
+        }
+
+        match self.setup_step {
+            tundra_ui::SetupStep::Language => match &key.key {
+                InputKey::Up | InputKey::Left => (target, ShellCommand::SetupPreviousLanguage),
+                InputKey::Down | InputKey::Right => (target, ShellCommand::SetupNextLanguage),
+                InputKey::Enter | InputKey::Character(' ') => (target, ShellCommand::SetupContinue),
+                _ => (target, ShellCommand::RecordInput),
+            },
+            tundra_ui::SetupStep::Timezone => match &key.key {
+                InputKey::Up => (target, ShellCommand::SetupPreviousTimezone),
+                InputKey::Down => (target, ShellCommand::SetupNextTimezone),
+                InputKey::PageUp => (target, ShellCommand::SetupPageTimezoneUp),
+                InputKey::PageDown => (target, ShellCommand::SetupPageTimezoneDown),
+                InputKey::Home => (target, ShellCommand::SetupFirstTimezone),
+                InputKey::End => (target, ShellCommand::SetupLastTimezone),
+                InputKey::Enter => (target, ShellCommand::SetupContinue),
+                _ => (target, ShellCommand::RecordInput),
+            },
+            tundra_ui::SetupStep::Admin => match &key.key {
+                InputKey::BackTab => (target, ShellCommand::SetupFocusPrevious),
+                InputKey::Tab if key.modifiers.shift => (target, ShellCommand::SetupFocusPrevious),
+                InputKey::Tab => (target, ShellCommand::SetupFocusNext),
+                InputKey::Backspace if setup_admin_text_field(self.setup_focused_field) => {
+                    (target, ShellCommand::SetupAdminBackspace)
+                }
+                InputKey::Enter if self.setup_focused_field == tundra_ui::SetupField::Submit => {
+                    (target, ShellCommand::SubmitSetup)
+                }
+                InputKey::Enter => (target, ShellCommand::SetupFocusNext),
+                InputKey::Character(character)
+                    if setup_admin_text_field(self.setup_focused_field) =>
+                {
+                    (target, ShellCommand::AppendSetupAdminChar(*character))
+                }
+                _ => (target, ShellCommand::RecordInput),
+            },
+        }
     }
 
     fn route_explorer_key(&self, key: &KeyInput) -> (RoutedTarget, ShellCommand) {
@@ -2839,6 +3327,10 @@ impl ShellState {
             return (routed_target, ShellCommand::CaptureOverlayInput);
         }
 
+        if self.active_screen() == ShellScreen::FirstRunSetup {
+            return self.route_setup_mouse(mouse, hit_target);
+        }
+
         if self.active_popup.is_some() {
             return self.route_popup_mouse(mouse, hit_target, received_at);
         }
@@ -2872,6 +3364,89 @@ impl ShellState {
                 } else {
                     (RoutedTarget::None, ShellCommand::RecordInput)
                 }
+            }
+            _ => (target_route(hit_target), ShellCommand::RecordInput),
+        }
+    }
+
+    fn route_setup_mouse(
+        &mut self,
+        mouse: MouseInput,
+        hit_target: Option<ShellComponent>,
+    ) -> (RoutedTarget, ShellCommand) {
+        let coordinates = mouse.coordinates();
+
+        match mouse {
+            MouseInput::Moved { .. } => (target_route(hit_target), ShellCommand::Hover(hit_target)),
+            MouseInput::Scroll {
+                direction: ScrollDirection::Up,
+                ..
+            } if hit_target == Some(ShellComponent::SetupLanguage)
+                && self.setup_step == tundra_ui::SetupStep::Language =>
+            {
+                (
+                    RoutedTarget::Component(ShellComponent::SetupLanguage),
+                    ShellCommand::SetupPreviousLanguage,
+                )
+            }
+            MouseInput::Scroll {
+                direction: ScrollDirection::Down,
+                ..
+            } if hit_target == Some(ShellComponent::SetupLanguage)
+                && self.setup_step == tundra_ui::SetupStep::Language =>
+            {
+                (
+                    RoutedTarget::Component(ShellComponent::SetupLanguage),
+                    ShellCommand::SetupNextLanguage,
+                )
+            }
+            MouseInput::Scroll {
+                direction: ScrollDirection::Up,
+                ..
+            } if hit_target == Some(ShellComponent::SetupTimezone)
+                && self.setup_step == tundra_ui::SetupStep::Timezone =>
+            {
+                (
+                    RoutedTarget::Component(ShellComponent::SetupTimezone),
+                    ShellCommand::SetupPreviousTimezone,
+                )
+            }
+            MouseInput::Scroll {
+                direction: ScrollDirection::Down,
+                ..
+            } if hit_target == Some(ShellComponent::SetupTimezone)
+                && self.setup_step == tundra_ui::SetupStep::Timezone =>
+            {
+                (
+                    RoutedTarget::Component(ShellComponent::SetupTimezone),
+                    ShellCommand::SetupNextTimezone,
+                )
+            }
+            MouseInput::Down {
+                button: PointerButton::Left,
+                ..
+            } => {
+                if let Some(target) = hit_target
+                    && setup_field_for_component(target).is_some()
+                    && setup_component_active_for_step(target, self.setup_step)
+                {
+                    return (
+                        RoutedTarget::Component(target),
+                        ShellCommand::ActivateSetup {
+                            target,
+                            coordinates,
+                        },
+                    );
+                }
+
+                (RoutedTarget::None, ShellCommand::RecordInput)
+            }
+            MouseInput::Down {
+                button: PointerButton::Right,
+                ..
+            } => {
+                self.last_click = None;
+                (target_route(hit_target), ShellCommand::CaptureOverlayInput)
             }
             _ => (target_route(hit_target), ShellCommand::RecordInput),
         }
@@ -3055,18 +3630,34 @@ impl ShellState {
             self.terminal_size,
             self.active_screen(),
             self.active_popup,
+            self.setup_step.clone(),
             self.hit_map_generation,
         );
 
         let focus_order = self.focus_order();
         if !focus_order.contains(&self.focused_component) {
             self.focused_component = focus_order.first().copied().unwrap_or(ShellComponent::Home);
+            if let Some(field) = setup_field_for_component(self.focused_component) {
+                self.setup_focused_field = field;
+            }
         }
     }
 
     fn focus_order(&self) -> Vec<ShellComponent> {
         if self.active_screen() == ShellScreen::ExitConfirm {
             return vec![ShellComponent::ExitDialog];
+        }
+        if self.active_screen() == ShellScreen::FirstRunSetup {
+            return match self.setup_step {
+                tundra_ui::SetupStep::Language => vec![ShellComponent::SetupLanguage],
+                tundra_ui::SetupStep::Timezone => vec![ShellComponent::SetupTimezone],
+                tundra_ui::SetupStep::Admin => vec![
+                    ShellComponent::SetupAdminUsername,
+                    ShellComponent::SetupAdminPassword,
+                    ShellComponent::SetupAdminHint,
+                    ShellComponent::SetupSubmit,
+                ],
+            };
         }
         if self.active_screen() == ShellScreen::Login {
             return vec![ShellComponent::LoginUsername, ShellComponent::LoginPassword];
@@ -3142,6 +3733,16 @@ impl ShellState {
             self.screen_stack.push(ShellScreen::Home);
         }
         self.focused_component = ShellComponent::Home;
+        self.refresh_hit_map();
+    }
+
+    fn cancel_exit_confirmation(&mut self) {
+        if self.active_screen() == ShellScreen::ExitConfirm {
+            self.screen_stack.pop();
+        }
+        if self.screen_stack.is_empty() {
+            self.screen_stack.push(ShellScreen::Home);
+        }
         self.refresh_hit_map();
     }
 }
@@ -3232,6 +3833,7 @@ fn build_shell_hit_map(
     terminal_size: CellPosition,
     active_screen: ShellScreen,
     active_popup: Option<ShellPopup>,
+    setup_step: tundra_ui::SetupStep,
     generation: u64,
 ) -> ShellHitMap {
     let (width, height) = terminal_size;
@@ -3251,6 +3853,9 @@ fn build_shell_hit_map(
                 area: top,
             });
             match active_screen {
+                ShellScreen::FirstRunSetup => {
+                    regions.extend(setup_hit_regions(main, setup_step));
+                }
                 ShellScreen::Login => {
                     let (username, password) = auth_field_rects(main);
                     regions.push(ShellHitRegion {
@@ -3326,6 +3931,150 @@ fn auth_field_rects(main: Rect) -> (Rect, Rect) {
         Rect::new(x, username_y, width, 1),
         Rect::new(x, password_y, width, 1),
     )
+}
+
+fn setup_hit_regions(
+    main: Rect,
+    setup_step: tundra_ui::SetupStep,
+) -> impl IntoIterator<Item = ShellHitRegion> {
+    match setup_step {
+        tundra_ui::SetupStep::Language => vec![ShellHitRegion {
+            component: ShellComponent::SetupLanguage,
+            area: setup_language_list_rect(main),
+        }],
+        tundra_ui::SetupStep::Timezone => vec![ShellHitRegion {
+            component: ShellComponent::SetupTimezone,
+            area: tundra_ui::setup_timezone_list_area(main),
+        }],
+        tundra_ui::SetupStep::Admin => vec![
+            ShellHitRegion {
+                component: ShellComponent::SetupAdminUsername,
+                area: tundra_ui::setup_admin_field_area(main, tundra_ui::SetupField::AdminUsername),
+            },
+            ShellHitRegion {
+                component: ShellComponent::SetupAdminPassword,
+                area: tundra_ui::setup_admin_field_area(main, tundra_ui::SetupField::AdminPassword),
+            },
+            ShellHitRegion {
+                component: ShellComponent::SetupAdminHint,
+                area: tundra_ui::setup_admin_field_area(main, tundra_ui::SetupField::PasswordHint),
+            },
+            ShellHitRegion {
+                component: ShellComponent::SetupSubmit,
+                area: tundra_ui::setup_admin_field_area(main, tundra_ui::SetupField::Submit),
+            },
+        ],
+    }
+}
+
+fn setup_language_list_row_at(
+    terminal_size: CellPosition,
+    coordinates: CellPosition,
+) -> Option<usize> {
+    let main = setup_main_rect(terminal_size)?;
+    setup_row_at(setup_language_list_rect(main), coordinates)
+}
+
+fn setup_timezone_list_row_at(
+    terminal_size: CellPosition,
+    coordinates: CellPosition,
+) -> Option<usize> {
+    let main = setup_main_rect(terminal_size)?;
+    setup_row_at(tundra_ui::setup_timezone_list_area(main), coordinates)
+}
+
+fn setup_timezone_visible_row_count(terminal_size: CellPosition) -> usize {
+    setup_main_rect(terminal_size)
+        .map(tundra_ui::setup_timezone_visible_rows)
+        .unwrap_or(0)
+}
+
+fn setup_main_rect(terminal_size: CellPosition) -> Option<Rect> {
+    let area = Rect::new(0, 0, terminal_size.0, terminal_size.1);
+    let tundra_ui::ShellLayout::Full { main, .. } = tundra_ui::compute_shell_layout(area) else {
+        return None;
+    };
+
+    Some(main)
+}
+
+fn setup_language_list_rect(main: Rect) -> Rect {
+    tundra_ui::setup_language_list_area(main, tundra_ui::setup_language_options().len())
+}
+
+fn setup_row_at(rect: Rect, coordinates: CellPosition) -> Option<usize> {
+    rect_contains(rect, coordinates).then(|| coordinates.1.saturating_sub(rect.y) as usize)
+}
+
+fn setup_field_for_component(component: ShellComponent) -> Option<tundra_ui::SetupField> {
+    match component {
+        ShellComponent::SetupLanguage => Some(tundra_ui::SetupField::LanguageList),
+        ShellComponent::SetupTimezone => Some(tundra_ui::SetupField::TimezoneList),
+        ShellComponent::SetupAdminUsername => Some(tundra_ui::SetupField::AdminUsername),
+        ShellComponent::SetupAdminPassword => Some(tundra_ui::SetupField::AdminPassword),
+        ShellComponent::SetupAdminHint => Some(tundra_ui::SetupField::PasswordHint),
+        ShellComponent::SetupSubmit => Some(tundra_ui::SetupField::Submit),
+        _ => None,
+    }
+}
+
+fn setup_component_for_field(field: tundra_ui::SetupField) -> ShellComponent {
+    match field {
+        tundra_ui::SetupField::LanguageList => ShellComponent::SetupLanguage,
+        tundra_ui::SetupField::TimezoneList => ShellComponent::SetupTimezone,
+        tundra_ui::SetupField::AdminUsername => ShellComponent::SetupAdminUsername,
+        tundra_ui::SetupField::AdminPassword => ShellComponent::SetupAdminPassword,
+        tundra_ui::SetupField::PasswordHint => ShellComponent::SetupAdminHint,
+        tundra_ui::SetupField::Submit => ShellComponent::SetupSubmit,
+    }
+}
+
+fn setup_component_active_for_step(component: ShellComponent, step: tundra_ui::SetupStep) -> bool {
+    matches!(
+        (step, component),
+        (
+            tundra_ui::SetupStep::Language,
+            ShellComponent::SetupLanguage
+        ) | (
+            tundra_ui::SetupStep::Timezone,
+            ShellComponent::SetupTimezone
+        ) | (
+            tundra_ui::SetupStep::Admin,
+            ShellComponent::SetupAdminUsername
+                | ShellComponent::SetupAdminPassword
+                | ShellComponent::SetupAdminHint
+                | ShellComponent::SetupSubmit
+        )
+    )
+}
+
+fn setup_admin_text_field(field: tundra_ui::SetupField) -> bool {
+    matches!(
+        field,
+        tundra_ui::SetupField::AdminUsername
+            | tundra_ui::SetupField::AdminPassword
+            | tundra_ui::SetupField::PasswordHint
+    )
+}
+
+fn setup_language_code_at(
+    options: &[tundra_ui::SetupLanguageOption],
+    index: usize,
+) -> Option<String> {
+    options
+        .get(index)
+        .or_else(|| options.first())
+        .map(|option| option.code.clone())
+}
+
+fn setup_timezone_id_at(
+    options: &[tundra_ui::SetupTimezoneOption],
+    index: usize,
+) -> Option<String> {
+    options
+        .get(index)
+        .or_else(|| options.first())
+        .map(|option| option.id.clone())
 }
 
 fn popup_rect(terminal_size: CellPosition, anchor: CellPosition) -> Rect {
@@ -3791,6 +4540,7 @@ pub fn run_fullscreen_blocking(
     loop {
         let chrome = state.to_shell_chrome_view_model();
         let home = state.to_home_view_model();
+        let setup = state.to_setup_view_model();
         let login = state.to_login_view_model();
         let bootstrap_admin = state.to_bootstrap_admin_view_model();
         let user_management = state.to_user_management_view_model();
@@ -3801,6 +4551,9 @@ pub fn run_fullscreen_blocking(
         guard.terminal_mut().draw(|frame| {
             let area = frame.area();
             match active_screen {
+                ShellScreen::FirstRunSetup => {
+                    tundra_ui::render_setup(frame, area, &chrome, &setup, &theme);
+                }
                 ShellScreen::Login => {
                     tundra_ui::render_login(frame, area, &chrome, &login, &theme);
                 }

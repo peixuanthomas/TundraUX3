@@ -113,6 +113,64 @@ impl BootstrapAdminViewModel {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SetupStep {
+    Language,
+    Timezone,
+    Admin,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SetupField {
+    LanguageList,
+    TimezoneList,
+    AdminUsername,
+    AdminPassword,
+    PasswordHint,
+    Submit,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SetupLanguageOption {
+    pub code: String,
+    pub label: String,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct SetupTimezoneOption {
+    pub id: String,
+    pub label: String,
+    pub description: String,
+    pub longitude: f64,
+    pub latitude: f64,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct SetupViewModel {
+    pub step: SetupStep,
+    pub languages: Vec<SetupLanguageOption>,
+    pub timezones: Vec<SetupTimezoneOption>,
+    pub selected_language_index: usize,
+    pub selected_timezone_index: usize,
+    pub timezone_window_start: usize,
+    pub admin_username: String,
+    pub admin_password_len: usize,
+    pub password_hint: String,
+    pub focused_field: SetupField,
+    pub can_submit: bool,
+    pub error: Option<String>,
+}
+
+impl SetupViewModel {
+    pub fn selected_language(&self) -> Option<&SetupLanguageOption> {
+        self.languages.get(self.selected_language_index)
+    }
+
+    pub fn selected_timezone(&self) -> Option<&SetupTimezoneOption> {
+        self.timezones.get(self.selected_timezone_index)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UserManagementUserViewModel {
     pub username: String,

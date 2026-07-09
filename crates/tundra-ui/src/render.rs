@@ -1,17 +1,30 @@
 use ratatui::Frame;
-use ratatui::layout::{Alignment, Rect};
+use ratatui::layout::{Alignment, Constraint, Layout, Rect};
 use ratatui::text::Line;
 use ratatui::widgets::{Block, Borders, Clear, Paragraph, Wrap};
 
 use crate::{
     AuthField, BootstrapAdminViewModel, ExitConfirmViewModel, ExplorerDialogViewModel,
     ExplorerEntryViewModel, ExplorerSearchViewModel, ExplorerViewModel, HomeDisplayMode,
-    HomeViewModel, LoginViewModel, ShellChromeViewModel, ShellLayout, TundraTheme,
-    UserManagementField, UserManagementFormKind, UserManagementFormViewModel,
-    UserManagementViewModel, compute_shell_layout,
+    HomeViewModel, LoginViewModel, SetupField, SetupStep, SetupViewModel, ShellChromeViewModel,
+    ShellLayout, TundraTheme, UserManagementField, UserManagementFormKind,
+    UserManagementFormViewModel, UserManagementViewModel, compute_shell_layout,
+    timezone_map::{TimezoneMapWidget, boundary_id_for_timezone},
 };
 
 pub const EXPLORER_HELP_LINE: &str = "Enter: open    Backspace: parent    N: folder    T: text file    R: rename    X/Delete: delete    C: copy    V: paste    /: search    H: hidden    Esc: back";
+const SETUP_WIDE_MAP_MIN_WIDTH: u16 = 90;
+const SETUP_WIDE_MAP_MIN_HEIGHT: u16 = 14;
+const SETUP_CONTROLS_WIDTH: u16 = 48;
+const SETUP_TIMEZONE_HEADER_HEIGHT: u16 = 5;
+const SETUP_TIMEZONE_TOP_INDICATOR_HEIGHT: u16 = 1;
+const SETUP_TIMEZONE_BOTTOM_INDICATOR_HEIGHT: u16 = 1;
+const SETUP_TIMEZONE_FOOTER_HEIGHT: u16 = 3;
+const SETUP_LANGUAGE_LIST_LINE: u16 = 4;
+const SETUP_ADMIN_USERNAME_LINE: u16 = 2;
+const SETUP_ADMIN_PASSWORD_LINE: u16 = 3;
+const SETUP_ADMIN_HINT_LINE: u16 = 4;
+const SETUP_ADMIN_SUBMIT_LINE: u16 = 6;
 
 pub fn render_home(
     frame: &mut Frame<'_>,
@@ -81,6 +94,23 @@ pub fn render_bootstrap_admin(
         bootstrap_lines(model),
         theme,
     );
+}
+
+pub fn render_setup(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    chrome: &ShellChromeViewModel,
+    model: &SetupViewModel,
+    theme: &TundraTheme,
+) {
+    match compute_shell_layout(area) {
+        ShellLayout::Compact(compact) => render_compact_home(frame, compact, theme),
+        ShellLayout::Full { top, main, status } => {
+            render_top(frame, top, chrome, theme);
+            render_setup_main(frame, main, model, theme);
+            render_status(frame, status, chrome, theme);
+        }
+    }
 }
 
 pub fn render_user_management(
@@ -239,6 +269,509 @@ fn render_compact_home(frame: &mut Frame<'_>, area: Rect, theme: &TundraTheme) {
         .wrap(Wrap { trim: true });
 
     frame.render_widget(compact, area);
+}
+
+fn render_setup_main(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    model: &SetupViewModel,
+    theme: &TundraTheme,
+) {
+    if model.step == SetupStep::Timezone
+        && area.width >= SETUP_WIDE_MAP_MIN_WIDTH
+        && area.height >= SETUP_WIDE_MAP_MIN_HEIGHT
+    {
+        let [controls, map] = Layout::horizontal([
+            Constraint::Length(SETUP_CONTROLS_WIDTH),
+            Constraint::Min(30),
+        ])
+        .areas(area);
+        render_setup_controls(frame, area, controls, model, theme);
+        render_setup_timezone_map(frame, map, model, theme);
+    } else {
+        render_setup_controls(frame, area, area, model, theme);
+    }
+}
+
+fn render_setup_controls(
+    frame: &mut Frame<'_>,
+    main: Rect,
+    controls: Rect,
+    model: &SetupViewModel,
+    theme: &TundraTheme,
+) {
+    match model.step {
+        SetupStep::Language => render_setup_language_page(frame, controls, model, theme),
+        SetupStep::Timezone => render_setup_timezone_page(frame, main, controls, model, theme),
+        SetupStep::Admin => render_setup_admin_page(frame, controls, model, theme),
+    }
+}
+
+fn render_setup_timezone_map(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    model: &SetupViewModel,
+    theme: &TundraTheme,
+) {
+    let selected_timezone = model.selected_timezone();
+    let selected_timezone_id = selected_timezone.map(|timezone| timezone.id.as_str());
+    let selected_boundary_id = selected_timezone_id.map(boundary_id_for_timezone);
+    let mut widget = TimezoneMapWidget::themed(&[], theme)
+        .selected_timezone_id(selected_timezone_id)
+        .selected_boundary_id(selected_boundary_id);
+
+    if let Some(timezone) = selected_timezone {
+        widget = widget.city(timezone.longitude, timezone.latitude);
+    }
+
+    frame.render_widget(widget, area);
+}
+
+fn render_setup_language_page(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    model: &SetupViewModel,
+    theme: &TundraTheme,
+) {
+    let controls = Paragraph::new(setup_language_lines(model, theme))
+        .block(setup_block(theme))
+        .wrap(Wrap { trim: true });
+
+    frame.render_widget(controls, area);
+}
+
+fn render_setup_timezone_page(
+    frame: &mut Frame<'_>,
+    main: Rect,
+    area: Rect,
+    model: &SetupViewModel,
+    theme: &TundraTheme,
+) {
+    frame.render_widget(setup_block(theme), area);
+
+    let content = setup_inner_area(area);
+    let list_area = setup_timezone_list_area(main);
+    let visible_rows = setup_timezone_visible_rows(main);
+    let (start, end) = setup_timezone_window_bounds(model, visible_rows);
+
+    let header = Rect::new(
+        content.x,
+        content.y,
+        content.width,
+        SETUP_TIMEZONE_HEADER_HEIGHT.min(content.height),
+    );
+    let top_indicator = Rect::new(
+        content.x,
+        list_area
+            .y
+            .saturating_sub(SETUP_TIMEZONE_TOP_INDICATOR_HEIGHT),
+        content.width,
+        SETUP_TIMEZONE_TOP_INDICATOR_HEIGHT.min(content.height),
+    );
+    let bottom_indicator = Rect::new(
+        content.x,
+        list_area.y.saturating_add(list_area.height),
+        content.width,
+        SETUP_TIMEZONE_BOTTOM_INDICATOR_HEIGHT.min(content.height),
+    );
+    let footer = Rect::new(
+        content.x,
+        content
+            .y
+            .saturating_add(content.height.saturating_sub(SETUP_TIMEZONE_FOOTER_HEIGHT)),
+        content.width,
+        SETUP_TIMEZONE_FOOTER_HEIGHT.min(content.height),
+    );
+
+    frame.render_widget(
+        Paragraph::new(setup_timezone_header_lines(model, theme)),
+        header,
+    );
+    frame.render_widget(
+        Paragraph::new(setup_timezone_indicator_line(
+            start > 0,
+            "^ more timezones",
+            theme,
+        )),
+        top_indicator,
+    );
+    frame.render_widget(
+        Paragraph::new(setup_timezone_window_lines(model, start, end, theme)),
+        list_area,
+    );
+    frame.render_widget(
+        Paragraph::new(setup_timezone_indicator_line(
+            end < model.timezones.len(),
+            "v more timezones",
+            theme,
+        )),
+        bottom_indicator,
+    );
+    frame.render_widget(
+        Paragraph::new(setup_timezone_footer_lines(model, theme)).wrap(Wrap { trim: true }),
+        footer,
+    );
+}
+
+fn render_setup_admin_page(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    model: &SetupViewModel,
+    theme: &TundraTheme,
+) {
+    let controls = Paragraph::new(setup_admin_lines(model, theme))
+        .block(setup_block(theme))
+        .wrap(Wrap { trim: true });
+
+    frame.render_widget(controls, area);
+}
+
+fn setup_block(theme: &TundraTheme) -> Block<'static> {
+    Block::default()
+        .title("First Run Setup")
+        .title_style(theme.title_style())
+        .borders(Borders::ALL)
+        .style(theme.body_style())
+}
+
+fn setup_language_lines(model: &SetupViewModel, theme: &TundraTheme) -> Vec<Line<'static>> {
+    let mut lines = vec![
+        Line::styled(
+            format!("Step: {}", setup_step_label(model.step)),
+            theme.title_style(),
+        ),
+        Line::from("Choose a language, then continue."),
+        Line::styled(
+            "Enter / Space: continue    Up / Down: choose    F1: help",
+            theme.muted_style(),
+        ),
+        Line::from(""),
+    ];
+
+    if model.languages.is_empty() {
+        lines.push(Line::styled(
+            "  No languages available",
+            theme.muted_style(),
+        ));
+    } else {
+        for (index, language) in model.languages.iter().enumerate() {
+            let text = format!(
+                "{}{} ({})",
+                selection_marker(index == model.selected_language_index),
+                language.label,
+                language.code
+            );
+            if index == model.selected_language_index {
+                lines.push(Line::styled(text, theme.title_style()));
+            } else {
+                lines.push(Line::from(text));
+            }
+        }
+    }
+
+    lines.push(Line::from(""));
+    lines.push(Line::styled(
+        selected_language_summary(model),
+        theme.muted_style(),
+    ));
+    append_setup_error(&mut lines, model, theme);
+
+    lines
+}
+
+fn setup_timezone_header_lines(model: &SetupViewModel, theme: &TundraTheme) -> Vec<Line<'static>> {
+    vec![
+        Line::styled(
+            format!("Step: {}", setup_step_label(model.step)),
+            theme.title_style(),
+        ),
+        Line::from("Choose a city or IANA zone, then continue."),
+        Line::styled(
+            "Enter: continue    Up / Down: choose    PgUp / PgDn: jump    F1: help",
+            theme.muted_style(),
+        ),
+        Line::from(selected_timezone_id_summary(model)),
+        Line::styled(
+            selected_timezone_description_summary(model),
+            theme.muted_style(),
+        ),
+    ]
+}
+
+fn setup_timezone_footer_lines(model: &SetupViewModel, theme: &TundraTheme) -> Vec<Line<'static>> {
+    let mut lines = Vec::new();
+    if let Some(error) = &model.error {
+        lines.push(Line::styled(format!("Error: {error}"), theme.error_style()));
+    }
+    lines
+}
+
+fn setup_admin_lines(model: &SetupViewModel, theme: &TundraTheme) -> Vec<Line<'static>> {
+    let mut lines = vec![
+        Line::styled(
+            format!("Step: {}", setup_step_label(model.step)),
+            theme.title_style(),
+        ),
+        Line::from(""),
+    ];
+    lines.push(setup_field_line(
+        model,
+        SetupField::AdminUsername,
+        format!("Admin username: {}", model.admin_username),
+        theme,
+    ));
+    lines.push(setup_field_line(
+        model,
+        SetupField::AdminPassword,
+        format!("Admin password: {}", "*".repeat(model.admin_password_len)),
+        theme,
+    ));
+    lines.push(setup_field_line(
+        model,
+        SetupField::PasswordHint,
+        format!("Password hint: {}", empty_placeholder(&model.password_hint)),
+        theme,
+    ));
+    lines.push(Line::from(""));
+    lines.push(setup_submit_line(model, theme));
+    append_setup_error(&mut lines, model, theme);
+
+    lines
+}
+
+fn append_setup_error(lines: &mut Vec<Line<'static>>, model: &SetupViewModel, theme: &TundraTheme) {
+    if let Some(error) = &model.error {
+        lines.push(Line::from(""));
+        lines.push(Line::styled(format!("Error: {error}"), theme.error_style()));
+    }
+}
+
+pub fn setup_timezone_list_area(main: Rect) -> Rect {
+    let controls = setup_timezone_controls_area(main);
+    let content = setup_inner_area(controls);
+    let reserved_height = SETUP_TIMEZONE_HEADER_HEIGHT
+        .saturating_add(SETUP_TIMEZONE_TOP_INDICATOR_HEIGHT)
+        .saturating_add(SETUP_TIMEZONE_BOTTOM_INDICATOR_HEIGHT)
+        .saturating_add(SETUP_TIMEZONE_FOOTER_HEIGHT);
+    Rect::new(
+        content.x,
+        content
+            .y
+            .saturating_add(SETUP_TIMEZONE_HEADER_HEIGHT)
+            .saturating_add(SETUP_TIMEZONE_TOP_INDICATOR_HEIGHT),
+        content.width,
+        content.height.saturating_sub(reserved_height),
+    )
+}
+
+pub fn setup_timezone_visible_rows(main: Rect) -> usize {
+    usize::from(setup_timezone_list_area(main).height)
+}
+
+pub fn setup_language_list_area(main: Rect, language_count: usize) -> Rect {
+    setup_line_area(
+        main,
+        SETUP_LANGUAGE_LIST_LINE,
+        setup_rendered_row_count(language_count),
+    )
+}
+
+pub fn setup_admin_field_area(main: Rect, field: SetupField) -> Rect {
+    let line = match field {
+        SetupField::AdminUsername => SETUP_ADMIN_USERNAME_LINE,
+        SetupField::AdminPassword => SETUP_ADMIN_PASSWORD_LINE,
+        SetupField::PasswordHint => SETUP_ADMIN_HINT_LINE,
+        SetupField::Submit => SETUP_ADMIN_SUBMIT_LINE,
+        SetupField::LanguageList | SetupField::TimezoneList => SETUP_ADMIN_USERNAME_LINE,
+    };
+    setup_line_area(main, line, 1)
+}
+
+fn setup_timezone_controls_area(main: Rect) -> Rect {
+    if main.width >= SETUP_WIDE_MAP_MIN_WIDTH && main.height >= SETUP_WIDE_MAP_MIN_HEIGHT {
+        Layout::horizontal([
+            Constraint::Length(SETUP_CONTROLS_WIDTH),
+            Constraint::Min(30),
+        ])
+        .split(main)[0]
+    } else {
+        main
+    }
+}
+
+fn setup_inner_area(area: Rect) -> Rect {
+    Rect::new(
+        area.x.saturating_add(1),
+        area.y.saturating_add(1),
+        area.width.saturating_sub(2),
+        area.height.saturating_sub(2),
+    )
+}
+
+fn setup_line_area(area: Rect, line: u16, desired_height: u16) -> Rect {
+    let content = setup_inner_area(area);
+    if line >= content.height || desired_height == 0 {
+        return Rect::new(
+            content.x,
+            content.y.saturating_add(content.height),
+            content.width,
+            0,
+        );
+    }
+
+    Rect::new(
+        content.x,
+        content.y.saturating_add(line),
+        content.width,
+        desired_height.min(content.height.saturating_sub(line)),
+    )
+}
+
+fn setup_rendered_row_count(count: usize) -> u16 {
+    u16::try_from(count.max(1)).unwrap_or(u16::MAX)
+}
+
+fn setup_timezone_window_bounds(model: &SetupViewModel, visible_rows: usize) -> (usize, usize) {
+    if model.timezones.is_empty() || visible_rows == 0 {
+        return (0, 0);
+    }
+
+    let selected = model.selected_timezone_index.min(model.timezones.len() - 1);
+    let max_start = model.timezones.len().saturating_sub(visible_rows);
+    let mut start = model.timezone_window_start.min(max_start);
+
+    if selected < start {
+        start = selected;
+    } else if selected >= start.saturating_add(visible_rows) {
+        start = selected.saturating_add(1).saturating_sub(visible_rows);
+    }
+    start = start.min(max_start);
+
+    let end = start
+        .saturating_add(visible_rows)
+        .min(model.timezones.len());
+    (start, end)
+}
+
+fn setup_timezone_indicator_line(
+    visible: bool,
+    text: &'static str,
+    theme: &TundraTheme,
+) -> Line<'static> {
+    if visible {
+        Line::styled(text, theme.muted_style())
+    } else {
+        Line::from("")
+    }
+}
+
+fn setup_timezone_window_lines(
+    model: &SetupViewModel,
+    start: usize,
+    end: usize,
+    theme: &TundraTheme,
+) -> Vec<Line<'static>> {
+    if model.timezones.is_empty() {
+        return vec![Line::styled(
+            "  No timezones available",
+            theme.muted_style(),
+        )];
+    }
+
+    if start >= end {
+        return Vec::new();
+    }
+
+    model.timezones[start..end]
+        .iter()
+        .enumerate()
+        .map(|(offset, timezone)| {
+            let index = start + offset;
+            let text = format!(
+                "{}{} ({})",
+                selection_marker(index == model.selected_timezone_index),
+                timezone.label,
+                timezone.id
+            );
+            if index == model.selected_timezone_index {
+                Line::styled(text, theme.title_style())
+            } else {
+                Line::from(text)
+            }
+        })
+        .collect()
+}
+
+fn setup_field_line(
+    model: &SetupViewModel,
+    field: SetupField,
+    text: String,
+    theme: &TundraTheme,
+) -> Line<'static> {
+    let text = format!("{}{}", focus_marker(model.focused_field == field), text);
+    if model.focused_field == field {
+        Line::styled(text, theme.title_style())
+    } else {
+        Line::from(text)
+    }
+}
+
+fn setup_submit_line(model: &SetupViewModel, theme: &TundraTheme) -> Line<'static> {
+    let label = if model.can_submit {
+        "Submit: ready"
+    } else {
+        "Submit: incomplete"
+    };
+    let text = format!(
+        "{}{}",
+        focus_marker(model.focused_field == SetupField::Submit),
+        label
+    );
+
+    if model.focused_field == SetupField::Submit {
+        Line::styled(text, theme.title_style())
+    } else if model.can_submit {
+        Line::from(text)
+    } else {
+        Line::styled(text, theme.muted_style())
+    }
+}
+
+fn selected_language_summary(model: &SetupViewModel) -> String {
+    model
+        .selected_language()
+        .map(|language| format!("Selected language: {}", language.code))
+        .unwrap_or_else(|| "Selected language: none".to_string())
+}
+
+fn selected_timezone_id_summary(model: &SetupViewModel) -> String {
+    model
+        .selected_timezone()
+        .map(|timezone| format!("Selected timezone: {}", timezone.id))
+        .unwrap_or_else(|| "Selected timezone: none".to_string())
+}
+
+fn selected_timezone_description_summary(model: &SetupViewModel) -> String {
+    model
+        .selected_timezone()
+        .map(|timezone| format!("{} - {}", timezone.label, timezone.description))
+        .unwrap_or_else(|| "No timezone selected".to_string())
+}
+
+fn empty_placeholder(value: &str) -> &str {
+    if value.is_empty() { "-" } else { value }
+}
+
+fn setup_step_label(step: SetupStep) -> &'static str {
+    match step {
+        SetupStep::Language => "Language",
+        SetupStep::Timezone => "Timezone",
+        SetupStep::Admin => "Admin",
+    }
+}
+
+fn selection_marker(selected: bool) -> &'static str {
+    if selected { "> " } else { "  " }
 }
 
 fn render_explorer_main(

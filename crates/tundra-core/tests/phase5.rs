@@ -4,7 +4,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use tundra_core::{
     AuditOutcome, AuditService, CoreError, DebugPolicy, FAILED_LOGIN_LOCK_THRESHOLD,
-    PermissionAction, PermissionService, SessionService, UserRole, UserService, verify_password,
+    PASSWORD_HINT_MAX_LEN, PermissionAction, PermissionService, SessionService, UserRole,
+    UserService, verify_password,
 };
 use tundra_platform::{AppPaths, cleanup_temp_path};
 use tundra_storage::{StorageManager, UserRecord};
@@ -80,9 +81,11 @@ fn bootstrap_login_and_password_hashing_work_without_plaintext_storage() {
         .bootstrap_admin("AdminUser", "StrongPass123")
         .expect("bootstrap should create admin");
     assert_eq!(admin.role, UserRole::Admin);
+    assert_eq!(admin.password_hint, None);
 
     let stored = manager.load_users().expect("users should load");
     assert_eq!(stored.users.len(), 1);
+    assert_eq!(stored.users[0].password_hint, None);
     assert_ne!(stored.users[0].password_hash, "StrongPass123");
     assert!(stored.users[0].password_hash.starts_with("$argon2"));
     assert!(verify_password(
@@ -107,6 +110,75 @@ fn bootstrap_login_and_password_hashing_work_without_plaintext_storage() {
 
     sessions.logout().expect("logout should audit");
     assert!(sessions.current_session().is_none());
+}
+
+#[test]
+fn bootstrap_admin_with_trimmed_hint_persists_and_login_still_works() {
+    let fixture = FixtureRoot::new("auth-hint");
+    let manager = storage(fixture.path());
+    let users = UserService::new(manager.clone());
+
+    let admin = users
+        .bootstrap_admin_with_hint(
+            "AdminUser",
+            "StrongPass123",
+            Some("  used for this device  "),
+        )
+        .expect("bootstrap should create admin with hint");
+
+    assert_eq!(admin.password_hint.as_deref(), Some("used for this device"));
+    let stored = manager.load_users().expect("users should load");
+    assert_eq!(
+        stored.users[0].password_hint.as_deref(),
+        Some("used for this device")
+    );
+
+    let mut sessions = SessionService::new(manager);
+    let session = sessions
+        .login("AdminUser", "StrongPass123")
+        .expect("login should work with hinted account");
+    assert_eq!(session.username, "AdminUser");
+}
+
+#[test]
+fn bootstrap_admin_with_blank_hint_stores_none() {
+    let fixture = FixtureRoot::new("blank-hint");
+    let manager = storage(fixture.path());
+    let users = UserService::new(manager.clone());
+
+    let admin = users
+        .bootstrap_admin_with_hint("AdminUser", "StrongPass123", Some(" \t\n "))
+        .expect("blank hint should normalize to none");
+
+    assert_eq!(admin.password_hint, None);
+    let stored = manager.load_users().expect("users should load");
+    assert_eq!(stored.users[0].password_hint, None);
+}
+
+#[test]
+fn invalid_password_hint_rejects_without_creating_user() {
+    let fixture = FixtureRoot::new("invalid-hint");
+    let manager = storage(fixture.path());
+    let users = UserService::new(manager.clone());
+    let too_long = "x".repeat(PASSWORD_HINT_MAX_LEN + 1);
+    let invalid_hints = [
+        "StrongPass123".to_string(),
+        "remember\u{0007}this".to_string(),
+        too_long,
+    ];
+
+    for hint in invalid_hints {
+        let result = users.bootstrap_admin_with_hint("AdminUser", "StrongPass123", Some(&hint));
+
+        assert!(matches!(result, Err(CoreError::InvalidUserInfo(_))));
+        assert!(
+            manager
+                .load_users()
+                .expect("users should load")
+                .users
+                .is_empty()
+        );
+    }
 }
 
 #[test]

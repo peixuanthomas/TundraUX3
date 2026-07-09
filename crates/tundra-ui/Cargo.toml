@@ -7,4 +7,6 @@ edition.workspace = true
 path = "src/lib.rs"
 
 [dependencies]
+geojson = "1.0"
 ratatui = "0.29"
+zip = { version = "6", default-features = false, features = ["deflate"] }

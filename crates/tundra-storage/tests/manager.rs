@@ -71,6 +71,8 @@ fn toml_and_json_documents_round_trip() {
     let config = StorageConfig {
         schema_version: SCHEMA_VERSION,
         theme: "light".to_string(),
+        language: "zh-Hans".to_string(),
+        timezone: "Asia/Shanghai".to_string(),
         shortcuts,
         explorer: ExplorerConfig { show_hidden: true },
         launcher: LauncherConfig {
@@ -85,6 +87,10 @@ fn toml_and_json_documents_round_trip() {
         .save_config(&config)
         .expect("config should save atomically");
     assert_eq!(manager.load_config().expect("config should reload"), config);
+    let config_contents =
+        fs::read_to_string(&manager.layout().config_path).expect("config should be readable");
+    assert!(config_contents.contains("language = \"zh-Hans\""));
+    assert!(config_contents.contains("timezone = \"Asia/Shanghai\""));
 
     let users = UsersDocument {
         schema_version: USERS_SCHEMA_VERSION,
@@ -94,6 +100,7 @@ fn toml_and_json_documents_round_trip() {
             display_name: "Local User".to_string(),
             role: "User".to_string(),
             password_hash: "$argon2id$placeholder".to_string(),
+            password_hint: Some("project password".to_string()),
             enabled: true,
             failed_login_attempts: 0,
             locked_until_epoch_ms: None,
@@ -151,6 +158,54 @@ fn toml_and_json_documents_round_trip() {
     };
     manager.save_trash(&trash).expect("trash should save");
     assert_eq!(manager.load_trash().expect("trash should reload"), trash);
+
+    cleanup(&base);
+}
+
+#[test]
+fn old_config_without_language_or_timezone_loads_with_defaults() {
+    let base = unique_temp_root("old-config-defaults");
+    let paths = app_paths(&base);
+    let layout = StorageLayout::from_app_paths(&paths);
+    fs::create_dir_all(layout.config_path.parent().expect("config parent"))
+        .expect("config parent should be writable");
+    fs::write(
+        &layout.config_path,
+        "schema_version = 1\ntheme = \"light\"\n\n[shortcuts]\n\n[explorer]\nshow_hidden = true\n\n[launcher]\npinned_apps = []\npinned_dirs = []\n\n[security]\nallow_release_debug = false\n",
+    )
+    .expect("old config fixture");
+
+    let opened = StorageManager::open(paths).expect("old config should load");
+    let config = opened.manager.load_config().expect("config should load");
+
+    assert_eq!(config.theme, "light");
+    assert_eq!(config.language, "en-US");
+    assert_eq!(config.timezone, "UTC");
+    assert!(opened.report.recovered_files.is_empty());
+    assert!(opened.report.warnings.is_empty());
+
+    cleanup(&base);
+}
+
+#[test]
+fn old_users_without_password_hint_load_with_none() {
+    let base = unique_temp_root("old-users-no-hint");
+    let paths = app_paths(&base);
+    let layout = StorageLayout::from_app_paths(&paths);
+    fs::create_dir_all(&layout.data_path).expect("data path should be writable");
+    fs::write(
+        &layout.users_path,
+        "{\n  \"schema_version\": 2,\n  \"users\": [\n    {\n      \"id\": \"user-1\",\n      \"username\": \"AdminUser\",\n      \"display_name\": \"Admin User\",\n      \"role\": \"Admin\",\n      \"password_hash\": \"$argon2id$placeholder\",\n      \"enabled\": true,\n      \"failed_login_attempts\": 0,\n      \"locked_until_epoch_ms\": null,\n      \"created_at_epoch_ms\": 1,\n      \"updated_at_epoch_ms\": 1,\n      \"last_login_at_epoch_ms\": null\n    }\n  ]\n}\n",
+    )
+    .expect("old users fixture");
+
+    let opened = StorageManager::open(paths).expect("old users should load");
+    let users = opened.manager.load_users().expect("users should load");
+
+    assert_eq!(users.users.len(), 1);
+    assert_eq!(users.users[0].password_hint, None);
+    assert!(opened.report.recovered_files.is_empty());
+    assert!(opened.report.warnings.is_empty());
 
     cleanup(&base);
 }
@@ -324,6 +379,7 @@ fn legacy_v1_users_are_migrated_to_disabled_v2_records() {
     assert_eq!(users.users[0].role, "User");
     assert!(!users.users[0].enabled);
     assert!(users.users[0].password_hash.is_empty());
+    assert_eq!(users.users[0].password_hint, None);
     assert_eq!(opened.report.migrated_files, vec![layout.users_path]);
 
     cleanup(&base);
