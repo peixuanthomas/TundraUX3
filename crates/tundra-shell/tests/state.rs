@@ -1,5 +1,6 @@
 use std::time::{Duration, Instant};
 
+use ratatui::layout::Rect;
 use tundra_platform::{CapabilityStatus, PlatformCapabilities, PlatformKind};
 use tundra_shell::{
     ClickKind, HomeModeOverride, InputEvent, PointerButton, ScrollDirection, ShellAction,
@@ -310,11 +311,7 @@ fn double_click_is_detected_for_same_component_and_nearby_cell() {
 
     assert_eq!(
         routed.command,
-        ShellCommand::Activate {
-            target: ShellComponent::Home,
-            coordinates: (11, 6),
-            click: ClickKind::Double,
-        }
+        ShellCommand::ActivateHomeEntryAt((11, 6), ClickKind::Double)
     );
 }
 
@@ -460,6 +457,88 @@ fn explicit_user_mode_shows_product_entries_without_diagnostics() {
 }
 
 #[test]
+fn home_arrow_keys_update_selected_entry() {
+    let mut state =
+        ShellState::new_for_home_mode(build_default_config(), (120, 40), ShellHomeMode::User);
+
+    assert_eq!(state.selected_home_entry_index(), 0);
+
+    state.apply_input(InputEvent::from_key_label("Right"));
+    assert_eq!(state.selected_home_entry_index(), 1);
+
+    state.apply_input(InputEvent::from_key_label("End"));
+    assert_eq!(state.selected_home_entry_index(), 4);
+}
+
+#[test]
+fn enter_on_home_explorer_entry_routes_activation() {
+    let mut state =
+        ShellState::new_for_home_mode(build_default_config(), (120, 40), ShellHomeMode::User);
+
+    state.apply_input(InputEvent::from_key_label("Enter"));
+
+    assert_eq!(
+        state.last_command(),
+        Some(&ShellCommand::ActivateSelectedHomeEntry)
+    );
+    assert_eq!(state.status(), "Ready");
+}
+
+#[test]
+fn enter_on_unimplemented_home_entry_shows_placeholder_status() {
+    let mut state =
+        ShellState::new_for_home_mode(build_default_config(), (120, 40), ShellHomeMode::User);
+
+    state.apply_input(InputEvent::from_key_label("Right"));
+    state.apply_input(InputEvent::from_key_label("Enter"));
+
+    assert_eq!(
+        state.last_command(),
+        Some(&ShellCommand::ActivateSelectedHomeEntry)
+    );
+    assert_eq!(state.status(), "Launcher is not implemented yet");
+}
+
+#[test]
+fn mouse_single_click_on_home_entry_selects_that_entry() {
+    let mut state =
+        ShellState::new_for_home_mode(build_default_config(), (120, 40), ShellHomeMode::User);
+    let launcher = home_entry_coordinates(&state, 1);
+
+    state.apply_input(InputEvent::mouse_down(PointerButton::Left, launcher));
+
+    assert_eq!(state.selected_home_entry_index(), 1);
+    assert_eq!(
+        state.last_command(),
+        Some(&ShellCommand::ActivateHomeEntryAt(
+            launcher,
+            ClickKind::Single
+        ))
+    );
+    assert_eq!(state.status(), "Home: Launcher");
+}
+
+#[test]
+fn mouse_double_click_on_unimplemented_home_entry_shows_placeholder_status() {
+    let mut state =
+        ShellState::new_for_home_mode(build_default_config(), (120, 40), ShellHomeMode::User);
+    let launcher = home_entry_coordinates(&state, 1);
+
+    state.apply_input(InputEvent::mouse_down(PointerButton::Left, launcher));
+    state.apply_input(InputEvent::mouse_down(PointerButton::Left, launcher));
+
+    assert_eq!(state.selected_home_entry_index(), 1);
+    assert_eq!(
+        state.last_command(),
+        Some(&ShellCommand::ActivateHomeEntryAt(
+            launcher,
+            ClickKind::Double
+        ))
+    );
+    assert_eq!(state.status(), "Launcher is not implemented yet");
+}
+
+#[test]
 fn state_builds_shell_chrome_view_model() {
     let mut state = ShellState::new(debug_config(), (120, 40));
     state.apply_input(InputEvent::from_key_label("q"));
@@ -593,4 +672,17 @@ fn restored_session_is_sanitized_to_stable_home_state() {
     assert_eq!(saved.focused_component, ShellComponent::Home);
     assert_eq!(saved.display_mode, ShellHomeMode::User);
     assert_eq!(saved.active_popup, None);
+}
+
+fn home_entry_coordinates(state: &ShellState, index: usize) -> (u16, u16) {
+    let area = Rect::new(0, 0, state.terminal_size().0, state.terminal_size().1);
+    let tundra_ui::ShellLayout::Full { main, .. } = tundra_ui::compute_shell_layout(area) else {
+        panic!("state tests use a full shell layout");
+    };
+    let tile = tundra_ui::home_entry_tile_areas(main, state.to_home_view_model().entries().len())
+        .get(index)
+        .copied()
+        .unwrap_or_else(|| panic!("missing home entry tile at index {index}"));
+
+    (tile.x.saturating_add(1), tile.y.saturating_add(1))
 }

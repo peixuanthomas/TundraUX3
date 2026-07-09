@@ -1,6 +1,7 @@
 mod command;
 mod focus;
 mod hit_test;
+mod home_icons;
 mod input;
 mod layout;
 mod render;
@@ -20,6 +21,7 @@ pub use focus::{
     ModalTrap,
 };
 pub use hit_test::{HitKind, HitMap, HitTarget, HitTargetKind};
+pub use home_icons::{HomeIcon, home_icon_for_label};
 pub use input::{
     InputEvent, Key, KeyCode, KeyEvent, KeyModifiers, KeyStroke, MouseAction, MouseButton,
     MouseEvent, MouseEventKind, Point, RouteTarget, RoutedEvent, RoutedTarget, ScrollDirection,
@@ -27,11 +29,12 @@ pub use input::{
 };
 pub use layout::{ShellLayout, compute_shell_layout};
 pub use render::{
-    explorer_first_entry_content_line, login_password_area, login_selected_username_area,
-    login_user_list_area, login_user_list_visible_rows, render_bootstrap_admin,
-    render_exit_confirmation, render_explorer, render_home, render_login, render_setup,
-    render_user_management, setup_admin_field_area, setup_language_list_area,
-    setup_timezone_list_area, setup_timezone_visible_rows,
+    explorer_first_entry_content_line, home_entry_index_at, home_entry_tile_areas,
+    login_password_area, login_selected_username_area, login_user_list_area,
+    login_user_list_visible_rows, render_bootstrap_admin, render_exit_confirmation,
+    render_explorer, render_home, render_login, render_setup, render_user_management,
+    setup_admin_field_area, setup_language_list_area, setup_timezone_list_area,
+    setup_timezone_visible_rows,
 };
 pub use setup_catalog::{setup_language_options, setup_timezone_options};
 pub use theme::TundraTheme;

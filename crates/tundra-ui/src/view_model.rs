@@ -57,6 +57,7 @@ pub struct HomeViewModel {
     pub(crate) current_user: Option<String>,
     pub(crate) current_time: Option<String>,
     entries: Vec<ShellEntry>,
+    selected_entry_index: usize,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -380,6 +381,7 @@ impl HomeViewModel {
             current_user: None,
             current_time: None,
             entries: Vec::new(),
+            selected_entry_index: 0,
         }
     }
 
@@ -388,12 +390,28 @@ impl HomeViewModel {
         current_time: impl Into<String>,
         entries: Vec<ShellEntry>,
     ) -> Self {
+        Self::user_with_selection(current_user, current_time, entries, 0)
+    }
+
+    pub fn user_with_selection(
+        current_user: impl Into<String>,
+        current_time: impl Into<String>,
+        entries: Vec<ShellEntry>,
+        selected_entry_index: usize,
+    ) -> Self {
+        let selected_entry_index = if entries.is_empty() {
+            0
+        } else {
+            selected_entry_index.min(entries.len() - 1)
+        };
+
         Self {
             display_mode: HomeDisplayMode::User,
             diagnostics: None,
             current_user: Some(current_user.into()),
             current_time: Some(current_time.into()),
             entries,
+            selected_entry_index,
         }
     }
 
@@ -407,6 +425,10 @@ impl HomeViewModel {
 
     pub fn entries(&self) -> &[ShellEntry] {
         &self.entries
+    }
+
+    pub fn selected_entry_index(&self) -> usize {
+        self.selected_entry_index
     }
 }
 

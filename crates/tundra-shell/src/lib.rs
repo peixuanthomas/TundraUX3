@@ -960,6 +960,15 @@ pub enum ShellCommand {
         target: ShellComponent,
         coordinates: CellPosition,
     },
+    HomeEntryLeft,
+    HomeEntryRight,
+    HomeEntryUp,
+    HomeEntryDown,
+    HomeFirstEntry,
+    HomeLastEntry,
+    ActivateSelectedHomeEntry,
+    SelectHomeEntryAt(CellPosition),
+    ActivateHomeEntryAt(CellPosition, ClickKind),
     OpenExplorer,
     CloseExplorer,
     ExplorerNext,
@@ -1198,6 +1207,7 @@ pub struct ShellState {
     user_management_selected: usize,
     user_management_message: Option<String>,
     user_management_mode: UserManagementMode,
+    selected_home_entry_index: usize,
     explorer_state: Option<ExplorerState>,
     explorer_input_mode: ExplorerInputMode,
     explorer_input: String,
@@ -1291,6 +1301,7 @@ impl ShellState {
             user_management_selected: 0,
             user_management_message: None,
             user_management_mode: UserManagementMode::Browse,
+            selected_home_entry_index: 0,
             explorer_state: None,
             explorer_input_mode: ExplorerInputMode::Browse,
             explorer_input: String::new(),
@@ -1393,7 +1404,12 @@ impl ShellState {
                     .as_ref()
                     .map(|session| session.username.as_str())
                     .unwrap_or("Guest");
-                tundra_ui::HomeViewModel::user(user, current_time_label(), self.user_home_entries())
+                tundra_ui::HomeViewModel::user_with_selection(
+                    user,
+                    current_time_label(),
+                    self.user_home_entries(),
+                    self.selected_home_entry_index(),
+                )
             }
         }
     }
@@ -2741,6 +2757,88 @@ impl ShellState {
         entries
     }
 
+    fn sync_home_entry_selection(&mut self) {
+        let count = self.user_home_entries().len();
+        self.selected_home_entry_index = if count == 0 {
+            0
+        } else {
+            self.selected_home_entry_index.min(count - 1)
+        };
+    }
+
+    fn select_home_entry(&mut self, index: usize) {
+        let entries = self.user_home_entries();
+        if entries.is_empty() {
+            self.selected_home_entry_index = 0;
+            return;
+        }
+
+        self.selected_home_entry_index = index.min(entries.len() - 1);
+        self.status_message = format!("Home: {}", entries[self.selected_home_entry_index].label);
+    }
+
+    fn select_home_entry_delta(&mut self, delta: isize) {
+        let count = self.user_home_entries().len();
+        if count == 0 {
+            self.selected_home_entry_index = 0;
+            return;
+        }
+
+        let current = self.selected_home_entry_index().min(count - 1) as isize;
+        let next = (current + delta).clamp(0, count.saturating_sub(1) as isize);
+        self.select_home_entry(next as usize);
+    }
+
+    fn select_home_entry_row_delta(&mut self, direction: isize) {
+        let columns = self.visible_home_entry_columns().max(1) as isize;
+        self.select_home_entry_delta(direction.saturating_mul(columns));
+    }
+
+    fn activate_selected_home_entry(&mut self, platform: &dyn Platform) {
+        self.activate_home_entry(self.selected_home_entry_index(), platform);
+    }
+
+    fn activate_home_entry(&mut self, index: usize, platform: &dyn Platform) {
+        let entries = self.user_home_entries();
+        let Some(entry) = entries.get(index) else {
+            return;
+        };
+
+        self.selected_home_entry_index = index;
+        match entry.label.as_str() {
+            "Explorer" => self.open_explorer(platform),
+            "User Management" | "User Profile" => self.open_user_management(),
+            label => {
+                self.error_message = None;
+                self.status_message = format!("{label} is not implemented yet");
+            }
+        }
+    }
+
+    fn visible_home_entry_columns(&self) -> usize {
+        let area = Rect::new(0, 0, self.terminal_size.0, self.terminal_size.1);
+        let tundra_ui::ShellLayout::Full { main, .. } = tundra_ui::compute_shell_layout(area)
+        else {
+            return 1;
+        };
+        let areas = tundra_ui::home_entry_tile_areas(main, self.user_home_entries().len());
+        let Some(first) = areas.first() else {
+            return 1;
+        };
+
+        areas.iter().take_while(|area| area.y == first.y).count()
+    }
+
+    fn home_entry_index_at(&self, coordinates: CellPosition) -> Option<usize> {
+        let area = Rect::new(0, 0, self.terminal_size.0, self.terminal_size.1);
+        let tundra_ui::ShellLayout::Full { main, .. } = tundra_ui::compute_shell_layout(area)
+        else {
+            return None;
+        };
+
+        tundra_ui::home_entry_index_at(main, self.user_home_entries().len(), coordinates)
+    }
+
     pub fn apply_input(&mut self, input: InputEvent) -> ShellAction {
         let platform = tundra_platform::native_platform();
         self.apply_input_with_platform(input, platform.as_ref())
@@ -2963,6 +3061,49 @@ impl ShellState {
                 coordinates,
             } => {
                 self.activate_login(target, coordinates);
+                ShellAction::Redraw
+            }
+            ShellCommand::HomeEntryLeft => {
+                self.select_home_entry_delta(-1);
+                ShellAction::Redraw
+            }
+            ShellCommand::HomeEntryRight => {
+                self.select_home_entry_delta(1);
+                ShellAction::Redraw
+            }
+            ShellCommand::HomeEntryUp => {
+                self.select_home_entry_row_delta(-1);
+                ShellAction::Redraw
+            }
+            ShellCommand::HomeEntryDown => {
+                self.select_home_entry_row_delta(1);
+                ShellAction::Redraw
+            }
+            ShellCommand::HomeFirstEntry => {
+                self.select_home_entry(0);
+                ShellAction::Redraw
+            }
+            ShellCommand::HomeLastEntry => {
+                self.select_home_entry(self.user_home_entries().len().saturating_sub(1));
+                ShellAction::Redraw
+            }
+            ShellCommand::ActivateSelectedHomeEntry => {
+                self.activate_selected_home_entry(platform);
+                ShellAction::Redraw
+            }
+            ShellCommand::SelectHomeEntryAt(coordinates) => {
+                if let Some(index) = self.home_entry_index_at(coordinates) {
+                    self.select_home_entry(index);
+                }
+                ShellAction::Redraw
+            }
+            ShellCommand::ActivateHomeEntryAt(coordinates, click) => {
+                if let Some(index) = self.home_entry_index_at(coordinates) {
+                    self.select_home_entry(index);
+                    if click == ClickKind::Double {
+                        self.activate_home_entry(index, platform);
+                    }
+                }
                 ShellAction::Redraw
             }
             ShellCommand::OpenExplorer => {
@@ -3244,6 +3385,15 @@ impl ShellState {
         self.focused_component
     }
 
+    pub fn selected_home_entry_index(&self) -> usize {
+        let count = self.user_home_entries().len();
+        if count == 0 {
+            0
+        } else {
+            self.selected_home_entry_index.min(count - 1)
+        }
+    }
+
     pub fn hovered_component(&self) -> Option<ShellComponent> {
         self.hovered_component
     }
@@ -3337,6 +3487,36 @@ impl ShellState {
         }
 
         match self.active_screen() {
+            ShellScreen::Home if matches!(&key.key, InputKey::Left) => (
+                RoutedTarget::Component(ShellComponent::Home),
+                ShellCommand::HomeEntryLeft,
+            ),
+            ShellScreen::Home if matches!(&key.key, InputKey::Right) => (
+                RoutedTarget::Component(ShellComponent::Home),
+                ShellCommand::HomeEntryRight,
+            ),
+            ShellScreen::Home if matches!(&key.key, InputKey::Up) => (
+                RoutedTarget::Component(ShellComponent::Home),
+                ShellCommand::HomeEntryUp,
+            ),
+            ShellScreen::Home if matches!(&key.key, InputKey::Down) => (
+                RoutedTarget::Component(ShellComponent::Home),
+                ShellCommand::HomeEntryDown,
+            ),
+            ShellScreen::Home if matches!(&key.key, InputKey::Home) => (
+                RoutedTarget::Component(ShellComponent::Home),
+                ShellCommand::HomeFirstEntry,
+            ),
+            ShellScreen::Home if matches!(&key.key, InputKey::End) => (
+                RoutedTarget::Component(ShellComponent::Home),
+                ShellCommand::HomeLastEntry,
+            ),
+            ShellScreen::Home if matches!(&key.key, InputKey::Enter | InputKey::Character(' ')) => {
+                (
+                    RoutedTarget::Component(ShellComponent::Home),
+                    ShellCommand::ActivateSelectedHomeEntry,
+                )
+            }
             ShellScreen::Home if key.is_character('e') || key.is_character('E') => {
                 (RoutedTarget::Global, ShellCommand::OpenExplorer)
             }
@@ -3707,6 +3887,13 @@ impl ShellState {
             MouseInput::Down { button, .. } => {
                 if let Some(target) = hit_target {
                     let click = self.register_click(hit_target, coordinates, button, received_at);
+                    if self.active_screen() == ShellScreen::Home && target == ShellComponent::Home {
+                        return (
+                            RoutedTarget::Component(target),
+                            ShellCommand::ActivateHomeEntryAt(coordinates, click),
+                        );
+                    }
+
                     (
                         RoutedTarget::Component(target),
                         ShellCommand::Activate {
@@ -4045,6 +4232,7 @@ impl ShellState {
             self.setup_step.clone(),
             self.hit_map_generation,
         );
+        self.sync_home_entry_selection();
 
         let focus_order = self.focus_order();
         if !focus_order.contains(&self.focused_component) {

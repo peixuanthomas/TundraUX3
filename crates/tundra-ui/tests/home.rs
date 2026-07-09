@@ -103,6 +103,102 @@ fn user_home_hides_diagnostics_and_lists_five_entries_including_explorer() {
 }
 
 #[test]
+fn home_icon_asset_exposes_known_ascii_icon_metadata() {
+    let icon = tundra_ui::home_icon_for_label("Explorer");
+
+    assert_eq!(icon.key, "explorer");
+    assert_eq!(icon.width, 7);
+    assert_eq!(icon.height, 4);
+    assert!(icon.lines.iter().any(|line| line.contains("____")));
+}
+
+#[test]
+fn user_home_renders_ascii_entry_tiles_with_selected_accent() {
+    let entries = vec![
+        ShellEntry::new("Explorer", "Browse files"),
+        ShellEntry::new("Launcher", "Open apps and commands"),
+        ShellEntry::new("Editor", "Edit text files"),
+    ];
+    let home = HomeViewModel::user_with_selection("Strix", "2026-07-01 09:30", entries, 1);
+    let chrome = ShellChromeViewModel {
+        app_name: "TundraUX 3".to_string(),
+        build_mode: "debug".to_string(),
+        display_mode: HomeDisplayMode::User,
+        terminal_size: (100, 30),
+        screen_stack: vec!["Home".to_string()],
+        status: StatusViewModel {
+            status: "Ready".to_string(),
+            toast: None,
+            error: None,
+        },
+    };
+    let mut terminal = Terminal::new(TestBackend::new(100, 30)).expect("test terminal");
+
+    terminal
+        .draw(|frame| {
+            render_home(
+                frame,
+                frame.area(),
+                &chrome,
+                &home,
+                &TundraTheme::default_dark(),
+            );
+        })
+        .expect("render home");
+
+    let output = terminal_output(&terminal);
+    assert!(output.contains("User: Strix"));
+    assert!(output.contains("Time: 2026-07-01 09:30"));
+    assert!(output.contains("_____"));
+    assert!(output.contains("Launcher"));
+    assert!(output.contains("Open apps and commands"));
+    assert!(output.contains("Arrows: select"));
+    assert!(output.contains("Enter: open"));
+
+    let main = main_rect(100, 30);
+    let selected_tile = tundra_ui::home_entry_tile_areas(main, home.entries().len())[1];
+    assert!(
+        region_has_fg(&terminal, selected_tile, TundraTheme::default_dark().accent),
+        "selected home tile should use the accent style"
+    );
+}
+
+#[test]
+fn home_entry_index_at_maps_coordinates_to_entry_tiles() {
+    let main = main_rect(100, 30);
+    let tile_areas = tundra_ui::home_entry_tile_areas(main, 5);
+    let first_tile = tile_areas[0];
+    let second_tile = tile_areas[1];
+
+    assert_eq!(
+        tundra_ui::home_entry_index_at(
+            main,
+            5,
+            (
+                first_tile.x.saturating_add(1),
+                first_tile.y.saturating_add(1),
+            ),
+        ),
+        Some(0)
+    );
+    assert_eq!(
+        tundra_ui::home_entry_index_at(
+            main,
+            5,
+            (
+                second_tile.x.saturating_add(1),
+                second_tile.y.saturating_add(1),
+            ),
+        ),
+        Some(1)
+    );
+    assert_eq!(
+        tundra_ui::home_entry_index_at(main, 5, (main.x, main.y)),
+        None
+    );
+}
+
+#[test]
 fn small_terminal_returns_compact_layout() {
     assert_eq!(
         compute_shell_layout(Rect::new(0, 0, 49, 30)),

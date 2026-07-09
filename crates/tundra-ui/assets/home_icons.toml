@@ -1,0 +1,87 @@
+[icons.explorer]
+label = "Explorer"
+width = 7
+height = 4
+lines = [
+  ' _____ ',
+  '/ ___ \',
+  '| | | |',
+  '|_____|',
+]
+
+[icons.launcher]
+label = "Launcher"
+width = 7
+height = 4
+lines = [
+  '  / \  ',
+  ' /===\ ',
+  ' | o | ',
+  ' /___\ ',
+]
+
+[icons.editor]
+label = "Editor"
+width = 7
+height = 4
+lines = [
+  ' _____ ',
+  '|==  |',
+  '|  __|',
+  '|_/__|',
+]
+
+[icons.settings]
+label = "Settings"
+width = 7
+height = 4
+lines = [
+  '  _*_  ',
+  '-( o )-',
+  '  /|\  ',
+  ' /_|_\ ',
+]
+
+[icons.diagnostics]
+label = "Diagnostics"
+width = 7
+height = 4
+lines = [
+  ' _____ ',
+  '|_|_|_|',
+  '|--+--|',
+  '|__|__|',
+]
+
+[icons.user_management]
+label = "User Management"
+width = 7
+height = 4
+lines = [
+  '  o o  ',
+  ' /| |\ ',
+  ' / \ \ ',
+  ' admin ',
+]
+
+[icons.user_profile]
+label = "User Profile"
+width = 7
+height = 4
+lines = [
+  '   o   ',
+  '  /|\  ',
+  '  / \  ',
+  ' user  ',
+]
+
+[icons.default]
+label = "Application"
+width = 7
+height = 4
+lines = [
+  ' _____ ',
+  '| ? ? |',
+  '|  ?  |',
+  '|_____|',
+]

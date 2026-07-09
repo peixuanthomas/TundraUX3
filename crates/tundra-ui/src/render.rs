@@ -9,6 +9,7 @@ use crate::{
     HomeViewModel, LoginField, LoginViewModel, SetupField, SetupStep, SetupViewModel,
     ShellChromeViewModel, ShellLayout, TundraTheme, UserManagementField, UserManagementFormKind,
     UserManagementFormViewModel, UserManagementViewModel, compute_shell_layout,
+    home_icon_for_label,
     timezone_map::{TimezoneMapWidget, boundary_id_for_timezone},
 };
 
@@ -38,6 +39,11 @@ const SETUP_ADMIN_HINT_LINE: u16 = 15;
 const SETUP_ADMIN_SUBMIT_LINE: u16 = 19;
 const SETUP_ADMIN_ERROR_LINE: u16 = 21;
 const SETUP_ADMIN_STACKED_CHECKLIST_LINE: u16 = 21;
+const HOME_SUMMARY_HEIGHT: u16 = 2;
+const HOME_CONTROLS_HEIGHT: u16 = 2;
+const HOME_TILE_MAX_HEIGHT: u16 = 8;
+const HOME_TILE_MIN_HEIGHT: u16 = 3;
+const HOME_TILE_GAP: u16 = 1;
 
 pub fn render_home(
     frame: &mut Frame<'_>,
@@ -1348,20 +1354,93 @@ fn render_top(
 }
 
 fn render_main(frame: &mut Frame<'_>, area: Rect, home: &HomeViewModel, theme: &TundraTheme) {
-    let lines = match home.display_mode() {
-        HomeDisplayMode::Debug => debug_lines(home),
-        HomeDisplayMode::User | HomeDisplayMode::Auth => user_lines(home),
-    };
-    let main = Paragraph::new(lines)
-        .block(
-            Block::default()
-                .title("Home")
-                .borders(Borders::ALL)
-                .style(theme.body_style()),
-        )
-        .wrap(Wrap { trim: true });
+    match home.display_mode() {
+        HomeDisplayMode::Debug => {
+            let main = Paragraph::new(debug_lines(home))
+                .block(
+                    Block::default()
+                        .title("Home")
+                        .borders(Borders::ALL)
+                        .style(theme.body_style()),
+                )
+                .wrap(Wrap { trim: true });
 
-    frame.render_widget(main, area);
+            frame.render_widget(main, area);
+        }
+        HomeDisplayMode::User | HomeDisplayMode::Auth => render_user_main(frame, area, home, theme),
+    }
+}
+
+fn render_user_main(frame: &mut Frame<'_>, area: Rect, home: &HomeViewModel, theme: &TundraTheme) {
+    let outer = Block::default()
+        .title("Home")
+        .borders(Borders::ALL)
+        .style(theme.body_style());
+    frame.render_widget(outer, area);
+
+    let content = home_content_area(area);
+    if content.width == 0 || content.height == 0 {
+        return;
+    }
+
+    let summary = home_summary_area(area);
+    let controls = home_controls_area(area);
+    let user = home.current_user.as_deref().unwrap_or("Unknown user");
+    let time = home.current_time.as_deref().unwrap_or("Unknown time");
+
+    frame.render_widget(
+        Paragraph::new(vec![
+            Line::from(format!("User: {user}")),
+            Line::from(format!("Time: {time}")),
+        ])
+        .style(theme.body_style())
+        .wrap(Wrap { trim: true }),
+        summary,
+    );
+
+    for (index, (entry, tile)) in home
+        .entries()
+        .iter()
+        .zip(home_entry_tile_areas(area, home.entries().len()))
+        .enumerate()
+    {
+        let selected = index == home.selected_entry_index();
+        let style = if selected {
+            theme.title_style()
+        } else {
+            theme.body_style()
+        };
+        let icon = home_icon_for_label(&entry.label);
+        let mut lines: Vec<Line<'static>> = icon
+            .lines
+            .iter()
+            .map(|line| Line::from((*line).to_string()))
+            .collect();
+        lines.push(Line::styled(entry.label.clone(), style));
+        lines.push(Line::from(entry.description.clone()));
+
+        let tile_widget = Paragraph::new(lines)
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .style(style)
+                    .title(if selected { "Selected" } else { "" }),
+            )
+            .style(style)
+            .alignment(Alignment::Center)
+            .wrap(Wrap { trim: true });
+
+        frame.render_widget(tile_widget, tile);
+    }
+
+    frame.render_widget(
+        Paragraph::new(Line::from(
+            "Arrows: select    Enter: open    E: explorer    U: users    Q / Esc: exit",
+        ))
+        .style(theme.muted_style())
+        .wrap(Wrap { trim: true }),
+        controls,
+    );
 }
 
 fn render_status(
@@ -1611,25 +1690,143 @@ fn format_attributes(attributes: &[String]) -> String {
     }
 }
 
-fn user_lines(home: &HomeViewModel) -> Vec<Line<'static>> {
-    let user = home.current_user.as_deref().unwrap_or("Unknown user");
-    let time = home.current_time.as_deref().unwrap_or("Unknown time");
-    let mut lines = vec![
-        Line::from(format!("User: {user}")),
-        Line::from(format!("Time: {time}")),
-        Line::from(""),
-    ];
+pub fn home_entry_tile_areas(main: Rect, entry_count: usize) -> Vec<Rect> {
+    if entry_count == 0 {
+        return Vec::new();
+    }
 
-    lines.extend(
-        home.entries()
-            .iter()
-            .map(|entry| Line::from(format!("{} - {}", entry.label, entry.description))),
+    let grid = home_entry_grid_area(main);
+    if grid.width == 0 || grid.height == 0 {
+        return Vec::new();
+    }
+
+    let columns = home_entry_column_count(grid.width, entry_count);
+    let rows = entry_count.div_ceil(columns);
+    let horizontal_gap = if columns > 1 { HOME_TILE_GAP } else { 0 };
+    let vertical_gap = if rows > 1 { HOME_TILE_GAP } else { 0 };
+    let total_horizontal_gap = horizontal_gap.saturating_mul(columns.saturating_sub(1) as u16);
+    let total_vertical_gap = vertical_gap.saturating_mul(rows.saturating_sub(1) as u16);
+    let tile_width = grid
+        .width
+        .saturating_sub(total_horizontal_gap)
+        .checked_div(columns as u16)
+        .unwrap_or(0);
+    let available_height = grid.height.saturating_sub(total_vertical_gap);
+    let tile_height = available_height
+        .checked_div(rows as u16)
+        .unwrap_or(0)
+        .min(HOME_TILE_MAX_HEIGHT)
+        .max(HOME_TILE_MIN_HEIGHT.min(grid.height));
+
+    let mut areas = Vec::with_capacity(entry_count);
+    for index in 0..entry_count {
+        let row = index / columns;
+        let column = index % columns;
+        let x = grid.x.saturating_add(
+            (column as u16).saturating_mul(tile_width.saturating_add(horizontal_gap)),
+        );
+        let y = grid
+            .y
+            .saturating_add((row as u16).saturating_mul(tile_height.saturating_add(vertical_gap)));
+        if x >= grid.x.saturating_add(grid.width) || y >= grid.y.saturating_add(grid.height) {
+            break;
+        }
+        let width = tile_width.min(grid.x.saturating_add(grid.width).saturating_sub(x));
+        let height = tile_height.min(grid.y.saturating_add(grid.height).saturating_sub(y));
+        if width > 0 && height > 0 {
+            areas.push(Rect::new(x, y, width, height));
+        }
+    }
+
+    areas
+}
+
+pub fn home_entry_index_at(
+    main: Rect,
+    entry_count: usize,
+    coordinates: (u16, u16),
+) -> Option<usize> {
+    home_entry_tile_areas(main, entry_count)
+        .into_iter()
+        .enumerate()
+        .find_map(|(index, area)| rect_contains(area, coordinates).then_some(index))
+}
+
+fn home_content_area(main: Rect) -> Rect {
+    Rect::new(
+        main.x.saturating_add(1),
+        main.y.saturating_add(1),
+        main.width.saturating_sub(2),
+        main.height.saturating_sub(2),
+    )
+}
+
+fn home_summary_area(main: Rect) -> Rect {
+    let content = home_content_area(main);
+    Rect::new(
+        content.x,
+        content.y,
+        content.width,
+        HOME_SUMMARY_HEIGHT.min(content.height),
+    )
+}
+
+fn home_controls_area(main: Rect) -> Rect {
+    let content = home_content_area(main);
+    let height = HOME_CONTROLS_HEIGHT.min(content.height);
+    Rect::new(
+        content.x,
+        content
+            .y
+            .saturating_add(content.height.saturating_sub(height)),
+        content.width,
+        height,
+    )
+}
+
+fn home_entry_grid_area(main: Rect) -> Rect {
+    let content = home_content_area(main);
+    let reserved = HOME_SUMMARY_HEIGHT.saturating_add(HOME_CONTROLS_HEIGHT);
+    let y = content
+        .y
+        .saturating_add(HOME_SUMMARY_HEIGHT.min(content.height));
+    let bottom = content.y.saturating_add(
+        content
+            .height
+            .saturating_sub(HOME_CONTROLS_HEIGHT.min(content.height)),
     );
-    lines.push(Line::from(""));
-    lines.push(Line::from(
-        "Q / Esc: exit    U: user management when available",
-    ));
-    lines
+    Rect::new(
+        content.x,
+        y,
+        content.width,
+        bottom
+            .saturating_sub(y)
+            .min(content.height.saturating_sub(reserved.min(content.height))),
+    )
+}
+
+fn home_entry_column_count(width: u16, entry_count: usize) -> usize {
+    let max_columns = if width >= 96 {
+        4
+    } else if width >= 72 {
+        3
+    } else if width >= 48 {
+        2
+    } else {
+        1
+    };
+
+    max_columns.min(entry_count.max(1))
+}
+
+fn rect_contains(rect: Rect, coordinates: (u16, u16)) -> bool {
+    let right = rect.x.saturating_add(rect.width);
+    let bottom = rect.y.saturating_add(rect.height);
+
+    coordinates.0 >= rect.x
+        && coordinates.0 < right
+        && coordinates.1 >= rect.y
+        && coordinates.1 < bottom
 }
 
 fn optional_text(value: &Option<String>) -> &str {
