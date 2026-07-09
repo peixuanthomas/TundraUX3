@@ -31,19 +31,19 @@ lines = [
 [items.settings]
 label = "Settings"
 lines = [
-  '  _*_  ',
-  '-( o )-',
-  '  /|\  ',
-  ' /_|_\ ',
+  ' o---  ',
+  '---o-- ',
+  ' --o-- ',
+  '---o-- ',
 ]
 
 [items.diagnostics]
 label = "Diagnostics"
 lines = [
   ' _____ ',
-  '|_|_|_|',
-  '|--+--|',
-  '|__|__|',
+  '| /\  |',
+  '|/  \_|',
+  '|_____|',
 ]
 
 [items.user_management]
