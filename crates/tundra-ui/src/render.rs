@@ -1,14 +1,15 @@
 use ratatui::Frame;
 use ratatui::layout::{Alignment, Constraint, Layout, Rect};
-use ratatui::text::Line;
+use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph, Wrap};
 
 use crate::{
-    AuthField, BootstrapAdminViewModel, ExitConfirmViewModel, ExplorerDialogViewModel,
-    ExplorerEntryViewModel, ExplorerSearchViewModel, ExplorerViewModel, HomeDisplayMode,
-    HomeViewModel, LoginField, LoginViewModel, SetupField, SetupStep, SetupViewModel,
-    ShellChromeViewModel, ShellLayout, TundraTheme, UserManagementField, UserManagementFormKind,
-    UserManagementFormViewModel, UserManagementViewModel, compute_shell_layout,
+    AuthField, BootstrapAdminViewModel, ClockViewModel, ExitConfirmViewModel,
+    ExplorerDialogViewModel, ExplorerEntryViewModel, ExplorerSearchViewModel, ExplorerViewModel,
+    HomeDisplayMode, HomeViewModel, LoginField, LoginViewModel, SetupField, SetupStep,
+    SetupViewModel, ShellChromeViewModel, ShellLayout, TimeSyncDialogViewModel, TundraTheme,
+    UserManagementField, UserManagementFormKind, UserManagementFormViewModel,
+    UserManagementViewModel, compute_shell_layout,
     timezone_map::{TimezoneMapWidget, boundary_id_for_timezone},
 };
 
@@ -43,6 +44,9 @@ const HOME_CONTROLS_HEIGHT: u16 = 2;
 const HOME_TILE_MAX_HEIGHT: u16 = 8;
 const HOME_TILE_MIN_HEIGHT: u16 = 3;
 const HOME_TILE_GAP: u16 = 1;
+const STATUS_TIME_BUTTON_HORIZONTAL_CHROME: u16 = 4;
+const STATUS_TIME_BUTTON_MIN_WIDTH: u16 = 3;
+const STATUS_TIME_BUTTON_RESERVED_LEFT_WIDTH: u16 = 12;
 
 pub fn render_home(
     frame: &mut Frame<'_>,
@@ -79,6 +83,64 @@ pub fn render_exit_confirmation(
                 .title(model.title.as_str())
                 .borders(Borders::ALL)
                 .style(theme.body_style()),
+        )
+        .alignment(Alignment::Center)
+        .wrap(Wrap { trim: true });
+
+    frame.render_widget(Clear, dialog);
+    frame.render_widget(dialog_widget, dialog);
+}
+
+pub fn render_clock_placeholder(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    chrome: &ShellChromeViewModel,
+    model: &ClockViewModel,
+    theme: &TundraTheme,
+) {
+    let main = match compute_shell_layout(area) {
+        ShellLayout::Compact(compact) => {
+            render_compact_home(frame, compact, theme);
+            return;
+        }
+        ShellLayout::Full { top, main, status } => {
+            render_top(frame, top, chrome, theme);
+            render_status(frame, status, chrome, theme);
+            main
+        }
+    };
+
+    let lines = vec![
+        Line::styled("Clock", theme.title_style()),
+        Line::from(""),
+        Line::from(format!("Current time: {}", model.current_time)),
+    ];
+    let clock = Paragraph::new(lines)
+        .block(
+            Block::default()
+                .title("Clock")
+                .borders(Borders::ALL)
+                .style(theme.body_style()),
+        )
+        .alignment(Alignment::Center)
+        .wrap(Wrap { trim: true });
+
+    frame.render_widget(clock, main);
+}
+
+pub fn render_time_sync_failure_dialog(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    model: &TimeSyncDialogViewModel,
+    theme: &TundraTheme,
+) {
+    let dialog = centered_rect(area, area.width.min(34), area.height.min(5));
+    let dialog_widget = Paragraph::new(Line::from(model.message()))
+        .block(
+            Block::default()
+                .title("Time Sync")
+                .borders(Borders::ALL)
+                .style(theme.error_style()),
         )
         .alignment(Alignment::Center)
         .wrap(Wrap { trim: true });
@@ -1409,17 +1471,23 @@ fn render_user_main(frame: &mut Frame<'_>, area: Rect, home: &HomeViewModel, the
         } else {
             theme.body_style()
         };
-        let mut lines: Vec<Line<'static>> = home
-            .home_icon_for_label(&entry.label)
-            .map(|icon| {
+        let content_width = usize::from(tile.width.saturating_sub(2));
+        let mut lines: Vec<Line<'static>> = Vec::new();
+        if let Some(icon) = home.home_icon_for_label(&entry.label) {
+            lines.extend(
                 icon.lines
                     .iter()
-                    .map(|line| Line::from(line.to_string()))
-                    .collect()
-            })
-            .unwrap_or_default();
-        lines.push(Line::styled(entry.label.clone(), style));
-        lines.push(Line::from(entry.description.clone()));
+                    .map(|line| centered_home_tile_line(line, icon.width(), content_width)),
+            );
+        }
+        lines.push(Line::styled(
+            centered_home_tile_text(&entry.label, content_width),
+            style,
+        ));
+        lines.push(Line::from(centered_home_tile_text(
+            &entry.description,
+            content_width,
+        )));
 
         let tile_widget = Paragraph::new(lines)
             .block(
@@ -1428,9 +1496,7 @@ fn render_user_main(frame: &mut Frame<'_>, area: Rect, home: &HomeViewModel, the
                     .style(style)
                     .title(if selected { "Selected" } else { "" }),
             )
-            .style(style)
-            .alignment(Alignment::Center)
-            .wrap(Wrap { trim: true });
+            .style(style);
 
         frame.render_widget(tile_widget, tile);
     }
@@ -1445,30 +1511,145 @@ fn render_user_main(frame: &mut Frame<'_>, area: Rect, home: &HomeViewModel, the
     );
 }
 
+fn centered_home_tile_line(
+    line: &str,
+    measured_width: usize,
+    content_width: usize,
+) -> Line<'static> {
+    Line::from(centered_home_tile_value(
+        line,
+        measured_width,
+        content_width,
+    ))
+}
+
+fn centered_home_tile_text(text: &str, content_width: usize) -> String {
+    centered_home_tile_value(text, text.chars().count(), content_width)
+}
+
+fn centered_home_tile_value(text: &str, measured_width: usize, content_width: usize) -> String {
+    let padding = " ".repeat(content_width.saturating_sub(measured_width) / 2);
+    format!("{padding}{text}")
+}
+
 fn render_status(
     frame: &mut Frame<'_>,
     area: Rect,
     chrome: &ShellChromeViewModel,
     theme: &TundraTheme,
 ) {
-    let mut lines = vec![Line::from(chrome.status.status.clone())];
-    if let Some(toast) = &chrome.status.toast {
-        lines.push(Line::styled(toast.clone(), theme.muted_style()));
-    }
-    if let Some(error) = &chrome.status.error {
-        lines.push(Line::styled(error.clone(), theme.error_style()));
+    if area.width == 0 || area.height == 0 {
+        return;
     }
 
-    let status = Paragraph::new(lines)
-        .block(
-            Block::default()
-                .title("Status")
-                .borders(Borders::ALL)
-                .style(theme.body_style()),
-        )
+    let time_button = chrome
+        .status
+        .time_button_label
+        .as_ref()
+        .map(|label| status_time_button_area(area, label))
+        .filter(|area| area.width > 0 && area.height > 0);
+
+    frame.render_widget(
+        Block::default()
+            .title("Status")
+            .borders(Borders::ALL)
+            .style(theme.body_style()),
+        area,
+    );
+
+    let inner = Block::default().borders(Borders::ALL).inner(area);
+    let left_width = match time_button {
+        Some(button) if button.x > inner.x => button.x.saturating_sub(inner.x).saturating_sub(1),
+        Some(_) => 0,
+        None => inner.width,
+    };
+    let left_area = Rect::new(inner.x, inner.y, left_width.min(inner.width), inner.height);
+    if left_area.width > 0 && left_area.height > 0 {
+        frame.render_widget(
+            Paragraph::new(status_line(&chrome.status, theme))
+                .style(theme.body_style())
+                .wrap(Wrap { trim: true }),
+            left_area,
+        );
+    }
+
+    if let (Some(label), Some(button_area)) = (&chrome.status.time_button_label, time_button) {
+        render_status_time_button(
+            frame,
+            button_area,
+            label,
+            chrome.status.time_button_selected,
+            theme,
+        );
+    }
+}
+
+pub fn status_time_button_area(status: Rect, label: &str) -> Rect {
+    if status.width == 0 || status.height == 0 || label.is_empty() {
+        return Rect::new(
+            status.x.saturating_add(status.width),
+            status.y,
+            0,
+            status.height,
+        );
+    }
+
+    let label_width = u16::try_from(label.chars().count()).unwrap_or(u16::MAX);
+    let desired_width = label_width.saturating_add(STATUS_TIME_BUTTON_HORIZONTAL_CHROME);
+    let max_width = if status.width
+        > STATUS_TIME_BUTTON_RESERVED_LEFT_WIDTH.saturating_add(STATUS_TIME_BUTTON_MIN_WIDTH)
+    {
+        status
+            .width
+            .saturating_sub(STATUS_TIME_BUTTON_RESERVED_LEFT_WIDTH)
+    } else {
+        status.width
+    };
+    let min_width = STATUS_TIME_BUTTON_MIN_WIDTH.min(max_width);
+    let width = desired_width
+        .min(max_width)
+        .max(min_width)
+        .min(status.width);
+
+    Rect::new(
+        status.x.saturating_add(status.width.saturating_sub(width)),
+        status.y,
+        width,
+        status.height,
+    )
+}
+
+fn status_line(status: &crate::StatusViewModel, theme: &TundraTheme) -> Line<'static> {
+    let mut spans = vec![Span::raw(status.status.clone())];
+    if let Some(toast) = &status.toast {
+        spans.push(Span::styled(format!(" | {toast}"), theme.muted_style()));
+    }
+    if let Some(error) = &status.error {
+        spans.push(Span::styled(format!(" | {error}"), theme.error_style()));
+    }
+    Line::from(spans)
+}
+
+fn render_status_time_button(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    label: &str,
+    selected: bool,
+    theme: &TundraTheme,
+) {
+    let style = if selected {
+        theme.title_style()
+    } else {
+        theme.body_style()
+    };
+    let button = Paragraph::new(label.to_string())
+        .style(style)
+        .block(Block::default().borders(Borders::ALL).style(style))
+        .alignment(Alignment::Center)
         .wrap(Wrap { trim: true });
 
-    frame.render_widget(status, area);
+    frame.render_widget(Clear, area);
+    frame.render_widget(button, area);
 }
 
 fn debug_lines(home: &HomeViewModel) -> Vec<Line<'static>> {

@@ -34,10 +34,11 @@ pub use layout::{ShellLayout, compute_shell_layout};
 pub use render::{
     explorer_first_entry_content_line, home_entry_index_at, home_entry_tile_areas,
     login_password_area, login_selected_username_area, login_user_list_area,
-    login_user_list_visible_rows, render_bootstrap_admin, render_exit_confirmation,
-    render_explorer, render_home, render_login, render_setup, render_user_management,
-    setup_admin_field_area, setup_language_list_area, setup_timezone_list_area,
-    setup_timezone_visible_rows,
+    login_user_list_visible_rows, render_bootstrap_admin, render_clock_placeholder,
+    render_exit_confirmation, render_explorer, render_home, render_login, render_setup,
+    render_time_sync_failure_dialog, render_user_management, setup_admin_field_area,
+    setup_language_list_area, setup_timezone_list_area, setup_timezone_visible_rows,
+    status_time_button_area,
 };
 pub use setup_catalog::{setup_language_options, setup_timezone_options};
 pub use theme::TundraTheme;
@@ -48,11 +49,11 @@ pub use timezone_map::{
     timezone_boundary_index,
 };
 pub use view_model::{
-    AuthField, BootstrapAdminViewModel, DebugDiagnosticsViewModel, ExitConfirmViewModel,
-    ExplorerDialogViewModel, ExplorerEntryViewModel, ExplorerSearchViewModel, ExplorerViewModel,
-    HomeDisplayMode, HomeViewModel, LoginField, LoginUserOptionViewModel, LoginViewModel,
-    SetupField, SetupLanguageOption, SetupPasswordRequirementViewModel, SetupStep,
+    AuthField, BootstrapAdminViewModel, ClockViewModel, DebugDiagnosticsViewModel,
+    ExitConfirmViewModel, ExplorerDialogViewModel, ExplorerEntryViewModel, ExplorerSearchViewModel,
+    ExplorerViewModel, HomeDisplayMode, HomeViewModel, LoginField, LoginUserOptionViewModel,
+    LoginViewModel, SetupField, SetupLanguageOption, SetupPasswordRequirementViewModel, SetupStep,
     SetupTimezoneOption, SetupViewModel, ShellChromeViewModel, ShellEntry, StatusViewModel,
-    UserManagementField, UserManagementFormKind, UserManagementFormViewModel,
-    UserManagementUserViewModel, UserManagementViewModel,
+    TimeSyncDialogViewModel, UserManagementField, UserManagementFormKind,
+    UserManagementFormViewModel, UserManagementUserViewModel, UserManagementViewModel,
 };

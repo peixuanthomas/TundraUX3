@@ -2435,8 +2435,10 @@ version = "0.1.0"
 name = "tundra-shell"
 version = "0.1.0"
 dependencies = [
+ "chrono",
  "crossterm 0.28.1",
  "ratatui",
+ "tokio",
  "tundra-apps",
  "tundra-ascii-assets",
  "tundra-core",

@@ -8,6 +8,7 @@ use tundra_storage::{
     CONFIG_DESCRIPTOR, SCHEMA_VERSION, StorageError, StorageLoadReport, StorageManager, UserRecord,
 };
 
+use chrono::{DateTime, Timelike, Utc};
 use crossterm::cursor::{Hide, Show};
 use crossterm::event::{
     self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEvent, KeyEventKind,
@@ -23,14 +24,17 @@ use ratatui::layout::Rect;
 use std::io::{self, Write};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tundra_platform::{
     AppPaths, CapabilityStatus, FileAttributes, Platform, PlatformCapabilities, PlatformError,
     PlatformKind, TerminalControlHandler,
 };
+use tundra_weathr::network_clock::{NetworkClock, TimeSyncResult};
 
 pub use tundra_platform::{ENTER_FULLSCREEN_SEQUENCE, EXIT_FULLSCREEN_SEQUENCE};
+pub use tundra_weathr::network_clock::TIME_SYNC_INTERVAL;
 
 pub const BANNER_DISPLAY_DURATION: Duration = Duration::from_secs(2);
 const BANNER_ASSET_KEY: &str = "tundraux3";
@@ -81,6 +85,7 @@ pub enum ShellScreen {
     BootstrapAdmin,
     Login,
     Home,
+    Clock,
     Explorer,
     UserManagement,
     ExitConfirm,
@@ -728,6 +733,8 @@ pub enum ShellComponent {
     CompactHome,
     TopBar,
     Home,
+    ClockButton,
+    Clock,
     LoginUserList,
     LoginUsername,
     LoginPassword,
@@ -744,6 +751,7 @@ pub enum ShellComponent {
     UserManagement,
     StatusBar,
     ExitDialog,
+    TimeSyncDialog,
     ContextMenu,
 }
 
@@ -753,6 +761,8 @@ impl ShellComponent {
             Self::CompactHome => "CompactHome",
             Self::TopBar => "TopBar",
             Self::Home => "Home",
+            Self::ClockButton => "ClockButton",
+            Self::Clock => "Clock",
             Self::LoginUserList => "LoginUserList",
             Self::LoginUsername => "LoginUsername",
             Self::LoginPassword => "LoginPassword",
@@ -769,6 +779,7 @@ impl ShellComponent {
             Self::UserManagement => "UserManagement",
             Self::StatusBar => "StatusBar",
             Self::ExitDialog => "ExitDialog",
+            Self::TimeSyncDialog => "TimeSyncDialog",
             Self::ContextMenu => "ContextMenu",
         }
     }
@@ -981,6 +992,8 @@ pub enum ShellCommand {
     CancelExplorerInput,
     OpenUserManagement,
     CloseUserManagement,
+    OpenClock,
+    CloseClock,
     UserManagementNext,
     UserManagementPrevious,
     CreateManagedUser(UserRole),
@@ -1007,6 +1020,7 @@ pub enum ShellCommand {
         coordinates: CellPosition,
     },
     ClosePopup,
+    CloseTimeSyncDialog,
     CaptureOverlayInput,
     RefreshHitMap {
         width: u16,
@@ -1168,12 +1182,42 @@ fn install_panic_restore_hook() {
     }));
 }
 
+#[derive(Debug, Clone)]
+struct ShellNetworkClock(NetworkClock);
+
+impl ShellNetworkClock {
+    fn new(timezone_id: Option<String>) -> Self {
+        Self(NetworkClock::new(timezone_id))
+    }
+
+    fn apply_sync(&mut self, result: TimeSyncResult) {
+        self.0.apply_sync(result);
+    }
+
+    fn current(&self) -> tundra_weathr::network_clock::ClockDisplay {
+        self.0.current()
+    }
+}
+
+impl PartialEq for ShellNetworkClock {
+    fn eq(&self, _other: &Self) -> bool {
+        true
+    }
+}
+
+impl Eq for ShellNetworkClock {}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ShellState {
     home_mode: ShellHomeMode,
     ascii_assets: tundra_ui::RuntimeAsciiAssets,
     screen_stack: Vec<ShellScreen>,
     storage_manager: Option<StorageManager>,
+    network_clock: ShellNetworkClock,
+    clock_timezone_id: Option<String>,
+    last_time_sync_utc: Option<DateTime<Utc>>,
+    time_sync_dialog_visible: bool,
+    time_sync_failure_message: Option<String>,
     auth_session: Option<AuthSession>,
     requested_debug_mode: bool,
     debug_policy: DebugPolicy,
@@ -1299,12 +1343,19 @@ impl ShellState {
             .get(login_selected_user)
             .map(|user| user.username.clone())
             .unwrap_or_default();
+        let clock_timezone_id = startup_clock_timezone_id(&startup);
+        let network_clock = ShellNetworkClock::new(clock_timezone_id.clone());
 
         let mut state = Self {
             home_mode,
             ascii_assets,
             screen_stack: vec![initial_screen],
             storage_manager: startup.storage_manager.clone(),
+            network_clock,
+            clock_timezone_id,
+            last_time_sync_utc: None,
+            time_sync_dialog_visible: false,
+            time_sync_failure_message: None,
             auth_session: None,
             requested_debug_mode: launch_config.home_mode_override == HomeModeOverride::Debug,
             debug_policy: startup.debug_policy,
@@ -1433,13 +1484,24 @@ impl ShellState {
                     .unwrap_or("Guest");
                 tundra_ui::HomeViewModel::user_with_selection_and_icon_assets(
                     user,
-                    current_time_label(),
+                    self.current_time_label(),
                     self.user_home_entries(),
                     self.selected_home_entry_index(),
                     self.ascii_assets.clone(),
                 )
             }
         }
+    }
+
+    pub fn to_clock_view_model(&self) -> tundra_ui::ClockViewModel {
+        tundra_ui::ClockViewModel {
+            current_time: self.current_time_label(),
+        }
+    }
+
+    pub fn to_time_sync_dialog_view_model(&self) -> Option<tundra_ui::TimeSyncDialogViewModel> {
+        self.time_sync_dialog_visible
+            .then(tundra_ui::TimeSyncDialogViewModel::new)
     }
 
     pub fn to_login_view_model(&self) -> tundra_ui::LoginViewModel {
@@ -1668,6 +1730,8 @@ impl ShellState {
                 status,
                 toast: self.toast_message.clone(),
                 error: self.error_message.clone(),
+                time_button_label: self.status_time_button_label(),
+                time_button_selected: self.time_button_selected(),
             },
         }
     }
@@ -2189,11 +2253,13 @@ impl ShellState {
         };
         config.language = self.selected_setup_language_value();
         config.timezone = self.selected_setup_timezone_value();
+        let selected_timezone = config.timezone.clone();
         if let Err(error) = storage.save_config(&config) {
             self.error_message = Some(error.to_string());
             self.status_message = "Setup failed".to_string();
             return;
         }
+        self.set_clock_timezone(Some(selected_timezone));
 
         let users = UserService::with_debug_policy(storage.clone(), self.debug_policy);
         match users.bootstrap_admin_with_hint(&username, &password, hint.as_deref()) {
@@ -2287,6 +2353,27 @@ impl ShellState {
             };
             self.refresh_hit_map();
         }
+    }
+
+    fn open_clock(&mut self) {
+        if self.active_screen() != ShellScreen::Clock {
+            self.screen_stack.push(ShellScreen::Clock);
+        }
+        self.active_popup = None;
+        self.focused_component = ShellComponent::Clock;
+        self.status_message = "Clock".to_string();
+        self.refresh_hit_map();
+    }
+
+    fn close_clock(&mut self) {
+        if self.active_screen() == ShellScreen::Clock {
+            self.screen_stack.pop();
+        }
+        if self.screen_stack.is_empty() {
+            self.screen_stack.push(ShellScreen::Home);
+        }
+        self.status_message = "Ready".to_string();
+        self.refresh_hit_map();
     }
 
     fn open_explorer(&mut self, platform: &dyn Platform) {
@@ -3229,6 +3316,14 @@ impl ShellState {
                 self.refresh_hit_map();
                 ShellAction::Redraw
             }
+            ShellCommand::OpenClock => {
+                self.open_clock();
+                ShellAction::Redraw
+            }
+            ShellCommand::CloseClock => {
+                self.close_clock();
+                ShellAction::Redraw
+            }
             ShellCommand::UserManagementNext => {
                 self.select_user_management_row(1);
                 ShellAction::Redraw
@@ -3338,6 +3433,10 @@ impl ShellState {
                 self.refresh_hit_map();
                 ShellAction::Redraw
             }
+            ShellCommand::CloseTimeSyncDialog => {
+                self.close_time_sync_dialog();
+                ShellAction::Redraw
+            }
             ShellCommand::CaptureOverlayInput => {
                 self.status_message = "Overlay captured input".to_string();
                 ShellAction::Redraw
@@ -3391,6 +3490,41 @@ impl ShellState {
 
     pub fn status(&self) -> &str {
         &self.status_message
+    }
+
+    pub fn current_time_label(&self) -> String {
+        clock_display_label(self.network_clock.current())
+    }
+
+    pub fn time_sync_failure_dialog_visible(&self) -> bool {
+        self.time_sync_dialog_visible
+    }
+
+    pub fn time_sync_failure_message(&self) -> Option<&str> {
+        self.time_sync_failure_message.as_deref()
+    }
+
+    pub fn apply_time_sync_result(&mut self, result: TimeSyncResult) {
+        match result {
+            Ok(utc) => self.apply_time_sync_success_utc(utc),
+            Err(error) => {
+                self.last_time_sync_utc = None;
+                self.network_clock.apply_sync(Err(error));
+                self.show_time_sync_failure_dialog("联网校准时间失败".to_string());
+            }
+        }
+    }
+
+    #[doc(hidden)]
+    pub fn apply_time_sync_utc_for_test(&mut self, utc: DateTime<Utc>) {
+        self.apply_time_sync_success_utc(utc);
+    }
+
+    #[doc(hidden)]
+    pub fn apply_time_sync_failure_for_test(&mut self, message: &str) {
+        self.last_time_sync_utc = None;
+        self.network_clock = ShellNetworkClock::new(self.clock_timezone_id.clone());
+        self.show_time_sync_failure_dialog(message.to_string());
     }
 
     pub fn terminal_flags(&self) -> ShellTerminalFlags {
@@ -3468,6 +3602,52 @@ impl ShellState {
         self.auth_session.as_ref()
     }
 
+    fn apply_time_sync_success_utc(&mut self, utc: DateTime<Utc>) {
+        self.last_time_sync_utc = Some(utc);
+        self.network_clock.apply_sync(Ok(utc));
+
+        if self.time_sync_dialog_visible {
+            self.time_sync_dialog_visible = false;
+            self.time_sync_failure_message = None;
+            self.status_message = "Ready".to_string();
+        }
+
+        self.refresh_hit_map();
+    }
+
+    fn show_time_sync_failure_dialog(&mut self, message: String) {
+        self.time_sync_dialog_visible = true;
+        self.time_sync_failure_message = Some(message.clone());
+        self.active_popup = None;
+        self.focused_component = ShellComponent::TimeSyncDialog;
+        self.status_message = message;
+        self.refresh_hit_map();
+    }
+
+    fn close_time_sync_dialog(&mut self) {
+        self.time_sync_dialog_visible = false;
+        self.time_sync_failure_message = None;
+        self.status_message = "Ready".to_string();
+        self.refresh_hit_map();
+    }
+
+    fn status_time_button_label(&self) -> Option<String> {
+        clock_button_active_for_screen(self.active_screen()).then(|| self.current_time_label())
+    }
+
+    fn time_button_selected(&self) -> bool {
+        self.focused_component == ShellComponent::ClockButton
+            || self.active_screen() == ShellScreen::Clock
+    }
+
+    fn set_clock_timezone(&mut self, timezone_id: Option<String>) {
+        self.clock_timezone_id = timezone_id;
+        self.network_clock = ShellNetworkClock::new(self.clock_timezone_id.clone());
+        if let Some(utc) = self.last_time_sync_utc {
+            self.network_clock.apply_sync(Ok(utc));
+        }
+    }
+
     fn route_key_input(&self, key: &KeyInput) -> (RoutedTarget, ShellCommand) {
         if !key.phase.is_press_like() {
             return (RoutedTarget::Global, ShellCommand::Noop);
@@ -3477,8 +3657,16 @@ impl ShellState {
             return (RoutedTarget::Global, ShellCommand::Shutdown);
         }
 
+        if self.time_sync_dialog_visible {
+            return self.route_time_sync_dialog_key(key);
+        }
+
         if self.active_screen() == ShellScreen::ExitConfirm {
             return self.route_exit_confirm_key(key);
+        }
+
+        if self.active_screen() == ShellScreen::Clock {
+            return self.route_clock_key(key);
         }
 
         if self.active_screen() == ShellScreen::FirstRunSetup {
@@ -3515,6 +3703,14 @@ impl ShellState {
         }
 
         match self.active_screen() {
+            _ if self.focused_component == ShellComponent::ClockButton
+                && matches!(&key.key, InputKey::Enter | InputKey::Character(' ')) =>
+            {
+                (
+                    RoutedTarget::Component(ShellComponent::ClockButton),
+                    self.clock_button_activation_command(),
+                )
+            }
             ShellScreen::Home if matches!(&key.key, InputKey::Left) => (
                 RoutedTarget::Component(ShellComponent::Home),
                 ShellCommand::HomeEntryLeft,
@@ -3634,6 +3830,32 @@ impl ShellState {
         }
 
         (target, ShellCommand::RecordInput)
+    }
+
+    fn route_clock_key(&self, key: &KeyInput) -> (RoutedTarget, ShellCommand) {
+        let target = RoutedTarget::Component(ShellComponent::Clock);
+        match &key.key {
+            InputKey::Escape => (RoutedTarget::Global, ShellCommand::CloseClock),
+            _ => (target, ShellCommand::RecordInput),
+        }
+    }
+
+    fn clock_button_activation_command(&self) -> ShellCommand {
+        if self.active_screen() == ShellScreen::Clock {
+            ShellCommand::CloseClock
+        } else {
+            ShellCommand::OpenClock
+        }
+    }
+
+    fn route_time_sync_dialog_key(&self, key: &KeyInput) -> (RoutedTarget, ShellCommand) {
+        let target = RoutedTarget::Modal(ShellComponent::TimeSyncDialog);
+        match &key.key {
+            InputKey::Escape | InputKey::Enter | InputKey::Character(' ') => {
+                (target, ShellCommand::CloseTimeSyncDialog)
+            }
+            _ => (target, ShellCommand::CaptureOverlayInput),
+        }
     }
 
     fn route_setup_key(&self, key: &KeyInput) -> (RoutedTarget, ShellCommand) {
@@ -3876,6 +4098,10 @@ impl ShellState {
         let coordinates = mouse.coordinates();
         let hit_target = self.hit_map.target_at(coordinates);
 
+        if self.time_sync_dialog_visible {
+            return self.route_time_sync_dialog_mouse(mouse, hit_target);
+        }
+
         if self.active_screen() == ShellScreen::ExitConfirm {
             let routed_target = if hit_target == Some(ShellComponent::ExitDialog) {
                 RoutedTarget::Modal(ShellComponent::ExitDialog)
@@ -3915,6 +4141,20 @@ impl ShellState {
             MouseInput::Down { button, .. } => {
                 if let Some(target) = hit_target {
                     let click = self.register_click(hit_target, coordinates, button, received_at);
+                    if target == ShellComponent::ClockButton {
+                        return (
+                            RoutedTarget::Component(target),
+                            if button == PointerButton::Left {
+                                self.clock_button_activation_command()
+                            } else {
+                                ShellCommand::Activate {
+                                    target,
+                                    coordinates,
+                                    click,
+                                }
+                            },
+                        );
+                    }
                     if self.active_screen() == ShellScreen::Home && target == ShellComponent::Home {
                         return (
                             RoutedTarget::Component(target),
@@ -3935,6 +4175,27 @@ impl ShellState {
                 }
             }
             _ => (target_route(hit_target), ShellCommand::RecordInput),
+        }
+    }
+
+    fn route_time_sync_dialog_mouse(
+        &mut self,
+        mouse: MouseInput,
+        hit_target: Option<ShellComponent>,
+    ) -> (RoutedTarget, ShellCommand) {
+        match mouse {
+            MouseInput::Moved { .. } => (
+                RoutedTarget::Modal(ShellComponent::TimeSyncDialog),
+                ShellCommand::Hover(hit_target),
+            ),
+            _ if mouse.down_button().is_some() => (
+                RoutedTarget::Modal(ShellComponent::TimeSyncDialog),
+                ShellCommand::CloseTimeSyncDialog,
+            ),
+            _ => (
+                RoutedTarget::Modal(ShellComponent::TimeSyncDialog),
+                ShellCommand::CaptureOverlayInput,
+            ),
         }
     }
 
@@ -4253,12 +4514,15 @@ impl ShellState {
         if self.active_screen() == ShellScreen::Login {
             self.sync_login_selection();
         }
+        let time_button_label = self.status_time_button_label();
         self.hit_map = build_shell_hit_map(
             self.terminal_size,
             self.active_screen(),
             self.active_popup,
             self.setup_step.clone(),
             self.hit_map_generation,
+            time_button_label.as_deref(),
+            self.time_sync_dialog_visible,
         );
         self.sync_home_entry_selection();
 
@@ -4272,6 +4536,9 @@ impl ShellState {
     }
 
     fn focus_order(&self) -> Vec<ShellComponent> {
+        if self.time_sync_dialog_visible {
+            return vec![ShellComponent::TimeSyncDialog];
+        }
         if self.active_screen() == ShellScreen::ExitConfirm {
             return vec![ShellComponent::ExitDialog];
         }
@@ -4303,6 +4570,9 @@ impl ShellState {
         if self.active_screen() == ShellScreen::Explorer {
             return vec![ShellComponent::Explorer];
         }
+        if self.active_screen() == ShellScreen::Clock {
+            return vec![ShellComponent::Clock];
+        }
         if self.active_popup.is_some() {
             return vec![ShellComponent::ContextMenu];
         }
@@ -4317,6 +4587,7 @@ impl ShellState {
 
         vec![
             ShellComponent::Home,
+            ShellComponent::ClockButton,
             ShellComponent::StatusBar,
             ShellComponent::TopBar,
         ]
@@ -4464,6 +4735,8 @@ fn build_shell_hit_map(
     active_popup: Option<ShellPopup>,
     setup_step: tundra_ui::SetupStep,
     generation: u64,
+    time_button_label: Option<&str>,
+    time_sync_dialog_visible: bool,
 ) -> ShellHitMap {
     let (width, height) = terminal_size;
     let area = Rect::new(0, 0, width, height);
@@ -4525,6 +4798,12 @@ fn build_shell_hit_map(
                         area: main,
                     });
                 }
+                ShellScreen::Clock => {
+                    regions.push(ShellHitRegion {
+                        component: ShellComponent::Clock,
+                        area: main,
+                    });
+                }
                 _ => {
                     regions.push(ShellHitRegion {
                         component: ShellComponent::Home,
@@ -4536,6 +4815,17 @@ fn build_shell_hit_map(
                 component: ShellComponent::StatusBar,
                 area: status,
             });
+            if clock_button_active_for_screen(active_screen)
+                && let Some(label) = time_button_label
+            {
+                let button = tundra_ui::status_time_button_area(status, label);
+                if button.width > 0 && button.height > 0 {
+                    regions.push(ShellHitRegion {
+                        component: ShellComponent::ClockButton,
+                        area: button,
+                    });
+                }
+            }
         }
     }
 
@@ -4550,6 +4840,13 @@ fn build_shell_hit_map(
         regions.push(ShellHitRegion {
             component: ShellComponent::ExitDialog,
             area: centered_rect(area, width.min(46), height.min(7)),
+        });
+    }
+
+    if time_sync_dialog_visible {
+        regions.push(ShellHitRegion {
+            component: ShellComponent::TimeSyncDialog,
+            area: centered_rect(area, width.min(34), height.min(5)),
         });
     }
 
@@ -4841,13 +5138,32 @@ fn centered_rect(area: Rect, width: u16, height: u16) -> Rect {
     )
 }
 
-fn current_time_label() -> String {
-    let seconds = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_secs())
-        .unwrap_or(0);
+fn clock_display_label(display: tundra_weathr::network_clock::ClockDisplay) -> String {
+    format!(
+        "{} {:02}:{:02}",
+        display.date,
+        display.time.hour(),
+        display.time.minute()
+    )
+}
 
-    format!("unix:{seconds}")
+fn clock_button_active_for_screen(screen: ShellScreen) -> bool {
+    matches!(
+        screen,
+        ShellScreen::Home
+            | ShellScreen::Explorer
+            | ShellScreen::UserManagement
+            | ShellScreen::Clock
+    )
+}
+
+fn startup_clock_timezone_id(startup: &ShellStartupState) -> Option<String> {
+    startup
+        .storage_manager
+        .as_ref()
+        .and_then(|storage| storage.load_config().ok())
+        .map(|config| config.timezone)
+        .or_else(|| Some("UTC".to_string()))
 }
 
 fn system_time_label(value: SystemTime) -> String {
@@ -5330,12 +5646,17 @@ pub fn run_fullscreen_blocking(
     let initial_size = crossterm::terminal::size().unwrap_or((80, 24));
     let mut state =
         ShellState::new_with_startup_and_assets(config, initial_size, startup, ascii_assets);
+    let (time_sync_sender, time_sync_receiver) = mpsc::channel();
+    let _time_sync_worker = spawn_time_sync_worker(time_sync_sender);
     let tick_rate = Duration::from_millis(250);
     let theme = tundra_ui::TundraTheme::default_dark();
 
     loop {
+        drain_time_sync_results(&mut state, &time_sync_receiver);
         let chrome = state.to_shell_chrome_view_model();
         let home = state.to_home_view_model();
+        let clock = state.to_clock_view_model();
+        let time_sync_dialog = state.to_time_sync_dialog_view_model();
         let setup = state.to_setup_view_model();
         let login = state.to_login_view_model();
         let bootstrap_admin = state.to_bootstrap_admin_view_model();
@@ -5374,6 +5695,9 @@ pub fn run_fullscreen_blocking(
                 ShellScreen::Explorer => {
                     tundra_ui::render_explorer(frame, area, &chrome, &explorer, &theme);
                 }
+                ShellScreen::Clock => {
+                    tundra_ui::render_clock_placeholder(frame, area, &chrome, &clock, &theme);
+                }
                 ShellScreen::Home | ShellScreen::ExitConfirm => {
                     tundra_ui::render_home(frame, area, &chrome, &home, &theme);
                 }
@@ -5381,6 +5705,9 @@ pub fn run_fullscreen_blocking(
 
             if active_screen == ShellScreen::ExitConfirm {
                 tundra_ui::render_exit_confirmation(frame, area, &exit_confirmation, &theme);
+            }
+            if let Some(dialog) = time_sync_dialog.as_ref() {
+                tundra_ui::render_time_sync_failure_dialog(frame, area, dialog, &theme);
             }
         })?;
 
@@ -5406,6 +5733,37 @@ pub fn run_fullscreen_blocking(
     }
 
     guard.restore()
+}
+
+fn spawn_time_sync_worker(sender: mpsc::Sender<TimeSyncResult>) -> thread::JoinHandle<()> {
+    thread::spawn(move || {
+        let Ok(runtime) = tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()
+        else {
+            return;
+        };
+
+        runtime.block_on(async move {
+            loop {
+                let result = tundra_weathr::network_clock::fetch_standard_time().await;
+                if sender.send(result).is_err() {
+                    break;
+                }
+                tokio::time::sleep(TIME_SYNC_INTERVAL).await;
+            }
+        });
+    })
+}
+
+fn drain_time_sync_results(state: &mut ShellState, receiver: &mpsc::Receiver<TimeSyncResult>) {
+    loop {
+        match receiver.try_recv() {
+            Ok(result) => state.apply_time_sync_result(result),
+            Err(mpsc::TryRecvError::Empty) => break,
+            Err(mpsc::TryRecvError::Disconnected) => break,
+        }
+    }
 }
 
 fn with_fullscreen<W, T>(

@@ -12,6 +12,36 @@ pub struct StatusViewModel {
     pub status: String,
     pub toast: Option<String>,
     pub error: Option<String>,
+    pub time_button_label: Option<String>,
+    pub time_button_selected: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ClockViewModel {
+    pub current_time: String,
+}
+
+impl ClockViewModel {
+    pub fn new(current_time: impl Into<String>) -> Self {
+        Self {
+            current_time: current_time.into(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct TimeSyncDialogViewModel;
+
+impl TimeSyncDialogViewModel {
+    pub const MESSAGE: &'static str = "联网校准时间失败";
+
+    pub fn new() -> Self {
+        Self
+    }
+
+    pub fn message(&self) -> &'static str {
+        Self::MESSAGE
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

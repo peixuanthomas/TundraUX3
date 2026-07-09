@@ -1,13 +1,19 @@
-use std::time::{Duration, Instant};
+use std::fs;
+use std::path::PathBuf;
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+use chrono::{TimeZone, Utc};
 use ratatui::layout::Rect;
-use tundra_platform::{CapabilityStatus, PlatformCapabilities, PlatformKind};
+use tundra_platform::{
+    CapabilityStatus, PlatformCapabilities, PlatformKind, build_windows_app_paths,
+};
 use tundra_shell::{
     ClickKind, HomeModeOverride, InputEvent, PointerButton, ScrollDirection, ShellAction,
     ShellAppConfig, ShellCommand, ShellComponent, ShellHomeMode, ShellLaunchConfig,
     ShellRestoredSession, ShellScreen, ShellStartupState, ShellState, ShellStorageReport,
     ShellTerminalMode, default_shell_shortcuts, detect_shortcut_conflicts,
 };
+use tundra_storage::StorageManager;
 use tundra_ui::HomeDisplayMode;
 
 fn debug_config() -> ShellLaunchConfig {
@@ -219,11 +225,15 @@ fn tab_and_shift_tab_route_to_focus_commands() {
     let mut state = ShellState::new(debug_config(), (120, 40));
 
     state.apply_input(InputEvent::from_key_label("Tab"));
+    assert_eq!(state.focused_component(), ShellComponent::ClockButton);
+    assert_eq!(state.last_command(), Some(&ShellCommand::FocusNext));
+
+    state.apply_input(InputEvent::from_key_label("Tab"));
     assert_eq!(state.focused_component(), ShellComponent::StatusBar);
     assert_eq!(state.last_command(), Some(&ShellCommand::FocusNext));
 
     state.apply_input(InputEvent::from_key_label("Shift+Tab"));
-    assert_eq!(state.focused_component(), ShellComponent::Home);
+    assert_eq!(state.focused_component(), ShellComponent::ClockButton);
     assert_eq!(state.last_command(), Some(&ShellCommand::FocusPrevious));
 }
 
@@ -431,6 +441,110 @@ fn user_state_builds_user_home_view_model() {
             .iter()
             .any(|entry| entry.label == "Diagnostics")
     );
+}
+
+#[test]
+fn current_time_label_uses_configured_timezone_datetime() {
+    let fixture = FixtureRoot::new("clock-timezone");
+    let opened = storage_manager_at(&fixture);
+    let mut config = opened.load_config().expect("config loads");
+    config.timezone = "Asia/Shanghai".to_string();
+    opened.save_config(&config).expect("config saves");
+    let mut startup = ShellStartupState::clean(
+        PlatformKind::Windows,
+        PlatformCapabilities::native_supported(),
+    );
+    startup.storage_manager = Some(opened);
+    let mut state = ShellState::new_with_startup(build_default_config(), (120, 40), startup);
+    let utc = Utc
+        .with_ymd_and_hms(2026, 7, 9, 15, 30, 0)
+        .single()
+        .unwrap();
+
+    state.apply_time_sync_utc_for_test(utc);
+
+    assert_eq!(state.current_time_label(), "2026-07-09 23:30");
+    assert_eq!(state.to_clock_view_model().current_time, "2026-07-09 23:30");
+}
+
+#[test]
+fn clock_button_click_toggles_clock_placeholder() {
+    let mut state =
+        ShellState::new_for_home_mode(build_default_config(), (120, 40), ShellHomeMode::User);
+    let coordinates = component_coordinates(&state, ShellComponent::ClockButton);
+
+    assert_eq!(
+        state.hit_target_at(coordinates),
+        Some(ShellComponent::ClockButton)
+    );
+
+    state.apply_input(InputEvent::mouse_down(PointerButton::Left, coordinates));
+
+    assert_eq!(state.active_screen(), ShellScreen::Clock);
+    assert_eq!(state.focused_component(), ShellComponent::Clock);
+    assert_eq!(state.last_command(), Some(&ShellCommand::OpenClock));
+
+    let coordinates = component_coordinates(&state, ShellComponent::ClockButton);
+    state.apply_input(InputEvent::mouse_down(PointerButton::Left, coordinates));
+
+    assert_eq!(state.active_screen(), ShellScreen::Home);
+    assert_eq!(state.focused_component(), ShellComponent::Home);
+    assert_eq!(state.last_command(), Some(&ShellCommand::CloseClock));
+}
+
+#[test]
+fn keyboard_activation_opens_clock_and_escape_closes_it() {
+    let mut state =
+        ShellState::new_for_home_mode(build_default_config(), (120, 40), ShellHomeMode::User);
+
+    state.apply_input(InputEvent::from_key_label("Tab"));
+    assert_eq!(state.focused_component(), ShellComponent::ClockButton);
+
+    state.apply_input(InputEvent::from_key_label("Enter"));
+    assert_eq!(state.active_screen(), ShellScreen::Clock);
+    assert_eq!(state.focused_component(), ShellComponent::Clock);
+    assert_eq!(state.last_command(), Some(&ShellCommand::OpenClock));
+
+    state.apply_input(InputEvent::from_key_label("Esc"));
+    assert_eq!(state.active_screen(), ShellScreen::Home);
+    assert_eq!(state.last_command(), Some(&ShellCommand::CloseClock));
+}
+
+#[test]
+fn time_sync_failure_helper_shows_and_closes_dialog() {
+    let mut state = ShellState::new(debug_config(), (120, 40));
+
+    state.apply_time_sync_failure_for_test("联网校准时间失败");
+
+    assert!(state.time_sync_failure_dialog_visible());
+    assert_eq!(state.time_sync_failure_message(), Some("联网校准时间失败"));
+    assert_eq!(state.status(), "联网校准时间失败");
+    assert_eq!(state.focused_component(), ShellComponent::TimeSyncDialog);
+    assert!(state.to_time_sync_dialog_view_model().is_some());
+
+    state.apply_input(InputEvent::from_key_label("Esc"));
+
+    assert!(!state.time_sync_failure_dialog_visible());
+    assert_eq!(state.time_sync_failure_message(), None);
+    assert_eq!(
+        state.last_command(),
+        Some(&ShellCommand::CloseTimeSyncDialog)
+    );
+}
+
+#[test]
+fn successful_time_sync_clears_failure_dialog_and_updates_anchor() {
+    let mut state = ShellState::new(debug_config(), (120, 40));
+    let utc = Utc
+        .with_ymd_and_hms(2026, 7, 9, 15, 30, 0)
+        .single()
+        .unwrap();
+
+    state.apply_time_sync_failure_for_test("联网校准时间失败");
+    state.apply_time_sync_utc_for_test(utc);
+
+    assert!(!state.time_sync_failure_dialog_visible());
+    assert_eq!(state.current_time_label(), "2026-07-09 15:30");
 }
 
 #[test]
@@ -685,4 +799,61 @@ fn home_entry_coordinates(state: &ShellState, index: usize) -> (u16, u16) {
         .unwrap_or_else(|| panic!("missing home entry tile at index {index}"));
 
     (tile.x.saturating_add(1), tile.y.saturating_add(1))
+}
+
+fn component_coordinates(state: &ShellState, component: ShellComponent) -> (u16, u16) {
+    let region = state
+        .hit_map()
+        .regions()
+        .iter()
+        .find(|region| region.component == component)
+        .unwrap_or_else(|| panic!("missing hit region for {component:?}"));
+
+    (
+        region
+            .area
+            .x
+            .saturating_add(region.area.width.saturating_sub(1)),
+        region.area.y,
+    )
+}
+
+fn storage_manager_at(fixture: &FixtureRoot) -> StorageManager {
+    let base = fixture.path();
+    let app_paths =
+        build_windows_app_paths(base.join("Roaming"), base.join("Local"), base.join("Temp"))
+            .expect("valid fixture app paths");
+    StorageManager::open(app_paths)
+        .expect("storage opens")
+        .manager
+}
+
+struct FixtureRoot {
+    path: PathBuf,
+}
+
+impl FixtureRoot {
+    fn new(name: &str) -> Self {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system time")
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!(
+            "tundra-shell-state-{name}-{}-{nanos}",
+            std::process::id()
+        ));
+        assert!(path.is_absolute());
+        let _ = fs::remove_dir_all(&path);
+        Self { path }
+    }
+
+    fn path(&self) -> &PathBuf {
+        &self.path
+    }
+}
+
+impl Drop for FixtureRoot {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.path);
+    }
 }
