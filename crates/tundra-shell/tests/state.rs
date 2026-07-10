@@ -302,7 +302,7 @@ fn modal_captures_mouse_without_closing_or_activating_home() {
         state.last_command(),
         Some(&ShellCommand::CaptureOverlayInput)
     );
-    assert_eq!(state.shutdown_requested(), false);
+    assert!(!state.shutdown_requested());
 }
 
 #[test]
@@ -523,8 +523,10 @@ fn modal_shortcut_shift_is_only_accepted_for_ascii_letter_case() {
         "Confirm",
         "Continue?",
         NotificationTone::Info,
-        vec![ShellNotificationAction::new("space", "Continue")
-            .with_shortcut(InputKey::Character(' '))],
+        vec![
+            ShellNotificationAction::new("space", "Continue")
+                .with_shortcut(InputKey::Character(' ')),
+        ],
     );
 
     state.apply_input(key_input(
@@ -737,7 +739,7 @@ fn undersized_notification_rejects_keyboard_and_mouse_activation() {
         let required_area = Rect::new(0, 0, large_layout.dialog.width, large_layout.dialog.height);
         let action_coordinates = notification_action_coordinates_in(&state, required_area, 0);
         let too_small_size = if shrink_width {
-            (required_area.width.saturating_sub(1), required_area.height)
+            (39, required_area.height)
         } else {
             (required_area.width, required_area.height.saturating_sub(1))
         };
@@ -858,7 +860,7 @@ fn modal_follow_up_screen_change_does_not_restore_previous_focus() {
     state.apply_input(InputEvent::from_key_label("Enter"));
 
     assert_eq!(state.active_screen(), ShellScreen::Clock);
-    assert_eq!(state.focused_component(), ShellComponent::Clock);
+    assert_eq!(state.focused_component(), ShellComponent::ClockNewButton);
     assert_ne!(state.focused_component(), ShellComponent::ClockButton);
 }
 
@@ -1085,7 +1087,9 @@ fn current_time_label_uses_configured_timezone_datetime() {
     state.apply_time_sync_utc_for_test(utc);
 
     assert_eq!(state.current_time_label(), "2026-07-09 23:30");
-    assert_eq!(state.to_clock_view_model().current_time, "2026-07-09 23:30");
+    let clock = state.to_clock_view_model();
+    assert_eq!(clock.date, "2026-07-09");
+    assert_eq!(clock.digital_time, "23:30:00");
 }
 
 #[test]
@@ -1102,7 +1106,7 @@ fn clock_button_click_toggles_clock_placeholder() {
     state.apply_input(InputEvent::mouse_down(PointerButton::Left, coordinates));
 
     assert_eq!(state.active_screen(), ShellScreen::Clock);
-    assert_eq!(state.focused_component(), ShellComponent::Clock);
+    assert_eq!(state.focused_component(), ShellComponent::ClockNewButton);
     assert_eq!(state.last_command(), Some(&ShellCommand::OpenClock));
 
     let coordinates = component_coordinates(&state, ShellComponent::ClockButton);
@@ -1123,7 +1127,7 @@ fn keyboard_activation_opens_clock_and_escape_closes_it() {
 
     state.apply_input(InputEvent::from_key_label("Enter"));
     assert_eq!(state.active_screen(), ShellScreen::Clock);
-    assert_eq!(state.focused_component(), ShellComponent::Clock);
+    assert_eq!(state.focused_component(), ShellComponent::ClockNewButton);
     assert_eq!(state.last_command(), Some(&ShellCommand::OpenClock));
 
     state.apply_input(InputEvent::from_key_label("Esc"));

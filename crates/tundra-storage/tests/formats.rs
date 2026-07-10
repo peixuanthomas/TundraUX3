@@ -1,5 +1,5 @@
 use tundra_storage::{
-    CONFIG_DESCRIPTOR, SCHEMA_VERSION, StorageFormat, USERS_SCHEMA_VERSION,
+    CLOCK_DESCRIPTOR, CONFIG_DESCRIPTOR, SCHEMA_VERSION, StorageFormat, USERS_SCHEMA_VERSION,
     VERSIONED_JSON_DESCRIPTORS,
 };
 
@@ -20,7 +20,14 @@ fn stateful_data_uses_versioned_json() {
 
     assert_eq!(
         names,
-        vec!["users", "state", "recent-files", "sessions", "trash"]
+        vec![
+            "users",
+            "state",
+            "recent-files",
+            "sessions",
+            "clock",
+            "trash"
+        ]
     );
     for descriptor in VERSIONED_JSON_DESCRIPTORS {
         assert_eq!(descriptor.format, StorageFormat::VersionedJson);
@@ -36,6 +43,14 @@ fn stateful_data_uses_versioned_json() {
             descriptor.name
         );
     }
+}
+
+#[test]
+fn clock_uses_its_public_versioned_json_descriptor() {
+    assert_eq!(CLOCK_DESCRIPTOR.name, "clock");
+    assert_eq!(CLOCK_DESCRIPTOR.file_name, "clock.v1.json");
+    assert_eq!(CLOCK_DESCRIPTOR.format, StorageFormat::VersionedJson);
+    assert_eq!(CLOCK_DESCRIPTOR.schema_version, SCHEMA_VERSION);
 }
 
 #[test]

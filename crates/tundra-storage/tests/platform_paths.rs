@@ -67,6 +67,7 @@ fn assert_storage_layout(storage: &StorageLayout, app_paths: &AppPaths) {
         &storage.data_path,
         "sessions.v1.json",
     );
+    assert_state_file(&storage.clock_path, &storage.data_path, "clock.v1.json");
     assert_state_file(&storage.users_path, &storage.data_path, "users.v2.json");
     assert_eq!(storage.trash_path, storage.data_path.join("trash"));
     assert!(storage.trash_path.is_dir());

@@ -157,13 +157,13 @@ impl FocusManager {
         if !self.is_enabled(&id) {
             return Err(FocusError::DisabledTarget(id));
         }
-        if let Some(modal) = self.modal_id() {
-            if !self.is_in_active_scope(&id) {
-                return Err(FocusError::TargetOutsideModal {
-                    modal: modal.clone(),
-                    target: id,
-                });
-            }
+        if let Some(modal) = self.modal_id()
+            && !self.is_in_active_scope(&id)
+        {
+            return Err(FocusError::TargetOutsideModal {
+                modal: modal.clone(),
+                target: id,
+            });
         }
 
         self.focused = Some(id);

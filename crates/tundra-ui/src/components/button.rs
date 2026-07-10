@@ -75,7 +75,7 @@ impl Button {
                         self.state.active = true;
                         ComponentEvent::FocusRequested(self.id.clone())
                     }
-                    MouseKind::Up(button) if button == super::MouseButton::Left => {
+                    MouseKind::Up(super::MouseButton::Left) => {
                         let was_active = self.state.active;
                         self.state.active = false;
                         if was_active && inside {

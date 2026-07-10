@@ -38,6 +38,13 @@ pub const CONFIG_DESCRIPTOR: StorageDescriptor = StorageDescriptor {
     schema_version: SCHEMA_VERSION,
 };
 
+pub const CLOCK_DESCRIPTOR: StorageDescriptor = StorageDescriptor {
+    name: "clock",
+    file_name: "clock.v1.json",
+    format: StorageFormat::VersionedJson,
+    schema_version: SCHEMA_VERSION,
+};
+
 pub const VERSIONED_JSON_DESCRIPTORS: &[StorageDescriptor] = &[
     StorageDescriptor {
         name: "users",
@@ -63,6 +70,7 @@ pub const VERSIONED_JSON_DESCRIPTORS: &[StorageDescriptor] = &[
         format: StorageFormat::VersionedJson,
         schema_version: SCHEMA_VERSION,
     },
+    CLOCK_DESCRIPTOR,
     StorageDescriptor {
         name: "trash",
         file_name: "trash.v1.json",
@@ -83,6 +91,7 @@ pub struct StorageLayout {
     pub state_path: PathBuf,
     pub recent_files_path: PathBuf,
     pub sessions_path: PathBuf,
+    pub clock_path: PathBuf,
     pub trash_path: PathBuf,
     pub trash_manifest_path: PathBuf,
     pub audit_log_path: PathBuf,
@@ -104,7 +113,8 @@ impl StorageLayout {
             state_path: data_path.join(VERSIONED_JSON_DESCRIPTORS[1].file_name),
             recent_files_path: data_path.join(VERSIONED_JSON_DESCRIPTORS[2].file_name),
             sessions_path: data_path.join(VERSIONED_JSON_DESCRIPTORS[3].file_name),
-            trash_manifest_path: trash_path.join(VERSIONED_JSON_DESCRIPTORS[4].file_name),
+            clock_path: data_path.join(CLOCK_DESCRIPTOR.file_name),
+            trash_manifest_path: trash_path.join(VERSIONED_JSON_DESCRIPTORS[5].file_name),
             trash_path,
             audit_log_path: app_paths.logs_path().join("audit.v1.log"),
         }
@@ -198,6 +208,14 @@ impl StorageManager {
         save_json_document(&self.layout.sessions_path, "sessions", sessions)
     }
 
+    pub fn load_clock(&self) -> Result<ClockDocument, StorageError> {
+        load_json_document(&self.layout.clock_path, CLOCK_DESCRIPTOR.name)
+    }
+
+    pub fn save_clock(&self, clock: &ClockDocument) -> Result<(), StorageError> {
+        save_json_document(&self.layout.clock_path, CLOCK_DESCRIPTOR.name, clock)
+    }
+
     pub fn load_trash(&self) -> Result<TrashDocument, StorageError> {
         load_json_document(&self.layout.trash_manifest_path, "trash")
     }
@@ -287,6 +305,12 @@ impl StorageManager {
         )?;
         self.ensure_json_document(
             &mut report,
+            &self.layout.clock_path,
+            CLOCK_DESCRIPTOR.name,
+            &ClockDocument::default(),
+        )?;
+        self.ensure_json_document(
+            &mut report,
             &self.layout.trash_manifest_path,
             "trash",
             &TrashDocument::default(),
@@ -320,6 +344,11 @@ impl StorageManager {
             (
                 self.layout.sessions_path.as_path(),
                 "sessions",
+                StorageFormat::VersionedJson,
+            ),
+            (
+                self.layout.clock_path.as_path(),
+                CLOCK_DESCRIPTOR.name,
                 StorageFormat::VersionedJson,
             ),
             (
@@ -799,6 +828,73 @@ impl VersionedDocument for SessionsDocument {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ClockDocument {
+    #[serde(default = "default_schema_version")]
+    pub schema_version: u32,
+    #[serde(default)]
+    pub profiles: BTreeMap<String, ClockProfile>,
+}
+
+impl Default for ClockDocument {
+    fn default() -> Self {
+        Self {
+            schema_version: SCHEMA_VERSION,
+            profiles: BTreeMap::new(),
+        }
+    }
+}
+
+impl VersionedDocument for ClockDocument {
+    fn schema_version(&self) -> u32 {
+        self.schema_version
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ClockProfile {
+    #[serde(default = "default_clock_next_id")]
+    pub next_id: u64,
+    #[serde(default)]
+    pub entries: Vec<ClockEntryRecord>,
+}
+
+impl Default for ClockProfile {
+    fn default() -> Self {
+        Self {
+            next_id: default_clock_next_id(),
+            entries: Vec::new(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ClockEntryRecord {
+    DailyAlarm {
+        #[serde(default)]
+        id: u64,
+        #[serde(default)]
+        hour: u8,
+        #[serde(default)]
+        minute: u8,
+        #[serde(default)]
+        second: u8,
+        #[serde(default)]
+        strong: bool,
+        #[serde(default)]
+        snooze_deadline_epoch_ms: Option<u64>,
+    },
+    Countdown {
+        #[serde(default)]
+        id: u64,
+        #[serde(default)]
+        deadline_epoch_ms: u64,
+        #[serde(default)]
+        strong: bool,
+    },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct TrashDocument {
     pub schema_version: u32,
     #[serde(default)]
@@ -842,6 +938,14 @@ fn default_language() -> String {
 
 fn default_timezone() -> String {
     "UTC".to_string()
+}
+
+fn default_schema_version() -> u32 {
+    SCHEMA_VERSION
+}
+
+fn default_clock_next_id() -> u64 {
+    1
 }
 
 fn create_dir(path: &Path, operation: &'static str) -> Result<(), StorageError> {

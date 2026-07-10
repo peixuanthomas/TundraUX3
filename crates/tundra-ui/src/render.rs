@@ -4,15 +4,21 @@ use ratatui::style::Style;
 use ratatui::text::Line;
 use ratatui::widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph, Wrap};
 
-use crate::layout::{notification_action_text, wrap_notification_text};
+use crate::layout::{
+    ClockEntryKind, ClockPageLayout, UserManagementColumnMode, UserManagementFormLayout,
+    UserManagementLayout, clock_page_layout, notification_action_text, user_management_layout,
+    wrap_notification_text,
+};
 use crate::{
-    AuthField, BootstrapAdminViewModel, ClockViewModel, ExitConfirmViewModel,
-    ExplorerDialogViewModel, ExplorerEntryViewModel, ExplorerSearchViewModel, ExplorerViewModel,
-    HomeDisplayMode, HomeViewModel, LoginField, LoginViewModel, NOTIFICATION_TOO_SMALL_MESSAGE,
-    NotificationLayout, NotificationLevel, NotificationTone, NotificationViewModel, SetupField,
-    SetupStep, SetupViewModel, ShellChromeViewModel, ShellLayout, TimeSyncDialogViewModel,
-    TundraTheme, UserManagementField, UserManagementFormKind, UserManagementFormViewModel,
-    UserManagementViewModel, compute_shell_layout, notification_layout,
+    AuthField, BootstrapAdminViewModel, ClockCreateDialogFocus, ClockEntryViewModel,
+    ClockFontAsset, ClockViewModel, ExitConfirmViewModel, ExplorerDialogViewModel,
+    ExplorerEntryViewModel, ExplorerSearchViewModel, ExplorerViewModel, HomeDisplayMode,
+    HomeViewModel, LoginField, LoginViewModel, NOTIFICATION_TOO_SMALL_MESSAGE, NotificationLayout,
+    NotificationLevel, NotificationTone, NotificationViewModel, SetupField, SetupStep,
+    SetupViewModel, ShellChromeViewModel, ShellLayout, TimeSyncDialogViewModel, TundraTheme,
+    UserManagementFeedbackTone, UserManagementField, UserManagementFocus, UserManagementFormKind,
+    UserManagementFormViewModel, UserManagementUserViewModel, UserManagementViewModel,
+    compute_shell_layout, notification_layout,
     timezone_map::{TimezoneMapWidget, boundary_id_for_timezone},
 };
 
@@ -51,6 +57,10 @@ const STATUS_TIME_BUTTON_HORIZONTAL_CHROME: u16 = 4;
 const STATUS_TIME_BUTTON_MIN_WIDTH: u16 = 3;
 const STATUS_TIME_BUTTON_RESERVED_LEFT_WIDTH: u16 = 12;
 const COMPACT_TERMINAL_MESSAGE: &str = "TundraUX 3 needs at least 50x12 terminal cells.";
+const LARGE_CLOCK_NUMERAL_MIN_WIDTH: usize = 64;
+const LARGE_CLOCK_NUMERAL_MIN_HEIGHT: usize = 19;
+const LARGE_CLOCK_NUMERAL_CENTER_CLEARANCE: usize = 24;
+const LARGE_CLOCK_NUMERAL_VERTICAL_CLEARANCE: usize = 5;
 
 pub fn render_home(
     frame: &mut Frame<'_>,
@@ -102,6 +112,16 @@ pub fn render_clock_placeholder(
     model: &ClockViewModel,
     theme: &TundraTheme,
 ) {
+    render_clock(frame, area, chrome, model, theme);
+}
+
+pub fn render_clock(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    chrome: &ShellChromeViewModel,
+    model: &ClockViewModel,
+    theme: &TundraTheme,
+) {
     let main = match compute_shell_layout(area) {
         ShellLayout::Compact(compact) => {
             render_compact_home(frame, compact, chrome, theme);
@@ -114,22 +134,586 @@ pub fn render_clock_placeholder(
         }
     };
 
-    let lines = vec![
-        Line::styled("Clock", theme.title_style()),
-        Line::from(""),
-        Line::from(format!("Current time: {}", model.current_time)),
-    ];
-    let clock = Paragraph::new(lines)
-        .block(
-            Block::default()
-                .title("Clock")
-                .borders(Borders::ALL)
-                .style(theme.body_style()),
-        )
-        .alignment(Alignment::Center)
-        .wrap(Wrap { trim: true });
+    let layout = clock_page_layout(main, model);
+    render_clock_face(frame, &layout, model, theme);
+    render_clock_panel(frame, &layout, model, theme);
+    if let (Some(dialog_model), Some(dialog_layout)) = (&model.create_dialog, layout.create_dialog)
+    {
+        render_clock_create_dialog(frame, dialog_layout, dialog_model, theme);
+    }
+}
 
-    frame.render_widget(clock, main);
+fn render_clock_face(
+    frame: &mut Frame<'_>,
+    layout: &ClockPageLayout,
+    model: &ClockViewModel,
+    theme: &TundraTheme,
+) {
+    if layout.clock.width == 0 || layout.clock.height == 0 {
+        return;
+    }
+    frame.render_widget(
+        Block::default()
+            .title("Clock")
+            .borders(Borders::ALL)
+            .style(theme.body_style()),
+        layout.clock,
+    );
+
+    if let Some(analog) = layout
+        .analog
+        .filter(|area| area.width > 0 && area.height > 0)
+    {
+        frame.render_widget(
+            Paragraph::new(ascii_clock_lines(analog, model))
+                .alignment(Alignment::Left)
+                .style(theme.body_style()),
+            analog,
+        );
+    }
+
+    if layout.digital.width == 0 || layout.digital.height == 0 {
+        return;
+    }
+    let lines = if layout.digital.height == 1 || model.date.is_empty() {
+        vec![Line::styled(
+            model.digital_time.clone(),
+            theme.title_style(),
+        )]
+    } else {
+        vec![
+            Line::from(model.date.clone()),
+            Line::styled(model.digital_time.clone(), theme.title_style()),
+        ]
+    };
+    frame.render_widget(
+        Paragraph::new(lines)
+            .alignment(Alignment::Center)
+            .style(theme.body_style()),
+        layout.digital,
+    );
+}
+
+fn render_clock_panel(
+    frame: &mut Frame<'_>,
+    layout: &ClockPageLayout,
+    model: &ClockViewModel,
+    theme: &TundraTheme,
+) {
+    if layout.panel.width == 0 || layout.panel.height == 0 {
+        return;
+    }
+    frame.render_widget(
+        Block::default()
+            .title("Alarms & Timers")
+            .borders(Borders::ALL)
+            .style(theme.body_style()),
+        layout.panel,
+    );
+
+    render_clock_line(
+        frame,
+        layout.new_button,
+        "[ + New ]".to_string(),
+        if model.selected_entry_id.is_none() && model.create_dialog.is_none() {
+            theme.title_style()
+        } else {
+            theme.body_style()
+        },
+        Alignment::Center,
+    );
+    render_clock_line(
+        frame,
+        layout.alarms_heading,
+        if model.alarms.is_empty() {
+            "ALARMS (none)".to_string()
+        } else {
+            "ALARMS".to_string()
+        },
+        theme.title_style(),
+        Alignment::Left,
+    );
+    render_clock_line(
+        frame,
+        layout.countdowns_heading,
+        if model.countdowns.is_empty() {
+            "COUNTDOWNS (none)".to_string()
+        } else {
+            "COUNTDOWNS".to_string()
+        },
+        theme.title_style(),
+        Alignment::Left,
+    );
+
+    for row in &layout.entry_rows {
+        let Some(entry) = clock_entry(model, row.kind, row.id) else {
+            continue;
+        };
+        let selected = model.selected_entry_id == Some(entry.id);
+        let marker = if selected { "> " } else { "  " };
+        let kind = match row.kind {
+            ClockEntryKind::Alarm => "[A]",
+            ClockEntryKind::Countdown => "[T]",
+        };
+        let strong = if entry.strong { " !" } else { "" };
+        render_clock_line(
+            frame,
+            row.area,
+            format!("{marker}{kind} {}{strong}", entry.label),
+            if selected {
+                theme.title_style()
+            } else {
+                theme.body_style()
+            },
+            Alignment::Left,
+        );
+    }
+}
+
+fn render_clock_create_dialog(
+    frame: &mut Frame<'_>,
+    layout: crate::ClockCreateDialogLayout,
+    model: &crate::ClockCreateDialogViewModel,
+    theme: &TundraTheme,
+) {
+    if layout.dialog.width == 0 || layout.dialog.height == 0 {
+        return;
+    }
+    frame.render_widget(Clear, layout.dialog);
+    frame.render_widget(
+        Block::default()
+            .title("New Alarm or Countdown")
+            .borders(Borders::ALL)
+            .style(theme.body_style()),
+        layout.dialog,
+    );
+
+    let prompt = Rect::new(
+        layout.dialog.x.saturating_add(1),
+        layout.dialog.y.saturating_add(1),
+        layout.dialog.width.saturating_sub(2),
+        u16::from(layout.dialog.height > 2),
+    );
+    render_clock_line(
+        frame,
+        prompt,
+        "Enter time (hh mm ss)".to_string(),
+        theme.body_style(),
+        Alignment::Left,
+    );
+
+    let input_is_empty = model.input.is_empty();
+    render_clock_line(
+        frame,
+        layout.input,
+        format!(
+            "[ {} ]",
+            if input_is_empty {
+                "hh mm ss"
+            } else {
+                model.input.as_str()
+            }
+        ),
+        if model.focus == ClockCreateDialogFocus::Input {
+            theme.title_style()
+        } else if input_is_empty {
+            theme.muted_style()
+        } else {
+            theme.body_style()
+        },
+        Alignment::Left,
+    );
+    if let Some(error) = &model.error {
+        render_clock_line(
+            frame,
+            layout.error,
+            error.clone(),
+            theme.error_style(),
+            Alignment::Left,
+        );
+    }
+    render_clock_line(
+        frame,
+        layout.create_alarm,
+        "[ Create Alarm ]".to_string(),
+        if model.focus == ClockCreateDialogFocus::CreateAlarm {
+            theme.title_style()
+        } else {
+            theme.body_style()
+        },
+        Alignment::Center,
+    );
+    render_clock_line(
+        frame,
+        layout.create_countdown,
+        "[ Create Countdown ]".to_string(),
+        if model.focus == ClockCreateDialogFocus::CreateCountdown {
+            theme.title_style()
+        } else {
+            theme.body_style()
+        },
+        Alignment::Center,
+    );
+}
+
+fn render_clock_line(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    text: String,
+    style: Style,
+    alignment: Alignment,
+) {
+    if area.width == 0 || area.height == 0 {
+        return;
+    }
+    frame.render_widget(
+        Paragraph::new(Line::styled(text, style))
+            .alignment(alignment)
+            .style(style),
+        area,
+    );
+}
+
+fn clock_entry(
+    model: &ClockViewModel,
+    kind: ClockEntryKind,
+    id: u64,
+) -> Option<&ClockEntryViewModel> {
+    let entries = match kind {
+        ClockEntryKind::Alarm => &model.alarms,
+        ClockEntryKind::Countdown => &model.countdowns,
+    };
+    entries.iter().find(|entry| entry.id == id)
+}
+
+fn ascii_clock_lines(area: Rect, model: &ClockViewModel) -> Vec<Line<'static>> {
+    let width = usize::from(area.width);
+    let height = usize::from(area.height);
+    if width == 0 || height == 0 {
+        return Vec::new();
+    }
+    let mut cells = vec![vec![' '; width]; height];
+    if width >= 7 && height >= 5 {
+        let large_numerals = large_clock_numerals(width, height, model);
+        let center_x = (width.saturating_sub(1) as f64) / 2.0;
+        let center_y = (height.saturating_sub(1) as f64) / 2.0;
+        let (radius_x, radius_y) = clock_face_radii(width, height, large_numerals.as_ref());
+
+        for sample in 0..720 {
+            let angle = (sample as f64) * std::f64::consts::TAU / 720.0;
+            let x = (center_x + angle.sin() * radius_x).round() as isize;
+            let y = (center_y - angle.cos() * radius_y).round() as isize;
+            let outline = if angle.sin().abs() < 0.35 {
+                '-'
+            } else if angle.cos().abs() < 0.35 {
+                '|'
+            } else {
+                '.'
+            };
+            put_clock_char(&mut cells, x, y, outline);
+        }
+
+        if large_numerals.is_none() {
+            put_clock_text(&mut cells, center_x.round() as isize - 1, 0, "12");
+            put_clock_text(
+                &mut cells,
+                width.saturating_sub(1) as isize,
+                center_y.round() as isize,
+                "3",
+            );
+            put_clock_text(
+                &mut cells,
+                center_x.round() as isize,
+                height.saturating_sub(1) as isize,
+                "6",
+            );
+            put_clock_text(&mut cells, 0, center_y.round() as isize, "9");
+        }
+
+        draw_clock_hands(&mut cells, center_x, center_y, radius_x, radius_y, model);
+        if let Some(numerals) = &large_numerals {
+            draw_large_clock_numerals(&mut cells, numerals, center_x, center_y, radius_x, radius_y);
+        }
+        put_clock_char(
+            &mut cells,
+            center_x.round() as isize,
+            center_y.round() as isize,
+            '@',
+        );
+    }
+
+    cells
+        .into_iter()
+        .map(|line| Line::from(line.into_iter().collect::<String>()))
+        .collect()
+}
+
+#[derive(Debug)]
+struct LargeClockNumerals {
+    twelve: Vec<String>,
+    three: Vec<String>,
+    six: Vec<String>,
+    nine: Vec<String>,
+}
+
+fn large_clock_numerals(
+    width: usize,
+    height: usize,
+    model: &ClockViewModel,
+) -> Option<LargeClockNumerals> {
+    if width < LARGE_CLOCK_NUMERAL_MIN_WIDTH || height < LARGE_CLOCK_NUMERAL_MIN_HEIGHT {
+        return None;
+    }
+    let font = model.clock_font()?;
+    let numerals = LargeClockNumerals {
+        twelve: clock_font_lines("12", font)?,
+        three: clock_font_lines("3", font)?,
+        six: clock_font_lines("6", font)?,
+        nine: clock_font_lines("9", font)?,
+    };
+    let side_width = clock_art_width(&numerals.nine)
+        .saturating_add(clock_art_width(&numerals.three))
+        .saturating_add(LARGE_CLOCK_NUMERAL_CENTER_CLEARANCE);
+    let vertical_height = numerals
+        .twelve
+        .len()
+        .saturating_add(numerals.six.len())
+        .saturating_add(LARGE_CLOCK_NUMERAL_VERTICAL_CLEARANCE);
+    let widest_centered = clock_art_width(&numerals.twelve).max(clock_art_width(&numerals.six));
+    if width < side_width.max(widest_centered) || height < vertical_height {
+        return None;
+    }
+    Some(numerals)
+}
+
+fn clock_face_radii(
+    width: usize,
+    height: usize,
+    numerals: Option<&LargeClockNumerals>,
+) -> (f64, f64) {
+    let center_x = (width.saturating_sub(1) as f64) / 2.0;
+    let center_y = (height.saturating_sub(1) as f64) / 2.0;
+    let (max_radius_x, radius_y, min_radius_x) =
+        numerals.map_or((center_x, center_y, 0.0), |numerals| {
+            let side_width = clock_art_width(&numerals.three).max(clock_art_width(&numerals.nine));
+            let centered_width =
+                clock_art_width(&numerals.twelve).max(clock_art_width(&numerals.six));
+            let vertical_height = numerals
+                .twelve
+                .len()
+                .max(numerals.six.len())
+                .max(numerals.three.len())
+                .max(numerals.nine.len());
+            let side_half_width = side_width.saturating_sub(1) as f64 / 2.0;
+            let centered_half_width = centered_width.saturating_sub(1) as f64 / 2.0;
+            let numeral_half_height = vertical_height.saturating_sub(1) as f64 / 2.0;
+            (
+                (center_x - side_half_width).max(1.0),
+                (center_y - numeral_half_height).max(1.0),
+                centered_half_width + side_half_width + 1.0,
+            )
+        });
+    // Terminal cells are roughly twice as tall as they are wide.
+    (
+        (radius_y * 2.0)
+            .max(min_radius_x)
+            .min(max_radius_x)
+            .max(1.0),
+        radius_y,
+    )
+}
+
+fn clock_font_lines(text: &str, font: &ClockFontAsset) -> Option<Vec<String>> {
+    if font.height == 0 {
+        return None;
+    }
+    let mut lines = vec![String::new(); font.height];
+    let characters = text.chars().collect::<Vec<_>>();
+    for (index, character) in characters.iter().copied().enumerate() {
+        if index > 0 {
+            let gap = if character == ':' || characters[index - 1] == ':' {
+                font.separator_spacing
+            } else {
+                font.spacing
+            };
+            for line in &mut lines {
+                line.push_str(&" ".repeat(gap));
+            }
+        }
+        let glyph = font.glyphs.get(&character)?;
+        if glyph.len() != font.height {
+            return None;
+        }
+        for (line, glyph_line) in lines.iter_mut().zip(glyph) {
+            line.push_str(glyph_line);
+        }
+    }
+    Some(lines)
+}
+
+fn draw_large_clock_numerals(
+    cells: &mut [Vec<char>],
+    numerals: &LargeClockNumerals,
+    center_x: f64,
+    center_y: f64,
+    radius_x: f64,
+    radius_y: f64,
+) {
+    let height = cells.len();
+    let width = cells.first().map(Vec::len).unwrap_or_default();
+    let twelve = centered_clock_art_origin(
+        center_x,
+        center_y - radius_y,
+        &numerals.twelve,
+        width,
+        height,
+    );
+    let three = centered_clock_art_origin(
+        center_x + radius_x,
+        center_y,
+        &numerals.three,
+        width,
+        height,
+    );
+    let six =
+        centered_clock_art_origin(center_x, center_y + radius_y, &numerals.six, width, height);
+    let nine =
+        centered_clock_art_origin(center_x - radius_x, center_y, &numerals.nine, width, height);
+
+    put_clock_art(cells, twelve.0, twelve.1, &numerals.twelve);
+    put_clock_art(cells, three.0, three.1, &numerals.three);
+    put_clock_art(cells, six.0, six.1, &numerals.six);
+    put_clock_art(cells, nine.0, nine.1, &numerals.nine);
+}
+
+fn centered_clock_art_origin(
+    target_x: f64,
+    target_y: f64,
+    lines: &[String],
+    width: usize,
+    height: usize,
+) -> (usize, usize) {
+    let art_width = clock_art_width(lines);
+    let art_height = lines.len();
+    let half_width = art_width.saturating_sub(1) as f64 / 2.0;
+    let half_height = art_height.saturating_sub(1) as f64 / 2.0;
+    let x = (target_x - half_width)
+        .round()
+        .clamp(0.0, width.saturating_sub(art_width) as f64) as usize;
+    let y = (target_y - half_height)
+        .round()
+        .clamp(0.0, height.saturating_sub(art_height) as f64) as usize;
+    (x, y)
+}
+
+fn clock_art_width(lines: &[String]) -> usize {
+    lines
+        .iter()
+        .map(|line| line.chars().count())
+        .max()
+        .unwrap_or_default()
+}
+
+fn put_clock_art(cells: &mut [Vec<char>], x: usize, y: usize, lines: &[String]) {
+    for (row, line) in lines.iter().enumerate() {
+        for (column, character) in line.chars().enumerate() {
+            put_clock_char(
+                cells,
+                x.saturating_add(column) as isize,
+                y.saturating_add(row) as isize,
+                character,
+            );
+        }
+    }
+}
+
+fn draw_clock_hands(
+    cells: &mut [Vec<char>],
+    center_x: f64,
+    center_y: f64,
+    radius_x: f64,
+    radius_y: f64,
+    model: &ClockViewModel,
+) {
+    let hour_angle = ((f64::from(model.hour % 12)
+        + f64::from(model.minute) / 60.0
+        + f64::from(model.second) / 3600.0)
+        * 30.0)
+        .to_radians();
+    let minute_angle =
+        ((f64::from(model.minute) + f64::from(model.second) / 60.0) * 6.0).to_radians();
+    let second_angle = (f64::from(model.second) * 6.0).to_radians();
+
+    // Draw longest to shortest so aligned hands keep visible radial bands:
+    // hour (#) inside minute (*) inside second (+).
+    draw_clock_hand(
+        cells,
+        center_x,
+        center_y,
+        radius_x * 0.78,
+        radius_y * 0.78,
+        second_angle,
+        '+',
+    );
+    draw_clock_hand(
+        cells,
+        center_x,
+        center_y,
+        radius_x * 0.62,
+        radius_y * 0.62,
+        minute_angle,
+        '*',
+    );
+    draw_clock_hand(
+        cells,
+        center_x,
+        center_y,
+        radius_x * 0.42,
+        radius_y * 0.42,
+        hour_angle,
+        '#',
+    );
+}
+
+#[allow(clippy::too_many_arguments)]
+fn draw_clock_hand(
+    cells: &mut [Vec<char>],
+    center_x: f64,
+    center_y: f64,
+    radius_x: f64,
+    radius_y: f64,
+    angle: f64,
+    character: char,
+) {
+    let end_x = center_x + angle.sin() * radius_x;
+    let end_y = center_y - angle.cos() * radius_y;
+    let steps = ((end_x - center_x).abs().max((end_y - center_y).abs()) * 2.0)
+        .ceil()
+        .max(1.0) as usize;
+    for step in 0..=steps {
+        let progress = (step as f64) / (steps as f64);
+        put_clock_char(
+            cells,
+            (center_x + (end_x - center_x) * progress).round() as isize,
+            (center_y + (end_y - center_y) * progress).round() as isize,
+            character,
+        );
+    }
+}
+
+fn put_clock_text(cells: &mut [Vec<char>], x: isize, y: isize, text: &str) {
+    for (offset, character) in text.chars().enumerate() {
+        put_clock_char(cells, x.saturating_add(offset as isize), y, character);
+    }
+}
+
+fn put_clock_char(cells: &mut [Vec<char>], x: isize, y: isize, character: char) {
+    let (Ok(x), Ok(y)) = (usize::try_from(x), usize::try_from(y)) else {
+        return;
+    };
+    if let Some(cell) = cells.get_mut(y).and_then(|row| row.get_mut(x)) {
+        *cell = character;
+    }
 }
 
 pub fn render_time_sync_failure_dialog(
@@ -302,46 +886,383 @@ pub fn render_user_management(
         ShellLayout::Compact(compact) => render_compact_home(frame, compact, chrome, theme),
         ShellLayout::Full { top, main, status } => {
             render_top(frame, top, chrome, theme);
-            let mut lines = vec![Line::from(format!("Current user: {}", model.current_user))];
-            lines.push(Line::from(if model.can_manage_all {
-                "N: new user    A: new admin    G: new debug    E: edit info    R: password    D: disable    U: enable/unlock    C: role    X/Delete: delete    Esc: back"
-            } else {
-                "E: edit info    R: password    X/Delete: delete account    Esc: back"
-            }));
-            lines.push(Line::from(""));
-            for (index, user) in model.users.iter().enumerate() {
-                let marker = if index == model.selected_index {
-                    ">"
-                } else {
-                    " "
-                };
-                let enabled = if user.enabled { "enabled" } else { "disabled" };
-                let locked = if user.locked { " locked" } else { "" };
-                lines.push(Line::from(format!(
-                    "{marker} {} ({}) | {} | {enabled}{locked}",
-                    user.username, user.display_name, user.role
-                )));
-            }
-            if let Some(form) = &model.form {
-                lines.push(Line::from(""));
-                lines.extend(user_management_form_lines(form));
-            }
-            if let Some(message) = &model.message {
-                lines.push(Line::from(""));
-                lines.push(Line::from(message.clone()));
-            }
-            let main_widget = Paragraph::new(lines)
-                .block(
-                    Block::default()
-                        .title("User Management")
-                        .borders(Borders::ALL)
-                        .style(theme.body_style()),
-                )
-                .wrap(Wrap { trim: true });
-            frame.render_widget(main_widget, main);
+            render_user_management_main(frame, main, model, theme);
             render_status(frame, status, chrome, theme);
         }
     }
+}
+
+fn render_user_management_main(
+    frame: &mut Frame<'_>,
+    main: Rect,
+    model: &UserManagementViewModel,
+    theme: &TundraTheme,
+) {
+    let layout = user_management_layout(main, model);
+    frame.render_widget(
+        Block::default()
+            .title("User Management")
+            .borders(Borders::ALL)
+            .style(theme.body_style()),
+        layout.panel,
+    );
+
+    render_clock_line(
+        frame,
+        layout.summary,
+        format!(
+            "Signed in: {}    {} {}",
+            model.current_user,
+            model.users.len(),
+            if model.users.len() == 1 {
+                "user"
+            } else {
+                "users"
+            }
+        ),
+        theme.body_style(),
+        Alignment::Left,
+    );
+    render_user_management_header(frame, &layout, theme);
+    render_user_management_rows(frame, &layout, model, theme);
+    render_user_management_feedback(frame, &layout, model, theme);
+    render_user_management_actions(frame, &layout, model, theme);
+    render_clock_line(
+        frame,
+        layout.help,
+        "↑↓ Select · Tab Actions · Enter Activate · Esc Back".to_string(),
+        theme.muted_style(),
+        Alignment::Left,
+    );
+
+    if let (Some(form_layout), Some(form)) = (layout.form.as_ref(), model.form.as_ref()) {
+        render_user_management_form(frame, form_layout, form, theme);
+    }
+}
+
+fn render_user_management_header(
+    frame: &mut Frame<'_>,
+    layout: &UserManagementLayout,
+    theme: &TundraTheme,
+) {
+    let (username, display_name) = match layout.column_mode {
+        UserManagementColumnMode::Detailed => ("USERNAME", "DISPLAY NAME"),
+        UserManagementColumnMode::Account => ("ACCOUNT", ""),
+    };
+    let text = user_management_table_line(
+        layout.header.width,
+        layout.column_mode,
+        " ",
+        username,
+        display_name,
+        "ROLE",
+        "STATUS",
+    );
+    render_clock_line(
+        frame,
+        layout.header,
+        text,
+        theme.title_style(),
+        Alignment::Left,
+    );
+}
+
+fn render_user_management_rows(
+    frame: &mut Frame<'_>,
+    layout: &UserManagementLayout,
+    model: &UserManagementViewModel,
+    theme: &TundraTheme,
+) {
+    if layout.rows.is_empty() && model.users.is_empty() {
+        let empty = Rect::new(
+            layout.rows_area.x,
+            layout.rows_area.y,
+            layout.rows_area.width,
+            u16::from(layout.rows_area.height > 0),
+        );
+        render_clock_line(
+            frame,
+            empty,
+            "  No users available".to_string(),
+            theme.muted_style(),
+            Alignment::Left,
+        );
+        return;
+    }
+
+    for row in &layout.rows {
+        let Some(user) = model.users.get(row.index) else {
+            continue;
+        };
+        let selected = row.index == model.selected_index;
+        let marker = if selected { ">" } else { " " };
+        let status = user_management_status(user);
+        let text = user_management_table_line(
+            row.area.width,
+            layout.column_mode,
+            marker,
+            &user.username,
+            &user.display_name,
+            &user.role,
+            &status,
+        );
+        render_clock_line(
+            frame,
+            row.area,
+            text,
+            if selected {
+                theme.title_style()
+            } else {
+                theme.body_style()
+            },
+            Alignment::Left,
+        );
+    }
+}
+
+fn render_user_management_feedback(
+    frame: &mut Frame<'_>,
+    layout: &UserManagementLayout,
+    model: &UserManagementViewModel,
+    theme: &TundraTheme,
+) {
+    let (text, style) = if let Some(message) = &model.message {
+        let style = match model.feedback_tone {
+            UserManagementFeedbackTone::Info => theme.body_style(),
+            UserManagementFeedbackTone::Success => theme.title_style(),
+            UserManagementFeedbackTone::Error => theme.error_style(),
+        };
+        (message.clone(), style)
+    } else if let UserManagementFocus::Action(focused) = model.focus {
+        let Some(reason) = model
+            .actions
+            .iter()
+            .find(|action| action.action == focused && !action.enabled)
+            .and_then(|action| action.disabled_reason.clone())
+        else {
+            return;
+        };
+        (reason, theme.muted_style())
+    } else {
+        return;
+    };
+    render_clock_line(frame, layout.feedback, text, style, Alignment::Left);
+}
+
+fn render_user_management_actions(
+    frame: &mut Frame<'_>,
+    layout: &UserManagementLayout,
+    model: &UserManagementViewModel,
+    theme: &TundraTheme,
+) {
+    for action_layout in &layout.actions {
+        let Some(action) = model
+            .actions
+            .iter()
+            .find(|action| action.action == action_layout.action)
+        else {
+            continue;
+        };
+        let focused = model.focus == UserManagementFocus::Action(action.action);
+        let style = if !action.enabled {
+            theme.muted_style()
+        } else if focused {
+            theme.title_style()
+        } else if action.dangerous {
+            theme.error_style()
+        } else {
+            theme.body_style()
+        };
+        render_clock_line(
+            frame,
+            action_layout.area,
+            fit_cell(
+                &action.button_label(),
+                usize::from(action_layout.area.width),
+            ),
+            style,
+            Alignment::Center,
+        );
+    }
+}
+
+fn render_user_management_form(
+    frame: &mut Frame<'_>,
+    layout: &UserManagementFormLayout,
+    form: &UserManagementFormViewModel,
+    theme: &TundraTheme,
+) {
+    frame.render_widget(Clear, layout.dialog);
+    if !layout.compact {
+        frame.render_widget(
+            Block::default()
+                .title(form.title.clone())
+                .borders(Borders::ALL)
+                .style(theme.body_style()),
+            layout.dialog,
+        );
+    }
+
+    let prompt = match (layout.compact, form.kind) {
+        (true, UserManagementFormKind::Create) => "Create user — User or Admin account".to_string(),
+        (true, _) => form.title.clone(),
+        (false, UserManagementFormKind::Create) => "Create a User or Admin account.".to_string(),
+        (false, UserManagementFormKind::EditInfo) => format!("Editing: {}", form.username),
+        (false, UserManagementFormKind::Password) => {
+            format!("Set a new password for {}.", form.username)
+        }
+    };
+    render_clock_line(
+        frame,
+        layout.prompt,
+        prompt,
+        theme.body_style(),
+        Alignment::Left,
+    );
+
+    for field in &layout.fields {
+        let value = match field.field {
+            UserManagementField::Username => format!("Username: {}", form.username),
+            UserManagementField::DisplayName => {
+                format!("Display name: {}", form.display_name)
+            }
+            UserManagementField::Role => format!("Role: {}  ◀/▶", form.role),
+            UserManagementField::Password => {
+                format!("Password: {}", "*".repeat(form.password_len))
+            }
+            UserManagementField::Submit | UserManagementField::Cancel => continue,
+        };
+        render_clock_line(
+            frame,
+            field.area,
+            format!("[ {value} ]"),
+            if form.focused_field == field.field {
+                theme.title_style()
+            } else {
+                theme.body_style()
+            },
+            Alignment::Left,
+        );
+    }
+    if let Some(error) = &form.error {
+        render_clock_line(
+            frame,
+            layout.error,
+            error.clone(),
+            theme.error_style(),
+            Alignment::Left,
+        );
+    }
+    render_clock_line(
+        frame,
+        layout.submit,
+        format!("[ {} ]", form.submit_label()),
+        if form.focused_field == UserManagementField::Submit {
+            theme.title_style()
+        } else {
+            theme.body_style()
+        },
+        Alignment::Center,
+    );
+    render_clock_line(
+        frame,
+        layout.cancel,
+        "[ Cancel ]".to_string(),
+        if form.focused_field == UserManagementField::Cancel {
+            theme.title_style()
+        } else {
+            theme.body_style()
+        },
+        Alignment::Center,
+    );
+}
+
+fn user_management_status(user: &UserManagementUserViewModel) -> String {
+    let mut status = if !user.enabled {
+        "Disabled".to_string()
+    } else if user.locked {
+        "Locked".to_string()
+    } else {
+        "Enabled".to_string()
+    };
+    if user.is_current {
+        status.push_str(" · You");
+    }
+    status
+}
+
+fn user_management_table_line(
+    width: u16,
+    mode: UserManagementColumnMode,
+    marker: &str,
+    username: &str,
+    display_name: &str,
+    role: &str,
+    status: &str,
+) -> String {
+    let width = usize::from(width);
+    if width == 0 {
+        return String::new();
+    }
+    let marker_width = 2_usize.min(width);
+    let available = width.saturating_sub(marker_width);
+    match mode {
+        UserManagementColumnMode::Detailed => {
+            let separators = 3_usize.min(available);
+            let cells = available.saturating_sub(separators);
+            let role_width = 10.min(cells / 4);
+            let status_width = 18.min(cells.saturating_sub(role_width) / 2);
+            let names_width = cells
+                .saturating_sub(role_width)
+                .saturating_sub(status_width);
+            let username_width = names_width / 2;
+            let display_width = names_width.saturating_sub(username_width);
+            format!(
+                "{}{} {} {} {}",
+                fit_cell(marker, marker_width),
+                fit_cell(username, username_width),
+                fit_cell(display_name, display_width),
+                fit_cell(role, role_width),
+                fit_cell(status, status_width),
+            )
+        }
+        UserManagementColumnMode::Account => {
+            let separators = 2_usize.min(available);
+            let cells = available.saturating_sub(separators);
+            let role_width = 9.min(cells / 3);
+            let status_width = 16.min(cells.saturating_sub(role_width) / 2);
+            let account_width = cells
+                .saturating_sub(role_width)
+                .saturating_sub(status_width);
+            let account = if display_name.is_empty() || display_name == username {
+                username.to_string()
+            } else {
+                format!("{username} — {display_name}")
+            };
+            format!(
+                "{}{} {} {}",
+                fit_cell(marker, marker_width),
+                fit_cell(&account, account_width),
+                fit_cell(role, role_width),
+                fit_cell(status, status_width),
+            )
+        }
+    }
+}
+
+fn fit_cell(text: &str, width: usize) -> String {
+    if width == 0 {
+        return String::new();
+    }
+    let mut characters = text.chars();
+    let mut fitted = characters.by_ref().take(width).collect::<String>();
+    if characters.next().is_some() && width > 1 {
+        fitted.pop();
+        fitted.push('…');
+    }
+    let used = fitted.chars().count();
+    fitted.extend(std::iter::repeat_n(' ', width.saturating_sub(used)));
+    fitted
 }
 
 pub fn render_explorer(
@@ -363,50 +1284,6 @@ pub fn render_explorer(
             }
         }
     }
-}
-
-fn user_management_form_lines(form: &UserManagementFormViewModel) -> Vec<Line<'static>> {
-    let mut lines = vec![
-        Line::from(form.title.clone()),
-        Line::from("Tab / Down: next    Shift+Tab / Up: previous    Enter: submit    Esc: cancel"),
-    ];
-    match form.kind {
-        UserManagementFormKind::Create => {
-            lines.push(Line::from(format!(
-                "{}Username: {}",
-                focus_marker(form.focused_field == UserManagementField::Username),
-                form.username
-            )));
-            lines.push(Line::from(format!(
-                "{}Display name: {}",
-                focus_marker(form.focused_field == UserManagementField::DisplayName),
-                form.display_name
-            )));
-            lines.push(Line::from(format!(
-                "{}Password: {}",
-                focus_marker(form.focused_field == UserManagementField::Password),
-                "*".repeat(form.password_len)
-            )));
-            lines.push(Line::from(format!("Role: {}", form.role)));
-        }
-        UserManagementFormKind::EditInfo => {
-            lines.push(Line::from(format!("Username: {}", form.username)));
-            lines.push(Line::from(format!(
-                "{}Display name: {}",
-                focus_marker(form.focused_field == UserManagementField::DisplayName),
-                form.display_name
-            )));
-        }
-        UserManagementFormKind::Password => {
-            lines.push(Line::from(format!("Username: {}", form.username)));
-            lines.push(Line::from(format!(
-                "{}Password: {}",
-                focus_marker(form.focused_field == UserManagementField::Password),
-                "*".repeat(form.password_len)
-            )));
-        }
-    }
-    lines
 }
 
 fn render_login_main(
@@ -1063,6 +1940,7 @@ fn setup_admin_header_lines(model: &SetupViewModel, theme: &TundraTheme) -> Vec<
     ]
 }
 
+#[allow(clippy::too_many_arguments)]
 fn render_setup_admin_field(
     frame: &mut Frame<'_>,
     area: Rect,
@@ -2188,4 +3066,83 @@ fn centered_rect(area: Rect, width: u16, height: u16) -> Rect {
         width,
         height,
     )
+}
+
+#[cfg(test)]
+mod analog_clock_tests {
+    use super::*;
+    use crate::RuntimeAsciiAssets;
+
+    #[test]
+    fn aligned_hands_keep_hour_minute_and_second_bands_visible() {
+        let mut cells = vec![vec![' '; 101]; 41];
+        let model = ClockViewModel::at("2026-07-10", "00:00:00", 0, 0, 0);
+
+        draw_clock_hands(&mut cells, 50.0, 20.0, 40.0, 20.0, &model);
+
+        assert_eq!(cells[15][50], '#', "inner hour-hand band disappeared");
+        assert_eq!(cells[10][50], '*', "middle minute-hand band disappeared");
+        assert_eq!(cells[5][50], '+', "outer second-hand band disappeared");
+    }
+
+    #[test]
+    fn large_numeral_centers_land_on_the_cardinal_rim_points() {
+        let width = LARGE_CLOCK_NUMERAL_MIN_WIDTH;
+        let height = LARGE_CLOCK_NUMERAL_MIN_HEIGHT;
+        let model = ClockViewModel::at("2026-07-10", "14:32:08", 14, 32, 8)
+            .with_ascii_assets(RuntimeAsciiAssets::load_default().expect("default ASCII assets"));
+        let numerals = large_clock_numerals(width, height, &model).expect("large numerals");
+        let center_x = (width.saturating_sub(1) as f64) / 2.0;
+        let center_y = (height.saturating_sub(1) as f64) / 2.0;
+        let (radius_x, radius_y) = clock_face_radii(width, height, Some(&numerals));
+
+        assert_art_center(
+            centered_clock_art_origin(
+                center_x,
+                center_y - radius_y,
+                &numerals.twelve,
+                width,
+                height,
+            ),
+            &numerals.twelve,
+            (center_x, center_y - radius_y),
+        );
+        assert_art_center(
+            centered_clock_art_origin(
+                center_x + radius_x,
+                center_y,
+                &numerals.three,
+                width,
+                height,
+            ),
+            &numerals.three,
+            (center_x + radius_x, center_y),
+        );
+        assert_art_center(
+            centered_clock_art_origin(center_x, center_y + radius_y, &numerals.six, width, height),
+            &numerals.six,
+            (center_x, center_y + radius_y),
+        );
+        assert_art_center(
+            centered_clock_art_origin(center_x - radius_x, center_y, &numerals.nine, width, height),
+            &numerals.nine,
+            (center_x - radius_x, center_y),
+        );
+    }
+
+    fn assert_art_center(origin: (usize, usize), lines: &[String], target: (f64, f64)) {
+        let actual_x = origin.0 as f64 + clock_art_width(lines).saturating_sub(1) as f64 / 2.0;
+        let actual_y = origin.1 as f64 + lines.len().saturating_sub(1) as f64 / 2.0;
+
+        assert!(
+            (actual_x - target.0).abs() <= 0.5,
+            "numeral x center {actual_x} missed rim point {}",
+            target.0
+        );
+        assert!(
+            (actual_y - target.1).abs() <= 0.5,
+            "numeral y center {actual_y} missed rim point {}",
+            target.1
+        );
+    }
 }

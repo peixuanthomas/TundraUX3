@@ -22,6 +22,15 @@ pub struct ClockDisplay {
     pub warning: Option<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ClockSnapshot {
+    pub utc: DateTime<Utc>,
+    pub date: NaiveDate,
+    pub time: NaiveTime,
+    pub timezone: Option<Tz>,
+    pub warning: Option<String>,
+}
+
 #[derive(Debug)]
 pub struct TimeSyncError {
     failures: Vec<String>,
@@ -112,13 +121,26 @@ impl NetworkClock {
                 self.sync_error = None;
             }
             Err(error) => {
-                self.anchor = None;
-                self.sync_error = Some(format!("Time sync failed: {error}; using system time"));
+                let fallback = if self.anchor.is_some() {
+                    "continuing last synchronized time"
+                } else {
+                    "using system time"
+                };
+                self.sync_error = Some(format!("Time sync failed: {error}; {fallback}"));
             }
         }
     }
 
     pub fn current(&self) -> ClockDisplay {
+        let snapshot = self.snapshot();
+        ClockDisplay {
+            date: snapshot.date,
+            time: snapshot.time,
+            warning: snapshot.warning,
+        }
+    }
+
+    pub fn snapshot(&self) -> ClockSnapshot {
         if let Some(timezone) = self.timezone {
             let utc = self
                 .anchor
@@ -126,17 +148,21 @@ impl NetworkClock {
                 .map(TimeAnchor::current_utc)
                 .unwrap_or_else(Utc::now);
             let local = utc.with_timezone(&timezone);
-            return ClockDisplay {
+            return ClockSnapshot {
+                utc,
                 date: local.date_naive(),
                 time: local.time(),
+                timezone: Some(timezone),
                 warning: self.warning(),
             };
         }
 
         let local = Local::now();
-        ClockDisplay {
+        ClockSnapshot {
+            utc: local.with_timezone(&Utc),
             date: local.date_naive(),
             time: local.time(),
+            timezone: None,
             warning: self.warning(),
         }
     }
@@ -263,6 +289,24 @@ mod tests {
     }
 
     #[test]
+    fn snapshot_keeps_utc_and_local_fields_from_one_read() {
+        let mut clock = NetworkClock::new(Some("Asia/Shanghai".to_string()));
+        let utc = Utc
+            .with_ymd_and_hms(2026, 7, 9, 15, 30, 17)
+            .single()
+            .unwrap();
+
+        clock.apply_sync(Ok(utc));
+        let snapshot = clock.snapshot();
+
+        let projected = snapshot.utc.with_timezone(&chrono_tz::Asia::Shanghai);
+        assert_eq!(snapshot.date, projected.date_naive());
+        assert_eq!(snapshot.time, projected.time());
+        assert_eq!(snapshot.time.second(), 17);
+        assert!(snapshot.warning.is_none());
+    }
+
+    #[test]
     fn unsynced_clock_uses_target_timezone_instead_of_utc_default() {
         let clock = NetworkClock::new(Some("Asia/Shanghai".to_string()));
         let expected = Utc::now().with_timezone(&chrono_tz::Asia::Shanghai);
@@ -280,7 +324,7 @@ mod tests {
     }
 
     #[test]
-    fn failed_sync_clears_anchor_and_reports_system_time_fallback() {
+    fn failed_sync_preserves_last_trusted_anchor() {
         let mut clock = NetworkClock::new(Some("UTC".to_string()));
         let utc = Utc
             .with_ymd_and_hms(2026, 7, 9, 15, 30, 0)
@@ -289,14 +333,33 @@ mod tests {
         clock.apply_sync(Ok(utc));
 
         clock.apply_sync(Err(TimeSyncError::new(vec!["example failed".to_string()])));
-        let display = clock.current();
+        let snapshot = clock.snapshot();
+
+        assert!(clock.anchor.is_some());
+        assert_eq!(snapshot.utc.date_naive(), utc.date_naive());
+        assert_eq!(snapshot.utc.hour(), utc.hour());
+        assert_eq!(snapshot.utc.minute(), utc.minute());
+        assert!(
+            snapshot
+                .warning
+                .as_deref()
+                .is_some_and(|warning| warning.contains("continuing last synchronized time"))
+        );
+    }
+
+    #[test]
+    fn first_failed_sync_reports_system_time_fallback() {
+        let mut clock = NetworkClock::new(Some("UTC".to_string()));
+
+        clock.apply_sync(Err(TimeSyncError::new(vec!["example failed".to_string()])));
+        let snapshot = clock.snapshot();
 
         assert!(clock.anchor.is_none());
         assert!(
-            display
+            snapshot
                 .warning
                 .as_deref()
-                .is_some_and(|warning| warning.contains("Time sync failed"))
+                .is_some_and(|warning| warning.contains("using system time"))
         );
     }
 

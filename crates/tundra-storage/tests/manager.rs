@@ -8,9 +8,10 @@ use tundra_platform::{
     AppPaths, Platform, UserDirs, build_macos_app_paths, build_windows_app_paths, cleanup_temp_path,
 };
 use tundra_storage::{
-    ExplorerConfig, LauncherConfig, RecentFilesDocument, SCHEMA_VERSION, SecurityConfig,
-    SessionsDocument, StateDocument, StorageConfig, StorageError, StorageLayout, StorageManager,
-    TrashDocument, TrashRecord, USERS_SCHEMA_VERSION, UserRecord, UsersDocument,
+    ClockDocument, ClockEntryRecord, ClockProfile, ExplorerConfig, LauncherConfig,
+    RecentFilesDocument, SCHEMA_VERSION, SecurityConfig, SessionsDocument, StateDocument,
+    StorageConfig, StorageError, StorageLayout, StorageManager, TrashDocument, TrashRecord,
+    USERS_SCHEMA_VERSION, UserRecord, UsersDocument,
 };
 
 #[test]
@@ -31,6 +32,7 @@ fn first_open_creates_storage_directories_and_default_files() {
     assert!(layout.state_path.is_file());
     assert!(layout.recent_files_path.is_file());
     assert!(layout.sessions_path.is_file());
+    assert!(layout.clock_path.is_file());
     assert!(layout.trash_path.is_dir());
     assert!(layout.trash_manifest_path.is_file());
     assert!(!layout.audit_log_path.exists());
@@ -50,6 +52,7 @@ fn first_open_creates_storage_directories_and_default_files() {
             layout.state_path,
             layout.recent_files_path,
             layout.sessions_path,
+            layout.clock_path,
             layout.trash_manifest_path,
         ])
     );
@@ -147,6 +150,39 @@ fn toml_and_json_documents_round_trip() {
         sessions
     );
 
+    let mut profiles = BTreeMap::new();
+    profiles.insert(
+        "user-1".to_string(),
+        ClockProfile {
+            next_id: 3,
+            entries: vec![
+                ClockEntryRecord::DailyAlarm {
+                    id: 1,
+                    hour: 7,
+                    minute: 30,
+                    second: 15,
+                    strong: true,
+                    snooze_deadline_epoch_ms: Some(1_725_000_000_000),
+                },
+                ClockEntryRecord::Countdown {
+                    id: 2,
+                    deadline_epoch_ms: 1_725_000_300_000,
+                    strong: false,
+                },
+            ],
+        },
+    );
+    let clock = ClockDocument {
+        schema_version: SCHEMA_VERSION,
+        profiles,
+    };
+    manager.save_clock(&clock).expect("clock should save");
+    assert_eq!(manager.load_clock().expect("clock should reload"), clock);
+    let clock_contents =
+        fs::read_to_string(&manager.layout().clock_path).expect("clock should be readable");
+    assert!(clock_contents.contains("\"kind\": \"daily_alarm\""));
+    assert!(clock_contents.contains("\"kind\": \"countdown\""));
+
     let trash = TrashDocument {
         schema_version: SCHEMA_VERSION,
         records: vec![TrashRecord {
@@ -211,6 +247,46 @@ fn old_users_without_password_hint_load_with_none() {
 }
 
 #[test]
+fn clock_fields_missing_from_hand_written_files_use_defaults() {
+    let base = unique_temp_root("clock-field-defaults");
+    let paths = app_paths(&base);
+    let layout = StorageLayout::from_app_paths(&paths);
+    fs::create_dir_all(&layout.data_path).expect("data path should be writable");
+    fs::write(
+        &layout.clock_path,
+        "{\n  \"schema_version\": 1,\n  \"profiles\": {\n    \"user-1\": {\n      \"entries\": [\n        { \"kind\": \"daily_alarm\" },\n        { \"kind\": \"countdown\" }\n      ]\n    }\n  }\n}\n",
+    )
+    .expect("hand-written clock fixture");
+
+    let opened = StorageManager::open(paths).expect("clock defaults should load");
+    let clock = opened.manager.load_clock().expect("clock should load");
+    let profile = clock.profiles.get("user-1").expect("profile should exist");
+
+    assert_eq!(profile.next_id, 1);
+    assert_eq!(
+        profile.entries,
+        vec![
+            ClockEntryRecord::DailyAlarm {
+                id: 0,
+                hour: 0,
+                minute: 0,
+                second: 0,
+                strong: false,
+                snooze_deadline_epoch_ms: None,
+            },
+            ClockEntryRecord::Countdown {
+                id: 0,
+                deadline_epoch_ms: 0,
+                strong: false,
+            },
+        ]
+    );
+    assert!(opened.report.recovered_files.is_empty());
+
+    cleanup(&base);
+}
+
+#[test]
 fn corrupt_toml_and_json_are_backed_up_and_replaced_with_defaults() {
     let base = unique_temp_root("corrupt-recovery");
     let paths = app_paths(&base);
@@ -221,6 +297,7 @@ fn corrupt_toml_and_json_are_backed_up_and_replaced_with_defaults() {
     fs::create_dir_all(&layout.trash_path).expect("trash path should be writable");
     fs::write(&layout.config_path, b"schema_version =\n").expect("corrupt TOML fixture");
     fs::write(&layout.users_path, b"{").expect("corrupt JSON fixture");
+    fs::write(&layout.clock_path, b"{").expect("corrupt clock fixture");
     fs::write(&layout.trash_manifest_path, b"{").expect("corrupt trash fixture");
 
     let opened = StorageManager::open(paths).expect("storage should recover corrupt documents");
@@ -240,13 +317,21 @@ fn corrupt_toml_and_json_are_backed_up_and_replaced_with_defaults() {
     assert!(
         opened
             .manager
+            .load_clock()
+            .expect("default clock")
+            .profiles
+            .is_empty()
+    );
+    assert!(
+        opened
+            .manager
             .load_trash()
             .expect("default trash")
             .records
             .is_empty()
     );
-    assert_eq!(opened.report.recovered_files.len(), 3);
-    assert_eq!(opened.report.warnings.len(), 3);
+    assert_eq!(opened.report.recovered_files.len(), 4);
+    assert_eq!(opened.report.warnings.len(), 4);
     for recovered in &opened.report.recovered_files {
         assert!(recovered.recovered_path.is_file());
         assert!(
@@ -288,6 +373,35 @@ fn future_trash_schema_errors_without_modifying_file() {
         original
     );
     assert_no_corrupt_backups(&layout.trash_path);
+
+    cleanup(&base);
+}
+
+#[test]
+fn future_clock_schema_errors_without_modifying_file() {
+    let base = unique_temp_root("future-clock");
+    let paths = app_paths(&base);
+    let layout = StorageLayout::from_app_paths(&paths);
+    fs::create_dir_all(&layout.data_path).expect("data path should be writable");
+    let original = "{\n  \"schema_version\": 2,\n  \"profiles\": {}\n}\n";
+    fs::write(&layout.clock_path, original).expect("future clock fixture");
+
+    let error = StorageManager::open(paths).expect_err("future clock should fail");
+
+    assert!(matches!(
+        error,
+        StorageError::UnsupportedSchema {
+            document: "clock",
+            found: 2,
+            supported: SCHEMA_VERSION,
+            ..
+        }
+    ));
+    assert_eq!(
+        fs::read_to_string(&layout.clock_path).expect("future clock should remain readable"),
+        original
+    );
+    assert_no_corrupt_backups(&layout.data_path);
 
     cleanup(&base);
 }

@@ -22,7 +22,7 @@ pub use focus::{
 };
 pub use hit_test::{HitKind, HitMap, HitTarget, HitTargetKind};
 pub use home_icons::{
-    AsciiAssetStore, AssetError, HomeIcon, HomeIconCatalog, RuntimeAsciiAssets,
+    AsciiAssetStore, AssetError, ClockFontAsset, HomeIcon, HomeIconCatalog, RuntimeAsciiAssets,
     home_icon_for_label, try_home_icon_for_label,
 };
 pub use input::{
@@ -31,13 +31,18 @@ pub use input::{
     UiId,
 };
 pub use layout::{
+    ClockCreateDialogLayout, ClockEntryKind, ClockEntryRowLayout, ClockPageLayout, ClockPageMode,
     NOTIFICATION_TOO_SMALL_MESSAGE, NotificationActionLayout, NotificationDialogLayout,
-    NotificationLayout, ShellLayout, compute_shell_layout, notification_layout,
+    NotificationLayout, ShellLayout, UserManagementActionLayout, UserManagementColumnMode,
+    UserManagementFieldLayout, UserManagementFormLayout, UserManagementLayout,
+    UserManagementRowLayout, clock_page_layout, compute_shell_layout, notification_layout,
+    user_management_action_at, user_management_form_control_at, user_management_layout,
+    user_management_row_index_at,
 };
 pub use render::{
     explorer_first_entry_content_line, home_entry_index_at, home_entry_tile_areas,
     login_password_area, login_selected_username_area, login_user_list_area,
-    login_user_list_visible_rows, render_bootstrap_admin, render_clock_placeholder,
+    login_user_list_visible_rows, render_bootstrap_admin, render_clock, render_clock_placeholder,
     render_exit_confirmation, render_explorer, render_home, render_login,
     render_notification_overlay, render_setup, render_time_sync_failure_dialog,
     render_user_management, setup_admin_field_area, setup_language_list_area,
@@ -52,12 +57,14 @@ pub use timezone_map::{
     timezone_boundary_index,
 };
 pub use view_model::{
-    AuthField, BootstrapAdminViewModel, ClockViewModel, DebugDiagnosticsViewModel,
-    ExitConfirmViewModel, ExplorerDialogViewModel, ExplorerEntryViewModel, ExplorerSearchViewModel,
-    ExplorerViewModel, HomeDisplayMode, HomeViewModel, LoginField, LoginUserOptionViewModel,
-    LoginViewModel, NotificationActionViewModel, NotificationLevel, NotificationTone,
-    NotificationViewModel, SetupField, SetupLanguageOption, SetupPasswordRequirementViewModel,
-    SetupStep, SetupTimezoneOption, SetupViewModel, ShellChromeViewModel, ShellEntry,
-    StatusViewModel, TimeSyncDialogViewModel, UserManagementField, UserManagementFormKind,
+    AuthField, BootstrapAdminViewModel, ClockCreateDialogFocus, ClockCreateDialogViewModel,
+    ClockEntryViewModel, ClockViewModel, DebugDiagnosticsViewModel, ExitConfirmViewModel,
+    ExplorerDialogViewModel, ExplorerEntryViewModel, ExplorerSearchViewModel, ExplorerViewModel,
+    HomeDisplayMode, HomeViewModel, LoginField, LoginUserOptionViewModel, LoginViewModel,
+    NotificationActionViewModel, NotificationLevel, NotificationTone, NotificationViewModel,
+    SetupField, SetupLanguageOption, SetupPasswordRequirementViewModel, SetupStep,
+    SetupTimezoneOption, SetupViewModel, ShellChromeViewModel, ShellEntry, StatusViewModel,
+    TimeSyncDialogViewModel, UserManagementAction, UserManagementActionViewModel,
+    UserManagementFeedbackTone, UserManagementField, UserManagementFocus, UserManagementFormKind,
     UserManagementFormViewModel, UserManagementUserViewModel, UserManagementViewModel,
 };
