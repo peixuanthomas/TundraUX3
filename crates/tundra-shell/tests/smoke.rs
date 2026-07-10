@@ -24,36 +24,34 @@ fn startup_lines_state_phase_zero_boundaries() {
 
 #[test]
 fn banner_contains_requested_tundraux3_logo() {
-    let lines = banner_lines();
+    let lines = banner_lines().expect("banner asset should load");
 
-    assert_eq!(lines.len(), 10);
-    assert!(lines[0].starts_with("ooooooooooooo"));
-    assert!(lines[1].contains(r#".dP""Y88b"#));
-    assert!(lines[3].contains(r#"`888""8P"#));
-    assert!(lines[6].contains(r#"d888b    `Y888""8o"#));
-    assert!(lines[6].contains(r#"`8bd88P'"#));
+    assert!(!lines.is_empty());
+    assert!(lines.iter().all(|line| line.is_ascii()));
+    assert!(lines.iter().any(|line| !line.trim().is_empty()));
 }
 
 #[test]
 fn static_banner_renders_all_logo_lines() {
     let mut output = Vec::new();
+    let expected_lines = banner_lines().expect("banner asset should load");
 
     render_static_banner(&mut output).expect("banner should render");
 
     let output = String::from_utf8(output).expect("banner should be utf8");
-    assert!(output.contains("ooooooooooooo"));
-    assert!(output.contains("`Y8bod88P\""));
-    assert_eq!(output.lines().count(), banner_lines().len());
+    let actual_lines = output.lines().map(str::to_string).collect::<Vec<String>>();
+    assert_eq!(actual_lines, expected_lines);
 }
 
 #[test]
 fn shell_can_enter_smoke_loop_without_animation() {
     let mut output = Vec::new();
+    let first_banner_line = first_non_blank_banner_line();
 
     run_without_animation(&mut output).expect("shell should run without animation");
 
     let output = String::from_utf8(output).expect("shell output should be utf8");
-    assert!(output.contains("ooooooooooooo"));
+    assert!(output.contains(&first_banner_line));
     assert!(output.contains("TundraUX3 shell - Phase 0 smoke"));
     assert!(output.contains("Entering smoke loop"));
 }
@@ -170,6 +168,7 @@ fn notfullscreen_mode_does_not_write_alternate_screen_sequences() {
 #[test]
 fn notfullscreen_accepts_debug_config_without_alternate_screen_sequences() {
     let mut output = Vec::new();
+    let first_banner_line = first_non_blank_banner_line();
 
     run_not_fullscreen(
         &mut output,
@@ -183,5 +182,13 @@ fn notfullscreen_accepts_debug_config_without_alternate_screen_sequences() {
     let output = String::from_utf8(output).expect("notfullscreen output should be utf8");
     assert!(!output.contains(ENTER_FULLSCREEN_SEQUENCE));
     assert!(!output.contains(EXIT_FULLSCREEN_SEQUENCE));
-    assert!(output.contains("TundraUX3 shell - Phase 0 smoke"));
+    assert!(output.contains(&first_banner_line));
+}
+
+fn first_non_blank_banner_line() -> String {
+    banner_lines()
+        .expect("banner asset should load")
+        .into_iter()
+        .find(|line| !line.trim().is_empty())
+        .expect("banner asset should contain visible content")
 }

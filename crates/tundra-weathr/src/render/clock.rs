@@ -2,13 +2,11 @@ use crate::config::ClockFormat;
 use crate::render::TerminalRenderer;
 use chrono::{DateTime, NaiveDateTime, NaiveTime, Timelike};
 use crossterm::style::Color;
-use serde::Deserialize;
 use std::collections::HashMap;
 use std::io;
-use std::sync::OnceLock;
 use std::time::Duration;
-
-const CLOCK_FONT_SOURCE: &str = include_str!("assets/clock_font.toml");
+use thiserror::Error as ThisError;
+use tundra_ascii_assets::ClockFontAsset;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ClockLayout {
@@ -17,31 +15,64 @@ pub struct ClockLayout {
 }
 
 #[derive(Debug)]
-struct ClockFont {
+pub struct ClockFont {
     height: usize,
     spacing: usize,
     separator_spacing: usize,
     glyphs: HashMap<char, Vec<String>>,
 }
 
-#[derive(Debug, Deserialize)]
-struct ClockFontFile {
-    #[allow(dead_code)]
-    name: Option<String>,
-    height: usize,
-    #[serde(default = "default_spacing")]
-    spacing: usize,
-    #[serde(default = "default_separator_spacing")]
-    separator_spacing: usize,
-    glyphs: HashMap<String, Vec<String>>,
+#[derive(Debug, ThisError, PartialEq, Eq)]
+pub enum ClockFontError {
+    #[error("clock font height must be greater than zero")]
+    EmptyHeight,
+
+    #[error("clock font glyph {glyph:?} has {actual} rows, expected {expected}")]
+    GlyphHeight {
+        glyph: char,
+        actual: usize,
+        expected: usize,
+    },
+
+    #[error("clock font is missing required glyph {0:?}")]
+    MissingGlyph(char),
 }
 
-fn default_spacing() -> usize {
-    1
-}
+impl ClockFont {
+    pub fn from_asset(asset: &ClockFontAsset) -> Result<Self, ClockFontError> {
+        if asset.height == 0 {
+            return Err(ClockFontError::EmptyHeight);
+        }
 
-fn default_separator_spacing() -> usize {
-    default_spacing()
+        let mut glyphs = HashMap::new();
+        for (&glyph, lines) in &asset.glyphs {
+            if lines.len() != asset.height {
+                return Err(ClockFontError::GlyphHeight {
+                    glyph,
+                    actual: lines.len(),
+                    expected: asset.height,
+                });
+            }
+            glyphs.insert(glyph, pad_glyph_lines(lines.clone()));
+        }
+
+        for required in required_glyphs() {
+            if !glyphs.contains_key(&required) {
+                return Err(ClockFontError::MissingGlyph(required));
+            }
+        }
+
+        Ok(Self {
+            height: asset.height,
+            spacing: asset.spacing,
+            separator_spacing: asset.separator_spacing,
+            glyphs,
+        })
+    }
+
+    pub fn height(&self) -> usize {
+        self.height
+    }
 }
 
 pub fn parse_local_datetime(timestamp: &str) -> Option<NaiveDateTime> {
@@ -84,8 +115,7 @@ pub fn format_local_time(time: NaiveTime, format: ClockFormat) -> String {
     format_time(time, format)
 }
 
-pub fn ascii_lines(text: &str) -> Vec<String> {
-    let font = clock_font();
+pub fn ascii_lines(text: &str, font: &ClockFont) -> Vec<String> {
     let mut lines = vec![String::new(); font.height];
     let chars: Vec<char> = text.chars().collect();
 
@@ -115,12 +145,12 @@ pub fn ascii_lines(text: &str) -> Vec<String> {
     lines
 }
 
-pub fn ascii_clock_lines(text: &str) -> Vec<String> {
-    ascii_lines(text)
+pub fn ascii_clock_lines(text: &str, font: &ClockFont) -> Vec<String> {
+    ascii_lines(text, font)
 }
 
-pub fn clock_height() -> usize {
-    clock_font().height
+pub fn clock_height(font: &ClockFont) -> usize {
+    font.height()
 }
 
 pub fn center_above_start(
@@ -150,6 +180,7 @@ pub fn centered_layout(lines: &[String], width: u16, height: u16) -> ClockLayout
 pub fn separator_anchored_layout(
     text: &str,
     lines: &[String],
+    font: &ClockFont,
     width: u16,
     height: u16,
 ) -> ClockLayout {
@@ -161,7 +192,7 @@ pub fn separator_anchored_layout(
     let clock_height = lines.len() as u16;
     let row = center_above_start(max_width as u16, clock_height, width, height).row;
 
-    let Some(anchor) = separator_anchor_offset(text) else {
+    let Some(anchor) = separator_anchor_offset(text, font) else {
         return ClockLayout {
             col: centered_layout(lines, width, height).col,
             row,
@@ -179,13 +210,14 @@ pub fn render_clock(
     renderer: &mut TerminalRenderer,
     time: NaiveTime,
     format: ClockFormat,
+    font: &ClockFont,
     width: u16,
     height: u16,
     color: Color,
 ) -> io::Result<()> {
     let text = format_time(time, format);
-    let lines = ascii_lines(&text);
-    let layout = separator_anchored_layout(&text, &lines, width, height);
+    let lines = ascii_lines(&text, font);
+    let layout = separator_anchored_layout(&text, &lines, font, width, height);
 
     for (idx, line) in lines.iter().enumerate() {
         renderer.render_line_colored(layout.col, layout.row + idx as u16, line, color)?;
@@ -194,21 +226,13 @@ pub fn render_clock(
     Ok(())
 }
 
-fn clock_font() -> &'static ClockFont {
-    static FONT: OnceLock<ClockFont> = OnceLock::new();
-    FONT.get_or_init(|| {
-        parse_clock_font(CLOCK_FONT_SOURCE).expect("bundled clock font must be valid")
-    })
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct SeparatorAnchor {
     offset: usize,
     width: usize,
 }
 
-fn separator_anchor_offset(text: &str) -> Option<SeparatorAnchor> {
-    let font = clock_font();
+fn separator_anchor_offset(text: &str, font: &ClockFont) -> Option<SeparatorAnchor> {
     let chars: Vec<char> = text.chars().collect();
     let separator_target = chars
         .iter()
@@ -255,49 +279,6 @@ fn glyph_width(font: &ClockFont, ch: char) -> usize {
         .unwrap_or(0)
 }
 
-fn parse_clock_font(source: &str) -> Result<ClockFont, String> {
-    let file: ClockFontFile =
-        toml::from_str(source).map_err(|e| format!("invalid clock font TOML: {e}"))?;
-
-    if file.height == 0 {
-        return Err("clock font height must be greater than zero".to_string());
-    }
-
-    let mut glyphs = HashMap::new();
-    for (key, lines) in file.glyphs {
-        let mut chars = key.chars();
-        let Some(ch) = chars.next() else {
-            return Err("clock font glyph key cannot be empty".to_string());
-        };
-        if chars.next().is_some() {
-            return Err(format!(
-                "clock font glyph key {key:?} must be one character"
-            ));
-        }
-        if lines.len() != file.height {
-            return Err(format!(
-                "clock font glyph {key:?} has {} rows, expected {}",
-                lines.len(),
-                file.height
-            ));
-        }
-        glyphs.insert(ch, pad_glyph_lines(lines));
-    }
-
-    for required in required_glyphs() {
-        if !glyphs.contains_key(&required) {
-            return Err(format!("clock font is missing required glyph {required:?}"));
-        }
-    }
-
-    Ok(ClockFont {
-        height: file.height,
-        spacing: file.spacing,
-        separator_spacing: file.separator_spacing,
-        glyphs,
-    })
-}
-
 fn required_glyphs() -> impl Iterator<Item = char> {
     "0123456789: APM".chars()
 }
@@ -311,7 +292,7 @@ fn pad_glyph_lines(mut lines: Vec<String>) -> Vec<String> {
 
     for line in &mut lines {
         let padding = width.saturating_sub(line.chars().count());
-        line.extend(std::iter::repeat(' ').take(padding));
+        line.push_str(&" ".repeat(padding));
     }
 
     lines
@@ -321,6 +302,7 @@ fn pad_glyph_lines(mut lines: Vec<String>) -> Vec<String> {
 mod tests {
     use super::*;
     use chrono::NaiveTime;
+    use std::collections::BTreeMap;
 
     #[test]
     fn formats_twenty_four_hour_time() {
@@ -360,123 +342,146 @@ mod tests {
         assert_eq!(parsed.time(), NaiveTime::from_hms_opt(15, 45, 0).unwrap());
     }
 
+    fn test_asset() -> ClockFontAsset {
+        let mut glyphs = BTreeMap::new();
+        for ch in "0123456789".chars() {
+            glyphs.insert(ch, vec![format!("{ch}{ch}"), format!("{ch}{ch}")]);
+        }
+        glyphs.insert('1', vec!["1".to_string(), "1".to_string()]);
+        glyphs.insert(':', vec!["##".to_string(), "##".to_string()]);
+        glyphs.insert(' ', vec![" ".to_string(), " ".to_string()]);
+        glyphs.insert('A', vec!["AA".to_string(), "AA".to_string()]);
+        glyphs.insert('P', vec!["PP".to_string(), "PP".to_string()]);
+        glyphs.insert('M', vec!["MM".to_string(), "MM".to_string()]);
+
+        ClockFontAsset {
+            height: 2,
+            spacing: 1,
+            separator_spacing: 5,
+            glyphs,
+        }
+    }
+
+    fn test_font() -> ClockFont {
+        ClockFont::from_asset(&test_asset()).expect("test font asset is valid")
+    }
+
     #[test]
     fn ascii_output_has_stable_height() {
-        let lines = ascii_clock_lines("12:34 PM");
-        assert_eq!(lines.len(), clock_height());
+        let font = test_font();
+        let lines = ascii_clock_lines("12:34 PM", &font);
+        assert_eq!(lines.len(), clock_height(&font));
         assert!(lines.iter().all(|line| !line.is_empty()));
     }
 
     #[test]
-    fn renders_expected_ascii_glyphs() {
-        let zero = ascii_clock_lines("0");
-        assert_eq!(zero.len(), 7);
-        assert!(zero[0].contains(".oooo."));
-        assert!(zero[6].contains("Y8bd8P"));
+    fn adapts_clock_font_asset_and_pads_glyph_rows() {
+        let mut asset = test_asset();
+        asset
+            .glyphs
+            .insert('0', vec!["0".to_string(), "00".to_string()]);
 
-        let colon = ascii_clock_lines(":");
-        assert_eq!(colon.len(), clock_height());
-        assert_eq!(colon[1].trim(), "##");
-
-        let letters = ascii_clock_lines("APM");
-        assert_eq!(letters.len(), clock_height());
-        assert!(letters[0].contains("###"));
-        assert!(letters[0].contains("######"));
+        let font = ClockFont::from_asset(&asset).expect("asset adapts");
+        let zero = font.glyphs.get(&'0').unwrap();
+        assert_eq!(zero, &vec!["0 ".to_string(), "00".to_string()]);
     }
 
     #[test]
     fn clock_separator_has_wide_spacing_on_both_sides() {
-        let lines = ascii_clock_lines("1:2");
+        let font = test_font();
+        let lines = ascii_clock_lines("1:2", &font);
         let row = &lines[1];
-        let one = clock_font().glyphs.get(&'1').unwrap();
-        let colon = clock_font().glyphs.get(&':').unwrap();
+        let one = font.glyphs.get(&'1').unwrap();
+        let colon = font.glyphs.get(&':').unwrap();
 
         let left_gap_start = one[1].len();
         let colon_start = left_gap_start + 5;
         let right_gap_start = colon_start + colon[1].len();
 
         assert_eq!(&row[left_gap_start..colon_start], "     ");
-        assert_eq!(row[colon_start..right_gap_start].trim(), "##");
+        assert_eq!(&row[colon_start..right_gap_start], colon[1].as_str());
         assert_eq!(&row[right_gap_start..right_gap_start + 5], "     ");
     }
 
     #[test]
     fn layout_centers_above_middle() {
-        let lines = ascii_lines("12:34");
+        let font = test_font();
+        let lines = ascii_lines("12:34", &font);
         let layout = centered_layout(&lines, 100, 30);
 
         assert!(layout.col < 50);
-        assert_eq!(layout.row, 7);
+        assert_eq!(
+            layout.row,
+            center_above_start(0, lines.len() as u16, 0, 30).row
+        );
     }
 
     #[test]
     fn separator_anchored_layout_keeps_colon_fixed() {
-        fn separator_col(text: &str) -> u16 {
-            let lines = ascii_lines(text);
-            let layout = separator_anchored_layout(text, &lines, 100, 30);
-            let anchor = separator_anchor_offset(text).unwrap();
+        let font = test_font();
+
+        fn separator_col(text: &str, font: &ClockFont) -> u16 {
+            let lines = ascii_lines(text, font);
+            let layout = separator_anchored_layout(text, &lines, font, 100, 30);
+            let anchor = separator_anchor_offset(text, font).unwrap();
             layout.col + anchor.offset as u16
         }
 
-        assert_eq!(separator_col("12:00"), separator_col("12:11"));
-        assert_eq!(separator_col("09:59"), separator_col("10:00"));
-        assert_eq!(separator_col("12:00"), 49);
+        let expected = {
+            let anchor = separator_anchor_offset("12:00", &font).unwrap();
+            100_u16.saturating_sub(anchor.width as u16) / 2
+        };
+
+        assert_eq!(separator_col("12:00", &font), separator_col("12:11", &font));
+        assert_eq!(separator_col("09:59", &font), separator_col("10:00", &font));
+        assert_eq!(separator_col("12:00", &font), expected);
     }
 
     #[test]
     fn separator_anchor_takes_priority_over_right_edge_fit() {
+        let font = test_font();
         let text = "12:05 AM";
-        let lines = ascii_lines(text);
-        let layout = separator_anchored_layout(text, &lines, 70, 30);
-        let anchor = separator_anchor_offset(text).unwrap();
+        let lines = ascii_lines(text, &font);
+        let layout = separator_anchored_layout(text, &lines, &font, 70, 30);
+        let anchor = separator_anchor_offset(text, &font).unwrap();
 
-        assert_eq!(layout.col + anchor.offset as u16, 34);
+        assert_eq!(
+            layout.col + anchor.offset as u16,
+            70_u16.saturating_sub(anchor.width as u16) / 2
+        );
     }
 
     #[test]
     fn layout_clamps_when_content_exceeds_area() {
+        let font = test_font();
         assert_eq!(
-            center_above_start(120, clock_height() as u16, 80, 4),
+            center_above_start(120, clock_height(&font) as u16, 80, 4),
             ClockLayout { col: 0, row: 0 }
         );
     }
 
     #[test]
-    fn bundled_font_file_parses() {
-        let font = parse_clock_font(CLOCK_FONT_SOURCE).expect("bundled font parses");
+    fn clock_font_asset_requires_required_glyphs() {
+        let mut asset = test_asset();
+        asset.glyphs.remove(&'A');
 
-        assert_eq!(font.height, 7);
-        assert_eq!(font.spacing, 1);
-        assert_eq!(font.separator_spacing, 5);
-        assert!(font.glyphs.contains_key(&'0'));
-        assert!(font.glyphs.contains_key(&'9'));
+        let err = ClockFont::from_asset(&asset).unwrap_err();
+        assert_eq!(err, ClockFontError::MissingGlyph('A'));
     }
 
     #[test]
-    fn font_parser_rejects_wrong_glyph_height() {
-        let source = r#"
-height = 2
-spacing = 1
+    fn clock_font_asset_rejects_wrong_glyph_height() {
+        let mut asset = test_asset();
+        asset.glyphs.insert('0', vec!["only one row".to_string()]);
 
-[glyphs]
-"0" = ["only one row"]
-"1" = ["a", "b"]
-"2" = ["a", "b"]
-"3" = ["a", "b"]
-"4" = ["a", "b"]
-"5" = ["a", "b"]
-"6" = ["a", "b"]
-"7" = ["a", "b"]
-"8" = ["a", "b"]
-"9" = ["a", "b"]
-":" = ["a", "b"]
-" " = [" ", " "]
-"A" = ["a", "b"]
-"P" = ["a", "b"]
-"M" = ["a", "b"]
-"#;
-
-        let err = parse_clock_font(source).unwrap_err();
-        assert!(err.contains("rows"));
+        let err = ClockFont::from_asset(&asset).unwrap_err();
+        assert_eq!(
+            err,
+            ClockFontError::GlyphHeight {
+                glyph: '0',
+                actual: 1,
+                expected: 2,
+            }
+        );
     }
 }

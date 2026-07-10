@@ -3,6 +3,7 @@ pub(crate) mod ground;
 mod house;
 pub(crate) mod style;
 
+use crate::assets::WorldSceneAssets;
 use crate::render::TerminalRenderer;
 use crate::scene::{ChimneyPosition, Scene, SceneContext, SceneLayout, WEATHER_GROUND_HEIGHT};
 use decorations::{DecorationLayout, Decorations};
@@ -20,11 +21,13 @@ pub struct WorldScene {
 }
 
 impl WorldScene {
-    pub fn new(width: u16, height: u16) -> Self {
+    pub(crate) fn new(width: u16, height: u16, assets: WorldSceneAssets) -> Self {
+        let decorations = Decorations::new(&assets);
+
         Self {
-            house: House,
+            house: House::new(assets.house),
             ground: Ground,
-            decorations: Decorations,
+            decorations,
             width,
             height,
         }

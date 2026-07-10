@@ -1,7 +1,8 @@
 use crate::animation_manager::AnimationManager;
 use crate::app_state::{AppState, BottomHudPrompt};
+use crate::assets::WeatherAsciiAssets;
 use crate::config::{ClockFormat, Config, Provider};
-use crate::error::WeatherError;
+use crate::error::{WeatherAssetError, WeatherError};
 use crate::network_clock::{self, NetworkClock, TimeSyncResult};
 use crate::render::{TerminalRenderer, clock};
 use crate::scene::lockscreen::LockscreenScene;
@@ -11,10 +12,7 @@ use crate::scene::{SceneContext, SceneRegistry};
 use crate::theme::ThemeRegistry;
 
 use crate::weather::provider::WeatherProvider;
-use crate::weather::types::CelestialEvents;
-use crate::weather::{
-    OpenMeteoProvider, WeatherClient, WeatherCondition, WeatherData, WeatherLocation,
-};
+use crate::weather::{OpenMeteoProvider, WeatherClient, WeatherData, WeatherLocation};
 use crossterm::event::{self, Event, KeyCode, KeyModifiers};
 use std::io;
 use std::sync::Arc;
@@ -93,38 +91,22 @@ fn resolve_theme_bindings(
     }
 }
 
-fn generate_offline_weather(rng: &mut impl rand::Rng) -> WeatherData {
-    use chrono::{Local, Timelike};
-    use rand::RngExt;
+fn build_visual_registries(
+    term_width: u16,
+    term_height: u16,
+    assets: &WeatherAsciiAssets,
+) -> (AnimationManager, SceneRegistry) {
+    let animations = AnimationManager::new(term_width, term_height, false, assets.animation());
 
-    let now = Local::now();
-    let hour = now.hour();
-    let is_day = (6..18).contains(&hour);
+    let mut scenes = SceneRegistry::new();
+    scenes.register(Box::new(LockscreenScene::new(term_width, term_height)));
+    scenes.register(Box::new(WorldScene::new(
+        term_width,
+        term_height,
+        assets.world().clone(),
+    )));
 
-    let conditions = [
-        WeatherCondition::Clear,
-        WeatherCondition::PartlyCloudy,
-        WeatherCondition::Cloudy,
-        WeatherCondition::Rain,
-    ];
-
-    let condition = conditions[rng.random_range(0..conditions.len())];
-
-    WeatherData {
-        condition,
-        temperature: rng.random_range(10.0..25.0),
-        precipitation: if condition.is_raining() {
-            rng.random_range(1.0..5.0)
-        } else {
-            0.0
-        },
-        wind_speed: rng.random_range(5.0..15.0),
-        wind_direction: rng.random_range(0.0..360.0),
-        sun: CelestialEvents::from_bool(is_day),
-        moon_phase: Some(0.5),
-        timestamp: now.format("%Y-%m-%dT%H:%M:%S").to_string(),
-        attribution: "".to_string(),
-    }
+    (animations, scenes)
 }
 
 pub struct App {
@@ -133,6 +115,7 @@ pub struct App {
     scenes: SceneRegistry,
     overlays: OverlayRegistry,
     themes: ThemeRegistry,
+    ascii_assets: WeatherAsciiAssets,
     active_scene_id: &'static str,
     active_overlay_id: Option<&'static str>,
     weather_receiver: mpsc::Receiver<Result<WeatherData, WeatherError>>,
@@ -160,7 +143,7 @@ impl App {
         term_height: u16,
         themes: ThemeRegistry,
         timezone_id: Option<String>,
-    ) -> Self {
+    ) -> Result<Self, WeatherAssetError> {
         Self::new_with_bottom_hud_prompt(
             config,
             term_width,
@@ -178,7 +161,7 @@ impl App {
         themes: ThemeRegistry,
         timezone_id: Option<String>,
         bottom_hud_prompt: BottomHudPrompt,
-    ) -> Self {
+    ) -> Result<Self, WeatherAssetError> {
         let location = WeatherLocation {
             latitude: config.location.latitude,
             longitude: config.location.longitude,
@@ -193,14 +176,18 @@ impl App {
             config.units,
             bottom_hud_prompt,
         );
-        let animations = AnimationManager::new(term_width, term_height, false);
 
-        let mut scenes = SceneRegistry::new();
-        scenes.register(Box::new(LockscreenScene::new(term_width, term_height)));
-        scenes.register(Box::new(WorldScene::new(term_width, term_height)));
-
+        let requested_theme_id = themes.active().id;
+        let mut ascii_assets = WeatherAsciiAssets::load(requested_theme_id)?;
+        let (mut animations, mut scenes) =
+            build_visual_registries(term_width, term_height, &ascii_assets);
         let overlays = OverlayRegistry::new();
         let bindings = resolve_theme_bindings(&themes, &scenes, &overlays);
+
+        if bindings.theme_id != requested_theme_id {
+            ascii_assets = WeatherAsciiAssets::load(bindings.theme_id)?;
+            (animations, scenes) = build_visual_registries(term_width, term_height, &ascii_assets);
+        }
 
         let (tx, rx) = mpsc::channel(1);
 
@@ -232,19 +219,20 @@ impl App {
             }
         });
 
-        Self {
+        Ok(Self {
             state,
             animations,
             scenes,
             overlays,
             themes,
+            ascii_assets,
             active_scene_id: bindings.scene_id,
             active_overlay_id: bindings.overlay_id,
             weather_receiver: rx,
             time_receiver: time_rx,
             clock: NetworkClock::new(timezone_id),
             clock_format: config.lockscreen.clock_format,
-        }
+        })
     }
 
     pub async fn run(&mut self, renderer: &mut TerminalRenderer) -> io::Result<()> {
@@ -286,26 +274,8 @@ impl App {
                             _ => format!("Failed to fetch weather: {}", error),
                         };
 
-                        if self.state.current_weather.is_none() {
-                            attribution = format!("Provider failed with {error_msg} - Simulating");
-                            let offline_weather = generate_offline_weather(&mut rng);
-                            let rain_intensity = offline_weather.condition.rain_intensity();
-                            let snow_intensity = offline_weather.condition.snow_intensity();
-                            let fog_intensity = offline_weather.condition.fog_intensity();
-                            let wind_speed = offline_weather.wind_speed;
-                            let wind_direction = offline_weather.wind_direction;
-
-                            self.state.update_weather(offline_weather);
-                            self.state.set_offline_mode(true);
-                            self.animations.update_rain_intensity(rain_intensity);
-                            self.animations.update_snow_intensity(snow_intensity);
-                            self.animations.update_fog_intensity(fog_intensity);
-                            self.animations
-                                .update_wind(wind_speed as f32, wind_direction as f32);
-                        } else {
-                            self.state.set_offline_mode(true);
-                            attribution = format!("Provider failed with {error_msg}");
-                        }
+                        self.state.clear_weather_for_offline();
+                        attribution = format!("Provider failed with {error_msg}");
                     }
                 },
                 Err(e) => {
@@ -351,11 +321,11 @@ impl App {
 
             scene.render(renderer, &ctx)?;
 
-            if let Some(ov_id) = self.active_overlay_id {
-                if let Some(overlay) = self.overlays.get_mut(ov_id) {
-                    overlay.update_size(term_width, term_height);
-                    overlay.render(renderer, &ctx, &layout)?;
-                }
+            if let Some(ov_id) = self.active_overlay_id
+                && let Some(overlay) = self.overlays.get_mut(ov_id)
+            {
+                overlay.update_size(term_width, term_height);
+                overlay.render(renderer, &ctx, &layout)?;
             }
 
             self.animations.render_chimney_smoke(
@@ -376,9 +346,15 @@ impl App {
 
             let current = self.clock.current();
             let time_text = clock::format_time(current.time, self.clock_format);
-            let clock_lines = clock::ascii_lines(&time_text);
-            let clock_layout =
-                clock::separator_anchored_layout(&time_text, &clock_lines, term_width, term_height);
+            let clock_font = self.ascii_assets.clock_font();
+            let clock_lines = clock::ascii_lines(&time_text, clock_font);
+            let clock_layout = clock::separator_anchored_layout(
+                &time_text,
+                &clock_lines,
+                clock_font,
+                term_width,
+                term_height,
+            );
 
             let date_text = current.date.format("%Y-%m-%d").to_string();
             render_centered_line(
@@ -402,12 +378,14 @@ impl App {
                 .row
                 .saturating_add(clock_lines.len() as u16)
                 .saturating_add(1);
-            if weather_row < term_height.saturating_sub(1) {
+            if weather_row < term_height.saturating_sub(1)
+                && let Some(weather_summary) = self.state.weather_summary_text()
+            {
                 render_centered_line(
                     renderer,
                     term_width,
                     weather_row,
-                    &self.state.weather_summary_text(),
+                    &weather_summary,
                     crossterm::style::Color::Cyan,
                 )?;
             }

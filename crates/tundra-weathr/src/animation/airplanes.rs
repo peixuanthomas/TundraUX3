@@ -14,15 +14,17 @@ struct Airplane {
 
 pub struct AirplaneSystem {
     planes: Vec<Airplane>,
+    art: Vec<String>,
     terminal_width: u16,
     terminal_height: u16,
     spawn_cooldown: u16,
 }
 
 impl AirplaneSystem {
-    pub fn new(terminal_width: u16, terminal_height: u16) -> Self {
+    pub fn new(terminal_width: u16, terminal_height: u16, art: Vec<String>) -> Self {
         Self {
             planes: Vec::with_capacity(2),
+            art,
             terminal_width,
             terminal_height,
             spawn_cooldown: 0,
@@ -60,13 +62,11 @@ impl AirplaneSystem {
     }
 
     pub fn render(&self, renderer: &mut TerminalRenderer) -> io::Result<()> {
-        const AIRPLANE_ART: &str = include_str!("assets/airplane.txt");
-
         for plane in &self.planes {
             let x = plane.x as u16;
             let y = plane.y as u16;
 
-            for (line_offset, line) in AIRPLANE_ART.lines().enumerate() {
+            for (line_offset, line) in self.art.iter().enumerate() {
                 let render_y = y + line_offset as u16;
                 if render_y >= self.terminal_height {
                     break;

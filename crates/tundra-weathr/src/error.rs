@@ -1,5 +1,17 @@
 use std::io;
 use thiserror::Error as ThisError;
+use tundra_ascii_assets::AssetError;
+
+use crate::render::clock::ClockFontError;
+
+#[derive(ThisError, Debug)]
+pub enum WeatherAssetError {
+    #[error("{0}")]
+    Store(#[from] AssetError),
+
+    #[error("invalid clock font asset: {0}")]
+    ClockFont(#[from] ClockFontError),
+}
 
 #[derive(ThisError, Debug)]
 pub enum WeatherError {

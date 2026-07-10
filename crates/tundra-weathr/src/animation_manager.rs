@@ -6,6 +6,7 @@ use crate::animation::{
     thunderstorm::ThunderstormSystem,
 };
 use crate::app_state::AppState;
+use crate::assets::WeatherAnimationAssets;
 use crate::render::TerminalRenderer;
 use crate::scene::SceneLayout;
 use crate::weather::{FogIntensity, RainIntensity, SnowIntensity, WeatherConditions};
@@ -18,16 +19,34 @@ pub struct AnimationManager {
 }
 
 impl AnimationManager {
-    pub fn new(term_width: u16, term_height: u16, show_leaves: bool) -> Self {
+    pub(crate) fn new(
+        term_width: u16,
+        term_height: u16,
+        show_leaves: bool,
+        assets: &WeatherAnimationAssets,
+    ) -> Self {
         let systems: Vec<Box<dyn AnimationSystem>> = vec![
             // Background (code-defined order)
             Box::new(StarSystem::new(term_width, term_height)),
-            Box::new(MoonSystem::new(term_width, term_height, None)),
+            Box::new(MoonSystem::new(
+                term_width,
+                term_height,
+                None,
+                assets.moon_phases.clone(),
+            )),
             Box::new(FireflySystem::new(term_width, term_height)),
             Box::new(BirdSystem::new(term_width, term_height)),
-            Box::new(SunSystem::new()),
-            Box::new(CloudSystem::new(term_width, term_height)),
-            Box::new(AirplaneSystem::new(term_width, term_height)),
+            Box::new(SunSystem::new(assets.sun_frames.clone())),
+            Box::new(CloudSystem::new(
+                term_width,
+                term_height,
+                assets.clouds.clone(),
+            )),
+            Box::new(AirplaneSystem::new(
+                term_width,
+                term_height,
+                assets.airplane.clone(),
+            )),
             // Post-scene
             Box::new(ChimneySmoke::new()),
             // Foreground

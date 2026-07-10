@@ -56,12 +56,13 @@ impl Scene for LockscreenScene {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::assets::WorldSceneAssets;
     use crate::scene::world::WorldScene;
 
     #[test]
     fn layout_matches_world_weather_bounds_without_chimney() {
         let lockscreen = LockscreenScene::new(120, 40);
-        let world = WorldScene::new(120, 40);
+        let world = WorldScene::new(120, 40, WorldSceneAssets::placeholder());
 
         let lockscreen_layout = lockscreen.layout();
         let world_layout = world.layout();

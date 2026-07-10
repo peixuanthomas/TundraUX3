@@ -5,27 +5,23 @@ use rand::Rng;
 
 use std::io;
 
-const MOON_PHASES: [&str; 8] = [
-    include_str!("assets/moon/phase_0.txt"),
-    include_str!("assets/moon/phase_1.txt"),
-    include_str!("assets/moon/phase_2.txt"),
-    include_str!("assets/moon/phase_3.txt"),
-    include_str!("assets/moon/phase_4.txt"),
-    include_str!("assets/moon/phase_5.txt"),
-    include_str!("assets/moon/phase_6.txt"),
-    include_str!("assets/moon/phase_7.txt"),
-];
-
 pub struct MoonSystem {
     phase: f64, // 0.0 = New, 0.25 = First Quarter, 0.5 = Full, 0.75 = Last Quarter
+    phases: Vec<Vec<String>>,
     x: u16,
     y: u16,
 }
 
 impl MoonSystem {
-    pub fn new(terminal_width: u16, terminal_height: u16, phase: Option<f64>) -> Self {
+    pub fn new(
+        terminal_width: u16,
+        terminal_height: u16,
+        phase: Option<f64>,
+        phases: Vec<Vec<String>>,
+    ) -> Self {
         Self {
             phase: phase.unwrap_or(0.5),
+            phases,
             x: (terminal_width / 4) + 10,
             y: (terminal_height / 4) + 2,
         }
@@ -41,10 +37,10 @@ impl MoonSystem {
     }
 
     pub fn render(&self, renderer: &mut TerminalRenderer) -> io::Result<()> {
-        let step = (self.phase * 8.0).round() as usize % 8;
-        let art = MOON_PHASES[step];
+        let step = (self.phase * self.phases.len() as f64).round() as usize % self.phases.len();
+        let art = &self.phases[step];
 
-        for (i, line) in art.lines().enumerate() {
+        for (i, line) in art.iter().enumerate() {
             let y = self.y + i as u16;
             for (j, ch) in line.chars().enumerate() {
                 if ch == ' ' {

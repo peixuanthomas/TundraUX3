@@ -1,0 +1,74 @@
+schema_version = 1
+name = "default-home-icons"
+
+[items.explorer]
+label = "Explorer"
+lines = [
+  ' _____ ',
+  '/ ___ \',
+  '| | | |',
+  '|_____|',
+]
+
+[items.launcher]
+label = "Launcher"
+lines = [
+  '  / \  ',
+  ' /===\ ',
+  ' | o | ',
+  ' /___\ ',
+]
+
+[items.editor]
+label = "Editor"
+lines = [
+  ' _____ ',
+  '|==  |',
+  '|  __|',
+  '|_/__|',
+]
+
+[items.settings]
+label = "Settings"
+lines = [
+  ' o---  ',
+  '---o-- ',
+  ' --o-- ',
+  '---o-- ',
+]
+
+[items.diagnostics]
+label = "Diagnostics"
+lines = [
+  ' _____ ',
+  '| /\  |',
+  '|/  \_|',
+  '|_____|',
+]
+
+[items.user_management]
+label = "User Management"
+lines = [
+  '  o o  ',
+  ' /| |\ ',
+  ' / \ \ ',
+  ' admin ',
+]
+
+[items.user_profile]
+label = "User Profile"
+lines = [
+  '   o   ',
+  '  /|\  ',
+  '  / \  ',
+  ' user  ',
+]
+
+[items.default]
+label = "Application"
+lines = [
+  ' _____ ',
+  '| ? ? |',
+  '|  ?  |',
+  '|_____|',
+]

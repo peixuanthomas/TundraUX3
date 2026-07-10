@@ -2394,9 +2394,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "tundra-ascii-assets"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "thiserror",
+ "toml 0.9.12+spec-1.1.0",
+]
+
+[[package]]
 name = "tundra-cli"
 version = "0.1.0"
 dependencies = [
+ "tundra-ascii-assets",
  "tundra-platform",
  "tundra-storage",
  "tundra-ui",
@@ -2425,9 +2435,12 @@ version = "0.1.0"
 name = "tundra-shell"
 version = "0.1.0"
 dependencies = [
+ "chrono",
  "crossterm 0.28.1",
  "ratatui",
+ "tokio",
  "tundra-apps",
+ "tundra-ascii-assets",
  "tundra-core",
  "tundra-platform",
  "tundra-storage",
@@ -2451,6 +2464,7 @@ version = "0.1.0"
 dependencies = [
  "geojson",
  "ratatui",
+ "tundra-ascii-assets",
  "zip",
 ]
 
@@ -2470,6 +2484,7 @@ dependencies = [
  "thiserror",
  "tokio",
  "toml 0.9.12+spec-1.1.0",
+ "tundra-ascii-assets",
 ]
 
 [[package]]

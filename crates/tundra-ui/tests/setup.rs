@@ -409,6 +409,8 @@ fn chrome_for(screen: &str, width: u16, height: u16) -> ShellChromeViewModel {
             status: "Ready".to_string(),
             toast: None,
             error: None,
+            time_button_label: None,
+            time_button_selected: false,
         },
     }
 }

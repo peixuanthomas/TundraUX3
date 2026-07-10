@@ -1,13 +1,20 @@
-use std::time::{Duration, Instant};
+use std::fs;
+use std::path::PathBuf;
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use tundra_platform::{CapabilityStatus, PlatformCapabilities, PlatformKind};
+use chrono::{TimeZone, Utc};
+use ratatui::layout::Rect;
+use tundra_platform::{
+    CapabilityStatus, PlatformCapabilities, PlatformKind, build_windows_app_paths,
+};
 use tundra_shell::{
     ClickKind, HomeModeOverride, InputEvent, PointerButton, ScrollDirection, ShellAction,
     ShellAppConfig, ShellCommand, ShellComponent, ShellHomeMode, ShellLaunchConfig,
-    ShellRestoredSession, ShellScreen, ShellStartupState, ShellState, ShellStorageReport,
-    ShellTerminalMode, default_shell_shortcuts, detect_shortcut_conflicts,
+    ShellNotificationAction, ShellRestoredSession, ShellScreen, ShellStartupState, ShellState,
+    ShellStorageReport, ShellTerminalMode, default_shell_shortcuts, detect_shortcut_conflicts,
 };
-use tundra_ui::HomeDisplayMode;
+use tundra_storage::StorageManager;
+use tundra_ui::{HomeDisplayMode, NotificationTone};
 
 fn debug_config() -> ShellLaunchConfig {
     ShellLaunchConfig {
@@ -218,11 +225,15 @@ fn tab_and_shift_tab_route_to_focus_commands() {
     let mut state = ShellState::new(debug_config(), (120, 40));
 
     state.apply_input(InputEvent::from_key_label("Tab"));
+    assert_eq!(state.focused_component(), ShellComponent::ClockButton);
+    assert_eq!(state.last_command(), Some(&ShellCommand::FocusNext));
+
+    state.apply_input(InputEvent::from_key_label("Tab"));
     assert_eq!(state.focused_component(), ShellComponent::StatusBar);
     assert_eq!(state.last_command(), Some(&ShellCommand::FocusNext));
 
     state.apply_input(InputEvent::from_key_label("Shift+Tab"));
-    assert_eq!(state.focused_component(), ShellComponent::Home);
+    assert_eq!(state.focused_component(), ShellComponent::ClockButton);
     assert_eq!(state.last_command(), Some(&ShellCommand::FocusPrevious));
 }
 
@@ -310,11 +321,7 @@ fn double_click_is_detected_for_same_component_and_nearby_cell() {
 
     assert_eq!(
         routed.command,
-        ShellCommand::Activate {
-            target: ShellComponent::Home,
-            coordinates: (11, 6),
-            click: ClickKind::Double,
-        }
+        ShellCommand::ActivateHomeEntryAt((11, 6), ClickKind::Double)
     );
 }
 
@@ -420,6 +427,181 @@ fn debug_status_bar_includes_recent_input_diagnostics() {
 }
 
 #[test]
+fn global_notifications_update_status_toast_and_alert() {
+    let mut state = ShellState::new(debug_config(), (120, 40));
+
+    state.notify_status("Working");
+    state.notify_toast("Saved");
+    state.notify_alert("Check configuration");
+
+    let chrome = state.to_shell_chrome_view_model();
+    assert!(chrome.status.status.starts_with("Working"));
+    assert_eq!(chrome.status.toast.as_deref(), Some("Saved"));
+    assert_eq!(chrome.status.error.as_deref(), Some("Check configuration"));
+    assert_eq!(state.take_notification_response(), None);
+
+    for _ in 0..16 {
+        state.apply_input(InputEvent::Tick);
+    }
+
+    let chrome = state.to_shell_chrome_view_model();
+    assert_eq!(chrome.status.toast, None);
+    assert_eq!(chrome.status.error.as_deref(), Some("Check configuration"));
+
+    state.clear_notification_alert();
+    assert_eq!(state.to_shell_chrome_view_model().status.error, None);
+}
+
+#[test]
+fn modal_notification_records_response_and_runs_follow_up_command() {
+    let mut state = ShellState::new(debug_config(), (120, 40));
+    let id = state.notify_modal(
+        "Open Clock",
+        "Open the clock now?",
+        NotificationTone::Info,
+        vec![
+            ShellNotificationAction::new("open", "Open").with_follow_up(ShellCommand::OpenClock),
+            ShellNotificationAction::new("cancel", "Cancel").cancel(),
+        ],
+    );
+
+    assert_eq!(
+        state
+            .to_notification_view_model()
+            .as_ref()
+            .map(|model| model.title.as_str()),
+        Some("Open Clock")
+    );
+
+    let action = state.apply_input(InputEvent::from_key_label("Enter"));
+
+    assert_eq!(action, ShellAction::Redraw);
+    assert_eq!(state.active_screen(), ShellScreen::Clock);
+    assert_eq!(state.last_command(), Some(&ShellCommand::OpenClock));
+    assert_eq!(
+        state.take_notification_response(),
+        Some(tundra_shell::ShellNotificationResponse {
+            notification_id: id,
+            action_id: "open".to_string(),
+        })
+    );
+    assert!(state.to_notification_view_model().is_none());
+}
+
+#[test]
+fn modal_notification_captures_input_and_escape_uses_cancel_action() {
+    let mut state = ShellState::new(debug_config(), (120, 40));
+    let id = state.notify_modal(
+        "Confirm",
+        "Continue?",
+        NotificationTone::Warning,
+        vec![
+            ShellNotificationAction::new("continue", "Continue"),
+            ShellNotificationAction::new("cancel", "Cancel").cancel(),
+        ],
+    );
+
+    state.apply_input(InputEvent::from_key_label("e"));
+    assert_eq!(state.active_screen(), ShellScreen::Home);
+    assert!(state.to_notification_view_model().is_some());
+    assert_eq!(
+        state.last_command(),
+        Some(&ShellCommand::CaptureOverlayInput)
+    );
+
+    state.apply_input(InputEvent::from_key_label("Tab"));
+    assert_eq!(
+        state
+            .to_notification_view_model()
+            .expect("active modal")
+            .actions
+            .iter()
+            .position(|action| action.selected),
+        Some(1)
+    );
+    state.apply_input(InputEvent::from_key_label("Shift+Tab"));
+    assert_eq!(
+        state
+            .to_notification_view_model()
+            .expect("active modal")
+            .actions
+            .iter()
+            .position(|action| action.selected),
+        Some(0)
+    );
+
+    state.apply_input(InputEvent::from_key_label("Esc"));
+
+    assert_eq!(
+        state.take_notification_response(),
+        Some(tundra_shell::ShellNotificationResponse {
+            notification_id: id,
+            action_id: "cancel".to_string(),
+        })
+    );
+    assert!(state.to_notification_view_model().is_none());
+}
+
+#[test]
+fn modal_notifications_are_fifo_and_low_priority_notifications_do_not_interrupt() {
+    let mut state = ShellState::new(debug_config(), (120, 40));
+    let first = state.notify_modal(
+        "First",
+        "First modal",
+        NotificationTone::Info,
+        vec![ShellNotificationAction::new("first-ok", "OK")],
+    );
+    let second = state.notify_modal(
+        "Second",
+        "Second modal",
+        NotificationTone::Info,
+        vec![ShellNotificationAction::new("second-ok", "OK")],
+    );
+
+    state.notify_status("Background work");
+    state.notify_toast("Saved in background");
+    state.notify_alert("Background warning");
+
+    let chrome = state.to_shell_chrome_view_model();
+    assert!(chrome.status.status.starts_with("Background work"));
+    assert_eq!(chrome.status.toast.as_deref(), Some("Saved in background"));
+    assert_eq!(chrome.status.error.as_deref(), Some("Background warning"));
+    assert_eq!(
+        state
+            .to_notification_view_model()
+            .as_ref()
+            .map(|model| model.title.as_str()),
+        Some("First")
+    );
+
+    state.apply_input(InputEvent::from_key_label(" "));
+    assert_eq!(
+        state.take_notification_response(),
+        Some(tundra_shell::ShellNotificationResponse {
+            notification_id: first,
+            action_id: "first-ok".to_string(),
+        })
+    );
+    assert_eq!(
+        state
+            .to_notification_view_model()
+            .as_ref()
+            .map(|model| model.title.as_str()),
+        Some("Second")
+    );
+
+    state.apply_input(InputEvent::from_key_label("Enter"));
+    assert_eq!(
+        state.take_notification_response(),
+        Some(tundra_shell::ShellNotificationResponse {
+            notification_id: second,
+            action_id: "second-ok".to_string(),
+        })
+    );
+    assert!(state.to_notification_view_model().is_none());
+}
+
+#[test]
 fn user_state_builds_user_home_view_model() {
     let state =
         ShellState::new_for_home_mode(build_default_config(), (120, 40), ShellHomeMode::User);
@@ -434,6 +616,110 @@ fn user_state_builds_user_home_view_model() {
             .iter()
             .any(|entry| entry.label == "Diagnostics")
     );
+}
+
+#[test]
+fn current_time_label_uses_configured_timezone_datetime() {
+    let fixture = FixtureRoot::new("clock-timezone");
+    let opened = storage_manager_at(&fixture);
+    let mut config = opened.load_config().expect("config loads");
+    config.timezone = "Asia/Shanghai".to_string();
+    opened.save_config(&config).expect("config saves");
+    let mut startup = ShellStartupState::clean(
+        PlatformKind::Windows,
+        PlatformCapabilities::native_supported(),
+    );
+    startup.storage_manager = Some(opened);
+    let mut state = ShellState::new_with_startup(build_default_config(), (120, 40), startup);
+    let utc = Utc
+        .with_ymd_and_hms(2026, 7, 9, 15, 30, 0)
+        .single()
+        .unwrap();
+
+    state.apply_time_sync_utc_for_test(utc);
+
+    assert_eq!(state.current_time_label(), "2026-07-09 23:30");
+    assert_eq!(state.to_clock_view_model().current_time, "2026-07-09 23:30");
+}
+
+#[test]
+fn clock_button_click_toggles_clock_placeholder() {
+    let mut state =
+        ShellState::new_for_home_mode(build_default_config(), (120, 40), ShellHomeMode::User);
+    let coordinates = component_coordinates(&state, ShellComponent::ClockButton);
+
+    assert_eq!(
+        state.hit_target_at(coordinates),
+        Some(ShellComponent::ClockButton)
+    );
+
+    state.apply_input(InputEvent::mouse_down(PointerButton::Left, coordinates));
+
+    assert_eq!(state.active_screen(), ShellScreen::Clock);
+    assert_eq!(state.focused_component(), ShellComponent::Clock);
+    assert_eq!(state.last_command(), Some(&ShellCommand::OpenClock));
+
+    let coordinates = component_coordinates(&state, ShellComponent::ClockButton);
+    state.apply_input(InputEvent::mouse_down(PointerButton::Left, coordinates));
+
+    assert_eq!(state.active_screen(), ShellScreen::Home);
+    assert_eq!(state.focused_component(), ShellComponent::Home);
+    assert_eq!(state.last_command(), Some(&ShellCommand::CloseClock));
+}
+
+#[test]
+fn keyboard_activation_opens_clock_and_escape_closes_it() {
+    let mut state =
+        ShellState::new_for_home_mode(build_default_config(), (120, 40), ShellHomeMode::User);
+
+    state.apply_input(InputEvent::from_key_label("Tab"));
+    assert_eq!(state.focused_component(), ShellComponent::ClockButton);
+
+    state.apply_input(InputEvent::from_key_label("Enter"));
+    assert_eq!(state.active_screen(), ShellScreen::Clock);
+    assert_eq!(state.focused_component(), ShellComponent::Clock);
+    assert_eq!(state.last_command(), Some(&ShellCommand::OpenClock));
+
+    state.apply_input(InputEvent::from_key_label("Esc"));
+    assert_eq!(state.active_screen(), ShellScreen::Home);
+    assert_eq!(state.last_command(), Some(&ShellCommand::CloseClock));
+}
+
+#[test]
+fn time_sync_failure_helper_shows_and_closes_dialog() {
+    let mut state = ShellState::new(debug_config(), (120, 40));
+
+    state.apply_time_sync_failure_for_test("联网校准时间失败");
+
+    assert!(state.time_sync_failure_dialog_visible());
+    assert_eq!(state.time_sync_failure_message(), Some("联网校准时间失败"));
+    assert_eq!(state.status(), "联网校准时间失败");
+    assert_eq!(state.focused_component(), ShellComponent::TimeSyncDialog);
+    assert!(state.to_time_sync_dialog_view_model().is_some());
+
+    state.apply_input(InputEvent::from_key_label("Esc"));
+
+    assert!(!state.time_sync_failure_dialog_visible());
+    assert_eq!(state.time_sync_failure_message(), None);
+    assert_eq!(
+        state.last_command(),
+        Some(&ShellCommand::CloseTimeSyncDialog)
+    );
+}
+
+#[test]
+fn successful_time_sync_clears_failure_dialog_and_updates_anchor() {
+    let mut state = ShellState::new(debug_config(), (120, 40));
+    let utc = Utc
+        .with_ymd_and_hms(2026, 7, 9, 15, 30, 0)
+        .single()
+        .unwrap();
+
+    state.apply_time_sync_failure_for_test("联网校准时间失败");
+    state.apply_time_sync_utc_for_test(utc);
+
+    assert!(!state.time_sync_failure_dialog_visible());
+    assert_eq!(state.current_time_label(), "2026-07-09 15:30");
 }
 
 #[test]
@@ -457,6 +743,88 @@ fn explicit_user_mode_shows_product_entries_without_diagnostics() {
         labels,
         vec!["Explorer", "Launcher", "Editor", "Settings", "Diagnostics"]
     );
+}
+
+#[test]
+fn home_arrow_keys_update_selected_entry() {
+    let mut state =
+        ShellState::new_for_home_mode(build_default_config(), (120, 40), ShellHomeMode::User);
+
+    assert_eq!(state.selected_home_entry_index(), 0);
+
+    state.apply_input(InputEvent::from_key_label("Right"));
+    assert_eq!(state.selected_home_entry_index(), 1);
+
+    state.apply_input(InputEvent::from_key_label("End"));
+    assert_eq!(state.selected_home_entry_index(), 4);
+}
+
+#[test]
+fn enter_on_home_explorer_entry_routes_activation() {
+    let mut state =
+        ShellState::new_for_home_mode(build_default_config(), (120, 40), ShellHomeMode::User);
+
+    state.apply_input(InputEvent::from_key_label("Enter"));
+
+    assert_eq!(
+        state.last_command(),
+        Some(&ShellCommand::ActivateSelectedHomeEntry)
+    );
+    assert_eq!(state.status(), "Ready");
+}
+
+#[test]
+fn enter_on_unimplemented_home_entry_shows_placeholder_status() {
+    let mut state =
+        ShellState::new_for_home_mode(build_default_config(), (120, 40), ShellHomeMode::User);
+
+    state.apply_input(InputEvent::from_key_label("Right"));
+    state.apply_input(InputEvent::from_key_label("Enter"));
+
+    assert_eq!(
+        state.last_command(),
+        Some(&ShellCommand::ActivateSelectedHomeEntry)
+    );
+    assert_eq!(state.status(), "Launcher is not implemented yet");
+}
+
+#[test]
+fn mouse_single_click_on_home_entry_selects_that_entry() {
+    let mut state =
+        ShellState::new_for_home_mode(build_default_config(), (120, 40), ShellHomeMode::User);
+    let launcher = home_entry_coordinates(&state, 1);
+
+    state.apply_input(InputEvent::mouse_down(PointerButton::Left, launcher));
+
+    assert_eq!(state.selected_home_entry_index(), 1);
+    assert_eq!(
+        state.last_command(),
+        Some(&ShellCommand::ActivateHomeEntryAt(
+            launcher,
+            ClickKind::Single
+        ))
+    );
+    assert_eq!(state.status(), "Home: Launcher");
+}
+
+#[test]
+fn mouse_double_click_on_unimplemented_home_entry_shows_placeholder_status() {
+    let mut state =
+        ShellState::new_for_home_mode(build_default_config(), (120, 40), ShellHomeMode::User);
+    let launcher = home_entry_coordinates(&state, 1);
+
+    state.apply_input(InputEvent::mouse_down(PointerButton::Left, launcher));
+    state.apply_input(InputEvent::mouse_down(PointerButton::Left, launcher));
+
+    assert_eq!(state.selected_home_entry_index(), 1);
+    assert_eq!(
+        state.last_command(),
+        Some(&ShellCommand::ActivateHomeEntryAt(
+            launcher,
+            ClickKind::Double
+        ))
+    );
+    assert_eq!(state.status(), "Launcher is not implemented yet");
 }
 
 #[test]
@@ -593,4 +961,74 @@ fn restored_session_is_sanitized_to_stable_home_state() {
     assert_eq!(saved.focused_component, ShellComponent::Home);
     assert_eq!(saved.display_mode, ShellHomeMode::User);
     assert_eq!(saved.active_popup, None);
+}
+
+fn home_entry_coordinates(state: &ShellState, index: usize) -> (u16, u16) {
+    let area = Rect::new(0, 0, state.terminal_size().0, state.terminal_size().1);
+    let tundra_ui::ShellLayout::Full { main, .. } = tundra_ui::compute_shell_layout(area) else {
+        panic!("state tests use a full shell layout");
+    };
+    let tile = tundra_ui::home_entry_tile_areas(main, state.to_home_view_model().entries().len())
+        .get(index)
+        .copied()
+        .unwrap_or_else(|| panic!("missing home entry tile at index {index}"));
+
+    (tile.x.saturating_add(1), tile.y.saturating_add(1))
+}
+
+fn component_coordinates(state: &ShellState, component: ShellComponent) -> (u16, u16) {
+    let region = state
+        .hit_map()
+        .regions()
+        .iter()
+        .find(|region| region.component == component)
+        .unwrap_or_else(|| panic!("missing hit region for {component:?}"));
+
+    (
+        region
+            .area
+            .x
+            .saturating_add(region.area.width.saturating_sub(1)),
+        region.area.y,
+    )
+}
+
+fn storage_manager_at(fixture: &FixtureRoot) -> StorageManager {
+    let base = fixture.path();
+    let app_paths =
+        build_windows_app_paths(base.join("Roaming"), base.join("Local"), base.join("Temp"))
+            .expect("valid fixture app paths");
+    StorageManager::open(app_paths)
+        .expect("storage opens")
+        .manager
+}
+
+struct FixtureRoot {
+    path: PathBuf,
+}
+
+impl FixtureRoot {
+    fn new(name: &str) -> Self {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system time")
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!(
+            "tundra-shell-state-{name}-{}-{nanos}",
+            std::process::id()
+        ));
+        assert!(path.is_absolute());
+        let _ = fs::remove_dir_all(&path);
+        Self { path }
+    }
+
+    fn path(&self) -> &PathBuf {
+        &self.path
+    }
+}
+
+impl Drop for FixtureRoot {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.path);
+    }
 }

@@ -4,7 +4,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use tundra_cli::{
     CliCommand, CliError, ConfigAction, ConfigField, ConfigUpdate, parse_args, run,
-    run_with_platform, run_with_platform_and_weathr_launcher,
+    run_with_platform, run_with_platform_and_asset_root, run_with_platform_and_weathr_launcher,
 };
 use tundra_platform::mock::{MockPlatform, UnsupportedPlatform};
 use tundra_platform::{
@@ -492,8 +492,15 @@ fn doctor_command_passes_and_bootstraps_storage_with_injected_macos_platform() {
     let mut stderr = Vec::new();
     let tree = TempTree::new("doctor-macos");
     let platform = mock_macos_platform(tree.path());
+    let asset_root = copy_complete_assets(&tree);
 
-    let exit_code = run_with_platform(["doctor"], &platform, &mut stdout, &mut stderr);
+    let exit_code = run_with_platform_and_asset_root(
+        ["doctor"],
+        &platform,
+        &mut stdout,
+        &mut stderr,
+        &asset_root,
+    );
 
     assert_eq!(exit_code, 0);
     assert!(stderr.is_empty());
@@ -509,6 +516,8 @@ fn doctor_command_passes_and_bootstraps_storage_with_injected_macos_platform() {
     assert!(stdout.contains("Path checks:"));
     assert!(stdout.contains("Storage checks:"));
     assert!(stdout.contains("[PASS] Storage bootstrap: storage initialized and loaded cleanly"));
+    assert!(stdout.contains("Asset checks:"));
+    assert!(stdout.contains("[PASS] Required ASCII assets (theme default):"));
     assert!(stdout.contains("Doctor result: PASS"));
     assert_path_labels(&stdout);
     assert_macos_resolved_path_markers(&stdout);
@@ -532,12 +541,48 @@ fn doctor_command_passes_and_bootstraps_storage_with_injected_macos_platform() {
 }
 
 #[test]
+fn doctor_command_warns_for_missing_ascii_asset_without_failing() {
+    let mut stdout = Vec::new();
+    let mut stderr = Vec::new();
+    let tree = TempTree::new("doctor-missing-asset");
+    let platform = mock_macos_platform(tree.path());
+    let asset_root = copy_complete_assets(&tree);
+    fs::remove_file(asset_root.join("themes/default/weathr/animation/cloud_0.txt"))
+        .expect("missing asset fixture can be removed");
+
+    let exit_code = run_with_platform_and_asset_root(
+        ["doctor"],
+        &platform,
+        &mut stdout,
+        &mut stderr,
+        &asset_root,
+    );
+
+    assert_eq!(exit_code, 0);
+    assert!(stderr.is_empty());
+    let stdout = String::from_utf8(stdout).expect("doctor output should be utf8");
+    assert!(stdout.contains("Asset checks:"));
+    assert!(stdout.contains("[WARN] Required ASCII assets (theme default):"));
+    assert!(stdout.contains("1 missing asset"));
+    assert!(stdout.contains("missing: weathr/animation/cloud_0"));
+    assert!(stdout.contains("Doctor result: PASS"));
+}
+
+#[test]
 fn doctor_command_reports_checks_and_skips_storage_when_app_paths_fail() {
     let mut stdout = Vec::new();
     let mut stderr = Vec::new();
     let platform = UnsupportedPlatform;
+    let tree = TempTree::new("doctor-unsupported-assets");
+    let asset_root = copy_complete_assets(&tree);
 
-    let exit_code = run_with_platform(["doctor"], &platform, &mut stdout, &mut stderr);
+    let exit_code = run_with_platform_and_asset_root(
+        ["doctor"],
+        &platform,
+        &mut stdout,
+        &mut stderr,
+        &asset_root,
+    );
 
     assert_eq!(exit_code, 1);
     let stdout = String::from_utf8(stdout).expect("doctor output should be utf8");
@@ -550,6 +595,8 @@ fn doctor_command_reports_checks_and_skips_storage_when_app_paths_fail() {
     assert!(stdout.contains("Capability checks:"));
     assert!(stdout.contains("Path checks:"));
     assert!(stdout.contains("[FAIL] App paths: platform capability is unsupported: app_paths"));
+    assert!(stdout.contains("Asset checks:"));
+    assert!(stdout.contains("[PASS] Required ASCII assets (theme default):"));
     assert!(!stdout.contains("Storage checks:"));
     assert!(stderr.contains("Doctor result: FAIL"));
 }
@@ -680,6 +727,13 @@ impl TempTree {
     fn path(&self) -> &Path {
         &self.path
     }
+}
+
+fn copy_complete_assets(tree: &TempTree) -> PathBuf {
+    let out_dir = tree.path().join("target/debug/build/tundra-cli-test/out");
+    fs::create_dir_all(&out_dir).expect("asset test OUT_DIR can be created");
+    tundra_ascii_assets::copy_canonical_assets_to_profile_dir(&out_dir)
+        .expect("canonical assets copy into temp profile dir")
 }
 
 impl Drop for TempTree {

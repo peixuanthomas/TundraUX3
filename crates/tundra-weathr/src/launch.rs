@@ -1,7 +1,7 @@
 use crate::app::AppRunOutcome;
 use crate::app_state::BottomHudPrompt;
 use crate::config::{Config, LocationDisplay};
-use crate::error::{ConfigError, TerminalError};
+use crate::error::{ConfigError, TerminalError, WeatherAssetError};
 use crate::render::TerminalRenderer;
 use crate::theme::ThemeRegistry;
 use crate::{app, geolocation};
@@ -72,6 +72,7 @@ impl From<AppRunOutcome> for ShellLockscreenResult {
 pub enum WeathrRunError {
     Config(ConfigError),
     Terminal(TerminalError),
+    Assets(WeatherAssetError),
     Runtime(io::Error),
     Run(io::Error),
     Cleanup(io::Error),
@@ -83,6 +84,7 @@ impl fmt::Display for WeathrRunError {
         match self {
             Self::Config(error) => write!(formatter, "failed to load weathr config: {error}"),
             Self::Terminal(error) => write!(formatter, "{}", error.user_friendly_message()),
+            Self::Assets(error) => write!(formatter, "failed to load weathr ASCII assets: {error}"),
             Self::Runtime(error) => write!(formatter, "failed to start weathr runtime: {error}"),
             Self::Run(error) => write!(formatter, "weathr render loop failed: {error}"),
             Self::Cleanup(error) => write!(formatter, "failed to restore terminal: {error}"),
@@ -96,6 +98,7 @@ impl std::error::Error for WeathrRunError {
         match self {
             Self::Config(error) => Some(error),
             Self::Terminal(error) => Some(error),
+            Self::Assets(error) => Some(error),
             Self::Runtime(error)
             | Self::Run(error)
             | Self::Cleanup(error)
@@ -113,6 +116,12 @@ impl From<ConfigError> for WeathrRunError {
 impl From<TerminalError> for WeathrRunError {
     fn from(value: TerminalError) -> Self {
         Self::Terminal(value)
+    }
+}
+
+impl From<WeatherAssetError> for WeathrRunError {
+    fn from(value: WeatherAssetError) -> Self {
+        Self::Assets(value)
     }
 }
 
@@ -169,8 +178,6 @@ async fn run_with_options(
     }
 
     let mut renderer = TerminalRenderer::new()?;
-    renderer.init()?;
-
     let (term_width, term_height) = renderer.get_size();
     let mut app = app::App::new_with_bottom_hud_prompt(
         &config,
@@ -179,7 +186,9 @@ async fn run_with_options(
         theme_registry,
         timezone_id,
         mode.bottom_hud_prompt(),
-    );
+    )?;
+
+    renderer.init()?;
 
     let run_result = tokio::select! {
         result = app.run_with_outcome(&mut renderer) => {

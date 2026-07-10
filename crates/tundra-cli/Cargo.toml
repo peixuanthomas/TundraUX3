@@ -11,7 +11,11 @@ name = "tundra-cli"
 path = "src/main.rs"
 
 [dependencies]
+tundra-ascii-assets = { path = "../tundra-ascii-assets" }
 tundra-platform = { path = "../tundra-platform" }
 tundra-storage = { path = "../tundra-storage" }
 tundra-ui = { path = "../tundra-ui" }
 tundra-weathr = { path = "../tundra-weathr" }
+
+[build-dependencies]
+tundra-ascii-assets = { path = "../tundra-ascii-assets" }
