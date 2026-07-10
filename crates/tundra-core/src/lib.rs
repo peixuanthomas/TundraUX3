@@ -21,7 +21,6 @@ pub enum UserRole {
     Guest,
     User,
     Admin,
-    Debug,
 }
 
 impl UserRole {
@@ -30,14 +29,12 @@ impl UserRole {
             Self::Guest => "Guest",
             Self::User => "User",
             Self::Admin => "Admin",
-            Self::Debug => "Debug",
         }
     }
 
     fn from_storage(value: &str) -> Self {
         match value {
             "Admin" => Self::Admin,
-            "Debug" => Self::Debug,
             "Guest" => Self::Guest,
             _ => Self::User,
         }
@@ -244,7 +241,7 @@ impl fmt::Display for CoreError {
                 write!(formatter, "{action} denied: {reason}")
             }
             Self::LastPrivilegedUserRequired => {
-                formatter.write_str("at least one enabled admin or debug user is required")
+                formatter.write_str("at least one enabled admin is required")
             }
             Self::AuditIntegrity(message) => write!(formatter, "audit integrity error: {message}"),
         }
@@ -297,25 +294,25 @@ impl PermissionService {
             | PermissionAction::DeleteFile
             | PermissionAction::MoveFile
             | PermissionAction::OpenExternal => match role {
-                UserRole::User | UserRole::Admin | UserRole::Debug => Authorization::allow(),
+                UserRole::User | UserRole::Admin => Authorization::allow(),
                 UserRole::Guest => Authorization::deny("not_authenticated"),
             },
             PermissionAction::ManageOwnUser => match role {
-                UserRole::User | UserRole::Admin | UserRole::Debug => Authorization::allow(),
+                UserRole::User | UserRole::Admin => Authorization::allow(),
                 UserRole::Guest => Authorization::deny("not_authenticated"),
             },
             PermissionAction::ManageUsers
             | PermissionAction::ViewAuditLog
             | PermissionAction::ChangeSettings => match role {
-                UserRole::Admin | UserRole::Debug => Authorization::allow(),
+                UserRole::Admin => Authorization::allow(),
                 UserRole::Guest => Authorization::deny("not_authenticated"),
                 UserRole::User => Authorization::deny("insufficient_role"),
             },
             PermissionAction::EnterDebugMode => match role {
-                UserRole::Debug if self.debug_policy.allows_debug() => Authorization::allow(),
-                UserRole::Debug => Authorization::deny("debug_policy_denied"),
+                UserRole::Admin if self.debug_policy.allows_debug() => Authorization::allow(),
+                UserRole::Admin => Authorization::deny("debug_policy_denied"),
                 UserRole::Guest => Authorization::deny("not_authenticated"),
-                UserRole::User | UserRole::Admin => Authorization::deny("insufficient_role"),
+                UserRole::User => Authorization::deny("insufficient_role"),
             },
         }
     }
@@ -543,7 +540,7 @@ impl UserService {
 
     pub fn disable_user(&self, actor: &AuthSession, username: &str) -> Result<(), CoreError> {
         self.update_user(actor, username, "disable_user", |document, index, now| {
-            ensure_can_remove_enabled_privileged_user(document, index)?;
+            ensure_can_remove_enabled_admin(document, index)?;
             let record = &mut document.users[index];
             record.enabled = false;
             record.updated_at_epoch_ms = now;
@@ -596,8 +593,8 @@ impl UserService {
         role: UserRole,
     ) -> Result<(), CoreError> {
         self.update_user(actor, username, "change_role", |document, index, now| {
-            if !matches!(role, UserRole::Admin | UserRole::Debug) {
-                ensure_can_remove_enabled_privileged_user(document, index)?;
+            if role != UserRole::Admin {
+                ensure_can_remove_enabled_admin(document, index)?;
             }
             let record = &mut document.users[index];
             record.role = role.as_str().to_string();
@@ -613,7 +610,7 @@ impl UserService {
         };
         let action =
             self.authorize_user_data_operation(actor, &document.users[index], "delete_user")?;
-        ensure_can_remove_enabled_privileged_user(&document, index)?;
+        ensure_can_remove_enabled_admin(&document, index)?;
         let removed = document.users.remove(index);
         self.storage.save_users(&document)?;
         AuditService::new(self.storage.clone()).record(
@@ -784,12 +781,12 @@ impl SessionService {
             let record = &mut document.users[index];
             if !record.enabled {
                 result = Err(CoreError::AccountDisabled);
-            } else if let Some(locked_until) = record.locked_until_epoch_ms {
-                if locked_until > now {
-                    result = Err(CoreError::AccountLocked {
-                        locked_until_epoch_ms: locked_until,
-                    });
-                }
+            } else if let Some(locked_until) = record.locked_until_epoch_ms
+                && locked_until > now
+            {
+                result = Err(CoreError::AccountLocked {
+                    locked_until_epoch_ms: locked_until,
+                });
             }
         }
 
@@ -1159,9 +1156,9 @@ fn normalize_username(username: &str) -> String {
 }
 
 fn actor_can_manage_users(document: &UsersDocument, actor: &AuthSession) -> bool {
-    matches!(actor.role, UserRole::Admin | UserRole::Debug)
+    actor.role == UserRole::Admin
         && find_authenticated_user_index(document, actor)
-            .map(|index| is_enabled_privileged_user(&document.users[index]))
+            .map(|index| is_enabled_admin(&document.users[index]))
             .unwrap_or(false)
 }
 
@@ -1196,31 +1193,27 @@ fn find_authenticated_user_index(document: &UsersDocument, actor: &AuthSession) 
         .position(|record| is_same_user(actor, record))
 }
 
-fn ensure_can_remove_enabled_privileged_user(
+fn ensure_can_remove_enabled_admin(
     document: &UsersDocument,
     target_index: usize,
 ) -> Result<(), CoreError> {
-    if !is_enabled_privileged_user(&document.users[target_index]) {
+    if !is_enabled_admin(&document.users[target_index]) {
         return Ok(());
     }
-    let has_other_enabled_privileged_user = document
+    let has_other_enabled_admin = document
         .users
         .iter()
         .enumerate()
-        .any(|(index, record)| index != target_index && is_enabled_privileged_user(record));
-    if has_other_enabled_privileged_user {
+        .any(|(index, record)| index != target_index && is_enabled_admin(record));
+    if has_other_enabled_admin {
         Ok(())
     } else {
         Err(CoreError::LastPrivilegedUserRequired)
     }
 }
 
-fn is_enabled_privileged_user(record: &UserRecord) -> bool {
-    record.enabled
-        && matches!(
-            UserRole::from_storage(&record.role),
-            UserRole::Admin | UserRole::Debug
-        )
+fn is_enabled_admin(record: &UserRecord) -> bool {
+    record.enabled && UserRole::from_storage(&record.role) == UserRole::Admin
 }
 
 fn next_user_id(document: &UsersDocument) -> String {

@@ -776,7 +776,7 @@ fn login_renderer_masks_password_length() {
         vec![
             login_user("AdminUser", "Admin User", "Admin"),
             login_user("Strix", "Local User", "User"),
-            login_user("debug", "Debug User", "Debug"),
+            login_user("guest", "Guest User", "Guest"),
         ],
         1,
         0,
@@ -852,6 +852,7 @@ fn bootstrap_and_user_management_render_expected_content() {
             role: "User".to_string(),
             enabled: true,
             locked: false,
+            is_current: false,
         }],
         0,
         Some("Created user2".to_string()),
@@ -870,8 +871,10 @@ fn bootstrap_and_user_management_render_expected_content() {
         })
         .expect("render user management");
     let output = terminal_output(&terminal);
-    assert!(output.contains("Current user: AdminUser"));
-    assert!(output.contains("user2 (User Two) | User | enabled"));
+    assert!(output.contains("Signed in: AdminUser"));
+    assert!(output.contains("user2"));
+    assert!(output.contains("User Two"));
+    assert!(output.contains("Enabled"));
     assert!(output.contains("Created user2"));
 }
 

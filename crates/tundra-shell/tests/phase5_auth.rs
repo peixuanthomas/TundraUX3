@@ -535,6 +535,7 @@ fn admin_can_manage_users_and_user_can_only_open_own_profile() {
     admin_state.apply_input(InputEvent::from_key_label("Tab"));
     type_text(&mut admin_state, "User Two");
     admin_state.apply_input(InputEvent::from_key_label("Tab"));
+    admin_state.apply_input(InputEvent::from_key_label("Tab"));
     type_text(&mut admin_state, "userPass2123!");
     admin_state.apply_input(InputEvent::from_key_label("Enter"));
     assert_eq!(
@@ -579,7 +580,8 @@ fn user_management_refresh_failure_is_visible_preserves_users_and_resolves_after
     let valid_users = fs::read(&users_path).expect("valid users document");
     fs::write(&users_path, b"{ invalid users json").expect("corrupt users fixture");
 
-    state.apply_input(InputEvent::from_key_label("c"));
+    state.apply_input(InputEvent::from_key_label("e"));
+    state.apply_input(InputEvent::from_key_label("Enter"));
 
     let failed_management = state.to_user_management_view_model();
     let failed_chrome = state.to_shell_chrome_view_model();
@@ -593,7 +595,8 @@ fn user_management_refresh_failure_is_visible_preserves_users_and_resolves_after
     assert_eq!(failed_chrome.status.alert_tone, NotificationTone::Error);
 
     fs::write(&users_path, valid_users).expect("restore users fixture");
-    state.apply_input(InputEvent::from_key_label("c"));
+    state.apply_input(InputEvent::from_key_label("e"));
+    state.apply_input(InputEvent::from_key_label("Enter"));
 
     let recovered_management = state.to_user_management_view_model();
     assert_eq!(recovered_management.users.len(), users_before_failure.len());
@@ -601,7 +604,7 @@ fn user_management_refresh_failure_is_visible_preserves_users_and_resolves_after
         recovered_management
             .users
             .iter()
-            .any(|user| user.username == "AdminUser" && user.role == "Debug")
+            .any(|user| user.username == "AdminUser" && user.role == "Admin")
     );
     assert_eq!(state.to_shell_chrome_view_model().status.error, None);
 }
@@ -620,6 +623,7 @@ fn login_mouse_click_selects_user_and_focuses_password() {
     type_text(&mut admin_state, "user2");
     admin_state.apply_input(InputEvent::from_key_label("Tab"));
     type_text(&mut admin_state, "User Two");
+    admin_state.apply_input(InputEvent::from_key_label("Tab"));
     admin_state.apply_input(InputEvent::from_key_label("Tab"));
     type_text(&mut admin_state, "userPass2123!");
     admin_state.apply_input(InputEvent::from_key_label("Enter"));
@@ -679,6 +683,7 @@ fn user_management_forms_edit_password_and_delete_accounts() {
     state.apply_input(InputEvent::from_key_label("Tab"));
     type_text(&mut state, "Delete Me");
     state.apply_input(InputEvent::from_key_label("Tab"));
+    state.apply_input(InputEvent::from_key_label("Tab"));
     type_text(&mut state, "deletePass123!");
     state.apply_input(InputEvent::from_key_label("Enter"));
     assert!(
@@ -716,9 +721,49 @@ fn user_management_forms_edit_password_and_delete_accounts() {
             .any(|user| user.username == "deleteme" && user.display_name == "Deleted User")
     );
 
+    state.apply_input(InputEvent::from_key_label("c"));
+    assert!(
+        state
+            .to_user_management_view_model()
+            .users
+            .iter()
+            .any(|user| user.username == "deleteme" && user.role == "Admin")
+    );
+    state.apply_input(InputEvent::from_key_label("c"));
+    assert!(
+        state
+            .to_user_management_view_model()
+            .users
+            .iter()
+            .any(|user| user.username == "deleteme" && user.role == "User")
+    );
+    state.apply_input(InputEvent::from_key_label("d"));
+    assert!(
+        state
+            .to_user_management_view_model()
+            .users
+            .iter()
+            .any(|user| user.username == "deleteme" && !user.enabled)
+    );
+    state.apply_input(InputEvent::from_key_label("u"));
+    assert!(
+        state
+            .to_user_management_view_model()
+            .users
+            .iter()
+            .any(|user| user.username == "deleteme" && user.enabled && !user.locked)
+    );
+
     state.apply_input(InputEvent::from_key_label("r"));
     type_text(&mut state, "ChangedPass123!");
     state.apply_input(InputEvent::from_key_label("Enter"));
+    state.apply_input(InputEvent::from_key_label("x"));
+    assert_eq!(
+        state
+            .to_notification_view_model()
+            .map(|notification| notification.title),
+        Some("Delete user".to_string())
+    );
     state.apply_input(InputEvent::from_key_label("x"));
     assert!(
         !state
@@ -733,6 +778,311 @@ fn user_management_forms_edit_password_and_delete_accounts() {
             .expect("clock document")
             .profiles
             .contains_key(&deleted_user_id)
+    );
+}
+
+#[test]
+fn compact_user_management_captures_hidden_actions_and_only_escape_leaves() {
+    let fixture = FixtureRoot::new("user-management-compact");
+    let platform = mock_platform(fixture.path());
+    bootstrap_with_shell(&platform);
+
+    let startup = prepare_shell_startup(&platform, default_config()).expect("admin startup");
+    let mut state = ShellState::new_with_startup(default_config(), (120, 40), startup);
+    login(&mut state, "AdminUser", "StrongPass123");
+    state.apply_input(InputEvent::from_key_label("u"));
+    let before = state.to_user_management_view_model();
+
+    state.apply_input(InputEvent::Resize {
+        width: 49,
+        height: 40,
+    });
+    for key in ["n", "e", "r", "d", "u", "c", "x", "Down", "End"] {
+        state.apply_input(InputEvent::from_key_label(key));
+    }
+    state.apply_input(InputEvent::mouse_down(PointerButton::Left, (10, 10)));
+
+    let compact = state.to_user_management_view_model();
+    assert_eq!(state.active_screen(), ShellScreen::UserManagement);
+    assert_eq!(compact.users, before.users);
+    assert_eq!(compact.selected_index, before.selected_index);
+    assert_eq!(compact.form, None);
+    assert_eq!(state.to_notification_view_model(), None);
+
+    state.apply_input(InputEvent::from_key_label("Esc"));
+    assert_eq!(state.active_screen(), ShellScreen::Home);
+}
+
+#[test]
+fn user_management_create_role_and_action_focus_use_one_keyboard_flow() {
+    let fixture = FixtureRoot::new("user-management-role-focus");
+    let platform = mock_platform(fixture.path());
+    bootstrap_with_shell(&platform);
+
+    let startup = prepare_shell_startup(&platform, default_config()).expect("admin startup");
+    let mut state = ShellState::new_with_startup(default_config(), (120, 40), startup);
+    login(&mut state, "AdminUser", "StrongPass123");
+    state.apply_input(InputEvent::from_key_label("u"));
+
+    state.apply_input(InputEvent::from_key_label("n"));
+    assert_eq!(
+        state
+            .to_user_management_view_model()
+            .form
+            .as_ref()
+            .map(|form| (form.kind, form.role.as_str(), form.focused_field)),
+        Some((
+            tundra_ui::UserManagementFormKind::Create,
+            "User",
+            tundra_ui::UserManagementField::Username,
+        ))
+    );
+    type_text(&mut state, "SecondAdmin");
+    state.apply_input(InputEvent::from_key_label("Tab"));
+    type_text(&mut state, "Second Administrator");
+    state.apply_input(InputEvent::from_key_label("Tab"));
+    assert_eq!(
+        state
+            .to_user_management_view_model()
+            .form
+            .as_ref()
+            .map(|form| form.focused_field),
+        Some(tundra_ui::UserManagementField::Role)
+    );
+    state.apply_input(InputEvent::from_key_label(" "));
+    assert_eq!(
+        state
+            .to_user_management_view_model()
+            .form
+            .as_ref()
+            .map(|form| form.role.as_str()),
+        Some("Admin")
+    );
+    state.apply_input(InputEvent::from_key_label("Tab"));
+    type_text(&mut state, "ManagedPass123!");
+    state.apply_input(InputEvent::from_key_label("Enter"));
+
+    let created = state.to_user_management_view_model();
+    assert!(created.form.is_none());
+    assert!(
+        created
+            .users
+            .iter()
+            .any(|user| user.username == "SecondAdmin" && user.role == "Admin")
+    );
+    assert_eq!(
+        created.focus,
+        tundra_ui::UserManagementFocus::Action(tundra_ui::UserManagementAction::NewUser)
+    );
+
+    state.apply_input(InputEvent::from_key_label("Shift+Tab"));
+    assert_eq!(
+        state.to_user_management_view_model().focus,
+        tundra_ui::UserManagementFocus::UserList
+    );
+    state.apply_input(InputEvent::from_key_label("Tab"));
+    state.apply_input(InputEvent::from_key_label("Enter"));
+    assert!(state.to_user_management_view_model().form.is_some());
+    state.apply_input(InputEvent::from_key_label("Esc"));
+    state.apply_input(InputEvent::from_key_label("Tab"));
+    state.apply_input(InputEvent::from_key_label(" "));
+    assert_eq!(
+        state
+            .to_user_management_view_model()
+            .form
+            .as_ref()
+            .map(|form| form.kind),
+        Some(tundra_ui::UserManagementFormKind::EditInfo)
+    );
+    state.apply_input(InputEvent::from_key_label("Esc"));
+
+    let user_count = state.to_user_management_view_model().users.len();
+    state.apply_input(InputEvent::from_key_label("a"));
+    state.apply_input(InputEvent::from_key_label("g"));
+    assert_eq!(
+        state.to_user_management_view_model().users.len(),
+        user_count
+    );
+    assert!(state.to_user_management_view_model().form.is_none());
+}
+
+#[test]
+fn user_management_mouse_uses_shared_rows_actions_forms_and_scroll_geometry() {
+    let fixture = FixtureRoot::new("user-management-mouse-layout");
+    let platform = mock_platform(fixture.path());
+    bootstrap_with_shell(&platform);
+
+    let startup = prepare_shell_startup(&platform, default_config()).expect("admin startup");
+    let mut state = ShellState::new_with_startup(default_config(), (120, 40), startup);
+    login(&mut state, "AdminUser", "StrongPass123");
+    state.apply_input(InputEvent::from_key_label("u"));
+    for username in ["mouse1", "mouse2", "mouse3", "mouse4"] {
+        create_managed_user(&mut state, username, false);
+    }
+
+    state.apply_input(InputEvent::Resize {
+        width: 120,
+        height: 16,
+    });
+    state.apply_input(InputEvent::from_key_label("Home"));
+    let layout = user_management_layout_for(&state);
+    assert!(layout.visible_capacity >= 2);
+    let clicked_row = layout.rows.last().copied().expect("visible user row");
+    state.apply_input(InputEvent::mouse_down(
+        PointerButton::Left,
+        rect_center(clicked_row.area),
+    ));
+    assert_eq!(
+        state.to_user_management_view_model().selected_index,
+        clicked_row.index
+    );
+
+    let before_scroll = state.to_user_management_view_model().selected_index;
+    state.apply_input(InputEvent::mouse_scroll(
+        tundra_shell::ScrollDirection::Down,
+        rect_center(layout.rows_area),
+    ));
+    let after_scroll = state.to_user_management_view_model();
+    assert_eq!(after_scroll.selected_index, before_scroll + 1);
+    assert!(after_scroll.user_window_start > 0);
+
+    let layout = user_management_layout_for(&state);
+    let new_user = layout
+        .actions
+        .iter()
+        .find(|action| action.action == tundra_ui::UserManagementAction::NewUser)
+        .expect("new user action");
+    state.apply_input(InputEvent::mouse_down(
+        PointerButton::Left,
+        rect_center(new_user.area),
+    ));
+    assert_eq!(
+        state
+            .to_user_management_view_model()
+            .form
+            .as_ref()
+            .map(|form| form.kind),
+        Some(tundra_ui::UserManagementFormKind::Create)
+    );
+
+    let layout = user_management_layout_for(&state);
+    let form = layout.form.as_ref().expect("create form layout");
+    let display_name = form
+        .fields
+        .iter()
+        .find(|field| field.field == tundra_ui::UserManagementField::DisplayName)
+        .expect("display name field");
+    state.apply_input(InputEvent::mouse_down(
+        PointerButton::Left,
+        rect_center(display_name.area),
+    ));
+    assert_eq!(
+        state
+            .to_user_management_view_model()
+            .form
+            .as_ref()
+            .map(|form| form.focused_field),
+        Some(tundra_ui::UserManagementField::DisplayName)
+    );
+
+    let cancel = user_management_layout_for(&state)
+        .form
+        .expect("create form layout")
+        .cancel;
+    state.apply_input(InputEvent::mouse_down(
+        PointerButton::Left,
+        rect_center(cancel),
+    ));
+    assert!(state.to_user_management_view_model().form.is_none());
+}
+
+#[test]
+fn last_admin_actions_are_skipped_and_self_delete_defaults_to_cancel() {
+    let fixture = FixtureRoot::new("user-management-last-admin-delete");
+    let platform = mock_platform(fixture.path());
+    bootstrap_with_shell(&platform);
+
+    let startup = prepare_shell_startup(&platform, default_config()).expect("admin startup");
+    let mut state = ShellState::new_with_startup(default_config(), (120, 40), startup);
+    login(&mut state, "AdminUser", "StrongPass123");
+    state.apply_input(InputEvent::from_key_label("u"));
+
+    let model = state.to_user_management_view_model();
+    for protected in [
+        tundra_ui::UserManagementAction::ToggleEnabled,
+        tundra_ui::UserManagementAction::ToggleRole,
+        tundra_ui::UserManagementAction::Delete,
+    ] {
+        let action = model
+            .actions
+            .iter()
+            .find(|action| action.action == protected)
+            .expect("protected action");
+        assert!(!action.enabled);
+        assert!(action.disabled_reason.is_some());
+    }
+    for _ in 0..4 {
+        state.apply_input(InputEvent::from_key_label("Tab"));
+    }
+    assert_eq!(
+        state.to_user_management_view_model().focus,
+        tundra_ui::UserManagementFocus::Action(tundra_ui::UserManagementAction::Back)
+    );
+    state.apply_input(InputEvent::from_key_label("x"));
+    assert!(state.to_notification_view_model().is_none());
+
+    create_managed_user(&mut state, "BackupAdmin", true);
+    state.apply_input(InputEvent::from_key_label("Home"));
+    assert_eq!(
+        state
+            .to_user_management_view_model()
+            .users
+            .get(state.to_user_management_view_model().selected_index)
+            .map(|user| user.username.as_str()),
+        Some("AdminUser")
+    );
+    state.apply_input(InputEvent::from_key_label("x"));
+    let notification = state
+        .to_notification_view_model()
+        .expect("self-delete confirmation");
+    assert_eq!(notification.title, "Delete your account");
+    assert!(notification.message.contains("signed out"));
+    assert_eq!(
+        notification
+            .actions
+            .iter()
+            .find(|action| action.selected)
+            .map(|action| action.id.as_str()),
+        Some("cancel")
+    );
+
+    state.apply_input(InputEvent::from_key_label("Enter"));
+    assert!(state.to_notification_view_model().is_none());
+    assert_eq!(state.active_screen(), ShellScreen::UserManagement);
+    assert_eq!(
+        state
+            .auth_session()
+            .map(|session| session.username.as_str()),
+        Some("AdminUser")
+    );
+
+    state.apply_input(InputEvent::from_key_label("x"));
+    state.apply_input(InputEvent::from_key_label("x"));
+    assert_eq!(state.active_screen(), ShellScreen::Login);
+    assert!(state.auth_session().is_none());
+    assert!(
+        state
+            .to_login_view_model()
+            .users
+            .iter()
+            .all(|user| user.username != "AdminUser")
+    );
+    assert!(
+        state
+            .to_login_view_model()
+            .users
+            .iter()
+            .any(|user| user.username == "BackupAdmin")
     );
 }
 
@@ -952,6 +1302,43 @@ fn type_text(state: &mut ShellState, text: &str) {
     for character in text.chars() {
         state.apply_input(InputEvent::from_key_label(character.to_string()));
     }
+}
+
+fn create_managed_user(state: &mut ShellState, username: &str, admin: bool) {
+    state.apply_input(InputEvent::from_key_label("n"));
+    type_text(state, username);
+    state.apply_input(InputEvent::from_key_label("Tab"));
+    type_text(state, username);
+    state.apply_input(InputEvent::from_key_label("Tab"));
+    if admin {
+        state.apply_input(InputEvent::from_key_label(" "));
+    }
+    state.apply_input(InputEvent::from_key_label("Tab"));
+    type_text(state, "ManagedPass123!");
+    state.apply_input(InputEvent::from_key_label("Enter"));
+    assert!(state.to_user_management_view_model().form.is_none());
+    assert!(
+        state
+            .to_user_management_view_model()
+            .users
+            .iter()
+            .any(|user| user.username == username)
+    );
+}
+
+fn user_management_layout_for(state: &ShellState) -> tundra_ui::UserManagementLayout {
+    let area = ratatui::layout::Rect::new(0, 0, state.terminal_size().0, state.terminal_size().1);
+    let tundra_ui::ShellLayout::Full { main, .. } = tundra_ui::compute_shell_layout(area) else {
+        panic!("user management layout requires a full shell");
+    };
+    tundra_ui::user_management_layout(main, &state.to_user_management_view_model())
+}
+
+fn rect_center(area: ratatui::layout::Rect) -> (u16, u16) {
+    (
+        area.x.saturating_add(area.width / 2),
+        area.y.saturating_add(area.height / 2),
+    )
 }
 
 fn fresh_setup_state(case: &str) -> (FixtureRoot, ShellState) {

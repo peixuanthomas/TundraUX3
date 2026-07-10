@@ -33,7 +33,11 @@ pub use input::{
 pub use layout::{
     ClockCreateDialogLayout, ClockEntryKind, ClockEntryRowLayout, ClockPageLayout, ClockPageMode,
     NOTIFICATION_TOO_SMALL_MESSAGE, NotificationActionLayout, NotificationDialogLayout,
-    NotificationLayout, ShellLayout, clock_page_layout, compute_shell_layout, notification_layout,
+    NotificationLayout, ShellLayout, UserManagementActionLayout, UserManagementColumnMode,
+    UserManagementFieldLayout, UserManagementFormLayout, UserManagementLayout,
+    UserManagementRowLayout, clock_page_layout, compute_shell_layout, notification_layout,
+    user_management_action_at, user_management_form_control_at, user_management_layout,
+    user_management_row_index_at,
 };
 pub use render::{
     explorer_first_entry_content_line, home_entry_index_at, home_entry_tile_areas,
@@ -60,6 +64,7 @@ pub use view_model::{
     NotificationActionViewModel, NotificationLevel, NotificationTone, NotificationViewModel,
     SetupField, SetupLanguageOption, SetupPasswordRequirementViewModel, SetupStep,
     SetupTimezoneOption, SetupViewModel, ShellChromeViewModel, ShellEntry, StatusViewModel,
-    TimeSyncDialogViewModel, UserManagementField, UserManagementFormKind,
+    TimeSyncDialogViewModel, UserManagementAction, UserManagementActionViewModel,
+    UserManagementFeedbackTone, UserManagementField, UserManagementFocus, UserManagementFormKind,
     UserManagementFormViewModel, UserManagementUserViewModel, UserManagementViewModel,
 };

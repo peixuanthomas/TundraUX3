@@ -177,11 +177,10 @@ impl ShortcutRegistry {
         };
         let key = key_event.stroke();
 
-        if let Some(scope) = local_scope {
-            if let Some(binding) = self.existing_binding(&ShortcutScope::Local(scope.clone()), &key)
-            {
-                return Some(binding);
-            }
+        if let Some(scope) = local_scope
+            && let Some(binding) = self.existing_binding(&ShortcutScope::Local(scope.clone()), &key)
+        {
+            return Some(binding);
         }
 
         self.existing_binding(&ShortcutScope::Global, &key)

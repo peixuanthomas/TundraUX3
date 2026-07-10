@@ -302,7 +302,7 @@ fn modal_captures_mouse_without_closing_or_activating_home() {
         state.last_command(),
         Some(&ShellCommand::CaptureOverlayInput)
     );
-    assert_eq!(state.shutdown_requested(), false);
+    assert!(!state.shutdown_requested());
 }
 
 #[test]

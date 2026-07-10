@@ -56,6 +56,7 @@ const TIME_SYNC_NOTIFICATION_KEY: &str = "shell.time-sync-failure";
 const EXPLORER_DELETE_NOTIFICATION_KEY: &str = "explorer.delete-confirm";
 const EXPLORER_ALERT_KEY: &str = "explorer.operation";
 const USER_MANAGEMENT_REFRESH_ALERT_KEY: &str = "user-management.refresh";
+const USER_MANAGEMENT_DELETE_NOTIFICATION_KEY: &str = "user-management.delete-confirm";
 const CLOCK_STORAGE_ALERT_KEY: &str = "clock.storage";
 const CLOCK_MANAGE_NOTIFICATION_KEY_PREFIX: &str = "clock.manage";
 const CLOCK_DUE_NOTIFICATION_KEY_PREFIX: &str = "clock.due";
@@ -543,10 +544,9 @@ impl KeyInput {
             && !self.modifiers.super_key
             && !self.modifiers.hyper
             && !self.modifiers.meta
+            && let InputKey::Character(character) = &self.key
         {
-            if let InputKey::Character(character) = &self.key {
-                return format!("Ctrl+{}", character.to_ascii_uppercase());
-            }
+            return format!("Ctrl+{}", character.to_ascii_uppercase());
         }
 
         let mut parts = Vec::new();
@@ -1024,6 +1024,11 @@ impl ShellNotification {
         self
     }
 
+    fn with_selected_action(mut self, index: usize) -> Self {
+        self.selected_action = index.min(self.actions.len().saturating_sub(1));
+        self
+    }
+
     fn to_view_model(&self) -> tundra_ui::NotificationViewModel {
         tundra_ui::NotificationViewModel::new(
             self.id.to_string(),
@@ -1463,25 +1468,10 @@ struct DragTracker {
 enum UserManagementFormField {
     Username,
     DisplayName,
+    Role,
     Password,
-}
-
-impl UserManagementFormField {
-    fn next(self) -> Self {
-        match self {
-            Self::Username => Self::DisplayName,
-            Self::DisplayName => Self::Password,
-            Self::Password => Self::Username,
-        }
-    }
-
-    fn previous(self) -> Self {
-        match self {
-            Self::Username => Self::Password,
-            Self::DisplayName => Self::Username,
-            Self::Password => Self::DisplayName,
-        }
-    }
+    Submit,
+    Cancel,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1497,12 +1487,14 @@ struct UserManagementCreateForm {
 struct UserManagementInfoForm {
     username: String,
     display_name: String,
+    focused_field: UserManagementFormField,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct UserManagementPasswordForm {
     username: String,
     password: String,
+    focused_field: UserManagementFormField,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1511,6 +1503,19 @@ enum UserManagementMode {
     Create(UserManagementCreateForm),
     EditInfo(UserManagementInfoForm),
     Password(UserManagementPasswordForm),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum UserManagementPageFocus {
+    UserList,
+    Action(tundra_ui::UserManagementAction),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum UserManagementFeedbackTone {
+    Info,
+    Success,
+    Error,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1640,12 +1645,24 @@ pub enum ShellCommand {
     ClockSnoozeFiveMinutes(u64),
     UserManagementNext,
     UserManagementPrevious,
-    CreateManagedUser(UserRole),
+    UserManagementPageUp,
+    UserManagementPageDown,
+    UserManagementFirst,
+    UserManagementLast,
+    UserManagementSelectRow(usize),
+    UserManagementFocusAction(tundra_ui::UserManagementAction),
+    UserManagementActivateFocused,
+    UserManagementActivateAction(tundra_ui::UserManagementAction),
+    UserManagementSetFormFocus(tundra_ui::UserManagementField),
+    UserManagementActivateFormControl(tundra_ui::UserManagementField),
+    UserManagementToggleFormRole,
+    CreateManagedUser,
     EditManagedUserInfo,
     DisableManagedUser,
     UnlockManagedUser,
     ResetManagedPassword,
     CycleManagedRole,
+    RequestDeleteManagedUser,
     DeleteManagedUser,
     AppendUserManagementChar(char),
     UserManagementBackspace,
@@ -1900,7 +1917,10 @@ pub struct ShellState {
     bootstrap_password: String,
     user_management_users: Vec<UserAccount>,
     user_management_selected: usize,
+    user_management_window_start: usize,
+    user_management_focus: UserManagementPageFocus,
     user_management_message: Option<String>,
+    user_management_feedback_tone: UserManagementFeedbackTone,
     user_management_mode: UserManagementMode,
     selected_home_entry_index: usize,
     explorer_state: Option<ExplorerState>,
@@ -2053,7 +2073,10 @@ impl ShellState {
             bootstrap_password: String::new(),
             user_management_users: Vec::new(),
             user_management_selected: 0,
+            user_management_window_start: 0,
+            user_management_focus: UserManagementPageFocus::UserList,
             user_management_message: None,
+            user_management_feedback_tone: UserManagementFeedbackTone::Info,
             user_management_mode: UserManagementMode::Browse,
             selected_home_entry_index: 0,
             explorer_state: None,
@@ -2283,7 +2306,7 @@ impl ShellState {
                 .all(|requirement| requirement.met);
 
         tundra_ui::SetupViewModel {
-            step: self.setup_step.clone(),
+            step: self.setup_step,
             languages: tundra_ui::setup_language_options(),
             timezones: tundra_ui::setup_timezone_options(),
             selected_language_index: self.setup_selected_language_index,
@@ -2294,18 +2317,20 @@ impl ShellState {
             admin_password_confirm_len: self.setup_admin_password_confirm.chars().count(),
             password_requirements,
             password_hint: self.setup_admin_password_hint.clone(),
-            focused_field: self.setup_focused_field.clone(),
+            focused_field: self.setup_focused_field,
             can_submit,
             error: self.error_message.clone(),
         }
     }
 
     pub fn to_user_management_view_model(&self) -> tundra_ui::UserManagementViewModel {
-        tundra_ui::UserManagementViewModel::new(
-            self.auth_session
-                .as_ref()
-                .map(|session| session.username.clone())
-                .unwrap_or_else(|| "Guest".to_string()),
+        let current_user = self
+            .auth_session
+            .as_ref()
+            .map(|session| session.username.clone())
+            .unwrap_or_else(|| "Guest".to_string());
+        let mut model = tundra_ui::UserManagementViewModel::new(
+            current_user.clone(),
             self.user_management_users
                 .iter()
                 .map(|user| tundra_ui::UserManagementUserViewModel {
@@ -2317,13 +2342,28 @@ impl ShellState {
                         .locked_until_epoch_ms
                         .map(|locked_until| locked_until > unix_millis())
                         .unwrap_or(false),
+                    is_current: user.username.eq_ignore_ascii_case(&current_user),
                 })
                 .collect(),
             self.user_management_selected,
             self.user_management_message.clone(),
             self.can_manage_all_users(),
             self.user_management_form_view_model(),
-        )
+        );
+        model.user_window_start = self.user_management_window_start;
+        model.focus = match self.user_management_focus {
+            UserManagementPageFocus::UserList => tundra_ui::UserManagementFocus::UserList,
+            UserManagementPageFocus::Action(action) => {
+                tundra_ui::UserManagementFocus::Action(action)
+            }
+        };
+        model.actions = self.user_management_action_view_models();
+        model.feedback_tone = match self.user_management_feedback_tone {
+            UserManagementFeedbackTone::Info => tundra_ui::UserManagementFeedbackTone::Info,
+            UserManagementFeedbackTone::Success => tundra_ui::UserManagementFeedbackTone::Success,
+            UserManagementFeedbackTone::Error => tundra_ui::UserManagementFeedbackTone::Error,
+        };
+        model
     }
 
     pub fn to_explorer_view_model(&self) -> tundra_ui::ExplorerViewModel {
@@ -2394,8 +2434,117 @@ impl ShellState {
     fn can_manage_all_users(&self) -> bool {
         matches!(
             self.auth_session.as_ref().map(|session| session.role),
-            Some(UserRole::Admin | UserRole::Debug)
+            Some(UserRole::Admin)
         )
+    }
+
+    fn user_management_action_view_models(&self) -> Vec<tundra_ui::UserManagementActionViewModel> {
+        use tundra_ui::UserManagementAction;
+
+        let selected = self
+            .user_management_users
+            .get(self.user_management_selected);
+        let last_enabled_admin = self.selected_is_last_enabled_admin();
+        let no_selection_reason = selected.is_none().then(|| "No user selected".to_string());
+        let protected_reason =
+            last_enabled_admin.then(|| "At least one enabled admin is required".to_string());
+        let mut actions = Vec::new();
+
+        if self.can_manage_all_users() {
+            actions.push(user_management_action_model(
+                UserManagementAction::NewUser,
+                "New user",
+                Some('N'),
+                true,
+                None,
+                false,
+            ));
+        }
+
+        actions.push(user_management_action_model(
+            UserManagementAction::EditInfo,
+            if self.can_manage_all_users() {
+                "Edit"
+            } else {
+                "Edit profile"
+            },
+            Some('E'),
+            selected.is_some(),
+            no_selection_reason.clone(),
+            false,
+        ));
+        actions.push(user_management_action_model(
+            UserManagementAction::SetPassword,
+            if self.can_manage_all_users() {
+                "Password"
+            } else {
+                "Change password"
+            },
+            Some('R'),
+            selected.is_some(),
+            no_selection_reason.clone(),
+            false,
+        ));
+
+        if self.can_manage_all_users() {
+            let locked = selected.is_some_and(user_is_locked);
+            let enabled = selected.is_some_and(|user| user.enabled);
+            let (toggle_label, toggle_shortcut, disabling) = if !enabled {
+                ("Enable", Some('U'), false)
+            } else if locked {
+                ("Unlock", Some('U'), false)
+            } else {
+                ("Disable", Some('D'), true)
+            };
+            actions.push(user_management_action_model(
+                UserManagementAction::ToggleEnabled,
+                toggle_label,
+                toggle_shortcut,
+                selected.is_some() && !(disabling && last_enabled_admin),
+                no_selection_reason.clone().or_else(|| {
+                    (disabling && last_enabled_admin)
+                        .then(|| protected_reason.clone())
+                        .flatten()
+                }),
+                disabling,
+            ));
+
+            let demoting = selected.is_some_and(|user| user.role == UserRole::Admin);
+            actions.push(user_management_action_model(
+                UserManagementAction::ToggleRole,
+                if demoting { "Make user" } else { "Make admin" },
+                Some('C'),
+                selected.is_some() && !(demoting && last_enabled_admin),
+                no_selection_reason.clone().or_else(|| {
+                    (demoting && last_enabled_admin)
+                        .then(|| protected_reason.clone())
+                        .flatten()
+                }),
+                demoting,
+            ));
+        }
+
+        actions.push(user_management_action_model(
+            UserManagementAction::Delete,
+            if self.can_manage_all_users() {
+                "Delete"
+            } else {
+                "Delete account"
+            },
+            Some('X'),
+            selected.is_some() && !last_enabled_admin,
+            no_selection_reason.or(protected_reason),
+            true,
+        ));
+        actions.push(user_management_action_model(
+            UserManagementAction::Back,
+            "Back",
+            None,
+            true,
+            None,
+            false,
+        ));
+        actions
     }
 
     fn user_management_form_view_model(&self) -> Option<tundra_ui::UserManagementFormViewModel> {
@@ -2409,6 +2558,7 @@ impl ShellState {
                 role: form.role.as_str().to_string(),
                 password_len: form.password.chars().count(),
                 focused_field: to_ui_user_management_field(form.focused_field),
+                error: self.user_management_form_error(),
             }),
             UserManagementMode::EditInfo(form) => Some(tundra_ui::UserManagementFormViewModel {
                 kind: tundra_ui::UserManagementFormKind::EditInfo,
@@ -2417,7 +2567,8 @@ impl ShellState {
                 display_name: form.display_name.clone(),
                 role: String::new(),
                 password_len: 0,
-                focused_field: tundra_ui::UserManagementField::DisplayName,
+                focused_field: to_ui_user_management_field(form.focused_field),
+                error: self.user_management_form_error(),
             }),
             UserManagementMode::Password(form) => Some(tundra_ui::UserManagementFormViewModel {
                 kind: tundra_ui::UserManagementFormKind::Password,
@@ -2426,9 +2577,16 @@ impl ShellState {
                 display_name: String::new(),
                 role: String::new(),
                 password_len: form.password.chars().count(),
-                focused_field: tundra_ui::UserManagementField::Password,
+                focused_field: to_ui_user_management_field(form.focused_field),
+                error: self.user_management_form_error(),
             }),
         }
+    }
+
+    fn user_management_form_error(&self) -> Option<String> {
+        (self.user_management_feedback_tone == UserManagementFeedbackTone::Error)
+            .then(|| self.user_management_message.clone())
+            .flatten()
     }
 
     pub fn to_shell_chrome_view_model(&self) -> tundra_ui::ShellChromeViewModel {
@@ -2748,7 +2906,7 @@ impl ShellState {
             None if direction < 0 => order.len().saturating_sub(1),
             None => 0,
         };
-        let (field, component) = order[next as usize];
+        let (field, component) = order[next];
         self.setup_focused_field = field;
         self.focused_component = component;
         self.error_message = None;
@@ -3080,6 +3238,9 @@ impl ShellState {
         if self.refresh_user_management() {
             self.screen_stack.push(ShellScreen::UserManagement);
             self.focused_component = ShellComponent::UserManagement;
+            self.user_management_mode = UserManagementMode::Browse;
+            self.user_management_focus = UserManagementPageFocus::UserList;
+            self.ensure_user_management_selection_visible();
             let status = if self.can_manage_all_users() {
                 "User Management"
             } else {
@@ -3969,14 +4130,28 @@ impl ShellState {
                 return false;
             }
         };
+        let selected_username = self.selected_managed_username();
         self.user_management_users = users;
         if self.user_management_users.is_empty() {
             self.user_management_selected = 0;
+            self.user_management_window_start = 0;
+            self.user_management_focus = UserManagementPageFocus::UserList;
+        } else if let Some(username) = selected_username {
+            self.user_management_selected = self
+                .user_management_users
+                .iter()
+                .position(|user| user.username.eq_ignore_ascii_case(&username))
+                .unwrap_or_else(|| {
+                    self.user_management_selected
+                        .min(self.user_management_users.len() - 1)
+                });
         } else {
             self.user_management_selected = self
                 .user_management_selected
                 .min(self.user_management_users.len() - 1);
         }
+        self.ensure_user_management_selection_visible();
+        self.normalize_user_management_focus();
         self.resolve_user_management_refresh_alert();
         true
     }
@@ -3998,6 +4173,7 @@ impl ShellState {
     fn report_user_management_refresh_error(&mut self, message: String) {
         self.error_message = Some(message.clone());
         self.user_management_message = Some(message.clone());
+        self.user_management_feedback_tone = UserManagementFeedbackTone::Error;
         self.notify_alert_with_key(
             USER_MANAGEMENT_REFRESH_ALERT_KEY,
             message,
@@ -4005,24 +4181,48 @@ impl ShellState {
         );
     }
 
-    fn select_user_management_row(&mut self, direction: i8) {
+    fn select_user_management_row(&mut self, direction: isize) {
         if self.user_management_users.is_empty() {
             return;
         }
-        let len = self.user_management_users.len() as isize;
-        let next = (self.user_management_selected as isize + direction as isize).rem_euclid(len);
+        let last = self.user_management_users.len().saturating_sub(1) as isize;
+        let next = (self.user_management_selected as isize + direction).clamp(0, last);
         self.user_management_selected = next as usize;
+        self.user_management_focus = UserManagementPageFocus::UserList;
+        self.ensure_user_management_selection_visible();
     }
 
-    fn begin_create_managed_user(&mut self, role: UserRole) {
+    fn select_user_management_edge(&mut self, last: bool) {
+        if self.user_management_users.is_empty() {
+            return;
+        }
+        self.user_management_selected = if last {
+            self.user_management_users.len().saturating_sub(1)
+        } else {
+            0
+        };
+        self.user_management_focus = UserManagementPageFocus::UserList;
+        self.ensure_user_management_selection_visible();
+    }
+
+    fn select_user_management_page(&mut self, direction: isize) {
+        let page = self.user_management_visible_row_count().max(1) as isize;
+        self.select_user_management_row(direction.saturating_mul(page));
+    }
+
+    fn begin_create_managed_user(&mut self) {
+        if !self.can_manage_all_users() {
+            return;
+        }
         self.user_management_mode = UserManagementMode::Create(UserManagementCreateForm {
             username: String::new(),
             display_name: String::new(),
             password: String::new(),
-            role,
+            role: UserRole::User,
             focused_field: UserManagementFormField::Username,
         });
         self.user_management_message = None;
+        self.user_management_feedback_tone = UserManagementFeedbackTone::Info;
     }
 
     fn begin_edit_selected_user_info(&mut self) {
@@ -4034,8 +4234,10 @@ impl ShellState {
             self.user_management_mode = UserManagementMode::EditInfo(UserManagementInfoForm {
                 username: user.username,
                 display_name: user.display_name,
+                focused_field: UserManagementFormField::DisplayName,
             });
             self.user_management_message = None;
+            self.user_management_feedback_tone = UserManagementFeedbackTone::Info;
         }
     }
 
@@ -4044,8 +4246,10 @@ impl ShellState {
             self.user_management_mode = UserManagementMode::Password(UserManagementPasswordForm {
                 username,
                 password: String::new(),
+                focused_field: UserManagementFormField::Password,
             });
             self.user_management_message = None;
+            self.user_management_feedback_tone = UserManagementFeedbackTone::Info;
         }
     }
 
@@ -4080,8 +4284,7 @@ impl ShellState {
                 .get(self.user_management_selected)
                 .map(|user| match user.role {
                     UserRole::User | UserRole::Guest => UserRole::Admin,
-                    UserRole::Admin => UserRole::Debug,
-                    UserRole::Debug => UserRole::User,
+                    UserRole::Admin => UserRole::User,
                 })
                 .unwrap_or(UserRole::User);
             let changed = self
@@ -4113,10 +4316,12 @@ impl ShellState {
         let succeeded = match operation(service, session) {
             Ok(()) => {
                 self.user_management_message = Some(format!("{success_prefix} {username}"));
+                self.user_management_feedback_tone = UserManagementFeedbackTone::Success;
                 true
             }
             Err(error) => {
                 self.user_management_message = Some(format_core_error(&error));
+                self.user_management_feedback_tone = UserManagementFeedbackTone::Error;
                 false
             }
         };
@@ -4146,9 +4351,13 @@ impl ShellState {
                 self.user_management_message = Some(match result {
                     Ok(account) => {
                         self.user_management_mode = UserManagementMode::Browse;
+                        self.user_management_feedback_tone = UserManagementFeedbackTone::Success;
                         format!("Created {}", account.username)
                     }
-                    Err(error) => format_core_error(&error),
+                    Err(error) => {
+                        self.user_management_feedback_tone = UserManagementFeedbackTone::Error;
+                        format_core_error(&error)
+                    }
                 });
                 if !self.refresh_user_management() {
                     return;
@@ -4163,9 +4372,13 @@ impl ShellState {
                 self.user_management_message = Some(match result {
                     Ok(account) => {
                         self.user_management_mode = UserManagementMode::Browse;
+                        self.user_management_feedback_tone = UserManagementFeedbackTone::Success;
                         format!("Updated {}", account.username)
                     }
-                    Err(error) => format_core_error(&error),
+                    Err(error) => {
+                        self.user_management_feedback_tone = UserManagementFeedbackTone::Error;
+                        format_core_error(&error)
+                    }
                 });
             }
             UserManagementMode::Password(form) => {
@@ -4173,9 +4386,13 @@ impl ShellState {
                 self.user_management_message = Some(match result {
                     Ok(()) => {
                         self.user_management_mode = UserManagementMode::Browse;
+                        self.user_management_feedback_tone = UserManagementFeedbackTone::Success;
                         format!("Updated password for {}", form.username)
                     }
-                    Err(error) => format_core_error(&error),
+                    Err(error) => {
+                        self.user_management_feedback_tone = UserManagementFeedbackTone::Error;
+                        format_core_error(&error)
+                    }
                 });
             }
         }
@@ -4203,10 +4420,12 @@ impl ShellState {
         {
             Ok(()) => {
                 self.user_management_message = Some(format!("Deleted {username}"));
+                self.user_management_feedback_tone = UserManagementFeedbackTone::Success;
                 true
             }
             Err(error) => {
                 self.user_management_message = Some(format_core_error(&error));
+                self.user_management_feedback_tone = UserManagementFeedbackTone::Error;
                 false
             }
         };
@@ -4234,9 +4453,21 @@ impl ShellState {
                 UserManagementFormField::Username => form.username.push(character),
                 UserManagementFormField::DisplayName => form.display_name.push(character),
                 UserManagementFormField::Password => form.password.push(character),
+                UserManagementFormField::Role
+                | UserManagementFormField::Submit
+                | UserManagementFormField::Cancel => {}
             },
-            UserManagementMode::EditInfo(form) => form.display_name.push(character),
-            UserManagementMode::Password(form) => form.password.push(character),
+            UserManagementMode::EditInfo(form)
+                if form.focused_field == UserManagementFormField::DisplayName =>
+            {
+                form.display_name.push(character);
+            }
+            UserManagementMode::Password(form)
+                if form.focused_field == UserManagementFormField::Password =>
+            {
+                form.password.push(character);
+            }
+            UserManagementMode::EditInfo(_) | UserManagementMode::Password(_) => {}
             UserManagementMode::Browse => {}
         }
     }
@@ -4253,32 +4484,322 @@ impl ShellState {
                 UserManagementFormField::Password => {
                     form.password.pop();
                 }
+                UserManagementFormField::Role
+                | UserManagementFormField::Submit
+                | UserManagementFormField::Cancel => {}
             },
-            UserManagementMode::EditInfo(form) => {
+            UserManagementMode::EditInfo(form)
+                if form.focused_field == UserManagementFormField::DisplayName =>
+            {
                 form.display_name.pop();
             }
-            UserManagementMode::Password(form) => {
+            UserManagementMode::Password(form)
+                if form.focused_field == UserManagementFormField::Password =>
+            {
                 form.password.pop();
             }
+            UserManagementMode::EditInfo(_) | UserManagementMode::Password(_) => {}
             UserManagementMode::Browse => {}
         }
     }
 
     fn move_user_management_form_focus(&mut self, direction: i8) {
-        if let UserManagementMode::Create(form) = &mut self.user_management_mode {
-            form.focused_field = if direction < 0 {
-                form.focused_field.previous()
-            } else {
-                form.focused_field.next()
-            };
-        }
+        let fields: &[UserManagementFormField] = match self.user_management_mode {
+            UserManagementMode::Create(_) => &[
+                UserManagementFormField::Username,
+                UserManagementFormField::DisplayName,
+                UserManagementFormField::Role,
+                UserManagementFormField::Password,
+                UserManagementFormField::Submit,
+                UserManagementFormField::Cancel,
+            ],
+            UserManagementMode::EditInfo(_) => &[
+                UserManagementFormField::DisplayName,
+                UserManagementFormField::Submit,
+                UserManagementFormField::Cancel,
+            ],
+            UserManagementMode::Password(_) => &[
+                UserManagementFormField::Password,
+                UserManagementFormField::Submit,
+                UserManagementFormField::Cancel,
+            ],
+            UserManagementMode::Browse => return,
+        };
+        let current = self.user_management_form_field();
+        let index = fields
+            .iter()
+            .position(|field| Some(*field) == current)
+            .unwrap_or(0);
+        let next = (index as isize + direction as isize).rem_euclid(fields.len() as isize) as usize;
+        self.set_user_management_form_field(fields[next]);
     }
 
     fn cancel_user_management_form(&mut self) {
         if self.user_management_mode != UserManagementMode::Browse {
             self.user_management_mode = UserManagementMode::Browse;
             self.user_management_message = Some("Cancelled".to_string());
+            self.user_management_feedback_tone = UserManagementFeedbackTone::Info;
+            self.ensure_user_management_selection_visible();
         }
+    }
+
+    fn user_management_form_field(&self) -> Option<UserManagementFormField> {
+        match &self.user_management_mode {
+            UserManagementMode::Browse => None,
+            UserManagementMode::Create(form) => Some(form.focused_field),
+            UserManagementMode::EditInfo(form) => Some(form.focused_field),
+            UserManagementMode::Password(form) => Some(form.focused_field),
+        }
+    }
+
+    fn set_user_management_form_field(&mut self, field: UserManagementFormField) {
+        match &mut self.user_management_mode {
+            UserManagementMode::Browse => {}
+            UserManagementMode::Create(form) => form.focused_field = field,
+            UserManagementMode::EditInfo(form) => form.focused_field = field,
+            UserManagementMode::Password(form) => form.focused_field = field,
+        }
+    }
+
+    fn set_user_management_form_focus(&mut self, field: tundra_ui::UserManagementField) {
+        let field = from_ui_user_management_field(field);
+        let valid = match self.user_management_mode {
+            UserManagementMode::Browse => false,
+            UserManagementMode::Create(_) => true,
+            UserManagementMode::EditInfo(_) => matches!(
+                field,
+                UserManagementFormField::DisplayName
+                    | UserManagementFormField::Submit
+                    | UserManagementFormField::Cancel
+            ),
+            UserManagementMode::Password(_) => matches!(
+                field,
+                UserManagementFormField::Password
+                    | UserManagementFormField::Submit
+                    | UserManagementFormField::Cancel
+            ),
+        };
+        if valid {
+            self.set_user_management_form_field(field);
+        }
+    }
+
+    fn toggle_user_management_form_role(&mut self) {
+        if let UserManagementMode::Create(form) = &mut self.user_management_mode {
+            form.role = if form.role == UserRole::Admin {
+                UserRole::User
+            } else {
+                UserRole::Admin
+            };
+        }
+    }
+
+    fn move_user_management_page_focus(&mut self, direction: i8) {
+        let order = self.user_management_focus_order();
+        if order.is_empty() {
+            self.user_management_focus = UserManagementPageFocus::UserList;
+            return;
+        }
+        let current = order
+            .iter()
+            .position(|focus| *focus == self.user_management_focus)
+            .unwrap_or(0);
+        let next = (current as isize + direction as isize).rem_euclid(order.len() as isize);
+        self.user_management_focus = order[next as usize];
+    }
+
+    fn user_management_focus_order(&self) -> Vec<UserManagementPageFocus> {
+        let mut order = vec![UserManagementPageFocus::UserList];
+        order.extend(
+            self.user_management_action_view_models()
+                .into_iter()
+                .filter(|action| action.enabled)
+                .map(|action| UserManagementPageFocus::Action(action.action)),
+        );
+        order
+    }
+
+    fn normalize_user_management_focus(&mut self) {
+        if !self
+            .user_management_focus_order()
+            .contains(&self.user_management_focus)
+        {
+            self.user_management_focus = UserManagementPageFocus::UserList;
+        }
+    }
+
+    fn focus_user_management_action(&mut self, action: tundra_ui::UserManagementAction) {
+        if self.user_management_action_enabled(action) {
+            self.user_management_focus = UserManagementPageFocus::Action(action);
+        }
+    }
+
+    fn user_management_action_enabled(&self, action: tundra_ui::UserManagementAction) -> bool {
+        self.user_management_action_view_models()
+            .iter()
+            .find(|model| model.action == action)
+            .is_some_and(|model| model.enabled)
+    }
+
+    fn activate_focused_user_management_control(&mut self) {
+        match self.user_management_focus {
+            UserManagementPageFocus::UserList => {}
+            UserManagementPageFocus::Action(action) => {
+                self.activate_user_management_action(action);
+            }
+        }
+    }
+
+    fn activate_user_management_action(&mut self, action: tundra_ui::UserManagementAction) {
+        use tundra_ui::UserManagementAction;
+
+        let action_model = self
+            .user_management_action_view_models()
+            .into_iter()
+            .find(|model| model.action == action);
+        let Some(action_model) = action_model else {
+            return;
+        };
+        if !action_model.enabled {
+            if let Some(reason) = action_model.disabled_reason {
+                self.user_management_message = Some(reason);
+                self.user_management_feedback_tone = UserManagementFeedbackTone::Error;
+                self.ensure_user_management_selection_visible();
+            }
+            return;
+        }
+
+        match action {
+            UserManagementAction::NewUser => self.begin_create_managed_user(),
+            UserManagementAction::EditInfo => self.begin_edit_selected_user_info(),
+            UserManagementAction::SetPassword => self.begin_set_selected_password(),
+            UserManagementAction::ToggleEnabled => {
+                let should_disable = self
+                    .user_management_users
+                    .get(self.user_management_selected)
+                    .is_some_and(|user| user.enabled && !user_is_locked(user));
+                if should_disable {
+                    self.disable_selected_user();
+                } else {
+                    self.unlock_selected_user();
+                }
+            }
+            UserManagementAction::ToggleRole => self.cycle_selected_role(),
+            UserManagementAction::Delete => self.request_delete_selected_user(),
+            UserManagementAction::Back => self.close_user_management(),
+        }
+        self.normalize_user_management_focus();
+    }
+
+    fn request_delete_selected_user(&mut self) {
+        use tundra_ui::UserManagementAction;
+
+        if !self.user_management_action_enabled(UserManagementAction::Delete) {
+            self.activate_user_management_action(UserManagementAction::Delete);
+            return;
+        }
+        let Some(username) = self.selected_managed_username() else {
+            return;
+        };
+        let deleting_current_user = self.is_current_username(&username);
+        let title = if deleting_current_user {
+            "Delete your account"
+        } else {
+            "Delete user"
+        };
+        let message = if deleting_current_user {
+            format!("Delete {username}? You will be signed out immediately.")
+        } else {
+            format!("Delete {username}? This action cannot be undone.")
+        };
+        self.notify_modal_with_options(
+            ShellNotification::modal(
+                title,
+                message,
+                tundra_ui::NotificationTone::Warning,
+                vec![
+                    ShellNotificationAction::new("delete", "Delete")
+                        .with_shortcut(InputKey::Character('x'))
+                        .with_follow_up(ShellCommand::DeleteManagedUser),
+                    ShellNotificationAction::new("cancel", "Cancel")
+                        .with_shortcut(InputKey::Escape)
+                        .cancel(),
+                ],
+            )
+            .with_selected_action(1)
+            .with_key(USER_MANAGEMENT_DELETE_NOTIFICATION_KEY)
+            .with_component(ShellComponent::NotificationDialog),
+        );
+    }
+
+    fn selected_is_last_enabled_admin(&self) -> bool {
+        let Some(selected) = self
+            .user_management_users
+            .get(self.user_management_selected)
+        else {
+            return false;
+        };
+        selected.enabled
+            && selected.role == UserRole::Admin
+            && self
+                .user_management_users
+                .iter()
+                .filter(|user| user.enabled && user.role == UserRole::Admin)
+                .count()
+                <= 1
+    }
+
+    fn user_management_visible_row_count(&self) -> usize {
+        self.user_management_layout()
+            .map(|layout| layout.visible_capacity)
+            .unwrap_or(0)
+    }
+
+    fn ensure_user_management_selection_visible(&mut self) {
+        let count = self.user_management_users.len();
+        if count == 0 {
+            self.user_management_selected = 0;
+            self.user_management_window_start = 0;
+            return;
+        }
+        self.user_management_selected = self.user_management_selected.min(count - 1);
+        let capacity = self.user_management_visible_row_count().min(count);
+        if capacity == 0 {
+            self.user_management_window_start = 0;
+            return;
+        }
+        let max_start = count.saturating_sub(capacity);
+        self.user_management_window_start = self.user_management_window_start.min(max_start);
+        if self.user_management_selected < self.user_management_window_start {
+            self.user_management_window_start = self.user_management_selected;
+        } else if self.user_management_selected
+            >= self.user_management_window_start.saturating_add(capacity)
+        {
+            self.user_management_window_start = self
+                .user_management_selected
+                .saturating_add(1)
+                .saturating_sub(capacity);
+        }
+    }
+
+    fn user_management_layout(&self) -> Option<tundra_ui::UserManagementLayout> {
+        let area = Rect::new(0, 0, self.terminal_size.0, self.terminal_size.1);
+        let tundra_ui::ShellLayout::Full { main, .. } = tundra_ui::compute_shell_layout(area)
+        else {
+            return None;
+        };
+        Some(tundra_ui::user_management_layout(
+            main,
+            &self.to_user_management_view_model(),
+        ))
+    }
+
+    fn close_user_management(&mut self) {
+        self.user_management_mode = UserManagementMode::Browse;
+        self.resolve_user_management_refresh_alert();
+        self.pop_to_home();
+        self.notify_status("Ready");
+        self.refresh_hit_map();
     }
 
     fn selected_managed_username(&self) -> Option<String> {
@@ -4336,6 +4857,9 @@ impl ShellState {
         self.clock_profile_pending_sync = None;
         self.user_management_users.clear();
         self.user_management_selected = 0;
+        self.user_management_window_start = 0;
+        self.user_management_focus = UserManagementPageFocus::UserList;
+        self.user_management_feedback_tone = UserManagementFeedbackTone::Info;
         self.user_management_mode = UserManagementMode::Browse;
         self.login_password.clear();
         let _ = self.refresh_login_users_from_storage();
@@ -4590,6 +5114,9 @@ impl ShellState {
                 }
                 if self.active_screen() == ShellScreen::Login {
                     self.sync_login_user_window();
+                }
+                if self.active_screen() == ShellScreen::UserManagement {
+                    self.ensure_user_management_selection_visible();
                 }
                 self.refresh_hit_map();
                 ShellAction::Redraw
@@ -4899,11 +5426,7 @@ impl ShellState {
                 ShellAction::Redraw
             }
             ShellCommand::CloseUserManagement => {
-                self.user_management_mode = UserManagementMode::Browse;
-                self.resolve_user_management_refresh_alert();
-                self.pop_to_home();
-                self.notify_status("Ready");
-                self.refresh_hit_map();
+                self.close_user_management();
                 ShellAction::Redraw
             }
             ShellCommand::OpenClock => {
@@ -5011,12 +5534,80 @@ impl ShellState {
                 self.select_user_management_row(-1);
                 ShellAction::Redraw
             }
-            ShellCommand::CreateManagedUser(role) => {
-                self.begin_create_managed_user(role);
+            ShellCommand::UserManagementPageUp => {
+                self.select_user_management_page(-1);
+                ShellAction::Redraw
+            }
+            ShellCommand::UserManagementPageDown => {
+                self.select_user_management_page(1);
+                ShellAction::Redraw
+            }
+            ShellCommand::UserManagementFirst => {
+                self.select_user_management_edge(false);
+                ShellAction::Redraw
+            }
+            ShellCommand::UserManagementLast => {
+                self.select_user_management_edge(true);
+                ShellAction::Redraw
+            }
+            ShellCommand::UserManagementSelectRow(index) => {
+                if index < self.user_management_users.len() {
+                    self.user_management_selected = index;
+                    self.user_management_focus = UserManagementPageFocus::UserList;
+                    self.ensure_user_management_selection_visible();
+                }
+                ShellAction::Redraw
+            }
+            ShellCommand::UserManagementFocusAction(action) => {
+                self.focus_user_management_action(action);
+                ShellAction::Redraw
+            }
+            ShellCommand::UserManagementActivateFocused => {
+                self.activate_focused_user_management_control();
+                self.refresh_hit_map();
+                ShellAction::Redraw
+            }
+            ShellCommand::UserManagementActivateAction(action) => {
+                self.focus_user_management_action(action);
+                self.activate_user_management_action(action);
+                self.refresh_hit_map();
+                ShellAction::Redraw
+            }
+            ShellCommand::UserManagementSetFormFocus(field) => {
+                self.set_user_management_form_focus(field);
+                ShellAction::Redraw
+            }
+            ShellCommand::UserManagementActivateFormControl(field) => {
+                self.set_user_management_form_focus(field);
+                match field {
+                    tundra_ui::UserManagementField::Role => {
+                        self.toggle_user_management_form_role();
+                    }
+                    tundra_ui::UserManagementField::Submit => {
+                        self.submit_user_management_form();
+                    }
+                    tundra_ui::UserManagementField::Cancel => {
+                        self.cancel_user_management_form();
+                    }
+                    tundra_ui::UserManagementField::Username
+                    | tundra_ui::UserManagementField::DisplayName
+                    | tundra_ui::UserManagementField::Password => {}
+                }
+                self.refresh_hit_map();
+                ShellAction::Redraw
+            }
+            ShellCommand::UserManagementToggleFormRole => {
+                self.toggle_user_management_form_role();
+                ShellAction::Redraw
+            }
+            ShellCommand::CreateManagedUser => {
+                self.begin_create_managed_user();
+                self.refresh_hit_map();
                 ShellAction::Redraw
             }
             ShellCommand::EditManagedUserInfo => {
                 self.begin_edit_selected_user_info();
+                self.refresh_hit_map();
                 ShellAction::Redraw
             }
             ShellCommand::DisableManagedUser => {
@@ -5029,14 +5620,21 @@ impl ShellState {
             }
             ShellCommand::ResetManagedPassword => {
                 self.reset_selected_password();
+                self.refresh_hit_map();
                 ShellAction::Redraw
             }
             ShellCommand::CycleManagedRole => {
                 self.cycle_selected_role();
+                self.normalize_user_management_focus();
+                ShellAction::Redraw
+            }
+            ShellCommand::RequestDeleteManagedUser => {
+                self.request_delete_selected_user();
                 ShellAction::Redraw
             }
             ShellCommand::DeleteManagedUser => {
                 self.delete_selected_user();
+                self.normalize_user_management_focus();
                 ShellAction::Redraw
             }
             ShellCommand::AppendUserManagementChar(character) => {
@@ -5048,19 +5646,29 @@ impl ShellState {
                 ShellAction::Redraw
             }
             ShellCommand::UserManagementFocusNext => {
-                self.move_user_management_form_focus(1);
+                if self.user_management_mode == UserManagementMode::Browse {
+                    self.move_user_management_page_focus(1);
+                } else {
+                    self.move_user_management_form_focus(1);
+                }
                 ShellAction::Redraw
             }
             ShellCommand::UserManagementFocusPrevious => {
-                self.move_user_management_form_focus(-1);
+                if self.user_management_mode == UserManagementMode::Browse {
+                    self.move_user_management_page_focus(-1);
+                } else {
+                    self.move_user_management_form_focus(-1);
+                }
                 ShellAction::Redraw
             }
             ShellCommand::SubmitUserManagementForm => {
                 self.submit_user_management_form();
+                self.refresh_hit_map();
                 ShellAction::Redraw
             }
             ShellCommand::CancelUserManagementForm => {
                 self.cancel_user_management_form();
+                self.refresh_hit_map();
                 ShellAction::Redraw
             }
             ShellCommand::Hover(target) => {
@@ -5973,12 +6581,8 @@ impl ShellState {
                 InputKey::Escape if key.is_unmodified_action_key() => {
                     (target, ShellCommand::CancelExplorerInput)
                 }
-                InputKey::Character(character) if matches!(character, 'y' | 'Y') => {
-                    (target, ShellCommand::ExplorerConfirmDelete)
-                }
-                InputKey::Character(character) if matches!(character, 'n' | 'N') => {
-                    (target, ShellCommand::CancelExplorerInput)
-                }
+                InputKey::Character('y' | 'Y') => (target, ShellCommand::ExplorerConfirmDelete),
+                InputKey::Character('n' | 'N') => (target, ShellCommand::CancelExplorerInput),
                 _ => (target, ShellCommand::CaptureOverlayInput),
             };
         }
@@ -6002,30 +6606,16 @@ impl ShellState {
             InputKey::Enter => (target, ShellCommand::ExplorerOpenSelected),
             InputKey::Backspace => (target, ShellCommand::ExplorerOpenParent),
             InputKey::Delete => (target, ShellCommand::ExplorerDelete),
-            InputKey::Character(character) if matches!(character, 'h' | 'H') => {
-                (target, ShellCommand::ExplorerToggleHidden)
-            }
-            InputKey::Character(character) if matches!(character, 'c' | 'C') => {
-                (target, ShellCommand::ExplorerCopy)
-            }
-            InputKey::Character(character) if matches!(character, 'x' | 'X') => {
-                (target, ShellCommand::ExplorerCut)
-            }
-            InputKey::Character(character) if matches!(character, 'v' | 'V') => {
-                (target, ShellCommand::ExplorerPaste)
-            }
-            InputKey::Character(character) if matches!(character, 'd' | 'D') => {
-                (target, ShellCommand::ExplorerDelete)
-            }
-            InputKey::Character(character) if matches!(character, 'n' | 'N' | 'f' | 'F') => {
+            InputKey::Character('h' | 'H') => (target, ShellCommand::ExplorerToggleHidden),
+            InputKey::Character('c' | 'C') => (target, ShellCommand::ExplorerCopy),
+            InputKey::Character('x' | 'X') => (target, ShellCommand::ExplorerCut),
+            InputKey::Character('v' | 'V') => (target, ShellCommand::ExplorerPaste),
+            InputKey::Character('d' | 'D') => (target, ShellCommand::ExplorerDelete),
+            InputKey::Character('n' | 'N' | 'f' | 'F') => {
                 (target, ShellCommand::BeginExplorerNewFolder)
             }
-            InputKey::Character(character) if matches!(character, 't' | 'T') => {
-                (target, ShellCommand::BeginExplorerNewTextFile)
-            }
-            InputKey::Character(character) if matches!(character, 'r' | 'R') => {
-                (target, ShellCommand::BeginExplorerRename)
-            }
+            InputKey::Character('t' | 'T') => (target, ShellCommand::BeginExplorerNewTextFile),
+            InputKey::Character('r' | 'R') => (target, ShellCommand::BeginExplorerRename),
             InputKey::Character('/') => (target, ShellCommand::BeginExplorerSearch),
             _ => (target, ShellCommand::RecordInput),
         }
@@ -6033,7 +6623,22 @@ impl ShellState {
 
     fn route_user_management_key(&self, key: &KeyInput) -> (RoutedTarget, ShellCommand) {
         let target = RoutedTarget::Component(ShellComponent::UserManagement);
+        let area = Rect::new(0, 0, self.terminal_size.0, self.terminal_size.1);
+        if matches!(
+            tundra_ui::compute_shell_layout(area),
+            tundra_ui::ShellLayout::Compact(_)
+        ) {
+            return match &key.key {
+                InputKey::Escape => (RoutedTarget::Global, ShellCommand::CloseUserManagement),
+                _ => (
+                    RoutedTarget::Component(ShellComponent::CompactHome),
+                    ShellCommand::CaptureOverlayInput,
+                ),
+            };
+        }
+
         if self.user_management_mode != UserManagementMode::Browse {
+            let field = self.user_management_form_field();
             return match &key.key {
                 InputKey::Escape => (target, ShellCommand::CancelUserManagementForm),
                 InputKey::BackTab => (target, ShellCommand::UserManagementFocusPrevious),
@@ -6042,8 +6647,44 @@ impl ShellState {
                 }
                 InputKey::Tab | InputKey::Down => (target, ShellCommand::UserManagementFocusNext),
                 InputKey::Up => (target, ShellCommand::UserManagementFocusPrevious),
-                InputKey::Enter => (target, ShellCommand::SubmitUserManagementForm),
+                InputKey::Left | InputKey::Right
+                    if field == Some(UserManagementFormField::Role) =>
+                {
+                    (target, ShellCommand::UserManagementToggleFormRole)
+                }
+                InputKey::Enter | InputKey::Character(' ')
+                    if field == Some(UserManagementFormField::Role) =>
+                {
+                    (target, ShellCommand::UserManagementToggleFormRole)
+                }
+                InputKey::Enter | InputKey::Character(' ')
+                    if field == Some(UserManagementFormField::Cancel) =>
+                {
+                    (target, ShellCommand::CancelUserManagementForm)
+                }
+                InputKey::Enter
+                    if field == Some(UserManagementFormField::Submit)
+                        || matches!(
+                            field,
+                            Some(
+                                UserManagementFormField::Username
+                                    | UserManagementFormField::DisplayName
+                                    | UserManagementFormField::Password
+                            )
+                        ) =>
+                {
+                    (target, ShellCommand::SubmitUserManagementForm)
+                }
+                InputKey::Character(' ') if field == Some(UserManagementFormField::Submit) => {
+                    (target, ShellCommand::SubmitUserManagementForm)
+                }
                 InputKey::Backspace => (target, ShellCommand::UserManagementBackspace),
+                InputKey::Character(character)
+                    if matches!(character, 'c' | 'C')
+                        && field == Some(UserManagementFormField::Role) =>
+                {
+                    (target, ShellCommand::UserManagementToggleFormRole)
+                }
                 InputKey::Character(character) => {
                     (target, ShellCommand::AppendUserManagementChar(*character))
                 }
@@ -6051,55 +6692,65 @@ impl ShellState {
             };
         }
 
-        if !self.can_manage_all_users() {
-            return match &key.key {
-                InputKey::Escape => (RoutedTarget::Global, ShellCommand::CloseUserManagement),
-                InputKey::Up => (target, ShellCommand::UserManagementPrevious),
-                InputKey::Down => (target, ShellCommand::UserManagementNext),
-                InputKey::Character('e') | InputKey::Character('E') => {
-                    (target, ShellCommand::EditManagedUserInfo)
-                }
-                InputKey::Character('r') | InputKey::Character('R') => {
-                    (target, ShellCommand::ResetManagedPassword)
-                }
-                InputKey::Character('x') | InputKey::Character('X') | InputKey::Delete => {
-                    (target, ShellCommand::DeleteManagedUser)
-                }
-                _ => (target, ShellCommand::RecordInput),
-            };
-        }
-
+        use tundra_ui::UserManagementAction;
         match &key.key {
             InputKey::Escape => (RoutedTarget::Global, ShellCommand::CloseUserManagement),
+            InputKey::BackTab => (target, ShellCommand::UserManagementFocusPrevious),
+            InputKey::Tab if key.modifiers.shift => {
+                (target, ShellCommand::UserManagementFocusPrevious)
+            }
+            InputKey::Tab => (target, ShellCommand::UserManagementFocusNext),
             InputKey::Up => (target, ShellCommand::UserManagementPrevious),
             InputKey::Down => (target, ShellCommand::UserManagementNext),
-            InputKey::Character('n') | InputKey::Character('N') => {
-                (target, ShellCommand::CreateManagedUser(UserRole::User))
+            InputKey::PageUp => (target, ShellCommand::UserManagementPageUp),
+            InputKey::PageDown => (target, ShellCommand::UserManagementPageDown),
+            InputKey::Home => (target, ShellCommand::UserManagementFirst),
+            InputKey::End => (target, ShellCommand::UserManagementLast),
+            InputKey::Enter | InputKey::Character(' ') => {
+                (target, ShellCommand::UserManagementActivateFocused)
             }
-            InputKey::Character('e') | InputKey::Character('E') => {
-                (target, ShellCommand::EditManagedUserInfo)
+            InputKey::Character('n') | InputKey::Character('N') if self.can_manage_all_users() => (
+                target,
+                ShellCommand::UserManagementActivateAction(UserManagementAction::NewUser),
+            ),
+            InputKey::Character('e') | InputKey::Character('E') => (
+                target,
+                ShellCommand::UserManagementActivateAction(UserManagementAction::EditInfo),
+            ),
+            InputKey::Character('d') | InputKey::Character('D')
+                if self
+                    .user_management_users
+                    .get(self.user_management_selected)
+                    .is_some_and(|user| user.enabled && !user_is_locked(user)) =>
+            {
+                (
+                    target,
+                    ShellCommand::UserManagementActivateAction(UserManagementAction::ToggleEnabled),
+                )
             }
-            InputKey::Character('a') | InputKey::Character('A') => {
-                (target, ShellCommand::CreateManagedUser(UserRole::Admin))
+            InputKey::Character('u') | InputKey::Character('U')
+                if self
+                    .user_management_users
+                    .get(self.user_management_selected)
+                    .is_some_and(|user| !user.enabled || user_is_locked(user)) =>
+            {
+                (
+                    target,
+                    ShellCommand::UserManagementActivateAction(UserManagementAction::ToggleEnabled),
+                )
             }
-            InputKey::Character('g') | InputKey::Character('G') => {
-                (target, ShellCommand::CreateManagedUser(UserRole::Debug))
-            }
-            InputKey::Character('d') | InputKey::Character('D') => {
-                (target, ShellCommand::DisableManagedUser)
-            }
-            InputKey::Character('u') | InputKey::Character('U') => {
-                (target, ShellCommand::UnlockManagedUser)
-            }
-            InputKey::Character('r') | InputKey::Character('R') => {
-                (target, ShellCommand::ResetManagedPassword)
-            }
-            InputKey::Character('c') | InputKey::Character('C') => {
-                (target, ShellCommand::CycleManagedRole)
-            }
-            InputKey::Character('x') | InputKey::Character('X') | InputKey::Delete => {
-                (target, ShellCommand::DeleteManagedUser)
-            }
+            InputKey::Character('r') | InputKey::Character('R') => (
+                target,
+                ShellCommand::UserManagementActivateAction(UserManagementAction::SetPassword),
+            ),
+            InputKey::Character('c') | InputKey::Character('C') if self.can_manage_all_users() => (
+                target,
+                ShellCommand::UserManagementActivateAction(UserManagementAction::ToggleRole),
+            ),
+            InputKey::Character('x') | InputKey::Character('X') | InputKey::Delete => (
+                target,
+                ShellCommand::UserManagementActivateAction(UserManagementAction::Delete),
+            ),
             _ => (target, ShellCommand::RecordInput),
         }
     }
@@ -6162,12 +6813,10 @@ impl ShellState {
         }
 
         if self.active_screen() == ShellScreen::ExitConfirm {
-            let routed_target = if hit_target == Some(ShellComponent::ExitDialog) {
-                RoutedTarget::Modal(ShellComponent::ExitDialog)
-            } else {
-                RoutedTarget::Modal(ShellComponent::ExitDialog)
-            };
-            return (routed_target, ShellCommand::CaptureOverlayInput);
+            return (
+                RoutedTarget::Modal(ShellComponent::ExitDialog),
+                ShellCommand::CaptureOverlayInput,
+            );
         }
 
         if self.active_screen() == ShellScreen::FirstRunSetup {
@@ -6184,6 +6833,10 @@ impl ShellState {
 
         if self.active_screen() == ShellScreen::Clock {
             return self.route_clock_mouse(mouse, hit_target);
+        }
+
+        if self.active_screen() == ShellScreen::UserManagement {
+            return self.route_user_management_mouse(mouse, hit_target);
         }
 
         match mouse {
@@ -6304,6 +6957,82 @@ impl ShellState {
                 ..
             } => (target, ShellCommand::CaptureOverlayInput),
             _ => (target, ShellCommand::RecordInput),
+        }
+    }
+
+    fn route_user_management_mouse(
+        &mut self,
+        mouse: MouseInput,
+        hit_target: Option<ShellComponent>,
+    ) -> (RoutedTarget, ShellCommand) {
+        let target = RoutedTarget::Component(ShellComponent::UserManagement);
+        let area = Rect::new(0, 0, self.terminal_size.0, self.terminal_size.1);
+        if matches!(
+            tundra_ui::compute_shell_layout(area),
+            tundra_ui::ShellLayout::Compact(_)
+        ) {
+            return (
+                RoutedTarget::Component(ShellComponent::CompactHome),
+                ShellCommand::CaptureOverlayInput,
+            );
+        }
+
+        let Some(layout) = self.user_management_layout() else {
+            return (target, ShellCommand::CaptureOverlayInput);
+        };
+        let coordinates = mouse.coordinates();
+
+        if self.user_management_mode != UserManagementMode::Browse {
+            return match mouse {
+                MouseInput::Moved { .. } => (target, ShellCommand::Hover(hit_target)),
+                MouseInput::Down {
+                    button: PointerButton::Left,
+                    ..
+                } => layout
+                    .form_control_at(coordinates.0, coordinates.1)
+                    .map(|field| {
+                        let command = match field {
+                            tundra_ui::UserManagementField::Role
+                            | tundra_ui::UserManagementField::Submit
+                            | tundra_ui::UserManagementField::Cancel => {
+                                ShellCommand::UserManagementActivateFormControl(field)
+                            }
+                            _ => ShellCommand::UserManagementSetFormFocus(field),
+                        };
+                        (target, command)
+                    })
+                    .unwrap_or((target, ShellCommand::CaptureOverlayInput)),
+                _ => (target, ShellCommand::CaptureOverlayInput),
+            };
+        }
+
+        match mouse {
+            MouseInput::Moved { .. } => (target, ShellCommand::Hover(hit_target)),
+            MouseInput::Scroll {
+                direction: ScrollDirection::Up,
+                ..
+            } if rect_contains(layout.rows_area, coordinates) => {
+                (target, ShellCommand::UserManagementPrevious)
+            }
+            MouseInput::Scroll {
+                direction: ScrollDirection::Down,
+                ..
+            } if rect_contains(layout.rows_area, coordinates) => {
+                (target, ShellCommand::UserManagementNext)
+            }
+            MouseInput::Down {
+                button: PointerButton::Left,
+                ..
+            } => {
+                if let Some(index) = layout.row_index_at(coordinates.0, coordinates.1) {
+                    return (target, ShellCommand::UserManagementSelectRow(index));
+                }
+                if let Some(action) = layout.action_at(coordinates.0, coordinates.1) {
+                    return (target, ShellCommand::UserManagementActivateAction(action));
+                }
+                (target, ShellCommand::RecordInput)
+            }
+            _ => (target, ShellCommand::CaptureOverlayInput),
         }
     }
 
@@ -6652,10 +7381,9 @@ impl ShellState {
                         click: ClickKind::Double,
                         ..
                     }
-                ) {
-                    if let MouseInput::Down { button, .. } = *mouse {
-                        summary = format!("Mouse DoubleClick {}", button.label());
-                    }
+                ) && let MouseInput::Down { button, .. } = *mouse
+                {
+                    summary = format!("Mouse DoubleClick {}", button.label());
                 }
 
                 self.last_mouse_event = Some(summary);
@@ -6740,7 +7468,7 @@ impl ShellState {
             self.terminal_size,
             self.active_screen(),
             self.active_popup,
-            self.setup_step.clone(),
+            self.setup_step,
             self.hit_map_generation,
             time_button_label.as_deref(),
             self.time_sync_dialog_visible,
@@ -7529,7 +8257,7 @@ fn format_core_error(error: &CoreError) -> String {
         CoreError::InvalidUserInfo(reason) => format!("Invalid user info: {reason}"),
         CoreError::InvalidPassword(reason) => format!("Invalid password: {reason}"),
         CoreError::LastPrivilegedUserRequired => {
-            "At least one enabled admin or debug user is required".to_string()
+            "At least one enabled admin is required".to_string()
         }
         CoreError::PermissionDenied { reason, .. } => format!("Permission denied: {reason}"),
         CoreError::UserNotFound => "User not found".to_string(),
@@ -7551,8 +8279,45 @@ fn to_ui_user_management_field(field: UserManagementFormField) -> tundra_ui::Use
     match field {
         UserManagementFormField::Username => tundra_ui::UserManagementField::Username,
         UserManagementFormField::DisplayName => tundra_ui::UserManagementField::DisplayName,
+        UserManagementFormField::Role => tundra_ui::UserManagementField::Role,
         UserManagementFormField::Password => tundra_ui::UserManagementField::Password,
+        UserManagementFormField::Submit => tundra_ui::UserManagementField::Submit,
+        UserManagementFormField::Cancel => tundra_ui::UserManagementField::Cancel,
     }
+}
+
+fn from_ui_user_management_field(field: tundra_ui::UserManagementField) -> UserManagementFormField {
+    match field {
+        tundra_ui::UserManagementField::Username => UserManagementFormField::Username,
+        tundra_ui::UserManagementField::DisplayName => UserManagementFormField::DisplayName,
+        tundra_ui::UserManagementField::Role => UserManagementFormField::Role,
+        tundra_ui::UserManagementField::Password => UserManagementFormField::Password,
+        tundra_ui::UserManagementField::Submit => UserManagementFormField::Submit,
+        tundra_ui::UserManagementField::Cancel => UserManagementFormField::Cancel,
+    }
+}
+
+fn user_management_action_model(
+    action: tundra_ui::UserManagementAction,
+    label: &str,
+    shortcut: Option<char>,
+    enabled: bool,
+    disabled_reason: Option<String>,
+    dangerous: bool,
+) -> tundra_ui::UserManagementActionViewModel {
+    tundra_ui::UserManagementActionViewModel {
+        action,
+        label: label.to_string(),
+        shortcut,
+        enabled,
+        disabled_reason: (!enabled).then_some(disabled_reason).flatten(),
+        dangerous,
+    }
+}
+
+fn user_is_locked(user: &UserAccount) -> bool {
+    user.locked_until_epoch_ms
+        .is_some_and(|locked_until| locked_until > unix_millis())
 }
 
 fn user_home_entries() -> Vec<tundra_ui::ShellEntry> {
