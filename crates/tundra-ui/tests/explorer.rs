@@ -2,7 +2,7 @@ use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use tundra_ui::{
     ExplorerDialogViewModel, ExplorerEntryViewModel, ExplorerSearchViewModel, ExplorerViewModel,
-    HomeDisplayMode, ShellChromeViewModel, StatusViewModel, TundraTheme,
+    HomeDisplayMode, NotificationTone, ShellChromeViewModel, StatusViewModel, TundraTheme,
     explorer_first_entry_content_line, render_explorer,
 };
 
@@ -106,6 +106,39 @@ fn explorer_first_entry_line_accounts_for_wrapped_header_text() {
     );
 }
 
+#[test]
+fn compact_explorer_shows_highest_priority_notification() {
+    let model = sample_model();
+    let mut chrome = chrome_for("Explorer");
+    chrome.terminal_size = (49, 11);
+    chrome.status = StatusViewModel {
+        status: "Compact status".to_string(),
+        toast: Some("Compact toast".to_string()),
+        error: Some("Explorer alert".to_string()),
+        alert_tone: NotificationTone::Critical,
+        time_button_label: None,
+        time_button_selected: false,
+    };
+    let mut terminal = Terminal::new(TestBackend::new(49, 11)).expect("test terminal");
+
+    terminal
+        .draw(|frame| {
+            render_explorer(
+                frame,
+                frame.area(),
+                &chrome,
+                &model,
+                &TundraTheme::default_dark(),
+            );
+        })
+        .expect("render compact explorer");
+
+    let output = terminal_output(&terminal);
+    assert!(output.contains("[CRITICAL] Explorer alert"));
+    assert!(!output.contains("Compact toast"));
+    assert!(!output.contains("Compact status"));
+}
+
 fn sample_model() -> ExplorerViewModel {
     ExplorerViewModel {
         current_path: "/Users/strix/projects".to_string(),
@@ -147,6 +180,7 @@ fn chrome_for(screen: &str) -> ShellChromeViewModel {
             status: "Ready".to_string(),
             toast: None,
             error: None,
+            alert_tone: tundra_ui::NotificationTone::Info,
             time_button_label: None,
             time_button_selected: false,
         },

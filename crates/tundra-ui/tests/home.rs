@@ -5,11 +5,12 @@ use ratatui::style::Color;
 use tundra_ui::{
     AuthField, BootstrapAdminViewModel, ClockViewModel, DebugDiagnosticsViewModel,
     ExitConfirmViewModel, HomeDisplayMode, HomeViewModel, LoginField, LoginUserOptionViewModel,
-    LoginViewModel, NotificationActionViewModel, NotificationLevel, NotificationTone,
-    NotificationViewModel, RuntimeAsciiAssets, ShellChromeViewModel, ShellEntry, ShellLayout,
-    StatusViewModel, TimeSyncDialogViewModel, TundraTheme, UserManagementUserViewModel,
-    UserManagementViewModel, compute_shell_layout, login_password_area, login_user_list_area,
-    login_user_list_visible_rows, render_bootstrap_admin, render_clock_placeholder, render_home,
+    LoginViewModel, NOTIFICATION_TOO_SMALL_MESSAGE, NotificationActionViewModel,
+    NotificationLayout, NotificationLevel, NotificationTone, NotificationViewModel,
+    RuntimeAsciiAssets, ShellChromeViewModel, ShellEntry, ShellLayout, StatusViewModel,
+    TimeSyncDialogViewModel, TundraTheme, UserManagementUserViewModel, UserManagementViewModel,
+    compute_shell_layout, login_password_area, login_user_list_area, login_user_list_visible_rows,
+    notification_layout, render_bootstrap_admin, render_clock_placeholder, render_home,
     render_login, render_notification_overlay, render_time_sync_failure_dialog,
     render_user_management, status_time_button_area,
 };
@@ -61,6 +62,7 @@ fn debug_home_renders_platform_capability_summary() {
             status: "Ready".to_string(),
             toast: None,
             error: None,
+            alert_tone: NotificationTone::Info,
             time_button_label: None,
             time_button_selected: false,
         },
@@ -150,6 +152,7 @@ fn user_home_renders_ascii_entry_tiles_with_selected_accent() {
             status: "Ready".to_string(),
             toast: None,
             error: None,
+            alert_tone: NotificationTone::Info,
             time_button_label: None,
             time_button_selected: false,
         },
@@ -203,6 +206,7 @@ fn user_home_preserves_ascii_icon_spacing_when_centered() {
             status: "Ready".to_string(),
             toast: None,
             error: None,
+            alert_tone: NotificationTone::Info,
             time_button_label: None,
             time_button_selected: false,
         },
@@ -325,6 +329,7 @@ fn status_view_model_exposes_status_toast_and_error() {
         status: "Ready".to_string(),
         toast: Some("Saved".to_string()),
         error: Some("Network unavailable".to_string()),
+        alert_tone: NotificationTone::Error,
         time_button_label: Some("2026-07-10 09:30".to_string()),
         time_button_selected: true,
     };
@@ -332,6 +337,7 @@ fn status_view_model_exposes_status_toast_and_error() {
     assert_eq!(status.status, "Ready");
     assert_eq!(status.toast.as_deref(), Some("Saved"));
     assert_eq!(status.error.as_deref(), Some("Network unavailable"));
+    assert_eq!(status.alert_tone, NotificationTone::Error);
     assert_eq!(
         status.time_button_label.as_deref(),
         Some("2026-07-10 09:30")
@@ -364,6 +370,7 @@ fn status_bar_renders_selectable_time_button_on_the_right() {
             status: "Ready".to_string(),
             toast: Some("Saved".to_string()),
             error: Some("Network unavailable".to_string()),
+            alert_tone: NotificationTone::Critical,
             time_button_label: Some(label.to_string()),
             time_button_selected: true,
         },
@@ -383,9 +390,9 @@ fn status_bar_renders_selectable_time_button_on_the_right() {
         .expect("render home");
 
     let output = terminal_output(&terminal);
-    assert!(output.contains("Ready"));
-    assert!(output.contains("Saved"));
-    assert!(output.contains("Network unavailable"));
+    assert!(output.contains("[CRITICAL] Network unavailable"));
+    assert!(!output.contains("Ready"));
+    assert!(!output.contains("Saved"));
     assert!(output.contains(label));
 
     let status = status_rect(120, 30);
@@ -415,6 +422,126 @@ fn status_time_button_area_clamps_long_labels_and_preserves_left_space() {
     );
     assert_eq!(button.width, 38);
     assert_eq!(button.x, 12);
+}
+
+#[test]
+fn narrow_full_status_prioritizes_alert_and_uses_ascii_ellipsis_without_wrapping() {
+    let home = HomeViewModel::user("Strix", "2026-07-10 09:30", Vec::new());
+    let mut chrome = chrome_for("Home");
+    chrome.terminal_size = (50, 12);
+    chrome.status = StatusViewModel {
+        status: "Low priority status".to_string(),
+        toast: Some("Lower priority toast".to_string()),
+        error: Some(
+            "This alert is intentionally long and must not wrap into hidden rows".to_string(),
+        ),
+        alert_tone: NotificationTone::Error,
+        time_button_label: None,
+        time_button_selected: false,
+    };
+    let mut terminal = Terminal::new(TestBackend::new(50, 12)).expect("test terminal");
+
+    terminal
+        .draw(|frame| {
+            render_home(
+                frame,
+                frame.area(),
+                &chrome,
+                &home,
+                &TundraTheme::default_dark(),
+            );
+        })
+        .expect("render narrow full status");
+
+    let status = status_rect(50, 12);
+    let rendered = buffer_row_text(
+        &terminal,
+        status.x.saturating_add(1),
+        status.y.saturating_add(1),
+        status.width.saturating_sub(2),
+    );
+    assert!(rendered.starts_with("[ERROR] This alert"));
+    assert!(rendered.ends_with("..."));
+    assert!(!rendered.contains("Low priority status"));
+    assert!(!rendered.contains("Lower priority toast"));
+    assert!(!terminal_output(&terminal).contains("hidden rows"));
+}
+
+#[test]
+fn compact_home_clock_login_bootstrap_and_user_management_show_highest_priority_notification() {
+    let theme = TundraTheme::default_dark();
+    let mut outputs = Vec::new();
+
+    let home = HomeViewModel::user("Strix", "now", Vec::new());
+    let chrome = compact_alert_chrome("Home");
+    let mut terminal = Terminal::new(TestBackend::new(49, 11)).expect("test terminal");
+    terminal
+        .draw(|frame| render_home(frame, frame.area(), &chrome, &home, &theme))
+        .expect("render compact home");
+    outputs.push(terminal_output(&terminal));
+
+    let clock = ClockViewModel::new("now");
+    let chrome = compact_alert_chrome("Clock");
+    let mut terminal = Terminal::new(TestBackend::new(49, 11)).expect("test terminal");
+    terminal
+        .draw(|frame| render_clock_placeholder(frame, frame.area(), &chrome, &clock, &theme))
+        .expect("render compact clock");
+    outputs.push(terminal_output(&terminal));
+
+    let login = LoginViewModel::new(Vec::new(), 0, 0, 0, LoginField::Password, None);
+    let chrome = compact_alert_chrome("Login");
+    let mut terminal = Terminal::new(TestBackend::new(49, 11)).expect("test terminal");
+    terminal
+        .draw(|frame| render_login(frame, frame.area(), &chrome, &login, &theme))
+        .expect("render compact login");
+    outputs.push(terminal_output(&terminal));
+
+    let bootstrap = BootstrapAdminViewModel::new("", 0, AuthField::Username, None);
+    let chrome = compact_alert_chrome("BootstrapAdmin");
+    let mut terminal = Terminal::new(TestBackend::new(49, 11)).expect("test terminal");
+    terminal
+        .draw(|frame| {
+            render_bootstrap_admin(frame, frame.area(), &chrome, &bootstrap, &theme);
+        })
+        .expect("render compact bootstrap admin");
+    outputs.push(terminal_output(&terminal));
+
+    let management = UserManagementViewModel::new("AdminUser", Vec::new(), 0, None, true, None);
+    let chrome = compact_alert_chrome("UserManagement");
+    let mut terminal = Terminal::new(TestBackend::new(49, 11)).expect("test terminal");
+    terminal
+        .draw(|frame| {
+            render_user_management(frame, frame.area(), &chrome, &management, &theme);
+        })
+        .expect("render compact user management");
+    outputs.push(terminal_output(&terminal));
+
+    for output in outputs {
+        assert!(output.contains("[ERROR] Compact alert"));
+        assert!(!output.contains("Compact toast"));
+        assert!(!output.contains("Compact status"));
+    }
+}
+
+#[test]
+fn extremely_small_compact_layout_uses_borderless_notification_fallback() {
+    let home = HomeViewModel::user("User", "Now", Vec::new());
+    let chrome = compact_alert_chrome("Home");
+    let mut terminal = Terminal::new(TestBackend::new(2, 2)).expect("test terminal");
+
+    terminal
+        .draw(|frame| {
+            render_home(
+                frame,
+                frame.area(),
+                &chrome,
+                &home,
+                &TundraTheme::default_dark(),
+            );
+        })
+        .expect("render tiny compact notification");
+
+    assert!(terminal_output(&terminal).contains("[E"));
 }
 
 #[test]
@@ -456,7 +583,7 @@ fn clock_placeholder_and_time_sync_failure_dialog_render_expected_content() {
 }
 
 #[test]
-fn notification_overlay_renders_modal_actions_and_handles_narrow_terminal() {
+fn notification_overlay_renders_modal_actions_and_replaces_too_small_terminal_content() {
     let model = NotificationViewModel::new(
         "42",
         NotificationLevel::Modal,
@@ -478,6 +605,7 @@ fn notification_overlay_renders_modal_actions_and_handles_narrow_terminal() {
         .expect("render notification");
 
     let output = terminal_output(&terminal);
+    assert!(output.contains("[WARN] Delete File"));
     assert!(output.contains("Delete File"));
     assert!(output.contains("Move README.md to TundraUX trash?"));
     assert!(output.contains("Y: Move"));
@@ -485,11 +613,151 @@ fn notification_overlay_renders_modal_actions_and_handles_narrow_terminal() {
 
     let mut narrow = Terminal::new(TestBackend::new(28, 10)).expect("test terminal");
     narrow
-        .draw(|frame| render_notification_overlay(frame, frame.area(), &model, &theme))
+        .draw(|frame| {
+            frame.render_widget(
+                ratatui::widgets::Paragraph::new("BACKGROUND CONTENT"),
+                frame.area(),
+            );
+            render_notification_overlay(frame, frame.area(), &model, &theme);
+        })
         .expect("render narrow notification");
 
     let narrow_output = terminal_output(&narrow);
-    assert!(narrow_output.contains("Delete File"));
+    assert!(
+        visible_text_without_spaces(&narrow_output)
+            .contains(&visible_text_without_spaces(NOTIFICATION_TOO_SMALL_MESSAGE))
+    );
+    assert!(!narrow_output.contains("BACKGROUND CONTENT"));
+    assert!(!narrow_output.contains("Delete File"));
+    assert!(!narrow_output.contains("README.md"));
+    assert!(!narrow_output.contains("Y: Move"));
+    assert!(!narrow_output.contains("N: Cancel"));
+}
+
+#[test]
+fn modal_notification_tones_have_text_labels() {
+    for (tone, prefix) in [
+        (NotificationTone::Info, "[INFO]"),
+        (NotificationTone::Success, "[SUCCESS]"),
+        (NotificationTone::Warning, "[WARN]"),
+        (NotificationTone::Error, "[ERROR]"),
+        (NotificationTone::Critical, "[CRITICAL]"),
+    ] {
+        let model = NotificationViewModel::new(
+            "tone",
+            NotificationLevel::Modal,
+            tone,
+            "Notification",
+            "Message",
+            vec![NotificationActionViewModel::new("ok", "OK")],
+        );
+        let mut terminal = Terminal::new(TestBackend::new(80, 24)).expect("test terminal");
+        terminal
+            .draw(|frame| {
+                render_notification_overlay(
+                    frame,
+                    frame.area(),
+                    &model,
+                    &TundraTheme::default_dark(),
+                );
+            })
+            .expect("render notification tone");
+
+        assert!(terminal_output(&terminal).contains(prefix));
+    }
+}
+
+#[test]
+fn notification_layout_uses_nominal_size_and_treats_either_smaller_dimension_as_too_small() {
+    let model = NotificationViewModel::new(
+        "42",
+        NotificationLevel::Modal,
+        NotificationTone::Warning,
+        "Delete File",
+        "Move README.md to TundraUX trash?",
+        vec![
+            NotificationActionViewModel::new("confirm", "Move")
+                .with_shortcut("Y")
+                .selected(true),
+            NotificationActionViewModel::new("cancel", "Cancel").with_shortcut("N"),
+        ],
+    );
+
+    let NotificationLayout::Dialog(layout) = notification_layout(Rect::new(5, 7, 64, 9), &model)
+    else {
+        panic!("the exact nominal notification size must render");
+    };
+    assert_eq!(layout.dialog, Rect::new(5, 7, 64, 9));
+    assert_eq!(layout.message, Rect::new(6, 8, 62, 1));
+    assert_eq!(layout.actions.len(), 2);
+    assert_eq!(layout.actions[0].index, 0);
+    assert_eq!(layout.actions[0].area, Rect::new(25, 10, 9, 1));
+    assert_eq!(layout.actions[1].index, 1);
+    assert_eq!(layout.actions[1].area, Rect::new(38, 10, 11, 1));
+
+    assert_eq!(
+        notification_layout(Rect::new(0, 0, 63, 9), &model),
+        NotificationLayout::TooSmall {
+            required_width: 64,
+            required_height: 9,
+        }
+    );
+    assert_eq!(
+        notification_layout(Rect::new(0, 0, 64, 8), &model),
+        NotificationLayout::TooSmall {
+            required_width: 64,
+            required_height: 9,
+        }
+    );
+}
+
+#[test]
+fn notification_layout_and_renderer_share_wrapped_message_and_stacked_action_rects() {
+    let model = NotificationViewModel::new(
+        "long",
+        NotificationLevel::Modal,
+        NotificationTone::Info,
+        "Long Notification",
+        "M".repeat(190),
+        vec![
+            NotificationActionViewModel::new("first", "A".repeat(70)).selected(true),
+            NotificationActionViewModel::new("second", "B".repeat(40)),
+        ],
+    );
+    let area = Rect::new(3, 4, 80, 20);
+    let NotificationLayout::Dialog(layout) = notification_layout(area, &model) else {
+        panic!("long notification should fit the supplied terminal");
+    };
+
+    assert_eq!(layout.dialog, Rect::new(11, 9, 64, 10));
+    assert_eq!(layout.message, Rect::new(12, 10, 62, 4));
+    assert_eq!(layout.actions.len(), 2);
+    assert_eq!(layout.actions[0].area, Rect::new(12, 15, 62, 2));
+    assert_eq!(layout.actions[1].area, Rect::new(22, 17, 42, 1));
+    assert_eq!(
+        notification_layout(Rect::new(0, 0, 64, 9), &model),
+        NotificationLayout::TooSmall {
+            required_width: 64,
+            required_height: 10,
+        }
+    );
+
+    let mut terminal = Terminal::new(TestBackend::new(86, 28)).expect("test terminal");
+    terminal
+        .draw(|frame| {
+            render_notification_overlay(frame, area, &model, &TundraTheme::default_dark())
+        })
+        .expect("render long notification");
+    assert!(region_has_fg(
+        &terminal,
+        layout.actions[0].area,
+        TundraTheme::default_dark().accent,
+    ));
+    assert!(region_has_fg(
+        &terminal,
+        layout.actions[1].area,
+        TundraTheme::default_dark().foreground,
+    ));
 }
 
 #[test]
@@ -609,10 +877,25 @@ fn chrome_for(screen: &str) -> ShellChromeViewModel {
             status: "Ready".to_string(),
             toast: None,
             error: None,
+            alert_tone: NotificationTone::Info,
             time_button_label: None,
             time_button_selected: false,
         },
     }
+}
+
+fn compact_alert_chrome(screen: &str) -> ShellChromeViewModel {
+    let mut chrome = chrome_for(screen);
+    chrome.terminal_size = (49, 11);
+    chrome.status = StatusViewModel {
+        status: "Compact status".to_string(),
+        toast: Some("Compact toast".to_string()),
+        error: Some("Compact alert".to_string()),
+        alert_tone: NotificationTone::Error,
+        time_button_label: None,
+        time_button_selected: false,
+    };
+    chrome
 }
 
 fn terminal_output(terminal: &Terminal<TestBackend>) -> String {
@@ -629,6 +912,14 @@ fn visible_text_without_spaces(output: &str) -> String {
     output
         .chars()
         .filter(|character| !character.is_whitespace())
+        .collect()
+}
+
+fn buffer_row_text(terminal: &Terminal<TestBackend>, x: u16, y: u16, width: u16) -> String {
+    let buffer = terminal.backend().buffer();
+    (x..x.saturating_add(width))
+        .filter_map(|column| buffer.cell((column, y)))
+        .map(|cell| cell.symbol())
         .collect()
 }
 

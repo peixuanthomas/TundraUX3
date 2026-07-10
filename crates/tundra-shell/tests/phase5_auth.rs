@@ -8,6 +8,7 @@ use tundra_shell::{
     HomeModeOverride, InputEvent, PointerButton, ShellComponent, ShellHomeMode, ShellLaunchConfig,
     ShellScreen, ShellState, ShellTerminalMode, prepare_shell_startup,
 };
+use tundra_ui::NotificationTone;
 
 fn debug_config() -> ShellLaunchConfig {
     ShellLaunchConfig {
@@ -556,6 +557,51 @@ fn admin_can_manage_users_and_user_can_only_open_own_profile() {
     assert!(!profile.can_manage_all);
     assert_eq!(profile.users.len(), 1);
     assert_eq!(profile.users[0].username, "user2");
+}
+
+#[test]
+fn user_management_refresh_failure_is_visible_preserves_users_and_resolves_after_recovery() {
+    let fixture = FixtureRoot::new("user-management-refresh-alert");
+    let platform = mock_platform(fixture.path());
+    bootstrap_with_shell(&platform);
+
+    let startup = prepare_shell_startup(&platform, default_config()).expect("admin startup");
+    let manager = startup.storage_manager.clone().expect("storage manager");
+    let users_path = manager.layout().users_path.clone();
+    let mut state = ShellState::new_with_startup(default_config(), (120, 40), startup);
+    login(&mut state, "AdminUser", "StrongPass123");
+    state.apply_input(InputEvent::from_key_label("u"));
+    assert_eq!(state.active_screen(), ShellScreen::UserManagement);
+
+    let users_before_failure = state.to_user_management_view_model().users;
+    let valid_users = fs::read(&users_path).expect("valid users document");
+    fs::write(&users_path, b"{ invalid users json").expect("corrupt users fixture");
+
+    state.apply_input(InputEvent::from_key_label("c"));
+
+    let failed_management = state.to_user_management_view_model();
+    let failed_chrome = state.to_shell_chrome_view_model();
+    assert_eq!(failed_management.users, users_before_failure);
+    assert!(
+        failed_management
+            .message
+            .as_deref()
+            .is_some_and(|message| { failed_chrome.status.error.as_deref() == Some(message) })
+    );
+    assert_eq!(failed_chrome.status.alert_tone, NotificationTone::Error);
+
+    fs::write(&users_path, valid_users).expect("restore users fixture");
+    state.apply_input(InputEvent::from_key_label("c"));
+
+    let recovered_management = state.to_user_management_view_model();
+    assert_eq!(recovered_management.users.len(), users_before_failure.len());
+    assert!(
+        recovered_management
+            .users
+            .iter()
+            .any(|user| user.username == "AdminUser" && user.role == "Debug")
+    );
+    assert_eq!(state.to_shell_chrome_view_model().status.error, None);
 }
 
 #[test]

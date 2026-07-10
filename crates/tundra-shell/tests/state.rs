@@ -8,13 +8,14 @@ use tundra_platform::{
     CapabilityStatus, PlatformCapabilities, PlatformKind, build_windows_app_paths,
 };
 use tundra_shell::{
-    ClickKind, HomeModeOverride, InputEvent, PointerButton, ScrollDirection, ShellAction,
-    ShellAppConfig, ShellCommand, ShellComponent, ShellHomeMode, ShellLaunchConfig,
-    ShellNotificationAction, ShellRestoredSession, ShellScreen, ShellStartupState, ShellState,
-    ShellStorageReport, ShellTerminalMode, default_shell_shortcuts, detect_shortcut_conflicts,
+    ClickKind, HomeModeOverride, InputEvent, InputKey, InputModifiers, InputPhase, KeyInput,
+    PointerButton, ScrollDirection, ShellAction, ShellAppConfig, ShellCommand, ShellComponent,
+    ShellHomeMode, ShellLaunchConfig, ShellNotificationAction, ShellRestoredSession, ShellScreen,
+    ShellStartupState, ShellState, ShellStorageReport, ShellTerminalMode, default_shell_shortcuts,
+    detect_shortcut_conflicts,
 };
 use tundra_storage::StorageManager;
-use tundra_ui::{HomeDisplayMode, NotificationTone};
+use tundra_ui::{HomeDisplayMode, NotificationLayout, NotificationTone};
 
 fn debug_config() -> ShellLaunchConfig {
     ShellLaunchConfig {
@@ -445,11 +446,456 @@ fn global_notifications_update_status_toast_and_alert() {
     }
 
     let chrome = state.to_shell_chrome_view_model();
-    assert_eq!(chrome.status.toast, None);
+    assert_eq!(chrome.status.toast.as_deref(), Some("Saved"));
     assert_eq!(chrome.status.error.as_deref(), Some("Check configuration"));
 
     state.clear_notification_alert();
     assert_eq!(state.to_shell_chrome_view_model().status.error, None);
+}
+
+#[test]
+fn modal_shortcuts_reject_ctrl_alt_and_super_modifiers() {
+    let mut state = ShellState::new(debug_config(), (120, 40));
+    let id = state.notify_modal(
+        "Confirm",
+        "Continue?",
+        NotificationTone::Warning,
+        vec![
+            ShellNotificationAction::new("confirm", "Confirm")
+                .with_shortcut(InputKey::Character('y')),
+            ShellNotificationAction::new("cancel", "Cancel").cancel(),
+        ],
+    );
+
+    let modified_shortcuts = [
+        InputModifiers {
+            control: true,
+            ..InputModifiers::none()
+        },
+        InputModifiers {
+            alt: true,
+            ..InputModifiers::none()
+        },
+        InputModifiers {
+            super_key: true,
+            ..InputModifiers::none()
+        },
+    ];
+
+    for modifiers in modified_shortcuts {
+        state.apply_input(key_input(
+            InputKey::Character('y'),
+            modifiers,
+            InputPhase::Press,
+        ));
+
+        assert!(state.to_notification_view_model().is_some());
+        assert_eq!(state.take_notification_response(), None);
+        assert_eq!(
+            state.last_command(),
+            Some(&ShellCommand::CaptureOverlayInput)
+        );
+    }
+
+    state.apply_input(key_input(
+        InputKey::Character('Y'),
+        InputModifiers {
+            shift: true,
+            ..InputModifiers::none()
+        },
+        InputPhase::Press,
+    ));
+
+    assert_eq!(
+        state.take_notification_response(),
+        Some(tundra_shell::ShellNotificationResponse {
+            notification_id: id,
+            action_id: "confirm".to_string(),
+        })
+    );
+    assert!(state.to_notification_view_model().is_none());
+}
+
+#[test]
+fn modal_shortcut_shift_is_only_accepted_for_ascii_letter_case() {
+    let mut state = ShellState::new(debug_config(), (120, 40));
+    state.notify_modal(
+        "Confirm",
+        "Continue?",
+        NotificationTone::Info,
+        vec![ShellNotificationAction::new("space", "Continue")
+            .with_shortcut(InputKey::Character(' '))],
+    );
+
+    state.apply_input(key_input(
+        InputKey::Character(' '),
+        InputModifiers {
+            shift: true,
+            ..InputModifiers::none()
+        },
+        InputPhase::Press,
+    ));
+
+    assert_eq!(state.take_notification_response(), None);
+    assert!(state.to_notification_view_model().is_some());
+}
+
+#[test]
+fn modal_activation_rejects_repeat_and_release_but_repeat_navigation_works() {
+    let mut state = ShellState::new(debug_config(), (120, 40));
+    let id = state.notify_modal(
+        "Confirm",
+        "Continue?",
+        NotificationTone::Warning,
+        vec![
+            ShellNotificationAction::new("confirm", "Confirm")
+                .with_shortcut(InputKey::Character('y')),
+            ShellNotificationAction::new("cancel", "Cancel").cancel(),
+        ],
+    );
+
+    for (key, phase) in [
+        (InputKey::Enter, InputPhase::Repeat),
+        (InputKey::Enter, InputPhase::Release),
+        (InputKey::Character('y'), InputPhase::Repeat),
+        (InputKey::Character('y'), InputPhase::Release),
+    ] {
+        state.apply_input(key_input(key, InputModifiers::none(), phase));
+        assert!(state.to_notification_view_model().is_some());
+        assert_eq!(state.take_notification_response(), None);
+    }
+
+    state.apply_input(key_input(
+        InputKey::Right,
+        InputModifiers::none(),
+        InputPhase::Repeat,
+    ));
+    assert_eq!(selected_notification_action(&state), Some(1));
+
+    state.apply_input(key_input(
+        InputKey::Enter,
+        InputModifiers::none(),
+        InputPhase::Press,
+    ));
+    assert_eq!(
+        state.take_notification_response(),
+        Some(tundra_shell::ShellNotificationResponse {
+            notification_id: id,
+            action_id: "cancel".to_string(),
+        })
+    );
+}
+
+#[test]
+fn modal_repeat_after_queue_promotion_does_not_activate_next_modal() {
+    let mut state = ShellState::new(debug_config(), (120, 40));
+    let first = state.notify_modal(
+        "First",
+        "First message",
+        NotificationTone::Info,
+        vec![ShellNotificationAction::new("first", "OK")],
+    );
+    let second = state.notify_modal(
+        "Second",
+        "Second message",
+        NotificationTone::Info,
+        vec![ShellNotificationAction::new("second", "OK")],
+    );
+
+    state.apply_input(key_input(
+        InputKey::Enter,
+        InputModifiers::none(),
+        InputPhase::Press,
+    ));
+    assert_eq!(
+        state.take_notification_response(),
+        Some(tundra_shell::ShellNotificationResponse {
+            notification_id: first,
+            action_id: "first".to_string(),
+        })
+    );
+
+    state.apply_input(key_input(
+        InputKey::Enter,
+        InputModifiers::none(),
+        InputPhase::Repeat,
+    ));
+    assert_eq!(state.take_notification_response(), None);
+    assert_eq!(
+        state
+            .to_notification_view_model()
+            .as_ref()
+            .map(|model| model.title.as_str()),
+        Some("Second")
+    );
+
+    state.apply_input(key_input(
+        InputKey::Enter,
+        InputModifiers::none(),
+        InputPhase::Press,
+    ));
+    assert_eq!(
+        state.take_notification_response(),
+        Some(tundra_shell::ShellNotificationResponse {
+            notification_id: second,
+            action_id: "second".to_string(),
+        })
+    );
+}
+
+#[test]
+fn capture_overlay_input_preserves_business_status() {
+    let mut state = ShellState::new(debug_config(), (120, 40));
+    state.notify_status("Background export is running");
+    state.notify_modal(
+        "Confirm",
+        "Continue?",
+        NotificationTone::Info,
+        vec![ShellNotificationAction::new("ok", "OK")],
+    );
+
+    state.apply_input(InputEvent::from_key_label("x"));
+
+    assert_eq!(state.status(), "Background export is running");
+    assert_eq!(
+        state.last_command(),
+        Some(&ShellCommand::CaptureOverlayInput)
+    );
+    assert!(state.to_notification_view_model().is_some());
+}
+
+#[test]
+fn modal_actions_require_left_click_release_on_same_action() {
+    let (mut accepted, accepted_id) = state_with_two_action_modal();
+    let accepted_action = notification_action_coordinates(&accepted, 0);
+
+    accepted.apply_input(InputEvent::mouse_down(PointerButton::Left, accepted_action));
+    assert_eq!(accepted.take_notification_response(), None);
+    assert!(accepted.to_notification_view_model().is_some());
+
+    accepted.apply_input(InputEvent::mouse_up(PointerButton::Left, accepted_action));
+    assert_eq!(
+        accepted.take_notification_response(),
+        Some(tundra_shell::ShellNotificationResponse {
+            notification_id: accepted_id,
+            action_id: "confirm".to_string(),
+        })
+    );
+
+    let (mut rejected, _) = state_with_two_action_modal();
+    let first_action = notification_action_coordinates(&rejected, 0);
+    let second_action = notification_action_coordinates(&rejected, 1);
+    let dialog = notification_dialog_layout(
+        &rejected,
+        Rect::new(0, 0, rejected.terminal_size().0, rejected.terminal_size().1),
+    )
+    .dialog;
+    let outside_actions = (dialog.x, dialog.y);
+
+    for button in [PointerButton::Right, PointerButton::Middle] {
+        rejected.apply_input(InputEvent::mouse_down(button, first_action));
+        rejected.apply_input(InputEvent::mouse_up(button, first_action));
+        assert_eq!(rejected.take_notification_response(), None);
+        assert!(rejected.to_notification_view_model().is_some());
+    }
+
+    rejected.apply_input(InputEvent::mouse_down(PointerButton::Left, first_action));
+    rejected.apply_input(InputEvent::mouse_up(PointerButton::Left, second_action));
+    assert_eq!(rejected.take_notification_response(), None);
+    assert!(rejected.to_notification_view_model().is_some());
+
+    rejected.apply_input(InputEvent::mouse_down(PointerButton::Left, first_action));
+    rejected.apply_input(InputEvent::mouse_drag(PointerButton::Left, outside_actions));
+    rejected.apply_input(InputEvent::mouse_up(PointerButton::Left, outside_actions));
+    assert_eq!(rejected.take_notification_response(), None);
+    assert!(rejected.to_notification_view_model().is_some());
+
+    rejected.apply_input(InputEvent::mouse_down(PointerButton::Left, first_action));
+    rejected.apply_input(InputEvent::mouse_drag(PointerButton::Left, outside_actions));
+    rejected.apply_input(InputEvent::mouse_drag(PointerButton::Left, first_action));
+    rejected.apply_input(InputEvent::mouse_up(PointerButton::Left, first_action));
+    assert_eq!(rejected.take_notification_response(), None);
+    assert!(rejected.to_notification_view_model().is_some());
+}
+
+#[test]
+fn undersized_notification_rejects_keyboard_and_mouse_activation() {
+    for shrink_width in [true, false] {
+        let mut state = ShellState::new(debug_config(), (120, 40));
+        state.notify_modal(
+            "Confirm",
+            "Continue?",
+            NotificationTone::Warning,
+            vec![
+                ShellNotificationAction::new("confirm", "Confirm")
+                    .with_shortcut(InputKey::Character('y')),
+            ],
+        );
+
+        let large_area = Rect::new(0, 0, 120, 40);
+        let large_layout = notification_dialog_layout(&state, large_area);
+        let required_area = Rect::new(0, 0, large_layout.dialog.width, large_layout.dialog.height);
+        let action_coordinates = notification_action_coordinates_in(&state, required_area, 0);
+        let too_small_size = if shrink_width {
+            (required_area.width.saturating_sub(1), required_area.height)
+        } else {
+            (required_area.width, required_area.height.saturating_sub(1))
+        };
+
+        state.apply_input(InputEvent::Resize {
+            width: too_small_size.0,
+            height: too_small_size.1,
+        });
+        let model = state
+            .to_notification_view_model()
+            .expect("undersized modal remains active");
+        assert!(matches!(
+            tundra_ui::notification_layout(
+                Rect::new(0, 0, too_small_size.0, too_small_size.1),
+                &model,
+            ),
+            NotificationLayout::TooSmall { .. }
+        ));
+
+        state.apply_input(key_input(
+            InputKey::Character('y'),
+            InputModifiers::none(),
+            InputPhase::Press,
+        ));
+        state.apply_input(key_input(
+            InputKey::Enter,
+            InputModifiers::none(),
+            InputPhase::Press,
+        ));
+        state.apply_input(InputEvent::mouse_down(
+            PointerButton::Left,
+            action_coordinates,
+        ));
+        state.apply_input(InputEvent::mouse_up(
+            PointerButton::Left,
+            action_coordinates,
+        ));
+
+        assert_eq!(state.take_notification_response(), None);
+        assert!(state.to_notification_view_model().is_some());
+
+        state.apply_input(key_input(
+            InputKey::Escape,
+            InputModifiers::none(),
+            InputPhase::Press,
+        ));
+        assert_eq!(state.take_notification_response(), None);
+        assert!(state.to_notification_view_model().is_none());
+    }
+}
+
+#[test]
+fn modal_close_restores_previous_focus() {
+    let mut state = ShellState::new(debug_config(), (120, 40));
+    focus_clock_button(&mut state);
+    state.notify_modal(
+        "Notice",
+        "Acknowledge this message.",
+        NotificationTone::Info,
+        vec![ShellNotificationAction::new("ok", "OK")],
+    );
+
+    assert_eq!(
+        state.focused_component(),
+        ShellComponent::NotificationDialog
+    );
+    state.apply_input(InputEvent::from_key_label("Enter"));
+
+    assert_eq!(state.focused_component(), ShellComponent::ClockButton);
+}
+
+#[test]
+fn queued_modals_restore_focus_after_last_modal_closes() {
+    let mut state = ShellState::new(debug_config(), (120, 40));
+    focus_clock_button(&mut state);
+    state.notify_modal(
+        "First",
+        "First message",
+        NotificationTone::Info,
+        vec![ShellNotificationAction::new("first", "First")],
+    );
+    state.notify_modal(
+        "Second",
+        "Second message",
+        NotificationTone::Info,
+        vec![ShellNotificationAction::new("second", "Second")],
+    );
+
+    state.apply_input(InputEvent::from_key_label("Enter"));
+    assert_eq!(
+        state.focused_component(),
+        ShellComponent::NotificationDialog
+    );
+    assert_eq!(
+        state
+            .to_notification_view_model()
+            .as_ref()
+            .map(|model| model.title.as_str()),
+        Some("Second")
+    );
+
+    state.apply_input(InputEvent::from_key_label("Enter"));
+    assert_eq!(state.focused_component(), ShellComponent::ClockButton);
+    assert!(state.to_notification_view_model().is_none());
+}
+
+#[test]
+fn modal_follow_up_screen_change_does_not_restore_previous_focus() {
+    let mut state = ShellState::new(debug_config(), (120, 40));
+    focus_clock_button(&mut state);
+    state.notify_modal(
+        "Open Clock",
+        "Open the clock now?",
+        NotificationTone::Info,
+        vec![ShellNotificationAction::new("open", "Open").with_follow_up(ShellCommand::OpenClock)],
+    );
+
+    state.apply_input(InputEvent::from_key_label("Enter"));
+
+    assert_eq!(state.active_screen(), ShellScreen::Clock);
+    assert_eq!(state.focused_component(), ShellComponent::Clock);
+    assert_ne!(state.focused_component(), ShellComponent::ClockButton);
+}
+
+#[test]
+fn modal_follow_up_focus_change_is_not_overwritten_by_focus_restore() {
+    let mut state = ShellState::new(debug_config(), (120, 40));
+    focus_clock_button(&mut state);
+    state.notify_modal(
+        "Move Focus",
+        "Move to the next component?",
+        NotificationTone::Info,
+        vec![ShellNotificationAction::new("next", "Next").with_follow_up(ShellCommand::FocusNext)],
+    );
+
+    state.apply_input(InputEvent::from_key_label("Enter"));
+
+    assert_eq!(state.active_screen(), ShellScreen::Home);
+    assert_eq!(state.focused_component(), ShellComponent::StatusBar);
+}
+
+#[test]
+fn time_sync_modal_close_and_programmatic_dismiss_restore_previous_focus() {
+    let mut closed = ShellState::new(debug_config(), (120, 40));
+    focus_clock_button(&mut closed);
+    closed.apply_time_sync_failure_for_test("Time sync unavailable");
+    closed.apply_input(InputEvent::from_key_label("Esc"));
+    assert_eq!(closed.focused_component(), ShellComponent::ClockButton);
+
+    let mut dismissed = ShellState::new(debug_config(), (120, 40));
+    focus_clock_button(&mut dismissed);
+    dismissed.apply_time_sync_failure_for_test("Time sync unavailable");
+    dismissed.apply_time_sync_utc_for_test(
+        Utc.with_ymd_and_hms(2026, 7, 10, 0, 0, 0)
+            .single()
+            .expect("valid UTC timestamp"),
+    );
+    assert_eq!(dismissed.focused_component(), ShellComponent::ClockButton);
 }
 
 #[test]
@@ -991,6 +1437,80 @@ fn component_coordinates(state: &ShellState, component: ShellComponent) -> (u16,
             .saturating_add(region.area.width.saturating_sub(1)),
         region.area.y,
     )
+}
+
+fn key_input(key: InputKey, modifiers: InputModifiers, phase: InputPhase) -> InputEvent {
+    InputEvent::Key(KeyInput::new(key, modifiers, phase))
+}
+
+fn selected_notification_action(state: &ShellState) -> Option<usize> {
+    state
+        .to_notification_view_model()?
+        .actions
+        .iter()
+        .position(|action| action.selected)
+}
+
+fn state_with_two_action_modal() -> (ShellState, u64) {
+    let mut state = ShellState::new(debug_config(), (120, 40));
+    let id = state.notify_modal(
+        "Confirm",
+        "Continue?",
+        NotificationTone::Warning,
+        vec![
+            ShellNotificationAction::new("confirm", "Confirm"),
+            ShellNotificationAction::new("cancel", "Cancel").cancel(),
+        ],
+    );
+    (state, id)
+}
+
+fn notification_dialog_layout(
+    state: &ShellState,
+    area: Rect,
+) -> tundra_ui::NotificationDialogLayout {
+    let model = state
+        .to_notification_view_model()
+        .expect("active notification view model");
+    match tundra_ui::notification_layout(area, &model) {
+        NotificationLayout::Dialog(layout) => layout,
+        NotificationLayout::TooSmall {
+            required_width,
+            required_height,
+        } => panic!(
+            "notification layout unexpectedly requires {required_width}x{required_height} in {area:?}"
+        ),
+    }
+}
+
+fn notification_action_coordinates(state: &ShellState, index: usize) -> (u16, u16) {
+    notification_action_coordinates_in(
+        state,
+        Rect::new(0, 0, state.terminal_size().0, state.terminal_size().1),
+        index,
+    )
+}
+
+fn notification_action_coordinates_in(state: &ShellState, area: Rect, index: usize) -> (u16, u16) {
+    let layout = notification_dialog_layout(state, area);
+    let action = layout
+        .actions
+        .iter()
+        .find(|action| action.index == index)
+        .unwrap_or_else(|| panic!("missing notification action layout at index {index}"));
+    rect_center(action.area)
+}
+
+fn rect_center(area: Rect) -> (u16, u16) {
+    (
+        area.x.saturating_add(area.width / 2),
+        area.y.saturating_add(area.height / 2),
+    )
+}
+
+fn focus_clock_button(state: &mut ShellState) {
+    state.apply_input(InputEvent::from_key_label("Tab"));
+    assert_eq!(state.focused_component(), ShellComponent::ClockButton);
 }
 
 fn storage_manager_at(fixture: &FixtureRoot) -> StorageManager {

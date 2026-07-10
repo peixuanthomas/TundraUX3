@@ -5,10 +5,10 @@ use ratatui::backend::TestBackend;
 use ratatui::layout::Rect;
 use ratatui::style::Color;
 use tundra_ui::{
-    HomeDisplayMode, SetupField, SetupPasswordRequirementViewModel, SetupStep, SetupTimezoneOption,
-    SetupViewModel, ShellChromeViewModel, ShellLayout, StatusViewModel, TundraTheme,
-    compute_shell_layout, render_setup, setup_admin_field_area, setup_language_options,
-    setup_timezone_options,
+    HomeDisplayMode, NotificationTone, SetupField, SetupPasswordRequirementViewModel, SetupStep,
+    SetupTimezoneOption, SetupViewModel, ShellChromeViewModel, ShellLayout, StatusViewModel,
+    TundraTheme, compute_shell_layout, render_setup, setup_admin_field_area,
+    setup_language_options, setup_timezone_options,
 };
 
 const WIDE_SETUP_WIDTH: u16 = 120;
@@ -319,6 +319,38 @@ fn setup_renderer_shows_timezone_scroll_indicators_when_window_is_partial() {
     assert!(output.contains("v more timezones"));
 }
 
+#[test]
+fn compact_setup_shows_highest_priority_notification() {
+    let model = sample_model(SetupStep::Language, None);
+    let mut chrome = chrome_for("Setup", 49, 11);
+    chrome.status = StatusViewModel {
+        status: "Compact status".to_string(),
+        toast: Some("Compact toast".to_string()),
+        error: Some("Setup alert".to_string()),
+        alert_tone: NotificationTone::Warning,
+        time_button_label: None,
+        time_button_selected: false,
+    };
+    let mut terminal = Terminal::new(TestBackend::new(49, 11)).expect("test terminal");
+
+    terminal
+        .draw(|frame| {
+            render_setup(
+                frame,
+                frame.area(),
+                &chrome,
+                &model,
+                &TundraTheme::default_dark(),
+            );
+        })
+        .expect("render compact setup");
+
+    let output = terminal_output(&terminal);
+    assert!(output.contains("[WARN] Setup alert"));
+    assert!(!output.contains("Compact toast"));
+    assert!(!output.contains("Compact status"));
+}
+
 fn sample_model(step: SetupStep, error: Option<String>) -> SetupViewModel {
     sample_model_with_timezone(step, "Asia/Tokyo", error)
 }
@@ -409,6 +441,7 @@ fn chrome_for(screen: &str, width: u16, height: u16) -> ShellChromeViewModel {
             status: "Ready".to_string(),
             toast: None,
             error: None,
+            alert_tone: tundra_ui::NotificationTone::Info,
             time_button_label: None,
             time_button_selected: false,
         },

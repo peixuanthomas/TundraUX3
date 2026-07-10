@@ -1,16 +1,18 @@
 use ratatui::Frame;
 use ratatui::layout::{Alignment, Constraint, Layout, Rect};
-use ratatui::text::{Line, Span};
+use ratatui::style::Style;
+use ratatui::text::Line;
 use ratatui::widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph, Wrap};
 
+use crate::layout::{notification_action_text, wrap_notification_text};
 use crate::{
     AuthField, BootstrapAdminViewModel, ClockViewModel, ExitConfirmViewModel,
     ExplorerDialogViewModel, ExplorerEntryViewModel, ExplorerSearchViewModel, ExplorerViewModel,
-    HomeDisplayMode, HomeViewModel, LoginField, LoginViewModel, NotificationActionViewModel,
-    NotificationLevel, NotificationTone, NotificationViewModel, SetupField, SetupStep,
-    SetupViewModel, ShellChromeViewModel, ShellLayout, TimeSyncDialogViewModel, TundraTheme,
-    UserManagementField, UserManagementFormKind, UserManagementFormViewModel,
-    UserManagementViewModel, compute_shell_layout,
+    HomeDisplayMode, HomeViewModel, LoginField, LoginViewModel, NOTIFICATION_TOO_SMALL_MESSAGE,
+    NotificationLayout, NotificationLevel, NotificationTone, NotificationViewModel, SetupField,
+    SetupStep, SetupViewModel, ShellChromeViewModel, ShellLayout, TimeSyncDialogViewModel,
+    TundraTheme, UserManagementField, UserManagementFormKind, UserManagementFormViewModel,
+    UserManagementViewModel, compute_shell_layout, notification_layout,
     timezone_map::{TimezoneMapWidget, boundary_id_for_timezone},
 };
 
@@ -48,6 +50,7 @@ const HOME_TILE_GAP: u16 = 1;
 const STATUS_TIME_BUTTON_HORIZONTAL_CHROME: u16 = 4;
 const STATUS_TIME_BUTTON_MIN_WIDTH: u16 = 3;
 const STATUS_TIME_BUTTON_RESERVED_LEFT_WIDTH: u16 = 12;
+const COMPACT_TERMINAL_MESSAGE: &str = "TundraUX 3 needs at least 50x12 terminal cells.";
 
 pub fn render_home(
     frame: &mut Frame<'_>,
@@ -57,7 +60,7 @@ pub fn render_home(
     theme: &TundraTheme,
 ) {
     match compute_shell_layout(area) {
-        ShellLayout::Compact(compact) => render_compact_home(frame, compact, theme),
+        ShellLayout::Compact(compact) => render_compact_home(frame, compact, chrome, theme),
         ShellLayout::Full { top, main, status } => {
             render_top(frame, top, chrome, theme);
             render_main(frame, main, home, theme);
@@ -101,7 +104,7 @@ pub fn render_clock_placeholder(
 ) {
     let main = match compute_shell_layout(area) {
         ShellLayout::Compact(compact) => {
-            render_compact_home(frame, compact, theme);
+            render_compact_home(frame, compact, chrome, theme);
             return;
         }
         ShellLayout::Full { top, main, status } => {
@@ -160,32 +163,81 @@ pub fn render_notification_overlay(
         return;
     }
 
-    let width = area.width.min(64);
-    let action_rows = if model.actions.is_empty() { 0 } else { 2 };
-    let height = area
-        .height
-        .min(7_u16.saturating_add(action_rows))
-        .max(3)
-        .min(area.height);
-    let dialog = centered_rect(area, width, height);
-    let mut lines = vec![Line::from(model.message.clone())];
-    if !model.actions.is_empty() {
-        lines.push(Line::from(""));
-        lines.push(notification_action_line(&model.actions, theme));
+    let layout = match notification_layout(area, model) {
+        NotificationLayout::Dialog(layout) => layout,
+        NotificationLayout::TooSmall { .. } => {
+            render_notification_too_small(frame, area, theme);
+            return;
+        }
+    };
+
+    frame.render_widget(Clear, layout.dialog);
+    frame.render_widget(
+        Block::default()
+            .title(format!(
+                "{} {}",
+                notification_tone_prefix(model.tone),
+                model.title
+            ))
+            .borders(Borders::ALL)
+            .style(notification_tone_style(model.tone, theme)),
+        layout.dialog,
+    );
+
+    let message_lines = wrap_notification_text(&model.message, layout.message.width)
+        .into_iter()
+        .map(Line::from)
+        .collect::<Vec<_>>();
+    frame.render_widget(
+        Paragraph::new(message_lines)
+            .style(theme.body_style())
+            .alignment(Alignment::Center),
+        layout.message,
+    );
+
+    for action_layout in layout.actions {
+        let Some(action) = model.actions.get(action_layout.index) else {
+            continue;
+        };
+        let action_text = notification_action_text(action);
+        let action_lines = wrap_notification_text(&action_text, action_layout.area.width)
+            .into_iter()
+            .map(Line::from)
+            .collect::<Vec<_>>();
+        let style = if action.selected {
+            theme.title_style()
+        } else {
+            theme.body_style()
+        };
+        frame.render_widget(
+            Paragraph::new(action_lines)
+                .style(style)
+                .alignment(Alignment::Center),
+            action_layout.area,
+        );
+    }
+}
+
+fn render_notification_too_small(frame: &mut Frame<'_>, area: Rect, theme: &TundraTheme) {
+    frame.render_widget(Clear, area);
+    if area.width == 0 || area.height == 0 {
+        return;
     }
 
-    let dialog_widget = Paragraph::new(lines)
-        .block(
-            Block::default()
-                .title(model.title.as_str())
-                .borders(Borders::ALL)
-                .style(notification_tone_style(model.tone, theme)),
-        )
-        .alignment(Alignment::Center)
-        .wrap(Wrap { trim: true });
-
-    frame.render_widget(Clear, dialog);
-    frame.render_widget(dialog_widget, dialog);
+    let lines = wrap_notification_text(NOTIFICATION_TOO_SMALL_MESSAGE, area.width)
+        .into_iter()
+        .map(Line::from)
+        .collect::<Vec<_>>();
+    let height = u16::try_from(lines.len())
+        .unwrap_or(u16::MAX)
+        .min(area.height);
+    let prompt = centered_rect(area, area.width, height);
+    frame.render_widget(
+        Paragraph::new(lines)
+            .style(theme.error_style())
+            .alignment(Alignment::Center),
+        prompt,
+    );
 }
 
 pub fn render_login(
@@ -196,7 +248,7 @@ pub fn render_login(
     theme: &TundraTheme,
 ) {
     match compute_shell_layout(area) {
-        ShellLayout::Compact(compact) => render_compact_home(frame, compact, theme),
+        ShellLayout::Compact(compact) => render_compact_home(frame, compact, chrome, theme),
         ShellLayout::Full { top, main, status } => {
             render_top(frame, top, chrome, theme);
             render_login_main(frame, main, model, theme);
@@ -230,7 +282,7 @@ pub fn render_setup(
     theme: &TundraTheme,
 ) {
     match compute_shell_layout(area) {
-        ShellLayout::Compact(compact) => render_compact_home(frame, compact, theme),
+        ShellLayout::Compact(compact) => render_compact_home(frame, compact, chrome, theme),
         ShellLayout::Full { top, main, status } => {
             render_top(frame, top, chrome, theme);
             render_setup_main(frame, main, model, theme);
@@ -247,7 +299,7 @@ pub fn render_user_management(
     theme: &TundraTheme,
 ) {
     match compute_shell_layout(area) {
-        ShellLayout::Compact(compact) => render_compact_home(frame, compact, theme),
+        ShellLayout::Compact(compact) => render_compact_home(frame, compact, chrome, theme),
         ShellLayout::Full { top, main, status } => {
             render_top(frame, top, chrome, theme);
             let mut lines = vec![Line::from(format!("Current user: {}", model.current_user))];
@@ -300,7 +352,7 @@ pub fn render_explorer(
     theme: &TundraTheme,
 ) {
     match compute_shell_layout(area) {
-        ShellLayout::Compact(compact) => render_compact_home(frame, compact, theme),
+        ShellLayout::Compact(compact) => render_compact_home(frame, compact, chrome, theme),
         ShellLayout::Full { top, main, status } => {
             render_top(frame, top, chrome, theme);
             render_explorer_main(frame, main, model, theme);
@@ -636,7 +688,7 @@ fn render_auth_screen(
     theme: &TundraTheme,
 ) {
     match compute_shell_layout(area) {
-        ShellLayout::Compact(compact) => render_compact_home(frame, compact, theme),
+        ShellLayout::Compact(compact) => render_compact_home(frame, compact, chrome, theme),
         ShellLayout::Full { top, main, status } => {
             render_top(frame, top, chrome, theme);
             let widget = Paragraph::new(lines)
@@ -653,18 +705,49 @@ fn render_auth_screen(
     }
 }
 
-fn render_compact_home(frame: &mut Frame<'_>, area: Rect, theme: &TundraTheme) {
-    let compact = Paragraph::new("TundraUX 3 needs at least 50x12 terminal cells.")
-        .block(
-            Block::default()
-                .title("TundraUX 3")
-                .borders(Borders::ALL)
-                .style(theme.body_style()),
-        )
-        .alignment(Alignment::Center)
-        .wrap(Wrap { trim: true });
+fn render_compact_home(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    chrome: &ShellChromeViewModel,
+    theme: &TundraTheme,
+) {
+    if area.width == 0 || area.height == 0 {
+        return;
+    }
 
-    frame.render_widget(compact, area);
+    let (notification, style) = status_presentation(&chrome.status, theme);
+    if area.width <= 2 || area.height <= 2 {
+        let notification = truncate_status_text(&notification, area.width);
+        frame.render_widget(Clear, area);
+        frame.render_widget(Paragraph::new(Line::styled(notification, style)), area);
+        return;
+    }
+
+    let block = Block::default()
+        .title("TundraUX 3")
+        .borders(Borders::ALL)
+        .style(theme.body_style());
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+    if inner.width == 0 || inner.height == 0 {
+        return;
+    }
+
+    let notification = truncate_status_text(&notification, inner.width);
+    frame.render_widget(
+        Paragraph::new(Line::styled(notification, style)).alignment(Alignment::Center),
+        Rect::new(inner.x, inner.y, inner.width, 1),
+    );
+
+    if inner.height > 1 {
+        let size_message = truncate_status_text(COMPACT_TERMINAL_MESSAGE, inner.width);
+        frame.render_widget(
+            Paragraph::new(size_message)
+                .style(theme.muted_style())
+                .alignment(Alignment::Center),
+            Rect::new(inner.x, inner.y.saturating_add(1), inner.width, 1),
+        );
+    }
 }
 
 fn render_setup_main(
@@ -1604,10 +1687,10 @@ fn render_status(
     };
     let left_area = Rect::new(inner.x, inner.y, left_width.min(inner.width), inner.height);
     if left_area.width > 0 && left_area.height > 0 {
+        let (notification, style) = status_presentation(&chrome.status, theme);
+        let notification = truncate_status_text(&notification, left_area.width);
         frame.render_widget(
-            Paragraph::new(status_line(&chrome.status, theme))
-                .style(theme.body_style())
-                .wrap(Wrap { trim: true }),
+            Paragraph::new(Line::styled(notification, style)).style(theme.body_style()),
             left_area,
         );
     }
@@ -1658,45 +1741,48 @@ pub fn status_time_button_area(status: Rect, label: &str) -> Rect {
     )
 }
 
-fn status_line(status: &crate::StatusViewModel, theme: &TundraTheme) -> Line<'static> {
-    let mut spans = vec![Span::raw(status.status.clone())];
+fn status_presentation(status: &crate::StatusViewModel, theme: &TundraTheme) -> (String, Style) {
+    if let Some(alert) = &status.error {
+        return (
+            format!("{} {alert}", notification_tone_prefix(status.alert_tone)),
+            notification_tone_style(status.alert_tone, theme),
+        );
+    }
     if let Some(toast) = &status.toast {
-        spans.push(Span::styled(format!(" | {toast}"), theme.muted_style()));
+        return (toast.clone(), theme.muted_style());
     }
-    if let Some(error) = &status.error {
-        spans.push(Span::styled(format!(" | {error}"), theme.error_style()));
-    }
-    Line::from(spans)
+    (status.status.clone(), theme.body_style())
 }
 
-fn notification_action_line(
-    actions: &[NotificationActionViewModel],
-    theme: &TundraTheme,
-) -> Line<'static> {
-    let mut spans = Vec::new();
-    for (index, action) in actions.iter().enumerate() {
-        if index > 0 {
-            spans.push(Span::raw("    "));
-        }
+fn notification_tone_prefix(tone: NotificationTone) -> &'static str {
+    match tone {
+        NotificationTone::Info => "[INFO]",
+        NotificationTone::Success => "[SUCCESS]",
+        NotificationTone::Warning => "[WARN]",
+        NotificationTone::Error => "[ERROR]",
+        NotificationTone::Critical => "[CRITICAL]",
+    }
+}
 
-        let label = match &action.shortcut {
-            Some(shortcut) => format!("{shortcut}: {}", action.label),
-            None => action.label.clone(),
-        };
-        let text = if action.selected {
-            format!("[{label}]")
-        } else {
-            format!(" {label} ")
-        };
-        let style = if action.selected {
-            theme.title_style()
-        } else {
-            theme.body_style()
-        };
-        spans.push(Span::styled(text, style));
+fn truncate_status_text(text: &str, width: u16) -> String {
+    let text = text
+        .chars()
+        .map(|character| match character {
+            '\r' | '\n' => ' ',
+            character => character,
+        })
+        .collect::<String>();
+    let width = usize::from(width);
+    let length = text.chars().count();
+    if length <= width {
+        return text;
+    }
+    if width <= 3 {
+        return text.chars().take(width).collect();
     }
 
-    Line::from(spans)
+    let visible = text.chars().take(width - 3).collect::<String>();
+    format!("{visible}...")
 }
 
 fn notification_tone_style(tone: NotificationTone, theme: &TundraTheme) -> ratatui::style::Style {

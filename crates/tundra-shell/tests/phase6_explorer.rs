@@ -8,9 +8,11 @@ use tundra_platform::{
     PlatformCapabilities, PlatformKind, UserDirs, build_windows_app_paths, cleanup_temp_path,
 };
 use tundra_shell::{
-    HomeModeOverride, InputEvent, PointerButton, ShellComponent, ShellHomeMode, ShellLaunchConfig,
-    ShellScreen, ShellState, ShellTerminalMode, prepare_shell_startup,
+    HomeModeOverride, InputEvent, InputKey, InputModifiers, InputPhase, KeyInput, PointerButton,
+    ShellComponent, ShellHomeMode, ShellLaunchConfig, ShellScreen, ShellState, ShellTerminalMode,
+    prepare_shell_startup,
 };
+use tundra_ui::NotificationTone;
 
 fn default_config() -> ShellLaunchConfig {
     ShellLaunchConfig {
@@ -158,6 +160,108 @@ fn delete_key_moves_selection_to_tundra_trash() {
         .storage_manager
         .expect("storage");
     assert_eq!(storage.load_trash().expect("trash").records.len(), 1);
+}
+
+#[test]
+fn failed_delete_confirmation_reopens_strict_modal_and_rejects_modified_or_repeat_input() {
+    let fixture = FixtureRoot::new("delete-confirm-failure");
+    let platform = mock_platform(fixture.path());
+    bootstrap_with_shell(&platform);
+    let target = fixture.path().join("Documents").join("alpha.txt");
+    fs::write(&target, "alpha").expect("alpha");
+    let mut state = logged_in_state(&platform);
+    state.apply_input_with_platform(InputEvent::from_key_label("e"), &platform);
+    state.apply_input_with_platform(InputEvent::from_key_label("Delete"), &platform);
+    fs::remove_file(&target).expect("remove target before confirming");
+
+    state.apply_input_with_platform(InputEvent::from_key_label("y"), &platform);
+    let reopened_id = state
+        .to_notification_view_model()
+        .expect("failed delete should reopen the strict modal")
+        .id;
+    while state.take_notification_response().is_some() {}
+
+    for input in [
+        InputEvent::Key(KeyInput::new(
+            InputKey::Character('y'),
+            InputModifiers {
+                control: true,
+                ..InputModifiers::none()
+            },
+            InputPhase::Press,
+        )),
+        InputEvent::Key(KeyInput::new(
+            InputKey::Enter,
+            InputModifiers::none(),
+            InputPhase::Repeat,
+        )),
+    ] {
+        state.apply_input_with_platform(input, &platform);
+        assert_eq!(
+            state
+                .to_notification_view_model()
+                .as_ref()
+                .map(|notification| notification.id.as_str()),
+            Some(reopened_id.as_str())
+        );
+        assert_eq!(state.take_notification_response(), None);
+    }
+
+    state.apply_input_with_platform(InputEvent::from_key_label("Esc"), &platform);
+    assert!(state.to_notification_view_model().is_none());
+    assert!(state.to_explorer_view_model().pending_dialog.is_none());
+}
+
+#[test]
+fn explorer_alert_resolves_after_success_and_close_without_clearing_unrelated_alert() {
+    let fixture = FixtureRoot::new("alert-lifecycle");
+    let platform = mock_platform(fixture.path());
+    bootstrap_with_shell(&platform);
+    let mut state = logged_in_state(&platform);
+    state.notify_alert_with_key(
+        "test.unrelated",
+        "Unrelated warning",
+        NotificationTone::Warning,
+    );
+
+    state.apply_input_with_platform(InputEvent::from_key_label("e"), &platform);
+    assert_eq!(state.active_screen(), ShellScreen::Explorer);
+    assert_eq!(
+        state.to_shell_chrome_view_model().status.error.as_deref(),
+        Some("Unrelated warning")
+    );
+
+    state.apply_input_with_platform(InputEvent::from_key_label("v"), &platform);
+    let failed = state.to_shell_chrome_view_model();
+    assert!(
+        failed
+            .status
+            .error
+            .as_deref()
+            .is_some_and(|message| message.contains("clipboard is empty"))
+    );
+    assert_eq!(failed.status.alert_tone, NotificationTone::Error);
+
+    state.apply_input_with_platform(InputEvent::from_key_label("h"), &platform);
+    let recovered = state.to_shell_chrome_view_model();
+    assert_eq!(recovered.status.error.as_deref(), Some("Unrelated warning"));
+    assert_eq!(recovered.status.alert_tone, NotificationTone::Warning);
+
+    state.apply_input_with_platform(InputEvent::from_key_label("v"), &platform);
+    assert!(
+        state
+            .to_shell_chrome_view_model()
+            .status
+            .error
+            .as_deref()
+            .is_some_and(|message| message.contains("clipboard is empty"))
+    );
+
+    state.apply_input_with_platform(InputEvent::from_key_label("Esc"), &platform);
+    let closed = state.to_shell_chrome_view_model();
+    assert_eq!(state.active_screen(), ShellScreen::Home);
+    assert_eq!(closed.status.error.as_deref(), Some("Unrelated warning"));
+    assert_eq!(closed.status.alert_tone, NotificationTone::Warning);
 }
 
 fn bootstrap_with_shell(platform: &MockPlatform) {

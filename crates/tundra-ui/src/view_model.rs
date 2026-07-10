@@ -12,6 +12,7 @@ pub struct StatusViewModel {
     pub status: String,
     pub toast: Option<String>,
     pub error: Option<String>,
+    pub alert_tone: NotificationTone,
     pub time_button_label: Option<String>,
     pub time_button_selected: bool,
 }

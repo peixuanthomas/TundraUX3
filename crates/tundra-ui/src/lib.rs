@@ -30,7 +30,10 @@ pub use input::{
     MouseEvent, MouseEventKind, Point, RouteTarget, RoutedEvent, RoutedTarget, ScrollDirection,
     UiId,
 };
-pub use layout::{ShellLayout, compute_shell_layout};
+pub use layout::{
+    NOTIFICATION_TOO_SMALL_MESSAGE, NotificationActionLayout, NotificationDialogLayout,
+    NotificationLayout, ShellLayout, compute_shell_layout, notification_layout,
+};
 pub use render::{
     explorer_first_entry_content_line, home_entry_index_at, home_entry_tile_areas,
     login_password_area, login_selected_username_area, login_user_list_area,
