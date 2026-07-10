@@ -5,11 +5,13 @@ use ratatui::style::Color;
 use tundra_ui::{
     AuthField, BootstrapAdminViewModel, ClockViewModel, DebugDiagnosticsViewModel,
     ExitConfirmViewModel, HomeDisplayMode, HomeViewModel, LoginField, LoginUserOptionViewModel,
-    LoginViewModel, RuntimeAsciiAssets, ShellChromeViewModel, ShellEntry, ShellLayout,
+    LoginViewModel, NotificationActionViewModel, NotificationLevel, NotificationTone,
+    NotificationViewModel, RuntimeAsciiAssets, ShellChromeViewModel, ShellEntry, ShellLayout,
     StatusViewModel, TimeSyncDialogViewModel, TundraTheme, UserManagementUserViewModel,
     UserManagementViewModel, compute_shell_layout, login_password_area, login_user_list_area,
     login_user_list_visible_rows, render_bootstrap_admin, render_clock_placeholder, render_home,
-    render_login, render_time_sync_failure_dialog, render_user_management, status_time_button_area,
+    render_login, render_notification_overlay, render_time_sync_failure_dialog,
+    render_user_management, status_time_button_area,
 };
 
 #[test]
@@ -451,6 +453,43 @@ fn clock_placeholder_and_time_sync_failure_dialog_render_expected_content() {
     let output = terminal_output(&dialog_terminal);
     assert!(output.contains("Time Sync"));
     assert!(visible_text_without_spaces(&output).contains("联网校准时间失败"));
+}
+
+#[test]
+fn notification_overlay_renders_modal_actions_and_handles_narrow_terminal() {
+    let model = NotificationViewModel::new(
+        "42",
+        NotificationLevel::Modal,
+        NotificationTone::Warning,
+        "Delete File",
+        "Move README.md to TundraUX trash?",
+        vec![
+            NotificationActionViewModel::new("confirm", "Move")
+                .with_shortcut("Y")
+                .selected(true),
+            NotificationActionViewModel::new("cancel", "Cancel").with_shortcut("N"),
+        ],
+    );
+    let theme = TundraTheme::default_dark();
+
+    let mut terminal = Terminal::new(TestBackend::new(80, 24)).expect("test terminal");
+    terminal
+        .draw(|frame| render_notification_overlay(frame, frame.area(), &model, &theme))
+        .expect("render notification");
+
+    let output = terminal_output(&terminal);
+    assert!(output.contains("Delete File"));
+    assert!(output.contains("Move README.md to TundraUX trash?"));
+    assert!(output.contains("Y: Move"));
+    assert!(output.contains("N: Cancel"));
+
+    let mut narrow = Terminal::new(TestBackend::new(28, 10)).expect("test terminal");
+    narrow
+        .draw(|frame| render_notification_overlay(frame, frame.area(), &model, &theme))
+        .expect("render narrow notification");
+
+    let narrow_output = terminal_output(&narrow);
+    assert!(narrow_output.contains("Delete File"));
 }
 
 #[test]

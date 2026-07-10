@@ -10,11 +10,11 @@ use tundra_platform::{
 use tundra_shell::{
     ClickKind, HomeModeOverride, InputEvent, PointerButton, ScrollDirection, ShellAction,
     ShellAppConfig, ShellCommand, ShellComponent, ShellHomeMode, ShellLaunchConfig,
-    ShellRestoredSession, ShellScreen, ShellStartupState, ShellState, ShellStorageReport,
-    ShellTerminalMode, default_shell_shortcuts, detect_shortcut_conflicts,
+    ShellNotificationAction, ShellRestoredSession, ShellScreen, ShellStartupState, ShellState,
+    ShellStorageReport, ShellTerminalMode, default_shell_shortcuts, detect_shortcut_conflicts,
 };
 use tundra_storage::StorageManager;
-use tundra_ui::HomeDisplayMode;
+use tundra_ui::{HomeDisplayMode, NotificationTone};
 
 fn debug_config() -> ShellLaunchConfig {
     ShellLaunchConfig {
@@ -424,6 +424,181 @@ fn debug_status_bar_includes_recent_input_diagnostics() {
     assert!(chrome.status.status.contains("Key: x"));
     assert!(chrome.status.status.contains("Mouse: Mouse Scroll Down"));
     assert!(chrome.status.status.contains("Resize: none"));
+}
+
+#[test]
+fn global_notifications_update_status_toast_and_alert() {
+    let mut state = ShellState::new(debug_config(), (120, 40));
+
+    state.notify_status("Working");
+    state.notify_toast("Saved");
+    state.notify_alert("Check configuration");
+
+    let chrome = state.to_shell_chrome_view_model();
+    assert!(chrome.status.status.starts_with("Working"));
+    assert_eq!(chrome.status.toast.as_deref(), Some("Saved"));
+    assert_eq!(chrome.status.error.as_deref(), Some("Check configuration"));
+    assert_eq!(state.take_notification_response(), None);
+
+    for _ in 0..16 {
+        state.apply_input(InputEvent::Tick);
+    }
+
+    let chrome = state.to_shell_chrome_view_model();
+    assert_eq!(chrome.status.toast, None);
+    assert_eq!(chrome.status.error.as_deref(), Some("Check configuration"));
+
+    state.clear_notification_alert();
+    assert_eq!(state.to_shell_chrome_view_model().status.error, None);
+}
+
+#[test]
+fn modal_notification_records_response_and_runs_follow_up_command() {
+    let mut state = ShellState::new(debug_config(), (120, 40));
+    let id = state.notify_modal(
+        "Open Clock",
+        "Open the clock now?",
+        NotificationTone::Info,
+        vec![
+            ShellNotificationAction::new("open", "Open").with_follow_up(ShellCommand::OpenClock),
+            ShellNotificationAction::new("cancel", "Cancel").cancel(),
+        ],
+    );
+
+    assert_eq!(
+        state
+            .to_notification_view_model()
+            .as_ref()
+            .map(|model| model.title.as_str()),
+        Some("Open Clock")
+    );
+
+    let action = state.apply_input(InputEvent::from_key_label("Enter"));
+
+    assert_eq!(action, ShellAction::Redraw);
+    assert_eq!(state.active_screen(), ShellScreen::Clock);
+    assert_eq!(state.last_command(), Some(&ShellCommand::OpenClock));
+    assert_eq!(
+        state.take_notification_response(),
+        Some(tundra_shell::ShellNotificationResponse {
+            notification_id: id,
+            action_id: "open".to_string(),
+        })
+    );
+    assert!(state.to_notification_view_model().is_none());
+}
+
+#[test]
+fn modal_notification_captures_input_and_escape_uses_cancel_action() {
+    let mut state = ShellState::new(debug_config(), (120, 40));
+    let id = state.notify_modal(
+        "Confirm",
+        "Continue?",
+        NotificationTone::Warning,
+        vec![
+            ShellNotificationAction::new("continue", "Continue"),
+            ShellNotificationAction::new("cancel", "Cancel").cancel(),
+        ],
+    );
+
+    state.apply_input(InputEvent::from_key_label("e"));
+    assert_eq!(state.active_screen(), ShellScreen::Home);
+    assert!(state.to_notification_view_model().is_some());
+    assert_eq!(
+        state.last_command(),
+        Some(&ShellCommand::CaptureOverlayInput)
+    );
+
+    state.apply_input(InputEvent::from_key_label("Tab"));
+    assert_eq!(
+        state
+            .to_notification_view_model()
+            .expect("active modal")
+            .actions
+            .iter()
+            .position(|action| action.selected),
+        Some(1)
+    );
+    state.apply_input(InputEvent::from_key_label("Shift+Tab"));
+    assert_eq!(
+        state
+            .to_notification_view_model()
+            .expect("active modal")
+            .actions
+            .iter()
+            .position(|action| action.selected),
+        Some(0)
+    );
+
+    state.apply_input(InputEvent::from_key_label("Esc"));
+
+    assert_eq!(
+        state.take_notification_response(),
+        Some(tundra_shell::ShellNotificationResponse {
+            notification_id: id,
+            action_id: "cancel".to_string(),
+        })
+    );
+    assert!(state.to_notification_view_model().is_none());
+}
+
+#[test]
+fn modal_notifications_are_fifo_and_low_priority_notifications_do_not_interrupt() {
+    let mut state = ShellState::new(debug_config(), (120, 40));
+    let first = state.notify_modal(
+        "First",
+        "First modal",
+        NotificationTone::Info,
+        vec![ShellNotificationAction::new("first-ok", "OK")],
+    );
+    let second = state.notify_modal(
+        "Second",
+        "Second modal",
+        NotificationTone::Info,
+        vec![ShellNotificationAction::new("second-ok", "OK")],
+    );
+
+    state.notify_status("Background work");
+    state.notify_toast("Saved in background");
+    state.notify_alert("Background warning");
+
+    let chrome = state.to_shell_chrome_view_model();
+    assert!(chrome.status.status.starts_with("Background work"));
+    assert_eq!(chrome.status.toast.as_deref(), Some("Saved in background"));
+    assert_eq!(chrome.status.error.as_deref(), Some("Background warning"));
+    assert_eq!(
+        state
+            .to_notification_view_model()
+            .as_ref()
+            .map(|model| model.title.as_str()),
+        Some("First")
+    );
+
+    state.apply_input(InputEvent::from_key_label(" "));
+    assert_eq!(
+        state.take_notification_response(),
+        Some(tundra_shell::ShellNotificationResponse {
+            notification_id: first,
+            action_id: "first-ok".to_string(),
+        })
+    );
+    assert_eq!(
+        state
+            .to_notification_view_model()
+            .as_ref()
+            .map(|model| model.title.as_str()),
+        Some("Second")
+    );
+
+    state.apply_input(InputEvent::from_key_label("Enter"));
+    assert_eq!(
+        state.take_notification_response(),
+        Some(tundra_shell::ShellNotificationResponse {
+            notification_id: second,
+            action_id: "second-ok".to_string(),
+        })
+    );
+    assert!(state.to_notification_view_model().is_none());
 }
 
 #[test]

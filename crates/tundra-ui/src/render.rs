@@ -6,7 +6,8 @@ use ratatui::widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragra
 use crate::{
     AuthField, BootstrapAdminViewModel, ClockViewModel, ExitConfirmViewModel,
     ExplorerDialogViewModel, ExplorerEntryViewModel, ExplorerSearchViewModel, ExplorerViewModel,
-    HomeDisplayMode, HomeViewModel, LoginField, LoginViewModel, SetupField, SetupStep,
+    HomeDisplayMode, HomeViewModel, LoginField, LoginViewModel, NotificationActionViewModel,
+    NotificationLevel, NotificationTone, NotificationViewModel, SetupField, SetupStep,
     SetupViewModel, ShellChromeViewModel, ShellLayout, TimeSyncDialogViewModel, TundraTheme,
     UserManagementField, UserManagementFormKind, UserManagementFormViewModel,
     UserManagementViewModel, compute_shell_layout,
@@ -141,6 +142,44 @@ pub fn render_time_sync_failure_dialog(
                 .title("Time Sync")
                 .borders(Borders::ALL)
                 .style(theme.error_style()),
+        )
+        .alignment(Alignment::Center)
+        .wrap(Wrap { trim: true });
+
+    frame.render_widget(Clear, dialog);
+    frame.render_widget(dialog_widget, dialog);
+}
+
+pub fn render_notification_overlay(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    model: &NotificationViewModel,
+    theme: &TundraTheme,
+) {
+    if model.level != NotificationLevel::Modal {
+        return;
+    }
+
+    let width = area.width.min(64);
+    let action_rows = if model.actions.is_empty() { 0 } else { 2 };
+    let height = area
+        .height
+        .min(7_u16.saturating_add(action_rows))
+        .max(3)
+        .min(area.height);
+    let dialog = centered_rect(area, width, height);
+    let mut lines = vec![Line::from(model.message.clone())];
+    if !model.actions.is_empty() {
+        lines.push(Line::from(""));
+        lines.push(notification_action_line(&model.actions, theme));
+    }
+
+    let dialog_widget = Paragraph::new(lines)
+        .block(
+            Block::default()
+                .title(model.title.as_str())
+                .borders(Borders::ALL)
+                .style(notification_tone_style(model.tone, theme)),
         )
         .alignment(Alignment::Center)
         .wrap(Wrap { trim: true });
@@ -1628,6 +1667,45 @@ fn status_line(status: &crate::StatusViewModel, theme: &TundraTheme) -> Line<'st
         spans.push(Span::styled(format!(" | {error}"), theme.error_style()));
     }
     Line::from(spans)
+}
+
+fn notification_action_line(
+    actions: &[NotificationActionViewModel],
+    theme: &TundraTheme,
+) -> Line<'static> {
+    let mut spans = Vec::new();
+    for (index, action) in actions.iter().enumerate() {
+        if index > 0 {
+            spans.push(Span::raw("    "));
+        }
+
+        let label = match &action.shortcut {
+            Some(shortcut) => format!("{shortcut}: {}", action.label),
+            None => action.label.clone(),
+        };
+        let text = if action.selected {
+            format!("[{label}]")
+        } else {
+            format!(" {label} ")
+        };
+        let style = if action.selected {
+            theme.title_style()
+        } else {
+            theme.body_style()
+        };
+        spans.push(Span::styled(text, style));
+    }
+
+    Line::from(spans)
+}
+
+fn notification_tone_style(tone: NotificationTone, theme: &TundraTheme) -> ratatui::style::Style {
+    match tone {
+        NotificationTone::Info => theme.body_style(),
+        NotificationTone::Success => theme.title_style(),
+        NotificationTone::Warning => theme.title_style(),
+        NotificationTone::Error | NotificationTone::Critical => theme.error_style(),
+    }
 }
 
 fn render_status_time_button(

@@ -21,6 +21,7 @@ use crossterm::terminal::{
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
 use ratatui::layout::Rect;
+use std::collections::VecDeque;
 use std::io::{self, Write};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -38,6 +39,10 @@ pub use tundra_weathr::network_clock::TIME_SYNC_INTERVAL;
 
 pub const BANNER_DISPLAY_DURATION: Duration = Duration::from_secs(2);
 const BANNER_ASSET_KEY: &str = "tundraux3";
+const DEFAULT_TOAST_TICKS: u16 = 16;
+const EXIT_CONFIRM_NOTIFICATION_KEY: &str = "shell.exit-confirm";
+const TIME_SYNC_NOTIFICATION_KEY: &str = "shell.time-sync-failure";
+const EXPLORER_DELETE_NOTIFICATION_KEY: &str = "explorer.delete-confirm";
 
 static PANIC_RESTORE_HOOK_INSTALLED: AtomicBool = AtomicBool::new(false);
 
@@ -752,6 +757,7 @@ pub enum ShellComponent {
     StatusBar,
     ExitDialog,
     TimeSyncDialog,
+    NotificationDialog,
     ContextMenu,
 }
 
@@ -780,6 +786,7 @@ impl ShellComponent {
             Self::StatusBar => "StatusBar",
             Self::ExitDialog => "ExitDialog",
             Self::TimeSyncDialog => "TimeSyncDialog",
+            Self::NotificationDialog => "NotificationDialog",
             Self::ContextMenu => "ContextMenu",
         }
     }
@@ -845,6 +852,355 @@ impl ShellHitMap {
 pub struct ShellPopup {
     pub owner: Option<ShellComponent>,
     pub anchor: CellPosition,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ShellNotificationAction {
+    pub id: String,
+    pub label: String,
+    pub shortcut: Option<InputKey>,
+    pub cancel: bool,
+    pub follow_up: Option<ShellCommand>,
+}
+
+impl ShellNotificationAction {
+    pub fn new(id: impl Into<String>, label: impl Into<String>) -> Self {
+        Self {
+            id: id.into(),
+            label: label.into(),
+            shortcut: None,
+            cancel: false,
+            follow_up: None,
+        }
+    }
+
+    pub fn with_shortcut(mut self, shortcut: InputKey) -> Self {
+        self.shortcut = Some(shortcut);
+        self
+    }
+
+    pub fn cancel(mut self) -> Self {
+        self.cancel = true;
+        self
+    }
+
+    pub fn with_follow_up(mut self, command: ShellCommand) -> Self {
+        self.follow_up = Some(command);
+        self
+    }
+
+    fn shortcut_label(&self) -> Option<String> {
+        self.shortcut.as_ref().map(InputKey::label)
+    }
+
+    fn matches_shortcut(&self, key: &InputKey) -> bool {
+        match (&self.shortcut, key) {
+            (Some(InputKey::Character(expected)), InputKey::Character(actual)) => {
+                expected.eq_ignore_ascii_case(actual)
+            }
+            (Some(expected), actual) => expected == actual,
+            _ => false,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ShellNotification {
+    pub id: u64,
+    pub key: Option<String>,
+    pub level: tundra_ui::NotificationLevel,
+    pub tone: tundra_ui::NotificationTone,
+    pub component: ShellComponent,
+    pub title: String,
+    pub message: String,
+    pub actions: Vec<ShellNotificationAction>,
+    selected_action: usize,
+}
+
+impl ShellNotification {
+    pub fn modal(
+        title: impl Into<String>,
+        message: impl Into<String>,
+        tone: tundra_ui::NotificationTone,
+        actions: Vec<ShellNotificationAction>,
+    ) -> Self {
+        Self {
+            id: 0,
+            key: None,
+            level: tundra_ui::NotificationLevel::Modal,
+            tone,
+            component: ShellComponent::NotificationDialog,
+            title: title.into(),
+            message: message.into(),
+            actions: non_empty_notification_actions(actions),
+            selected_action: 0,
+        }
+    }
+
+    pub fn with_key(mut self, key: impl Into<String>) -> Self {
+        self.key = Some(key.into());
+        self
+    }
+
+    pub fn with_component(mut self, component: ShellComponent) -> Self {
+        self.component = component;
+        self
+    }
+
+    fn to_view_model(&self) -> tundra_ui::NotificationViewModel {
+        tundra_ui::NotificationViewModel::new(
+            self.id.to_string(),
+            self.level,
+            self.tone,
+            self.title.clone(),
+            self.message.clone(),
+            self.actions
+                .iter()
+                .enumerate()
+                .map(|(index, action)| {
+                    let mut view =
+                        tundra_ui::NotificationActionViewModel::new(&action.id, &action.label);
+                    if let Some(shortcut) = action.shortcut_label() {
+                        view = view.with_shortcut(shortcut);
+                    }
+                    view.selected(index == self.selected_action)
+                })
+                .collect(),
+        )
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ShellNotificationResponse {
+    pub notification_id: u64,
+    pub action_id: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NotificationCenter {
+    status: String,
+    toast: Option<String>,
+    toast_ticks_remaining: Option<u16>,
+    alert: Option<String>,
+    alert_tone: tundra_ui::NotificationTone,
+    active_modal: Option<ShellNotification>,
+    modal_queue: VecDeque<ShellNotification>,
+    responses: VecDeque<ShellNotificationResponse>,
+    next_id: u64,
+}
+
+impl NotificationCenter {
+    pub fn new(status: impl Into<String>) -> Self {
+        Self {
+            status: status.into(),
+            toast: None,
+            toast_ticks_remaining: None,
+            alert: None,
+            alert_tone: tundra_ui::NotificationTone::Info,
+            active_modal: None,
+            modal_queue: VecDeque::new(),
+            responses: VecDeque::new(),
+            next_id: 1,
+        }
+    }
+
+    pub fn notify_status(&mut self, message: impl Into<String>) {
+        self.status = message.into();
+    }
+
+    pub fn notify_toast(&mut self, message: impl Into<String>) {
+        self.toast = Some(message.into());
+        self.toast_ticks_remaining = Some(DEFAULT_TOAST_TICKS);
+    }
+
+    pub fn notify_alert(&mut self, message: impl Into<String>, tone: tundra_ui::NotificationTone) {
+        self.alert = Some(message.into());
+        self.alert_tone = tone;
+    }
+
+    pub fn clear_alert(&mut self) {
+        self.alert = None;
+        self.alert_tone = tundra_ui::NotificationTone::Info;
+    }
+
+    pub fn tick(&mut self) {
+        if let Some(remaining) = self.toast_ticks_remaining.as_mut() {
+            *remaining = remaining.saturating_sub(1);
+            if *remaining == 0 {
+                self.toast = None;
+                self.toast_ticks_remaining = None;
+            }
+        }
+    }
+
+    pub fn push_modal(&mut self, mut notification: ShellNotification) -> u64 {
+        if let Some(key) = notification.key.clone()
+            && let Some(existing) = self.modal_with_key_mut(&key)
+        {
+            notification.id = existing.id;
+            *existing = notification;
+            return existing.id;
+        }
+
+        notification.id = self.next_id;
+        self.next_id = self.next_id.saturating_add(1).max(1);
+        let id = notification.id;
+        if self.active_modal.is_none() {
+            self.active_modal = Some(notification);
+        } else {
+            self.modal_queue.push_back(notification);
+        }
+        id
+    }
+
+    pub fn dismiss_modal_by_key(&mut self, key: &str) {
+        let active_matches = self
+            .active_modal
+            .as_ref()
+            .and_then(|modal| modal.key.as_deref())
+            == Some(key);
+        if active_matches {
+            self.active_modal = None;
+            self.promote_next_modal();
+        }
+        self.modal_queue
+            .retain(|modal| modal.key.as_deref() != Some(key));
+    }
+
+    pub fn has_active_modal(&self) -> bool {
+        self.active_modal.is_some()
+    }
+
+    pub fn active_modal_component(&self) -> Option<ShellComponent> {
+        self.active_modal.as_ref().map(|modal| modal.component)
+    }
+
+    pub fn active_modal_view_model(&self) -> Option<tundra_ui::NotificationViewModel> {
+        self.active_modal
+            .as_ref()
+            .map(ShellNotification::to_view_model)
+    }
+
+    pub fn active_modal_action_count(&self) -> usize {
+        self.active_modal
+            .as_ref()
+            .map(|modal| modal.actions.len())
+            .unwrap_or(0)
+    }
+
+    pub fn select_next_action(&mut self) {
+        let Some(modal) = self.active_modal.as_mut() else {
+            return;
+        };
+        if modal.actions.is_empty() {
+            return;
+        }
+        modal.selected_action = (modal.selected_action + 1) % modal.actions.len();
+    }
+
+    pub fn select_previous_action(&mut self) {
+        let Some(modal) = self.active_modal.as_mut() else {
+            return;
+        };
+        if modal.actions.is_empty() {
+            return;
+        }
+        modal.selected_action = if modal.selected_action == 0 {
+            modal.actions.len().saturating_sub(1)
+        } else {
+            modal.selected_action.saturating_sub(1)
+        };
+    }
+
+    pub fn action_index_for_key(&self, key: &InputKey) -> Option<usize> {
+        self.active_modal.as_ref().and_then(|modal| {
+            modal
+                .actions
+                .iter()
+                .position(|action| action.matches_shortcut(key))
+        })
+    }
+
+    pub fn cancel_action_index(&self) -> Option<usize> {
+        self.active_modal.as_ref().and_then(|modal| {
+            modal
+                .actions
+                .iter()
+                .position(|action| action.cancel)
+                .or_else(|| modal.actions.len().checked_sub(1))
+        })
+    }
+
+    pub fn activate_selected_action(&mut self) -> Option<ShellCommand> {
+        let index = self
+            .active_modal
+            .as_ref()
+            .map(|modal| modal.selected_action)?;
+        self.activate_action(index)
+    }
+
+    pub fn activate_action(&mut self, index: usize) -> Option<ShellCommand> {
+        let modal = self.active_modal.take()?;
+        if index >= modal.actions.len() {
+            self.active_modal = Some(modal);
+            return None;
+        }
+
+        let action = modal.actions[index].clone();
+        self.responses.push_back(ShellNotificationResponse {
+            notification_id: modal.id,
+            action_id: action.id,
+        });
+        self.promote_next_modal();
+        action.follow_up
+    }
+
+    pub fn take_response(&mut self) -> Option<ShellNotificationResponse> {
+        self.responses.pop_front()
+    }
+
+    pub fn status(&self) -> &str {
+        &self.status
+    }
+
+    pub fn toast(&self) -> Option<String> {
+        self.toast.clone()
+    }
+
+    pub fn alert(&self) -> Option<String> {
+        self.alert.clone()
+    }
+
+    fn modal_with_key_mut(&mut self, key: &str) -> Option<&mut ShellNotification> {
+        if self
+            .active_modal
+            .as_ref()
+            .and_then(|modal| modal.key.as_deref())
+            == Some(key)
+        {
+            return self.active_modal.as_mut();
+        }
+
+        self.modal_queue
+            .iter_mut()
+            .find(|modal| modal.key.as_deref() == Some(key))
+    }
+
+    fn promote_next_modal(&mut self) {
+        if self.active_modal.is_none() {
+            self.active_modal = self.modal_queue.pop_front();
+        }
+    }
+}
+
+fn non_empty_notification_actions(
+    actions: Vec<ShellNotificationAction>,
+) -> Vec<ShellNotificationAction> {
+    if actions.is_empty() {
+        vec![ShellNotificationAction::new("ok", "OK").cancel()]
+    } else {
+        actions
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1021,6 +1377,11 @@ pub enum ShellCommand {
     },
     ClosePopup,
     CloseTimeSyncDialog,
+    NotificationNextAction,
+    NotificationPreviousAction,
+    NotificationActivateSelected,
+    NotificationActivateAction(usize),
+    NotificationCancel,
     CaptureOverlayInput,
     RefreshHitMap {
         width: u16,
@@ -1253,8 +1614,7 @@ pub struct ShellState {
     hit_map: ShellHitMap,
     hit_map_generation: u64,
     tick_count: u64,
-    status_message: String,
-    toast_message: Option<String>,
+    notifications: NotificationCenter,
     error_message: Option<String>,
     shutdown_requested: bool,
     last_command: Option<ShellCommand>,
@@ -1345,6 +1705,10 @@ impl ShellState {
             .unwrap_or_default();
         let clock_timezone_id = startup_clock_timezone_id(&startup);
         let network_clock = ShellNetworkClock::new(clock_timezone_id.clone());
+        let mut notifications = NotificationCenter::new("Ready");
+        if startup.storage_report.has_recovery_warnings() {
+            notifications.notify_toast("Storage recovered defaults");
+        }
 
         let mut state = Self {
             home_mode,
@@ -1391,11 +1755,7 @@ impl ShellState {
             hit_map: ShellHitMap::empty(terminal_size),
             hit_map_generation: 0,
             tick_count: 0,
-            status_message: "Ready".to_string(),
-            toast_message: startup
-                .storage_report
-                .has_recovery_warnings()
-                .then(|| "Storage recovered defaults".to_string()),
+            notifications,
             error_message: None,
             shutdown_requested: false,
             last_command: None,
@@ -1708,13 +2068,13 @@ impl ShellState {
         {
             format!(
                 "{} | Key: {} | Mouse: {} | Resize: {}",
-                self.status_message,
+                self.notifications.status(),
                 self.last_key_event.as_deref().unwrap_or("none"),
                 self.last_mouse_event.as_deref().unwrap_or("none"),
                 self.last_resize_event.as_deref().unwrap_or("none")
             )
         } else {
-            self.status_message.clone()
+            self.notifications.status().to_string()
         };
         tundra_ui::ShellChromeViewModel {
             app_name: "TundraUX 3".to_string(),
@@ -1728,8 +2088,8 @@ impl ShellState {
                 .collect(),
             status: tundra_ui::StatusViewModel {
                 status,
-                toast: self.toast_message.clone(),
-                error: self.error_message.clone(),
+                toast: self.notifications.toast(),
+                error: self.notifications.alert(),
                 time_button_label: self.status_time_button_label(),
                 time_button_selected: self.time_button_selected(),
             },
@@ -2183,7 +2543,7 @@ impl ShellState {
         };
         let Some(username) = self.selected_login_username().map(str::to_string) else {
             self.error_message = Some("No user selected".to_string());
-            self.status_message = "Login failed".to_string();
+            self.notify_status("Login failed");
             return;
         };
         let password_hint = self.selected_login_password_hint().map(str::to_string);
@@ -2192,7 +2552,7 @@ impl ShellState {
             Ok(session) => self.complete_login(session),
             Err(error) => {
                 self.error_message = Some(login_error_message(&error, password_hint.as_deref()));
-                self.status_message = "Login failed".to_string();
+                self.notify_status("Login failed");
                 let _ = self.refresh_login_users_from_storage();
             }
         }
@@ -2213,13 +2573,13 @@ impl ShellState {
                     Ok(session) => self.complete_login(session),
                     Err(error) => {
                         self.error_message = Some(format_core_error(&error));
-                        self.status_message = "Login failed".to_string();
+                        self.notify_status("Login failed");
                     }
                 }
             }
             Err(error) => {
                 self.error_message = Some(format_core_error(&error));
-                self.status_message = "Admin bootstrap failed".to_string();
+                self.notify_status("Admin bootstrap failed");
             }
         }
     }
@@ -2236,7 +2596,7 @@ impl ShellState {
             self.setup_focused_field = tundra_ui::SetupField::AdminPasswordConfirm;
             self.focused_component = ShellComponent::SetupAdminPasswordConfirm;
             self.error_message = Some("Passwords do not match".to_string());
-            self.status_message = "Setup incomplete".to_string();
+            self.notify_status("Setup incomplete");
             return;
         }
 
@@ -2247,7 +2607,7 @@ impl ShellState {
             Ok(config) => config,
             Err(error) => {
                 self.error_message = Some(error.to_string());
-                self.status_message = "Setup failed".to_string();
+                self.notify_status("Setup failed");
                 return;
             }
         };
@@ -2256,7 +2616,7 @@ impl ShellState {
         let selected_timezone = config.timezone.clone();
         if let Err(error) = storage.save_config(&config) {
             self.error_message = Some(error.to_string());
-            self.status_message = "Setup failed".to_string();
+            self.notify_status("Setup failed");
             return;
         }
         self.set_clock_timezone(Some(selected_timezone));
@@ -2275,13 +2635,13 @@ impl ShellState {
                         self.setup_admin_password.clear();
                         self.setup_admin_password_confirm.clear();
                         self.error_message = Some(format_core_error(&error));
-                        self.status_message = "Login failed".to_string();
+                        self.notify_status("Login failed");
                     }
                 }
             }
             Err(error) => {
                 self.error_message = Some(format_core_error(&error));
-                self.status_message = "Setup failed".to_string();
+                self.notify_status("Setup failed");
             }
         }
     }
@@ -2294,7 +2654,7 @@ impl ShellState {
         self.setup_admin_password.clear();
         self.setup_admin_password_confirm.clear();
         self.error_message = None;
-        self.status_message = format!("Signed in as {}", session.username);
+        self.notify_status(format!("Signed in as {}", session.username));
         self.home_mode = ShellHomeMode::User;
 
         if self.requested_debug_mode {
@@ -2326,7 +2686,7 @@ impl ShellState {
                         AuditOutcome::Denied,
                         Some(reason),
                     );
-                    self.toast_message = Some("Debug mode denied".to_string());
+                    self.notify_toast("Debug mode denied");
                 }
             }
         }
@@ -2346,11 +2706,12 @@ impl ShellState {
         if self.refresh_user_management().is_ok() {
             self.screen_stack.push(ShellScreen::UserManagement);
             self.focused_component = ShellComponent::UserManagement;
-            self.status_message = if self.can_manage_all_users() {
-                "User Management".to_string()
+            let status = if self.can_manage_all_users() {
+                "User Management"
             } else {
-                "User Profile".to_string()
+                "User Profile"
             };
+            self.notify_status(status);
             self.refresh_hit_map();
         }
     }
@@ -2361,7 +2722,7 @@ impl ShellState {
         }
         self.active_popup = None;
         self.focused_component = ShellComponent::Clock;
-        self.status_message = "Clock".to_string();
+        self.notify_status("Clock");
         self.refresh_hit_map();
     }
 
@@ -2372,7 +2733,7 @@ impl ShellState {
         if self.screen_stack.is_empty() {
             self.screen_stack.push(ShellScreen::Home);
         }
-        self.status_message = "Ready".to_string();
+        self.notify_status("Ready");
         self.refresh_hit_map();
     }
 
@@ -2405,7 +2766,7 @@ impl ShellState {
         self.explorer_input.clear();
         self.screen_stack.push(ShellScreen::Explorer);
         self.focused_component = ShellComponent::Explorer;
-        self.status_message = "Explorer".to_string();
+        self.notify_status("Explorer");
         self.apply_explorer_command(ExplorerCommand::Refresh, platform);
         self.refresh_hit_map();
     }
@@ -2414,10 +2775,11 @@ impl ShellState {
         self.explorer_input_mode = ExplorerInputMode::Browse;
         self.explorer_input.clear();
         self.pop_to_home();
-        self.status_message = "Ready".to_string();
+        self.notify_status("Ready");
     }
 
     fn apply_explorer_command(&mut self, command: ExplorerCommand, platform: &dyn Platform) {
+        let command_kind = command.clone();
         let Some(storage) = self.storage_manager.clone() else {
             self.error_message = Some("Storage unavailable".to_string());
             return;
@@ -2429,14 +2791,38 @@ impl ShellState {
         };
 
         ExplorerController::default().apply(state, command, session.as_ref(), platform, &storage);
+        let pending_dialog = state.pending_dialog.clone();
         if let Some(error) = state.error.clone() {
-            self.error_message = Some(error);
-            self.status_message = "Explorer error".to_string();
+            self.error_message = Some(error.clone());
+            self.notify_alert_with_tone(error, tundra_ui::NotificationTone::Error);
+            self.notify_status("Explorer error");
         } else {
             self.error_message = None;
             if let Some(message) = state.message.clone() {
-                self.status_message = message;
+                self.notify_status(message);
             }
+        }
+
+        if command_kind == ExplorerCommand::DeleteToTrash
+            && let Some(dialog) = pending_dialog
+        {
+            self.notify_modal_with_options(
+                ShellNotification::modal(
+                    dialog.title,
+                    dialog.message,
+                    tundra_ui::NotificationTone::Warning,
+                    vec![
+                        ShellNotificationAction::new("confirm", "Move")
+                            .with_shortcut(InputKey::Character('y'))
+                            .with_follow_up(ShellCommand::ExplorerConfirmDelete),
+                        ShellNotificationAction::new("cancel", "Cancel")
+                            .with_shortcut(InputKey::Character('n'))
+                            .cancel()
+                            .with_follow_up(ShellCommand::CancelExplorerInput),
+                    ],
+                )
+                .with_key(EXPLORER_DELETE_NOTIFICATION_KEY),
+            );
         }
     }
 
@@ -2451,7 +2837,7 @@ impl ShellState {
         } else {
             String::new()
         };
-        self.status_message = explorer_input_prompt(mode).to_string();
+        self.notify_status(explorer_input_prompt(mode));
     }
 
     fn append_explorer_char(&mut self, character: char) {
@@ -2483,12 +2869,14 @@ impl ShellState {
         {
             state.pending_dialog = None;
             state.message = Some("Cancelled".to_string());
-            self.status_message = "Cancelled".to_string();
+            self.notifications
+                .dismiss_modal_by_key(EXPLORER_DELETE_NOTIFICATION_KEY);
+            self.notify_status("Cancelled");
             return;
         }
         self.explorer_input_mode = ExplorerInputMode::Browse;
         self.explorer_input.clear();
-        self.status_message = "Explorer".to_string();
+        self.notify_status("Explorer");
     }
 
     fn select_explorer_at(
@@ -2852,7 +3240,7 @@ impl ShellState {
         let _ = self.refresh_login_users_from_storage();
         self.screen_stack = vec![ShellScreen::Login];
         self.focused_component = ShellComponent::LoginUserList;
-        self.status_message = status.to_string();
+        self.notify_status(status);
         self.refresh_hit_map();
     }
 
@@ -2889,7 +3277,10 @@ impl ShellState {
         }
 
         self.selected_home_entry_index = index.min(entries.len() - 1);
-        self.status_message = format!("Home: {}", entries[self.selected_home_entry_index].label);
+        self.notify_status(format!(
+            "Home: {}",
+            entries[self.selected_home_entry_index].label
+        ));
     }
 
     fn select_home_entry_delta(&mut self, delta: isize) {
@@ -2925,7 +3316,7 @@ impl ShellState {
             "User Management" | "User Profile" => self.open_user_management(),
             label => {
                 self.error_message = None;
-                self.status_message = format!("{label} is not implemented yet");
+                self.notify_status(format!("{label} is not implemented yet"));
             }
         }
     }
@@ -2952,6 +3343,48 @@ impl ShellState {
         };
 
         tundra_ui::home_entry_index_at(main, self.user_home_entries().len(), coordinates)
+    }
+
+    fn notification_action_index_at(&self, coordinates: CellPosition) -> Option<usize> {
+        let modal = self.notifications.active_modal.as_ref()?;
+        if modal.actions.is_empty() {
+            return None;
+        }
+
+        let dialog = notification_dialog_rect(self.terminal_size);
+        let inner_x = dialog.x.saturating_add(1);
+        let inner_y = dialog.y.saturating_add(1);
+        let inner_width = dialog.width.saturating_sub(2);
+        let action_y = inner_y.saturating_add(2);
+        if coordinates.1 != action_y {
+            return None;
+        }
+
+        let labels = modal
+            .actions
+            .iter()
+            .map(notification_action_display_label)
+            .collect::<Vec<_>>();
+        let total_width = labels
+            .iter()
+            .enumerate()
+            .map(|(index, label)| label.chars().count() + if index == 0 { 0 } else { 4 })
+            .sum::<usize>();
+        let total_width = u16::try_from(total_width).unwrap_or(u16::MAX);
+        let mut cursor = inner_x.saturating_add(inner_width.saturating_sub(total_width) / 2);
+
+        for (index, label) in labels.iter().enumerate() {
+            if index > 0 {
+                cursor = cursor.saturating_add(4);
+            }
+            let width = u16::try_from(label.chars().count()).unwrap_or(u16::MAX);
+            if coordinates.0 >= cursor && coordinates.0 < cursor.saturating_add(width) {
+                return Some(index);
+            }
+            cursor = cursor.saturating_add(width);
+        }
+
+        None
     }
 
     pub fn apply_input(&mut self, input: InputEvent) -> ShellAction {
@@ -3003,6 +3436,8 @@ impl ShellState {
         self.record_input_diagnostics(&routed);
         self.last_routed_target = Some(routed.target);
         self.last_command = Some(routed.command.clone());
+        let routed_input = routed.input.clone();
+        let routed_target = routed.target;
 
         match routed.command {
             ShellCommand::Shutdown => {
@@ -3011,6 +3446,7 @@ impl ShellState {
             }
             ShellCommand::Tick => {
                 self.tick_count = self.tick_count.saturating_add(1);
+                self.notifications.tick();
                 ShellAction::Redraw
             }
             ShellCommand::RefreshHitMap { width, height } => {
@@ -3030,8 +3466,25 @@ impl ShellState {
                     self.screen_stack.push(ShellScreen::ExitConfirm);
                 }
                 self.active_popup = None;
-                self.focused_component = ShellComponent::ExitDialog;
-                self.status_message = "Confirm exit".to_string();
+                self.notify_status("Confirm exit");
+                self.notify_modal_with_options(
+                    ShellNotification::modal(
+                        "Exit TundraUX 3",
+                        "Leave the shell and restore the terminal?",
+                        tundra_ui::NotificationTone::Warning,
+                        vec![
+                            ShellNotificationAction::new("confirm", "Exit")
+                                .with_shortcut(InputKey::Character('y'))
+                                .with_follow_up(ShellCommand::ConfirmExit),
+                            ShellNotificationAction::new("cancel", "Cancel")
+                                .with_shortcut(InputKey::Character('n'))
+                                .cancel()
+                                .with_follow_up(ShellCommand::CancelExit),
+                        ],
+                    )
+                    .with_key(EXIT_CONFIRM_NOTIFICATION_KEY)
+                    .with_component(ShellComponent::ExitDialog),
+                );
                 self.refresh_hit_map();
                 ShellAction::Redraw
             }
@@ -3040,20 +3493,22 @@ impl ShellState {
                 ShellAction::Exit
             }
             ShellCommand::CancelExit => {
+                self.notifications
+                    .dismiss_modal_by_key(EXIT_CONFIRM_NOTIFICATION_KEY);
                 self.cancel_exit_confirmation();
                 self.active_popup = None;
-                self.status_message = "Ready".to_string();
+                self.notify_status("Ready");
                 self.refresh_hit_map();
                 ShellAction::Redraw
             }
             ShellCommand::FocusNext => {
                 self.move_focus(1);
-                self.status_message = format!("Focus: {}", self.focused_component.label());
+                self.notify_status(format!("Focus: {}", self.focused_component.label()));
                 ShellAction::Redraw
             }
             ShellCommand::FocusPrevious => {
                 self.move_focus(-1);
-                self.status_message = format!("Focus: {}", self.focused_component.label());
+                self.notify_status(format!("Focus: {}", self.focused_component.label()));
                 ShellAction::Redraw
             }
             ShellCommand::AppendAuthChar(character) => {
@@ -3267,6 +3722,8 @@ impl ShellState {
             }
             ShellCommand::ExplorerConfirmDelete => {
                 self.apply_explorer_command(ExplorerCommand::ConfirmDelete, platform);
+                self.notifications
+                    .dismiss_modal_by_key(EXPLORER_DELETE_NOTIFICATION_KEY);
                 ShellAction::Redraw
             }
             ShellCommand::ExplorerSelectAt(coordinates, click) => {
@@ -3312,7 +3769,7 @@ impl ShellState {
             ShellCommand::CloseUserManagement => {
                 self.user_management_mode = UserManagementMode::Browse;
                 self.pop_to_home();
-                self.status_message = "Ready".to_string();
+                self.notify_status("Ready");
                 self.refresh_hit_map();
                 ShellAction::Redraw
             }
@@ -3403,7 +3860,7 @@ impl ShellState {
                     ClickKind::Single => "single click",
                     ClickKind::Double => "double click",
                 };
-                self.status_message = format!("{} activated by {click_label}", target.label());
+                self.notify_status(format!("{} activated by {click_label}", target.label()));
                 ShellAction::Redraw
             }
             ShellCommand::OpenContextMenu {
@@ -3420,16 +3877,17 @@ impl ShellState {
                     anchor: coordinates,
                 });
                 self.focused_component = ShellComponent::ContextMenu;
-                self.status_message = match target {
+                let status = match target {
                     Some(target) => format!("Context menu: {}", target.label()),
                     None => "Context menu".to_string(),
                 };
+                self.notify_status(status);
                 self.refresh_hit_map();
                 ShellAction::Redraw
             }
             ShellCommand::ClosePopup => {
                 self.active_popup = None;
-                self.status_message = "Ready".to_string();
+                self.notify_status("Ready");
                 self.refresh_hit_map();
                 ShellAction::Redraw
             }
@@ -3437,8 +3895,29 @@ impl ShellState {
                 self.close_time_sync_dialog();
                 ShellAction::Redraw
             }
+            ShellCommand::NotificationNextAction => {
+                self.notifications.select_next_action();
+                ShellAction::Redraw
+            }
+            ShellCommand::NotificationPreviousAction => {
+                self.notifications.select_previous_action();
+                ShellAction::Redraw
+            }
+            ShellCommand::NotificationActivateSelected => {
+                self.activate_notification_selected(routed_input, routed_target, platform)
+            }
+            ShellCommand::NotificationActivateAction(index) => {
+                self.activate_notification_action(index, routed_input, routed_target, platform)
+            }
+            ShellCommand::NotificationCancel => {
+                if let Some(index) = self.notifications.cancel_action_index() {
+                    self.activate_notification_action(index, routed_input, routed_target, platform)
+                } else {
+                    ShellAction::Redraw
+                }
+            }
             ShellCommand::CaptureOverlayInput => {
-                self.status_message = "Overlay captured input".to_string();
+                self.notify_status("Overlay captured input");
                 ShellAction::Redraw
             }
             ShellCommand::RecordInput | ShellCommand::Noop => ShellAction::Redraw,
@@ -3489,7 +3968,53 @@ impl ShellState {
     }
 
     pub fn status(&self) -> &str {
-        &self.status_message
+        self.notifications.status()
+    }
+
+    pub fn notify_status(&mut self, message: impl Into<String>) {
+        self.notifications.notify_status(message);
+    }
+
+    pub fn notify_toast(&mut self, message: impl Into<String>) {
+        self.notifications.notify_toast(message);
+    }
+
+    pub fn notify_alert(&mut self, message: impl Into<String>) {
+        self.notifications
+            .notify_alert(message, tundra_ui::NotificationTone::Warning);
+    }
+
+    pub fn notify_alert_with_tone(
+        &mut self,
+        message: impl Into<String>,
+        tone: tundra_ui::NotificationTone,
+    ) {
+        self.notifications.notify_alert(message, tone);
+    }
+
+    pub fn clear_notification_alert(&mut self) {
+        self.notifications.clear_alert();
+    }
+
+    pub fn notify_modal(
+        &mut self,
+        title: impl Into<String>,
+        message: impl Into<String>,
+        tone: tundra_ui::NotificationTone,
+        actions: Vec<ShellNotificationAction>,
+    ) -> u64 {
+        self.notify_modal_with_options(
+            ShellNotification::modal(title, message, tone, actions)
+                .with_component(ShellComponent::NotificationDialog),
+        )
+    }
+
+    pub fn take_notification_response(&mut self) -> Option<ShellNotificationResponse> {
+        self.notifications.take_response()
+    }
+
+    pub fn to_notification_view_model(&self) -> Option<tundra_ui::NotificationViewModel> {
+        self.notifications.active_modal_view_model()
     }
 
     pub fn current_time_label(&self) -> String {
@@ -3602,6 +4127,63 @@ impl ShellState {
         self.auth_session.as_ref()
     }
 
+    fn notify_modal_with_options(&mut self, notification: ShellNotification) -> u64 {
+        let id = self.notifications.push_modal(notification);
+        self.active_popup = None;
+        if let Some(component) = self.notifications.active_modal_component() {
+            self.focused_component = component;
+        }
+        self.refresh_hit_map();
+        id
+    }
+
+    fn activate_notification_selected(
+        &mut self,
+        input: InputEvent,
+        target: RoutedTarget,
+        platform: &dyn Platform,
+    ) -> ShellAction {
+        let follow_up = self.notifications.activate_selected_action();
+        self.apply_notification_follow_up(follow_up, input, target, platform)
+    }
+
+    fn activate_notification_action(
+        &mut self,
+        index: usize,
+        input: InputEvent,
+        target: RoutedTarget,
+        platform: &dyn Platform,
+    ) -> ShellAction {
+        let follow_up = self.notifications.activate_action(index);
+        self.apply_notification_follow_up(follow_up, input, target, platform)
+    }
+
+    fn apply_notification_follow_up(
+        &mut self,
+        follow_up: Option<ShellCommand>,
+        input: InputEvent,
+        target: RoutedTarget,
+        platform: &dyn Platform,
+    ) -> ShellAction {
+        self.refresh_hit_map();
+        if let Some(component) = self.notifications.active_modal_component() {
+            self.focused_component = component;
+        }
+
+        let Some(command) = follow_up else {
+            return ShellAction::Redraw;
+        };
+
+        self.apply_routed_event(
+            RoutedEvent {
+                input,
+                target,
+                command,
+            },
+            platform,
+        )
+    }
+
     fn apply_time_sync_success_utc(&mut self, utc: DateTime<Utc>) {
         self.last_time_sync_utc = Some(utc);
         self.network_clock.apply_sync(Ok(utc));
@@ -3609,7 +4191,9 @@ impl ShellState {
         if self.time_sync_dialog_visible {
             self.time_sync_dialog_visible = false;
             self.time_sync_failure_message = None;
-            self.status_message = "Ready".to_string();
+            self.notifications
+                .dismiss_modal_by_key(TIME_SYNC_NOTIFICATION_KEY);
+            self.notify_status("Ready");
         }
 
         self.refresh_hit_map();
@@ -3619,15 +4203,31 @@ impl ShellState {
         self.time_sync_dialog_visible = true;
         self.time_sync_failure_message = Some(message.clone());
         self.active_popup = None;
-        self.focused_component = ShellComponent::TimeSyncDialog;
-        self.status_message = message;
+        self.notify_status(message.clone());
+        self.notify_modal_with_options(
+            ShellNotification::modal(
+                "Time Sync",
+                message,
+                tundra_ui::NotificationTone::Error,
+                vec![
+                    ShellNotificationAction::new("ok", "OK")
+                        .with_shortcut(InputKey::Escape)
+                        .cancel()
+                        .with_follow_up(ShellCommand::CloseTimeSyncDialog),
+                ],
+            )
+            .with_key(TIME_SYNC_NOTIFICATION_KEY)
+            .with_component(ShellComponent::TimeSyncDialog),
+        );
         self.refresh_hit_map();
     }
 
     fn close_time_sync_dialog(&mut self) {
         self.time_sync_dialog_visible = false;
         self.time_sync_failure_message = None;
-        self.status_message = "Ready".to_string();
+        self.notifications
+            .dismiss_modal_by_key(TIME_SYNC_NOTIFICATION_KEY);
+        self.notify_status("Ready");
         self.refresh_hit_map();
     }
 
@@ -3655,6 +4255,10 @@ impl ShellState {
 
         if key.is_ctrl_c() {
             return (RoutedTarget::Global, ShellCommand::Shutdown);
+        }
+
+        if self.notifications.has_active_modal() {
+            return self.route_notification_key(key);
         }
 
         if self.time_sync_dialog_visible {
@@ -3845,6 +4449,34 @@ impl ShellState {
             ShellCommand::CloseClock
         } else {
             ShellCommand::OpenClock
+        }
+    }
+
+    fn route_notification_key(&self, key: &KeyInput) -> (RoutedTarget, ShellCommand) {
+        let target_component = self
+            .notifications
+            .active_modal_component()
+            .unwrap_or(ShellComponent::NotificationDialog);
+        let target = RoutedTarget::Modal(target_component);
+
+        if let Some(index) = self.notifications.action_index_for_key(&key.key) {
+            return (target, ShellCommand::NotificationActivateAction(index));
+        }
+
+        match &key.key {
+            InputKey::BackTab => (target, ShellCommand::NotificationPreviousAction),
+            InputKey::Tab if key.modifiers.shift => {
+                (target, ShellCommand::NotificationPreviousAction)
+            }
+            InputKey::Tab | InputKey::Right | InputKey::Down => {
+                (target, ShellCommand::NotificationNextAction)
+            }
+            InputKey::Left | InputKey::Up => (target, ShellCommand::NotificationPreviousAction),
+            InputKey::Enter | InputKey::Character(' ') => {
+                (target, ShellCommand::NotificationActivateSelected)
+            }
+            InputKey::Escape => (target, ShellCommand::NotificationCancel),
+            _ => (target, ShellCommand::CaptureOverlayInput),
         }
     }
 
@@ -4098,6 +4730,10 @@ impl ShellState {
         let coordinates = mouse.coordinates();
         let hit_target = self.hit_map.target_at(coordinates);
 
+        if self.notifications.has_active_modal() {
+            return self.route_notification_mouse(mouse, hit_target);
+        }
+
         if self.time_sync_dialog_visible {
             return self.route_time_sync_dialog_mouse(mouse, hit_target);
         }
@@ -4196,6 +4832,33 @@ impl ShellState {
                 RoutedTarget::Modal(ShellComponent::TimeSyncDialog),
                 ShellCommand::CaptureOverlayInput,
             ),
+        }
+    }
+
+    fn route_notification_mouse(
+        &mut self,
+        mouse: MouseInput,
+        hit_target: Option<ShellComponent>,
+    ) -> (RoutedTarget, ShellCommand) {
+        let target_component = self
+            .notifications
+            .active_modal_component()
+            .unwrap_or(ShellComponent::NotificationDialog);
+        let target = RoutedTarget::Modal(target_component);
+
+        match mouse {
+            MouseInput::Moved { .. } => (target, ShellCommand::Hover(hit_target)),
+            _ if mouse.down_button().is_some() => {
+                if hit_target != Some(target_component) {
+                    return (target, ShellCommand::CaptureOverlayInput);
+                }
+                let coordinates = mouse.coordinates();
+                match self.notification_action_index_at(coordinates) {
+                    Some(index) => (target, ShellCommand::NotificationActivateAction(index)),
+                    None => (target, ShellCommand::CaptureOverlayInput),
+                }
+            }
+            _ => (target, ShellCommand::CaptureOverlayInput),
         }
     }
 
@@ -4523,6 +5186,7 @@ impl ShellState {
             self.hit_map_generation,
             time_button_label.as_deref(),
             self.time_sync_dialog_visible,
+            self.notifications.active_modal_component(),
         );
         self.sync_home_entry_selection();
 
@@ -4536,6 +5200,9 @@ impl ShellState {
     }
 
     fn focus_order(&self) -> Vec<ShellComponent> {
+        if let Some(component) = self.notifications.active_modal_component() {
+            return vec![component];
+        }
         if self.time_sync_dialog_visible {
             return vec![ShellComponent::TimeSyncDialog];
         }
@@ -4737,6 +5404,7 @@ fn build_shell_hit_map(
     generation: u64,
     time_button_label: Option<&str>,
     time_sync_dialog_visible: bool,
+    notification_modal_component: Option<ShellComponent>,
 ) -> ShellHitMap {
     let (width, height) = terminal_size;
     let area = Rect::new(0, 0, width, height);
@@ -4847,6 +5515,13 @@ fn build_shell_hit_map(
         regions.push(ShellHitRegion {
             component: ShellComponent::TimeSyncDialog,
             area: centered_rect(area, width.min(34), height.min(5)),
+        });
+    }
+
+    if let Some(component) = notification_modal_component {
+        regions.push(ShellHitRegion {
+            component,
+            area: notification_dialog_rect(terminal_size),
         });
     }
 
@@ -5136,6 +5811,19 @@ fn centered_rect(area: Rect, width: u16, height: u16) -> Rect {
         width,
         height,
     )
+}
+
+fn notification_dialog_rect(terminal_size: CellPosition) -> Rect {
+    let (width, height) = terminal_size;
+    let area = Rect::new(0, 0, width, height);
+    centered_rect(area, width.min(64), height.min(9).max(3).min(height))
+}
+
+fn notification_action_display_label(action: &ShellNotificationAction) -> String {
+    match action.shortcut_label() {
+        Some(shortcut) => format!(" {shortcut}: {} ", action.label),
+        None => format!(" {} ", action.label),
+    }
 }
 
 fn clock_display_label(display: tundra_weathr::network_clock::ClockDisplay) -> String {
@@ -5662,6 +6350,7 @@ pub fn run_fullscreen_blocking(
         let bootstrap_admin = state.to_bootstrap_admin_view_model();
         let user_management = state.to_user_management_view_model();
         let explorer = state.to_explorer_view_model();
+        let notification = state.to_notification_view_model();
         let active_screen = state.active_screen();
         let exit_confirmation = tundra_ui::ExitConfirmViewModel::new();
 
@@ -5703,11 +6392,16 @@ pub fn run_fullscreen_blocking(
                 }
             }
 
-            if active_screen == ShellScreen::ExitConfirm {
+            if notification.is_none() && active_screen == ShellScreen::ExitConfirm {
                 tundra_ui::render_exit_confirmation(frame, area, &exit_confirmation, &theme);
             }
-            if let Some(dialog) = time_sync_dialog.as_ref() {
+            if notification.is_none()
+                && let Some(dialog) = time_sync_dialog.as_ref()
+            {
                 tundra_ui::render_time_sync_failure_dialog(frame, area, dialog, &theme);
+            }
+            if let Some(notification) = notification.as_ref() {
+                tundra_ui::render_notification_overlay(frame, area, notification, &theme);
             }
         })?;
 
