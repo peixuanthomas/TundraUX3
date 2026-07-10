@@ -545,7 +545,7 @@ fn extremely_small_compact_layout_uses_borderless_notification_fallback() {
 }
 
 #[test]
-fn clock_placeholder_and_time_sync_failure_dialog_render_expected_content() {
+fn clock_compatibility_entrypoint_and_time_sync_failure_dialog_render_expected_content() {
     let mut clock_terminal = Terminal::new(TestBackend::new(80, 24)).expect("test terminal");
     let clock = ClockViewModel::new("2026-07-10 09:30 Asia/Shanghai");
 
@@ -563,7 +563,9 @@ fn clock_placeholder_and_time_sync_failure_dialog_render_expected_content() {
 
     let output = terminal_output(&clock_terminal);
     assert!(output.contains("Clock"));
-    assert!(output.contains("Current time: 2026-07-10 09:30 Asia/Shanghai"));
+    assert!(output.contains("2026-07-10"));
+    assert!(output.contains("09:30"));
+    assert!(output.contains("Alarms & Timers"));
 
     let mut dialog_terminal = Terminal::new(TestBackend::new(80, 24)).expect("test terminal");
     dialog_terminal
@@ -668,7 +670,7 @@ fn modal_notification_tones_have_text_labels() {
 }
 
 #[test]
-fn notification_layout_uses_nominal_size_and_treats_either_smaller_dimension_as_too_small() {
+fn notification_layout_uses_nominal_size_and_adapts_to_full_shell_widths() {
     let model = NotificationViewModel::new(
         "42",
         NotificationLevel::Modal,
@@ -695,17 +697,24 @@ fn notification_layout_uses_nominal_size_and_treats_either_smaller_dimension_as_
     assert_eq!(layout.actions[1].index, 1);
     assert_eq!(layout.actions[1].area, Rect::new(38, 10, 11, 1));
 
+    let NotificationLayout::Dialog(narrow) = notification_layout(Rect::new(0, 0, 50, 12), &model)
+    else {
+        panic!("the minimum full-shell width must keep modal actions operable");
+    };
+    assert_eq!(narrow.dialog.width, 50);
+    assert_eq!(narrow.actions.len(), 2);
+    assert!(narrow.actions.iter().all(|action| action.area.width > 0));
     assert_eq!(
-        notification_layout(Rect::new(0, 0, 63, 9), &model),
+        notification_layout(Rect::new(0, 0, 39, 9), &model),
         NotificationLayout::TooSmall {
-            required_width: 64,
+            required_width: 40,
             required_height: 9,
         }
     );
     assert_eq!(
         notification_layout(Rect::new(0, 0, 64, 8), &model),
         NotificationLayout::TooSmall {
-            required_width: 64,
+            required_width: 40,
             required_height: 9,
         }
     );
@@ -737,7 +746,7 @@ fn notification_layout_and_renderer_share_wrapped_message_and_stacked_action_rec
     assert_eq!(
         notification_layout(Rect::new(0, 0, 64, 9), &model),
         NotificationLayout::TooSmall {
-            required_width: 64,
+            required_width: 40,
             required_height: 10,
         }
     );

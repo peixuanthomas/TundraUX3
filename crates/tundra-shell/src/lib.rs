@@ -1,3 +1,8 @@
+mod clock_scheduler;
+
+use clock_scheduler::{
+    ClockEntryKind as ScheduledClockEntryKind, ClockScheduler, ClockSchedulerError, DueEvent,
+};
 use tundra_apps::explorer::{ExplorerCommand, ExplorerController, ExplorerState};
 use tundra_core::{
     AuditOutcome, AuditService, AuthSession, CoreError, DebugPolicy, PASSWORD_MAX_LEN,
@@ -5,7 +10,8 @@ use tundra_core::{
     UserService,
 };
 use tundra_storage::{
-    CONFIG_DESCRIPTOR, SCHEMA_VERSION, StorageError, StorageLoadReport, StorageManager, UserRecord,
+    CLOCK_DESCRIPTOR, CONFIG_DESCRIPTOR, ClockProfile, SCHEMA_VERSION, StorageError,
+    StorageLoadReport, StorageManager, UserRecord,
 };
 
 use chrono::{DateTime, Timelike, Utc};
@@ -50,6 +56,9 @@ const TIME_SYNC_NOTIFICATION_KEY: &str = "shell.time-sync-failure";
 const EXPLORER_DELETE_NOTIFICATION_KEY: &str = "explorer.delete-confirm";
 const EXPLORER_ALERT_KEY: &str = "explorer.operation";
 const USER_MANAGEMENT_REFRESH_ALERT_KEY: &str = "user-management.refresh";
+const CLOCK_STORAGE_ALERT_KEY: &str = "clock.storage";
+const CLOCK_MANAGE_NOTIFICATION_KEY_PREFIX: &str = "clock.manage";
+const CLOCK_DUE_NOTIFICATION_KEY_PREFIX: &str = "clock.due";
 
 static PANIC_RESTORE_HOOK_INSTALLED: AtomicBool = AtomicBool::new(false);
 
@@ -783,6 +792,12 @@ pub enum ShellComponent {
     Home,
     ClockButton,
     Clock,
+    ClockNewButton,
+    ClockEntryList,
+    ClockCreateDialog,
+    ClockCreateInput,
+    ClockCreateAlarmButton,
+    ClockCreateCountdownButton,
     LoginUserList,
     LoginUsername,
     LoginPassword,
@@ -812,6 +827,12 @@ impl ShellComponent {
             Self::Home => "Home",
             Self::ClockButton => "ClockButton",
             Self::Clock => "Clock",
+            Self::ClockNewButton => "ClockNewButton",
+            Self::ClockEntryList => "ClockEntryList",
+            Self::ClockCreateDialog => "ClockCreateDialog",
+            Self::ClockCreateInput => "ClockCreateInput",
+            Self::ClockCreateAlarmButton => "ClockCreateAlarmButton",
+            Self::ClockCreateCountdownButton => "ClockCreateCountdownButton",
             Self::LoginUserList => "LoginUserList",
             Self::LoginUsername => "LoginUsername",
             Self::LoginPassword => "LoginPassword",
@@ -1120,11 +1141,26 @@ impl NotificationCenter {
     }
 
     pub fn resolve_alert(&mut self, key: &str) {
+        let had_alerts = !self.alerts.is_empty();
         self.alerts.retain(|alert| alert.key != key);
+        if had_alerts && self.alerts.is_empty() && self.toast.is_some() {
+            let now = Instant::now();
+            self.toast_expires_at = now.checked_add(DEFAULT_TOAST_DURATION).or(Some(now));
+        }
     }
 
     pub fn clear_alert(&mut self) {
+        let had_alerts = !self.alerts.is_empty();
         self.alerts.clear();
+        if had_alerts && self.toast.is_some() {
+            let now = Instant::now();
+            self.toast_expires_at = now.checked_add(DEFAULT_TOAST_DURATION).or(Some(now));
+        }
+    }
+
+    pub fn clear_toast(&mut self) {
+        self.toast = None;
+        self.toast_expires_at = None;
     }
 
     pub fn tick(&mut self) {
@@ -1132,9 +1168,10 @@ impl NotificationCenter {
     }
 
     pub fn expire(&mut self, now: Instant) {
-        if self
-            .toast_expires_at
-            .is_some_and(|expires_at| now >= expires_at)
+        if self.alerts.is_empty()
+            && self
+                .toast_expires_at
+                .is_some_and(|expires_at| now >= expires_at)
         {
             self.toast = None;
             self.toast_expires_at = None;
@@ -1142,6 +1179,9 @@ impl NotificationCenter {
     }
 
     pub fn poll_timeout(&self, now: Instant, maximum: Duration) -> Duration {
+        if !self.alerts.is_empty() {
+            return maximum;
+        }
         match self.toast_expires_at {
             Some(expires_at) => expires_at
                 .checked_duration_since(now)
@@ -1183,6 +1223,24 @@ impl NotificationCenter {
         }
         self.modal_queue
             .retain(|modal| modal.key.as_deref() != Some(key));
+    }
+
+    fn dismiss_modals_by_key_prefix(&mut self, prefix: &str) {
+        self.modal_queue.retain(|modal| {
+            !modal
+                .key
+                .as_deref()
+                .is_some_and(|key| key.starts_with(prefix))
+        });
+        while self
+            .active_modal
+            .as_ref()
+            .and_then(|modal| modal.key.as_deref())
+            .is_some_and(|key| key.starts_with(prefix))
+        {
+            self.active_modal = None;
+            self.promote_next_modal();
+        }
     }
 
     pub fn has_active_modal(&self) -> bool {
@@ -1465,6 +1523,23 @@ enum ExplorerInputMode {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+struct ClockCreateState {
+    input: String,
+    error: Option<String>,
+    focus: tundra_ui::ClockCreateDialogFocus,
+}
+
+impl Default for ClockCreateState {
+    fn default() -> Self {
+        Self {
+            input: String::new(),
+            error: None,
+            focus: tundra_ui::ClockCreateDialogFocus::Input,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ShellCommand {
     Noop,
     Tick,
@@ -1542,6 +1617,27 @@ pub enum ShellCommand {
     CloseUserManagement,
     OpenClock,
     CloseClock,
+    ClockOpenCreate,
+    ClockCloseCreate,
+    ClockCreateFocusNext,
+    ClockCreateFocusPrevious,
+    ClockCreateSetFocus(tundra_ui::ClockCreateDialogFocus),
+    ClockCreateAppend(char),
+    ClockCreateBackspace,
+    ClockCreateAlarm,
+    ClockCreateCountdown,
+    ClockSelectPrevious,
+    ClockSelectNext,
+    ClockSelectPageUp,
+    ClockSelectPageDown,
+    ClockSelectFirst,
+    ClockSelectLast,
+    ClockSelectEntry(u64),
+    ClockActivateSelected,
+    ClockManageEntry(u64),
+    ClockDeleteEntry(u64),
+    ClockToggleStrong(u64),
+    ClockSnoozeFiveMinutes(u64),
     UserManagementNext,
     UserManagementPrevious,
     CreateManagedUser(UserRole),
@@ -1750,6 +1846,10 @@ impl ShellNetworkClock {
     fn current(&self) -> tundra_weathr::network_clock::ClockDisplay {
         self.0.current()
     }
+
+    fn snapshot(&self) -> tundra_weathr::network_clock::ClockSnapshot {
+        self.0.snapshot()
+    }
 }
 
 impl PartialEq for ShellNetworkClock {
@@ -1769,6 +1869,14 @@ pub struct ShellState {
     network_clock: ShellNetworkClock,
     clock_timezone_id: Option<String>,
     last_time_sync_utc: Option<DateTime<Utc>>,
+    clock_scheduler: Option<ClockScheduler>,
+    clock_selected_entry_id: Option<u64>,
+    clock_entry_window_start: usize,
+    clock_create_state: Option<ClockCreateState>,
+    clock_persist_pending: bool,
+    clock_pending_due_summary: Option<String>,
+    clock_profile_pending_sync: Option<ClockProfile>,
+    time_sync_attempted: bool,
     time_sync_dialog_visible: bool,
     time_sync_failure_message: Option<String>,
     auth_session: Option<AuthSession>,
@@ -1914,6 +2022,14 @@ impl ShellState {
             network_clock,
             clock_timezone_id,
             last_time_sync_utc: None,
+            clock_scheduler: None,
+            clock_selected_entry_id: None,
+            clock_entry_window_start: 0,
+            clock_create_state: None,
+            clock_persist_pending: false,
+            clock_pending_due_summary: None,
+            clock_profile_pending_sync: None,
+            time_sync_attempted: false,
             time_sync_dialog_visible: false,
             time_sync_failure_message: None,
             auth_session: None,
@@ -2054,9 +2170,62 @@ impl ShellState {
     }
 
     pub fn to_clock_view_model(&self) -> tundra_ui::ClockViewModel {
-        tundra_ui::ClockViewModel {
-            current_time: self.current_time_label(),
+        let snapshot = self.network_clock.snapshot();
+        self.to_clock_view_model_at(&snapshot, Instant::now())
+    }
+
+    fn to_clock_view_model_at(
+        &self,
+        snapshot: &tundra_weathr::network_clock::ClockSnapshot,
+        now: Instant,
+    ) -> tundra_ui::ClockViewModel {
+        let mut alarms = Vec::new();
+        let mut countdowns = Vec::new();
+        if let Some(scheduler) = &self.clock_scheduler {
+            for entry in scheduler.entries(now) {
+                let label = match entry.kind {
+                    ScheduledClockEntryKind::DailyAlarm => {
+                        if entry.snoozed {
+                            format!("{} Daily (snoozed)", entry.display_time)
+                        } else {
+                            format!("{} Daily", entry.display_time)
+                        }
+                    }
+                    ScheduledClockEntryKind::Countdown => {
+                        format!("{} left", entry.display_time)
+                    }
+                };
+                let view = tundra_ui::ClockEntryViewModel::new(entry.id, label, entry.strong);
+                match entry.kind {
+                    ScheduledClockEntryKind::DailyAlarm => alarms.push(view),
+                    ScheduledClockEntryKind::Countdown => countdowns.push(view),
+                }
+            }
         }
+
+        let mut model = tundra_ui::ClockViewModel::at(
+            snapshot.date.to_string(),
+            snapshot.time.format("%H:%M:%S").to_string(),
+            snapshot.time.hour() as u8,
+            snapshot.time.minute() as u8,
+            snapshot.time.second() as u8,
+        )
+        .with_ascii_assets(self.ascii_assets.clone());
+        model.alarms = alarms;
+        model.countdowns = countdowns;
+        model.selected_entry_id = (self.focused_component == ShellComponent::ClockEntryList)
+            .then_some(self.clock_selected_entry_id)
+            .flatten();
+        model.entry_window_start = self.clock_entry_window_start;
+        model.create_dialog =
+            self.clock_create_state
+                .as_ref()
+                .map(|state| tundra_ui::ClockCreateDialogViewModel {
+                    input: state.input.clone(),
+                    error: state.error.clone(),
+                    focus: state.focus,
+                });
+        model
     }
 
     pub fn to_time_sync_dialog_view_model(&self) -> Option<tundra_ui::TimeSyncDialogViewModel> {
@@ -2898,6 +3067,7 @@ impl ShellState {
         self.screen_stack = vec![ShellScreen::Home];
         self.focused_component = ShellComponent::Home;
         self.active_popup = None;
+        self.load_clock_for_session(&session);
         self.refresh_hit_map();
     }
 
@@ -2925,7 +3095,9 @@ impl ShellState {
             self.screen_stack.push(ShellScreen::Clock);
         }
         self.active_popup = None;
-        self.focused_component = ShellComponent::Clock;
+        self.clock_create_state = None;
+        self.focused_component = ShellComponent::ClockNewButton;
+        self.sync_clock_selection();
         self.notify_status("Clock");
         self.refresh_hit_map();
     }
@@ -2937,8 +3109,635 @@ impl ShellState {
         if self.screen_stack.is_empty() {
             self.screen_stack.push(ShellScreen::Home);
         }
+        self.clock_create_state = None;
         self.notify_status("Ready");
         self.refresh_hit_map();
+    }
+
+    fn load_clock_for_session(&mut self, session: &AuthSession) {
+        self.clock_scheduler = None;
+        self.clock_selected_entry_id = None;
+        self.clock_entry_window_start = 0;
+        self.clock_create_state = None;
+        self.clock_persist_pending = false;
+        self.clock_pending_due_summary = None;
+        self.clock_profile_pending_sync = None;
+
+        let Some(storage) = self.storage_manager.clone() else {
+            return;
+        };
+        let document = match storage.load_clock() {
+            Ok(document) => document,
+            Err(error) => {
+                self.report_clock_storage_error(error.to_string());
+                return;
+            }
+        };
+        let profile = document
+            .profiles
+            .get(&session.user_id)
+            .cloned()
+            .unwrap_or_default();
+        if !self.time_sync_attempted && !profile.entries.is_empty() {
+            self.clock_profile_pending_sync = Some(profile);
+            self.notify_toast("Waiting for initial time sync to restore reminders");
+            return;
+        }
+        self.restore_clock_profile(profile);
+    }
+
+    fn restore_clock_profile(&mut self, profile: ClockProfile) {
+        let snapshot = self.network_clock.snapshot();
+        let now = Instant::now();
+        let (scheduler, due) = ClockScheduler::restore(profile, &snapshot, now);
+        self.clock_scheduler = Some(scheduler);
+        self.sync_clock_selection_at(now);
+        let ordinary_due = self.handle_clock_due_events(due);
+        if let Some(summary) = ordinary_due {
+            self.remember_clock_due_summary(summary);
+        }
+
+        if let Err(error) = self.persist_clock_scheduler_at(&snapshot, now) {
+            self.clock_persist_pending = true;
+            self.report_clock_storage_error(error);
+        } else {
+            self.clock_pending_due_summary = None;
+            self.notifications.resolve_alert(CLOCK_STORAGE_ALERT_KEY);
+        }
+    }
+
+    fn restore_clock_profile_after_initial_sync(&mut self) {
+        if self.auth_session.is_none() {
+            self.clock_profile_pending_sync = None;
+            return;
+        }
+        if let Some(profile) = self.clock_profile_pending_sync.take() {
+            self.restore_clock_profile(profile);
+            self.refresh_hit_map();
+        }
+    }
+
+    fn persist_clock_scheduler_at(
+        &self,
+        snapshot: &tundra_weathr::network_clock::ClockSnapshot,
+        now: Instant,
+    ) -> Result<(), String> {
+        let storage = self
+            .storage_manager
+            .as_ref()
+            .ok_or_else(|| "Clock storage is unavailable".to_string())?;
+        let user_id = self
+            .auth_session
+            .as_ref()
+            .map(|session| session.user_id.as_str())
+            .ok_or_else(|| "Sign in to save alarms and countdowns".to_string())?;
+        let scheduler = self
+            .clock_scheduler
+            .as_ref()
+            .ok_or_else(|| "Clock scheduler is unavailable".to_string())?;
+        let mut document = storage.load_clock().map_err(|error| error.to_string())?;
+        document
+            .profiles
+            .insert(user_id.to_string(), scheduler.export_profile(snapshot, now));
+        storage
+            .save_clock(&document)
+            .map_err(|error| error.to_string())
+    }
+
+    fn report_clock_storage_error(&mut self, message: impl Into<String>) {
+        let ordinary_due = self.clock_pending_due_summary.clone();
+        self.report_clock_storage_error_with_due(message, ordinary_due.as_deref());
+    }
+
+    fn remember_clock_due_summary(&mut self, summary: String) {
+        self.clock_pending_due_summary = Some(match self.clock_pending_due_summary.take() {
+            None => summary,
+            Some(previous) if previous == summary => previous,
+            Some(_) => "Multiple reminders are due".to_string(),
+        });
+    }
+
+    fn report_clock_storage_error_with_due(
+        &mut self,
+        message: impl Into<String>,
+        ordinary_due: Option<&str>,
+    ) {
+        let storage_error = format!("Clock data could not be saved: {}", message.into());
+        let message = ordinary_due
+            .map(|due| format!("{due}. {storage_error}"))
+            .unwrap_or(storage_error);
+        self.notifications.notify_alert_with_key(
+            CLOCK_STORAGE_ALERT_KEY,
+            message,
+            tundra_ui::NotificationTone::Error,
+        );
+    }
+
+    fn commit_clock_mutation(
+        &mut self,
+        previous: ClockScheduler,
+        snapshot: &tundra_weathr::network_clock::ClockSnapshot,
+        now: Instant,
+    ) -> Result<(), String> {
+        match self.persist_clock_scheduler_at(snapshot, now) {
+            Ok(()) => {
+                self.clock_persist_pending = false;
+                self.clock_pending_due_summary = None;
+                self.notifications.resolve_alert(CLOCK_STORAGE_ALERT_KEY);
+                Ok(())
+            }
+            Err(error) => {
+                self.clock_scheduler = Some(previous);
+                self.report_clock_storage_error(error.clone());
+                Err(error)
+            }
+        }
+    }
+
+    fn advance_clock_background(&mut self) {
+        let snapshot = self.network_clock.snapshot();
+        self.advance_clock_background_at(&snapshot, Instant::now());
+    }
+
+    fn advance_clock_background_at(
+        &mut self,
+        snapshot: &tundra_weathr::network_clock::ClockSnapshot,
+        now: Instant,
+    ) {
+        self.notifications.expire(now);
+        let due = self
+            .clock_scheduler
+            .as_mut()
+            .map(|scheduler| scheduler.advance(snapshot, now))
+            .unwrap_or_default();
+        let has_due = !due.is_empty();
+        let ordinary_due = if has_due {
+            self.sync_clock_selection_at(now);
+            let ordinary_due = self.handle_clock_due_events(due);
+            self.refresh_hit_map();
+            ordinary_due
+        } else {
+            None
+        };
+        if let Some(summary) = ordinary_due {
+            self.remember_clock_due_summary(summary);
+        }
+        if has_due || self.clock_persist_pending {
+            match self.persist_clock_scheduler_at(snapshot, now) {
+                Ok(()) => {
+                    self.clock_persist_pending = false;
+                    self.clock_pending_due_summary = None;
+                    self.notifications.resolve_alert(CLOCK_STORAGE_ALERT_KEY);
+                }
+                Err(error) => {
+                    self.clock_persist_pending = true;
+                    self.report_clock_storage_error(error);
+                }
+            }
+        }
+    }
+
+    fn handle_clock_due_events(&mut self, due: Vec<DueEvent>) -> Option<String> {
+        let mut ordinary = Vec::new();
+        for event in due {
+            let message = match event.kind {
+                ScheduledClockEntryKind::DailyAlarm => {
+                    format!("Alarm {} is due", event.display_time)
+                }
+                ScheduledClockEntryKind::Countdown => "Countdown finished".to_string(),
+            };
+            if !event.strong {
+                ordinary.push(message);
+                continue;
+            }
+
+            let user_id = self
+                .auth_session
+                .as_ref()
+                .map(|session| session.user_id.as_str())
+                .unwrap_or("unknown");
+            let key = format!("{CLOCK_DUE_NOTIFICATION_KEY_PREFIX}.{user_id}.{}", event.id);
+            let (title, actions) = match event.kind {
+                ScheduledClockEntryKind::DailyAlarm => (
+                    "Alarm",
+                    vec![
+                        ShellNotificationAction::new("snooze", "Snooze 5 min")
+                            .with_shortcut(InputKey::Character('s'))
+                            .with_follow_up(ShellCommand::ClockSnoozeFiveMinutes(event.id)),
+                        ShellNotificationAction::new("dismiss", "Dismiss")
+                            .with_shortcut(InputKey::Escape)
+                            .cancel(),
+                    ],
+                ),
+                ScheduledClockEntryKind::Countdown => (
+                    "Countdown",
+                    vec![
+                        ShellNotificationAction::new("dismiss", "Dismiss")
+                            .with_shortcut(InputKey::Escape)
+                            .cancel(),
+                    ],
+                ),
+            };
+            self.notify_modal_with_options(
+                ShellNotification::modal(
+                    title,
+                    message,
+                    tundra_ui::NotificationTone::Critical,
+                    actions,
+                )
+                .with_key(key)
+                .with_component(ShellComponent::NotificationDialog),
+            );
+        }
+
+        let message = match ordinary.len() {
+            0 => None,
+            1 => ordinary.pop(),
+            count => Some(format!("{count} reminders are due")),
+        };
+        if let Some(message) = &message {
+            self.notify_toast(message.clone());
+        }
+        message
+    }
+
+    fn open_clock_create_dialog(&mut self) {
+        if self.clock_scheduler.is_none() {
+            if self.clock_profile_pending_sync.is_some() {
+                self.notify_toast("Waiting for initial time sync to restore reminders");
+            } else {
+                self.notify_toast("Sign in to create alarms and countdowns");
+            }
+            return;
+        }
+        self.clock_create_state = Some(ClockCreateState::default());
+        self.focused_component = ShellComponent::ClockCreateInput;
+        self.refresh_hit_map();
+    }
+
+    fn close_clock_create_dialog(&mut self) {
+        self.clock_create_state = None;
+        self.focused_component = ShellComponent::ClockNewButton;
+        self.refresh_hit_map();
+    }
+
+    fn move_clock_create_focus(&mut self, direction: i8) {
+        let Some(state) = self.clock_create_state.as_mut() else {
+            return;
+        };
+        let order = [
+            tundra_ui::ClockCreateDialogFocus::Input,
+            tundra_ui::ClockCreateDialogFocus::CreateAlarm,
+            tundra_ui::ClockCreateDialogFocus::CreateCountdown,
+        ];
+        let current = order
+            .iter()
+            .position(|focus| *focus == state.focus)
+            .unwrap_or(0);
+        let next =
+            (current as isize + direction as isize).rem_euclid(order.len() as isize) as usize;
+        self.set_clock_create_focus(order[next]);
+    }
+
+    fn set_clock_create_focus(&mut self, focus: tundra_ui::ClockCreateDialogFocus) {
+        let Some(state) = self.clock_create_state.as_mut() else {
+            return;
+        };
+        state.focus = focus;
+        self.focused_component = match focus {
+            tundra_ui::ClockCreateDialogFocus::Input => ShellComponent::ClockCreateInput,
+            tundra_ui::ClockCreateDialogFocus::CreateAlarm => {
+                ShellComponent::ClockCreateAlarmButton
+            }
+            tundra_ui::ClockCreateDialogFocus::CreateCountdown => {
+                ShellComponent::ClockCreateCountdownButton
+            }
+        };
+    }
+
+    fn append_clock_create_char(&mut self, character: char) {
+        let Some(state) = self.clock_create_state.as_mut() else {
+            return;
+        };
+        if state.focus != tundra_ui::ClockCreateDialogFocus::Input
+            || state.input.len() >= 8
+            || !(character.is_ascii_digit() || character == ' ')
+        {
+            return;
+        }
+        state.input.push(character);
+        state.error = None;
+    }
+
+    fn clock_create_backspace(&mut self) {
+        let Some(state) = self.clock_create_state.as_mut() else {
+            return;
+        };
+        if state.focus == tundra_ui::ClockCreateDialogFocus::Input {
+            state.input.pop();
+            state.error = None;
+        }
+    }
+
+    fn create_clock_entry(&mut self, kind: ScheduledClockEntryKind) {
+        let Some(input) = self
+            .clock_create_state
+            .as_ref()
+            .map(|state| state.input.clone())
+        else {
+            return;
+        };
+        let snapshot = self.network_clock.snapshot();
+        let now = Instant::now();
+        let Some(previous) = self.clock_scheduler.clone() else {
+            if let Some(state) = self.clock_create_state.as_mut() {
+                state.error = Some("Sign in to create clock entries".to_string());
+            }
+            return;
+        };
+        let result = match (kind, self.clock_scheduler.as_mut()) {
+            (ScheduledClockEntryKind::DailyAlarm, Some(scheduler)) => {
+                scheduler.create_daily_alarm(&input, &snapshot)
+            }
+            (ScheduledClockEntryKind::Countdown, Some(scheduler)) => {
+                scheduler.create_countdown(&input, &snapshot, now)
+            }
+            (_, None) => Err(ClockSchedulerError::EntryNotFound),
+        };
+        let id = match result {
+            Ok(id) => id,
+            Err(error) => {
+                if let Some(state) = self.clock_create_state.as_mut() {
+                    state.error = Some(error.to_string());
+                }
+                return;
+            }
+        };
+        if let Err(error) = self.commit_clock_mutation(previous, &snapshot, now) {
+            if let Some(state) = self.clock_create_state.as_mut() {
+                state.error = Some(format!("Could not save: {error}"));
+            }
+            return;
+        }
+
+        self.clock_create_state = None;
+        self.clock_selected_entry_id = Some(id);
+        self.focused_component = ShellComponent::ClockEntryList;
+        self.sync_clock_window_at(now);
+        self.notify_toast(match kind {
+            ScheduledClockEntryKind::DailyAlarm => "Daily alarm created",
+            ScheduledClockEntryKind::Countdown => "Countdown created",
+        });
+        self.refresh_hit_map();
+    }
+
+    fn ordered_clock_entry_ids_at(&self, now: Instant) -> Vec<u64> {
+        let Some(scheduler) = &self.clock_scheduler else {
+            return Vec::new();
+        };
+        let entries = scheduler.entries(now);
+        entries
+            .iter()
+            .filter(|entry| entry.kind == ScheduledClockEntryKind::DailyAlarm)
+            .chain(
+                entries
+                    .iter()
+                    .filter(|entry| entry.kind == ScheduledClockEntryKind::Countdown),
+            )
+            .map(|entry| entry.id)
+            .collect()
+    }
+
+    fn sync_clock_selection(&mut self) {
+        self.sync_clock_selection_at(Instant::now());
+    }
+
+    fn sync_clock_selection_at(&mut self, now: Instant) {
+        let ids = self.ordered_clock_entry_ids_at(now);
+        if !self
+            .clock_selected_entry_id
+            .is_some_and(|selected| ids.contains(&selected))
+        {
+            self.clock_selected_entry_id = ids.first().copied();
+        }
+        self.sync_clock_window_at(now);
+    }
+
+    fn clock_entry_capacity_at(&self, now: Instant) -> usize {
+        let (width, height) = self.terminal_size;
+        let area = Rect::new(0, 0, width, height);
+        let tundra_ui::ShellLayout::Full { main, .. } = tundra_ui::compute_shell_layout(area)
+        else {
+            return 1;
+        };
+        let snapshot = self.network_clock.snapshot();
+        let model = self.to_clock_view_model_at(&snapshot, now);
+        tundra_ui::clock_page_layout(main, &model)
+            .entry_capacity
+            .max(1)
+    }
+
+    fn sync_clock_window_at(&mut self, now: Instant) {
+        let ids = self.ordered_clock_entry_ids_at(now);
+        let capacity = self.clock_entry_capacity_at(now);
+        let max_start = ids.len().saturating_sub(capacity);
+        self.clock_entry_window_start = self.clock_entry_window_start.min(max_start);
+        let Some(index) = self
+            .clock_selected_entry_id
+            .and_then(|selected| ids.iter().position(|id| *id == selected))
+        else {
+            self.clock_entry_window_start = 0;
+            return;
+        };
+        if index < self.clock_entry_window_start {
+            self.clock_entry_window_start = index;
+        } else if index >= self.clock_entry_window_start.saturating_add(capacity) {
+            self.clock_entry_window_start = index.saturating_add(1).saturating_sub(capacity);
+        }
+    }
+
+    fn select_clock_entry_delta(&mut self, delta: isize) {
+        let now = Instant::now();
+        let ids = self.ordered_clock_entry_ids_at(now);
+        if ids.is_empty() {
+            self.clock_selected_entry_id = None;
+            self.focused_component = ShellComponent::ClockNewButton;
+            return;
+        }
+        let current = self
+            .clock_selected_entry_id
+            .and_then(|selected| ids.iter().position(|id| *id == selected))
+            .unwrap_or(0);
+        let next =
+            (current as isize + delta).clamp(0, ids.len().saturating_sub(1) as isize) as usize;
+        self.clock_selected_entry_id = Some(ids[next]);
+        self.focused_component = ShellComponent::ClockEntryList;
+        self.sync_clock_window_at(now);
+    }
+
+    fn select_clock_entry_edge(&mut self, last: bool) {
+        let now = Instant::now();
+        let ids = self.ordered_clock_entry_ids_at(now);
+        self.clock_selected_entry_id = if last {
+            ids.last().copied()
+        } else {
+            ids.first().copied()
+        };
+        if self.clock_selected_entry_id.is_some() {
+            self.focused_component = ShellComponent::ClockEntryList;
+        }
+        self.sync_clock_window_at(now);
+    }
+
+    fn select_clock_entry(&mut self, id: u64) {
+        if self
+            .ordered_clock_entry_ids_at(Instant::now())
+            .contains(&id)
+        {
+            self.clock_selected_entry_id = Some(id);
+            self.focused_component = ShellComponent::ClockEntryList;
+            self.sync_clock_window_at(Instant::now());
+        }
+    }
+
+    fn show_clock_manage_dialog(&mut self, id: u64) {
+        let Some(entry) = self.clock_scheduler.as_ref().and_then(|scheduler| {
+            scheduler
+                .entries(Instant::now())
+                .into_iter()
+                .find(|entry| entry.id == id)
+        }) else {
+            self.notify_toast("Clock entry no longer exists");
+            return;
+        };
+        self.clock_selected_entry_id = Some(id);
+        let (title, kind_label) = match entry.kind {
+            ScheduledClockEntryKind::DailyAlarm => ("Manage Alarm", "Daily alarm"),
+            ScheduledClockEntryKind::Countdown => ("Manage Countdown", "Countdown"),
+        };
+        let toggle_label = if entry.strong {
+            "Turn Strong Off"
+        } else {
+            "Turn Strong On"
+        };
+        let user_id = self
+            .auth_session
+            .as_ref()
+            .map(|session| session.user_id.as_str())
+            .unwrap_or("unknown");
+        self.notify_modal_with_options(
+            ShellNotification::modal(
+                title,
+                format!("{kind_label} {}", entry.display_time),
+                tundra_ui::NotificationTone::Info,
+                vec![
+                    ShellNotificationAction::new("delete", "Delete")
+                        .with_shortcut(InputKey::Character('x'))
+                        .with_follow_up(ShellCommand::ClockDeleteEntry(id)),
+                    ShellNotificationAction::new("toggle-strong", toggle_label)
+                        .with_shortcut(InputKey::Character('t'))
+                        .with_follow_up(ShellCommand::ClockToggleStrong(id)),
+                    ShellNotificationAction::new("cancel", "Cancel")
+                        .with_shortcut(InputKey::Escape)
+                        .cancel(),
+                ],
+            )
+            .with_key(format!(
+                "{CLOCK_MANAGE_NOTIFICATION_KEY_PREFIX}.{user_id}.{id}"
+            ))
+            .with_component(ShellComponent::NotificationDialog),
+        );
+    }
+
+    fn delete_clock_entry(&mut self, id: u64) {
+        let snapshot = self.network_clock.snapshot();
+        let now = Instant::now();
+        let Some(previous) = self.clock_scheduler.clone() else {
+            return;
+        };
+        if !self
+            .clock_scheduler
+            .as_mut()
+            .is_some_and(|scheduler| scheduler.delete(id))
+        {
+            self.notify_toast("Clock entry no longer exists");
+            return;
+        }
+        if self.commit_clock_mutation(previous, &snapshot, now).is_ok() {
+            if let Some(user_id) = self
+                .auth_session
+                .as_ref()
+                .map(|session| session.user_id.as_str())
+            {
+                self.notifications.dismiss_modal_by_key(&format!(
+                    "{CLOCK_DUE_NOTIFICATION_KEY_PREFIX}.{user_id}.{id}"
+                ));
+            }
+            self.sync_clock_selection_at(now);
+            self.notify_toast("Clock entry deleted");
+            self.refresh_hit_map();
+        }
+    }
+
+    fn toggle_clock_entry_strong(&mut self, id: u64) {
+        let snapshot = self.network_clock.snapshot();
+        let now = Instant::now();
+        let Some(previous) = self.clock_scheduler.clone() else {
+            return;
+        };
+        let Some(enabled) = self
+            .clock_scheduler
+            .as_mut()
+            .and_then(|scheduler| scheduler.toggle_strong(id))
+        else {
+            self.notify_toast("Clock entry no longer exists");
+            return;
+        };
+        if self.commit_clock_mutation(previous, &snapshot, now).is_ok() {
+            self.notify_toast(if enabled {
+                "Strong notification enabled"
+            } else {
+                "Strong notification disabled"
+            });
+            self.refresh_hit_map();
+        }
+    }
+
+    fn snooze_clock_alarm(&mut self, id: u64) {
+        let snapshot = self.network_clock.snapshot();
+        let now = Instant::now();
+        let Some(previous) = self.clock_scheduler.clone() else {
+            return;
+        };
+        let retry_event = previous
+            .entries(now)
+            .into_iter()
+            .find(|entry| {
+                entry.id == id && entry.kind == ScheduledClockEntryKind::DailyAlarm && entry.strong
+            })
+            .map(|entry| DueEvent {
+                id: entry.id,
+                kind: entry.kind,
+                strong: true,
+                display_time: entry.display_time,
+            });
+        let result = self
+            .clock_scheduler
+            .as_mut()
+            .ok_or(ClockSchedulerError::EntryNotFound)
+            .and_then(|scheduler| scheduler.snooze_five_minutes(id, &snapshot, now));
+        match result {
+            Ok(()) => {
+                if self.commit_clock_mutation(previous, &snapshot, now).is_ok() {
+                    self.notify_toast("Alarm snoozed for 5 minutes");
+                    self.refresh_hit_map();
+                } else if let Some(event) = retry_event {
+                    let _ = self.handle_clock_due_events(vec![event]);
+                    self.refresh_hit_map();
+                }
+            }
+            Err(error) => self.notify_toast(error.to_string()),
+        }
     }
 
     fn open_explorer(&mut self, platform: &dyn Platform) {
@@ -3041,8 +3840,7 @@ impl ShellState {
         if matches!(
             command_kind,
             ExplorerCommand::DeleteToTrash | ExplorerCommand::ConfirmDelete
-        )
-            && let Some(dialog) = pending_dialog
+        ) && let Some(dialog) = pending_dialog
         {
             self.notify_modal_with_options(
                 ShellNotification::modal(
@@ -3388,6 +4186,11 @@ impl ShellState {
         let Some(username) = self.selected_managed_username() else {
             return;
         };
+        let deleted_user_id = self
+            .user_management_users
+            .iter()
+            .find(|user| user.username.eq_ignore_ascii_case(&username))
+            .map(|user| user.id.clone());
         let Some(storage) = self.storage_manager.clone() else {
             return;
         };
@@ -3395,7 +4198,7 @@ impl ShellState {
             return;
         };
         let deleting_current_user = self.is_current_username(&username);
-        let deleted = match UserService::with_debug_policy(storage, self.debug_policy)
+        let deleted = match UserService::with_debug_policy(storage.clone(), self.debug_policy)
             .delete_user(session, &username)
         {
             Ok(()) => {
@@ -3407,6 +4210,17 @@ impl ShellState {
                 false
             }
         };
+        if deleted && let Some(user_id) = deleted_user_id {
+            match storage.load_clock() {
+                Ok(mut document) => {
+                    document.profiles.remove(&user_id);
+                    if let Err(error) = storage.save_clock(&document) {
+                        self.report_clock_storage_error(error.to_string());
+                    }
+                }
+                Err(error) => self.report_clock_storage_error(error.to_string()),
+            }
+        }
         if deleted && deleting_current_user {
             self.return_to_login("Account deleted");
             return;
@@ -3505,7 +4319,21 @@ impl ShellState {
 
     fn return_to_login(&mut self, status: &str) {
         self.resolve_user_management_refresh_alert();
+        self.notifications.dismiss_modals_by_key_prefix("clock.");
+        self.notifications.resolve_alert(CLOCK_STORAGE_ALERT_KEY);
+        self.notifications.clear_toast();
+        self.modal_focus_context = None;
+        self.modal_focus_prepared_for_follow_up = false;
+        self.notification_pointer_capture = None;
+        self.pending_notification_commands.clear();
         self.auth_session = None;
+        self.clock_scheduler = None;
+        self.clock_selected_entry_id = None;
+        self.clock_entry_window_start = 0;
+        self.clock_create_state = None;
+        self.clock_persist_pending = false;
+        self.clock_pending_due_summary = None;
+        self.clock_profile_pending_sync = None;
         self.user_management_users.clear();
         self.user_management_selected = 0;
         self.user_management_mode = UserManagementMode::Browse;
@@ -3750,6 +4578,7 @@ impl ShellState {
             ShellCommand::Tick => {
                 self.tick_count = self.tick_count.saturating_add(1);
                 self.notifications.tick();
+                self.advance_clock_background();
                 ShellAction::Redraw
             }
             ShellCommand::RefreshHitMap { width, height } => {
@@ -4085,6 +4914,95 @@ impl ShellState {
                 self.close_clock();
                 ShellAction::Redraw
             }
+            ShellCommand::ClockOpenCreate => {
+                self.open_clock_create_dialog();
+                ShellAction::Redraw
+            }
+            ShellCommand::ClockCloseCreate => {
+                self.close_clock_create_dialog();
+                ShellAction::Redraw
+            }
+            ShellCommand::ClockCreateFocusNext => {
+                self.move_clock_create_focus(1);
+                ShellAction::Redraw
+            }
+            ShellCommand::ClockCreateFocusPrevious => {
+                self.move_clock_create_focus(-1);
+                ShellAction::Redraw
+            }
+            ShellCommand::ClockCreateSetFocus(focus) => {
+                self.set_clock_create_focus(focus);
+                ShellAction::Redraw
+            }
+            ShellCommand::ClockCreateAppend(character) => {
+                self.append_clock_create_char(character);
+                ShellAction::Redraw
+            }
+            ShellCommand::ClockCreateBackspace => {
+                self.clock_create_backspace();
+                ShellAction::Redraw
+            }
+            ShellCommand::ClockCreateAlarm => {
+                self.create_clock_entry(ScheduledClockEntryKind::DailyAlarm);
+                ShellAction::Redraw
+            }
+            ShellCommand::ClockCreateCountdown => {
+                self.create_clock_entry(ScheduledClockEntryKind::Countdown);
+                ShellAction::Redraw
+            }
+            ShellCommand::ClockSelectPrevious => {
+                self.select_clock_entry_delta(-1);
+                ShellAction::Redraw
+            }
+            ShellCommand::ClockSelectNext => {
+                self.select_clock_entry_delta(1);
+                ShellAction::Redraw
+            }
+            ShellCommand::ClockSelectPageUp => {
+                let page = self.clock_entry_capacity_at(Instant::now()) as isize;
+                self.select_clock_entry_delta(-page.max(1));
+                ShellAction::Redraw
+            }
+            ShellCommand::ClockSelectPageDown => {
+                let page = self.clock_entry_capacity_at(Instant::now()) as isize;
+                self.select_clock_entry_delta(page.max(1));
+                ShellAction::Redraw
+            }
+            ShellCommand::ClockSelectFirst => {
+                self.select_clock_entry_edge(false);
+                ShellAction::Redraw
+            }
+            ShellCommand::ClockSelectLast => {
+                self.select_clock_entry_edge(true);
+                ShellAction::Redraw
+            }
+            ShellCommand::ClockSelectEntry(id) => {
+                self.select_clock_entry(id);
+                ShellAction::Redraw
+            }
+            ShellCommand::ClockActivateSelected => {
+                if let Some(id) = self.clock_selected_entry_id {
+                    self.show_clock_manage_dialog(id);
+                }
+                ShellAction::Redraw
+            }
+            ShellCommand::ClockManageEntry(id) => {
+                self.select_clock_entry(id);
+                self.show_clock_manage_dialog(id);
+                ShellAction::Redraw
+            }
+            ShellCommand::ClockDeleteEntry(id) => {
+                self.delete_clock_entry(id);
+                ShellAction::Redraw
+            }
+            ShellCommand::ClockToggleStrong(id) => {
+                self.toggle_clock_entry_strong(id);
+                ShellAction::Redraw
+            }
+            ShellCommand::ClockSnoozeFiveMinutes(id) => {
+                self.snooze_clock_alarm(id);
+                ShellAction::Redraw
+            }
             ShellCommand::UserManagementNext => {
                 self.select_user_management_row(1);
                 ShellAction::Redraw
@@ -4348,26 +5266,31 @@ impl ShellState {
     }
 
     pub fn apply_time_sync_result(&mut self, result: TimeSyncResult) {
+        self.time_sync_attempted = true;
         match result {
             Ok(utc) => self.apply_time_sync_success_utc(utc),
             Err(error) => {
-                self.last_time_sync_utc = None;
                 self.network_clock.apply_sync(Err(error));
                 self.show_time_sync_failure_dialog("联网校准时间失败".to_string());
             }
         }
+        self.restore_clock_profile_after_initial_sync();
     }
 
     #[doc(hidden)]
     pub fn apply_time_sync_utc_for_test(&mut self, utc: DateTime<Utc>) {
+        self.time_sync_attempted = true;
         self.apply_time_sync_success_utc(utc);
+        self.restore_clock_profile_after_initial_sync();
     }
 
     #[doc(hidden)]
     pub fn apply_time_sync_failure_for_test(&mut self, message: &str) {
+        self.time_sync_attempted = true;
         self.last_time_sync_utc = None;
         self.network_clock = ShellNetworkClock::new(self.clock_timezone_id.clone());
         self.show_time_sync_failure_dialog(message.to_string());
+        self.restore_clock_profile_after_initial_sync();
     }
 
     pub fn terminal_flags(&self) -> ShellTerminalFlags {
@@ -4540,6 +5463,21 @@ impl ShellState {
     fn apply_time_sync_success_utc(&mut self, utc: DateTime<Utc>) {
         self.last_time_sync_utc = Some(utc);
         self.network_clock.apply_sync(Ok(utc));
+
+        if self.clock_scheduler.is_some() && self.auth_session.is_some() {
+            let snapshot = self.network_clock.snapshot();
+            match self.persist_clock_scheduler_at(&snapshot, Instant::now()) {
+                Ok(()) => {
+                    self.clock_persist_pending = false;
+                    self.clock_pending_due_summary = None;
+                    self.notifications.resolve_alert(CLOCK_STORAGE_ALERT_KEY);
+                }
+                Err(error) => {
+                    self.clock_persist_pending = true;
+                    self.report_clock_storage_error(error);
+                }
+            }
+        }
 
         if self.time_sync_dialog_visible {
             self.time_sync_dialog_visible = false;
@@ -4793,9 +5731,103 @@ impl ShellState {
     }
 
     fn route_clock_key(&self, key: &KeyInput) -> (RoutedTarget, ShellCommand) {
-        let target = RoutedTarget::Component(ShellComponent::Clock);
+        let area = Rect::new(0, 0, self.terminal_size.0, self.terminal_size.1);
+        if matches!(
+            tundra_ui::compute_shell_layout(area),
+            tundra_ui::ShellLayout::Compact(_)
+        ) {
+            return match &key.key {
+                InputKey::Escape if self.clock_create_state.is_some() => (
+                    RoutedTarget::Modal(ShellComponent::ClockCreateDialog),
+                    ShellCommand::ClockCloseCreate,
+                ),
+                InputKey::Escape => (RoutedTarget::Global, ShellCommand::CloseClock),
+                _ => (
+                    RoutedTarget::Component(ShellComponent::CompactHome),
+                    ShellCommand::CaptureOverlayInput,
+                ),
+            };
+        }
+
+        if let Some(create) = &self.clock_create_state {
+            let target = RoutedTarget::Modal(ShellComponent::ClockCreateDialog);
+            return match &key.key {
+                InputKey::Escape => (target, ShellCommand::ClockCloseCreate),
+                InputKey::BackTab => (target, ShellCommand::ClockCreateFocusPrevious),
+                InputKey::Tab if key.modifiers.shift => {
+                    (target, ShellCommand::ClockCreateFocusPrevious)
+                }
+                InputKey::Tab => (target, ShellCommand::ClockCreateFocusNext),
+                InputKey::Up | InputKey::Left => (target, ShellCommand::ClockCreateFocusPrevious),
+                InputKey::Down | InputKey::Right => (target, ShellCommand::ClockCreateFocusNext),
+                InputKey::Enter => match create.focus {
+                    tundra_ui::ClockCreateDialogFocus::Input => {
+                        (target, ShellCommand::ClockCreateFocusNext)
+                    }
+                    tundra_ui::ClockCreateDialogFocus::CreateAlarm => {
+                        (target, ShellCommand::ClockCreateAlarm)
+                    }
+                    tundra_ui::ClockCreateDialogFocus::CreateCountdown => {
+                        (target, ShellCommand::ClockCreateCountdown)
+                    }
+                },
+                InputKey::Character(' ')
+                    if create.focus == tundra_ui::ClockCreateDialogFocus::CreateAlarm =>
+                {
+                    (target, ShellCommand::ClockCreateAlarm)
+                }
+                InputKey::Character(' ')
+                    if create.focus == tundra_ui::ClockCreateDialogFocus::CreateCountdown =>
+                {
+                    (target, ShellCommand::ClockCreateCountdown)
+                }
+                InputKey::Backspace if create.focus == tundra_ui::ClockCreateDialogFocus::Input => {
+                    (target, ShellCommand::ClockCreateBackspace)
+                }
+                InputKey::Character(character)
+                    if create.focus == tundra_ui::ClockCreateDialogFocus::Input =>
+                {
+                    (target, ShellCommand::ClockCreateAppend(*character))
+                }
+                _ => (target, ShellCommand::CaptureOverlayInput),
+            };
+        }
+
+        let target = RoutedTarget::Component(self.focused_component);
         match &key.key {
             InputKey::Escape => (RoutedTarget::Global, ShellCommand::CloseClock),
+            InputKey::BackTab => (target, ShellCommand::FocusPrevious),
+            InputKey::Tab if key.modifiers.shift => (target, ShellCommand::FocusPrevious),
+            InputKey::Tab => (target, ShellCommand::FocusNext),
+            InputKey::Character('n' | 'N') => (target, ShellCommand::ClockOpenCreate),
+            InputKey::Enter | InputKey::Character(' ')
+                if self.focused_component == ShellComponent::ClockNewButton =>
+            {
+                (target, ShellCommand::ClockOpenCreate)
+            }
+            InputKey::Enter | InputKey::Character(' ')
+                if self.focused_component == ShellComponent::ClockEntryList =>
+            {
+                (target, ShellCommand::ClockActivateSelected)
+            }
+            InputKey::Up if self.focused_component == ShellComponent::ClockEntryList => {
+                (target, ShellCommand::ClockSelectPrevious)
+            }
+            InputKey::Down if self.focused_component == ShellComponent::ClockEntryList => {
+                (target, ShellCommand::ClockSelectNext)
+            }
+            InputKey::PageUp if self.focused_component == ShellComponent::ClockEntryList => {
+                (target, ShellCommand::ClockSelectPageUp)
+            }
+            InputKey::PageDown if self.focused_component == ShellComponent::ClockEntryList => {
+                (target, ShellCommand::ClockSelectPageDown)
+            }
+            InputKey::Home if self.focused_component == ShellComponent::ClockEntryList => {
+                (target, ShellCommand::ClockSelectFirst)
+            }
+            InputKey::End if self.focused_component == ShellComponent::ClockEntryList => {
+                (target, ShellCommand::ClockSelectLast)
+            }
             _ => (target, ShellCommand::RecordInput),
         }
     }
@@ -5150,6 +6182,10 @@ impl ShellState {
             return self.route_popup_mouse(mouse, hit_target, received_at);
         }
 
+        if self.active_screen() == ShellScreen::Clock {
+            return self.route_clock_mouse(mouse, hit_target);
+        }
+
         match mouse {
             MouseInput::Moved { .. } => (target_route(hit_target), ShellCommand::Hover(hit_target)),
             MouseInput::Down {
@@ -5203,6 +6239,88 @@ impl ShellState {
             }
             _ => (target_route(hit_target), ShellCommand::RecordInput),
         }
+    }
+
+    fn route_clock_mouse(
+        &mut self,
+        mouse: MouseInput,
+        hit_target: Option<ShellComponent>,
+    ) -> (RoutedTarget, ShellCommand) {
+        let coordinates = mouse.coordinates();
+        let modal_target = RoutedTarget::Modal(ShellComponent::ClockCreateDialog);
+
+        if self.clock_create_state.is_some() {
+            return match mouse {
+                MouseInput::Moved { .. } => (modal_target, ShellCommand::Hover(hit_target)),
+                MouseInput::Down {
+                    button: PointerButton::Left,
+                    ..
+                } => match hit_target {
+                    Some(ShellComponent::ClockCreateInput) => (
+                        modal_target,
+                        ShellCommand::ClockCreateSetFocus(tundra_ui::ClockCreateDialogFocus::Input),
+                    ),
+                    Some(ShellComponent::ClockCreateAlarmButton) => {
+                        (modal_target, ShellCommand::ClockCreateAlarm)
+                    }
+                    Some(ShellComponent::ClockCreateCountdownButton) => {
+                        (modal_target, ShellCommand::ClockCreateCountdown)
+                    }
+                    _ => (modal_target, ShellCommand::CaptureOverlayInput),
+                },
+                _ => (modal_target, ShellCommand::CaptureOverlayInput),
+            };
+        }
+
+        let target = target_route(hit_target);
+        match mouse {
+            MouseInput::Moved { .. } => (target, ShellCommand::Hover(hit_target)),
+            MouseInput::Scroll {
+                direction: ScrollDirection::Up,
+                ..
+            } if hit_target == Some(ShellComponent::ClockEntryList) => {
+                (target, ShellCommand::ClockSelectPrevious)
+            }
+            MouseInput::Scroll {
+                direction: ScrollDirection::Down,
+                ..
+            } if hit_target == Some(ShellComponent::ClockEntryList) => {
+                (target, ShellCommand::ClockSelectNext)
+            }
+            MouseInput::Down {
+                button: PointerButton::Left,
+                ..
+            } => match hit_target {
+                Some(ShellComponent::ClockButton) => (target, ShellCommand::CloseClock),
+                Some(ShellComponent::ClockNewButton) => (target, ShellCommand::ClockOpenCreate),
+                Some(ShellComponent::ClockEntryList) => self
+                    .clock_entry_id_at(coordinates)
+                    .map(|id| (target, ShellCommand::ClockManageEntry(id)))
+                    .unwrap_or((target, ShellCommand::RecordInput)),
+                _ => (target, ShellCommand::RecordInput),
+            },
+            MouseInput::Down {
+                button: PointerButton::Right,
+                ..
+            } => (target, ShellCommand::CaptureOverlayInput),
+            _ => (target, ShellCommand::RecordInput),
+        }
+    }
+
+    fn clock_entry_id_at(&self, coordinates: CellPosition) -> Option<u64> {
+        let (width, height) = self.terminal_size;
+        let area = Rect::new(0, 0, width, height);
+        let tundra_ui::ShellLayout::Full { main, .. } = tundra_ui::compute_shell_layout(area)
+        else {
+            return None;
+        };
+        let snapshot = self.network_clock.snapshot();
+        let model = self.to_clock_view_model_at(&snapshot, Instant::now());
+        tundra_ui::clock_page_layout(main, &model)
+            .entry_rows
+            .into_iter()
+            .find(|row| rect_contains(row.area, coordinates))
+            .map(|row| row.id)
     }
 
     fn route_time_sync_dialog_mouse(
@@ -5616,6 +6734,8 @@ impl ShellState {
         }
         let time_button_label = self.status_time_button_label();
         let notification_model = self.notifications.active_modal_view_model();
+        let clock_model =
+            (self.active_screen() == ShellScreen::Clock).then(|| self.to_clock_view_model());
         self.hit_map = build_shell_hit_map(
             self.terminal_size,
             self.active_screen(),
@@ -5626,6 +6746,7 @@ impl ShellState {
             self.time_sync_dialog_visible,
             self.notifications.active_modal_component(),
             notification_model.as_ref(),
+            clock_model.as_ref(),
         );
         self.sync_home_entry_selection();
 
@@ -5677,7 +6798,25 @@ impl ShellState {
             return vec![ShellComponent::Explorer];
         }
         if self.active_screen() == ShellScreen::Clock {
-            return vec![ShellComponent::Clock];
+            let area = Rect::new(0, 0, self.terminal_size.0, self.terminal_size.1);
+            if matches!(
+                tundra_ui::compute_shell_layout(area),
+                tundra_ui::ShellLayout::Compact(_)
+            ) {
+                return vec![ShellComponent::CompactHome];
+            }
+            if self.clock_create_state.is_some() {
+                return vec![
+                    ShellComponent::ClockCreateInput,
+                    ShellComponent::ClockCreateAlarmButton,
+                    ShellComponent::ClockCreateCountdownButton,
+                ];
+            }
+            let mut order = vec![ShellComponent::ClockNewButton];
+            if !self.ordered_clock_entry_ids_at(Instant::now()).is_empty() {
+                order.push(ShellComponent::ClockEntryList);
+            }
+            return order;
         }
         if self.active_popup.is_some() {
             return vec![ShellComponent::ContextMenu];
@@ -5835,6 +6974,7 @@ pub fn detect_shortcut_conflicts(shortcuts: &[ShellShortcut]) -> Vec<ShortcutCon
     conflicts
 }
 
+#[allow(clippy::too_many_arguments)]
 fn build_shell_hit_map(
     terminal_size: CellPosition,
     active_screen: ShellScreen,
@@ -5845,6 +6985,7 @@ fn build_shell_hit_map(
     time_sync_dialog_visible: bool,
     notification_modal_component: Option<ShellComponent>,
     notification_model: Option<&tundra_ui::NotificationViewModel>,
+    clock_model: Option<&tundra_ui::ClockViewModel>,
 ) -> ShellHitMap {
     let (width, height) = terminal_size;
     let area = Rect::new(0, 0, width, height);
@@ -5911,6 +7052,43 @@ fn build_shell_hit_map(
                         component: ShellComponent::Clock,
                         area: main,
                     });
+                    if let Some(model) = clock_model {
+                        let layout = tundra_ui::clock_page_layout(main, model);
+                        if layout.panel.width > 0 && layout.panel.height > 0 {
+                            regions.push(ShellHitRegion {
+                                component: ShellComponent::ClockEntryList,
+                                area: layout.panel,
+                            });
+                        }
+                        if layout.new_button.width > 0 && layout.new_button.height > 0 {
+                            regions.push(ShellHitRegion {
+                                component: ShellComponent::ClockNewButton,
+                                area: layout.new_button,
+                            });
+                        }
+                        regions.extend(layout.entry_rows.iter().map(|row| ShellHitRegion {
+                            component: ShellComponent::ClockEntryList,
+                            area: row.area,
+                        }));
+                        if let Some(dialog) = layout.create_dialog {
+                            regions.push(ShellHitRegion {
+                                component: ShellComponent::ClockCreateDialog,
+                                area: dialog.dialog,
+                            });
+                            regions.push(ShellHitRegion {
+                                component: ShellComponent::ClockCreateInput,
+                                area: dialog.input,
+                            });
+                            regions.push(ShellHitRegion {
+                                component: ShellComponent::ClockCreateAlarmButton,
+                                area: dialog.create_alarm,
+                            });
+                            regions.push(ShellHitRegion {
+                                component: ShellComponent::ClockCreateCountdownButton,
+                                area: dialog.create_countdown,
+                            });
+                        }
+                    }
                 }
                 _ => {
                     regions.push(ShellHitRegion {
@@ -6633,7 +7811,10 @@ pub fn startup_lines() -> Vec<String> {
             "Config format: {} (schema v{})",
             CONFIG_DESCRIPTOR.file_name, SCHEMA_VERSION
         ),
-        "State data: users, state, recent-files, sessions use versioned JSON".to_string(),
+        format!(
+            "State data: users, state, recent-files, sessions, {} use versioned JSON",
+            CLOCK_DESCRIPTOR.name
+        ),
     ]
 }
 
@@ -6771,9 +7952,12 @@ pub fn run_fullscreen_blocking(
 
     loop {
         drain_time_sync_results(&mut state, &time_sync_receiver);
+        let frame_now = Instant::now();
+        let clock_snapshot = state.network_clock.snapshot();
+        state.advance_clock_background_at(&clock_snapshot, frame_now);
         let chrome = state.to_shell_chrome_view_model();
         let home = state.to_home_view_model();
-        let clock = state.to_clock_view_model();
+        let clock = state.to_clock_view_model_at(&clock_snapshot, frame_now);
         let time_sync_dialog = state.to_time_sync_dialog_view_model();
         let setup = state.to_setup_view_model();
         let login = state.to_login_view_model();
@@ -6815,7 +7999,7 @@ pub fn run_fullscreen_blocking(
                     tundra_ui::render_explorer(frame, area, &chrome, &explorer, &theme);
                 }
                 ShellScreen::Clock => {
-                    tundra_ui::render_clock_placeholder(frame, area, &chrome, &clock, &theme);
+                    tundra_ui::render_clock(frame, area, &chrome, &clock, &theme);
                 }
                 ShellScreen::Home | ShellScreen::ExitConfirm => {
                     tundra_ui::render_home(frame, area, &chrome, &home, &theme);
@@ -7091,6 +8275,66 @@ mod tests {
 
         notifications.expire(replacement_at + Duration::from_secs(3) + DEFAULT_TOAST_DURATION);
         assert_eq!(notifications.toast(), None);
+    }
+
+    #[test]
+    fn notification_toast_waits_behind_an_active_alert() {
+        let started_at = Instant::now();
+        let mut notifications = NotificationCenter::new("Ready");
+        notifications.notify_alert_with_key(
+            "storage",
+            "Storage unavailable",
+            tundra_ui::NotificationTone::Error,
+        );
+        notifications.notify_toast_at("Countdown finished", started_at);
+
+        notifications.expire(started_at + DEFAULT_TOAST_DURATION + Duration::from_secs(1));
+
+        assert_eq!(notifications.toast().as_deref(), Some("Countdown finished"));
+        assert_eq!(
+            notifications.poll_timeout(started_at, Duration::from_millis(250)),
+            Duration::from_millis(250)
+        );
+        notifications.resolve_alert("storage");
+        assert_eq!(notifications.toast().as_deref(), Some("Countdown finished"));
+    }
+
+    #[test]
+    fn clock_storage_retry_keeps_the_due_summary_visible() {
+        let mut state = ShellState::new(ShellLaunchConfig::default(), (80, 24));
+        state.remember_clock_due_summary("Countdown finished".to_string());
+
+        state.report_clock_storage_error("first failure");
+        state.report_clock_storage_error("retry failure");
+
+        assert!(
+            state
+                .to_shell_chrome_view_model()
+                .status
+                .error
+                .as_deref()
+                .is_some_and(|message| {
+                    message.contains("Countdown finished") && message.contains("retry failure")
+                })
+        );
+    }
+
+    #[test]
+    fn compact_clock_routes_only_escape_and_does_not_open_hidden_controls() {
+        let mut state = ShellState::new(ShellLaunchConfig::default(), (49, 11));
+        state.screen_stack = vec![ShellScreen::Clock];
+
+        assert_eq!(
+            state.route_clock_key(&KeyInput::from_label("n")).1,
+            ShellCommand::CaptureOverlayInput
+        );
+        assert_eq!(state.focus_order(), vec![ShellComponent::CompactHome]);
+
+        state.clock_create_state = Some(ClockCreateState::default());
+        assert_eq!(
+            state.route_clock_key(&KeyInput::from_label("Esc")).1,
+            ShellCommand::ClockCloseCreate
+        );
     }
 
     #[test]

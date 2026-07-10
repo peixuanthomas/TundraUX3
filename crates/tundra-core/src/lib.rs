@@ -3,7 +3,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use argon2::password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString};
 use argon2::{Argon2, password_hash};
-use rand_core::OsRng;
+use rand_core::{OsRng, RngCore};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use tundra_storage::{StorageError, StorageManager, UserRecord, UsersDocument};
@@ -372,7 +372,7 @@ impl UserService {
         let password_hint = normalize_password_hint(password_hint, password)?;
         let now = unix_millis();
         let record = UserRecord {
-            id: "user-1".to_string(),
+            id: next_user_id(&document),
             username: username.trim().to_string(),
             display_name: username.trim().to_string(),
             role: UserRole::Admin.as_str().to_string(),
@@ -1224,13 +1224,14 @@ fn is_enabled_privileged_user(record: &UserRecord) -> bool {
 }
 
 fn next_user_id(document: &UsersDocument) -> String {
-    let mut next = document.users.len() + 1;
+    let mut random = OsRng;
     loop {
-        let candidate = format!("user-{next}");
+        let mut bytes = [0_u8; 16];
+        random.fill_bytes(&mut bytes);
+        let candidate = format!("user-{}", hex::encode(bytes));
         if !document.users.iter().any(|record| record.id == candidate) {
             return candidate;
         }
-        next += 1;
     }
 }
 

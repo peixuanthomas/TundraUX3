@@ -8,7 +8,7 @@ use tundra_core::{
     UserService, verify_password,
 };
 use tundra_platform::{AppPaths, cleanup_temp_path};
-use tundra_storage::{StorageManager, UserRecord};
+use tundra_storage::{ClockProfile, StorageManager, UserRecord};
 
 #[test]
 fn permission_matrix_matches_phase5_roles() {
@@ -110,6 +110,30 @@ fn bootstrap_login_and_password_hashing_work_without_plaintext_storage() {
 
     sessions.logout().expect("logout should audit");
     assert!(sessions.current_session().is_none());
+}
+
+#[test]
+fn bootstrap_never_claims_an_orphaned_clock_profile_id() {
+    let fixture = FixtureRoot::new("bootstrap-orphan-clock");
+    let manager = storage(fixture.path());
+    let mut clock = manager.load_clock().expect("clock document");
+    clock
+        .profiles
+        .insert("user-1".to_string(), ClockProfile::default());
+    manager.save_clock(&clock).expect("orphan clock profile");
+
+    let admin = UserService::new(manager.clone())
+        .bootstrap_admin("AdminUser", "StrongPass123")
+        .expect("bootstrap should create admin");
+
+    assert_ne!(admin.id, "user-1");
+    assert!(
+        !manager
+            .load_clock()
+            .expect("clock document")
+            .profiles
+            .contains_key(&admin.id)
+    );
 }
 
 #[test]
@@ -311,7 +335,7 @@ fn delete_user_removes_accounts_but_preserves_last_privileged_user() {
     let mut sessions = SessionService::new(manager.clone());
     let admin = sessions.login("AdminUser", "StrongPass123").expect("login");
 
-    users
+    let normal_user = users
         .create_user(
             &admin,
             "NormalUser",
@@ -349,6 +373,22 @@ fn delete_user_removes_accounts_but_preserves_last_privileged_user() {
             .iter()
             .any(|user| user.username == "NormalUser")
     );
+    let replacement = users
+        .create_user(
+            &admin,
+            "ReplacementUser",
+            "Replacement User",
+            UserRole::User,
+            "ReplacementPass123",
+        )
+        .expect("admin can create replacement user");
+    assert_ne!(
+        replacement.id, normal_user.id,
+        "deleted user IDs must never be reused"
+    );
+    users
+        .delete_user(&admin, "ReplacementUser")
+        .expect("replacement user can be removed");
 
     users
         .delete_user(&admin, "SecondAdmin")

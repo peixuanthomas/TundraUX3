@@ -93,16 +93,152 @@ impl NotificationViewModel {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ClockViewModel {
-    pub current_time: String,
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum ClockCreateDialogFocus {
+    #[default]
+    Input,
+    CreateAlarm,
+    CreateCountdown,
 }
 
-impl ClockViewModel {
-    pub fn new(current_time: impl Into<String>) -> Self {
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ClockEntryViewModel {
+    pub id: u64,
+    pub label: String,
+    pub strong: bool,
+}
+
+impl ClockEntryViewModel {
+    pub fn new(id: u64, label: impl Into<String>, strong: bool) -> Self {
         Self {
-            current_time: current_time.into(),
+            id,
+            label: label.into(),
+            strong,
         }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ClockCreateDialogViewModel {
+    pub input: String,
+    pub error: Option<String>,
+    pub focus: ClockCreateDialogFocus,
+}
+
+impl ClockCreateDialogViewModel {
+    pub fn new(input: impl Into<String>) -> Self {
+        Self {
+            input: input.into(),
+            error: None,
+            focus: ClockCreateDialogFocus::Input,
+        }
+    }
+}
+
+impl Default for ClockCreateDialogViewModel {
+    fn default() -> Self {
+        Self::new("")
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct ClockViewModel {
+    pub date: String,
+    pub digital_time: String,
+    pub hour: u8,
+    pub minute: u8,
+    pub second: u8,
+    pub alarms: Vec<ClockEntryViewModel>,
+    pub countdowns: Vec<ClockEntryViewModel>,
+    pub selected_entry_id: Option<u64>,
+    /// Offset into the flattened `alarms` then `countdowns` display order.
+    pub entry_window_start: usize,
+    pub create_dialog: Option<ClockCreateDialogViewModel>,
+    ascii_assets: Option<RuntimeAsciiAssets>,
+}
+
+impl PartialEq for ClockViewModel {
+    fn eq(&self, other: &Self) -> bool {
+        self.date == other.date
+            && self.digital_time == other.digital_time
+            && self.hour == other.hour
+            && self.minute == other.minute
+            && self.second == other.second
+            && self.alarms == other.alarms
+            && self.countdowns == other.countdowns
+            && self.selected_entry_id == other.selected_entry_id
+            && self.entry_window_start == other.entry_window_start
+            && self.create_dialog == other.create_dialog
+    }
+}
+
+impl Eq for ClockViewModel {}
+
+impl ClockViewModel {
+    /// Compatibility constructor for callers which only have a formatted time label.
+    /// New code should prefer [`ClockViewModel::at`].
+    pub fn new(current_time: impl Into<String>) -> Self {
+        let current_time = current_time.into();
+        let mut date = String::new();
+        let mut digital_time = current_time.clone();
+
+        for part in current_time.split_whitespace() {
+            if date.is_empty() && part.contains('-') {
+                date = part.to_string();
+            }
+            if part.contains(':') {
+                digital_time = part.to_string();
+                break;
+            }
+        }
+
+        let mut time_parts = digital_time
+            .split(':')
+            .filter_map(|part| part.parse::<u8>().ok());
+        let hour = time_parts.next().unwrap_or(0);
+        let minute = time_parts.next().unwrap_or(0);
+        let second = time_parts.next().unwrap_or(0);
+
+        Self::at(date, digital_time, hour, minute, second)
+    }
+
+    pub fn at(
+        date: impl Into<String>,
+        digital_time: impl Into<String>,
+        hour: u8,
+        minute: u8,
+        second: u8,
+    ) -> Self {
+        Self {
+            date: date.into(),
+            digital_time: digital_time.into(),
+            hour,
+            minute,
+            second,
+            alarms: Vec::new(),
+            countdowns: Vec::new(),
+            selected_entry_id: None,
+            entry_window_start: 0,
+            create_dialog: None,
+            ascii_assets: None,
+        }
+    }
+
+    pub fn with_ascii_assets(mut self, ascii_assets: RuntimeAsciiAssets) -> Self {
+        self.ascii_assets = Some(ascii_assets);
+        self
+    }
+
+    pub(crate) fn clock_font(&self) -> Option<&crate::ClockFontAsset> {
+        self.ascii_assets
+            .as_ref()
+            .map(RuntimeAsciiAssets::clock_font)
+    }
+}
+
+impl Default for ClockViewModel {
+    fn default() -> Self {
+        Self::at("", "00:00:00", 0, 0, 0)
     }
 }
 

@@ -2,12 +2,14 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use chrono::Utc;
 use tundra_platform::mock::MockPlatform;
 use tundra_platform::{PlatformCapabilities, PlatformKind, UserDirs, build_windows_app_paths};
 use tundra_shell::{
     HomeModeOverride, InputEvent, PointerButton, ShellComponent, ShellHomeMode, ShellLaunchConfig,
     ShellScreen, ShellState, ShellTerminalMode, prepare_shell_startup,
 };
+use tundra_storage::{ClockEntryRecord, ClockProfile};
 use tundra_ui::NotificationTone;
 
 fn debug_config() -> ShellLaunchConfig {
@@ -667,6 +669,7 @@ fn user_management_forms_edit_password_and_delete_accounts() {
     bootstrap_with_shell(&platform);
 
     let startup = prepare_shell_startup(&platform, default_config()).expect("admin startup");
+    let manager = startup.storage_manager.clone().expect("storage manager");
     let mut state = ShellState::new_with_startup(default_config(), (120, 40), startup);
     login(&mut state, "AdminUser", "StrongPass123");
     state.apply_input(InputEvent::from_key_label("u"));
@@ -685,6 +688,19 @@ fn user_management_forms_edit_password_and_delete_accounts() {
             .iter()
             .any(|user| user.username == "deleteme")
     );
+    let deleted_user_id = manager
+        .load_users()
+        .expect("users")
+        .users
+        .into_iter()
+        .find(|user| user.username == "deleteme")
+        .expect("managed user")
+        .id;
+    let mut clock = manager.load_clock().expect("clock document");
+    clock
+        .profiles
+        .insert(deleted_user_id.clone(), ClockProfile::default());
+    manager.save_clock(&clock).expect("clock profile saved");
 
     state.apply_input(InputEvent::from_key_label("e"));
     for _ in 0.."Delete Me".len() {
@@ -711,6 +727,176 @@ fn user_management_forms_edit_password_and_delete_accounts() {
             .iter()
             .any(|user| user.username == "deleteme")
     );
+    assert!(
+        !manager
+            .load_clock()
+            .expect("clock document")
+            .profiles
+            .contains_key(&deleted_user_id)
+    );
+}
+
+#[test]
+fn clock_keyboard_flow_creates_manages_and_persists_entries() {
+    let fixture = FixtureRoot::new("clock-keyboard-flow");
+    let platform = mock_platform(fixture.path());
+    let startup = prepare_shell_startup(&platform, default_config()).expect("startup");
+    let manager = startup.storage_manager.clone().expect("storage manager");
+    let mut state = ShellState::new_with_startup(default_config(), (120, 40), startup);
+    complete_first_run_setup(&mut state, 0, 0, "AdminUser", "StrongPass123", "Clock hint");
+
+    open_clock(&mut state);
+    let new_button = component_center(&state, ShellComponent::ClockNewButton);
+    state.apply_input(InputEvent::mouse_down(PointerButton::Left, new_button));
+    assert_eq!(state.focused_component(), ShellComponent::ClockCreateInput);
+    state.apply_input(InputEvent::from_key_label("Esc"));
+
+    create_clock_entry(&mut state, "07 30 00", false);
+    assert_eq!(state.to_clock_view_model().alarms.len(), 1);
+    assert!(
+        state.to_clock_view_model().alarms[0]
+            .label
+            .contains("07:30:00")
+    );
+    let alarm_row = component_center(&state, ShellComponent::ClockEntryList);
+    state.apply_input(InputEvent::mouse_down(PointerButton::Left, alarm_row));
+    assert_eq!(
+        state
+            .to_notification_view_model()
+            .map(|notification| notification.title),
+        Some("Manage Alarm".to_string())
+    );
+    state.apply_input(InputEvent::from_key_label("Esc"));
+
+    create_clock_entry(&mut state, "00 00 05", true);
+    assert_eq!(state.to_clock_view_model().countdowns.len(), 1);
+    assert_eq!(state.focused_component(), ShellComponent::ClockEntryList);
+
+    state.apply_input(InputEvent::from_key_label("Enter"));
+    assert_eq!(
+        state
+            .to_notification_view_model()
+            .map(|notification| notification.title),
+        Some("Manage Countdown".to_string())
+    );
+    state.apply_input(InputEvent::from_key_label("t"));
+    assert!(state.to_clock_view_model().countdowns[0].strong);
+
+    state.apply_input(InputEvent::from_key_label("Enter"));
+    state.apply_input(InputEvent::from_key_label("x"));
+    assert!(state.to_clock_view_model().countdowns.is_empty());
+
+    let user_id = state.auth_session().expect("signed in").user_id.clone();
+    let document = manager.load_clock().expect("clock document");
+    let profile = document.profiles.get(&user_id).expect("user clock profile");
+    assert_eq!(profile.entries.len(), 1);
+    assert!(matches!(
+        profile.entries[0],
+        ClockEntryRecord::DailyAlarm { .. }
+    ));
+}
+
+#[test]
+fn expired_countdown_waits_for_initial_sync_then_is_delivered_and_removed() {
+    let fixture = FixtureRoot::new("clock-expired-on-login");
+    let platform = mock_platform(fixture.path());
+    bootstrap_with_shell(&platform);
+
+    let startup = prepare_shell_startup(&platform, default_config()).expect("startup");
+    let manager = startup.storage_manager.clone().expect("storage manager");
+    let user_id = manager
+        .load_users()
+        .expect("users")
+        .users
+        .into_iter()
+        .find(|user| user.username == "AdminUser")
+        .expect("admin user")
+        .id;
+    let mut document = manager.load_clock().expect("clock document");
+    document.profiles.insert(
+        user_id.clone(),
+        ClockProfile {
+            next_id: 2,
+            entries: vec![ClockEntryRecord::Countdown {
+                id: 1,
+                deadline_epoch_ms: 1,
+                strong: false,
+            }],
+        },
+    );
+    manager.save_clock(&document).expect("clock saved");
+
+    let mut state = ShellState::new_with_startup(default_config(), (120, 40), startup);
+    login(&mut state, "AdminUser", "StrongPass123");
+
+    assert_eq!(
+        state.to_shell_chrome_view_model().status.toast.as_deref(),
+        Some("Waiting for initial time sync to restore reminders")
+    );
+    assert_eq!(
+        manager
+            .load_clock()
+            .expect("clock remains pending")
+            .profiles
+            .get(&user_id)
+            .expect("profile retained")
+            .entries
+            .len(),
+        1
+    );
+
+    state.apply_time_sync_utc_for_test(Utc::now());
+
+    assert!(state.to_clock_view_model().countdowns.is_empty());
+    assert_eq!(
+        state.to_shell_chrome_view_model().status.toast.as_deref(),
+        Some("Countdown finished")
+    );
+    assert!(
+        manager
+            .load_clock()
+            .expect("clock reloaded")
+            .profiles
+            .get(&user_id)
+            .expect("profile retained")
+            .entries
+            .is_empty()
+    );
+}
+
+fn open_clock(state: &mut ShellState) {
+    assert_eq!(state.active_screen(), ShellScreen::Home);
+    state.apply_input(InputEvent::from_key_label("Tab"));
+    assert_eq!(state.focused_component(), ShellComponent::ClockButton);
+    state.apply_input(InputEvent::from_key_label("Enter"));
+    assert_eq!(state.active_screen(), ShellScreen::Clock);
+    assert_eq!(state.focused_component(), ShellComponent::ClockNewButton);
+}
+
+fn create_clock_entry(state: &mut ShellState, input: &str, countdown: bool) {
+    state.apply_input(InputEvent::from_key_label("n"));
+    assert_eq!(state.focused_component(), ShellComponent::ClockCreateInput);
+    type_text(state, input);
+    state.apply_input(InputEvent::from_key_label("Tab"));
+    if countdown {
+        state.apply_input(InputEvent::from_key_label("Tab"));
+    }
+    state.apply_input(InputEvent::from_key_label("Enter"));
+    assert_eq!(state.focused_component(), ShellComponent::ClockEntryList);
+}
+
+fn component_center(state: &ShellState, component: ShellComponent) -> (u16, u16) {
+    let region = state
+        .hit_map()
+        .regions()
+        .iter()
+        .rev()
+        .find(|region| region.component == component)
+        .unwrap_or_else(|| panic!("missing {component:?} hit region"));
+    (
+        region.area.x.saturating_add(region.area.width / 2),
+        region.area.y.saturating_add(region.area.height / 2),
+    )
 }
 
 fn bootstrap_with_shell(platform: &MockPlatform) {
