@@ -1,18 +1,21 @@
 impl ShellState {
     fn refresh_hit_map(&mut self) {
         self.hit_map_generation = self.hit_map_generation.saturating_add(1);
-        if self.active_screen() == ShellScreen::Login {
+        let active_screen = self.active_screen();
+        let content_screen = self.content_screen();
+        if content_screen == ShellScreen::Login {
             self.sync_login_selection();
         }
         let time_button_label = self.status_time_button_label();
         let notification_model = self.notifications.active_modal_view_model();
         let home_model =
-            (self.active_screen() == ShellScreen::Home).then(|| self.to_home_view_model());
+            (content_screen == ShellScreen::Home).then(|| self.to_home_view_model());
         let clock_model =
-            (self.active_screen() == ShellScreen::Clock).then(|| self.to_clock_view_model());
+            (content_screen == ShellScreen::Clock).then(|| self.to_clock_view_model());
         self.hit_map = build_shell_hit_map(
             self.terminal_size,
-            self.active_screen(),
+            content_screen,
+            active_screen == ShellScreen::ExitConfirm,
             self.active_popup,
             self.setup_step,
             self.hit_map_generation,

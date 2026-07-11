@@ -6,6 +6,15 @@ impl ShellState {
             .unwrap_or(ShellScreen::Home)
     }
 
+    fn content_screen(&self) -> ShellScreen {
+        self.screen_stack
+            .iter()
+            .rev()
+            .copied()
+            .find(|screen| *screen != ShellScreen::ExitConfirm)
+            .unwrap_or(ShellScreen::Home)
+    }
+
     pub fn home_mode(&self) -> ShellHomeMode {
         self.home_mode
     }
@@ -101,7 +110,7 @@ impl ShellState {
 
     fn home_display_mode(&self) -> tundra_ui::HomeDisplayMode {
         if matches!(
-            self.active_screen(),
+            self.content_screen(),
             ShellScreen::FirstRunSetup | ShellScreen::Login | ShellScreen::BootstrapAdmin
         ) {
             return tundra_ui::HomeDisplayMode::Auth;

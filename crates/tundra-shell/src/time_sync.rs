@@ -113,12 +113,12 @@ impl ShellState {
     }
 
     fn status_time_button_label(&self) -> Option<String> {
-        clock_button_active_for_screen(self.active_screen()).then(|| self.current_time_label())
+        clock_button_active_for_screen(self.content_screen()).then(|| self.current_time_label())
     }
 
     fn time_button_selected(&self) -> bool {
         self.focused_component == ShellComponent::ClockButton
-            || self.active_screen() == ShellScreen::Clock
+            || self.content_screen() == ShellScreen::Clock
     }
 
     fn set_clock_timezone(&mut self, timezone_id: Option<String>) {

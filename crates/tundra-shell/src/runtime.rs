@@ -146,11 +146,12 @@ fn run_fullscreen_shell_session(
         let explorer = state.to_explorer_view_model();
         let notification = state.to_notification_view_model();
         let active_screen = state.active_screen();
+        let content_screen = state.content_screen();
         let exit_confirmation = tundra_ui::ExitConfirmViewModel::new();
 
         guard.terminal_mut().draw(|frame| {
             let area = frame.area();
-            match active_screen {
+            match content_screen {
                 ShellScreen::FirstRunSetup => {
                     tundra_ui::render_setup(frame, area, &chrome, &setup, &theme);
                 }

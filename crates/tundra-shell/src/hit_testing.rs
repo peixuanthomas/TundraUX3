@@ -1,7 +1,8 @@
 #[allow(clippy::too_many_arguments)]
 fn build_shell_hit_map(
     terminal_size: CellPosition,
-    active_screen: ShellScreen,
+    content_screen: ShellScreen,
+    exit_confirmation_visible: bool,
     active_popup: Option<ShellPopup>,
     setup_step: tundra_ui::SetupStep,
     generation: u64,
@@ -28,7 +29,7 @@ fn build_shell_hit_map(
                 component: ShellComponent::TopBar,
                 area: top,
             });
-            match active_screen {
+            match content_screen {
                 ShellScreen::FirstRunSetup => {
                     regions.extend(setup_hit_regions(main, setup_step));
                 }
@@ -126,7 +127,7 @@ fn build_shell_hit_map(
                         component: ShellComponent::Home,
                         area: main,
                     });
-                    if active_screen == ShellScreen::Home
+                    if content_screen == ShellScreen::Home
                         && let Some(model) = home_model
                     {
                         let logout = tundra_ui::home_logout_area(main, model);
@@ -143,7 +144,7 @@ fn build_shell_hit_map(
                 component: ShellComponent::StatusBar,
                 area: status,
             });
-            if clock_button_active_for_screen(active_screen)
+            if clock_button_active_for_screen(content_screen)
                 && let Some(label) = time_button_label
             {
                 let button = tundra_ui::status_time_button_area(status, label);
@@ -164,7 +165,7 @@ fn build_shell_hit_map(
         });
     }
 
-    if active_screen == ShellScreen::ExitConfirm {
+    if exit_confirmation_visible {
         regions.push(ShellHitRegion {
             component: ShellComponent::ExitDialog,
             area: centered_rect(area, width.min(46), height.min(7)),

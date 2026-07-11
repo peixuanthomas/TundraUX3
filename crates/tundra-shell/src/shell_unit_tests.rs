@@ -6,6 +6,44 @@ mod tests {
     };
 
     #[test]
+    fn exit_confirmation_keeps_login_as_the_content_screen() {
+        let mut state = ShellState::new(ShellLaunchConfig::default(), (120, 40));
+        state.screen_stack = vec![ShellScreen::Login];
+        state.focused_component = ShellComponent::LoginUserList;
+        state.refresh_hit_map();
+
+        let action = state.apply_input(InputEvent::from_key_label("Esc"));
+
+        assert_eq!(action, ShellAction::Redraw);
+        assert_eq!(state.active_screen(), ShellScreen::ExitConfirm);
+        assert_eq!(state.content_screen(), ShellScreen::Login);
+        assert_eq!(
+            state.to_shell_chrome_view_model().display_mode,
+            tundra_ui::HomeDisplayMode::Auth
+        );
+        assert!(
+            state
+                .hit_map()
+                .regions()
+                .iter()
+                .any(|region| region.component == ShellComponent::LoginUserList)
+        );
+        assert!(
+            state
+                .hit_map()
+                .regions()
+                .iter()
+                .any(|region| region.component == ShellComponent::ExitDialog)
+        );
+
+        state.apply_input(InputEvent::from_key_label("Esc"));
+
+        assert_eq!(state.active_screen(), ShellScreen::Login);
+        assert_eq!(state.content_screen(), ShellScreen::Login);
+        assert_eq!(state.focused_component(), ShellComponent::LoginUserList);
+    }
+
+    #[test]
     fn key_event_to_label_maps_requested_keys() {
         let cases = [
             (
