@@ -15,7 +15,10 @@ mod trash_document;
 mod user_document;
 
 pub use clock_document::{ClockDocument, ClockEntryRecord, ClockProfile};
-pub use config_document::{ExplorerConfig, LauncherConfig, SecurityConfig, StorageConfig};
+pub use config_document::{
+    ExplorerConfig, ExplorerDateZone, ExplorerSizeFormat, ExplorerSortDirection, ExplorerSortField,
+    LauncherConfig, SecurityConfig, StorageConfig,
+};
 pub use descriptors::{
     CLOCK_DESCRIPTOR, CONFIG_DESCRIPTOR, StorageDescriptor, VERSIONED_JSON_DESCRIPTORS,
 };

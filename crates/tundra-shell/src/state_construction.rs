@@ -129,6 +129,13 @@ impl ShellState {
             explorer_state: None,
             explorer_input_mode: ExplorerInputMode::Browse,
             explorer_input: String::new(),
+            explorer_overlay_mode: None,
+            explorer_overlay_selection: 0,
+            explorer_conflict_apply_to_remaining: false,
+            explorer_task_runtime: startup
+                .storage_manager
+                .as_ref()
+                .map(|storage| ShellExplorerTaskRuntime::new(storage.clone())),
             terminal_size,
             terminal_flags: ShellTerminalFlags::enabled(),
             focused_component: initial_focus,

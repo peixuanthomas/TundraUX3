@@ -536,7 +536,7 @@ fn terminal_environment_check_is_reported_by_platform_layer() {
 }
 
 #[test]
-fn mock_windows_platform_applies_windows_external_open_policy() {
+fn executable_open_policy_applies_on_every_platform() {
     let base = unique_temp_root("windows-external-open-policy");
     let windows_platform = mock_platform(&base).with_kind(PlatformKind::Windows);
     let macos_platform = mock_platform(&base).with_kind(PlatformKind::Macos);
@@ -553,7 +553,7 @@ fn mock_windows_platform_applies_windows_external_open_policy() {
             .unwrap_or_default()
             .contains("Windows")
     );
-    assert!(macos_policy.is_allowed());
+    assert!(!macos_policy.is_allowed());
 
     cleanup_temp_path(&base).expect("fixture root should be removable");
 }

@@ -236,23 +236,156 @@ impl ShellState {
         let entries = state
             .entries
             .iter()
-            .enumerate()
-            .map(|(index, entry)| tundra_ui::ExplorerEntryViewModel {
-                name: entry.name.clone(),
-                kind: entry.kind.label().to_string(),
+            .map(|entry| tundra_ui::ExplorerEntryViewModel {
+                name: explorer_display_name(entry, state.show_extensions),
+                kind: entry.type_label.clone(),
                 size: (entry.kind == tundra_apps::explorer::ExplorerEntryKind::File)
-                    .then(|| entry.size.to_string()),
-                modified: entry.modified.map(system_time_label),
+                    .then(|| explorer_size_label(entry.size, state.size_format)),
+                modified: entry.modified.map(|modified| {
+                    explorer_system_time_label(
+                        modified,
+                        state.date_zone,
+                        self.clock_timezone_id.as_deref(),
+                    )
+                }),
                 attributes: explorer_attribute_labels(&entry.attributes),
-                selected: index == state.selected_index,
+                selected: state.is_selected(&entry.path),
             })
             .collect::<Vec<_>>();
         let selected_index = (!entries.is_empty()).then_some(state.selected_index);
-        let mut model = tundra_ui::ExplorerViewModel::new(
+        let mut model = tundra_ui::ExplorerViewModel::with_ascii_assets(
             state.current_path.display().to_string(),
             entries,
             selected_index,
+            self.ascii_assets.clone(),
         );
+        model.entry_presentations = state
+            .entries
+            .iter()
+            .enumerate()
+            .map(|(index, entry)| {
+                let mut presentation = tundra_ui::ExplorerEntryPresentationViewModel::new(
+                    entry.path.display().to_string(),
+                    entry.path.display().to_string(),
+                    entry.icon_key.clone(),
+                    entry.kind == tundra_apps::explorer::ExplorerEntryKind::Directory,
+                );
+                presentation.selected = state.is_selected(&entry.path);
+                presentation.focused = index == state.selected_index;
+                presentation.cut = state.clipboard.as_ref().is_some_and(|clipboard| {
+                    clipboard.mode == tundra_apps::explorer::ExplorerClipboardMode::Cut
+                        && clipboard.paths.contains(&entry.path)
+                });
+                presentation.drop_target = state
+                    .drag
+                    .as_ref()
+                    .and_then(|drag| drag.target.as_ref())
+                    .is_some_and(|target| target == &entry.path);
+                presentation.metadata_warning = entry.metadata_warning.clone();
+                presentation
+            })
+            .collect();
+        model.quick_locations = state
+            .quick_locations
+            .iter()
+            .map(|location| {
+                let mut model = tundra_ui::ExplorerQuickLocationViewModel::new(
+                    location.id.clone(),
+                    location.label.clone(),
+                    location.path.display().to_string(),
+                    location.icon_key.clone(),
+                );
+                model.current = location.path == state.current_path;
+                model.enabled = location.path.is_dir();
+                model.drop_target = state
+                    .drag
+                    .as_ref()
+                    .and_then(|drag| drag.target.as_ref())
+                    .is_some_and(|target| target == &location.path);
+                model
+            })
+            .collect();
+        model.breadcrumbs = explorer_breadcrumb_view_models(&state.current_path, state);
+        model.sort_column = match state.sort_field {
+            tundra_apps::explorer::ExplorerSortField::Name => tundra_ui::ExplorerSortColumn::Name,
+            tundra_apps::explorer::ExplorerSortField::Type => tundra_ui::ExplorerSortColumn::Type,
+            tundra_apps::explorer::ExplorerSortField::Size => tundra_ui::ExplorerSortColumn::Size,
+            tundra_apps::explorer::ExplorerSortField::Modified => {
+                tundra_ui::ExplorerSortColumn::Modified
+            }
+        };
+        model.sort_direction = match state.sort_direction {
+            tundra_apps::explorer::ExplorerSortDirection::Ascending => {
+                tundra_ui::ExplorerSortDirection::Ascending
+            }
+            tundra_apps::explorer::ExplorerSortDirection::Descending => {
+                tundra_ui::ExplorerSortDirection::Descending
+            }
+        };
+        model.viewport_offset = state.viewport_offset;
+        model.viewport_follows_focus = state.viewport_follows_focus;
+        model.show_sidebar = state.show_sidebar;
+        model.selected_count = state.effective_selected_paths().len();
+        model.listing_warning_count = state.listing_warning_count;
+        model.set_history_availability(
+            !state.back_history.is_empty(),
+            !state.forward_history.is_empty(),
+        );
+        let busy = state.operation.is_some();
+        for button in &mut model.toolbar.buttons {
+            button.enabled = match button.action {
+                tundra_ui::ExplorerToolbarAction::Back => !state.back_history.is_empty(),
+                tundra_ui::ExplorerToolbarAction::Forward => !state.forward_history.is_empty(),
+                tundra_ui::ExplorerToolbarAction::Up => state.current_path.parent().is_some(),
+                tundra_ui::ExplorerToolbarAction::New => !busy,
+                tundra_ui::ExplorerToolbarAction::Cut
+                | tundra_ui::ExplorerToolbarAction::Copy
+                | tundra_ui::ExplorerToolbarAction::Delete => {
+                    model.selected_count > 0 && !busy
+                }
+                tundra_ui::ExplorerToolbarAction::Paste => {
+                    state.clipboard.is_some() && !busy
+                }
+                tundra_ui::ExplorerToolbarAction::Rename => {
+                    model.selected_count == 1 && !busy
+                }
+                _ => true,
+            };
+        }
+        model.operation = state.operation.as_ref().map(|operation| {
+            let phase = match operation.phase {
+                tundra_apps::explorer::ExplorerOperationPhase::Scanning => {
+                    tundra_ui::ExplorerOperationPhase::Scanning
+                }
+                tundra_apps::explorer::ExplorerOperationPhase::WaitingForConflict => {
+                    tundra_ui::ExplorerOperationPhase::CheckingConflicts
+                }
+                tundra_apps::explorer::ExplorerOperationPhase::Executing => {
+                    if operation.label.to_ascii_lowercase().contains("mov") {
+                        tundra_ui::ExplorerOperationPhase::Moving
+                    } else if operation.label.to_ascii_lowercase().contains("trash") {
+                        tundra_ui::ExplorerOperationPhase::Deleting
+                    } else {
+                        tundra_ui::ExplorerOperationPhase::Copying
+                    }
+                }
+                tundra_apps::explorer::ExplorerOperationPhase::Completed
+                | tundra_apps::explorer::ExplorerOperationPhase::Cancelled
+                | tundra_apps::explorer::ExplorerOperationPhase::Failed => {
+                    tundra_ui::ExplorerOperationPhase::Finishing
+                }
+            };
+            tundra_ui::ExplorerOperationProgressViewModel {
+                phase,
+                label: operation.label.clone(),
+                completed_items: operation.completed_items as u64,
+                total_items: operation.total_items.map(|value| value as u64),
+                completed_bytes: operation.completed_bytes,
+                total_bytes: operation.total_bytes,
+                cancellable: operation.cancellable,
+                cancel_label: "Cancel".to_string(),
+            }
+        });
         model.show_hidden = state.show_hidden;
         model.message = state.message.clone();
         model.error = state.error.clone();
@@ -280,15 +413,82 @@ impl ShellState {
             )
         });
 
-        if self.explorer_input_mode != ExplorerInputMode::Browse
+        model.overlay = if let Some(conflict) = state.pending_conflict.as_ref() {
+            Some(tundra_ui::ExplorerOverlayViewModel::Conflict(
+                tundra_ui::ExplorerConflictViewModel {
+                    title: "Name conflict".to_string(),
+                    source: conflict.source.display().to_string(),
+                    destination: conflict.target.display().to_string(),
+                    choices: vec![
+                        tundra_ui::ExplorerConflictChoice::KeepBoth,
+                        tundra_ui::ExplorerConflictChoice::Replace,
+                        tundra_ui::ExplorerConflictChoice::Skip,
+                        tundra_ui::ExplorerConflictChoice::Cancel,
+                    ],
+                    selected_choice: tundra_ui::ExplorerConflictChoice::KeepBoth,
+                    apply_to_remaining: self.explorer_conflict_apply_to_remaining,
+                },
+            ))
+        } else if self.explorer_input_mode != ExplorerInputMode::Browse
             && self.explorer_input_mode != ExplorerInputMode::Search
         {
-            model.message = Some(format!(
-                "{}: {}",
-                explorer_input_prompt(self.explorer_input_mode),
-                self.explorer_input
-            ));
-        }
+            let (kind, title, prompt, confirm_label) = match self.explorer_input_mode {
+                ExplorerInputMode::NewFolder => (
+                    tundra_ui::ExplorerNameDialogKind::NewFolder,
+                    "New folder",
+                    "Folder name",
+                    "Create",
+                ),
+                ExplorerInputMode::NewTextFile => (
+                    tundra_ui::ExplorerNameDialogKind::NewTextFile,
+                    "New text file",
+                    "File name",
+                    "Create",
+                ),
+                ExplorerInputMode::Rename => (
+                    tundra_ui::ExplorerNameDialogKind::Rename,
+                    "Rename",
+                    "New name",
+                    "Rename",
+                ),
+                ExplorerInputMode::Browse | ExplorerInputMode::Search => unreachable!(),
+            };
+            Some(tundra_ui::ExplorerOverlayViewModel::Name(
+                tundra_ui::ExplorerNameDialogViewModel {
+                    kind,
+                    title: title.to_string(),
+                    prompt: prompt.to_string(),
+                    value: self.explorer_input.clone(),
+                    error: state.error.clone(),
+                    confirm_label: confirm_label.to_string(),
+                    cancel_label: "Cancel".to_string(),
+                },
+            ))
+        } else if let Some(overlay_mode) = self.explorer_overlay_mode {
+            Some(match overlay_mode {
+                ExplorerOverlayMode::ContextMenu { anchor } => explorer_context_menu_view_model(
+                    anchor,
+                    model.selected_count,
+                    state.clipboard.is_some(),
+                    self.explorer_overlay_selection,
+                ),
+                ExplorerOverlayMode::Sort { anchor } => {
+                    explorer_sort_menu_view_model(
+                        anchor,
+                        model.sort_column,
+                        self.explorer_overlay_selection,
+                    )
+                }
+                ExplorerOverlayMode::Options => {
+                    explorer_options_view_model(state, self.explorer_overlay_selection)
+                }
+                ExplorerOverlayMode::Properties => {
+                    explorer_properties_view_model(state, self.clock_timezone_id.as_deref())
+                }
+            })
+        } else {
+            None
+        };
 
         model
     }

@@ -1,5 +1,6 @@
 use std::fmt;
 use std::fs;
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
@@ -58,6 +59,7 @@ pub struct PlatformCapabilities {
     pub app_paths: CapabilityStatus,
     pub temp: CapabilityStatus,
     pub file_attributes: CapabilityStatus,
+    pub directory_listing: CapabilityStatus,
     pub notifications: CapabilityStatus,
     pub default_apps: CapabilityStatus,
     pub power: CapabilityStatus,
@@ -76,6 +78,7 @@ impl PlatformCapabilities {
             app_paths: CapabilityStatus::Supported,
             temp: CapabilityStatus::Supported,
             file_attributes: CapabilityStatus::Supported,
+            directory_listing: CapabilityStatus::Supported,
             notifications: CapabilityStatus::Unsupported,
             default_apps: CapabilityStatus::Unsupported,
             power: CapabilityStatus::Unsupported,
@@ -94,13 +97,14 @@ impl PlatformCapabilities {
             app_paths: CapabilityStatus::Unsupported,
             temp: CapabilityStatus::Unsupported,
             file_attributes: CapabilityStatus::Unsupported,
+            directory_listing: CapabilityStatus::Unsupported,
             notifications: CapabilityStatus::Unsupported,
             default_apps: CapabilityStatus::Unsupported,
             power: CapabilityStatus::Unsupported,
         }
     }
 
-    pub fn checks(&self) -> [(&'static str, CapabilityStatus); 13] {
+    pub fn checks(&self) -> [(&'static str, CapabilityStatus); 14] {
         [
             ("open_path", self.open_path),
             ("open_with", self.open_with),
@@ -112,6 +116,7 @@ impl PlatformCapabilities {
             ("app_paths", self.app_paths),
             ("temp", self.temp),
             ("file_attributes", self.file_attributes),
+            ("directory_listing", self.directory_listing),
             ("notifications", self.notifications),
             ("default_apps", self.default_apps),
             ("power", self.power),
@@ -155,6 +160,94 @@ pub struct FileAttributes {
     pub shortcut: bool,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExecutableKind {
+    NativeBinary,
+    Installer,
+    Script,
+    Shortcut,
+    ApplicationBundle,
+}
+
+impl ExecutableKind {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::NativeBinary => "executable",
+            Self::Installer => "installer",
+            Self::Script => "script",
+            Self::Shortcut => "shortcut",
+            Self::ApplicationBundle => "application bundle",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FileOpenPolicy {
+    SystemDefault,
+    LauncherRequired {
+        kind: ExecutableKind,
+        reason: String,
+    },
+    Blocked {
+        reason: String,
+    },
+}
+
+impl FileOpenPolicy {
+    pub fn system_default() -> Self {
+        Self::SystemDefault
+    }
+
+    pub fn launcher_required(kind: ExecutableKind, reason: impl Into<String>) -> Self {
+        Self::LauncherRequired {
+            kind,
+            reason: reason.into(),
+        }
+    }
+
+    pub fn blocked(reason: impl Into<String>) -> Self {
+        Self::Blocked {
+            reason: reason.into(),
+        }
+    }
+
+    pub fn is_system_default(&self) -> bool {
+        matches!(self, Self::SystemDefault)
+    }
+
+    pub fn requires_launcher(&self) -> bool {
+        matches!(self, Self::LauncherRequired { .. })
+    }
+
+    pub fn reason(&self) -> Option<&str> {
+        match self {
+            Self::SystemDefault => None,
+            Self::LauncherRequired { reason, .. } | Self::Blocked { reason } => Some(reason),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DirectoryEntryMetadata {
+    pub path: PathBuf,
+    pub name: String,
+    pub attributes: Option<FileAttributes>,
+    pub open_policy: FileOpenPolicy,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DirectoryListingWarning {
+    pub path: PathBuf,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DirectoryListing {
+    pub path: PathBuf,
+    pub entries: Vec<DirectoryEntryMetadata>,
+    pub warnings: Vec<DirectoryListingWarning>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ExternalOpenPolicy {
     blocked_reason: Option<String>,
@@ -180,6 +273,14 @@ impl ExternalOpenPolicy {
     pub fn blocked_reason(&self) -> Option<&str> {
         self.blocked_reason.as_deref()
     }
+
+    pub fn from_file_open_policy(policy: FileOpenPolicy) -> Self {
+        match policy {
+            FileOpenPolicy::SystemDefault => Self::allowed(),
+            FileOpenPolicy::LauncherRequired { reason, .. }
+            | FileOpenPolicy::Blocked { reason } => Self::blocked(reason),
+        }
+    }
 }
 
 pub trait Platform: Send + Sync {
@@ -199,9 +300,20 @@ pub trait Platform: Send + Sync {
         default_file_attributes(path)
     }
 
+    fn read_directory(&self, path: &Path) -> Result<DirectoryListing, PlatformError> {
+        default_read_directory(self, path)
+    }
+
+    fn file_open_policy(&self, path: &Path, attributes: &FileAttributes) -> FileOpenPolicy {
+        default_file_open_policy(self.kind(), path, attributes)
+    }
+
     fn external_open_policy(&self, path: &Path, attributes: &FileAttributes) -> ExternalOpenPolicy {
-        let _ = path;
-        default_external_open_policy(attributes)
+        ExternalOpenPolicy::from_file_open_policy(self.file_open_policy(path, attributes))
+    }
+
+    fn rename_path(&self, source: &Path, target: &Path) -> Result<(), PlatformError> {
+        default_rename_path(source, target)
     }
 
     fn create_temp_file(&self, prefix: &str) -> Result<PathBuf, PlatformError> {
@@ -268,6 +380,11 @@ pub enum PlatformError {
         path: Option<PathBuf>,
         message: String,
     },
+    CrossDevice {
+        source: PathBuf,
+        target: PathBuf,
+        message: String,
+    },
     ProcessPolicy {
         message: String,
     },
@@ -305,6 +422,16 @@ impl fmt::Display for PlatformError {
                 ),
                 None => write!(formatter, "{operation} failed: {message}"),
             },
+            Self::CrossDevice {
+                source,
+                target,
+                message,
+            } => write!(
+                formatter,
+                "cannot rename {} to {} across filesystems: {message}",
+                source.display(),
+                target.display()
+            ),
             Self::ProcessPolicy { message } => formatter.write_str(message),
             Self::CommandFailed {
                 program,
@@ -361,6 +488,112 @@ pub fn default_file_attributes(path: &Path) -> Result<FileAttributes, PlatformEr
     })
 }
 
+pub fn default_read_directory<P: Platform + ?Sized>(
+    platform: &P,
+    path: &Path,
+) -> Result<DirectoryListing, PlatformError> {
+    let directory = fs::read_dir(path).map_err(|error| PlatformError::Io {
+        operation: "read directory",
+        path: Some(path.to_path_buf()),
+        message: error.to_string(),
+    })?;
+    let mut entries = Vec::new();
+    let mut warnings = Vec::new();
+
+    for result in directory {
+        let entry = match result {
+            Ok(entry) => entry,
+            Err(error) => {
+                warnings.push(DirectoryListingWarning {
+                    path: path.to_path_buf(),
+                    message: error.to_string(),
+                });
+                continue;
+            }
+        };
+        let entry_path = entry.path();
+        let name = entry.file_name().to_string_lossy().into_owned();
+        match platform.file_attributes(&entry_path) {
+            Ok(attributes) => {
+                let open_policy = platform.file_open_policy(&entry_path, &attributes);
+                entries.push(DirectoryEntryMetadata {
+                    path: entry_path,
+                    name,
+                    attributes: Some(attributes),
+                    open_policy,
+                });
+            }
+            Err(error) => {
+                warnings.push(DirectoryListingWarning {
+                    path: entry_path.clone(),
+                    message: error.to_string(),
+                });
+                entries.push(DirectoryEntryMetadata {
+                    path: entry_path,
+                    name,
+                    attributes: None,
+                    open_policy: FileOpenPolicy::blocked(
+                        "metadata is unavailable; opening this entry is blocked",
+                    ),
+                });
+            }
+        }
+    }
+
+    Ok(DirectoryListing {
+        path: path.to_path_buf(),
+        entries,
+        warnings,
+    })
+}
+
+pub fn default_rename_path(source: &Path, target: &Path) -> Result<(), PlatformError> {
+    fs::rename(source, target).map_err(|error| {
+        if is_cross_device_error(&error) {
+            PlatformError::CrossDevice {
+                source: source.to_path_buf(),
+                target: target.to_path_buf(),
+                message: error.to_string(),
+            }
+        } else {
+            PlatformError::Io {
+                operation: "rename path",
+                path: Some(source.to_path_buf()),
+                message: error.to_string(),
+            }
+        }
+    })
+}
+
+fn is_cross_device_error(error: &std::io::Error) -> bool {
+    matches!(error.raw_os_error(), Some(17 | 18))
+}
+
+pub fn default_file_open_policy(
+    kind: PlatformKind,
+    path: &Path,
+    attributes: &FileAttributes,
+) -> FileOpenPolicy {
+    if attributes.symlink || attributes.junction || attributes.reparse_point {
+        return FileOpenPolicy::blocked(
+            "symbolic links and reparse points are blocked until safe path traversal is available",
+        );
+    }
+
+    if kind != PlatformKind::Windows && attributes.is_file && extension_is(path, &["exe"]) {
+        return FileOpenPolicy::launcher_required(
+            ExecutableKind::NativeBinary,
+            "executable files must be opened through Launcher",
+        );
+    }
+
+    match kind {
+        PlatformKind::Windows => windows_file_open_policy(path, attributes),
+        PlatformKind::Macos => macos_file_open_policy(path, attributes),
+        PlatformKind::Unsupported => unsupported_file_open_policy(path, attributes),
+    }
+}
+
 pub fn default_external_open_policy(attributes: &FileAttributes) -> ExternalOpenPolicy {
     if attributes.shortcut {
         return ExternalOpenPolicy::blocked(
@@ -377,29 +610,136 @@ pub fn default_external_open_policy(attributes: &FileAttributes) -> ExternalOpen
     ExternalOpenPolicy::allowed()
 }
 
+pub(crate) fn windows_file_open_policy(path: &Path, attributes: &FileAttributes) -> FileOpenPolicy {
+    const NATIVE: &[&str] = &["exe", "com", "scr", "cpl", "pif"];
+    const INSTALLERS: &[&str] = &["msi", "msp", "msix", "msixbundle", "appx", "appxbundle"];
+    const SCRIPTS: &[&str] = &[
+        "bat", "cmd", "ps1", "psm1", "vbs", "vbe", "js", "jse", "wsf", "wsh", "hta", "jar", "py",
+        "pyw", "rb", "pl",
+    ];
+    const SHORTCUTS: &[&str] = &["lnk", "url", "reg", "scf"];
+
+    let classified = if attributes.shortcut {
+        Some(ExecutableKind::Shortcut)
+    } else if !attributes.is_file {
+        None
+    } else if extension_is(path, NATIVE) {
+        Some(ExecutableKind::NativeBinary)
+    } else if extension_is(path, INSTALLERS) {
+        Some(ExecutableKind::Installer)
+    } else if extension_is(path, SCRIPTS) {
+        Some(ExecutableKind::Script)
+    } else if extension_is(path, SHORTCUTS) {
+        Some(ExecutableKind::Shortcut)
+    } else {
+        None
+    };
+
+    classified.map_or_else(FileOpenPolicy::system_default, |kind| {
+        FileOpenPolicy::launcher_required(
+            kind,
+            format!(
+                "Windows {} files must be opened through Launcher",
+                kind.label()
+            ),
+        )
+    })
+}
+
+pub(crate) fn macos_file_open_policy(path: &Path, attributes: &FileAttributes) -> FileOpenPolicy {
+    if attributes.is_dir && extension_is(path, &["app"]) {
+        return FileOpenPolicy::launcher_required(
+            ExecutableKind::ApplicationBundle,
+            "macOS application bundles must be opened through Launcher",
+        );
+    }
+    if extension_is(path, &["pkg", "mpkg"]) {
+        return FileOpenPolicy::launcher_required(
+            ExecutableKind::Installer,
+            "macOS installer packages must be opened through Launcher",
+        );
+    }
+    let mach_o = attributes.is_file && is_mach_o(path);
+    if attributes.is_file && (mach_o || native_executable_bit(path)) {
+        return FileOpenPolicy::launcher_required(
+            if !mach_o && extension_is(path, &["command", "tool", "sh", "bash", "zsh"]) {
+                ExecutableKind::Script
+            } else {
+                ExecutableKind::NativeBinary
+            },
+            "executable files must be opened through Launcher",
+        );
+    }
+    FileOpenPolicy::system_default()
+}
+
+pub(crate) fn unsupported_file_open_policy(
+    path: &Path,
+    attributes: &FileAttributes,
+) -> FileOpenPolicy {
+    if attributes.is_file
+        && (extension_is(path, &["desktop", "appimage", "run"]) || native_executable_bit(path))
+    {
+        return FileOpenPolicy::launcher_required(
+            ExecutableKind::NativeBinary,
+            "executable files must be opened through Launcher",
+        );
+    }
+    FileOpenPolicy::system_default()
+}
+
 pub(crate) fn windows_external_open_policy(
     path: &Path,
     attributes: &FileAttributes,
 ) -> ExternalOpenPolicy {
-    let default_policy = default_external_open_policy(attributes);
-    if !default_policy.is_allowed() {
-        return default_policy;
-    }
+    ExternalOpenPolicy::from_file_open_policy(default_file_open_policy(
+        PlatformKind::Windows,
+        path,
+        attributes,
+    ))
+}
 
-    let extension = path
-        .extension()
+fn extension_is(path: &Path, candidates: &[&str]) -> bool {
+    path.extension()
         .and_then(|extension| extension.to_str())
-        .map(|extension| extension.to_ascii_lowercase());
-    if matches!(
-        extension.as_deref(),
-        Some("lnk" | "exe" | "bat" | "cmd" | "ps1")
-    ) {
-        return ExternalOpenPolicy::blocked(
-            "Windows executables, scripts, and shortcuts are blocked until Launcher/Open With policy is available",
-        );
-    }
+        .is_some_and(|extension| {
+            candidates
+                .iter()
+                .any(|candidate| extension.eq_ignore_ascii_case(candidate))
+        })
+}
 
-    ExternalOpenPolicy::allowed()
+fn is_mach_o(path: &Path) -> bool {
+    const MACH_O_MAGICS: [[u8; 4]; 8] = [
+        [0xfe, 0xed, 0xfa, 0xce],
+        [0xce, 0xfa, 0xed, 0xfe],
+        [0xfe, 0xed, 0xfa, 0xcf],
+        [0xcf, 0xfa, 0xed, 0xfe],
+        [0xca, 0xfe, 0xba, 0xbe],
+        [0xbe, 0xba, 0xfe, 0xca],
+        [0xca, 0xfe, 0xba, 0xbf],
+        [0xbf, 0xba, 0xfe, 0xca],
+    ];
+
+    let mut magic = [0_u8; 4];
+    fs::File::open(path)
+        .and_then(|mut file| file.read_exact(&mut magic))
+        .is_ok()
+        && MACH_O_MAGICS.contains(&magic)
+}
+
+#[cfg(unix)]
+fn native_executable_bit(path: &Path) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+
+    fs::symlink_metadata(path)
+        .map(|metadata| metadata.permissions().mode() & 0o111 != 0)
+        .unwrap_or(false)
+}
+
+#[cfg(not(unix))]
+fn native_executable_bit(_path: &Path) -> bool {
+    false
 }
 
 fn is_dotfile(path: &Path) -> bool {

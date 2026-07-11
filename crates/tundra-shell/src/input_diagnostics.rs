@@ -48,6 +48,7 @@ impl ShellState {
             } => {
                 self.drag_tracker = Some(DragTracker {
                     button,
+                    origin_coordinates: coordinates,
                     last_coordinates: coordinates,
                 });
                 self.mouse_drag_direction = None;
@@ -62,11 +63,17 @@ impl ShellState {
                     .drag_tracker
                     .filter(|tracker| tracker.button == button)
                     .map(|tracker| tracker.last_coordinates);
+                let origin = self
+                    .drag_tracker
+                    .filter(|tracker| tracker.button == button)
+                    .map(|tracker| tracker.origin_coordinates)
+                    .unwrap_or(coordinates);
                 let direction =
                     previous.and_then(|previous| drag_direction_between(previous, coordinates));
 
                 self.drag_tracker = Some(DragTracker {
                     button,
+                    origin_coordinates: origin,
                     last_coordinates: coordinates,
                 });
                 self.mouse_drag_direction =

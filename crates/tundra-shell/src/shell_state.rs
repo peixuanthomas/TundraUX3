@@ -13,6 +13,7 @@ struct NotificationPointerCapture {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct DragTracker {
     button: PointerButton,
+    origin_coordinates: CellPosition,
     last_coordinates: CellPosition,
 }
 
@@ -77,6 +78,14 @@ enum ExplorerInputMode {
     NewFolder,
     NewTextFile,
     Rename,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ExplorerOverlayMode {
+    ContextMenu { anchor: CellPosition },
+    Sort { anchor: CellPosition },
+    Options,
+    Properties,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -184,6 +193,10 @@ pub struct ShellState {
     explorer_state: Option<ExplorerState>,
     explorer_input_mode: ExplorerInputMode,
     explorer_input: String,
+    explorer_overlay_mode: Option<ExplorerOverlayMode>,
+    explorer_overlay_selection: usize,
+    explorer_conflict_apply_to_remaining: bool,
+    explorer_task_runtime: Option<ShellExplorerTaskRuntime>,
     terminal_size: (u16, u16),
     terminal_flags: ShellTerminalFlags,
     focused_component: ShellComponent,

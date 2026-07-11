@@ -51,6 +51,7 @@ pub(crate) const REQUIRED_TEXT_ARTS: &[(&str, &str)] = &[
 
 const REQUIRED_TOML_ASSETS: &[(&str, &str, AssetKind)] = &[
     ("banner", "banner.toml", AssetKind::ArtSet),
+    ("explorer_icons", "explorer_icons.toml", AssetKind::ArtSet),
     ("home_icons", "home_icons.toml", AssetKind::ArtSet),
     (
         "weathr/render/clock_font",

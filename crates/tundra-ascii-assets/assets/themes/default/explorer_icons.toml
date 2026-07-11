@@ -1,0 +1,134 @@
+schema_version = 1
+name = "default-explorer-icons"
+
+[items.folder]
+label = "Folder"
+lines = ["[+]"]
+
+[items.file]
+label = "File"
+lines = ["[ ]"]
+
+[items.text]
+label = "Text"
+lines = ["[T]"]
+
+[items.code]
+label = "Code"
+lines = ["[#]"]
+
+[items.document]
+label = "Document"
+lines = ["[D]"]
+
+[items.image]
+label = "Image"
+lines = ["[I]"]
+
+[items.audio]
+label = "Audio"
+lines = ["[A]"]
+
+[items.video]
+label = "Video"
+lines = ["[V]"]
+
+[items.archive]
+label = "Archive"
+lines = ["[Z]"]
+
+[items.executable]
+label = "Executable"
+lines = ["[!]"]
+
+[items.link]
+label = "Link"
+lines = ["[@]"]
+
+[items.other]
+label = "Other"
+lines = ["[?]"]
+
+[items.desktop]
+label = "Desktop"
+lines = ["[_]"]
+
+[items.documents]
+label = "Documents"
+lines = ["[=]"]
+
+[items.downloads]
+label = "Downloads"
+lines = ["[v]"]
+
+[items.pictures]
+label = "Pictures"
+lines = ["[P]"]
+
+[items.music]
+label = "Music"
+lines = ["[M]"]
+
+[items.videos]
+label = "Videos"
+lines = ["[V]"]
+
+[items.back]
+label = "Back"
+lines = ["<"]
+
+[items.forward]
+label = "Forward"
+lines = [">"]
+
+[items.up]
+label = "Up"
+lines = ["^"]
+
+[items.refresh]
+label = "Refresh"
+lines = ["@"]
+
+[items.new]
+label = "New"
+lines = ["+"]
+
+[items.cut]
+label = "Cut"
+lines = ["x"]
+
+[items.copy]
+label = "Copy"
+lines = ["c"]
+
+[items.paste]
+label = "Paste"
+lines = ["v"]
+
+[items.rename]
+label = "Rename"
+lines = ["r"]
+
+[items.delete]
+label = "Delete"
+lines = ["-"]
+
+[items.search]
+label = "Search"
+lines = ["?"]
+
+[items.options]
+label = "Options"
+lines = ["*"]
+
+[items.sort_asc]
+label = "Ascending"
+lines = ["^"]
+
+[items.sort_desc]
+label = "Descending"
+lines = ["v"]
+
+[items.cancel]
+label = "Cancel"
+lines = ["x"]

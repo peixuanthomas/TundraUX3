@@ -177,7 +177,7 @@ mod tests {
 
         assert_eq!(
             summary,
-            "Windows: 10 supported, 0 best-effort, 3 unsupported"
+            "Windows: 11 supported, 0 best-effort, 3 unsupported"
         );
     }
 

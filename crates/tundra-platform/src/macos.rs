@@ -5,8 +5,8 @@ use std::process::{Command, Stdio};
 
 use crate::paths::home_dir_from_env;
 use crate::{
-    AppPaths, Platform, PlatformCapabilities, PlatformError, PlatformKind, ProcessExit,
-    ProcessSpec, UserDirs, build_macos_app_paths,
+    AppPaths, DirectoryListing, FileAttributes, FileOpenPolicy, Platform, PlatformCapabilities,
+    PlatformError, PlatformKind, ProcessExit, ProcessSpec, UserDirs, build_macos_app_paths,
 };
 
 const OPEN: &str = "/usr/bin/open";
@@ -137,6 +137,46 @@ impl Platform for MacosPlatform {
             })
         }
     }
+
+    fn file_attributes(&self, path: &Path) -> Result<FileAttributes, PlatformError> {
+        let mut attributes = crate::default_file_attributes(path)?;
+        apply_macos_file_flags(path, &mut attributes)?;
+        Ok(attributes)
+    }
+
+    fn read_directory(&self, path: &Path) -> Result<DirectoryListing, PlatformError> {
+        crate::default_read_directory(self, path)
+    }
+
+    fn file_open_policy(&self, path: &Path, attributes: &FileAttributes) -> FileOpenPolicy {
+        crate::default_file_open_policy(PlatformKind::Macos, path, attributes)
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn apply_macos_file_flags(
+    path: &Path,
+    attributes: &mut FileAttributes,
+) -> Result<(), PlatformError> {
+    use std::fs;
+    use std::os::macos::fs::MetadataExt;
+
+    const UF_HIDDEN: u32 = 0x0000_8000;
+    let metadata = fs::symlink_metadata(path).map_err(|error| PlatformError::Io {
+        operation: "read macOS file flags",
+        path: Some(path.to_path_buf()),
+        message: error.to_string(),
+    })?;
+    attributes.hidden = attributes.hidden || metadata.st_flags() & UF_HIDDEN != 0;
+    Ok(())
+}
+
+#[cfg(not(target_os = "macos"))]
+fn apply_macos_file_flags(
+    _path: &Path,
+    _attributes: &mut FileAttributes,
+) -> Result<(), PlatformError> {
+    Ok(())
 }
 
 fn run_open<I, S>(args: I) -> Result<(), PlatformError>

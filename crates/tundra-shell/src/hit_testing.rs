@@ -12,6 +12,7 @@ fn build_shell_hit_map(
     notification_model: Option<&tundra_ui::NotificationViewModel>,
     home_model: Option<&tundra_ui::HomeViewModel>,
     clock_model: Option<&tundra_ui::ClockViewModel>,
+    explorer_model: Option<&tundra_ui::ExplorerViewModel>,
 ) -> ShellHitMap {
     let (width, height) = terminal_size;
     let area = Rect::new(0, 0, width, height);
@@ -155,9 +156,19 @@ fn build_shell_hit_map(
     }
 
     if let Some(popup) = active_popup {
+        let explorer_overlay = explorer_model.and_then(|model| {
+            let tundra_ui::ShellLayout::Full { main, .. } =
+                tundra_ui::compute_shell_layout(area)
+            else {
+                return None;
+            };
+            tundra_ui::explorer_layout(main, model)
+                .overlay
+                .map(|overlay| overlay.area)
+        });
         regions.push(ShellHitRegion {
             component: ShellComponent::ContextMenu,
-            area: popup_rect(terminal_size, popup.anchor),
+            area: explorer_overlay.unwrap_or_else(|| popup_rect(terminal_size, popup.anchor)),
         });
     }
 

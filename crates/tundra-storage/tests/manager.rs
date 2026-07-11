@@ -8,7 +8,8 @@ use tundra_platform::{
     AppPaths, Platform, UserDirs, build_macos_app_paths, build_windows_app_paths, cleanup_temp_path,
 };
 use tundra_storage::{
-    ClockDocument, ClockEntryRecord, ClockProfile, ExplorerConfig, LauncherConfig,
+    ClockDocument, ClockEntryRecord, ClockProfile, ExplorerConfig, ExplorerDateZone,
+    ExplorerSizeFormat, ExplorerSortDirection, ExplorerSortField, LauncherConfig,
     RecentFilesDocument, SCHEMA_VERSION, SecurityConfig, SessionsDocument, StateDocument,
     StorageConfig, StorageError, StorageLayout, StorageManager, TrashDocument, TrashRecord,
     USERS_SCHEMA_VERSION, UserRecord, UsersDocument,
@@ -77,7 +78,20 @@ fn toml_and_json_documents_round_trip() {
         language: "zh-Hans".to_string(),
         timezone: "Asia/Shanghai".to_string(),
         shortcuts,
-        explorer: ExplorerConfig { show_hidden: true },
+        explorer: ExplorerConfig {
+            show_hidden: true,
+            show_system: true,
+            show_extensions: false,
+            folders_first: false,
+            case_sensitive_sort: true,
+            size_format: ExplorerSizeFormat::Bytes,
+            date_zone: ExplorerDateZone::Utc,
+            confirm_delete: false,
+            confirm_name_conflicts: false,
+            show_sidebar: false,
+            sort_field: ExplorerSortField::Modified,
+            sort_direction: ExplorerSortDirection::Descending,
+        },
         launcher: LauncherConfig {
             pinned_apps: vec!["notepad.exe".to_string()],
             pinned_dirs: vec!["C:/Projects".to_string()],
@@ -94,6 +108,10 @@ fn toml_and_json_documents_round_trip() {
         fs::read_to_string(&manager.layout().config_path).expect("config should be readable");
     assert!(config_contents.contains("language = \"zh-Hans\""));
     assert!(config_contents.contains("timezone = \"Asia/Shanghai\""));
+    assert!(config_contents.contains("size_format = \"bytes\""));
+    assert!(config_contents.contains("date_zone = \"utc\""));
+    assert!(config_contents.contains("sort_field = \"modified\""));
+    assert!(config_contents.contains("sort_direction = \"descending\""));
 
     let users = UsersDocument {
         schema_version: USERS_SCHEMA_VERSION,
@@ -217,6 +235,13 @@ fn old_config_without_language_or_timezone_loads_with_defaults() {
     assert_eq!(config.theme, "light");
     assert_eq!(config.language, "en-US");
     assert_eq!(config.timezone, "UTC");
+    assert_eq!(
+        config.explorer,
+        ExplorerConfig {
+            show_hidden: true,
+            ..ExplorerConfig::default()
+        }
+    );
     assert!(opened.report.recovered_files.is_empty());
     assert!(opened.report.warnings.is_empty());
 

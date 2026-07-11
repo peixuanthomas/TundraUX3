@@ -3,7 +3,10 @@ mod clock_scheduler;
 use clock_scheduler::{
     ClockEntryKind as ScheduledClockEntryKind, ClockScheduler, ClockSchedulerError, DueEvent,
 };
-use tundra_apps::explorer::{ExplorerCommand, ExplorerController, ExplorerState};
+use tundra_apps::explorer::{
+    ExplorerCommand, ExplorerConflictAction, ExplorerController, ExplorerEffect,
+    ExplorerOpenTarget, ExplorerState,
+};
 use tundra_core::{
     AuditOutcome, AuditService, AuthSession, CoreError, DebugPolicy, PASSWORD_MAX_LEN,
     PASSWORD_MIN_LEN, PermissionAction, PermissionService, SessionService, UserAccount, UserRole,
@@ -42,6 +45,7 @@ const NOTIFICATION_FOLLOW_UP_ALERT_KEY: &str = "shell.notification-follow-up";
 const EXIT_CONFIRM_NOTIFICATION_KEY: &str = "shell.exit-confirm";
 const TIME_SYNC_NOTIFICATION_KEY: &str = "shell.time-sync-failure";
 const EXPLORER_DELETE_NOTIFICATION_KEY: &str = "explorer.delete-confirm";
+const EXPLORER_CONFLICT_NOTIFICATION_KEY: &str = "explorer.name-conflict";
 const EXPLORER_ALERT_KEY: &str = "explorer.operation";
 const USER_MANAGEMENT_REFRESH_ALERT_KEY: &str = "user-management.refresh";
 const USER_MANAGEMENT_DELETE_NOTIFICATION_KEY: &str = "user-management.delete-confirm";
@@ -92,6 +96,7 @@ include!("view_models.rs");
 include!("account_workflows.rs");
 include!("clock_workflows.rs");
 include!("explorer_workflows.rs");
+include!("explorer_task_workflows.rs");
 include!("user_management_workflows.rs");
 include!("home_navigation.rs");
 include!("notification_workflows.rs");

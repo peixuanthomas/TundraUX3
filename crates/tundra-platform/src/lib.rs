@@ -18,9 +18,11 @@ pub use paths::{
     build_windows_app_paths, cleanup_temp_path, create_temp_dir, create_temp_file,
 };
 pub use platform::{
-    CapabilityStatus, ExternalOpenPolicy, FileAttributes, Platform, PlatformCapabilities,
-    PlatformError, PlatformKind, PowerAction, default_external_open_policy,
-    default_file_attributes, native_platform,
+    CapabilityStatus, DirectoryEntryMetadata, DirectoryListing, DirectoryListingWarning,
+    ExecutableKind, ExternalOpenPolicy, FileAttributes, FileOpenPolicy, Platform,
+    PlatformCapabilities, PlatformError, PlatformKind, PowerAction, default_external_open_policy,
+    default_file_attributes, default_file_open_policy, default_read_directory, default_rename_path,
+    native_platform,
 };
 pub use process::{ProcessExit, ProcessSpec, ProcessStream, validate_process_spec};
 pub use terminal::{

@@ -146,6 +146,7 @@ impl ShellState {
                 self.tick_count = self.tick_count.saturating_add(1);
                 self.notifications.tick();
                 self.advance_clock_background();
+                self.poll_explorer_background_tasks(platform);
                 ShellAction::Redraw
             }
             ShellCommand::RefreshHitMap { width, height } => {
@@ -411,6 +412,47 @@ impl ShellState {
                 self.apply_explorer_command(ExplorerCommand::SelectPrevious, platform);
                 ShellAction::Redraw
             }
+            ShellCommand::ExplorerNextExtend => {
+                let next = self
+                    .explorer_state
+                    .as_ref()
+                    .filter(|state| !state.entries.is_empty())
+                    .map(|state| (state.selected_index + 1).min(state.entries.len() - 1));
+                if let Some(index) = next {
+                    self.apply_explorer_command(
+                        ExplorerCommand::SelectIndexWithMode(
+                            index,
+                            tundra_apps::explorer::ExplorerSelectionMode::Range,
+                        ),
+                        platform,
+                    );
+                }
+                ShellAction::Redraw
+            }
+            ShellCommand::ExplorerPreviousExtend => {
+                let previous = self
+                    .explorer_state
+                    .as_ref()
+                    .map(|state| state.selected_index.saturating_sub(1));
+                if let Some(index) = previous {
+                    self.apply_explorer_command(
+                        ExplorerCommand::SelectIndexWithMode(
+                            index,
+                            tundra_apps::explorer::ExplorerSelectionMode::Range,
+                        ),
+                        platform,
+                    );
+                }
+                ShellAction::Redraw
+            }
+            ShellCommand::ExplorerSelectAll => {
+                self.apply_explorer_command(ExplorerCommand::SelectAll, platform);
+                ShellAction::Redraw
+            }
+            ShellCommand::ExplorerToggleFocused => {
+                self.apply_explorer_command(ExplorerCommand::ToggleFocused, platform);
+                ShellAction::Redraw
+            }
             ShellCommand::ExplorerOpenSelected => {
                 self.apply_explorer_command(ExplorerCommand::OpenSelected, platform);
                 ShellAction::Redraw
@@ -419,8 +461,80 @@ impl ShellState {
                 self.apply_explorer_command(ExplorerCommand::OpenParent, platform);
                 ShellAction::Redraw
             }
+            ShellCommand::ExplorerOpenBack => {
+                self.apply_explorer_command(ExplorerCommand::OpenBack, platform);
+                ShellAction::Redraw
+            }
+            ShellCommand::ExplorerOpenForward => {
+                self.apply_explorer_command(ExplorerCommand::OpenForward, platform);
+                ShellAction::Redraw
+            }
             ShellCommand::ExplorerToggleHidden => {
                 self.apply_explorer_command(ExplorerCommand::ToggleHidden, platform);
+                ShellAction::Redraw
+            }
+            ShellCommand::ExplorerToggleSystem => {
+                self.apply_explorer_command(ExplorerCommand::ToggleSystem, platform);
+                ShellAction::Redraw
+            }
+            ShellCommand::ExplorerToggleExtensions => {
+                self.apply_explorer_command(ExplorerCommand::ToggleExtensions, platform);
+                ShellAction::Redraw
+            }
+            ShellCommand::ExplorerToggleFoldersFirst => {
+                self.apply_explorer_command(ExplorerCommand::ToggleFoldersFirst, platform);
+                ShellAction::Redraw
+            }
+            ShellCommand::ExplorerToggleCaseSensitiveSort => {
+                self.apply_explorer_command(ExplorerCommand::ToggleCaseSensitiveSort, platform);
+                ShellAction::Redraw
+            }
+            ShellCommand::ExplorerToggleSidebar => {
+                self.apply_explorer_command(ExplorerCommand::ToggleSidebar, platform);
+                ShellAction::Redraw
+            }
+            ShellCommand::ExplorerToggleSizeFormat => {
+                self.apply_explorer_command(ExplorerCommand::ToggleSizeFormat, platform);
+                ShellAction::Redraw
+            }
+            ShellCommand::ExplorerToggleDateZone => {
+                self.apply_explorer_command(ExplorerCommand::ToggleDateZone, platform);
+                ShellAction::Redraw
+            }
+            ShellCommand::ExplorerToggleDeleteConfirmation => {
+                self.apply_explorer_command(ExplorerCommand::ToggleDeleteConfirmation, platform);
+                ShellAction::Redraw
+            }
+            ShellCommand::ExplorerToggleConflictConfirmation => {
+                self.apply_explorer_command(ExplorerCommand::ToggleConflictConfirmation, platform);
+                ShellAction::Redraw
+            }
+            ShellCommand::ExplorerSortName => {
+                self.apply_explorer_command(
+                    ExplorerCommand::SetSort(tundra_apps::explorer::ExplorerSortField::Name),
+                    platform,
+                );
+                ShellAction::Redraw
+            }
+            ShellCommand::ExplorerSortType => {
+                self.apply_explorer_command(
+                    ExplorerCommand::SetSort(tundra_apps::explorer::ExplorerSortField::Type),
+                    platform,
+                );
+                ShellAction::Redraw
+            }
+            ShellCommand::ExplorerSortSize => {
+                self.apply_explorer_command(
+                    ExplorerCommand::SetSort(tundra_apps::explorer::ExplorerSortField::Size),
+                    platform,
+                );
+                ShellAction::Redraw
+            }
+            ShellCommand::ExplorerSortModified => {
+                self.apply_explorer_command(
+                    ExplorerCommand::SetSort(tundra_apps::explorer::ExplorerSortField::Modified),
+                    platform,
+                );
                 ShellAction::Redraw
             }
             ShellCommand::ExplorerCopy => {
@@ -443,8 +557,108 @@ impl ShellState {
                 self.apply_explorer_command(ExplorerCommand::ConfirmDelete, platform);
                 ShellAction::Redraw
             }
+            ShellCommand::ExplorerConflictKeepBoth => {
+                let apply_to_all = self.explorer_conflict_apply_to_remaining;
+                self.apply_explorer_command(
+                    ExplorerCommand::ResolveConflict {
+                        action: ExplorerConflictAction::KeepBoth,
+                        apply_to_all,
+                    },
+                    platform,
+                );
+                self.explorer_conflict_apply_to_remaining = false;
+                ShellAction::Redraw
+            }
+            ShellCommand::ExplorerConflictReplace => {
+                let apply_to_all = self.explorer_conflict_apply_to_remaining;
+                self.apply_explorer_command(
+                    ExplorerCommand::ResolveConflict {
+                        action: ExplorerConflictAction::Replace,
+                        apply_to_all,
+                    },
+                    platform,
+                );
+                self.explorer_conflict_apply_to_remaining = false;
+                ShellAction::Redraw
+            }
+            ShellCommand::ExplorerConflictSkip => {
+                let apply_to_all = self.explorer_conflict_apply_to_remaining;
+                self.apply_explorer_command(
+                    ExplorerCommand::ResolveConflict {
+                        action: ExplorerConflictAction::Skip,
+                        apply_to_all,
+                    },
+                    platform,
+                );
+                self.explorer_conflict_apply_to_remaining = false;
+                ShellAction::Redraw
+            }
+            ShellCommand::ExplorerConflictCancel => {
+                self.apply_explorer_command(
+                    ExplorerCommand::ResolveConflict {
+                        action: ExplorerConflictAction::Cancel,
+                        apply_to_all: false,
+                    },
+                    platform,
+                );
+                self.explorer_conflict_apply_to_remaining = false;
+                ShellAction::Redraw
+            }
+            ShellCommand::ExplorerConflictToggleApplyToRemaining => {
+                self.explorer_conflict_apply_to_remaining =
+                    !self.explorer_conflict_apply_to_remaining;
+                ShellAction::Redraw
+            }
+            ShellCommand::ExplorerCancelOperation => {
+                self.apply_explorer_command(ExplorerCommand::CancelOperation, platform);
+                ShellAction::Redraw
+            }
+            ShellCommand::ExplorerOverlayPrevious => {
+                self.move_explorer_overlay_selection(-1);
+                ShellAction::Redraw
+            }
+            ShellCommand::ExplorerOverlayNext => {
+                self.move_explorer_overlay_selection(1);
+                ShellAction::Redraw
+            }
+            ShellCommand::ExplorerOverlayActivate => {
+                self.activate_selected_explorer_overlay(platform);
+                ShellAction::Redraw
+            }
             ShellCommand::ExplorerSelectAt(coordinates, click) => {
                 self.select_explorer_at(coordinates, click, platform);
+                ShellAction::Redraw
+            }
+            ShellCommand::ExplorerPointerDown(coordinates, click, modifiers) => {
+                self.pointer_down_explorer_at(coordinates, click, modifiers, platform);
+                ShellAction::Redraw
+            }
+            ShellCommand::ExplorerDragUpdate(coordinates, modifiers) => {
+                self.update_explorer_drag(coordinates, modifiers, platform);
+                ShellAction::Redraw
+            }
+            ShellCommand::ExplorerDrop(coordinates, modifiers) => {
+                self.drop_explorer_drag(coordinates, modifiers, platform);
+                ShellAction::Redraw
+            }
+            ShellCommand::ExplorerCancelDrag => {
+                self.apply_explorer_command(ExplorerCommand::CancelDrag, platform);
+                ShellAction::Redraw
+            }
+            ShellCommand::ExplorerScroll(delta) => {
+                if let Some(state) = self.explorer_state.as_mut() {
+                    state.viewport_follows_focus = false;
+                    if delta < 0 {
+                        state.viewport_offset = state
+                            .viewport_offset
+                            .saturating_sub(delta.unsigned_abs() as usize);
+                    } else {
+                        state.viewport_offset = state
+                            .viewport_offset
+                            .saturating_add(delta as usize)
+                            .min(state.entries.len().saturating_sub(1));
+                    }
+                }
                 ShellAction::Redraw
             }
             ShellCommand::BeginExplorerSearch => {
@@ -464,11 +678,11 @@ impl ShellState {
                 ShellAction::Redraw
             }
             ShellCommand::AppendExplorerChar(character) => {
-                self.append_explorer_char(character);
+                self.append_explorer_char(character, platform);
                 ShellAction::Redraw
             }
             ShellCommand::ExplorerBackspace => {
-                self.explorer_backspace();
+                self.explorer_backspace(platform);
                 ShellAction::Redraw
             }
             ShellCommand::SubmitExplorerInput => {
@@ -738,6 +952,12 @@ impl ShellState {
                 coordinates,
                 click,
             } => {
+                if target == ShellComponent::ContextMenu
+                    && self.explorer_overlay_mode.is_some()
+                {
+                    self.activate_explorer_overlay_at(coordinates, platform);
+                    return ShellAction::Redraw;
+                }
                 if target == ShellComponent::Explorer {
                     self.focus_component(target);
                     self.select_explorer_at(coordinates, click, platform);
@@ -758,8 +978,22 @@ impl ShellState {
                 if target == Some(ShellComponent::Explorer)
                     && let Some(index) = self.explorer_index_at(coordinates)
                 {
-                    self.apply_explorer_command(ExplorerCommand::SelectIndex(index), platform);
+                    let already_selected = self
+                        .explorer_state
+                        .as_ref()
+                        .and_then(|state| state.entries.get(index).map(|entry| state.is_selected(&entry.path)))
+                        .unwrap_or(false);
+                    if !already_selected {
+                        self.apply_explorer_command(ExplorerCommand::SelectIndex(index), platform);
+                    }
+                } else if target == Some(ShellComponent::Explorer)
+                    && let Some(state) = self.explorer_state.as_mut()
+                {
+                    state.clear_selection();
                 }
+                self.explorer_overlay_mode = (target == Some(ShellComponent::Explorer))
+                    .then_some(ExplorerOverlayMode::ContextMenu { anchor: coordinates });
+                self.explorer_overlay_selection = 0;
                 self.active_popup = Some(ShellPopup {
                     owner: target,
                     anchor: coordinates,
@@ -775,6 +1009,8 @@ impl ShellState {
             }
             ShellCommand::ClosePopup => {
                 self.active_popup = None;
+                self.explorer_overlay_mode = None;
+                self.explorer_overlay_selection = 0;
                 self.notify_status("Ready");
                 self.refresh_hit_map();
                 ShellAction::Redraw

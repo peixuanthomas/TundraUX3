@@ -22,8 +22,8 @@ pub use focus::{
 };
 pub use hit_test::{HitKind, HitMap, HitTarget, HitTargetKind};
 pub use home_icons::{
-    AsciiAssetStore, AssetDimensions, AssetError, ClockFontAsset, HomeIcon, HomeIconCatalog,
-    RuntimeAsciiAssets, home_icon_for_label, try_home_icon_for_label,
+    AsciiAssetStore, AssetDimensions, AssetError, ClockFontAsset, ExplorerIcon, HomeIcon,
+    HomeIconCatalog, RuntimeAsciiAssets, home_icon_for_label, try_home_icon_for_label,
 };
 pub use input::{
     InputEvent, Key, KeyCode, KeyEvent, KeyModifiers, KeyStroke, MouseAction, MouseButton,
@@ -32,11 +32,15 @@ pub use input::{
 };
 pub use layout::{
     ClockCreateDialogLayout, ClockEntryKind, ClockEntryRowLayout, ClockPageLayout, ClockPageMode,
-    MIN_SHELL_TERMINAL_HEIGHT, MIN_SHELL_TERMINAL_WIDTH, NOTIFICATION_TOO_SMALL_MESSAGE,
-    NotificationActionLayout, NotificationDialogLayout, NotificationLayout, ShellLayout,
-    UserManagementActionLayout, UserManagementColumnMode, UserManagementFieldLayout,
-    UserManagementFormLayout, UserManagementLayout, UserManagementRowLayout, clock_page_layout,
-    compute_shell_layout, notification_layout, user_management_action_at,
+    ExplorerBreadcrumbLayout, ExplorerColumnLayout, ExplorerHitTarget, ExplorerLayout,
+    ExplorerLayoutMode, ExplorerOverlayControl, ExplorerOverlayControlLayout,
+    ExplorerOverlayLayout, ExplorerQuickLocationLayout, ExplorerRowLayout,
+    ExplorerToolbarButtonLayout, MIN_SHELL_TERMINAL_HEIGHT, MIN_SHELL_TERMINAL_WIDTH,
+    NOTIFICATION_TOO_SMALL_MESSAGE, NotificationActionLayout, NotificationDialogLayout,
+    NotificationLayout, ShellLayout, UserManagementActionLayout, UserManagementColumnMode,
+    UserManagementFieldLayout, UserManagementFormLayout, UserManagementLayout,
+    UserManagementRowLayout, clock_page_layout, compute_shell_layout, explorer_hit_test,
+    explorer_layout, notification_layout, user_management_action_at,
     user_management_form_control_at, user_management_layout, user_management_row_index_at,
 };
 pub use render::{
@@ -60,8 +64,15 @@ pub use timezone_map::{
 pub use view_model::{
     AuthField, BootstrapAdminViewModel, ClockCreateDialogFocus, ClockCreateDialogViewModel,
     ClockEntryViewModel, ClockViewModel, DebugDiagnosticsViewModel, ExitConfirmViewModel,
-    ExplorerDialogViewModel, ExplorerEntryViewModel, ExplorerSearchViewModel, ExplorerViewModel,
-    HomeDisplayMode, HomeViewModel, LoginField, LoginUserOptionViewModel, LoginViewModel,
+    ExplorerBreadcrumbViewModel, ExplorerConflictChoice, ExplorerConflictViewModel,
+    ExplorerContextMenuItemViewModel, ExplorerContextMenuViewModel, ExplorerDialogViewModel,
+    ExplorerEntryPresentationViewModel, ExplorerEntryViewModel, ExplorerNameDialogKind,
+    ExplorerNameDialogViewModel, ExplorerOperationPhase, ExplorerOperationProgressViewModel,
+    ExplorerOptionViewModel, ExplorerOptionsViewModel, ExplorerOverlayViewModel,
+    ExplorerPropertiesViewModel, ExplorerPropertyViewModel, ExplorerQuickLocationViewModel,
+    ExplorerSearchViewModel, ExplorerSortColumn, ExplorerSortDirection, ExplorerToolbarAction,
+    ExplorerToolbarButtonViewModel, ExplorerToolbarViewModel, ExplorerViewModel, HomeDisplayMode,
+    HomeViewModel, LoginField, LoginUserOptionViewModel, LoginViewModel,
     NotificationActionViewModel, NotificationLevel, NotificationTone, NotificationViewModel,
     SetupField, SetupLanguageOption, SetupPasswordRequirementViewModel, SetupStep,
     SetupTimezoneOption, SetupViewModel, ShellChromeViewModel, ShellEntry, StatusViewModel,

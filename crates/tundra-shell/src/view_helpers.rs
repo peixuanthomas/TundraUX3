@@ -36,11 +36,303 @@ fn startup_clock_timezone_id(startup: &ShellStartupState) -> Option<String> {
         .or_else(|| Some("UTC".to_string()))
 }
 
-fn system_time_label(value: SystemTime) -> String {
-    value
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| format!("unix:{}", duration.as_secs()))
-        .unwrap_or_else(|_| "unknown".to_string())
+fn explorer_system_time_label(
+    value: SystemTime,
+    zone: tundra_storage::ExplorerDateZone,
+    configured_timezone: Option<&str>,
+) -> String {
+    let utc = DateTime::<Utc>::from(value);
+    match zone {
+        tundra_storage::ExplorerDateZone::Utc => utc.format("%Y-%m-%d %H:%M").to_string(),
+        tundra_storage::ExplorerDateZone::ConfiguredTimezone => configured_timezone
+            .and_then(|timezone| timezone.parse::<chrono_tz::Tz>().ok())
+            .map(|timezone| utc.with_timezone(&timezone).format("%Y-%m-%d %H:%M").to_string())
+            .unwrap_or_else(|| utc.format("%Y-%m-%d %H:%M").to_string()),
+    }
+}
+
+fn explorer_size_label(size: u64, format: tundra_storage::ExplorerSizeFormat) -> String {
+    if format == tundra_storage::ExplorerSizeFormat::Bytes {
+        return format!("{size} B");
+    }
+    const UNITS: &[&str] = &["B", "KiB", "MiB", "GiB", "TiB"];
+    let mut value = size as f64;
+    let mut unit = 0usize;
+    while value >= 1024.0 && unit + 1 < UNITS.len() {
+        value /= 1024.0;
+        unit += 1;
+    }
+    if unit == 0 {
+        format!("{} {}", size, UNITS[unit])
+    } else if value >= 10.0 {
+        format!("{value:.0} {}", UNITS[unit])
+    } else {
+        format!("{value:.1} {}", UNITS[unit])
+    }
+}
+
+fn explorer_display_name(
+    entry: &tundra_apps::explorer::ExplorerEntry,
+    show_extensions: bool,
+) -> String {
+    if show_extensions || entry.kind != tundra_apps::explorer::ExplorerEntryKind::File {
+        return entry.name.clone();
+    }
+    entry
+        .path
+        .file_stem()
+        .and_then(std::ffi::OsStr::to_str)
+        .filter(|stem| !stem.is_empty())
+        .map(str::to_string)
+        .unwrap_or_else(|| entry.name.clone())
+}
+
+fn explorer_breadcrumb_view_models(
+    path: &std::path::Path,
+    state: &ExplorerState,
+) -> Vec<tundra_ui::ExplorerBreadcrumbViewModel> {
+    let mut ancestors = path.ancestors().collect::<Vec<_>>();
+    ancestors.reverse();
+    ancestors
+        .into_iter()
+        .enumerate()
+        .map(|(index, ancestor)| {
+            let label = ancestor
+                .file_name()
+                .and_then(std::ffi::OsStr::to_str)
+                .filter(|label| !label.is_empty())
+                .map(str::to_string)
+                .unwrap_or_else(|| ancestor.display().to_string());
+            let mut model = tundra_ui::ExplorerBreadcrumbViewModel::new(
+                format!("breadcrumb-{index}"),
+                label,
+                ancestor.display().to_string(),
+            );
+            model.drop_target = state
+                .drag
+                .as_ref()
+                .and_then(|drag| drag.target.as_ref())
+                .is_some_and(|target| target == ancestor);
+            model
+        })
+        .collect()
+}
+
+fn explorer_context_menu_view_model(
+    anchor: CellPosition,
+    selected_count: usize,
+    clipboard_available: bool,
+    focused_index: usize,
+) -> tundra_ui::ExplorerOverlayViewModel {
+    let item = |id: &str, label: &str, enabled: bool, dangerous: bool| {
+        tundra_ui::ExplorerContextMenuItemViewModel {
+            id: id.to_string(),
+            label: label.to_string(),
+            shortcut: None,
+            enabled,
+            dangerous,
+        }
+    };
+    let items = if selected_count > 0 {
+        vec![
+            item("open", "Open", selected_count == 1, false),
+            item("cut", "Cut", true, false),
+            item("copy", "Copy", true, false),
+            item("rename", "Rename", selected_count == 1, false),
+            item("delete", "Delete", true, true),
+            item("properties", "Properties", selected_count == 1, false),
+        ]
+    } else {
+        vec![
+            item("new-folder", "New folder", true, false),
+            item("new-text", "New text file", true, false),
+            item("paste", "Paste", clipboard_available, false),
+            item("select-all", "Select all", true, false),
+            item("refresh", "Refresh", true, false),
+            item("sort", "Sort", true, false),
+            item("options", "Advanced options", true, false),
+        ]
+    };
+    let selected_index = (!items.is_empty()).then_some(focused_index.min(items.len() - 1));
+    tundra_ui::ExplorerOverlayViewModel::ContextMenu(
+        tundra_ui::ExplorerContextMenuViewModel {
+            x: anchor.0,
+            y: anchor.1,
+            title: if selected_count > 0 {
+                "Selection".to_string()
+            } else {
+                "Explorer".to_string()
+            },
+            items,
+            selected_index,
+        },
+    )
+}
+
+fn explorer_sort_menu_view_model(
+    anchor: CellPosition,
+    selected: tundra_ui::ExplorerSortColumn,
+    focused_index: usize,
+) -> tundra_ui::ExplorerOverlayViewModel {
+    let items = tundra_ui::ExplorerSortColumn::ALL
+        .into_iter()
+        .map(|column| tundra_ui::ExplorerContextMenuItemViewModel {
+            id: format!("sort-{}", column.label().to_ascii_lowercase()),
+            label: if column == selected {
+                format!("* {}", column.label())
+            } else {
+                format!("  {}", column.label())
+            },
+            shortcut: None,
+            enabled: true,
+            dangerous: false,
+        })
+        .collect();
+    tundra_ui::ExplorerOverlayViewModel::ContextMenu(
+        tundra_ui::ExplorerContextMenuViewModel {
+            x: anchor.0,
+            y: anchor.1,
+            title: "Sort by".to_string(),
+            items,
+            selected_index: Some(focused_index.min(tundra_ui::ExplorerSortColumn::ALL.len() - 1)),
+        },
+    )
+}
+
+fn explorer_options_view_model(
+    state: &ExplorerState,
+    focused_index: usize,
+) -> tundra_ui::ExplorerOverlayViewModel {
+    let toggle = |id: &str, label: &str, value: bool| tundra_ui::ExplorerOptionViewModel {
+        id: id.to_string(),
+        label: label.to_string(),
+        value: if value { "On" } else { "Off" }.to_string(),
+        enabled: true,
+        selected: value,
+        focused: false,
+    };
+    let mut options = vec![
+        toggle("hidden", "Show hidden files", state.show_hidden),
+        toggle("system", "Show system files", state.show_system),
+        toggle("extensions", "Show file extensions", state.show_extensions),
+        toggle("folders-first", "Folders first", state.folders_first),
+        toggle(
+            "case-sensitive",
+            "Case-sensitive sort",
+            state.case_sensitive_sort,
+        ),
+        tundra_ui::ExplorerOptionViewModel {
+            id: "size-format".to_string(),
+            label: "Size format".to_string(),
+            value: match state.size_format {
+                tundra_storage::ExplorerSizeFormat::HumanBinary => "Human binary",
+                tundra_storage::ExplorerSizeFormat::Bytes => "Bytes",
+            }
+            .to_string(),
+            enabled: true,
+            selected: false,
+            focused: false,
+        },
+        tundra_ui::ExplorerOptionViewModel {
+            id: "date-zone".to_string(),
+            label: "Date zone".to_string(),
+            value: match state.date_zone {
+                tundra_storage::ExplorerDateZone::ConfiguredTimezone => "Configured",
+                tundra_storage::ExplorerDateZone::Utc => "UTC",
+            }
+            .to_string(),
+            enabled: true,
+            selected: false,
+            focused: false,
+        },
+        toggle("confirm-delete", "Confirm delete", state.confirm_delete),
+        toggle(
+            "confirm-conflicts",
+            "Confirm name conflicts",
+            state.confirm_name_conflicts,
+        ),
+        toggle("sidebar", "Show quick access", state.show_sidebar),
+    ];
+    let option_count = options.len();
+    if let Some(option) = options.get_mut(focused_index.min(option_count.saturating_sub(1))) {
+        option.focused = true;
+    }
+    tundra_ui::ExplorerOverlayViewModel::Options(tundra_ui::ExplorerOptionsViewModel {
+        title: "Advanced options".to_string(),
+        options,
+        close_label: "Close".to_string(),
+    })
+}
+
+fn explorer_properties_view_model(
+    state: &ExplorerState,
+    configured_timezone: Option<&str>,
+) -> tundra_ui::ExplorerOverlayViewModel {
+    let Some(entry) = state.selected_entry() else {
+        return tundra_ui::ExplorerOverlayViewModel::Properties(
+            tundra_ui::ExplorerPropertiesViewModel {
+                title: "Properties".to_string(),
+                properties: vec![tundra_ui::ExplorerPropertyViewModel {
+                    label: "Selection".to_string(),
+                    value: "No item selected".to_string(),
+                }],
+                close_label: "Close".to_string(),
+            },
+        );
+    };
+    let mut properties = vec![
+        tundra_ui::ExplorerPropertyViewModel {
+            label: "Name".to_string(),
+            value: entry.name.clone(),
+        },
+        tundra_ui::ExplorerPropertyViewModel {
+            label: "Path".to_string(),
+            value: entry.path.display().to_string(),
+        },
+        tundra_ui::ExplorerPropertyViewModel {
+            label: "Type".to_string(),
+            value: entry.type_label.clone(),
+        },
+        tundra_ui::ExplorerPropertyViewModel {
+            label: "Size".to_string(),
+            value: if entry.kind == tundra_apps::explorer::ExplorerEntryKind::Directory {
+                "--".to_string()
+            } else {
+                explorer_size_label(entry.size, state.size_format)
+            },
+        },
+        tundra_ui::ExplorerPropertyViewModel {
+            label: "Modified".to_string(),
+            value: entry
+                .modified
+                .map(|modified| {
+                    explorer_system_time_label(modified, state.date_zone, configured_timezone)
+                })
+                .unwrap_or_else(|| "Unknown".to_string()),
+        },
+        tundra_ui::ExplorerPropertyViewModel {
+            label: "Attributes".to_string(),
+            value: {
+                let labels = explorer_attribute_labels(&entry.attributes);
+                if labels.is_empty() {
+                    "None".to_string()
+                } else {
+                    labels.join(", ")
+                }
+            },
+        },
+    ];
+    if let Some(reason) = entry.open_policy.reason() {
+        properties.push(tundra_ui::ExplorerPropertyViewModel {
+            label: "Open policy".to_string(),
+            value: reason.to_string(),
+        });
+    }
+    tundra_ui::ExplorerOverlayViewModel::Properties(tundra_ui::ExplorerPropertiesViewModel {
+        title: format!("Properties: {}", entry.name),
+        properties,
+        close_label: "Close".to_string(),
+    })
 }
 
 fn explorer_attribute_labels(attributes: &FileAttributes) -> Vec<String> {

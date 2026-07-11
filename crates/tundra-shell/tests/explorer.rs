@@ -1,6 +1,6 @@
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use ratatui::layout::Rect;
 use tundra_platform::mock::{MockCall, MockPlatform};
@@ -76,7 +76,7 @@ fn mouse_single_click_selects_and_double_click_opens_file() {
         &platform,
     );
 
-    assert_eq!(platform.calls(), vec![MockCall::OpenPath(target)]);
+    assert_eq!(opened_paths(&platform), vec![target]);
 }
 
 #[test]
@@ -101,7 +101,7 @@ fn mouse_double_click_on_first_rendered_row_does_not_open_second_entry() {
         &platform,
     );
 
-    assert_eq!(platform.calls(), vec![MockCall::OpenPath(alpha)]);
+    assert_eq!(opened_paths(&platform), vec![alpha]);
 }
 
 #[test]
@@ -133,6 +133,57 @@ fn right_click_selects_explorer_entry_and_opens_context_menu() {
 }
 
 #[test]
+fn normal_directory_click_release_does_not_start_a_drag_move() {
+    let fixture = FixtureRoot::new("click-release");
+    let platform = mock_platform(fixture.path());
+    bootstrap_with_shell(&platform);
+    let folder = fixture.path().join("Documents").join("folder");
+    fs::create_dir(&folder).expect("folder");
+    let mut state = logged_in_state(&platform);
+    state.apply_input_with_platform(InputEvent::from_key_label("e"), &platform);
+    let first_entry = first_entry_coordinates(&state);
+
+    state.apply_input_with_platform(
+        InputEvent::mouse_down(PointerButton::Left, first_entry),
+        &platform,
+    );
+    state.apply_input_with_platform(
+        InputEvent::mouse_drag(PointerButton::Left, first_entry),
+        &platform,
+    );
+    state.apply_input_with_platform(
+        InputEvent::mouse_up(PointerButton::Left, first_entry),
+        &platform,
+    );
+
+    let explorer = state.to_explorer_view_model();
+    assert!(folder.is_dir());
+    assert!(explorer.operation.is_none());
+    assert!(explorer.error.is_none());
+}
+
+#[test]
+fn context_menu_supports_arrow_and_enter_keyboard_activation() {
+    let fixture = FixtureRoot::new("context-keyboard");
+    let platform = mock_platform(fixture.path());
+    bootstrap_with_shell(&platform);
+    fs::write(fixture.path().join("Documents").join("alpha.txt"), "alpha").expect("alpha");
+    let mut state = logged_in_state(&platform);
+    state.apply_input_with_platform(InputEvent::from_key_label("e"), &platform);
+    let first_entry = first_entry_coordinates(&state);
+    state.apply_input_with_platform(
+        InputEvent::mouse_down(PointerButton::Right, first_entry),
+        &platform,
+    );
+
+    state.apply_input_with_platform(InputEvent::from_key_label("Down"), &platform);
+    state.apply_input_with_platform(InputEvent::from_key_label("Enter"), &platform);
+
+    assert!(state.active_popup().is_none());
+    assert!(state.to_explorer_view_model().entry_presentations[0].cut);
+}
+
+#[test]
 fn delete_key_moves_selection_to_tundra_trash() {
     let fixture = FixtureRoot::new("delete-trash");
     let platform = mock_platform(fixture.path());
@@ -154,6 +205,11 @@ fn delete_key_moves_selection_to_tundra_trash() {
     );
     state.apply_input_with_platform(InputEvent::from_key_label("y"), &platform);
 
+    drive_explorer_tasks_until(&mut state, &platform, |state| {
+        let explorer = state.to_explorer_view_model();
+        !target.exists() && explorer.pending_dialog.is_none() && explorer.operation.is_none()
+    });
+
     assert!(!target.exists());
     let storage = prepare_shell_startup(&platform, default_config())
         .expect("startup")
@@ -163,7 +219,7 @@ fn delete_key_moves_selection_to_tundra_trash() {
 }
 
 #[test]
-fn failed_delete_confirmation_reopens_strict_modal_and_rejects_modified_or_repeat_input() {
+fn failed_background_delete_reports_a_stable_operation_error() {
     let fixture = FixtureRoot::new("delete-confirm-failure");
     let platform = mock_platform(fixture.path());
     bootstrap_with_shell(&platform);
@@ -175,10 +231,20 @@ fn failed_delete_confirmation_reopens_strict_modal_and_rejects_modified_or_repea
     fs::remove_file(&target).expect("remove target before confirming");
 
     state.apply_input_with_platform(InputEvent::from_key_label("y"), &platform);
-    let reopened_id = state
-        .to_notification_view_model()
-        .expect("failed delete should reopen the strict modal")
-        .id;
+    drive_explorer_tasks_until(&mut state, &platform, |state| {
+        let explorer = state.to_explorer_view_model();
+        explorer.pending_dialog.is_none()
+            && explorer.operation.is_none()
+            && explorer.error.as_deref().is_some_and(|error| {
+                error.contains("failed") || error.contains("error") || error.contains("missing")
+            })
+    });
+    let reported_error = state
+        .to_explorer_view_model()
+        .error
+        .expect("failed background delete should report an Explorer error");
+    assert!(reported_error.contains("failed") || reported_error.contains("error"));
+    assert!(state.to_notification_view_model().is_none());
     while state.take_notification_response().is_some() {}
 
     for input in [
@@ -198,18 +264,11 @@ fn failed_delete_confirmation_reopens_strict_modal_and_rejects_modified_or_repea
     ] {
         state.apply_input_with_platform(input, &platform);
         assert_eq!(
-            state
-                .to_notification_view_model()
-                .as_ref()
-                .map(|notification| notification.id.as_str()),
-            Some(reopened_id.as_str())
+            state.to_explorer_view_model().error.as_deref(),
+            Some(reported_error.as_str())
         );
         assert_eq!(state.take_notification_response(), None);
     }
-
-    state.apply_input_with_platform(InputEvent::from_key_label("Esc"), &platform);
-    assert!(state.to_notification_view_model().is_none());
-    assert!(state.to_explorer_view_model().pending_dialog.is_none());
 }
 
 #[test]
@@ -342,15 +401,43 @@ fn first_entry_coordinates(state: &ShellState) -> (u16, u16) {
     let tundra_ui::ShellLayout::Full { main, .. } = tundra_ui::compute_shell_layout(area) else {
         panic!("phase6 tests use a full shell layout");
     };
-    let content_width = main.width.saturating_sub(2);
-    let content_line = tundra_ui::explorer_first_entry_content_line(
-        &state.to_explorer_view_model(),
-        content_width,
-    ) as u16;
-    (
-        main.x.saturating_add(3),
-        main.y.saturating_add(1 + content_line),
-    )
+    let model = state.to_explorer_view_model();
+    let row = tundra_ui::explorer_layout(main, &model)
+        .rows
+        .into_iter()
+        .next()
+        .expect("Explorer should render its first entry row");
+    (row.area.x.saturating_add(2), row.area.y)
+}
+
+fn drive_explorer_tasks_until(
+    state: &mut ShellState,
+    platform: &MockPlatform,
+    done: impl Fn(&ShellState) -> bool,
+) {
+    for _ in 0..200 {
+        state.apply_input_with_platform(InputEvent::Tick, platform);
+        if done(state) {
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    let explorer = state.to_explorer_view_model();
+    panic!(
+        "Explorer background task did not finish in time: operation={:?}, dialog={:?}, error={:?}, message={:?}",
+        explorer.operation, explorer.pending_dialog, explorer.error, explorer.message
+    );
+}
+
+fn opened_paths(platform: &MockPlatform) -> Vec<PathBuf> {
+    platform
+        .calls()
+        .into_iter()
+        .filter_map(|call| match call {
+            MockCall::OpenPath(path) => Some(path),
+            _ => None,
+        })
+        .collect()
 }
 
 fn mock_platform(base: &Path) -> MockPlatform {

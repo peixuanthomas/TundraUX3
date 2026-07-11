@@ -44,9 +44,74 @@ impl VersionedDocument for StorageConfig {
     }
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(default)]
 pub struct ExplorerConfig {
     pub show_hidden: bool,
+    pub show_system: bool,
+    pub show_extensions: bool,
+    pub folders_first: bool,
+    pub case_sensitive_sort: bool,
+    pub size_format: ExplorerSizeFormat,
+    pub date_zone: ExplorerDateZone,
+    pub confirm_delete: bool,
+    pub confirm_name_conflicts: bool,
+    pub show_sidebar: bool,
+    pub sort_field: ExplorerSortField,
+    pub sort_direction: ExplorerSortDirection,
+}
+
+impl Default for ExplorerConfig {
+    fn default() -> Self {
+        Self {
+            show_hidden: false,
+            show_system: false,
+            show_extensions: true,
+            folders_first: true,
+            case_sensitive_sort: false,
+            size_format: ExplorerSizeFormat::HumanBinary,
+            date_zone: ExplorerDateZone::ConfiguredTimezone,
+            confirm_delete: true,
+            confirm_name_conflicts: true,
+            show_sidebar: true,
+            sort_field: ExplorerSortField::Name,
+            sort_direction: ExplorerSortDirection::Ascending,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ExplorerSizeFormat {
+    #[default]
+    HumanBinary,
+    Bytes,
+}
+
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ExplorerDateZone {
+    #[default]
+    ConfiguredTimezone,
+    Utc,
+}
+
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ExplorerSortField {
+    #[default]
+    Name,
+    Type,
+    Size,
+    Modified,
+}
+
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ExplorerSortDirection {
+    #[default]
+    Ascending,
+    Descending,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]

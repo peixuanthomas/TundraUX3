@@ -4,21 +4,27 @@ use std::os::windows::ffi::{OsStrExt, OsStringExt};
 use std::os::windows::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 use std::ptr;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use crate::{
-    AppPaths, FileAttributes, Platform, PlatformCapabilities, PlatformError, PlatformKind,
-    ProcessExit, ProcessSpec, UserDirs, build_windows_app_paths,
+    AppPaths, DirectoryEntryMetadata, DirectoryListing, DirectoryListingWarning, FileAttributes,
+    FileOpenPolicy, Platform, PlatformCapabilities, PlatformError, PlatformKind, ProcessExit,
+    ProcessSpec, UserDirs, build_windows_app_paths,
 };
 
 const SW_SHOWNORMAL: i32 = 1;
 const CF_UNICODETEXT: u32 = 13;
 const GMEM_MOVEABLE: u32 = 0x0002;
+const FILE_ATTRIBUTE_READONLY: u32 = 0x0001;
 const FILE_ATTRIBUTE_HIDDEN: u32 = 0x0002;
 const FILE_ATTRIBUTE_SYSTEM: u32 = 0x0004;
+const FILE_ATTRIBUTE_DIRECTORY: u32 = 0x0010;
 const FILE_ATTRIBUTE_ARCHIVE: u32 = 0x0020;
 const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x0400;
 const IO_REPARSE_TAG_MOUNT_POINT: u32 = 0xA0000003;
 const IO_REPARSE_TAG_SYMLINK: u32 = 0xA000000C;
+const ERROR_FILE_NOT_FOUND: u32 = 2;
+const ERROR_NO_MORE_FILES: u32 = 18;
 
 #[derive(Debug, Clone, Copy, Default)]
 pub struct WindowsPlatform;
@@ -190,12 +196,127 @@ impl Platform for WindowsPlatform {
         Ok(attributes)
     }
 
+    fn read_directory(&self, path: &Path) -> Result<DirectoryListing, PlatformError> {
+        windows_read_directory(path)
+    }
+
+    fn file_open_policy(&self, path: &Path, attributes: &FileAttributes) -> FileOpenPolicy {
+        crate::default_file_open_policy(PlatformKind::Windows, path, attributes)
+    }
+
     fn external_open_policy(
         &self,
         path: &Path,
         attributes: &FileAttributes,
     ) -> crate::ExternalOpenPolicy {
         crate::platform::windows_external_open_policy(path, attributes)
+    }
+}
+
+fn windows_read_directory(path: &Path) -> Result<DirectoryListing, PlatformError> {
+    let search_path = path.join("*");
+    let search_path = to_wide(search_path.as_os_str());
+    let mut data: Win32FindDataW = unsafe { std::mem::zeroed() };
+    let handle = unsafe { FindFirstFileW(search_path.as_ptr(), &mut data) };
+
+    if handle as isize == -1 {
+        let error_code = unsafe { GetLastError() };
+        if error_code == ERROR_FILE_NOT_FOUND && path.is_dir() {
+            return Ok(DirectoryListing {
+                path: path.to_path_buf(),
+                entries: Vec::new(),
+                warnings: Vec::new(),
+            });
+        }
+        return Err(PlatformError::Io {
+            operation: "read directory",
+            path: Some(path.to_path_buf()),
+            message: std::io::Error::from_raw_os_error(error_code as i32).to_string(),
+        });
+    }
+
+    let mut entries = Vec::new();
+    let mut warnings = Vec::new();
+    loop {
+        let name = os_string_from_null_terminated(&data.file_name);
+        if name != OsStr::new(".") && name != OsStr::new("..") {
+            let entry_path = path.join(&name);
+            let attributes = file_attributes_from_find_data(entry_path.clone(), &data);
+            let open_policy =
+                crate::default_file_open_policy(PlatformKind::Windows, &entry_path, &attributes);
+            entries.push(DirectoryEntryMetadata {
+                path: entry_path,
+                name: name.to_string_lossy().into_owned(),
+                attributes: Some(attributes),
+                open_policy,
+            });
+        }
+
+        data = unsafe { std::mem::zeroed() };
+        if unsafe { FindNextFileW(handle, &mut data) } == 0 {
+            let error_code = unsafe { GetLastError() };
+            if error_code != ERROR_NO_MORE_FILES {
+                warnings.push(DirectoryListingWarning {
+                    path: path.to_path_buf(),
+                    message: std::io::Error::from_raw_os_error(error_code as i32).to_string(),
+                });
+            }
+            break;
+        }
+    }
+
+    unsafe {
+        FindClose(handle);
+    }
+
+    Ok(DirectoryListing {
+        path: path.to_path_buf(),
+        entries,
+        warnings,
+    })
+}
+
+fn file_attributes_from_find_data(path: PathBuf, data: &Win32FindDataW) -> FileAttributes {
+    let native = data.file_attributes;
+    let is_dir = native & FILE_ATTRIBUTE_DIRECTORY != 0;
+    let reparse_point = native & FILE_ATTRIBUTE_REPARSE_POINT != 0;
+    FileAttributes {
+        path: path.clone(),
+        is_file: !is_dir,
+        is_dir,
+        len: (u64::from(data.file_size_high) << 32) | u64::from(data.file_size_low),
+        readonly: native & FILE_ATTRIBUTE_READONLY != 0,
+        modified: file_time_to_system_time(data.last_write_time),
+        hidden: native & FILE_ATTRIBUTE_HIDDEN != 0,
+        system: native & FILE_ATTRIBUTE_SYSTEM != 0,
+        archive: native & FILE_ATTRIBUTE_ARCHIVE != 0,
+        symlink: reparse_point && data.reserved0 == IO_REPARSE_TAG_SYMLINK,
+        junction: reparse_point && data.reserved0 == IO_REPARSE_TAG_MOUNT_POINT,
+        reparse_point,
+        shortcut: is_shortcut(&path),
+    }
+}
+
+fn os_string_from_null_terminated(value: &[u16]) -> OsString {
+    let len = value
+        .iter()
+        .position(|unit| *unit == 0)
+        .unwrap_or(value.len());
+    OsString::from_wide(&value[..len])
+}
+
+fn file_time_to_system_time(value: FileTime) -> Option<SystemTime> {
+    const WINDOWS_TO_UNIX_EPOCH_TICKS: u64 = 116_444_736_000_000_000;
+
+    let ticks = (u64::from(value.high_date_time) << 32) | u64::from(value.low_date_time);
+    if ticks == 0 {
+        return None;
+    }
+    let duration_from_epoch = |delta: u64| Duration::from_nanos(delta.saturating_mul(100));
+    if ticks >= WINDOWS_TO_UNIX_EPOCH_TICKS {
+        UNIX_EPOCH.checked_add(duration_from_epoch(ticks - WINDOWS_TO_UNIX_EPOCH_TICKS))
+    } else {
+        UNIX_EPOCH.checked_sub(duration_from_epoch(WINDOWS_TO_UNIX_EPOCH_TICKS - ticks))
     }
 }
 
@@ -362,6 +483,7 @@ struct Guid {
     data4: [u8; 8],
 }
 
+#[derive(Debug, Clone, Copy)]
 #[repr(C)]
 struct FileTime {
     low_date_time: u32,
@@ -475,7 +597,9 @@ unsafe extern "system" {
         lp_file_name: *const u16,
         lp_find_file_data: *mut Win32FindDataW,
     ) -> *mut c_void;
+    fn FindNextFileW(h_find_file: *mut c_void, lp_find_file_data: *mut Win32FindDataW) -> i32;
     fn FindClose(h_find_file: *mut c_void) -> i32;
+    fn GetLastError() -> u32;
     fn GlobalAlloc(u_flags: u32, dw_bytes: usize) -> *mut c_void;
     fn GlobalLock(h_mem: *mut c_void) -> *mut c_void;
     fn GlobalUnlock(h_mem: *mut c_void) -> i32;

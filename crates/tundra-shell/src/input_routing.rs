@@ -469,6 +469,43 @@ impl ShellState {
     fn route_explorer_key(&self, key: &KeyInput) -> (RoutedTarget, ShellCommand) {
         let target = RoutedTarget::Component(ShellComponent::Explorer);
 
+        // Repeated action keys must not submit a dialog twice or open a file again while held.
+        // Character/backspace repeats remain useful in name and search inputs.
+        if key.phase != InputPhase::Press
+            && matches!(key.key, InputKey::Enter | InputKey::Escape)
+        {
+            return (target, ShellCommand::CaptureOverlayInput);
+        }
+
+        if self
+            .explorer_state
+            .as_ref()
+            .and_then(|state| state.pending_conflict.as_ref())
+            .is_some()
+        {
+            if key.phase != InputPhase::Press || key.has_non_shift_modifier() {
+                return (target, ShellCommand::CaptureOverlayInput);
+            }
+            return match &key.key {
+                InputKey::Enter | InputKey::Character('k' | 'K') => {
+                    (target, ShellCommand::ExplorerConflictKeepBoth)
+                }
+                InputKey::Character('r' | 'R') => {
+                    (target, ShellCommand::ExplorerConflictReplace)
+                }
+                InputKey::Character('s' | 'S') => {
+                    (target, ShellCommand::ExplorerConflictSkip)
+                }
+                InputKey::Character('a' | 'A') => {
+                    (target, ShellCommand::ExplorerConflictToggleApplyToRemaining)
+                }
+                InputKey::Escape | InputKey::Character('n' | 'N') => {
+                    (target, ShellCommand::ExplorerConflictCancel)
+                }
+                _ => (target, ShellCommand::CaptureOverlayInput),
+            };
+        }
+
         if self
             .explorer_state
             .as_ref()
@@ -505,11 +542,31 @@ impl ShellState {
 
         match &key.key {
             InputKey::Escape => (RoutedTarget::Global, ShellCommand::CloseExplorer),
+            InputKey::Left if key.modifiers.alt => (target, ShellCommand::ExplorerOpenBack),
+            InputKey::Right if key.modifiers.alt => (target, ShellCommand::ExplorerOpenForward),
+            InputKey::Up if key.modifiers.shift => {
+                (target, ShellCommand::ExplorerPreviousExtend)
+            }
+            InputKey::Down if key.modifiers.shift => {
+                (target, ShellCommand::ExplorerNextExtend)
+            }
             InputKey::Up => (target, ShellCommand::ExplorerPrevious),
             InputKey::Down => (target, ShellCommand::ExplorerNext),
             InputKey::Enter => (target, ShellCommand::ExplorerOpenSelected),
             InputKey::Backspace => (target, ShellCommand::ExplorerOpenParent),
             InputKey::Delete => (target, ShellCommand::ExplorerDelete),
+            InputKey::Function(2) => (target, ShellCommand::BeginExplorerRename),
+            InputKey::Character('a' | 'A')
+                if key.modifiers.control || key.modifiers.super_key =>
+            {
+                (target, ShellCommand::ExplorerSelectAll)
+            }
+            InputKey::Character(' ') => (target, ShellCommand::ExplorerToggleFocused),
+            InputKey::Character('f' | 'F')
+                if key.modifiers.control || key.modifiers.super_key =>
+            {
+                (target, ShellCommand::BeginExplorerSearch)
+            }
             InputKey::Character('h' | 'H') => (target, ShellCommand::ExplorerToggleHidden),
             InputKey::Character('c' | 'C') => (target, ShellCommand::ExplorerCopy),
             InputKey::Character('x' | 'X') => (target, ShellCommand::ExplorerCut),
@@ -685,6 +742,25 @@ impl ShellState {
     fn route_popup_key(&self, key: &KeyInput) -> (RoutedTarget, ShellCommand) {
         let target = RoutedTarget::Popup(ShellComponent::ContextMenu);
 
+        if self.explorer_overlay_mode.is_some() {
+            if key.phase != InputPhase::Press || key.has_non_shift_modifier() {
+                return (target, ShellCommand::CaptureOverlayInput);
+            }
+            return match &key.key {
+                InputKey::Escape => (target, ShellCommand::ClosePopup),
+                InputKey::Up | InputKey::BackTab => {
+                    (target, ShellCommand::ExplorerOverlayPrevious)
+                }
+                InputKey::Down | InputKey::Tab => {
+                    (target, ShellCommand::ExplorerOverlayNext)
+                }
+                InputKey::Enter | InputKey::Character(' ') => {
+                    (target, ShellCommand::ExplorerOverlayActivate)
+                }
+                _ => (target, ShellCommand::CaptureOverlayInput),
+            };
+        }
+
         if matches!(&key.key, InputKey::Escape) {
             return (target, ShellCommand::ClosePopup);
         }
@@ -743,6 +819,10 @@ impl ShellState {
             return self.route_user_management_mouse(mouse, hit_target);
         }
 
+        if self.active_screen() == ShellScreen::Explorer {
+            return self.route_explorer_mouse(mouse, hit_target, received_at);
+        }
+
         match mouse {
             MouseInput::Moved { .. } => (target_route(hit_target), ShellCommand::Hover(hit_target)),
             MouseInput::Down {
@@ -798,6 +878,70 @@ impl ShellState {
                 }
             }
             _ => (target_route(hit_target), ShellCommand::RecordInput),
+        }
+    }
+
+    fn route_explorer_mouse(
+        &mut self,
+        mouse: MouseInput,
+        hit_target: Option<ShellComponent>,
+        received_at: Instant,
+    ) -> (RoutedTarget, ShellCommand) {
+        let coordinates = mouse.coordinates();
+        let target = RoutedTarget::Component(ShellComponent::Explorer);
+        match mouse {
+            MouseInput::Moved { .. } => (target_route(hit_target), ShellCommand::Hover(hit_target)),
+            MouseInput::Down {
+                button: PointerButton::Right,
+                ..
+            } => {
+                self.last_click = None;
+                (
+                    target,
+                    ShellCommand::OpenContextMenu {
+                        target: Some(ShellComponent::Explorer),
+                        coordinates,
+                    },
+                )
+            }
+            MouseInput::Down {
+                button: PointerButton::Left,
+                modifiers,
+                ..
+            } => {
+                let click = self.register_click(
+                    Some(ShellComponent::Explorer),
+                    coordinates,
+                    PointerButton::Left,
+                    received_at,
+                );
+                (
+                    target,
+                    ShellCommand::ExplorerPointerDown(coordinates, click, modifiers),
+                )
+            }
+            MouseInput::Drag {
+                button: PointerButton::Left,
+                modifiers,
+                ..
+            } => (target, ShellCommand::ExplorerDragUpdate(coordinates, modifiers)),
+            MouseInput::Up {
+                button: PointerButton::Left,
+                modifiers,
+                ..
+            } => (target, ShellCommand::ExplorerDrop(coordinates, modifiers)),
+            MouseInput::Scroll {
+                direction: ScrollDirection::Up,
+                ..
+            } => (target, ShellCommand::ExplorerScroll(-3)),
+            MouseInput::Scroll {
+                direction: ScrollDirection::Down,
+                ..
+            } => (target, ShellCommand::ExplorerScroll(3)),
+            MouseInput::Down { .. }
+            | MouseInput::Up { .. }
+            | MouseInput::Drag { .. }
+            | MouseInput::Scroll { .. } => (target, ShellCommand::RecordInput),
         }
     }
 
@@ -1221,11 +1365,14 @@ impl ShellState {
                 RoutedTarget::Popup(ShellComponent::ContextMenu),
                 ShellCommand::Hover(Some(ShellComponent::ContextMenu)),
             ),
-            MouseInput::Down { button, .. } => {
+            MouseInput::Down {
+                button: PointerButton::Left,
+                ..
+            } => {
                 let click = self.register_click(
                     Some(ShellComponent::ContextMenu),
                     coordinates,
-                    button,
+                    PointerButton::Left,
                     received_at,
                 );
                 (

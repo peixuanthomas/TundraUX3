@@ -1,12 +1,16 @@
 use std::fs;
 use std::path::PathBuf;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use tundra_apps::explorer::{ExplorerCommand, ExplorerController, ExplorerState};
+use tundra_apps::explorer::{
+    ExplorerCommand, ExplorerConflictAction, ExplorerController, ExplorerSelectionMode,
+    ExplorerSortDirection, ExplorerSortField, ExplorerState,
+};
 use tundra_core::{AuthSession, UserRole};
 use tundra_platform::mock::{MockCall, MockPlatform};
 use tundra_platform::{
-    FileAttributes, Platform, PlatformKind, UserDirs, build_windows_app_paths, cleanup_temp_path,
+    FileAttributes, Platform, PlatformError, PlatformKind, UserDirs, build_windows_app_paths,
+    cleanup_temp_path,
 };
 use tundra_storage::StorageManager;
 
@@ -227,7 +231,13 @@ fn lnk_files_are_blocked_before_platform_open() {
             .unwrap_or_default()
             .contains("blocked")
     );
-    assert_eq!(fixture.platform.calls(), Vec::<MockCall>::new());
+    assert!(
+        !fixture
+            .platform
+            .calls()
+            .iter()
+            .any(|call| matches!(call, MockCall::OpenPath(_)))
+    );
 }
 
 #[test]
@@ -262,15 +272,336 @@ fn windows_executables_are_blocked_by_platform_open_policy() {
             .unwrap_or_default()
             .contains("Windows")
     );
-    assert_eq!(fixture.platform.calls(), Vec::<MockCall>::new());
+    assert!(
+        !fixture
+            .platform
+            .calls()
+            .iter()
+            .any(|call| matches!(call, MockCall::OpenPath(_)))
+    );
+}
+
+#[test]
+fn name_sort_is_natural_and_folders_remain_first() {
+    let fixture = Fixture::new("natural-sort");
+    fs::create_dir(fixture.documents.join("folder20")).expect("folder fixture");
+    for name in ["file10.txt", "file2.txt", "file1.txt"] {
+        fs::write(fixture.documents.join(name), name).expect("file fixture");
+    }
+    let storage = fixture.storage();
+    let controller = ExplorerController::default();
+    let mut state = ExplorerState::new(&fixture.documents, true);
+
+    controller.apply(
+        &mut state,
+        ExplorerCommand::Refresh,
+        Some(&session()),
+        &fixture.platform,
+        &storage,
+    );
+
+    assert_eq!(
+        state
+            .entries
+            .iter()
+            .map(|entry| entry.name.as_str())
+            .collect::<Vec<_>>(),
+        vec!["folder20", "file1.txt", "file2.txt", "file10.txt"]
+    );
+
+    controller.apply(
+        &mut state,
+        ExplorerCommand::SetSort(ExplorerSortField::Name),
+        Some(&session()),
+        &fixture.platform,
+        &storage,
+    );
+    assert_eq!(state.sort_direction, ExplorerSortDirection::Descending);
+    assert_eq!(state.entries[0].name, "folder20");
+    assert_eq!(state.entries[1].name, "file10.txt");
+}
+
+#[test]
+fn ctrl_and_shift_style_selection_drives_batch_clipboard() {
+    let fixture = Fixture::new("multi-select");
+    for name in ["a.txt", "b.txt", "c.txt"] {
+        fs::write(fixture.documents.join(name), name).expect("file fixture");
+    }
+    let storage = fixture.storage();
+    let controller = ExplorerController::default();
+    let mut state = ExplorerState::new(&fixture.documents, true);
+    controller.apply(
+        &mut state,
+        ExplorerCommand::Refresh,
+        Some(&session()),
+        &fixture.platform,
+        &storage,
+    );
+
+    controller.apply(
+        &mut state,
+        ExplorerCommand::SelectIndexWithMode(0, ExplorerSelectionMode::Replace),
+        Some(&session()),
+        &fixture.platform,
+        &storage,
+    );
+    controller.apply(
+        &mut state,
+        ExplorerCommand::SelectIndexWithMode(2, ExplorerSelectionMode::Range),
+        Some(&session()),
+        &fixture.platform,
+        &storage,
+    );
+    controller.apply(
+        &mut state,
+        ExplorerCommand::Copy,
+        Some(&session()),
+        &fixture.platform,
+        &storage,
+    );
+
+    assert_eq!(state.selected_paths.len(), 3);
+    assert_eq!(
+        state
+            .clipboard
+            .as_ref()
+            .map(|clipboard| clipboard.paths.len()),
+        Some(3)
+    );
+}
+
+#[test]
+fn implicit_selection_toggle_and_repeated_range_keep_expected_paths() {
+    let fixture = Fixture::new("selection-regression");
+    for name in ["a.txt", "b.txt", "c.txt"] {
+        fs::write(fixture.documents.join(name), name).expect("file fixture");
+    }
+    let storage = fixture.storage();
+    let controller = ExplorerController::default();
+    let mut state = ExplorerState::new(&fixture.documents, true);
+    controller.apply(
+        &mut state,
+        ExplorerCommand::Refresh,
+        Some(&session()),
+        &fixture.platform,
+        &storage,
+    );
+
+    state.select_index(1, ExplorerSelectionMode::Toggle);
+    assert_eq!(state.effective_selected_paths().len(), 2);
+    state.select_index(0, ExplorerSelectionMode::Toggle);
+    assert_eq!(
+        state.effective_selected_paths(),
+        vec![fixture.documents.join("b.txt")]
+    );
+    state.clear_selection();
+    assert!(state.effective_selected_paths().is_empty());
+
+    let mut range_state = ExplorerState::new(&fixture.documents, true);
+    controller.apply(
+        &mut range_state,
+        ExplorerCommand::Refresh,
+        Some(&session()),
+        &fixture.platform,
+        &storage,
+    );
+    range_state.select_index(1, ExplorerSelectionMode::Range);
+    range_state.select_index(2, ExplorerSelectionMode::Range);
+    assert_eq!(range_state.effective_selected_paths().len(), 3);
+    assert_eq!(
+        range_state.selection_anchor,
+        Some(fixture.documents.join("a.txt"))
+    );
+}
+
+#[test]
+fn type_size_and_modified_sort_keep_unknown_values_last() {
+    let fixture = Fixture::new("metadata-sort");
+    fs::create_dir(fixture.documents.join("folder")).expect("folder fixture");
+    for name in ["alpha.rs", "beta.txt", "unknown.bin"] {
+        fs::write(fixture.documents.join(name), name).expect("file fixture");
+    }
+    let storage = fixture.storage();
+    let controller = ExplorerController::default();
+    let mut state = ExplorerState::new(&fixture.documents, true);
+    controller.apply(
+        &mut state,
+        ExplorerCommand::Refresh,
+        Some(&session()),
+        &fixture.platform,
+        &storage,
+    );
+    for entry in &mut state.all_entries {
+        match entry.name.as_str() {
+            "alpha.rs" => {
+                entry.size = 10;
+                entry.modified = Some(UNIX_EPOCH + Duration::from_secs(20));
+            }
+            "beta.txt" => {
+                entry.size = 2;
+                entry.modified = Some(UNIX_EPOCH + Duration::from_secs(10));
+            }
+            "unknown.bin" => {
+                entry.kind = tundra_apps::explorer::ExplorerEntryKind::Other;
+                entry.type_label = "Other".to_string();
+                entry.modified = None;
+            }
+            _ => {}
+        }
+    }
+    state.apply_projection();
+
+    controller.apply(
+        &mut state,
+        ExplorerCommand::SetSort(ExplorerSortField::Type),
+        Some(&session()),
+        &fixture.platform,
+        &storage,
+    );
+    assert_eq!(
+        entry_names(&state),
+        vec!["folder", "unknown.bin", "alpha.rs", "beta.txt"]
+    );
+
+    controller.apply(
+        &mut state,
+        ExplorerCommand::SetSort(ExplorerSortField::Size),
+        Some(&session()),
+        &fixture.platform,
+        &storage,
+    );
+    assert_eq!(
+        entry_names(&state),
+        vec!["folder", "beta.txt", "alpha.rs", "unknown.bin"]
+    );
+
+    controller.apply(
+        &mut state,
+        ExplorerCommand::SetSort(ExplorerSortField::Modified),
+        Some(&session()),
+        &fixture.platform,
+        &storage,
+    );
+    assert_eq!(state.sort_direction, ExplorerSortDirection::Descending);
+    assert_eq!(
+        entry_names(&state),
+        vec!["folder", "alpha.rs", "beta.txt", "unknown.bin"]
+    );
+    controller.apply(
+        &mut state,
+        ExplorerCommand::SetSort(ExplorerSortField::Modified),
+        Some(&session()),
+        &fixture.platform,
+        &storage,
+    );
+    assert_eq!(
+        entry_names(&state),
+        vec!["folder", "beta.txt", "alpha.rs", "unknown.bin"]
+    );
+}
+
+#[test]
+fn unreadable_directory_refresh_clears_stale_actionable_rows() {
+    let fixture = Fixture::new("unreadable-refresh");
+    fs::write(fixture.documents.join("old.txt"), "old").expect("file fixture");
+    let storage = fixture.storage();
+    let controller = ExplorerController::default();
+    let mut state = ExplorerState::new(&fixture.documents, true);
+    controller.apply(
+        &mut state,
+        ExplorerCommand::Refresh,
+        Some(&session()),
+        &fixture.platform,
+        &storage,
+    );
+    assert_eq!(state.entries.len(), 1);
+    fixture.platform.set_directory_error(
+        fixture.documents.clone(),
+        PlatformError::Io {
+            operation: "read directory",
+            path: Some(fixture.documents.clone()),
+            message: "access denied".to_string(),
+        },
+    );
+
+    controller.apply(
+        &mut state,
+        ExplorerCommand::Refresh,
+        Some(&session()),
+        &fixture.platform,
+        &storage,
+    );
+    assert!(
+        state
+            .error
+            .as_deref()
+            .is_some_and(|error| error.contains("access denied"))
+    );
+    assert!(state.entries.is_empty());
+    assert!(state.effective_selected_paths().is_empty());
+}
+
+#[test]
+fn same_directory_copy_uses_conflict_resolution_and_keep_both_name() {
+    let fixture = Fixture::new("keep-both");
+    fs::write(fixture.documents.join("note.txt"), "original").expect("file fixture");
+    let storage = fixture.storage();
+    let controller = ExplorerController::default();
+    let mut state = ExplorerState::new(&fixture.documents, true);
+    controller.apply(
+        &mut state,
+        ExplorerCommand::Refresh,
+        Some(&session()),
+        &fixture.platform,
+        &storage,
+    );
+    select_name(&mut state, "note.txt");
+    controller.apply(
+        &mut state,
+        ExplorerCommand::Copy,
+        Some(&session()),
+        &fixture.platform,
+        &storage,
+    );
+    controller.apply(
+        &mut state,
+        ExplorerCommand::Paste,
+        Some(&session()),
+        &fixture.platform,
+        &storage,
+    );
+    assert!(state.pending_conflict.is_some());
+
+    controller.apply(
+        &mut state,
+        ExplorerCommand::ResolveConflict {
+            action: ExplorerConflictAction::KeepBoth,
+            apply_to_all: false,
+        },
+        Some(&session()),
+        &fixture.platform,
+        &storage,
+    );
+
+    assert!(fixture.documents.join("note (2).txt").is_file());
+    assert!(state.pending_conflict.is_none());
 }
 
 fn select_name(state: &mut ExplorerState, name: &str) {
-    state.selected_index = state
+    let index = state
         .entries
         .iter()
         .position(|entry| entry.name == name)
         .unwrap_or_else(|| panic!("missing entry {name}; entries: {:?}", state.entries));
+    state.select_index(index, tundra_apps::explorer::ExplorerSelectionMode::Replace);
+}
+
+fn entry_names(state: &ExplorerState) -> Vec<&str> {
+    state
+        .entries
+        .iter()
+        .map(|entry| entry.name.as_str())
+        .collect()
 }
 
 fn file_attributes(path: PathBuf, hidden: bool, shortcut: bool) -> FileAttributes {

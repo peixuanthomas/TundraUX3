@@ -3,8 +3,8 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 use crate::{
-    AppPaths, FileAttributes, Platform, PlatformCapabilities, PlatformError, PlatformKind,
-    ProcessExit, ProcessSpec, ProcessStream, UserDirs,
+    AppPaths, DirectoryListing, FileAttributes, FileOpenPolicy, Platform, PlatformCapabilities,
+    PlatformError, PlatformKind, ProcessExit, ProcessSpec, ProcessStream, UserDirs,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -16,6 +16,8 @@ pub enum MockCall {
     SpawnWait(ProcessSpec),
     ReadClipboardText,
     WriteClipboardText(String),
+    ReadDirectory(PathBuf),
+    RenamePath { source: PathBuf, target: PathBuf },
 }
 
 #[derive(Debug)]
@@ -26,7 +28,10 @@ pub struct MockPlatform {
     app_paths: AppPaths,
     clipboard_text: Mutex<String>,
     calls: Mutex<Vec<MockCall>>,
-    file_attributes: Mutex<BTreeMap<PathBuf, FileAttributes>>,
+    file_attributes: Mutex<BTreeMap<PathBuf, Result<FileAttributes, PlatformError>>>,
+    directory_listings: Mutex<BTreeMap<PathBuf, Result<DirectoryListing, PlatformError>>>,
+    file_open_policies: Mutex<BTreeMap<PathBuf, FileOpenPolicy>>,
+    rename_results: Mutex<BTreeMap<(PathBuf, PathBuf), Result<(), PlatformError>>>,
 }
 
 impl MockPlatform {
@@ -39,6 +44,9 @@ impl MockPlatform {
             clipboard_text: Mutex::new(String::new()),
             calls: Mutex::new(Vec::new()),
             file_attributes: Mutex::new(BTreeMap::new()),
+            directory_listings: Mutex::new(BTreeMap::new()),
+            file_open_policies: Mutex::new(BTreeMap::new()),
+            rename_results: Mutex::new(BTreeMap::new()),
         }
     }
 
@@ -60,7 +68,61 @@ impl MockPlatform {
         self.file_attributes
             .lock()
             .expect("file attributes lock poisoned")
-            .insert(path, attributes);
+            .insert(path, Ok(attributes));
+    }
+
+    pub fn set_file_attributes_error(&self, path: PathBuf, error: PlatformError) {
+        self.file_attributes
+            .lock()
+            .expect("file attributes lock poisoned")
+            .insert(path, Err(error));
+    }
+
+    pub fn set_directory_listing(&self, path: PathBuf, listing: DirectoryListing) {
+        self.directory_listings
+            .lock()
+            .expect("directory listings lock poisoned")
+            .insert(path, Ok(listing));
+    }
+
+    pub fn set_directory_error(&self, path: PathBuf, error: PlatformError) {
+        self.directory_listings
+            .lock()
+            .expect("directory listings lock poisoned")
+            .insert(path, Err(error));
+    }
+
+    pub fn set_file_open_policy(&self, path: PathBuf, policy: FileOpenPolicy) {
+        self.file_open_policies
+            .lock()
+            .expect("file open policies lock poisoned")
+            .insert(path, policy);
+    }
+
+    pub fn set_rename_result(
+        &self,
+        source: PathBuf,
+        target: PathBuf,
+        result: Result<(), PlatformError>,
+    ) {
+        self.rename_results
+            .lock()
+            .expect("rename results lock poisoned")
+            .insert((source, target), result);
+    }
+
+    pub fn set_cross_device_rename(
+        &self,
+        source: PathBuf,
+        target: PathBuf,
+        message: impl Into<String>,
+    ) {
+        let error = PlatformError::CrossDevice {
+            source: source.clone(),
+            target: target.clone(),
+            message: message.into(),
+        };
+        self.set_rename_result(source, target, Err(error));
     }
 
     pub fn calls(&self) -> Vec<MockCall> {
@@ -144,9 +206,24 @@ impl Platform for MockPlatform {
             .get(path)
             .cloned()
         {
-            Ok(attributes)
+            attributes
         } else {
             crate::default_file_attributes(path)
+        }
+    }
+
+    fn read_directory(&self, path: &Path) -> Result<DirectoryListing, PlatformError> {
+        self.record(MockCall::ReadDirectory(path.to_path_buf()));
+        if let Some(listing) = self
+            .directory_listings
+            .lock()
+            .expect("directory listings lock poisoned")
+            .get(path)
+            .cloned()
+        {
+            listing
+        } else {
+            crate::default_read_directory(self, path)
         }
     }
 
@@ -155,13 +232,33 @@ impl Platform for MockPlatform {
         path: &Path,
         attributes: &FileAttributes,
     ) -> crate::ExternalOpenPolicy {
-        match self.kind {
-            PlatformKind::Windows => {
-                crate::platform::windows_external_open_policy(path, attributes)
-            }
-            PlatformKind::Macos | PlatformKind::Unsupported => {
-                crate::default_external_open_policy(attributes)
-            }
+        crate::ExternalOpenPolicy::from_file_open_policy(self.file_open_policy(path, attributes))
+    }
+
+    fn file_open_policy(&self, path: &Path, attributes: &FileAttributes) -> FileOpenPolicy {
+        self.file_open_policies
+            .lock()
+            .expect("file open policies lock poisoned")
+            .get(path)
+            .cloned()
+            .unwrap_or_else(|| crate::default_file_open_policy(self.kind, path, attributes))
+    }
+
+    fn rename_path(&self, source: &Path, target: &Path) -> Result<(), PlatformError> {
+        self.record(MockCall::RenamePath {
+            source: source.to_path_buf(),
+            target: target.to_path_buf(),
+        });
+        if let Some(result) = self
+            .rename_results
+            .lock()
+            .expect("rename results lock poisoned")
+            .get(&(source.to_path_buf(), target.to_path_buf()))
+            .cloned()
+        {
+            result
+        } else {
+            crate::default_rename_path(source, target)
         }
     }
 }

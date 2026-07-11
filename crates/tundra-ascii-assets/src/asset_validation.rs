@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use crate::artwork::{load_art_set, load_text_art};
+use crate::artwork::{load_art_set, load_explorer_icons, load_text_art};
 use crate::asset_manifest::{AssetKind, required_assets};
 use crate::asset_resolver::AssetResolver;
 use crate::clock_font::load_clock_font;
@@ -94,7 +94,11 @@ pub fn check_required_assets(root: &Path, theme_id: &str) -> AssetCheckReport {
                 load_text_art(&resolver, theme_id, asset.key, asset.relative_path).map(|_| ())
             }
             AssetKind::ArtSet => {
-                load_art_set(&resolver, theme_id, asset.key, asset.relative_path).map(|_| ())
+                if asset.key == "explorer_icons" {
+                    load_explorer_icons(&resolver, theme_id).map(|_| ())
+                } else {
+                    load_art_set(&resolver, theme_id, asset.key, asset.relative_path).map(|_| ())
+                }
             }
             AssetKind::Font => load_clock_font(&resolver, theme_id).map(|_| ()),
         };
@@ -131,7 +135,7 @@ mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
 
     use super::*;
-    use crate::asset_manifest::DEFAULT_THEME_ID;
+    use crate::asset_manifest::{CANONICAL_ASSETS_DIR, DEFAULT_THEME_ID};
 
     #[test]
     fn check_required_assets_warns_for_missing_root_contents() {
@@ -147,6 +151,27 @@ mod tests {
                 .iter()
                 .any(|message| message.contains("missing ASCII asset"))
         );
+    }
+
+    #[test]
+    fn check_required_assets_applies_explorer_icon_dimension_validation() {
+        let temp = TempDir::new("invalid-explorer-icons");
+        let theme = temp.path().join("themes/default");
+        fs::create_dir_all(&theme).expect("temp theme root");
+        let canonical = Path::new(CANONICAL_ASSETS_DIR).join("themes/default/explorer_icons.toml");
+        let source = fs::read_to_string(canonical).expect("canonical Explorer icons");
+        let invalid = source.replacen("lines = [\"[+]\"]", "lines = [\"[]\"]", 1);
+        fs::write(theme.join("explorer_icons.toml"), invalid).expect("invalid icon fixture");
+
+        let report = check_required_assets(temp.path(), DEFAULT_THEME_ID);
+        let check = report
+            .checks
+            .iter()
+            .find(|check| check.key == "explorer_icons")
+            .expect("Explorer icon check");
+
+        assert!(check.is_invalid());
+        assert!(check.message.contains("folder must be exactly 3x1"));
     }
 
     struct TempDir {

@@ -12,6 +12,8 @@ impl ShellState {
             (content_screen == ShellScreen::Home).then(|| self.to_home_view_model());
         let clock_model =
             (content_screen == ShellScreen::Clock).then(|| self.to_clock_view_model());
+        let explorer_model =
+            (content_screen == ShellScreen::Explorer).then(|| self.to_explorer_view_model());
         self.hit_map = build_shell_hit_map(
             self.terminal_size,
             content_screen,
@@ -25,6 +27,7 @@ impl ShellState {
             notification_model.as_ref(),
             home_model.as_ref(),
             clock_model.as_ref(),
+            explorer_model.as_ref(),
         );
         self.sync_home_entry_selection();
 

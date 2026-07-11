@@ -7,7 +7,7 @@ mod asset_store;
 mod asset_validation;
 mod clock_font;
 
-pub use artwork::{ArtItem, ArtSet, HomeIcon, HomeIconCatalog, TextArt};
+pub use artwork::{ArtItem, ArtSet, ExplorerIcon, HomeIcon, HomeIconCatalog, TextArt};
 pub use asset_distribution::{
     cargo_profile_dir_from_out_dir, copy_canonical_assets_to_profile_dir,
 };

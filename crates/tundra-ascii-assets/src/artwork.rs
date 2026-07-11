@@ -68,6 +68,46 @@ impl ArtItem {
 }
 
 pub type HomeIcon = ArtItem;
+pub type ExplorerIcon = ArtItem;
+
+pub(crate) const EXPLORER_ENTRY_AND_LOCATION_ICON_KEYS: &[&str] = &[
+    "folder",
+    "file",
+    "text",
+    "code",
+    "document",
+    "image",
+    "audio",
+    "video",
+    "archive",
+    "executable",
+    "link",
+    "other",
+    "desktop",
+    "documents",
+    "downloads",
+    "pictures",
+    "music",
+    "videos",
+];
+
+pub(crate) const EXPLORER_ACTION_ICON_KEYS: &[&str] = &[
+    "back",
+    "forward",
+    "up",
+    "refresh",
+    "new",
+    "cut",
+    "copy",
+    "paste",
+    "rename",
+    "delete",
+    "search",
+    "options",
+    "sort_asc",
+    "sort_desc",
+    "cancel",
+];
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ArtSet {
@@ -181,6 +221,39 @@ pub(crate) fn load_home_icon_catalog(
     }
 
     Ok(HomeIconCatalog { icons, labels })
+}
+
+pub(crate) fn load_explorer_icons(
+    resolver: &AssetResolver,
+    theme_id: &str,
+) -> Result<ArtSet, AssetError> {
+    let icons = load_art_set(resolver, theme_id, "explorer_icons", "explorer_icons.toml")?;
+    for key in EXPLORER_ENTRY_AND_LOCATION_ICON_KEYS {
+        let icon = icons.get(key).ok_or_else(|| AssetError::InvalidAsset {
+            asset: "explorer_icons".to_string(),
+            message: format!("missing required Explorer icon {key}"),
+        })?;
+        if icon.width() != 3 || icon.height() != 1 {
+            return Err(AssetError::InvalidAsset {
+                asset: "explorer_icons".to_string(),
+                message: format!("Explorer entry/location icon {key} must be exactly 3x1"),
+            });
+        }
+    }
+    for key in EXPLORER_ACTION_ICON_KEYS {
+        let icon = icons.get(key).ok_or_else(|| AssetError::InvalidAsset {
+            asset: "explorer_icons".to_string(),
+            message: format!("missing required Explorer action icon {key}"),
+        })?;
+        if icon.width() != 1 || icon.height() != 1 {
+            return Err(AssetError::InvalidAsset {
+                asset: "explorer_icons".to_string(),
+                message: format!("Explorer action icon {key} must be exactly 1x1"),
+            });
+        }
+    }
+
+    Ok(icons)
 }
 
 pub(crate) fn load_art_set(
