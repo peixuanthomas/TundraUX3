@@ -1,0 +1,145 @@
+use crate::{CellPosition, rect_contains};
+use ratatui::layout::Rect;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ShellComponent {
+    CompactHome,
+    TopBar,
+    Home,
+    ClockButton,
+    Clock,
+    ClockNewButton,
+    ClockEntryList,
+    ClockCreateDialog,
+    ClockCreateInput,
+    ClockCreateAlarmButton,
+    ClockCreateCountdownButton,
+    LoginUserList,
+    LoginUsername,
+    LoginPassword,
+    LoginPasswordVisibility,
+    LoginGuest,
+    HomeLogout,
+    SetupLanguage,
+    SetupTimezone,
+    SetupAdminUsername,
+    SetupAdminPassword,
+    SetupAdminPasswordConfirm,
+    SetupAdminHint,
+    SetupSubmit,
+    BootstrapUsername,
+    BootstrapPassword,
+    Explorer,
+    UserManagement,
+    StatusBar,
+    ExitDialog,
+    TimeSyncDialog,
+    NotificationDialog,
+    ContextMenu,
+}
+
+impl ShellComponent {
+    pub(crate) const fn label(self) -> &'static str {
+        match self {
+            Self::CompactHome => "CompactHome",
+            Self::TopBar => "TopBar",
+            Self::Home => "Home",
+            Self::ClockButton => "ClockButton",
+            Self::Clock => "Clock",
+            Self::ClockNewButton => "ClockNewButton",
+            Self::ClockEntryList => "ClockEntryList",
+            Self::ClockCreateDialog => "ClockCreateDialog",
+            Self::ClockCreateInput => "ClockCreateInput",
+            Self::ClockCreateAlarmButton => "ClockCreateAlarmButton",
+            Self::ClockCreateCountdownButton => "ClockCreateCountdownButton",
+            Self::LoginUserList => "LoginUserList",
+            Self::LoginUsername => "LoginUsername",
+            Self::LoginPassword => "LoginPassword",
+            Self::LoginPasswordVisibility => "LoginPasswordVisibility",
+            Self::LoginGuest => "LoginGuest",
+            Self::HomeLogout => "HomeLogout",
+            Self::SetupLanguage => "SetupLanguage",
+            Self::SetupTimezone => "SetupTimezone",
+            Self::SetupAdminUsername => "SetupAdminUsername",
+            Self::SetupAdminPassword => "SetupAdminPassword",
+            Self::SetupAdminPasswordConfirm => "SetupAdminPasswordConfirm",
+            Self::SetupAdminHint => "SetupAdminHint",
+            Self::SetupSubmit => "SetupSubmit",
+            Self::BootstrapUsername => "BootstrapUsername",
+            Self::BootstrapPassword => "BootstrapPassword",
+            Self::Explorer => "Explorer",
+            Self::UserManagement => "UserManagement",
+            Self::StatusBar => "StatusBar",
+            Self::ExitDialog => "ExitDialog",
+            Self::TimeSyncDialog => "TimeSyncDialog",
+            Self::NotificationDialog => "NotificationDialog",
+            Self::ContextMenu => "ContextMenu",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ClickKind {
+    Single,
+    Double,
+}
+
+// Shell-local stand-in until the UI foundation exports hit testing and overlay
+// ownership. Expected future imports: tundra_ui::{ComponentId, HitMap,
+// HitRegion, OverlayCapture, OverlayLayer}.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ShellHitRegion {
+    pub component: ShellComponent,
+    pub area: Rect,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ShellHitMap {
+    terminal_size: CellPosition,
+    generation: u64,
+    regions: Vec<ShellHitRegion>,
+}
+
+impl ShellHitMap {
+    pub(crate) fn new(
+        terminal_size: CellPosition,
+        generation: u64,
+        regions: Vec<ShellHitRegion>,
+    ) -> Self {
+        Self {
+            terminal_size,
+            generation,
+            regions,
+        }
+    }
+
+    pub(crate) fn empty(terminal_size: CellPosition) -> Self {
+        Self::new(terminal_size, 0, Vec::new())
+    }
+
+    pub fn generation(&self) -> u64 {
+        self.generation
+    }
+
+    pub fn terminal_size(&self) -> CellPosition {
+        self.terminal_size
+    }
+
+    pub fn regions(&self) -> &[ShellHitRegion] {
+        &self.regions
+    }
+
+    pub fn target_at(&self, coordinates: CellPosition) -> Option<ShellComponent> {
+        self.regions
+            .iter()
+            .rev()
+            .find(|region| rect_contains(region.area, coordinates))
+            .map(|region| region.component)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ShellPopup {
+    pub owner: Option<ShellComponent>,
+    pub anchor: CellPosition,
+}

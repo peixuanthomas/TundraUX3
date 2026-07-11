@@ -1,7 +1,7 @@
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use ratatui::layout::Rect;
-use ratatui::style::Color;
+use ratatui::style::{Color, Modifier};
 use tundra_ui::{
     AuthField, BootstrapAdminViewModel, ClockViewModel, DebugDiagnosticsViewModel,
     ExitConfirmViewModel, HomeDisplayMode, HomeViewModel, LoginField, LoginUserOptionViewModel,
@@ -894,6 +894,45 @@ fn login_renderer_masks_password_length() {
 }
 
 #[test]
+fn login_focused_boxes_keep_solid_regular_weight_vertical_borders() {
+    let chrome = chrome_for("Login");
+    let theme = TundraTheme::default_dark();
+    let main = main_rect(80, 24);
+    let cases = [
+        (LoginField::UserList, login_user_list_area(main), "U"),
+        (LoginField::Password, login_password_area(main), "P"),
+    ];
+
+    for (focused_field, focused_area, title_first_character) in cases {
+        let model = LoginViewModel::new(
+            vec![login_user("Strix", "Local User", "User")],
+            0,
+            0,
+            0,
+            focused_field,
+            None,
+        );
+        let mut terminal = Terminal::new(TestBackend::new(80, 24)).expect("test terminal");
+
+        terminal
+            .draw(|frame| render_login(frame, frame.area(), &chrome, &model, &theme))
+            .expect("render focused login field");
+
+        assert_regular_weight_vertical_border(&terminal, focused_area, theme.accent);
+        let title_cell = terminal
+            .backend()
+            .buffer()
+            .cell((focused_area.x.saturating_add(1), focused_area.y))
+            .expect("focused field title cell");
+        assert_eq!(title_cell.symbol(), title_first_character);
+        assert!(
+            title_cell.modifier.contains(Modifier::BOLD),
+            "focused title should retain bold emphasis"
+        );
+    }
+}
+
+#[test]
 fn login_renderer_reveals_only_explicit_plaintext_and_focuses_new_controls() {
     let chrome = chrome_for("Login");
     let visible = "密碼🙂";
@@ -1140,4 +1179,25 @@ fn region_has_fg(terminal: &Terminal<TestBackend>, area: Rect, fg: Color) -> boo
                 .is_some_and(|cell| cell.fg == fg && cell.symbol() != " ")
         })
     })
+}
+
+fn assert_regular_weight_vertical_border(
+    terminal: &Terminal<TestBackend>,
+    area: Rect,
+    expected_fg: Color,
+) {
+    let buffer = terminal.backend().buffer();
+    let right = area.right().saturating_sub(1);
+
+    for y in area.y.saturating_add(1)..area.bottom().saturating_sub(1) {
+        for x in [area.x, right] {
+            let cell = buffer.cell((x, y)).expect("vertical border cell");
+            assert_eq!(cell.symbol(), "│", "border at ({x}, {y}) must stay solid");
+            assert_eq!(cell.fg, expected_fg, "border at ({x}, {y}) color");
+            assert!(
+                !cell.modifier.contains(Modifier::BOLD),
+                "border at ({x}, {y}) must use regular weight"
+            );
+        }
+    }
 }

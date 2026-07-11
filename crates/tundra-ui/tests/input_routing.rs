@@ -1,3 +1,5 @@
+//! Typed input routing and focus traversal contracts.
+
 use ratatui::layout::Rect;
 use tundra_ui::{
     FocusDirection, FocusManager, HitKind, HitMap, HitTarget, InputEvent, Key, KeyModifiers,

@@ -1,6 +1,6 @@
-//! Phase 2 component primitives.
+//! Reusable component primitives.
 //!
-//! Assumptions until the shared foundation layer lands:
+//! Interaction contracts shared by all components:
 //! - The app/router owns focus order, global shortcuts, and shortcut conflict detection.
 //! - Crossterm events are normalized into [`InputEvent`] before components see them.
 //! - Component ids are stable across frames and are used by the router for focus and actions.

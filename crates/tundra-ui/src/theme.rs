@@ -40,6 +40,12 @@ impl TundraTheme {
     }
 }
 
+/// Keep box-drawing glyphs at regular weight. Some terminal fonts render bold
+/// vertical borders with gaps between rows, which makes a solid border look dashed.
+pub(crate) fn solid_border_style(style: Style) -> Style {
+    style.remove_modifier(Modifier::BOLD)
+}
+
 impl Default for TundraTheme {
     fn default() -> Self {
         Self::default_dark()

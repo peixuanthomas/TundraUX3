@@ -1,5 +1,6 @@
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
+use ratatui::style::Modifier;
 use tundra_ui::TundraTheme;
 use tundra_ui::components::{
     Button, CommandPalette, CommandPaletteCommand, ComponentEvent, ComponentId, ContextMenu,
@@ -38,6 +39,7 @@ fn button_keyboard_and_mouse_activate_the_same_component() {
 
     let mut buffer = Buffer::empty(area);
     button.render(area, &mut buffer, &TundraTheme::default());
+    assert_regular_weight_vertical_border(&buffer, area);
 }
 
 #[test]
@@ -115,6 +117,21 @@ fn text_input_edits_text_and_maps_mouse_clicks_to_cursor_positions() {
 
     let mut buffer = Buffer::empty(area);
     input.render(area, &mut buffer, &TundraTheme::default());
+    assert_regular_weight_vertical_border(&buffer, area);
+}
+
+fn assert_regular_weight_vertical_border(buffer: &Buffer, area: Rect) {
+    let right = area.right().saturating_sub(1);
+    for y in area.y.saturating_add(1)..area.bottom().saturating_sub(1) {
+        for x in [area.x, right] {
+            let cell = buffer.cell((x, y)).expect("vertical border cell");
+            assert_eq!(cell.symbol(), "│", "border at ({x}, {y}) must stay solid");
+            assert!(
+                !cell.modifier.contains(Modifier::BOLD),
+                "border at ({x}, {y}) must use regular weight"
+            );
+        }
+    }
 }
 
 #[test]

@@ -1,3 +1,5 @@
+//! Cross-cutting shortcut, focus, and hit-testing contracts.
+
 use ratatui::layout::Rect;
 use tundra_ui::{
     Command, ComponentId, FocusDirection, FocusManager, FocusScope, HitKind, HitMap, HitTarget,

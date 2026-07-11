@@ -2,7 +2,7 @@ use ratatui::buffer::Buffer;
 use ratatui::layout::{Alignment, Rect};
 use ratatui::widgets::{Block, Borders, Paragraph, Widget};
 
-use crate::TundraTheme;
+use crate::{TundraTheme, theme::solid_border_style};
 
 use super::{
     ComponentEvent, ComponentId, ComponentState, InputEvent, Key, MouseKind, contains_point,
@@ -103,7 +103,12 @@ impl Button {
         let button = Paragraph::new(self.label.as_str())
             .alignment(Alignment::Center)
             .style(style)
-            .block(Block::default().borders(Borders::ALL).style(style));
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .border_style(solid_border_style(style))
+                    .style(style),
+            );
 
         button.render(area, buffer);
     }

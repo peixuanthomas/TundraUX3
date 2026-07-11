@@ -9,6 +9,7 @@ use crate::layout::{
     UserManagementLayout, clock_page_layout, notification_action_text, user_management_layout,
     wrap_notification_text,
 };
+use crate::theme::solid_border_style;
 use crate::{
     AuthField, BootstrapAdminViewModel, ClockCreateDialogFocus, ClockEntryViewModel,
     ClockFontAsset, ClockViewModel, ExitConfirmViewModel, ExplorerDialogViewModel,
@@ -770,6 +771,7 @@ pub fn render_notification_overlay(
     };
 
     frame.render_widget(Clear, layout.dialog);
+    let tone_style = notification_tone_style(model.tone, theme);
     frame.render_widget(
         Block::default()
             .title(format!(
@@ -777,8 +779,10 @@ pub fn render_notification_overlay(
                 notification_tone_prefix(model.tone),
                 model.title
             ))
+            .title_style(tone_style)
             .borders(Borders::ALL)
-            .style(notification_tone_style(model.tone, theme)),
+            .border_style(solid_border_style(tone_style))
+            .style(tone_style),
         layout.dialog,
     );
 
@@ -1403,7 +1407,9 @@ fn render_login_user_list(
         .block(
             Block::default()
                 .title("Users")
+                .title_style(block_style)
                 .borders(Borders::ALL)
+                .border_style(solid_border_style(block_style))
                 .style(block_style),
         )
         .highlight_symbol("> ")
@@ -1484,7 +1490,9 @@ fn render_login_password_field(
             .block(
                 Block::default()
                     .title("Password")
+                    .title_style(block_style)
                     .borders(Borders::ALL)
+                    .border_style(solid_border_style(block_style))
                     .style(block_style),
             )
             .wrap(Wrap { trim: true }),
@@ -2078,6 +2086,7 @@ fn render_setup_admin_field(
         .title(title)
         .title_style(box_style)
         .borders(Borders::ALL)
+        .border_style(solid_border_style(box_style))
         .style(box_style);
     let inner = block.inner(field_area);
     frame.render_widget(block, field_area);
@@ -2598,8 +2607,10 @@ fn render_user_main(frame: &mut Frame<'_>, area: Rect, home: &HomeViewModel, the
             .block(
                 Block::default()
                     .borders(Borders::ALL)
+                    .border_style(solid_border_style(style))
                     .style(style)
-                    .title(if selected { "Selected" } else { "" }),
+                    .title(if selected { "Selected" } else { "" })
+                    .title_style(style),
             )
             .style(style);
 
@@ -2873,7 +2884,12 @@ fn render_status_time_button(
     };
     let button = Paragraph::new(label.to_string())
         .style(style)
-        .block(Block::default().borders(Borders::ALL).style(style))
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_style(solid_border_style(style))
+                .style(style),
+        )
         .alignment(Alignment::Center)
         .wrap(Wrap { trim: true });
 
