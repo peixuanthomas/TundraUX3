@@ -26,8 +26,16 @@ fn layout_switches_columns_at_72_cells_and_keeps_one_row_at_minimum_height() {
         .iter()
         .find(|action| action.action == UserManagementAction::NewUser)
         .expect("new user action");
-    assert_eq!(new_user.area.y, detailed.summary.y);
-    assert!(new_user.area.x >= detailed.summary.right());
+    assert_eq!(detailed.actions[0].action, UserManagementAction::NewUser);
+    assert_eq!(new_user.area.y, detailed.actions_area.y);
+    assert_ne!(new_user.area.y, detailed.summary.y);
+    assert_eq!(detailed.summary.width, 70);
+    assert!(
+        detailed
+            .actions
+            .iter()
+            .all(|action| action.area.y == detailed.actions_area.y)
+    );
 }
 
 #[test]

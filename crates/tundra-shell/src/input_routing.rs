@@ -1028,6 +1028,22 @@ impl ShellState {
             );
         }
 
+        if self.user_management_mode == UserManagementMode::Browse
+            && hit_target == Some(ShellComponent::ClockButton)
+            && matches!(
+                mouse,
+                MouseInput::Down {
+                    button: PointerButton::Left,
+                    ..
+                }
+            )
+        {
+            return (
+                RoutedTarget::Component(ShellComponent::ClockButton),
+                self.clock_button_activation_command(),
+            );
+        }
+
         let Some(layout) = self.user_management_layout() else {
             return (target, ShellCommand::CaptureOverlayInput);
         };

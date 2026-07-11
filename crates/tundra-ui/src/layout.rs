@@ -211,43 +211,7 @@ pub fn compute_shell_layout(area: Rect) -> ShellLayout {
 pub fn user_management_layout(main: Rect, model: &UserManagementViewModel) -> UserManagementLayout {
     let panel = main;
     let inner = inset_rect(panel, 1);
-    let summary_line = line_in_rect(inner, inner.y);
-    let new_user_action = model
-        .actions
-        .iter()
-        .find(|action| action.action == UserManagementAction::NewUser);
-    let (summary, new_user_layout) = new_user_action.map_or((summary_line, None), |action| {
-        let desired_width = u16::try_from(action.button_label().chars().count())
-            .unwrap_or(u16::MAX)
-            .min(summary_line.width);
-        let gap = u16::from(summary_line.width > desired_width);
-        let summary_width = summary_line
-            .width
-            .saturating_sub(desired_width)
-            .saturating_sub(gap);
-        let action_area = Rect::new(
-            summary_line
-                .x
-                .saturating_add(summary_width)
-                .saturating_add(gap),
-            summary_line.y,
-            desired_width,
-            summary_line.height,
-        );
-        (
-            Rect::new(
-                summary_line.x,
-                summary_line.y,
-                summary_width,
-                summary_line.height,
-            ),
-            Some(UserManagementActionLayout {
-                action: action.action,
-                area: action_area,
-                enabled: action.enabled,
-            }),
-        )
-    });
+    let summary = line_in_rect(inner, inner.y);
     let header = line_in_rect(inner, inner.y.saturating_add(1));
     let inner_bottom = inner.y.saturating_add(inner.height);
 
@@ -295,16 +259,7 @@ pub fn user_management_layout(main: Rect, model: &UserManagementViewModel) -> Us
         })
         .collect();
 
-    let bottom_actions = model
-        .actions
-        .iter()
-        .filter(|action| action.action != UserManagementAction::NewUser)
-        .cloned()
-        .collect::<Vec<_>>();
-    let mut actions = user_management_action_layouts(actions_area, &bottom_actions);
-    if let Some(new_user_layout) = new_user_layout {
-        actions.insert(0, new_user_layout);
-    }
+    let actions = user_management_action_layouts(actions_area, &model.actions);
 
     UserManagementLayout {
         panel,

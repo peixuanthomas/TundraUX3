@@ -1294,6 +1294,47 @@ fn user_management_mouse_uses_shared_rows_actions_forms_and_scroll_geometry() {
 }
 
 #[test]
+fn user_management_clock_button_opens_clock_and_returns_to_user_management() {
+    let fixture = FixtureRoot::new("user-management-clock-button");
+    let platform = mock_platform(fixture.path());
+    bootstrap_with_shell(&platform);
+
+    let startup = prepare_shell_startup(&platform, default_config()).expect("admin startup");
+    let mut state = ShellState::new_with_startup(default_config(), (120, 40), startup);
+    login(&mut state, "AdminUser", "StrongPass123");
+    state.apply_input(InputEvent::from_key_label("u"));
+    assert_eq!(state.active_screen(), ShellScreen::UserManagement);
+
+    let clock_coordinates = component_center(&state, ShellComponent::ClockButton);
+    assert_eq!(
+        state.hit_target_at(clock_coordinates),
+        Some(ShellComponent::ClockButton)
+    );
+    state.apply_input(InputEvent::mouse_down(
+        PointerButton::Left,
+        clock_coordinates,
+    ));
+
+    assert_eq!(state.active_screen(), ShellScreen::Clock);
+    assert_eq!(
+        state.last_command(),
+        Some(&tundra_shell::ShellCommand::OpenClock)
+    );
+
+    let clock_coordinates = component_center(&state, ShellComponent::ClockButton);
+    state.apply_input(InputEvent::mouse_down(
+        PointerButton::Left,
+        clock_coordinates,
+    ));
+
+    assert_eq!(state.active_screen(), ShellScreen::UserManagement);
+    assert_eq!(
+        state.last_command(),
+        Some(&tundra_shell::ShellCommand::CloseClock)
+    );
+}
+
+#[test]
 fn last_admin_actions_are_skipped_and_self_delete_defaults_to_cancel() {
     let fixture = FixtureRoot::new("user-management-last-admin-delete");
     let platform = mock_platform(fixture.path());
