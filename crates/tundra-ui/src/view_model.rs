@@ -154,6 +154,7 @@ pub struct ClockViewModel {
     /// Offset into the flattened `alarms` then `countdowns` display order.
     pub entry_window_start: usize,
     pub create_dialog: Option<ClockCreateDialogViewModel>,
+    read_only: bool,
     ascii_assets: Option<RuntimeAsciiAssets>,
 }
 
@@ -169,6 +170,7 @@ impl PartialEq for ClockViewModel {
             && self.selected_entry_id == other.selected_entry_id
             && self.entry_window_start == other.entry_window_start
             && self.create_dialog == other.create_dialog
+            && self.read_only == other.read_only
     }
 }
 
@@ -220,8 +222,23 @@ impl ClockViewModel {
             selected_entry_id: None,
             entry_window_start: 0,
             create_dialog: None,
+            read_only: false,
             ascii_assets: None,
         }
+    }
+
+    /// Marks the Clock page as view-only.
+    ///
+    /// Read-only pages omit all controls which create clock entries. Input
+    /// routing should use the zero-sized `new_button` returned by
+    /// `clock_page_layout` as the matching hit-test contract.
+    pub fn with_read_only(mut self, read_only: bool) -> Self {
+        self.read_only = read_only;
+        self
+    }
+
+    pub fn is_read_only(&self) -> bool {
+        self.read_only
     }
 
     pub fn with_ascii_assets(mut self, ascii_assets: RuntimeAsciiAssets) -> Self {
@@ -304,6 +321,8 @@ pub struct HomeViewModel {
     pub(crate) current_time: Option<String>,
     entries: Vec<ShellEntry>,
     selected_entry_index: usize,
+    logout_visible: bool,
+    logout_selected: bool,
 }
 
 impl PartialEq for HomeViewModel {
@@ -314,6 +333,8 @@ impl PartialEq for HomeViewModel {
             && self.current_time == other.current_time
             && self.entries == other.entries
             && self.selected_entry_index == other.selected_entry_index
+            && self.logout_visible == other.logout_visible
+            && self.logout_selected == other.logout_selected
     }
 }
 
@@ -329,6 +350,8 @@ pub enum AuthField {
 pub enum LoginField {
     UserList,
     Password,
+    PasswordVisibility,
+    Guest,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -348,6 +371,7 @@ pub struct LoginViewModel {
     pub password_len: usize,
     pub focused_field: LoginField,
     pub error: Option<String>,
+    visible_password: Option<String>,
 }
 
 impl LoginViewModel {
@@ -373,7 +397,23 @@ impl LoginViewModel {
             password_len,
             focused_field,
             error,
+            visible_password: None,
         }
+    }
+
+    /// Supplies the plaintext to render while the password reveal control is
+    /// active. The compatibility constructor never stores plaintext.
+    pub fn with_visible_password(mut self, password: impl Into<String>) -> Self {
+        self.visible_password = Some(password.into());
+        self
+    }
+
+    pub fn visible_password(&self) -> Option<&str> {
+        self.visible_password.as_deref()
+    }
+
+    pub fn password_is_visible(&self) -> bool {
+        self.visible_password.is_some()
     }
 
     pub fn selected_user(&self) -> Option<&LoginUserOptionViewModel> {
@@ -872,6 +912,8 @@ impl HomeViewModel {
             current_time: None,
             entries: Vec::new(),
             selected_entry_index: 0,
+            logout_visible: false,
+            logout_selected: false,
         }
     }
 
@@ -953,7 +995,28 @@ impl HomeViewModel {
             current_time: Some(current_time.into()),
             entries,
             selected_entry_index,
+            logout_visible: false,
+            logout_selected: false,
         }
+    }
+
+    /// Adds an authenticated account summary and its Logout control.
+    ///
+    /// This is also the opt-in path for authenticated Debug homes; a plain
+    /// [`HomeViewModel::debug`] remains the storage-free development view.
+    pub fn with_account_logout(mut self, current_user: impl Into<String>, selected: bool) -> Self {
+        self.current_user = Some(current_user.into());
+        self.logout_visible = true;
+        self.logout_selected = selected;
+        self
+    }
+
+    pub fn logout_visible(&self) -> bool {
+        self.logout_visible
+    }
+
+    pub fn logout_selected(&self) -> bool {
+        self.logout_selected
     }
 
     pub fn display_mode(&self) -> HomeDisplayMode {

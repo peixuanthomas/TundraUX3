@@ -44,6 +44,8 @@ pub use tundra_platform::{ENTER_FULLSCREEN_SEQUENCE, EXIT_FULLSCREEN_SEQUENCE};
 pub use tundra_weathr::network_clock::TIME_SYNC_INTERVAL;
 
 pub const BANNER_DISPLAY_DURATION: Duration = Duration::from_secs(2);
+pub const LOGIN_IDLE_TIMEOUT: Duration = Duration::from_secs(60);
+pub const PASSWORD_REVEAL_DURATION: Duration = Duration::from_secs(5);
 const BANNER_ASSET_KEY: &str = "tundraux3";
 const DEFAULT_TOAST_DURATION: Duration = Duration::from_secs(4);
 const MAX_ACTIVE_ALERTS: usize = 64;
@@ -523,6 +525,21 @@ impl KeyInput {
             "End" => (InputKey::End, InputModifiers::none()),
             "PageUp" => (InputKey::PageUp, InputModifiers::none()),
             "PageDown" => (InputKey::PageDown, InputModifiers::none()),
+            function
+                if function
+                    .strip_prefix('F')
+                    .and_then(|number| number.parse::<u8>().ok())
+                    .is_some() =>
+            {
+                (
+                    InputKey::Function(
+                        function[1..]
+                            .parse::<u8>()
+                            .expect("function key guard validated the number"),
+                    ),
+                    InputModifiers::none(),
+                )
+            }
             single if single.chars().count() == 1 => (
                 InputKey::Character(single.chars().next().expect("single char")),
                 InputModifiers::none(),
@@ -801,6 +818,9 @@ pub enum ShellComponent {
     LoginUserList,
     LoginUsername,
     LoginPassword,
+    LoginPasswordVisibility,
+    LoginGuest,
+    HomeLogout,
     SetupLanguage,
     SetupTimezone,
     SetupAdminUsername,
@@ -836,6 +856,9 @@ impl ShellComponent {
             Self::LoginUserList => "LoginUserList",
             Self::LoginUsername => "LoginUsername",
             Self::LoginPassword => "LoginPassword",
+            Self::LoginPasswordVisibility => "LoginPasswordVisibility",
+            Self::LoginGuest => "LoginGuest",
+            Self::HomeLogout => "HomeLogout",
             Self::SetupLanguage => "SetupLanguage",
             Self::SetupTimezone => "SetupTimezone",
             Self::SetupAdminUsername => "SetupAdminUsername",
@@ -1230,24 +1253,6 @@ impl NotificationCenter {
             .retain(|modal| modal.key.as_deref() != Some(key));
     }
 
-    fn dismiss_modals_by_key_prefix(&mut self, prefix: &str) {
-        self.modal_queue.retain(|modal| {
-            !modal
-                .key
-                .as_deref()
-                .is_some_and(|key| key.starts_with(prefix))
-        });
-        while self
-            .active_modal
-            .as_ref()
-            .and_then(|modal| modal.key.as_deref())
-            .is_some_and(|key| key.starts_with(prefix))
-        {
-            self.active_modal = None;
-            self.promote_next_modal();
-        }
-    }
-
     pub fn has_active_modal(&self) -> bool {
         self.active_modal.is_some()
     }
@@ -1564,6 +1569,10 @@ pub enum ShellCommand {
     LoginLastUser,
     LoginFocusUserList,
     LoginFocusPassword,
+    LoginFocusPasswordVisibility,
+    LoginFocusGuest,
+    ToggleLoginPasswordVisibility,
+    LoginAsGuest,
     SubmitLogin,
     SubmitBootstrapAdmin,
     SetupPreviousLanguage,
@@ -1595,6 +1604,7 @@ pub enum ShellCommand {
     HomeFirstEntry,
     HomeLastEntry,
     ActivateSelectedHomeEntry,
+    Logout,
     SelectHomeEntryAt(CellPosition),
     ActivateHomeEntryAt(CellPosition, ClickKind),
     OpenExplorer,
@@ -1897,6 +1907,7 @@ pub struct ShellState {
     time_sync_dialog_visible: bool,
     time_sync_failure_message: Option<String>,
     auth_session: Option<AuthSession>,
+    guest_mode: bool,
     requested_debug_mode: bool,
     debug_policy: DebugPolicy,
     login_users: Vec<ShellLoginUser>,
@@ -1904,6 +1915,8 @@ pub struct ShellState {
     login_user_window_start: usize,
     login_username: String,
     login_password: String,
+    login_idle_deadline: Instant,
+    login_password_visible_until: Option<Instant>,
     setup_step: tundra_ui::SetupStep,
     setup_selected_language_index: usize,
     setup_selected_timezone_index: usize,
@@ -1941,6 +1954,7 @@ pub struct ShellState {
     pending_notification_commands: VecDeque<ShellCommand>,
     error_message: Option<String>,
     shutdown_requested: bool,
+    return_to_lockscreen_requested: bool,
     last_command: Option<ShellCommand>,
     last_routed_target: Option<RoutedTarget>,
     last_key_event: Option<String>,
@@ -2034,6 +2048,7 @@ impl ShellState {
             notifications.notify_toast("Storage recovered defaults");
         }
 
+        let created_at = Instant::now();
         let mut state = Self {
             home_mode,
             ascii_assets,
@@ -2053,6 +2068,7 @@ impl ShellState {
             time_sync_dialog_visible: false,
             time_sync_failure_message: None,
             auth_session: None,
+            guest_mode: false,
             requested_debug_mode: launch_config.home_mode_override == HomeModeOverride::Debug,
             debug_policy: startup.debug_policy,
             login_users,
@@ -2060,6 +2076,8 @@ impl ShellState {
             login_user_window_start: 0,
             login_username,
             login_password: String::new(),
+            login_idle_deadline: created_at + LOGIN_IDLE_TIMEOUT,
+            login_password_visible_until: None,
             setup_step: tundra_ui::SetupStep::Language,
             setup_selected_language_index: 0,
             setup_selected_timezone_index: 0,
@@ -2097,6 +2115,7 @@ impl ShellState {
             pending_notification_commands: VecDeque::new(),
             error_message: None,
             shutdown_requested: false,
+            return_to_lockscreen_requested: false,
             last_command: None,
             last_routed_target: None,
             last_key_event: None,
@@ -2161,7 +2180,7 @@ impl ShellState {
     }
 
     pub fn to_home_view_model(&self) -> tundra_ui::HomeViewModel {
-        match self.home_mode {
+        let model = match self.home_mode {
             ShellHomeMode::Debug => {
                 tundra_ui::HomeViewModel::debug(tundra_ui::DebugDiagnosticsViewModel {
                     tick_count: self.tick_count,
@@ -2176,11 +2195,7 @@ impl ShellState {
                 })
             }
             ShellHomeMode::User => {
-                let user = self
-                    .auth_session
-                    .as_ref()
-                    .map(|session| session.username.as_str())
-                    .unwrap_or("Guest");
+                let user = self.current_home_username().unwrap_or("Guest");
                 tundra_ui::HomeViewModel::user_with_selection_and_icon_assets(
                     user,
                     self.current_time_label(),
@@ -2189,7 +2204,22 @@ impl ShellState {
                     self.ascii_assets.clone(),
                 )
             }
+        };
+        if let Some(username) = self.current_home_username() {
+            model.with_account_logout(
+                username,
+                self.focused_component == ShellComponent::HomeLogout,
+            )
+        } else {
+            model
         }
+    }
+
+    fn current_home_username(&self) -> Option<&str> {
+        self.auth_session
+            .as_ref()
+            .map(|session| session.username.as_str())
+            .or(self.guest_mode.then_some("Guest"))
     }
 
     pub fn to_clock_view_model(&self) -> tundra_ui::ClockViewModel {
@@ -2233,7 +2263,8 @@ impl ShellState {
             snapshot.time.minute() as u8,
             snapshot.time.second() as u8,
         )
-        .with_ascii_assets(self.ascii_assets.clone());
+        .with_ascii_assets(self.ascii_assets.clone())
+        .with_read_only(self.is_strict_guest());
         model.alarms = alarms;
         model.countdowns = countdowns;
         model.selected_entry_id = (self.focused_component == ShellComponent::ClockEntryList)
@@ -2257,7 +2288,11 @@ impl ShellState {
     }
 
     pub fn to_login_view_model(&self) -> tundra_ui::LoginViewModel {
-        tundra_ui::LoginViewModel::new(
+        self.to_login_view_model_at(Instant::now())
+    }
+
+    pub fn to_login_view_model_at(&self, now: Instant) -> tundra_ui::LoginViewModel {
+        let model = tundra_ui::LoginViewModel::new(
             self.login_users
                 .iter()
                 .map(|user| tundra_ui::LoginUserOptionViewModel {
@@ -2276,10 +2311,19 @@ impl ShellState {
             self.login_password.chars().count(),
             match self.focused_component {
                 ShellComponent::LoginPassword => tundra_ui::LoginField::Password,
+                ShellComponent::LoginPasswordVisibility => {
+                    tundra_ui::LoginField::PasswordVisibility
+                }
+                ShellComponent::LoginGuest => tundra_ui::LoginField::Guest,
                 _ => tundra_ui::LoginField::UserList,
             },
             self.error_message.clone(),
-        )
+        );
+        if self.login_password_is_visible_at(now) {
+            model.with_visible_password(self.login_password.clone())
+        } else {
+            model
+        }
     }
 
     pub fn to_bootstrap_admin_view_model(&self) -> tundra_ui::BootstrapAdminViewModel {
@@ -2637,6 +2681,57 @@ impl ShellState {
         self.error_message = None;
     }
 
+    fn reset_login_idle_deadline_at(&mut self, now: Instant) {
+        self.login_idle_deadline = now + LOGIN_IDLE_TIMEOUT;
+    }
+
+    fn login_idle_tracking_active(&self) -> bool {
+        self.screen_stack.contains(&ShellScreen::Login)
+            && self.auth_session.is_none()
+            && !self.guest_mode
+    }
+
+    fn expire_login_password_visibility_at(&mut self, now: Instant) {
+        if self
+            .login_password_visible_until
+            .is_some_and(|deadline| now >= deadline)
+        {
+            self.login_password_visible_until = None;
+        }
+    }
+
+    fn login_password_is_visible_at(&self, now: Instant) -> bool {
+        self.login_password_visible_until
+            .is_some_and(|deadline| now < deadline)
+    }
+
+    fn auth_poll_timeout(&self, now: Instant, fallback: Duration) -> Duration {
+        let mut timeout = fallback;
+        if self.login_idle_tracking_active() {
+            timeout = timeout.min(self.login_idle_deadline.saturating_duration_since(now));
+        }
+        if let Some(deadline) = self.login_password_visible_until {
+            timeout = timeout.min(deadline.saturating_duration_since(now));
+        }
+        timeout
+    }
+
+    fn toggle_login_password_visibility_at(&mut self, now: Instant) {
+        if self.login_password_is_visible_at(now) {
+            self.login_password_visible_until = None;
+        } else {
+            self.login_password_visible_until = Some(now + PASSWORD_REVEAL_DURATION);
+        }
+        self.error_message = None;
+    }
+
+    fn prepare_return_to_lockscreen(&mut self) {
+        self.login_password.clear();
+        self.login_password_visible_until = None;
+        self.error_message = None;
+        self.return_to_lockscreen_requested = true;
+    }
+
     fn auth_backspace(&mut self) {
         match self.focused_component {
             ShellComponent::LoginPassword => {
@@ -2718,6 +2813,7 @@ impl ShellState {
         self.login_selected_user =
             (current + delta).clamp(0, self.login_users.len() as isize - 1) as usize;
         self.login_password.clear();
+        self.login_password_visible_until = None;
         self.error_message = None;
         self.sync_login_selection();
     }
@@ -2725,6 +2821,7 @@ impl ShellState {
     fn select_first_login_user(&mut self) {
         self.login_selected_user = 0;
         self.login_password.clear();
+        self.login_password_visible_until = None;
         self.error_message = None;
         self.sync_login_selection();
     }
@@ -2737,6 +2834,7 @@ impl ShellState {
 
         self.login_selected_user = self.login_users.len() - 1;
         self.login_password.clear();
+        self.login_password_visible_until = None;
         self.error_message = None;
         self.sync_login_selection();
     }
@@ -2748,6 +2846,7 @@ impl ShellState {
 
         self.login_selected_user = index;
         self.login_password.clear();
+        self.login_password_visible_until = None;
         self.error_message = None;
         self.sync_login_selection();
     }
@@ -3082,6 +3181,7 @@ impl ShellState {
         match sessions.login(&username, &self.login_password) {
             Ok(session) => self.complete_login(session),
             Err(error) => {
+                self.login_password_visible_until = None;
                 self.error_message = Some(login_error_message(&error, password_hint.as_deref()));
                 self.notify_status("Login failed");
                 let _ = self.refresh_login_users_from_storage();
@@ -3178,9 +3278,11 @@ impl ShellState {
     }
 
     fn complete_login(&mut self, session: AuthSession) {
+        self.guest_mode = false;
         self.auth_session = Some(session.clone());
         self.login_username = session.username.clone();
         self.login_password.clear();
+        self.login_password_visible_until = None;
         self.bootstrap_password.clear();
         self.setup_admin_password.clear();
         self.setup_admin_password_confirm.clear();
@@ -3225,11 +3327,41 @@ impl ShellState {
         self.screen_stack = vec![ShellScreen::Home];
         self.focused_component = ShellComponent::Home;
         self.active_popup = None;
-        self.load_clock_for_session(&session);
+        if session.role != UserRole::Guest {
+            self.load_clock_for_session(&session);
+        }
+        self.refresh_hit_map();
+    }
+
+    fn complete_guest_login(&mut self) {
+        self.auth_session = None;
+        self.guest_mode = true;
+        self.login_password.clear();
+        self.login_password_visible_until = None;
+        self.bootstrap_password.clear();
+        self.setup_admin_password.clear();
+        self.setup_admin_password_confirm.clear();
+        self.error_message = None;
+        self.home_mode = ShellHomeMode::User;
+        self.selected_home_entry_index = 0;
+        self.clock_scheduler = None;
+        self.clock_selected_entry_id = None;
+        self.clock_entry_window_start = 0;
+        self.clock_create_state = None;
+        self.clock_profile_pending_sync = None;
+        self.screen_stack = vec![ShellScreen::Home];
+        self.focused_component = ShellComponent::Home;
+        self.active_popup = None;
+        self.notify_status("Signed in as Guest");
         self.refresh_hit_map();
     }
 
     fn open_user_management(&mut self) {
+        if self.is_strict_guest() {
+            self.error_message = None;
+            self.notify_status("Guest access is read-only");
+            return;
+        }
         if self.auth_session.is_none() {
             self.error_message = Some("Login required".to_string());
             return;
@@ -3257,7 +3389,11 @@ impl ShellState {
         }
         self.active_popup = None;
         self.clock_create_state = None;
-        self.focused_component = ShellComponent::ClockNewButton;
+        self.focused_component = if self.is_strict_guest() {
+            ShellComponent::ClockButton
+        } else {
+            ShellComponent::ClockNewButton
+        };
         self.sync_clock_selection();
         self.notify_status("Clock");
         self.refresh_hit_map();
@@ -3523,6 +3659,10 @@ impl ShellState {
     }
 
     fn open_clock_create_dialog(&mut self) {
+        if self.is_strict_guest() {
+            self.notify_status("Guest clock is read-only");
+            return;
+        }
         if self.clock_scheduler.is_none() {
             if self.clock_profile_pending_sync.is_some() {
                 self.notify_toast("Waiting for initial time sync to restore reminders");
@@ -3902,6 +4042,11 @@ impl ShellState {
     }
 
     fn open_explorer(&mut self, platform: &dyn Platform) {
+        if self.is_strict_guest() {
+            self.error_message = None;
+            self.notify_status("Guest access is read-only");
+            return;
+        }
         if self.auth_session.is_none() {
             self.error_message = Some("Login required".to_string());
             return;
@@ -4838,16 +4983,43 @@ impl ShellState {
         }
     }
 
+    fn logout_at(&mut self, now: Instant) {
+        let audit_error = self
+            .auth_session
+            .as_ref()
+            .zip(self.storage_manager.clone())
+            .and_then(|(session, storage)| {
+                SessionService::new(storage)
+                    .logout_session(session)
+                    .err()
+                    .map(|error| error.to_string())
+            });
+
+        self.return_to_login_at("Signed out", now);
+        if let Some(error) = audit_error {
+            self.notify_alert_with_key(
+                "auth.logout-audit",
+                format!("Signed out, but logout audit failed: {error}"),
+                tundra_ui::NotificationTone::Warning,
+            );
+        }
+    }
+
     fn return_to_login(&mut self, status: &str) {
+        self.return_to_login_at(status, Instant::now());
+    }
+
+    fn return_to_login_at(&mut self, status: &str, now: Instant) {
         self.resolve_user_management_refresh_alert();
-        self.notifications.dismiss_modals_by_key_prefix("clock.");
-        self.notifications.resolve_alert(CLOCK_STORAGE_ALERT_KEY);
-        self.notifications.clear_toast();
+        self.notifications = NotificationCenter::new(status);
         self.modal_focus_context = None;
         self.modal_focus_prepared_for_follow_up = false;
         self.notification_pointer_capture = None;
         self.pending_notification_commands.clear();
         self.auth_session = None;
+        self.guest_mode = false;
+        self.time_sync_dialog_visible = false;
+        self.time_sync_failure_message = None;
         self.clock_scheduler = None;
         self.clock_selected_entry_id = None;
         self.clock_entry_window_start = 0;
@@ -4861,28 +5033,55 @@ impl ShellState {
         self.user_management_focus = UserManagementPageFocus::UserList;
         self.user_management_feedback_tone = UserManagementFeedbackTone::Info;
         self.user_management_mode = UserManagementMode::Browse;
+        self.user_management_message = None;
+        self.selected_home_entry_index = 0;
+        self.explorer_state = None;
+        self.explorer_input_mode = ExplorerInputMode::Browse;
+        self.explorer_input.clear();
+        self.active_popup = None;
+        self.hovered_component = None;
+        self.last_click = None;
+        self.drag_tracker = None;
         self.login_password.clear();
+        self.login_password_visible_until = None;
+        self.error_message = None;
+        self.return_to_lockscreen_requested = false;
+        self.reset_login_idle_deadline_at(now);
         let _ = self.refresh_login_users_from_storage();
         self.screen_stack = vec![ShellScreen::Login];
         self.focused_component = ShellComponent::LoginUserList;
-        self.notify_status(status);
         self.refresh_hit_map();
     }
 
     fn user_home_entries(&self) -> Vec<tundra_ui::ShellEntry> {
+        if self.is_strict_guest() {
+            return Vec::new();
+        }
         let mut entries = user_home_entries();
         if self.can_manage_all_users() {
             entries.push(tundra_ui::ShellEntry::new(
                 "User Management",
                 "Manage local TundraUX users",
             ));
-        } else if self.auth_session.is_some() {
+        } else if self
+            .auth_session
+            .as_ref()
+            .is_some_and(|session| session.role == UserRole::User)
+        {
             entries.push(tundra_ui::ShellEntry::new(
                 "User Profile",
                 "Manage your local TundraUX account",
             ));
         }
         entries
+    }
+
+    fn is_strict_guest(&self) -> bool {
+        self.guest_mode
+            || self
+                .auth_session
+                .as_ref()
+                .is_some_and(|session| session.role == UserRole::Guest)
     }
 
     fn sync_home_entry_selection(&mut self) {
@@ -5007,10 +5206,44 @@ impl ShellState {
         input: InputEvent,
         platform: &dyn Platform,
     ) -> ShellAction {
-        let received_at = Instant::now();
+        self.apply_input_with_platform_at(input, platform, Instant::now())
+    }
+
+    #[doc(hidden)]
+    pub fn apply_input_at_for_test(
+        &mut self,
+        input: InputEvent,
+        received_at: Instant,
+    ) -> ShellAction {
+        let platform = tundra_platform::native_platform();
+        self.apply_input_with_platform_at(input, platform.as_ref(), received_at)
+    }
+
+    fn apply_input_with_platform_at(
+        &mut self,
+        input: InputEvent,
+        platform: &dyn Platform,
+        received_at: Instant,
+    ) -> ShellAction {
         self.notifications.expire(received_at);
+        self.expire_login_password_visibility_at(received_at);
+        let requests_shutdown = match &input {
+            InputEvent::Shutdown => true,
+            InputEvent::Key(key) => key.is_ctrl_c(),
+            _ => false,
+        };
+        if self.login_idle_tracking_active()
+            && received_at >= self.login_idle_deadline
+            && !requests_shutdown
+        {
+            self.prepare_return_to_lockscreen();
+            return ShellAction::Exit;
+        }
+        if self.login_idle_tracking_active() && resets_login_idle_timeout(&input) {
+            self.login_idle_deadline = received_at + LOGIN_IDLE_TIMEOUT;
+        }
         let routed = self.route_input_at(input, received_at);
-        self.apply_routed_event(routed, platform)
+        self.apply_routed_event(routed, platform, received_at)
     }
 
     pub fn route_input_at(&mut self, input: InputEvent, received_at: Instant) -> RoutedEvent {
@@ -5044,11 +5277,16 @@ impl ShellState {
         }
     }
 
-    fn apply_routed_event(&mut self, routed: RoutedEvent, platform: &dyn Platform) -> ShellAction {
+    fn apply_routed_event(
+        &mut self,
+        routed: RoutedEvent,
+        platform: &dyn Platform,
+        received_at: Instant,
+    ) -> ShellAction {
         self.pending_notification_commands.clear();
         let follow_up_input = routed.input.clone();
         let follow_up_target = routed.target;
-        let mut action = self.apply_routed_event_once(routed, platform);
+        let mut action = self.apply_routed_event_once(routed, platform, received_at);
         let mut steps = 0_usize;
 
         while action != ShellAction::Exit {
@@ -5072,6 +5310,7 @@ impl ShellState {
                     command,
                 },
                 platform,
+                received_at,
             );
         }
 
@@ -5086,6 +5325,7 @@ impl ShellState {
         &mut self,
         routed: RoutedEvent,
         platform: &dyn Platform,
+        received_at: Instant,
     ) -> ShellAction {
         self.record_input_diagnostics(&routed);
         if !matches!(routed.input, InputEvent::Mouse(_)) {
@@ -5214,7 +5454,27 @@ impl ShellState {
                 self.error_message = None;
                 ShellAction::Redraw
             }
+            ShellCommand::LoginFocusPasswordVisibility => {
+                self.focused_component = ShellComponent::LoginPasswordVisibility;
+                self.error_message = None;
+                ShellAction::Redraw
+            }
+            ShellCommand::LoginFocusGuest => {
+                self.focused_component = ShellComponent::LoginGuest;
+                self.error_message = None;
+                ShellAction::Redraw
+            }
+            ShellCommand::ToggleLoginPasswordVisibility => {
+                self.focused_component = ShellComponent::LoginPasswordVisibility;
+                self.toggle_login_password_visibility_at(received_at);
+                ShellAction::Redraw
+            }
+            ShellCommand::LoginAsGuest => {
+                self.complete_guest_login();
+                ShellAction::Redraw
+            }
             ShellCommand::SubmitLogin => {
+                self.login_password_visible_until = None;
                 self.submit_login();
                 ShellAction::Redraw
             }
@@ -5320,6 +5580,10 @@ impl ShellState {
             }
             ShellCommand::ActivateSelectedHomeEntry => {
                 self.activate_selected_home_entry(platform);
+                ShellAction::Redraw
+            }
+            ShellCommand::Logout => {
+                self.logout_at(received_at);
                 ShellAction::Redraw
             }
             ShellCommand::SelectHomeEntryAt(coordinates) => {
@@ -5887,6 +6151,10 @@ impl ShellState {
 
     #[doc(hidden)]
     pub fn apply_time_sync_utc_for_test(&mut self, utc: DateTime<Utc>) {
+        self.apply_time_sync_utc(utc);
+    }
+
+    fn apply_time_sync_utc(&mut self, utc: DateTime<Utc>) {
         self.time_sync_attempted = true;
         self.apply_time_sync_success_utc(utc);
         self.restore_clock_profile_after_initial_sync();
@@ -5894,6 +6162,10 @@ impl ShellState {
 
     #[doc(hidden)]
     pub fn apply_time_sync_failure_for_test(&mut self, message: &str) {
+        self.apply_time_sync_failure_message(message);
+    }
+
+    fn apply_time_sync_failure_message(&mut self, message: &str) {
         self.time_sync_attempted = true;
         self.last_time_sync_utc = None;
         self.network_clock = ShellNetworkClock::new(self.clock_timezone_id.clone());
@@ -5974,6 +6246,24 @@ impl ShellState {
 
     pub fn auth_session(&self) -> Option<&AuthSession> {
         self.auth_session.as_ref()
+    }
+
+    pub fn guest_mode(&self) -> bool {
+        self.guest_mode
+    }
+
+    #[doc(hidden)]
+    pub fn login_idle_deadline_for_test(&self) -> Instant {
+        self.login_idle_deadline
+    }
+
+    #[doc(hidden)]
+    pub fn login_password_visible_until_for_test(&self) -> Option<Instant> {
+        self.login_password_visible_until
+    }
+
+    fn return_to_lockscreen_requested(&self) -> bool {
+        self.return_to_lockscreen_requested
     }
 
     fn capture_modal_focus_context(&mut self) {
@@ -6209,6 +6499,15 @@ impl ShellState {
         }
 
         match self.active_screen() {
+            ShellScreen::Home
+                if self.focused_component == ShellComponent::HomeLogout
+                    && matches!(&key.key, InputKey::Enter | InputKey::Character(' ')) =>
+            {
+                (
+                    RoutedTarget::Component(ShellComponent::HomeLogout),
+                    ShellCommand::Logout,
+                )
+            }
             _ if self.focused_component == ShellComponent::ClockButton
                 && matches!(&key.key, InputKey::Enter | InputKey::Character(' ')) =>
             {
@@ -6253,6 +6552,12 @@ impl ShellState {
             ShellScreen::Home if key.is_character('u') || key.is_character('U') => {
                 (RoutedTarget::Global, ShellCommand::OpenUserManagement)
             }
+            ShellScreen::Home
+                if self.current_home_username().is_some()
+                    && (key.is_character('l') || key.is_character('L')) =>
+            {
+                (RoutedTarget::Global, ShellCommand::Logout)
+            }
             ShellScreen::Home if key.is_character('q') || matches!(&key.key, InputKey::Escape) => {
                 (RoutedTarget::Global, ShellCommand::RequestExit)
             }
@@ -6264,16 +6569,36 @@ impl ShellState {
     }
 
     fn route_login_key(&self, key: &KeyInput) -> (RoutedTarget, ShellCommand) {
+        let area = Rect::new(0, 0, self.terminal_size.0, self.terminal_size.1);
+        if matches!(
+            tundra_ui::compute_shell_layout(area),
+            tundra_ui::ShellLayout::Compact(_)
+        ) {
+            return if matches!(&key.key, InputKey::Escape) {
+                (RoutedTarget::Global, ShellCommand::RequestExit)
+            } else {
+                (
+                    RoutedTarget::Component(ShellComponent::CompactHome),
+                    ShellCommand::CaptureOverlayInput,
+                )
+            };
+        }
         let target = RoutedTarget::Component(self.focused_component);
         if matches!(&key.key, InputKey::Escape) {
             return (RoutedTarget::Global, ShellCommand::RequestExit);
+        }
+        if matches!(&key.key, InputKey::Function(2)) {
+            return (target, ShellCommand::ToggleLoginPasswordVisibility);
+        }
+        if matches!(&key.key, InputKey::Function(3)) {
+            return (target, ShellCommand::LoginAsGuest);
         }
 
         match self.focused_component {
             ShellComponent::LoginPassword => match &key.key {
                 InputKey::BackTab => (target, ShellCommand::LoginFocusUserList),
                 InputKey::Tab if key.modifiers.shift => (target, ShellCommand::LoginFocusUserList),
-                InputKey::Tab => (target, ShellCommand::LoginFocusUserList),
+                InputKey::Tab => (target, ShellCommand::LoginFocusPasswordVisibility),
                 InputKey::Up => (target, ShellCommand::LoginFocusUserList),
                 InputKey::Enter => (target, ShellCommand::SubmitLogin),
                 InputKey::Backspace => (target, ShellCommand::AuthBackspace),
@@ -6282,8 +6607,35 @@ impl ShellState {
                 }
                 _ => (target, ShellCommand::RecordInput),
             },
-            _ => match &key.key {
+            ShellComponent::LoginPasswordVisibility => match &key.key {
                 InputKey::BackTab => (target, ShellCommand::LoginFocusPassword),
+                InputKey::Tab if key.modifiers.shift => (target, ShellCommand::LoginFocusPassword),
+                InputKey::Tab | InputKey::Right | InputKey::Down => {
+                    (target, ShellCommand::LoginFocusGuest)
+                }
+                InputKey::Left | InputKey::Up => (target, ShellCommand::LoginFocusPassword),
+                InputKey::Enter | InputKey::Character(' ') => {
+                    (target, ShellCommand::ToggleLoginPasswordVisibility)
+                }
+                _ => (target, ShellCommand::RecordInput),
+            },
+            ShellComponent::LoginGuest => match &key.key {
+                InputKey::BackTab => (target, ShellCommand::LoginFocusPasswordVisibility),
+                InputKey::Tab if key.modifiers.shift => {
+                    (target, ShellCommand::LoginFocusPasswordVisibility)
+                }
+                InputKey::Tab | InputKey::Right | InputKey::Down => {
+                    (target, ShellCommand::LoginFocusUserList)
+                }
+                InputKey::Left | InputKey::Up => {
+                    (target, ShellCommand::LoginFocusPasswordVisibility)
+                }
+                InputKey::Enter | InputKey::Character(' ') => (target, ShellCommand::LoginAsGuest),
+                _ => (target, ShellCommand::RecordInput),
+            },
+            _ => match &key.key {
+                InputKey::BackTab => (target, ShellCommand::LoginFocusGuest),
+                InputKey::Tab if key.modifiers.shift => (target, ShellCommand::LoginFocusGuest),
                 InputKey::Tab => (target, ShellCommand::LoginFocusPassword),
                 InputKey::Enter => (target, ShellCommand::LoginFocusPassword),
                 InputKey::Up => (target, ShellCommand::LoginPreviousUser),
@@ -6354,6 +6706,15 @@ impl ShellState {
                     RoutedTarget::Component(ShellComponent::CompactHome),
                     ShellCommand::CaptureOverlayInput,
                 ),
+            };
+        }
+
+        if self.is_strict_guest() {
+            let target = RoutedTarget::Component(ShellComponent::ClockButton);
+            return match &key.key {
+                InputKey::Escape => (RoutedTarget::Global, ShellCommand::CloseClock),
+                InputKey::Enter | InputKey::Character(' ') => (target, ShellCommand::CloseClock),
+                _ => (target, ShellCommand::CaptureOverlayInput),
             };
         }
 
@@ -6857,6 +7218,9 @@ impl ShellState {
             MouseInput::Down { button, .. } => {
                 if let Some(target) = hit_target {
                     let click = self.register_click(hit_target, coordinates, button, received_at);
+                    if target == ShellComponent::HomeLogout && button == PointerButton::Left {
+                        return (RoutedTarget::Component(target), ShellCommand::Logout);
+                    }
                     if target == ShellComponent::ClockButton {
                         return (
                             RoutedTarget::Component(target),
@@ -7256,6 +7620,18 @@ impl ShellState {
                 button: PointerButton::Left,
                 ..
             } => {
+                if hit_target == Some(ShellComponent::LoginPasswordVisibility) {
+                    return (
+                        RoutedTarget::Component(ShellComponent::LoginPasswordVisibility),
+                        ShellCommand::ToggleLoginPasswordVisibility,
+                    );
+                }
+                if hit_target == Some(ShellComponent::LoginGuest) {
+                    return (
+                        RoutedTarget::Component(ShellComponent::LoginGuest),
+                        ShellCommand::LoginAsGuest,
+                    );
+                }
                 if let Some(
                     target @ (ShellComponent::LoginUserList
                     | ShellComponent::LoginUsername
@@ -7462,6 +7838,8 @@ impl ShellState {
         }
         let time_button_label = self.status_time_button_label();
         let notification_model = self.notifications.active_modal_view_model();
+        let home_model =
+            (self.active_screen() == ShellScreen::Home).then(|| self.to_home_view_model());
         let clock_model =
             (self.active_screen() == ShellScreen::Clock).then(|| self.to_clock_view_model());
         self.hit_map = build_shell_hit_map(
@@ -7474,6 +7852,7 @@ impl ShellState {
             self.time_sync_dialog_visible,
             self.notifications.active_modal_component(),
             notification_model.as_ref(),
+            home_model.as_ref(),
             clock_model.as_ref(),
         );
         self.sync_home_entry_selection();
@@ -7511,7 +7890,19 @@ impl ShellState {
             };
         }
         if self.active_screen() == ShellScreen::Login {
-            return vec![ShellComponent::LoginUserList, ShellComponent::LoginPassword];
+            let area = Rect::new(0, 0, self.terminal_size.0, self.terminal_size.1);
+            if matches!(
+                tundra_ui::compute_shell_layout(area),
+                tundra_ui::ShellLayout::Compact(_)
+            ) {
+                return vec![ShellComponent::CompactHome];
+            }
+            return vec![
+                ShellComponent::LoginUserList,
+                ShellComponent::LoginPassword,
+                ShellComponent::LoginPasswordVisibility,
+                ShellComponent::LoginGuest,
+            ];
         }
         if self.active_screen() == ShellScreen::BootstrapAdmin {
             return vec![
@@ -7540,6 +7931,9 @@ impl ShellState {
                     ShellComponent::ClockCreateCountdownButton,
                 ];
             }
+            if self.is_strict_guest() {
+                return vec![ShellComponent::ClockButton];
+            }
             let mut order = vec![ShellComponent::ClockNewButton];
             if !self.ordered_clock_entry_ids_at(Instant::now()).is_empty() {
                 order.push(ShellComponent::ClockEntryList);
@@ -7558,12 +7952,16 @@ impl ShellState {
             return vec![ShellComponent::CompactHome];
         }
 
-        vec![
-            ShellComponent::Home,
+        let mut order = vec![ShellComponent::Home];
+        if self.auth_session.is_some() || self.guest_mode {
+            order.push(ShellComponent::HomeLogout);
+        }
+        order.extend([
             ShellComponent::ClockButton,
             ShellComponent::StatusBar,
             ShellComponent::TopBar,
-        ]
+        ]);
+        order
     }
 
     fn move_focus(&mut self, direction: i8) {
@@ -7648,6 +8046,21 @@ pub fn default_shell_shortcuts() -> Vec<ShellShortcut> {
             command: ShellCommand::RequestExit,
         },
         ShellShortcut {
+            scope: ShortcutScope::Screen(ShellScreen::Home),
+            binding: KeyBinding::from(&KeyInput::from_label("L")),
+            command: ShellCommand::Logout,
+        },
+        ShellShortcut {
+            scope: ShortcutScope::Screen(ShellScreen::Login),
+            binding: KeyBinding::from(&KeyInput::from_label("F2")),
+            command: ShellCommand::ToggleLoginPasswordVisibility,
+        },
+        ShellShortcut {
+            scope: ShortcutScope::Screen(ShellScreen::Login),
+            binding: KeyBinding::from(&KeyInput::from_label("F3")),
+            command: ShellCommand::LoginAsGuest,
+        },
+        ShellShortcut {
             scope: ShortcutScope::Screen(ShellScreen::ExitConfirm),
             binding: KeyBinding::from(&KeyInput::from_label("y")),
             command: ShellCommand::ConfirmExit,
@@ -7713,6 +8126,7 @@ fn build_shell_hit_map(
     time_sync_dialog_visible: bool,
     notification_modal_component: Option<ShellComponent>,
     notification_model: Option<&tundra_ui::NotificationViewModel>,
+    home_model: Option<&tundra_ui::HomeViewModel>,
     clock_model: Option<&tundra_ui::ClockViewModel>,
 ) -> ShellHitMap {
     let (width, height) = terminal_size;
@@ -7736,20 +8150,26 @@ fn build_shell_hit_map(
                     regions.extend(setup_hit_regions(main, setup_step));
                 }
                 ShellScreen::Login => {
-                    let users = tundra_ui::login_user_list_area(main);
-                    let username = tundra_ui::login_selected_username_area(main);
-                    let password = tundra_ui::login_password_area(main);
+                    let layout = tundra_ui::login_layout(main);
                     regions.push(ShellHitRegion {
                         component: ShellComponent::LoginUserList,
-                        area: users,
+                        area: layout.user_list,
                     });
                     regions.push(ShellHitRegion {
                         component: ShellComponent::LoginUsername,
-                        area: username,
+                        area: layout.selected_username,
                     });
                     regions.push(ShellHitRegion {
                         component: ShellComponent::LoginPassword,
-                        area: password,
+                        area: layout.password,
+                    });
+                    regions.push(ShellHitRegion {
+                        component: ShellComponent::LoginPasswordVisibility,
+                        area: layout.password_visibility,
+                    });
+                    regions.push(ShellHitRegion {
+                        component: ShellComponent::LoginGuest,
+                        area: layout.guest,
                     });
                 }
                 ShellScreen::BootstrapAdmin => {
@@ -7823,6 +8243,17 @@ fn build_shell_hit_map(
                         component: ShellComponent::Home,
                         area: main,
                     });
+                    if active_screen == ShellScreen::Home
+                        && let Some(model) = home_model
+                    {
+                        let logout = tundra_ui::home_logout_area(main, model);
+                        if logout.width > 0 && logout.height > 0 {
+                            regions.push(ShellHitRegion {
+                                component: ShellComponent::HomeLogout,
+                                area: logout,
+                            });
+                        }
+                    }
                 }
             }
             regions.push(ShellHitRegion {
@@ -8423,6 +8854,17 @@ fn build_mode_label() -> &'static str {
     }
 }
 
+fn resets_login_idle_timeout(input: &InputEvent) -> bool {
+    matches!(
+        input,
+        InputEvent::Key(_)
+            | InputEvent::Mouse(_)
+            | InputEvent::Resize { .. }
+            | InputEvent::FocusGained
+            | InputEvent::Paste(_)
+    )
+}
+
 pub fn crossterm_event_to_input(event: Event) -> InputEvent {
     match event {
         Event::Key(key_event) => InputEvent::Key(key_event_to_input(key_event)),
@@ -8694,29 +9136,100 @@ pub fn run_fullscreen_blocking(
 ) -> io::Result<()> {
     let ascii_assets = tundra_ui::RuntimeAsciiAssets::load_default().map_err(asset_io_error)?;
     let platform = tundra_platform::native_platform();
-    let startup = prepare_shell_startup(platform.as_ref(), config).map_err(io::Error::other)?;
-    if should_show_startup_lockscreen(&startup) {
-        let lockscreen_options = startup_lockscreen_launch_options(&startup);
-        match tundra_weathr::run_shell_lockscreen_blocking_with_options(lockscreen_options)
-            .map_err(io::Error::other)?
-        {
-            tundra_weathr::ShellLockscreenResult::Started => {}
-            tundra_weathr::ShellLockscreenResult::Cancelled => return Ok(()),
+    install_panic_restore_hook();
+    let (time_sync_sender, time_sync_receiver) = mpsc::channel();
+    let _time_sync_worker = spawn_time_sync_worker(time_sync_sender);
+    let mut cached_time_sync = None;
+    let mut force_lockscreen = false;
+
+    loop {
+        let mut startup =
+            prepare_shell_startup(platform.as_ref(), config).map_err(io::Error::other)?;
+        if force_lockscreen || should_show_startup_lockscreen(&startup) {
+            let lockscreen_options = startup_lockscreen_launch_options(&startup);
+            match tundra_weathr::run_shell_lockscreen_blocking_with_options(lockscreen_options)
+                .map_err(io::Error::other)?
+            {
+                tundra_weathr::ShellLockscreenResult::Started => {}
+                tundra_weathr::ShellLockscreenResult::Cancelled => return Ok(()),
+            }
+            startup = prepare_shell_startup(platform.as_ref(), config).map_err(io::Error::other)?;
+        }
+
+        match run_fullscreen_shell_session(
+            output,
+            config,
+            startup,
+            ascii_assets.clone(),
+            platform.as_ref(),
+            &time_sync_receiver,
+            &mut cached_time_sync,
+        )? {
+            FullscreenShellSessionOutcome::Exit => return Ok(()),
+            FullscreenShellSessionOutcome::ReturnToLockscreen => {
+                force_lockscreen = true;
+            }
         }
     }
-    install_panic_restore_hook();
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum FullscreenShellSessionOutcome {
+    Exit,
+    ReturnToLockscreen,
+}
+
+#[derive(Debug, Clone)]
+enum CachedTimeSyncResult {
+    Success {
+        utc: DateTime<Utc>,
+        received_at: Instant,
+    },
+    Failure,
+}
+
+#[derive(Debug)]
+struct TimedTimeSyncResult {
+    result: TimeSyncResult,
+    received_at: Instant,
+}
+
+impl CachedTimeSyncResult {
+    fn apply_to_state_at(&self, state: &mut ShellState, now: Instant) {
+        match self {
+            Self::Success { utc, received_at } => {
+                let elapsed = now.saturating_duration_since(*received_at);
+                state.apply_time_sync_utc(*utc + elapsed);
+            }
+            Self::Failure => {
+                state.apply_time_sync_failure_message("联网校准时间失败");
+            }
+        }
+    }
+}
+
+fn run_fullscreen_shell_session(
+    output: &mut impl Write,
+    config: ShellLaunchConfig,
+    startup: ShellStartupState,
+    ascii_assets: tundra_ui::RuntimeAsciiAssets,
+    platform: &dyn Platform,
+    time_sync_receiver: &mpsc::Receiver<TimedTimeSyncResult>,
+    cached_time_sync: &mut Option<CachedTimeSyncResult>,
+) -> io::Result<FullscreenShellSessionOutcome> {
     let terminal_control = TerminalControlHandler::install();
     let mut guard = TerminalGuard::enter(output)?;
     let initial_size = crossterm::terminal::size().unwrap_or((80, 24));
     let mut state =
         ShellState::new_with_startup_and_assets(config, initial_size, startup, ascii_assets);
-    let (time_sync_sender, time_sync_receiver) = mpsc::channel();
-    let _time_sync_worker = spawn_time_sync_worker(time_sync_sender);
+    if let Some(cached) = cached_time_sync.as_ref() {
+        cached.apply_to_state_at(&mut state, Instant::now());
+    }
     let tick_rate = Duration::from_millis(250);
     let theme = tundra_ui::TundraTheme::default_dark();
 
     loop {
-        drain_time_sync_results(&mut state, &time_sync_receiver);
+        drain_time_sync_results(&mut state, time_sync_receiver, cached_time_sync);
         let frame_now = Instant::now();
         let clock_snapshot = state.network_clock.snapshot();
         state.advance_clock_background_at(&clock_snapshot, frame_now);
@@ -8725,7 +9238,7 @@ pub fn run_fullscreen_blocking(
         let clock = state.to_clock_view_model_at(&clock_snapshot, frame_now);
         let time_sync_dialog = state.to_time_sync_dialog_view_model();
         let setup = state.to_setup_view_model();
-        let login = state.to_login_view_model();
+        let login = state.to_login_view_model_at(frame_now);
         let bootstrap_admin = state.to_bootstrap_admin_view_model();
         let user_management = state.to_user_management_view_model();
         let explorer = state.to_explorer_view_model();
@@ -8785,20 +9298,21 @@ pub fn run_fullscreen_blocking(
         })?;
 
         if terminal_control.shutdown_requested() {
-            state.apply_input_with_platform(InputEvent::Shutdown, platform.as_ref());
+            state.apply_input_with_platform(InputEvent::Shutdown, platform);
         }
         if state.shutdown_requested() {
             break;
         }
 
-        let poll_timeout = state.notifications.poll_timeout(Instant::now(), tick_rate);
+        let poll_now = Instant::now();
+        let poll_timeout = state.auth_poll_timeout(
+            poll_now,
+            state.notifications.poll_timeout(poll_now, tick_rate),
+        );
         let action = if event::poll(poll_timeout)? {
-            state.apply_input_with_platform(
-                crossterm_event_to_input(event::read()?),
-                platform.as_ref(),
-            )
+            state.apply_input_with_platform(crossterm_event_to_input(event::read()?), platform)
         } else {
-            state.apply_input_with_platform(InputEvent::Tick, platform.as_ref())
+            state.apply_input_with_platform(InputEvent::Tick, platform)
         };
 
         if action == ShellAction::Exit {
@@ -8806,10 +9320,17 @@ pub fn run_fullscreen_blocking(
         }
     }
 
-    guard.restore()
+    let outcome = if state.return_to_lockscreen_requested() {
+        FullscreenShellSessionOutcome::ReturnToLockscreen
+    } else {
+        FullscreenShellSessionOutcome::Exit
+    };
+    guard.restore()?;
+    drop(guard);
+    Ok(outcome)
 }
 
-fn spawn_time_sync_worker(sender: mpsc::Sender<TimeSyncResult>) -> thread::JoinHandle<()> {
+fn spawn_time_sync_worker(sender: mpsc::Sender<TimedTimeSyncResult>) -> thread::JoinHandle<()> {
     thread::spawn(move || {
         let Ok(runtime) = tokio::runtime::Builder::new_multi_thread()
             .enable_all()
@@ -8821,7 +9342,13 @@ fn spawn_time_sync_worker(sender: mpsc::Sender<TimeSyncResult>) -> thread::JoinH
         runtime.block_on(async move {
             loop {
                 let result = tundra_weathr::network_clock::fetch_standard_time().await;
-                if sender.send(result).is_err() {
+                if sender
+                    .send(TimedTimeSyncResult {
+                        result,
+                        received_at: Instant::now(),
+                    })
+                    .is_err()
+                {
                     break;
                 }
                 tokio::time::sleep(TIME_SYNC_INTERVAL).await;
@@ -8830,12 +9357,38 @@ fn spawn_time_sync_worker(sender: mpsc::Sender<TimeSyncResult>) -> thread::JoinH
     })
 }
 
-fn drain_time_sync_results(state: &mut ShellState, receiver: &mpsc::Receiver<TimeSyncResult>) {
+fn drain_time_sync_results(
+    state: &mut ShellState,
+    receiver: &mpsc::Receiver<TimedTimeSyncResult>,
+    cached: &mut Option<CachedTimeSyncResult>,
+) {
     loop {
         match receiver.try_recv() {
-            Ok(result) => state.apply_time_sync_result(result),
+            Ok(result) => apply_timed_time_sync_result_at(state, cached, result, Instant::now()),
             Err(mpsc::TryRecvError::Empty) => break,
             Err(mpsc::TryRecvError::Disconnected) => break,
+        }
+    }
+}
+
+fn apply_timed_time_sync_result_at(
+    state: &mut ShellState,
+    cached: &mut Option<CachedTimeSyncResult>,
+    timed: TimedTimeSyncResult,
+    now: Instant,
+) {
+    match timed.result {
+        Ok(utc) => {
+            *cached = Some(CachedTimeSyncResult::Success {
+                utc,
+                received_at: timed.received_at,
+            });
+            let elapsed = now.saturating_duration_since(timed.received_at);
+            state.apply_time_sync_result(Ok(utc + elapsed));
+        }
+        Err(error) => {
+            *cached = Some(CachedTimeSyncResult::Failure);
+            state.apply_time_sync_result(Err(error));
         }
     }
 }
@@ -9181,6 +9734,62 @@ mod tests {
         assert_eq!(
             state.to_shell_chrome_view_model().status.alert_tone,
             tundra_ui::NotificationTone::Critical
+        );
+    }
+
+    #[test]
+    fn cached_time_sync_replays_into_recreated_shell_state() {
+        let received_at = Instant::now();
+        let consumed_at = received_at + Duration::from_secs(3);
+        let replayed_at = received_at + Duration::from_secs(5);
+        let utc = Utc::now();
+        let mut cached = None;
+        let mut original_state = ShellState::new(ShellLaunchConfig::default(), (80, 24));
+
+        apply_timed_time_sync_result_at(
+            &mut original_state,
+            &mut cached,
+            TimedTimeSyncResult {
+                result: Ok(utc),
+                received_at,
+            },
+            consumed_at,
+        );
+
+        assert_eq!(
+            original_state.last_time_sync_utc,
+            Some(utc + Duration::from_secs(3))
+        );
+
+        let mut recreated_state = ShellState::new(ShellLaunchConfig::default(), (80, 24));
+        cached
+            .as_ref()
+            .expect("successful sync should be cached")
+            .apply_to_state_at(&mut recreated_state, replayed_at);
+
+        assert!(recreated_state.time_sync_attempted);
+        assert_eq!(
+            recreated_state.last_time_sync_utc,
+            Some(utc + Duration::from_secs(5))
+        );
+
+        let mut failed_state = ShellState::new(ShellLaunchConfig::default(), (80, 24));
+        CachedTimeSyncResult::Failure.apply_to_state_at(&mut failed_state, replayed_at);
+        assert!(failed_state.time_sync_attempted);
+        assert!(failed_state.time_sync_failure_dialog_visible());
+    }
+
+    #[test]
+    fn auth_poll_timeout_wakes_at_password_reveal_deadline() {
+        let now = Instant::now();
+        let mut state = ShellState::new(ShellLaunchConfig::default(), (80, 24));
+        state.screen_stack = vec![ShellScreen::Login];
+        state.login_idle_deadline = now + LOGIN_IDLE_TIMEOUT;
+        state.login_password_visible_until = Some(now + Duration::from_millis(10));
+
+        assert_eq!(
+            state.auth_poll_timeout(now, Duration::from_millis(250)),
+            Duration::from_millis(10)
         );
     }
 

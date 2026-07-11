@@ -229,6 +229,26 @@ fn minimum_full_shell_keeps_an_operable_entry_and_compacts_dialog_controls() {
 }
 
 #[test]
+fn read_only_clock_hides_new_control_and_ignores_create_dialog_model() {
+    let mut model = clock_model().with_read_only(true);
+    model.create_dialog = Some(ClockCreateDialogViewModel::default());
+
+    let (terminal, main) = render(80, 24, &model, false);
+    let layout = clock_page_layout(main, &model);
+    let output = terminal_output(&terminal);
+
+    assert!(model.is_read_only());
+    assert_eq!(layout.new_button.width, 0);
+    assert_eq!(layout.new_button.height, 0);
+    assert!(layout.create_dialog.is_none());
+    assert!(!output.contains("[ + New ]"));
+    assert!(!output.contains("New Alarm or Countdown"));
+    assert!(output.contains("ALARMS"));
+    assert!(output.contains("COUNTDOWNS"));
+    assert!(layout.entry_capacity > 0);
+}
+
+#[test]
 fn legacy_clock_renderer_forwards_to_the_new_renderer() {
     let model = clock_model();
     let (new_terminal, _) = render(80, 24, &model, false);

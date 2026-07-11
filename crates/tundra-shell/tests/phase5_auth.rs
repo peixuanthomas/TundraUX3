@@ -1,13 +1,16 @@
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use chrono::Utc;
+use tundra_core::AuditService;
 use tundra_platform::mock::MockPlatform;
 use tundra_platform::{PlatformCapabilities, PlatformKind, UserDirs, build_windows_app_paths};
 use tundra_shell::{
-    HomeModeOverride, InputEvent, PointerButton, ShellComponent, ShellHomeMode, ShellLaunchConfig,
-    ShellScreen, ShellState, ShellTerminalMode, prepare_shell_startup,
+    HomeModeOverride, InputEvent, InputKey, InputModifiers, InputPhase, KeyInput,
+    LOGIN_IDLE_TIMEOUT, PASSWORD_REVEAL_DURATION, PointerButton, ShellAction, ShellComponent,
+    ShellHomeMode, ShellLaunchConfig, ShellScreen, ShellState, ShellTerminalMode,
+    prepare_shell_startup,
 };
 use tundra_storage::{ClockEntryRecord, ClockProfile};
 use tundra_ui::NotificationTone;
@@ -516,6 +519,328 @@ fn login_bad_password_without_hint_shows_invalid_credentials() {
         state.to_login_view_model().error.as_deref(),
         Some("Invalid username or password")
     );
+}
+
+#[test]
+fn login_idle_timeout_uses_exact_sixty_second_boundary_and_only_resets_for_activity() {
+    let fixture = FixtureRoot::new("login-idle-timeout");
+    let platform = mock_platform(fixture.path());
+    bootstrap_with_shell(&platform);
+
+    let startup = prepare_shell_startup(&platform, default_config()).expect("login startup");
+    let mut state = ShellState::new_with_startup(default_config(), (120, 40), startup);
+    state.apply_input(InputEvent::from_key_label("Tab"));
+    type_text(&mut state, "WrongPass123");
+    state.apply_input(InputEvent::from_key_label("Enter"));
+    assert!(state.to_login_view_model().error.is_some());
+
+    let mut activity_at = Instant::now();
+    state.apply_input_at_for_test(InputEvent::FocusGained, activity_at);
+    assert_eq!(
+        state.login_idle_deadline_for_test(),
+        activity_at + LOGIN_IDLE_TIMEOUT
+    );
+
+    for activity in [
+        InputEvent::from_key_label("z"),
+        InputEvent::mouse_moved((2, 2)),
+        InputEvent::Resize {
+            width: 119,
+            height: 39,
+        },
+        InputEvent::Paste("ignored paste".to_string()),
+        InputEvent::FocusGained,
+    ] {
+        activity_at += Duration::from_secs(1);
+        assert_eq!(
+            state.apply_input_at_for_test(activity, activity_at),
+            ShellAction::Redraw
+        );
+        assert_eq!(
+            state.login_idle_deadline_for_test(),
+            activity_at + LOGIN_IDLE_TIMEOUT
+        );
+    }
+
+    let deadline = state.login_idle_deadline_for_test();
+    state.apply_input_at_for_test(InputEvent::FocusLost, activity_at + Duration::from_secs(1));
+    assert_eq!(state.login_idle_deadline_for_test(), deadline);
+    state.apply_time_sync_utc_for_test(Utc::now());
+    assert_eq!(state.login_idle_deadline_for_test(), deadline);
+
+    assert_eq!(
+        state.apply_input_at_for_test(InputEvent::Tick, deadline - Duration::from_nanos(1)),
+        ShellAction::Redraw
+    );
+    assert_eq!(state.active_screen(), ShellScreen::Login);
+    assert_eq!(state.login_idle_deadline_for_test(), deadline);
+
+    assert_eq!(
+        state.apply_input_at_for_test(InputEvent::Tick, deadline),
+        ShellAction::Exit
+    );
+    assert!(!state.shutdown_requested());
+    assert_eq!(state.to_login_view_model_at(deadline).password_len, 0);
+    assert_eq!(state.to_login_view_model_at(deadline).error, None);
+
+    let mut home = ShellState::new(debug_config(), (120, 40));
+    assert_eq!(home.active_screen(), ShellScreen::Home);
+    assert_eq!(
+        home.apply_input_at_for_test(
+            InputEvent::Tick,
+            Instant::now() + LOGIN_IDLE_TIMEOUT + Duration::from_secs(1),
+        ),
+        ShellAction::Redraw
+    );
+}
+
+#[test]
+fn login_password_reveal_handles_unicode_expires_at_five_seconds_and_does_not_extend() {
+    let fixture = FixtureRoot::new("login-password-reveal");
+    let platform = mock_platform(fixture.path());
+    bootstrap_with_shell(&platform);
+
+    let startup = prepare_shell_startup(&platform, default_config()).expect("login startup");
+    let mut state = ShellState::new_with_startup(default_config(), (120, 40), startup);
+    state.apply_input(InputEvent::from_key_label("Tab"));
+    type_text(&mut state, "密碼🙂");
+
+    let shown_at = Instant::now();
+    state.apply_input_at_for_test(function_key(2), shown_at);
+    let reveal_deadline = shown_at + PASSWORD_REVEAL_DURATION;
+    assert_eq!(
+        state.login_password_visible_until_for_test(),
+        Some(reveal_deadline)
+    );
+    let visible = state.to_login_view_model_at(shown_at);
+    assert_eq!(visible.password_len, 3);
+    assert_eq!(visible.visible_password(), Some("密碼🙂"));
+
+    state.apply_input_at_for_test(
+        InputEvent::mouse_moved((1, 1)),
+        shown_at + Duration::from_secs(4),
+    );
+    assert_eq!(
+        state.login_password_visible_until_for_test(),
+        Some(reveal_deadline),
+        "ordinary activity must not extend the fixed reveal window"
+    );
+    assert_eq!(
+        state
+            .to_login_view_model_at(reveal_deadline - Duration::from_nanos(1))
+            .visible_password(),
+        Some("密碼🙂")
+    );
+
+    state.apply_input_at_for_test(InputEvent::Tick, reveal_deadline);
+    assert_eq!(state.login_password_visible_until_for_test(), None);
+    let hidden = state.to_login_view_model_at(reveal_deadline);
+    assert_eq!(hidden.password_len, 3);
+    assert_eq!(hidden.visible_password(), None);
+
+    let shown_again_at = reveal_deadline + Duration::from_secs(1);
+    state.apply_input_at_for_test(function_key(2), shown_again_at);
+    assert_eq!(
+        state
+            .to_login_view_model_at(shown_again_at)
+            .visible_password(),
+        Some("密碼🙂")
+    );
+    state.apply_input_at_for_test(function_key(2), shown_again_at + Duration::from_secs(1));
+    assert_eq!(
+        state
+            .to_login_view_model_at(shown_again_at + Duration::from_secs(1))
+            .visible_password(),
+        None
+    );
+}
+
+#[test]
+fn guest_login_is_ephemeral_restricted_to_home_and_read_only_clock() {
+    let fixture = FixtureRoot::new("guest-ephemeral");
+    let platform = mock_platform(fixture.path());
+    bootstrap_with_shell(&platform);
+
+    let startup = prepare_shell_startup(&platform, default_config()).expect("guest startup");
+    let manager = startup.storage_manager.clone().expect("storage manager");
+    let users_before = read_optional_file(&manager.layout().users_path);
+    let clock_before = read_optional_file(&manager.layout().clock_path);
+    let audit_before = read_optional_file(&manager.layout().audit_log_path);
+    let mut state = ShellState::new_with_startup(default_config(), (120, 40), startup);
+
+    state.apply_input(function_key(3));
+    assert_eq!(state.active_screen(), ShellScreen::Home);
+    assert!(state.guest_mode());
+    assert!(state.auth_session().is_none());
+    assert!(state.to_home_view_model().entries().is_empty());
+    assert!(state.to_home_view_model().logout_visible());
+
+    state.apply_input(InputEvent::from_key_label("e"));
+    assert_eq!(state.active_screen(), ShellScreen::Home);
+    state.apply_input(InputEvent::from_key_label("u"));
+    assert_eq!(state.active_screen(), ShellScreen::Home);
+
+    state.apply_input(InputEvent::from_key_label("Tab"));
+    assert_eq!(state.focused_component(), ShellComponent::HomeLogout);
+    state.apply_input(InputEvent::from_key_label("Tab"));
+    assert_eq!(state.focused_component(), ShellComponent::ClockButton);
+    state.apply_input(InputEvent::from_key_label("Enter"));
+    assert_eq!(state.active_screen(), ShellScreen::Clock);
+    let clock_model = state.to_clock_view_model();
+    assert!(clock_model.is_read_only());
+    assert!(clock_model.create_dialog.is_none());
+    assert!(
+        state
+            .hit_map()
+            .regions()
+            .iter()
+            .all(|region| region.component != ShellComponent::ClockNewButton)
+    );
+
+    let area = ratatui::layout::Rect::new(0, 0, state.terminal_size().0, state.terminal_size().1);
+    let tundra_ui::ShellLayout::Full { main, .. } = tundra_ui::compute_shell_layout(area) else {
+        panic!("guest test requires a full shell layout");
+    };
+    assert_eq!(
+        tundra_ui::clock_page_layout(main, &clock_model)
+            .new_button
+            .width,
+        0
+    );
+    state.apply_input(InputEvent::from_key_label("n"));
+    assert!(state.to_clock_view_model().create_dialog.is_none());
+
+    state.apply_input(InputEvent::from_key_label("Esc"));
+    assert_eq!(state.active_screen(), ShellScreen::Home);
+    state.apply_input(InputEvent::from_key_label("l"));
+    assert_eq!(state.active_screen(), ShellScreen::Login);
+    assert!(!state.guest_mode());
+    assert!(state.auth_session().is_none());
+
+    assert_eq!(
+        read_optional_file(&manager.layout().users_path),
+        users_before
+    );
+    assert_eq!(
+        read_optional_file(&manager.layout().clock_path),
+        clock_before
+    );
+    assert_eq!(
+        read_optional_file(&manager.layout().audit_log_path),
+        audit_before
+    );
+}
+
+#[test]
+fn authenticated_logout_supports_shortcut_focus_and_mouse_and_audits_each_session() {
+    let fixture = FixtureRoot::new("logout-inputs");
+    let platform = mock_platform(fixture.path());
+    bootstrap_with_shell(&platform);
+
+    let startup = prepare_shell_startup(&platform, default_config()).expect("shortcut startup");
+    let manager = startup.storage_manager.clone().expect("storage manager");
+    let mut shortcut_state = ShellState::new_with_startup(default_config(), (120, 40), startup);
+    login(&mut shortcut_state, "AdminUser", "StrongPass123");
+    let first_actor = shortcut_state.auth_session().expect("signed in").clone();
+    let baseline_logout_count = AuditService::new(manager.clone())
+        .read_records(&first_actor)
+        .expect("read baseline audit")
+        .into_iter()
+        .filter(|record| record.action == "Logout")
+        .count();
+    shortcut_state.apply_input(InputEvent::from_key_label("l"));
+    assert_eq!(shortcut_state.active_screen(), ShellScreen::Login);
+    assert!(shortcut_state.auth_session().is_none());
+
+    let startup = prepare_shell_startup(&platform, default_config()).expect("focus startup");
+    let mut focus_state = ShellState::new_with_startup(default_config(), (120, 40), startup);
+    login(&mut focus_state, "AdminUser", "StrongPass123");
+    focus_state.apply_input(InputEvent::from_key_label("Tab"));
+    assert_eq!(focus_state.focused_component(), ShellComponent::HomeLogout);
+    focus_state.apply_input(InputEvent::from_key_label("Enter"));
+    assert_eq!(focus_state.active_screen(), ShellScreen::Login);
+    assert!(focus_state.auth_session().is_none());
+
+    let startup = prepare_shell_startup(&platform, default_config()).expect("mouse startup");
+    let mut mouse_state = ShellState::new_with_startup(default_config(), (120, 40), startup);
+    login(&mut mouse_state, "AdminUser", "StrongPass123");
+    let last_actor = mouse_state.auth_session().expect("signed in").clone();
+    let logout = component_center(&mouse_state, ShellComponent::HomeLogout);
+    assert_eq!(
+        mouse_state.hit_target_at(logout),
+        Some(ShellComponent::HomeLogout)
+    );
+    mouse_state.apply_input(InputEvent::mouse_down(PointerButton::Left, logout));
+    assert_eq!(mouse_state.active_screen(), ShellScreen::Login);
+    assert!(mouse_state.auth_session().is_none());
+
+    let records = AuditService::new(manager)
+        .read_records(&last_actor)
+        .expect("read logout audit records");
+    let logout_records = records
+        .iter()
+        .filter(|record| record.action == "Logout")
+        .collect::<Vec<_>>();
+    assert_eq!(logout_records.len(), baseline_logout_count + 3);
+    for record in logout_records.iter().rev().take(3) {
+        assert_eq!(record.outcome, "Success");
+        assert_eq!(record.reason.as_deref(), Some("logout"));
+        assert_eq!(record.actor_username.as_deref(), Some("AdminUser"));
+    }
+}
+
+#[test]
+fn login_and_logout_hit_regions_share_render_geometry_at_supported_sizes() {
+    let fixture = FixtureRoot::new("auth-hit-geometry");
+    let platform = mock_platform(fixture.path());
+    bootstrap_with_shell(&platform);
+
+    for terminal_size in [(80, 24), (50, 12)] {
+        let startup = prepare_shell_startup(&platform, default_config()).expect("login startup");
+        let mut state = ShellState::new_with_startup(default_config(), terminal_size, startup);
+        let password = component_area(&state, ShellComponent::LoginPassword);
+        let visibility = component_area(&state, ShellComponent::LoginPasswordVisibility);
+        let guest = component_area(&state, ShellComponent::LoginGuest);
+
+        for area in [password, visibility, guest] {
+            assert!(
+                area.width > 0 && area.height > 0,
+                "missing area at {terminal_size:?}"
+            );
+        }
+        assert!(!rects_overlap(password, visibility));
+        assert!(!rects_overlap(password, guest));
+        assert!(!rects_overlap(visibility, guest));
+        for component in [
+            ShellComponent::LoginPassword,
+            ShellComponent::LoginPasswordVisibility,
+            ShellComponent::LoginGuest,
+        ] {
+            let center = rect_center(component_area(&state, component));
+            assert_eq!(state.hit_target_at(center), Some(component));
+        }
+
+        login(&mut state, "AdminUser", "StrongPass123");
+        let logout = component_area(&state, ShellComponent::HomeLogout);
+        assert!(logout.width > 0 && logout.height > 0);
+        assert_eq!(
+            state.hit_target_at(rect_center(logout)),
+            Some(ShellComponent::HomeLogout),
+            "Logout must win over the enclosing Home region"
+        );
+    }
+
+    let startup = prepare_shell_startup(&platform, default_config()).expect("compact startup");
+    let compact = ShellState::new_with_startup(default_config(), (49, 11), startup);
+    assert!(compact.hit_map().regions().iter().all(|region| {
+        !matches!(
+            region.component,
+            ShellComponent::LoginPassword
+                | ShellComponent::LoginPasswordVisibility
+                | ShellComponent::LoginGuest
+                | ShellComponent::HomeLogout
+        )
+    }));
 }
 
 #[test]
@@ -1217,6 +1542,8 @@ fn expired_countdown_waits_for_initial_sync_then_is_delivered_and_removed() {
 fn open_clock(state: &mut ShellState) {
     assert_eq!(state.active_screen(), ShellScreen::Home);
     state.apply_input(InputEvent::from_key_label("Tab"));
+    assert_eq!(state.focused_component(), ShellComponent::HomeLogout);
+    state.apply_input(InputEvent::from_key_label("Tab"));
     assert_eq!(state.focused_component(), ShellComponent::ClockButton);
     state.apply_input(InputEvent::from_key_label("Enter"));
     assert_eq!(state.active_screen(), ShellScreen::Clock);
@@ -1236,17 +1563,37 @@ fn create_clock_entry(state: &mut ShellState, input: &str, countdown: bool) {
 }
 
 fn component_center(state: &ShellState, component: ShellComponent) -> (u16, u16) {
-    let region = state
+    rect_center(component_area(state, component))
+}
+
+fn component_area(state: &ShellState, component: ShellComponent) -> ratatui::layout::Rect {
+    state
         .hit_map()
         .regions()
         .iter()
         .rev()
         .find(|region| region.component == component)
-        .unwrap_or_else(|| panic!("missing {component:?} hit region"));
-    (
-        region.area.x.saturating_add(region.area.width / 2),
-        region.area.y.saturating_add(region.area.height / 2),
-    )
+        .unwrap_or_else(|| panic!("missing {component:?} hit region"))
+        .area
+}
+
+fn rects_overlap(first: ratatui::layout::Rect, second: ratatui::layout::Rect) -> bool {
+    first.x < second.right()
+        && second.x < first.right()
+        && first.y < second.bottom()
+        && second.y < first.bottom()
+}
+
+fn function_key(number: u8) -> InputEvent {
+    InputEvent::Key(KeyInput::new(
+        InputKey::Function(number),
+        InputModifiers::none(),
+        InputPhase::Press,
+    ))
+}
+
+fn read_optional_file(path: &Path) -> Option<Vec<u8>> {
+    fs::read(path).ok()
 }
 
 fn bootstrap_with_shell(platform: &MockPlatform) {

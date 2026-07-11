@@ -13,6 +13,9 @@ use crossterm::{
 use std::fmt;
 use std::io;
 use std::panic;
+use std::sync::atomic::{AtomicBool, Ordering};
+
+static PANIC_RESTORE_HOOK_INSTALLED: AtomicBool = AtomicBool::new(false);
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct LaunchLocation {
@@ -239,6 +242,12 @@ fn apply_launch_location(config: &mut Config, options: &LaunchOptions) {
 }
 
 fn install_panic_restore_hook() {
+    if PANIC_RESTORE_HOOK_INSTALLED
+        .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+        .is_err()
+    {
+        return;
+    }
     let default_hook = panic::take_hook();
     panic::set_hook(Box::new(move |panic_info| {
         let _ = disable_raw_mode();

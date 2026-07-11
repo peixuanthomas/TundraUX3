@@ -31,10 +31,10 @@ lines = [
 [items.settings]
 label = "Settings"
 lines = [
-  ' o---  ',
-  '---o-- ',
-  ' --o-- ',
-  '---o-- ',
+  '-o-----',
+  '---o---',
+  '--o----',
+  '-----o-',
 ]
 
 [items.diagnostics]

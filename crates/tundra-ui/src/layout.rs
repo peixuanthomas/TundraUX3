@@ -567,14 +567,20 @@ pub fn clock_page_layout(main: Rect, model: &ClockViewModel) -> ClockPageLayout 
     };
 
     let panel_inner = inset_rect(panel, 1);
-    let new_button = line_in_rect(panel_inner, panel_inner.y);
+    let new_button = if model.is_read_only() {
+        Rect::new(panel_inner.x, panel_inner.y, 0, 0)
+    } else {
+        line_in_rect(panel_inner, panel_inner.y)
+    };
     let condensed_panel = panel_inner.height < 7;
-    let entry_capacity =
-        usize::from(
-            panel_inner
-                .height
-                .saturating_sub(if condensed_panel { 3 } else { 4 }),
-        );
+    let reserved_lines = if model.is_read_only() {
+        2
+    } else if condensed_panel {
+        3
+    } else {
+        4
+    };
+    let entry_capacity = usize::from(panel_inner.height.saturating_sub(reserved_lines));
     let total_entries = model.alarms.len().saturating_add(model.countdowns.len());
     let entry_window_start = model.entry_window_start.min(total_entries);
     let visible = flattened_clock_entries(model)
@@ -589,9 +595,13 @@ pub fn clock_page_layout(main: Rect, model: &ClockViewModel) -> ClockPageLayout 
 
     let alarms_heading = line_in_rect(
         panel_inner,
-        panel_inner
-            .y
-            .saturating_add(if condensed_panel { 1 } else { 2 }),
+        panel_inner.y.saturating_add(if model.is_read_only() {
+            0
+        } else if condensed_panel {
+            1
+        } else {
+            2
+        }),
     );
     let alarm_rows_y = alarms_heading.y.saturating_add(alarms_heading.height);
     let countdowns_heading = line_in_rect(
@@ -639,9 +649,9 @@ pub fn clock_page_layout(main: Rect, model: &ClockViewModel) -> ClockPageLayout 
         entry_rows,
         entry_window_start,
         entry_capacity,
-        create_dialog: model
-            .create_dialog
-            .as_ref()
+        create_dialog: (!model.is_read_only())
+            .then_some(model.create_dialog.as_ref())
+            .flatten()
             .map(|_| clock_create_dialog_layout(main)),
     }
 }

@@ -37,6 +37,9 @@ const LOGIN_USER_LIST_WIDTH: u16 = 30;
 const LOGIN_USERNAME_FIELD_HEIGHT: u16 = 5;
 const LOGIN_PASSWORD_FIELD_HEIGHT: u16 = 3;
 const LOGIN_FORM_GAP: u16 = 1;
+const LOGIN_PASSWORD_VISIBILITY_WIDTH: u16 = 6;
+const LOGIN_GUEST_WIDTH: u16 = 7;
+const LOGIN_CONTROL_GAP: u16 = 1;
 const SETUP_ADMIN_CHECKLIST_HEIGHT: u16 = 7;
 const SETUP_ADMIN_SIDE_CHECKLIST_MIN_WIDTH: u16 = 68;
 const SETUP_ADMIN_CHECKLIST_WIDTH: u16 = 32;
@@ -48,7 +51,7 @@ const SETUP_ADMIN_HINT_LINE: u16 = 15;
 const SETUP_ADMIN_SUBMIT_LINE: u16 = 19;
 const SETUP_ADMIN_ERROR_LINE: u16 = 21;
 const SETUP_ADMIN_STACKED_CHECKLIST_LINE: u16 = 21;
-const HOME_SUMMARY_HEIGHT: u16 = 2;
+const HOME_SUMMARY_HEIGHT: u16 = 1;
 const HOME_CONTROLS_HEIGHT: u16 = 2;
 const HOME_TILE_MAX_HEIGHT: u16 = 8;
 const HOME_TILE_MIN_HEIGHT: u16 = 3;
@@ -61,6 +64,17 @@ const LARGE_CLOCK_NUMERAL_MIN_WIDTH: usize = 64;
 const LARGE_CLOCK_NUMERAL_MIN_HEIGHT: usize = 19;
 const LARGE_CLOCK_NUMERAL_CENTER_CLEARANCE: usize = 24;
 const LARGE_CLOCK_NUMERAL_VERTICAL_CLEARANCE: usize = 5;
+
+/// Shared Login page geometry for rendering and input hit-testing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LoginLayout {
+    pub user_list: Rect,
+    pub selected_username: Rect,
+    pub password: Rect,
+    pub password_visibility: Rect,
+    pub guest: Rect,
+    pub help: Rect,
+}
 
 pub fn render_home(
     frame: &mut Frame<'_>,
@@ -1298,28 +1312,34 @@ fn render_login_main(
         .style(theme.body_style());
     frame.render_widget(outer, main);
 
-    let list_area = login_user_list_area(main);
-    let username_area = login_selected_username_area(main);
-    let password_area = login_password_area(main);
-    let form_area = login_form_area(main);
+    let layout = login_layout(main);
 
-    render_login_user_list(frame, list_area, model, theme);
-    render_login_username_field(frame, username_area, model, theme);
-    render_login_password_field(frame, password_area, model, theme);
+    render_login_user_list(frame, layout.user_list, model, theme);
+    render_login_username_field(frame, layout.selected_username, model, theme);
+    render_login_password_field(frame, layout.password, model, theme);
+    render_login_button(
+        frame,
+        layout.password_visibility,
+        if model.password_is_visible() {
+            "[Hide]"
+        } else {
+            "[Show]"
+        },
+        model.focused_field == LoginField::PasswordVisibility,
+        theme,
+    );
+    render_login_button(
+        frame,
+        layout.guest,
+        "[Guest]",
+        model.focused_field == LoginField::Guest,
+        theme,
+    );
 
-    let help_y = password_area
-        .y
-        .saturating_add(password_area.height)
-        .saturating_add(LOGIN_FORM_GAP);
-    let help_height = form_area
-        .y
-        .saturating_add(form_area.height)
-        .saturating_sub(help_y);
-    if help_height > 0 {
-        let help_area = Rect::new(form_area.x, help_y, form_area.width, help_height);
+    if layout.help.height > 0 {
         let mut lines = vec![
-            Line::from("Users: Up/Down/Home/End    Tab: password"),
-            Line::from("Enter on password: login    Esc: exit"),
+            Line::from("Users: Up/Down/Home/End    Tab: password/show/guest"),
+            Line::from("Enter: activate    F2: show/hide    F3: guest    Esc: exit"),
         ];
         if let Some(error) = &model.error {
             lines.push(Line::from(""));
@@ -1329,7 +1349,7 @@ fn render_login_main(
             Paragraph::new(lines)
                 .style(theme.muted_style())
                 .wrap(Wrap { trim: true }),
-            help_area,
+            layout.help,
         );
     }
 }
@@ -1446,12 +1466,14 @@ fn render_login_password_field(
     } else {
         theme.body_style()
     };
-    let password = if model.password_len == 0 {
+    let password = if let Some(visible) = model.visible_password() {
+        visible.to_string()
+    } else if model.password_len == 0 {
         "Enter password".to_string()
     } else {
         "*".repeat(model.password_len)
     };
-    let password_style = if model.password_len == 0 {
+    let password_style = if model.password_len == 0 && !model.password_is_visible() {
         theme.muted_style()
     } else {
         theme.body_style()
@@ -1470,12 +1492,37 @@ fn render_login_password_field(
     );
 }
 
-pub fn login_user_list_area(main: Rect) -> Rect {
-    login_columns(main).0
+fn render_login_button(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    label: &'static str,
+    selected: bool,
+    theme: &TundraTheme,
+) {
+    if area.width == 0 || area.height == 0 {
+        return;
+    }
+    let line = Rect::new(
+        area.x,
+        area.y.saturating_add(area.height / 2),
+        area.width,
+        1,
+    );
+    let style = if selected {
+        theme.title_style()
+    } else {
+        theme.body_style()
+    };
+    frame.render_widget(
+        Paragraph::new(Line::styled(label, style))
+            .style(style)
+            .alignment(Alignment::Center),
+        line,
+    );
 }
 
-pub fn login_selected_username_area(main: Rect) -> Rect {
-    let form = login_form_area(main);
+pub fn login_layout(main: Rect) -> LoginLayout {
+    let (user_list, form) = login_columns(main);
     let reserved_password_height = LOGIN_PASSWORD_FIELD_HEIGHT.saturating_add(LOGIN_FORM_GAP);
     let height = if form.height > reserved_password_height {
         form.height
@@ -1484,37 +1531,102 @@ pub fn login_selected_username_area(main: Rect) -> Rect {
     } else {
         0
     };
-
-    Rect::new(form.x, form.y, form.width, height)
-}
-
-pub fn login_password_area(main: Rect) -> Rect {
-    let form = login_form_area(main);
-    let username = login_selected_username_area(main);
-    let gap = if username.height > 0 {
-        LOGIN_FORM_GAP.min(form.height.saturating_sub(username.height))
+    let selected_username = Rect::new(form.x, form.y, form.width, height);
+    let gap = if selected_username.height > 0 {
+        LOGIN_FORM_GAP.min(form.height.saturating_sub(selected_username.height))
     } else {
         0
     };
-    let y = username
+    let password_y = selected_username
         .y
-        .saturating_add(username.height)
+        .saturating_add(selected_username.height)
         .saturating_add(gap);
-    let max_height = form.y.saturating_add(form.height).saturating_sub(y);
-    Rect::new(
-        form.x,
-        y,
-        form.width,
-        max_height.min(LOGIN_PASSWORD_FIELD_HEIGHT),
-    )
+    let max_height = form
+        .y
+        .saturating_add(form.height)
+        .saturating_sub(password_y);
+    let control_height = max_height.min(LOGIN_PASSWORD_FIELD_HEIGHT);
+
+    let (password_width, first_gap, visibility_width, second_gap, guest_width) = if form.width
+        >= 3_u16
+            .saturating_add(LOGIN_CONTROL_GAP.saturating_mul(2))
+            .saturating_add(LOGIN_PASSWORD_VISIBILITY_WIDTH)
+            .saturating_add(LOGIN_GUEST_WIDTH)
+    {
+        (
+            form.width.saturating_sub(
+                LOGIN_CONTROL_GAP
+                    .saturating_mul(2)
+                    .saturating_add(LOGIN_PASSWORD_VISIBILITY_WIDTH)
+                    .saturating_add(LOGIN_GUEST_WIDTH),
+            ),
+            LOGIN_CONTROL_GAP,
+            LOGIN_PASSWORD_VISIBILITY_WIDTH,
+            LOGIN_CONTROL_GAP,
+            LOGIN_GUEST_WIDTH,
+        )
+    } else {
+        let password_width = form.width.div_ceil(3);
+        let remaining = form.width.saturating_sub(password_width);
+        let visibility_width = remaining / 2;
+        (
+            password_width,
+            0,
+            visibility_width,
+            0,
+            remaining.saturating_sub(visibility_width),
+        )
+    };
+    let password = Rect::new(form.x, password_y, password_width, control_height);
+    let visibility_x = password
+        .x
+        .saturating_add(password.width)
+        .saturating_add(first_gap);
+    let password_visibility = Rect::new(visibility_x, password_y, visibility_width, control_height);
+    let guest_x = password_visibility
+        .x
+        .saturating_add(password_visibility.width)
+        .saturating_add(second_gap);
+    let guest = Rect::new(guest_x, password_y, guest_width, control_height);
+
+    let help_y = password_y
+        .saturating_add(control_height)
+        .saturating_add(LOGIN_FORM_GAP);
+    let help_height = form.y.saturating_add(form.height).saturating_sub(help_y);
+    let help = Rect::new(form.x, help_y, form.width, help_height);
+
+    LoginLayout {
+        user_list,
+        selected_username,
+        password,
+        password_visibility,
+        guest,
+        help,
+    }
+}
+
+pub fn login_user_list_area(main: Rect) -> Rect {
+    login_layout(main).user_list
+}
+
+pub fn login_selected_username_area(main: Rect) -> Rect {
+    login_layout(main).selected_username
+}
+
+pub fn login_password_area(main: Rect) -> Rect {
+    login_layout(main).password
+}
+
+pub fn login_password_visibility_area(main: Rect) -> Rect {
+    login_layout(main).password_visibility
+}
+
+pub fn login_guest_area(main: Rect) -> Rect {
+    login_layout(main).guest
 }
 
 pub fn login_user_list_visible_rows(main: Rect) -> usize {
     login_user_list_area(main).height.saturating_sub(2) as usize
-}
-
-fn login_form_area(main: Rect) -> Rect {
-    login_columns(main).1
 }
 
 fn login_columns(main: Rect) -> (Rect, Rect) {
@@ -2417,6 +2529,10 @@ fn render_top(
 fn render_main(frame: &mut Frame<'_>, area: Rect, home: &HomeViewModel, theme: &TundraTheme) {
     match home.display_mode() {
         HomeDisplayMode::Debug => {
+            if home.logout_visible() {
+                render_authenticated_debug_main(frame, area, home, theme);
+                return;
+            }
             let main = Paragraph::new(debug_lines(home))
                 .block(
                     Block::default()
@@ -2446,18 +2562,7 @@ fn render_user_main(frame: &mut Frame<'_>, area: Rect, home: &HomeViewModel, the
 
     let summary = home_summary_area(area);
     let controls = home_controls_area(area);
-    let user = home.current_user.as_deref().unwrap_or("Unknown user");
-    let time = home.current_time.as_deref().unwrap_or("Unknown time");
-
-    frame.render_widget(
-        Paragraph::new(vec![
-            Line::from(format!("User: {user}")),
-            Line::from(format!("Time: {time}")),
-        ])
-        .style(theme.body_style())
-        .wrap(Wrap { trim: true }),
-        summary,
-    );
+    render_home_account_summary(frame, area, summary, home, theme);
 
     for (index, (entry, tile)) in home
         .entries()
@@ -2501,14 +2606,96 @@ fn render_user_main(frame: &mut Frame<'_>, area: Rect, home: &HomeViewModel, the
         frame.render_widget(tile_widget, tile);
     }
 
+    let controls_text = if home.logout_visible() && home.entries().is_empty() {
+        "Tab: focus Logout / Clock    L: logout    Q / Esc: exit"
+    } else if home.logout_visible() {
+        "Arrows: select    Enter: open    E: explorer    U: users    L: logout    Q / Esc: exit"
+    } else {
+        "Arrows: select    Enter: open    E: explorer    U: users    Q / Esc: exit"
+    };
+    frame.render_widget(
+        Paragraph::new(Line::from(controls_text))
+            .style(theme.muted_style())
+            .wrap(Wrap { trim: true }),
+        controls,
+    );
+}
+
+fn render_authenticated_debug_main(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    home: &HomeViewModel,
+    theme: &TundraTheme,
+) {
+    frame.render_widget(
+        Block::default()
+            .title("Home")
+            .borders(Borders::ALL)
+            .style(theme.body_style()),
+        area,
+    );
+    let summary = home_summary_area(area);
+    render_home_account_summary(frame, area, summary, home, theme);
+
+    let content = home_content_area(area);
+    let controls = home_controls_area(area);
+    let diagnostics_y = summary.y.saturating_add(summary.height);
+    let diagnostics = Rect::new(
+        content.x,
+        diagnostics_y,
+        content.width,
+        controls.y.saturating_sub(diagnostics_y),
+    );
+    frame.render_widget(
+        Paragraph::new(debug_lines(home))
+            .style(theme.body_style())
+            .wrap(Wrap { trim: true }),
+        diagnostics,
+    );
     frame.render_widget(
         Paragraph::new(Line::from(
-            "Arrows: select    Enter: open    E: explorer    U: users    Q / Esc: exit",
+            "Tab: focus Logout    L: logout    Q / Esc: exit",
         ))
         .style(theme.muted_style())
         .wrap(Wrap { trim: true }),
         controls,
     );
+}
+
+fn render_home_account_summary(
+    frame: &mut Frame<'_>,
+    main: Rect,
+    summary: Rect,
+    home: &HomeViewModel,
+    theme: &TundraTheme,
+) {
+    if summary.width == 0 || summary.height == 0 {
+        return;
+    }
+    let logout = home_logout_area(main, home);
+    let user_width = if logout.width > 0 {
+        logout.x.saturating_sub(summary.x).saturating_sub(2)
+    } else {
+        summary.width
+    };
+    let user = home.current_user.as_deref().unwrap_or("Unknown user");
+    frame.render_widget(
+        Paragraph::new(Line::from(format!("User: {user}")))
+            .style(theme.body_style())
+            .wrap(Wrap { trim: true }),
+        Rect::new(summary.x, summary.y, user_width, summary.height),
+    );
+    if logout.width > 0 {
+        let style = if home.logout_selected() {
+            theme.title_style()
+        } else {
+            theme.body_style()
+        };
+        frame.render_widget(
+            Paragraph::new(Line::styled("[Logout]", style)).style(style),
+            logout,
+        );
+    }
 }
 
 fn centered_home_tile_line(
@@ -2975,6 +3162,38 @@ pub fn home_entry_index_at(
         .into_iter()
         .enumerate()
         .find_map(|(index, area)| rect_contains(area, coordinates).then_some(index))
+}
+
+/// Returns the exact Logout control rectangle used by Home rendering.
+///
+/// Homes without an authenticated account expose a zero-sized area so input
+/// routing cannot accidentally make Logout interactive.
+pub fn home_logout_area(main: Rect, home: &HomeViewModel) -> Rect {
+    let summary = home_summary_area(main);
+    if !home.logout_visible() || summary.width == 0 || summary.height == 0 {
+        return Rect::new(summary.x.saturating_add(summary.width), summary.y, 0, 0);
+    }
+
+    const LOGOUT_LABEL_WIDTH: u16 = 8;
+    const ACCOUNT_LOGOUT_GAP: u16 = 2;
+    let width = LOGOUT_LABEL_WIDTH.min(summary.width);
+    let user_width = home
+        .current_user
+        .as_deref()
+        .unwrap_or("Unknown user")
+        .chars()
+        .count()
+        .saturating_add("User: ".len());
+    let desired_offset = u16::try_from(user_width)
+        .unwrap_or(u16::MAX)
+        .saturating_add(ACCOUNT_LOGOUT_GAP);
+    let max_offset = summary.width.saturating_sub(width);
+    Rect::new(
+        summary.x.saturating_add(desired_offset.min(max_offset)),
+        summary.y,
+        width,
+        1,
+    )
 }
 
 fn home_content_area(main: Rect) -> Rect {

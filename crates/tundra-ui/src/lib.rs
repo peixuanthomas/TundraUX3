@@ -40,8 +40,9 @@ pub use layout::{
     user_management_row_index_at,
 };
 pub use render::{
-    explorer_first_entry_content_line, home_entry_index_at, home_entry_tile_areas,
-    login_password_area, login_selected_username_area, login_user_list_area,
+    LoginLayout, explorer_first_entry_content_line, home_entry_index_at, home_entry_tile_areas,
+    home_logout_area, login_guest_area, login_layout, login_password_area,
+    login_password_visibility_area, login_selected_username_area, login_user_list_area,
     login_user_list_visible_rows, render_bootstrap_admin, render_clock, render_clock_placeholder,
     render_exit_confirmation, render_explorer, render_home, render_login,
     render_notification_overlay, render_setup, render_time_sync_failure_dialog,

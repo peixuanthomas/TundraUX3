@@ -9,7 +9,8 @@ use tundra_ui::{
     NotificationLayout, NotificationLevel, NotificationTone, NotificationViewModel,
     RuntimeAsciiAssets, ShellChromeViewModel, ShellEntry, ShellLayout, StatusViewModel,
     TimeSyncDialogViewModel, TundraTheme, UserManagementUserViewModel, UserManagementViewModel,
-    compute_shell_layout, login_password_area, login_user_list_area, login_user_list_visible_rows,
+    compute_shell_layout, home_logout_area, login_guest_area, login_password_area,
+    login_password_visibility_area, login_user_list_area, login_user_list_visible_rows,
     notification_layout, render_bootstrap_admin, render_clock_placeholder, render_home,
     render_login, render_notification_overlay, render_time_sync_failure_dialog,
     render_user_management, status_time_button_area,
@@ -177,7 +178,7 @@ fn user_home_renders_ascii_entry_tiles_with_selected_accent() {
             .expect("home view model should carry loaded icon assets"),
     );
     assert!(output.contains("User: Strix"));
-    assert!(output.contains("Time: 2026-07-01 09:30"));
+    assert!(!output.contains("Time: 2026-07-01 09:30"));
     assert!(output.contains(icon_line));
     assert!(output.contains("Launcher"));
     assert!(output.contains("Open apps and commands"));
@@ -190,6 +191,69 @@ fn user_home_renders_ascii_entry_tiles_with_selected_accent() {
         region_has_fg(&terminal, selected_tile, TundraTheme::default_dark().accent),
         "selected home tile should use the accent style"
     );
+}
+
+#[test]
+fn authenticated_user_and_debug_homes_render_single_line_account_logout() {
+    let theme = TundraTheme::default_dark();
+    let chrome = chrome_for("Home");
+    let user_home = HomeViewModel::user("ignored", "2026-07-01 09:30", Vec::new())
+        .with_account_logout("Strix", true);
+    let mut user_terminal = Terminal::new(TestBackend::new(80, 24)).expect("test terminal");
+    user_terminal
+        .draw(|frame| render_home(frame, frame.area(), &chrome, &user_home, &theme))
+        .expect("render user home");
+    let user_output = terminal_output(&user_terminal);
+    let main = main_rect(80, 24);
+    let logout = home_logout_area(main, &user_home);
+
+    assert!(user_output.contains("User: Strix  [Logout]"));
+    assert!(!user_output.contains("Time:"));
+    assert!(user_output.contains("Tab: focus Logout / Clock"));
+    assert!(!user_output.contains("E: explorer"));
+    assert!(!user_output.contains("U: users"));
+    assert!(!user_output.contains("Arrows: select"));
+    assert!(logout.width > 0 && logout.height == 1);
+    assert!(region_has_fg(&user_terminal, logout, theme.accent));
+
+    let debug_home = HomeViewModel::debug(DebugDiagnosticsViewModel {
+        tick_count: 1,
+        last_key_event: None,
+        last_mouse_event: None,
+        last_resize_event: None,
+        mouse_coordinates: None,
+        scroll_direction: None,
+        drag_direction: None,
+        terminal_flags: Vec::new(),
+        platform_capability_summary: "supported".to_string(),
+    })
+    .with_account_logout("Admin", false);
+    let mut debug_terminal = Terminal::new(TestBackend::new(80, 24)).expect("test terminal");
+    debug_terminal
+        .draw(|frame| render_home(frame, frame.area(), &chrome, &debug_home, &theme))
+        .expect("render authenticated debug home");
+    let debug_output = terminal_output(&debug_terminal);
+
+    assert!(debug_output.contains("User: Admin  [Logout]"));
+    assert!(debug_output.contains("Tick: 1"));
+    assert!(home_logout_area(main, &debug_home).width > 0);
+}
+
+#[test]
+fn storage_free_debug_home_does_not_expose_logout_hit_area() {
+    let home = HomeViewModel::debug(DebugDiagnosticsViewModel {
+        tick_count: 0,
+        last_key_event: None,
+        last_mouse_event: None,
+        last_resize_event: None,
+        mouse_coordinates: None,
+        scroll_direction: None,
+        drag_direction: None,
+        terminal_flags: Vec::new(),
+        platform_capability_summary: "supported".to_string(),
+    });
+
+    assert_eq!(home_logout_area(main_rect(80, 24), &home).width, 0);
 }
 
 #[test]
@@ -806,12 +870,19 @@ fn login_renderer_masks_password_length() {
     assert!(output.contains("Password"));
     assert!(output.contains("*************"));
     assert!(!output.contains("StrongPass123"));
+    assert!(output.contains("[Show]"));
+    assert!(output.contains("[Guest]"));
     assert!(output.contains("Invalid username or password"));
 
     let main = main_rect(80, 24);
     let list_area = login_user_list_area(main);
     let password_area = login_password_area(main);
+    let visibility_area = login_password_visibility_area(main);
+    let guest_area = login_guest_area(main);
     assert!(list_area.x < password_area.x);
+    assert!(password_area.right() <= visibility_area.x);
+    assert!(visibility_area.right() <= guest_area.x);
+    assert!(guest_area.right() <= main.right());
     assert_eq!(
         login_user_list_visible_rows(main),
         usize::from(list_area.height.saturating_sub(2))
@@ -820,6 +891,67 @@ fn login_renderer_masks_password_length() {
         region_has_fg(&terminal, password_area, TundraTheme::default_dark().accent),
         "focused password field should use the accent style"
     );
+}
+
+#[test]
+fn login_renderer_reveals_only_explicit_plaintext_and_focuses_new_controls() {
+    let chrome = chrome_for("Login");
+    let visible = "密碼🙂";
+    let model = LoginViewModel::new(
+        vec![login_user("Strix", "Local User", "User")],
+        0,
+        0,
+        visible.chars().count(),
+        LoginField::PasswordVisibility,
+        None,
+    )
+    .with_visible_password(visible);
+    let mut terminal = Terminal::new(TestBackend::new(80, 24)).expect("test terminal");
+
+    terminal
+        .draw(|frame| {
+            render_login(
+                frame,
+                frame.area(),
+                &chrome,
+                &model,
+                &TundraTheme::default_dark(),
+            );
+        })
+        .expect("render revealed login password");
+
+    let output = terminal_output(&terminal);
+    let visibility = login_password_visibility_area(main_rect(80, 24));
+    assert_eq!(model.visible_password(), Some(visible));
+    assert!(model.password_is_visible());
+    assert!(visible.chars().all(|character| output.contains(character)));
+    assert!(output.contains("[Hide]"));
+    assert!(!output.contains("***"));
+    assert!(region_has_fg(
+        &terminal,
+        visibility,
+        TundraTheme::default_dark().accent,
+    ));
+
+    let guest_model = LoginViewModel::new(Vec::new(), 0, 0, 0, LoginField::Guest, None);
+    assert!(!guest_model.password_is_visible());
+    let mut guest_terminal = Terminal::new(TestBackend::new(80, 24)).expect("test terminal");
+    guest_terminal
+        .draw(|frame| {
+            render_login(
+                frame,
+                frame.area(),
+                &chrome,
+                &guest_model,
+                &TundraTheme::default_dark(),
+            );
+        })
+        .expect("render guest-focused login");
+    assert!(region_has_fg(
+        &guest_terminal,
+        login_guest_area(main_rect(80, 24)),
+        TundraTheme::default_dark().accent,
+    ));
 }
 
 #[test]

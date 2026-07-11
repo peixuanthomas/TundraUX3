@@ -866,14 +866,19 @@ impl SessionService {
 
     pub fn logout(&mut self) -> Result<(), CoreError> {
         if let Some(session) = self.current_session.take() {
-            AuditService::new(self.storage.clone()).record(
-                Some(&session),
-                PermissionAction::Logout,
-                Some(&session.username),
-                AuditOutcome::Success,
-                Some("logout"),
-            )?;
+            self.logout_session(&session)?;
         }
+        Ok(())
+    }
+
+    pub fn logout_session(&self, session: &AuthSession) -> Result<(), CoreError> {
+        AuditService::new(self.storage.clone()).record(
+            Some(session),
+            PermissionAction::Logout,
+            Some(&session.username),
+            AuditOutcome::Success,
+            Some("logout"),
+        )?;
         Ok(())
     }
 }

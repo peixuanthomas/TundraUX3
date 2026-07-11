@@ -122,7 +122,7 @@ fn bootstrap_login_and_password_hashing_work_without_plaintext_storage() {
         Err(CoreError::BootstrapAlreadyExists)
     ));
 
-    let mut sessions = SessionService::new(manager);
+    let mut sessions = SessionService::new(manager.clone());
     let session = sessions
         .login("adminuser", "StrongPass123")
         .expect("case-insensitive login should work");
@@ -134,6 +134,65 @@ fn bootstrap_login_and_password_hashing_work_without_plaintext_storage() {
 
     sessions.logout().expect("logout should audit");
     assert!(sessions.current_session().is_none());
+
+    let records = AuditService::new(manager)
+        .read_records(&session)
+        .expect("admin should read audit records");
+    let logout = records.last().expect("logout audit record");
+    assert_eq!(
+        logout.actor_user_id.as_deref(),
+        Some(session.user_id.as_str())
+    );
+    assert_eq!(
+        logout.actor_username.as_deref(),
+        Some(session.username.as_str())
+    );
+    assert_eq!(
+        logout.session_id.as_deref(),
+        Some(session.session_id.as_str())
+    );
+    assert_eq!(logout.action, "Logout");
+    assert_eq!(logout.resource.as_deref(), Some(session.username.as_str()));
+    assert_eq!(logout.outcome, "Success");
+    assert_eq!(logout.reason.as_deref(), Some("logout"));
+}
+
+#[test]
+fn logout_session_audits_an_existing_borrowed_session() {
+    let fixture = FixtureRoot::new("explicit-logout");
+    let manager = storage(fixture.path());
+    let session = session("admin", UserRole::Admin);
+    let sessions = SessionService::new(manager.clone());
+
+    sessions
+        .logout_session(&session)
+        .expect("explicit logout should audit");
+
+    assert!(sessions.current_session().is_none());
+    let records = AuditService::new(manager.clone())
+        .read_records(&session)
+        .expect("admin should read audit records");
+    assert_eq!(records.len(), 1);
+    let logout = &records[0];
+    assert_eq!(
+        logout.actor_user_id.as_deref(),
+        Some(session.user_id.as_str())
+    );
+    assert_eq!(
+        logout.actor_username.as_deref(),
+        Some(session.username.as_str())
+    );
+    assert_eq!(
+        logout.session_id.as_deref(),
+        Some(session.session_id.as_str())
+    );
+    assert_eq!(logout.action, "Logout");
+    assert_eq!(logout.resource.as_deref(), Some(session.username.as_str()));
+    assert_eq!(logout.outcome, "Success");
+    assert_eq!(logout.reason.as_deref(), Some("logout"));
+    AuditService::new(manager)
+        .verify_chain()
+        .expect("logout audit chain should verify");
 }
 
 #[test]
