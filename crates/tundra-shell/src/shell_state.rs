@@ -153,7 +153,6 @@ pub struct ShellState {
     time_sync_dialog_visible: bool,
     time_sync_failure_message: Option<String>,
     auth_session: Option<AuthSession>,
-    guest_mode: bool,
     requested_debug_mode: bool,
     debug_policy: DebugPolicy,
     login_users: Vec<ShellLoginUser>,

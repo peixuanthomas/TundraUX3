@@ -16,7 +16,6 @@ impl ShellState {
     fn login_idle_tracking_active(&self) -> bool {
         self.screen_stack.contains(&ShellScreen::Login)
             && self.auth_session.is_none()
-            && !self.guest_mode
     }
 
     fn expire_login_password_visibility_at(&mut self, now: Instant) {
@@ -606,7 +605,6 @@ impl ShellState {
     }
 
     fn complete_login(&mut self, session: AuthSession) {
-        self.guest_mode = false;
         self.auth_session = Some(session.clone());
         self.login_username = session.username.clone();
         self.login_password.clear();
@@ -658,29 +656,6 @@ impl ShellState {
         if session.role != UserRole::Guest {
             self.load_clock_for_session(&session);
         }
-        self.refresh_hit_map();
-    }
-
-    fn complete_guest_login(&mut self) {
-        self.auth_session = None;
-        self.guest_mode = true;
-        self.login_password.clear();
-        self.login_password_visible_until = None;
-        self.bootstrap_password.clear();
-        self.setup_admin_password.clear();
-        self.setup_admin_password_confirm.clear();
-        self.error_message = None;
-        self.home_mode = ShellHomeMode::User;
-        self.selected_home_entry_index = 0;
-        self.clock_scheduler = None;
-        self.clock_selected_entry_id = None;
-        self.clock_entry_window_start = 0;
-        self.clock_create_state = None;
-        self.clock_profile_pending_sync = None;
-        self.screen_stack = vec![ShellScreen::Home];
-        self.focused_component = ShellComponent::Home;
-        self.active_popup = None;
-        self.notify_status("Signed in as Guest");
         self.refresh_hit_map();
     }
 

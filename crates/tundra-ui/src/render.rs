@@ -39,7 +39,6 @@ const LOGIN_USERNAME_FIELD_HEIGHT: u16 = 5;
 const LOGIN_PASSWORD_FIELD_HEIGHT: u16 = 3;
 const LOGIN_FORM_GAP: u16 = 1;
 const LOGIN_PASSWORD_VISIBILITY_WIDTH: u16 = 6;
-const LOGIN_GUEST_WIDTH: u16 = 7;
 const LOGIN_CONTROL_GAP: u16 = 1;
 const SETUP_ADMIN_CHECKLIST_HEIGHT: u16 = 7;
 const SETUP_ADMIN_SIDE_CHECKLIST_MIN_WIDTH: u16 = 68;
@@ -65,6 +64,9 @@ const LARGE_CLOCK_NUMERAL_MIN_WIDTH: usize = 64;
 const LARGE_CLOCK_NUMERAL_MIN_HEIGHT: usize = 19;
 const LARGE_CLOCK_NUMERAL_CENTER_CLEARANCE: usize = 24;
 const LARGE_CLOCK_NUMERAL_VERTICAL_CLEARANCE: usize = 5;
+const CLOCK_CELL_HEIGHT_TO_WIDTH_RATIO: f64 = 2.5;
+const CLOCK_OUTLINE_MIN_SAMPLES: usize = 720;
+const CLOCK_OUTLINE_MAX_SAMPLE_STEP: f64 = 0.5;
 
 /// Shared Login page geometry for rendering and input hit-testing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -73,7 +75,6 @@ pub struct LoginLayout {
     pub selected_username: Rect,
     pub password: Rect,
     pub password_visibility: Rect,
-    pub guest: Rect,
     pub help: Rect,
 }
 
@@ -409,13 +410,13 @@ fn ascii_clock_lines(area: Rect, model: &ClockViewModel) -> Vec<Line<'static>> {
     }
     let mut cells = vec![vec![' '; width]; height];
     if width >= 7 && height >= 5 {
-        let large_numerals = large_clock_numerals(width, height, model);
         let center_x = (width.saturating_sub(1) as f64) / 2.0;
         let center_y = (height.saturating_sub(1) as f64) / 2.0;
-        let (radius_x, radius_y) = clock_face_radii(width, height, large_numerals.as_ref());
+        let (large_numerals, radius_x, radius_y) = clock_face_geometry(width, height, model);
 
-        for sample in 0..720 {
-            let angle = (sample as f64) * std::f64::consts::TAU / 720.0;
+        let outline_samples = clock_outline_sample_count(radius_x, radius_y);
+        for sample in 0..outline_samples {
+            let angle = (sample as f64) * std::f64::consts::TAU / (outline_samples as f64);
             let x = (center_x + angle.sin() * radius_x).round() as isize;
             let y = (center_y - angle.cos() * radius_y).round() as isize;
             let outline = if angle.sin().abs() < 0.35 {
@@ -429,20 +430,10 @@ fn ascii_clock_lines(area: Rect, model: &ClockViewModel) -> Vec<Line<'static>> {
         }
 
         if large_numerals.is_none() {
-            put_clock_text(&mut cells, center_x.round() as isize - 1, 0, "12");
-            put_clock_text(
-                &mut cells,
-                width.saturating_sub(1) as isize,
-                center_y.round() as isize,
-                "3",
-            );
-            put_clock_text(
-                &mut cells,
-                center_x.round() as isize,
-                height.saturating_sub(1) as isize,
-                "6",
-            );
-            put_clock_text(&mut cells, 0, center_y.round() as isize, "9");
+            put_clock_text_centered(&mut cells, center_x, center_y - radius_y, "12");
+            put_clock_text_centered(&mut cells, center_x + radius_x, center_y, "3");
+            put_clock_text_centered(&mut cells, center_x, center_y + radius_y, "6");
+            put_clock_text_centered(&mut cells, center_x - radius_x, center_y, "9");
         }
 
         draw_clock_hands(&mut cells, center_x, center_y, radius_x, radius_y, model);
@@ -469,6 +460,22 @@ struct LargeClockNumerals {
     three: Vec<String>,
     six: Vec<String>,
     nine: Vec<String>,
+}
+
+fn clock_face_geometry(
+    width: usize,
+    height: usize,
+    model: &ClockViewModel,
+) -> (Option<LargeClockNumerals>, f64, f64) {
+    if let Some(numerals) = large_clock_numerals(width, height, model)
+        && let Some((radius_x, radius_y)) = clock_face_radii(width, height, Some(&numerals))
+    {
+        return (Some(numerals), radius_x, radius_y);
+    }
+
+    let (radius_x, radius_y) = clock_face_radii(width, height, None)
+        .expect("a drawable clock canvas should have positive radii");
+    (None, radius_x, radius_y)
 }
 
 fn large_clock_numerals(
@@ -505,10 +512,10 @@ fn clock_face_radii(
     width: usize,
     height: usize,
     numerals: Option<&LargeClockNumerals>,
-) -> (f64, f64) {
+) -> Option<(f64, f64)> {
     let center_x = (width.saturating_sub(1) as f64) / 2.0;
     let center_y = (height.saturating_sub(1) as f64) / 2.0;
-    let (max_radius_x, radius_y, min_radius_x) =
+    let (max_radius_x, max_radius_y, min_radius_x) =
         numerals.map_or((center_x, center_y, 0.0), |numerals| {
             let side_width = clock_art_width(&numerals.three).max(clock_art_width(&numerals.nine));
             let centered_width =
@@ -523,19 +530,26 @@ fn clock_face_radii(
             let centered_half_width = centered_width.saturating_sub(1) as f64 / 2.0;
             let numeral_half_height = vertical_height.saturating_sub(1) as f64 / 2.0;
             (
-                (center_x - side_half_width).max(1.0),
-                (center_y - numeral_half_height).max(1.0),
+                center_x - side_half_width,
+                center_y - numeral_half_height,
                 centered_half_width + side_half_width + 1.0,
             )
         });
-    // Terminal cells are roughly twice as tall as they are wide.
-    (
-        (radius_y * 2.0)
-            .max(min_radius_x)
-            .min(max_radius_x)
-            .max(1.0),
-        radius_y,
-    )
+    if max_radius_x <= 0.0 || max_radius_y <= 0.0 {
+        return None;
+    }
+
+    // Horizontal and vertical radii must be solved together. Clamping only one
+    // axis turns tall or narrow terminal areas into ellipses.
+    let radius_y = max_radius_y.min(max_radius_x / CLOCK_CELL_HEIGHT_TO_WIDTH_RATIO);
+    let radius_x = radius_y * CLOCK_CELL_HEIGHT_TO_WIDTH_RATIO;
+    (radius_y >= 1.0 && radius_x + f64::EPSILON >= min_radius_x).then_some((radius_x, radius_y))
+}
+
+fn clock_outline_sample_count(radius_x: f64, radius_y: f64) -> usize {
+    ((std::f64::consts::TAU * radius_x.max(radius_y) / CLOCK_OUTLINE_MAX_SAMPLE_STEP).ceil()
+        as usize)
+        .max(CLOCK_OUTLINE_MIN_SAMPLES)
 }
 
 fn clock_font_lines(text: &str, font: &ClockFontAsset) -> Option<Vec<String>> {
@@ -720,6 +734,16 @@ fn put_clock_text(cells: &mut [Vec<char>], x: isize, y: isize, text: &str) {
     for (offset, character) in text.chars().enumerate() {
         put_clock_char(cells, x.saturating_add(offset as isize), y, character);
     }
+}
+
+fn put_clock_text_centered(cells: &mut [Vec<char>], x: f64, y: f64, text: &str) {
+    let half_width = text.chars().count().saturating_sub(1) as f64 / 2.0;
+    put_clock_text(
+        cells,
+        (x - half_width).round() as isize,
+        y.round() as isize,
+        text,
+    );
 }
 
 fn put_clock_char(cells: &mut [Vec<char>], x: isize, y: isize, character: char) {
@@ -1332,18 +1356,10 @@ fn render_login_main(
         model.focused_field == LoginField::PasswordVisibility,
         theme,
     );
-    render_login_button(
-        frame,
-        layout.guest,
-        "[Guest]",
-        model.focused_field == LoginField::Guest,
-        theme,
-    );
-
     if layout.help.height > 0 {
         let mut lines = vec![
-            Line::from("Users: Up/Down/Home/End    Tab: password/show/guest"),
-            Line::from("Enter: activate    F2: show/hide    F3: guest    Esc: exit"),
+            Line::from("Users: Up/Down/Home/End    Tab: password/show"),
+            Line::from("Enter: activate    F2: show/hide    Esc: exit"),
         ];
         if let Some(error) = &model.error {
             lines.push(Line::from(""));
@@ -1555,47 +1571,27 @@ pub fn login_layout(main: Rect) -> LoginLayout {
         .saturating_sub(password_y);
     let control_height = max_height.min(LOGIN_PASSWORD_FIELD_HEIGHT);
 
-    let (password_width, first_gap, visibility_width, second_gap, guest_width) = if form.width
+    let (password_width, control_gap, visibility_width) = if form.width
         >= 3_u16
-            .saturating_add(LOGIN_CONTROL_GAP.saturating_mul(2))
+            .saturating_add(LOGIN_CONTROL_GAP)
             .saturating_add(LOGIN_PASSWORD_VISIBILITY_WIDTH)
-            .saturating_add(LOGIN_GUEST_WIDTH)
     {
         (
-            form.width.saturating_sub(
-                LOGIN_CONTROL_GAP
-                    .saturating_mul(2)
-                    .saturating_add(LOGIN_PASSWORD_VISIBILITY_WIDTH)
-                    .saturating_add(LOGIN_GUEST_WIDTH),
-            ),
+            form.width
+                .saturating_sub(LOGIN_CONTROL_GAP.saturating_add(LOGIN_PASSWORD_VISIBILITY_WIDTH)),
             LOGIN_CONTROL_GAP,
             LOGIN_PASSWORD_VISIBILITY_WIDTH,
-            LOGIN_CONTROL_GAP,
-            LOGIN_GUEST_WIDTH,
         )
     } else {
-        let password_width = form.width.div_ceil(3);
-        let remaining = form.width.saturating_sub(password_width);
-        let visibility_width = remaining / 2;
-        (
-            password_width,
-            0,
-            visibility_width,
-            0,
-            remaining.saturating_sub(visibility_width),
-        )
+        let password_width = form.width.div_ceil(2);
+        (password_width, 0, form.width.saturating_sub(password_width))
     };
     let password = Rect::new(form.x, password_y, password_width, control_height);
     let visibility_x = password
         .x
         .saturating_add(password.width)
-        .saturating_add(first_gap);
+        .saturating_add(control_gap);
     let password_visibility = Rect::new(visibility_x, password_y, visibility_width, control_height);
-    let guest_x = password_visibility
-        .x
-        .saturating_add(password_visibility.width)
-        .saturating_add(second_gap);
-    let guest = Rect::new(guest_x, password_y, guest_width, control_height);
 
     let help_y = password_y
         .saturating_add(control_height)
@@ -1608,7 +1604,6 @@ pub fn login_layout(main: Rect) -> LoginLayout {
         selected_username,
         password,
         password_visibility,
-        guest,
         help,
     }
 }
@@ -1627,10 +1622,6 @@ pub fn login_password_area(main: Rect) -> Rect {
 
 pub fn login_password_visibility_area(main: Rect) -> Rect {
     login_layout(main).password_visibility
-}
-
-pub fn login_guest_area(main: Rect) -> Rect {
-    login_layout(main).guest
 }
 
 pub fn login_user_list_visible_rows(main: Rect) -> usize {
@@ -3326,10 +3317,10 @@ mod analog_clock_tests {
         let height = LARGE_CLOCK_NUMERAL_MIN_HEIGHT;
         let model = ClockViewModel::at("2026-07-10", "14:32:08", 14, 32, 8)
             .with_ascii_assets(RuntimeAsciiAssets::load_default().expect("default ASCII assets"));
-        let numerals = large_clock_numerals(width, height, &model).expect("large numerals");
+        let (large_numerals, radius_x, radius_y) = clock_face_geometry(width, height, &model);
+        let numerals = large_numerals.as_ref().expect("large numerals");
         let center_x = (width.saturating_sub(1) as f64) / 2.0;
         let center_y = (height.saturating_sub(1) as f64) / 2.0;
-        let (radius_x, radius_y) = clock_face_radii(width, height, Some(&numerals));
 
         assert_art_center(
             centered_clock_art_origin(
@@ -3363,6 +3354,95 @@ mod analog_clock_tests {
             &numerals.nine,
             (center_x - radius_x, center_y),
         );
+    }
+
+    #[test]
+    fn drawable_clock_sizes_preserve_a_circular_physical_radius() {
+        let model = ClockViewModel::default()
+            .with_ascii_assets(RuntimeAsciiAssets::load_default().expect("default ASCII assets"));
+        let mut saw_large_numerals = false;
+        let mut saw_small_numerals = false;
+
+        for width in 7..=200 {
+            for height in 5..=80 {
+                let (numerals, radius_x, radius_y) = clock_face_geometry(width, height, &model);
+                let center_x = (width.saturating_sub(1) as f64) / 2.0;
+                let center_y = (height.saturating_sub(1) as f64) / 2.0;
+
+                assert!(radius_x <= center_x + f64::EPSILON);
+                assert!(radius_y <= center_y + f64::EPSILON);
+                assert!(
+                    (radius_x / radius_y - CLOCK_CELL_HEIGHT_TO_WIDTH_RATIO).abs() <= f64::EPSILON,
+                    "{width}x{height} distorted the clock face"
+                );
+                let samples = clock_outline_sample_count(radius_x, radius_y);
+                let maximum_step = std::f64::consts::TAU * radius_x.max(radius_y) / samples as f64;
+                assert!(maximum_step <= CLOCK_OUTLINE_MAX_SAMPLE_STEP);
+
+                if let Some(numerals) = numerals.as_ref() {
+                    saw_large_numerals = true;
+                    assert_art_center(
+                        centered_clock_art_origin(
+                            center_x,
+                            center_y - radius_y,
+                            &numerals.twelve,
+                            width,
+                            height,
+                        ),
+                        &numerals.twelve,
+                        (center_x, center_y - radius_y),
+                    );
+                    assert_art_center(
+                        centered_clock_art_origin(
+                            center_x + radius_x,
+                            center_y,
+                            &numerals.three,
+                            width,
+                            height,
+                        ),
+                        &numerals.three,
+                        (center_x + radius_x, center_y),
+                    );
+                    assert_art_center(
+                        centered_clock_art_origin(
+                            center_x,
+                            center_y + radius_y,
+                            &numerals.six,
+                            width,
+                            height,
+                        ),
+                        &numerals.six,
+                        (center_x, center_y + radius_y),
+                    );
+                    assert_art_center(
+                        centered_clock_art_origin(
+                            center_x - radius_x,
+                            center_y,
+                            &numerals.nine,
+                            width,
+                            height,
+                        ),
+                        &numerals.nine,
+                        (center_x - radius_x, center_y),
+                    );
+                } else {
+                    saw_small_numerals = true;
+                }
+            }
+        }
+
+        assert!(saw_large_numerals);
+        assert!(saw_small_numerals);
+    }
+
+    #[test]
+    fn outline_sampling_scales_beyond_legacy_wide_terminals() {
+        let radius_x = 500.0;
+        let radius_y = radius_x / CLOCK_CELL_HEIGHT_TO_WIDTH_RATIO;
+        let samples = clock_outline_sample_count(radius_x, radius_y);
+
+        assert!(samples > CLOCK_OUTLINE_MIN_SAMPLES);
+        assert!(std::f64::consts::TAU * radius_x / samples as f64 <= CLOCK_OUTLINE_MAX_SAMPLE_STEP);
     }
 
     fn assert_art_center(origin: (usize, usize), lines: &[String], target: (f64, f64)) {

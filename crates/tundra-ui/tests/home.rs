@@ -9,11 +9,11 @@ use tundra_ui::{
     NotificationLayout, NotificationLevel, NotificationTone, NotificationViewModel,
     RuntimeAsciiAssets, ShellChromeViewModel, ShellEntry, ShellLayout, StatusViewModel,
     TimeSyncDialogViewModel, TundraTheme, UserManagementUserViewModel, UserManagementViewModel,
-    compute_shell_layout, home_logout_area, login_guest_area, login_password_area,
-    login_password_visibility_area, login_user_list_area, login_user_list_visible_rows,
-    notification_layout, render_bootstrap_admin, render_clock_placeholder, render_home,
-    render_login, render_notification_overlay, render_time_sync_failure_dialog,
-    render_user_management, status_time_button_area,
+    compute_shell_layout, home_logout_area, login_password_area, login_password_visibility_area,
+    login_user_list_area, login_user_list_visible_rows, notification_layout,
+    render_bootstrap_admin, render_clock_placeholder, render_home, render_login,
+    render_notification_overlay, render_time_sync_failure_dialog, render_user_management,
+    status_time_button_area,
 };
 
 #[test]
@@ -840,7 +840,7 @@ fn login_renderer_masks_password_length() {
         vec![
             login_user("AdminUser", "Admin User", "Admin"),
             login_user("Strix", "Local User", "User"),
-            login_user("guest", "Guest User", "Guest"),
+            login_user("Operator", "Backup User", "User"),
         ],
         1,
         0,
@@ -871,18 +871,17 @@ fn login_renderer_masks_password_length() {
     assert!(output.contains("*************"));
     assert!(!output.contains("StrongPass123"));
     assert!(output.contains("[Show]"));
-    assert!(output.contains("[Guest]"));
+    assert!(!output.to_ascii_lowercase().contains("guest"));
+    assert!(!output.contains("F3"));
     assert!(output.contains("Invalid username or password"));
 
     let main = main_rect(80, 24);
     let list_area = login_user_list_area(main);
     let password_area = login_password_area(main);
     let visibility_area = login_password_visibility_area(main);
-    let guest_area = login_guest_area(main);
     assert!(list_area.x < password_area.x);
     assert!(password_area.right() <= visibility_area.x);
-    assert!(visibility_area.right() <= guest_area.x);
-    assert!(guest_area.right() <= main.right());
+    assert!(visibility_area.right() <= main.right());
     assert_eq!(
         login_user_list_visible_rows(main),
         usize::from(list_area.height.saturating_sub(2))
@@ -933,7 +932,7 @@ fn login_focused_boxes_keep_solid_regular_weight_vertical_borders() {
 }
 
 #[test]
-fn login_renderer_reveals_only_explicit_plaintext_and_focuses_new_controls() {
+fn login_renderer_reveals_only_explicit_plaintext_and_focuses_visibility_control() {
     let chrome = chrome_for("Login");
     let visible = "密碼🙂";
     let model = LoginViewModel::new(
@@ -969,26 +968,6 @@ fn login_renderer_reveals_only_explicit_plaintext_and_focuses_new_controls() {
     assert!(region_has_fg(
         &terminal,
         visibility,
-        TundraTheme::default_dark().accent,
-    ));
-
-    let guest_model = LoginViewModel::new(Vec::new(), 0, 0, 0, LoginField::Guest, None);
-    assert!(!guest_model.password_is_visible());
-    let mut guest_terminal = Terminal::new(TestBackend::new(80, 24)).expect("test terminal");
-    guest_terminal
-        .draw(|frame| {
-            render_login(
-                frame,
-                frame.area(),
-                &chrome,
-                &guest_model,
-                &TundraTheme::default_dark(),
-            );
-        })
-        .expect("render guest-focused login");
-    assert!(region_has_fg(
-        &guest_terminal,
-        login_guest_area(main_rect(80, 24)),
         TundraTheme::default_dark().accent,
     ));
 }

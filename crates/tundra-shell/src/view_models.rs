@@ -15,7 +15,7 @@ impl ShellState {
                 })
             }
             ShellHomeMode::User => {
-                let user = self.current_home_username().unwrap_or("Guest");
+                let user = self.current_home_username().unwrap_or("Unauthenticated");
                 tundra_ui::HomeViewModel::user_with_selection_and_icon_assets(
                     user,
                     self.current_time_label(),
@@ -39,7 +39,6 @@ impl ShellState {
         self.auth_session
             .as_ref()
             .map(|session| session.username.as_str())
-            .or(self.guest_mode.then_some("Guest"))
     }
 
     pub fn to_clock_view_model(&self) -> tundra_ui::ClockViewModel {
@@ -134,7 +133,6 @@ impl ShellState {
                 ShellComponent::LoginPasswordVisibility => {
                     tundra_ui::LoginField::PasswordVisibility
                 }
-                ShellComponent::LoginGuest => tundra_ui::LoginField::Guest,
                 _ => tundra_ui::LoginField::UserList,
             },
             self.error_message.clone(),
@@ -192,7 +190,7 @@ impl ShellState {
             .auth_session
             .as_ref()
             .map(|session| session.username.clone())
-            .unwrap_or_else(|| "Guest".to_string());
+            .unwrap_or_else(|| "Unauthenticated".to_string());
         let mut model = tundra_ui::UserManagementViewModel::new(
             current_user.clone(),
             self.user_management_users

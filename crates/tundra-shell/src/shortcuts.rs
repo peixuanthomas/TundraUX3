@@ -40,11 +40,6 @@ pub fn default_shell_shortcuts() -> Vec<ShellShortcut> {
             command: ShellCommand::ToggleLoginPasswordVisibility,
         },
         ShellShortcut {
-            scope: ShortcutScope::Screen(ShellScreen::Login),
-            binding: KeyBinding::from(&KeyInput::from_label("F3")),
-            command: ShellCommand::LoginAsGuest,
-        },
-        ShellShortcut {
             scope: ShortcutScope::Screen(ShellScreen::ExitConfirm),
             binding: KeyBinding::from(&KeyInput::from_label("y")),
             command: ShellCommand::ConfirmExit,

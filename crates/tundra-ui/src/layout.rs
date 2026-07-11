@@ -22,6 +22,8 @@ const CLOCK_CREATE_DIALOG_HEIGHT: u16 = 11;
 const USER_MANAGEMENT_DETAILED_MIN_WIDTH: u16 = 72;
 const USER_MANAGEMENT_DIALOG_WIDTH: u16 = 60;
 
+pub const MIN_SHELL_TERMINAL_WIDTH: u16 = 50;
+pub const MIN_SHELL_TERMINAL_HEIGHT: u16 = 12;
 pub const NOTIFICATION_TOO_SMALL_MESSAGE: &str =
     "Terminal is too small to render this notification.";
 
@@ -179,7 +181,7 @@ impl UserManagementLayout {
 }
 
 pub fn compute_shell_layout(area: Rect) -> ShellLayout {
-    if area.width < 50 || area.height < 12 {
+    if area.width < MIN_SHELL_TERMINAL_WIDTH || area.height < MIN_SHELL_TERMINAL_HEIGHT {
         return ShellLayout::Compact(area);
     }
 

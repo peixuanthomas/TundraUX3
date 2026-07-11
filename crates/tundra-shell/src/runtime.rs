@@ -3,7 +3,14 @@ pub fn run_without_animation(output: &mut impl Write) -> io::Result<()> {
 }
 
 pub fn run_not_fullscreen_without_animation(output: &mut impl Write) -> io::Result<()> {
-    let ascii_assets = tundra_ui::RuntimeAsciiAssets::load_default().map_err(asset_io_error)?;
+    run_not_fullscreen_without_animation_with_loader(output, load_validated_runtime_ascii_assets)
+}
+
+fn run_not_fullscreen_without_animation_with_loader(
+    output: &mut impl Write,
+    load_assets: impl FnOnce() -> io::Result<tundra_ui::RuntimeAsciiAssets>,
+) -> io::Result<()> {
+    let ascii_assets = load_assets()?;
     render_static_banner_with_assets(output, &ascii_assets)?;
     write_smoke_loop_message(output)
 }
@@ -19,13 +26,44 @@ pub fn run_with_banner_animation(output: &mut impl Write) -> io::Result<()> {
 }
 
 pub fn run_not_fullscreen(output: &mut impl Write, _config: ShellLaunchConfig) -> io::Result<()> {
-    let ascii_assets = tundra_ui::RuntimeAsciiAssets::load_default().map_err(asset_io_error)?;
-    display_animated_banner_with_assets(output, BANNER_DISPLAY_DURATION, &ascii_assets)?;
+    run_not_fullscreen_with_loader(output, load_validated_runtime_ascii_assets)
+}
+
+fn run_not_fullscreen_with_loader(
+    output: &mut impl Write,
+    load_assets: impl FnOnce() -> io::Result<tundra_ui::RuntimeAsciiAssets>,
+) -> io::Result<()> {
+    let ascii_assets = load_assets()?;
+    run_not_fullscreen_with_assets(output, &ascii_assets)
+}
+
+fn run_not_fullscreen_with_assets(
+    output: &mut impl Write,
+    ascii_assets: &tundra_ui::RuntimeAsciiAssets,
+) -> io::Result<()> {
+    display_animated_banner_with_assets(output, BANNER_DISPLAY_DURATION, ascii_assets)?;
     write_smoke_loop_message(output)
 }
 
+pub fn run_shell_blocking(
+    output: &mut impl Write,
+    config: ShellLaunchConfig,
+) -> io::Result<()> {
+    match config.terminal_mode {
+        ShellTerminalMode::Fullscreen => run_fullscreen_blocking(output, config),
+        ShellTerminalMode::NotFullscreen => run_not_fullscreen(output, config),
+    }
+}
+
 pub fn run_fullscreen_once_without_animation(output: &mut impl Write) -> io::Result<()> {
-    let ascii_assets = tundra_ui::RuntimeAsciiAssets::load_default().map_err(asset_io_error)?;
+    run_fullscreen_once_without_animation_with_loader(output, load_validated_runtime_ascii_assets)
+}
+
+fn run_fullscreen_once_without_animation_with_loader(
+    output: &mut impl Write,
+    load_assets: impl FnOnce() -> io::Result<tundra_ui::RuntimeAsciiAssets>,
+) -> io::Result<()> {
+    let ascii_assets = load_assets()?;
     with_fullscreen(output, |output| {
         render_static_banner_with_assets(output, &ascii_assets)?;
         write_smoke_loop_message(output)
@@ -36,7 +74,8 @@ pub fn run_fullscreen_blocking(
     output: &mut impl Write,
     config: ShellLaunchConfig,
 ) -> io::Result<()> {
-    let ascii_assets = tundra_ui::RuntimeAsciiAssets::load_default().map_err(asset_io_error)?;
+    let ascii_assets = load_validated_runtime_ascii_assets()?;
+    let terminal_size_requirement = ShellTerminalSizeRequirement::from_assets(&ascii_assets);
     let platform = tundra_platform::native_platform();
     install_panic_restore_hook();
     let (time_sync_sender, time_sync_receiver) = mpsc::channel();
@@ -48,7 +87,8 @@ pub fn run_fullscreen_blocking(
         let mut startup =
             prepare_shell_startup(platform.as_ref(), config).map_err(io::Error::other)?;
         if force_lockscreen || should_show_startup_lockscreen(&startup) {
-            let lockscreen_options = startup_lockscreen_launch_options(&startup);
+            let lockscreen_options =
+                startup_lockscreen_launch_options(&startup, terminal_size_requirement);
             match tundra_weathr::run_shell_lockscreen_blocking_with_options(lockscreen_options)
                 .map_err(io::Error::other)?
             {
@@ -119,9 +159,10 @@ fn run_fullscreen_shell_session(
     time_sync_receiver: &mpsc::Receiver<TimedTimeSyncResult>,
     cached_time_sync: &mut Option<CachedTimeSyncResult>,
 ) -> io::Result<FullscreenShellSessionOutcome> {
+    let terminal_size_requirement = ShellTerminalSizeRequirement::from_assets(&ascii_assets);
+    let initial_size = checked_current_terminal_size(terminal_size_requirement)?;
     let terminal_control = TerminalControlHandler::install();
     let mut guard = TerminalGuard::enter(output)?;
-    let initial_size = crossterm::terminal::size().unwrap_or((80, 24));
     let mut state =
         ShellState::new_with_startup_and_assets(config, initial_size, startup, ascii_assets);
     if let Some(cached) = cached_time_sync.as_ref() {
@@ -129,8 +170,14 @@ fn run_fullscreen_shell_session(
     }
     let tick_rate = Duration::from_millis(250);
     let theme = tundra_ui::TundraTheme::default_dark();
+    let mut terminal_size_error = None;
 
     loop {
+        if let Err(error) = terminal_size_requirement.validate(crossterm::terminal::size()?) {
+            terminal_size_error = Some(io::Error::other(error));
+            break;
+        }
+
         drain_time_sync_results(&mut state, time_sync_receiver, cached_time_sync);
         let frame_now = Instant::now();
         let clock_snapshot = state.network_clock.snapshot();
@@ -213,7 +260,14 @@ fn run_fullscreen_shell_session(
             state.notifications.poll_timeout(poll_now, tick_rate),
         );
         let action = if event::poll(poll_timeout)? {
-            state.apply_input_with_platform(crossterm_event_to_input(event::read()?), platform)
+            let terminal_event = event::read()?;
+            if let event::Event::Resize(width, height) = terminal_event
+                && let Err(error) = terminal_size_requirement.validate((width, height))
+            {
+                terminal_size_error = Some(io::Error::other(error));
+                break;
+            }
+            state.apply_input_with_platform(crossterm_event_to_input(terminal_event), platform)
         } else {
             state.apply_input_with_platform(InputEvent::Tick, platform)
         };
@@ -223,14 +277,51 @@ fn run_fullscreen_shell_session(
         }
     }
 
+    guard.restore()?;
+    drop(guard);
+
+    if let Some(error) = terminal_size_error {
+        return Err(error);
+    }
+
     let outcome = if state.return_to_lockscreen_requested() {
         FullscreenShellSessionOutcome::ReturnToLockscreen
     } else {
         FullscreenShellSessionOutcome::Exit
     };
-    guard.restore()?;
-    drop(guard);
     Ok(outcome)
+}
+
+fn load_validated_runtime_ascii_assets() -> io::Result<tundra_ui::RuntimeAsciiAssets> {
+    let ascii_assets = tundra_ui::RuntimeAsciiAssets::load_default().map_err(asset_io_error)?;
+    checked_current_terminal_size(ShellTerminalSizeRequirement::from_assets(&ascii_assets))?;
+    Ok(ascii_assets)
+}
+
+#[cfg(test)]
+mod runtime_preflight_tests {
+    use super::*;
+
+    #[test]
+    fn failed_terminal_preflight_writes_no_banner_or_fullscreen_sequence() {
+        let fail = || Err(io::Error::other("terminal is too small"));
+
+        let mut static_output = Vec::new();
+        assert!(
+            run_not_fullscreen_without_animation_with_loader(&mut static_output, fail).is_err()
+        );
+        assert!(static_output.is_empty());
+
+        let mut animated_output = Vec::new();
+        assert!(run_not_fullscreen_with_loader(&mut animated_output, fail).is_err());
+        assert!(animated_output.is_empty());
+
+        let mut fullscreen_output = Vec::new();
+        assert!(
+            run_fullscreen_once_without_animation_with_loader(&mut fullscreen_output, fail).is_err()
+        );
+        assert!(fullscreen_output.is_empty());
+    }
 }
 
 fn spawn_time_sync_worker(sender: mpsc::Sender<TimedTimeSyncResult>) -> thread::JoinHandle<()> {

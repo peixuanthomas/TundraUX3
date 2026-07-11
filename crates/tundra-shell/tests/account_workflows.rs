@@ -656,66 +656,43 @@ fn login_password_reveal_handles_unicode_expires_at_five_seconds_and_does_not_ex
 }
 
 #[test]
-fn guest_login_is_ephemeral_restricted_to_home_and_read_only_clock() {
-    let fixture = FixtureRoot::new("guest-ephemeral");
+fn login_f3_cannot_create_an_anonymous_session_and_focus_skips_guest() {
+    let fixture = FixtureRoot::new("login-without-guest");
     let platform = mock_platform(fixture.path());
     bootstrap_with_shell(&platform);
 
-    let startup = prepare_shell_startup(&platform, default_config()).expect("guest startup");
+    let startup = prepare_shell_startup(&platform, default_config()).expect("login startup");
     let manager = startup.storage_manager.clone().expect("storage manager");
     let users_before = read_optional_file(&manager.layout().users_path);
     let clock_before = read_optional_file(&manager.layout().clock_path);
     let audit_before = read_optional_file(&manager.layout().audit_log_path);
     let mut state = ShellState::new_with_startup(default_config(), (120, 40), startup);
 
-    state.apply_input(function_key(3));
-    assert_eq!(state.active_screen(), ShellScreen::Home);
-    assert!(state.guest_mode());
-    assert!(state.auth_session().is_none());
-    assert!(state.to_home_view_model().entries().is_empty());
-    assert!(state.to_home_view_model().logout_visible());
-
-    state.apply_input(InputEvent::from_key_label("e"));
-    assert_eq!(state.active_screen(), ShellScreen::Home);
-    state.apply_input(InputEvent::from_key_label("u"));
-    assert_eq!(state.active_screen(), ShellScreen::Home);
-
-    state.apply_input(InputEvent::from_key_label("Tab"));
-    assert_eq!(state.focused_component(), ShellComponent::HomeLogout);
-    state.apply_input(InputEvent::from_key_label("Tab"));
-    assert_eq!(state.focused_component(), ShellComponent::ClockButton);
-    state.apply_input(InputEvent::from_key_label("Enter"));
-    assert_eq!(state.active_screen(), ShellScreen::Clock);
-    let clock_model = state.to_clock_view_model();
-    assert!(clock_model.is_read_only());
-    assert!(clock_model.create_dialog.is_none());
-    assert!(
-        state
-            .hit_map()
-            .regions()
-            .iter()
-            .all(|region| region.component != ShellComponent::ClockNewButton)
-    );
-
-    let area = ratatui::layout::Rect::new(0, 0, state.terminal_size().0, state.terminal_size().1);
-    let tundra_ui::ShellLayout::Full { main, .. } = tundra_ui::compute_shell_layout(area) else {
-        panic!("guest test requires a full shell layout");
-    };
-    assert_eq!(
-        tundra_ui::clock_page_layout(main, &clock_model)
-            .new_button
-            .width,
-        0
-    );
-    state.apply_input(InputEvent::from_key_label("n"));
-    assert!(state.to_clock_view_model().create_dialog.is_none());
-
-    state.apply_input(InputEvent::from_key_label("Esc"));
-    assert_eq!(state.active_screen(), ShellScreen::Home);
-    state.apply_input(InputEvent::from_key_label("l"));
     assert_eq!(state.active_screen(), ShellScreen::Login);
-    assert!(!state.guest_mode());
     assert!(state.auth_session().is_none());
+    assert_eq!(state.focused_component(), ShellComponent::LoginUserList);
+    state.apply_input(InputEvent::from_key_label("Tab"));
+    assert_eq!(state.focused_component(), ShellComponent::LoginPassword);
+    state.apply_input(InputEvent::from_key_label("Tab"));
+    assert_eq!(
+        state.focused_component(),
+        ShellComponent::LoginPasswordVisibility
+    );
+    state.apply_input(InputEvent::from_key_label("Tab"));
+    assert_eq!(state.focused_component(), ShellComponent::LoginUserList);
+    state.apply_input(InputEvent::from_key_label("Shift+Tab"));
+    assert_eq!(
+        state.focused_component(),
+        ShellComponent::LoginPasswordVisibility
+    );
+
+    state.apply_input(function_key(3));
+    assert_eq!(state.active_screen(), ShellScreen::Login);
+    assert!(state.auth_session().is_none());
+    assert_eq!(
+        state.focused_component(),
+        ShellComponent::LoginPasswordVisibility
+    );
 
     assert_eq!(
         read_optional_file(&manager.layout().users_path),
@@ -800,21 +777,17 @@ fn login_and_logout_hit_regions_share_render_geometry_at_supported_sizes() {
         let mut state = ShellState::new_with_startup(default_config(), terminal_size, startup);
         let password = component_area(&state, ShellComponent::LoginPassword);
         let visibility = component_area(&state, ShellComponent::LoginPasswordVisibility);
-        let guest = component_area(&state, ShellComponent::LoginGuest);
 
-        for area in [password, visibility, guest] {
+        for area in [password, visibility] {
             assert!(
                 area.width > 0 && area.height > 0,
                 "missing area at {terminal_size:?}"
             );
         }
         assert!(!rects_overlap(password, visibility));
-        assert!(!rects_overlap(password, guest));
-        assert!(!rects_overlap(visibility, guest));
         for component in [
             ShellComponent::LoginPassword,
             ShellComponent::LoginPasswordVisibility,
-            ShellComponent::LoginGuest,
         ] {
             let center = rect_center(component_area(&state, component));
             assert_eq!(state.hit_target_at(center), Some(component));
@@ -837,7 +810,6 @@ fn login_and_logout_hit_regions_share_render_geometry_at_supported_sizes() {
             region.component,
             ShellComponent::LoginPassword
                 | ShellComponent::LoginPasswordVisibility
-                | ShellComponent::LoginGuest
                 | ShellComponent::HomeLogout
         )
     }));

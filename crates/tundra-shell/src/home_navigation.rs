@@ -33,7 +33,6 @@ impl ShellState {
         self.notification_pointer_capture = None;
         self.pending_notification_commands.clear();
         self.auth_session = None;
-        self.guest_mode = false;
         self.time_sync_dialog_visible = false;
         self.time_sync_failure_message = None;
         self.clock_scheduler = None;
@@ -93,11 +92,9 @@ impl ShellState {
     }
 
     fn is_strict_guest(&self) -> bool {
-        self.guest_mode
-            || self
-                .auth_session
-                .as_ref()
-                .is_some_and(|session| session.role == UserRole::Guest)
+        self.auth_session
+            .as_ref()
+            .is_some_and(|session| session.role == UserRole::Guest)
     }
 
     fn sync_home_entry_selection(&mut self) {

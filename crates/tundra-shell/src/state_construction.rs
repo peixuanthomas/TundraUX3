@@ -98,7 +98,6 @@ impl ShellState {
             time_sync_dialog_visible: false,
             time_sync_failure_message: None,
             auth_session: None,
-            guest_mode: false,
             requested_debug_mode: launch_config.home_mode_override == HomeModeOverride::Debug,
             debug_policy: startup.debug_policy,
             login_users,

@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 
 use serde::Deserialize;
 
-use crate::artwork::{pad_lines, read_asset_to_string};
+use crate::artwork::{lines_are_printable_ascii, pad_lines, read_asset_to_string};
 use crate::asset_error::AssetError;
 use crate::asset_resolver::AssetResolver;
 
@@ -12,6 +12,28 @@ pub struct ClockFontAsset {
     pub spacing: usize,
     pub separator_spacing: usize,
     pub glyphs: BTreeMap<char, Vec<String>>,
+}
+
+impl ClockFontAsset {
+    pub fn max_rendered_clock_width(&self) -> usize {
+        let glyph_width = |glyph: char| {
+            self.glyphs
+                .get(&glyph)
+                .and_then(|lines| lines.iter().map(|line| line.chars().count()).max())
+                .unwrap_or(0)
+        };
+        let digit_width = "0123456789".chars().map(glyph_width).max().unwrap_or(0);
+        let suffix_width = glyph_width('A').max(glyph_width('P'));
+
+        digit_width
+            .saturating_mul(4)
+            .saturating_add(glyph_width(':'))
+            .saturating_add(glyph_width(' '))
+            .saturating_add(suffix_width)
+            .saturating_add(glyph_width('M'))
+            .saturating_add(self.separator_spacing.saturating_mul(2))
+            .saturating_add(self.spacing.saturating_mul(5))
+    }
 }
 
 pub(crate) fn load_clock_font(
@@ -60,6 +82,14 @@ pub(crate) fn load_clock_font(
                 ),
             });
         }
+        if !lines_are_printable_ascii(&lines) {
+            return Err(AssetError::InvalidAsset {
+                asset: key.to_string(),
+                message: format!(
+                    "clock font glyph {glyph_key:?} must contain printable ASCII characters only"
+                ),
+            });
+        }
         glyphs.insert(ch, pad_lines(lines));
     }
 
@@ -90,4 +120,25 @@ struct ClockFontFile {
     spacing: Option<usize>,
     separator_spacing: Option<usize>,
     glyphs: BTreeMap<String, Vec<String>>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn maximum_clock_width_includes_composed_glyphs_and_both_spacing_kinds() {
+        let glyphs = "0123456789: APM"
+            .chars()
+            .map(|glyph| (glyph, vec![glyph.to_string()]))
+            .collect();
+        let font = ClockFontAsset {
+            height: 1,
+            spacing: 2,
+            separator_spacing: 3,
+            glyphs,
+        };
+
+        assert_eq!(font.max_rendered_clock_width(), 24);
+    }
 }

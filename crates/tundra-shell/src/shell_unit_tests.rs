@@ -446,9 +446,14 @@ mod tests {
         );
         startup.storage_manager = Some(opened.manager.clone());
 
-        let options = startup_lockscreen_launch_options(&startup);
+        let terminal_size_requirement = ShellTerminalSizeRequirement {
+            width: 108,
+            height: 20,
+        };
+        let options = startup_lockscreen_launch_options(&startup, terminal_size_requirement);
 
         assert_eq!(options.timezone_id.as_deref(), Some("Asia/Shanghai"));
+        assert_eq!(options.minimum_terminal_size, Some((108, 20)));
         let location = options.location_override.expect("mapped location");
         assert_eq!(location.city.as_deref(), Some("Shanghai"));
         assert!((location.latitude - 31.2304).abs() < 0.001);

@@ -126,10 +126,6 @@ impl ShellState {
         self.auth_session.as_ref()
     }
 
-    pub fn guest_mode(&self) -> bool {
-        self.guest_mode
-    }
-
     #[doc(hidden)]
     pub fn login_idle_deadline_for_test(&self) -> Instant {
         self.login_idle_deadline

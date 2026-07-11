@@ -262,18 +262,9 @@ impl ShellState {
                 self.error_message = None;
                 ShellAction::Redraw
             }
-            ShellCommand::LoginFocusGuest => {
-                self.focused_component = ShellComponent::LoginGuest;
-                self.error_message = None;
-                ShellAction::Redraw
-            }
             ShellCommand::ToggleLoginPasswordVisibility => {
                 self.focused_component = ShellComponent::LoginPasswordVisibility;
                 self.toggle_login_password_visibility_at(received_at);
-                ShellAction::Redraw
-            }
-            ShellCommand::LoginAsGuest => {
-                self.complete_guest_login();
                 ShellAction::Redraw
             }
             ShellCommand::SubmitLogin => {

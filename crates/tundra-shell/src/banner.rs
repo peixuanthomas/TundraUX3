@@ -1,8 +1,13 @@
-use crate::{BANNER_ASSET_KEY, BANNER_DISPLAY_DURATION};
+use crate::{
+    BANNER_ASSET_KEY, BANNER_DISPLAY_DURATION, ShellTerminalSizeRequirement,
+    checked_current_terminal_size,
+};
 use std::io::{self, Write};
 use std::thread;
 use std::time::{Duration, Instant};
 use tundra_storage::{CLOCK_DESCRIPTOR, CONFIG_DESCRIPTOR, SCHEMA_VERSION};
+
+const TERMINAL_SIZE_POLL_INTERVAL: Duration = Duration::from_millis(50);
 
 pub fn banner_lines() -> Result<Vec<String>, tundra_ui::AssetError> {
     let ascii_assets = tundra_ui::RuntimeAsciiAssets::load_default()?;
@@ -62,6 +67,19 @@ pub fn display_animated_banner_with_assets(
     total_duration: Duration,
     ascii_assets: &tundra_ui::RuntimeAsciiAssets,
 ) -> io::Result<()> {
+    let requirement = ShellTerminalSizeRequirement::from_assets(ascii_assets);
+    display_animated_banner_with_assets_and_size_check(output, total_duration, ascii_assets, || {
+        checked_current_terminal_size(requirement).map(|_| ())
+    })
+}
+
+fn display_animated_banner_with_assets_and_size_check(
+    output: &mut impl Write,
+    total_duration: Duration,
+    ascii_assets: &tundra_ui::RuntimeAsciiAssets,
+    mut check_size: impl FnMut() -> io::Result<()>,
+) -> io::Result<()> {
+    check_size()?;
     let banner_lines = ascii_assets
         .banner_lines(BANNER_ASSET_KEY)
         .map_err(asset_io_error)?;
@@ -73,25 +91,77 @@ pub fn display_animated_banner_with_assets(
     let frame_delay = total_duration / (banner_lines.len() as u32 + 1);
 
     for revealed_lines in 1..=banner_lines.len() {
+        check_size()?;
         write!(output, "\x1B[2J\x1B[H")?;
         for line in banner_lines.iter().take(revealed_lines) {
             writeln!(output, "{line}")?;
         }
         output.flush()?;
 
-        if !frame_delay.is_zero() {
-            thread::sleep(frame_delay);
-        }
+        wait_with_size_checks(frame_delay, &mut check_size)?;
     }
 
     let elapsed = started_at.elapsed();
     if elapsed < total_duration {
-        thread::sleep(total_duration - elapsed);
+        wait_with_size_checks(total_duration - elapsed, &mut check_size)?;
     }
 
     Ok(())
 }
 
+fn wait_with_size_checks(
+    duration: Duration,
+    check_size: &mut impl FnMut() -> io::Result<()>,
+) -> io::Result<()> {
+    let started_at = Instant::now();
+    while started_at.elapsed() < duration {
+        check_size()?;
+        let remaining = duration.saturating_sub(started_at.elapsed());
+        thread::sleep(remaining.min(TERMINAL_SIZE_POLL_INTERVAL));
+    }
+    Ok(())
+}
+
 pub(crate) fn asset_io_error(error: tundra_ui::AssetError) -> io::Error {
     io::Error::other(error.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn animated_banner_stops_rendering_when_a_size_check_fails() {
+        let asset_root =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../tundra-ascii-assets/assets");
+        let store = tundra_ui::AsciiAssetStore::load_with_root(asset_root, "default")
+            .expect("canonical ASCII assets");
+        let assets = tundra_ui::RuntimeAsciiAssets::from_store(store);
+        let banner_lines = assets
+            .banner_lines(BANNER_ASSET_KEY)
+            .expect("default banner")
+            .to_vec();
+        let mut output = Vec::new();
+        let mut checks = 0;
+
+        let error = display_animated_banner_with_assets_and_size_check(
+            &mut output,
+            Duration::ZERO,
+            &assets,
+            || {
+                checks += 1;
+                if checks >= 3 {
+                    Err(io::Error::other("terminal became too small"))
+                } else {
+                    Ok(())
+                }
+            },
+        )
+        .expect_err("failed size check must stop the animation");
+
+        let output = String::from_utf8(output).expect("banner output should be UTF-8");
+        assert!(error.to_string().contains("too small"));
+        assert!(output.contains(&banner_lines[0]));
+        assert!(!output.contains(&banner_lines[1]));
+    }
 }

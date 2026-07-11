@@ -72,7 +72,6 @@ impl ShellState {
                 ShellComponent::LoginUserList,
                 ShellComponent::LoginPassword,
                 ShellComponent::LoginPasswordVisibility,
-                ShellComponent::LoginGuest,
             ];
         }
         if self.active_screen() == ShellScreen::BootstrapAdmin {
@@ -124,7 +123,7 @@ impl ShellState {
         }
 
         let mut order = vec![ShellComponent::Home];
-        if self.auth_session.is_some() || self.guest_mode {
+        if self.auth_session.is_some() {
             order.push(ShellComponent::HomeLogout);
         }
         order.extend([

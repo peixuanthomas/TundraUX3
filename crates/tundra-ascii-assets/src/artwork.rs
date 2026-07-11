@@ -131,6 +131,7 @@ pub(crate) fn load_text_art(
 ) -> Result<TextArt, AssetError> {
     let source = read_asset_to_string(resolver, theme_id, key, relative_path)?;
     let lines = split_preserved_lines(&source);
+    ensure_ascii_lines(key, "text art", &lines)?;
     let (width, height) = measure_lines(&lines);
     if height == 0 {
         return Err(AssetError::InvalidAsset {
@@ -220,6 +221,7 @@ pub(crate) fn load_art_set(
                 });
             }
         };
+        ensure_ascii_lines(key, &format!("art item {item_key}"), &lines)?;
         let (width, height) = measure_lines(&lines);
         if height == 0 {
             return Err(AssetError::InvalidAsset {
@@ -281,6 +283,24 @@ fn measure_lines(lines: &[String]) -> (usize, usize) {
     )
 }
 
+fn ensure_ascii_lines(asset: &str, description: &str, lines: &[String]) -> Result<(), AssetError> {
+    if !lines_are_printable_ascii(lines) {
+        return Err(AssetError::InvalidAsset {
+            asset: asset.to_string(),
+            message: format!("{description} must contain printable ASCII characters only"),
+        });
+    }
+
+    Ok(())
+}
+
+pub(crate) fn lines_are_printable_ascii(lines: &[String]) -> bool {
+    lines.iter().all(|line| {
+        line.bytes()
+            .all(|byte| byte == b' ' || byte.is_ascii_graphic())
+    })
+}
+
 pub(crate) fn pad_lines(mut lines: Vec<String>) -> Vec<String> {
     let (width, _) = measure_lines(&lines);
     for line in &mut lines {
@@ -288,6 +308,22 @@ pub(crate) fn pad_lines(mut lines: Vec<String>) -> Vec<String> {
         line.push_str(&" ".repeat(padding));
     }
     lines
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ascii_art_rejects_characters_with_non_unit_terminal_width() {
+        for content in ["天气", "column\tcolumn", "\u{1b}[31m", "\u{7f}"] {
+            let error = ensure_ascii_lines("example", "text art", &[content.to_string()])
+                .expect_err("non-cell-width art must be rejected");
+
+            assert!(matches!(error, AssetError::InvalidAsset { .. }));
+            assert!(error.to_string().contains("printable ASCII"));
+        }
+    }
 }
 
 #[derive(Debug, Deserialize)]

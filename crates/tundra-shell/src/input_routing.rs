@@ -149,10 +149,6 @@ impl ShellState {
         if matches!(&key.key, InputKey::Function(2)) {
             return (target, ShellCommand::ToggleLoginPasswordVisibility);
         }
-        if matches!(&key.key, InputKey::Function(3)) {
-            return (target, ShellCommand::LoginAsGuest);
-        }
-
         match self.focused_component {
             ShellComponent::LoginPassword => match &key.key {
                 InputKey::BackTab => (target, ShellCommand::LoginFocusUserList),
@@ -170,7 +166,7 @@ impl ShellState {
                 InputKey::BackTab => (target, ShellCommand::LoginFocusPassword),
                 InputKey::Tab if key.modifiers.shift => (target, ShellCommand::LoginFocusPassword),
                 InputKey::Tab | InputKey::Right | InputKey::Down => {
-                    (target, ShellCommand::LoginFocusGuest)
+                    (target, ShellCommand::LoginFocusUserList)
                 }
                 InputKey::Left | InputKey::Up => (target, ShellCommand::LoginFocusPassword),
                 InputKey::Enter | InputKey::Character(' ') => {
@@ -178,23 +174,11 @@ impl ShellState {
                 }
                 _ => (target, ShellCommand::RecordInput),
             },
-            ShellComponent::LoginGuest => match &key.key {
+            _ => match &key.key {
                 InputKey::BackTab => (target, ShellCommand::LoginFocusPasswordVisibility),
                 InputKey::Tab if key.modifiers.shift => {
                     (target, ShellCommand::LoginFocusPasswordVisibility)
                 }
-                InputKey::Tab | InputKey::Right | InputKey::Down => {
-                    (target, ShellCommand::LoginFocusUserList)
-                }
-                InputKey::Left | InputKey::Up => {
-                    (target, ShellCommand::LoginFocusPasswordVisibility)
-                }
-                InputKey::Enter | InputKey::Character(' ') => (target, ShellCommand::LoginAsGuest),
-                _ => (target, ShellCommand::RecordInput),
-            },
-            _ => match &key.key {
-                InputKey::BackTab => (target, ShellCommand::LoginFocusGuest),
-                InputKey::Tab if key.modifiers.shift => (target, ShellCommand::LoginFocusGuest),
                 InputKey::Tab => (target, ShellCommand::LoginFocusPassword),
                 InputKey::Enter => (target, ShellCommand::LoginFocusPassword),
                 InputKey::Up => (target, ShellCommand::LoginPreviousUser),
@@ -1183,12 +1167,6 @@ impl ShellState {
                     return (
                         RoutedTarget::Component(ShellComponent::LoginPasswordVisibility),
                         ShellCommand::ToggleLoginPasswordVisibility,
-                    );
-                }
-                if hit_target == Some(ShellComponent::LoginGuest) {
-                    return (
-                        RoutedTarget::Component(ShellComponent::LoginGuest),
-                        ShellCommand::LoginAsGuest,
                     );
                 }
                 if let Some(

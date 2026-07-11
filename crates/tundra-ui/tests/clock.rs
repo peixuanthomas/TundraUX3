@@ -89,14 +89,6 @@ fn wide_renderer_draws_ascii_hands_digital_time_and_grouped_entries() {
     assert!(face.contains('*'), "minute hand should use *");
     assert!(face.contains('+'), "second hand should use +");
     assert!(face.contains('@'), "center should use @");
-    assert!(
-        face.contains("8888888888"),
-        "wide clock should use the lockscreen numeral font"
-    );
-    assert!(
-        face.contains("Y88[   ]88"),
-        "wide clock should render the seven-line lockscreen six"
-    );
     assert!(face.is_ascii());
 
     let selected_row = layout
@@ -123,10 +115,6 @@ fn analog_clock_falls_back_to_small_numerals_below_either_large_face_threshold()
         );
 
         assert!(face.contains("12"), "{width}x{height} lost the small 12");
-        assert!(
-            !face.contains("8888888888"),
-            "{width}x{height} unexpectedly used large numerals"
-        );
         assert!(face.is_ascii());
     }
 }

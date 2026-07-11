@@ -17,6 +17,6 @@ pub use asset_manifest::{
     required_assets,
 };
 pub use asset_resolver::{AssetResolver, asset_root_from_env_or_current_exe};
-pub use asset_store::AsciiAssetStore;
+pub use asset_store::{AsciiAssetStore, AssetDimensions};
 pub use asset_validation::{AssetCheck, AssetCheckReport, AssetCheckStatus, check_required_assets};
 pub use clock_font::ClockFontAsset;

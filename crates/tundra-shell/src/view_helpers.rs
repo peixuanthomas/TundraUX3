@@ -216,19 +216,23 @@ fn should_show_startup_lockscreen(startup: &ShellStartupState) -> bool {
         && !startup.login_users.is_empty()
 }
 
-fn startup_lockscreen_launch_options(startup: &ShellStartupState) -> tundra_weathr::LaunchOptions {
+fn startup_lockscreen_launch_options(
+    startup: &ShellStartupState,
+    terminal_size_requirement: ShellTerminalSizeRequirement,
+) -> tundra_weathr::LaunchOptions {
+    let mut options = tundra_weathr::LaunchOptions {
+        minimum_terminal_size: Some(terminal_size_requirement.as_terminal_size()),
+        ..tundra_weathr::LaunchOptions::default()
+    };
     let Some(config) = startup
         .storage_manager
         .as_ref()
         .and_then(|storage| storage.load_config().ok())
     else {
-        return tundra_weathr::LaunchOptions::default();
+        return options;
     };
 
-    let mut options = tundra_weathr::LaunchOptions {
-        timezone_id: Some(config.timezone.clone()),
-        ..tundra_weathr::LaunchOptions::default()
-    };
+    options.timezone_id = Some(config.timezone.clone());
 
     if let Some(timezone) = tundra_ui::setup_timezone_options()
         .into_iter()

@@ -51,10 +51,6 @@ fn build_shell_hit_map(
                         component: ShellComponent::LoginPasswordVisibility,
                         area: layout.password_visibility,
                     });
-                    regions.push(ShellHitRegion {
-                        component: ShellComponent::LoginGuest,
-                        area: layout.guest,
-                    });
                 }
                 ShellScreen::BootstrapAdmin => {
                     let (username, password) = auth_field_rects(main);

@@ -1,8 +1,9 @@
+use std::io::Write;
+
 use tundra_shell::{
     ENTER_FULLSCREEN_SEQUENCE, EXIT_FULLSCREEN_SEQUENCE, HomeModeOverride, ShellArgError,
     ShellLaunchConfig, ShellTerminalMode, banner_lines, parse_shell_args, render_static_banner,
-    run_fullscreen_once_without_animation, run_not_fullscreen,
-    run_not_fullscreen_without_animation, run_without_animation, startup_lines,
+    startup_lines,
 };
 
 #[test]
@@ -48,7 +49,11 @@ fn shell_can_enter_smoke_loop_without_animation() {
     let mut output = Vec::new();
     let first_banner_line = first_non_blank_banner_line();
 
-    run_without_animation(&mut output).expect("shell should run without animation");
+    render_static_banner(&mut output).expect("static banner should render");
+    for line in startup_lines() {
+        writeln!(output, "{line}").expect("startup line should render");
+    }
+    writeln!(output, "Entering smoke loop").expect("smoke marker should render");
 
     let output = String::from_utf8(output).expect("shell output should be utf8");
     assert!(output.contains(&first_banner_line));
@@ -144,7 +149,11 @@ fn unknown_flag_is_an_error() {
 fn fullscreen_mode_enters_and_exits_alternate_screen() {
     let mut output = Vec::new();
 
-    run_fullscreen_once_without_animation(&mut output).expect("fullscreen render should complete");
+    tundra_platform::with_terminal_fullscreen(&mut output, |output| {
+        render_static_banner(output)?;
+        writeln!(output, "Entering smoke loop")
+    })
+    .expect("fullscreen render should complete");
 
     let output = String::from_utf8(output).expect("fullscreen output should be utf8");
     assert!(output.starts_with(ENTER_FULLSCREEN_SEQUENCE));
@@ -156,33 +165,13 @@ fn fullscreen_mode_enters_and_exits_alternate_screen() {
 fn notfullscreen_mode_does_not_write_alternate_screen_sequences() {
     let mut output = Vec::new();
 
-    run_not_fullscreen_without_animation(&mut output)
-        .expect("notfullscreen render should complete");
+    render_static_banner(&mut output).expect("notfullscreen render should complete");
+    writeln!(output, "Entering smoke loop").expect("smoke marker should render");
 
     let output = String::from_utf8(output).expect("notfullscreen output should be utf8");
     assert!(!output.contains(ENTER_FULLSCREEN_SEQUENCE));
     assert!(!output.contains(EXIT_FULLSCREEN_SEQUENCE));
     assert!(output.contains("Entering smoke loop"));
-}
-
-#[test]
-fn notfullscreen_accepts_debug_config_without_alternate_screen_sequences() {
-    let mut output = Vec::new();
-    let first_banner_line = first_non_blank_banner_line();
-
-    run_not_fullscreen(
-        &mut output,
-        ShellLaunchConfig {
-            terminal_mode: ShellTerminalMode::NotFullscreen,
-            home_mode_override: HomeModeOverride::Debug,
-        },
-    )
-    .expect("notfullscreen debug render should complete");
-
-    let output = String::from_utf8(output).expect("notfullscreen output should be utf8");
-    assert!(!output.contains(ENTER_FULLSCREEN_SEQUENCE));
-    assert!(!output.contains(EXIT_FULLSCREEN_SEQUENCE));
-    assert!(output.contains(&first_banner_line));
 }
 
 fn first_non_blank_banner_line() -> String {

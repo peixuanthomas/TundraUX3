@@ -351,7 +351,6 @@ pub enum LoginField {
     UserList,
     Password,
     PasswordVisibility,
-    Guest,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

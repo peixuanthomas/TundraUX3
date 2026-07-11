@@ -29,6 +29,7 @@ pub struct LaunchOptions {
     pub prefer_config_location: bool,
     pub location_override: Option<LaunchLocation>,
     pub timezone_id: Option<String>,
+    pub minimum_terminal_size: Option<(u16, u16)>,
 }
 
 impl Default for LaunchOptions {
@@ -37,6 +38,7 @@ impl Default for LaunchOptions {
             prefer_config_location: true,
             location_override: None,
             timezone_id: None,
+            minimum_terminal_size: None,
         }
     }
 }
@@ -180,7 +182,14 @@ async fn run_with_options(
         );
     }
 
-    let mut renderer = TerminalRenderer::new()?;
+    let active_theme_id = theme_registry.active().id;
+    let asset_dimensions = tundra_ascii_assets::AsciiAssetStore::load_theme(active_theme_id)
+        .map_err(WeatherAssetError::from)?
+        .max_asset_dimensions();
+    let minimum_terminal_size =
+        minimum_terminal_size_for_assets(asset_dimensions, options.minimum_terminal_size);
+
+    let mut renderer = TerminalRenderer::new_with_minimum(minimum_terminal_size)?;
     let (term_width, term_height) = renderer.get_size();
     let mut app = app::App::new_with_bottom_hud_prompt(
         &config,
@@ -210,6 +219,20 @@ async fn run_with_options(
         (Err(error), _) => Err(error),
         (Ok(_), Err(error)) => Err(error),
     }
+}
+
+fn minimum_terminal_size_for_assets(
+    asset_dimensions: tundra_ascii_assets::AssetDimensions,
+    requested_minimum: Option<(u16, u16)>,
+) -> (u16, u16) {
+    let (requested_width, requested_height) = requested_minimum.unwrap_or((
+        crate::render::MIN_TERMINAL_WIDTH,
+        crate::render::MIN_TERMINAL_HEIGHT,
+    ));
+    (
+        requested_width.max(u16::try_from(asset_dimensions.width).unwrap_or(u16::MAX)),
+        requested_height.max(u16::try_from(asset_dimensions.height).unwrap_or(u16::MAX)),
+    )
 }
 
 fn apply_launch_location(config: &mut Config, options: &LaunchOptions) {
@@ -281,6 +304,46 @@ mod tests {
         assert_eq!(
             LaunchRunMode::ShellLockscreen.bottom_hud_prompt(),
             BottomHudPrompt::Start
+        );
+    }
+
+    #[test]
+    fn resize_size_error_remains_one_actionable_line_after_launch_wrapping() {
+        let error = WeathrRunError::Run(io::Error::other(TerminalError::TooSmall {
+            width: 107,
+            height: 20,
+            min_width: 108,
+            min_height: 20,
+        }))
+        .to_string();
+
+        assert_eq!(error.lines().count(), 1);
+        assert!(error.contains("107x20"));
+        assert!(error.contains("108x20"));
+        assert!(error.contains("resize"));
+    }
+
+    #[test]
+    fn launch_terminal_minimum_tracks_assets_and_an_explicit_shell_floor() {
+        assert_eq!(
+            minimum_terminal_size_for_assets(
+                tundra_ascii_assets::AssetDimensions {
+                    width: 137,
+                    height: 23,
+                },
+                None,
+            ),
+            (137, 23)
+        );
+        assert_eq!(
+            minimum_terminal_size_for_assets(
+                tundra_ascii_assets::AssetDimensions {
+                    width: 66,
+                    height: 10,
+                },
+                Some((108, 20)),
+            ),
+            (108, 20)
         );
     }
 }

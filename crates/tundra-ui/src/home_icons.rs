@@ -2,7 +2,7 @@ use std::fmt;
 use std::sync::Arc;
 
 pub use tundra_ascii_assets::{
-    AsciiAssetStore, AssetError, ClockFontAsset, HomeIcon, HomeIconCatalog,
+    AsciiAssetStore, AssetDimensions, AssetError, ClockFontAsset, HomeIcon, HomeIconCatalog,
 };
 
 #[derive(Clone)]
@@ -43,6 +43,10 @@ impl RuntimeAsciiAssets {
 
     pub fn clock_font(&self) -> &ClockFontAsset {
         self.store.clock_font()
+    }
+
+    pub fn max_asset_dimensions(&self) -> AssetDimensions {
+        self.store.max_asset_dimensions()
     }
 
     pub fn home_icon_for_label(&self, label: &str) -> Option<&HomeIcon> {

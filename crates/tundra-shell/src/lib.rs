@@ -63,6 +63,7 @@ mod shortcuts;
 mod startup;
 mod terminal_events;
 mod terminal_session;
+mod terminal_size;
 
 pub use banner::*;
 pub use input_events::*;
@@ -74,6 +75,7 @@ pub use shortcuts::*;
 pub use startup::*;
 pub use terminal_events::crossterm_event_to_input;
 pub use terminal_session::TerminalGuard;
+pub use terminal_size::{ShellTerminalSizeError, ShellTerminalSizeRequirement};
 
 pub(crate) use banner::asset_io_error;
 pub(crate) use input_events::DOUBLE_CLICK_CELL_TOLERANCE;
@@ -81,6 +83,7 @@ pub(crate) use terminal_events::resets_login_idle_timeout;
 #[cfg(test)]
 pub(crate) use terminal_events::{key_event_to_label, mouse_event_to_input};
 pub(crate) use terminal_session::install_panic_restore_hook;
+pub(crate) use terminal_size::checked_current_terminal_size;
 
 // Shell state and cohesive business workflows.
 include!("shell_state.rs");

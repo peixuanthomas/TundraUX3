@@ -10,8 +10,8 @@ use crossterm::{
 };
 use std::io::{self, BufWriter, IsTerminal, Stdout, Write};
 
-const MIN_TERMINAL_WIDTH: u16 = 70;
-const MIN_TERMINAL_HEIGHT: u16 = 20;
+pub const MIN_TERMINAL_WIDTH: u16 = 70;
+pub const MIN_TERMINAL_HEIGHT: u16 = 20;
 
 const MAX_TERMINAL_WIDTH: u16 = 1000;
 const MAX_TERMINAL_HEIGHT: u16 = 500;
@@ -21,6 +21,38 @@ fn clamp_terminal_size(width: u16, height: u16) -> (u16, u16) {
         width.min(MAX_TERMINAL_WIDTH),
         height.min(MAX_TERMINAL_HEIGHT),
     )
+}
+
+pub fn validate_terminal_size(width: u16, height: u16) -> Result<(), TerminalError> {
+    validate_terminal_size_with_minimum(width, height, MIN_TERMINAL_WIDTH, MIN_TERMINAL_HEIGHT)
+}
+
+pub fn validate_terminal_size_with_minimum(
+    width: u16,
+    height: u16,
+    min_width: u16,
+    min_height: u16,
+) -> Result<(), TerminalError> {
+    let min_width = min_width.max(MIN_TERMINAL_WIDTH);
+    let min_height = min_height.max(MIN_TERMINAL_HEIGHT);
+    if min_width > MAX_TERMINAL_WIDTH || min_height > MAX_TERMINAL_HEIGHT {
+        return Err(TerminalError::RequirementTooLarge {
+            min_width,
+            min_height,
+            max_width: MAX_TERMINAL_WIDTH,
+            max_height: MAX_TERMINAL_HEIGHT,
+        });
+    }
+    if width < min_width || height < min_height {
+        return Err(TerminalError::TooSmall {
+            width,
+            height,
+            min_width,
+            min_height,
+        });
+    }
+
+    Ok(())
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -45,24 +77,25 @@ pub struct TerminalRenderer {
     buffer: Vec<Cell>,
     last_buffer: Vec<Cell>,
     capabilities: TerminalCapabilities,
+    min_width: u16,
+    min_height: u16,
 }
 
 impl TerminalRenderer {
     pub fn new() -> Result<Self, TerminalError> {
+        Self::new_with_minimum((MIN_TERMINAL_WIDTH, MIN_TERMINAL_HEIGHT))
+    }
+
+    pub fn new_with_minimum((min_width, min_height): (u16, u16)) -> Result<Self, TerminalError> {
         if !io::stdout().is_terminal() {
             return Err(TerminalError::NotATty);
         }
 
         let (width, height) = terminal::size().map_err(TerminalError::SizeError)?;
+        let min_width = min_width.max(MIN_TERMINAL_WIDTH);
+        let min_height = min_height.max(MIN_TERMINAL_HEIGHT);
 
-        if width < MIN_TERMINAL_WIDTH || height < MIN_TERMINAL_HEIGHT {
-            return Err(TerminalError::TooSmall {
-                width,
-                height,
-                min_width: MIN_TERMINAL_WIDTH,
-                min_height: MIN_TERMINAL_HEIGHT,
-            });
-        }
+        validate_terminal_size_with_minimum(width, height, min_width, min_height)?;
 
         let (width, height) = clamp_terminal_size(width, height);
 
@@ -77,6 +110,8 @@ impl TerminalRenderer {
             buffer: vec![Cell::default(); buffer_size],
             last_buffer: vec![Cell::default(); buffer_size],
             capabilities,
+            min_width,
+            min_height,
         })
     }
 
@@ -94,6 +129,8 @@ impl TerminalRenderer {
     }
 
     pub fn manual_resize(&mut self, width: u16, height: u16) -> io::Result<()> {
+        validate_terminal_size_with_minimum(width, height, self.min_width, self.min_height)
+            .map_err(io::Error::other)?;
         let (width, height) = clamp_terminal_size(width, height);
         if width != self.width || height != self.height {
             self.width = width;
@@ -243,5 +280,81 @@ impl TerminalRenderer {
 impl Drop for TerminalRenderer {
     fn drop(&mut self) {
         let _ = self.cleanup();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn terminal_size_validation_accepts_the_boundary_and_larger_sizes() {
+        assert!(validate_terminal_size(MIN_TERMINAL_WIDTH, MIN_TERMINAL_HEIGHT).is_ok());
+        assert!(validate_terminal_size(u16::MAX, u16::MAX).is_ok());
+    }
+
+    #[test]
+    fn terminal_size_validation_rejects_each_undersized_dimension() {
+        for (width, height) in [
+            (MIN_TERMINAL_WIDTH - 1, MIN_TERMINAL_HEIGHT),
+            (MIN_TERMINAL_WIDTH, MIN_TERMINAL_HEIGHT - 1),
+            (MIN_TERMINAL_WIDTH - 1, MIN_TERMINAL_HEIGHT - 1),
+        ] {
+            assert!(matches!(
+                validate_terminal_size(width, height),
+                Err(TerminalError::TooSmall {
+                    width: actual_width,
+                    height: actual_height,
+                    min_width: MIN_TERMINAL_WIDTH,
+                    min_height: MIN_TERMINAL_HEIGHT,
+                }) if actual_width == width && actual_height == height
+            ));
+        }
+    }
+
+    #[test]
+    fn terminal_size_validation_honors_a_larger_embedded_shell_requirement() {
+        assert!(matches!(
+            validate_terminal_size_with_minimum(107, 20, 108, 20),
+            Err(TerminalError::TooSmall {
+                width: 107,
+                height: 20,
+                min_width: 108,
+                min_height: 20,
+            })
+        ));
+        assert!(validate_terminal_size_with_minimum(108, 20, 108, 20).is_ok());
+    }
+
+    #[test]
+    fn terminal_size_validation_rejects_requirements_above_renderer_capacity() {
+        assert!(matches!(
+            validate_terminal_size_with_minimum(1200, 20, 1200, 20),
+            Err(TerminalError::RequirementTooLarge {
+                min_width: 1200,
+                min_height: 20,
+                max_width: MAX_TERMINAL_WIDTH,
+                max_height: MAX_TERMINAL_HEIGHT,
+            })
+        ));
+    }
+
+    #[test]
+    fn terminal_too_small_message_is_one_actionable_line() {
+        let error = TerminalError::TooSmall {
+            width: 69,
+            height: 19,
+            min_width: MIN_TERMINAL_WIDTH,
+            min_height: MIN_TERMINAL_HEIGHT,
+        };
+        let display = error.to_string();
+        let message = error.user_friendly_message();
+
+        for line in [display, message] {
+            assert_eq!(line.lines().count(), 1);
+            assert!(line.contains("69x19"));
+            assert!(line.contains("70x20"));
+            assert!(line.contains("resize"));
+        }
     }
 }

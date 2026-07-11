@@ -201,12 +201,24 @@ impl ConfigError {
 
 #[derive(ThisError, Debug)]
 pub enum TerminalError {
-    #[error("terminal is too small (minimum: {min_width}x{min_height}, current: {width}x{height})")]
+    #[error(
+        "terminal is too small ({width}x{height}); resize it to at least {min_width}x{min_height} characters"
+    )]
     TooSmall {
         width: u16,
         height: u16,
         min_width: u16,
         min_height: u16,
+    },
+
+    #[error(
+        "terminal size requirement {min_width}x{min_height} exceeds the supported maximum {max_width}x{max_height}; reduce the configured asset size"
+    )]
+    RequirementTooLarge {
+        min_width: u16,
+        min_height: u16,
+        max_width: u16,
+        max_height: u16,
     },
 
     #[error("not running in a terminal (output is redirected or piped)")]
@@ -235,10 +247,19 @@ impl TerminalError {
                 min_height,
             } => {
                 format!(
-                    "Terminal window is too small ({width}x{height}).\n\
-                     Please resize to at least {min_width}x{min_height} characters."
+                    "Terminal window is too small ({width}x{height}); resize it to at least \
+                     {min_width}x{min_height} characters."
                 )
             }
+            TerminalError::RequirementTooLarge {
+                min_width,
+                min_height,
+                max_width,
+                max_height,
+            } => format!(
+                "Configured assets require {min_width}x{min_height} characters, but the renderer \
+                 supports at most {max_width}x{max_height}; reduce the asset size."
+            ),
             TerminalError::NotATty => "This application must be run in a terminal.\n\
                  It cannot work when output is redirected or piped."
                 .to_string(),
