@@ -54,7 +54,7 @@ pub use render::{
     status_time_button_area,
 };
 pub use setup_catalog::{setup_language_options, setup_timezone_options};
-pub use theme::TundraTheme;
+pub use theme::{BorderShape, TundraTheme};
 pub use timezone_map::{
     TimezoneBoundary, TimezoneBoundaryIndex, TimezoneCoordinate, TimezoneMapCity,
     TimezoneMapColors, TimezoneMapError, TimezoneMapInput, TimezoneMapRasterCache,
@@ -70,8 +70,9 @@ pub use view_model::{
     ExplorerNameDialogViewModel, ExplorerOperationPhase, ExplorerOperationProgressViewModel,
     ExplorerOptionViewModel, ExplorerOptionsViewModel, ExplorerOverlayViewModel,
     ExplorerPropertiesViewModel, ExplorerPropertyViewModel, ExplorerQuickLocationViewModel,
-    ExplorerSearchViewModel, ExplorerSortColumn, ExplorerSortDirection, ExplorerToolbarAction,
-    ExplorerToolbarButtonViewModel, ExplorerToolbarViewModel, ExplorerViewModel, HomeDisplayMode,
+    ExplorerQuickLocationKind, ExplorerSearchViewModel, ExplorerSortColumn,
+    ExplorerSortDirection, ExplorerToolbarAction, ExplorerToolbarButtonViewModel,
+    ExplorerToolbarViewModel, ExplorerViewModel, HomeDisplayMode,
     HomeViewModel, LoginField, LoginUserOptionViewModel, LoginViewModel,
     NotificationActionViewModel, NotificationLevel, NotificationTone, NotificationViewModel,
     SetupField, SetupLanguageOption, SetupPasswordRequirementViewModel, SetupStep,

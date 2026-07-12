@@ -163,13 +163,14 @@ fn run_fullscreen_shell_session(
     let initial_size = checked_current_terminal_size(terminal_size_requirement)?;
     let terminal_control = TerminalControlHandler::install();
     let mut guard = TerminalGuard::enter(output)?;
+    let theme = tundra_ui::TundraTheme::default_dark()
+        .with_border_shape(startup.app_config.border_shape);
     let mut state =
         ShellState::new_with_startup_and_assets(config, initial_size, startup, ascii_assets);
     if let Some(cached) = cached_time_sync.as_ref() {
         cached.apply_to_state_at(&mut state, Instant::now());
     }
     let tick_rate = Duration::from_millis(250);
-    let theme = tundra_ui::TundraTheme::default_dark();
     let mut terminal_size_error = None;
 
     loop {

@@ -60,6 +60,8 @@ pub struct PlatformCapabilities {
     pub temp: CapabilityStatus,
     pub file_attributes: CapabilityStatus,
     pub directory_listing: CapabilityStatus,
+    pub local_volumes: CapabilityStatus,
+    pub trash: CapabilityStatus,
     pub notifications: CapabilityStatus,
     pub default_apps: CapabilityStatus,
     pub power: CapabilityStatus,
@@ -79,6 +81,8 @@ impl PlatformCapabilities {
             temp: CapabilityStatus::Supported,
             file_attributes: CapabilityStatus::Supported,
             directory_listing: CapabilityStatus::Supported,
+            local_volumes: CapabilityStatus::Supported,
+            trash: CapabilityStatus::Supported,
             notifications: CapabilityStatus::Unsupported,
             default_apps: CapabilityStatus::Unsupported,
             power: CapabilityStatus::Unsupported,
@@ -98,13 +102,15 @@ impl PlatformCapabilities {
             temp: CapabilityStatus::Unsupported,
             file_attributes: CapabilityStatus::Unsupported,
             directory_listing: CapabilityStatus::Unsupported,
+            local_volumes: CapabilityStatus::Unsupported,
+            trash: CapabilityStatus::Unsupported,
             notifications: CapabilityStatus::Unsupported,
             default_apps: CapabilityStatus::Unsupported,
             power: CapabilityStatus::Unsupported,
         }
     }
 
-    pub fn checks(&self) -> [(&'static str, CapabilityStatus); 14] {
+    pub fn checks(&self) -> [(&'static str, CapabilityStatus); 16] {
         [
             ("open_path", self.open_path),
             ("open_with", self.open_with),
@@ -117,11 +123,66 @@ impl PlatformCapabilities {
             ("temp", self.temp),
             ("file_attributes", self.file_attributes),
             ("directory_listing", self.directory_listing),
+            ("local_volumes", self.local_volumes),
+            ("trash", self.trash),
             ("notifications", self.notifications),
             ("default_apps", self.default_apps),
             ("power", self.power),
         ]
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VolumeKind {
+    Fixed,
+    Removable,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LocalVolume {
+    pub root: PathBuf,
+    pub label: Option<String>,
+    pub kind: VolumeKind,
+    pub total_bytes: Option<u64>,
+    pub available_bytes: Option<u64>,
+}
+
+/// A platform-owned identifier for an item currently in the system Trash.
+/// Callers must not infer paths or other platform details from its value.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct TrashEntryId(String);
+
+impl TrashEntryId {
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+
+    pub(crate) fn from_native(value: impl Into<String>) -> Self {
+        Self(value.into())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TrashEntry {
+    pub id: TrashEntryId,
+    pub display_name: String,
+    pub original_path: Option<PathBuf>,
+    pub deleted_at: Option<SystemTime>,
+    pub size: u64,
+    pub is_directory: bool,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct TrashStats {
+    pub item_count: u64,
+    pub total_bytes: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub enum TrashRestoreTarget {
+    OriginalLocation,
+    /// The complete absolute destination path, including the restored name.
+    DestinationPath(PathBuf),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -286,6 +347,15 @@ impl ExternalOpenPolicy {
 pub trait Platform: Send + Sync {
     fn kind(&self) -> PlatformKind;
     fn capabilities(&self) -> PlatformCapabilities;
+
+    /// Whether this value is the operating system's real platform backend.
+    /// Test doubles must keep the default even when they emulate a native
+    /// `PlatformKind`, so callers never infer permission for native side
+    /// effects from `kind()` alone.
+    fn is_native_backend(&self) -> bool {
+        false
+    }
+
     fn user_dirs(&self) -> Result<UserDirs, PlatformError>;
     fn app_paths(&self) -> Result<AppPaths, PlatformError>;
     fn open_path(&self, path: &Path) -> Result<(), PlatformError>;
@@ -295,6 +365,46 @@ pub trait Platform: Send + Sync {
     fn spawn_wait(&self, spec: &ProcessSpec) -> Result<ProcessExit, PlatformError>;
     fn read_clipboard_text(&self) -> Result<String, PlatformError>;
     fn write_clipboard_text(&self, text: &str) -> Result<(), PlatformError>;
+
+    fn local_volumes(&self) -> Result<Vec<LocalVolume>, PlatformError> {
+        Err(PlatformError::Unsupported {
+            capability: "local_volumes",
+        })
+    }
+
+    fn list_trash(&self) -> Result<Vec<TrashEntry>, PlatformError> {
+        Err(PlatformError::Unsupported {
+            capability: "trash.list",
+        })
+    }
+
+    fn trash_stats(&self) -> Result<TrashStats, PlatformError> {
+        Err(PlatformError::Unsupported {
+            capability: "trash.stats",
+        })
+    }
+
+    fn move_to_trash(&self, _paths: &[PathBuf]) -> Result<(), PlatformError> {
+        Err(PlatformError::Unsupported {
+            capability: "trash.move",
+        })
+    }
+
+    fn empty_trash(&self) -> Result<(), PlatformError> {
+        Err(PlatformError::Unsupported {
+            capability: "trash.empty",
+        })
+    }
+
+    fn restore_trash_item(
+        &self,
+        _id: &TrashEntryId,
+        _target: TrashRestoreTarget,
+    ) -> Result<PathBuf, PlatformError> {
+        Err(PlatformError::Unsupported {
+            capability: "trash.restore",
+        })
+    }
 
     fn file_attributes(&self, path: &Path) -> Result<FileAttributes, PlatformError> {
         default_file_attributes(path)

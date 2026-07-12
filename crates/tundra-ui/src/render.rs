@@ -110,7 +110,8 @@ pub fn render_exit_confirmation(
     ];
     let dialog_widget = Paragraph::new(lines)
         .block(
-            Block::default()
+            theme
+                .block()
                 .title(model.title.as_str())
                 .borders(Borders::ALL)
                 .style(theme.body_style()),
@@ -170,7 +171,8 @@ fn render_clock_face(
         return;
     }
     frame.render_widget(
-        Block::default()
+        theme
+            .block()
             .title("Clock")
             .borders(Borders::ALL)
             .style(theme.body_style()),
@@ -221,7 +223,8 @@ fn render_clock_panel(
         return;
     }
     frame.render_widget(
-        Block::default()
+        theme
+            .block()
             .title("Alarms & Timers")
             .borders(Borders::ALL)
             .style(theme.body_style()),
@@ -298,7 +301,8 @@ fn render_clock_create_dialog(
     }
     frame.render_widget(Clear, layout.dialog);
     frame.render_widget(
-        Block::default()
+        theme
+            .block()
             .title("New Alarm or Countdown")
             .borders(Borders::ALL)
             .style(theme.body_style()),
@@ -765,7 +769,8 @@ pub fn render_time_sync_failure_dialog(
     let dialog = centered_rect(area, area.width.min(34), area.height.min(5));
     let dialog_widget = Paragraph::new(Line::from(model.message()))
         .block(
-            Block::default()
+            theme
+                .block()
                 .title("Time Sync")
                 .borders(Borders::ALL)
                 .style(theme.error_style()),
@@ -798,7 +803,8 @@ pub fn render_notification_overlay(
     frame.render_widget(Clear, layout.dialog);
     let tone_style = notification_tone_style(model.tone, theme);
     frame.render_widget(
-        Block::default()
+        theme
+            .block()
             .title(format!(
                 "{} {}",
                 notification_tone_prefix(model.tone),
@@ -943,7 +949,8 @@ fn render_user_management_main(
 ) {
     let layout = user_management_layout(main, model);
     frame.render_widget(
-        Block::default()
+        theme
+            .block()
             .title("User Management")
             .borders(Borders::ALL)
             .style(theme.body_style()),
@@ -1138,7 +1145,8 @@ fn render_user_management_form(
     frame.render_widget(Clear, layout.dialog);
     if !layout.compact {
         frame.render_widget(
-            Block::default()
+            theme
+                .block()
                 .title(form.title.clone())
                 .borders(Borders::ALL)
                 .style(theme.body_style()),
@@ -1332,7 +1340,8 @@ fn render_login_main(
     model: &LoginViewModel,
     theme: &TundraTheme,
 ) {
-    let outer = Block::default()
+    let outer = theme
+        .block()
         .title("Login")
         .borders(Borders::ALL)
         .style(theme.body_style());
@@ -1419,7 +1428,8 @@ fn render_login_user_list(
     };
     let list = List::new(items)
         .block(
-            Block::default()
+            theme
+                .block()
                 .title("Users")
                 .title_style(block_style)
                 .borders(Borders::ALL)
@@ -1460,7 +1470,8 @@ fn render_login_username_field(
     frame.render_widget(
         Paragraph::new(lines)
             .block(
-                Block::default()
+                theme
+                    .block()
                     .title("Selected User")
                     .borders(Borders::ALL)
                     .style(theme.body_style()),
@@ -1502,7 +1513,8 @@ fn render_login_password_field(
         Paragraph::new(password)
             .style(password_style)
             .block(
-                Block::default()
+                theme
+                    .block()
                     .title("Password")
                     .title_style(block_style)
                     .borders(Borders::ALL)
@@ -1679,7 +1691,8 @@ fn render_auth_screen(
             render_top(frame, top, chrome, theme);
             let widget = Paragraph::new(lines)
                 .block(
-                    Block::default()
+                    theme
+                        .block()
                         .title(title)
                         .borders(Borders::ALL)
                         .style(theme.body_style()),
@@ -1709,7 +1722,8 @@ fn render_compact_home(
         return;
     }
 
-    let block = Block::default()
+    let block = theme
+        .block()
         .title("TundraUX 3")
         .borders(Borders::ALL)
         .style(theme.body_style());
@@ -1956,7 +1970,8 @@ fn render_setup_admin_page(
 }
 
 fn setup_block(theme: &TundraTheme) -> Block<'static> {
-    Block::default()
+    theme
+        .block()
         .title("First Run Setup")
         .title_style(theme.title_style())
         .borders(Borders::ALL)
@@ -2071,7 +2086,8 @@ fn render_setup_admin_field(
     } else {
         theme.body_style()
     };
-    let block = Block::default()
+    let block = theme
+        .block()
         .title(title)
         .title_style(box_style)
         .borders(Borders::ALL)
@@ -2112,7 +2128,8 @@ fn render_setup_password_checklist(
         return;
     }
 
-    let block = Block::default()
+    let block = theme
+        .block()
         .title("Password checklist")
         .title_style(theme.title_style())
         .borders(Borders::ALL)
@@ -2453,7 +2470,8 @@ fn render_explorer_main(
     theme: &TundraTheme,
 ) {
     frame.render_widget(
-        Block::default()
+        theme
+            .block()
             .title("Explorer")
             .borders(Borders::ALL)
             .style(theme.body_style()),
@@ -2525,14 +2543,28 @@ fn render_explorer_path_bar(
     model: &ExplorerViewModel,
     theme: &TundraTheme,
 ) {
+    let address_style = if model.address_editing {
+        theme.title_style()
+    } else {
+        theme.body_style()
+    };
     frame.render_widget(
-        Paragraph::new(fit_cell(
-            &format!("Path: {}", model.current_path),
-            usize::from(layout.path_bar.width),
-        ))
-        .style(theme.body_style()),
-        layout.path_bar,
+        Paragraph::new(fit_cell("[Edit]", usize::from(layout.address_button.width)))
+            .style(address_style),
+        layout.address_button,
     );
+    if model.address_editing || model.breadcrumbs.is_empty() {
+        let text = if model.address_editing {
+            format!("> {}_", model.address_value)
+        } else {
+            model.address_value.clone()
+        };
+        frame.render_widget(
+            Paragraph::new(fit_cell(&text, usize::from(layout.address_input.width)))
+                .style(address_style),
+            layout.address_input,
+        );
+    }
     for crumb_layout in &layout.breadcrumbs {
         let Some(crumb) = model.breadcrumbs.get(crumb_layout.index) else {
             continue;
@@ -2639,7 +2671,11 @@ fn render_explorer_table(
 
     if model.entries.is_empty() && layout.table_body.height > 0 {
         frame.render_widget(
-            Paragraph::new("(empty directory)")
+            Paragraph::new(if model.is_trash {
+                "(Trash is empty)"
+            } else {
+                "(empty directory)"
+            })
                 .style(theme.muted_style())
                 .alignment(Alignment::Center),
             layout.table_body,
@@ -2824,7 +2860,8 @@ fn render_explorer_overlay(
     };
     frame.render_widget(Clear, overlay_layout.area);
     frame.render_widget(
-        Block::default()
+        theme
+            .block()
             .title(title)
             .borders(Borders::ALL)
             .style(theme.body_style()),
@@ -2958,7 +2995,7 @@ fn render_explorer_name_dialog(
         match control.control {
             ExplorerOverlayControl::NameInput => frame.render_widget(
                 Paragraph::new(format!("> {}_", dialog.value))
-                    .block(Block::default().borders(Borders::ALL))
+                    .block(theme.block().borders(Borders::ALL))
                     .style(theme.title_style()),
                 Rect::new(
                     control.area.x,
@@ -3161,7 +3198,8 @@ fn render_top(
         ),
     ];
     let top = Paragraph::new(lines).block(
-        Block::default()
+        theme
+            .block()
             .borders(Borders::ALL)
             .style(theme.body_style()),
     );
@@ -3178,7 +3216,8 @@ fn render_main(frame: &mut Frame<'_>, area: Rect, home: &HomeViewModel, theme: &
             }
             let main = Paragraph::new(debug_lines(home))
                 .block(
-                    Block::default()
+                    theme
+                        .block()
                         .title("Home")
                         .borders(Borders::ALL)
                         .style(theme.body_style()),
@@ -3192,7 +3231,8 @@ fn render_main(frame: &mut Frame<'_>, area: Rect, home: &HomeViewModel, theme: &
 }
 
 fn render_user_main(frame: &mut Frame<'_>, area: Rect, home: &HomeViewModel, theme: &TundraTheme) {
-    let outer = Block::default()
+    let outer = theme
+        .block()
         .title("Home")
         .borders(Borders::ALL)
         .style(theme.body_style());
@@ -3239,7 +3279,8 @@ fn render_user_main(frame: &mut Frame<'_>, area: Rect, home: &HomeViewModel, the
 
         let tile_widget = Paragraph::new(lines)
             .block(
-                Block::default()
+                theme
+                    .block()
                     .borders(Borders::ALL)
                     .border_style(solid_border_style(style))
                     .style(style)
@@ -3273,7 +3314,8 @@ fn render_authenticated_debug_main(
     theme: &TundraTheme,
 ) {
     frame.render_widget(
-        Block::default()
+        theme
+            .block()
             .title("Home")
             .borders(Borders::ALL)
             .style(theme.body_style()),
@@ -3382,14 +3424,15 @@ fn render_status(
         .filter(|area| area.width > 0 && area.height > 0);
 
     frame.render_widget(
-        Block::default()
+        theme
+            .block()
             .title("Status")
             .borders(Borders::ALL)
             .style(theme.body_style()),
         area,
     );
 
-    let inner = Block::default().borders(Borders::ALL).inner(area);
+    let inner = theme.block().borders(Borders::ALL).inner(area);
     let left_width = match time_button {
         Some(button) if button.x > inner.x => button.x.saturating_sub(inner.x).saturating_sub(1),
         Some(_) => 0,
@@ -3519,7 +3562,8 @@ fn render_status_time_button(
     let button = Paragraph::new(label.to_string())
         .style(style)
         .block(
-            Block::default()
+            theme
+                .block()
                 .borders(Borders::ALL)
                 .border_style(solid_border_style(style))
                 .style(style),

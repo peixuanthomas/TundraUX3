@@ -9,10 +9,9 @@ use tundra_apps::explorer::{
 };
 use tundra_apps::explorer_tasks::{
     ExplorerCollisionPolicy, ExplorerCollisionResolution, ExplorerDeletePlan, ExplorerTaskEngine,
-    ExplorerTaskError, ExplorerTaskEvent, ExplorerTaskId, ExplorerTaskPhase, ExplorerTaskPlan,
-    ExplorerTaskSubmitError, ExplorerTransferOperation, ExplorerTransferPlan, ExplorerTrash,
+    ExplorerTaskEvent, ExplorerTaskId, ExplorerTaskPhase, ExplorerTaskPlan,
+    ExplorerTaskSubmitError, ExplorerTransferOperation, ExplorerTransferPlan, SystemExplorerTrash,
 };
-use tundra_storage::TrashRecord;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ShellExplorerTaskKind {
@@ -26,7 +25,6 @@ struct ShellExplorerTaskContext {
     id: ExplorerTaskId,
     kind: ShellExplorerTaskKind,
     sources: Vec<ShellExplorerTaskSource>,
-    uses_trash: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -35,266 +33,10 @@ struct ShellExplorerTaskSource {
     canonical: PathBuf,
 }
 
-#[derive(Debug)]
-struct StorageExplorerTrash {
-    storage: StorageManager,
-    actor: Arc<Mutex<String>>,
-    sequence: std::sync::atomic::AtomicU64,
-}
-
-impl StorageExplorerTrash {
-    fn new(storage: StorageManager, actor: Arc<Mutex<String>>) -> Self {
-        Self {
-            storage,
-            actor,
-            sequence: std::sync::atomic::AtomicU64::new(0),
-        }
-    }
-
-    fn unique_target(&self, path: &Path) -> Result<PathBuf, ExplorerTaskError> {
-        let name = path
-            .file_name()
-            .ok_or_else(|| ExplorerTaskError::InvalidPlan {
-                message: format!("{} has no file name", path.display()),
-            })?;
-        let millis = explorer_unix_millis();
-        loop {
-            let sequence = self
-                .sequence
-                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-            let target = self
-                .storage
-                .layout()
-                .trash_path
-                .join(format!("{millis}-{sequence}-{}", name.to_string_lossy()));
-            if !target.exists() {
-                return Ok(target);
-            }
-        }
-    }
-}
-
-impl ExplorerTrash for StorageExplorerTrash {
-    fn move_to_trash(
-        &self,
-        platform: &dyn Platform,
-        path: &Path,
-    ) -> Result<PathBuf, ExplorerTaskError> {
-        let trash_root = &self.storage.layout().trash_path;
-        std::fs::create_dir_all(trash_root).map_err(|error| ExplorerTaskError::Io {
-            operation: "create trash directory",
-            path: trash_root.clone(),
-            message: error.to_string(),
-        })?;
-        let target = self.unique_target(path)?;
-        move_to_trash_path(platform, path, &target)?;
-
-        let actor = self
-            .actor
-            .lock()
-            .expect("Explorer trash actor lock poisoned")
-            .clone();
-        let manifest_result = self.storage.load_trash().and_then(|mut trash| {
-            trash.records.push(TrashRecord {
-                original_path: path.to_path_buf(),
-                trash_path: target.clone(),
-                actor,
-                timestamp_epoch_ms: explorer_unix_millis(),
-            });
-            self.storage.save_trash(&trash)
-        });
-        if let Err(storage_error) = manifest_result {
-            let rollback = move_to_trash_path(platform, &target, path);
-            let message = match rollback {
-                Ok(()) => format!("{storage_error}; filesystem move was rolled back"),
-                Err(rollback_error) => format!(
-                    "{storage_error}; rollback from {} failed: {rollback_error}",
-                    target.display()
-                ),
-            };
-            return Err(ExplorerTaskError::Io {
-                operation: "update trash manifest",
-                path: self.storage.layout().trash_manifest_path.clone(),
-                message,
-            });
-        }
-        Ok(target)
-    }
-}
-
-fn move_to_trash_path(
-    platform: &dyn Platform,
-    source: &Path,
-    target: &Path,
-) -> Result<(), ExplorerTaskError> {
-    match platform.rename_path(source, target) {
-        Ok(()) => Ok(()),
-        Err(tundra_platform::PlatformError::CrossDevice { .. }) => {
-            move_to_trash_across_volumes(platform, source, target)
-        }
-        Err(error) => Err(error.into()),
-    }
-}
-
-fn move_to_trash_across_volumes(
-    platform: &dyn Platform,
-    source: &Path,
-    target: &Path,
-) -> Result<(), ExplorerTaskError> {
-    let attributes = platform.file_attributes(source)?;
-    if attributes.symlink || attributes.junction || attributes.reparse_point {
-        return Err(ExplorerTaskError::UnsafeLink {
-            path: source.to_path_buf(),
-        });
-    }
-    let staging = unique_trash_staging_path(target)?;
-    if let Err(error) = copy_to_trash_staging(platform, source, &staging) {
-        cleanup_trash_staging(&staging);
-        return Err(error);
-    }
-    if let Err(error) = platform.rename_path(&staging, target) {
-        cleanup_trash_staging(&staging);
-        return Err(error.into());
-    }
-    let remove_result = if attributes.is_dir {
-        std::fs::remove_dir_all(source)
-    } else {
-        std::fs::remove_file(source)
-    };
-    if let Err(error) = remove_result {
-        cleanup_trash_staging(target);
-        return Err(ExplorerTaskError::Io {
-            operation: "remove source after trash copy",
-            path: source.to_path_buf(),
-            message: error.to_string(),
-        });
-    }
-    Ok(())
-}
-
-fn copy_to_trash_staging(
-    platform: &dyn Platform,
-    source: &Path,
-    target: &Path,
-) -> Result<(), ExplorerTaskError> {
-    let attributes = platform.file_attributes(source)?;
-    if attributes.symlink || attributes.junction || attributes.reparse_point {
-        return Err(ExplorerTaskError::UnsafeLink {
-            path: source.to_path_buf(),
-        });
-    }
-    if attributes.is_dir {
-        std::fs::create_dir(target).map_err(|error| ExplorerTaskError::Io {
-            operation: "create trash staging directory",
-            path: target.to_path_buf(),
-            message: error.to_string(),
-        })?;
-        let entries = std::fs::read_dir(source).map_err(|error| ExplorerTaskError::Io {
-            operation: "scan directory for trash",
-            path: source.to_path_buf(),
-            message: error.to_string(),
-        })?;
-        for entry in entries {
-            let entry = entry.map_err(|error| ExplorerTaskError::Io {
-                operation: "read directory entry for trash",
-                path: source.to_path_buf(),
-                message: error.to_string(),
-            })?;
-            copy_to_trash_staging(platform, &entry.path(), &target.join(entry.file_name()))?;
-        }
-        if let Ok(metadata) = std::fs::metadata(source) {
-            let _ = std::fs::set_permissions(target, metadata.permissions());
-        }
-        return Ok(());
-    }
-    if !attributes.is_file {
-        return Err(ExplorerTaskError::InvalidPlan {
-            message: format!("{} is not a regular file or directory", source.display()),
-        });
-    }
-
-    let mut input = std::fs::File::open(source).map_err(|error| ExplorerTaskError::Io {
-        operation: "open trash source",
-        path: source.to_path_buf(),
-        message: error.to_string(),
-    })?;
-    let mut output = std::fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(target)
-        .map_err(|error| ExplorerTaskError::Io {
-            operation: "create trash staging file",
-            path: target.to_path_buf(),
-            message: error.to_string(),
-        })?;
-    std::io::copy(&mut input, &mut output).map_err(|error| ExplorerTaskError::Io {
-        operation: "copy file to trash staging",
-        path: target.to_path_buf(),
-        message: error.to_string(),
-    })?;
-    output.sync_all().map_err(|error| ExplorerTaskError::Io {
-        operation: "sync trash staging file",
-        path: target.to_path_buf(),
-        message: error.to_string(),
-    })?;
-    if let Ok(metadata) = std::fs::metadata(source) {
-        let _ = std::fs::set_permissions(target, metadata.permissions());
-    }
-    Ok(())
-}
-
-fn unique_trash_staging_path(target: &Path) -> Result<PathBuf, ExplorerTaskError> {
-    let parent = target
-        .parent()
-        .ok_or_else(|| ExplorerTaskError::InvalidPlan {
-            message: format!("{} has no parent", target.display()),
-        })?;
-    let name = target
-        .file_name()
-        .ok_or_else(|| ExplorerTaskError::InvalidPlan {
-            message: format!("{} has no file name", target.display()),
-        })?;
-    for suffix in 0_u64.. {
-        let staging = parent.join(format!(
-            ".{}.tundra-trash-stage-{suffix}",
-            name.to_string_lossy()
-        ));
-        if !staging.exists() {
-            return Ok(staging);
-        }
-    }
-    unreachable!("u64 staging suffixes are exhaustive")
-}
-
-fn cleanup_trash_staging(path: &Path) {
-    let Ok(metadata) = std::fs::symlink_metadata(path) else {
-        return;
-    };
-    if metadata.is_dir() && !metadata.file_type().is_symlink() {
-        let _ = std::fs::remove_dir_all(path);
-    } else {
-        let _ = std::fs::remove_file(path);
-    }
-}
-
 fn task_plan_sources(plan: &ExplorerTaskPlan) -> Vec<PathBuf> {
     match plan {
         ExplorerTaskPlan::Transfer(plan) => plan.sources.clone(),
         ExplorerTaskPlan::DeleteToTrash(plan) => plan.paths.clone(),
-    }
-}
-
-fn task_plan_uses_trash(plan: &ExplorerTaskPlan) -> bool {
-    match plan {
-        ExplorerTaskPlan::DeleteToTrash(_) => true,
-        ExplorerTaskPlan::Transfer(plan) => {
-            plan.collisions.default == ExplorerCollisionResolution::Replace
-                || plan
-                    .collisions
-                    .overrides
-                    .values()
-                    .any(|resolution| *resolution == ExplorerCollisionResolution::Replace)
-        }
     }
 }
 
@@ -382,8 +124,6 @@ fn collect_explorer_conflicts_no_follow(
 }
 
 struct ShellExplorerTaskShared {
-    storage: StorageManager,
-    actor: Arc<Mutex<String>>,
     engine: Mutex<Option<ExplorerTaskEngine>>,
     context: Mutex<Option<ShellExplorerTaskContext>>,
 }
@@ -398,11 +138,9 @@ struct ShellExplorerTaskRuntime {
 }
 
 impl ShellExplorerTaskRuntime {
-    fn new(storage: StorageManager) -> Self {
+    fn new(_storage: StorageManager) -> Self {
         Self {
             shared: Arc::new(ShellExplorerTaskShared {
-                storage,
-                actor: Arc::new(Mutex::new("Guest".to_string())),
                 engine: Mutex::new(None),
                 context: Mutex::new(None),
             }),
@@ -413,7 +151,7 @@ impl ShellExplorerTaskRuntime {
         &self,
         plan: ExplorerTaskPlan,
         kind: ShellExplorerTaskKind,
-        actor: String,
+        _actor: String,
     ) -> Result<ExplorerTaskId, ExplorerTaskSubmitError> {
         let mut context = self
             .shared
@@ -430,7 +168,6 @@ impl ShellExplorerTaskRuntime {
                 original,
             })
             .collect();
-        let uses_trash = task_plan_uses_trash(&plan);
         let mut engine = self
             .shared
             .engine
@@ -438,23 +175,14 @@ impl ShellExplorerTaskRuntime {
             .expect("Explorer task engine lock poisoned");
         let engine = engine.get_or_insert_with(|| {
             let platform: Arc<dyn Platform> = Arc::from(tundra_platform::native_platform());
-            let trash = Arc::new(StorageExplorerTrash::new(
-                self.shared.storage.clone(),
-                Arc::clone(&self.shared.actor),
-            ));
+            let trash = Arc::new(SystemExplorerTrash);
             ExplorerTaskEngine::new(platform, trash)
         });
-        *self
-            .shared
-            .actor
-            .lock()
-            .expect("Explorer trash actor lock poisoned") = actor;
         let handle = engine.submit(plan)?;
         *context = Some(ShellExplorerTaskContext {
             id: handle.id,
             kind,
             sources,
-            uses_trash,
         });
         Ok(handle.id)
     }
@@ -506,10 +234,7 @@ impl ShellExplorerTaskRuntime {
 
 impl fmt::Debug for ShellExplorerTaskRuntime {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter
-            .debug_struct("ShellExplorerTaskRuntime")
-            .field("trash_root", &self.shared.storage.layout().trash_path)
-            .finish_non_exhaustive()
+        formatter.debug_struct("ShellExplorerTaskRuntime").finish_non_exhaustive()
     }
 }
 
@@ -528,6 +253,9 @@ impl ShellState {
         command: &ExplorerCommand,
         platform: &dyn Platform,
     ) -> bool {
+        if !platform.is_native_backend() {
+            return false;
+        }
         match command {
             ExplorerCommand::Paste => {
                 self.start_explorer_background_paste(platform);
@@ -541,17 +269,34 @@ impl ShellState {
                 if should_confirm {
                     false
                 } else {
-                    self.start_explorer_background_delete();
+                let paths = self
+                    .explorer_state
+                    .as_ref()
+                    .map(|state| state.effective_selected_paths())
+                    .unwrap_or_default();
+                self.start_explorer_background_delete_paths(paths);
                     true
                 }
             }
             ExplorerCommand::ConfirmDelete => {
+                let Some(paths) = self.explorer_state.as_ref().and_then(|state| {
+                    state
+                        .pending_dialog
+                        .as_ref()
+                        .filter(|dialog| {
+                            dialog.kind
+                                == tundra_apps::explorer::ExplorerDialogKind::DeleteToTrash
+                        })
+                        .map(|dialog| dialog.targets.clone())
+                }) else {
+                    return false;
+                };
                 self.notifications
                     .dismiss_modal_by_key(EXPLORER_DELETE_NOTIFICATION_KEY);
                 if let Some(state) = self.explorer_state.as_mut() {
                     state.pending_dialog = None;
                 }
-                self.start_explorer_background_delete();
+                self.start_explorer_background_delete_paths(paths);
                 true
             }
             ExplorerCommand::DropDrag => {
@@ -830,12 +575,7 @@ impl ShellState {
         self.submit_explorer_task(ExplorerTaskPlan::Transfer(plan), kind);
     }
 
-    fn start_explorer_background_delete(&mut self) {
-        let paths = self
-            .explorer_state
-            .as_ref()
-            .map(ExplorerState::effective_selected_paths)
-            .unwrap_or_default();
+    fn start_explorer_background_delete_paths(&mut self, paths: Vec<std::path::PathBuf>) {
         if paths.is_empty() {
             self.report_explorer_task_error("No file is selected");
             return;
@@ -1044,22 +784,13 @@ impl ShellState {
                     }
                 }
 
-                let reconciliation_error = context
-                    .uses_trash
-                    .then(|| self.reconcile_explorer_trash_manifest())
-                    .transpose()
-                    .err()
-                    .map(|error| format!("trash reconciliation failed: {error}"));
                 self.apply_explorer_command(ExplorerCommand::Refresh, platform);
                 let fatal = summary
                     .fatal_error
                     .as_ref()
                     .map(ToString::to_string)
                     .unwrap_or_default();
-                let detail = [
-                    (!summary.cancelled && !fatal.is_empty()).then_some(fatal),
-                    reconciliation_error.clone(),
-                ]
+                let detail = [(!summary.cancelled && !fatal.is_empty()).then_some(fatal)]
                 .into_iter()
                 .flatten()
                 .collect::<Vec<_>>()
@@ -1077,7 +808,6 @@ impl ShellState {
                     )
                 } else if summary.failed_items > 0
                     || summary.fatal_error.is_some()
-                    || reconciliation_error.is_some()
                 {
                     format!(
                         "Operation finished with errors: {} succeeded, {} failed{}",
@@ -1096,8 +826,7 @@ impl ShellState {
                     )
                 };
                 let has_error = summary.failed_items > 0
-                    || (!summary.cancelled && summary.fatal_error.is_some())
-                    || reconciliation_error.is_some();
+                    || (!summary.cancelled && summary.fatal_error.is_some());
                 if let Some(state) = self.explorer_state.as_mut() {
                     state.operation = None;
                     state.message = Some(message.clone());
@@ -1123,13 +852,6 @@ impl ShellState {
         self.explorer_task_runtime
             .as_ref()
             .and_then(|runtime| runtime.context_for(id))
-    }
-
-    fn reconcile_explorer_trash_manifest(&self) -> Result<(), StorageError> {
-        let Some(storage) = self.storage_manager.as_ref() else {
-            return Ok(());
-        };
-        reconcile_storage_trash_manifest(storage)
     }
 
     fn update_explorer_task_phase(&mut self, phase: ExplorerTaskPhase) {
@@ -1252,25 +974,6 @@ fn collision_resolution(action: ExplorerConflictAction) -> ExplorerCollisionReso
     }
 }
 
-fn explorer_unix_millis() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_millis()
-        .try_into()
-        .unwrap_or(u64::MAX)
-}
-
-fn reconcile_storage_trash_manifest(storage: &StorageManager) -> Result<(), StorageError> {
-    let mut trash = storage.load_trash()?;
-    let original_len = trash.records.len();
-    trash.records.retain(|record| record.trash_path.exists());
-    if trash.records.len() != original_len {
-        storage.save_trash(&trash)?;
-    }
-    Ok(())
-}
-
 #[cfg(test)]
 mod explorer_task_workflow_tests {
     use super::*;
@@ -1316,6 +1019,7 @@ mod explorer_task_workflow_tests {
         let _ = std::fs::remove_dir_all(fixture);
     }
 
+    #[cfg(any())]
     #[test]
     fn storage_trash_adapter_indexes_background_delete_once() {
         let fixture = std::env::temp_dir().join(format!(
@@ -1357,6 +1061,7 @@ mod explorer_task_workflow_tests {
         let _ = std::fs::remove_dir_all(fixture);
     }
 
+    #[cfg(any())]
     #[test]
     fn replacement_is_indexed_in_storage_trash() {
         let fixture = std::env::temp_dir().join(format!(
@@ -1407,6 +1112,7 @@ mod explorer_task_workflow_tests {
         let _ = std::fs::remove_dir_all(fixture);
     }
 
+    #[cfg(any())]
     #[test]
     fn trash_manifest_failure_rolls_back_filesystem_move() {
         let fixture = std::env::temp_dir().join(format!(
@@ -1440,6 +1146,7 @@ mod explorer_task_workflow_tests {
         let _ = std::fs::remove_dir_all(fixture);
     }
 
+    #[cfg(any())]
     #[test]
     fn cross_volume_trash_move_commits_copy_before_removing_source() {
         let fixture = std::env::temp_dir().join(format!(
@@ -1493,6 +1200,7 @@ mod explorer_task_workflow_tests {
         let _ = std::fs::remove_dir_all(fixture);
     }
 
+    #[cfg(any())]
     #[test]
     fn reconciliation_removes_manifest_record_restored_by_engine_rollback() {
         let fixture = std::env::temp_dir().join(format!(

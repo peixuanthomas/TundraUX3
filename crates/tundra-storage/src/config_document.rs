@@ -16,6 +16,8 @@ pub struct StorageConfig {
     #[serde(default)]
     pub shortcuts: BTreeMap<String, String>,
     #[serde(default)]
+    pub appearance: AppearanceConfig,
+    #[serde(default)]
     pub explorer: ExplorerConfig,
     #[serde(default)]
     pub launcher: LauncherConfig,
@@ -31,6 +33,7 @@ impl Default for StorageConfig {
             language: default_language(),
             timezone: default_timezone(),
             shortcuts: BTreeMap::new(),
+            appearance: AppearanceConfig::default(),
             explorer: ExplorerConfig::default(),
             launcher: LauncherConfig::default(),
             security: SecurityConfig::default(),
@@ -42,6 +45,20 @@ impl VersionedDocument for StorageConfig {
     fn schema_version(&self) -> u32 {
         self.schema_version
     }
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(default)]
+pub struct AppearanceConfig {
+    pub border_shape: BorderShape,
+}
+
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum BorderShape {
+    #[default]
+    Rounded,
+    Square,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

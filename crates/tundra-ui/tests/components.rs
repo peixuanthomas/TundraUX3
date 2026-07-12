@@ -1,12 +1,13 @@
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::Modifier;
-use tundra_ui::TundraTheme;
+use ratatui::widgets::BorderType;
 use tundra_ui::components::{
     Button, CommandPalette, CommandPaletteCommand, ComponentEvent, ComponentId, ContextMenu,
     ContextMenuItem, Dialog, DialogAction, InputEvent, Key, List, ListItem, MouseButton, MouseKind,
     TabItem, Tabs, TextInput,
 };
+use tundra_ui::{BorderShape, TundraTheme};
 
 #[test]
 fn button_keyboard_and_mouse_activate_the_same_component() {
@@ -40,6 +41,25 @@ fn button_keyboard_and_mouse_activate_the_same_component() {
     let mut buffer = Buffer::empty(area);
     button.render(area, &mut buffer, &TundraTheme::default());
     assert_regular_weight_vertical_border(&buffer, area);
+}
+
+#[test]
+fn theme_defaults_to_rounded_borders_and_square_uses_ratatui_plain() {
+    let area = Rect::new(0, 0, 12, 3);
+    let button = Button::new("shape", "Shape");
+
+    let rounded = TundraTheme::default();
+    assert_eq!(rounded.border_shape, BorderShape::Rounded);
+    assert_eq!(rounded.border_type(), BorderType::Rounded);
+    let mut rounded_buffer = Buffer::empty(area);
+    button.render(area, &mut rounded_buffer, &rounded);
+    assert_eq!(rounded_buffer.cell((0, 0)).unwrap().symbol(), "╭");
+
+    let square = rounded.with_border_shape(BorderShape::Square);
+    assert_eq!(square.border_type(), BorderType::Plain);
+    let mut square_buffer = Buffer::empty(area);
+    button.render(area, &mut square_buffer, &square);
+    assert_eq!(square_buffer.cell((0, 0)).unwrap().symbol(), "┌");
 }
 
 #[test]

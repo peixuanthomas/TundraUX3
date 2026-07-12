@@ -89,6 +89,8 @@ pub(crate) const EXPLORER_ENTRY_AND_LOCATION_ICON_KEYS: &[&str] = &[
     "pictures",
     "music",
     "videos",
+    "drive",
+    "trash",
 ];
 
 pub(crate) const EXPLORER_ACTION_ICON_KEYS: &[&str] = &[

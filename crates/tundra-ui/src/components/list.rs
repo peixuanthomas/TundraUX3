@@ -1,6 +1,6 @@
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
-use ratatui::widgets::{Block, Borders, Paragraph, Widget};
+use ratatui::widgets::{Borders, Paragraph, Widget};
 
 use crate::TundraTheme;
 
@@ -145,11 +145,13 @@ impl List {
 
     pub fn render(&self, area: Rect, buffer: &mut Buffer, theme: &TundraTheme) {
         let block = match self.title.as_deref() {
-            Some(title) => Block::default()
+            Some(title) => theme
+                .block()
                 .title(title)
                 .borders(Borders::ALL)
                 .style(theme.body_style()),
-            None => Block::default()
+            None => theme
+                .block()
                 .borders(Borders::ALL)
                 .style(theme.body_style()),
         };

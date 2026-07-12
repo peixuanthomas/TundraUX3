@@ -23,12 +23,14 @@ fn build_shell_hit_map(
             regions.push(ShellHitRegion {
                 component: ShellComponent::CompactHome,
                 area: compact,
+                layer: ShellHitLayer::ShellChrome,
             });
         }
         tundra_ui::ShellLayout::Full { top, main, status } => {
             regions.push(ShellHitRegion {
                 component: ShellComponent::TopBar,
                 area: top,
+                layer: ShellHitLayer::ShellChrome,
             });
             match content_screen {
                 ShellScreen::FirstRunSetup => {
@@ -39,18 +41,22 @@ fn build_shell_hit_map(
                     regions.push(ShellHitRegion {
                         component: ShellComponent::LoginUserList,
                         area: layout.user_list,
+                        layer: ShellHitLayer::AppContent,
                     });
                     regions.push(ShellHitRegion {
                         component: ShellComponent::LoginUsername,
                         area: layout.selected_username,
+                        layer: ShellHitLayer::AppContent,
                     });
                     regions.push(ShellHitRegion {
                         component: ShellComponent::LoginPassword,
                         area: layout.password,
+                        layer: ShellHitLayer::AppContent,
                     });
                     regions.push(ShellHitRegion {
                         component: ShellComponent::LoginPasswordVisibility,
                         area: layout.password_visibility,
+                        layer: ShellHitLayer::AppContent,
                     });
                 }
                 ShellScreen::BootstrapAdmin => {
@@ -58,28 +64,33 @@ fn build_shell_hit_map(
                     regions.push(ShellHitRegion {
                         component: ShellComponent::BootstrapUsername,
                         area: username,
+                        layer: ShellHitLayer::AppContent,
                     });
                     regions.push(ShellHitRegion {
                         component: ShellComponent::BootstrapPassword,
                         area: password,
+                        layer: ShellHitLayer::AppContent,
                     });
                 }
                 ShellScreen::UserManagement => {
                     regions.push(ShellHitRegion {
                         component: ShellComponent::UserManagement,
                         area: main,
+                        layer: ShellHitLayer::AppContent,
                     });
                 }
                 ShellScreen::Explorer => {
                     regions.push(ShellHitRegion {
                         component: ShellComponent::Explorer,
                         area: main,
+                        layer: ShellHitLayer::AppContent,
                     });
                 }
                 ShellScreen::Clock => {
                     regions.push(ShellHitRegion {
                         component: ShellComponent::Clock,
                         area: main,
+                        layer: ShellHitLayer::AppContent,
                     });
                     if let Some(model) = clock_model {
                         let layout = tundra_ui::clock_page_layout(main, model);
@@ -87,34 +98,41 @@ fn build_shell_hit_map(
                             regions.push(ShellHitRegion {
                                 component: ShellComponent::ClockEntryList,
                                 area: layout.panel,
+                                layer: ShellHitLayer::AppContent,
                             });
                         }
                         if layout.new_button.width > 0 && layout.new_button.height > 0 {
                             regions.push(ShellHitRegion {
                                 component: ShellComponent::ClockNewButton,
                                 area: layout.new_button,
+                                layer: ShellHitLayer::AppContent,
                             });
                         }
                         regions.extend(layout.entry_rows.iter().map(|row| ShellHitRegion {
                             component: ShellComponent::ClockEntryList,
                             area: row.area,
+                            layer: ShellHitLayer::AppContent,
                         }));
                         if let Some(dialog) = layout.create_dialog {
                             regions.push(ShellHitRegion {
                                 component: ShellComponent::ClockCreateDialog,
                                 area: dialog.dialog,
+                                layer: ShellHitLayer::AppOverlay,
                             });
                             regions.push(ShellHitRegion {
                                 component: ShellComponent::ClockCreateInput,
                                 area: dialog.input,
+                                layer: ShellHitLayer::AppOverlay,
                             });
                             regions.push(ShellHitRegion {
                                 component: ShellComponent::ClockCreateAlarmButton,
                                 area: dialog.create_alarm,
+                                layer: ShellHitLayer::AppOverlay,
                             });
                             regions.push(ShellHitRegion {
                                 component: ShellComponent::ClockCreateCountdownButton,
                                 area: dialog.create_countdown,
+                                layer: ShellHitLayer::AppOverlay,
                             });
                         }
                     }
@@ -123,6 +141,7 @@ fn build_shell_hit_map(
                     regions.push(ShellHitRegion {
                         component: ShellComponent::Home,
                         area: main,
+                        layer: ShellHitLayer::AppContent,
                     });
                     if content_screen == ShellScreen::Home
                         && let Some(model) = home_model
@@ -132,6 +151,7 @@ fn build_shell_hit_map(
                             regions.push(ShellHitRegion {
                                 component: ShellComponent::HomeLogout,
                                 area: logout,
+                                layer: ShellHitLayer::AppContent,
                             });
                         }
                     }
@@ -140,6 +160,7 @@ fn build_shell_hit_map(
             regions.push(ShellHitRegion {
                 component: ShellComponent::StatusBar,
                 area: status,
+                layer: ShellHitLayer::ShellChrome,
             });
             if clock_button_active_for_screen(content_screen)
                 && let Some(label) = time_button_label
@@ -149,6 +170,7 @@ fn build_shell_hit_map(
                     regions.push(ShellHitRegion {
                         component: ShellComponent::ClockButton,
                         area: button,
+                        layer: ShellHitLayer::ShellChrome,
                     });
                 }
             }
@@ -169,6 +191,7 @@ fn build_shell_hit_map(
         regions.push(ShellHitRegion {
             component: ShellComponent::ContextMenu,
             area: explorer_overlay.unwrap_or_else(|| popup_rect(terminal_size, popup.anchor)),
+            layer: ShellHitLayer::AppOverlay,
         });
     }
 
@@ -176,6 +199,7 @@ fn build_shell_hit_map(
         regions.push(ShellHitRegion {
             component: ShellComponent::ExitDialog,
             area: centered_rect(area, width.min(46), height.min(7)),
+            layer: ShellHitLayer::ShellModal,
         });
     }
 
@@ -183,6 +207,7 @@ fn build_shell_hit_map(
         regions.push(ShellHitRegion {
             component: ShellComponent::TimeSyncDialog,
             area: centered_rect(area, width.min(34), height.min(5)),
+            layer: ShellHitLayer::ShellModal,
         });
     }
 
@@ -193,6 +218,7 @@ fn build_shell_hit_map(
         regions.push(ShellHitRegion {
             component,
             area: layout.dialog,
+            layer: ShellHitLayer::ShellModal,
         });
     }
 
@@ -219,19 +245,23 @@ fn setup_hit_regions(
         tundra_ui::SetupStep::Language => vec![ShellHitRegion {
             component: ShellComponent::SetupLanguage,
             area: setup_language_list_rect(main),
+            layer: ShellHitLayer::AppContent,
         }],
         tundra_ui::SetupStep::Timezone => vec![ShellHitRegion {
             component: ShellComponent::SetupTimezone,
             area: tundra_ui::setup_timezone_list_area(main),
+            layer: ShellHitLayer::AppContent,
         }],
         tundra_ui::SetupStep::Admin => vec![
             ShellHitRegion {
                 component: ShellComponent::SetupAdminUsername,
                 area: tundra_ui::setup_admin_field_area(main, tundra_ui::SetupField::AdminUsername),
+                layer: ShellHitLayer::AppContent,
             },
             ShellHitRegion {
                 component: ShellComponent::SetupAdminPassword,
                 area: tundra_ui::setup_admin_field_area(main, tundra_ui::SetupField::AdminPassword),
+                layer: ShellHitLayer::AppContent,
             },
             ShellHitRegion {
                 component: ShellComponent::SetupAdminPasswordConfirm,
@@ -239,14 +269,17 @@ fn setup_hit_regions(
                     main,
                     tundra_ui::SetupField::AdminPasswordConfirm,
                 ),
+                layer: ShellHitLayer::AppContent,
             },
             ShellHitRegion {
                 component: ShellComponent::SetupAdminHint,
                 area: tundra_ui::setup_admin_field_area(main, tundra_ui::SetupField::PasswordHint),
+                layer: ShellHitLayer::AppContent,
             },
             ShellHitRegion {
                 component: ShellComponent::SetupSubmit,
                 area: tundra_ui::setup_admin_field_area(main, tundra_ui::SetupField::Submit),
+                layer: ShellHitLayer::AppContent,
             },
         ],
     }

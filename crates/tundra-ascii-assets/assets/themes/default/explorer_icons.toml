@@ -73,6 +73,14 @@ lines = ["[M]"]
 label = "Videos"
 lines = ["[V]"]
 
+[items.drive]
+label = "Drive"
+lines = ["[/]"]
+
+[items.trash]
+label = "Trash"
+lines = ["[X]"]
+
 [items.back]
 label = "Back"
 lines = ["<"]

@@ -8,8 +8,8 @@ use tundra_platform::{
     AppPaths, Platform, UserDirs, build_macos_app_paths, build_windows_app_paths, cleanup_temp_path,
 };
 use tundra_storage::{
-    ClockDocument, ClockEntryRecord, ClockProfile, ExplorerConfig, ExplorerDateZone,
-    ExplorerSizeFormat, ExplorerSortDirection, ExplorerSortField, LauncherConfig,
+    AppearanceConfig, BorderShape, ClockDocument, ClockEntryRecord, ClockProfile, ExplorerConfig,
+    ExplorerDateZone, ExplorerSizeFormat, ExplorerSortDirection, ExplorerSortField, LauncherConfig,
     RecentFilesDocument, SCHEMA_VERSION, SecurityConfig, SessionsDocument, StateDocument,
     StorageConfig, StorageError, StorageLayout, StorageManager, TrashDocument, TrashRecord,
     USERS_SCHEMA_VERSION, UserRecord, UsersDocument,
@@ -78,6 +78,9 @@ fn toml_and_json_documents_round_trip() {
         language: "zh-Hans".to_string(),
         timezone: "Asia/Shanghai".to_string(),
         shortcuts,
+        appearance: AppearanceConfig {
+            border_shape: BorderShape::Square,
+        },
         explorer: ExplorerConfig {
             show_hidden: true,
             show_system: true,
@@ -108,6 +111,8 @@ fn toml_and_json_documents_round_trip() {
         fs::read_to_string(&manager.layout().config_path).expect("config should be readable");
     assert!(config_contents.contains("language = \"zh-Hans\""));
     assert!(config_contents.contains("timezone = \"Asia/Shanghai\""));
+    assert!(config_contents.contains("[appearance]"));
+    assert!(config_contents.contains("border_shape = \"square\""));
     assert!(config_contents.contains("size_format = \"bytes\""));
     assert!(config_contents.contains("date_zone = \"utc\""));
     assert!(config_contents.contains("sort_field = \"modified\""));
@@ -235,6 +240,7 @@ fn old_config_without_language_or_timezone_loads_with_defaults() {
     assert_eq!(config.theme, "light");
     assert_eq!(config.language, "en-US");
     assert_eq!(config.timezone, "UTC");
+    assert_eq!(config.appearance.border_shape, BorderShape::Rounded);
     assert_eq!(
         config.explorer,
         ExplorerConfig {

@@ -3,21 +3,37 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 use crate::{
-    AppPaths, DirectoryListing, FileAttributes, FileOpenPolicy, Platform, PlatformCapabilities,
-    PlatformError, PlatformKind, ProcessExit, ProcessSpec, ProcessStream, UserDirs,
+    AppPaths, DirectoryListing, FileAttributes, FileOpenPolicy, LocalVolume, Platform,
+    PlatformCapabilities, PlatformError, PlatformKind, ProcessExit, ProcessSpec, ProcessStream,
+    TrashEntry, TrashEntryId, TrashRestoreTarget, TrashStats, UserDirs,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MockCall {
     OpenPath(PathBuf),
-    OpenWith { path: PathBuf, application: PathBuf },
+    OpenWith {
+        path: PathBuf,
+        application: PathBuf,
+    },
     OpenUri(String),
     SpawnDetached(ProcessSpec),
     SpawnWait(ProcessSpec),
     ReadClipboardText,
     WriteClipboardText(String),
     ReadDirectory(PathBuf),
-    RenamePath { source: PathBuf, target: PathBuf },
+    RenamePath {
+        source: PathBuf,
+        target: PathBuf,
+    },
+    LocalVolumes,
+    ListTrash,
+    TrashStats,
+    MoveToTrash(Vec<PathBuf>),
+    EmptyTrash,
+    RestoreTrashItem {
+        id: TrashEntryId,
+        target: TrashRestoreTarget,
+    },
 }
 
 #[derive(Debug)]
@@ -32,6 +48,13 @@ pub struct MockPlatform {
     directory_listings: Mutex<BTreeMap<PathBuf, Result<DirectoryListing, PlatformError>>>,
     file_open_policies: Mutex<BTreeMap<PathBuf, FileOpenPolicy>>,
     rename_results: Mutex<BTreeMap<(PathBuf, PathBuf), Result<(), PlatformError>>>,
+    local_volumes: Mutex<Result<Vec<LocalVolume>, PlatformError>>,
+    trash_entries: Mutex<Result<Vec<TrashEntry>, PlatformError>>,
+    trash_stats: Mutex<Result<TrashStats, PlatformError>>,
+    move_to_trash_result: Mutex<Result<(), PlatformError>>,
+    empty_trash_result: Mutex<Result<(), PlatformError>>,
+    restore_results:
+        Mutex<BTreeMap<(TrashEntryId, TrashRestoreTarget), Result<PathBuf, PlatformError>>>,
 }
 
 impl MockPlatform {
@@ -47,6 +70,12 @@ impl MockPlatform {
             directory_listings: Mutex::new(BTreeMap::new()),
             file_open_policies: Mutex::new(BTreeMap::new()),
             rename_results: Mutex::new(BTreeMap::new()),
+            local_volumes: Mutex::new(Ok(Vec::new())),
+            trash_entries: Mutex::new(Ok(Vec::new())),
+            trash_stats: Mutex::new(Ok(TrashStats::default())),
+            move_to_trash_result: Mutex::new(Ok(())),
+            empty_trash_result: Mutex::new(Ok(())),
+            restore_results: Mutex::new(BTreeMap::new()),
         }
     }
 
@@ -125,6 +154,54 @@ impl MockPlatform {
         self.set_rename_result(source, target, Err(error));
     }
 
+    pub fn trash_entry_id(value: impl Into<String>) -> TrashEntryId {
+        TrashEntryId::from_native(value)
+    }
+
+    pub fn set_local_volumes_result(&self, result: Result<Vec<LocalVolume>, PlatformError>) {
+        *self
+            .local_volumes
+            .lock()
+            .expect("local volumes lock poisoned") = result;
+    }
+
+    pub fn set_trash_entries_result(&self, result: Result<Vec<TrashEntry>, PlatformError>) {
+        *self
+            .trash_entries
+            .lock()
+            .expect("trash entries lock poisoned") = result;
+    }
+
+    pub fn set_trash_stats_result(&self, result: Result<TrashStats, PlatformError>) {
+        *self.trash_stats.lock().expect("trash stats lock poisoned") = result;
+    }
+
+    pub fn set_move_to_trash_result(&self, result: Result<(), PlatformError>) {
+        *self
+            .move_to_trash_result
+            .lock()
+            .expect("move to trash lock poisoned") = result;
+    }
+
+    pub fn set_empty_trash_result(&self, result: Result<(), PlatformError>) {
+        *self
+            .empty_trash_result
+            .lock()
+            .expect("empty trash lock poisoned") = result;
+    }
+
+    pub fn set_restore_result(
+        &self,
+        id: TrashEntryId,
+        target: TrashRestoreTarget,
+        result: Result<PathBuf, PlatformError>,
+    ) {
+        self.restore_results
+            .lock()
+            .expect("restore results lock poisoned")
+            .insert((id, target), result);
+    }
+
     pub fn calls(&self) -> Vec<MockCall> {
         self.calls.lock().expect("calls lock poisoned").clone()
     }
@@ -196,6 +273,67 @@ impl Platform for MockPlatform {
         self.record(MockCall::WriteClipboardText(text.to_string()));
         *self.clipboard_text.lock().expect("clipboard lock poisoned") = text.to_string();
         Ok(())
+    }
+
+    fn local_volumes(&self) -> Result<Vec<LocalVolume>, PlatformError> {
+        self.record(MockCall::LocalVolumes);
+        self.local_volumes
+            .lock()
+            .expect("local volumes lock poisoned")
+            .clone()
+    }
+
+    fn list_trash(&self) -> Result<Vec<TrashEntry>, PlatformError> {
+        self.record(MockCall::ListTrash);
+        self.trash_entries
+            .lock()
+            .expect("trash entries lock poisoned")
+            .clone()
+    }
+
+    fn trash_stats(&self) -> Result<TrashStats, PlatformError> {
+        self.record(MockCall::TrashStats);
+        self.trash_stats
+            .lock()
+            .expect("trash stats lock poisoned")
+            .clone()
+    }
+
+    fn move_to_trash(&self, paths: &[PathBuf]) -> Result<(), PlatformError> {
+        self.record(MockCall::MoveToTrash(paths.to_vec()));
+        self.move_to_trash_result
+            .lock()
+            .expect("move to trash lock poisoned")
+            .clone()
+    }
+
+    fn empty_trash(&self) -> Result<(), PlatformError> {
+        self.record(MockCall::EmptyTrash);
+        self.empty_trash_result
+            .lock()
+            .expect("empty trash lock poisoned")
+            .clone()
+    }
+
+    fn restore_trash_item(
+        &self,
+        id: &TrashEntryId,
+        target: TrashRestoreTarget,
+    ) -> Result<PathBuf, PlatformError> {
+        self.record(MockCall::RestoreTrashItem {
+            id: id.clone(),
+            target: target.clone(),
+        });
+        self.restore_results
+            .lock()
+            .expect("restore results lock poisoned")
+            .get(&(id.clone(), target))
+            .cloned()
+            .unwrap_or_else(|| {
+                Err(PlatformError::InvalidInput {
+                    message: format!("no mock restore result for trash entry {}", id.as_str()),
+                })
+            })
     }
 
     fn file_attributes(&self, path: &Path) -> Result<FileAttributes, PlatformError> {

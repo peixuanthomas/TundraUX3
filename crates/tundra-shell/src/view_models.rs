@@ -232,6 +232,12 @@ impl ShellState {
         let Some(state) = self.explorer_state.as_ref() else {
             return tundra_ui::ExplorerViewModel::new("Explorer unavailable", Vec::new(), None);
         };
+        let is_trash = state.current_location.is_trash();
+        let display_path = if is_trash {
+            "Trash".to_string()
+        } else {
+            state.current_path.display().to_string()
+        };
 
         let entries = state
             .entries
@@ -254,11 +260,18 @@ impl ShellState {
             .collect::<Vec<_>>();
         let selected_index = (!entries.is_empty()).then_some(state.selected_index);
         let mut model = tundra_ui::ExplorerViewModel::with_ascii_assets(
-            state.current_path.display().to_string(),
+            display_path.clone(),
             entries,
             selected_index,
             self.ascii_assets.clone(),
         );
+        model.is_trash = is_trash;
+        model.address_editing = self.explorer_input_mode == ExplorerInputMode::Address;
+        model.address_value = if model.address_editing {
+            self.explorer_input.clone()
+        } else {
+            display_path
+        };
         model.entry_presentations = state
             .entries
             .iter()
@@ -282,6 +295,10 @@ impl ShellState {
                     .and_then(|drag| drag.target.as_ref())
                     .is_some_and(|target| target == &entry.path);
                 presentation.metadata_warning = entry.metadata_warning.clone();
+                presentation.original_path = entry
+                    .original_path
+                    .as_ref()
+                    .map(|path| path.display().to_string());
                 presentation
             })
             .collect();
@@ -295,17 +312,38 @@ impl ShellState {
                     location.path.display().to_string(),
                     location.icon_key.clone(),
                 );
-                model.current = location.path == state.current_path;
-                model.enabled = location.path.is_dir();
-                model.drop_target = state
-                    .drag
-                    .as_ref()
-                    .and_then(|drag| drag.target.as_ref())
-                    .is_some_and(|target| target == &location.path);
+                model.kind = match location.kind {
+                    tundra_apps::explorer::ExplorerQuickLocationKind::Directory => {
+                        tundra_ui::ExplorerQuickLocationKind::Directory
+                    }
+                    tundra_apps::explorer::ExplorerQuickLocationKind::Volume => {
+                        tundra_ui::ExplorerQuickLocationKind::Volume
+                    }
+                    tundra_apps::explorer::ExplorerQuickLocationKind::Trash => {
+                        tundra_ui::ExplorerQuickLocationKind::Trash
+                    }
+                };
+                model.current = if location.is_trash() {
+                    is_trash
+                } else {
+                    !is_trash && location.path == state.current_path
+                };
+                model.enabled = location.enabled
+                    && (location.is_trash() || location.path.is_dir());
+                model.drop_target = !location.is_trash()
+                    && state
+                        .drag
+                        .as_ref()
+                        .and_then(|drag| drag.target.as_ref())
+                        .is_some_and(|target| target == &location.path);
                 model
             })
             .collect();
-        model.breadcrumbs = explorer_breadcrumb_view_models(&state.current_path, state);
+        model.breadcrumbs = if is_trash {
+            Vec::new()
+        } else {
+            explorer_breadcrumb_view_models(&state.current_path, state)
+        };
         model.sort_column = match state.sort_field {
             tundra_apps::explorer::ExplorerSortField::Name => tundra_ui::ExplorerSortColumn::Name,
             tundra_apps::explorer::ExplorerSortField::Type => tundra_ui::ExplorerSortColumn::Type,
@@ -332,12 +370,22 @@ impl ShellState {
             !state.forward_history.is_empty(),
         );
         let busy = state.operation.is_some();
+        if is_trash {
+            model.toolbar = tundra_ui::ExplorerToolbarViewModel::trash(
+                !state.back_history.is_empty(),
+                !state.forward_history.is_empty(),
+                model.selected_count == 1 && !busy,
+                !state.entries.is_empty() && !busy,
+            );
+        }
         for button in &mut model.toolbar.buttons {
             button.enabled = match button.action {
                 tundra_ui::ExplorerToolbarAction::Back => !state.back_history.is_empty(),
                 tundra_ui::ExplorerToolbarAction::Forward => !state.forward_history.is_empty(),
-                tundra_ui::ExplorerToolbarAction::Up => state.current_path.parent().is_some(),
-                tundra_ui::ExplorerToolbarAction::New => !busy,
+                tundra_ui::ExplorerToolbarAction::Up => {
+                    !is_trash && state.current_path.parent().is_some()
+                }
+                tundra_ui::ExplorerToolbarAction::New => !is_trash && !busy,
                 tundra_ui::ExplorerToolbarAction::Cut
                 | tundra_ui::ExplorerToolbarAction::Copy
                 | tundra_ui::ExplorerToolbarAction::Delete => {
@@ -347,7 +395,13 @@ impl ShellState {
                     state.clipboard.is_some() && !busy
                 }
                 tundra_ui::ExplorerToolbarAction::Rename => {
-                    model.selected_count == 1 && !busy
+                    !is_trash && model.selected_count == 1 && !busy
+                }
+                tundra_ui::ExplorerToolbarAction::Restore => {
+                    is_trash && model.selected_count == 1 && !busy
+                }
+                tundra_ui::ExplorerToolbarAction::DumpTrash => {
+                    is_trash && !state.entries.is_empty() && !busy
                 }
                 _ => true,
             };
@@ -387,7 +441,16 @@ impl ShellState {
             }
         });
         model.show_hidden = state.show_hidden;
-        model.message = state.message.clone();
+        model.message = if is_trash && model.selected_count > 0 {
+            state.selected_entry().map(|entry| {
+                entry.original_path.as_ref().map_or_else(
+                    || "Original location unavailable".to_string(),
+                    |path| format!("Original location: {}", path.display()),
+                )
+            })
+        } else {
+            state.message.clone()
+        };
         model.error = state.error.clone();
         model.search = if self.explorer_input_mode == ExplorerInputMode::Search {
             Some(tundra_ui::ExplorerSearchViewModel::new(
@@ -405,15 +468,39 @@ impl ShellState {
             None
         };
         model.pending_dialog = state.pending_dialog.as_ref().map(|dialog| {
+            let (confirm, cancel) = match dialog.kind {
+                tundra_apps::explorer::ExplorerDialogKind::DeleteToTrash => {
+                    ("Y / Enter: move", "N / Esc: cancel")
+                }
+                tundra_apps::explorer::ExplorerDialogKind::DumpTrash => {
+                    ("Y / Enter: empty permanently", "N / Esc: cancel")
+                }
+            };
             tundra_ui::ExplorerDialogViewModel::new(
                 dialog.title.clone(),
                 dialog.message.clone(),
-                "Y / Enter: move",
-                "N / Esc: cancel",
+                confirm,
+                cancel,
             )
         });
 
-        model.overlay = if let Some(conflict) = state.pending_conflict.as_ref() {
+        model.overlay = if let Some(conflict) = state.pending_restore.as_ref() {
+            Some(tundra_ui::ExplorerOverlayViewModel::Conflict(
+                tundra_ui::ExplorerConflictViewModel {
+                    title: "Restore conflict".to_string(),
+                    source: format!("Trash: {}", conflict.display_name),
+                    destination: conflict.target.display().to_string(),
+                    choices: vec![
+                        tundra_ui::ExplorerConflictChoice::KeepBoth,
+                        tundra_ui::ExplorerConflictChoice::Replace,
+                        tundra_ui::ExplorerConflictChoice::Cancel,
+                    ],
+                    selected_choice: tundra_ui::ExplorerConflictChoice::KeepBoth,
+                    apply_to_remaining: false,
+                    allow_apply_to_remaining: false,
+                },
+            ))
+        } else if let Some(conflict) = state.pending_conflict.as_ref() {
             Some(tundra_ui::ExplorerOverlayViewModel::Conflict(
                 tundra_ui::ExplorerConflictViewModel {
                     title: "Name conflict".to_string(),
@@ -427,10 +514,16 @@ impl ShellState {
                     ],
                     selected_choice: tundra_ui::ExplorerConflictChoice::KeepBoth,
                     apply_to_remaining: self.explorer_conflict_apply_to_remaining,
+                    allow_apply_to_remaining: true,
                 },
             ))
-        } else if self.explorer_input_mode != ExplorerInputMode::Browse
-            && self.explorer_input_mode != ExplorerInputMode::Search
+        } else if matches!(
+            self.explorer_input_mode,
+            ExplorerInputMode::NewFolder
+                | ExplorerInputMode::NewTextFile
+                | ExplorerInputMode::Rename
+                | ExplorerInputMode::RestoreDestination
+        )
         {
             let (kind, title, prompt, confirm_label) = match self.explorer_input_mode {
                 ExplorerInputMode::NewFolder => (
@@ -451,7 +544,15 @@ impl ShellState {
                     "New name",
                     "Rename",
                 ),
-                ExplorerInputMode::Browse | ExplorerInputMode::Search => unreachable!(),
+                ExplorerInputMode::RestoreDestination => (
+                    tundra_ui::ExplorerNameDialogKind::RestoreDestination,
+                    "Restore item",
+                    "Absolute destination directory",
+                    "Restore",
+                ),
+                ExplorerInputMode::Browse
+                | ExplorerInputMode::Address
+                | ExplorerInputMode::Search => unreachable!(),
             };
             Some(tundra_ui::ExplorerOverlayViewModel::Name(
                 tundra_ui::ExplorerNameDialogViewModel {
@@ -470,6 +571,8 @@ impl ShellState {
                     anchor,
                     model.selected_count,
                     state.clipboard.is_some(),
+                    is_trash,
+                    !state.entries.is_empty(),
                     self.explorer_overlay_selection,
                 ),
                 ExplorerOverlayMode::Sort { anchor } => {

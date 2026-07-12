@@ -11,7 +11,7 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::widgets::{Block, Borders, Widget};
 use zip::ZipArchive;
 
-use crate::TundraTheme;
+use crate::{BorderShape, TundraTheme};
 
 const CITY_MARKER_SYMBOL: &str = "◎";
 const DEFAULT_CACHE_CAPACITY: usize = 8;
@@ -611,6 +611,7 @@ impl Default for TimezoneMapRasterCache {
 pub struct TimezoneMapWidget<'a> {
     input: TimezoneMapInput<'a>,
     cache: Option<&'a TimezoneMapRasterCache>,
+    border_shape: BorderShape,
 }
 
 impl<'a> TimezoneMapWidget<'a> {
@@ -619,11 +620,15 @@ impl<'a> TimezoneMapWidget<'a> {
     }
 
     pub fn themed(boundaries: &'a [TimezoneBoundary], theme: &TundraTheme) -> Self {
-        Self::new(boundaries, TimezoneMapColors::from_theme(theme))
+        Self::new(boundaries, TimezoneMapColors::from_theme(theme)).border_shape(theme.border_shape)
     }
 
     pub fn from_input(input: TimezoneMapInput<'a>) -> Self {
-        Self { input, cache: None }
+        Self {
+            input,
+            cache: None,
+            border_shape: BorderShape::default(),
+        }
     }
 
     pub fn selected_timezone_id(mut self, selected_timezone_id: Option<&'a str>) -> Self {
@@ -645,12 +650,18 @@ impl<'a> TimezoneMapWidget<'a> {
         self.cache = Some(cache);
         self
     }
+
+    pub fn border_shape(mut self, border_shape: BorderShape) -> Self {
+        self.border_shape = border_shape;
+        self
+    }
 }
 
 impl Widget for TimezoneMapWidget<'_> {
     fn render(self, area: Rect, buffer: &mut Buffer) {
         let colors = self.input.colors;
         let block = Block::default()
+            .border_type(self.border_shape.border_type())
             .title("Timezone Map")
             .title_style(
                 Style::default()
@@ -1432,6 +1443,17 @@ mod tests {
                 .iter()
                 .any(|cell| cell.symbol() == CITY_MARKER_SYMBOL && cell.fg == Color::Cyan)
         );
+        assert_eq!(buffer.cell((0, 0)).unwrap().symbol(), "╭");
+    }
+
+    #[test]
+    fn themed_widget_uses_themes_square_border_shape() {
+        let theme = TundraTheme::default().with_border_shape(BorderShape::Square);
+        let mut buffer = Buffer::empty(Rect::new(0, 0, 48, 14));
+
+        TimezoneMapWidget::themed(&sample_boundaries(), &theme).render(buffer.area, &mut buffer);
+
+        assert_eq!(buffer.cell((0, 0)).unwrap().symbol(), "┌");
     }
 
     #[test]

@@ -1,7 +1,7 @@
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Paragraph, Widget};
+use ratatui::widgets::{Borders, Paragraph, Widget};
 
 use crate::TundraTheme;
 
@@ -109,7 +109,8 @@ impl Tabs {
     }
 
     pub fn render(&self, area: Rect, buffer: &mut Buffer, theme: &TundraTheme) {
-        let block = Block::default()
+        let block = theme
+            .block()
             .borders(Borders::ALL)
             .style(theme.body_style());
         let inner = block.inner(area);

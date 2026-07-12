@@ -44,7 +44,7 @@ fn explorer_renderer_shows_path_entries_details_search_and_message() {
 
     let output = render_output(&model);
 
-    assert!(output.contains("Path: /Users/strix/projects"));
+    assert!(output.contains("/Users/strix/projects"));
     assert!(output.contains("Hidden files: shown"));
     assert!(output.contains("Search: read (1 match, active)"));
     assert!(output.contains("[+] src"));
@@ -92,6 +92,20 @@ fn explorer_renderer_shows_error() {
     let output = render_output(&model);
 
     assert!(output.contains("Error: Permission denied: README.md"));
+}
+
+#[test]
+fn explorer_renderer_supports_volume_and_trash_quick_location_icons() {
+    let mut model = sample_model();
+    model.quick_locations = vec![
+        ExplorerQuickLocationViewModel::new("volume-c", "Local Disk (C:)", "C:\\", "drive"),
+        ExplorerQuickLocationViewModel::new("trash", "Trash", "", "trash"),
+    ];
+
+    let output = render_output(&model);
+
+    assert!(output.contains("[/] Local Disk (C:)"));
+    assert!(output.contains("[X] Trash"));
 }
 
 #[test]
@@ -273,7 +287,7 @@ fn explorer_toolbar_keeps_every_action_at_supported_widths() {
                 .iter()
                 .map(|button| button.action)
                 .collect::<Vec<_>>(),
-            ExplorerToolbarAction::ALL,
+            ExplorerToolbarAction::REGULAR,
             "toolbar actions at width {width}"
         );
     }
@@ -416,6 +430,7 @@ fn explorer_advanced_options_conflict_and_properties_overlays_render() {
 
     model.overlay = Some(ExplorerOverlayViewModel::Conflict(
         ExplorerConflictViewModel {
+            allow_apply_to_remaining: true,
             title: "Name conflict".to_string(),
             source: "README.md".to_string(),
             destination: "/tmp/README.md".to_string(),

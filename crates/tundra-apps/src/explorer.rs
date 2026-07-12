@@ -11,16 +11,43 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use tundra_core::{
     AuditOutcome, AuditService, AuthSession, CoreError, PermissionAction, PermissionService,
 };
-use tundra_platform::{ExecutableKind, FileAttributes, FileOpenPolicy, Platform, PlatformError};
+use tundra_platform::{
+    ExecutableKind, FileAttributes, FileOpenPolicy, Platform, PlatformError, TrashEntry,
+    TrashEntryId, TrashRestoreTarget,
+};
 use tundra_storage::{
     ExplorerConfig, ExplorerDateZone, ExplorerSizeFormat,
     ExplorerSortDirection as StoredSortDirection, ExplorerSortField as StoredSortField,
-    StorageError, StorageManager, TrashDocument, TrashRecord,
+    StorageError, StorageManager,
 };
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ExplorerLocation {
+    Directory(PathBuf),
+    Trash,
+}
+
+impl ExplorerLocation {
+    pub fn directory(path: impl Into<PathBuf>) -> Self {
+        Self::Directory(path.into())
+    }
+
+    pub const fn is_trash(&self) -> bool {
+        matches!(self, Self::Trash)
+    }
+
+    pub fn path(&self) -> Option<&Path> {
+        match self {
+            Self::Directory(path) => Some(path),
+            Self::Trash => None,
+        }
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ExplorerState {
     pub current_path: PathBuf,
+    pub current_location: ExplorerLocation,
     pub all_entries: Vec<ExplorerEntry>,
     pub entries: Vec<ExplorerEntry>,
     pub selected_index: usize,
@@ -43,12 +70,13 @@ pub struct ExplorerState {
     pub viewport_offset: usize,
     pub viewport_follows_focus: bool,
     pub listing_warning_count: usize,
-    pub back_history: Vec<PathBuf>,
-    pub forward_history: Vec<PathBuf>,
+    pub back_history: Vec<ExplorerLocation>,
+    pub forward_history: Vec<ExplorerLocation>,
     pub quick_locations: Vec<ExplorerQuickLocation>,
     pub clipboard: Option<ExplorerClipboard>,
     pub pending_dialog: Option<ExplorerDialog>,
     pub pending_conflict: Option<ExplorerConflict>,
+    pub pending_restore: Option<ExplorerPendingRestore>,
     pub pending_transfer: Option<ExplorerPendingTransfer>,
     pub drag: Option<ExplorerDragState>,
     pub operation: Option<ExplorerOperationProgress>,
@@ -66,8 +94,10 @@ impl ExplorerState {
     }
 
     pub fn with_config(current_path: impl Into<PathBuf>, config: &ExplorerConfig) -> Self {
+        let current_path = current_path.into();
         Self {
-            current_path: current_path.into(),
+            current_path: current_path.clone(),
+            current_location: ExplorerLocation::Directory(current_path),
             all_entries: Vec::new(),
             entries: Vec::new(),
             selected_index: 0,
@@ -96,6 +126,7 @@ impl ExplorerState {
             clipboard: None,
             pending_dialog: None,
             pending_conflict: None,
+            pending_restore: None,
             pending_transfer: None,
             drag: None,
             operation: None,
@@ -281,6 +312,8 @@ impl ExplorerState {
 pub struct ExplorerEntry {
     pub name: String,
     pub path: PathBuf,
+    pub trash_id: Option<TrashEntryId>,
+    pub original_path: Option<PathBuf>,
     pub kind: ExplorerEntryKind,
     pub size: u64,
     pub modified: Option<SystemTime>,
@@ -297,6 +330,15 @@ pub struct ExplorerQuickLocation {
     pub label: String,
     pub path: PathBuf,
     pub icon_key: String,
+    pub kind: ExplorerQuickLocationKind,
+    pub enabled: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExplorerQuickLocationKind {
+    Directory,
+    Volume,
+    Trash,
 }
 
 impl ExplorerQuickLocation {
@@ -311,7 +353,39 @@ impl ExplorerQuickLocation {
             label: label.into(),
             path: path.into(),
             icon_key: icon_key.into(),
+            kind: ExplorerQuickLocationKind::Directory,
+            enabled: true,
         }
+    }
+
+    pub fn volume(
+        id: impl Into<String>,
+        label: impl Into<String>,
+        path: impl Into<PathBuf>,
+    ) -> Self {
+        Self {
+            id: id.into(),
+            label: label.into(),
+            path: path.into(),
+            icon_key: "drive".to_string(),
+            kind: ExplorerQuickLocationKind::Volume,
+            enabled: true,
+        }
+    }
+
+    pub fn trash() -> Self {
+        Self {
+            id: "trash".to_string(),
+            label: "Trash".to_string(),
+            path: PathBuf::new(),
+            icon_key: "trash".to_string(),
+            kind: ExplorerQuickLocationKind::Trash,
+            enabled: true,
+        }
+    }
+
+    pub const fn is_trash(&self) -> bool {
+        matches!(self.kind, ExplorerQuickLocationKind::Trash)
     }
 }
 
@@ -340,6 +414,8 @@ impl ExplorerEntry {
         Self {
             name,
             path,
+            trash_id: None,
+            original_path: None,
             kind,
             size: attributes.len,
             modified: attributes.modified,
@@ -348,6 +424,49 @@ impl ExplorerEntry {
             type_label,
             icon_key,
             metadata_warning,
+        }
+    }
+
+
+    fn from_trash(entry: TrashEntry) -> Self {
+        let synthetic_path = PathBuf::from(format!("trash:{}", entry.id.as_str()));
+        let attributes = FileAttributes {
+            path: synthetic_path.clone(),
+            is_file: !entry.is_directory,
+            is_dir: entry.is_directory,
+            len: entry.size,
+            readonly: true,
+            modified: entry.deleted_at,
+            hidden: false,
+            system: false,
+            archive: false,
+            symlink: false,
+            junction: false,
+            reparse_point: false,
+            shortcut: false,
+        };
+        let kind = if entry.is_directory {
+            ExplorerEntryKind::Directory
+        } else {
+            ExplorerEntryKind::File
+        };
+        Self {
+            name: entry.display_name,
+            path: synthetic_path,
+            trash_id: Some(entry.id),
+            original_path: entry.original_path,
+            kind,
+            size: entry.size,
+            modified: entry.deleted_at,
+            attributes,
+            open_policy: FileOpenPolicy::blocked("Trash items must be restored before opening"),
+            type_label: if entry.is_directory {
+                "Trashed folder".to_string()
+            } else {
+                "Trashed file".to_string()
+            },
+            icon_key: if entry.is_directory { "folder" } else { "file" }.to_string(),
+            metadata_warning: None,
         }
     }
 }
@@ -451,15 +570,29 @@ pub enum ExplorerClipboardMode {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ExplorerDialog {
+    pub kind: ExplorerDialogKind,
     pub title: String,
     pub message: String,
+    /// Immutable snapshot of the paths covered by a delete confirmation.
+    ///
+    /// Confirming must never re-read the live selection: keyboard navigation or a delayed shell
+    /// notification could otherwise delete a different item than the one named by the dialog.
+    pub targets: Vec<PathBuf>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExplorerDialogKind {
+    DeleteToTrash,
+    DumpTrash,
 }
 
 impl ExplorerDialog {
     pub fn delete(path: &Path) -> Self {
         Self {
+            kind: ExplorerDialogKind::DeleteToTrash,
             title: "Delete to trash".to_string(),
-            message: format!("Move {} to TundraUX trash?", path.display()),
+            message: format!("Move {} to the system Trash?", path.display()),
+            targets: vec![path.to_path_buf()],
         }
     }
 
@@ -468,10 +601,31 @@ impl ExplorerDialog {
             return Self::delete(&paths[0]);
         }
         Self {
+            kind: ExplorerDialogKind::DeleteToTrash,
             title: "Delete to trash".to_string(),
-            message: format!("Move {} selected items to TundraUX trash?", paths.len()),
+            message: format!("Move {} selected items to the system Trash?", paths.len()),
+            targets: paths.to_vec(),
         }
     }
+
+
+    pub fn dump_trash(item_count: usize) -> Self {
+        Self {
+            kind: ExplorerDialogKind::DumpTrash,
+            title: "Dump Trash".to_string(),
+            message: format!(
+                "Permanently delete all {item_count} item(s) from the system Trash? This cannot be undone."
+            ),
+            targets: Vec::new(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExplorerPendingRestore {
+    pub id: TrashEntryId,
+    pub display_name: String,
+    pub target: PathBuf,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -583,6 +737,7 @@ pub enum ExplorerCommand {
     OpenBack,
     OpenForward,
     Navigate(PathBuf),
+    NavigateTrash,
     SelectNext,
     SelectPrevious,
     SelectIndex(usize),
@@ -606,6 +761,11 @@ pub enum ExplorerCommand {
     Rename(String),
     ConfirmDelete,
     DeleteToTrash,
+    DumpTrash,
+    ConfirmDumpTrash,
+    RestoreSelected,
+    RestoreSelectedToDirectory(PathBuf),
+    ResolveRestoreConflict(ExplorerConflictAction),
     Copy,
     Cut,
     Paste,
@@ -785,42 +945,57 @@ impl ExplorerController {
                 ExplorerEffect::PersistConfig(state.to_config())
             }
             ExplorerCommand::OpenParent => {
+                ensure_filesystem_location(state)?;
                 let parent = state
                     .current_path
                     .parent()
                     .ok_or_else(|| ExplorerError::InvalidOperation("no parent directory".into()))?
                     .to_path_buf();
-                navigate_to(state, parent, true);
                 self.file_service
-                    .refresh(state, session, platform, storage)?;
+                    .navigate_directory(state, session, platform, storage, parent, true)?;
                 ExplorerEffect::None
             }
             ExplorerCommand::OpenBack => {
                 let target = state
                     .back_history
-                    .pop()
+                    .last()
+                    .cloned()
                     .ok_or_else(|| ExplorerError::InvalidOperation("no back history".into()))?;
-                state.forward_history.push(state.current_path.clone());
-                navigate_to(state, target, false);
+                let previous = state.current_location.clone();
                 self.file_service
-                    .refresh(state, session, platform, storage)?;
+                    .navigate_location(state, session, platform, storage, target, false)?;
+                state.back_history.pop();
+                state.forward_history.push(previous);
                 ExplorerEffect::None
             }
             ExplorerCommand::OpenForward => {
                 let target = state
                     .forward_history
-                    .pop()
+                    .last()
+                    .cloned()
                     .ok_or_else(|| ExplorerError::InvalidOperation("no forward history".into()))?;
-                state.back_history.push(state.current_path.clone());
-                navigate_to(state, target, false);
+                let previous = state.current_location.clone();
                 self.file_service
-                    .refresh(state, session, platform, storage)?;
+                    .navigate_location(state, session, platform, storage, target, false)?;
+                state.forward_history.pop();
+                state.back_history.push(previous);
                 ExplorerEffect::None
             }
             ExplorerCommand::Navigate(path) => {
-                navigate_to(state, path, true);
                 self.file_service
-                    .refresh(state, session, platform, storage)?;
+                    .navigate_directory(state, session, platform, storage, path, true)?;
+                ExplorerEffect::None
+            }
+            ExplorerCommand::NavigateTrash => {
+                self.file_service
+                    .navigate_location(
+                        state,
+                        session,
+                        platform,
+                        storage,
+                        ExplorerLocation::Trash,
+                        true,
+                    )?;
                 ExplorerEffect::None
             }
             ExplorerCommand::OpenSelected => {
@@ -837,16 +1012,19 @@ impl ExplorerController {
                 )?
             }
             ExplorerCommand::NewFolder(name) => {
+                ensure_filesystem_location(state)?;
                 self.file_service
                     .create_folder(state, session, platform, storage, &name)?;
                 ExplorerEffect::None
             }
             ExplorerCommand::NewTextFile(name) => {
+                ensure_filesystem_location(state)?;
                 self.file_service
                     .create_text_file(state, session, platform, storage, &name)?;
                 ExplorerEffect::None
             }
             ExplorerCommand::Rename(name) => {
+                ensure_filesystem_location(state)?;
                 let paths = state.effective_selected_paths();
                 if paths.len() != 1 {
                     return Err(ExplorerError::InvalidOperation(
@@ -858,6 +1036,7 @@ impl ExplorerController {
                 ExplorerEffect::None
             }
             ExplorerCommand::DeleteToTrash => {
+                ensure_filesystem_location(state)?;
                 let paths = selected_paths_or_error(state)?;
                 if state.confirm_delete {
                     state.pending_dialog = Some(ExplorerDialog::delete_many(&paths));
@@ -868,13 +1047,95 @@ impl ExplorerController {
                 ExplorerEffect::None
             }
             ExplorerCommand::ConfirmDelete => {
-                let paths = selected_paths_or_error(state)?;
+                ensure_filesystem_location(state)?;
+                let dialog = state.pending_dialog.clone().ok_or_else(|| {
+                    ExplorerError::InvalidOperation("no delete confirmation is pending".into())
+                })?;
+                if dialog.kind != ExplorerDialogKind::DeleteToTrash || dialog.targets.is_empty() {
+                    return Err(ExplorerError::InvalidOperation(
+                        "the pending dialog is not a delete confirmation".into(),
+                    ));
+                }
                 self.file_service
-                    .delete_many_to_trash(state, session, platform, storage, &paths)?;
+                    .delete_many_to_trash(state, session, platform, storage, &dialog.targets)?;
+                ExplorerEffect::None
+            }
+            ExplorerCommand::DumpTrash => {
+                ensure_trash_location(state)?;
+                state.pending_dialog = Some(ExplorerDialog::dump_trash(state.entries.len()));
+                ExplorerEffect::None
+            }
+            ExplorerCommand::ConfirmDumpTrash => {
+                ensure_trash_location(state)?;
+                let dialog = state.pending_dialog.as_ref().ok_or_else(|| {
+                    ExplorerError::InvalidOperation("no Dump Trash confirmation is pending".into())
+                })?;
+                if dialog.kind != ExplorerDialogKind::DumpTrash {
+                    return Err(ExplorerError::InvalidOperation(
+                        "the pending dialog is not a Dump Trash confirmation".into(),
+                    ));
+                }
+                if let Err(error) = platform.empty_trash() {
+                    // Emptying may be partially completed by the native shell. Never leave a
+                    // confirmation that can replay against a now-different Trash snapshot.
+                    state.pending_dialog = None;
+                    let _ = self.file_service.refresh(state, session, platform, storage);
+                    return Err(error.into());
+                }
                 state.pending_dialog = None;
+                match self.file_service.refresh(state, session, platform, storage) {
+                    Ok(()) => state.set_success("System Trash emptied"),
+                    Err(error) => {
+                        state.message = None;
+                        state.error = Some(format!(
+                            "System Trash was emptied, but Explorer could not refresh: {error}"
+                        ));
+                    }
+                }
+                ExplorerEffect::None
+            }
+            ExplorerCommand::RestoreSelected => {
+                ensure_trash_location(state)?;
+                let entry = selected_trash_entry(state)?;
+                let target = entry.original_path.clone().ok_or_else(|| {
+                    ExplorerError::InvalidOperation(
+                        "This Trash item has no recorded original path; choose a destination"
+                            .into(),
+                    )
+                })?;
+                self.file_service.prepare_restore(
+                    state,
+                    session,
+                    platform,
+                    storage,
+                    &entry,
+                    target,
+                )?;
+                ExplorerEffect::None
+            }
+            ExplorerCommand::RestoreSelectedToDirectory(directory) => {
+                ensure_trash_location(state)?;
+                let entry = selected_trash_entry(state)?;
+                let target = restore_target_in_directory(&directory, &entry.name)?;
+                self.file_service.prepare_restore(
+                    state,
+                    session,
+                    platform,
+                    storage,
+                    &entry,
+                    target,
+                )?;
+                ExplorerEffect::None
+            }
+            ExplorerCommand::ResolveRestoreConflict(action) => {
+                ensure_trash_location(state)?;
+                self.file_service.resolve_restore_conflict(
+                    state, session, platform, storage, action,
+                )?;
                 ExplorerEffect::None
             }
             ExplorerCommand::Copy => {
+                ensure_filesystem_location(state)?;
                 let paths = selected_paths_or_error(state)?;
                 state.clipboard = Some(ExplorerClipboard {
                     paths,
@@ -884,6 +1145,7 @@ impl ExplorerController {
                 ExplorerEffect::None
             }
             ExplorerCommand::Cut => {
+                ensure_filesystem_location(state)?;
                 let paths = selected_paths_or_error(state)?;
                 state.clipboard = Some(ExplorerClipboard {
                     paths,
@@ -893,6 +1155,7 @@ impl ExplorerController {
                 ExplorerEffect::None
             }
             ExplorerCommand::Paste => {
+                ensure_filesystem_location(state)?;
                 let clipboard = state
                     .clipboard
                     .clone()
@@ -902,6 +1165,7 @@ impl ExplorerController {
                 ExplorerEffect::None
             }
             ExplorerCommand::BeginDrag => {
+                ensure_filesystem_location(state)?;
                 let sources = selected_paths_or_error(state)?;
                 state.drag = Some(ExplorerDragState {
                     sources,
@@ -912,6 +1176,7 @@ impl ExplorerController {
                 ExplorerEffect::None
             }
             ExplorerCommand::UpdateDrag { target, mode } => {
+                ensure_filesystem_location(state)?;
                 if let Some(drag) = state.drag.as_mut() {
                     drag.target = target;
                     drag.mode = mode;
@@ -920,6 +1185,7 @@ impl ExplorerController {
                 ExplorerEffect::None
             }
             ExplorerCommand::DropDrag => {
+                ensure_filesystem_location(state)?;
                 let Some(drag) = state.drag.take() else {
                     return Ok(ExplorerEffect::None);
                 };
@@ -949,6 +1215,7 @@ impl ExplorerController {
                 action,
                 apply_to_all,
             } => {
+                ensure_filesystem_location(state)?;
                 self.file_service.resolve_pending_transfer(
                     state,
                     session,
@@ -965,6 +1232,7 @@ impl ExplorerController {
                     operation.cancellable = false;
                 }
                 state.pending_conflict = None;
+                state.pending_restore = None;
                 ExplorerEffect::None
             }
         };
@@ -996,48 +1264,113 @@ impl ExplorerFileService {
         platform: &dyn Platform,
         storage: &StorageManager,
     ) -> Result<(), ExplorerError> {
-        self.authorize(
-            session,
-            storage,
-            PermissionAction::ReadFile,
-            &state.current_path,
-        )?;
-
-        let listing = match platform.read_directory(&state.current_path) {
+        let location = state.current_location.clone();
+        let (entries, warning_count) = match self.load_location(session, platform, storage, &location)
+        {
             Ok(listing) => listing,
             Err(error) => {
-                // The path has already changed for navigation commands. Never leave actionable
-                // rows from the previous directory under the new breadcrumb when listing fails.
-                state.all_entries.clear();
-                state.entries.clear();
-                state.clear_selection();
-                state.selected_index = 0;
-                state.viewport_offset = 0;
-                state.listing_warning_count = 0;
-                return Err(error.into());
+                // A refresh is different from navigation: the current location is unchanged, but
+                // rows whose existence/authorization can no longer be verified must not remain
+                // actionable. Navigation loads first and therefore keeps the previous rows on
+                // failure; refreshing the already-visible location deliberately clears them.
+                clear_location_listing(state);
+                return Err(error);
             }
         };
-        state.listing_warning_count = listing.warnings.len();
-        state.all_entries = listing
-            .entries
-            .into_iter()
-            .map(|entry| {
-                ExplorerEntry::from_metadata(
-                    entry.path,
-                    entry.name,
-                    entry.attributes,
-                    entry.open_policy,
-                )
-            })
-            .collect();
-        state.apply_projection();
-        if state.listing_warning_count > 0 {
-            state.message = Some(format!(
-                "{} directory entries have incomplete metadata",
-                state.listing_warning_count
+        commit_location_listing(state, location, entries, warning_count);
+        Ok(())
+    }
+
+    fn navigate_directory(
+        &self,
+        state: &mut ExplorerState,
+        session: Option<&AuthSession>,
+        platform: &dyn Platform,
+        storage: &StorageManager,
+        target: PathBuf,
+        push_history: bool,
+    ) -> Result<(), ExplorerError> {
+        if !target.is_absolute() {
+            return Err(ExplorerError::InvalidOperation(
+                "path must be absolute".to_string(),
             ));
         }
+        let attributes = platform.file_attributes(&target)?;
+        if !attributes.is_dir {
+            return Err(ExplorerError::InvalidOperation(format!(
+                "{} is not a directory",
+                target.display()
+            )));
+        }
+        self.navigate_location(
+            state,
+            session,
+            platform,
+            storage,
+            ExplorerLocation::Directory(target),
+            push_history,
+        )
+    }
+
+    fn navigate_location(
+        &self,
+        state: &mut ExplorerState,
+        session: Option<&AuthSession>,
+        platform: &dyn Platform,
+        storage: &StorageManager,
+        target: ExplorerLocation,
+        push_history: bool,
+    ) -> Result<(), ExplorerError> {
+        let (entries, warning_count) = self.load_location(session, platform, storage, &target)?;
+        if push_history && state.current_location != target {
+            state.back_history.push(state.current_location.clone());
+            state.forward_history.clear();
+        }
+        commit_location_listing(state, target, entries, warning_count);
         Ok(())
+    }
+
+    fn load_location(
+        &self,
+        session: Option<&AuthSession>,
+        platform: &dyn Platform,
+        storage: &StorageManager,
+        location: &ExplorerLocation,
+    ) -> Result<(Vec<ExplorerEntry>, usize), ExplorerError> {
+        match location {
+            ExplorerLocation::Directory(path) => {
+                self.authorize(session, storage, PermissionAction::ReadFile, path)?;
+                let listing = platform.read_directory(path)?;
+                let warning_count = listing.warnings.len();
+                let entries = listing
+                    .entries
+                    .into_iter()
+                    .map(|entry| {
+                        ExplorerEntry::from_metadata(
+                            entry.path,
+                            entry.name,
+                            entry.attributes,
+                            entry.open_policy,
+                        )
+                    })
+                    .collect();
+                Ok((entries, warning_count))
+            }
+            ExplorerLocation::Trash => {
+                self.authorize(
+                    session,
+                    storage,
+                    PermissionAction::ReadFile,
+                    &storage.layout().data_path,
+                )?;
+                let entries = platform
+                    .list_trash()?
+                    .into_iter()
+                    .map(ExplorerEntry::from_trash)
+                    .collect();
+                Ok((entries, 0))
+            }
+        }
     }
 
     fn open_entry(
@@ -1049,6 +1382,11 @@ impl ExplorerFileService {
         entry: &ExplorerEntry,
         resolver: &dyn ExplorerOpenRouteResolver,
     ) -> Result<ExplorerEffect, ExplorerError> {
+        if state.current_location.is_trash() {
+            return Err(ExplorerError::InvalidOperation(
+                "Restore Trash items before opening them".to_string(),
+            ));
+        }
         match &entry.open_policy {
             FileOpenPolicy::Blocked { reason } => {
                 self.audit(
@@ -1084,9 +1422,14 @@ impl ExplorerFileService {
         }
 
         if entry.kind == ExplorerEntryKind::Directory {
-            self.authorize(session, storage, PermissionAction::ReadFile, &entry.path)?;
-            navigate_to(state, entry.path.clone(), true);
-            self.refresh(state, session, platform, storage)?;
+            self.navigate_directory(
+                state,
+                session,
+                platform,
+                storage,
+                entry.path.clone(),
+                true,
+            )?;
             return Ok(ExplorerEffect::None);
         }
 
@@ -1204,50 +1547,287 @@ impl ExplorerFileService {
         for path in paths {
             self.authorize(session, storage, PermissionAction::DeleteFile, path)?;
         }
-        fs::create_dir_all(&storage.layout().trash_path).map_err(|error| ExplorerError::Io {
-            operation: "create trash directory",
-            path: storage.layout().trash_path.clone(),
-            message: error.to_string(),
-        })?;
-        let mut trash = storage.load_trash()?;
-        let actor = session
-            .map(|session| session.username.clone())
-            .unwrap_or_else(|| "Guest".to_string());
         state.operation = Some(ExplorerOperationProgress {
             phase: ExplorerOperationPhase::Executing,
-            label: "Moving items to trash".to_string(),
+            label: "Moving items to system Trash".to_string(),
             completed_items: 0,
             total_items: Some(paths.len()),
             completed_bytes: 0,
             total_bytes: None,
-            cancellable: true,
+            cancellable: false,
         });
-        for (index, path) in paths.iter().enumerate() {
-            let trash_path = unique_trash_path(&storage.layout().trash_path, path);
-            platform.rename_path(path, &trash_path)?;
-            trash.records.push(TrashRecord {
-                original_path: path.clone(),
-                trash_path: trash_path.clone(),
-                actor: actor.clone(),
-                timestamp_epoch_ms: unix_millis(),
-            });
-            self.audit(
+        if let Err(error) = platform.move_to_trash(paths) {
+            state.operation = None;
+            // Native Trash APIs may report a partial operation. The old confirmation snapshot is
+            // therefore no longer safe to replay blindly; refresh and require a new selection.
+            if state
+                .pending_dialog
+                .as_ref()
+                .is_some_and(|dialog| dialog.kind == ExplorerDialogKind::DeleteToTrash)
+            {
+                state.pending_dialog = None;
+            }
+            let _ = self.refresh(state, session, platform, storage);
+            return Err(error.into());
+        }
+
+        state.operation = None;
+        state.pending_dialog = None;
+        state.clear_selection();
+        let mut post_commit_warnings = Vec::new();
+        for path in paths {
+            if let Err(error) = self.audit(
                 storage,
                 session,
                 PermissionAction::DeleteFile,
                 path,
                 AuditOutcome::Success,
-                "delete_to_trash",
-            )?;
-            if let Some(operation) = state.operation.as_mut() {
-                operation.completed_items = index + 1;
+                "move_to_system_trash",
+            ) {
+                post_commit_warnings.push(error.to_string());
             }
         }
-        storage.save_trash(&trash)?;
-        state.operation = None;
-        state.clear_selection();
-        state.set_success(format!("Moved {} item(s) to trash", paths.len()));
-        self.refresh(state, session, platform, storage)
+        if let Err(error) = self.refresh(state, session, platform, storage) {
+            post_commit_warnings.push(format!("could not refresh Explorer: {error}"));
+        }
+        if post_commit_warnings.is_empty() {
+            state.set_success(format!("Moved {} item(s) to system Trash", paths.len()));
+        } else {
+            state.message = None;
+            state.error = Some(format!(
+                "Moved {} item(s) to system Trash, but {}",
+                paths.len(),
+                post_commit_warnings.join("; ")
+            ));
+        }
+        Ok(())
+    }
+
+    fn prepare_restore(
+        &self,
+        state: &mut ExplorerState,
+        session: Option<&AuthSession>,
+        platform: &dyn Platform,
+        storage: &StorageManager,
+        entry: &ExplorerEntry,
+        target: PathBuf,
+    ) -> Result<(), ExplorerError> {
+        if !target.is_absolute() {
+            return Err(ExplorerError::InvalidOperation(
+                "restore target must be absolute".into(),
+            ));
+        }
+        let parent = target.parent().ok_or_else(|| {
+            ExplorerError::InvalidOperation("restore target has no parent directory".into())
+        })?;
+        let parent_attributes = platform.file_attributes(parent)?;
+        if !parent_attributes.is_dir {
+            return Err(ExplorerError::InvalidOperation(format!(
+                "restore parent {} is not a directory",
+                parent.display()
+            )));
+        }
+        self.authorize(session, storage, PermissionAction::WriteFile, &target)?;
+        let id = entry
+            .trash_id
+            .clone()
+            .ok_or_else(|| ExplorerError::InvalidOperation("Trash item has no identity".into()))?;
+        if path_exists_no_follow(&target)? {
+            state.pending_restore = Some(ExplorerPendingRestore {
+                id,
+                display_name: entry.name.clone(),
+                target,
+            });
+            return Ok(());
+        }
+        let restore_target = if entry.original_path.as_ref() == Some(&target) {
+            TrashRestoreTarget::OriginalLocation
+        } else {
+            TrashRestoreTarget::DestinationPath(target)
+        };
+        self.perform_restore(state, session, platform, storage, &id, restore_target)
+    }
+
+    fn resolve_restore_conflict(
+        &self,
+        state: &mut ExplorerState,
+        session: Option<&AuthSession>,
+        platform: &dyn Platform,
+        storage: &StorageManager,
+        action: ExplorerConflictAction,
+    ) -> Result<(), ExplorerError> {
+        let pending = state.pending_restore.clone().ok_or_else(|| {
+            ExplorerError::InvalidOperation("no Restore conflict is pending".into())
+        })?;
+        match action {
+            ExplorerConflictAction::Cancel | ExplorerConflictAction::Skip => {
+                state.pending_restore = None;
+                state.set_success("Restore cancelled");
+                Ok(())
+            }
+            ExplorerConflictAction::KeepBoth => {
+                let target = unique_sibling_path(&pending.target)?;
+                state.pending_restore = None;
+                self.perform_restore(
+                    state,
+                    session,
+                    platform,
+                    storage,
+                    &pending.id,
+                    TrashRestoreTarget::DestinationPath(target),
+                )
+            }
+            ExplorerConflictAction::Replace => {
+                // The native restore consumes the Trash identity on success. Clear the pending
+                // action before entering the transaction so an audit/refresh/rollback warning can
+                // never replay a now-stale identity.
+                state.pending_restore = None;
+                self.replace_with_restored_item(state, session, platform, storage, &pending)
+            }
+        }
+    }
+
+    fn replace_with_restored_item(
+        &self,
+        state: &mut ExplorerState,
+        session: Option<&AuthSession>,
+        platform: &dyn Platform,
+        storage: &StorageManager,
+        pending: &ExplorerPendingRestore,
+    ) -> Result<(), ExplorerError> {
+        let parent = pending.target.parent().ok_or_else(|| {
+            ExplorerError::InvalidOperation("restore target has no parent".into())
+        })?;
+        let backup_dir = create_restore_rollback_directory(parent)?;
+        let backup = backup_dir.join(
+            pending
+                .target
+                .file_name()
+                .ok_or_else(|| ExplorerError::InvalidOperation("target has no name".into()))?,
+        );
+        if let Err(error) = platform.rename_path(&pending.target, &backup) {
+            let _ = fs::remove_dir(&backup_dir);
+            return Err(error.into());
+        }
+        let restored = match platform.restore_trash_item(
+            &pending.id,
+            TrashRestoreTarget::DestinationPath(pending.target.clone()),
+        ) {
+            Ok(restored) => restored,
+            Err(error) => {
+                return match platform.rename_path(&backup, &pending.target) {
+                    Ok(()) => {
+                        let _ = fs::remove_dir(&backup_dir);
+                        Err(error.into())
+                    }
+                    Err(rollback_error) => Err(ExplorerError::InvalidOperation(format!(
+                        "Restore failed ({error}); the previous item is preserved at {}, but could not be returned to {} ({rollback_error})",
+                        backup.display(),
+                        pending.target.display()
+                    ))),
+                };
+            }
+        };
+        if let Err(error) = platform.move_to_trash(std::slice::from_ref(&backup)) {
+            // The replacement is already restored. Park it beside the backup before rolling the
+            // previous target back; this ensures neither version is overwritten even if a native
+            // Trash or rename operation fails midway through recovery.
+            let rescued = backup_dir.join("restored-item");
+            if let Err(park_error) = platform.rename_path(&restored, &rescued) {
+                return Err(ExplorerError::InvalidOperation(format!(
+                    "Restored {}, but could not move the previous item to system Trash ({error}). Both versions are preserved at {} and {} (could not park the restored item: {park_error})",
+                    restored.display(),
+                    restored.display(),
+                    backup.display()
+                )));
+            }
+            if let Err(rollback_error) = platform.rename_path(&backup, &pending.target) {
+                let rescue_rollback = platform.rename_path(&rescued, &pending.target);
+                return Err(ExplorerError::InvalidOperation(format!(
+                    "Could not move the previous item to system Trash ({error}) or roll it back from {} to {} ({rollback_error}); the restored item is preserved at {}{}",
+                    backup.display(),
+                    pending.target.display(),
+                    rescued.display(),
+                    if rescue_rollback.is_ok() { " (and was returned to its requested path)" } else { "" }
+                )));
+            }
+            if let Err(retrash_error) = platform.move_to_trash(std::slice::from_ref(&rescued)) {
+                return Err(ExplorerError::InvalidOperation(format!(
+                    "The previous item was returned to {}, but the restored item could not be returned to system Trash ({retrash_error}); it is preserved at {}",
+                    pending.target.display(),
+                    rescued.display()
+                )));
+            }
+            let _ = fs::remove_dir(&backup_dir);
+            return Err(error.into());
+        }
+        let _ = fs::remove_dir(&backup_dir);
+        self.finish_restore_commit(
+            state,
+            session,
+            platform,
+            storage,
+            restored,
+            "restore_replace",
+        )
+    }
+
+    fn perform_restore(
+        &self,
+        state: &mut ExplorerState,
+        session: Option<&AuthSession>,
+        platform: &dyn Platform,
+        storage: &StorageManager,
+        id: &TrashEntryId,
+        target: TrashRestoreTarget,
+    ) -> Result<(), ExplorerError> {
+        let restored = platform.restore_trash_item(id, target)?;
+        state.pending_restore = None;
+        self.finish_restore_commit(
+            state,
+            session,
+            platform,
+            storage,
+            restored,
+            "restore_from_system_trash",
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn finish_restore_commit(
+        &self,
+        state: &mut ExplorerState,
+        session: Option<&AuthSession>,
+        platform: &dyn Platform,
+        storage: &StorageManager,
+        restored: PathBuf,
+        audit_reason: &'static str,
+    ) -> Result<(), ExplorerError> {
+        let mut post_commit_warnings = Vec::new();
+        if let Err(error) = self.audit(
+            storage,
+            session,
+            PermissionAction::WriteFile,
+            &restored,
+            AuditOutcome::Success,
+            audit_reason,
+        ) {
+            post_commit_warnings.push(error.to_string());
+        }
+        if let Err(error) = self.refresh(state, session, platform, storage) {
+            post_commit_warnings.push(format!("could not refresh Explorer: {error}"));
+        }
+        if post_commit_warnings.is_empty() {
+            state.set_success(format!("Restored {}", restored.display()));
+        } else {
+            state.message = None;
+            state.error = Some(format!(
+                "Restored {}, but {}",
+                restored.display(),
+                post_commit_warnings.join("; ")
+            ));
+        }
+        Ok(())
     }
 
     fn paste(
@@ -1291,7 +1871,7 @@ impl ExplorerFileService {
                 ExplorerClipboardMode::Cut => PermissionAction::MoveFile,
             };
             self.authorize(session, storage, permission, &target)?;
-            if target.exists() {
+            if path_exists_no_follow(&target)? {
                 conflicts.push((source.clone(), target));
             }
         }
@@ -1434,6 +2014,7 @@ impl ExplorerFileService {
                 .get(&original_target)
                 .copied()
                 .unwrap_or(ExplorerConflictAction::KeepBoth);
+            let target_exists = path_exists_no_follow(&original_target)?;
             if resolution == ExplorerConflictAction::Skip {
                 skipped += 1;
                 if let Some(operation) = state.operation.as_mut() {
@@ -1441,14 +2022,13 @@ impl ExplorerFileService {
                 }
                 continue;
             }
-            let target =
-                if original_target.exists() && resolution == ExplorerConflictAction::KeepBoth {
-                    unique_sibling_path(&original_target)
+            let target = if target_exists && resolution == ExplorerConflictAction::KeepBoth {
+                    unique_sibling_path(&original_target)?
                 } else {
                     original_target.clone()
                 };
-            if original_target.exists() && resolution == ExplorerConflictAction::Replace {
-                move_existing_to_trash(storage, session, platform, &original_target)?;
+            if target_exists && resolution == ExplorerConflictAction::Replace {
+                move_existing_to_trash(platform, &original_target)?;
             }
 
             match clipboard.mode {
@@ -1646,21 +2226,93 @@ fn selected_paths_or_error(state: &ExplorerState) -> Result<Vec<PathBuf>, Explor
     }
 }
 
-fn navigate_to(state: &mut ExplorerState, target: PathBuf, push_history: bool) {
-    if target == state.current_path {
-        return;
+fn selected_trash_entry(state: &ExplorerState) -> Result<ExplorerEntry, ExplorerError> {
+    let selected = state.effective_selected_paths();
+    if selected.len() != 1 {
+        return Err(ExplorerError::InvalidOperation(
+            "restore requires exactly one selected Trash item".into(),
+        ));
     }
-    if push_history {
-        state.back_history.push(state.current_path.clone());
-        state.forward_history.clear();
+    let entry = state
+        .entries
+        .iter()
+        .find(|entry| entry.path == selected[0])
+        .cloned()
+        .ok_or_else(|| ExplorerError::InvalidOperation("selected Trash item is missing".into()))?;
+    if entry.trash_id.is_none() {
+        return Err(ExplorerError::InvalidOperation(
+            "selected item is not a system Trash entry".into(),
+        ));
     }
-    state.current_path = target;
+    Ok(entry)
+}
+
+fn ensure_filesystem_location(state: &ExplorerState) -> Result<(), ExplorerError> {
+    if state.current_location.is_trash() {
+        Err(ExplorerError::InvalidOperation(
+            "This operation is unavailable in Trash".into(),
+        ))
+    } else {
+        Ok(())
+    }
+}
+
+fn ensure_trash_location(state: &ExplorerState) -> Result<(), ExplorerError> {
+    if state.current_location.is_trash() {
+        Ok(())
+    } else {
+        Err(ExplorerError::InvalidOperation(
+            "This operation is only available in Trash".into(),
+        ))
+    }
+}
+
+fn restore_target_in_directory(directory: &Path, name: &str) -> Result<PathBuf, ExplorerError> {
+    if !directory.is_absolute() {
+        return Err(ExplorerError::InvalidOperation(
+            "restore destination must be an absolute directory".into(),
+        ));
+    }
+    validate_child_name(name).map_err(|_| {
+        ExplorerError::InvalidOperation("Trash item has an invalid name".into())
+    })?;
+    Ok(directory.join(name))
+}
+
+fn commit_location_listing(
+    state: &mut ExplorerState,
+    location: ExplorerLocation,
+    entries: Vec<ExplorerEntry>,
+    warning_count: usize,
+) {
+    if let ExplorerLocation::Directory(path) = &location {
+        state.current_path = path.clone();
+    }
+    state.current_location = location;
+    state.all_entries = entries;
+    state.listing_warning_count = warning_count;
     state.query.clear();
     state.clear_selection();
     state.selection_cleared = false;
     state.selected_index = 0;
     state.viewport_offset = 0;
     state.viewport_follows_focus = true;
+    state.apply_projection();
+    if warning_count > 0 {
+        state.message = Some(format!(
+            "{warning_count} entries have incomplete metadata"
+        ));
+    }
+}
+
+fn clear_location_listing(state: &mut ExplorerState) {
+    state.all_entries.clear();
+    state.entries.clear();
+    state.clear_selection();
+    state.selected_index = 0;
+    state.viewport_offset = 0;
+    state.viewport_follows_focus = true;
+    state.listing_warning_count = 0;
 }
 
 fn compare_entries(state: &ExplorerState, left: &ExplorerEntry, right: &ExplorerEntry) -> Ordering {
@@ -1913,7 +2565,7 @@ fn validate_transfer_destination(source: &Path, target: &Path) -> Result<(), Exp
     Ok(())
 }
 
-fn unique_sibling_path(path: &Path) -> PathBuf {
+fn unique_sibling_path(path: &Path) -> Result<PathBuf, ExplorerError> {
     let parent = path.parent().unwrap_or_else(|| Path::new("."));
     let stem = path.file_stem().and_then(OsStr::to_str).unwrap_or("item");
     let extension = path.extension().and_then(OsStr::to_str);
@@ -1925,11 +2577,23 @@ fn unique_sibling_path(path: &Path) -> PathBuf {
             _ => format!("{stem} ({suffix})"),
         };
         let candidate = parent.join(name);
-        if !candidate.exists() {
-            return candidate;
+        if !path_exists_no_follow(&candidate)? {
+            return Ok(candidate);
         }
     }
     unreachable!("u32 suffix iterator is unbounded for practical purposes")
+}
+
+fn path_exists_no_follow(path: &Path) -> Result<bool, ExplorerError> {
+    match fs::symlink_metadata(path) {
+        Ok(_) => Ok(true),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(ExplorerError::Io {
+            operation: "inspect destination",
+            path: path.to_path_buf(),
+            message: error.to_string(),
+        }),
+    }
 }
 
 fn copy_path_staged(source: &Path, target: &Path) -> Result<(), ExplorerError> {
@@ -2035,38 +2699,53 @@ fn remove_source_path(path: &Path) -> Result<(), ExplorerError> {
 }
 
 fn move_existing_to_trash(
-    storage: &StorageManager,
-    session: Option<&AuthSession>,
     platform: &dyn Platform,
     path: &Path,
 ) -> Result<(), ExplorerError> {
-    fs::create_dir_all(&storage.layout().trash_path).map_err(|error| ExplorerError::Io {
-        operation: "create trash directory",
-        path: storage.layout().trash_path.clone(),
-        message: error.to_string(),
-    })?;
-    let trash_path = unique_trash_path(&storage.layout().trash_path, path);
-    platform.rename_path(path, &trash_path)?;
-    let mut trash = storage.load_trash()?;
-    trash.records.push(TrashRecord {
-        original_path: path.to_path_buf(),
-        trash_path,
-        actor: session
-            .map(|session| session.username.clone())
-            .unwrap_or_else(|| "Guest".to_string()),
-        timestamp_epoch_ms: unix_millis(),
-    });
-    storage.save_trash(&trash)?;
-    Ok(())
+    platform.move_to_trash(&[path.to_path_buf()]).map_err(Into::into)
+}
+
+fn create_restore_rollback_directory(parent: &Path) -> Result<PathBuf, ExplorerError> {
+    let prefix = format!(
+        ".tundra-restore-{}-{}",
+        std::process::id(),
+        unix_millis()
+    );
+    for suffix in 0u32.. {
+        let name = if suffix == 0 {
+            prefix.clone()
+        } else {
+            format!("{prefix}-{suffix}")
+        };
+        let candidate = parent.join(name);
+        match fs::create_dir(&candidate) {
+            Ok(()) => return Ok(candidate),
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) => {
+                return Err(ExplorerError::Io {
+                    operation: "create restore rollback directory",
+                    path: candidate,
+                    message: error.to_string(),
+                });
+            }
+        }
+    }
+    unreachable!("u32 suffix iterator is unbounded for practical purposes")
 }
 
 fn validate_child_name(name: &str) -> Result<(), ExplorerError> {
     let trimmed = name.trim();
+    let mut components = Path::new(name).components();
+    let is_single_normal_component = matches!(
+        components.next(),
+        Some(std::path::Component::Normal(component)) if component == OsStr::new(name)
+    ) && components.next().is_none();
     if trimmed.is_empty()
         || trimmed == "."
         || trimmed == ".."
         || trimmed.contains('/')
         || trimmed.contains('\\')
+        || !is_single_normal_component
     {
         return Err(ExplorerError::InvalidName(format!(
             "invalid file name: {name}"
@@ -2120,29 +2799,9 @@ fn copy_directory(source: &Path, target: &Path) -> Result<(), ExplorerError> {
     Ok(())
 }
 
-fn unique_trash_path(trash_path: &Path, original_path: &Path) -> PathBuf {
-    let stem = original_path
-        .file_name()
-        .and_then(OsStr::to_str)
-        .unwrap_or("item")
-        .replace(['/', '\\', ':'], "_");
-    let mut candidate = trash_path.join(format!("{}-{stem}", unix_millis()));
-    let mut suffix = 1u32;
-    while candidate.exists() {
-        candidate = trash_path.join(format!("{}-{suffix}-{stem}", unix_millis()));
-        suffix = suffix.saturating_add(1);
-    }
-    candidate
-}
-
 fn unix_millis() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_millis() as u64)
         .unwrap_or(0)
-}
-
-#[allow(dead_code)]
-fn empty_trash_document() -> TrashDocument {
-    TrashDocument::default()
 }

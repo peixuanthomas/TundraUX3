@@ -1,6 +1,6 @@
 use ratatui::buffer::Buffer;
 use ratatui::layout::{Alignment, Rect};
-use ratatui::widgets::{Block, Borders, Paragraph, Widget};
+use ratatui::widgets::{Borders, Paragraph, Widget};
 
 use crate::{TundraTheme, theme::solid_border_style};
 
@@ -104,7 +104,8 @@ impl Button {
             .alignment(Alignment::Center)
             .style(style)
             .block(
-                Block::default()
+                theme
+                    .block()
                     .borders(Borders::ALL)
                     .border_style(solid_border_style(style))
                     .style(style),

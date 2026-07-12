@@ -1349,7 +1349,7 @@ fn debug_diagnostics_use_injected_platform_summary() {
     let diagnostics = home.diagnostics().expect("debug diagnostics");
     assert_eq!(
         diagnostics.platform_capability_summary,
-        "macOS: 1 supported, 0 best-effort, 13 unsupported"
+        "macOS: 1 supported, 0 best-effort, 15 unsupported"
     );
 }
 
@@ -1358,6 +1358,7 @@ fn debug_override_wins_over_persisted_config_and_session() {
     let startup = ShellStartupState {
         app_config: ShellAppConfig {
             home_mode: Some(ShellHomeMode::User),
+            ..ShellAppConfig::default()
         },
         storage_report: ShellStorageReport::default(),
         platform_kind: PlatformKind::Windows,

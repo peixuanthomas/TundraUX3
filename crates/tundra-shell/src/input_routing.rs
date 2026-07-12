@@ -480,6 +480,29 @@ impl ShellState {
         if self
             .explorer_state
             .as_ref()
+            .and_then(|state| state.pending_restore.as_ref())
+            .is_some()
+        {
+            if key.phase != InputPhase::Press || key.has_non_shift_modifier() {
+                return (target, ShellCommand::CaptureOverlayInput);
+            }
+            return match &key.key {
+                InputKey::Enter | InputKey::Character('k' | 'K') => {
+                    (target, ShellCommand::ExplorerRestoreKeepBoth)
+                }
+                InputKey::Character('r' | 'R') => {
+                    (target, ShellCommand::ExplorerRestoreReplace)
+                }
+                InputKey::Escape | InputKey::Character('n' | 'N') => {
+                    (target, ShellCommand::ExplorerRestoreCancel)
+                }
+                _ => (target, ShellCommand::CaptureOverlayInput),
+            };
+        }
+
+        if self
+            .explorer_state
+            .as_ref()
             .and_then(|state| state.pending_conflict.as_ref())
             .is_some()
         {
@@ -512,17 +535,30 @@ impl ShellState {
             .and_then(|state| state.pending_dialog.as_ref())
             .is_some()
         {
+            let confirm = self
+                .explorer_state
+                .as_ref()
+                .and_then(|state| state.pending_dialog.as_ref())
+                .map(|dialog| match dialog.kind {
+                    tundra_apps::explorer::ExplorerDialogKind::DeleteToTrash => {
+                        ShellCommand::ExplorerConfirmDelete
+                    }
+                    tundra_apps::explorer::ExplorerDialogKind::DumpTrash => {
+                        ShellCommand::ExplorerConfirmDumpTrash
+                    }
+                })
+                .unwrap_or(ShellCommand::ExplorerConfirmDelete);
             if key.phase != InputPhase::Press || key.has_non_shift_modifier() {
                 return (target, ShellCommand::CaptureOverlayInput);
             }
             return match &key.key {
                 InputKey::Enter if key.is_unmodified_action_key() => {
-                    (target, ShellCommand::ExplorerConfirmDelete)
+                    (target, confirm.clone())
                 }
                 InputKey::Escape if key.is_unmodified_action_key() => {
                     (target, ShellCommand::CancelExplorerInput)
                 }
-                InputKey::Character('y' | 'Y') => (target, ShellCommand::ExplorerConfirmDelete),
+                InputKey::Character('y' | 'Y') => (target, confirm),
                 InputKey::Character('n' | 'N') => (target, ShellCommand::CancelExplorerInput),
                 _ => (target, ShellCommand::CaptureOverlayInput),
             };
@@ -532,16 +568,27 @@ impl ShellState {
             return match &key.key {
                 InputKey::Escape => (target, ShellCommand::CancelExplorerInput),
                 InputKey::Enter => (target, ShellCommand::SubmitExplorerInput),
-                InputKey::Backspace => (target, ShellCommand::ExplorerBackspace),
-                InputKey::Character(character) => {
+                InputKey::Backspace | InputKey::Delete => {
+                    (target, ShellCommand::ExplorerBackspace)
+                }
+                InputKey::Character(character) if !key.has_non_shift_modifier() => {
                     (target, ShellCommand::AppendExplorerChar(*character))
                 }
                 _ => (target, ShellCommand::RecordInput),
             };
         }
 
+        let is_trash = self
+            .explorer_state
+            .as_ref()
+            .is_some_and(|state| state.current_location.is_trash());
         match &key.key {
             InputKey::Escape => (RoutedTarget::Global, ShellCommand::CloseExplorer),
+            InputKey::Character('l' | 'L')
+                if key.modifiers.control || key.modifiers.super_key =>
+            {
+                (target, ShellCommand::BeginExplorerAddress)
+            }
             InputKey::Left if key.modifiers.alt => (target, ShellCommand::ExplorerOpenBack),
             InputKey::Right if key.modifiers.alt => (target, ShellCommand::ExplorerOpenForward),
             InputKey::Up if key.modifiers.shift => {
@@ -552,10 +599,10 @@ impl ShellState {
             }
             InputKey::Up => (target, ShellCommand::ExplorerPrevious),
             InputKey::Down => (target, ShellCommand::ExplorerNext),
-            InputKey::Enter => (target, ShellCommand::ExplorerOpenSelected),
+            InputKey::Enter if !is_trash => (target, ShellCommand::ExplorerOpenSelected),
             InputKey::Backspace => (target, ShellCommand::ExplorerOpenParent),
-            InputKey::Delete => (target, ShellCommand::ExplorerDelete),
-            InputKey::Function(2) => (target, ShellCommand::BeginExplorerRename),
+            InputKey::Delete if !is_trash => (target, ShellCommand::ExplorerDelete),
+            InputKey::Function(2) if !is_trash => (target, ShellCommand::BeginExplorerRename),
             InputKey::Character('a' | 'A')
                 if key.modifiers.control || key.modifiers.super_key =>
             {
@@ -568,15 +615,30 @@ impl ShellState {
                 (target, ShellCommand::BeginExplorerSearch)
             }
             InputKey::Character('h' | 'H') => (target, ShellCommand::ExplorerToggleHidden),
-            InputKey::Character('c' | 'C') => (target, ShellCommand::ExplorerCopy),
-            InputKey::Character('x' | 'X') => (target, ShellCommand::ExplorerCut),
-            InputKey::Character('v' | 'V') => (target, ShellCommand::ExplorerPaste),
-            InputKey::Character('d' | 'D') => (target, ShellCommand::ExplorerDelete),
-            InputKey::Character('n' | 'N' | 'f' | 'F') => {
+            InputKey::Character('r' | 'R') if is_trash => {
+                (target, ShellCommand::ExplorerRestore)
+            }
+            InputKey::Character('c' | 'C') if !is_trash => {
+                (target, ShellCommand::ExplorerCopy)
+            }
+            InputKey::Character('x' | 'X') if !is_trash => {
+                (target, ShellCommand::ExplorerCut)
+            }
+            InputKey::Character('v' | 'V') if !is_trash => {
+                (target, ShellCommand::ExplorerPaste)
+            }
+            InputKey::Character('d' | 'D') if !is_trash => {
+                (target, ShellCommand::ExplorerDelete)
+            }
+            InputKey::Character('n' | 'N' | 'f' | 'F') if !is_trash => {
                 (target, ShellCommand::BeginExplorerNewFolder)
             }
-            InputKey::Character('t' | 'T') => (target, ShellCommand::BeginExplorerNewTextFile),
-            InputKey::Character('r' | 'R') => (target, ShellCommand::BeginExplorerRename),
+            InputKey::Character('t' | 'T') if !is_trash => {
+                (target, ShellCommand::BeginExplorerNewTextFile)
+            }
+            InputKey::Character('r' | 'R') if !is_trash => {
+                (target, ShellCommand::BeginExplorerRename)
+            }
             InputKey::Character('/') => (target, ShellCommand::BeginExplorerSearch),
             _ => (target, ShellCommand::RecordInput),
         }
@@ -783,6 +845,28 @@ impl ShellState {
     ) -> (RoutedTarget, ShellCommand) {
         let coordinates = mouse.coordinates();
         let hit_target = self.hit_map.target_at(coordinates);
+        let hit_layer = self.hit_map.layer_at(coordinates);
+
+        if hit_layer == Some(ShellHitLayer::ShellModal) {
+            if self.notifications.has_active_modal() {
+                return self.route_notification_mouse(mouse, hit_target);
+            }
+
+            if self.time_sync_dialog_visible {
+                return self.route_time_sync_dialog_mouse(mouse, hit_target);
+            }
+
+            if self.active_screen() == ShellScreen::ExitConfirm {
+                return (
+                    RoutedTarget::Modal(ShellComponent::ExitDialog),
+                    ShellCommand::CaptureOverlayInput,
+                );
+            }
+        }
+
+        if hit_layer == Some(ShellHitLayer::ShellChrome) {
+            return self.route_shell_chrome_mouse(mouse, hit_target);
+        }
 
         if self.notifications.has_active_modal() {
             return self.route_notification_mouse(mouse, hit_target);
@@ -881,6 +965,45 @@ impl ShellState {
         }
     }
 
+    fn route_shell_chrome_mouse(
+        &mut self,
+        mouse: MouseInput,
+        hit_target: Option<ShellComponent>,
+    ) -> (RoutedTarget, ShellCommand) {
+        let target = target_route(hit_target);
+
+        if self.active_screen() == ShellScreen::Explorer
+            && matches!(
+                mouse,
+                MouseInput::Down { .. } | MouseInput::Up { .. } | MouseInput::Drag { .. }
+            )
+        {
+            self.clear_explorer_pointer_capture();
+        }
+
+        match mouse {
+            MouseInput::Moved { .. } => (target, ShellCommand::Hover(hit_target)),
+            MouseInput::Down {
+                button: PointerButton::Left,
+                ..
+            } if hit_target == Some(ShellComponent::ClockButton) => {
+                self.last_click = None;
+                (target, self.clock_button_activation_command())
+            }
+            MouseInput::Down { .. }
+            | MouseInput::Up { .. }
+            | MouseInput::Drag { .. }
+            | MouseInput::Scroll { .. } => (target, ShellCommand::CaptureOverlayInput),
+        }
+    }
+
+    fn clear_explorer_pointer_capture(&mut self) {
+        if let Some(state) = self.explorer_state.as_mut() {
+            state.drag = None;
+        }
+        self.last_click = None;
+    }
+
     fn route_explorer_mouse(
         &mut self,
         mouse: MouseInput,
@@ -889,6 +1012,28 @@ impl ShellState {
     ) -> (RoutedTarget, ShellCommand) {
         let coordinates = mouse.coordinates();
         let target = RoutedTarget::Component(ShellComponent::Explorer);
+
+        if hit_target != Some(ShellComponent::Explorer) {
+            if matches!(
+                mouse,
+                MouseInput::Down { .. } | MouseInput::Up { .. } | MouseInput::Drag { .. }
+            ) {
+                self.clear_explorer_pointer_capture();
+            }
+            return match mouse {
+                MouseInput::Moved { .. } => {
+                    (target_route(hit_target), ShellCommand::Hover(hit_target))
+                }
+                MouseInput::Down { .. }
+                | MouseInput::Up { .. }
+                | MouseInput::Drag { .. }
+                | MouseInput::Scroll { .. } => (
+                    target_route(hit_target),
+                    ShellCommand::CaptureOverlayInput,
+                ),
+            };
+        }
+
         match mouse {
             MouseInput::Moved { .. } => (target_route(hit_target), ShellCommand::Hover(hit_target)),
             MouseInput::Down {

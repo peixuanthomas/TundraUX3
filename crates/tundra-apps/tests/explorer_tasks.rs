@@ -5,9 +5,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use tundra_apps::explorer_tasks::{
-    DirectoryExplorerTrash, ExplorerCollisionPolicy, ExplorerCollisionResolution,
-    ExplorerDeletePlan, ExplorerTaskEngine, ExplorerTaskError, ExplorerTaskEvent, ExplorerTaskPlan,
-    ExplorerTaskSubmitError, ExplorerTransferOperation, ExplorerTransferPlan,
+    ExplorerCollisionPolicy, ExplorerCollisionResolution, ExplorerDeletePlan, ExplorerTaskEngine,
+    ExplorerTaskError, ExplorerTaskEvent, ExplorerTaskPlan, ExplorerTaskSubmitError, ExplorerTrash,
+    ExplorerTransferOperation, ExplorerTransferPlan,
 };
 use tundra_platform::{
     AppPaths, Platform, PlatformCapabilities, PlatformError, PlatformKind, ProcessExit,
@@ -18,6 +18,49 @@ static TEMP_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 struct TempTree {
     root: PathBuf,
+}
+
+/// Test-only rollback adapter for transfer replacement tests. Production code has no exported
+/// directory-backed Trash implementation and uses the operating-system adapter.
+#[derive(Debug)]
+struct TestTrash {
+    root: PathBuf,
+    sequence: AtomicU64,
+}
+
+impl TestTrash {
+    fn new(root: PathBuf) -> Self {
+        Self {
+            root,
+            sequence: AtomicU64::new(0),
+        }
+    }
+}
+
+impl ExplorerTrash for TestTrash {
+    fn move_to_trash(
+        &self,
+        _platform: &dyn Platform,
+        path: &Path,
+    ) -> Result<PathBuf, ExplorerTaskError> {
+        fs::create_dir_all(&self.root).map_err(|error| ExplorerTaskError::Io {
+            operation: "create test trash",
+            path: self.root.clone(),
+            message: error.to_string(),
+        })?;
+        let name = path.file_name().unwrap_or_else(|| std::ffi::OsStr::new("item"));
+        let target = self.root.join(format!(
+            "{}-{}",
+            self.sequence.fetch_add(1, Ordering::Relaxed),
+            name.to_string_lossy()
+        ));
+        fs::rename(path, &target).map_err(|error| ExplorerTaskError::Io {
+            operation: "move to test trash",
+            path: path.to_path_buf(),
+            message: error.to_string(),
+        })?;
+        Ok(target)
+    }
 }
 
 impl TempTree {
@@ -50,6 +93,7 @@ impl Drop for TempTree {
 struct TestPlatform {
     cross_device_source_root: Option<PathBuf>,
     unsafe_path: Option<PathBuf>,
+    system_trash_root: Option<PathBuf>,
 }
 
 impl TestPlatform {
@@ -57,6 +101,7 @@ impl TestPlatform {
         Self {
             cross_device_source_root: Some(source_root),
             unsafe_path: None,
+            system_trash_root: None,
         }
     }
 
@@ -64,6 +109,15 @@ impl TestPlatform {
         Self {
             cross_device_source_root: None,
             unsafe_path: Some(path),
+            system_trash_root: None,
+        }
+    }
+
+    fn with_system_trash(root: PathBuf) -> Self {
+        Self {
+            cross_device_source_root: None,
+            unsafe_path: None,
+            system_trash_root: Some(root),
         }
     }
 
@@ -115,6 +169,28 @@ impl Platform for TestPlatform {
 
     fn write_clipboard_text(&self, _text: &str) -> Result<(), PlatformError> {
         Err(Self::unsupported("clipboard_text"))
+    }
+
+    fn move_to_trash(&self, paths: &[PathBuf]) -> Result<(), PlatformError> {
+        let root = self
+            .system_trash_root
+            .as_ref()
+            .ok_or_else(|| Self::unsupported("trash.move"))?;
+        fs::create_dir_all(root).map_err(|error| PlatformError::Io {
+            operation: "create simulated system Trash",
+            path: Some(root.clone()),
+            message: error.to_string(),
+        })?;
+        for (index, path) in paths.iter().enumerate() {
+            let name = path.file_name().unwrap_or_else(|| std::ffi::OsStr::new("item"));
+            let target = root.join(format!("{index}-{}", name.to_string_lossy()));
+            fs::rename(path, &target).map_err(|error| PlatformError::Io {
+                operation: "move to simulated system Trash",
+                path: Some(path.clone()),
+                message: error.to_string(),
+            })?;
+        }
+        Ok(())
     }
 
     fn file_attributes(
@@ -169,7 +245,7 @@ fn finished(
 }
 
 fn engine(platform: Arc<dyn Platform>, trash: PathBuf) -> ExplorerTaskEngine {
-    ExplorerTaskEngine::new(platform, Arc::new(DirectoryExplorerTrash::new(trash)))
+    ExplorerTaskEngine::new(platform, Arc::new(TestTrash::new(trash)))
 }
 
 #[test]
@@ -470,10 +546,14 @@ fn a_second_mutation_is_rejected_and_cancelled_plan_leaves_no_stage() {
 fn delete_plan_moves_each_path_to_trash() {
     let tree = TempTree::new("delete");
     let source = tree.path("delete-me.txt");
-    let trash = tree.path("trash");
+    let private_trash = tree.path("private-trash-must-not-be-used");
+    let system_trash = tree.path("simulated-system-trash");
     fs::write(&source, b"recoverable").unwrap();
 
-    let engine = engine(Arc::new(TestPlatform::default()), trash.clone());
+    let engine = engine(
+        Arc::new(TestPlatform::with_system_trash(system_trash.clone())),
+        private_trash.clone(),
+    );
     engine
         .submit(ExplorerTaskPlan::DeleteToTrash(ExplorerDeletePlan::new(
             vec![source.clone()],
@@ -483,7 +563,11 @@ fn delete_plan_moves_each_path_to_trash() {
 
     assert!(summary.failures.is_empty());
     assert!(!source.exists());
-    let trashed: Vec<_> = fs::read_dir(trash)
+    assert!(
+        !private_trash.exists(),
+        "DeleteToTrash must bypass the legacy rollback adapter"
+    );
+    let trashed: Vec<_> = fs::read_dir(system_trash)
         .unwrap()
         .collect::<Result<_, _>>()
         .unwrap();

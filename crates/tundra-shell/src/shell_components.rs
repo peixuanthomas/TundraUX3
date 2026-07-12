@@ -37,6 +37,25 @@ pub enum ShellComponent {
     ContextMenu,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ShellHitLayer {
+    ShellModal,
+    ShellChrome,
+    AppOverlay,
+    AppContent,
+}
+
+impl ShellHitLayer {
+    const fn priority(self) -> u8 {
+        match self {
+            Self::ShellModal => 3,
+            Self::ShellChrome => 2,
+            Self::AppOverlay => 1,
+            Self::AppContent => 0,
+        }
+    }
+}
+
 impl ShellComponent {
     pub(crate) const fn label(self) -> &'static str {
         match self {
@@ -74,6 +93,7 @@ impl ShellComponent {
             Self::ContextMenu => "ContextMenu",
         }
     }
+
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -89,6 +109,17 @@ pub enum ClickKind {
 pub struct ShellHitRegion {
     pub component: ShellComponent,
     pub area: Rect,
+    pub layer: ShellHitLayer,
+}
+
+impl ShellHitRegion {
+    pub const fn new(component: ShellComponent, area: Rect, layer: ShellHitLayer) -> Self {
+        Self {
+            component,
+            area,
+            layer,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -127,12 +158,21 @@ impl ShellHitMap {
         &self.regions
     }
 
-    pub fn target_at(&self, coordinates: CellPosition) -> Option<ShellComponent> {
+    pub fn region_at(&self, coordinates: CellPosition) -> Option<&ShellHitRegion> {
         self.regions
             .iter()
-            .rev()
-            .find(|region| rect_contains(region.area, coordinates))
-            .map(|region| region.component)
+            .enumerate()
+            .filter(|(_, region)| rect_contains(region.area, coordinates))
+            .max_by_key(|(index, region)| (region.layer.priority(), *index))
+            .map(|(_, region)| region)
+    }
+
+    pub fn target_at(&self, coordinates: CellPosition) -> Option<ShellComponent> {
+        self.region_at(coordinates).map(|region| region.component)
+    }
+
+    pub fn layer_at(&self, coordinates: CellPosition) -> Option<ShellHitLayer> {
+        self.region_at(coordinates).map(|region| region.layer)
     }
 }
 

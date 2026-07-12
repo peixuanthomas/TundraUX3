@@ -864,12 +864,14 @@ pub enum ExplorerToolbarAction {
     Paste,
     Rename,
     Delete,
+    Restore,
+    DumpTrash,
     Sort,
     Options,
 }
 
 impl ExplorerToolbarAction {
-    pub const ALL: [Self; 12] = [
+    pub const ALL: [Self; 14] = [
         Self::Back,
         Self::Forward,
         Self::Up,
@@ -880,6 +882,33 @@ impl ExplorerToolbarAction {
         Self::Paste,
         Self::Rename,
         Self::Delete,
+        Self::Restore,
+        Self::DumpTrash,
+        Self::Sort,
+        Self::Options,
+    ];
+
+    pub const REGULAR: [Self; 12] = [
+        Self::Back,
+        Self::Forward,
+        Self::Up,
+        Self::Refresh,
+        Self::New,
+        Self::Cut,
+        Self::Copy,
+        Self::Paste,
+        Self::Rename,
+        Self::Delete,
+        Self::Sort,
+        Self::Options,
+    ];
+
+    pub const TRASH: [Self; 7] = [
+        Self::Back,
+        Self::Forward,
+        Self::Refresh,
+        Self::Restore,
+        Self::DumpTrash,
         Self::Sort,
         Self::Options,
     ];
@@ -896,6 +925,8 @@ impl ExplorerToolbarAction {
             Self::Paste => "Paste",
             Self::Rename => "Rename",
             Self::Delete => "Delete",
+            Self::Restore => "Restore",
+            Self::DumpTrash => "Dump Trash",
             Self::Sort => "Sort",
             Self::Options => "Options",
         }
@@ -913,6 +944,8 @@ impl ExplorerToolbarAction {
             Self::Paste => "paste",
             Self::Rename => "rename",
             Self::Delete => "delete",
+            Self::Restore => "refresh",
+            Self::DumpTrash => "delete",
             Self::Sort => "sort_asc",
             Self::Options => "options",
         }
@@ -948,12 +981,35 @@ pub struct ExplorerToolbarViewModel {
 impl ExplorerToolbarViewModel {
     pub fn standard(can_go_back: bool, can_go_forward: bool) -> Self {
         Self {
-            buttons: ExplorerToolbarAction::ALL
+            buttons: ExplorerToolbarAction::REGULAR
                 .into_iter()
                 .map(|action| {
                     let enabled = match action {
                         ExplorerToolbarAction::Back => can_go_back,
                         ExplorerToolbarAction::Forward => can_go_forward,
+                        _ => true,
+                    };
+                    ExplorerToolbarButtonViewModel::new(action, enabled)
+                })
+                .collect(),
+        }
+    }
+
+    pub fn trash(
+        can_go_back: bool,
+        can_go_forward: bool,
+        can_restore: bool,
+        can_dump: bool,
+    ) -> Self {
+        Self {
+            buttons: ExplorerToolbarAction::TRASH
+                .into_iter()
+                .map(|action| {
+                    let enabled = match action {
+                        ExplorerToolbarAction::Back => can_go_back,
+                        ExplorerToolbarAction::Forward => can_go_forward,
+                        ExplorerToolbarAction::Restore => can_restore,
+                        ExplorerToolbarAction::DumpTrash => can_dump,
                         _ => true,
                     };
                     ExplorerToolbarButtonViewModel::new(action, enabled)
@@ -986,6 +1042,7 @@ pub struct ExplorerEntryPresentationViewModel {
     pub cut: bool,
     pub drop_target: bool,
     pub metadata_warning: Option<String>,
+    pub original_path: Option<String>,
 }
 
 impl ExplorerEntryPresentationViewModel {
@@ -1005,6 +1062,7 @@ impl ExplorerEntryPresentationViewModel {
             cut: false,
             drop_target: false,
             metadata_warning: None,
+            original_path: None,
         }
     }
 }
@@ -1015,9 +1073,18 @@ pub struct ExplorerQuickLocationViewModel {
     pub label: String,
     pub path: String,
     pub icon_key: String,
+    pub kind: ExplorerQuickLocationKind,
     pub current: bool,
     pub enabled: bool,
     pub drop_target: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ExplorerQuickLocationKind {
+    #[default]
+    Directory,
+    Volume,
+    Trash,
 }
 
 impl ExplorerQuickLocationViewModel {
@@ -1032,6 +1099,7 @@ impl ExplorerQuickLocationViewModel {
             label: label.into(),
             path: path.into(),
             icon_key: icon_key.into(),
+            kind: ExplorerQuickLocationKind::Directory,
             current: false,
             enabled: true,
             drop_target: false,
@@ -1139,6 +1207,7 @@ pub enum ExplorerNameDialogKind {
     NewFolder,
     NewTextFile,
     Rename,
+    RestoreDestination,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1196,6 +1265,7 @@ pub struct ExplorerConflictViewModel {
     pub choices: Vec<ExplorerConflictChoice>,
     pub selected_choice: ExplorerConflictChoice,
     pub apply_to_remaining: bool,
+    pub allow_apply_to_remaining: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1264,6 +1334,9 @@ impl ExplorerDialogViewModel {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ExplorerViewModel {
     pub current_path: String,
+    pub address_value: String,
+    pub address_editing: bool,
+    pub is_trash: bool,
     pub entries: Vec<ExplorerEntryViewModel>,
     pub selected_index: Option<usize>,
     pub search: Option<ExplorerSearchViewModel>,
@@ -1320,8 +1393,12 @@ impl ExplorerViewModel {
         ascii_assets: RuntimeAsciiAssets,
     ) -> Self {
         let selected_count = entries.iter().filter(|entry| entry.selected).count();
+        let current_path = current_path.into();
         Self {
-            current_path: current_path.into(),
+            address_value: current_path.clone(),
+            current_path,
+            address_editing: false,
+            is_trash: false,
             entries,
             selected_index,
             search: None,

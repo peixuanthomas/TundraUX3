@@ -7,7 +7,8 @@ use tundra_platform::{
     PlatformCapabilities, PlatformKind, UserDirs, build_macos_app_paths, build_windows_app_paths,
 };
 use tundra_shell::{ShellLaunchConfig, ShellStartupError, prepare_shell_startup};
-use tundra_storage::StorageError;
+use tundra_storage::{BorderShape as StorageBorderShape, StorageError, StorageManager};
+use tundra_ui::BorderShape as UiBorderShape;
 
 #[test]
 fn prepare_shell_startup_uses_windows_mock_app_paths() {
@@ -31,7 +32,31 @@ fn prepare_shell_startup_uses_windows_mock_app_paths() {
     assert_eq!(startup.storage_report.app_paths.as_ref(), Some(&app_paths));
     assert!(startup.storage_report.warnings.is_empty());
     assert_eq!(startup.app_config.home_mode, None);
+    assert_eq!(startup.app_config.border_shape, UiBorderShape::Rounded);
     assert_eq!(startup.restored_session, None);
+}
+
+#[test]
+fn prepare_shell_startup_maps_persisted_square_border_shape() {
+    let fixture = FixtureRoot::new("square-border");
+    let base = fixture.path();
+    let app_paths =
+        build_windows_app_paths(base.join("roaming"), base.join("local"), base.join("temp"))
+            .expect("valid Windows app paths");
+    let manager = StorageManager::open(app_paths.clone())
+        .expect("storage should initialize")
+        .manager;
+    let mut config = manager.load_config().expect("config should load");
+    config.appearance.border_shape = StorageBorderShape::Square;
+    manager.save_config(&config).expect("config should save");
+    let platform = MockPlatform::new(user_dirs(base), app_paths)
+        .with_kind(PlatformKind::Windows)
+        .with_capabilities(PlatformCapabilities::native_supported());
+
+    let startup =
+        prepare_shell_startup(&platform, ShellLaunchConfig::default()).expect("startup state");
+
+    assert_eq!(startup.app_config.border_shape, UiBorderShape::Square);
 }
 
 #[test]

@@ -29,9 +29,48 @@ impl ShellState {
             storage.layout().data_path.clone()
         };
 
-        let mut explorer_state = ExplorerState::with_config(start_path, &explorer_config);
-        if let Some(dirs) = user_dirs {
-            explorer_state.quick_locations = vec![
+        self.explorer_state = Some(ExplorerState::with_config(start_path, &explorer_config));
+        self.refresh_explorer_quick_locations(platform);
+        self.explorer_input_mode = ExplorerInputMode::Browse;
+        self.explorer_input.clear();
+        self.explorer_input_replace_all = false;
+        self.explorer_overlay_mode = None;
+        self.screen_stack.push(ShellScreen::Explorer);
+        self.focused_component = ShellComponent::Explorer;
+        self.notify_status("Explorer");
+        self.apply_explorer_command(ExplorerCommand::Refresh, platform);
+        self.refresh_hit_map();
+    }
+
+    fn close_explorer(&mut self) {
+        self.explorer_input_mode = ExplorerInputMode::Browse;
+        self.explorer_input.clear();
+        self.explorer_input_replace_all = false;
+        self.explorer_overlay_mode = None;
+        self.resolve_explorer_alert();
+        self.pop_to_home();
+        self.notify_status("Ready");
+    }
+
+    fn refresh_explorer_quick_locations(&mut self, platform: &dyn Platform) {
+        let retained_volumes = self
+            .explorer_state
+            .as_ref()
+            .map(|state| {
+                state
+                    .quick_locations
+                    .iter()
+                    .filter(|location| {
+                        location.kind
+                            == tundra_apps::explorer::ExplorerQuickLocationKind::Volume
+                    })
+                    .cloned()
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        let mut locations = Vec::new();
+        if let Ok(dirs) = platform.user_dirs() {
+            locations.extend([
                 tundra_apps::explorer::ExplorerQuickLocation::new(
                     "desktop",
                     "Desktop",
@@ -68,26 +107,46 @@ impl ShellState {
                     dirs.videos(),
                     "videos",
                 ),
-            ];
+            ]);
         }
-        self.explorer_state = Some(explorer_state);
-        self.explorer_input_mode = ExplorerInputMode::Browse;
-        self.explorer_input.clear();
-        self.explorer_overlay_mode = None;
-        self.screen_stack.push(ShellScreen::Explorer);
-        self.focused_component = ShellComponent::Explorer;
-        self.notify_status("Explorer");
-        self.apply_explorer_command(ExplorerCommand::Refresh, platform);
-        self.refresh_hit_map();
-    }
-
-    fn close_explorer(&mut self) {
-        self.explorer_input_mode = ExplorerInputMode::Browse;
-        self.explorer_input.clear();
-        self.explorer_overlay_mode = None;
-        self.resolve_explorer_alert();
-        self.pop_to_home();
-        self.notify_status("Ready");
+        let volumes = platform.local_volumes().map_or(retained_volumes, |volumes| {
+            volumes
+                .into_iter()
+                .enumerate()
+                .map(|(index, volume)| {
+                    let root_label = volume.root.display().to_string();
+                    let label = volume
+                        .label
+                        .filter(|label| !label.trim().is_empty())
+                        .map(|label| format!("{label} ({root_label})"))
+                        .unwrap_or_else(|| root_label.clone());
+                    tundra_apps::explorer::ExplorerQuickLocation::volume(
+                        format!("volume-{index}-{root_label}"),
+                        label,
+                        volume.root,
+                    )
+                })
+                .collect()
+        });
+        locations.extend(volumes);
+        locations.push(tundra_apps::explorer::ExplorerQuickLocation::trash());
+        let mut unique = Vec::with_capacity(locations.len());
+        for location in locations {
+            let duplicate = unique.iter().any(
+                |existing: &tundra_apps::explorer::ExplorerQuickLocation| {
+                    (existing.is_trash() && location.is_trash())
+                        || (!existing.is_trash()
+                            && !location.is_trash()
+                            && existing.path == location.path)
+                },
+            );
+            if !duplicate {
+                unique.push(location);
+            }
+        }
+        if let Some(state) = self.explorer_state.as_mut() {
+            state.quick_locations = unique;
+        }
     }
 
     fn resolve_explorer_alert(&mut self) {
@@ -166,18 +225,29 @@ impl ShellState {
 
         if matches!(
             command_kind,
-            ExplorerCommand::DeleteToTrash | ExplorerCommand::ConfirmDelete
+            ExplorerCommand::DeleteToTrash
+                | ExplorerCommand::ConfirmDelete
+                | ExplorerCommand::DumpTrash
+                | ExplorerCommand::ConfirmDumpTrash
         ) && let Some(dialog) = pending_dialog
         {
+            let (confirm_label, follow_up) = match dialog.kind {
+                tundra_apps::explorer::ExplorerDialogKind::DeleteToTrash => {
+                    ("Move", ShellCommand::ExplorerConfirmDelete)
+                }
+                tundra_apps::explorer::ExplorerDialogKind::DumpTrash => {
+                    ("Empty", ShellCommand::ExplorerConfirmDumpTrash)
+                }
+            };
             self.notify_modal_with_options(
                 ShellNotification::modal(
                     dialog.title,
                     dialog.message,
                     tundra_ui::NotificationTone::Warning,
                     vec![
-                        ShellNotificationAction::new("confirm", "Move")
+                        ShellNotificationAction::new("confirm", confirm_label)
                             .with_shortcut(InputKey::Character('y'))
-                            .with_follow_up(ShellCommand::ExplorerConfirmDelete),
+                            .with_follow_up(follow_up),
                         ShellNotificationAction::new("cancel", "Cancel")
                             .with_shortcut(InputKey::Character('n'))
                             .cancel()
@@ -277,25 +347,47 @@ impl ShellState {
 
     fn begin_explorer_input(&mut self, mode: ExplorerInputMode) {
         self.explorer_input_mode = mode;
-        self.explorer_input = if mode == ExplorerInputMode::Rename {
-            self.explorer_state
+        self.explorer_input = match mode {
+            ExplorerInputMode::Address => self
+                .explorer_state
+                .as_ref()
+                .map(|state| state.current_path.display().to_string())
+                .unwrap_or_default(),
+            ExplorerInputMode::Rename => self
+                .explorer_state
                 .as_ref()
                 .and_then(|state| state.selected_entry())
                 .map(|entry| entry.name.clone())
-                .unwrap_or_default()
-        } else {
-            String::new()
+                .unwrap_or_default(),
+            ExplorerInputMode::Browse
+            | ExplorerInputMode::Search
+            | ExplorerInputMode::NewFolder
+            | ExplorerInputMode::NewTextFile
+            | ExplorerInputMode::RestoreDestination => String::new(),
         };
+        self.explorer_input_replace_all = mode == ExplorerInputMode::Address;
+        if let Some(state) = self.explorer_state.as_mut() {
+            state.error = None;
+        }
         self.notify_status(explorer_input_prompt(mode));
     }
 
     fn append_explorer_char(&mut self, character: char, platform: &dyn Platform) {
+        if self.explorer_input_replace_all {
+            self.explorer_input.clear();
+            self.explorer_input_replace_all = false;
+        }
         self.explorer_input.push(character);
         self.apply_live_explorer_search(platform);
     }
 
     fn explorer_backspace(&mut self, platform: &dyn Platform) {
-        self.explorer_input.pop();
+        if self.explorer_input_replace_all {
+            self.explorer_input.clear();
+            self.explorer_input_replace_all = false;
+        } else {
+            self.explorer_input.pop();
+        }
         self.apply_live_explorer_search(platform);
     }
 
@@ -309,18 +401,48 @@ impl ShellState {
     }
 
     fn submit_explorer_input(&mut self, platform: &dyn Platform) {
-        let value = self.explorer_input.trim().to_string();
+        let raw_value = self.explorer_input.clone();
+        let trimmed_value = raw_value.trim().to_string();
         let command = match self.explorer_input_mode {
             ExplorerInputMode::Browse => return,
-            ExplorerInputMode::Search => ExplorerCommand::Search(value),
-            ExplorerInputMode::NewFolder => ExplorerCommand::NewFolder(value),
-            ExplorerInputMode::NewTextFile => ExplorerCommand::NewTextFile(value),
-            ExplorerInputMode::Rename => ExplorerCommand::Rename(value),
+            ExplorerInputMode::Address => {
+                ExplorerCommand::Navigate(std::path::PathBuf::from(raw_value))
+            }
+            ExplorerInputMode::Search => ExplorerCommand::Search(trimmed_value),
+            ExplorerInputMode::NewFolder => ExplorerCommand::NewFolder(trimmed_value),
+            ExplorerInputMode::NewTextFile => ExplorerCommand::NewTextFile(trimmed_value),
+            ExplorerInputMode::Rename => ExplorerCommand::Rename(trimmed_value),
+            ExplorerInputMode::RestoreDestination => ExplorerCommand::RestoreSelectedToDirectory(
+                std::path::PathBuf::from(raw_value),
+            ),
         };
 
+        self.apply_explorer_command(command, platform);
+        if self
+            .explorer_state
+            .as_ref()
+            .is_some_and(|state| state.error.is_some())
+        {
+            return;
+        }
         self.explorer_input_mode = ExplorerInputMode::Browse;
         self.explorer_input.clear();
-        self.apply_explorer_command(command, platform);
+        self.explorer_input_replace_all = false;
+    }
+
+    fn restore_selected_explorer_item(&mut self, platform: &dyn Platform) {
+        let selected = self.explorer_state.as_ref().and_then(|state| {
+            (state.current_location.is_trash()
+                && state.effective_selected_paths().len() == 1)
+                .then(|| state.selected_entry())
+                .flatten()
+                .map(|entry| entry.original_path.is_some())
+        });
+        match selected {
+            Some(true) => self.apply_explorer_command(ExplorerCommand::RestoreSelected, platform),
+            Some(false) => self.begin_explorer_input(ExplorerInputMode::RestoreDestination),
+            None => {}
+        }
     }
 
     fn cancel_explorer_input(&mut self) {
@@ -336,6 +458,7 @@ impl ShellState {
         }
         self.explorer_input_mode = ExplorerInputMode::Browse;
         self.explorer_input.clear();
+        self.explorer_input_replace_all = false;
         self.notify_status("Explorer");
     }
 
@@ -367,6 +490,10 @@ impl ShellState {
                 self.activate_explorer_toolbar(action, coordinates, platform);
                 return;
             }
+            tundra_ui::ExplorerHitTarget::Address => {
+                self.begin_explorer_input(ExplorerInputMode::Address);
+                return;
+            }
             tundra_ui::ExplorerHitTarget::Breadcrumb(index) => {
                 let destination = self
                     .to_explorer_view_model()
@@ -380,14 +507,23 @@ impl ShellState {
                 return;
             }
             tundra_ui::ExplorerHitTarget::QuickLocation(index) => {
-                let destination = self
+                let location = self
                     .to_explorer_view_model()
                     .quick_locations
                     .get(index)
                     .filter(|location| location.enabled)
-                    .map(|location| std::path::PathBuf::from(&location.path));
-                if let Some(destination) = destination {
-                    self.apply_explorer_command(ExplorerCommand::Navigate(destination), platform);
+                    .cloned();
+                if let Some(location) = location {
+                    match location.kind {
+                        tundra_ui::ExplorerQuickLocationKind::Trash => self
+                            .apply_explorer_command(ExplorerCommand::NavigateTrash, platform),
+                        tundra_ui::ExplorerQuickLocationKind::Directory
+                        | tundra_ui::ExplorerQuickLocationKind::Volume => self
+                            .apply_explorer_command(
+                                ExplorerCommand::Navigate(std::path::PathBuf::from(location.path)),
+                                platform,
+                            ),
+                    }
                 }
                 return;
             }
@@ -439,7 +575,10 @@ impl ShellState {
         if self
             .explorer_state
             .as_ref()
-            .is_none_or(|state| state.effective_selected_paths().is_empty())
+            .is_none_or(|state| {
+                state.current_location.is_trash()
+                    || state.effective_selected_paths().is_empty()
+            })
         {
             return;
         }
@@ -465,6 +604,7 @@ impl ShellState {
                 self.apply_explorer_command(ExplorerCommand::OpenParent, platform)
             }
             ExplorerToolbarAction::Refresh => {
+                self.refresh_explorer_quick_locations(platform);
                 self.apply_explorer_command(ExplorerCommand::Refresh, platform)
             }
             ExplorerToolbarAction::New => self.begin_explorer_input(ExplorerInputMode::NewFolder),
@@ -480,6 +620,10 @@ impl ShellState {
             ExplorerToolbarAction::Rename => self.begin_explorer_input(ExplorerInputMode::Rename),
             ExplorerToolbarAction::Delete => {
                 self.apply_explorer_command(ExplorerCommand::DeleteToTrash, platform)
+            }
+            ExplorerToolbarAction::Restore => self.restore_selected_explorer_item(platform),
+            ExplorerToolbarAction::DumpTrash => {
+                self.apply_explorer_command(ExplorerCommand::DumpTrash, platform)
             }
             ExplorerToolbarAction::Sort => {
                 self.open_explorer_popup(ExplorerOverlayMode::Sort { anchor }, anchor)
@@ -537,6 +681,10 @@ impl ShellState {
                     "delete" => {
                         self.apply_explorer_command(ExplorerCommand::DeleteToTrash, platform)
                     }
+                    "restore" => self.restore_selected_explorer_item(platform),
+                    "dump-trash" => {
+                        self.apply_explorer_command(ExplorerCommand::DumpTrash, platform)
+                    }
                     "properties" => {
                         self.open_explorer_popup(ExplorerOverlayMode::Properties, anchor)
                     }
@@ -546,7 +694,10 @@ impl ShellState {
                     "select-all" => {
                         self.apply_explorer_command(ExplorerCommand::SelectAll, platform)
                     }
-                    "refresh" => self.apply_explorer_command(ExplorerCommand::Refresh, platform),
+                    "refresh" => {
+                        self.refresh_explorer_quick_locations(platform);
+                        self.apply_explorer_command(ExplorerCommand::Refresh, platform);
+                    }
                     "sort" => self.open_explorer_popup(ExplorerOverlayMode::Sort { anchor }, anchor),
                     "options" => self.open_explorer_popup(ExplorerOverlayMode::Options, anchor),
                     "sort-name" => self.apply_explorer_command(
@@ -611,18 +762,35 @@ impl ShellState {
                     ExplorerConflictChoice::Skip => ExplorerConflictAction::Skip,
                     ExplorerConflictChoice::Cancel => ExplorerConflictAction::Cancel,
                 };
-                self.apply_explorer_command(
-                    ExplorerCommand::ResolveConflict {
-                        action,
-                        apply_to_all: self.explorer_conflict_apply_to_remaining,
-                    },
-                    platform,
-                );
+                let restore_conflict = self
+                    .explorer_state
+                    .as_ref()
+                    .is_some_and(|state| state.pending_restore.is_some());
+                if restore_conflict {
+                    self.apply_explorer_command(
+                        ExplorerCommand::ResolveRestoreConflict(action),
+                        platform,
+                    );
+                } else {
+                    self.apply_explorer_command(
+                        ExplorerCommand::ResolveConflict {
+                            action,
+                            apply_to_all: self.explorer_conflict_apply_to_remaining,
+                        },
+                        platform,
+                    );
+                }
                 self.explorer_conflict_apply_to_remaining = false;
             }
             ExplorerOverlayControl::ApplyToRemaining => {
-                self.explorer_conflict_apply_to_remaining =
-                    !self.explorer_conflict_apply_to_remaining;
+                if self
+                    .explorer_state
+                    .as_ref()
+                    .is_none_or(|state| state.pending_restore.is_none())
+                {
+                    self.explorer_conflict_apply_to_remaining =
+                        !self.explorer_conflict_apply_to_remaining;
+                }
             }
         }
         self.refresh_hit_map();
@@ -808,7 +976,10 @@ impl ShellState {
             tundra_ui::ExplorerHitTarget::QuickLocation(index) => model
                 .quick_locations
                 .get(index)
-                .filter(|location| location.enabled)
+                .filter(|location| {
+                    location.enabled
+                        && location.kind != tundra_ui::ExplorerQuickLocationKind::Trash
+                })
                 .map(|location| std::path::PathBuf::from(&location.path)),
             tundra_ui::ExplorerHitTarget::Breadcrumb(index) => model
                 .breadcrumbs
@@ -818,6 +989,7 @@ impl ShellState {
             tundra_ui::ExplorerHitTarget::EmptyTable => self
                 .explorer_state
                 .as_ref()
+                .filter(|state| !state.current_location.is_trash())
                 .map(|state| state.current_path.clone()),
             _ => None,
         }

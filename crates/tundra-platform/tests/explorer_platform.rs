@@ -4,8 +4,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use tundra_platform::mock::{MockCall, MockPlatform};
 use tundra_platform::{
-    AppPaths, DirectoryListing, ExecutableKind, FileAttributes, FileOpenPolicy, Platform,
-    PlatformError, PlatformKind, UserDirs, cleanup_temp_path, default_file_open_policy,
+    AppPaths, DirectoryListing, ExecutableKind, FileAttributes, FileOpenPolicy, LocalVolume,
+    Platform, PlatformError, PlatformKind, TrashEntry, TrashRestoreTarget, TrashStats, UserDirs,
+    VolumeKind, cleanup_temp_path, default_file_open_policy,
 };
 
 #[test]
@@ -233,6 +234,95 @@ fn mock_injects_directory_policy_and_cross_device_rename_results() {
     assert!(platform.calls().contains(&MockCall::RenamePath {
         source: executable,
         target,
+    }));
+}
+
+#[test]
+fn mock_injects_and_records_volume_and_trash_operations() {
+    let base = unique_temp_root("mock-trash-injection");
+    let platform = mock_platform(&base);
+    let volume = LocalVolume {
+        root: base.clone(),
+        label: Some("Fixture".to_string()),
+        kind: VolumeKind::Fixed,
+        total_bytes: Some(1024),
+        available_bytes: Some(512),
+    };
+    platform.set_local_volumes_result(Ok(vec![volume.clone()]));
+    assert_eq!(
+        platform.local_volumes().expect("injected volumes"),
+        vec![volume]
+    );
+
+    let id = MockPlatform::trash_entry_id("fixture-trash-id");
+    let entry = TrashEntry {
+        id: id.clone(),
+        display_name: "deleted.txt".to_string(),
+        original_path: Some(base.join("deleted.txt")),
+        deleted_at: None,
+        size: 7,
+        is_directory: false,
+    };
+    platform.set_trash_entries_result(Ok(vec![entry.clone()]));
+    platform.set_trash_stats_result(Ok(TrashStats {
+        item_count: 1,
+        total_bytes: 7,
+    }));
+    assert_eq!(platform.list_trash().expect("injected Trash"), vec![entry]);
+    assert_eq!(
+        platform.trash_stats().expect("injected stats").total_bytes,
+        7
+    );
+
+    let destination = base.join("restored.txt");
+    let target = TrashRestoreTarget::DestinationPath(destination.clone());
+    platform.set_restore_result(id.clone(), target.clone(), Ok(destination.clone()));
+    assert_eq!(
+        platform
+            .restore_trash_item(&id, target.clone())
+            .expect("injected restore"),
+        destination
+    );
+    let moved_paths = vec![base.join("one"), base.join("two")];
+    platform
+        .move_to_trash(&moved_paths)
+        .expect("injected move");
+    platform.empty_trash().expect("injected empty");
+
+    let calls = platform.calls();
+    assert!(calls.contains(&MockCall::LocalVolumes));
+    assert!(calls.contains(&MockCall::ListTrash));
+    assert!(calls.contains(&MockCall::TrashStats));
+    assert!(calls.contains(&MockCall::MoveToTrash(moved_paths)));
+    assert!(calls.contains(&MockCall::RestoreTrashItem { id, target }));
+    assert!(calls.contains(&MockCall::EmptyTrash));
+}
+
+#[test]
+fn platform_trait_remains_object_safe_with_trash_api() {
+    fn accepts_platform(platform: &dyn Platform) {
+        assert!(!platform.is_native_backend());
+    }
+    let base = unique_temp_root("object-safe-platform");
+    let platform = mock_platform(&base).with_kind(PlatformKind::Windows);
+    accepts_platform(&platform);
+    assert_eq!(platform.kind(), PlatformKind::Windows);
+    assert!(!platform.is_native_backend());
+}
+
+#[cfg(windows)]
+#[test]
+fn windows_volume_enumeration_only_returns_supported_local_kinds() {
+    use tundra_platform::windows::WindowsPlatform;
+
+    let volumes = WindowsPlatform
+        .local_volumes()
+        .expect("Windows local volumes");
+    assert!(WindowsPlatform.is_native_backend());
+    assert!(!volumes.is_empty());
+    assert!(volumes.iter().all(|volume| {
+        volume.root.is_absolute()
+            && matches!(volume.kind, VolumeKind::Fixed | VolumeKind::Removable)
     }));
 }
 

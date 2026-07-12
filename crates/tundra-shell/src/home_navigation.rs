@@ -53,6 +53,7 @@ impl ShellState {
         self.explorer_state = None;
         self.explorer_input_mode = ExplorerInputMode::Browse;
         self.explorer_input.clear();
+        self.explorer_input_replace_all = false;
         self.explorer_overlay_mode = None;
         self.active_popup = None;
         self.hovered_component = None;

@@ -8,8 +8,9 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use crate::{
     AppPaths, DirectoryEntryMetadata, DirectoryListing, DirectoryListingWarning, FileAttributes,
-    FileOpenPolicy, Platform, PlatformCapabilities, PlatformError, PlatformKind, ProcessExit,
-    ProcessSpec, UserDirs, build_windows_app_paths,
+    FileOpenPolicy, LocalVolume, Platform, PlatformCapabilities, PlatformError, PlatformKind,
+    ProcessExit, ProcessSpec, TrashEntry, TrashEntryId, TrashRestoreTarget, TrashStats, UserDirs,
+    VolumeKind, build_windows_app_paths,
 };
 
 const SW_SHOWNORMAL: i32 = 1;
@@ -25,6 +26,28 @@ const IO_REPARSE_TAG_MOUNT_POINT: u32 = 0xA0000003;
 const IO_REPARSE_TAG_SYMLINK: u32 = 0xA000000C;
 const ERROR_FILE_NOT_FOUND: u32 = 2;
 const ERROR_NO_MORE_FILES: u32 = 18;
+const DRIVE_REMOVABLE: u32 = 2;
+const DRIVE_FIXED: u32 = 3;
+const S_FALSE: i32 = 1;
+const RPC_E_CHANGED_MODE: i32 = 0x8001_0106u32 as i32;
+const COINIT_APARTMENTTHREADED: u32 = 0x2;
+const CLSCTX_INPROC_SERVER: u32 = 0x1;
+const SIGDN_NORMALDISPLAY: u32 = 0;
+const SIGDN_DESKTOPABSOLUTEPARSING: u32 = 0x8002_8000;
+const SFGAO_FOLDER: u32 = 0x2000_0000;
+const FOF_SILENT: u32 = 0x0004;
+const FOF_NOCONFIRMATION: u32 = 0x0010;
+const FOF_ALLOWUNDO: u32 = 0x0040;
+const FOF_NOERRORUI: u32 = 0x0400;
+const FOFX_RECYCLEONDELETE: u32 = 0x0008_0000;
+const FOFX_EARLYFAILURE: u32 = 0x0010_0000;
+const FILE_OPERATION_FLAGS: u32 =
+    FOF_SILENT | FOF_NOCONFIRMATION | FOF_NOERRORUI | FOFX_EARLYFAILURE;
+const RECYCLE_OPERATION_FLAGS: u32 =
+    FILE_OPERATION_FLAGS | FOF_ALLOWUNDO | FOFX_RECYCLEONDELETE;
+const SHERB_NOCONFIRMATION: u32 = 0x1;
+const SHERB_NOPROGRESSUI: u32 = 0x2;
+const SHERB_NOSOUND: u32 = 0x4;
 
 #[derive(Debug, Clone, Copy, Default)]
 pub struct WindowsPlatform;
@@ -36,6 +59,10 @@ impl Platform for WindowsPlatform {
 
     fn capabilities(&self) -> PlatformCapabilities {
         PlatformCapabilities::native_supported()
+    }
+
+    fn is_native_backend(&self) -> bool {
+        true
     }
 
     fn user_dirs(&self) -> Result<UserDirs, PlatformError> {
@@ -175,6 +202,34 @@ impl Platform for WindowsPlatform {
         Ok(())
     }
 
+    fn local_volumes(&self) -> Result<Vec<LocalVolume>, PlatformError> {
+        windows_local_volumes()
+    }
+
+    fn list_trash(&self) -> Result<Vec<TrashEntry>, PlatformError> {
+        windows_list_trash()
+    }
+
+    fn trash_stats(&self) -> Result<TrashStats, PlatformError> {
+        windows_trash_stats()
+    }
+
+    fn move_to_trash(&self, paths: &[PathBuf]) -> Result<(), PlatformError> {
+        windows_move_to_trash(paths)
+    }
+
+    fn empty_trash(&self) -> Result<(), PlatformError> {
+        windows_empty_trash()
+    }
+
+    fn restore_trash_item(
+        &self,
+        id: &TrashEntryId,
+        target: TrashRestoreTarget,
+    ) -> Result<PathBuf, PlatformError> {
+        windows_restore_trash_item(id, target)
+    }
+
     fn file_attributes(&self, path: &Path) -> Result<FileAttributes, PlatformError> {
         let metadata = fs::symlink_metadata(path).map_err(|error| PlatformError::Io {
             operation: "read file attributes",
@@ -210,6 +265,549 @@ impl Platform for WindowsPlatform {
         attributes: &FileAttributes,
     ) -> crate::ExternalOpenPolicy {
         crate::platform::windows_external_open_policy(path, attributes)
+    }
+}
+
+fn windows_local_volumes() -> Result<Vec<LocalVolume>, PlatformError> {
+    let required = unsafe { GetLogicalDriveStringsW(0, ptr::null_mut()) };
+    if required == 0 {
+        return Err(last_windows_error("GetLogicalDriveStringsW", None));
+    }
+    let mut buffer = vec![0u16; required as usize + 1];
+    let written = unsafe { GetLogicalDriveStringsW(buffer.len() as u32, buffer.as_mut_ptr()) };
+    if written == 0 || written as usize >= buffer.len() {
+        return Err(last_windows_error("GetLogicalDriveStringsW", None));
+    }
+
+    let mut volumes = Vec::new();
+    let mut start = 0usize;
+    while start < written as usize && buffer[start] != 0 {
+        let relative_end = buffer[start..]
+            .iter()
+            .position(|unit| *unit == 0)
+            .unwrap_or(buffer.len() - start);
+        let end = start + relative_end;
+        let root = PathBuf::from(OsString::from_wide(&buffer[start..end]));
+        let root_wide = to_wide(root.as_os_str());
+        let kind = match unsafe { GetDriveTypeW(root_wide.as_ptr()) } {
+            DRIVE_FIXED => VolumeKind::Fixed,
+            DRIVE_REMOVABLE => VolumeKind::Removable,
+            _ => {
+                start = end + 1;
+                continue;
+            }
+        };
+
+        let mut label_buffer = [0u16; 261];
+        let label = if unsafe {
+            GetVolumeInformationW(
+                root_wide.as_ptr(),
+                label_buffer.as_mut_ptr(),
+                label_buffer.len() as u32,
+                ptr::null_mut(),
+                ptr::null_mut(),
+                ptr::null_mut(),
+                ptr::null_mut(),
+                0,
+            )
+        } != 0
+        {
+            let value = os_string_from_null_terminated(&label_buffer)
+                .to_string_lossy()
+                .into_owned();
+            (!value.is_empty()).then_some(value)
+        } else {
+            None
+        };
+
+        let mut available = 0u64;
+        let mut total = 0u64;
+        let mut free = 0u64;
+        let has_space = unsafe {
+            GetDiskFreeSpaceExW(root_wide.as_ptr(), &mut available, &mut total, &mut free)
+        } != 0;
+        volumes.push(LocalVolume {
+            root,
+            label,
+            kind,
+            total_bytes: has_space.then_some(total),
+            available_bytes: has_space.then_some(available),
+        });
+        start = end + 1;
+    }
+    volumes.sort_by(|left, right| left.root.cmp(&right.root));
+    Ok(volumes)
+}
+
+fn windows_list_trash() -> Result<Vec<TrashEntry>, PlatformError> {
+    let _apartment = ComApartment::enter()?;
+    let mut entries = enumerate_recycle_bin_items()?
+        .iter()
+        .map(trash_entry_from_shell_item)
+        .collect::<Result<Vec<_>, _>>()?;
+    entries.sort_by(|left, right| {
+        left.display_name
+            .to_lowercase()
+            .cmp(&right.display_name.to_lowercase())
+            .then_with(|| left.id.cmp(&right.id))
+    });
+    Ok(entries)
+}
+
+fn windows_trash_stats() -> Result<TrashStats, PlatformError> {
+    let mut info = ShQueryRecycleBinInfo {
+        cb_size: std::mem::size_of::<ShQueryRecycleBinInfo>() as u32,
+        size: 0,
+        item_count: 0,
+    };
+    let status = unsafe { SHQueryRecycleBinW(ptr::null(), &mut info) };
+    check_hresult(status, "SHQueryRecycleBinW")?;
+    Ok(TrashStats {
+        item_count: info.item_count.max(0) as u64,
+        total_bytes: info.size.max(0) as u64,
+    })
+}
+
+fn windows_move_to_trash(paths: &[PathBuf]) -> Result<(), PlatformError> {
+    if paths.is_empty() {
+        return Err(PlatformError::InvalidInput {
+            message: "at least one path is required to move to the Recycle Bin".to_string(),
+        });
+    }
+    for path in paths {
+        validate_recycle_source(path)?;
+    }
+
+    let _apartment = ComApartment::enter()?;
+    let sources = paths
+        .iter()
+        .map(|path| shell_item_from_path(path))
+        .collect::<Result<Vec<_>, _>>()?;
+    let operation = create_file_operation()?;
+    // DeleteItem plus FOFX_RECYCLEONDELETE is the documented IFileOperation
+    // contract for a recycle-only delete. Moving an item to the virtual
+    // Recycle Bin folder is not equivalent and is rejected by some Shell
+    // namespace implementations. There is deliberately no permanent-delete
+    // fallback if the volume cannot recycle an item.
+    file_operation_set_flags(&operation, RECYCLE_OPERATION_FLAGS)?;
+    let table = unsafe { operation.vtable::<FileOperationVTable>() };
+    for source in &sources {
+        let status =
+            unsafe { (table.delete_item)(operation.raw(), source.raw(), ptr::null_mut()) };
+        check_hresult(status, "IFileOperation::DeleteItem(Recycle Bin)")?;
+    }
+    perform_file_operation(&operation, "move items to Recycle Bin")
+}
+
+fn windows_empty_trash() -> Result<(), PlatformError> {
+    let status = unsafe {
+        SHEmptyRecycleBinW(
+            ptr::null_mut(),
+            ptr::null(),
+            SHERB_NOCONFIRMATION | SHERB_NOPROGRESSUI | SHERB_NOSOUND,
+        )
+    };
+    check_hresult(status, "SHEmptyRecycleBinW")
+}
+
+fn windows_restore_trash_item(
+    id: &TrashEntryId,
+    target: TrashRestoreTarget,
+) -> Result<PathBuf, PlatformError> {
+    let _apartment = ComApartment::enter()?;
+    let mut found = None;
+    for item in enumerate_recycle_bin_items()? {
+        if shell_item_id(&item)? == *id {
+            found = Some(item);
+            break;
+        }
+    }
+    let item = found.ok_or_else(|| PlatformError::InvalidInput {
+        message: "Recycle Bin item no longer exists".to_string(),
+    })?;
+    let destination = match target {
+        TrashRestoreTarget::OriginalLocation => {
+            original_path_from_shell_item(&item)?.ok_or_else(|| PlatformError::InvalidInput {
+                message: "Recycle Bin item has no original path".to_string(),
+            })?
+        }
+        TrashRestoreTarget::DestinationPath(path) => path,
+    };
+    validate_restore_destination(&destination)?;
+    let parent_path = destination.parent().expect("validated destination parent");
+    let destination_folder = shell_item_from_path(parent_path)?;
+    let new_name = to_wide(
+        destination
+            .file_name()
+            .expect("validated destination file name"),
+    );
+
+    let operation = create_file_operation()?;
+    file_operation_set_flags(&operation, FILE_OPERATION_FLAGS)?;
+    let table = unsafe { operation.vtable::<FileOperationVTable>() };
+    let status = unsafe {
+        (table.move_item)(
+            operation.raw(),
+            item.raw(),
+            destination_folder.raw(),
+            new_name.as_ptr(),
+            ptr::null_mut(),
+        )
+    };
+    check_hresult(status, "IFileOperation::MoveItem(restore)")?;
+    perform_file_operation(&operation, "restore Recycle Bin item")?;
+    Ok(destination)
+}
+
+fn validate_recycle_source(path: &Path) -> Result<(), PlatformError> {
+    if !path.is_absolute() || path.file_name().is_none() {
+        return Err(PlatformError::InvalidInput {
+            message: format!(
+                "Recycle Bin source must be a complete absolute path: {}",
+                path.display()
+            ),
+        });
+    }
+    fs::symlink_metadata(path).map_err(|error| PlatformError::Io {
+        operation: "locate item to move to Recycle Bin",
+        path: Some(path.to_path_buf()),
+        message: error.to_string(),
+    })?;
+    Ok(())
+}
+
+fn validate_restore_destination(destination: &Path) -> Result<(), PlatformError> {
+    if !destination.is_absolute() || destination.file_name().is_none() {
+        return Err(PlatformError::InvalidInput {
+            message: "restore destination must be a complete absolute path".to_string(),
+        });
+    }
+    match fs::symlink_metadata(destination) {
+        Ok(_) => {
+            return Err(PlatformError::InvalidInput {
+                message: format!(
+                    "restore destination already exists: {}",
+                    destination.display()
+                ),
+            });
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => {
+            return Err(PlatformError::Io {
+                operation: "check restore destination",
+                path: Some(destination.to_path_buf()),
+                message: error.to_string(),
+            });
+        }
+    }
+    let parent = destination
+        .parent()
+        .ok_or_else(|| PlatformError::InvalidInput {
+            message: "restore destination has no parent directory".to_string(),
+        })?;
+    if !fs::metadata(parent).is_ok_and(|metadata| metadata.is_dir()) {
+        return Err(PlatformError::InvalidInput {
+            message: format!(
+                "restore destination parent is not a directory: {}",
+                parent.display()
+            ),
+        });
+    }
+    Ok(())
+}
+
+fn trash_entry_from_shell_item(item: &ComPtr) -> Result<TrashEntry, PlatformError> {
+    let item2 = shell_item2(item)?;
+    let original_name = shell_item2_string(&item2, &PKEY_ORIGINAL_FILE_NAME)
+        .or_else(|| shell_item_display_name(item, SIGDN_NORMALDISPLAY).ok())
+        .unwrap_or_else(|| OsString::from("Unknown item"));
+    let display_name = original_name.to_string_lossy().into_owned();
+    let original_path = shell_item2_string(&item2, &PKEY_RECYCLE_DELETED_FROM)
+        .map(PathBuf::from)
+        .map(|parent| parent.join(&original_name));
+    let deleted_at = shell_item2_file_time(&item2, &PKEY_RECYCLE_DATE_DELETED);
+    let size = shell_item2_u64(&item2, &PKEY_SIZE).unwrap_or(0);
+    let table = unsafe { item.vtable::<ShellItemVTable>() };
+    let mut attributes = 0u32;
+    let is_directory = unsafe {
+        (table.get_attributes)(item.raw(), SFGAO_FOLDER, &mut attributes) >= 0
+            && attributes & SFGAO_FOLDER != 0
+    };
+    Ok(TrashEntry {
+        id: shell_item_id(item)?,
+        display_name,
+        original_path,
+        deleted_at,
+        size,
+        is_directory,
+    })
+}
+
+fn original_path_from_shell_item(item: &ComPtr) -> Result<Option<PathBuf>, PlatformError> {
+    let item2 = shell_item2(item)?;
+    let Some(parent) = shell_item2_string(&item2, &PKEY_RECYCLE_DELETED_FROM) else {
+        return Ok(None);
+    };
+    let name = shell_item2_string(&item2, &PKEY_ORIGINAL_FILE_NAME)
+        .or_else(|| shell_item_display_name(item, SIGDN_NORMALDISPLAY).ok());
+    Ok(name.map(|name| PathBuf::from(parent).join(name)))
+}
+
+fn shell_item_id(item: &ComPtr) -> Result<TrashEntryId, PlatformError> {
+    let parsing_name = shell_item_display_name(item, SIGDN_DESKTOPABSOLUTEPARSING)?;
+    let encoded: String = parsing_name
+        .encode_wide()
+        .map(|unit| format!("{unit:04x}"))
+        .collect();
+    Ok(TrashEntryId::from_native(format!("win-shell-v1-{encoded}")))
+}
+
+fn enumerate_recycle_bin_items() -> Result<Vec<ComPtr>, PlatformError> {
+    let recycle_bin = known_folder_item(&FOLDERID_RECYCLE_BIN)?;
+    let table = unsafe { recycle_bin.vtable::<ShellItemVTable>() };
+    let mut raw_enumerator = ptr::null_mut();
+    let status = unsafe {
+        (table.bind_to_handler)(
+            recycle_bin.raw(),
+            ptr::null_mut(),
+            &BHID_ENUM_ITEMS,
+            &IID_IENUM_SHELL_ITEMS,
+            &mut raw_enumerator,
+        )
+    };
+    check_hresult(status, "IShellItem::BindToHandler(BHID_EnumItems)")?;
+    let enumerator = ComPtr::new(raw_enumerator, "Recycle Bin enumerator")?;
+    let table = unsafe { enumerator.vtable::<EnumShellItemsVTable>() };
+    let mut items = Vec::new();
+    loop {
+        let mut raw_item = ptr::null_mut();
+        let mut fetched = 0u32;
+        let status = unsafe { (table.next)(enumerator.raw(), 1, &mut raw_item, &mut fetched) };
+        if status == S_FALSE {
+            break;
+        }
+        check_hresult(status, "IEnumShellItems::Next")?;
+        if fetched == 0 {
+            return Err(PlatformError::Native {
+                operation: "IEnumShellItems::Next",
+                message: "returned success without an item".to_string(),
+            });
+        }
+        items.push(ComPtr::new(raw_item, "Recycle Bin item")?);
+    }
+    Ok(items)
+}
+
+fn known_folder_item(folder_id: &Guid) -> Result<ComPtr, PlatformError> {
+    let mut raw = ptr::null_mut();
+    let status =
+        unsafe { SHGetKnownFolderItem(folder_id, 0, ptr::null_mut(), &IID_ISHELL_ITEM, &mut raw) };
+    check_hresult(status, "SHGetKnownFolderItem")?;
+    ComPtr::new(raw, "known folder shell item")
+}
+
+fn shell_item_from_path(path: &Path) -> Result<ComPtr, PlatformError> {
+    let path_wide = to_wide(path.as_os_str());
+    let mut raw = ptr::null_mut();
+    let status = unsafe {
+        SHCreateItemFromParsingName(
+            path_wide.as_ptr(),
+            ptr::null_mut(),
+            &IID_ISHELL_ITEM,
+            &mut raw,
+        )
+    };
+    check_hresult(status, "SHCreateItemFromParsingName")?;
+    ComPtr::new(raw, "filesystem shell item")
+}
+
+fn shell_item2(item: &ComPtr) -> Result<ComPtr, PlatformError> {
+    let table = unsafe { item.vtable::<ShellItemVTable>() };
+    let mut raw = ptr::null_mut();
+    let status = unsafe { (table.query_interface)(item.raw(), &IID_ISHELL_ITEM2, &mut raw) };
+    check_hresult(status, "IShellItem::QueryInterface(IShellItem2)")?;
+    ComPtr::new(raw, "IShellItem2")
+}
+
+fn shell_item_display_name(item: &ComPtr, kind: u32) -> Result<OsString, PlatformError> {
+    let table = unsafe { item.vtable::<ShellItemVTable>() };
+    let mut raw = ptr::null_mut();
+    let status = unsafe { (table.get_display_name)(item.raw(), kind, &mut raw) };
+    check_hresult(status, "IShellItem::GetDisplayName")?;
+    if raw.is_null() {
+        return Err(PlatformError::Native {
+            operation: "IShellItem::GetDisplayName",
+            message: "returned a null string".to_string(),
+        });
+    }
+    let value = unsafe { os_string_from_wide_ptr(raw) };
+    unsafe { CoTaskMemFree(raw.cast()) };
+    Ok(value)
+}
+
+fn shell_item2_string(item: &ComPtr, key: &PropertyKey) -> Option<OsString> {
+    let table = unsafe { item.vtable::<ShellItem2VTable>() };
+    let mut raw = ptr::null_mut();
+    let status = unsafe { (table.get_string)(item.raw(), key, &mut raw) };
+    if status < 0 || raw.is_null() {
+        return None;
+    }
+    let value = unsafe { os_string_from_wide_ptr(raw) };
+    unsafe { CoTaskMemFree(raw.cast()) };
+    Some(value)
+}
+
+fn shell_item2_file_time(item: &ComPtr, key: &PropertyKey) -> Option<SystemTime> {
+    let table = unsafe { item.vtable::<ShellItem2VTable>() };
+    let mut value = FileTime {
+        low_date_time: 0,
+        high_date_time: 0,
+    };
+    let status = unsafe { (table.get_file_time)(item.raw(), key, &mut value) };
+    (status >= 0)
+        .then(|| file_time_to_system_time(value))
+        .flatten()
+}
+
+fn shell_item2_u64(item: &ComPtr, key: &PropertyKey) -> Option<u64> {
+    let table = unsafe { item.vtable::<ShellItem2VTable>() };
+    let mut value = 0u64;
+    let status = unsafe { (table.get_uint64)(item.raw(), key, &mut value) };
+    (status >= 0).then_some(value)
+}
+
+fn create_file_operation() -> Result<ComPtr, PlatformError> {
+    let mut raw = ptr::null_mut();
+    let status = unsafe {
+        CoCreateInstance(
+            &CLSID_FILE_OPERATION,
+            ptr::null_mut(),
+            CLSCTX_INPROC_SERVER,
+            &IID_IFILE_OPERATION,
+            &mut raw,
+        )
+    };
+    check_hresult(status, "CoCreateInstance(FileOperation)")?;
+    ComPtr::new(raw, "IFileOperation")
+}
+
+fn file_operation_set_flags(operation: &ComPtr, flags: u32) -> Result<(), PlatformError> {
+    let table = unsafe { operation.vtable::<FileOperationVTable>() };
+    let status = unsafe { (table.set_operation_flags)(operation.raw(), flags) };
+    check_hresult(status, "IFileOperation::SetOperationFlags")
+}
+
+fn perform_file_operation(operation: &ComPtr, name: &'static str) -> Result<(), PlatformError> {
+    let table = unsafe { operation.vtable::<FileOperationVTable>() };
+    let status = unsafe { (table.perform_operations)(operation.raw()) };
+    check_hresult(status, "IFileOperation::PerformOperations")?;
+    let mut aborted = 0i32;
+    let status = unsafe { (table.get_any_operations_aborted)(operation.raw(), &mut aborted) };
+    check_hresult(status, "IFileOperation::GetAnyOperationsAborted")?;
+    if aborted != 0 {
+        Err(PlatformError::Native {
+            operation: name,
+            message: "the Shell aborted one or more operations".to_string(),
+        })
+    } else {
+        Ok(())
+    }
+}
+
+fn check_hresult(status: i32, operation: &'static str) -> Result<(), PlatformError> {
+    if status >= 0 {
+        Ok(())
+    } else {
+        Err(PlatformError::Native {
+            operation,
+            message: format!("HRESULT {:#010x}", status as u32),
+        })
+    }
+}
+
+fn last_windows_error(operation: &'static str, path: Option<&Path>) -> PlatformError {
+    let code = unsafe { GetLastError() };
+    PlatformError::Io {
+        operation,
+        path: path.map(Path::to_path_buf),
+        message: std::io::Error::from_raw_os_error(code as i32).to_string(),
+    }
+}
+
+unsafe fn os_string_from_wide_ptr(raw: *const u16) -> OsString {
+    let mut len = 0usize;
+    unsafe {
+        while *raw.add(len) != 0 {
+            len += 1;
+        }
+        OsString::from_wide(std::slice::from_raw_parts(raw, len))
+    }
+}
+
+struct ComApartment {
+    uninitialize: bool,
+}
+
+impl ComApartment {
+    fn enter() -> Result<Self, PlatformError> {
+        let status = unsafe { CoInitializeEx(ptr::null_mut(), COINIT_APARTMENTTHREADED) };
+        if status >= 0 {
+            Ok(Self { uninitialize: true })
+        } else if status == RPC_E_CHANGED_MODE {
+            Ok(Self {
+                uninitialize: false,
+            })
+        } else {
+            Err(PlatformError::Native {
+                operation: "CoInitializeEx",
+                message: format!("HRESULT {:#010x}", status as u32),
+            })
+        }
+    }
+}
+
+impl Drop for ComApartment {
+    fn drop(&mut self) {
+        if self.uninitialize {
+            unsafe { CoUninitialize() };
+        }
+    }
+}
+
+struct ComPtr {
+    raw: *mut c_void,
+}
+
+impl ComPtr {
+    fn new(raw: *mut c_void, name: &'static str) -> Result<Self, PlatformError> {
+        if raw.is_null() {
+            Err(PlatformError::Native {
+                operation: name,
+                message: "COM returned a null interface".to_string(),
+            })
+        } else {
+            Ok(Self { raw })
+        }
+    }
+
+    fn raw(&self) -> *mut c_void {
+        self.raw
+    }
+
+    unsafe fn vtable<T>(&self) -> &T {
+        unsafe {
+            let table = *(self.raw as *const *const T);
+            &*table
+        }
+    }
+}
+
+impl Drop for ComPtr {
+    fn drop(&mut self) {
+        unsafe {
+            let table = *(self.raw as *const *const IUnknownVTable);
+            ((*table).release)(self.raw);
+        }
     }
 }
 
@@ -504,6 +1102,94 @@ struct Win32FindDataW {
     alternate_file_name: [u16; 14],
 }
 
+#[repr(C)]
+struct ShQueryRecycleBinInfo {
+    cb_size: u32,
+    size: i64,
+    item_count: i64,
+}
+
+#[repr(C)]
+struct PropertyKey {
+    format_id: Guid,
+    property_id: u32,
+}
+
+#[repr(C)]
+struct IUnknownVTable {
+    _query_interface: unsafe extern "system" fn(*mut c_void, *const Guid, *mut *mut c_void) -> i32,
+    _add_ref: unsafe extern "system" fn(*mut c_void) -> u32,
+    release: unsafe extern "system" fn(*mut c_void) -> u32,
+}
+
+#[repr(C)]
+struct ShellItemVTable {
+    query_interface: unsafe extern "system" fn(*mut c_void, *const Guid, *mut *mut c_void) -> i32,
+    _add_ref: unsafe extern "system" fn(*mut c_void) -> u32,
+    _release: unsafe extern "system" fn(*mut c_void) -> u32,
+    bind_to_handler: unsafe extern "system" fn(
+        *mut c_void,
+        *mut c_void,
+        *const Guid,
+        *const Guid,
+        *mut *mut c_void,
+    ) -> i32,
+    _get_parent: usize,
+    get_display_name: unsafe extern "system" fn(*mut c_void, u32, *mut *mut u16) -> i32,
+    get_attributes: unsafe extern "system" fn(*mut c_void, u32, *mut u32) -> i32,
+    _compare: usize,
+}
+
+#[repr(C)]
+struct EnumShellItemsVTable {
+    _query_interface: usize,
+    _add_ref: usize,
+    _release: usize,
+    next: unsafe extern "system" fn(*mut c_void, u32, *mut *mut c_void, *mut u32) -> i32,
+    _skip: usize,
+    _reset: usize,
+    _clone: usize,
+}
+
+#[repr(C)]
+struct ShellItem2VTable {
+    _query_interface: usize,
+    _add_ref: usize,
+    _release: usize,
+    _base_and_property_methods: [usize; 12],
+    get_file_time: unsafe extern "system" fn(*mut c_void, *const PropertyKey, *mut FileTime) -> i32,
+    _get_int32: usize,
+    get_string: unsafe extern "system" fn(*mut c_void, *const PropertyKey, *mut *mut u16) -> i32,
+    _get_uint32: usize,
+    get_uint64: unsafe extern "system" fn(*mut c_void, *const PropertyKey, *mut u64) -> i32,
+    _get_bool: usize,
+}
+
+#[repr(C)]
+struct FileOperationVTable {
+    _query_interface: usize,
+    _add_ref: usize,
+    _release: usize,
+    _advise_methods: [usize; 2],
+    set_operation_flags: unsafe extern "system" fn(*mut c_void, u32) -> i32,
+    _before_move: [usize; 8],
+    move_item: unsafe extern "system" fn(
+        *mut c_void,
+        *mut c_void,
+        *mut c_void,
+        *const u16,
+        *mut c_void,
+    ) -> i32,
+    _move_items: usize,
+    _copy_item: usize,
+    _copy_items: usize,
+    delete_item: unsafe extern "system" fn(*mut c_void, *mut c_void, *mut c_void) -> i32,
+    _delete_items: usize,
+    _new_item: usize,
+    perform_operations: unsafe extern "system" fn(*mut c_void) -> i32,
+    get_any_operations_aborted: unsafe extern "system" fn(*mut c_void, *mut i32) -> i32,
+}
+
 const FOLDERID_DESKTOP: Guid = Guid {
     data1: 0xB4BFCC3A,
     data2: 0xDB2C,
@@ -552,6 +1238,84 @@ const FOLDERID_LOCAL_APP_DATA: Guid = Guid {
     data3: 0x4FCF,
     data4: [0x9D, 0x55, 0x7B, 0x8E, 0x7F, 0x15, 0x70, 0x91],
 };
+const FOLDERID_RECYCLE_BIN: Guid = Guid {
+    data1: 0xB7534046,
+    data2: 0x3ECB,
+    data3: 0x4C18,
+    data4: [0xBE, 0x4E, 0x64, 0xCD, 0x4C, 0xB7, 0xD6, 0xAC],
+};
+const IID_ISHELL_ITEM: Guid = Guid {
+    data1: 0x43826D1E,
+    data2: 0xE718,
+    data3: 0x42EE,
+    data4: [0xBC, 0x55, 0xA1, 0xE2, 0x61, 0xC3, 0x7B, 0xFE],
+};
+const IID_ISHELL_ITEM2: Guid = Guid {
+    data1: 0x7E9FB0D3,
+    data2: 0x919F,
+    data3: 0x4307,
+    data4: [0xAB, 0x2E, 0x9B, 0x18, 0x60, 0x31, 0x0C, 0x93],
+};
+const BHID_ENUM_ITEMS: Guid = Guid {
+    data1: 0x94F60519,
+    data2: 0x2850,
+    data3: 0x4924,
+    data4: [0xAA, 0x5A, 0xD1, 0x5E, 0x84, 0x86, 0x80, 0x39],
+};
+const IID_IENUM_SHELL_ITEMS: Guid = Guid {
+    data1: 0x70629033,
+    data2: 0xE363,
+    data3: 0x4A28,
+    data4: [0xA5, 0x67, 0x0D, 0xB7, 0x80, 0x06, 0xE6, 0xD7],
+};
+const CLSID_FILE_OPERATION: Guid = Guid {
+    data1: 0x3AD05575,
+    data2: 0x8857,
+    data3: 0x4850,
+    data4: [0x92, 0x77, 0x11, 0xB8, 0x5B, 0xDB, 0x8E, 0x09],
+};
+const IID_IFILE_OPERATION: Guid = Guid {
+    data1: 0x947AAB5F,
+    data2: 0x0A5C,
+    data3: 0x4C13,
+    data4: [0xB4, 0xD6, 0x4E, 0xBB, 0xB5, 0x0C, 0xB1, 0x3E],
+};
+const PKEY_ORIGINAL_FILE_NAME: PropertyKey = PropertyKey {
+    format_id: Guid {
+        data1: 0x0CEF7D53,
+        data2: 0xFA64,
+        data3: 0x11D1,
+        data4: [0xA2, 0x03, 0x00, 0x00, 0xF8, 0x1F, 0xED, 0xEE],
+    },
+    property_id: 6,
+};
+const PKEY_RECYCLE_DELETED_FROM: PropertyKey = PropertyKey {
+    format_id: Guid {
+        data1: 0x9B174B33,
+        data2: 0x40FF,
+        data3: 0x11D2,
+        data4: [0xA2, 0x7E, 0x00, 0xC0, 0x4F, 0xC3, 0x08, 0x71],
+    },
+    property_id: 2,
+};
+const PKEY_RECYCLE_DATE_DELETED: PropertyKey = PropertyKey {
+    format_id: Guid {
+        data1: 0x9B174B33,
+        data2: 0x40FF,
+        data3: 0x11D2,
+        data4: [0xA2, 0x7E, 0x00, 0xC0, 0x4F, 0xC3, 0x08, 0x71],
+    },
+    property_id: 3,
+};
+const PKEY_SIZE: PropertyKey = PropertyKey {
+    format_id: Guid {
+        data1: 0xB725F130,
+        data2: 0x47EF,
+        data3: 0x101A,
+        data4: [0xA5, 0xF1, 0x02, 0x60, 0x8C, 0x9E, 0xEB, 0xAC],
+    },
+    property_id: 12,
+};
 
 #[link(name = "ntdll")]
 unsafe extern "system" {
@@ -575,11 +1339,38 @@ unsafe extern "system" {
         h_token: *mut c_void,
         ppsz_path: *mut *mut u16,
     ) -> i32;
+
+    fn SHGetKnownFolderItem(
+        rfid: *const Guid,
+        flags: u32,
+        token: *mut c_void,
+        riid: *const Guid,
+        item: *mut *mut c_void,
+    ) -> i32;
+
+    fn SHCreateItemFromParsingName(
+        path: *const u16,
+        bind_context: *mut c_void,
+        riid: *const Guid,
+        item: *mut *mut c_void,
+    ) -> i32;
+
+    fn SHQueryRecycleBinW(root_path: *const u16, info: *mut ShQueryRecycleBinInfo) -> i32;
+    fn SHEmptyRecycleBinW(hwnd: *mut c_void, root_path: *const u16, flags: u32) -> i32;
 }
 
 #[link(name = "ole32")]
 unsafe extern "system" {
     fn CoTaskMemFree(pv: *mut c_void);
+    fn CoInitializeEx(reserved: *mut c_void, coinit: u32) -> i32;
+    fn CoUninitialize();
+    fn CoCreateInstance(
+        class_id: *const Guid,
+        outer: *mut c_void,
+        context: u32,
+        interface_id: *const Guid,
+        object: *mut *mut c_void,
+    ) -> i32;
 }
 
 #[link(name = "user32")]
@@ -593,6 +1384,24 @@ unsafe extern "system" {
 
 #[link(name = "kernel32")]
 unsafe extern "system" {
+    fn GetLogicalDriveStringsW(buffer_length: u32, buffer: *mut u16) -> u32;
+    fn GetDriveTypeW(root_path_name: *const u16) -> u32;
+    fn GetVolumeInformationW(
+        root_path_name: *const u16,
+        volume_name_buffer: *mut u16,
+        volume_name_size: u32,
+        volume_serial_number: *mut u32,
+        maximum_component_length: *mut u32,
+        file_system_flags: *mut u32,
+        file_system_name_buffer: *mut u16,
+        file_system_name_size: u32,
+    ) -> i32;
+    fn GetDiskFreeSpaceExW(
+        directory_name: *const u16,
+        free_bytes_available: *mut u64,
+        total_number_of_bytes: *mut u64,
+        total_number_of_free_bytes: *mut u64,
+    ) -> i32;
     fn FindFirstFileW(
         lp_file_name: *const u16,
         lp_find_file_data: *mut Win32FindDataW,

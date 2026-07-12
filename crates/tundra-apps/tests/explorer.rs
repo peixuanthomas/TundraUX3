@@ -148,15 +148,32 @@ fn file_operations_create_rename_copy_cut_paste_and_trash_with_audit() {
     select_name(&mut state, "renamed.txt");
     controller.apply(
         &mut state,
+        ExplorerCommand::DeleteToTrash,
+        Some(&actor),
+        &fixture.platform,
+        &storage,
+    );
+    assert!(state.pending_dialog.is_some());
+    controller.apply(
+        &mut state,
         ExplorerCommand::ConfirmDelete,
         Some(&actor),
         &fixture.platform,
         &storage,
     );
-    assert!(!fixture.documents.join("renamed.txt").exists());
+    // MockPlatform records the native system call without touching the host's real Recycle Bin.
+    assert!(fixture.documents.join("renamed.txt").exists());
+    assert!(fixture.platform.calls().iter().any(|call| {
+        matches!(
+            call,
+            MockCall::MoveToTrash(paths)
+                if paths == &vec![fixture.documents.join("renamed.txt")]
+        )
+    }));
     assert_eq!(
         storage.load_trash().expect("trash manifest").records.len(),
-        1
+        0,
+        "system Trash operations must never write the legacy private manifest"
     );
     let audit = storage.read_audit_lines().expect("audit lines").join("\n");
     assert!(audit.contains("WriteFile"));

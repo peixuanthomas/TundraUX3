@@ -776,6 +776,7 @@ pub struct ExplorerOverlayLayout {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ExplorerHitTarget {
     Toolbar(ExplorerToolbarAction),
+    Address,
     Breadcrumb(usize),
     Search,
     QuickLocation(usize),
@@ -795,6 +796,8 @@ pub struct ExplorerLayout {
     pub toolbar: Rect,
     pub toolbar_buttons: Vec<ExplorerToolbarButtonLayout>,
     pub path_bar: Rect,
+    pub address_button: Rect,
+    pub address_input: Rect,
     pub breadcrumbs: Vec<ExplorerBreadcrumbLayout>,
     pub search: Rect,
     pub sidebar: Option<Rect>,
@@ -835,6 +838,9 @@ impl ExplorerLayout {
         }
         if rect_contains(self.search, x, y) {
             return Some(ExplorerHitTarget::Search);
+        }
+        if rect_contains(self.address_button, x, y) {
+            return Some(ExplorerHitTarget::Address);
         }
         if let Some(crumb) = self
             .breadcrumbs
@@ -917,13 +923,37 @@ pub fn explorer_layout(area: Rect, model: &ExplorerViewModel) -> ExplorerLayout 
         search_width,
         path_bar.height,
     );
-    let breadcrumb_area = Rect::new(
+    let address_area = Rect::new(
         path_bar.x,
         path_bar.y,
         path_bar.width.saturating_sub(search_width),
         path_bar.height,
     );
-    let breadcrumbs = explorer_breadcrumb_layouts(breadcrumb_area, model);
+    let address_button_width = 6.min(address_area.width);
+    let address_gap = u16::from(address_area.width > address_button_width);
+    let address_button = Rect::new(
+        address_area.x,
+        address_area.y,
+        address_button_width,
+        address_area.height,
+    );
+    let address_input = Rect::new(
+        address_area
+            .x
+            .saturating_add(address_button_width)
+            .saturating_add(address_gap),
+        address_area.y,
+        address_area
+            .width
+            .saturating_sub(address_button_width)
+            .saturating_sub(address_gap),
+        address_area.height,
+    );
+    let breadcrumbs = if model.address_editing {
+        Vec::new()
+    } else {
+        explorer_breadcrumb_layouts(address_input, model)
+    };
 
     let remaining_height = inner.height.saturating_sub(2);
     let footer_height = if remaining_height >= 11 {
@@ -1048,6 +1078,8 @@ pub fn explorer_layout(area: Rect, model: &ExplorerViewModel) -> ExplorerLayout 
         toolbar,
         toolbar_buttons,
         path_bar,
+        address_button,
+        address_input,
         breadcrumbs,
         search,
         sidebar,
@@ -1121,7 +1153,7 @@ fn explorer_breadcrumb_layouts(
     area: Rect,
     model: &ExplorerViewModel,
 ) -> Vec<ExplorerBreadcrumbLayout> {
-    let mut x = area.x.saturating_add(6.min(area.width));
+    let mut x = area.x;
     model
         .breadcrumbs
         .iter()
@@ -1359,11 +1391,13 @@ fn explorer_overlay_layout(area: Rect, model: &ExplorerViewModel) -> Option<Expl
                     enabled: true,
                 })
                 .collect::<Vec<_>>();
-            controls.push(ExplorerOverlayControlLayout {
-                control: ExplorerOverlayControl::ApplyToRemaining,
-                area: line_in_rect(content, choices_y.saturating_add(1)),
-                enabled: true,
-            });
+            if conflict.allow_apply_to_remaining {
+                controls.push(ExplorerOverlayControlLayout {
+                    control: ExplorerOverlayControl::ApplyToRemaining,
+                    area: line_in_rect(content, choices_y.saturating_add(1)),
+                    enabled: true,
+                });
+            }
             Some(ExplorerOverlayLayout {
                 area: dialog,
                 content,

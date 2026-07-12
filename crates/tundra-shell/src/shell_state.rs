@@ -74,10 +74,12 @@ enum UserManagementFeedbackTone {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ExplorerInputMode {
     Browse,
+    Address,
     Search,
     NewFolder,
     NewTextFile,
     Rename,
+    RestoreDestination,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -193,6 +195,7 @@ pub struct ShellState {
     explorer_state: Option<ExplorerState>,
     explorer_input_mode: ExplorerInputMode,
     explorer_input: String,
+    explorer_input_replace_all: bool,
     explorer_overlay_mode: Option<ExplorerOverlayMode>,
     explorer_overlay_selection: usize,
     explorer_conflict_apply_to_remaining: bool,

@@ -499,6 +499,7 @@ fn map_test_theme() -> TundraTheme {
         accent: Color::LightMagenta,
         muted: Color::Gray,
         error: Color::Red,
+        border_shape: tundra_ui::BorderShape::Rounded,
     }
 }
 

@@ -184,7 +184,7 @@ fn context_menu_supports_arrow_and_enter_keyboard_activation() {
 }
 
 #[test]
-fn delete_key_moves_selection_to_tundra_trash() {
+fn delete_key_moves_selection_to_system_trash() {
     let fixture = FixtureRoot::new("delete-trash");
     let platform = mock_platform(fixture.path());
     bootstrap_with_shell(&platform);
@@ -205,21 +205,24 @@ fn delete_key_moves_selection_to_tundra_trash() {
     );
     state.apply_input_with_platform(InputEvent::from_key_label("y"), &platform);
 
-    drive_explorer_tasks_until(&mut state, &platform, |state| {
-        let explorer = state.to_explorer_view_model();
-        !target.exists() && explorer.pending_dialog.is_none() && explorer.operation.is_none()
-    });
-
-    assert!(!target.exists());
+    assert!(platform.calls().iter().any(|call| matches!(
+        call,
+        tundra_platform::mock::MockCall::MoveToTrash(paths)
+            if paths == &vec![target.clone()]
+    )));
+    let explorer = state.to_explorer_view_model();
+    assert!(explorer.pending_dialog.is_none());
+    assert!(explorer.operation.is_none());
+    assert!(target.exists(), "the mock platform must not mutate the filesystem");
     let storage = prepare_shell_startup(&platform, default_config())
         .expect("startup")
         .storage_manager
         .expect("storage");
-    assert_eq!(storage.load_trash().expect("trash").records.len(), 1);
+    assert!(storage.load_trash().expect("trash").records.is_empty());
 }
 
 #[test]
-fn failed_background_delete_reports_a_stable_operation_error() {
+fn failed_system_trash_delete_reports_a_stable_operation_error() {
     let fixture = FixtureRoot::new("delete-confirm-failure");
     let platform = mock_platform(fixture.path());
     bootstrap_with_shell(&platform);
@@ -228,7 +231,10 @@ fn failed_background_delete_reports_a_stable_operation_error() {
     let mut state = logged_in_state(&platform);
     state.apply_input_with_platform(InputEvent::from_key_label("e"), &platform);
     state.apply_input_with_platform(InputEvent::from_key_label("Delete"), &platform);
-    fs::remove_file(&target).expect("remove target before confirming");
+    platform.set_move_to_trash_result(Err(tundra_platform::PlatformError::Native {
+        operation: "move to system Trash",
+        message: "injected system Trash failure".to_string(),
+    }));
 
     state.apply_input_with_platform(InputEvent::from_key_label("y"), &platform);
     drive_explorer_tasks_until(&mut state, &platform, |state| {

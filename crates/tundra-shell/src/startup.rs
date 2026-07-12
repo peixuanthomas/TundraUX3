@@ -52,11 +52,19 @@ pub enum ShellScreen {
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct ShellAppConfig {
     pub home_mode: Option<ShellHomeMode>,
+    pub border_shape: tundra_ui::BorderShape,
 }
 
 impl ShellAppConfig {
-    fn from_storage_config(_config: &tundra_storage::StorageConfig) -> Self {
-        Self::default()
+    fn from_storage_config(config: &tundra_storage::StorageConfig) -> Self {
+        let border_shape = match config.appearance.border_shape {
+            tundra_storage::BorderShape::Rounded => tundra_ui::BorderShape::Rounded,
+            tundra_storage::BorderShape::Square => tundra_ui::BorderShape::Square,
+        };
+        Self {
+            border_shape,
+            ..Self::default()
+        }
     }
 }
 

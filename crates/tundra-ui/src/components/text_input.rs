@@ -1,6 +1,6 @@
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
-use ratatui::widgets::{Block, Borders, Paragraph, Widget};
+use ratatui::widgets::{Borders, Paragraph, Widget};
 
 use crate::{TundraTheme, theme::solid_border_style};
 
@@ -138,7 +138,8 @@ impl TextInput {
 
     pub fn render(&self, area: Rect, buffer: &mut Buffer, theme: &TundraTheme) {
         let style = interactive_style(self.state, theme);
-        let block = Block::default()
+        let block = theme
+            .block()
             .borders(Borders::ALL)
             .border_style(solid_border_style(style))
             .style(style);

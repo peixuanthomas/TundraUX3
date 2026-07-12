@@ -557,6 +557,39 @@ impl ShellState {
                 self.apply_explorer_command(ExplorerCommand::ConfirmDelete, platform);
                 ShellAction::Redraw
             }
+            ShellCommand::ExplorerRestore => {
+                self.restore_selected_explorer_item(platform);
+                ShellAction::Redraw
+            }
+            ShellCommand::ExplorerDumpTrash => {
+                self.apply_explorer_command(ExplorerCommand::DumpTrash, platform);
+                ShellAction::Redraw
+            }
+            ShellCommand::ExplorerConfirmDumpTrash => {
+                self.apply_explorer_command(ExplorerCommand::ConfirmDumpTrash, platform);
+                ShellAction::Redraw
+            }
+            ShellCommand::ExplorerRestoreKeepBoth => {
+                self.apply_explorer_command(
+                    ExplorerCommand::ResolveRestoreConflict(ExplorerConflictAction::KeepBoth),
+                    platform,
+                );
+                ShellAction::Redraw
+            }
+            ShellCommand::ExplorerRestoreReplace => {
+                self.apply_explorer_command(
+                    ExplorerCommand::ResolveRestoreConflict(ExplorerConflictAction::Replace),
+                    platform,
+                );
+                ShellAction::Redraw
+            }
+            ShellCommand::ExplorerRestoreCancel => {
+                self.apply_explorer_command(
+                    ExplorerCommand::ResolveRestoreConflict(ExplorerConflictAction::Cancel),
+                    platform,
+                );
+                ShellAction::Redraw
+            }
             ShellCommand::ExplorerConflictKeepBoth => {
                 let apply_to_all = self.explorer_conflict_apply_to_remaining;
                 self.apply_explorer_command(
@@ -663,6 +696,10 @@ impl ShellState {
             }
             ShellCommand::BeginExplorerSearch => {
                 self.begin_explorer_input(ExplorerInputMode::Search);
+                ShellAction::Redraw
+            }
+            ShellCommand::BeginExplorerAddress => {
+                self.begin_explorer_input(ExplorerInputMode::Address);
                 ShellAction::Redraw
             }
             ShellCommand::BeginExplorerNewFolder => {

@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, mpsc};
 use std::thread::{self, JoinHandle};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::Duration;
 
 use tundra_platform::{FileAttributes, Platform, PlatformError, PlatformKind};
 
@@ -338,16 +338,25 @@ pub struct ExplorerTaskHandle {
     pub cancellation: ExplorerCancellationToken,
 }
 
-/// A trash adapter supplied by the shell/storage layer.
+/// A trash adapter used while replacing an existing transfer destination.
 ///
-/// Implementations may update TundraUX's trash document in the same call.  Returning the final
-/// trash path lets the worker roll a replacement back when its staged commit fails.
+/// User-initiated delete tasks bypass this adapter and call [`Platform::move_to_trash`] directly.
+/// Native shells should use [`SystemExplorerTrash`] so replacement victims also enter the
+/// operating system Trash instead of a Tundra-private directory.
 pub trait ExplorerTrash: Send + Sync + 'static {
     fn move_to_trash(
         &self,
         platform: &dyn Platform,
         path: &Path,
     ) -> Result<PathBuf, ExplorerTaskError>;
+
+    /// Whether the returned path can be renamed back to the original destination.
+    ///
+    /// Native system Trash APIs intentionally do not expose their internal storage path, so the
+    /// safe recovery rule is to leave the previous item in Trash if a later staged commit fails.
+    fn has_rollback_path(&self) -> bool {
+        true
+    }
 }
 
 #[derive(Debug, Default)]
@@ -365,54 +374,26 @@ impl ExplorerTrash for UnavailableExplorerTrash {
     }
 }
 
-/// A small filesystem-only trash implementation.  Storage-aware callers normally provide their
-/// own [`ExplorerTrash`] so the trash index and audit log are updated atomically with the rename.
-#[derive(Debug)]
-pub struct DirectoryExplorerTrash {
-    root: PathBuf,
-    sequence: AtomicU64,
-}
+/// Sends replacement victims to the operating system Trash.
+///
+/// The returned path is only a best-effort rollback hint. Native Trash APIs intentionally hide
+/// their storage paths; if the subsequent transfer commit fails, the original remains safely in
+/// the system Trash and can be restored by the user.
+#[derive(Debug, Default)]
+pub struct SystemExplorerTrash;
 
-impl DirectoryExplorerTrash {
-    pub fn new(root: impl Into<PathBuf>) -> Self {
-        Self {
-            root: root.into(),
-            sequence: AtomicU64::new(0),
-        }
-    }
-
-    pub fn root(&self) -> &Path {
-        &self.root
-    }
-}
-
-impl ExplorerTrash for DirectoryExplorerTrash {
+impl ExplorerTrash for SystemExplorerTrash {
     fn move_to_trash(
         &self,
         platform: &dyn Platform,
         path: &Path,
     ) -> Result<PathBuf, ExplorerTaskError> {
-        fs::create_dir_all(&self.root)
-            .map_err(|error| io_error("create trash directory", &self.root, error))?;
-        let name = path
-            .file_name()
-            .ok_or_else(|| ExplorerTaskError::InvalidPlan {
-                message: format!("{} has no file name", path.display()),
-            })?;
-        let millis = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_millis();
-        loop {
-            let sequence = self.sequence.fetch_add(1, Ordering::Relaxed);
-            let target = self
-                .root
-                .join(format!("{millis}-{sequence}-{}", name.to_string_lossy()));
-            if !path_exists_no_follow(&target) {
-                platform.rename_path(path, &target)?;
-                return Ok(target);
-            }
-        }
+        platform.move_to_trash(&[path.to_path_buf()])?;
+        Ok(path.to_path_buf())
+    }
+
+    fn has_rollback_path(&self) -> bool {
+        false
     }
 }
 
@@ -682,17 +663,17 @@ fn execute_task(
                     context.summary.cancelled = true;
                     break;
                 }
-                match trash.move_to_trash(platform, &path) {
-                    Ok(target) => {
+                match platform.move_to_trash(&[path.clone()]) {
+                    Ok(()) => {
                         context.progress.processed_bytes = context
                             .progress
                             .processed_bytes
                             .saturating_add(attributes.len);
-                        context.record_success(&path, Some(&target));
+                        context.record_success(&path, None);
                         context.summary.succeeded_sources.push(path);
                     }
                     Err(error) => {
-                        context.record_failure(&path, None, error);
+                        context.record_failure(&path, None, error.into());
                         context.summary.failed_sources.push(path);
                     }
                 }
@@ -1315,8 +1296,10 @@ impl<'a> ExecutionContext<'a> {
                 };
                 if !*merge || *replace {
                     if path_exists_no_follow(&node.target) {
-                        if let Some(trashed) = trashed {
-                            let _ = self.platform.rename_path(&trashed, &node.target);
+                        if self.trash.has_rollback_path() {
+                            if let Some(trashed) = trashed {
+                                let _ = self.platform.rename_path(&trashed, &node.target);
+                            }
                         }
                         return Err(ExplorerTaskError::DestinationChanged {
                             path: node.target.clone(),
@@ -1438,7 +1421,9 @@ impl<'a> ExecutionContext<'a> {
         };
         if let Err(error) = self.platform.rename_path(&staging, &node.target) {
             let _ = self.platform.rename_path(&staging, &node.source);
-            let _ = self.platform.rename_path(&trashed, &node.target);
+            if self.trash.has_rollback_path() {
+                let _ = self.platform.rename_path(&trashed, &node.target);
+            }
             return Err(error.into());
         }
         Ok(FastMove::Moved)
@@ -1480,8 +1465,10 @@ impl<'a> ExecutionContext<'a> {
         };
         if let Err(error) = self.platform.rename_path(&staging, target) {
             self.cleanup_staging(&staging);
-            if let Some(trashed) = trashed {
-                let _ = self.platform.rename_path(&trashed, target);
+            if self.trash.has_rollback_path() {
+                if let Some(trashed) = trashed {
+                    let _ = self.platform.rename_path(&trashed, target);
+                }
             }
             return Err(error.into());
         }

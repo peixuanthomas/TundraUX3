@@ -122,6 +122,8 @@ fn explorer_context_menu_view_model(
     anchor: CellPosition,
     selected_count: usize,
     clipboard_available: bool,
+    is_trash: bool,
+    trash_has_items: bool,
     focused_index: usize,
 ) -> tundra_ui::ExplorerOverlayViewModel {
     let item = |id: &str, label: &str, enabled: bool, dangerous: bool| {
@@ -133,7 +135,19 @@ fn explorer_context_menu_view_model(
             dangerous,
         }
     };
-    let items = if selected_count > 0 {
+    let items = if is_trash && selected_count > 0 {
+        vec![
+            item("restore", "Restore", selected_count == 1, false),
+            item("properties", "Properties", selected_count == 1, false),
+        ]
+    } else if is_trash {
+        vec![
+            item("refresh", "Refresh", true, false),
+            item("dump-trash", "Dump Trash", trash_has_items, true),
+            item("sort", "Sort", true, false),
+            item("options", "Advanced options", true, false),
+        ]
+    } else if selected_count > 0 {
         vec![
             item("open", "Open", selected_count == 1, false),
             item("cut", "Cut", true, false),
@@ -367,10 +381,12 @@ fn explorer_attribute_labels(attributes: &FileAttributes) -> Vec<String> {
 fn explorer_input_prompt(mode: ExplorerInputMode) -> &'static str {
     match mode {
         ExplorerInputMode::Browse => "Explorer",
+        ExplorerInputMode::Address => "Absolute path",
         ExplorerInputMode::Search => "Search",
         ExplorerInputMode::NewFolder => "New folder name",
         ExplorerInputMode::NewTextFile => "New text file name",
         ExplorerInputMode::Rename => "Rename to",
+        ExplorerInputMode::RestoreDestination => "Restore destination directory",
     }
 }
 

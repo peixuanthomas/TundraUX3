@@ -177,7 +177,7 @@ mod tests {
 
         assert_eq!(
             summary,
-            "Windows: 11 supported, 0 best-effort, 3 unsupported"
+            "Windows: 13 supported, 0 best-effort, 3 unsupported"
         );
     }
 
@@ -460,5 +460,228 @@ mod tests {
         assert!((location.longitude - 121.4737).abs() < 0.001);
 
         let _ = std::fs::remove_dir_all(base);
+    }
+
+    #[test]
+    fn hit_map_uses_explicit_layer_priority_instead_of_insertion_order() {
+        let area = Rect::new(0, 0, 10, 5);
+        let map = ShellHitMap::new(
+            (10, 5),
+            1,
+            vec![
+                ShellHitRegion {
+                    component: ShellComponent::ExitDialog,
+                    area,
+                    layer: ShellHitLayer::ShellModal,
+                },
+                ShellHitRegion {
+                    component: ShellComponent::ClockButton,
+                    area,
+                    layer: ShellHitLayer::ShellChrome,
+                },
+                ShellHitRegion {
+                    component: ShellComponent::ContextMenu,
+                    area,
+                    layer: ShellHitLayer::AppOverlay,
+                },
+                ShellHitRegion {
+                    component: ShellComponent::Explorer,
+                    area,
+                    layer: ShellHitLayer::AppContent,
+                },
+            ],
+        );
+
+        assert_eq!(map.target_at((2, 2)), Some(ShellComponent::ExitDialog));
+        assert_eq!(map.layer_at((2, 2)), Some(ShellHitLayer::ShellModal));
+
+        let without_modal = ShellHitMap::new((10, 5), 2, map.regions()[1..].to_vec());
+        assert_eq!(
+            without_modal.target_at((2, 2)),
+            Some(ShellComponent::ClockButton)
+        );
+
+        let app_only = ShellHitMap::new((10, 5), 3, map.regions()[2..].to_vec());
+        assert_eq!(
+            app_only.target_at((2, 2)),
+            Some(ShellComponent::ContextMenu)
+        );
+    }
+
+    #[test]
+    fn clock_button_routes_before_explorer_popup_and_app_forms() {
+        let mut explorer = explorer_routing_test_state();
+        let clock = hit_region_center(&explorer, ShellComponent::ClockButton);
+        explorer.active_popup = Some(ShellPopup {
+            owner: Some(ShellComponent::Explorer),
+            anchor: (10, 10),
+        });
+        explorer.explorer_overlay_mode = Some(ExplorerOverlayMode::ContextMenu {
+            anchor: (10, 10),
+        });
+        explorer.refresh_hit_map();
+
+        let routed = explorer.route_input_at(
+            InputEvent::mouse_down(PointerButton::Left, clock),
+            Instant::now(),
+        );
+        assert_eq!(
+            routed.target,
+            RoutedTarget::Component(ShellComponent::ClockButton)
+        );
+        assert_eq!(routed.command, ShellCommand::OpenClock);
+
+        explorer.active_popup = None;
+        explorer.explorer_overlay_mode = None;
+        explorer.explorer_input_mode = ExplorerInputMode::NewFolder;
+        explorer.refresh_hit_map();
+        let routed = explorer.route_input_at(
+            InputEvent::mouse_down(PointerButton::Left, clock),
+            Instant::now(),
+        );
+        assert_eq!(routed.command, ShellCommand::OpenClock);
+
+        let mut user_management =
+            ShellState::new_for_home_mode(ShellLaunchConfig::default(), (120, 40), ShellHomeMode::User);
+        user_management.screen_stack = vec![ShellScreen::UserManagement];
+        user_management.user_management_mode = UserManagementMode::Create(UserManagementCreateForm {
+            username: String::new(),
+            display_name: String::new(),
+            password: String::new(),
+            role: UserRole::User,
+            focused_field: UserManagementFormField::Username,
+        });
+        user_management.refresh_hit_map();
+        let clock = hit_region_center(&user_management, ShellComponent::ClockButton);
+        let routed = user_management.route_input_at(
+            InputEvent::mouse_down(PointerButton::Left, clock),
+            Instant::now(),
+        );
+        assert_eq!(routed.command, ShellCommand::OpenClock);
+    }
+
+    #[test]
+    fn clock_button_routes_outside_shell_modal_while_modal_region_stays_highest() {
+        let mut state =
+            ShellState::new_for_home_mode(ShellLaunchConfig::default(), (120, 40), ShellHomeMode::User);
+        state.notify_modal(
+            "Confirm",
+            "Keep the clock available",
+            tundra_ui::NotificationTone::Info,
+            vec![ShellNotificationAction::new("ok", "OK")],
+        );
+        let clock = hit_region_center(&state, ShellComponent::ClockButton);
+        let dialog = hit_region_center(&state, ShellComponent::NotificationDialog);
+
+        assert_eq!(state.hit_map.layer_at(clock), Some(ShellHitLayer::ShellChrome));
+        assert_eq!(state.hit_map.layer_at(dialog), Some(ShellHitLayer::ShellModal));
+
+        let routed = state.route_input_at(
+            InputEvent::mouse_down(PointerButton::Left, clock),
+            Instant::now(),
+        );
+        assert_eq!(routed.command, ShellCommand::OpenClock);
+    }
+
+    #[test]
+    fn explorer_never_receives_shell_chrome_pointer_commands_and_clears_drag() {
+        let mut state = explorer_routing_test_state();
+        state.explorer_state.as_mut().expect("Explorer state").drag = Some(
+            tundra_apps::explorer::ExplorerDragState {
+                sources: vec![std::path::PathBuf::from("source")],
+                target: None,
+                mode: tundra_apps::explorer::ExplorerTransferMode::Copy,
+                active: true,
+            },
+        );
+        let top = hit_region_center(&state, ShellComponent::TopBar);
+
+        let routed = state.route_input_at(
+            InputEvent::mouse_drag(PointerButton::Left, top),
+            Instant::now(),
+        );
+        assert_eq!(
+            routed.target,
+            RoutedTarget::Component(ShellComponent::TopBar)
+        );
+        assert_eq!(routed.command, ShellCommand::CaptureOverlayInput);
+        assert!(
+            state
+                .explorer_state
+                .as_ref()
+                .expect("Explorer state")
+                .drag
+                .is_none()
+        );
+
+        let status = hit_region_center(&state, ShellComponent::StatusBar);
+        for input in [
+            InputEvent::mouse_down(PointerButton::Left, status),
+            InputEvent::mouse_down(PointerButton::Right, status),
+            InputEvent::Mouse(MouseInput::Scroll {
+                direction: ScrollDirection::Down,
+                coordinates: status,
+                modifiers: InputModifiers::none(),
+            }),
+        ] {
+            let routed = state.route_input_at(input, Instant::now());
+            assert_eq!(
+                routed.target,
+                RoutedTarget::Component(ShellComponent::StatusBar)
+            );
+            assert_eq!(routed.command, ShellCommand::CaptureOverlayInput);
+        }
+
+        state.explorer_state.as_mut().expect("Explorer state").drag = Some(
+            tundra_apps::explorer::ExplorerDragState {
+                sources: vec![std::path::PathBuf::from("source")],
+                target: None,
+                mode: tundra_apps::explorer::ExplorerTransferMode::Move,
+                active: true,
+            },
+        );
+        let (target, command) = state.route_explorer_mouse(
+            MouseInput::Up {
+                button: PointerButton::Left,
+                coordinates: top,
+                modifiers: InputModifiers::none(),
+            },
+            Some(ShellComponent::TopBar),
+            Instant::now(),
+        );
+        assert_eq!(target, RoutedTarget::Component(ShellComponent::TopBar));
+        assert_eq!(command, ShellCommand::CaptureOverlayInput);
+        assert!(
+            state
+                .explorer_state
+                .as_ref()
+                .expect("Explorer state")
+                .drag
+                .is_none()
+        );
+    }
+
+    fn explorer_routing_test_state() -> ShellState {
+        let mut state =
+            ShellState::new_for_home_mode(ShellLaunchConfig::default(), (120, 40), ShellHomeMode::User);
+        state.screen_stack = vec![ShellScreen::Explorer];
+        state.focused_component = ShellComponent::Explorer;
+        state.explorer_state = Some(ExplorerState::new(".", false));
+        state.refresh_hit_map();
+        state
+    }
+
+    fn hit_region_center(state: &ShellState, component: ShellComponent) -> CellPosition {
+        let area = state
+            .hit_map
+            .regions()
+            .iter()
+            .find(|region| region.component == component)
+            .unwrap_or_else(|| panic!("missing {component:?} hit region"))
+            .area;
+        (
+            area.x.saturating_add(area.width / 2),
+            area.y.saturating_add(area.height / 2),
+        )
     }
 }

@@ -1,4 +1,21 @@
 use ratatui::style::{Color, Modifier, Style};
+use ratatui::widgets::{Block, BorderType};
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum BorderShape {
+    #[default]
+    Rounded,
+    Square,
+}
+
+impl BorderShape {
+    pub const fn border_type(self) -> BorderType {
+        match self {
+            Self::Rounded => BorderType::Rounded,
+            Self::Square => BorderType::Plain,
+        }
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TundraTheme {
@@ -7,6 +24,7 @@ pub struct TundraTheme {
     pub accent: Color,
     pub muted: Color,
     pub error: Color,
+    pub border_shape: BorderShape,
 }
 
 impl TundraTheme {
@@ -17,7 +35,21 @@ impl TundraTheme {
             accent: Color::Cyan,
             muted: Color::DarkGray,
             error: Color::Red,
+            border_shape: BorderShape::Rounded,
         }
+    }
+
+    pub fn with_border_shape(mut self, border_shape: BorderShape) -> Self {
+        self.border_shape = border_shape;
+        self
+    }
+
+    pub const fn border_type(&self) -> BorderType {
+        self.border_shape.border_type()
+    }
+
+    pub fn block(&self) -> Block<'static> {
+        Block::default().border_type(self.border_type())
     }
 
     pub fn title_style(&self) -> Style {

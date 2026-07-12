@@ -1,6 +1,6 @@
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
-use ratatui::widgets::{Block, Borders, Clear, Paragraph, Widget};
+use ratatui::widgets::{Borders, Clear, Paragraph, Widget};
 
 use crate::TundraTheme;
 
@@ -214,7 +214,8 @@ impl CommandPalette {
         }
 
         Clear.render(area, buffer);
-        let block = Block::default()
+        let block = theme
+            .block()
             .title("Command Palette")
             .borders(Borders::ALL)
             .style(theme.body_style());
