@@ -206,6 +206,38 @@ impl ShellState {
                 self.refresh_hit_map();
                 ShellAction::Redraw
             }
+            ShellCommand::OpenLatestCrashReport => {
+                match self.latest_watchdog_report.clone() {
+                    Some(path) => match platform.open_path(&path) {
+                        Ok(()) => self.notify_toast("Opened watchdog crash report"),
+                        Err(error) => self.notify_alert_with_tone(
+                            format!("Could not open crash report: {error}"),
+                            tundra_ui::NotificationTone::Critical,
+                        ),
+                    },
+                    None => self.notify_alert_with_tone(
+                        "No watchdog crash report path is available",
+                        tundra_ui::NotificationTone::Critical,
+                    ),
+                }
+                ShellAction::Redraw
+            }
+            ShellCommand::CopyLatestCrashSummary => {
+                match self.latest_watchdog_summary.clone() {
+                    Some(summary) => match platform.write_clipboard_text(&summary) {
+                        Ok(()) => self.notify_toast("Copied watchdog incident summary"),
+                        Err(error) => self.notify_alert_with_tone(
+                            format!("Could not copy crash summary: {error}"),
+                            tundra_ui::NotificationTone::Critical,
+                        ),
+                    },
+                    None => self.notify_alert_with_tone(
+                        "No watchdog incident summary is available",
+                        tundra_ui::NotificationTone::Critical,
+                    ),
+                }
+                ShellAction::Redraw
+            }
             ShellCommand::FocusNext => {
                 self.move_focus(1);
                 self.notify_status(format!("Focus: {}", self.focused_component.label()));

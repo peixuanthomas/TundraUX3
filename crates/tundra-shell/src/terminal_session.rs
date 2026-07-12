@@ -1,4 +1,3 @@
-use crate::PANIC_RESTORE_HOOK_INSTALLED;
 use crossterm::cursor::{Hide, Show};
 use crossterm::event::{DisableMouseCapture, EnableMouseCapture};
 use crossterm::execute;
@@ -8,7 +7,6 @@ use crossterm::terminal::{
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
 use std::io::{self, Write};
-use std::sync::atomic::Ordering;
 
 pub struct TerminalGuard<W: Write> {
     terminal: Terminal<CrosstermBackend<W>>,
@@ -17,8 +15,6 @@ pub struct TerminalGuard<W: Write> {
 
 impl<W: Write> TerminalGuard<W> {
     pub fn enter(mut output: W) -> io::Result<Self> {
-        install_panic_restore_hook();
-
         enable_raw_mode()?;
         if let Err(error) = execute!(output, EnterAlternateScreen, EnableMouseCapture, Hide) {
             let _ = disable_raw_mode();
@@ -61,19 +57,8 @@ impl<W: Write> Drop for TerminalGuard<W> {
     }
 }
 
-pub(crate) fn install_panic_restore_hook() {
-    if PANIC_RESTORE_HOOK_INSTALLED
-        .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
-        .is_err()
-    {
-        return;
-    }
-
-    let previous_hook = std::panic::take_hook();
-    std::panic::set_hook(Box::new(move |panic_info| {
-        let _ = disable_raw_mode();
-        let mut stderr = io::stderr();
-        let _ = execute!(stderr, Show, DisableMouseCapture, LeaveAlternateScreen);
-        previous_hook(panic_info);
-    }));
+pub fn restore_terminal_best_effort() {
+    let _ = disable_raw_mode();
+    let mut stderr = io::stderr();
+    let _ = execute!(stderr, Show, DisableMouseCapture, LeaveAlternateScreen);
 }

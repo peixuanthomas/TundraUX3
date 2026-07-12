@@ -213,7 +213,10 @@ fn delete_key_moves_selection_to_system_trash() {
     let explorer = state.to_explorer_view_model();
     assert!(explorer.pending_dialog.is_none());
     assert!(explorer.operation.is_none());
-    assert!(target.exists(), "the mock platform must not mutate the filesystem");
+    assert!(
+        target.exists(),
+        "the mock platform must not mutate the filesystem"
+    );
     let storage = prepare_shell_startup(&platform, default_config())
         .expect("startup")
         .storage_manager

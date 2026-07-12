@@ -13,14 +13,22 @@ use std::process::{Command, Stdio};
 use crate::VolumeKind;
 use crate::paths::home_dir_from_env;
 use crate::{
-    AppPaths, DirectoryListing, FileAttributes, FileOpenPolicy, LocalVolume, Platform,
-    PlatformCapabilities, PlatformError, PlatformKind, ProcessExit, ProcessSpec, TrashEntry,
-    TrashEntryId, TrashRestoreTarget, TrashStats, UserDirs, build_macos_app_paths,
+    AppPaths, CapabilityStatus, DirectoryListing, FileAttributes, FileOpenPolicy, LocalVolume,
+    Platform, PlatformCapabilities, PlatformError, PlatformKind, ProcessExit, ProcessSpec,
+    TrashEntry, TrashEntryId, TrashRestoreTarget, TrashStats, UserDirs, build_macos_app_paths,
 };
 
 const OPEN: &str = "/usr/bin/open";
 const PBCOPY: &str = "/usr/bin/pbcopy";
 const PBPASTE: &str = "/usr/bin/pbpaste";
+#[cfg(target_os = "macos")]
+const OSASCRIPT: &str = "/usr/bin/osascript";
+
+#[cfg(target_os = "macos")]
+unsafe extern "C" {
+    fn kill(pid: i32, signal: i32) -> i32;
+    fn __error() -> *mut i32;
+}
 
 #[derive(Debug, Clone, Copy, Default)]
 pub struct MacosPlatform;
@@ -31,7 +39,9 @@ impl Platform for MacosPlatform {
     }
 
     fn capabilities(&self) -> PlatformCapabilities {
-        PlatformCapabilities::native_supported()
+        let mut capabilities = PlatformCapabilities::native_supported();
+        capabilities.critical_dialog = CapabilityStatus::BestEffort;
+        capabilities
     }
 
     fn is_native_backend(&self) -> bool {
@@ -151,6 +161,14 @@ impl Platform for MacosPlatform {
         }
     }
 
+    fn show_critical_error(&self, title: &str, body: &str) -> Result<(), PlatformError> {
+        macos_show_critical_error(title, body)
+    }
+
+    fn is_process_alive(&self, pid: u32) -> Result<bool, PlatformError> {
+        macos_is_process_alive(pid)
+    }
+
     fn local_volumes(&self) -> Result<Vec<LocalVolume>, PlatformError> {
         macos_local_volumes()
     }
@@ -198,6 +216,85 @@ impl Platform for MacosPlatform {
     fn file_open_policy(&self, path: &Path, attributes: &FileAttributes) -> FileOpenPolicy {
         crate::default_file_open_policy(PlatformKind::Macos, path, attributes)
     }
+}
+
+#[cfg(target_os = "macos")]
+fn macos_show_critical_error(title: &str, body: &str) -> Result<(), PlatformError> {
+    if title.contains('\0') || body.contains('\0') {
+        return Err(PlatformError::InvalidInput {
+            message: "critical error title and body must not contain NUL characters".to_string(),
+        });
+    }
+
+    // Values are passed as argv rather than interpolated into AppleScript, so
+    // report content cannot alter the script or invoke a shell.
+    const SCRIPT: &str = r#"on run argv
+set argumentCount to count argv
+set dialogTitle to item (argumentCount - 1) of argv
+set dialogBody to item argumentCount of argv
+display alert dialogTitle message dialogBody as critical buttons {"OK"} default button "OK"
+end run"#;
+    let output = Command::new(OSASCRIPT)
+        .arg("-e")
+        .arg(SCRIPT)
+        .arg("--")
+        .arg(title)
+        .arg(body)
+        .output()
+        .map_err(|error| PlatformError::Io {
+            operation: "show critical error dialog",
+            path: Some(PathBuf::from(OSASCRIPT)),
+            message: error.to_string(),
+        })?;
+
+    if output.status.success() {
+        Ok(())
+    } else {
+        Err(PlatformError::CommandFailed {
+            program: OSASCRIPT.to_string(),
+            status: output.status.code(),
+            stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
+        })
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn macos_show_critical_error(_title: &str, _body: &str) -> Result<(), PlatformError> {
+    Err(PlatformError::Unsupported {
+        capability: "critical_dialog.macos",
+    })
+}
+
+#[cfg(target_os = "macos")]
+fn macos_is_process_alive(pid: u32) -> Result<bool, PlatformError> {
+    const EPERM: i32 = 1;
+    const ESRCH: i32 = 3;
+
+    if pid == 0 || pid > i32::MAX as u32 {
+        return Ok(false);
+    }
+    if unsafe { kill(pid as i32, 0) } == 0 {
+        return Ok(true);
+    }
+
+    let errno = unsafe { *__error() };
+    match errno {
+        ESRCH => Ok(false),
+        // Permission is checked after the kernel resolves the PID, so EPERM
+        // is positive evidence that the protected process exists.
+        EPERM => Ok(true),
+        _ => Err(PlatformError::Native {
+            operation: "kill(pid, 0)",
+            message: std::io::Error::from_raw_os_error(errno).to_string(),
+        }),
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn macos_is_process_alive(_pid: u32) -> Result<bool, PlatformError> {
+    Err(PlatformError::Unsupported {
+        capability: "process_liveness.macos",
+    })
 }
 
 #[cfg(target_os = "macos")]

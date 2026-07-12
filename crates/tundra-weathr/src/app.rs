@@ -16,13 +16,30 @@ use crate::weather::{OpenMeteoProvider, WeatherClient, WeatherData, WeatherLocat
 use crossterm::event::{self, Event, KeyCode, KeyModifiers};
 use std::io;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 use tokio::sync::mpsc;
+use tundra_watchdog::{
+    AppWatchdog, ComponentId, ManagedTaskGroup, RestartPolicy, TaskId, TaskSpec,
+};
 
 const REFRESH_INTERVAL: Duration = Duration::from_secs(300);
 const INPUT_POLL_FPS: u64 = 30;
 const FRAME_DURATION: Duration = Duration::from_millis(1000 / INPUT_POLL_FPS);
 const DEFAULT_THEME_ID: &str = "default";
+static NEXT_APP_INSTANCE_ID: AtomicU64 = AtomicU64::new(1);
+
+fn service_restart_policy() -> RestartPolicy {
+    RestartPolicy::limited(
+        3,
+        Duration::from_secs(5 * 60),
+        vec![
+            Duration::from_secs(1),
+            Duration::from_secs(5),
+            Duration::from_secs(30),
+        ],
+    )
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum AppRunOutcome {
@@ -122,6 +139,7 @@ pub struct App {
     time_receiver: mpsc::Receiver<TimeSyncResult>,
     clock: NetworkClock,
     clock_format: ClockFormat,
+    background_tasks: Vec<ManagedTaskGroup>,
 }
 
 fn render_centered_line(
@@ -143,6 +161,7 @@ impl App {
         term_height: u16,
         themes: ThemeRegistry,
         timezone_id: Option<String>,
+        watchdog: AppWatchdog,
     ) -> Result<Self, WeatherAssetError> {
         Self::new_with_bottom_hud_prompt(
             config,
@@ -151,6 +170,7 @@ impl App {
             themes,
             timezone_id,
             BottomHudPrompt::Quit,
+            watchdog,
         )
     }
 
@@ -161,6 +181,7 @@ impl App {
         themes: ThemeRegistry,
         timezone_id: Option<String>,
         bottom_hud_prompt: BottomHudPrompt,
+        watchdog: AppWatchdog,
     ) -> Result<Self, WeatherAssetError> {
         let location = WeatherLocation {
             latitude: config.location.latitude,
@@ -193,31 +214,63 @@ impl App {
 
         let wanted_provider = Provider::OpenMeteo;
         let provider: Arc<dyn WeatherProvider> = Arc::new(OpenMeteoProvider::new());
-        let weather_client = WeatherClient::new(provider, REFRESH_INTERVAL);
+        let weather_client =
+            WeatherClient::new_managed(provider, REFRESH_INTERVAL, watchdog.clone());
         let units = config.units;
+        let instance_id = NEXT_APP_INSTANCE_ID.fetch_add(1, Ordering::Relaxed);
+        let service_group_name = format!("service-{instance_id}");
 
-        tokio::spawn(async move {
-            loop {
-                let result = weather_client
-                    .get_current_weather(&location, &units, wanted_provider)
-                    .await;
-                if tx.send(result).await.is_err() {
-                    break;
+        let weather_tasks = watchdog
+            .child_component(ComponentId::from_static("weather-refresh"))
+            .task_group(&service_group_name);
+        drop(weather_tasks.spawn_async(
+            TaskSpec::idempotent_service(TaskId::from_static("poll"), service_restart_policy()),
+            move || {
+                let weather_client = weather_client.clone();
+                let tx = tx.clone();
+                async move {
+                    loop {
+                        let result = weather_client
+                            .get_current_weather(&location, &units, wanted_provider)
+                            .await;
+                        if tx.send(result).await.is_err() {
+                            break;
+                        }
+                        tokio::time::sleep(REFRESH_INTERVAL).await;
+                    }
                 }
-                tokio::time::sleep(REFRESH_INTERVAL).await;
-            }
-        });
+            },
+        )?);
 
         let (time_tx, time_rx) = mpsc::channel(1);
-        tokio::spawn(async move {
-            loop {
-                let result = network_clock::fetch_standard_time().await;
-                if time_tx.send(result).await.is_err() {
-                    break;
+        let time_tasks = watchdog
+            .child_component(ComponentId::from_static("time-sync"))
+            .task_group(&service_group_name);
+        let time_task = time_tasks.spawn_async(
+            TaskSpec::idempotent_service(
+                TaskId::from_static("synchronize"),
+                service_restart_policy(),
+            ),
+            move || {
+                let time_tx = time_tx.clone();
+                async move {
+                    loop {
+                        let result = network_clock::fetch_standard_time().await;
+                        if time_tx.send(result).await.is_err() {
+                            break;
+                        }
+                        tokio::time::sleep(network_clock::TIME_SYNC_INTERVAL).await;
+                    }
                 }
-                tokio::time::sleep(network_clock::TIME_SYNC_INTERVAL).await;
+            },
+        );
+        match time_task {
+            Ok(handle) => drop(handle),
+            Err(error) => {
+                weather_tasks.cancel_all();
+                return Err(error.into());
             }
-        });
+        }
 
         Ok(Self {
             state,
@@ -232,6 +285,7 @@ impl App {
             time_receiver: time_rx,
             clock: NetworkClock::new(timezone_id),
             clock_format: config.lockscreen.clock_format,
+            background_tasks: vec![weather_tasks, time_tasks],
         })
     }
 
@@ -445,9 +499,33 @@ impl App {
     }
 }
 
+impl Drop for App {
+    fn drop(&mut self) {
+        for group in &self.background_tasks {
+            group.cancel_all();
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn service_restart_policy_matches_watchdog_budget() {
+        let policy = service_restart_policy();
+
+        assert_eq!(policy.max_restarts, 3);
+        assert_eq!(policy.window, Duration::from_secs(5 * 60));
+        assert_eq!(
+            policy.backoff,
+            vec![
+                Duration::from_secs(1),
+                Duration::from_secs(5),
+                Duration::from_secs(30),
+            ]
+        );
+    }
     use crate::render::TerminalRenderer;
     use crate::scene::overlay::SceneOverlay;
     use crate::scene::{Scene, SceneContext, SceneLayout};

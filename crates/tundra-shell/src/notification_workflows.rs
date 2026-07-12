@@ -54,6 +54,31 @@ impl ShellState {
         )
     }
 
+    pub fn notify_critical_modal(
+        &mut self,
+        title: impl Into<String>,
+        message: impl Into<String>,
+        actions: Vec<ShellNotificationAction>,
+    ) -> u64 {
+        self.capture_modal_focus_context();
+        let notification = ShellNotification::modal(
+            title,
+            message,
+            tundra_ui::NotificationTone::Critical,
+            actions,
+        )
+        .with_component(ShellComponent::NotificationDialog);
+        let id = self.notifications.push_critical_modal(notification);
+        self.active_popup = None;
+        self.notification_pointer_capture = None;
+        self.modal_focus_prepared_for_follow_up = false;
+        if let Some(component) = self.notifications.active_modal_component() {
+            self.focused_component = component;
+        }
+        self.refresh_hit_map();
+        id
+    }
+
     pub fn take_notification_response(&mut self) -> Option<ShellNotificationResponse> {
         self.notifications.take_response()
     }

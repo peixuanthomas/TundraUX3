@@ -214,6 +214,8 @@ pub struct ShellState {
     notification_pointer_capture: Option<NotificationPointerCapture>,
     pending_notification_commands: VecDeque<ShellCommand>,
     error_message: Option<String>,
+    latest_watchdog_report: Option<std::path::PathBuf>,
+    latest_watchdog_summary: Option<String>,
     shutdown_requested: bool,
     return_to_lockscreen_requested: bool,
     last_command: Option<ShellCommand>,

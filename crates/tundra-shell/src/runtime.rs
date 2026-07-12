@@ -1,3 +1,10 @@
+use std::panic::AssertUnwindSafe;
+use tundra_watchdog::{
+    AppCriticality, AppDescriptor, AppId, AppWatchdog, BoundaryKind, BoundarySpec, ComponentId,
+    CaughtPanic, IncidentReceipt, ManagedThreadHandle, PanicAction, ProcessWatchdog, RecoveryOutcome,
+    ReplaySafety, RestartPolicy, RuntimeSnapshot, TaskId, TaskKind, TaskSpec,
+};
+
 pub fn run_without_animation(output: &mut impl Write) -> io::Result<()> {
     run_not_fullscreen_without_animation(output)
 }
@@ -49,9 +56,37 @@ pub fn run_shell_blocking(
     output: &mut impl Write,
     config: ShellLaunchConfig,
 ) -> io::Result<()> {
+    let process = ProcessWatchdog::global().ok_or_else(|| {
+        io::Error::other("the process watchdog must be installed before starting tundra-shell")
+    })?;
+    run_shell_blocking_managed(output, config, process)
+}
+
+pub fn run_shell_blocking_managed(
+    output: &mut impl Write,
+    config: ShellLaunchConfig,
+    process: ProcessWatchdog,
+) -> io::Result<()> {
     match config.terminal_mode {
-        ShellTerminalMode::Fullscreen => run_fullscreen_blocking(output, config),
-        ShellTerminalMode::NotFullscreen => run_not_fullscreen(output, config),
+        ShellTerminalMode::Fullscreen => run_fullscreen_blocking_managed(output, config, process),
+        ShellTerminalMode::NotFullscreen => {
+            let shell = process
+                .register_app(shell_watchdog_descriptor())
+                .map_err(io::Error::other)?;
+            match shell.run_boundary(
+                BoundarySpec::new("shell.not-fullscreen", BoundaryKind::UiSession),
+                AssertUnwindSafe(|| run_not_fullscreen(output, config)),
+            ) {
+                Ok(result) => result,
+                Err(caught) => {
+                    let reason = caught.payload().to_string();
+                    let _ = caught.finalize(RecoveryOutcome::Unrecoverable(
+                        "the non-fullscreen shell session cannot be reconstructed".to_string(),
+                    ));
+                    Err(io::Error::other(format!("shell panicked: {reason}")))
+                }
+            }
+        }
     }
 }
 
@@ -74,41 +109,112 @@ pub fn run_fullscreen_blocking(
     output: &mut impl Write,
     config: ShellLaunchConfig,
 ) -> io::Result<()> {
+    let process = ProcessWatchdog::global().ok_or_else(|| {
+        io::Error::other("the process watchdog must be installed before starting tundra-shell")
+    })?;
+    run_fullscreen_blocking_managed(output, config, process)
+}
+
+pub fn run_fullscreen_blocking_managed(
+    output: &mut impl Write,
+    config: ShellLaunchConfig,
+    process: ProcessWatchdog,
+) -> io::Result<()> {
     let ascii_assets = load_validated_runtime_ascii_assets()?;
     let terminal_size_requirement = ShellTerminalSizeRequirement::from_assets(&ascii_assets);
     let platform = tundra_platform::native_platform();
-    install_panic_restore_hook();
+    let shell_watchdog = process
+        .register_app(shell_watchdog_descriptor())
+        .map_err(io::Error::other)?;
+    let weathr_watchdog = process
+        .register_app(tundra_weathr::weathr_watchdog_descriptor())
+        .map_err(io::Error::other)?;
     let (time_sync_sender, time_sync_receiver) = mpsc::channel();
-    let _time_sync_worker = spawn_time_sync_worker(time_sync_sender);
+    let time_sync_watchdog = shell_watchdog.child_component(ComponentId::from_static("time-sync"));
+    let _time_sync_worker = spawn_time_sync_worker(time_sync_sender, &time_sync_watchdog)
+        .map_err(io::Error::other)?;
     let mut cached_time_sync = None;
     let mut force_lockscreen = false;
+    let mut session_recoveries = VecDeque::new();
+    let mut explorer_task_runtime: Option<ShellExplorerTaskRuntime> = None;
 
     loop {
         let mut startup =
             prepare_shell_startup(platform.as_ref(), config).map_err(io::Error::other)?;
+        if explorer_task_runtime.is_none()
+            && let Some(storage) = startup.storage_manager.as_ref()
+        {
+            let explorer_watchdog = process
+                .register_app(tundra_apps::explorer_tasks::explorer_watchdog_descriptor())
+                .map_err(io::Error::other)?;
+            explorer_task_runtime = Some(ShellExplorerTaskRuntime::new_managed(
+                storage.clone(),
+                explorer_watchdog,
+            ));
+        }
         if force_lockscreen || should_show_startup_lockscreen(&startup) {
             let lockscreen_options =
                 startup_lockscreen_launch_options(&startup, terminal_size_requirement);
-            match tundra_weathr::run_shell_lockscreen_blocking_with_options(lockscreen_options)
-                .map_err(io::Error::other)?
-            {
-                tundra_weathr::ShellLockscreenResult::Started => {}
-                tundra_weathr::ShellLockscreenResult::Cancelled => return Ok(()),
+            let lockscreen_watchdog = weathr_watchdog.clone();
+            let lockscreen_result = weathr_watchdog.run_boundary(
+                BoundarySpec::new("shell-lockscreen-ui-session", BoundaryKind::UiSession)
+                    .terminal_owner(),
+                AssertUnwindSafe(|| {
+                    tundra_weathr::run_shell_lockscreen_managed(
+                        lockscreen_options,
+                        lockscreen_watchdog,
+                    )
+                }),
+            );
+            match lockscreen_result {
+                Ok(Ok(tundra_weathr::ShellLockscreenResult::Started)) => {}
+                Ok(Ok(tundra_weathr::ShellLockscreenResult::Cancelled)) => return Ok(()),
+                Ok(Err(error)) => return Err(io::Error::other(error)),
+                Err(caught) => {
+                    recover_session_panic(
+                        caught,
+                        "Weathr lockscreen",
+                        &mut session_recoveries,
+                        platform.as_ref(),
+                    )?;
+                    force_lockscreen = true;
+                    continue;
+                }
             }
             startup = prepare_shell_startup(platform.as_ref(), config).map_err(io::Error::other)?;
         }
 
-        match run_fullscreen_shell_session(
-            output,
-            config,
-            startup,
-            ascii_assets.clone(),
-            platform.as_ref(),
-            &time_sync_receiver,
-            &mut cached_time_sync,
-        )? {
-            FullscreenShellSessionOutcome::Exit => return Ok(()),
-            FullscreenShellSessionOutcome::ReturnToLockscreen => {
+        let session_result = shell_watchdog.run_boundary(
+            BoundarySpec::new("shell.fullscreen-session", BoundaryKind::UiSession)
+                .terminal_owner(),
+            AssertUnwindSafe(|| {
+                run_fullscreen_shell_session(
+                    output,
+                    config,
+                    startup,
+                    ascii_assets.clone(),
+                    platform.as_ref(),
+                    &time_sync_receiver,
+                    &mut cached_time_sync,
+                    &shell_watchdog,
+                    &process,
+                    explorer_task_runtime.clone(),
+                )
+            }),
+        );
+        match session_result {
+            Ok(Ok(FullscreenShellSessionOutcome::Exit)) => return Ok(()),
+            Ok(Ok(FullscreenShellSessionOutcome::ReturnToLockscreen)) => {
+                force_lockscreen = true;
+            }
+            Ok(Err(error)) => return Err(error),
+            Err(caught) => {
+                recover_session_panic(
+                    caught,
+                    "Shell UI",
+                    &mut session_recoveries,
+                    platform.as_ref(),
+                )?;
                 force_lockscreen = true;
             }
         }
@@ -158,6 +264,9 @@ fn run_fullscreen_shell_session(
     platform: &dyn Platform,
     time_sync_receiver: &mpsc::Receiver<TimedTimeSyncResult>,
     cached_time_sync: &mut Option<CachedTimeSyncResult>,
+    shell_watchdog: &AppWatchdog,
+    process_watchdog: &ProcessWatchdog,
+    explorer_task_runtime: Option<ShellExplorerTaskRuntime>,
 ) -> io::Result<FullscreenShellSessionOutcome> {
     let terminal_size_requirement = ShellTerminalSizeRequirement::from_assets(&ascii_assets);
     let initial_size = checked_current_terminal_size(terminal_size_requirement)?;
@@ -165,8 +274,13 @@ fn run_fullscreen_shell_session(
     let mut guard = TerminalGuard::enter(output)?;
     let theme = tundra_ui::TundraTheme::default_dark()
         .with_border_shape(startup.app_config.border_shape);
-    let mut state =
-        ShellState::new_with_startup_and_assets(config, initial_size, startup, ascii_assets);
+    let mut state = ShellState::new_with_runtime_services(
+        config,
+        initial_size,
+        startup,
+        ascii_assets,
+        explorer_task_runtime,
+    );
     if let Some(cached) = cached_time_sync.as_ref() {
         cached.apply_to_state_at(&mut state, Instant::now());
     }
@@ -180,6 +294,12 @@ fn run_fullscreen_shell_session(
         }
 
         drain_time_sync_results(&mut state, time_sync_receiver, cached_time_sync);
+        drain_watchdog_incidents(&mut state, process_watchdog);
+        shell_watchdog.heartbeat(RuntimeSnapshot {
+            screen: Some(format!("{:?}", state.active_screen())),
+            terminal_size: Some(state.terminal_size()),
+            ..RuntimeSnapshot::default()
+        });
         let frame_now = Instant::now();
         let clock_snapshot = state.network_clock.snapshot();
         state.advance_clock_background_at(&clock_snapshot, frame_now);
@@ -293,6 +413,56 @@ fn run_fullscreen_shell_session(
     Ok(outcome)
 }
 
+const SESSION_RECOVERY_WINDOW: Duration = Duration::from_secs(60);
+const MAX_SESSION_RECOVERIES: usize = 2;
+
+fn reserve_session_recovery(recoveries: &mut VecDeque<Instant>, now: Instant) -> bool {
+    while recoveries
+        .front()
+        .is_some_and(|at| now.saturating_duration_since(*at) > SESSION_RECOVERY_WINDOW)
+    {
+        recoveries.pop_front();
+    }
+    if recoveries.len() >= MAX_SESSION_RECOVERIES {
+        return false;
+    }
+    recoveries.push_back(now);
+    true
+}
+
+fn recover_session_panic(
+    caught: CaughtPanic,
+    session_name: &str,
+    recoveries: &mut VecDeque<Instant>,
+    platform: &dyn Platform,
+) -> io::Result<()> {
+    let reason = caught.payload().to_string();
+    if reserve_session_recovery(recoveries, Instant::now()) {
+        let _ = caught.finalize(RecoveryOutcome::RecoveredWithWarnings(format!(
+            "the {session_name} state was discarded; reauthentication is required"
+        )));
+        return Ok(());
+    }
+
+    let receipt = caught
+        .finalize(RecoveryOutcome::Unrecoverable(format!(
+            "automatic {session_name} recovery limit reached"
+        )))
+        .ok();
+    let report = receipt
+        .as_ref()
+        .and_then(|receipt| receipt.text_report_path.as_ref())
+        .map(|path| path.display().to_string())
+        .unwrap_or_else(|| "report path unavailable".to_string());
+    let _ = platform.show_critical_error(
+        "TundraUX3 could not recover",
+        &format!("{session_name}: {reason}\n\nCrash report: {report}"),
+    );
+    Err(io::Error::other(format!(
+        "{session_name} recovery limit reached after panic: {reason}"
+    )))
+}
+
 fn load_validated_runtime_ascii_assets() -> io::Result<tundra_ui::RuntimeAsciiAssets> {
     let ascii_assets = tundra_ui::RuntimeAsciiAssets::load_default().map_err(asset_io_error)?;
     checked_current_terminal_size(ShellTerminalSizeRequirement::from_assets(&ascii_assets))?;
@@ -325,8 +495,29 @@ mod runtime_preflight_tests {
     }
 }
 
-fn spawn_time_sync_worker(sender: mpsc::Sender<TimedTimeSyncResult>) -> thread::JoinHandle<()> {
-    thread::spawn(move || {
+fn spawn_time_sync_worker(
+    sender: mpsc::Sender<TimedTimeSyncResult>,
+    watchdog: &AppWatchdog,
+) -> Result<ManagedThreadHandle<()>, tundra_watchdog::WatchdogError> {
+    let group = watchdog.task_group("network-clock");
+    group.spawn_thread(
+        TaskSpec {
+            id: TaskId::from_static("refresh-loop"),
+            kind: TaskKind::LongRunning,
+            panic_action: PanicAction::RestartTask,
+            replay_safety: ReplaySafety::Idempotent,
+            restart_policy: RestartPolicy::limited(
+                3,
+                Duration::from_secs(5 * 60),
+                vec![
+                    Duration::from_secs(1),
+                    Duration::from_secs(5),
+                    Duration::from_secs(30),
+                ],
+            ),
+        },
+        move || {
+        let sender = sender.clone();
         let Ok(runtime) = tokio::runtime::Builder::new_multi_thread()
             .enable_all()
             .build()
@@ -349,7 +540,58 @@ fn spawn_time_sync_worker(sender: mpsc::Sender<TimedTimeSyncResult>) -> thread::
                 tokio::time::sleep(TIME_SYNC_INTERVAL).await;
             }
         });
-    })
+        },
+    )
+}
+
+fn shell_watchdog_descriptor() -> AppDescriptor {
+    AppDescriptor::new(
+        AppId::from_static("shell"),
+        "Tundra Shell",
+        env!("CARGO_PKG_VERSION"),
+        AppCriticality::ProcessCritical,
+    )
+}
+
+fn drain_watchdog_incidents(state: &mut ShellState, watchdog: &ProcessWatchdog) {
+    for incident in watchdog.drain_incidents() {
+        show_watchdog_incident(state, incident);
+    }
+}
+
+fn show_watchdog_incident(state: &mut ShellState, incident: IncidentReceipt) {
+    let report_path = incident
+        .text_report_path
+        .as_ref()
+        .or(incident.json_report_path.as_ref())
+        .cloned();
+    let report = report_path
+        .as_ref()
+        .map(|path| path.display().to_string())
+        .unwrap_or_else(|| "report path unavailable".to_string());
+    let summary = format!(
+        "{}\n\nRecovery: {:?}\nIncident: {}\nReport: {}",
+        incident.summary, incident.recovery, incident.incident_id, report
+    );
+    state.latest_watchdog_report = report_path;
+    state.latest_watchdog_summary = Some(summary.clone());
+    state.notify_critical_modal(
+        if incident.recovery.is_recovered() {
+            "Program recovered from a critical error"
+        } else {
+            "Program encountered a critical error"
+        },
+        summary,
+        vec![
+            ShellNotificationAction::new("continue", "Continue").cancel(),
+            ShellNotificationAction::new("open-report", "Open report")
+                .with_follow_up(ShellCommand::OpenLatestCrashReport),
+            ShellNotificationAction::new("copy-summary", "Copy summary")
+                .with_follow_up(ShellCommand::CopyLatestCrashSummary),
+            ShellNotificationAction::new("exit", "Exit")
+                .with_follow_up(ShellCommand::RequestExit),
+        ],
+    );
 }
 
 fn drain_time_sync_results(

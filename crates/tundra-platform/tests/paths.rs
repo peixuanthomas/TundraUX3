@@ -259,6 +259,67 @@ fn mock_platform_records_process_clipboard_and_open_calls() {
 }
 
 #[test]
+fn mock_platform_records_critical_dialog_and_process_liveness_calls() {
+    let base = unique_temp_root("mock-watchdog-platform");
+    let platform = mock_platform(&base);
+    platform.set_process_alive_result(42, Ok(true));
+
+    platform
+        .show_critical_error("TundraUX recovered", "incident wd-42")
+        .expect("mock critical dialog should pass");
+    assert!(
+        platform
+            .is_process_alive(42)
+            .expect("mock process probe should pass")
+    );
+    assert!(!platform.is_process_alive(7).expect("unknown mock PID"));
+
+    assert_eq!(
+        platform.calls(),
+        vec![
+            MockCall::ShowCriticalError {
+                title: "TundraUX recovered".to_string(),
+                body: "incident wd-42".to_string(),
+            },
+            MockCall::IsProcessAlive(42),
+            MockCall::IsProcessAlive(7),
+        ]
+    );
+    assert_eq!(
+        platform.capabilities().critical_dialog,
+        CapabilityStatus::Supported
+    );
+}
+
+#[test]
+fn mock_platform_propagates_injected_critical_dialog_failure() {
+    let base = unique_temp_root("mock-critical-error");
+    let platform = mock_platform(&base);
+    platform.set_critical_error_result(Err(PlatformError::Native {
+        operation: "mock critical dialog",
+        message: "injected failure".to_string(),
+    }));
+
+    let error = platform
+        .show_critical_error("title", "body")
+        .expect_err("injected critical dialog failure should be returned");
+    assert!(error.to_string().contains("injected failure"));
+}
+
+#[cfg(windows)]
+#[test]
+fn windows_platform_reports_the_current_process_as_alive() {
+    let platform = tundra_platform::windows::WindowsPlatform;
+
+    assert!(
+        platform
+            .is_process_alive(std::process::id())
+            .expect("current process liveness probe should pass")
+    );
+    assert!(!platform.is_process_alive(0).expect("PID zero probe"));
+}
+
+#[test]
 fn mock_platform_returns_injected_file_attributes() {
     let base = unique_temp_root("mock-file-attributes");
     let platform = mock_platform(&base);
@@ -421,6 +482,19 @@ fn unsupported_platform_reports_unsupported_capabilities() {
         PlatformError::Unsupported { capability } => assert_eq!(capability, "app_paths"),
         error => panic!("expected unsupported app_paths error, got {error:?}"),
     }
+
+    assert!(matches!(
+        platform.show_critical_error("title", "body"),
+        Err(PlatformError::Unsupported {
+            capability: "critical_dialog"
+        })
+    ));
+    assert!(matches!(
+        platform.is_process_alive(42),
+        Err(PlatformError::Unsupported {
+            capability: "process_liveness"
+        })
+    ));
 }
 
 #[test]

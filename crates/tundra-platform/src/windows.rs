@@ -14,6 +14,11 @@ use crate::{
 };
 
 const SW_SHOWNORMAL: i32 = 1;
+const MB_OK: u32 = 0x0000_0000;
+const MB_ICONERROR: u32 = 0x0000_0010;
+const MB_TASKMODAL: u32 = 0x0000_2000;
+const MB_SETFOREGROUND: u32 = 0x0001_0000;
+const MB_TOPMOST: u32 = 0x0004_0000;
 const CF_UNICODETEXT: u32 = 13;
 const GMEM_MOVEABLE: u32 = 0x0002;
 const FILE_ATTRIBUTE_READONLY: u32 = 0x0001;
@@ -25,7 +30,14 @@ const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x0400;
 const IO_REPARSE_TAG_MOUNT_POINT: u32 = 0xA0000003;
 const IO_REPARSE_TAG_SYMLINK: u32 = 0xA000000C;
 const ERROR_FILE_NOT_FOUND: u32 = 2;
+const ERROR_ACCESS_DENIED: u32 = 5;
 const ERROR_NO_MORE_FILES: u32 = 18;
+const ERROR_INVALID_PARAMETER: u32 = 87;
+const PROCESS_QUERY_LIMITED_INFORMATION: u32 = 0x1000;
+const SYNCHRONIZE: u32 = 0x0010_0000;
+const WAIT_OBJECT_0: u32 = 0x0000_0000;
+const WAIT_TIMEOUT: u32 = 0x0000_0102;
+const WAIT_FAILED: u32 = 0xffff_ffff;
 const DRIVE_REMOVABLE: u32 = 2;
 const DRIVE_FIXED: u32 = 3;
 const S_FALSE: i32 = 1;
@@ -202,6 +214,14 @@ impl Platform for WindowsPlatform {
         Ok(())
     }
 
+    fn show_critical_error(&self, title: &str, body: &str) -> Result<(), PlatformError> {
+        windows_show_critical_error(title, body)
+    }
+
+    fn is_process_alive(&self, pid: u32) -> Result<bool, PlatformError> {
+        windows_is_process_alive(pid)
+    }
+
     fn local_volumes(&self) -> Result<Vec<LocalVolume>, PlatformError> {
         windows_local_volumes()
     }
@@ -265,6 +285,67 @@ impl Platform for WindowsPlatform {
         attributes: &FileAttributes,
     ) -> crate::ExternalOpenPolicy {
         crate::platform::windows_external_open_policy(path, attributes)
+    }
+}
+
+fn windows_show_critical_error(title: &str, body: &str) -> Result<(), PlatformError> {
+    if title.contains('\0') || body.contains('\0') {
+        return Err(PlatformError::InvalidInput {
+            message: "critical error title and body must not contain NUL characters".to_string(),
+        });
+    }
+
+    let title = to_wide(OsStr::new(title));
+    let body = to_wide(OsStr::new(body));
+    let result = unsafe {
+        MessageBoxW(
+            ptr::null_mut(),
+            body.as_ptr(),
+            title.as_ptr(),
+            MB_OK | MB_ICONERROR | MB_TASKMODAL | MB_SETFOREGROUND | MB_TOPMOST,
+        )
+    };
+    if result == 0 {
+        Err(last_windows_error("MessageBoxW", None))
+    } else {
+        Ok(())
+    }
+}
+
+fn windows_is_process_alive(pid: u32) -> Result<bool, PlatformError> {
+    if pid == 0 {
+        return Ok(false);
+    }
+
+    let handle = unsafe { OpenProcess(SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) };
+    if handle.is_null() {
+        let code = unsafe { GetLastError() };
+        return match code {
+            ERROR_INVALID_PARAMETER => Ok(false),
+            // Windows reports access denied only after resolving an existing
+            // protected process, which is sufficient for a liveness probe.
+            ERROR_ACCESS_DENIED => Ok(true),
+            _ => Err(windows_error_from_code("OpenProcess", code)),
+        };
+    }
+
+    let wait_result = unsafe { WaitForSingleObject(handle, 0) };
+    let wait_error = (wait_result == WAIT_FAILED).then(|| unsafe { GetLastError() });
+    unsafe {
+        CloseHandle(handle);
+    }
+
+    match wait_result {
+        WAIT_TIMEOUT => Ok(true),
+        WAIT_OBJECT_0 => Ok(false),
+        WAIT_FAILED => Err(windows_error_from_code(
+            "WaitForSingleObject",
+            wait_error.unwrap_or_default(),
+        )),
+        result => Err(PlatformError::Native {
+            operation: "WaitForSingleObject",
+            message: format!("unexpected wait result {result:#010x}"),
+        }),
     }
 }
 
@@ -727,6 +808,18 @@ fn check_hresult(status: i32, operation: &'static str) -> Result<(), PlatformErr
 
 fn last_windows_error(operation: &'static str, path: Option<&Path>) -> PlatformError {
     let code = unsafe { GetLastError() };
+    windows_error_from_code_with_path(operation, path, code)
+}
+
+fn windows_error_from_code(operation: &'static str, code: u32) -> PlatformError {
+    windows_error_from_code_with_path(operation, None, code)
+}
+
+fn windows_error_from_code_with_path(
+    operation: &'static str,
+    path: Option<&Path>,
+    code: u32,
+) -> PlatformError {
     PlatformError::Io {
         operation,
         path: path.map(Path::to_path_buf),
@@ -1375,6 +1468,12 @@ unsafe extern "system" {
 
 #[link(name = "user32")]
 unsafe extern "system" {
+    fn MessageBoxW(
+        h_wnd: *mut c_void,
+        lp_text: *const u16,
+        lp_caption: *const u16,
+        u_type: u32,
+    ) -> i32;
     fn OpenClipboard(h_wnd_new_owner: *mut c_void) -> i32;
     fn CloseClipboard() -> i32;
     fn EmptyClipboard() -> i32;
@@ -1384,6 +1483,9 @@ unsafe extern "system" {
 
 #[link(name = "kernel32")]
 unsafe extern "system" {
+    fn OpenProcess(desired_access: u32, inherit_handle: i32, process_id: u32) -> *mut c_void;
+    fn WaitForSingleObject(handle: *mut c_void, milliseconds: u32) -> u32;
+    fn CloseHandle(object: *mut c_void) -> i32;
     fn GetLogicalDriveStringsW(buffer_length: u32, buffer: *mut u16) -> u32;
     fn GetDriveTypeW(root_path_name: *const u16) -> u32;
     fn GetVolumeInformationW(

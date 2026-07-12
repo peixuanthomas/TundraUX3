@@ -19,9 +19,7 @@ use crossterm::event;
 use ratatui::layout::Rect;
 use std::collections::VecDeque;
 use std::io::{self, Write};
-use std::sync::atomic::AtomicBool;
 use std::sync::mpsc;
-use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tundra_platform::{
     CapabilityStatus, FileAttributes, Platform, PlatformCapabilities, PlatformKind,
@@ -53,8 +51,6 @@ const CLOCK_STORAGE_ALERT_KEY: &str = "clock.storage";
 const CLOCK_MANAGE_NOTIFICATION_KEY_PREFIX: &str = "clock.manage";
 const CLOCK_DUE_NOTIFICATION_KEY_PREFIX: &str = "clock.due";
 
-static PANIC_RESTORE_HOOK_INSTALLED: AtomicBool = AtomicBool::new(false);
-
 // Public models and low-coupling services live in regular modules. Re-exports
 // preserve the crate-root API used by the binary and integration tests.
 mod banner;
@@ -78,7 +74,7 @@ pub use shell_components::*;
 pub use shortcuts::*;
 pub use startup::*;
 pub use terminal_events::crossterm_event_to_input;
-pub use terminal_session::TerminalGuard;
+pub use terminal_session::{TerminalGuard, restore_terminal_best_effort};
 pub use terminal_size::{ShellTerminalSizeError, ShellTerminalSizeRequirement};
 
 pub(crate) use banner::asset_io_error;
@@ -86,7 +82,6 @@ pub(crate) use input_events::DOUBLE_CLICK_CELL_TOLERANCE;
 pub(crate) use terminal_events::resets_login_idle_timeout;
 #[cfg(test)]
 pub(crate) use terminal_events::{key_event_to_label, mouse_event_to_input};
-pub(crate) use terminal_session::install_panic_restore_hook;
 pub(crate) use terminal_size::checked_current_terminal_size;
 
 // Shell state and cohesive business workflows.

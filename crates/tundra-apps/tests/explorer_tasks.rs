@@ -1,6 +1,6 @@
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -13,8 +13,10 @@ use tundra_platform::{
     AppPaths, Platform, PlatformCapabilities, PlatformError, PlatformKind, ProcessExit,
     ProcessSpec, UserDirs, default_file_attributes, default_rename_path,
 };
+use tundra_watchdog::{AppWatchdog, WatchdogConfig, WatchdogRuntime};
 
 static TEMP_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+static TEST_WATCHDOG: OnceLock<AppWatchdog> = OnceLock::new();
 
 struct TempTree {
     root: PathBuf,
@@ -245,7 +247,35 @@ fn finished(
 }
 
 fn engine(platform: Arc<dyn Platform>, trash: PathBuf) -> ExplorerTaskEngine {
-    ExplorerTaskEngine::new(platform, Arc::new(TestTrash::new(trash)))
+    ExplorerTaskEngine::new_managed(
+        platform,
+        Arc::new(TestTrash::new(trash)),
+        test_watchdog(),
+    )
+    .expect("managed Explorer test worker")
+}
+
+fn test_watchdog() -> AppWatchdog {
+    TEST_WATCHDOG
+        .get_or_init(|| {
+            let root = std::env::temp_dir().join(format!(
+                "tundra-explorer-watchdog-tests-{}",
+                std::process::id()
+            ));
+            let config = WatchdogConfig::new(
+                root.join("reports"),
+                root.join("fallback"),
+                root.join("state"),
+                "tundra-apps-tests",
+                env!("CARGO_PKG_VERSION"),
+            );
+            let (runtime, process) = WatchdogRuntime::start(config).expect("test watchdog");
+            let _runtime = Box::leak(Box::new(runtime));
+            process
+                .register_app(tundra_apps::explorer_tasks::explorer_watchdog_descriptor())
+                .expect("Explorer test watchdog registration")
+        })
+        .clone()
 }
 
 #[test]

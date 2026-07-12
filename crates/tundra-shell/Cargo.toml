@@ -21,6 +21,7 @@ tundra-apps = { path = "../tundra-apps" }
 tundra-core = { path = "../tundra-core" }
 tundra-storage = { path = "../tundra-storage" }
 tundra-ui = { path = "../tundra-ui" }
+tundra-watchdog = { path = "../tundra-watchdog", features = ["tokio"] }
 tundra-weathr = { path = "../tundra-weathr" }
 
 [build-dependencies]

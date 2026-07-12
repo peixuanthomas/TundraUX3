@@ -2,6 +2,7 @@ use crate::cache;
 use crate::error::{GeolocationError, NetworkError};
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
+use tundra_watchdog::AppWatchdog;
 
 const IPINFO_URL: &str = "https://ipinfo.io/json";
 const NOMINATIM_URL: &str = "https://nominatim.openstreetmap.org/reverse";
@@ -27,14 +28,40 @@ pub struct GeoLocation {
 }
 
 pub async fn detect_location() -> Result<GeoLocation, GeolocationError> {
+    detect_location_with_watchdog(None).await
+}
+
+pub async fn detect_location_managed(
+    watchdog: &AppWatchdog,
+) -> Result<GeoLocation, GeolocationError> {
+    detect_location_with_watchdog(Some(watchdog)).await
+}
+
+async fn detect_location_with_watchdog(
+    watchdog: Option<&AppWatchdog>,
+) -> Result<GeoLocation, GeolocationError> {
     if let Some(cached) = cache::load_cached_location().await {
         return Ok(cached);
     }
 
-    detect_location_with_retry().await
+    detect_location_with_retry(watchdog).await
 }
 
 pub async fn search_address(query: &str) -> Result<GeoLocation, GeolocationError> {
+    search_address_with_watchdog(query, None).await
+}
+
+pub async fn search_address_managed(
+    watchdog: &AppWatchdog,
+    query: &str,
+) -> Result<GeoLocation, GeolocationError> {
+    search_address_with_watchdog(query, Some(watchdog)).await
+}
+
+async fn search_address_with_watchdog(
+    query: &str,
+    watchdog: Option<&AppWatchdog>,
+) -> Result<GeoLocation, GeolocationError> {
     let address_key =
         cache::normalize_address_key(query).ok_or(GeolocationError::EmptyAddressQuery)?;
     let cache_key = localized_address_cache_key(&address_key);
@@ -44,7 +71,10 @@ pub async fn search_address(query: &str) -> Result<GeoLocation, GeolocationError
     }
 
     let location = fetch_address_search(&address_key).await?;
-    cache::save_address_cache(&cache_key, &location);
+    let _ = match watchdog {
+        Some(watchdog) => cache::save_address_cache_managed(watchdog, &cache_key, &location),
+        None => cache::save_address_cache(&cache_key, &location),
+    };
     Ok(location)
 }
 
@@ -60,11 +90,13 @@ fn localized_address_cache_key(address_key: &str) -> String {
     format!("{NOMINATIM_SEARCH_LANGUAGE}:{address_key}")
 }
 
-async fn detect_location_with_retry() -> Result<GeoLocation, GeolocationError> {
+async fn detect_location_with_retry(
+    watchdog: Option<&AppWatchdog>,
+) -> Result<GeoLocation, GeolocationError> {
     let mut last_error = None;
 
     for attempt in 1..=MAX_RETRIES {
-        match fetch_location().await {
+        match fetch_location(watchdog).await {
             Ok(location) => return Ok(location),
             Err(e) => {
                 let should_retry = matches!(
@@ -90,7 +122,7 @@ async fn detect_location_with_retry() -> Result<GeoLocation, GeolocationError> {
     )
 }
 
-async fn fetch_location() -> Result<GeoLocation, GeolocationError> {
+async fn fetch_location(watchdog: Option<&AppWatchdog>) -> Result<GeoLocation, GeolocationError> {
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(10))
         .connect_timeout(Duration::from_secs(5))
@@ -131,7 +163,10 @@ async fn fetch_location() -> Result<GeoLocation, GeolocationError> {
         city: ip_info.city,
     };
 
-    cache::save_location_cache(&location);
+    let _ = match watchdog {
+        Some(watchdog) => cache::save_location_cache_managed(watchdog, &location),
+        None => cache::save_location_cache(&location),
+    };
 
     Ok(location)
 }
@@ -172,12 +207,35 @@ struct NominatimSearchResult {
 /// coordinates, or `None` if the lookup fails or the location doesn't map to a
 /// meaningful settlement (e.g. open sea, administrative-only regions).
 pub async fn reverse_geocode(latitude: f64, longitude: f64, language: &str) -> Option<String> {
+    reverse_geocode_with_watchdog(latitude, longitude, language, None).await
+}
+
+pub async fn reverse_geocode_managed(
+    watchdog: &AppWatchdog,
+    latitude: f64,
+    longitude: f64,
+    language: &str,
+) -> Option<String> {
+    reverse_geocode_with_watchdog(latitude, longitude, language, Some(watchdog)).await
+}
+
+async fn reverse_geocode_with_watchdog(
+    latitude: f64,
+    longitude: f64,
+    language: &str,
+    watchdog: Option<&AppWatchdog>,
+) -> Option<String> {
     if let Some(cached) = cache::load_cached_geocode(latitude, longitude, language).await {
         return Some(cached);
     }
 
     let city = fetch_reverse_geocode(latitude, longitude, language).await?;
-    cache::save_geocode_cache(&city, latitude, longitude, language);
+    let _ = match watchdog {
+        Some(watchdog) => {
+            cache::save_geocode_cache_managed(watchdog, &city, latitude, longitude, language)
+        }
+        None => cache::save_geocode_cache(&city, latitude, longitude, language),
+    };
     Some(city)
 }
 

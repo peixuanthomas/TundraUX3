@@ -303,6 +303,24 @@ impl NotificationCenter {
         id
     }
 
+    pub fn push_critical_modal(&mut self, mut notification: ShellNotification) -> u64 {
+        if let Some(key) = notification.key.clone()
+            && let Some(existing) = self.modal_with_key_mut(&key)
+        {
+            notification.id = existing.id;
+            *existing = notification;
+            return existing.id;
+        }
+
+        notification.id = self.next_id;
+        self.next_id = self.next_id.saturating_add(1).max(1);
+        let id = notification.id;
+        if let Some(previous) = self.active_modal.replace(notification) {
+            self.modal_queue.push_front(previous);
+        }
+        id
+    }
+
     pub fn dismiss_modal_by_key(&mut self, key: &str) {
         let active_matches = self
             .active_modal

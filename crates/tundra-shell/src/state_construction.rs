@@ -48,6 +48,26 @@ impl ShellState {
         startup: ShellStartupState,
         ascii_assets: tundra_ui::RuntimeAsciiAssets,
     ) -> Self {
+        let explorer_task_runtime = startup
+            .storage_manager
+            .as_ref()
+            .map(|storage| ShellExplorerTaskRuntime::new(storage.clone()));
+        Self::new_with_runtime_services(
+            launch_config,
+            terminal_size,
+            startup,
+            ascii_assets,
+            explorer_task_runtime,
+        )
+    }
+
+    pub(crate) fn new_with_runtime_services(
+        launch_config: ShellLaunchConfig,
+        terminal_size: (u16, u16),
+        startup: ShellStartupState,
+        ascii_assets: tundra_ui::RuntimeAsciiAssets,
+        explorer_task_runtime: Option<ShellExplorerTaskRuntime>,
+    ) -> Self {
         let home_mode = resolved_home_mode(launch_config, &startup);
         let auth_gate_enabled = startup.storage_manager.is_some();
         let initial_screen = if auth_gate_enabled {
@@ -133,10 +153,7 @@ impl ShellState {
             explorer_overlay_mode: None,
             explorer_overlay_selection: 0,
             explorer_conflict_apply_to_remaining: false,
-            explorer_task_runtime: startup
-                .storage_manager
-                .as_ref()
-                .map(|storage| ShellExplorerTaskRuntime::new(storage.clone())),
+            explorer_task_runtime,
             terminal_size,
             terminal_flags: ShellTerminalFlags::enabled(),
             focused_component: initial_focus,
@@ -151,6 +168,8 @@ impl ShellState {
             notification_pointer_capture: None,
             pending_notification_commands: VecDeque::new(),
             error_message: None,
+            latest_watchdog_report: None,
+            latest_watchdog_summary: None,
             shutdown_requested: false,
             return_to_lockscreen_requested: false,
             last_command: None,

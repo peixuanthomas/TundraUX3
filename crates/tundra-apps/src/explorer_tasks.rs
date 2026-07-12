@@ -8,15 +8,22 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Write};
+use std::panic::AssertUnwindSafe;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, mpsc};
-use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
 use tundra_platform::{FileAttributes, Platform, PlatformError, PlatformKind};
+use tundra_watchdog::{
+    AppCriticality, AppDescriptor, AppId, AppWatchdog, BoundaryKind, BoundarySpec, ComponentId,
+    ErrorContext, IncidentSeverity, ManagedThreadHandle, OperationCheckpoint, OperationDescriptor,
+    OperationGuard, OperationKind, OperationRecord, PanicAction, ProcessWatchdog, RecoveryHandler,
+    RecoveryOutcome, ReplaySafety, RestartPolicy, TaskId, TaskKind, TaskSpec, WatchdogError,
+};
 
 pub const DEFAULT_TRANSFER_CHUNK_SIZE: usize = 256 * 1024;
+static ENGINE_SEQUENCE: AtomicU64 = AtomicU64::new(1);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct ExplorerTaskId(pub u64);
@@ -205,6 +212,12 @@ pub enum ExplorerTaskEvent {
         id: ExplorerTaskId,
         summary: ExplorerTaskSummary,
     },
+    Panicked {
+        id: ExplorerTaskId,
+        incident_id: String,
+        message: String,
+        recovery: RecoveryOutcome,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -235,6 +248,12 @@ pub enum ExplorerTaskError {
     },
     Cancelled,
     WorkerStopped,
+    Journal {
+        message: String,
+    },
+    RecoveryRequired {
+        message: String,
+    },
 }
 
 impl fmt::Display for ExplorerTaskError {
@@ -280,6 +299,15 @@ impl fmt::Display for ExplorerTaskError {
             ),
             Self::Cancelled => formatter.write_str("the task was cancelled"),
             Self::WorkerStopped => formatter.write_str("the Explorer task worker has stopped"),
+            Self::Journal { message } => {
+                write!(formatter, "Explorer recovery journal failed: {message}")
+            }
+            Self::RecoveryRequired { message } => {
+                write!(
+                    formatter,
+                    "Explorer operation requires manual recovery: {message}"
+                )
+            }
         }
     }
 }
@@ -296,6 +324,7 @@ impl From<PlatformError> for ExplorerTaskError {
 pub enum ExplorerTaskSubmitError {
     Busy { active: ExplorerTaskId },
     WorkerStopped,
+    RecoveryRequired,
 }
 
 impl fmt::Display for ExplorerTaskSubmitError {
@@ -305,6 +334,9 @@ impl fmt::Display for ExplorerTaskSubmitError {
                 write!(formatter, "Explorer task {} is still running", active.0)
             }
             Self::WorkerStopped => formatter.write_str("the Explorer task worker has stopped"),
+            Self::RecoveryRequired => formatter.write_str(
+                "Explorer mutations are disabled until the interrupted operation is reconciled",
+            ),
         }
     }
 }
@@ -417,21 +449,75 @@ pub struct ExplorerTaskEngine {
     event_rx: mpsc::Receiver<ExplorerTaskEvent>,
     busy: Arc<AtomicBool>,
     active: Arc<Mutex<Option<ActiveTask>>>,
+    mutations_blocked: Arc<AtomicBool>,
     next_id: AtomicU64,
-    worker: Option<JoinHandle<()>>,
+    worker: Option<ManagedThreadHandle<()>>,
 }
 
 impl ExplorerTaskEngine {
     pub fn new(platform: Arc<dyn Platform>, trash: Arc<dyn ExplorerTrash>) -> Self {
+        let process = ProcessWatchdog::global()
+            .expect("the process watchdog must be installed before starting Explorer tasks");
+        let watchdog = process
+            .register_app(explorer_watchdog_descriptor())
+            .expect("Explorer watchdog registration must be consistent");
+        Self::new_managed(platform, trash, watchdog)
+            .expect("the managed Explorer worker must start")
+    }
+
+    pub fn new_managed(
+        platform: Arc<dyn Platform>,
+        trash: Arc<dyn ExplorerTrash>,
+        watchdog: AppWatchdog,
+    ) -> Result<Self, WatchdogError> {
         let (command_tx, command_rx) = mpsc::channel();
         let (event_tx, event_rx) = mpsc::channel();
         let busy = Arc::new(AtomicBool::new(false));
         let active = Arc::new(Mutex::new(None));
         let worker_busy = Arc::clone(&busy);
         let worker_active = Arc::clone(&active);
-        let worker = thread::Builder::new()
-            .name("tundra-explorer-fs".to_string())
-            .spawn(move || {
+        let mutations_blocked = Arc::new(AtomicBool::new(false));
+        let worker_mutations_blocked = Arc::clone(&mutations_blocked);
+        watchdog.register_recovery_handler(
+            explorer_operation_kind(),
+            Arc::new(ExplorerRecoveryHandler),
+        )?;
+        let worker_watchdog = watchdog.child_component(ComponentId::from_static("filesystem"));
+        let task_group = worker_watchdog.task_group(&format!(
+            "worker-{}",
+            ENGINE_SEQUENCE.fetch_add(1, Ordering::Relaxed)
+        ));
+        let mut worker_inputs = Some((
+            platform,
+            trash,
+            command_rx,
+            event_tx,
+            worker_busy,
+            worker_active,
+            worker_mutations_blocked,
+            worker_watchdog,
+        ));
+        let worker = task_group.spawn_thread(
+            TaskSpec {
+                id: TaskId::from_static("event-loop"),
+                kind: TaskKind::LongRunning,
+                panic_action: PanicAction::ReportOnly,
+                replay_safety: ReplaySafety::Checkpointed(explorer_operation_kind()),
+                restart_policy: RestartPolicy::never(),
+            },
+            move || {
+                let (
+                    platform,
+                    trash,
+                    command_rx,
+                    event_tx,
+                    worker_busy,
+                    worker_active,
+                    worker_mutations_blocked,
+                    worker_watchdog,
+                ) = worker_inputs
+                    .take()
+                    .expect("the non-restartable Explorer worker factory runs once");
                 worker_loop(
                     platform,
                     trash,
@@ -439,17 +525,20 @@ impl ExplorerTaskEngine {
                     event_tx,
                     worker_busy,
                     worker_active,
+                    worker_mutations_blocked,
+                    worker_watchdog,
                 )
-            })
-            .expect("failed to spawn Explorer filesystem worker");
-        Self {
+            },
+        )?;
+        Ok(Self {
             command_tx,
             event_rx,
             busy,
             active,
+            mutations_blocked,
             next_id: AtomicU64::new(1),
             worker: Some(worker),
-        }
+        })
     }
 
     pub fn without_trash(platform: Arc<dyn Platform>) -> Self {
@@ -460,6 +549,9 @@ impl ExplorerTaskEngine {
         &self,
         plan: ExplorerTaskPlan,
     ) -> Result<ExplorerTaskHandle, ExplorerTaskSubmitError> {
+        if self.mutations_blocked.load(Ordering::Acquire) {
+            return Err(ExplorerTaskSubmitError::RecoveryRequired);
+        }
         if self
             .busy
             .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
@@ -557,6 +649,8 @@ fn worker_loop(
     event_tx: mpsc::Sender<ExplorerTaskEvent>,
     busy: Arc<AtomicBool>,
     active: Arc<Mutex<Option<ActiveTask>>>,
+    mutations_blocked: Arc<AtomicBool>,
+    watchdog: AppWatchdog,
 ) {
     while let Ok(command) = command_rx.recv() {
         match command {
@@ -566,21 +660,394 @@ fn worker_loop(
                 cancellation,
             } => {
                 send_event(&event_tx, ExplorerTaskEvent::Accepted { id });
-                let summary = execute_task(
-                    id,
-                    plan,
-                    cancellation,
-                    platform.as_ref(),
-                    trash.as_ref(),
-                    &event_tx,
+                let operation_descriptor = operation_descriptor(id, &plan);
+                let mut journal = match watchdog.begin_operation(operation_descriptor) {
+                    Ok(journal) => journal,
+                    Err(error) => {
+                        let mut summary = ExplorerTaskSummary::empty();
+                        summary.fatal_error = Some(ExplorerTaskError::Journal {
+                            message: error.to_string(),
+                        });
+                        clear_active_task(&active, &busy);
+                        send_event(&event_tx, ExplorerTaskEvent::Finished { id, summary });
+                        continue;
+                    }
+                };
+                let result = watchdog.run_boundary(
+                    BoundarySpec::new(format!("explorer.operation.{}", id.0), BoundaryKind::Worker),
+                    AssertUnwindSafe(|| {
+                        execute_task(
+                            id,
+                            plan,
+                            cancellation,
+                            platform.as_ref(),
+                            trash.as_ref(),
+                            &event_tx,
+                            &mut journal,
+                        )
+                    }),
                 );
-                *active.lock().expect("Explorer active-task lock poisoned") = None;
-                busy.store(false, Ordering::Release);
-                send_event(&event_tx, ExplorerTaskEvent::Finished { id, summary });
+                let summary = match result {
+                    Ok(mut summary) => {
+                        let incomplete = summary.cancelled
+                            || summary.fatal_error.is_some()
+                            || summary.failed_items > 0;
+                        if incomplete {
+                            let recovery = ExplorerRecoveryHandler.recover(journal.record());
+                            mutations_blocked.store(!recovery.is_recovered(), Ordering::Release);
+                            if recovery.is_recovered() {
+                                if let Err(error) =
+                                    journal.commit("Explorer incomplete operation reconciled")
+                                {
+                                    mutations_blocked.store(true, Ordering::Release);
+                                    summary
+                                        .fatal_error
+                                        .get_or_insert(ExplorerTaskError::Journal {
+                                            message: error.to_string(),
+                                        });
+                                }
+                            } else {
+                                let recovery_error = ExplorerTaskError::RecoveryRequired {
+                                    message: format!("{recovery:?}"),
+                                };
+                                watchdog.report_error(
+                                    ErrorContext::new(
+                                        format!("explorer.operation.{}.recovery", id.0),
+                                        IncidentSeverity::Critical,
+                                    ),
+                                    &recovery_error,
+                                );
+                                summary.fatal_error.get_or_insert(recovery_error);
+                            }
+                        } else if let Err(error) = journal.commit("Explorer operation finished") {
+                            mutations_blocked.store(true, Ordering::Release);
+                            summary.fatal_error = Some(ExplorerTaskError::Journal {
+                                message: error.to_string(),
+                            });
+                        }
+                        Some(summary)
+                    }
+                    Err(caught) => {
+                        let incident_id = caught.incident_id().to_string();
+                        let message = caught.payload().to_string();
+                        let recovery = ExplorerRecoveryHandler.recover(journal.record());
+                        mutations_blocked.store(!recovery.is_recovered(), Ordering::Release);
+                        let _ = caught.finalize(recovery.clone());
+                        if recovery.is_recovered() {
+                            let _ = journal.commit("Explorer panic checkpoint reconciled");
+                        }
+                        send_event(
+                            &event_tx,
+                            ExplorerTaskEvent::Panicked {
+                                id,
+                                incident_id,
+                                message,
+                                recovery,
+                            },
+                        );
+                        None
+                    }
+                };
+                clear_active_task(&active, &busy);
+                if let Some(summary) = summary {
+                    send_event(&event_tx, ExplorerTaskEvent::Finished { id, summary });
+                }
             }
             WorkerCommand::Shutdown => break,
         }
     }
+}
+
+pub fn explorer_watchdog_descriptor() -> AppDescriptor {
+    AppDescriptor::new(
+        AppId::from_static("explorer"),
+        "Tundra Explorer",
+        env!("CARGO_PKG_VERSION"),
+        AppCriticality::SessionCritical,
+    )
+}
+
+pub fn explorer_operation_kind() -> OperationKind {
+    OperationKind::from_static("explorer.filesystem.v1")
+}
+
+fn clear_active_task(active: &Mutex<Option<ActiveTask>>, busy: &AtomicBool) {
+    *active
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner()) = None;
+    busy.store(false, Ordering::Release);
+}
+
+fn operation_descriptor(id: ExplorerTaskId, plan: &ExplorerTaskPlan) -> OperationDescriptor {
+    let (summary, payload) = match plan {
+        ExplorerTaskPlan::Transfer(plan) => (
+            format!("{:?} {} item(s)", plan.operation, plan.sources.len()),
+            serde_json::json!({
+                "task_id": id.0,
+                "operation": format!("{:?}", plan.operation),
+                "sources": plan.sources.iter().map(|path| path.display().to_string()).collect::<Vec<_>>(),
+                "destination": plan.destination.display().to_string(),
+            }),
+        ),
+        ExplorerTaskPlan::DeleteToTrash(plan) => (
+            format!("Delete {} item(s) to Trash", plan.paths.len()),
+            serde_json::json!({
+                "task_id": id.0,
+                "operation": "delete_to_trash",
+                "sources": plan.paths.iter().map(|path| path.display().to_string()).collect::<Vec<_>>(),
+            }),
+        ),
+    };
+    OperationDescriptor::new(explorer_operation_kind(), summary, payload)
+}
+
+struct ExplorerRecoveryHandler;
+
+impl RecoveryHandler for ExplorerRecoveryHandler {
+    fn version(&self) -> &str {
+        "1"
+    }
+
+    fn recover(&self, record: &OperationRecord) -> RecoveryOutcome {
+        let phase = record.checkpoint.phase.as_str();
+        let payload = &record.checkpoint.payload;
+        let source = checkpoint_path(payload, "source");
+        let target = checkpoint_path(payload, "target");
+        let staging = checkpoint_path(payload, "staging");
+
+        match phase {
+            "planned" | "planning" => RecoveryOutcome::Recovered(
+                "the operation had not reached a filesystem mutation".to_string(),
+            ),
+            "copy_staging_writing" | "copy_staging_synced" => {
+                let Some(staging) = staging else {
+                    return missing_checkpoint_path(record, "staging");
+                };
+                match remove_exact_staging(&staging) {
+                    Ok(()) => RecoveryOutcome::Recovered(
+                        "the uncommitted staged copy was removed; the source and old destination were preserved"
+                            .to_string(),
+                    ),
+                    Err(error) => RecoveryOutcome::ManualActionRequired(error),
+                }
+            }
+            "move_rename_pending" => match (source.as_ref(), target.as_ref()) {
+                (Some(source), Some(target)) if source.exists() && !target.exists() => {
+                    RecoveryOutcome::Recovered(
+                        "the move had not committed and the source remains in place".to_string(),
+                    )
+                }
+                (Some(source), Some(target)) if !source.exists() && target.exists() => {
+                    RecoveryOutcome::RecoveredWithWarnings(
+                        "the atomic move committed before the panic".to_string(),
+                    )
+                }
+                _ => RecoveryOutcome::ManualActionRequired(
+                    "the move source/target state is ambiguous; no path was changed during recovery"
+                        .to_string(),
+                ),
+            },
+            "move_source_staging" | "move_source_staged" => {
+                let (Some(source), Some(target), Some(staging)) = (source, target, staging) else {
+                    return missing_checkpoint_path(record, "source/target/staging");
+                };
+                if source.exists() && !staging.exists() {
+                    return RecoveryOutcome::Recovered(
+                        "the source was not moved into staging".to_string(),
+                    );
+                }
+                if !source.exists() && staging.exists() && target.exists() {
+                    return match fs::rename(&staging, &source) {
+                        Ok(()) => RecoveryOutcome::Recovered(
+                            "the staged move source was restored to its original path".to_string(),
+                        ),
+                        Err(error) => RecoveryOutcome::ManualActionRequired(format!(
+                            "could not restore {} to {}: {error}",
+                            staging.display(),
+                            source.display()
+                        )),
+                    };
+                }
+                RecoveryOutcome::ManualActionRequired(
+                    "the replacement move changed externally; staged and destination paths were preserved"
+                        .to_string(),
+                )
+            }
+            "destination_trash_pending" => {
+                let (Some(target), Some(staging)) = (target, staging) else {
+                    return missing_checkpoint_path(record, "target/staging");
+                };
+                if !target.exists() && staging.exists() {
+                    return match fs::rename(&staging, &target) {
+                        Ok(()) => RecoveryOutcome::RecoveredWithWarnings(
+                            "the synchronized staged replacement was committed after the previous destination entered Trash"
+                                .to_string(),
+                        ),
+                        Err(error) => RecoveryOutcome::ManualActionRequired(format!(
+                            "could not commit staged replacement {} to {}: {error}",
+                            staging.display(),
+                            target.display()
+                        )),
+                    };
+                }
+                if target.exists() && staging.exists() {
+                    return match remove_exact_staging(&staging) {
+                        Ok(()) => RecoveryOutcome::Recovered(
+                            "the previous destination remained in place and the uncommitted staged replacement was removed"
+                                .to_string(),
+                        ),
+                        Err(error) => RecoveryOutcome::ManualActionRequired(error),
+                    };
+                }
+                RecoveryOutcome::ManualActionRequired(
+                    "the destination changed while entering Trash; all remaining paths were preserved"
+                        .to_string(),
+                )
+            }
+            "destination_trashed" => {
+                let (Some(target), Some(staging)) = (target, staging) else {
+                    return missing_checkpoint_path(record, "target/staging");
+                };
+                if !target.exists() && staging.exists() {
+                    return match fs::rename(&staging, &target) {
+                        Ok(()) => RecoveryOutcome::RecoveredWithWarnings(
+                            "the fully staged replacement was committed after the previous destination entered Trash"
+                                .to_string(),
+                        ),
+                        Err(error) => RecoveryOutcome::ManualActionRequired(format!(
+                            "could not commit staged replacement {} to {}: {error}",
+                            staging.display(),
+                            target.display()
+                        )),
+                    };
+                }
+                if target.exists() && !staging.exists() {
+                    return RecoveryOutcome::RecoveredWithWarnings(
+                        "the replacement target was already committed".to_string(),
+                    );
+                }
+                RecoveryOutcome::ManualActionRequired(
+                    "the destination and staging state is ambiguous; both were preserved".to_string(),
+                )
+            }
+            "target_committed" | "source_removed" => match target {
+                Some(target) if target.exists() => RecoveryOutcome::RecoveredWithWarnings(
+                    "the destination commit completed before the panic".to_string(),
+                ),
+                _ => RecoveryOutcome::ManualActionRequired(
+                    "the journal says the target committed but it is no longer present".to_string(),
+                ),
+            },
+            "cross_volume_target_committed" => match (source, target) {
+                (Some(source), Some(target)) if source.exists() && target.exists() => {
+                    RecoveryOutcome::ManualActionRequired(format!(
+                        "both {} and {} were preserved; verify the copy before removing the old source",
+                        source.display(),
+                        target.display()
+                    ))
+                }
+                (Some(source), Some(target)) if !source.exists() && target.exists() => {
+                    RecoveryOutcome::RecoveredWithWarnings(
+                        "the cross-volume move completed before the panic".to_string(),
+                    )
+                }
+                _ => RecoveryOutcome::ManualActionRequired(
+                    "the cross-volume move state is ambiguous; no recovery deletion was attempted"
+                        .to_string(),
+                ),
+            },
+            "delete_pending" => match source {
+                Some(source) if source.exists() => RecoveryOutcome::Recovered(
+                    "the delete had not committed; the source remains present".to_string(),
+                ),
+                Some(_) => RecoveryOutcome::RecoveredWithWarnings(
+                    "the item is absent and is treated as already moved to Trash".to_string(),
+                ),
+                None => missing_checkpoint_path(record, "source"),
+            },
+            "delete_committed" => RecoveryOutcome::RecoveredWithWarnings(
+                "the item was already moved to Trash".to_string(),
+            ),
+            "directory_replace_pending" => match target {
+                Some(target) if target.exists() => RecoveryOutcome::Recovered(
+                    "the destination directory was not moved to Trash".to_string(),
+                ),
+                Some(_) => RecoveryOutcome::ManualActionRequired(
+                    "the previous destination directory may have entered Trash; no automatic replacement was attempted"
+                        .to_string(),
+                ),
+                None => missing_checkpoint_path(record, "target"),
+            },
+            "directory_destination_trashed" => RecoveryOutcome::ManualActionRequired(
+                "the previous destination directory entered Trash before the new directory was complete; existing paths were preserved"
+                    .to_string(),
+            ),
+            "directory_create_pending" => {
+                let replaced = payload
+                    .get("replaced")
+                    .and_then(serde_json::Value::as_bool)
+                    .unwrap_or(false);
+                match target {
+                    Some(target) if target.exists() => RecoveryOutcome::ManualActionRequired(
+                        "the destination directory may contain only part of the requested tree; it was preserved for inspection"
+                            .to_string(),
+                    ),
+                    Some(_) if replaced => RecoveryOutcome::ManualActionRequired(
+                        "the previous destination entered Trash and the replacement directory was not created"
+                            .to_string(),
+                    ),
+                    Some(_) => RecoveryOutcome::Recovered(
+                        "the destination directory was not created, so no filesystem mutation remains"
+                            .to_string(),
+                    ),
+                    None => missing_checkpoint_path(record, "target"),
+                }
+            }
+            "directory_target_created" => RecoveryOutcome::ManualActionRequired(
+                "the destination directory may contain a partially completed child set; it was preserved and writes remain disabled pending review"
+                    .to_string(),
+            ),
+            _ => RecoveryOutcome::ManualActionRequired(format!(
+                "no safe recovery rule exists for Explorer checkpoint phase {phase}"
+            )),
+        }
+    }
+}
+
+fn checkpoint_path(payload: &serde_json::Value, key: &str) -> Option<PathBuf> {
+    payload
+        .get(key)
+        .and_then(|value| value.as_str())
+        .map(PathBuf::from)
+}
+
+fn missing_checkpoint_path(record: &OperationRecord, field: &str) -> RecoveryOutcome {
+    RecoveryOutcome::ManualActionRequired(format!(
+        "operation {} is missing recovery field {field}",
+        record.operation_id
+    ))
+}
+
+fn remove_exact_staging(path: &Path) -> Result<(), String> {
+    if !path.exists() {
+        return Ok(());
+    }
+    let name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or_default();
+    if !name.starts_with(".tundra-stage-") {
+        return Err(format!(
+            "refused to remove non-staging recovery path {}",
+            path.display()
+        ));
+    }
+    if path.is_dir() {
+        fs::remove_dir_all(path)
+    } else {
+        fs::remove_file(path)
+    }
+    .map_err(|error| format!("could not remove staged path {}: {error}", path.display()))
 }
 
 fn execute_task(
@@ -590,7 +1057,12 @@ fn execute_task(
     platform: &dyn Platform,
     trash: &dyn ExplorerTrash,
     event_tx: &mpsc::Sender<ExplorerTaskEvent>,
+    journal: &mut OperationGuard,
 ) -> ExplorerTaskSummary {
+    let _ = journal.checkpoint(OperationCheckpoint::new(
+        "planning",
+        serde_json::json!({ "task_id": id.0 }),
+    ));
     send_event(
         event_tx,
         ExplorerTaskEvent::PhaseChanged {
@@ -620,6 +1092,7 @@ fn execute_task(
                 prepared.total_items,
                 prepared.total_bytes,
                 plan.chunk_size,
+                journal,
             );
             context.phase(ExplorerTaskPhase::Executing);
             for node in &prepared.roots {
@@ -656,6 +1129,7 @@ fn execute_task(
                 paths.len() as u64,
                 total_bytes,
                 DEFAULT_TRANSFER_CHUNK_SIZE,
+                journal,
             );
             context.phase(ExplorerTaskPhase::Executing);
             for (path, attributes) in paths {
@@ -663,8 +1137,20 @@ fn execute_task(
                     context.summary.cancelled = true;
                     break;
                 }
+                if let Err(error) = context.checkpoint(
+                    "delete_pending",
+                    serde_json::json!({ "source": path.display().to_string() }),
+                ) {
+                    context.record_failure(&path, None, error);
+                    context.summary.failed_sources.push(path);
+                    continue;
+                }
                 match platform.move_to_trash(&[path.clone()]) {
                     Ok(()) => {
+                        let _ = context.checkpoint(
+                            "delete_committed",
+                            serde_json::json!({ "source": path.display().to_string() }),
+                        );
                         context.progress.processed_bytes = context
                             .progress
                             .processed_bytes
@@ -1125,6 +1611,7 @@ struct ExecutionContext<'a> {
     summary: ExplorerTaskSummary,
     chunk_size: usize,
     staging_sequence: u64,
+    journal: &'a mut OperationGuard,
 }
 
 impl<'a> ExecutionContext<'a> {
@@ -1138,6 +1625,7 @@ impl<'a> ExecutionContext<'a> {
         total_items: u64,
         total_bytes: u64,
         chunk_size: usize,
+        journal: &'a mut OperationGuard,
     ) -> Self {
         let mut summary = ExplorerTaskSummary::empty();
         summary.total_items = total_items;
@@ -1159,7 +1647,20 @@ impl<'a> ExecutionContext<'a> {
             summary,
             chunk_size,
             staging_sequence: 0,
+            journal,
         }
+    }
+
+    fn checkpoint(
+        &mut self,
+        phase: &str,
+        payload: serde_json::Value,
+    ) -> Result<(), ExplorerTaskError> {
+        self.journal
+            .checkpoint(OperationCheckpoint::new(phase, payload))
+            .map_err(|error| ExplorerTaskError::Journal {
+                message: error.to_string(),
+            })
     }
 
     fn phase(&mut self, phase: ExplorerTaskPhase) {
@@ -1290,7 +1791,22 @@ impl<'a> ExecutionContext<'a> {
                 children,
             } => {
                 let trashed = if *replace {
-                    Some(self.trash.move_to_trash(self.platform, &node.target)?)
+                    self.checkpoint(
+                        "directory_replace_pending",
+                        serde_json::json!({
+                            "source": node.source.display().to_string(),
+                            "target": node.target.display().to_string(),
+                        }),
+                    )?;
+                    let trashed = self.trash.move_to_trash(self.platform, &node.target)?;
+                    self.checkpoint(
+                        "directory_destination_trashed",
+                        serde_json::json!({
+                            "source": node.source.display().to_string(),
+                            "target": node.target.display().to_string(),
+                        }),
+                    )?;
+                    Some(trashed)
                 } else {
                     None
                 };
@@ -1305,6 +1821,14 @@ impl<'a> ExecutionContext<'a> {
                             path: node.target.clone(),
                         });
                     }
+                    self.checkpoint(
+                        "directory_create_pending",
+                        serde_json::json!({
+                            "source": node.source.display().to_string(),
+                            "target": node.target.display().to_string(),
+                            "replaced": *replace,
+                        }),
+                    )?;
                     if let Err(error) = fs::create_dir(&node.target) {
                         if let Some(trashed) = trashed {
                             let _ = self.platform.rename_path(&trashed, &node.target);
@@ -1315,6 +1839,14 @@ impl<'a> ExecutionContext<'a> {
                             error,
                         ));
                     }
+                    self.checkpoint(
+                        "directory_target_created",
+                        serde_json::json!({
+                            "source": node.source.display().to_string(),
+                            "target": node.target.display().to_string(),
+                            "replaced": *replace,
+                        }),
+                    )?;
                 }
                 let mut clean = true;
                 for child in children {
@@ -1383,7 +1915,21 @@ impl<'a> ExecutionContext<'a> {
                         });
                     }
                     self.check_cancel()?;
+                    self.checkpoint(
+                        "cross_volume_target_committed",
+                        serde_json::json!({
+                            "source": node.source.display().to_string(),
+                            "target": node.target.display().to_string(),
+                        }),
+                    )?;
                     remove_path_no_follow(self.platform, &node.source)?;
+                    self.checkpoint(
+                        "source_removed",
+                        serde_json::json!({
+                            "source": node.source.display().to_string(),
+                            "target": node.target.display().to_string(),
+                        }),
+                    )?;
                     self.record_success(&node.source, Some(&node.target));
                     Ok(true)
                 }
@@ -1399,19 +1945,51 @@ impl<'a> ExecutionContext<'a> {
             PreparedDisposition::Skip => false,
         };
         if !replace {
+            self.checkpoint(
+                "move_rename_pending",
+                serde_json::json!({
+                    "source": node.source.display().to_string(),
+                    "target": node.target.display().to_string(),
+                }),
+            )?;
             return match self.platform.rename_path(&node.source, &node.target) {
-                Ok(()) => Ok(FastMove::Moved),
+                Ok(()) => {
+                    self.checkpoint(
+                        "target_committed",
+                        serde_json::json!({
+                            "source": node.source.display().to_string(),
+                            "target": node.target.display().to_string(),
+                        }),
+                    )?;
+                    Ok(FastMove::Moved)
+                }
                 Err(PlatformError::CrossDevice { .. }) => Ok(FastMove::CrossDevice),
                 Err(error) => Err(error.into()),
             };
         }
 
         let staging = self.unique_staging_path(&node.target)?;
+        self.checkpoint(
+            "move_source_staging",
+            serde_json::json!({
+                "source": node.source.display().to_string(),
+                "target": node.target.display().to_string(),
+                "staging": staging.display().to_string(),
+            }),
+        )?;
         match self.platform.rename_path(&node.source, &staging) {
             Ok(()) => {}
             Err(PlatformError::CrossDevice { .. }) => return Ok(FastMove::CrossDevice),
             Err(error) => return Err(error.into()),
         }
+        self.checkpoint(
+            "move_source_staged",
+            serde_json::json!({
+                "source": node.source.display().to_string(),
+                "target": node.target.display().to_string(),
+                "staging": staging.display().to_string(),
+            }),
+        )?;
         let trashed = match self.trash.move_to_trash(self.platform, &node.target) {
             Ok(path) => path,
             Err(error) => {
@@ -1419,6 +1997,14 @@ impl<'a> ExecutionContext<'a> {
                 return Err(error);
             }
         };
+        self.checkpoint(
+            "destination_trashed",
+            serde_json::json!({
+                "source": node.source.display().to_string(),
+                "target": node.target.display().to_string(),
+                "staging": staging.display().to_string(),
+            }),
+        )?;
         if let Err(error) = self.platform.rename_path(&staging, &node.target) {
             let _ = self.platform.rename_path(&staging, &node.source);
             if self.trash.has_rollback_path() {
@@ -1426,6 +2012,14 @@ impl<'a> ExecutionContext<'a> {
             }
             return Err(error.into());
         }
+        self.checkpoint(
+            "target_committed",
+            serde_json::json!({
+                "source": node.source.display().to_string(),
+                "target": node.target.display().to_string(),
+                "staging": staging.display().to_string(),
+            }),
+        )?;
         Ok(FastMove::Moved)
     }
 
@@ -1436,17 +2030,44 @@ impl<'a> ExecutionContext<'a> {
         replace: bool,
     ) -> Result<(), ExplorerTaskError> {
         let staging = self.unique_staging_path(target)?;
+        self.checkpoint(
+            "copy_staging_writing",
+            serde_json::json!({
+                "source": source.display().to_string(),
+                "target": target.display().to_string(),
+                "staging": staging.display().to_string(),
+                "replace": replace,
+            }),
+        )?;
         let result = self.write_staging_file(source, &staging);
         if let Err(error) = result {
             self.cleanup_staging(&staging);
             return Err(error);
         }
+        self.checkpoint(
+            "copy_staging_synced",
+            serde_json::json!({
+                "source": source.display().to_string(),
+                "target": target.display().to_string(),
+                "staging": staging.display().to_string(),
+                "replace": replace,
+            }),
+        )?;
         if self.check_cancel().is_err() {
             self.cleanup_staging(&staging);
             return Err(ExplorerTaskError::Cancelled);
         }
 
         let trashed = if replace {
+            self.checkpoint(
+                "destination_trash_pending",
+                serde_json::json!({
+                    "source": source.display().to_string(),
+                    "target": target.display().to_string(),
+                    "staging": staging.display().to_string(),
+                    "replace": true,
+                }),
+            )?;
             match self.trash.move_to_trash(self.platform, target) {
                 Ok(path) => Some(path),
                 Err(error) => {
@@ -1463,6 +2084,17 @@ impl<'a> ExecutionContext<'a> {
             }
             None
         };
+        if replace {
+            self.checkpoint(
+                "destination_trashed",
+                serde_json::json!({
+                    "source": source.display().to_string(),
+                    "target": target.display().to_string(),
+                    "staging": staging.display().to_string(),
+                    "replace": true,
+                }),
+            )?;
+        }
         if let Err(error) = self.platform.rename_path(&staging, target) {
             self.cleanup_staging(&staging);
             if self.trash.has_rollback_path() {
@@ -1472,6 +2104,14 @@ impl<'a> ExecutionContext<'a> {
             }
             return Err(error.into());
         }
+        self.checkpoint(
+            "target_committed",
+            serde_json::json!({
+                "source": source.display().to_string(),
+                "target": target.display().to_string(),
+                "staging": staging.display().to_string(),
+            }),
+        )?;
         Ok(())
     }
 
@@ -1713,4 +2353,157 @@ fn io_error(operation: &'static str, path: &Path, error: std::io::Error) -> Expl
 
 fn send_event(sender: &mpsc::Sender<ExplorerTaskEvent>, event: ExplorerTaskEvent) {
     let _ = sender.send(event);
+}
+
+#[cfg(test)]
+mod recovery_tests {
+    use super::*;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static SEQUENCE: AtomicU64 = AtomicU64::new(1);
+
+    fn fixture(label: &str) -> PathBuf {
+        let path = std::env::temp_dir().join(format!(
+            "tundra-explorer-recovery-{label}-{}-{}",
+            std::process::id(),
+            SEQUENCE.fetch_add(1, Ordering::Relaxed)
+        ));
+        fs::create_dir_all(&path).unwrap();
+        path
+    }
+
+    fn record(phase: &str, payload: serde_json::Value) -> OperationRecord {
+        serde_json::from_value(serde_json::json!({
+            "schema_version": 1,
+            "run_id": "test-run",
+            "app_id": "explorer",
+            "component": "explorer/filesystem",
+            "operation_id": "test-operation",
+            "kind": "explorer.filesystem.v1",
+            "replay_safety": {
+                "kind": "checkpointed",
+                "operation": "explorer.filesystem.v1"
+            },
+            "recovery_handler_version": "1",
+            "summary": "test",
+            "checkpoint_sequence": 2,
+            "checkpoint": {
+                "phase": phase,
+                "payload": payload
+            },
+            "status": "active",
+            "started_at": "2026-07-12T00:00:00Z",
+            "updated_at": "2026-07-12T00:00:01Z"
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn recovery_commits_a_synced_stage_after_destination_was_trashed() {
+        let root = fixture("forward-commit");
+        let target = root.join("target.txt");
+        let staging = root.join(".tundra-stage-test-target.txt");
+        fs::write(&staging, b"new").unwrap();
+        let outcome = ExplorerRecoveryHandler.recover(&record(
+            "destination_trashed",
+            serde_json::json!({
+                "target": target.display().to_string(),
+                "staging": staging.display().to_string()
+            }),
+        ));
+
+        assert!(outcome.is_recovered());
+        assert_eq!(fs::read(&target).unwrap(), b"new");
+        assert!(!staging.exists());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn recovery_preserves_both_cross_volume_copies_for_manual_review() {
+        let root = fixture("cross-volume");
+        let source = root.join("source.txt");
+        let target = root.join("target.txt");
+        fs::write(&source, b"data").unwrap();
+        fs::write(&target, b"data").unwrap();
+        let outcome = ExplorerRecoveryHandler.recover(&record(
+            "cross_volume_target_committed",
+            serde_json::json!({
+                "source": source.display().to_string(),
+                "target": target.display().to_string()
+            }),
+        ));
+
+        assert!(matches!(outcome, RecoveryOutcome::ManualActionRequired(_)));
+        assert!(source.exists());
+        assert!(target.exists());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn recovery_removes_only_an_exact_uncommitted_stage_path() {
+        let root = fixture("stage-cleanup");
+        let staging = root.join(".tundra-stage-test-target.txt");
+        fs::write(&staging, b"partial").unwrap();
+        let outcome = ExplorerRecoveryHandler.recover(&record(
+            "copy_staging_writing",
+            serde_json::json!({ "staging": staging.display().to_string() }),
+        ));
+        assert!(outcome.is_recovered());
+        assert!(!staging.exists());
+
+        let ordinary = root.join("ordinary.txt");
+        fs::write(&ordinary, b"keep").unwrap();
+        let outcome = ExplorerRecoveryHandler.recover(&record(
+            "copy_staging_writing",
+            serde_json::json!({ "staging": ordinary.display().to_string() }),
+        ));
+        assert!(matches!(outcome, RecoveryOutcome::ManualActionRequired(_)));
+        assert!(ordinary.exists());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn recovery_preserves_a_partially_created_directory_for_manual_review() {
+        let root = fixture("partial-directory");
+        let target = root.join("target");
+        fs::create_dir(&target).unwrap();
+        fs::write(target.join("completed-child.txt"), b"keep").unwrap();
+
+        let outcome = ExplorerRecoveryHandler.recover(&record(
+            "directory_target_created",
+            serde_json::json!({
+                "target": target.display().to_string(),
+                "replaced": false
+            }),
+        ));
+
+        assert!(matches!(outcome, RecoveryOutcome::ManualActionRequired(_)));
+        assert_eq!(
+            fs::read(target.join("completed-child.txt")).unwrap(),
+            b"keep"
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn recovery_forward_commits_when_trash_move_finished_before_its_checkpoint() {
+        let root = fixture("trash-checkpoint-gap");
+        let target = root.join("target.txt");
+        let staging = root.join(".tundra-stage-gap-target.txt");
+        fs::write(&staging, b"new").unwrap();
+
+        let outcome = ExplorerRecoveryHandler.recover(&record(
+            "destination_trash_pending",
+            serde_json::json!({
+                "target": target.display().to_string(),
+                "staging": staging.display().to_string(),
+                "replace": true
+            }),
+        ));
+
+        assert!(outcome.is_recovered());
+        assert_eq!(fs::read(&target).unwrap(), b"new");
+        assert!(!staging.exists());
+        let _ = fs::remove_dir_all(root);
+    }
 }

@@ -11,6 +11,8 @@ pub enum ShellCommand {
     RequestExit,
     ConfirmExit,
     CancelExit,
+    OpenLatestCrashReport,
+    CopyLatestCrashSummary,
     FocusNext,
     FocusPrevious,
     AppendAuthChar(char),

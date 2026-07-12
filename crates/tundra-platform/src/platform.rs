@@ -62,6 +62,7 @@ pub struct PlatformCapabilities {
     pub directory_listing: CapabilityStatus,
     pub local_volumes: CapabilityStatus,
     pub trash: CapabilityStatus,
+    pub critical_dialog: CapabilityStatus,
     pub notifications: CapabilityStatus,
     pub default_apps: CapabilityStatus,
     pub power: CapabilityStatus,
@@ -83,6 +84,7 @@ impl PlatformCapabilities {
             directory_listing: CapabilityStatus::Supported,
             local_volumes: CapabilityStatus::Supported,
             trash: CapabilityStatus::Supported,
+            critical_dialog: CapabilityStatus::Supported,
             notifications: CapabilityStatus::Unsupported,
             default_apps: CapabilityStatus::Unsupported,
             power: CapabilityStatus::Unsupported,
@@ -104,13 +106,14 @@ impl PlatformCapabilities {
             directory_listing: CapabilityStatus::Unsupported,
             local_volumes: CapabilityStatus::Unsupported,
             trash: CapabilityStatus::Unsupported,
+            critical_dialog: CapabilityStatus::Unsupported,
             notifications: CapabilityStatus::Unsupported,
             default_apps: CapabilityStatus::Unsupported,
             power: CapabilityStatus::Unsupported,
         }
     }
 
-    pub fn checks(&self) -> [(&'static str, CapabilityStatus); 16] {
+    pub fn checks(&self) -> [(&'static str, CapabilityStatus); 17] {
         [
             ("open_path", self.open_path),
             ("open_with", self.open_with),
@@ -125,6 +128,7 @@ impl PlatformCapabilities {
             ("directory_listing", self.directory_listing),
             ("local_volumes", self.local_volumes),
             ("trash", self.trash),
+            ("critical_dialog", self.critical_dialog),
             ("notifications", self.notifications),
             ("default_apps", self.default_apps),
             ("power", self.power),
@@ -455,6 +459,24 @@ pub trait Platform: Send + Sync {
     fn show_notification(&self, _title: &str, _body: &str) -> Result<(), PlatformError> {
         Err(PlatformError::Unsupported {
             capability: "notifications",
+        })
+    }
+
+    /// Displays a process-level critical error after an interactive terminal
+    /// can no longer provide a reliable error surface.
+    fn show_critical_error(&self, _title: &str, _body: &str) -> Result<(), PlatformError> {
+        Err(PlatformError::Unsupported {
+            capability: "critical_dialog",
+        })
+    }
+
+    /// Returns whether an operating-system process is still alive.
+    ///
+    /// Backends treat an access-denied probe as alive because the process is
+    /// known to exist even though its state cannot be queried in detail.
+    fn is_process_alive(&self, _pid: u32) -> Result<bool, PlatformError> {
+        Err(PlatformError::Unsupported {
+            capability: "process_liveness",
         })
     }
 

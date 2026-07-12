@@ -126,6 +126,7 @@ fn collect_explorer_conflicts_no_follow(
 struct ShellExplorerTaskShared {
     engine: Mutex<Option<ExplorerTaskEngine>>,
     context: Mutex<Option<ShellExplorerTaskContext>>,
+    watchdog: Option<AppWatchdog>,
 }
 
 /// Cloneable shell handle around the single-worker Explorer mutation engine.
@@ -139,10 +140,24 @@ struct ShellExplorerTaskRuntime {
 
 impl ShellExplorerTaskRuntime {
     fn new(_storage: StorageManager) -> Self {
+        let watchdog = ProcessWatchdog::global().and_then(|process| {
+            process
+                .register_app(tundra_apps::explorer_tasks::explorer_watchdog_descriptor())
+                .ok()
+        });
+        Self::with_watchdog(watchdog)
+    }
+
+    fn new_managed(_storage: StorageManager, watchdog: AppWatchdog) -> Self {
+        Self::with_watchdog(Some(watchdog))
+    }
+
+    fn with_watchdog(watchdog: Option<AppWatchdog>) -> Self {
         Self {
             shared: Arc::new(ShellExplorerTaskShared {
                 engine: Mutex::new(None),
                 context: Mutex::new(None),
+                watchdog,
             }),
         }
     }
@@ -173,11 +188,20 @@ impl ShellExplorerTaskRuntime {
             .engine
             .lock()
             .expect("Explorer task engine lock poisoned");
-        let engine = engine.get_or_insert_with(|| {
+        if engine.is_none() {
+            let Some(watchdog) = self.shared.watchdog.clone() else {
+                return Err(ExplorerTaskSubmitError::WorkerStopped);
+            };
             let platform: Arc<dyn Platform> = Arc::from(tundra_platform::native_platform());
             let trash = Arc::new(SystemExplorerTrash);
-            ExplorerTaskEngine::new(platform, trash)
-        });
+            *engine = Some(
+                ExplorerTaskEngine::new_managed(platform, trash, watchdog)
+                    .map_err(|_| ExplorerTaskSubmitError::WorkerStopped)?,
+            );
+        }
+        let engine = engine
+            .as_ref()
+            .expect("Explorer engine was initialized in the preceding branch");
         let handle = engine.submit(plan)?;
         *context = Some(ShellExplorerTaskContext {
             id: handle.id,
@@ -742,6 +766,30 @@ impl ShellState {
                     );
                 }
             }
+            ExplorerTaskEvent::Panicked {
+                id,
+                incident_id,
+                message,
+                recovery,
+            } => {
+                let context = self
+                    .explorer_task_runtime
+                    .as_ref()
+                    .and_then(|runtime| runtime.finish(id));
+                if context.is_none() {
+                    return;
+                }
+                let detail = format!(
+                    "Explorer operation stopped after an internal error: {message} (incident {incident_id}; recovery: {recovery:?})"
+                );
+                if let Some(state) = self.explorer_state.as_mut() {
+                    state.operation = None;
+                    state.message = Some(detail.clone());
+                    state.error = Some(detail.clone());
+                }
+                self.error_message = Some(detail);
+                self.apply_explorer_command(ExplorerCommand::Refresh, platform);
+            }
             ExplorerTaskEvent::Finished { id, summary } => {
                 let context = self
                     .explorer_task_runtime
@@ -978,6 +1026,32 @@ fn collision_resolution(action: ExplorerConflictAction) -> ExplorerCollisionReso
 mod explorer_task_workflow_tests {
     use super::*;
 
+    fn test_explorer_watchdog() -> tundra_watchdog::AppWatchdog {
+        static WATCHDOG: std::sync::OnceLock<tundra_watchdog::AppWatchdog> =
+            std::sync::OnceLock::new();
+        WATCHDOG
+            .get_or_init(|| {
+                let root = std::env::temp_dir().join(format!(
+                    "tundra-shell-explorer-watchdog-tests-{}",
+                    std::process::id()
+                ));
+                let config = tundra_watchdog::WatchdogConfig::new(
+                    root.join("reports"),
+                    root.join("fallback"),
+                    root.join("state"),
+                    "tundra-shell-tests",
+                    env!("CARGO_PKG_VERSION"),
+                );
+                let (runtime, process) = tundra_watchdog::WatchdogRuntime::start(config)
+                    .expect("Explorer workflow test watchdog");
+                let _runtime = Box::leak(Box::new(runtime));
+                process
+                    .register_app(tundra_apps::explorer_tasks::explorer_watchdog_descriptor())
+                    .expect("Explorer workflow watchdog registration")
+            })
+            .clone()
+    }
+
     #[test]
     fn shell_runtime_executes_copy_on_real_temporary_paths() {
         let fixture = std::env::temp_dir().join(format!(
@@ -996,7 +1070,7 @@ mod explorer_task_workflow_tests {
         std::fs::write(&source, b"background copy").expect("source file");
 
         let storage = storage_at(&fixture);
-        let runtime = ShellExplorerTaskRuntime::new(storage);
+        let runtime = ShellExplorerTaskRuntime::new_managed(storage, test_explorer_watchdog());
         let plan =
             ExplorerTransferPlan::new(ExplorerTransferOperation::Copy, vec![source], &destination);
         runtime
@@ -1036,7 +1110,10 @@ mod explorer_task_workflow_tests {
         std::fs::write(&source, b"trash me").expect("source file");
 
         let storage = storage_at(&fixture);
-        let runtime = ShellExplorerTaskRuntime::new(storage.clone());
+        let runtime = ShellExplorerTaskRuntime::new_managed(
+            storage.clone(),
+            test_explorer_watchdog(),
+        );
         runtime
             .submit(
                 ExplorerTaskPlan::DeleteToTrash(ExplorerDeletePlan::new(vec![source.clone()])),
@@ -1082,7 +1159,10 @@ mod explorer_task_workflow_tests {
         std::fs::write(&replaced, b"old contents").expect("destination file");
 
         let storage = storage_at(&fixture);
-        let runtime = ShellExplorerTaskRuntime::new(storage.clone());
+        let runtime = ShellExplorerTaskRuntime::new_managed(
+            storage.clone(),
+            test_explorer_watchdog(),
+        );
         let mut plan =
             ExplorerTransferPlan::new(ExplorerTransferOperation::Copy, vec![source], &destination);
         plan.collisions = ExplorerCollisionPolicy::replace();

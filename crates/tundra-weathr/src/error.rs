@@ -11,6 +11,9 @@ pub enum WeatherAssetError {
 
     #[error("invalid clock font asset: {0}")]
     ClockFont(#[from] ClockFontError),
+
+    #[error("failed to start a managed weathr task: {0}")]
+    Watchdog(#[from] tundra_watchdog::WatchdogError),
 }
 
 #[derive(ThisError, Debug)]

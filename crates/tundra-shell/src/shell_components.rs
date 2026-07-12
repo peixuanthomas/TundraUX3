@@ -93,7 +93,6 @@ impl ShellComponent {
             Self::ContextMenu => "ContextMenu",
         }
     }
-
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -2,11 +2,78 @@ use crate::weather::WeatherData;
 use crate::{config::Provider, geolocation::GeoLocation};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::future::Future;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
 use tokio::fs;
+use tundra_watchdog::{
+    AppWatchdog, ComponentId, ErrorContext, IncidentSeverity, TaskId, TaskSpec, WatchdogError,
+};
 
 const LOCATION_CACHE_DURATION_SECS: u64 = 86400;
 const WEATHER_CACHE_DURATION_SECS: u64 = 300;
+static NEXT_CACHE_TASK_ID: AtomicU64 = AtomicU64::new(1);
+
+#[derive(Debug, thiserror::Error)]
+enum CacheWriteError {
+    #[error("the operating system did not provide a cache directory")]
+    CacheDirectoryUnavailable,
+
+    #[error("failed to {operation} cache path {path}: {source}")]
+    Io {
+        operation: &'static str,
+        path: PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
+
+    #[error("failed to serialize cache data: {0}")]
+    Serialization(#[from] serde_json::Error),
+}
+
+fn cache_io_error(
+    operation: &'static str,
+    path: PathBuf,
+    source: std::io::Error,
+) -> CacheWriteError {
+    CacheWriteError::Io {
+        operation,
+        path,
+        source,
+    }
+}
+
+fn spawn_cache_write<F, Fut>(
+    watchdog: &AppWatchdog,
+    kind: &'static str,
+    operation: F,
+) -> Result<(), WatchdogError>
+where
+    F: FnOnce() -> Fut + Send + 'static,
+    Fut: Future<Output = Result<(), CacheWriteError>> + Send + 'static,
+{
+    let cache_watchdog = watchdog.child_component(ComponentId::from_static("cache"));
+    let group = cache_watchdog.task_group("writes");
+    let sequence = NEXT_CACHE_TASK_ID.fetch_add(1, Ordering::Relaxed);
+    let task_id = TaskId::new(format!("{kind}-{sequence}"))?;
+    let mut operation = Some(operation);
+
+    let _ = group.spawn_async(TaskSpec::one_shot(task_id), move || {
+        let operation = operation
+            .take()
+            .expect("one-shot cache task factory is called only once");
+        let cache_watchdog = cache_watchdog.clone();
+        async move {
+            if let Err(error) = operation().await {
+                cache_watchdog.report_error(
+                    ErrorContext::new(format!("cache.{kind}"), IncidentSeverity::Warning),
+                    &error,
+                );
+            }
+        }
+    })?;
+    Ok(())
+}
 
 #[derive(Serialize, Deserialize)]
 struct LocationCache {
@@ -90,22 +157,32 @@ pub async fn load_cached_location() -> Option<GeoLocation> {
     }
 }
 
-pub fn save_location_cache(location: &GeoLocation) {
+pub fn save_location_cache(location: &GeoLocation) -> Result<(), WatchdogError> {
+    let watchdog = AppWatchdog::current().ok_or(WatchdogError::NotInstalled)?;
+    save_location_cache_managed(&watchdog, location)
+}
+
+pub fn save_location_cache_managed(
+    watchdog: &AppWatchdog,
+    location: &GeoLocation,
+) -> Result<(), WatchdogError> {
     let location = location.clone();
-    tokio::spawn(async move {
-        if let Some(cache_dir) = get_cache_dir() {
-            let _ = fs::create_dir_all(&cache_dir).await;
+    spawn_cache_write(watchdog, "location", move || async move {
+        let cache_dir = get_cache_dir().ok_or(CacheWriteError::CacheDirectoryUnavailable)?;
+        fs::create_dir_all(&cache_dir)
+            .await
+            .map_err(|error| cache_io_error("create", cache_dir.clone(), error))?;
 
-            let cache = LocationCache {
-                location,
-                cached_at: current_timestamp(),
-            };
-
-            if let Ok(json) = serde_json::to_string(&cache) {
-                let _ = fs::write(cache_dir.join("location.json"), json).await;
-            }
-        }
-    });
+        let cache = LocationCache {
+            location,
+            cached_at: current_timestamp(),
+        };
+        let json = serde_json::to_string(&cache)?;
+        let cache_path = cache_dir.join("location.json");
+        fs::write(&cache_path, json)
+            .await
+            .map_err(|error| cache_io_error("write", cache_path, error))
+    })
 }
 
 pub async fn load_cached_address(address_key: &str) -> Option<GeoLocation> {
@@ -117,37 +194,48 @@ pub async fn load_cached_address(address_key: &str) -> Option<GeoLocation> {
     cached_address_entry(&cache, &address_key, current_timestamp())
 }
 
-pub fn save_address_cache(address_key: &str, location: &GeoLocation) {
+pub fn save_address_cache(address_key: &str, location: &GeoLocation) -> Result<(), WatchdogError> {
+    let watchdog = AppWatchdog::current().ok_or(WatchdogError::NotInstalled)?;
+    save_address_cache_managed(&watchdog, address_key, location)
+}
+
+pub fn save_address_cache_managed(
+    watchdog: &AppWatchdog,
+    address_key: &str,
+    location: &GeoLocation,
+) -> Result<(), WatchdogError> {
     let Some(address_key) = normalize_address_key(address_key) else {
-        return;
+        return Ok(());
     };
 
     let location = location.clone();
-    tokio::spawn(async move {
-        if let Some(cache_dir) = get_cache_dir() {
-            let _ = fs::create_dir_all(&cache_dir).await;
+    spawn_cache_write(watchdog, "address", move || async move {
+        let cache_dir = get_cache_dir().ok_or(CacheWriteError::CacheDirectoryUnavailable)?;
+        fs::create_dir_all(&cache_dir)
+            .await
+            .map_err(|error| cache_io_error("create", cache_dir.clone(), error))?;
 
-            let cache_path = cache_dir.join("address.json");
-            let mut cache: AddressCache = match fs::read_to_string(&cache_path).await {
-                Ok(contents) => serde_json::from_str(&contents).unwrap_or_default(),
-                Err(_) => AddressCache::default(),
-            };
+        let cache_path = cache_dir.join("address.json");
+        let mut cache: AddressCache = match fs::read_to_string(&cache_path).await {
+            Ok(contents) => serde_json::from_str(&contents).unwrap_or_default(),
+            Err(_) => AddressCache::default(),
+        };
 
-            let now = current_timestamp();
-            prune_expired_address_entries(&mut cache, now);
-            cache.entries.insert(
-                address_key,
-                AddressCacheEntry {
-                    location,
-                    cached_at: now,
-                },
-            );
+        let now = current_timestamp();
+        prune_expired_address_entries(&mut cache, now);
+        cache.entries.insert(
+            address_key,
+            AddressCacheEntry {
+                location,
+                cached_at: now,
+            },
+        );
 
-            if let Ok(json) = serde_json::to_string(&cache) {
-                let _ = fs::write(cache_path, json).await;
-            }
-        }
-    });
+        let json = serde_json::to_string(&cache)?;
+        fs::write(&cache_path, json)
+            .await
+            .map_err(|error| cache_io_error("write", cache_path, error))
+    })
 }
 
 #[derive(Serialize, Deserialize)]
@@ -176,25 +264,43 @@ pub async fn load_cached_geocode(latitude: f64, longitude: f64, language: &str) 
     }
 }
 
-pub fn save_geocode_cache(city_name: &str, latitude: f64, longitude: f64, language: &str) {
+pub fn save_geocode_cache(
+    city_name: &str,
+    latitude: f64,
+    longitude: f64,
+    language: &str,
+) -> Result<(), WatchdogError> {
+    let watchdog = AppWatchdog::current().ok_or(WatchdogError::NotInstalled)?;
+    save_geocode_cache_managed(&watchdog, city_name, latitude, longitude, language)
+}
+
+pub fn save_geocode_cache_managed(
+    watchdog: &AppWatchdog,
+    city_name: &str,
+    latitude: f64,
+    longitude: f64,
+    language: &str,
+) -> Result<(), WatchdogError> {
     let city_name = city_name.to_string();
     let language = language.to_string();
-    tokio::spawn(async move {
-        if let Some(cache_dir) = get_cache_dir() {
-            let _ = fs::create_dir_all(&cache_dir).await;
+    spawn_cache_write(watchdog, "geocode", move || async move {
+        let cache_dir = get_cache_dir().ok_or(CacheWriteError::CacheDirectoryUnavailable)?;
+        fs::create_dir_all(&cache_dir)
+            .await
+            .map_err(|error| cache_io_error("create", cache_dir.clone(), error))?;
 
-            let cache = GeocodeCache {
-                city_name,
-                cached_at: current_timestamp(),
-                location_key: make_location_key(latitude, longitude),
-                language,
-            };
-
-            if let Ok(json) = serde_json::to_string(&cache) {
-                let _ = fs::write(cache_dir.join("geocode.json"), json).await;
-            }
-        }
-    });
+        let cache = GeocodeCache {
+            city_name,
+            cached_at: current_timestamp(),
+            location_key: make_location_key(latitude, longitude),
+            language,
+        };
+        let json = serde_json::to_string(&cache)?;
+        let cache_path = cache_dir.join("geocode.json");
+        fs::write(&cache_path, json)
+            .await
+            .map_err(|error| cache_io_error("write", cache_path, error))
+    })
 }
 
 pub async fn load_cached_weather(
@@ -224,29 +330,45 @@ pub fn save_weather_cache(
     latitude: f64,
     longitude: f64,
     provider: Provider,
-) {
+) -> Result<(), WatchdogError> {
+    let watchdog = AppWatchdog::current().ok_or(WatchdogError::NotInstalled)?;
+    save_weather_cache_managed(&watchdog, weather, latitude, longitude, provider)
+}
+
+pub fn save_weather_cache_managed(
+    watchdog: &AppWatchdog,
+    weather: &WeatherData,
+    latitude: f64,
+    longitude: f64,
+    provider: Provider,
+) -> Result<(), WatchdogError> {
     let weather = weather.clone();
-    tokio::spawn(async move {
-        if let Some(cache_dir) = get_cache_dir() {
-            let _ = fs::create_dir_all(&cache_dir).await;
+    spawn_cache_write(watchdog, "weather", move || async move {
+        let cache_dir = get_cache_dir().ok_or(CacheWriteError::CacheDirectoryUnavailable)?;
+        fs::create_dir_all(&cache_dir)
+            .await
+            .map_err(|error| cache_io_error("create", cache_dir.clone(), error))?;
 
-            let cache = WeatherCache {
-                data: weather,
-                cached_at: current_timestamp(),
-                location_key: make_location_key(latitude, longitude),
-                provider,
-            };
-
-            if let Ok(json) = serde_json::to_string(&cache) {
-                let _ = fs::write(cache_dir.join("weather.json"), json).await;
-            }
-        }
-    });
+        let cache = WeatherCache {
+            data: weather,
+            cached_at: current_timestamp(),
+            location_key: make_location_key(latitude, longitude),
+            provider,
+        };
+        let json = serde_json::to_string(&cache)?;
+        let cache_path = cache_dir.join("weather.json");
+        fs::write(&cache_path, json)
+            .await
+            .map_err(|error| cache_io_error("write", cache_path, error))
+    })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Arc;
+    use std::time::Duration;
+    use tundra_watchdog::{WatchdogConfig, WatchdogRuntime};
 
     fn test_location() -> GeoLocation {
         GeoLocation {
@@ -254,6 +376,44 @@ mod tests {
             longitude: -74.0060,
             city: Some("New York".to_string()),
         }
+    }
+
+    #[tokio::test]
+    async fn managed_cache_task_uses_an_explicit_non_global_watchdog() {
+        let root = std::env::temp_dir().join(format!(
+            "tundra-weathr-cache-watchdog-{}-{}",
+            std::process::id(),
+            current_timestamp()
+        ));
+        let config = WatchdogConfig::new(
+            root.join("crashes"),
+            root.join("fallback"),
+            root.join("state"),
+            "tundra-weathr-cache-test",
+            env!("CARGO_PKG_VERSION"),
+        );
+        let (runtime, process) = WatchdogRuntime::start(config).expect("test watchdog starts");
+        let watchdog = process
+            .register_app(crate::weathr_watchdog_descriptor())
+            .expect("test Weathr watchdog registers");
+        let completed = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let task_completed = completed.clone();
+
+        spawn_cache_write(&watchdog, "explicit-test", move || async move {
+            task_completed.store(true, Ordering::Release);
+            Ok(())
+        })
+        .expect("explicit managed cache task starts without a global watchdog");
+
+        tokio::time::timeout(Duration::from_secs(1), async {
+            while !completed.load(Ordering::Acquire) {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("managed cache task completes");
+        runtime.shutdown().expect("test watchdog shuts down");
+        let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]

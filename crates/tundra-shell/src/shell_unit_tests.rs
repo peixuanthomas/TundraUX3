@@ -6,6 +6,54 @@ mod tests {
     };
 
     #[test]
+    fn shell_and_lockscreen_share_the_same_session_recovery_budget() {
+        let now = Instant::now();
+        let mut recoveries = VecDeque::new();
+
+        assert!(reserve_session_recovery(&mut recoveries, now));
+        assert!(reserve_session_recovery(&mut recoveries, now));
+        assert!(!reserve_session_recovery(&mut recoveries, now));
+        assert_eq!(recoveries.len(), MAX_SESSION_RECOVERIES);
+    }
+
+    #[test]
+    fn session_recovery_budget_resets_after_the_crash_loop_window() {
+        let now = Instant::now();
+        let mut recoveries = VecDeque::from([now, now]);
+        let after_window = now + SESSION_RECOVERY_WINDOW + Duration::from_millis(1);
+
+        assert!(reserve_session_recovery(&mut recoveries, after_window));
+        assert_eq!(recoveries, VecDeque::from([after_window]));
+    }
+
+    #[test]
+    fn critical_modal_preempts_and_then_restores_the_previous_modal() {
+        let mut center = NotificationCenter::new("Ready");
+        center.push_modal(ShellNotification::modal(
+            "Normal confirmation",
+            "normal",
+            tundra_ui::NotificationTone::Warning,
+            vec![ShellNotificationAction::new("ok", "OK")],
+        ));
+        center.push_critical_modal(ShellNotification::modal(
+            "Recovered from panic",
+            "critical",
+            tundra_ui::NotificationTone::Critical,
+            vec![ShellNotificationAction::new("continue", "Continue")],
+        ));
+
+        assert_eq!(
+            center.active_modal_view_model().unwrap().title,
+            "Recovered from panic"
+        );
+        center.activate_selected_action();
+        assert_eq!(
+            center.active_modal_view_model().unwrap().title,
+            "Normal confirmation"
+        );
+    }
+
+    #[test]
     fn exit_confirmation_keeps_login_as_the_content_screen() {
         let mut state = ShellState::new(ShellLaunchConfig::default(), (120, 40));
         state.screen_stack = vec![ShellScreen::Login];
@@ -177,7 +225,7 @@ mod tests {
 
         assert_eq!(
             summary,
-            "Windows: 13 supported, 0 best-effort, 3 unsupported"
+            "Windows: 14 supported, 0 best-effort, 3 unsupported"
         );
     }
 

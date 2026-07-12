@@ -4,13 +4,17 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use tundra_cli::{
     CliCommand, CliError, ConfigAction, ConfigField, ConfigUpdate, parse_args, run,
-    run_with_platform, run_with_platform_and_asset_root, run_with_platform_and_weathr_launcher,
+    run_with_platform, run_with_platform_and_asset_root,
+    run_with_platform_and_managed_weathr_launcher, run_with_platform_and_weathr_launcher,
 };
-use tundra_platform::mock::{MockPlatform, UnsupportedPlatform};
+use tundra_platform::mock::{MockCall, MockPlatform, UnsupportedPlatform};
 use tundra_platform::{
     Platform, PlatformKind, UserDirs, build_macos_app_paths, build_windows_app_paths,
 };
 use tundra_storage::{StorageConfig, StorageLayout, StorageManager};
+use tundra_watchdog::{
+    BoundaryKind, BoundarySpec, ProcessWatchdog, RecoveryOutcome, WatchdogConfig, WatchdogRuntime,
+};
 
 #[test]
 fn no_args_dispatches_help() {
@@ -174,6 +178,109 @@ fn weathr_command_reports_injected_runner_error() {
     assert!(stdout.is_empty());
     let stderr = String::from_utf8(stderr).expect("weathr error output should be utf8");
     assert!(stderr.contains("ERROR: could not launch weathr: terminal unavailable"));
+}
+
+#[test]
+fn managed_weathr_launcher_receives_the_explicit_app_watchdog() {
+    let mut stdout = Vec::new();
+    let mut stderr = Vec::new();
+    let tree = TempTree::new("managed-weathr-launch");
+    let platform = mock_windows_platform(tree.path());
+    let (_runtime, process, weathr) = test_weathr_watchdog(&tree);
+    let mut received_app_id = None;
+
+    let exit_code = run_with_platform_and_managed_weathr_launcher(
+        ["weathr"],
+        &platform,
+        &mut stdout,
+        &mut stderr,
+        &process,
+        weathr,
+        |_options, watchdog| {
+            received_app_id = Some(watchdog.descriptor().id.as_str().to_string());
+            Ok(())
+        },
+    );
+
+    assert_eq!(exit_code, 0);
+    assert_eq!(received_app_id.as_deref(), Some("weathr"));
+    assert!(stderr.is_empty());
+}
+
+#[test]
+fn unrecoverable_managed_weathr_panic_routes_to_stderr_and_critical_dialog() {
+    let mut stdout = Vec::new();
+    let mut stderr = Vec::new();
+    let tree = TempTree::new("managed-weathr-panic");
+    let platform = mock_windows_platform(tree.path());
+    let (_runtime, process, weathr) = test_weathr_watchdog(&tree);
+
+    let exit_code = run_with_platform_and_managed_weathr_launcher(
+        ["weathr"],
+        &platform,
+        &mut stdout,
+        &mut stderr,
+        &process,
+        weathr,
+        |_options, _watchdog| {
+            Err(tundra_weathr::WeathrRunError::Panic {
+                incident_id: "test-weathr-panic".to_string(),
+                reason: "render failed".to_string(),
+            })
+        },
+    );
+
+    assert_eq!(exit_code, 1);
+    let stderr = String::from_utf8(stderr).expect("managed Weathr error output is UTF-8");
+    assert!(stderr.contains("render failed"));
+    assert!(stderr.contains("test-weathr-panic"));
+    assert!(stderr.contains("report path unavailable"));
+    assert!(platform.calls().iter().any(|call| matches!(
+        call,
+        MockCall::ShowCriticalError { title, body }
+            if title.contains("Weathr") && body.contains("render failed")
+    )));
+}
+
+#[test]
+fn managed_cli_routes_pending_watchdog_incidents_for_non_weathr_commands() {
+    let mut stdout = Vec::new();
+    let mut stderr = Vec::new();
+    let tree = TempTree::new("managed-watchdog-drain");
+    let platform = mock_windows_platform(tree.path());
+    let (_runtime, process, weathr) = test_weathr_watchdog(&tree);
+    let caught = weathr
+        .run_boundary(
+            BoundarySpec::new("test.recovered", BoundaryKind::Worker),
+            std::panic::AssertUnwindSafe(|| -> () { panic!("managed incident") }),
+        )
+        .expect_err("test boundary should catch panic");
+    caught
+        .finalize(RecoveryOutcome::Recovered(
+            "test recovery completed".to_string(),
+        ))
+        .expect("test incident report finalizes");
+
+    let exit_code = run_with_platform_and_managed_weathr_launcher(
+        ["help"],
+        &platform,
+        &mut stdout,
+        &mut stderr,
+        &process,
+        weathr,
+        |_options, _watchdog| Ok(()),
+    );
+
+    assert_eq!(exit_code, 0);
+    let stderr = String::from_utf8(stderr).expect("watchdog route output is UTF-8");
+    assert!(stderr.contains("WATCHDOG CRITICAL:"));
+    assert!(stderr.contains("test recovery completed"));
+    assert!(
+        !platform
+            .calls()
+            .iter()
+            .any(|call| matches!(call, MockCall::ShowCriticalError { .. }))
+    );
 }
 
 #[test]
@@ -705,6 +812,28 @@ fn user_dirs(base: &Path) -> UserDirs {
         base.join("AppData"),
     )
     .expect("absolute user directory roots should resolve")
+}
+
+fn test_weathr_watchdog(
+    tree: &TempTree,
+) -> (
+    WatchdogRuntime,
+    ProcessWatchdog,
+    tundra_watchdog::AppWatchdog,
+) {
+    let root = tree.path().join("watchdog");
+    let config = WatchdogConfig::new(
+        root.join("crashes"),
+        root.join("fallback"),
+        root.join("state"),
+        "tundra-cli-test",
+        env!("CARGO_PKG_VERSION"),
+    );
+    let (runtime, process) = WatchdogRuntime::start(config).expect("test watchdog starts");
+    let weathr = process
+        .register_app(tundra_weathr::weathr_watchdog_descriptor())
+        .expect("test Weathr app registers");
+    (runtime, process, weathr)
 }
 
 #[derive(Debug)]

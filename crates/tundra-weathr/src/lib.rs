@@ -16,5 +16,7 @@ pub mod weather;
 
 pub use launch::{
     LaunchLocation, LaunchOptions, ShellLockscreenResult, WeathrRunError,
-    run_blocking_with_options, run_default_blocking, run_shell_lockscreen_blocking_with_options,
+    restore_terminal_best_effort, run_blocking_managed, run_blocking_with_options,
+    run_default_blocking, run_shell_lockscreen_blocking_with_options, run_shell_lockscreen_managed,
+    weathr_watchdog_descriptor,
 };

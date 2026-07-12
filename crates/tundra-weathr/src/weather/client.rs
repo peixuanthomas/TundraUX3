@@ -7,12 +7,14 @@ use crate::weather::types::{WeatherData, WeatherLocation, WeatherUnits};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::RwLock;
+use tundra_watchdog::AppWatchdog;
 
 #[derive(Clone)]
 pub struct WeatherClient {
     provider: Arc<dyn WeatherProvider>,
     cache: Arc<RwLock<Option<CachedWeather>>>,
     cache_duration: Duration,
+    watchdog: Option<AppWatchdog>,
 }
 
 struct CachedWeather {
@@ -26,6 +28,20 @@ impl WeatherClient {
             provider,
             cache: Arc::new(RwLock::new(None)),
             cache_duration,
+            watchdog: None,
+        }
+    }
+
+    pub fn new_managed(
+        provider: Arc<dyn WeatherProvider>,
+        cache_duration: Duration,
+        watchdog: AppWatchdog,
+    ) -> Self {
+        Self {
+            provider,
+            cache: Arc::new(RwLock::new(None)),
+            cache_duration,
+            watchdog: Some(watchdog),
         }
     }
 
@@ -69,7 +85,18 @@ impl WeatherClient {
             });
         }
 
-        cache::save_weather_cache(&data, location.latitude, location.longitude, provider);
+        let _ = match self.watchdog.as_ref() {
+            Some(watchdog) => cache::save_weather_cache_managed(
+                watchdog,
+                &data,
+                location.latitude,
+                location.longitude,
+                provider,
+            ),
+            None => {
+                cache::save_weather_cache(&data, location.latitude, location.longitude, provider)
+            }
+        };
 
         Ok(data)
     }

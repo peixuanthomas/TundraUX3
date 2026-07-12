@@ -617,6 +617,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7e3450815272ef58cec6d564423f6e755e25379b217b0bc688e295ba24df6b1d"
 
 [[package]]
+name = "futures-macro"
+version = "0.3.32"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e835b70203e41293343137df5c0664546da5745f82ec9b84d40be8336958447b"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
+]
+
+[[package]]
 name = "futures-sink"
 version = "0.3.32"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -635,6 +646,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "389ca41296e6190b48053de0321d02a77f32f8a5d2461dd38762c0593805c6d6"
 dependencies = [
  "futures-core",
+ "futures-macro",
  "futures-task",
  "pin-project-lite",
  "slab",
@@ -2388,9 +2400,11 @@ checksum = "e421abadd41a4225275504ea4d6566923418b7f05506fbc9c0fe86ba7396114b"
 name = "tundra-apps"
 version = "0.1.0"
 dependencies = [
+ "serde_json",
  "tundra-core",
  "tundra-platform",
  "tundra-storage",
+ "tundra-watchdog",
 ]
 
 [[package]]
@@ -2410,6 +2424,7 @@ dependencies = [
  "tundra-platform",
  "tundra-storage",
  "tundra-ui",
+ "tundra-watchdog",
  "tundra-weathr",
 ]
 
@@ -2446,6 +2461,7 @@ dependencies = [
  "tundra-platform",
  "tundra-storage",
  "tundra-ui",
+ "tundra-watchdog",
  "tundra-weathr",
 ]
 
@@ -2470,6 +2486,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "tundra-watchdog"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "futures-util",
+ "serde",
+ "serde_json",
+ "tokio",
+ "windows-sys 0.52.0",
+]
+
+[[package]]
 name = "tundra-weathr"
 version = "0.1.0"
 dependencies = [
@@ -2486,6 +2514,7 @@ dependencies = [
  "tokio",
  "toml 0.9.12+spec-1.1.0",
  "tundra-ascii-assets",
+ "tundra-watchdog",
 ]
 
 [[package]]

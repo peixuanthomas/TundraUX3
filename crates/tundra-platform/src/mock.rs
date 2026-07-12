@@ -20,6 +20,11 @@ pub enum MockCall {
     SpawnWait(ProcessSpec),
     ReadClipboardText,
     WriteClipboardText(String),
+    ShowCriticalError {
+        title: String,
+        body: String,
+    },
+    IsProcessAlive(u32),
     ReadDirectory(PathBuf),
     RenamePath {
         source: PathBuf,
@@ -43,6 +48,8 @@ pub struct MockPlatform {
     user_dirs: UserDirs,
     app_paths: AppPaths,
     clipboard_text: Mutex<String>,
+    critical_error_result: Mutex<Result<(), PlatformError>>,
+    process_alive_results: Mutex<BTreeMap<u32, Result<bool, PlatformError>>>,
     calls: Mutex<Vec<MockCall>>,
     file_attributes: Mutex<BTreeMap<PathBuf, Result<FileAttributes, PlatformError>>>,
     directory_listings: Mutex<BTreeMap<PathBuf, Result<DirectoryListing, PlatformError>>>,
@@ -65,6 +72,8 @@ impl MockPlatform {
             user_dirs,
             app_paths,
             clipboard_text: Mutex::new(String::new()),
+            critical_error_result: Mutex::new(Ok(())),
+            process_alive_results: Mutex::new(BTreeMap::new()),
             calls: Mutex::new(Vec::new()),
             file_attributes: Mutex::new(BTreeMap::new()),
             directory_listings: Mutex::new(BTreeMap::new()),
@@ -91,6 +100,20 @@ impl MockPlatform {
 
     pub fn set_clipboard_text(&self, text: impl Into<String>) {
         *self.clipboard_text.lock().expect("clipboard lock poisoned") = text.into();
+    }
+
+    pub fn set_critical_error_result(&self, result: Result<(), PlatformError>) {
+        *self
+            .critical_error_result
+            .lock()
+            .expect("critical error result lock poisoned") = result;
+    }
+
+    pub fn set_process_alive_result(&self, pid: u32, result: Result<bool, PlatformError>) {
+        self.process_alive_results
+            .lock()
+            .expect("process liveness lock poisoned")
+            .insert(pid, result);
     }
 
     pub fn set_file_attributes(&self, path: PathBuf, attributes: FileAttributes) {
@@ -273,6 +296,27 @@ impl Platform for MockPlatform {
         self.record(MockCall::WriteClipboardText(text.to_string()));
         *self.clipboard_text.lock().expect("clipboard lock poisoned") = text.to_string();
         Ok(())
+    }
+
+    fn show_critical_error(&self, title: &str, body: &str) -> Result<(), PlatformError> {
+        self.record(MockCall::ShowCriticalError {
+            title: title.to_string(),
+            body: body.to_string(),
+        });
+        self.critical_error_result
+            .lock()
+            .expect("critical error result lock poisoned")
+            .clone()
+    }
+
+    fn is_process_alive(&self, pid: u32) -> Result<bool, PlatformError> {
+        self.record(MockCall::IsProcessAlive(pid));
+        self.process_alive_results
+            .lock()
+            .expect("process liveness lock poisoned")
+            .get(&pid)
+            .cloned()
+            .unwrap_or(Ok(false))
     }
 
     fn local_volumes(&self) -> Result<Vec<LocalVolume>, PlatformError> {

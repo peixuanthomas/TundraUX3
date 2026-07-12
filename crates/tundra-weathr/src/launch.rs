@@ -12,10 +12,11 @@ use crossterm::{
 };
 use std::fmt;
 use std::io;
-use std::panic;
-use std::sync::atomic::{AtomicBool, Ordering};
-
-static PANIC_RESTORE_HOOK_INSTALLED: AtomicBool = AtomicBool::new(false);
+use std::panic::AssertUnwindSafe;
+use tundra_watchdog::{
+    AppCriticality, AppDescriptor, AppId, AppWatchdog, BoundaryKind, BoundarySpec, CaughtPanic,
+    ProcessWatchdog, RecoveryOutcome, WatchdogError,
+};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct LaunchLocation {
@@ -55,6 +56,8 @@ enum LaunchRunMode {
     ShellLockscreen,
 }
 
+const CLI_UI_MAX_RECOVERIES: usize = 1;
+
 impl LaunchRunMode {
     fn bottom_hud_prompt(self) -> BottomHudPrompt {
         match self {
@@ -78,6 +81,9 @@ pub enum WeathrRunError {
     Config(ConfigError),
     Terminal(TerminalError),
     Assets(WeatherAssetError),
+    WatchdogUnavailable,
+    Watchdog(WatchdogError),
+    Panic { incident_id: String, reason: String },
     Runtime(io::Error),
     Run(io::Error),
     Cleanup(io::Error),
@@ -90,6 +96,17 @@ impl fmt::Display for WeathrRunError {
             Self::Config(error) => write!(formatter, "failed to load weathr config: {error}"),
             Self::Terminal(error) => write!(formatter, "{}", error.user_friendly_message()),
             Self::Assets(error) => write!(formatter, "failed to load weathr ASCII assets: {error}"),
+            Self::WatchdogUnavailable => formatter.write_str(
+                "weathr requires the process watchdog to be installed before it is launched",
+            ),
+            Self::Watchdog(error) => write!(formatter, "weathr watchdog setup failed: {error}"),
+            Self::Panic {
+                incident_id,
+                reason,
+            } => write!(
+                formatter,
+                "weathr stopped after a panic ({incident_id}): {reason}"
+            ),
             Self::Runtime(error) => write!(formatter, "failed to start weathr runtime: {error}"),
             Self::Run(error) => write!(formatter, "weathr render loop failed: {error}"),
             Self::Cleanup(error) => write!(formatter, "failed to restore terminal: {error}"),
@@ -104,6 +121,9 @@ impl std::error::Error for WeathrRunError {
             Self::Config(error) => Some(error),
             Self::Terminal(error) => Some(error),
             Self::Assets(error) => Some(error),
+            Self::WatchdogUnavailable => None,
+            Self::Watchdog(error) => Some(error),
+            Self::Panic { .. } => None,
             Self::Runtime(error)
             | Self::Run(error)
             | Self::Cleanup(error)
@@ -126,7 +146,56 @@ impl From<TerminalError> for WeathrRunError {
 
 impl From<WeatherAssetError> for WeathrRunError {
     fn from(value: WeatherAssetError) -> Self {
-        Self::Assets(value)
+        match value {
+            WeatherAssetError::Watchdog(error) => Self::Watchdog(error),
+            error => Self::Assets(error),
+        }
+    }
+}
+
+impl From<WatchdogError> for WeathrRunError {
+    fn from(value: WatchdogError) -> Self {
+        Self::Watchdog(value)
+    }
+}
+
+/// Returns the canonical watchdog identity used by every Weathr host.
+///
+/// Shell, CLI, and future hosts should register this descriptor instead of
+/// duplicating its metadata so repeated registration remains conflict-free.
+pub fn weathr_watchdog_descriptor() -> AppDescriptor {
+    AppDescriptor::new(
+        AppId::from_static("weathr"),
+        "Weathr",
+        env!("CARGO_PKG_VERSION"),
+        AppCriticality::SessionCritical,
+    )
+}
+
+/// Restores terminal state without installing or replacing a panic hook.
+///
+/// Process hosts can register this function as watchdog emergency cleanup.
+pub fn restore_terminal_best_effort() {
+    let _ = disable_raw_mode();
+    let _ = execute!(io::stdout(), LeaveAlternateScreen, cursor::Show, ResetColor);
+}
+
+fn global_weathr_watchdog() -> Result<AppWatchdog, WeathrRunError> {
+    let process = ProcessWatchdog::global().ok_or(WeathrRunError::WatchdogUnavailable)?;
+    process
+        .register_app(weathr_watchdog_descriptor())
+        .map_err(WeathrRunError::Watchdog)
+}
+
+fn finalize_ui_panic(caught: CaughtPanic, mode: &'static str) -> WeathrRunError {
+    let incident_id = caught.incident_id().to_string();
+    let reason = caught.payload().to_string();
+    let _ = caught.finalize(RecoveryOutcome::Unrecoverable(format!(
+        "weathr {mode} UI session stopped after panic"
+    )));
+    WeathrRunError::Panic {
+        incident_id,
+        reason,
     }
 }
 
@@ -135,32 +204,94 @@ pub fn run_default_blocking() -> Result<(), WeathrRunError> {
 }
 
 pub fn run_blocking_with_options(options: LaunchOptions) -> Result<(), WeathrRunError> {
-    install_panic_restore_hook();
+    run_blocking_managed(options, global_weathr_watchdog()?)
+}
+
+pub fn run_blocking_managed(
+    options: LaunchOptions,
+    watchdog: AppWatchdog,
+) -> Result<(), WeathrRunError> {
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
         .map_err(WeathrRunError::Runtime)?;
 
-    runtime
-        .block_on(run_with_options(options, LaunchRunMode::Cli))
-        .map(|_| ())
+    run_cli_ui_with_recovery(&watchdog, || {
+        runtime
+            .block_on(run_with_options(
+                options.clone(),
+                LaunchRunMode::Cli,
+                watchdog.clone(),
+            ))
+            .map(|_| ())
+    })
+}
+
+fn run_cli_ui_with_recovery<T, F>(
+    watchdog: &AppWatchdog,
+    mut attempt: F,
+) -> Result<T, WeathrRunError>
+where
+    F: FnMut() -> Result<T, WeathrRunError>,
+{
+    let mut recoveries = 0_usize;
+    loop {
+        let result = watchdog.run_boundary(
+            BoundarySpec::new("cli-ui-session", BoundaryKind::UiSession).terminal_owner(),
+            AssertUnwindSafe(&mut attempt),
+        );
+        match result {
+            Ok(result) => return result,
+            Err(caught) if recoveries < CLI_UI_MAX_RECOVERIES => {
+                recoveries += 1;
+                let _ = caught.finalize(RecoveryOutcome::RecoveredWithWarnings(
+                    "the Weathr CLI UI was rebuilt once from configuration and cache".to_string(),
+                ));
+            }
+            Err(caught) => return Err(finalize_ui_panic(caught, "CLI")),
+        }
+    }
 }
 
 pub fn run_shell_lockscreen_blocking_with_options(
     options: LaunchOptions,
 ) -> Result<ShellLockscreenResult, WeathrRunError> {
-    install_panic_restore_hook();
+    let watchdog = global_weathr_watchdog()?;
+    let boundary = watchdog.clone();
+    match boundary.run_boundary(
+        BoundarySpec::new("standalone-shell-lockscreen-ui", BoundaryKind::UiSession)
+            .terminal_owner(),
+        AssertUnwindSafe(|| run_shell_lockscreen_managed(options, watchdog)),
+    ) {
+        Ok(result) => result,
+        Err(caught) => Err(finalize_ui_panic(caught, "standalone Shell lockscreen")),
+    }
+}
+
+/// Runs one Shell lockscreen UI session under the caller's supervisor.
+///
+/// A panic intentionally unwinds to the host boundary so the Shell can apply
+/// its shared 60-second/two-recovery crash-loop policy.
+pub fn run_shell_lockscreen_managed(
+    options: LaunchOptions,
+    watchdog: AppWatchdog,
+) -> Result<ShellLockscreenResult, WeathrRunError> {
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
         .map_err(WeathrRunError::Runtime)?;
 
-    runtime.block_on(run_with_options(options, LaunchRunMode::ShellLockscreen))
+    runtime.block_on(run_with_options(
+        options,
+        LaunchRunMode::ShellLockscreen,
+        watchdog,
+    ))
 }
 
 async fn run_with_options(
     options: LaunchOptions,
     mode: LaunchRunMode,
+    watchdog: AppWatchdog,
 ) -> Result<ShellLockscreenResult, WeathrRunError> {
     let mut config = match Config::load() {
         Ok(config) => config,
@@ -198,6 +329,7 @@ async fn run_with_options(
         theme_registry,
         timezone_id,
         mode.bottom_hud_prompt(),
+        watchdog,
     )?;
 
     renderer.init()?;
@@ -264,24 +396,41 @@ fn apply_launch_location(config: &mut Config, options: &LaunchOptions) {
     };
 }
 
-fn install_panic_restore_hook() {
-    if PANIC_RESTORE_HOOK_INSTALLED
-        .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
-        .is_err()
-    {
-        return;
-    }
-    let default_hook = panic::take_hook();
-    panic::set_hook(Box::new(move |panic_info| {
-        let _ = disable_raw_mode();
-        let _ = execute!(io::stdout(), LeaveAlternateScreen, cursor::Show, ResetColor);
-        default_hook(panic_info);
-    }));
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::{SystemTime, UNIX_EPOCH};
+    use tundra_watchdog::{WatchdogConfig, WatchdogRuntime};
+
+    fn test_watchdog(
+        name: &str,
+    ) -> (
+        WatchdogRuntime,
+        ProcessWatchdog,
+        AppWatchdog,
+        std::path::PathBuf,
+    ) {
+        let suffix = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("test clock is after epoch")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "tundra-weathr-{name}-{}-{suffix}",
+            std::process::id()
+        ));
+        let config = WatchdogConfig::new(
+            root.join("crashes"),
+            root.join("fallback"),
+            root.join("state"),
+            "tundra-weathr-test",
+            env!("CARGO_PKG_VERSION"),
+        );
+        let (runtime, process) = WatchdogRuntime::start(config).expect("test watchdog starts");
+        let app = process
+            .register_app(weathr_watchdog_descriptor())
+            .expect("test Weathr app registers");
+        (runtime, process, app, root)
+    }
 
     #[test]
     fn shell_lockscreen_result_distinguishes_space_and_cancel() {
@@ -305,6 +454,69 @@ mod tests {
             LaunchRunMode::ShellLockscreen.bottom_hud_prompt(),
             BottomHudPrompt::Start
         );
+    }
+
+    #[test]
+    fn watchdog_descriptor_is_stable_for_every_host() {
+        let descriptor = weathr_watchdog_descriptor();
+
+        assert_eq!(descriptor.id.as_str(), "weathr");
+        assert_eq!(descriptor.display_name, "Weathr");
+        assert_eq!(descriptor.version, env!("CARGO_PKG_VERSION"));
+        assert_eq!(descriptor.criticality, AppCriticality::SessionCritical);
+    }
+
+    #[test]
+    fn cli_ui_rebuild_is_limited_to_one_recovery() {
+        assert_eq!(CLI_UI_MAX_RECOVERIES, 1);
+    }
+
+    #[test]
+    fn cli_ui_rebuilds_once_after_a_panic() {
+        let (runtime, process, watchdog, root) = test_watchdog("cli-rebuild");
+        let mut attempts = 0;
+
+        let result = run_cli_ui_with_recovery(&watchdog, || {
+            attempts += 1;
+            if attempts == 1 {
+                panic!("first UI failed");
+            }
+            Ok(())
+        });
+
+        assert!(result.is_ok());
+        assert_eq!(attempts, 2);
+        let incidents = process.drain_incidents();
+        assert_eq!(incidents.len(), 1);
+        assert!(matches!(
+            &incidents[0].recovery,
+            RecoveryOutcome::RecoveredWithWarnings(_)
+        ));
+        runtime.shutdown().expect("test watchdog shuts down");
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn second_cli_ui_panic_stops_the_crash_loop() {
+        let (runtime, process, watchdog, root) = test_watchdog("cli-crash-loop");
+        let mut attempts = 0;
+
+        let error = run_cli_ui_with_recovery::<(), _>(&watchdog, || {
+            attempts += 1;
+            panic!("UI failed repeatedly");
+        })
+        .expect_err("second UI panic must stop recovery");
+
+        assert_eq!(attempts, 2);
+        assert!(matches!(error, WeathrRunError::Panic { .. }));
+        let incidents = process.drain_incidents();
+        assert_eq!(incidents.len(), 2);
+        assert!(incidents.iter().any(|incident| matches!(
+            &incident.recovery,
+            RecoveryOutcome::Unrecoverable(_)
+        )));
+        runtime.shutdown().expect("test watchdog shuts down");
+        let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]
