@@ -52,12 +52,17 @@ impl ShellState {
             .storage_manager
             .as_ref()
             .map(|storage| ShellExplorerTaskRuntime::new(storage.clone()));
+        let diagnostics_task_runtime = startup
+            .storage_manager
+            .as_ref()
+            .map(|storage| ShellDiagnosticsTaskRuntime::new(storage.clone()));
         Self::new_with_runtime_services(
             launch_config,
             terminal_size,
             startup,
             ascii_assets,
             explorer_task_runtime,
+            diagnostics_task_runtime,
         )
     }
 
@@ -67,7 +72,11 @@ impl ShellState {
         startup: ShellStartupState,
         ascii_assets: tundra_ui::RuntimeAsciiAssets,
         explorer_task_runtime: Option<ShellExplorerTaskRuntime>,
+        diagnostics_task_runtime: Option<ShellDiagnosticsTaskRuntime>,
     ) -> Self {
+        let diagnostics_restart_required = diagnostics_task_runtime
+            .as_ref()
+            .is_some_and(ShellDiagnosticsTaskRuntime::restart_required);
         let home_mode = resolved_home_mode(launch_config, &startup);
         let auth_gate_enabled = startup.storage_manager.is_some();
         let initial_screen = if auth_gate_enabled {
@@ -154,6 +163,20 @@ impl ShellState {
             explorer_overlay_selection: 0,
             explorer_conflict_apply_to_remaining: false,
             explorer_task_runtime,
+            diagnostics_task_runtime,
+            diagnostics_snapshot: None,
+            diagnostics_tab: tundra_ui::DiagnosticsTab::Health,
+            diagnostics_selected_check: 0,
+            diagnostics_selected_incident: 0,
+            diagnostics_list_window_start: 0,
+            diagnostics_scanning: false,
+            diagnostics_rescan_pending: false,
+            diagnostics_repair_preview: Vec::new(),
+            diagnostics_repair_selected: 0,
+            diagnostics_repair_scroll_offset: 0,
+            diagnostics_repair_confirm_selected: true,
+            diagnostics_feedback: None,
+            diagnostics_restart_required,
             terminal_size,
             terminal_flags: ShellTerminalFlags::enabled(),
             focused_component: initial_focus,

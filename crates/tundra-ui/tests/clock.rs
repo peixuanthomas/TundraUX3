@@ -133,7 +133,7 @@ fn upward_pointing_hands_do_not_overwrite_the_large_twelve() {
         })
         .collect::<Vec<_>>();
     let model = ClockViewModel::at("2026-07-10", "00:00:00", 0, 0, 0).with_ascii_assets(assets);
-    let (terminal, main) = render(100, 30, &model, false);
+    let (terminal, main) = render(100, 32, &model, false);
     let layout = clock_page_layout(main, &model);
     let face = region_text(
         &terminal,

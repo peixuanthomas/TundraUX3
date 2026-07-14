@@ -13,6 +13,7 @@ fn build_shell_hit_map(
     home_model: Option<&tundra_ui::HomeViewModel>,
     clock_model: Option<&tundra_ui::ClockViewModel>,
     explorer_model: Option<&tundra_ui::ExplorerViewModel>,
+    diagnostics_model: Option<&tundra_ui::DiagnosticsViewModel>,
 ) -> ShellHitMap {
     let (width, height) = terminal_size;
     let area = Rect::new(0, 0, width, height);
@@ -85,6 +86,23 @@ fn build_shell_hit_map(
                         area: main,
                         layer: ShellHitLayer::AppContent,
                     });
+                }
+                ShellScreen::Diagnostics => {
+                    regions.push(ShellHitRegion {
+                        component: ShellComponent::Diagnostics,
+                        area: main,
+                        layer: ShellHitLayer::AppContent,
+                    });
+                    if let Some(model) = diagnostics_model {
+                        let layout = tundra_ui::diagnostics_layout(main, model);
+                        if let Some(dialog) = layout.repair_dialog {
+                            regions.push(ShellHitRegion {
+                                component: ShellComponent::DiagnosticsRepairDialog,
+                                area: dialog.dialog,
+                                layer: ShellHitLayer::AppOverlay,
+                            });
+                        }
+                    }
                 }
                 ShellScreen::Clock => {
                     regions.push(ShellHitRegion {

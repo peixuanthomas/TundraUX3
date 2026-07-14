@@ -44,6 +44,7 @@ pub enum ShellScreen {
     Login,
     Home,
     Clock,
+    Diagnostics,
     Explorer,
     UserManagement,
     ExitConfirm,

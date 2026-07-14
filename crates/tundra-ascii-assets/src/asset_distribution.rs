@@ -53,7 +53,7 @@ fn copy_dir_recursive(source: &Path, destination: &Path) -> Result<(), std::io::
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{AsciiAssetStore, DEFAULT_THEME_ID};
+    use crate::{AsciiAssetStore, DEFAULT_THEME_ID, check_required_assets, required_assets};
     use std::time::{SystemTime, UNIX_EPOCH};
 
     #[test]
@@ -82,6 +82,9 @@ mod tests {
         );
         let store = AsciiAssetStore::load_with_root(&copied_root, DEFAULT_THEME_ID)
             .expect("copied runtime assets should be self-contained");
+        let report = check_required_assets(&copied_root, DEFAULT_THEME_ID);
+        assert_eq!(report.checks.len(), required_assets().len());
+        assert!(report.is_ok(), "{:?}", report.warning_messages());
         assert_eq!(
             store.explorer_icon("folder").expect("folder icon").width(),
             3

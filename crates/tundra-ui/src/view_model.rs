@@ -141,6 +141,48 @@ impl Default for ClockCreateDialogViewModel {
     }
 }
 
+/// Physical height-to-width ratio of one terminal character cell.
+///
+/// Terminals may omit pixel dimensions, so the conventional 2:1 character
+/// cell is used as a fallback. Keeping this value explicit lets circular
+/// graphics compensate for fonts and line heights which use another ratio.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct TerminalCellAspectRatio(f64);
+
+impl TerminalCellAspectRatio {
+    pub const FALLBACK: Self = Self(2.0);
+
+    pub fn new(height_to_width: f64) -> Option<Self> {
+        (height_to_width.is_finite() && height_to_width > 0.0).then_some(Self(height_to_width))
+    }
+
+    /// Derives the average cell ratio from terminal character and pixel sizes.
+    ///
+    /// Crossterm reports zero pixel dimensions on terminals which do not
+    /// support them; those and all other invalid dimensions use the fallback.
+    pub fn from_window_size(columns: u16, rows: u16, pixel_width: u16, pixel_height: u16) -> Self {
+        if columns == 0 || rows == 0 || pixel_width == 0 || pixel_height == 0 {
+            return Self::FALLBACK;
+        }
+
+        let height_to_width = (f64::from(pixel_height) * f64::from(columns))
+            / (f64::from(pixel_width) * f64::from(rows));
+        Self::new(height_to_width).unwrap_or(Self::FALLBACK)
+    }
+
+    pub fn height_to_width(self) -> f64 {
+        self.0
+    }
+}
+
+impl Eq for TerminalCellAspectRatio {}
+
+impl Default for TerminalCellAspectRatio {
+    fn default() -> Self {
+        Self::FALLBACK
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct ClockViewModel {
     pub date: String,
@@ -156,6 +198,7 @@ pub struct ClockViewModel {
     pub create_dialog: Option<ClockCreateDialogViewModel>,
     read_only: bool,
     ascii_assets: Option<RuntimeAsciiAssets>,
+    terminal_cell_aspect_ratio: TerminalCellAspectRatio,
 }
 
 impl PartialEq for ClockViewModel {
@@ -171,6 +214,7 @@ impl PartialEq for ClockViewModel {
             && self.entry_window_start == other.entry_window_start
             && self.create_dialog == other.create_dialog
             && self.read_only == other.read_only
+            && self.terminal_cell_aspect_ratio == other.terminal_cell_aspect_ratio
     }
 }
 
@@ -224,6 +268,7 @@ impl ClockViewModel {
             create_dialog: None,
             read_only: false,
             ascii_assets: None,
+            terminal_cell_aspect_ratio: TerminalCellAspectRatio::default(),
         }
     }
 
@@ -244,6 +289,18 @@ impl ClockViewModel {
     pub fn with_ascii_assets(mut self, ascii_assets: RuntimeAsciiAssets) -> Self {
         self.ascii_assets = Some(ascii_assets);
         self
+    }
+
+    pub fn with_terminal_cell_aspect_ratio(
+        mut self,
+        terminal_cell_aspect_ratio: TerminalCellAspectRatio,
+    ) -> Self {
+        self.terminal_cell_aspect_ratio = terminal_cell_aspect_ratio;
+        self
+    }
+
+    pub(crate) fn terminal_cell_aspect_ratio(&self) -> TerminalCellAspectRatio {
+        self.terminal_cell_aspect_ratio
     }
 
     pub(crate) fn clock_font(&self) -> Option<&crate::ClockFontAsset> {
@@ -310,6 +367,130 @@ pub struct DebugDiagnosticsViewModel {
     pub drag_direction: Option<String>,
     pub terminal_flags: Vec<String>,
     pub platform_capability_summary: String,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum DiagnosticsTab {
+    #[default]
+    Health,
+    Incidents,
+}
+
+impl DiagnosticsTab {
+    pub const ALL: [Self; 2] = [Self::Health, Self::Incidents];
+
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Health => "Health",
+            Self::Incidents => "Incidents",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum DiagnosticsStatus {
+    #[default]
+    Pass,
+    Warning,
+    Fail,
+}
+
+impl DiagnosticsStatus {
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Pass => "Pass",
+            Self::Warning => "Warning",
+            Self::Fail => "Failure",
+        }
+    }
+
+    pub const fn marker(self) -> &'static str {
+        match self {
+            Self::Pass => "[OK]",
+            Self::Warning => "[!]",
+            Self::Fail => "[X]",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DiagnosticsCheckViewModel {
+    pub id: String,
+    pub label: String,
+    pub category: String,
+    pub status: DiagnosticsStatus,
+    pub summary: String,
+    pub detail: String,
+    pub remediation: String,
+    pub repairable: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DiagnosticsIncidentViewModel {
+    pub id: String,
+    pub occurred_at: String,
+    pub app: String,
+    pub severity: DiagnosticsStatus,
+    pub recovery: String,
+    pub summary: String,
+    pub detail: String,
+    pub report_path: String,
+    pub restricted: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DiagnosticsRepairItemViewModel {
+    pub id: String,
+    pub label: String,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct DiagnosticsRepairDialogViewModel {
+    pub items: Vec<DiagnosticsRepairItemViewModel>,
+    pub selected: usize,
+    pub confirm_selected: bool,
+    pub scroll_offset: usize,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct DiagnosticsViewModel {
+    pub tab: DiagnosticsTab,
+    pub checks: Vec<DiagnosticsCheckViewModel>,
+    pub incidents: Vec<DiagnosticsIncidentViewModel>,
+    pub selected_check: usize,
+    pub selected_incident: usize,
+    pub list_window_start: usize,
+    pub scanning: bool,
+    pub can_view_details: bool,
+    pub can_repair: bool,
+    pub restart_required: bool,
+    pub repair_dialog: Option<DiagnosticsRepairDialogViewModel>,
+    pub feedback: Option<String>,
+    pub scanned_at: Option<String>,
+}
+
+impl DiagnosticsViewModel {
+    pub fn selected_check(&self) -> Option<&DiagnosticsCheckViewModel> {
+        self.checks.get(self.selected_check)
+    }
+
+    pub fn selected_incident(&self) -> Option<&DiagnosticsIncidentViewModel> {
+        self.incidents.get(self.selected_incident)
+    }
+
+    pub fn item_count(&self) -> usize {
+        match self.tab {
+            DiagnosticsTab::Health => self.checks.len(),
+            DiagnosticsTab::Incidents => self.incidents.len(),
+        }
+    }
+
+    pub fn selected_index(&self) -> usize {
+        match self.tab {
+            DiagnosticsTab::Health => self.selected_check,
+            DiagnosticsTab::Incidents => self.selected_incident,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]

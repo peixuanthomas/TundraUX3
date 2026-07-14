@@ -35,6 +35,144 @@ impl ShellState {
         }
     }
 
+    pub fn to_diagnostics_view_model(&self) -> tundra_ui::DiagnosticsViewModel {
+        let can_view_details = self.diagnostics_can_view_details();
+        let can_repair = self.diagnostics_can_repair();
+        let (checks, incidents, scanned_at) = self
+            .diagnostics_snapshot
+            .as_ref()
+            .map(|snapshot| {
+                let checks = snapshot
+                    .checks
+                    .iter()
+                    .map(|check| tundra_ui::DiagnosticsCheckViewModel {
+                        id: check.id.clone(),
+                        label: check.label.clone(),
+                        category: check.category.label().to_string(),
+                        status: diagnostics_status_to_ui(check.status),
+                        summary: if can_view_details {
+                            check.summary.clone()
+                        } else {
+                            diagnostics_public_check_summary(check)
+                        },
+                        detail: if can_view_details {
+                            check.detail.clone()
+                        } else {
+                            String::new()
+                        },
+                        remediation: check.remediation.clone().unwrap_or_default(),
+                        repairable: check.repair.is_some(),
+                    })
+                    .collect();
+                let incidents = snapshot
+                    .incidents
+                    .iter()
+                    .map(|incident| {
+                        let app = incident
+                            .app
+                            .as_ref()
+                            .map(|app| app.display_name.clone())
+                            .unwrap_or_else(|| "TundraUX process".to_string());
+                        let recovery = if can_view_details {
+                            format!("{:?}", incident.recovery)
+                        } else {
+                            diagnostics_recovery_label(&incident.recovery)
+                        };
+                        let detail = if can_view_details {
+                            format!(
+                                "Boundary: {}; Component: {}",
+                                incident.boundary,
+                                incident.component.as_deref().unwrap_or("none")
+                            )
+                        } else {
+                            String::new()
+                        };
+                        tundra_ui::DiagnosticsIncidentViewModel {
+                            id: if can_view_details {
+                                incident.incident_id.clone()
+                            } else {
+                                String::new()
+                            },
+                            occurred_at: incident
+                                .occurred_at
+                                .format("%Y-%m-%d %H:%M:%S UTC")
+                                .to_string(),
+                            app,
+                            severity: diagnostics_incident_severity_to_ui(incident.severity),
+                            recovery,
+                            summary: if can_view_details {
+                                incident.summary.clone()
+                            } else {
+                                String::new()
+                            },
+                            detail,
+                            report_path: if can_view_details {
+                                incident
+                                    .text_report_path
+                                    .as_ref()
+                                    .unwrap_or(&incident.json_report_path)
+                                    .display()
+                                    .to_string()
+                            } else {
+                                String::new()
+                            },
+                            restricted: !can_view_details,
+                        }
+                    })
+                    .collect();
+                (
+                    checks,
+                    incidents,
+                    Some(
+                        snapshot
+                            .scanned_at
+                            .format("%Y-%m-%d %H:%M:%S UTC")
+                            .to_string(),
+                    ),
+                )
+            })
+            .unwrap_or_else(|| (Vec::new(), Vec::new(), None));
+
+        let repair_dialog = (!self.diagnostics_repair_preview.is_empty()).then(|| {
+            tundra_ui::DiagnosticsRepairDialogViewModel {
+                items: self
+                    .diagnostics_repair_preview
+                    .iter()
+                    .enumerate()
+                    .map(
+                        |(index, action)| tundra_ui::DiagnosticsRepairItemViewModel {
+                            id: index.to_string(),
+                            label: action.label(),
+                        },
+                    )
+                    .collect(),
+                selected: self.diagnostics_repair_selected,
+                confirm_selected: self.diagnostics_repair_confirm_selected,
+                scroll_offset: self.diagnostics_repair_scroll_offset,
+            }
+        });
+
+        tundra_ui::DiagnosticsViewModel {
+            tab: self.diagnostics_tab,
+            checks,
+            incidents,
+            selected_check: self.diagnostics_selected_check,
+            selected_incident: self.diagnostics_selected_incident,
+            list_window_start: self.diagnostics_list_window_start,
+            scanning: self.diagnostics_scanning
+                || self
+                    .diagnostics_task_runtime
+                    .as_ref()
+                    .is_some_and(ShellDiagnosticsTaskRuntime::is_busy),
+            can_view_details,
+            can_repair,
+            restart_required: self.diagnostics_restart_is_required(),
+            repair_dialog,
+            feedback: self.diagnostics_feedback.clone(),
+            scanned_at,
+        }
+    }
+
     fn current_home_username(&self) -> Option<&str> {
         self.auth_session
             .as_ref()
@@ -328,8 +466,7 @@ impl ShellState {
                 } else {
                     !is_trash && location.path == state.current_path
                 };
-                model.enabled = location.enabled
-                    && (location.is_trash() || location.path.is_dir());
+                model.enabled = location.enabled && (location.is_trash() || location.path.is_dir());
                 model.drop_target = !location.is_trash()
                     && state
                         .drag
@@ -388,12 +525,8 @@ impl ShellState {
                 tundra_ui::ExplorerToolbarAction::New => !is_trash && !busy,
                 tundra_ui::ExplorerToolbarAction::Cut
                 | tundra_ui::ExplorerToolbarAction::Copy
-                | tundra_ui::ExplorerToolbarAction::Delete => {
-                    model.selected_count > 0 && !busy
-                }
-                tundra_ui::ExplorerToolbarAction::Paste => {
-                    state.clipboard.is_some() && !busy
-                }
+                | tundra_ui::ExplorerToolbarAction::Delete => model.selected_count > 0 && !busy,
+                tundra_ui::ExplorerToolbarAction::Paste => state.clipboard.is_some() && !busy,
                 tundra_ui::ExplorerToolbarAction::Rename => {
                     !is_trash && model.selected_count == 1 && !busy
                 }
@@ -523,8 +656,7 @@ impl ShellState {
                 | ExplorerInputMode::NewTextFile
                 | ExplorerInputMode::Rename
                 | ExplorerInputMode::RestoreDestination
-        )
-        {
+        ) {
             let (kind, title, prompt, confirm_label) = match self.explorer_input_mode {
                 ExplorerInputMode::NewFolder => (
                     tundra_ui::ExplorerNameDialogKind::NewFolder,
@@ -575,13 +707,11 @@ impl ShellState {
                     !state.entries.is_empty(),
                     self.explorer_overlay_selection,
                 ),
-                ExplorerOverlayMode::Sort { anchor } => {
-                    explorer_sort_menu_view_model(
-                        anchor,
-                        model.sort_column,
-                        self.explorer_overlay_selection,
-                    )
-                }
+                ExplorerOverlayMode::Sort { anchor } => explorer_sort_menu_view_model(
+                    anchor,
+                    model.sort_column,
+                    self.explorer_overlay_selection,
+                ),
                 ExplorerOverlayMode::Options => {
                     explorer_options_view_model(state, self.explorer_overlay_selection)
                 }

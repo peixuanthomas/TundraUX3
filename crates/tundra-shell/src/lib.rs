@@ -92,6 +92,7 @@ include!("account_workflows.rs");
 include!("clock_workflows.rs");
 include!("explorer_workflows.rs");
 include!("explorer_task_workflows.rs");
+include!("diagnostics_workflows.rs");
 include!("user_management_workflows.rs");
 include!("home_navigation.rs");
 include!("notification_workflows.rs");

@@ -2,6 +2,7 @@ mod atomic_write;
 mod clock_document;
 mod config_document;
 mod descriptors;
+mod document_health;
 mod document_io;
 mod error;
 mod initialization;
@@ -21,6 +22,9 @@ pub use config_document::{
 };
 pub use descriptors::{
     CLOCK_DESCRIPTOR, CONFIG_DESCRIPTOR, StorageDescriptor, VERSIONED_JSON_DESCRIPTORS,
+};
+pub use document_health::{
+    StorageDocumentCheck, StorageDocumentKind, StorageDocumentStatus, StorageRepairReport,
 };
 pub use error::StorageError;
 pub use layout::StorageLayout;

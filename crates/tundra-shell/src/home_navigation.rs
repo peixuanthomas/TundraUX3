@@ -1,5 +1,24 @@
 impl ShellState {
     fn logout_at(&mut self, now: Instant) {
+        if self.diagnostics_restart_is_required() {
+            self.notify_alert_with_tone(
+                "Restart TundraUX before signing out",
+                tundra_ui::NotificationTone::Warning,
+            );
+            return;
+        }
+        if self.diagnostics_scanning
+            || self
+                .diagnostics_task_runtime
+                .as_ref()
+                .is_some_and(ShellDiagnosticsTaskRuntime::is_busy)
+        {
+            self.notify_alert_with_tone(
+                "Wait for the diagnostics task to finish before signing out",
+                tundra_ui::NotificationTone::Warning,
+            );
+            return;
+        }
         let audit_error = self
             .auth_session
             .as_ref()
@@ -55,6 +74,19 @@ impl ShellState {
         self.explorer_input.clear();
         self.explorer_input_replace_all = false;
         self.explorer_overlay_mode = None;
+        self.diagnostics_snapshot = None;
+        self.diagnostics_tab = tundra_ui::DiagnosticsTab::Health;
+        self.diagnostics_selected_check = 0;
+        self.diagnostics_selected_incident = 0;
+        self.diagnostics_list_window_start = 0;
+        self.diagnostics_scanning = false;
+        self.diagnostics_rescan_pending = false;
+        self.diagnostics_repair_preview.clear();
+        self.diagnostics_repair_selected = 0;
+        self.diagnostics_repair_scroll_offset = 0;
+        self.diagnostics_repair_confirm_selected = true;
+        self.diagnostics_feedback = None;
+        self.diagnostics_restart_required = self.diagnostics_restart_is_required();
         self.active_popup = None;
         self.hovered_component = None;
         self.last_click = None;
@@ -152,6 +184,7 @@ impl ShellState {
         self.selected_home_entry_index = index;
         match entry.label.as_str() {
             "Explorer" => self.open_explorer(platform),
+            "Diagnostics" => self.open_diagnostics(),
             "User Management" | "User Profile" => self.open_user_management(),
             label => {
                 self.error_message = None;

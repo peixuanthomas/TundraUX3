@@ -23,8 +23,89 @@ fn clock_button_active_for_screen(screen: ShellScreen) -> bool {
         ShellScreen::Home
             | ShellScreen::Explorer
             | ShellScreen::UserManagement
+            | ShellScreen::Diagnostics
             | ShellScreen::Clock
     )
+}
+
+fn diagnostics_status_to_ui(
+    status: tundra_apps::diagnostics::DiagnosticStatus,
+) -> tundra_ui::DiagnosticsStatus {
+    match status {
+        tundra_apps::diagnostics::DiagnosticStatus::Pass => tundra_ui::DiagnosticsStatus::Pass,
+        tundra_apps::diagnostics::DiagnosticStatus::Warning => {
+            tundra_ui::DiagnosticsStatus::Warning
+        }
+        tundra_apps::diagnostics::DiagnosticStatus::Fail => tundra_ui::DiagnosticsStatus::Fail,
+    }
+}
+
+fn diagnostics_incident_severity_to_ui(
+    severity: tundra_watchdog::IncidentSeverity,
+) -> tundra_ui::DiagnosticsStatus {
+    match severity {
+        tundra_watchdog::IncidentSeverity::Warning => tundra_ui::DiagnosticsStatus::Warning,
+        tundra_watchdog::IncidentSeverity::Error | tundra_watchdog::IncidentSeverity::Critical => {
+            tundra_ui::DiagnosticsStatus::Fail
+        }
+    }
+}
+
+fn diagnostics_recovery_label(recovery: &tundra_watchdog::RecoveryOutcome) -> String {
+    match recovery {
+        tundra_watchdog::RecoveryOutcome::Pending => "Pending".to_string(),
+        tundra_watchdog::RecoveryOutcome::Recovered(_) => "Recovered".to_string(),
+        tundra_watchdog::RecoveryOutcome::RecoveredWithWarnings(_) => {
+            "Recovered with warnings".to_string()
+        }
+        tundra_watchdog::RecoveryOutcome::ManualActionRequired(_) => {
+            "Manual action required".to_string()
+        }
+        tundra_watchdog::RecoveryOutcome::Unrecoverable(_) => "Unrecoverable".to_string(),
+    }
+}
+
+fn diagnostics_public_check_summary(check: &tundra_apps::diagnostics::DiagnosticCheck) -> String {
+    use tundra_apps::diagnostics::{DiagnosticCategory, DiagnosticStatus};
+
+    match (check.category, check.status) {
+        (DiagnosticCategory::Environment, DiagnosticStatus::Pass) => {
+            "Environment check passed".to_string()
+        }
+        (DiagnosticCategory::Environment, DiagnosticStatus::Warning) => {
+            "Environment check needs review".to_string()
+        }
+        (DiagnosticCategory::Environment, DiagnosticStatus::Fail) => {
+            "Environment check failed".to_string()
+        }
+        (DiagnosticCategory::Paths, DiagnosticStatus::Pass) => {
+            "Application path is accessible".to_string()
+        }
+        (DiagnosticCategory::Paths, DiagnosticStatus::Warning) => {
+            "Application path needs attention".to_string()
+        }
+        (DiagnosticCategory::Paths, DiagnosticStatus::Fail) => {
+            "Application path check failed".to_string()
+        }
+        (DiagnosticCategory::Storage, DiagnosticStatus::Pass) => {
+            "Storage document is healthy".to_string()
+        }
+        (DiagnosticCategory::Storage, DiagnosticStatus::Warning) => {
+            "Storage document needs attention".to_string()
+        }
+        (DiagnosticCategory::Storage, DiagnosticStatus::Fail) => {
+            "Storage document check failed".to_string()
+        }
+        (DiagnosticCategory::Assets, DiagnosticStatus::Pass) => {
+            "Required asset is available".to_string()
+        }
+        (DiagnosticCategory::Assets, DiagnosticStatus::Warning) => {
+            "Required asset needs attention".to_string()
+        }
+        (DiagnosticCategory::Assets, DiagnosticStatus::Fail) => {
+            "Required asset check failed".to_string()
+        }
+    }
 }
 
 fn startup_clock_timezone_id(startup: &ShellStartupState) -> Option<String> {
@@ -46,7 +127,11 @@ fn explorer_system_time_label(
         tundra_storage::ExplorerDateZone::Utc => utc.format("%Y-%m-%d %H:%M").to_string(),
         tundra_storage::ExplorerDateZone::ConfiguredTimezone => configured_timezone
             .and_then(|timezone| timezone.parse::<chrono_tz::Tz>().ok())
-            .map(|timezone| utc.with_timezone(&timezone).format("%Y-%m-%d %H:%M").to_string())
+            .map(|timezone| {
+                utc.with_timezone(&timezone)
+                    .format("%Y-%m-%d %H:%M")
+                    .to_string()
+            })
             .unwrap_or_else(|| utc.format("%Y-%m-%d %H:%M").to_string()),
     }
 }
@@ -168,19 +253,17 @@ fn explorer_context_menu_view_model(
         ]
     };
     let selected_index = (!items.is_empty()).then_some(focused_index.min(items.len() - 1));
-    tundra_ui::ExplorerOverlayViewModel::ContextMenu(
-        tundra_ui::ExplorerContextMenuViewModel {
-            x: anchor.0,
-            y: anchor.1,
-            title: if selected_count > 0 {
-                "Selection".to_string()
-            } else {
-                "Explorer".to_string()
-            },
-            items,
-            selected_index,
+    tundra_ui::ExplorerOverlayViewModel::ContextMenu(tundra_ui::ExplorerContextMenuViewModel {
+        x: anchor.0,
+        y: anchor.1,
+        title: if selected_count > 0 {
+            "Selection".to_string()
+        } else {
+            "Explorer".to_string()
         },
-    )
+        items,
+        selected_index,
+    })
 }
 
 fn explorer_sort_menu_view_model(
@@ -202,15 +285,13 @@ fn explorer_sort_menu_view_model(
             dangerous: false,
         })
         .collect();
-    tundra_ui::ExplorerOverlayViewModel::ContextMenu(
-        tundra_ui::ExplorerContextMenuViewModel {
-            x: anchor.0,
-            y: anchor.1,
-            title: "Sort by".to_string(),
-            items,
-            selected_index: Some(focused_index.min(tundra_ui::ExplorerSortColumn::ALL.len() - 1)),
-        },
-    )
+    tundra_ui::ExplorerOverlayViewModel::ContextMenu(tundra_ui::ExplorerContextMenuViewModel {
+        x: anchor.0,
+        y: anchor.1,
+        title: "Sort by".to_string(),
+        items,
+        selected_index: Some(focused_index.min(tundra_ui::ExplorerSortColumn::ALL.len() - 1)),
+    })
 }
 
 fn explorer_options_view_model(

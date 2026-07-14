@@ -45,6 +45,26 @@ fn permission_matrix_uses_admin_as_the_only_management_role() {
             .allowed
     );
     assert!(
+        !service
+            .authorize(Some(&user), PermissionAction::ViewDiagnosticsDetails, None,)
+            .allowed
+    );
+    assert!(
+        service
+            .authorize(Some(&admin), PermissionAction::ViewDiagnosticsDetails, None,)
+            .allowed
+    );
+    assert!(
+        !service
+            .authorize(Some(&user), PermissionAction::RepairDiagnostics, None)
+            .allowed
+    );
+    assert!(
+        service
+            .authorize(Some(&admin), PermissionAction::RepairDiagnostics, None)
+            .allowed
+    );
+    assert!(
         service
             .authorize(Some(&admin), PermissionAction::ManageUsers, None)
             .allowed

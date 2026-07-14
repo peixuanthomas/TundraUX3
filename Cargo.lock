@@ -2400,7 +2400,9 @@ checksum = "e421abadd41a4225275504ea4d6566923418b7f05506fbc9c0fe86ba7396114b"
 name = "tundra-apps"
 version = "0.1.0"
 dependencies = [
+ "chrono",
  "serde_json",
+ "tundra-ascii-assets",
  "tundra-core",
  "tundra-platform",
  "tundra-storage",

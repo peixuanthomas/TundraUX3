@@ -7,6 +7,7 @@ mod error;
 mod journal;
 mod model;
 mod report;
+mod report_catalog;
 mod runtime;
 mod sanitize;
 mod task;
@@ -16,6 +17,7 @@ pub use config::{RetentionPolicy, WatchdogConfig};
 pub use error::WatchdogError;
 pub use journal::OperationGuard;
 pub use model::*;
+pub use report_catalog::{IncidentReportCatalog, IncidentReportSummary};
 pub use runtime::{AppWatchdog, CaughtPanic, EmergencyCleanup, ProcessWatchdog, WatchdogRuntime};
 pub use task::{ManagedTaskGroup, ManagedThreadHandle};
 

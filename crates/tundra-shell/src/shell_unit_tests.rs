@@ -564,9 +564,8 @@ mod tests {
             owner: Some(ShellComponent::Explorer),
             anchor: (10, 10),
         });
-        explorer.explorer_overlay_mode = Some(ExplorerOverlayMode::ContextMenu {
-            anchor: (10, 10),
-        });
+        explorer.explorer_overlay_mode =
+            Some(ExplorerOverlayMode::ContextMenu { anchor: (10, 10) });
         explorer.refresh_hit_map();
 
         let routed = explorer.route_input_at(
@@ -589,16 +588,20 @@ mod tests {
         );
         assert_eq!(routed.command, ShellCommand::OpenClock);
 
-        let mut user_management =
-            ShellState::new_for_home_mode(ShellLaunchConfig::default(), (120, 40), ShellHomeMode::User);
+        let mut user_management = ShellState::new_for_home_mode(
+            ShellLaunchConfig::default(),
+            (120, 40),
+            ShellHomeMode::User,
+        );
         user_management.screen_stack = vec![ShellScreen::UserManagement];
-        user_management.user_management_mode = UserManagementMode::Create(UserManagementCreateForm {
-            username: String::new(),
-            display_name: String::new(),
-            password: String::new(),
-            role: UserRole::User,
-            focused_field: UserManagementFormField::Username,
-        });
+        user_management.user_management_mode =
+            UserManagementMode::Create(UserManagementCreateForm {
+                username: String::new(),
+                display_name: String::new(),
+                password: String::new(),
+                role: UserRole::User,
+                focused_field: UserManagementFormField::Username,
+            });
         user_management.refresh_hit_map();
         let clock = hit_region_center(&user_management, ShellComponent::ClockButton);
         let routed = user_management.route_input_at(
@@ -610,8 +613,11 @@ mod tests {
 
     #[test]
     fn clock_button_routes_outside_shell_modal_while_modal_region_stays_highest() {
-        let mut state =
-            ShellState::new_for_home_mode(ShellLaunchConfig::default(), (120, 40), ShellHomeMode::User);
+        let mut state = ShellState::new_for_home_mode(
+            ShellLaunchConfig::default(),
+            (120, 40),
+            ShellHomeMode::User,
+        );
         state.notify_modal(
             "Confirm",
             "Keep the clock available",
@@ -621,8 +627,14 @@ mod tests {
         let clock = hit_region_center(&state, ShellComponent::ClockButton);
         let dialog = hit_region_center(&state, ShellComponent::NotificationDialog);
 
-        assert_eq!(state.hit_map.layer_at(clock), Some(ShellHitLayer::ShellChrome));
-        assert_eq!(state.hit_map.layer_at(dialog), Some(ShellHitLayer::ShellModal));
+        assert_eq!(
+            state.hit_map.layer_at(clock),
+            Some(ShellHitLayer::ShellChrome)
+        );
+        assert_eq!(
+            state.hit_map.layer_at(dialog),
+            Some(ShellHitLayer::ShellModal)
+        );
 
         let routed = state.route_input_at(
             InputEvent::mouse_down(PointerButton::Left, clock),
@@ -634,14 +646,13 @@ mod tests {
     #[test]
     fn explorer_never_receives_shell_chrome_pointer_commands_and_clears_drag() {
         let mut state = explorer_routing_test_state();
-        state.explorer_state.as_mut().expect("Explorer state").drag = Some(
-            tundra_apps::explorer::ExplorerDragState {
+        state.explorer_state.as_mut().expect("Explorer state").drag =
+            Some(tundra_apps::explorer::ExplorerDragState {
                 sources: vec![std::path::PathBuf::from("source")],
                 target: None,
                 mode: tundra_apps::explorer::ExplorerTransferMode::Copy,
                 active: true,
-            },
-        );
+            });
         let top = hit_region_center(&state, ShellComponent::TopBar);
 
         let routed = state.route_input_at(
@@ -680,14 +691,13 @@ mod tests {
             assert_eq!(routed.command, ShellCommand::CaptureOverlayInput);
         }
 
-        state.explorer_state.as_mut().expect("Explorer state").drag = Some(
-            tundra_apps::explorer::ExplorerDragState {
+        state.explorer_state.as_mut().expect("Explorer state").drag =
+            Some(tundra_apps::explorer::ExplorerDragState {
                 sources: vec![std::path::PathBuf::from("source")],
                 target: None,
                 mode: tundra_apps::explorer::ExplorerTransferMode::Move,
                 active: true,
-            },
-        );
+            });
         let (target, command) = state.route_explorer_mouse(
             MouseInput::Up {
                 button: PointerButton::Left,
@@ -709,9 +719,111 @@ mod tests {
         );
     }
 
+    #[test]
+    fn watchdog_incident_redacts_details_and_actions_for_standard_users() {
+        let mut state = ShellState::new_for_home_mode(
+            ShellLaunchConfig::default(),
+            (120, 40),
+            ShellHomeMode::User,
+        );
+        state.auth_session = Some(AuthSession {
+            session_id: "user-session".to_string(),
+            user_id: "user-id".to_string(),
+            username: "user".to_string(),
+            role: UserRole::User,
+            started_at_epoch_ms: 1,
+        });
+        show_watchdog_incident(
+            &mut state,
+            IncidentReceipt {
+                incident_id: "SECRET-INCIDENT-ID".to_string(),
+                kind: tundra_watchdog::IncidentKind::Error,
+                severity: tundra_watchdog::IncidentSeverity::Critical,
+                app_id: None,
+                component: Some("private-component".to_string()),
+                task_id: None,
+                task_group: None,
+                boundary: "private-boundary".to_string(),
+                panic_action: None,
+                operation_kind: None,
+                operation_id: None,
+                recovery_handler_version: None,
+                restart_attempt: 0,
+                summary: "SECRET watchdog summary".to_string(),
+                recovery: RecoveryOutcome::Recovered("SECRET recovery detail".to_string()),
+                json_report_path: Some(std::path::PathBuf::from(
+                    "/private/reports/SECRET-INCIDENT-ID.json",
+                )),
+                text_report_path: None,
+            },
+        );
+
+        let modal = state.to_notification_view_model().expect("watchdog modal");
+        assert!(modal.message.contains("restricted to administrators"));
+        assert!(!modal.message.contains("SECRET"));
+        assert!(!modal.message.contains("/private"));
+        assert!(
+            modal
+                .actions
+                .iter()
+                .all(|action| { action.id != "open-report" && action.id != "copy-summary" })
+        );
+    }
+
+    #[test]
+    fn previous_unclean_exit_does_not_interrupt_the_login_screen() {
+        let mut state = ShellState::new_for_home_mode(
+            ShellLaunchConfig::default(),
+            (120, 40),
+            ShellHomeMode::User,
+        );
+        state.screen_stack = vec![ShellScreen::Login];
+        state.focused_component = ShellComponent::LoginUserList;
+        let report_path = std::path::PathBuf::from("/reports/previous-run.txt");
+
+        show_watchdog_incident(
+            &mut state,
+            IncidentReceipt {
+                incident_id: "unclean-previous-run".to_string(),
+                kind: IncidentKind::UncleanExit,
+                severity: tundra_watchdog::IncidentSeverity::Critical,
+                app_id: None,
+                component: None,
+                task_id: None,
+                task_group: None,
+                boundary: "process.unhandled".to_string(),
+                panic_action: None,
+                operation_kind: None,
+                operation_id: None,
+                recovery_handler_version: None,
+                restart_attempt: 0,
+                summary: "previous run ended without a clean shutdown".to_string(),
+                recovery: RecoveryOutcome::Unrecoverable(
+                    "the previous process had already terminated".to_string(),
+                ),
+                json_report_path: None,
+                text_report_path: Some(report_path.clone()),
+            },
+        );
+
+        assert_eq!(state.active_screen(), ShellScreen::Login);
+        assert_eq!(state.focused_component(), ShellComponent::LoginUserList);
+        assert!(state.to_notification_view_model().is_none());
+        assert_eq!(state.latest_watchdog_report.as_ref(), Some(&report_path));
+        assert!(
+            state
+                .latest_watchdog_summary
+                .as_deref()
+                .is_some_and(|summary| summary.contains("previous run ended"))
+        );
+    }
+
     fn explorer_routing_test_state() -> ShellState {
-        let mut state =
-            ShellState::new_for_home_mode(ShellLaunchConfig::default(), (120, 40), ShellHomeMode::User);
+        let mut state = ShellState::new_for_home_mode(
+            ShellLaunchConfig::default(),
+            (120, 40),
+            ShellHomeMode::User,
+        );
         state.screen_stack = vec![ShellScreen::Explorer];
         state.focused_component = ShellComponent::Explorer;
         state.explorer_state = Some(ExplorerState::new(".", false));

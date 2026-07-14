@@ -7,7 +7,9 @@ edition.workspace = true
 path = "src/lib.rs"
 
 [dependencies]
+chrono = "0.4"
 serde_json = "1"
+tundra-ascii-assets = { path = "../tundra-ascii-assets" }
 tundra-core = { path = "../tundra-core" }
 tundra-platform = { path = "../tundra-platform" }
 tundra-storage = { path = "../tundra-storage" }

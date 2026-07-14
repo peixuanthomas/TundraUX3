@@ -47,6 +47,8 @@ pub enum PermissionAction {
     ManageOwnUser,
     ManageUsers,
     ViewAuditLog,
+    ViewDiagnosticsDetails,
+    RepairDiagnostics,
     ChangeSettings,
     EnterDebugMode,
 }
@@ -64,6 +66,8 @@ impl PermissionAction {
             Self::ManageOwnUser => "ManageOwnUser",
             Self::ManageUsers => "ManageUsers",
             Self::ViewAuditLog => "ViewAuditLog",
+            Self::ViewDiagnosticsDetails => "ViewDiagnosticsDetails",
+            Self::RepairDiagnostics => "RepairDiagnostics",
             Self::ChangeSettings => "ChangeSettings",
             Self::EnterDebugMode => "EnterDebugMode",
         }
@@ -158,6 +162,8 @@ impl PermissionService {
             },
             PermissionAction::ManageUsers
             | PermissionAction::ViewAuditLog
+            | PermissionAction::ViewDiagnosticsDetails
+            | PermissionAction::RepairDiagnostics
             | PermissionAction::ChangeSettings => match role {
                 UserRole::Admin => Authorization::allow(),
                 UserRole::Guest => Authorization::deny("not_authenticated"),

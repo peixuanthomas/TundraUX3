@@ -147,6 +147,7 @@ impl ShellState {
                 self.notifications.tick();
                 self.advance_clock_background();
                 self.poll_explorer_background_tasks(platform);
+                self.drain_diagnostics_events();
                 ShellAction::Redraw
             }
             ShellCommand::RefreshHitMap { width, height } => {
@@ -207,34 +208,92 @@ impl ShellState {
                 ShellAction::Redraw
             }
             ShellCommand::OpenLatestCrashReport => {
-                match self.latest_watchdog_report.clone() {
-                    Some(path) => match platform.open_path(&path) {
-                        Ok(()) => self.notify_toast("Opened watchdog crash report"),
-                        Err(error) => self.notify_alert_with_tone(
-                            format!("Could not open crash report: {error}"),
+                if !self.diagnostics_can_view_details() {
+                    self.record_diagnostics_audit(
+                        PermissionAction::ViewDiagnosticsDetails,
+                        "watchdog.report.open",
+                        AuditOutcome::Denied,
+                        Some("insufficient_role"),
+                    );
+                    self.notify_alert_with_tone(
+                        "Only administrators can open watchdog reports",
+                        tundra_ui::NotificationTone::Warning,
+                    );
+                } else {
+                    match self.latest_watchdog_report.clone() {
+                        Some(path) => match platform.open_path(&path) {
+                            Ok(()) => {
+                                self.record_diagnostics_audit(
+                                    PermissionAction::ViewDiagnosticsDetails,
+                                    "watchdog.report.open",
+                                    AuditOutcome::Success,
+                                    None,
+                                );
+                                self.notify_toast("Opened watchdog crash report");
+                            }
+                            Err(error) => {
+                                self.record_diagnostics_audit(
+                                    PermissionAction::ViewDiagnosticsDetails,
+                                    "watchdog.report.open",
+                                    AuditOutcome::Failure,
+                                    Some(&error.to_string()),
+                                );
+                                self.notify_alert_with_tone(
+                                    format!("Could not open crash report: {error}"),
+                                    tundra_ui::NotificationTone::Critical,
+                                );
+                            }
+                        },
+                        None => self.notify_alert_with_tone(
+                            "No watchdog crash report path is available",
                             tundra_ui::NotificationTone::Critical,
                         ),
-                    },
-                    None => self.notify_alert_with_tone(
-                        "No watchdog crash report path is available",
-                        tundra_ui::NotificationTone::Critical,
-                    ),
+                    }
                 }
                 ShellAction::Redraw
             }
             ShellCommand::CopyLatestCrashSummary => {
-                match self.latest_watchdog_summary.clone() {
-                    Some(summary) => match platform.write_clipboard_text(&summary) {
-                        Ok(()) => self.notify_toast("Copied watchdog incident summary"),
-                        Err(error) => self.notify_alert_with_tone(
-                            format!("Could not copy crash summary: {error}"),
+                if !self.diagnostics_can_view_details() {
+                    self.record_diagnostics_audit(
+                        PermissionAction::ViewDiagnosticsDetails,
+                        "watchdog.summary.copy",
+                        AuditOutcome::Denied,
+                        Some("insufficient_role"),
+                    );
+                    self.notify_alert_with_tone(
+                        "Only administrators can copy full watchdog summaries",
+                        tundra_ui::NotificationTone::Warning,
+                    );
+                } else {
+                    match self.latest_watchdog_summary.clone() {
+                        Some(summary) => match platform.write_clipboard_text(&summary) {
+                            Ok(()) => {
+                                self.record_diagnostics_audit(
+                                    PermissionAction::ViewDiagnosticsDetails,
+                                    "watchdog.summary.copy",
+                                    AuditOutcome::Success,
+                                    None,
+                                );
+                                self.notify_toast("Copied watchdog incident summary");
+                            }
+                            Err(error) => {
+                                self.record_diagnostics_audit(
+                                    PermissionAction::ViewDiagnosticsDetails,
+                                    "watchdog.summary.copy",
+                                    AuditOutcome::Failure,
+                                    Some(&error.to_string()),
+                                );
+                                self.notify_alert_with_tone(
+                                    format!("Could not copy crash summary: {error}"),
+                                    tundra_ui::NotificationTone::Critical,
+                                );
+                            }
+                        },
+                        None => self.notify_alert_with_tone(
+                            "No watchdog incident summary is available",
                             tundra_ui::NotificationTone::Critical,
                         ),
-                    },
-                    None => self.notify_alert_with_tone(
-                        "No watchdog incident summary is available",
-                        tundra_ui::NotificationTone::Critical,
-                    ),
+                    }
                 }
                 ShellAction::Redraw
             }
@@ -778,6 +837,95 @@ impl ShellState {
                 self.close_clock();
                 ShellAction::Redraw
             }
+            ShellCommand::OpenDiagnostics => {
+                self.open_diagnostics();
+                ShellAction::Redraw
+            }
+            ShellCommand::CloseDiagnostics => {
+                self.close_diagnostics();
+                ShellAction::Redraw
+            }
+            ShellCommand::DiagnosticsHealthTab => {
+                self.set_diagnostics_tab(tundra_ui::DiagnosticsTab::Health);
+                ShellAction::Redraw
+            }
+            ShellCommand::DiagnosticsIncidentsTab => {
+                self.set_diagnostics_tab(tundra_ui::DiagnosticsTab::Incidents);
+                ShellAction::Redraw
+            }
+            ShellCommand::DiagnosticsPrevious => {
+                self.move_diagnostics_selection(-1);
+                ShellAction::Redraw
+            }
+            ShellCommand::DiagnosticsNext => {
+                self.move_diagnostics_selection(1);
+                ShellAction::Redraw
+            }
+            ShellCommand::DiagnosticsPageUp => {
+                self.move_diagnostics_selection(-8);
+                ShellAction::Redraw
+            }
+            ShellCommand::DiagnosticsPageDown => {
+                self.move_diagnostics_selection(8);
+                ShellAction::Redraw
+            }
+            ShellCommand::DiagnosticsFirst => {
+                self.move_diagnostics_selection(-(self.diagnostics_item_count() as isize));
+                ShellAction::Redraw
+            }
+            ShellCommand::DiagnosticsLast => {
+                self.move_diagnostics_selection(self.diagnostics_item_count() as isize);
+                ShellAction::Redraw
+            }
+            ShellCommand::DiagnosticsSelectIndex(index) => {
+                self.select_diagnostics_index(index);
+                ShellAction::Redraw
+            }
+            ShellCommand::DiagnosticsRescan => {
+                self.request_diagnostics_scan();
+                ShellAction::Redraw
+            }
+            ShellCommand::DiagnosticsPreviewSelectedRepair => {
+                self.preview_selected_diagnostics_repair();
+                ShellAction::Redraw
+            }
+            ShellCommand::DiagnosticsPreviewAllRepairs => {
+                self.preview_all_diagnostics_repairs();
+                ShellAction::Redraw
+            }
+            ShellCommand::DiagnosticsCancelRepair => {
+                self.cancel_diagnostics_repair_preview();
+                ShellAction::Redraw
+            }
+            ShellCommand::DiagnosticsConfirmRepair => {
+                self.confirm_diagnostics_repair();
+                ShellAction::Redraw
+            }
+            ShellCommand::DiagnosticsRepairPrevious => {
+                self.move_diagnostics_repair_selection(-1);
+                ShellAction::Redraw
+            }
+            ShellCommand::DiagnosticsRepairNext => {
+                self.move_diagnostics_repair_selection(1);
+                ShellAction::Redraw
+            }
+            ShellCommand::DiagnosticsRepairToggleAction => {
+                self.diagnostics_repair_confirm_selected =
+                    !self.diagnostics_repair_confirm_selected;
+                ShellAction::Redraw
+            }
+            ShellCommand::DiagnosticsSelectRepairItem(index) => {
+                self.select_diagnostics_repair_item(index);
+                ShellAction::Redraw
+            }
+            ShellCommand::DiagnosticsCopySummary => {
+                self.copy_diagnostics_summary(platform);
+                ShellAction::Redraw
+            }
+            ShellCommand::DiagnosticsOpenReport => {
+                self.open_selected_diagnostics_report(platform);
+                ShellAction::Redraw
+            }
             ShellCommand::ClockOpenCreate => {
                 self.open_clock_create_dialog();
                 ShellAction::Redraw
@@ -1021,9 +1169,7 @@ impl ShellState {
                 coordinates,
                 click,
             } => {
-                if target == ShellComponent::ContextMenu
-                    && self.explorer_overlay_mode.is_some()
-                {
+                if target == ShellComponent::ContextMenu && self.explorer_overlay_mode.is_some() {
                     self.activate_explorer_overlay_at(coordinates, platform);
                     return ShellAction::Redraw;
                 }
@@ -1050,7 +1196,12 @@ impl ShellState {
                     let already_selected = self
                         .explorer_state
                         .as_ref()
-                        .and_then(|state| state.entries.get(index).map(|entry| state.is_selected(&entry.path)))
+                        .and_then(|state| {
+                            state
+                                .entries
+                                .get(index)
+                                .map(|entry| state.is_selected(&entry.path))
+                        })
                         .unwrap_or(false);
                     if !already_selected {
                         self.apply_explorer_command(ExplorerCommand::SelectIndex(index), platform);
@@ -1060,8 +1211,11 @@ impl ShellState {
                 {
                     state.clear_selection();
                 }
-                self.explorer_overlay_mode = (target == Some(ShellComponent::Explorer))
-                    .then_some(ExplorerOverlayMode::ContextMenu { anchor: coordinates });
+                self.explorer_overlay_mode = (target == Some(ShellComponent::Explorer)).then_some(
+                    ExplorerOverlayMode::ContextMenu {
+                        anchor: coordinates,
+                    },
+                );
                 self.explorer_overlay_selection = 0;
                 self.active_popup = Some(ShellPopup {
                     owner: target,

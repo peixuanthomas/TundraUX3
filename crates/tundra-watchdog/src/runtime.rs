@@ -5,13 +5,13 @@ use crate::report::{
 };
 use crate::task::{GroupState, ManagedTaskGroup};
 use crate::writer::{self, WriterCommand};
-use crate::{durable, sanitize};
 use crate::{
     AppDescriptor, AppId, BoundaryKind, BoundarySpec, Breadcrumb, ComponentId, ErrorContext,
     IncidentKind, IncidentReceipt, IncidentSeverity, IncidentTicket, OperationDescriptor,
     OperationKind, RecoveryHandler, RecoveryOutcome, RuntimeSnapshot, TaskId, TaskKind,
     WatchdogError,
 };
+use crate::{durable, report_catalog, sanitize};
 use chrono::Utc;
 use serde::Deserialize;
 use std::backtrace::Backtrace;
@@ -377,6 +377,10 @@ impl ProcessWatchdog {
 
     pub fn drain_incidents(&self) -> Vec<IncidentReceipt> {
         std::iter::from_fn(|| self.try_recv_incident()).collect()
+    }
+
+    pub fn list_incident_reports(&self) -> report_catalog::IncidentReportCatalog {
+        report_catalog::list_incident_reports(&self.shared.config)
     }
 
     pub fn report_stale_runs(

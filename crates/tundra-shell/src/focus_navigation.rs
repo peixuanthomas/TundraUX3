@@ -14,6 +14,8 @@ impl ShellState {
             (content_screen == ShellScreen::Clock).then(|| self.to_clock_view_model());
         let explorer_model =
             (content_screen == ShellScreen::Explorer).then(|| self.to_explorer_view_model());
+        let diagnostics_model =
+            (content_screen == ShellScreen::Diagnostics).then(|| self.to_diagnostics_view_model());
         self.hit_map = build_shell_hit_map(
             self.terminal_size,
             content_screen,
@@ -28,6 +30,7 @@ impl ShellState {
             home_model.as_ref(),
             clock_model.as_ref(),
             explorer_model.as_ref(),
+            diagnostics_model.as_ref(),
         );
         self.sync_home_entry_selection();
 
@@ -88,6 +91,12 @@ impl ShellState {
         }
         if self.active_screen() == ShellScreen::Explorer {
             return vec![ShellComponent::Explorer];
+        }
+        if self.active_screen() == ShellScreen::Diagnostics {
+            if !self.diagnostics_repair_preview.is_empty() {
+                return vec![ShellComponent::DiagnosticsRepairDialog];
+            }
+            return vec![ShellComponent::Diagnostics];
         }
         if self.active_screen() == ShellScreen::Clock {
             let area = Rect::new(0, 0, self.terminal_size.0, self.terminal_size.1);

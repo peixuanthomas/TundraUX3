@@ -24,6 +24,10 @@ impl ShellState {
             return self.route_clock_key(key);
         }
 
+        if self.active_screen() == ShellScreen::Diagnostics {
+            return self.route_diagnostics_key(key);
+        }
+
         if self.active_screen() == ShellScreen::FirstRunSetup {
             return self.route_setup_key(key);
         }
@@ -110,6 +114,9 @@ impl ShellState {
             }
             ShellScreen::Home if key.is_character('u') || key.is_character('U') => {
                 (RoutedTarget::Global, ShellCommand::OpenUserManagement)
+            }
+            ShellScreen::Home if key.is_character('d') || key.is_character('D') => {
+                (RoutedTarget::Global, ShellCommand::OpenDiagnostics)
             }
             ShellScreen::Home
                 if self.current_home_username().is_some()
@@ -344,6 +351,86 @@ impl ShellState {
         }
     }
 
+    fn route_diagnostics_key(&self, key: &KeyInput) -> (RoutedTarget, ShellCommand) {
+        let area = Rect::new(0, 0, self.terminal_size.0, self.terminal_size.1);
+        if matches!(
+            tundra_ui::compute_shell_layout(area),
+            tundra_ui::ShellLayout::Compact(_)
+        ) {
+            return if matches!(&key.key, InputKey::Escape) {
+                (RoutedTarget::Global, ShellCommand::CloseDiagnostics)
+            } else {
+                (
+                    RoutedTarget::Component(ShellComponent::CompactHome),
+                    ShellCommand::CaptureOverlayInput,
+                )
+            };
+        }
+
+        if !self.diagnostics_repair_preview.is_empty() {
+            let target = RoutedTarget::Modal(ShellComponent::DiagnosticsRepairDialog);
+            return match &key.key {
+                InputKey::Escape => (target, ShellCommand::DiagnosticsCancelRepair),
+                InputKey::Up => (target, ShellCommand::DiagnosticsRepairPrevious),
+                InputKey::Down => (target, ShellCommand::DiagnosticsRepairNext),
+                InputKey::Tab | InputKey::BackTab | InputKey::Left | InputKey::Right => {
+                    (target, ShellCommand::DiagnosticsRepairToggleAction)
+                }
+                InputKey::Enter | InputKey::Character(' ')
+                    if self.diagnostics_repair_confirm_selected =>
+                {
+                    (target, ShellCommand::DiagnosticsConfirmRepair)
+                }
+                InputKey::Enter | InputKey::Character(' ') => {
+                    (target, ShellCommand::DiagnosticsCancelRepair)
+                }
+                _ => (target, ShellCommand::CaptureOverlayInput),
+            };
+        }
+
+        let target = RoutedTarget::Component(ShellComponent::Diagnostics);
+        if self.diagnostics_restart_is_required() {
+            return match &key.key {
+                InputKey::Enter => (RoutedTarget::Global, ShellCommand::RequestExit),
+                InputKey::Escape => (RoutedTarget::Global, ShellCommand::CloseDiagnostics),
+                _ => (target, ShellCommand::CaptureOverlayInput),
+            };
+        }
+        match &key.key {
+            InputKey::Escape => (RoutedTarget::Global, ShellCommand::CloseDiagnostics),
+            InputKey::Tab | InputKey::Right => match self.diagnostics_tab {
+                tundra_ui::DiagnosticsTab::Health => {
+                    (target, ShellCommand::DiagnosticsIncidentsTab)
+                }
+                tundra_ui::DiagnosticsTab::Incidents => {
+                    (target, ShellCommand::DiagnosticsHealthTab)
+                }
+            },
+            InputKey::BackTab | InputKey::Left => match self.diagnostics_tab {
+                tundra_ui::DiagnosticsTab::Health => {
+                    (target, ShellCommand::DiagnosticsIncidentsTab)
+                }
+                tundra_ui::DiagnosticsTab::Incidents => {
+                    (target, ShellCommand::DiagnosticsHealthTab)
+                }
+            },
+            InputKey::Up => (target, ShellCommand::DiagnosticsPrevious),
+            InputKey::Down => (target, ShellCommand::DiagnosticsNext),
+            InputKey::PageUp => (target, ShellCommand::DiagnosticsPageUp),
+            InputKey::PageDown => (target, ShellCommand::DiagnosticsPageDown),
+            InputKey::Home => (target, ShellCommand::DiagnosticsFirst),
+            InputKey::End => (target, ShellCommand::DiagnosticsLast),
+            InputKey::Character('r' | 'R') => (target, ShellCommand::DiagnosticsRescan),
+            InputKey::Character('f' | 'F') => {
+                (target, ShellCommand::DiagnosticsPreviewSelectedRepair)
+            }
+            InputKey::Character('a' | 'A') => (target, ShellCommand::DiagnosticsPreviewAllRepairs),
+            InputKey::Character('c' | 'C') => (target, ShellCommand::DiagnosticsCopySummary),
+            InputKey::Character('o' | 'O') => (target, ShellCommand::DiagnosticsOpenReport),
+            _ => (target, ShellCommand::RecordInput),
+        }
+    }
+
     fn clock_button_activation_command(&self) -> ShellCommand {
         if self.active_screen() == ShellScreen::Clock {
             ShellCommand::CloseClock
@@ -471,9 +558,7 @@ impl ShellState {
 
         // Repeated action keys must not submit a dialog twice or open a file again while held.
         // Character/backspace repeats remain useful in name and search inputs.
-        if key.phase != InputPhase::Press
-            && matches!(key.key, InputKey::Enter | InputKey::Escape)
-        {
+        if key.phase != InputPhase::Press && matches!(key.key, InputKey::Enter | InputKey::Escape) {
             return (target, ShellCommand::CaptureOverlayInput);
         }
 
@@ -490,9 +575,7 @@ impl ShellState {
                 InputKey::Enter | InputKey::Character('k' | 'K') => {
                     (target, ShellCommand::ExplorerRestoreKeepBoth)
                 }
-                InputKey::Character('r' | 'R') => {
-                    (target, ShellCommand::ExplorerRestoreReplace)
-                }
+                InputKey::Character('r' | 'R') => (target, ShellCommand::ExplorerRestoreReplace),
                 InputKey::Escape | InputKey::Character('n' | 'N') => {
                     (target, ShellCommand::ExplorerRestoreCancel)
                 }
@@ -513,12 +596,8 @@ impl ShellState {
                 InputKey::Enter | InputKey::Character('k' | 'K') => {
                     (target, ShellCommand::ExplorerConflictKeepBoth)
                 }
-                InputKey::Character('r' | 'R') => {
-                    (target, ShellCommand::ExplorerConflictReplace)
-                }
-                InputKey::Character('s' | 'S') => {
-                    (target, ShellCommand::ExplorerConflictSkip)
-                }
+                InputKey::Character('r' | 'R') => (target, ShellCommand::ExplorerConflictReplace),
+                InputKey::Character('s' | 'S') => (target, ShellCommand::ExplorerConflictSkip),
                 InputKey::Character('a' | 'A') => {
                     (target, ShellCommand::ExplorerConflictToggleApplyToRemaining)
                 }
@@ -552,9 +631,7 @@ impl ShellState {
                 return (target, ShellCommand::CaptureOverlayInput);
             }
             return match &key.key {
-                InputKey::Enter if key.is_unmodified_action_key() => {
-                    (target, confirm.clone())
-                }
+                InputKey::Enter if key.is_unmodified_action_key() => (target, confirm.clone()),
                 InputKey::Escape if key.is_unmodified_action_key() => {
                     (target, ShellCommand::CancelExplorerInput)
                 }
@@ -568,9 +645,7 @@ impl ShellState {
             return match &key.key {
                 InputKey::Escape => (target, ShellCommand::CancelExplorerInput),
                 InputKey::Enter => (target, ShellCommand::SubmitExplorerInput),
-                InputKey::Backspace | InputKey::Delete => {
-                    (target, ShellCommand::ExplorerBackspace)
-                }
+                InputKey::Backspace | InputKey::Delete => (target, ShellCommand::ExplorerBackspace),
                 InputKey::Character(character) if !key.has_non_shift_modifier() => {
                     (target, ShellCommand::AppendExplorerChar(*character))
                 }
@@ -584,52 +659,32 @@ impl ShellState {
             .is_some_and(|state| state.current_location.is_trash());
         match &key.key {
             InputKey::Escape => (RoutedTarget::Global, ShellCommand::CloseExplorer),
-            InputKey::Character('l' | 'L')
-                if key.modifiers.control || key.modifiers.super_key =>
-            {
+            InputKey::Character('l' | 'L') if key.modifiers.control || key.modifiers.super_key => {
                 (target, ShellCommand::BeginExplorerAddress)
             }
             InputKey::Left if key.modifiers.alt => (target, ShellCommand::ExplorerOpenBack),
             InputKey::Right if key.modifiers.alt => (target, ShellCommand::ExplorerOpenForward),
-            InputKey::Up if key.modifiers.shift => {
-                (target, ShellCommand::ExplorerPreviousExtend)
-            }
-            InputKey::Down if key.modifiers.shift => {
-                (target, ShellCommand::ExplorerNextExtend)
-            }
+            InputKey::Up if key.modifiers.shift => (target, ShellCommand::ExplorerPreviousExtend),
+            InputKey::Down if key.modifiers.shift => (target, ShellCommand::ExplorerNextExtend),
             InputKey::Up => (target, ShellCommand::ExplorerPrevious),
             InputKey::Down => (target, ShellCommand::ExplorerNext),
             InputKey::Enter if !is_trash => (target, ShellCommand::ExplorerOpenSelected),
             InputKey::Backspace => (target, ShellCommand::ExplorerOpenParent),
             InputKey::Delete if !is_trash => (target, ShellCommand::ExplorerDelete),
             InputKey::Function(2) if !is_trash => (target, ShellCommand::BeginExplorerRename),
-            InputKey::Character('a' | 'A')
-                if key.modifiers.control || key.modifiers.super_key =>
-            {
+            InputKey::Character('a' | 'A') if key.modifiers.control || key.modifiers.super_key => {
                 (target, ShellCommand::ExplorerSelectAll)
             }
             InputKey::Character(' ') => (target, ShellCommand::ExplorerToggleFocused),
-            InputKey::Character('f' | 'F')
-                if key.modifiers.control || key.modifiers.super_key =>
-            {
+            InputKey::Character('f' | 'F') if key.modifiers.control || key.modifiers.super_key => {
                 (target, ShellCommand::BeginExplorerSearch)
             }
             InputKey::Character('h' | 'H') => (target, ShellCommand::ExplorerToggleHidden),
-            InputKey::Character('r' | 'R') if is_trash => {
-                (target, ShellCommand::ExplorerRestore)
-            }
-            InputKey::Character('c' | 'C') if !is_trash => {
-                (target, ShellCommand::ExplorerCopy)
-            }
-            InputKey::Character('x' | 'X') if !is_trash => {
-                (target, ShellCommand::ExplorerCut)
-            }
-            InputKey::Character('v' | 'V') if !is_trash => {
-                (target, ShellCommand::ExplorerPaste)
-            }
-            InputKey::Character('d' | 'D') if !is_trash => {
-                (target, ShellCommand::ExplorerDelete)
-            }
+            InputKey::Character('r' | 'R') if is_trash => (target, ShellCommand::ExplorerRestore),
+            InputKey::Character('c' | 'C') if !is_trash => (target, ShellCommand::ExplorerCopy),
+            InputKey::Character('x' | 'X') if !is_trash => (target, ShellCommand::ExplorerCut),
+            InputKey::Character('v' | 'V') if !is_trash => (target, ShellCommand::ExplorerPaste),
+            InputKey::Character('d' | 'D') if !is_trash => (target, ShellCommand::ExplorerDelete),
             InputKey::Character('n' | 'N' | 'f' | 'F') if !is_trash => {
                 (target, ShellCommand::BeginExplorerNewFolder)
             }
@@ -810,12 +865,8 @@ impl ShellState {
             }
             return match &key.key {
                 InputKey::Escape => (target, ShellCommand::ClosePopup),
-                InputKey::Up | InputKey::BackTab => {
-                    (target, ShellCommand::ExplorerOverlayPrevious)
-                }
-                InputKey::Down | InputKey::Tab => {
-                    (target, ShellCommand::ExplorerOverlayNext)
-                }
+                InputKey::Up | InputKey::BackTab => (target, ShellCommand::ExplorerOverlayPrevious),
+                InputKey::Down | InputKey::Tab => (target, ShellCommand::ExplorerOverlayNext),
                 InputKey::Enter | InputKey::Character(' ') => {
                     (target, ShellCommand::ExplorerOverlayActivate)
                 }
@@ -864,6 +915,14 @@ impl ShellState {
             }
         }
 
+        if self.active_screen() == ShellScreen::Diagnostics
+            && !self.diagnostics_repair_preview.is_empty()
+            && !self.notifications.has_active_modal()
+            && !self.time_sync_dialog_visible
+        {
+            return self.route_diagnostics_mouse(mouse, hit_target);
+        }
+
         if hit_layer == Some(ShellHitLayer::ShellChrome) {
             return self.route_shell_chrome_mouse(mouse, hit_target);
         }
@@ -897,6 +956,10 @@ impl ShellState {
 
         if self.active_screen() == ShellScreen::Clock {
             return self.route_clock_mouse(mouse, hit_target);
+        }
+
+        if self.active_screen() == ShellScreen::Diagnostics {
+            return self.route_diagnostics_mouse(mouse, hit_target);
         }
 
         if self.active_screen() == ShellScreen::UserManagement {
@@ -1027,10 +1090,9 @@ impl ShellState {
                 MouseInput::Down { .. }
                 | MouseInput::Up { .. }
                 | MouseInput::Drag { .. }
-                | MouseInput::Scroll { .. } => (
-                    target_route(hit_target),
-                    ShellCommand::CaptureOverlayInput,
-                ),
+                | MouseInput::Scroll { .. } => {
+                    (target_route(hit_target), ShellCommand::CaptureOverlayInput)
+                }
             };
         }
 
@@ -1069,7 +1131,10 @@ impl ShellState {
                 button: PointerButton::Left,
                 modifiers,
                 ..
-            } => (target, ShellCommand::ExplorerDragUpdate(coordinates, modifiers)),
+            } => (
+                target,
+                ShellCommand::ExplorerDragUpdate(coordinates, modifiers),
+            ),
             MouseInput::Up {
                 button: PointerButton::Left,
                 modifiers,
@@ -1153,6 +1218,77 @@ impl ShellState {
                 ..
             } => (target, ShellCommand::CaptureOverlayInput),
             _ => (target, ShellCommand::RecordInput),
+        }
+    }
+
+    fn route_diagnostics_mouse(
+        &mut self,
+        mouse: MouseInput,
+        hit_target: Option<ShellComponent>,
+    ) -> (RoutedTarget, ShellCommand) {
+        let coordinates = mouse.coordinates();
+        let area = Rect::new(0, 0, self.terminal_size.0, self.terminal_size.1);
+        let tundra_ui::ShellLayout::Full { main, .. } = tundra_ui::compute_shell_layout(area)
+        else {
+            return (
+                target_route(hit_target),
+                if matches!(mouse, MouseInput::Moved { .. }) {
+                    ShellCommand::Hover(hit_target)
+                } else {
+                    ShellCommand::CaptureOverlayInput
+                },
+            );
+        };
+        let model = self.to_diagnostics_view_model();
+        let layout = tundra_ui::diagnostics_layout(main, &model);
+        let diagnostic_target =
+            tundra_ui::diagnostics_hit_test(&layout, (coordinates.0, coordinates.1));
+        let routed = if self.diagnostics_repair_preview.is_empty() {
+            RoutedTarget::Component(ShellComponent::Diagnostics)
+        } else {
+            RoutedTarget::Modal(ShellComponent::DiagnosticsRepairDialog)
+        };
+
+        match mouse {
+            MouseInput::Moved { .. } => (routed, ShellCommand::Hover(hit_target)),
+            MouseInput::Scroll {
+                direction: ScrollDirection::Up,
+                ..
+            } if self.diagnostics_repair_preview.is_empty() => {
+                (routed, ShellCommand::DiagnosticsPrevious)
+            }
+            MouseInput::Scroll {
+                direction: ScrollDirection::Down,
+                ..
+            } if self.diagnostics_repair_preview.is_empty() => {
+                (routed, ShellCommand::DiagnosticsNext)
+            }
+            MouseInput::Down {
+                button: PointerButton::Left,
+                ..
+            } => match diagnostic_target {
+                Some(tundra_ui::DiagnosticsHitTarget::Tab(tundra_ui::DiagnosticsTab::Health)) => {
+                    (routed, ShellCommand::DiagnosticsHealthTab)
+                }
+                Some(tundra_ui::DiagnosticsHitTarget::Tab(
+                    tundra_ui::DiagnosticsTab::Incidents,
+                )) => (routed, ShellCommand::DiagnosticsIncidentsTab),
+                Some(tundra_ui::DiagnosticsHitTarget::Check(index))
+                | Some(tundra_ui::DiagnosticsHitTarget::Incident(index)) => {
+                    (routed, ShellCommand::DiagnosticsSelectIndex(index))
+                }
+                Some(tundra_ui::DiagnosticsHitTarget::RepairConfirm) => {
+                    (routed, ShellCommand::DiagnosticsConfirmRepair)
+                }
+                Some(tundra_ui::DiagnosticsHitTarget::RepairCancel) => {
+                    (routed, ShellCommand::DiagnosticsCancelRepair)
+                }
+                Some(tundra_ui::DiagnosticsHitTarget::RepairItem(index)) => {
+                    (routed, ShellCommand::DiagnosticsSelectRepairItem(index))
+                }
+                _ => (routed, ShellCommand::CaptureOverlayInput),
+            },
+            _ => (routed, ShellCommand::CaptureOverlayInput),
         }
     }
 
