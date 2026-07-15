@@ -90,6 +90,16 @@ enum ExplorerOverlayMode {
     Properties,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+enum ExplorerPurpose {
+    #[default]
+    Browse,
+    EditorOpen,
+    EditorSaveAs {
+        contents: Vec<u8>,
+    },
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct ClockCreateState {
     input: String,
@@ -199,7 +209,20 @@ pub struct ShellState {
     explorer_overlay_mode: Option<ExplorerOverlayMode>,
     explorer_overlay_selection: usize,
     explorer_conflict_apply_to_remaining: bool,
+    explorer_purpose: ExplorerPurpose,
     explorer_task_runtime: Option<ShellExplorerTaskRuntime>,
+    editor_state: Option<EditorState>,
+    editor_focus: tundra_ui::EditorFocus,
+    editor_open_menu: Option<tundra_ui::EditorMenu>,
+    editor_selected_toolbar_action: Option<tundra_ui::EditorToolbarAction>,
+    editor_drag_anchor: Option<usize>,
+    editor_fingerprint: Option<DocumentFingerprint>,
+    editor_close_after_save: bool,
+    editor_open_after_save: bool,
+    editor_discard_for_open: bool,
+    editor_message: Option<String>,
+    editor_recovery_dirty_since: Option<Instant>,
+    editor_last_recovery_write: Option<Instant>,
     diagnostics_task_runtime: Option<ShellDiagnosticsTaskRuntime>,
     diagnostics_snapshot: Option<tundra_apps::diagnostics::DiagnosticsSnapshot>,
     diagnostics_tab: tundra_ui::DiagnosticsTab,

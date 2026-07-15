@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use ratatui::layout::Rect;
-use tundra_platform::mock::{MockCall, MockPlatform};
+use tundra_platform::mock::MockPlatform;
 use tundra_platform::{
     PlatformCapabilities, PlatformKind, UserDirs, build_windows_app_paths, cleanup_temp_path,
 };
@@ -76,7 +76,14 @@ fn mouse_single_click_selects_and_double_click_opens_file() {
         &platform,
     );
 
-    assert_eq!(opened_paths(&platform), vec![target]);
+    assert_eq!(state.active_screen(), ShellScreen::Editor);
+    let editor = state.to_editor_view_model();
+    assert_eq!(editor.file_name, "alpha.txt");
+    assert_eq!(
+        editor.path_hint.as_deref(),
+        Some(target.to_string_lossy().as_ref())
+    );
+    assert_eq!(editor.source.as_deref(), Some("alpha"));
 }
 
 #[test]
@@ -101,7 +108,14 @@ fn mouse_double_click_on_first_rendered_row_does_not_open_second_entry() {
         &platform,
     );
 
-    assert_eq!(opened_paths(&platform), vec![alpha]);
+    assert_eq!(state.active_screen(), ShellScreen::Editor);
+    let editor = state.to_editor_view_model();
+    assert_eq!(editor.file_name, "alpha.txt");
+    assert_eq!(
+        editor.path_hint.as_deref(),
+        Some(alpha.to_string_lossy().as_ref())
+    );
+    assert_eq!(editor.source.as_deref(), Some("alpha"));
 }
 
 #[test]
@@ -436,17 +450,6 @@ fn drive_explorer_tasks_until(
         "Explorer background task did not finish in time: operation={:?}, dialog={:?}, error={:?}, message={:?}",
         explorer.operation, explorer.pending_dialog, explorer.error, explorer.message
     );
-}
-
-fn opened_paths(platform: &MockPlatform) -> Vec<PathBuf> {
-    platform
-        .calls()
-        .into_iter()
-        .filter_map(|call| match call {
-            MockCall::OpenPath(path) => Some(path),
-            _ => None,
-        })
-        .collect()
 }
 
 fn mock_platform(base: &Path) -> MockPlatform {

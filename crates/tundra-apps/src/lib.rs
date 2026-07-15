@@ -1,4 +1,6 @@
 pub mod diagnostics;
+pub mod editor;
+pub mod editor_recovery;
 pub mod explorer;
 pub mod explorer_tasks;
 

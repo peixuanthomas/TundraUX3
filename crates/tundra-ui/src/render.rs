@@ -98,6 +98,23 @@ pub fn render_home(
     }
 }
 
+pub fn render_editor_app(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    chrome: &ShellChromeViewModel,
+    editor: &crate::EditorViewModel,
+    theme: &TundraTheme,
+) -> crate::EditorLayout {
+    match compute_shell_layout(area) {
+        ShellLayout::Compact(compact) => crate::render_editor(frame, compact, editor, theme),
+        ShellLayout::Full { top, main, status } => {
+            render_top(frame, top, chrome, theme);
+            render_status(frame, status, chrome, theme);
+            crate::render_editor(frame, main, editor, theme)
+        }
+    }
+}
+
 pub fn render_exit_confirmation(
     frame: &mut Frame<'_>,
     area: Rect,

@@ -3,6 +3,7 @@ mod clock_scheduler;
 use clock_scheduler::{
     ClockEntryKind as ScheduledClockEntryKind, ClockScheduler, ClockSchedulerError, DueEvent,
 };
+use tundra_apps::editor::EditorState;
 use tundra_apps::explorer::{
     ExplorerCommand, ExplorerConflictAction, ExplorerController, ExplorerEffect,
     ExplorerOpenTarget, ExplorerState,
@@ -22,8 +23,8 @@ use std::io::{self, Write};
 use std::sync::mpsc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tundra_platform::{
-    CapabilityStatus, FileAttributes, Platform, PlatformCapabilities, PlatformKind,
-    TerminalControlHandler,
+    CapabilityStatus, DocumentFingerprint, FileAttributes, Platform, PlatformCapabilities,
+    PlatformKind, TerminalControlHandler,
 };
 use tundra_weathr::network_clock::{NetworkClock, TimeSyncResult};
 
@@ -45,6 +46,9 @@ const TIME_SYNC_NOTIFICATION_KEY: &str = "shell.time-sync-failure";
 const EXPLORER_DELETE_NOTIFICATION_KEY: &str = "explorer.delete-confirm";
 const EXPLORER_CONFLICT_NOTIFICATION_KEY: &str = "explorer.name-conflict";
 const EXPLORER_ALERT_KEY: &str = "explorer.operation";
+const EDITOR_CLOSE_NOTIFICATION_KEY: &str = "editor.close-confirm";
+const EDITOR_OPEN_NOTIFICATION_KEY: &str = "editor.open-confirm";
+const EDITOR_ALERT_KEY: &str = "editor.operation";
 const USER_MANAGEMENT_REFRESH_ALERT_KEY: &str = "user-management.refresh";
 const USER_MANAGEMENT_DELETE_NOTIFICATION_KEY: &str = "user-management.delete-confirm";
 const CLOCK_STORAGE_ALERT_KEY: &str = "clock.storage";
@@ -92,6 +96,7 @@ include!("account_workflows.rs");
 include!("clock_workflows.rs");
 include!("explorer_workflows.rs");
 include!("explorer_task_workflows.rs");
+include!("editor_workflows.rs");
 include!("diagnostics_workflows.rs");
 include!("user_management_workflows.rs");
 include!("home_navigation.rs");

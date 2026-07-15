@@ -46,6 +46,7 @@ pub enum ShellScreen {
     Clock,
     Diagnostics,
     Explorer,
+    Editor,
     UserManagement,
     ExitConfirm,
 }
@@ -291,7 +292,7 @@ pub fn prepare_shell_startup(
     })
 }
 
-fn app_paths_from_storage_layout(
+pub(crate) fn app_paths_from_storage_layout(
     layout: &tundra_storage::StorageLayout,
 ) -> Result<AppPaths, ShellStartupError> {
     AppPaths::from_parts(

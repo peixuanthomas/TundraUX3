@@ -92,6 +92,9 @@ impl ShellState {
         if self.active_screen() == ShellScreen::Explorer {
             return vec![ShellComponent::Explorer];
         }
+        if self.active_screen() == ShellScreen::Editor {
+            return vec![ShellComponent::Editor];
+        }
         if self.active_screen() == ShellScreen::Diagnostics {
             if !self.diagnostics_repair_preview.is_empty() {
                 return vec![ShellComponent::DiagnosticsRepairDialog];

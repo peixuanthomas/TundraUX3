@@ -1,4 +1,5 @@
 mod diagnostics;
+mod document;
 pub mod macos;
 pub mod mock;
 mod paths;
@@ -12,6 +13,11 @@ pub mod windows;
 pub use diagnostics::{
     CheckStatus, DoctorReport, EnvironmentCheck, PathCheck, WindowsBuildClass,
     check_directory_read_write, classify_windows_build, run_doctor, run_doctor_with,
+};
+pub use document::{
+    DocumentBytes, DocumentFingerprint, DocumentWriteError, atomic_write_document,
+    atomic_write_document_if_unchanged, document_fingerprint, read_document_bytes,
+    validate_no_follow_path,
 };
 pub use paths::{
     AppPaths, PathResolutionError, UserDirs, build_binary_dir_app_paths, build_macos_app_paths,

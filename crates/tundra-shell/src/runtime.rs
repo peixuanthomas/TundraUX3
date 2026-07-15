@@ -342,6 +342,7 @@ fn run_fullscreen_shell_session(
         let bootstrap_admin = state.to_bootstrap_admin_view_model();
         let user_management = state.to_user_management_view_model();
         let explorer = state.to_explorer_view_model();
+        let editor = state.to_editor_view_model();
         let diagnostics = state.to_diagnostics_view_model();
         let notification = state.to_notification_view_model();
         let active_screen = state.active_screen();
@@ -377,6 +378,9 @@ fn run_fullscreen_shell_session(
                 }
                 ShellScreen::Explorer => {
                     tundra_ui::render_explorer(frame, area, &chrome, &explorer, &theme);
+                }
+                ShellScreen::Editor => {
+                    tundra_ui::render_editor_app(frame, area, &chrome, &editor, &theme);
                 }
                 ShellScreen::Diagnostics => {
                     tundra_ui::render_diagnostics(frame, area, &chrome, &diagnostics, &theme);

@@ -1,6 +1,6 @@
 use crate::{
-    CellPosition, ClickKind, InputEvent, InputKey, InputModifiers, KeyInput, ShellComponent,
-    ShellScreen,
+    CellPosition, ClickKind, InputEvent, InputKey, InputModifiers, KeyInput, MouseInput,
+    ShellComponent, ShellScreen,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -63,6 +63,17 @@ pub enum ShellCommand {
     ActivateHomeEntryAt(CellPosition, ClickKind),
     OpenExplorer,
     CloseExplorer,
+    OpenEditor,
+    CloseEditor,
+    EditorKey(KeyInput),
+    EditorPaste(String),
+    EditorPointer(MouseInput),
+    EditorSaveAndClose,
+    EditorDiscardAndClose,
+    EditorCancelClose,
+    EditorSaveAndOpen,
+    EditorDiscardAndOpen,
+    EditorCancelOpen,
     ExplorerNext,
     ExplorerPrevious,
     ExplorerNextExtend,

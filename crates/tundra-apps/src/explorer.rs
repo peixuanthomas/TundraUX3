@@ -730,6 +730,31 @@ impl ExplorerOpenRouteResolver for SystemDefaultOpenRouteResolver {
     }
 }
 
+/// Routes documents supported by the built-in editor while leaving every
+/// other file type with the operating system.
+#[derive(Debug, Default)]
+pub struct EditorAwareOpenRouteResolver;
+
+impl ExplorerOpenRouteResolver for EditorAwareOpenRouteResolver {
+    fn route(&self, path: &Path, attributes: &FileAttributes) -> ExplorerOpenTarget {
+        if attributes.is_file && is_editor_document_path(path) {
+            ExplorerOpenTarget::Editor
+        } else {
+            ExplorerOpenTarget::SystemDefault
+        }
+    }
+}
+
+pub fn is_editor_document_path(path: &Path) -> bool {
+    let extension = path
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .unwrap_or_default();
+    ["md", "markdown", "mdown", "mkd", "txt"]
+        .iter()
+        .any(|candidate| extension.eq_ignore_ascii_case(candidate))
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ExplorerCommand {
     OpenSelected,
@@ -794,7 +819,7 @@ impl ExplorerController {
     pub fn new(file_service: ExplorerFileService) -> Self {
         Self {
             file_service,
-            open_resolver: Arc::new(SystemDefaultOpenRouteResolver),
+            open_resolver: Arc::new(EditorAwareOpenRouteResolver),
         }
     }
 
@@ -1433,17 +1458,13 @@ impl ExplorerFileService {
             return Ok(ExplorerEffect::None);
         }
 
-        self.authorize(
-            session,
-            storage,
-            PermissionAction::OpenExternal,
-            &entry.path,
-        )?;
         let target = resolver.route(&entry.path, &entry.attributes);
-        if target == ExplorerOpenTarget::Editor {
-            state.error = Some("Editor is not implemented".to_string());
-            state.message = None;
-        }
+        let permission = if target == ExplorerOpenTarget::Editor {
+            PermissionAction::ReadFile
+        } else {
+            PermissionAction::OpenExternal
+        };
+        self.authorize(session, storage, permission, &entry.path)?;
         Ok(ExplorerEffect::OpenRequested(ExplorerOpenRequest {
             path: entry.path.clone(),
             target,

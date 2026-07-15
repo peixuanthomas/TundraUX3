@@ -32,7 +32,9 @@ impl ShellState {
         self.expire_login_password_visibility_at(received_at);
         let requests_shutdown = match &input {
             InputEvent::Shutdown => true,
-            InputEvent::Key(key) => key.is_ctrl_c(),
+            InputEvent::Key(key) => {
+                key.is_ctrl_c() && self.active_screen() != ShellScreen::Editor
+            }
             _ => false,
         };
         if self.login_idle_tracking_active()
@@ -68,6 +70,10 @@ impl ShellState {
                 let (target, command) = self.route_mouse_input(*mouse, received_at);
                 (target, command)
             }
+            InputEvent::Paste(value) if self.active_screen() == ShellScreen::Editor => (
+                RoutedTarget::Component(ShellComponent::Editor),
+                ShellCommand::EditorPaste(value.clone()),
+            ),
             InputEvent::FocusGained | InputEvent::FocusLost | InputEvent::Paste(_) => {
                 (RoutedTarget::Global, ShellCommand::RecordInput)
             }
@@ -139,6 +145,7 @@ impl ShellState {
 
         match routed.command {
             ShellCommand::Shutdown => {
+                let _ = self.persist_editor_recovery_now(received_at);
                 self.shutdown_requested = true;
                 ShellAction::Exit
             }
@@ -148,6 +155,7 @@ impl ShellState {
                 self.advance_clock_background();
                 self.poll_explorer_background_tasks(platform);
                 self.drain_diagnostics_events();
+                self.persist_editor_recovery_if_due(received_at);
                 ShellAction::Redraw
             }
             ShellCommand::RefreshHitMap { width, height } => {
@@ -195,6 +203,10 @@ impl ShellState {
                 ShellAction::Redraw
             }
             ShellCommand::ConfirmExit => {
+                if !self.persist_editor_recovery_now(received_at) {
+                    self.shutdown_requested = false;
+                    return ShellAction::Redraw;
+                }
                 self.shutdown_requested = true;
                 ShellAction::Exit
             }
@@ -493,6 +505,73 @@ impl ShellState {
             }
             ShellCommand::CloseExplorer => {
                 self.close_explorer();
+                ShellAction::Redraw
+            }
+            ShellCommand::OpenEditor => {
+                self.open_editor();
+                ShellAction::Redraw
+            }
+            ShellCommand::CloseEditor => {
+                self.request_editor_close(platform);
+                ShellAction::Redraw
+            }
+            ShellCommand::EditorKey(key) => {
+                self.handle_editor_key(key, platform);
+                ShellAction::Redraw
+            }
+            ShellCommand::EditorPaste(value) => {
+                self.handle_editor_paste(value);
+                ShellAction::Redraw
+            }
+            ShellCommand::EditorPointer(mouse) => {
+                self.handle_editor_pointer(mouse, platform);
+                ShellAction::Redraw
+            }
+            ShellCommand::EditorSaveAndClose => {
+                self.editor_close_after_save = true;
+                self.apply_editor_command(
+                    tundra_apps::editor::EditorCommand::RequestSave,
+                    platform,
+                );
+                ShellAction::Redraw
+            }
+            ShellCommand::EditorDiscardAndClose => {
+                self.editor_close_after_save = false;
+                self.finish_editor_close(true);
+                ShellAction::Redraw
+            }
+            ShellCommand::EditorCancelClose => {
+                self.editor_close_after_save = false;
+                self.notifications
+                    .dismiss_modal_by_key(EDITOR_CLOSE_NOTIFICATION_KEY);
+                self.notify_status("Close cancelled");
+                ShellAction::Redraw
+            }
+            ShellCommand::EditorSaveAndOpen => {
+                self.editor_open_after_save = true;
+                self.editor_discard_for_open = false;
+                self.notifications
+                    .dismiss_modal_by_key(EDITOR_OPEN_NOTIFICATION_KEY);
+                self.apply_editor_command(
+                    tundra_apps::editor::EditorCommand::RequestSave,
+                    platform,
+                );
+                ShellAction::Redraw
+            }
+            ShellCommand::EditorDiscardAndOpen => {
+                self.editor_open_after_save = false;
+                self.editor_discard_for_open = true;
+                self.notifications
+                    .dismiss_modal_by_key(EDITOR_OPEN_NOTIFICATION_KEY);
+                self.open_editor_picker(platform);
+                ShellAction::Redraw
+            }
+            ShellCommand::EditorCancelOpen => {
+                self.editor_open_after_save = false;
+                self.editor_discard_for_open = false;
+                self.notifications
+                    .dismiss_modal_by_key(EDITOR_OPEN_NOTIFICATION_KEY);
+                self.notify_status("Open cancelled");
                 ShellAction::Redraw
             }
             ShellCommand::ExplorerNext => {

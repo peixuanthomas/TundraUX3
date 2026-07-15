@@ -22,6 +22,7 @@ fn clock_button_active_for_screen(screen: ShellScreen) -> bool {
         screen,
         ShellScreen::Home
             | ShellScreen::Explorer
+            | ShellScreen::Editor
             | ShellScreen::UserManagement
             | ShellScreen::Diagnostics
             | ShellScreen::Clock

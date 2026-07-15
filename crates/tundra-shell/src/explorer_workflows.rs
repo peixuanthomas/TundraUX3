@@ -1,5 +1,6 @@
 impl ShellState {
     fn open_explorer(&mut self, platform: &dyn Platform) {
+        self.explorer_purpose = ExplorerPurpose::Browse;
         if self.is_strict_guest() {
             self.error_message = None;
             self.notify_status("Guest access is read-only");
@@ -48,6 +49,13 @@ impl ShellState {
         self.explorer_input_replace_all = false;
         self.explorer_overlay_mode = None;
         self.resolve_explorer_alert();
+        if !matches!(self.explorer_purpose, ExplorerPurpose::Browse)
+            && self.editor_state.is_some()
+        {
+            self.return_from_editor_picker();
+            return;
+        }
+        self.explorer_purpose = ExplorerPurpose::Browse;
         self.pop_to_home();
         self.notify_status("Ready");
     }
@@ -328,10 +336,7 @@ impl ShellState {
                     }
                 }
                 ExplorerOpenTarget::Editor => {
-                    if let Some(state) = self.explorer_state.as_mut() {
-                        state.error = Some("Editor is not implemented".to_string());
-                        state.message = None;
-                    }
+                    self.open_editor_path(request.path);
                 }
                 ExplorerOpenTarget::Launcher => {
                     if let Some(state) = self.explorer_state.as_mut()
@@ -401,6 +406,9 @@ impl ShellState {
     }
 
     fn submit_explorer_input(&mut self, platform: &dyn Platform) {
+        if self.submit_editor_save_as_from_explorer(platform) {
+            return;
+        }
         let raw_value = self.explorer_input.clone();
         let trimmed_value = raw_value.trim().to_string();
         let command = match self.explorer_input_mode {

@@ -4,6 +4,13 @@ impl ShellState {
             return (RoutedTarget::Global, ShellCommand::Noop);
         }
 
+        if key.is_ctrl_c() && self.active_screen() == ShellScreen::Editor {
+            return (
+                RoutedTarget::Component(ShellComponent::Editor),
+                ShellCommand::EditorKey(key.clone()),
+            );
+        }
+
         if key.is_ctrl_c() {
             return (RoutedTarget::Global, ShellCommand::Shutdown);
         }
@@ -50,6 +57,13 @@ impl ShellState {
 
         if self.active_screen() == ShellScreen::Explorer {
             return self.route_explorer_key(key);
+        }
+
+        if self.active_screen() == ShellScreen::Editor {
+            return (
+                RoutedTarget::Component(ShellComponent::Editor),
+                ShellCommand::EditorKey(key.clone()),
+            );
         }
 
         if matches!(&key.key, InputKey::BackTab)
@@ -968,6 +982,13 @@ impl ShellState {
 
         if self.active_screen() == ShellScreen::Explorer {
             return self.route_explorer_mouse(mouse, hit_target, received_at);
+        }
+
+        if self.active_screen() == ShellScreen::Editor {
+            return (
+                RoutedTarget::Component(ShellComponent::Editor),
+                ShellCommand::EditorPointer(mouse),
+            );
         }
 
         match mouse {

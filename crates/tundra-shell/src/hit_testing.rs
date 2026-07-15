@@ -87,6 +87,13 @@ fn build_shell_hit_map(
                         layer: ShellHitLayer::AppContent,
                     });
                 }
+                ShellScreen::Editor => {
+                    regions.push(ShellHitRegion {
+                        component: ShellComponent::Editor,
+                        area: main,
+                        layer: ShellHitLayer::AppContent,
+                    });
+                }
                 ShellScreen::Diagnostics => {
                     regions.push(ShellHitRegion {
                         component: ShellComponent::Diagnostics,

@@ -8,7 +8,9 @@ path = "src/lib.rs"
 
 [dependencies]
 geojson = "1.0"
+image = { version = "0.25", default-features = false, features = ["gif", "jpeg", "png", "webp"] }
 ratatui = "0.29"
+ratatui-image = { version = "=8.0.1", default-features = false, features = ["crossterm"] }
 tundra-ascii-assets = { path = "../tundra-ascii-assets" }
 zip = { version = "6", default-features = false, features = ["deflate"] }
 

@@ -1,4 +1,6 @@
 mod command;
+mod editor;
+mod editor_media;
 mod focus;
 mod hit_test;
 mod home_icons;
@@ -15,6 +17,11 @@ pub mod components;
 pub use command::{
     Command, KeyChord, ShortcutBinding, ShortcutConflict, ShortcutConflictError,
     ShortcutConflictKind, ShortcutRegistry, ShortcutScope,
+};
+pub use editor::*;
+pub use editor_media::{
+    EDITOR_IMAGE_MAX_PIXELS, EditorGraphicsProtocol, EditorImagePicker, EditorMediaError,
+    PreparedEditorImage,
 };
 pub use focus::{
     ComponentId, FocusChange, FocusDirection, FocusError, FocusManager, FocusNode, FocusScope,
@@ -50,7 +57,7 @@ pub use render::{
     home_logout_area, login_layout, login_password_area, login_password_visibility_area,
     login_selected_username_area, login_user_list_area, login_user_list_visible_rows,
     render_bootstrap_admin, render_clock, render_clock_placeholder, render_diagnostics,
-    render_exit_confirmation, render_explorer, render_home, render_login,
+    render_editor_app, render_exit_confirmation, render_explorer, render_home, render_login,
     render_notification_overlay, render_setup, render_time_sync_failure_dialog,
     render_user_management, setup_admin_field_area, setup_language_list_area,
     setup_timezone_list_area, setup_timezone_visible_rows, status_time_button_area,

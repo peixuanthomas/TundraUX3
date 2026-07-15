@@ -19,6 +19,13 @@ impl ShellState {
             );
             return;
         }
+        if !self.persist_editor_recovery_now(now) {
+            self.notify_alert_with_tone(
+                "Could not save the Editor recovery; sign out was cancelled",
+                tundra_ui::NotificationTone::Error,
+            );
+            return;
+        }
         let audit_error = self
             .auth_session
             .as_ref()
@@ -45,6 +52,10 @@ impl ShellState {
     }
 
     fn return_to_login_at(&mut self, status: &str, now: Instant) {
+        // Account disable/delete may force a return to login without passing
+        // through the ordinary Logout command. Preserve any dirty editor text
+        // before the authenticated recovery context is cleared.
+        let _ = self.persist_editor_recovery_now(now);
         self.resolve_user_management_refresh_alert();
         self.notifications = NotificationCenter::new(status);
         self.modal_focus_context = None;
@@ -74,6 +85,19 @@ impl ShellState {
         self.explorer_input.clear();
         self.explorer_input_replace_all = false;
         self.explorer_overlay_mode = None;
+        self.explorer_purpose = ExplorerPurpose::Browse;
+        self.editor_state = None;
+        self.editor_focus = tundra_ui::EditorFocus::Canvas;
+        self.editor_open_menu = None;
+        self.editor_selected_toolbar_action = None;
+        self.editor_drag_anchor = None;
+        self.editor_fingerprint = None;
+        self.editor_close_after_save = false;
+        self.editor_open_after_save = false;
+        self.editor_discard_for_open = false;
+        self.editor_message = None;
+        self.editor_recovery_dirty_since = None;
+        self.editor_last_recovery_write = None;
         self.diagnostics_snapshot = None;
         self.diagnostics_tab = tundra_ui::DiagnosticsTab::Health;
         self.diagnostics_selected_check = 0;
@@ -184,6 +208,7 @@ impl ShellState {
         self.selected_home_entry_index = index;
         match entry.label.as_str() {
             "Explorer" => self.open_explorer(platform),
+            "Editor" => self.open_editor(),
             "Diagnostics" => self.open_diagnostics(),
             "User Management" | "User Profile" => self.open_user_management(),
             label => {
