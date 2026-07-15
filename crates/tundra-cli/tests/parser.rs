@@ -27,6 +27,15 @@ fn doctor_arg_dispatches_doctor() {
 }
 
 #[test]
+fn editor_arg_dispatches_editor() {
+    assert_eq!(parse_args(["editor"]), Ok(CliCommand::Editor));
+    assert_eq!(
+        parse_args(["editor", "note.md"]),
+        Err(CliError::UnexpectedArgument("note.md".to_string()))
+    );
+}
+
+#[test]
 fn paths_arg_dispatches_paths() {
     assert_eq!(parse_args(["paths"]), Ok(CliCommand::Paths));
 }
@@ -110,9 +119,10 @@ fn help_command_writes_usage_to_stdout() {
     assert_eq!(exit_code, 0);
     assert!(stderr.is_empty());
     let stdout = String::from_utf8(stdout).expect("help output should be utf8");
-    assert!(stdout.contains("Usage: tundra-cli <config|doctor|explain|new|paths|weathr>"));
+    assert!(stdout.contains("Usage: tundra-cli <config|doctor|editor|explain|new|paths|weathr>"));
     assert!(stdout.contains("config  View or update user config"));
     assert!(stdout.contains("new     Clear saved TundraUX3 data"));
+    assert!(stdout.contains("editor  Launch the shell directly into the Markdown editor"));
     assert!(stdout.contains("weathr  Launch the terminal weather scene"));
     assert!(!stdout.contains("Windows 11"));
     assert!(!stdout.contains("Windows Terminal"));
@@ -134,7 +144,7 @@ fn explain_command_prints_startup_and_boundary_notes() {
     assert!(stdout.contains("UI boundary"));
     assert!(stdout.contains("tundra-platform"));
     assert!(stdout.contains("tundra-shell"));
-    assert!(stdout.contains("doctor, paths, explain, new, weathr"));
+    assert!(stdout.contains("doctor, editor, paths, explain, new, weathr"));
     assert!(!stdout.contains("Windows 11"));
     assert!(!stdout.contains("Windows Terminal"));
 }
@@ -186,7 +196,7 @@ fn managed_weathr_launcher_receives_the_explicit_app_watchdog() {
     let mut stderr = Vec::new();
     let tree = TempTree::new("managed-weathr-launch");
     let platform = mock_windows_platform(tree.path());
-    let (_runtime, process, weathr) = test_weathr_watchdog(&tree);
+    let watchdog = test_weathr_watchdog();
     let mut received_app_id = None;
 
     let exit_code = run_with_platform_and_managed_weathr_launcher(
@@ -194,8 +204,8 @@ fn managed_weathr_launcher_receives_the_explicit_app_watchdog() {
         &platform,
         &mut stdout,
         &mut stderr,
-        &process,
-        weathr,
+        &watchdog.process,
+        watchdog.weathr.clone(),
         |_options, watchdog| {
             received_app_id = Some(watchdog.descriptor().id.as_str().to_string());
             Ok(())
@@ -213,15 +223,15 @@ fn unrecoverable_managed_weathr_panic_routes_to_stderr_and_critical_dialog() {
     let mut stderr = Vec::new();
     let tree = TempTree::new("managed-weathr-panic");
     let platform = mock_windows_platform(tree.path());
-    let (_runtime, process, weathr) = test_weathr_watchdog(&tree);
+    let watchdog = test_weathr_watchdog();
 
     let exit_code = run_with_platform_and_managed_weathr_launcher(
         ["weathr"],
         &platform,
         &mut stdout,
         &mut stderr,
-        &process,
-        weathr,
+        &watchdog.process,
+        watchdog.weathr.clone(),
         |_options, _watchdog| {
             Err(tundra_weathr::WeathrRunError::Panic {
                 incident_id: "test-weathr-panic".to_string(),
@@ -248,7 +258,8 @@ fn managed_cli_routes_pending_watchdog_incidents_for_non_weathr_commands() {
     let mut stderr = Vec::new();
     let tree = TempTree::new("managed-watchdog-drain");
     let platform = mock_windows_platform(tree.path());
-    let (_runtime, process, weathr) = test_weathr_watchdog(&tree);
+    let watchdog = test_weathr_watchdog();
+    let weathr = watchdog.weathr.clone();
     let caught = weathr
         .run_boundary(
             BoundarySpec::new("test.recovered", BoundaryKind::Worker),
@@ -266,7 +277,7 @@ fn managed_cli_routes_pending_watchdog_incidents_for_non_weathr_commands() {
         &platform,
         &mut stdout,
         &mut stderr,
-        &process,
+        &watchdog.process,
         weathr,
         |_options, _watchdog| Ok(()),
     );
@@ -719,7 +730,7 @@ fn unknown_command_exits_two_and_writes_error_to_stderr() {
     assert!(stdout.is_empty());
     let stderr = String::from_utf8(stderr).expect("error output should be utf8");
     assert!(stderr.contains("ERROR: unknown command: repair"));
-    assert!(stderr.contains("Usage: tundra-cli <config|doctor|explain|new|paths|weathr>"));
+    assert!(stderr.contains("Usage: tundra-cli <config|doctor|editor|explain|new|paths|weathr>"));
 }
 
 fn assert_path_labels(output: &str) {
@@ -814,26 +825,41 @@ fn user_dirs(base: &Path) -> UserDirs {
     .expect("absolute user directory roots should resolve")
 }
 
-fn test_weathr_watchdog(
-    tree: &TempTree,
-) -> (
-    WatchdogRuntime,
-    ProcessWatchdog,
-    tundra_watchdog::AppWatchdog,
-) {
-    let root = tree.path().join("watchdog");
-    let config = WatchdogConfig::new(
-        root.join("crashes"),
-        root.join("fallback"),
-        root.join("state"),
-        "tundra-cli-test",
-        env!("CARGO_PKG_VERSION"),
-    );
-    let (runtime, process) = WatchdogRuntime::start(config).expect("test watchdog starts");
-    let weathr = process
-        .register_app(tundra_weathr::weathr_watchdog_descriptor())
-        .expect("test Weathr app registers");
-    (runtime, process, weathr)
+struct TestWeathrWatchdog {
+    _tree: TempTree,
+    _runtime: WatchdogRuntime,
+    process: ProcessWatchdog,
+    weathr: tundra_watchdog::AppWatchdog,
+}
+
+fn test_weathr_watchdog() -> std::sync::MutexGuard<'static, TestWeathrWatchdog> {
+    static WATCHDOG: std::sync::OnceLock<std::sync::Mutex<TestWeathrWatchdog>> =
+        std::sync::OnceLock::new();
+
+    WATCHDOG
+        .get_or_init(|| {
+            let tree = TempTree::new("managed-weathr-watchdog");
+            let root = tree.path().join("watchdog");
+            let config = WatchdogConfig::new(
+                root.join("crashes"),
+                root.join("fallback"),
+                root.join("state"),
+                "tundra-cli-test",
+                env!("CARGO_PKG_VERSION"),
+            );
+            let (runtime, process) = WatchdogRuntime::start(config).expect("test watchdog starts");
+            let weathr = process
+                .register_app(tundra_weathr::weathr_watchdog_descriptor())
+                .expect("test Weathr app registers");
+            std::sync::Mutex::new(TestWeathrWatchdog {
+                _tree: tree,
+                _runtime: runtime,
+                process,
+                weathr,
+            })
+        })
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
 #[derive(Debug)]

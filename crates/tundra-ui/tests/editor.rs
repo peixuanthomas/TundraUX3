@@ -3,10 +3,11 @@ use ratatui::backend::TestBackend;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier};
 use tundra_ui::{
-    EditorBlockArea, EditorBlockSourceMap, EditorFocus, EditorHitTarget, EditorMode,
-    EditorRenderBlock, EditorRenderSpan, EditorSelection, EditorSourceRange, EditorSourceSelection,
-    EditorTableAlignment, EditorTableCell, EditorTextPosition, EditorToolbarAction,
-    EditorViewModel, TundraTheme, editor_layout, render_editor,
+    EditorBlockArea, EditorBlockSourceMap, EditorDocumentPosition, EditorFocus, EditorHitTarget,
+    EditorMenu, EditorMenuAction, EditorMode, EditorRenderBlock, EditorRenderSpan, EditorSelection,
+    EditorSourceRange, EditorSourceSelection, EditorTableAlignment, EditorTableCell,
+    EditorTableEdge, EditorTextPosition, EditorToolbarAction, EditorViewModel, RichPosition,
+    RichRange, TundraTheme, editor_layout, render_editor,
 };
 
 #[test]
@@ -143,6 +144,70 @@ fn source_mode_preserves_markdown_and_highlights_the_selection() {
         .expect("source mode");
     let source_cell = &terminal.backend().buffer()[(source.area.x, source.area.y)];
     assert_eq!(source_cell.bg, TundraTheme::default_dark().accent);
+}
+
+#[test]
+fn source_mode_disables_markdown_toolbar_actions_and_keeps_plain_actions_available() {
+    let model = EditorViewModel::source("README.md", "plain **source**");
+    let layout = editor_layout(Rect::new(0, 0, 140, 14), &model);
+    let formatting = [
+        EditorToolbarAction::ParagraphStyle,
+        EditorToolbarAction::Bold,
+        EditorToolbarAction::Italic,
+        EditorToolbarAction::Strikethrough,
+        EditorToolbarAction::InlineCode,
+        EditorToolbarAction::BulletList,
+        EditorToolbarAction::OrderedList,
+        EditorToolbarAction::Quote,
+        EditorToolbarAction::Link,
+        EditorToolbarAction::Image,
+        EditorToolbarAction::Table,
+    ];
+
+    for action in formatting {
+        let item = toolbar_item(&layout, action);
+        assert!(!item.enabled, "{action:?} must be disabled in Source mode");
+        assert_eq!(layout.hit_test(item.area.x, item.area.y), None);
+    }
+    assert!(toolbar_item(&layout, EditorToolbarAction::New).enabled);
+    assert!(toolbar_item(&layout, EditorToolbarAction::Open).enabled);
+    assert!(toolbar_item(&layout, EditorToolbarAction::Save).enabled);
+
+    let terminal = render(&model, 140, 14);
+    let bold = toolbar_item(&layout, EditorToolbarAction::Bold);
+    assert_eq!(
+        terminal.backend().buffer()[(bold.area.x + 1, bold.area.y)].fg,
+        TundraTheme::default_dark().muted
+    );
+}
+
+#[test]
+fn open_menu_renders_a_clickable_overlay_above_the_toolbar_and_canvas() {
+    let mut model = EditorViewModel::new(
+        "menu.md",
+        vec![EditorRenderBlock::paragraph("canvas content")],
+    );
+    model.open_menu = Some(EditorMenu::Format);
+    let layout = editor_layout(Rect::new(0, 0, 72, 16), &model);
+    let popup = layout.menu_popup.expect("Format popup");
+    let bold = layout
+        .menu_items
+        .iter()
+        .find(|item| item.action == EditorMenuAction::Toolbar(EditorToolbarAction::Bold))
+        .expect("Bold menu item");
+
+    assert!(popup.height > 2);
+    assert_eq!(
+        layout.hit_test(bold.area.x, bold.area.y),
+        Some(EditorHitTarget::MenuAction(EditorMenuAction::Toolbar(
+            EditorToolbarAction::Bold
+        )))
+    );
+    let terminal = render(&model, 72, 16);
+    assert!(terminal_output(&terminal).contains("Strikethrough"));
+    let (bold_x, bold_y) = find_text(&terminal, "Bold");
+    assert!(bold_y >= popup.y && bold_y < popup.bottom());
+    assert!(bold_x >= popup.x && bold_x < popup.right());
 }
 
 #[test]
@@ -354,6 +419,105 @@ fn list_and_code_virtual_cells_anchor_to_editable_source_content() {
 }
 
 #[test]
+fn rich_table_cells_map_to_source_and_expose_draggable_column_edges() {
+    let source = "| Name | Value |\n| --- | --- |\n| old | 1 |";
+    let name_start = source.find("Name").expect("Name cell");
+    let value_start = source.find("Value").expect("Value cell");
+    let old_start = source.find("old").expect("old cell");
+    let one_start = source.rfind('1').expect("numeric cell");
+    let mut model = EditorViewModel::new(
+        "table.md",
+        vec![EditorRenderBlock::Table {
+            header: vec![
+                EditorTableCell {
+                    spans: vec![
+                        EditorRenderSpan::plain("Name")
+                            .with_source_range(EditorSourceRange::new(name_start, name_start + 4)),
+                    ],
+                },
+                EditorTableCell {
+                    spans: vec![
+                        EditorRenderSpan::plain("Value").with_source_range(EditorSourceRange::new(
+                            value_start,
+                            value_start + 5,
+                        )),
+                    ],
+                },
+            ],
+            rows: vec![vec![
+                EditorTableCell {
+                    spans: vec![
+                        EditorRenderSpan::plain("old")
+                            .with_source_range(EditorSourceRange::new(old_start, old_start + 3)),
+                    ],
+                },
+                EditorTableCell {
+                    spans: vec![
+                        EditorRenderSpan::plain("1")
+                            .with_source_range(EditorSourceRange::new(one_start, one_start + 1)),
+                    ],
+                },
+            ]],
+            alignments: vec![EditorTableAlignment::Left, EditorTableAlignment::Right],
+        }],
+    );
+    model.source = Some(source.to_string());
+    model.block_sources = vec![EditorBlockSourceMap::new(EditorSourceRange::new(
+        0,
+        source.len(),
+    ))];
+    model.table_column_widths = vec![vec![8, 5]];
+
+    let layout = editor_layout(Rect::new(0, 0, 80, 14), &model);
+    let left_edge = layout
+        .table_edge_handles
+        .iter()
+        .find(|handle| handle.edge == EditorTableEdge::Left)
+        .expect("left table edge");
+    let right_edge = layout
+        .table_edge_handles
+        .iter()
+        .find(|handle| handle.edge == EditorTableEdge::Right)
+        .expect("right table edge");
+    for edge in [left_edge, right_edge] {
+        assert_eq!(
+            layout.hit_test(edge.area.x, edge.area.y + 1),
+            Some(EditorHitTarget::TableEdge {
+                block_index: 0,
+                edge: edge.edge,
+                source_range: EditorSourceRange::new(0, source.len()),
+            })
+        );
+    }
+    let old_end = layout
+        .visual_position_for_source(old_start + 3)
+        .expect("old cell end maps to the rendered table");
+    let old_end_hit = layout
+        .hit_test_source(
+            layout.canvas.x + old_end.column as u16,
+            layout.canvas.y + old_end.line as u16,
+        )
+        .expect("table content is editable");
+    assert!(old_end_hit.editable);
+    assert_eq!(old_end_hit.byte_offset, old_start + 3);
+
+    let first_edge = layout
+        .table_resize_handles
+        .first()
+        .expect("first column resize edge");
+    assert_eq!(first_edge.width, 8);
+    assert_eq!(first_edge.column_index, 0);
+    assert_eq!(
+        layout.hit_test(first_edge.area.x, first_edge.area.y + 1),
+        Some(EditorHitTarget::TableResize {
+            block_index: 0,
+            column_index: 0,
+            width: 8,
+        })
+    );
+}
+
+#[test]
 fn source_hits_follow_terminal_cells_but_return_utf8_grapheme_boundaries() {
     let source = "A好e\u{301}🙂";
     let model = EditorViewModel::source("unicode.txt", source);
@@ -387,6 +551,175 @@ fn source_hits_follow_terminal_cells_but_return_utf8_grapheme_boundaries() {
             .expect("inside emoji")
             .byte_offset,
         source.len()
+    );
+}
+
+#[test]
+fn rich_hits_use_stable_container_ids_and_grapheme_offsets_without_markdown_source() {
+    let text = "A好e\u{301}🙂";
+    let mut model = EditorViewModel::new(
+        "logical.md",
+        vec![EditorRenderBlock::Paragraph(vec![
+            EditorRenderSpan::plain(text).with_rich_range(RichRange::new(42, 10, 14)),
+        ])],
+    );
+    model.rich_cursor = Some(RichPosition::new(42, 12));
+    // Deliberately conflicting legacy offsets must not affect a logical Rich
+    // view model.
+    model.cursor_offset = Some(0);
+    let layout = editor_layout(Rect::new(0, 0, 60, 10), &model);
+    let line = line_area(&layout, 0);
+
+    assert_eq!(
+        layout
+            .hit_test_document(line.area.x, line.area.y)
+            .expect("logical start")
+            .position,
+        EditorDocumentPosition::Rich(RichPosition::new(42, 10))
+    );
+    assert_eq!(
+        layout
+            .hit_test_document(line.area.x + 2, line.area.y)
+            .expect("inside wide grapheme")
+            .position,
+        EditorDocumentPosition::Rich(RichPosition::new(42, 12))
+    );
+    assert_eq!(
+        layout.visual_position_for_rich(RichPosition::new(42, 13)),
+        Some(EditorTextPosition::new(0, 4))
+    );
+    assert_eq!(
+        layout.visual_position_for_document(EditorDocumentPosition::Source(0)),
+        None
+    );
+}
+
+#[test]
+fn rich_virtual_list_marker_maps_to_nearest_logical_boundary_not_source() {
+    let model = EditorViewModel::new(
+        "list.md",
+        vec![EditorRenderBlock::BulletListItem {
+            depth: 0,
+            checked: None,
+            spans: vec![EditorRenderSpan::plain("item").with_rich_range(RichRange::new(7, 0, 4))],
+        }],
+    );
+    let layout = editor_layout(Rect::new(0, 0, 60, 10), &model);
+    let line = line_area(&layout, 0);
+    let marker_hit = layout
+        .hit_test_document(line.area.x, line.area.y)
+        .expect("virtual marker resolves to item start");
+
+    assert_eq!(
+        marker_hit.position,
+        EditorDocumentPosition::Rich(RichPosition::new(7, 0))
+    );
+    assert!(marker_hit.editable);
+    assert!(layout.source_line_maps.is_empty());
+    assert!(layout.hit_test_source(line.area.x, line.area.y).is_none());
+    assert_eq!(
+        layout.visual_position_for_rich(RichPosition::new(7, 0)),
+        Some(EditorTextPosition::new(0, 2))
+    );
+}
+
+#[test]
+fn rich_table_cells_and_virtual_borders_use_cell_logical_ranges() {
+    let mut model = EditorViewModel::new(
+        "table.md",
+        vec![EditorRenderBlock::Table {
+            header: vec![
+                EditorTableCell {
+                    spans: vec![
+                        EditorRenderSpan::plain("Name").with_rich_range(RichRange::new(100, 0, 4)),
+                    ],
+                },
+                EditorTableCell {
+                    spans: vec![
+                        EditorRenderSpan::plain("值").with_rich_range(RichRange::new(101, 0, 1)),
+                    ],
+                },
+            ],
+            rows: vec![vec![
+                EditorTableCell {
+                    spans: vec![
+                        EditorRenderSpan::plain("e\u{301}")
+                            .with_rich_range(RichRange::new(200, 0, 1)),
+                    ],
+                },
+                EditorTableCell {
+                    spans: vec![
+                        EditorRenderSpan::plain("🙂").with_rich_range(RichRange::new(201, 0, 1)),
+                    ],
+                },
+            ]],
+            alignments: vec![EditorTableAlignment::Left, EditorTableAlignment::Right],
+        }],
+    );
+    model.table_column_widths = vec![vec![6, 4]];
+    let layout = editor_layout(Rect::new(0, 0, 80, 14), &model);
+
+    let second_header = layout
+        .visual_position_for_rich(RichPosition::new(101, 0))
+        .expect("second header cell");
+    assert_eq!(second_header.line, 1);
+    let content_hit = layout
+        .hit_test_document(
+            layout.canvas.x + second_header.column as u16,
+            layout.canvas.y + second_header.line as u16,
+        )
+        .expect("header content hit");
+    assert_eq!(
+        content_hit.position,
+        EditorDocumentPosition::Rich(RichPosition::new(101, 0))
+    );
+    assert!(content_hit.editable);
+
+    // The top border is synthetic, but each column segment carries its cell's
+    // logical anchor and resolves to the nearest editable cell boundary.
+    let border_hit = layout
+        .hit_test_document(
+            layout.canvas.x + second_header.column as u16,
+            layout.canvas.y,
+        )
+        .expect("virtual border hit");
+    assert_eq!(
+        border_hit.position,
+        EditorDocumentPosition::Rich(RichPosition::new(101, 0))
+    );
+    assert!(border_hit.editable);
+
+    let emoji_end = layout
+        .visual_position_for_rich(RichPosition::new(201, 1))
+        .expect("emoji cell end");
+    assert_eq!(emoji_end.line, 3);
+    assert!(layout.source_line_maps.is_empty());
+    assert!(
+        layout
+            .hit_test_source(
+                layout.canvas.x + second_header.column as u16,
+                layout.canvas.y
+            )
+            .is_none()
+    );
+}
+
+#[test]
+fn source_document_hits_remain_utf8_byte_offsets() {
+    let model = EditorViewModel::source("source.md", "好x");
+    let layout = editor_layout(Rect::new(0, 0, 60, 10), &model);
+    let line = line_area(&layout, 0);
+
+    assert_eq!(
+        layout
+            .hit_test_document(line.area.x + 2, line.area.y)
+            .expect("source boundary")
+            .position,
+        EditorDocumentPosition::Source("好".len())
+    );
+    assert_eq!(
+        layout.visual_position_for_document(EditorDocumentPosition::Rich(RichPosition::new(1, 0))),
+        None
     );
 }
 

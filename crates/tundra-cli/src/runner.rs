@@ -152,6 +152,13 @@ where
         Ok(CliCommand::New) => run_new(platform, stdout, stderr),
         Ok(CliCommand::Paths) => run_paths(platform, stdout, stderr),
         Ok(CliCommand::Doctor) => run_doctor(platform, stdout, stderr, None),
+        Ok(CliCommand::Editor) => run_editor(stderr, || {
+            tundra_shell::run_shell_blocking_managed(
+                stdout,
+                tundra_shell::ShellLaunchConfig::editor(),
+                process_watchdog.clone(),
+            )
+        }),
         Ok(CliCommand::Weathr) => {
             routed_by_weathr = true;
             run_weathr_managed(
@@ -234,11 +241,29 @@ where
         Ok(CliCommand::New) => run_new(platform, stdout, stderr),
         Ok(CliCommand::Paths) => run_paths(platform, stdout, stderr),
         Ok(CliCommand::Doctor) => run_doctor(platform, stdout, stderr, asset_root),
+        Ok(CliCommand::Editor) => run_editor(stderr, || {
+            tundra_shell::run_shell_blocking(stdout, tundra_shell::ShellLaunchConfig::editor())
+        }),
         Ok(CliCommand::Weathr) => run_weathr(platform, stderr, weathr_launcher),
         Err(error) => {
             let _ = writeln!(stderr, "ERROR: {error}");
             let _ = write_help(stderr);
             2
+        }
+    }
+}
+
+fn run_editor<Stderr, Launcher, LaunchError>(stderr: &mut Stderr, launcher: Launcher) -> i32
+where
+    Stderr: Write,
+    Launcher: FnOnce() -> Result<(), LaunchError>,
+    LaunchError: fmt::Display,
+{
+    match launcher() {
+        Ok(()) => 0,
+        Err(error) => {
+            let _ = writeln!(stderr, "ERROR: could not launch editor: {error}");
+            1
         }
     }
 }

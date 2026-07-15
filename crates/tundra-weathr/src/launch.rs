@@ -425,7 +425,8 @@ mod tests {
             "tundra-weathr-test",
             env!("CARGO_PKG_VERSION"),
         );
-        let (runtime, process) = WatchdogRuntime::start(config).expect("test watchdog starts");
+        let (runtime, process) =
+            WatchdogRuntime::start_isolated(config).expect("test watchdog starts");
         let app = process
             .register_app(weathr_watchdog_descriptor())
             .expect("test Weathr app registers");
@@ -511,10 +512,11 @@ mod tests {
         assert!(matches!(error, WeathrRunError::Panic { .. }));
         let incidents = process.drain_incidents();
         assert_eq!(incidents.len(), 2);
-        assert!(incidents.iter().any(|incident| matches!(
-            &incident.recovery,
-            RecoveryOutcome::Unrecoverable(_)
-        )));
+        assert!(
+            incidents
+                .iter()
+                .any(|incident| matches!(&incident.recovery, RecoveryOutcome::Unrecoverable(_)))
+        );
         runtime.shutdown().expect("test watchdog shuts down");
         let _ = std::fs::remove_dir_all(root);
     }

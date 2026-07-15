@@ -4,9 +4,9 @@
 //! calls the documented wide-character file replacement APIs with NUL-terminated
 //! paths owned by this function. Both paths are on the same directory/volume.
 
-use std::fs::{self, OpenOptions};
 #[cfg(not(windows))]
 use std::fs::File;
+use std::fs::{self, OpenOptions};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -106,7 +106,16 @@ fn replace_file(from: &Path, to: &Path) -> io::Result<()> {
     let replaced = if to_path_exists(to.as_ptr()) {
         // SAFETY: `to` and `from` are live NUL-terminated UTF-16 buffers for
         // the duration of this call. Optional pointers are null as required.
-        unsafe { ReplaceFileW(to.as_ptr(), from.as_ptr(), ptr::null(), 0, ptr::null(), ptr::null()) }
+        unsafe {
+            ReplaceFileW(
+                to.as_ptr(),
+                from.as_ptr(),
+                ptr::null(),
+                0,
+                ptr::null(),
+                ptr::null(),
+            )
+        }
     } else {
         // SAFETY: both path buffers are valid and NUL-terminated. Omitting
         // REPLACE_EXISTING ensures this branch cannot overwrite a raced writer.

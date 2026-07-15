@@ -34,6 +34,9 @@ fn native_recycle_bin_round_trip_for_temporary_file() {
         .restore_trash_item(&entry.id, TrashRestoreTarget::OriginalLocation)
         .expect("restore temporary fixture");
     assert_eq!(restored, source);
-    assert_eq!(fs::read(&source).expect("restored fixture"), b"temporary recycle smoke test");
+    assert_eq!(
+        fs::read(&source).expect("restored fixture"),
+        b"temporary recycle smoke test"
+    );
     fs::remove_file(source).expect("cleanup fixture");
 }

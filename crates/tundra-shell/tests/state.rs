@@ -10,9 +10,9 @@ use tundra_platform::{
 use tundra_shell::{
     ClickKind, HomeModeOverride, InputEvent, InputKey, InputModifiers, InputPhase, KeyInput,
     PointerButton, ScrollDirection, ShellAction, ShellAppConfig, ShellCommand, ShellComponent,
-    ShellHomeMode, ShellLaunchConfig, ShellNotificationAction, ShellRestoredSession, ShellScreen,
-    ShellStartupState, ShellState, ShellStorageReport, ShellTerminalMode, default_shell_shortcuts,
-    detect_shortcut_conflicts,
+    ShellHomeMode, ShellLaunchConfig, ShellLaunchTarget, ShellNotificationAction,
+    ShellRestoredSession, ShellScreen, ShellStartupState, ShellState, ShellStorageReport,
+    ShellTerminalMode, default_shell_shortcuts, detect_shortcut_conflicts,
 };
 use tundra_storage::StorageManager;
 use tundra_ui::{HomeDisplayMode, NotificationLayout, NotificationTone};
@@ -21,6 +21,7 @@ fn debug_config() -> ShellLaunchConfig {
     ShellLaunchConfig {
         terminal_mode: ShellTerminalMode::Fullscreen,
         home_mode_override: HomeModeOverride::Debug,
+        launch_target: ShellLaunchTarget::Home,
     }
 }
 
@@ -28,6 +29,7 @@ fn build_default_config() -> ShellLaunchConfig {
     ShellLaunchConfig {
         terminal_mode: ShellTerminalMode::Fullscreen,
         home_mode_override: HomeModeOverride::BuildDefault,
+        launch_target: ShellLaunchTarget::Home,
     }
 }
 
@@ -1177,6 +1179,7 @@ fn explicit_user_mode_shows_product_entries_without_diagnostics() {
     let config = ShellLaunchConfig {
         terminal_mode: ShellTerminalMode::Fullscreen,
         home_mode_override: HomeModeOverride::BuildDefault,
+        launch_target: ShellLaunchTarget::Home,
     };
     let state = ShellState::new_for_home_mode(config, (120, 35), ShellHomeMode::User);
 

@@ -9,8 +9,8 @@ use tundra_platform::{PlatformCapabilities, PlatformKind, UserDirs, build_window
 use tundra_shell::{
     HomeModeOverride, InputEvent, InputKey, InputModifiers, InputPhase, KeyInput,
     LOGIN_IDLE_TIMEOUT, PASSWORD_REVEAL_DURATION, PointerButton, ShellAction, ShellComponent,
-    ShellHomeMode, ShellLaunchConfig, ShellScreen, ShellState, ShellTerminalMode,
-    prepare_shell_startup,
+    ShellHomeMode, ShellLaunchConfig, ShellLaunchTarget, ShellScreen, ShellState,
+    ShellTerminalMode, prepare_shell_startup,
 };
 use tundra_storage::{ClockEntryRecord, ClockProfile};
 use tundra_ui::NotificationTone;
@@ -19,6 +19,7 @@ fn debug_config() -> ShellLaunchConfig {
     ShellLaunchConfig {
         terminal_mode: ShellTerminalMode::Fullscreen,
         home_mode_override: HomeModeOverride::Debug,
+        launch_target: ShellLaunchTarget::Home,
     }
 }
 
@@ -26,6 +27,7 @@ fn default_config() -> ShellLaunchConfig {
     ShellLaunchConfig {
         terminal_mode: ShellTerminalMode::Fullscreen,
         home_mode_override: HomeModeOverride::BuildDefault,
+        launch_target: ShellLaunchTarget::Home,
     }
 }
 

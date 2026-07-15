@@ -1,4 +1,4 @@
-use crate::{HomeModeOverride, ShellLaunchConfig, ShellTerminalMode};
+use crate::{HomeModeOverride, ShellLaunchConfig, ShellLaunchTarget, ShellTerminalMode};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ShellArgError {
@@ -27,6 +27,7 @@ where
     let mut config = ShellLaunchConfig::default();
     let mut seen_not_fullscreen = false;
     let mut seen_debug = false;
+    let mut seen_editor = false;
 
     for arg in args {
         match arg.as_ref() {
@@ -43,6 +44,13 @@ where
                 }
                 seen_debug = true;
                 config.home_mode_override = HomeModeOverride::Debug;
+            }
+            "-editor" => {
+                if seen_editor {
+                    return Err(ShellArgError::DuplicateArgument(arg.as_ref().to_string()));
+                }
+                seen_editor = true;
+                config.launch_target = ShellLaunchTarget::Editor;
             }
             other => return Err(ShellArgError::UnknownArgument(other.to_string())),
         }

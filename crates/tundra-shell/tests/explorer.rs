@@ -9,8 +9,8 @@ use tundra_platform::{
 };
 use tundra_shell::{
     HomeModeOverride, InputEvent, InputKey, InputModifiers, InputPhase, KeyInput, PointerButton,
-    ShellComponent, ShellHomeMode, ShellLaunchConfig, ShellScreen, ShellState, ShellTerminalMode,
-    prepare_shell_startup,
+    ShellComponent, ShellHomeMode, ShellLaunchConfig, ShellLaunchTarget, ShellScreen, ShellState,
+    ShellTerminalMode, prepare_shell_startup,
 };
 use tundra_ui::NotificationTone;
 
@@ -18,6 +18,7 @@ fn default_config() -> ShellLaunchConfig {
     ShellLaunchConfig {
         terminal_mode: ShellTerminalMode::Fullscreen,
         home_mode_override: HomeModeOverride::BuildDefault,
+        launch_target: ShellLaunchTarget::Home,
     }
 }
 
@@ -488,6 +489,7 @@ impl FixtureRoot {
             std::process::id()
         ));
         fs::create_dir_all(&path).expect("fixture root");
+        let path = fs::canonicalize(&path).expect("canonicalize fixture root");
         Self { path }
     }
 

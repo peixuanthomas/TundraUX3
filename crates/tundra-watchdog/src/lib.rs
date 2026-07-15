@@ -114,7 +114,10 @@ mod tests {
         assert_eq!(process.report_stale_runs(|_| false).unwrap(), 1);
         let receipt = receive_incident(&runtime);
         assert!(receipt.summary.contains("previous run previous-run"));
-        assert!(matches!(receipt.recovery, RecoveryOutcome::Unrecoverable(_)));
+        assert!(matches!(
+            receipt.recovery,
+            RecoveryOutcome::Unrecoverable(_)
+        ));
         assert!(!marker.exists());
 
         cleanup(runtime, &root);
@@ -317,9 +320,10 @@ mod tests {
             .unwrap();
         assert_eq!(recovered.load(Ordering::SeqCst), 0);
         drop(guard);
-        assert!(app
-            .reconcile_checkpointed(&OperationKind::new("filesystem.v1").unwrap())
-            .is_recovered());
+        assert!(
+            app.reconcile_checkpointed(&OperationKind::new("filesystem.v1").unwrap())
+                .is_recovered()
+        );
         assert_eq!(recovered.load(Ordering::SeqCst), 1);
         assert_eq!(
             fs::read_dir(&journal_directory)
@@ -375,7 +379,10 @@ mod tests {
             &std::io::Error::other("cache write failed"),
         );
         let receipt = receive_incident(&runtime);
-        assert!(matches!(receipt.recovery, RecoveryOutcome::Unrecoverable(_)));
+        assert!(matches!(
+            receipt.recovery,
+            RecoveryOutcome::Unrecoverable(_)
+        ));
         cleanup(runtime, &root);
     }
 
@@ -450,12 +457,14 @@ mod tests {
         let shutdown = group.shutdown_async(Duration::from_secs(1)).await;
         assert_eq!(shutdown.still_running, 0);
         assert_eq!(handle.join().await.unwrap(), None);
-        assert!(closed
-            .spawn_async(
-                TaskSpec::one_shot(TaskId::new("after-close").unwrap()),
-                || async { 1_u8 },
-            )
-            .is_err());
+        assert!(
+            closed
+                .spawn_async(
+                    TaskSpec::one_shot(TaskId::new("after-close").unwrap()),
+                    || async { 1_u8 },
+                )
+                .is_err()
+        );
         cleanup(runtime, &root);
     }
 

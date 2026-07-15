@@ -18,6 +18,14 @@ struct DragTracker {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct EditorTableResizeState {
+    table_id: tundra_ui::NodeId,
+    column_index: usize,
+    start_x: u16,
+    start_width: usize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum UserManagementFormField {
     Username,
     DisplayName,
@@ -96,7 +104,7 @@ enum ExplorerPurpose {
     Browse,
     EditorOpen,
     EditorSaveAs {
-        contents: Vec<u8>,
+        snapshot: tundra_apps::editor::SaveSnapshot,
     },
 }
 
@@ -157,6 +165,7 @@ impl Eq for ShellNetworkClock {}
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ShellState {
     home_mode: ShellHomeMode,
+    launch_target: ShellLaunchTarget,
     ascii_assets: tundra_ui::RuntimeAsciiAssets,
     screen_stack: Vec<ShellScreen>,
     storage_manager: Option<StorageManager>,
@@ -215,7 +224,9 @@ pub struct ShellState {
     editor_focus: tundra_ui::EditorFocus,
     editor_open_menu: Option<tundra_ui::EditorMenu>,
     editor_selected_toolbar_action: Option<tundra_ui::EditorToolbarAction>,
-    editor_drag_anchor: Option<usize>,
+    editor_drag_anchor: Option<tundra_apps::editor::EditorPosition>,
+    editor_table_column_widths: std::collections::BTreeMap<tundra_ui::NodeId, Vec<usize>>,
+    editor_table_resize: Option<EditorTableResizeState>,
     editor_fingerprint: Option<DocumentFingerprint>,
     editor_close_after_save: bool,
     editor_open_after_save: bool,

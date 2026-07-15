@@ -91,6 +91,8 @@ impl ShellState {
         self.editor_open_menu = None;
         self.editor_selected_toolbar_action = None;
         self.editor_drag_anchor = None;
+        self.editor_table_column_widths.clear();
+        self.editor_table_resize = None;
         self.editor_fingerprint = None;
         self.editor_close_after_save = false;
         self.editor_open_after_save = false;

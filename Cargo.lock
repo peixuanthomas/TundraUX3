@@ -2687,6 +2687,7 @@ dependencies = [
  "chrono",
  "comrak",
  "ropey",
+ "serde",
  "serde_json",
  "tundra-ascii-assets",
  "tundra-core",
@@ -2712,6 +2713,7 @@ version = "0.1.0"
 dependencies = [
  "tundra-ascii-assets",
  "tundra-platform",
+ "tundra-shell",
  "tundra-storage",
  "tundra-ui",
  "tundra-watchdog",

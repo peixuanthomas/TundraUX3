@@ -55,8 +55,7 @@ const FOFX_RECYCLEONDELETE: u32 = 0x0008_0000;
 const FOFX_EARLYFAILURE: u32 = 0x0010_0000;
 const FILE_OPERATION_FLAGS: u32 =
     FOF_SILENT | FOF_NOCONFIRMATION | FOF_NOERRORUI | FOFX_EARLYFAILURE;
-const RECYCLE_OPERATION_FLAGS: u32 =
-    FILE_OPERATION_FLAGS | FOF_ALLOWUNDO | FOFX_RECYCLEONDELETE;
+const RECYCLE_OPERATION_FLAGS: u32 = FILE_OPERATION_FLAGS | FOF_ALLOWUNDO | FOFX_RECYCLEONDELETE;
 const SHERB_NOCONFIRMATION: u32 = 0x1;
 const SHERB_NOPROGRESSUI: u32 = 0x2;
 const SHERB_NOSOUND: u32 = 0x4;
@@ -473,8 +472,7 @@ fn windows_move_to_trash(paths: &[PathBuf]) -> Result<(), PlatformError> {
     file_operation_set_flags(&operation, RECYCLE_OPERATION_FLAGS)?;
     let table = unsafe { operation.vtable::<FileOperationVTable>() };
     for source in &sources {
-        let status =
-            unsafe { (table.delete_item)(operation.raw(), source.raw(), ptr::null_mut()) };
+        let status = unsafe { (table.delete_item)(operation.raw(), source.raw(), ptr::null_mut()) };
         check_hresult(status, "IFileOperation::DeleteItem(Recycle Bin)")?;
     }
     perform_file_operation(&operation, "move items to Recycle Bin")

@@ -656,7 +656,10 @@ impl ShellState {
         if session.role != UserRole::Guest {
             self.load_clock_for_session(&session);
         }
-        self.refresh_hit_map();
+        match self.launch_target {
+            ShellLaunchTarget::Home => self.refresh_hit_map(),
+            ShellLaunchTarget::Editor => self.open_editor(),
+        }
     }
 
     fn open_user_management(&mut self) {

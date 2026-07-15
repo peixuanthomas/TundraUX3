@@ -178,8 +178,7 @@ fn sanitize_incident(mut incident: IncidentRecord) -> IncidentRecord {
     incident.boundary = sanitize::text(incident.boundary);
     incident.task_group = incident.task_group.map(sanitize::text);
     incident.operation_id = incident.operation_id.map(sanitize::text);
-    incident.recovery_handler_version =
-        incident.recovery_handler_version.map(sanitize::text);
+    incident.recovery_handler_version = incident.recovery_handler_version.map(sanitize::text);
     if let Some(panic) = &mut incident.panic {
         panic.payload = sanitize::text(&panic.payload);
     }

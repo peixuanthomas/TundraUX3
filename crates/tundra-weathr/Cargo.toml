@@ -31,3 +31,6 @@ tokio = { version = "1", features = [
 toml = "0.9"
 tundra-ascii-assets = { path = "../tundra-ascii-assets" }
 tundra-watchdog = { path = "../tundra-watchdog", features = ["tokio"] }
+
+[dev-dependencies]
+tundra-watchdog = { path = "../tundra-watchdog", features = ["test-support"] }

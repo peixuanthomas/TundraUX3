@@ -177,8 +177,10 @@ impl OperationGuard {
     pub fn commit(mut self, detail: impl Into<String>) -> Result<(), WatchdogError> {
         self.record.status = OperationStatus::Committed;
         self.record.checkpoint_sequence = self.record.checkpoint_sequence.saturating_add(1);
-        self.record.checkpoint =
-            OperationCheckpoint::new("committed", serde_json::json!({ "detail": sanitize::text(detail.into()) }));
+        self.record.checkpoint = OperationCheckpoint::new(
+            "committed",
+            serde_json::json!({ "detail": sanitize::text(detail.into()) }),
+        );
         self.record.updated_at = Utc::now();
         write_record(&self.path, &self.record)?;
         self.committed = true;

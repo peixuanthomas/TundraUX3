@@ -93,7 +93,7 @@ pub(crate) fn drain_watchdog_incidents(
 }
 
 fn unique_incidents(incidents: Vec<IncidentReceipt>) -> Vec<IncidentReceipt> {
-    let mut positions = HashMap::new();
+    let mut positions: HashMap<_, usize> = HashMap::new();
     let mut unique: Vec<IncidentReceipt> = Vec::new();
     for incident in incidents {
         if let Some(index) = positions.get(&incident.incident_id).copied() {

@@ -138,8 +138,9 @@ impl WatchdogRuntime {
         }
     }
 
-    #[cfg(test)]
-    pub(crate) fn start_isolated(
+    #[cfg(any(test, feature = "test-support"))]
+    #[doc(hidden)]
+    pub fn start_isolated(
         config: WatchdogConfig,
     ) -> Result<(WatchdogRuntime, ProcessWatchdog), WatchdogError> {
         Self::start_inner(config)
@@ -249,7 +250,8 @@ impl WatchdogRuntime {
                 group.counts()
             };
             if counts.still_running > 0 {
-                self.process.report_shutdown_timeout(&name, &group.running_task_names());
+                self.process
+                    .report_shutdown_timeout(&name, &group.running_task_names());
             }
         }
         let (tx, rx) = mpsc::channel();
@@ -287,10 +289,9 @@ impl ProcessWatchdog {
         let previous = panic::take_hook();
         let process = self.clone();
         panic::set_hook(Box::new(move |panic_info| {
-            let context = current_execution_context()
-                .unwrap_or_else(|| {
-                    ExecutionContext::process(process.next_incident_id(), process.clone())
-                });
+            let context = current_execution_context().unwrap_or_else(|| {
+                ExecutionContext::process(process.next_incident_id(), process.clone())
+            });
             let incident = process.panic_incident(&context, panic_info);
             writer::append_emergency(
                 &process.shared.config,
@@ -417,7 +418,9 @@ impl ProcessWatchdog {
                 }
             };
             let marker = match serde_json::from_slice::<StaleRunMarker>(&bytes) {
-                Ok(marker) if marker.schema_version == 1 && is_safe_run_id(&marker.run_id) => marker,
+                Ok(marker) if marker.schema_version == 1 && is_safe_run_id(&marker.run_id) => {
+                    marker
+                }
                 Ok(marker) => {
                     self.report_corrupt_marker(
                         &path,
@@ -442,10 +445,8 @@ impl ProcessWatchdog {
                 continue;
             }
 
-            let context = ExecutionContext::process(
-                format!("unclean-{}", marker.run_id),
-                self.clone(),
-            );
+            let context =
+                ExecutionContext::process(format!("unclean-{}", marker.run_id), self.clone());
             let mut incident = self.incident_record(
                 &context,
                 IncidentKind::UncleanExit,
@@ -504,7 +505,11 @@ impl ProcessWatchdog {
             .map_err(WatchdogError::Writer)
     }
 
-    fn report_corrupt_marker(&self, path: &std::path::Path, detail: &str) -> Result<(), WatchdogError> {
+    fn report_corrupt_marker(
+        &self,
+        path: &std::path::Path,
+        detail: &str,
+    ) -> Result<(), WatchdogError> {
         let file_name = path
             .file_name()
             .and_then(|name| name.to_str())
@@ -646,7 +651,12 @@ impl ProcessWatchdog {
             .operation_contexts
             .try_lock()
             .ok()
-            .and_then(|operations| operations.get(&context.incident_id).and_then(|items| items.last()).cloned());
+            .and_then(|operations| {
+                operations
+                    .get(&context.incident_id)
+                    .and_then(|items| items.last())
+                    .cloned()
+            });
         IncidentRecord {
             schema_version: REPORT_SCHEMA_VERSION,
             incident_id: context.incident_id.clone(),
@@ -667,10 +677,11 @@ impl ProcessWatchdog {
             task_kind: context.task_kind,
             replay_safety: context.replay_safety.clone(),
             operation_kind: context.operation_kind.clone(),
-            operation_id: context
-                .operation_id
-                .clone()
-                .or_else(|| operation.as_ref().map(|operation| operation.operation_id.clone())),
+            operation_id: context.operation_id.clone().or_else(|| {
+                operation
+                    .as_ref()
+                    .map(|operation| operation.operation_id.clone())
+            }),
             recovery_handler_version: context.recovery_handler_version.clone().or_else(|| {
                 operation
                     .as_ref()
@@ -853,7 +864,8 @@ impl AppWatchdog {
                 .recovery_handlers
                 .lock()
                 .unwrap_or_else(|poisoned| poisoned.into_inner());
-            if let Some(existing) = handlers.get(&(self.descriptor.id.clone(), operation_kind.clone()))
+            if let Some(existing) =
+                handlers.get(&(self.descriptor.id.clone(), operation_kind.clone()))
                 && existing.version() != handler.version()
             {
                 return Err(WatchdogError::InvalidTaskPolicy(format!(
@@ -926,7 +938,10 @@ impl AppWatchdog {
             .recovery_status
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .insert((self.descriptor.id.clone(), operation_kind.clone()), outcome);
+            .insert(
+                (self.descriptor.id.clone(), operation_kind.clone()),
+                outcome,
+            );
     }
 
     fn report_recovery_outcome(&self, operation_kind: &OperationKind, outcome: RecoveryOutcome) {

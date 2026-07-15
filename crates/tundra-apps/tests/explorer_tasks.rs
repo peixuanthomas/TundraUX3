@@ -1,13 +1,13 @@
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, OnceLock};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, OnceLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use tundra_apps::explorer_tasks::{
     ExplorerCollisionPolicy, ExplorerCollisionResolution, ExplorerDeletePlan, ExplorerTaskEngine,
-    ExplorerTaskError, ExplorerTaskEvent, ExplorerTaskPlan, ExplorerTaskSubmitError, ExplorerTrash,
-    ExplorerTransferOperation, ExplorerTransferPlan,
+    ExplorerTaskError, ExplorerTaskEvent, ExplorerTaskPlan, ExplorerTaskSubmitError,
+    ExplorerTransferOperation, ExplorerTransferPlan, ExplorerTrash,
 };
 use tundra_platform::{
     AppPaths, Platform, PlatformCapabilities, PlatformError, PlatformKind, ProcessExit,
@@ -50,7 +50,9 @@ impl ExplorerTrash for TestTrash {
             path: self.root.clone(),
             message: error.to_string(),
         })?;
-        let name = path.file_name().unwrap_or_else(|| std::ffi::OsStr::new("item"));
+        let name = path
+            .file_name()
+            .unwrap_or_else(|| std::ffi::OsStr::new("item"));
         let target = self.root.join(format!(
             "{}-{}",
             self.sequence.fetch_add(1, Ordering::Relaxed),
@@ -184,7 +186,9 @@ impl Platform for TestPlatform {
             message: error.to_string(),
         })?;
         for (index, path) in paths.iter().enumerate() {
-            let name = path.file_name().unwrap_or_else(|| std::ffi::OsStr::new("item"));
+            let name = path
+                .file_name()
+                .unwrap_or_else(|| std::ffi::OsStr::new("item"));
             let target = root.join(format!("{index}-{}", name.to_string_lossy()));
             fs::rename(path, &target).map_err(|error| PlatformError::Io {
                 operation: "move to simulated system Trash",
@@ -247,12 +251,8 @@ fn finished(
 }
 
 fn engine(platform: Arc<dyn Platform>, trash: PathBuf) -> ExplorerTaskEngine {
-    ExplorerTaskEngine::new_managed(
-        platform,
-        Arc::new(TestTrash::new(trash)),
-        test_watchdog(),
-    )
-    .expect("managed Explorer test worker")
+    ExplorerTaskEngine::new_managed(platform, Arc::new(TestTrash::new(trash)), test_watchdog())
+        .expect("managed Explorer test worker")
 }
 
 fn test_watchdog() -> AppWatchdog {

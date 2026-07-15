@@ -455,16 +455,22 @@ fn replace_file(from: &Path, to: &Path) -> std::io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static NEXT_TEMP_DIRECTORY_ID: AtomicU64 = AtomicU64::new(0);
 
     fn unique_temp_dir() -> PathBuf {
-        std::env::temp_dir().join(format!(
-            "tundra-platform-document-{}-{}",
+        let directory = std::env::temp_dir().join(format!(
+            "tundra-platform-document-{}-{}-{}",
             process::id(),
             SystemTime::now()
                 .duration_since(UNIX_EPOCH)
                 .unwrap_or_default()
-                .as_nanos()
-        ))
+                .as_nanos(),
+            NEXT_TEMP_DIRECTORY_ID.fetch_add(1, Ordering::Relaxed)
+        ));
+        fs::create_dir_all(&directory).expect("create document test directory");
+        fs::canonicalize(directory).expect("canonicalize document test directory")
     }
 
     #[test]

@@ -2,8 +2,8 @@ use std::io::Write;
 
 use tundra_shell::{
     ENTER_FULLSCREEN_SEQUENCE, EXIT_FULLSCREEN_SEQUENCE, HomeModeOverride, ShellArgError,
-    ShellLaunchConfig, ShellTerminalMode, banner_lines, parse_shell_args, render_static_banner,
-    startup_lines,
+    ShellLaunchConfig, ShellLaunchTarget, ShellTerminalMode, banner_lines, parse_shell_args,
+    render_static_banner, startup_lines,
 };
 
 #[test]
@@ -68,6 +68,7 @@ fn shell_default_config_uses_fullscreen_and_build_default_home() {
         ShellLaunchConfig {
             terminal_mode: ShellTerminalMode::Fullscreen,
             home_mode_override: HomeModeOverride::BuildDefault,
+            launch_target: ShellLaunchTarget::Home,
         }
     );
 }
@@ -79,6 +80,7 @@ fn shell_can_be_started_without_fullscreen_explicitly() {
         ShellLaunchConfig {
             terminal_mode: ShellTerminalMode::NotFullscreen,
             home_mode_override: HomeModeOverride::BuildDefault,
+            launch_target: ShellLaunchTarget::Home,
         }
     );
 }
@@ -90,7 +92,16 @@ fn debug_flag_forces_debug_home() {
         ShellLaunchConfig {
             terminal_mode: ShellTerminalMode::Fullscreen,
             home_mode_override: HomeModeOverride::Debug,
+            launch_target: ShellLaunchTarget::Home,
         }
+    );
+}
+
+#[test]
+fn editor_flag_targets_editor_without_changing_home_mode() {
+    assert_eq!(
+        parse_shell_args(["-editor"]).expect("editor flag should parse"),
+        ShellLaunchConfig::editor()
     );
 }
 
@@ -99,6 +110,7 @@ fn notfullscreen_and_debug_can_be_combined() {
     let expected = ShellLaunchConfig {
         terminal_mode: ShellTerminalMode::NotFullscreen,
         home_mode_override: HomeModeOverride::Debug,
+        launch_target: ShellLaunchTarget::Home,
     };
 
     assert_eq!(
@@ -112,6 +124,26 @@ fn notfullscreen_and_debug_can_be_combined() {
 }
 
 #[test]
+fn editor_target_combines_with_terminal_and_debug_options_in_any_order() {
+    let expected = ShellLaunchConfig {
+        terminal_mode: ShellTerminalMode::NotFullscreen,
+        home_mode_override: HomeModeOverride::Debug,
+        launch_target: ShellLaunchTarget::Editor,
+    };
+
+    assert_eq!(
+        parse_shell_args(["-editor", "-debug", "-notfullscreen"])
+            .expect("editor target should combine with existing options"),
+        expected
+    );
+    assert_eq!(
+        parse_shell_args(["-notfullscreen", "-editor", "-debug"])
+            .expect("combined flags should be order independent"),
+        expected
+    );
+}
+
+#[test]
 fn duplicate_debug_flag_is_an_error() {
     let error = parse_shell_args(["-debug", "-debug"]).expect_err("duplicate flag should fail");
 
@@ -120,6 +152,17 @@ fn duplicate_debug_flag_is_an_error() {
         ShellArgError::DuplicateArgument("-debug".to_string())
     );
     assert_eq!(error.to_string(), "duplicate argument: -debug");
+}
+
+#[test]
+fn duplicate_editor_flag_is_an_error() {
+    let error = parse_shell_args(["-editor", "-editor"]).expect_err("duplicate flag should fail");
+
+    assert_eq!(
+        error,
+        ShellArgError::DuplicateArgument("-editor".to_string())
+    );
+    assert_eq!(error.to_string(), "duplicate argument: -editor");
 }
 
 #[test]

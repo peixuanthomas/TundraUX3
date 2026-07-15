@@ -284,9 +284,7 @@ fn mock_injects_and_records_volume_and_trash_operations() {
         destination
     );
     let moved_paths = vec![base.join("one"), base.join("two")];
-    platform
-        .move_to_trash(&moved_paths)
-        .expect("injected move");
+    platform.move_to_trash(&moved_paths).expect("injected move");
     platform.empty_trash().expect("injected empty");
 
     let calls = platform.calls();

@@ -8,6 +8,7 @@ path = "src/lib.rs"
 
 [features]
 default = []
+test-support = []
 tokio = ["dep:futures-util", "dep:tokio"]
 
 [dependencies]

@@ -1,5 +1,6 @@
 use std::borrow::Cow;
 use std::cmp::{max, min};
+use std::collections::BTreeMap;
 
 use ratatui::Frame;
 use ratatui::layout::Rect;
@@ -9,7 +10,7 @@ use ratatui::widgets::{Block, Borders, Clear, Paragraph};
 
 use crate::TundraTheme;
 
-/// The two representations exposed by the editor. Both edit the same document.
+/// The two representations exposed by the editor.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum EditorMode {
     #[default]
@@ -57,6 +58,12 @@ pub enum EditorToolbarAction {
     More,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EditorMenuAction {
+    Toolbar(EditorToolbarAction),
+    Mode(EditorMode),
+}
+
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum EditorSpanColor {
     #[default]
@@ -72,6 +79,93 @@ pub enum EditorSpanColor {
 pub struct EditorSourceRange {
     pub start: usize,
     pub end: usize,
+}
+
+/// Stable identity for an editable node/container in a rich document.
+///
+/// The UI deliberately treats this value as opaque. It is supplied by the
+/// editor's document model and remains stable while blocks are inserted or
+/// removed around the node.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct NodeId(pub u64);
+
+impl NodeId {
+    pub const fn new(value: u64) -> Self {
+        Self(value)
+    }
+
+    pub const fn get(self) -> u64 {
+        self.0
+    }
+}
+
+impl From<u64> for NodeId {
+    fn from(value: u64) -> Self {
+        Self(value)
+    }
+}
+
+impl From<NodeId> for u64 {
+    fn from(value: NodeId) -> Self {
+        value.0
+    }
+}
+
+/// A cursor boundary in rich content. Offsets count Unicode grapheme
+/// clusters, never Markdown bytes or Unicode scalar values.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct RichPosition {
+    pub container_id: NodeId,
+    pub grapheme_offset: usize,
+}
+
+impl RichPosition {
+    pub const fn new(container_id: u64, grapheme_offset: usize) -> Self {
+        Self {
+            container_id: NodeId::new(container_id),
+            grapheme_offset,
+        }
+    }
+
+    pub const fn in_node(container_id: NodeId, grapheme_offset: usize) -> Self {
+        Self {
+            container_id,
+            grapheme_offset,
+        }
+    }
+}
+
+/// A rich selection/range. Endpoints may be in different containers.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+pub struct RichRange {
+    pub start: RichPosition,
+    pub end: RichPosition,
+}
+
+impl RichRange {
+    pub const fn new(container_id: u64, start: usize, end: usize) -> Self {
+        Self {
+            start: RichPosition::new(container_id, start),
+            end: RichPosition::new(container_id, end),
+        }
+    }
+
+    pub const fn between(start: RichPosition, end: RichPosition) -> Self {
+        Self { start, end }
+    }
+
+    pub fn is_empty(self) -> bool {
+        self.start.container_id == self.end.container_id
+            && self.start.grapheme_offset == self.end.grapheme_offset
+    }
+}
+
+/// Mode-aware document coordinate used by input routing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum EditorDocumentPosition {
+    Rich(RichPosition),
+    /// UTF-8 byte boundary in Source mode.
+    Source(usize),
 }
 
 impl EditorSourceRange {
@@ -96,7 +190,12 @@ pub struct EditorRenderSpan {
     pub link: bool,
     pub color: EditorSpanColor,
     /// Optional mapping back to the exact Markdown/plain-text source.
+    /// This is a legacy/Source-mode compatibility field; Rich input routing
+    /// uses `rich_range` exclusively.
     pub source_range: Option<EditorSourceRange>,
+    /// Logical range in the in-memory rich document. Its length is measured in
+    /// grapheme clusters and normally matches the visible text in this span.
+    pub rich_range: Option<RichRange>,
 }
 
 impl EditorRenderSpan {
@@ -140,6 +239,11 @@ impl EditorRenderSpan {
 
     pub fn with_source_range(mut self, source_range: EditorSourceRange) -> Self {
         self.source_range = Some(source_range);
+        self
+    }
+
+    pub fn with_rich_range(mut self, rich_range: RichRange) -> Self {
+        self.rich_range = Some(rich_range);
         self
     }
 }
@@ -196,6 +300,17 @@ pub enum EditorRenderBlock {
         rows: Vec<Vec<EditorTableCell>>,
         alignments: Vec<EditorTableAlignment>,
     },
+    /// A table projected from the native rich document model.
+    ///
+    /// Unlike the legacy [`EditorRenderBlock::Table`] payload, this variant
+    /// has a stable identity and never requires a Markdown source range for
+    /// layout, resizing, or structural edge commands.
+    RichTable {
+        table_id: NodeId,
+        header: Vec<EditorTableCell>,
+        rows: Vec<Vec<EditorTableCell>>,
+        alignments: Vec<EditorTableAlignment>,
+    },
     HorizontalRule,
     RawHtml(String),
     /// The original Markdown is rendered verbatim until an image protocol overlay is available.
@@ -218,6 +333,14 @@ impl EditorRenderBlock {
         Self::Heading {
             level: level.clamp(1, 6),
             spans: vec![EditorRenderSpan::plain(text)],
+        }
+    }
+
+    /// Returns the stable native-document identity for Rich tables.
+    pub const fn table_id(&self) -> Option<NodeId> {
+        match self {
+            Self::RichTable { table_id, .. } => Some(*table_id),
+            _ => None,
         }
     }
 }
@@ -375,7 +498,12 @@ impl EditorToolbarState {
         }
     }
 
-    pub fn is_enabled(&self, action: EditorToolbarAction, read_only: bool) -> bool {
+    pub fn is_enabled(
+        &self,
+        action: EditorToolbarAction,
+        read_only: bool,
+        mode: EditorMode,
+    ) -> bool {
         match action {
             EditorToolbarAction::Save => self.can_save,
             EditorToolbarAction::Undo => self.can_undo,
@@ -390,7 +518,7 @@ impl EditorToolbarState {
             | EditorToolbarAction::Link
             | EditorToolbarAction::Image
             | EditorToolbarAction::Table
-            | EditorToolbarAction::ParagraphStyle => !read_only,
+            | EditorToolbarAction::ParagraphStyle => !read_only && mode == EditorMode::Rich,
             _ => true,
         }
     }
@@ -412,12 +540,26 @@ pub struct EditorViewModel {
     pub horizontal_scroll: usize,
     pub cursor: Option<EditorTextPosition>,
     pub selection: Option<EditorSelection>,
+    /// Logical Rich-mode cursor. When present, this is authoritative and the
+    /// renderer never consults Markdown byte offsets.
+    pub rich_cursor: Option<RichPosition>,
+    /// Logical Rich-mode selection. Endpoints remain directional so callers
+    /// can preserve anchor/focus semantics across blocks.
+    pub rich_selection: Option<RichRange>,
     /// Canonical source used only for visual-to-byte mapping. `None` preserves
     /// the legacy visual line/column contract.
     pub source: Option<String>,
     /// Parallel to `blocks`. Missing entries simply disable source mapping for
     /// the corresponding block.
     pub block_sources: Vec<EditorBlockSourceMap>,
+    /// Optional user-sized table columns, parallel to `blocks`. Empty entries
+    /// keep the natural Markdown table widths. This remains for legacy
+    /// source-backed table projections.
+    pub table_column_widths: Vec<Vec<usize>>,
+    /// User-sized Rich table columns keyed by the table's stable document ID.
+    /// Inserting or removing blocks before a table therefore cannot move its
+    /// width state to a different table.
+    pub rich_table_column_widths: BTreeMap<NodeId, Vec<usize>>,
     pub cursor_offset: Option<usize>,
     pub selection_offsets: Option<EditorSourceSelection>,
     pub toolbar: EditorToolbarState,
@@ -445,8 +587,12 @@ impl EditorViewModel {
             horizontal_scroll: 0,
             cursor: Some(EditorTextPosition::default()),
             selection: None,
+            rich_cursor: None,
+            rich_selection: None,
             source: None,
             block_sources: Vec::new(),
+            table_column_widths: Vec::new(),
+            rich_table_column_widths: BTreeMap::new(),
             cursor_offset: None,
             selection_offsets: None,
             toolbar: EditorToolbarState::default(),
@@ -470,12 +616,35 @@ impl EditorViewModel {
         model.word_count = source.split_whitespace().count();
         model
     }
+
+    /// Returns user-specified widths for a table block. Rich tables use their
+    /// stable ID; legacy tables fall back to the block-parallel source state.
+    pub fn table_widths_for_block(
+        &self,
+        block_index: usize,
+        table_id: Option<NodeId>,
+    ) -> Option<&[usize]> {
+        match table_id {
+            Some(table_id) => self
+                .rich_table_column_widths
+                .get(&table_id)
+                .map(Vec::as_slice),
+            None => self.table_column_widths.get(block_index).map(Vec::as_slice),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct EditorMenuLayout {
     pub menu: EditorMenu,
     pub area: Rect,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct EditorMenuItemLayout {
+    pub action: EditorMenuAction,
+    pub area: Rect,
+    pub enabled: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -512,10 +681,62 @@ pub struct EditorScrollbarLayout {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct EditorTableResizeHandle {
+    /// Stable Rich table identity. `None` denotes a legacy source-backed
+    /// projection whose structural commands still use `block_index`.
+    pub table_id: Option<NodeId>,
+    pub block_index: usize,
+    pub column_index: usize,
+    pub width: usize,
+    pub area: Rect,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EditorTableEdge {
+    Left,
+    Right,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct EditorTableEdgeHandle {
+    /// Stable Rich table identity. Present for native Rich tables even when
+    /// no Markdown source mapping exists.
+    pub table_id: Option<NodeId>,
+    pub block_index: usize,
+    pub edge: EditorTableEdge,
+    /// Legacy source-backed identity. Native Rich tables leave this empty.
+    pub source_range: Option<EditorSourceRange>,
+    pub area: Rect,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EditorHitTarget {
     Menu(EditorMenu),
+    MenuAction(EditorMenuAction),
+    MenuPopup,
     Toolbar(EditorToolbarAction),
     Mode(EditorMode),
+    TableResize {
+        block_index: usize,
+        column_index: usize,
+        width: usize,
+    },
+    /// Column boundary in a native Rich table.
+    RichTableResize {
+        table_id: NodeId,
+        column_index: usize,
+        width: usize,
+    },
+    TableEdge {
+        block_index: usize,
+        edge: EditorTableEdge,
+        source_range: EditorSourceRange,
+    },
+    /// Structural left/right edge in a native Rich table.
+    RichTableEdge {
+        table_id: NodeId,
+        edge: EditorTableEdge,
+    },
     Canvas(EditorTextPosition),
     VerticalScrollbar,
     StatusBar,
@@ -528,6 +749,29 @@ pub struct EditorCanvasHit {
     /// False when the rendered cell is synthetic or cannot be mapped to one
     /// exact source grapheme. Callers must not edit through such a hit.
     pub editable: bool,
+}
+
+/// Result of a mode-aware canvas hit test.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct EditorDocumentHit {
+    pub visual: EditorTextPosition,
+    pub position: EditorDocumentPosition,
+    /// False for read-only or synthetic display cells. The position remains a
+    /// useful cursor anchor, but callers must not mutate through it.
+    pub editable: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct EditorRichBoundary {
+    pub column: usize,
+    pub position: RichPosition,
+    pub editable: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EditorRichLineMap {
+    pub document_line: usize,
+    pub boundaries: Vec<EditorRichBoundary>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -547,6 +791,7 @@ pub struct EditorSourceLineMap {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EditorLayout {
+    pub mode: EditorMode,
     pub area: Rect,
     pub menu_bar: Rect,
     pub toolbar: Rect,
@@ -555,12 +800,16 @@ pub struct EditorLayout {
     pub canvas: Rect,
     pub status_bar: Rect,
     pub menus: Vec<EditorMenuLayout>,
+    pub menu_popup: Option<Rect>,
+    pub menu_items: Vec<EditorMenuItemLayout>,
     pub toolbar_items: Vec<EditorToolbarItemLayout>,
     pub modes: Vec<EditorModeLayout>,
     pub line_areas: Vec<EditorLineLayout>,
     pub block_areas: Vec<EditorBlockArea>,
     /// Subset of `block_areas` that can receive a ratatui-image overlay.
     pub image_areas: Vec<EditorBlockArea>,
+    pub table_edge_handles: Vec<EditorTableEdgeHandle>,
+    pub table_resize_handles: Vec<EditorTableResizeHandle>,
     pub vertical_scrollbar: Option<EditorScrollbarLayout>,
     pub visible_start: usize,
     pub visible_capacity: usize,
@@ -569,6 +818,9 @@ pub struct EditorLayout {
     pub toolbar_overflow: bool,
     pub canvas_framed: bool,
     pub source_line_maps: Vec<EditorSourceLineMap>,
+    /// Rich-mode visual mapping. Unlike `source_line_maps`, this contains only
+    /// stable node identities and grapheme offsets.
+    pub rich_line_maps: Vec<EditorRichLineMap>,
 }
 
 impl EditorLayout {
@@ -578,6 +830,16 @@ impl EditorLayout {
         }
         if let Some(item) = self.menus.iter().find(|item| contains(item.area, x, y)) {
             return Some(EditorHitTarget::Menu(item.menu));
+        }
+        if let Some(item) = self
+            .menu_items
+            .iter()
+            .find(|item| item.enabled && contains(item.area, x, y))
+        {
+            return Some(EditorHitTarget::MenuAction(item.action));
+        }
+        if self.menu_popup.is_some_and(|area| contains(area, x, y)) {
+            return Some(EditorHitTarget::MenuPopup);
         }
         if let Some(item) = self
             .toolbar_items
@@ -591,6 +853,43 @@ impl EditorLayout {
             .is_some_and(|scrollbar| contains(scrollbar.track, x, y))
         {
             return Some(EditorHitTarget::VerticalScrollbar);
+        }
+        if let Some(handle) = self
+            .table_edge_handles
+            .iter()
+            .find(|handle| contains(handle.area, x, y))
+        {
+            if let Some(table_id) = handle.table_id {
+                return Some(EditorHitTarget::RichTableEdge {
+                    table_id,
+                    edge: handle.edge,
+                });
+            }
+            if let Some(source_range) = handle.source_range {
+                return Some(EditorHitTarget::TableEdge {
+                    block_index: handle.block_index,
+                    edge: handle.edge,
+                    source_range,
+                });
+            }
+        }
+        if let Some(handle) = self
+            .table_resize_handles
+            .iter()
+            .find(|handle| contains(handle.area, x, y))
+        {
+            if let Some(table_id) = handle.table_id {
+                return Some(EditorHitTarget::RichTableResize {
+                    table_id,
+                    column_index: handle.column_index,
+                    width: handle.width,
+                });
+            }
+            return Some(EditorHitTarget::TableResize {
+                block_index: handle.block_index,
+                column_index: handle.column_index,
+                width: handle.width,
+            });
         }
         if contains(self.canvas, x, y) {
             let line = self
@@ -632,6 +931,65 @@ impl EditorLayout {
 
     pub fn visual_position_for_source(&self, byte_offset: usize) -> Option<EditorTextPosition> {
         nearest_visual_position(&self.source_line_maps, byte_offset)
+    }
+
+    /// Resolves a canvas cell to a Rich document position without consulting
+    /// Markdown source text or byte offsets.
+    pub fn hit_test_rich(&self, x: u16, y: u16) -> Option<EditorDocumentHit> {
+        let EditorHitTarget::Canvas(visual) = self.hit_test(x, y)? else {
+            return None;
+        };
+        let line = self
+            .rich_line_maps
+            .iter()
+            .find(|line| line.document_line == visual.line)?;
+        let boundary = nearest_rich_boundary(&line.boundaries, visual.column)?;
+        let boundary = if boundary.editable {
+            boundary
+        } else {
+            nearest_editable_rich_boundary(&self.rich_line_maps, visual, boundary.position)
+                .unwrap_or(boundary)
+        };
+        Some(EditorDocumentHit {
+            visual,
+            position: EditorDocumentPosition::Rich(boundary.position),
+            editable: boundary.editable,
+        })
+    }
+
+    pub fn visual_position_for_rich(&self, position: RichPosition) -> Option<EditorTextPosition> {
+        nearest_visual_position_for_rich(&self.rich_line_maps, position)
+    }
+
+    /// Mode-aware input mapping. Rich mode never falls back to source byte
+    /// offsets; Source mode continues to return UTF-8 byte boundaries.
+    pub fn hit_test_document(&self, x: u16, y: u16) -> Option<EditorDocumentHit> {
+        match self.mode {
+            EditorMode::Rich => self.hit_test_rich(x, y),
+            EditorMode::Source => {
+                let hit = self.hit_test_source(x, y)?;
+                Some(EditorDocumentHit {
+                    visual: hit.visual,
+                    position: EditorDocumentPosition::Source(hit.byte_offset),
+                    editable: hit.editable,
+                })
+            }
+        }
+    }
+
+    pub fn visual_position_for_document(
+        &self,
+        position: EditorDocumentPosition,
+    ) -> Option<EditorTextPosition> {
+        match (self.mode, position) {
+            (EditorMode::Rich, EditorDocumentPosition::Rich(position)) => {
+                self.visual_position_for_rich(position)
+            }
+            (EditorMode::Source, EditorDocumentPosition::Source(byte_offset)) => {
+                self.visual_position_for_source(byte_offset)
+            }
+            _ => None,
+        }
     }
 }
 
@@ -731,6 +1089,10 @@ pub fn editor_layout(area: Rect, model: &EditorViewModel) -> EditorLayout {
             )
         })
         .collect();
+    let table_resize_handles =
+        table_resize_handles(canvas, model.horizontal_scroll, &block_areas, model);
+    let table_edge_handles =
+        table_edge_handles(canvas, model.horizontal_scroll, &block_areas, model);
 
     let vertical_scrollbar = (document_line_count > visible_capacity && base_canvas.width > 1)
         .then(|| {
@@ -742,6 +1104,7 @@ pub fn editor_layout(area: Rect, model: &EditorViewModel) -> EditorLayout {
             )
         });
     let (menus, modes) = menu_layout(menu_bar);
+    let (menu_popup, menu_items) = menu_popup_layout(area, &menus, model);
     let (toolbar_items, toolbar_overflow) = toolbar_layout(toolbar, model);
     let source_line_maps = display_lines
         .iter()
@@ -754,8 +1117,20 @@ pub fn editor_layout(area: Rect, model: &EditorViewModel) -> EditorLayout {
             })
         })
         .collect();
+    let rich_line_maps = display_lines
+        .iter()
+        .enumerate()
+        .filter_map(|(document_line, line)| {
+            let boundaries = display_line_rich_boundaries(line);
+            (!boundaries.is_empty()).then_some(EditorRichLineMap {
+                document_line,
+                boundaries,
+            })
+        })
+        .collect();
 
     EditorLayout {
+        mode: model.mode,
         area,
         menu_bar,
         toolbar,
@@ -763,11 +1138,15 @@ pub fn editor_layout(area: Rect, model: &EditorViewModel) -> EditorLayout {
         canvas,
         status_bar,
         menus,
+        menu_popup,
+        menu_items,
         toolbar_items,
         modes,
         line_areas,
         block_areas,
         image_areas,
+        table_edge_handles,
+        table_resize_handles,
         vertical_scrollbar,
         visible_start,
         visible_capacity,
@@ -776,6 +1155,7 @@ pub fn editor_layout(area: Rect, model: &EditorViewModel) -> EditorLayout {
         toolbar_overflow,
         canvas_framed,
         source_line_maps,
+        rich_line_maps,
     }
 }
 
@@ -793,6 +1173,8 @@ pub fn render_editor(
     render_toolbar(frame, &layout, model, theme);
     render_canvas(frame, &layout, model, theme);
     render_status_bar(frame, &layout, model, theme);
+    // The popup overlaps the toolbar/canvas, so it must be painted last.
+    render_menu_popup(frame, &layout, model, theme);
     layout
 }
 
@@ -801,6 +1183,7 @@ struct DisplayRun {
     text: String,
     style: EditorRenderSpan,
     source: DisplaySource,
+    rich: DisplayRich,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -810,12 +1193,20 @@ enum DisplaySource {
     Virtual(usize),
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DisplayRich {
+    Unmapped,
+    Range(RichRange),
+    Virtual(RichPosition),
+}
+
 impl DisplayRun {
     fn unmapped(text: impl Into<String>, style: EditorRenderSpan) -> Self {
         Self {
             text: text.into(),
             style,
             source: DisplaySource::Unmapped,
+            rich: DisplayRich::Unmapped,
         }
     }
 
@@ -830,7 +1221,27 @@ impl DisplayRun {
             source: byte_offset
                 .map(DisplaySource::Virtual)
                 .unwrap_or(DisplaySource::Unmapped),
+            rich: DisplayRich::Unmapped,
         }
+    }
+
+    fn with_virtual_rich(mut self, position: Option<RichPosition>) -> Self {
+        if let Some(position) = position {
+            self.rich = DisplayRich::Virtual(position);
+        }
+        self
+    }
+
+    /// Marks an otherwise zero-width display run as an editable Rich cursor
+    /// boundary. This differs from a virtual decoration: the position is a
+    /// real boundary in the document model even though it has no terminal
+    /// cell of its own (for example, immediately before or after a soft
+    /// break).
+    fn with_editable_rich_boundary(mut self, position: Option<RichPosition>) -> Self {
+        if let Some(position) = position {
+            self.rich = DisplayRich::Range(RichRange::between(position, position));
+        }
+        self
     }
 }
 
@@ -883,6 +1294,42 @@ fn render_menu_bar(
         };
         frame.render_widget(
             Paragraph::new(format!(" {} ", mode_label(item.mode))).style(style),
+            item.area,
+        );
+    }
+}
+
+fn render_menu_popup(
+    frame: &mut Frame<'_>,
+    layout: &EditorLayout,
+    model: &EditorViewModel,
+    theme: &TundraTheme,
+) {
+    let Some(area) = layout.menu_popup else {
+        return;
+    };
+    frame.render_widget(Clear, area);
+    frame.render_widget(
+        theme
+            .block()
+            .borders(Borders::ALL)
+            .style(Style::default().fg(theme.foreground).bg(theme.background)),
+        area,
+    );
+    for item in &layout.menu_items {
+        let active_mode = matches!(item.action, EditorMenuAction::Mode(mode) if mode == model.mode);
+        let style = if !item.enabled {
+            theme.muted_style()
+        } else if active_mode {
+            Style::default()
+                .fg(theme.background)
+                .bg(theme.accent)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            theme.body_style()
+        };
+        frame.render_widget(
+            Paragraph::new(format!(" {}", menu_action_label(item.action))).style(style),
             item.area,
         );
     }
@@ -966,6 +1413,7 @@ fn render_canvas(
         let line = styled_line(
             display_line,
             line_layout.document_line,
+            layout,
             model,
             theme,
             usize::from(layout.canvas.width),
@@ -1072,6 +1520,7 @@ fn render_status_bar(
 fn styled_line(
     line: &DisplayLine,
     document_line: usize,
+    layout: &EditorLayout,
     model: &EditorViewModel,
     theme: &TundraTheme,
     width: usize,
@@ -1099,14 +1548,30 @@ fn styled_line(
                 break;
             }
             let position = EditorTextPosition::new(document_line, start);
-            let selected = model.selection_offsets.map_or_else(
-                || {
-                    model
-                        .selection
-                        .is_some_and(|selection| selection.contains(position))
-                },
-                |selection| source_run_is_selected(run, selection),
-            );
+            let selected = match model.mode {
+                EditorMode::Rich => model.rich_selection.map_or_else(
+                    || {
+                        if layout.rich_line_maps.is_empty() {
+                            model
+                                .selection_offsets
+                                .is_some_and(|selection| source_run_is_selected(run, selection))
+                        } else {
+                            model
+                                .selection
+                                .is_some_and(|selection| selection.contains(position))
+                        }
+                    },
+                    |selection| rich_run_is_selected(run, layout, selection, position),
+                ),
+                EditorMode::Source => model.selection_offsets.map_or_else(
+                    || {
+                        model
+                            .selection
+                            .is_some_and(|selection| selection.contains(position))
+                    },
+                    |selection| source_run_is_selected(run, selection),
+                ),
+            };
             let style = if selected {
                 base_style
                     .fg(theme.background)
@@ -1126,10 +1591,49 @@ fn styled_line(
 }
 
 fn effective_cursor(layout: &EditorLayout, model: &EditorViewModel) -> Option<EditorTextPosition> {
-    model
-        .cursor_offset
-        .and_then(|offset| layout.visual_position_for_source(offset))
-        .or(model.cursor)
+    match model.mode {
+        EditorMode::Rich => model
+            .rich_cursor
+            .and_then(|position| layout.visual_position_for_rich(position))
+            // Transitional compatibility for old Rich view models. A model
+            // that supplies logical ranges never consults source offsets.
+            .or_else(|| {
+                layout
+                    .rich_line_maps
+                    .is_empty()
+                    .then(|| model.cursor_offset)
+                    .flatten()
+                    .and_then(|offset| layout.visual_position_for_source(offset))
+            })
+            .or(model.cursor),
+        EditorMode::Source => model
+            .cursor_offset
+            .and_then(|offset| layout.visual_position_for_source(offset))
+            .or(model.cursor),
+    }
+}
+
+fn rich_run_is_selected(
+    run: &DisplayRun,
+    layout: &EditorLayout,
+    selection: RichRange,
+    visual: EditorTextPosition,
+) -> bool {
+    if selection.is_empty() || !matches!(run.rich, DisplayRich::Range(_)) {
+        return false;
+    }
+    let Some(anchor) = layout.visual_position_for_rich(selection.start) else {
+        return false;
+    };
+    let Some(active) = layout.visual_position_for_rich(selection.end) else {
+        return false;
+    };
+    let (start, end) = if anchor <= active {
+        (anchor, active)
+    } else {
+        (active, anchor)
+    };
+    start <= visual && visual < end
 }
 
 fn source_run_is_selected(run: &DisplayRun, selection: EditorSourceSelection) -> bool {
@@ -1209,11 +1713,13 @@ fn flatten_document(model: &EditorViewModel, width: usize) -> Vec<DisplayLine> {
 
     let mut output = Vec::new();
     for (block_index, block) in model.blocks.iter().enumerate() {
+        let table_widths = model.table_widths_for_block(block_index, block.table_id());
         let lines = block_lines(
             block,
             block_index,
             width,
             model.block_sources.get(block_index).copied(),
+            table_widths,
             model.source.as_deref(),
         );
         output.extend(lines);
@@ -1229,6 +1735,7 @@ fn block_lines(
     block_index: usize,
     width: usize,
     block_source: Option<EditorBlockSourceMap>,
+    table_widths: Option<&[usize]>,
     source: Option<&str>,
 ) -> Vec<DisplayLine> {
     let anchor = block_source.map(EditorBlockSourceMap::anchor);
@@ -1351,7 +1858,21 @@ fn block_lines(
             header,
             rows,
             alignments,
-        } => table_lines(header, rows, alignments, block_index, anchor),
+        }
+        | EditorRenderBlock::RichTable {
+            table_id: _,
+            header,
+            rows,
+            alignments,
+        } => table_lines(
+            header,
+            rows,
+            alignments,
+            table_widths,
+            block_index,
+            anchor,
+            source,
+        ),
         EditorRenderBlock::HorizontalRule => vec![DisplayLine {
             runs: vec![DisplayRun::virtual_text(
                 "─".repeat(width),
@@ -1405,8 +1926,10 @@ fn table_lines(
     header: &[EditorTableCell],
     rows: &[Vec<EditorTableCell>],
     alignments: &[EditorTableAlignment],
+    requested_widths: Option<&[usize]>,
     block_index: usize,
     anchor: Option<usize>,
+    source: Option<&str>,
 ) -> Vec<DisplayLine> {
     let columns = max(
         header.len(),
@@ -1415,30 +1938,26 @@ fn table_lines(
     if columns == 0 {
         return vec![empty_display_line_at(Some(block_index), anchor)];
     }
-    let mut widths = vec![1usize; columns];
-    for row in std::iter::once(header).chain(rows.iter().map(Vec::as_slice)) {
-        for (index, cell) in row.iter().enumerate() {
-            widths[index] = widths[index].max(cell_text(cell).chars().count().min(24));
-        }
-    }
-    let border = |left: char, middle: char, right: char| {
-        let mut value = String::new();
-        value.push(left);
-        for (index, width) in widths.iter().enumerate() {
-            value.push_str(&"─".repeat(width.saturating_add(2)));
-            value.push(if index + 1 == widths.len() {
-                right
-            } else {
-                middle
-            });
-        }
-        value
+    let rich_anchor = std::iter::once(header)
+        .chain(rows.iter().map(Vec::as_slice))
+        .flat_map(|row| row.iter())
+        .find_map(|cell| table_cell_rich_range(cell).map(|range| range.start));
+    let widths = table_column_widths(header, rows, requested_widths);
+    let first_row = if header.is_empty() {
+        rows.first().map(Vec::as_slice).unwrap_or_default()
+    } else {
+        header
     };
-    let mut output = vec![table_display_line(
-        border('┌', '┬', '┐'),
+    let mut output = vec![table_border_line(
+        '┌',
+        '┬',
+        '┐',
+        &widths,
+        first_row,
         block_index,
         false,
         anchor,
+        rich_anchor,
     )];
     if !header.is_empty() {
         output.push(table_row_line(
@@ -1448,23 +1967,44 @@ fn table_lines(
             block_index,
             true,
             anchor,
+            rich_anchor,
+            source,
         ));
-        output.push(table_display_line(
-            border('├', '┼', '┤'),
+        output.push(table_border_line(
+            '├',
+            '┼',
+            '┤',
+            &widths,
+            header,
             block_index,
             false,
             anchor,
+            rich_anchor,
         ));
     }
-    output.extend(
-        rows.iter()
-            .map(|row| table_row_line(row, &widths, alignments, block_index, false, anchor)),
-    );
-    output.push(table_display_line(
-        border('└', '┴', '┘'),
+    output.extend(rows.iter().map(|row| {
+        table_row_line(
+            row,
+            &widths,
+            alignments,
+            block_index,
+            false,
+            anchor,
+            rich_anchor,
+            source,
+        )
+    }));
+    let last_row = rows.last().map(Vec::as_slice).unwrap_or(first_row);
+    output.push(table_border_line(
+        '└',
+        '┴',
+        '┘',
+        &widths,
+        last_row,
         block_index,
         false,
         anchor,
+        rich_anchor,
     ));
     output
 }
@@ -1476,36 +2016,368 @@ fn table_row_line(
     block_index: usize,
     header: bool,
     anchor: Option<usize>,
+    rich_anchor: Option<RichPosition>,
+    source: Option<&str>,
 ) -> DisplayLine {
-    let mut text = String::from("│");
+    let row_anchor = row
+        .iter()
+        .find_map(|cell| table_cell_rich_range(cell).map(|range| range.start))
+        .or(rich_anchor);
+    let mut runs = vec![
+        DisplayRun::virtual_text("│", table_span(header), anchor).with_virtual_rich(row_anchor),
+    ];
     for (column, width) in widths.iter().enumerate() {
-        let value = row.get(column).map(cell_text).unwrap_or_default();
-        text.push(' ');
-        text.push_str(&align_text(
-            &fit_text(&value, *width),
+        let cell = row.get(column);
+        let cell_range = cell.and_then(table_cell_source_range);
+        let start = cell_range.map(|range| range.start);
+        let end = cell_range.map(|range| range.end);
+        let rich_range = cell.and_then(table_cell_rich_range);
+        let rich_start = rich_range.map(|range| range.start).or(row_anchor);
+        let rich_end = rich_range.map(|range| range.end).or(rich_start);
+        let mut content = cell.map_or_else(Vec::new, |cell| {
+            cell.spans
+                .iter()
+                .flat_map(|span| {
+                    let mut style = span.clone();
+                    style.color = EditorSpanColor::Accent;
+                    style.bold |= header;
+                    mapped_text_runs(&span.text, style, span.source_range, source)
+                })
+                .collect::<Vec<_>>()
+        });
+        let (fitted, used) = fit_table_content(
+            std::mem::take(&mut content),
             *width,
-            alignments.get(column).copied().unwrap_or_default(),
+            end.or(start).or(anchor),
+            rich_end,
+            header,
+        );
+        let remaining = width.saturating_sub(used);
+        let (aligned_left, aligned_right) =
+            match alignments.get(column).copied().unwrap_or_default() {
+                EditorTableAlignment::Left => (0, remaining),
+                EditorTableAlignment::Center => {
+                    (remaining / 2, remaining.saturating_sub(remaining / 2))
+                }
+                EditorTableAlignment::Right => (remaining, 0),
+            };
+        runs.push(table_padding(
+            " ".repeat(aligned_left.saturating_add(1)),
+            start,
+            anchor,
+            rich_start,
+            header,
         ));
-        text.push(' ');
-        text.push('│');
+        runs.extend(fitted);
+        runs.push(table_padding(
+            " ".repeat(aligned_right.saturating_add(1)),
+            end.or(start),
+            anchor,
+            rich_end,
+            header,
+        ));
+        runs.push(
+            DisplayRun::virtual_text("│", table_span(header), end.or(start).or(anchor))
+                .with_virtual_rich(rich_end),
+        );
     }
-    table_display_line(text, block_index, header, anchor)
-}
-
-fn table_display_line(
-    text: String,
-    block_index: usize,
-    header: bool,
-    anchor: Option<usize>,
-) -> DisplayLine {
-    let mut style = EditorRenderSpan::plain("");
-    style.color = EditorSpanColor::Accent;
-    style.bold = header;
     DisplayLine {
-        runs: vec![DisplayRun::virtual_text(text, style, anchor)],
+        runs,
         block_index: Some(block_index),
         no_wrap: true,
     }
+}
+
+fn table_border_line(
+    left: char,
+    middle: char,
+    right: char,
+    widths: &[usize],
+    cells: &[EditorTableCell],
+    block_index: usize,
+    header: bool,
+    anchor: Option<usize>,
+    rich_anchor: Option<RichPosition>,
+) -> DisplayLine {
+    let first_anchor = cells
+        .first()
+        .and_then(table_cell_rich_range)
+        .map(|range| range.start)
+        .or(rich_anchor);
+    let mut runs = vec![
+        DisplayRun::virtual_text(left.to_string(), table_span(header), anchor)
+            .with_virtual_rich(first_anchor),
+    ];
+    for (column, width) in widths.iter().copied().enumerate() {
+        let cell_range = cells.get(column).and_then(table_cell_rich_range);
+        let start = cell_range.map(|range| range.start).or(rich_anchor);
+        let end = cell_range.map(|range| range.end).or(start);
+        runs.push(
+            DisplayRun::virtual_text(
+                "─".repeat(width.saturating_add(2)),
+                table_span(header),
+                anchor,
+            )
+            .with_virtual_rich(start),
+        );
+        let delimiter = if column + 1 == widths.len() {
+            right
+        } else {
+            middle
+        };
+        runs.push(
+            DisplayRun::virtual_text(delimiter.to_string(), table_span(header), anchor)
+                .with_virtual_rich(end),
+        );
+    }
+    DisplayLine {
+        runs,
+        block_index: Some(block_index),
+        no_wrap: true,
+    }
+}
+
+fn table_span(header: bool) -> EditorRenderSpan {
+    let mut style = EditorRenderSpan::plain("");
+    style.color = EditorSpanColor::Accent;
+    style.bold = header;
+    style
+}
+
+fn table_padding(
+    text: String,
+    byte_offset: Option<usize>,
+    fallback: Option<usize>,
+    rich_position: Option<RichPosition>,
+    header: bool,
+) -> DisplayRun {
+    match byte_offset {
+        Some(byte_offset) => DisplayRun {
+            text,
+            style: table_span(header),
+            source: DisplaySource::Range(EditorSourceRange::new(byte_offset, byte_offset)),
+            rich: rich_position
+                .map(DisplayRich::Virtual)
+                .unwrap_or(DisplayRich::Unmapped),
+        },
+        None => DisplayRun::virtual_text(text, table_span(header), fallback)
+            .with_virtual_rich(rich_position),
+    }
+}
+
+fn table_cell_rich_range(cell: &EditorTableCell) -> Option<RichRange> {
+    let mut ranges = cell.spans.iter().filter_map(|span| span.rich_range);
+    let first = ranges.next()?;
+    let mut start = first.start;
+    let mut end = first.end;
+    for range in ranges {
+        if range.start.container_id != start.container_id
+            || range.end.container_id != start.container_id
+        {
+            return Some(RichRange::between(first.start, first.end));
+        }
+        start.grapheme_offset = start.grapheme_offset.min(range.start.grapheme_offset);
+        end.grapheme_offset = end.grapheme_offset.max(range.end.grapheme_offset);
+    }
+    Some(RichRange::between(start, end))
+}
+
+fn table_cell_source_range(cell: &EditorTableCell) -> Option<EditorSourceRange> {
+    Some(EditorSourceRange::new(
+        cell.spans
+            .iter()
+            .filter_map(|span| span.source_range)
+            .map(|range| range.start)
+            .min()?,
+        cell.spans
+            .iter()
+            .filter_map(|span| span.source_range)
+            .map(|range| range.end)
+            .max()?,
+    ))
+}
+
+fn fit_table_content(
+    runs: Vec<DisplayRun>,
+    width: usize,
+    overflow_anchor: Option<usize>,
+    rich_overflow_anchor: Option<RichPosition>,
+    header: bool,
+) -> (Vec<DisplayRun>, usize) {
+    let used = runs_width(&runs);
+    if used <= width {
+        return (runs, used);
+    }
+    if width == 0 {
+        return (Vec::new(), 0);
+    }
+    let content_width = width.saturating_sub(1);
+    let mut fitted = Vec::new();
+    let mut fitted_width = 0usize;
+    for run in runs {
+        let run_width = display_run_width(&run);
+        if fitted_width.saturating_add(run_width) > content_width {
+            break;
+        }
+        fitted_width = fitted_width.saturating_add(run_width);
+        fitted.push(run);
+    }
+    fitted.push(
+        DisplayRun::virtual_text("…", table_span(header), overflow_anchor)
+            .with_virtual_rich(rich_overflow_anchor),
+    );
+    (fitted, width)
+}
+
+fn table_column_widths(
+    header: &[EditorTableCell],
+    rows: &[Vec<EditorTableCell>],
+    requested: Option<&[usize]>,
+) -> Vec<usize> {
+    let columns = max(
+        header.len(),
+        rows.iter().map(Vec::len).max().unwrap_or_default(),
+    );
+    let mut widths = vec![1usize; columns];
+    for row in std::iter::once(header).chain(rows.iter().map(Vec::as_slice)) {
+        for (index, cell) in row.iter().enumerate() {
+            widths[index] = widths[index].max(
+                Span::raw(terminal_safe_text(&cell_text(cell)))
+                    .width()
+                    .min(24),
+            );
+        }
+    }
+    if let Some(requested) = requested {
+        for (width, requested) in widths.iter_mut().zip(requested.iter().copied()) {
+            if requested > 0 {
+                *width = requested.clamp(1, 120);
+            }
+        }
+    }
+    widths
+}
+
+fn table_resize_handles(
+    canvas: Rect,
+    horizontal_scroll: usize,
+    block_areas: &[EditorBlockArea],
+    model: &EditorViewModel,
+) -> Vec<EditorTableResizeHandle> {
+    let mut handles = Vec::new();
+    for block_area in block_areas {
+        let Some(block) = model.blocks.get(block_area.block_index) else {
+            continue;
+        };
+        let (table_id, header, rows) = match block {
+            EditorRenderBlock::Table { header, rows, .. } => (None, header, rows),
+            EditorRenderBlock::RichTable {
+                table_id,
+                header,
+                rows,
+                ..
+            } => (Some(*table_id), header, rows),
+            _ => continue,
+        };
+        let widths = table_column_widths(
+            header,
+            rows,
+            model.table_widths_for_block(block_area.block_index, table_id),
+        );
+        let mut boundary_column = 0usize;
+        for (column_index, width) in widths.into_iter().enumerate() {
+            boundary_column = boundary_column.saturating_add(width.saturating_add(3));
+            let Some(visible_column) = boundary_column.checked_sub(horizontal_scroll) else {
+                continue;
+            };
+            if visible_column >= usize::from(canvas.width) {
+                continue;
+            }
+            handles.push(EditorTableResizeHandle {
+                table_id,
+                block_index: block_area.block_index,
+                column_index,
+                width,
+                area: Rect::new(
+                    canvas.x.saturating_add(to_u16(visible_column)),
+                    block_area.area.y,
+                    1,
+                    block_area.area.height,
+                ),
+            });
+        }
+    }
+    handles
+}
+
+fn table_edge_handles(
+    canvas: Rect,
+    horizontal_scroll: usize,
+    block_areas: &[EditorBlockArea],
+    model: &EditorViewModel,
+) -> Vec<EditorTableEdgeHandle> {
+    let mut handles = Vec::new();
+    for block_area in block_areas {
+        let Some(block) = model.blocks.get(block_area.block_index) else {
+            continue;
+        };
+        let (table_id, header, rows) = match block {
+            EditorRenderBlock::Table { header, rows, .. } => (None, header, rows),
+            EditorRenderBlock::RichTable {
+                table_id,
+                header,
+                rows,
+                ..
+            } => (Some(*table_id), header, rows),
+            _ => continue,
+        };
+        let source_range = model
+            .block_sources
+            .get(block_area.block_index)
+            .map(|mapping| mapping.source_range);
+        if table_id.is_none() && source_range.is_none() {
+            continue;
+        }
+        let widths = table_column_widths(
+            header,
+            rows,
+            model.table_widths_for_block(block_area.block_index, table_id),
+        );
+        if widths.is_empty() {
+            continue;
+        }
+
+        if horizontal_scroll == 0 && canvas.width > 0 {
+            handles.push(EditorTableEdgeHandle {
+                table_id,
+                block_index: block_area.block_index,
+                edge: EditorTableEdge::Left,
+                source_range,
+                area: Rect::new(canvas.x, block_area.area.y, 1, block_area.area.height),
+            });
+        }
+
+        let right_column = widths
+            .iter()
+            .fold(0usize, |total, width| total.saturating_add(width + 3));
+        if let Some(visible_column) = right_column.checked_sub(horizontal_scroll)
+            && visible_column < usize::from(canvas.width)
+        {
+            handles.push(EditorTableEdgeHandle {
+                table_id,
+                block_index: block_area.block_index,
+                edge: EditorTableEdge::Right,
+                source_range,
+                area: Rect::new(
+                    canvas.x.saturating_add(to_u16(visible_column)),
+                    block_area.area.y,
+                    1,
+                    block_area.area.height,
+                ),
+            });
+        }
+    }
+    handles
 }
 
 fn wrap_runs(
@@ -1516,16 +2388,30 @@ fn wrap_runs(
     no_wrap: bool,
     source: Option<&str>,
 ) -> Vec<DisplayLine> {
+    let rich_anchor = spans
+        .iter()
+        .find_map(|span| span.rich_range.map(|range| range.start));
+    let mut prefix = prefix;
+    for run in &mut prefix {
+        if matches!(run.rich, DisplayRich::Unmapped)
+            && let Some(position) = rich_anchor
+        {
+            run.rich = DisplayRich::Virtual(position);
+        }
+    }
     let prefix_width = runs_width(&prefix);
     let continuation_anchor = prefix.iter().find_map(display_run_anchor);
     let continuation_prefix = if prefix_width == 0 {
         Vec::new()
     } else {
-        vec![DisplayRun::virtual_text(
-            " ".repeat(prefix_width),
-            EditorRenderSpan::plain(""),
-            continuation_anchor,
-        )]
+        vec![
+            DisplayRun::virtual_text(
+                " ".repeat(prefix_width),
+                EditorRenderSpan::plain(""),
+                continuation_anchor,
+            )
+            .with_virtual_rich(rich_anchor),
+        ]
     };
     let mut lines = Vec::new();
     let mut current = prefix.clone();
@@ -1534,12 +2420,13 @@ fn wrap_runs(
         let span_range = span.source_range;
         for run in mapped_text_runs(&span.text, span.clone(), span_range, source) {
             if is_display_newline(&run.text) {
-                if let Some(before) = display_run_start(&run) {
-                    current.push(DisplayRun::virtual_text(
-                        "",
-                        EditorRenderSpan::plain(""),
-                        Some(before),
-                    ));
+                let before = display_run_start(&run);
+                let rich_before = display_run_rich_start(&run);
+                if before.is_some() || rich_before.is_some() {
+                    current.push(
+                        DisplayRun::virtual_text("", EditorRenderSpan::plain(""), before)
+                            .with_editable_rich_boundary(rich_before),
+                    );
                 }
                 lines.push(DisplayLine {
                     runs: std::mem::take(&mut current),
@@ -1547,12 +2434,13 @@ fn wrap_runs(
                     no_wrap,
                 });
                 current = continuation_prefix.clone();
-                if let Some(after) = display_run_end(&run) {
-                    current.push(DisplayRun::virtual_text(
-                        "",
-                        EditorRenderSpan::plain(""),
-                        Some(after),
-                    ));
+                let after = display_run_end(&run);
+                let rich_after = display_run_rich_end(&run);
+                if after.is_some() || rich_after.is_some() {
+                    current.push(
+                        DisplayRun::virtual_text("", EditorRenderSpan::plain(""), after)
+                            .with_editable_rich_boundary(rich_after),
+                    );
                 }
                 current_width = prefix_width;
                 continue;
@@ -1623,6 +2511,92 @@ fn menu_layout(area: Rect) -> (Vec<EditorMenuLayout>, Vec<EditorModeLayout>) {
     (menus, modes)
 }
 
+fn menu_popup_layout(
+    area: Rect,
+    menus: &[EditorMenuLayout],
+    model: &EditorViewModel,
+) -> (Option<Rect>, Vec<EditorMenuItemLayout>) {
+    let Some(menu) = model.open_menu else {
+        return (None, Vec::new());
+    };
+    let Some(anchor) = menus.iter().find(|item| item.menu == menu) else {
+        return (None, Vec::new());
+    };
+    let actions = menu_actions(menu);
+    let desired_width = actions
+        .iter()
+        .map(|action| menu_action_label(*action).chars().count())
+        .max()
+        .unwrap_or_default()
+        .saturating_add(4);
+    let width = to_u16(desired_width).min(area.width);
+    let y = anchor.area.bottom();
+    let available_height = area.bottom().saturating_sub(y);
+    let height = to_u16(actions.len().saturating_add(2)).min(available_height);
+    if width < 3 || height < 3 {
+        return (None, Vec::new());
+    }
+    let x = anchor.area.x.min(area.right().saturating_sub(width));
+    let popup = Rect::new(x, y, width, height);
+    let visible_items = usize::from(height.saturating_sub(2)).min(actions.len());
+    let items = actions
+        .into_iter()
+        .take(visible_items)
+        .enumerate()
+        .map(|(index, action)| EditorMenuItemLayout {
+            action,
+            area: Rect::new(
+                popup.x.saturating_add(1),
+                popup.y.saturating_add(1).saturating_add(to_u16(index)),
+                popup.width.saturating_sub(2),
+                1,
+            ),
+            enabled: match action {
+                EditorMenuAction::Toolbar(action) => {
+                    model
+                        .toolbar
+                        .is_enabled(action, model.read_only, model.mode)
+                }
+                EditorMenuAction::Mode(_) => true,
+            },
+        })
+        .collect();
+    (Some(popup), items)
+}
+
+fn menu_actions(menu: EditorMenu) -> Vec<EditorMenuAction> {
+    use EditorMenuAction::{Mode, Toolbar};
+    use EditorToolbarAction as ToolbarAction;
+    match menu {
+        EditorMenu::File => vec![
+            Toolbar(ToolbarAction::New),
+            Toolbar(ToolbarAction::Open),
+            Toolbar(ToolbarAction::Save),
+        ],
+        EditorMenu::Edit => vec![
+            Toolbar(ToolbarAction::Undo),
+            Toolbar(ToolbarAction::Redo),
+            Toolbar(ToolbarAction::Find),
+        ],
+        EditorMenu::Insert => vec![
+            Toolbar(ToolbarAction::Link),
+            Toolbar(ToolbarAction::Image),
+            Toolbar(ToolbarAction::Table),
+        ],
+        EditorMenu::Format => vec![
+            Toolbar(ToolbarAction::ParagraphStyle),
+            Toolbar(ToolbarAction::Bold),
+            Toolbar(ToolbarAction::Italic),
+            Toolbar(ToolbarAction::Strikethrough),
+            Toolbar(ToolbarAction::InlineCode),
+            Toolbar(ToolbarAction::BulletList),
+            Toolbar(ToolbarAction::OrderedList),
+            Toolbar(ToolbarAction::Quote),
+        ],
+        EditorMenu::View => vec![Mode(EditorMode::Rich), Mode(EditorMode::Source)],
+    }
+}
+
 fn toolbar_layout(area: Rect, model: &EditorViewModel) -> (Vec<EditorToolbarItemLayout>, bool) {
     if area.is_empty() {
         return (Vec::new(), false);
@@ -1648,7 +2622,9 @@ fn toolbar_layout(area: Rect, model: &EditorViewModel) -> (Vec<EditorToolbarItem
         items.push(EditorToolbarItemLayout {
             action,
             area: Rect::new(x, area.y, width, 1),
-            enabled: model.toolbar.is_enabled(action, model.read_only),
+            enabled: model
+                .toolbar
+                .is_enabled(action, model.read_only, model.mode),
         });
         x = x.saturating_add(width);
     }
@@ -1728,6 +2704,31 @@ fn menu_label(menu: EditorMenu) -> &'static str {
     }
 }
 
+fn menu_action_label(action: EditorMenuAction) -> &'static str {
+    match action {
+        EditorMenuAction::Toolbar(EditorToolbarAction::New) => "New",
+        EditorMenuAction::Toolbar(EditorToolbarAction::Open) => "Open",
+        EditorMenuAction::Toolbar(EditorToolbarAction::Save) => "Save",
+        EditorMenuAction::Toolbar(EditorToolbarAction::Undo) => "Undo",
+        EditorMenuAction::Toolbar(EditorToolbarAction::Redo) => "Redo",
+        EditorMenuAction::Toolbar(EditorToolbarAction::ParagraphStyle) => "Normal text",
+        EditorMenuAction::Toolbar(EditorToolbarAction::Bold) => "Bold",
+        EditorMenuAction::Toolbar(EditorToolbarAction::Italic) => "Italic",
+        EditorMenuAction::Toolbar(EditorToolbarAction::Strikethrough) => "Strikethrough",
+        EditorMenuAction::Toolbar(EditorToolbarAction::InlineCode) => "Inline code",
+        EditorMenuAction::Toolbar(EditorToolbarAction::BulletList) => "Bulleted list",
+        EditorMenuAction::Toolbar(EditorToolbarAction::OrderedList) => "Numbered list",
+        EditorMenuAction::Toolbar(EditorToolbarAction::Quote) => "Quote",
+        EditorMenuAction::Toolbar(EditorToolbarAction::Link) => "Link",
+        EditorMenuAction::Toolbar(EditorToolbarAction::Image) => "Image",
+        EditorMenuAction::Toolbar(EditorToolbarAction::Table) => "Table",
+        EditorMenuAction::Toolbar(EditorToolbarAction::Find) => "Find",
+        EditorMenuAction::Toolbar(EditorToolbarAction::More) => "More",
+        EditorMenuAction::Mode(EditorMode::Rich) => "Rich view",
+        EditorMenuAction::Mode(EditorMode::Source) => "Source view",
+    }
+}
+
 fn mode_label(mode: EditorMode) -> &'static str {
     match mode {
         EditorMode::Rich => "Rich",
@@ -1765,17 +2766,6 @@ fn scrollbar_layout(
             to_u16(thumb_height),
         ),
     }
-}
-
-fn align_text(text: &str, width: usize, alignment: EditorTableAlignment) -> String {
-    let used = text.chars().count().min(width);
-    let remaining = width.saturating_sub(used);
-    let (left, right) = match alignment {
-        EditorTableAlignment::Left => (0, remaining),
-        EditorTableAlignment::Center => (remaining / 2, remaining - remaining / 2),
-        EditorTableAlignment::Right => (remaining, 0),
-    };
-    format!("{}{}{}", " ".repeat(left), text, " ".repeat(right))
 }
 
 fn cell_text(cell: &EditorTableCell) -> String {
@@ -1840,33 +2830,55 @@ fn mapped_text_runs(
         range.start <= range.end
             && source.and_then(|source| source.get(range.start..range.end)) == Some(text)
     });
-    let span = Span::raw(text.to_owned());
-    let mut relative = 0usize;
-    let mut runs = span
-        .styled_graphemes(Style::default())
-        .map(|grapheme| {
-            let start = relative;
-            relative = relative.saturating_add(grapheme.symbol.len());
-            let mapped = match (exact, source_range) {
-                (Some(range), _) => DisplaySource::Range(EditorSourceRange::new(
-                    range.start.saturating_add(start),
-                    range.start.saturating_add(relative).min(range.end),
-                )),
-                // Decoded entities, generated labels and other non-exact text
-                // must never pretend that every visible grapheme covers the
-                // whole source range. Keep an anchor for Source-mode fallback,
-                // but mark it virtual/non-editable.
-                (None, Some(range)) => DisplaySource::Virtual(range.start),
-                (None, None) => DisplaySource::Unmapped,
-            };
-            DisplayRun {
-                text: grapheme.symbol.to_owned(),
-                style: style.clone(),
-                source: mapped,
+    let mut runs = Vec::new();
+    let mut segment_start = 0usize;
+    let mut grapheme_offset = 0usize;
+    let bytes = text.as_bytes();
+    let mut index = 0usize;
+    while index < bytes.len() {
+        let newline_len = match bytes[index] {
+            b'\r' if bytes.get(index + 1) == Some(&b'\n') => 2,
+            b'\r' | b'\n' => 1,
+            _ => {
+                index += 1;
+                continue;
             }
-        })
-        .collect::<Vec<_>>();
+        };
+        append_mapped_grapheme_runs(
+            &mut runs,
+            &text[segment_start..index],
+            segment_start,
+            &style,
+            exact,
+            source_range,
+            &mut grapheme_offset,
+        );
+        push_mapped_text_run(
+            &mut runs,
+            &text[index..index + newline_len],
+            index,
+            index + newline_len,
+            &style,
+            exact,
+            source_range,
+            grapheme_offset,
+            grapheme_offset.saturating_add(1),
+        );
+        grapheme_offset = grapheme_offset.saturating_add(1);
+        index += newline_len;
+        segment_start = index;
+    }
+    append_mapped_grapheme_runs(
+        &mut runs,
+        &text[segment_start..],
+        segment_start,
+        &style,
+        exact,
+        source_range,
+        &mut grapheme_offset,
+    );
     if runs.is_empty() {
+        let rich = empty_rich_mapping(style.rich_range);
         runs.push(DisplayRun {
             text: String::new(),
             style,
@@ -1874,9 +2886,105 @@ fn mapped_text_runs(
                 .map(DisplaySource::Range)
                 .or_else(|| source_range.map(|range| DisplaySource::Virtual(range.start)))
                 .unwrap_or(DisplaySource::Unmapped),
+            rich,
         });
     }
     runs
+}
+
+fn append_mapped_grapheme_runs(
+    runs: &mut Vec<DisplayRun>,
+    text: &str,
+    base: usize,
+    style: &EditorRenderSpan,
+    exact: Option<EditorSourceRange>,
+    source_range: Option<EditorSourceRange>,
+    grapheme_offset: &mut usize,
+) {
+    let span = Span::raw(text.to_owned());
+    let mut relative = 0usize;
+    for grapheme in span.styled_graphemes(Style::default()) {
+        let start = base.saturating_add(relative);
+        relative = relative.saturating_add(grapheme.symbol.len());
+        push_mapped_text_run(
+            runs,
+            grapheme.symbol,
+            start,
+            base.saturating_add(relative),
+            style,
+            exact,
+            source_range,
+            *grapheme_offset,
+            grapheme_offset.saturating_add(1),
+        );
+        *grapheme_offset = grapheme_offset.saturating_add(1);
+    }
+}
+
+fn push_mapped_text_run(
+    runs: &mut Vec<DisplayRun>,
+    text: &str,
+    start: usize,
+    end: usize,
+    style: &EditorRenderSpan,
+    exact: Option<EditorSourceRange>,
+    source_range: Option<EditorSourceRange>,
+    grapheme_start: usize,
+    grapheme_end: usize,
+) {
+    let source = match (exact, source_range) {
+        (Some(range), _) => DisplaySource::Range(EditorSourceRange::new(
+            range.start.saturating_add(start).min(range.end),
+            range.start.saturating_add(end).min(range.end),
+        )),
+        // Decoded entities, generated labels and other non-exact text must
+        // never pretend that every visible grapheme covers the whole source.
+        (None, Some(range)) => DisplaySource::Virtual(range.start),
+        (None, None) => DisplaySource::Unmapped,
+    };
+    runs.push(DisplayRun {
+        text: text.to_owned(),
+        style: style.clone(),
+        source,
+        rich: rich_mapping(style.rich_range, grapheme_start, grapheme_end),
+    });
+}
+
+fn empty_rich_mapping(range: Option<RichRange>) -> DisplayRich {
+    match range {
+        Some(range) if range.start.container_id == range.end.container_id => {
+            DisplayRich::Range(range)
+        }
+        Some(range) => DisplayRich::Virtual(range.start),
+        None => DisplayRich::Unmapped,
+    }
+}
+
+fn rich_mapping(
+    range: Option<RichRange>,
+    relative_start: usize,
+    relative_end: usize,
+) -> DisplayRich {
+    let Some(range) = range else {
+        return DisplayRich::Unmapped;
+    };
+    if range.start.container_id != range.end.container_id {
+        return DisplayRich::Virtual(range.start);
+    }
+    let start = range
+        .start
+        .grapheme_offset
+        .saturating_add(relative_start)
+        .min(range.end.grapheme_offset);
+    let end = range
+        .start
+        .grapheme_offset
+        .saturating_add(relative_end)
+        .min(range.end.grapheme_offset);
+    DisplayRich::Range(RichRange::between(
+        RichPosition::in_node(range.start.container_id, start),
+        RichPosition::in_node(range.start.container_id, end),
+    ))
 }
 
 fn display_line_source_boundaries(line: &DisplayLine) -> Vec<EditorSourceBoundary> {
@@ -1927,6 +3035,90 @@ fn display_line_source_boundaries(line: &DisplayLine) -> Vec<EditorSourceBoundar
     boundaries
 }
 
+fn display_line_rich_boundaries(line: &DisplayLine) -> Vec<EditorRichBoundary> {
+    let mut boundaries = Vec::new();
+    let mut column = 0usize;
+    for run in &line.runs {
+        if run.text.is_empty() {
+            if let Some(position) = display_run_rich_start(run) {
+                push_rich_boundary(
+                    &mut boundaries,
+                    column,
+                    position,
+                    matches!(run.rich, DisplayRich::Range(_)),
+                );
+            }
+            if let Some(position) = display_run_rich_end(run) {
+                push_rich_boundary(
+                    &mut boundaries,
+                    column,
+                    position,
+                    matches!(run.rich, DisplayRich::Range(_)),
+                );
+            }
+            continue;
+        }
+        let span = Span::raw(run.text.clone());
+        for grapheme in span.styled_graphemes(Style::default()) {
+            if let Some(position) = display_run_rich_start(run) {
+                push_rich_boundary(
+                    &mut boundaries,
+                    column,
+                    position,
+                    matches!(run.rich, DisplayRich::Range(_)),
+                );
+            }
+            let safe = terminal_safe_text(grapheme.symbol);
+            column = column.saturating_add(Span::raw(safe).width().max(1));
+            if let Some(position) = display_run_rich_end(run) {
+                push_rich_boundary(
+                    &mut boundaries,
+                    column,
+                    position,
+                    matches!(run.rich, DisplayRich::Range(_)),
+                );
+            }
+        }
+    }
+    boundaries
+}
+
+fn display_run_rich_start(run: &DisplayRun) -> Option<RichPosition> {
+    match run.rich {
+        DisplayRich::Unmapped => None,
+        DisplayRich::Range(range) => Some(range.start),
+        DisplayRich::Virtual(position) => Some(position),
+    }
+}
+
+fn display_run_rich_end(run: &DisplayRun) -> Option<RichPosition> {
+    match run.rich {
+        DisplayRich::Unmapped => None,
+        DisplayRich::Range(range) => Some(range.end),
+        DisplayRich::Virtual(position) => Some(position),
+    }
+}
+
+fn push_rich_boundary(
+    boundaries: &mut Vec<EditorRichBoundary>,
+    column: usize,
+    position: RichPosition,
+    editable: bool,
+) {
+    if let Some(last) = boundaries
+        .last_mut()
+        .filter(|last| last.column == column && last.position == position)
+    {
+        last.editable |= editable;
+        return;
+    }
+    boundaries.push(EditorRichBoundary {
+        column,
+        position,
+        editable,
+    });
+}
+
 fn push_source_boundary(
     boundaries: &mut Vec<EditorSourceBoundary>,
     column: usize,
@@ -1960,6 +3152,50 @@ fn nearest_source_boundary(
     })
 }
 
+fn nearest_rich_boundary(
+    boundaries: &[EditorRichBoundary],
+    column: usize,
+) -> Option<EditorRichBoundary> {
+    boundaries.iter().copied().min_by_key(|boundary| {
+        (
+            boundary.column.abs_diff(column),
+            usize::from(!boundary.editable),
+            usize::from(boundary.column < column),
+        )
+    })
+}
+
+fn nearest_editable_rich_boundary(
+    lines: &[EditorRichLineMap],
+    visual: EditorTextPosition,
+    position: RichPosition,
+) -> Option<EditorRichBoundary> {
+    lines
+        .iter()
+        .flat_map(|line| {
+            line.boundaries
+                .iter()
+                .filter(move |boundary| {
+                    boundary.editable && boundary.position.container_id == position.container_id
+                })
+                .map(move |boundary| {
+                    (
+                        (
+                            boundary
+                                .position
+                                .grapheme_offset
+                                .abs_diff(position.grapheme_offset),
+                            line.document_line.abs_diff(visual.line),
+                            boundary.column.abs_diff(visual.column),
+                        ),
+                        *boundary,
+                    )
+                })
+        })
+        .min_by_key(|(distance, _)| *distance)
+        .map(|(_, boundary)| boundary)
+}
+
 fn nearest_visual_position(
     lines: &[EditorSourceLineMap],
     byte_offset: usize,
@@ -1979,6 +3215,33 @@ fn nearest_visual_position(
         })
         .min_by_key(|(distance, position)| (*distance, position.line, position.column))
         .map(|(_, position)| position)
+}
+
+fn nearest_visual_position_for_rich(
+    lines: &[EditorRichLineMap],
+    position: RichPosition,
+) -> Option<EditorTextPosition> {
+    lines
+        .iter()
+        .flat_map(|line| {
+            line.boundaries
+                .iter()
+                .filter(move |boundary| boundary.position.container_id == position.container_id)
+                .map(move |boundary| {
+                    (
+                        (
+                            boundary
+                                .position
+                                .grapheme_offset
+                                .abs_diff(position.grapheme_offset),
+                            usize::from(!boundary.editable),
+                        ),
+                        EditorTextPosition::new(line.document_line, boundary.column),
+                    )
+                })
+        })
+        .min_by_key(|(distance, visual)| (*distance, visual.line, visual.column))
+        .map(|(_, visual)| visual)
 }
 
 fn code_line_source_ranges(
@@ -2155,4 +3418,167 @@ fn contains(area: Rect, x: u16, y: u16) -> bool {
 
 fn to_u16(value: usize) -> u16 {
     min(value, usize::from(u16::MAX)) as u16
+}
+
+#[cfg(test)]
+mod rich_table_identity_tests {
+    use super::*;
+
+    fn rich_table(table_id: NodeId) -> EditorRenderBlock {
+        EditorRenderBlock::RichTable {
+            table_id,
+            header: vec![
+                EditorTableCell {
+                    spans: vec![
+                        EditorRenderSpan::plain("Name").with_rich_range(RichRange::new(101, 0, 4)),
+                    ],
+                },
+                EditorTableCell {
+                    spans: vec![
+                        EditorRenderSpan::plain("Value").with_rich_range(RichRange::new(102, 0, 5)),
+                    ],
+                },
+            ],
+            rows: vec![vec![
+                EditorTableCell {
+                    spans: vec![
+                        EditorRenderSpan::plain("Tundra")
+                            .with_rich_range(RichRange::new(201, 0, 6)),
+                    ],
+                },
+                EditorTableCell {
+                    spans: vec![
+                        EditorRenderSpan::plain("3").with_rich_range(RichRange::new(202, 0, 1)),
+                    ],
+                },
+            ]],
+            alignments: vec![EditorTableAlignment::Left, EditorTableAlignment::Right],
+        }
+    }
+
+    #[test]
+    fn rich_table_handles_and_widths_follow_stable_table_id() {
+        let table_id = NodeId::new(9001);
+        let mut model = EditorViewModel::new(
+            "table.md",
+            vec![EditorRenderBlock::paragraph("before"), rich_table(table_id)],
+        );
+        model.rich_table_column_widths.insert(table_id, vec![9, 4]);
+
+        let first_layout = editor_layout(Rect::new(0, 0, 80, 16), &model);
+        let first_resize = first_layout
+            .table_resize_handles
+            .iter()
+            .find(|handle| handle.table_id == Some(table_id) && handle.column_index == 0)
+            .expect("Rich table resize handle");
+        assert_eq!(first_resize.block_index, 1);
+        assert_eq!(first_resize.width, 9);
+        assert_eq!(
+            first_layout.hit_test(first_resize.area.x, first_resize.area.y + 1),
+            Some(EditorHitTarget::RichTableResize {
+                table_id,
+                column_index: 0,
+                width: 9,
+            })
+        );
+
+        let left_edge = first_layout
+            .table_edge_handles
+            .iter()
+            .find(|handle| {
+                handle.table_id == Some(table_id) && handle.edge == EditorTableEdge::Left
+            })
+            .expect("Rich table edge handle");
+        assert_eq!(left_edge.source_range, None);
+        assert_eq!(
+            first_layout.hit_test(left_edge.area.x, left_edge.area.y + 1),
+            Some(EditorHitTarget::RichTableEdge {
+                table_id,
+                edge: EditorTableEdge::Left,
+            })
+        );
+
+        model
+            .blocks
+            .insert(0, EditorRenderBlock::paragraph("new leading block"));
+        let shifted_layout = editor_layout(Rect::new(0, 0, 80, 18), &model);
+        let shifted_resize = shifted_layout
+            .table_resize_handles
+            .iter()
+            .find(|handle| handle.table_id == Some(table_id) && handle.column_index == 0)
+            .expect("shifted Rich table resize handle");
+        assert_eq!(shifted_resize.block_index, 2);
+        assert_eq!(shifted_resize.width, 9);
+    }
+}
+
+#[cfg(test)]
+mod rich_newline_position_tests {
+    use super::*;
+
+    #[test]
+    fn soft_break_second_line_hit_is_the_boundary_after_the_break() {
+        let container = NodeId::new(77);
+        let model = EditorViewModel::new(
+            "soft-break.md",
+            vec![EditorRenderBlock::Paragraph(vec![
+                EditorRenderSpan::plain("a ").with_rich_range(RichRange::new(
+                    container.get(),
+                    0,
+                    2,
+                )),
+                EditorRenderSpan::plain("\n").with_rich_range(RichRange::new(
+                    container.get(),
+                    2,
+                    3,
+                )),
+            ])],
+        );
+        let layout = editor_layout(Rect::new(0, 0, 40, 10), &model);
+        let after_break = RichPosition::in_node(container, 3);
+
+        let visual = layout
+            .visual_position_for_rich(after_break)
+            .expect("soft-break boundary has a visual position");
+        assert_eq!(visual, EditorTextPosition::new(1, 0));
+
+        let hit = layout
+            .hit_test_document(
+                layout.canvas.x.saturating_add(to_u16(visual.column)),
+                layout
+                    .canvas
+                    .y
+                    .saturating_add(to_u16(visual.line.saturating_sub(layout.visible_start))),
+            )
+            .expect("second visual line is hittable");
+        assert_eq!(hit.position, EditorDocumentPosition::Rich(after_break));
+        assert!(hit.editable);
+        assert_eq!(
+            layout.visual_position_for_document(hit.position),
+            Some(visual)
+        );
+    }
+
+    #[test]
+    fn source_newline_mapping_remains_byte_based() {
+        let model = EditorViewModel::source("source.md", "a \nb");
+        let layout = editor_layout(Rect::new(0, 0, 40, 10), &model);
+        let after_newline = 3;
+        let visual = layout
+            .visual_position_for_source(after_newline)
+            .expect("source byte boundary has a visual position");
+        assert_eq!(visual, EditorTextPosition::new(1, 0));
+
+        let hit = layout
+            .hit_test_document(
+                layout.canvas.x.saturating_add(to_u16(visual.column)),
+                layout
+                    .canvas
+                    .y
+                    .saturating_add(to_u16(visual.line.saturating_sub(layout.visible_start))),
+            )
+            .expect("second source line is hittable");
+        assert_eq!(hit.position, EditorDocumentPosition::Source(after_newline));
+        assert!(hit.editable);
+    }
 }

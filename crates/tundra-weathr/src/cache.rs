@@ -392,7 +392,8 @@ mod tests {
             "tundra-weathr-cache-test",
             env!("CARGO_PKG_VERSION"),
         );
-        let (runtime, process) = WatchdogRuntime::start(config).expect("test watchdog starts");
+        let (runtime, process) =
+            WatchdogRuntime::start_isolated(config).expect("test watchdog starts");
         let watchdog = process
             .register_app(crate::weathr_watchdog_descriptor())
             .expect("test Weathr watchdog registers");

@@ -427,7 +427,6 @@ impl ExplorerEntry {
         }
     }
 
-
     fn from_trash(entry: TrashEntry) -> Self {
         let synthetic_path = PathBuf::from(format!("trash:{}", entry.id.as_str()));
         let attributes = FileAttributes {
@@ -607,7 +606,6 @@ impl ExplorerDialog {
             targets: paths.to_vec(),
         }
     }
-
 
     pub fn dump_trash(item_count: usize) -> Self {
         Self {
@@ -994,11 +992,10 @@ impl ExplorerController {
                 ExplorerEffect::None
             }
             ExplorerCommand::OpenForward => {
-                let target = state
-                    .forward_history
-                    .last()
-                    .cloned()
-                    .ok_or_else(|| ExplorerError::InvalidOperation("no forward history".into()))?;
+                let target =
+                    state.forward_history.last().cloned().ok_or_else(|| {
+                        ExplorerError::InvalidOperation("no forward history".into())
+                    })?;
                 let previous = state.current_location.clone();
                 self.file_service
                     .navigate_location(state, session, platform, storage, target, false)?;
@@ -1012,15 +1009,14 @@ impl ExplorerController {
                 ExplorerEffect::None
             }
             ExplorerCommand::NavigateTrash => {
-                self.file_service
-                    .navigate_location(
-                        state,
-                        session,
-                        platform,
-                        storage,
-                        ExplorerLocation::Trash,
-                        true,
-                    )?;
+                self.file_service.navigate_location(
+                    state,
+                    session,
+                    platform,
+                    storage,
+                    ExplorerLocation::Trash,
+                    true,
+                )?;
                 ExplorerEffect::None
             }
             ExplorerCommand::OpenSelected => {
@@ -1081,8 +1077,13 @@ impl ExplorerController {
                         "the pending dialog is not a delete confirmation".into(),
                     ));
                 }
-                self.file_service
-                    .delete_many_to_trash(state, session, platform, storage, &dialog.targets)?;
+                self.file_service.delete_many_to_trash(
+                    state,
+                    session,
+                    platform,
+                    storage,
+                    &dialog.targets,
+                )?;
                 ExplorerEffect::None
             }
             ExplorerCommand::DumpTrash => {
@@ -1128,35 +1129,22 @@ impl ExplorerController {
                             .into(),
                     )
                 })?;
-                self.file_service.prepare_restore(
-                    state,
-                    session,
-                    platform,
-                    storage,
-                    &entry,
-                    target,
-                )?;
+                self.file_service
+                    .prepare_restore(state, session, platform, storage, &entry, target)?;
                 ExplorerEffect::None
             }
             ExplorerCommand::RestoreSelectedToDirectory(directory) => {
                 ensure_trash_location(state)?;
                 let entry = selected_trash_entry(state)?;
                 let target = restore_target_in_directory(&directory, &entry.name)?;
-                self.file_service.prepare_restore(
-                    state,
-                    session,
-                    platform,
-                    storage,
-                    &entry,
-                    target,
-                )?;
+                self.file_service
+                    .prepare_restore(state, session, platform, storage, &entry, target)?;
                 ExplorerEffect::None
             }
             ExplorerCommand::ResolveRestoreConflict(action) => {
                 ensure_trash_location(state)?;
-                self.file_service.resolve_restore_conflict(
-                    state, session, platform, storage, action,
-                )?;
+                self.file_service
+                    .resolve_restore_conflict(state, session, platform, storage, action)?;
                 ExplorerEffect::None
             }
             ExplorerCommand::Copy => {
@@ -1290,18 +1278,18 @@ impl ExplorerFileService {
         storage: &StorageManager,
     ) -> Result<(), ExplorerError> {
         let location = state.current_location.clone();
-        let (entries, warning_count) = match self.load_location(session, platform, storage, &location)
-        {
-            Ok(listing) => listing,
-            Err(error) => {
-                // A refresh is different from navigation: the current location is unchanged, but
-                // rows whose existence/authorization can no longer be verified must not remain
-                // actionable. Navigation loads first and therefore keeps the previous rows on
-                // failure; refreshing the already-visible location deliberately clears them.
-                clear_location_listing(state);
-                return Err(error);
-            }
-        };
+        let (entries, warning_count) =
+            match self.load_location(session, platform, storage, &location) {
+                Ok(listing) => listing,
+                Err(error) => {
+                    // A refresh is different from navigation: the current location is unchanged, but
+                    // rows whose existence/authorization can no longer be verified must not remain
+                    // actionable. Navigation loads first and therefore keeps the previous rows on
+                    // failure; refreshing the already-visible location deliberately clears them.
+                    clear_location_listing(state);
+                    return Err(error);
+                }
+            };
         commit_location_listing(state, location, entries, warning_count);
         Ok(())
     }
@@ -1447,14 +1435,7 @@ impl ExplorerFileService {
         }
 
         if entry.kind == ExplorerEntryKind::Directory {
-            self.navigate_directory(
-                state,
-                session,
-                platform,
-                storage,
-                entry.path.clone(),
-                true,
-            )?;
+            self.navigate_directory(state, session, platform, storage, entry.path.clone(), true)?;
             return Ok(ExplorerEffect::None);
         }
 
@@ -1769,7 +1750,11 @@ impl ExplorerFileService {
                     backup.display(),
                     pending.target.display(),
                     rescued.display(),
-                    if rescue_rollback.is_ok() { " (and was returned to its requested path)" } else { "" }
+                    if rescue_rollback.is_ok() {
+                        " (and was returned to its requested path)"
+                    } else {
+                        ""
+                    }
                 )));
             }
             if let Err(retrash_error) = platform.move_to_trash(std::slice::from_ref(&rescued)) {
@@ -2044,10 +2029,10 @@ impl ExplorerFileService {
                 continue;
             }
             let target = if target_exists && resolution == ExplorerConflictAction::KeepBoth {
-                    unique_sibling_path(&original_target)?
-                } else {
-                    original_target.clone()
-                };
+                unique_sibling_path(&original_target)?
+            } else {
+                original_target.clone()
+            };
             if target_exists && resolution == ExplorerConflictAction::Replace {
                 move_existing_to_trash(platform, &original_target)?;
             }
@@ -2294,9 +2279,8 @@ fn restore_target_in_directory(directory: &Path, name: &str) -> Result<PathBuf, 
             "restore destination must be an absolute directory".into(),
         ));
     }
-    validate_child_name(name).map_err(|_| {
-        ExplorerError::InvalidOperation("Trash item has an invalid name".into())
-    })?;
+    validate_child_name(name)
+        .map_err(|_| ExplorerError::InvalidOperation("Trash item has an invalid name".into()))?;
     Ok(directory.join(name))
 }
 
@@ -2320,9 +2304,7 @@ fn commit_location_listing(
     state.viewport_follows_focus = true;
     state.apply_projection();
     if warning_count > 0 {
-        state.message = Some(format!(
-            "{warning_count} entries have incomplete metadata"
-        ));
+        state.message = Some(format!("{warning_count} entries have incomplete metadata"));
     }
 }
 
@@ -2719,19 +2701,14 @@ fn remove_source_path(path: &Path) -> Result<(), ExplorerError> {
     })
 }
 
-fn move_existing_to_trash(
-    platform: &dyn Platform,
-    path: &Path,
-) -> Result<(), ExplorerError> {
-    platform.move_to_trash(&[path.to_path_buf()]).map_err(Into::into)
+fn move_existing_to_trash(platform: &dyn Platform, path: &Path) -> Result<(), ExplorerError> {
+    platform
+        .move_to_trash(&[path.to_path_buf()])
+        .map_err(Into::into)
 }
 
 fn create_restore_rollback_directory(parent: &Path) -> Result<PathBuf, ExplorerError> {
-    let prefix = format!(
-        ".tundra-restore-{}-{}",
-        std::process::id(),
-        unix_millis()
-    );
+    let prefix = format!(".tundra-restore-{}-{}", std::process::id(), unix_millis());
     for suffix in 0u32.. {
         let name = if suffix == 0 {
             prefix.clone()

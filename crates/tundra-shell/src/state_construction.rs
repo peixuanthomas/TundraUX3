@@ -86,12 +86,16 @@ impl ShellState {
                 ShellScreen::Login
             }
         } else {
-            ShellScreen::Home
+            match launch_config.launch_target {
+                ShellLaunchTarget::Home => ShellScreen::Home,
+                ShellLaunchTarget::Editor => ShellScreen::Editor,
+            }
         };
         let initial_focus = match initial_screen {
             ShellScreen::FirstRunSetup => ShellComponent::SetupLanguage,
             ShellScreen::BootstrapAdmin => ShellComponent::BootstrapUsername,
             ShellScreen::Login => ShellComponent::LoginUserList,
+            ShellScreen::Editor => ShellComponent::Editor,
             _ => ShellComponent::Home,
         };
         let login_users = startup.login_users.clone();
@@ -110,6 +114,7 @@ impl ShellState {
         let created_at = Instant::now();
         let mut state = Self {
             home_mode,
+            launch_target: launch_config.launch_target,
             ascii_assets,
             screen_stack: vec![initial_screen],
             storage_manager: startup.storage_manager.clone(),
@@ -169,6 +174,8 @@ impl ShellState {
             editor_open_menu: None,
             editor_selected_toolbar_action: None,
             editor_drag_anchor: None,
+            editor_table_column_widths: std::collections::BTreeMap::new(),
+            editor_table_resize: None,
             editor_fingerprint: None,
             editor_close_after_save: false,
             editor_open_after_save: false,
@@ -224,8 +231,15 @@ impl ShellState {
             drag_tracker: None,
         };
         state.refresh_hit_map();
-        if !auth_gate_enabled && let Some(restored_session) = startup.restored_session.as_ref() {
-            state.apply_restored_session(restored_session);
+        if !auth_gate_enabled {
+            match launch_config.launch_target {
+                ShellLaunchTarget::Home => {
+                    if let Some(restored_session) = startup.restored_session.as_ref() {
+                        state.apply_restored_session(restored_session);
+                    }
+                }
+                ShellLaunchTarget::Editor => state.open_editor(),
+            }
         }
         state
     }

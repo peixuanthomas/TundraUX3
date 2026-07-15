@@ -336,11 +336,7 @@ fn macos_local_volumes() -> Result<Vec<LocalVolume>, PlatformError> {
                     Ok(metadata) => metadata,
                     Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
                     Err(error) => {
-                        return Err(macos_io(
-                            "inspect mounted volume",
-                            Some(&path),
-                            error,
-                        ));
+                        return Err(macos_io("inspect mounted volume", Some(&path), error));
                     }
                 };
                 // /Volumes can contain aliases and network mounts. diskutil
@@ -634,11 +630,7 @@ fn macos_restore_trash_item(
             restore_across_volumes(&source, &destination)?;
         }
         Err(error) => {
-            return Err(macos_io(
-                "restore Trash item",
-                Some(&destination),
-                error,
-            ));
+            return Err(macos_io("restore Trash item", Some(&destination), error));
         }
     }
 
@@ -657,9 +649,10 @@ fn validate_trash_source(source: &Path) -> Result<(), PlatformError> {
     let home_trash = home_dir_from_env()?.join(".Trash");
     let volumes = macos_local_volumes()?;
     let is_trash_path = source.starts_with(&home_trash)
-        || volumes.iter().filter(|volume| volume.root != Path::new("/")).any(|volume| {
-            source.starts_with(volume.root.join(".Trashes"))
-        });
+        || volumes
+            .iter()
+            .filter(|volume| volume.root != Path::new("/"))
+            .any(|volume| source.starts_with(volume.root.join(".Trashes")));
     let volume = volume_for_path(source, &volumes)?;
     if source.file_name().is_none() || source == volume.root || is_trash_path {
         return Err(PlatformError::InvalidInput {
@@ -809,10 +802,9 @@ fn ensure_trash_root(root: &Path) -> Result<(), PlatformError> {
             std::fs::create_dir(container).map_err(|error| {
                 macos_io("create volume Trash directory", Some(container), error)
             })?;
-            std::fs::set_permissions(container, std::fs::Permissions::from_mode(0o1777))
-                .map_err(|error| {
-                    macos_io("secure volume Trash directory", Some(container), error)
-                })?;
+            std::fs::set_permissions(container, std::fs::Permissions::from_mode(0o1777)).map_err(
+                |error| macos_io("secure volume Trash directory", Some(container), error),
+            )?;
         }
     }
     if !validate_existing_trash_root(root)? {
@@ -874,7 +866,10 @@ fn volume_for_path<'a>(
         .filter(|volume| path.starts_with(&volume.root))
         .max_by_key(|volume| volume.root.components().count())
         .ok_or_else(|| PlatformError::InvalidInput {
-            message: format!("path is not on a recognized local volume: {}", path.display()),
+            message: format!(
+                "path is not on a recognized local volume: {}",
+                path.display()
+            ),
         })?;
     if path.starts_with("/Volumes") && volume.root == Path::new("/") {
         return Err(PlatformError::InvalidInput {
@@ -1111,8 +1106,8 @@ fn restore_across_volumes(source: &Path, destination: &Path) -> Result<(), Platf
         .parent()
         .expect("validated restore destination has a parent");
     let staging = unique_restore_staging_path(parent);
-    if let Err(error) = copy_path_for_restore(source, &staging)
-        .and_then(|()| sync_copied_tree(&staging))
+    if let Err(error) =
+        copy_path_for_restore(source, &staging).and_then(|()| sync_copied_tree(&staging))
     {
         let cleanup = cleanup_restore_staging(parent, &staging).err();
         return Err(match cleanup {
@@ -1180,16 +1175,14 @@ fn copy_path_for_restore(source: &Path, staging: &Path) -> Result<(), PlatformEr
     const COPYFILE_EXCL: u32 = 0x0002_0000;
     const COPYFILE_NOFOLLOW_SRC: u32 = 0x0004_0000;
     const COPYFILE_NOFOLLOW_DST: u32 = 0x0008_0000;
-    let source_c = CString::new(source.as_os_str().as_bytes()).map_err(|_| {
-        PlatformError::InvalidInput {
+    let source_c =
+        CString::new(source.as_os_str().as_bytes()).map_err(|_| PlatformError::InvalidInput {
             message: "Trash source contains an invalid NUL byte".to_string(),
-        }
-    })?;
-    let staging_c = CString::new(staging.as_os_str().as_bytes()).map_err(|_| {
-        PlatformError::InvalidInput {
+        })?;
+    let staging_c =
+        CString::new(staging.as_os_str().as_bytes()).map_err(|_| PlatformError::InvalidInput {
             message: "restore destination contains an invalid NUL byte".to_string(),
-        }
-    })?;
+        })?;
     let status = unsafe {
         copyfile(
             source_c.as_ptr(),
@@ -1310,9 +1303,9 @@ fn remove_tree_without_following_mounts(
                 ),
             });
         }
-        for entry in std::fs::read_dir(path)
-            .map_err(|error| macos_io("read directory before permanent removal", Some(path), error))?
-        {
+        for entry in std::fs::read_dir(path).map_err(|error| {
+            macos_io("read directory before permanent removal", Some(path), error)
+        })? {
             let entry = entry.map_err(|error| {
                 macos_io("read directory before permanent removal", Some(path), error)
             })?;

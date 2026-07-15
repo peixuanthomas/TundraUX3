@@ -16,10 +16,18 @@ pub enum HomeModeOverride {
     Debug,
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum ShellLaunchTarget {
+    #[default]
+    Home,
+    Editor,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ShellLaunchConfig {
     pub terminal_mode: ShellTerminalMode,
     pub home_mode_override: HomeModeOverride,
+    pub launch_target: ShellLaunchTarget,
 }
 
 impl Default for ShellLaunchConfig {
@@ -27,6 +35,17 @@ impl Default for ShellLaunchConfig {
         Self {
             terminal_mode: ShellTerminalMode::Fullscreen,
             home_mode_override: HomeModeOverride::BuildDefault,
+            launch_target: ShellLaunchTarget::Home,
+        }
+    }
+}
+
+impl ShellLaunchConfig {
+    pub const fn editor() -> Self {
+        Self {
+            terminal_mode: ShellTerminalMode::Fullscreen,
+            home_mode_override: HomeModeOverride::BuildDefault,
+            launch_target: ShellLaunchTarget::Editor,
         }
     }
 }
