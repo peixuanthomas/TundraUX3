@@ -173,6 +173,7 @@ impl ShellState {
             editor_focus: tundra_ui::EditorFocus::Canvas,
             editor_open_menu: None,
             editor_selected_toolbar_action: None,
+            editor_quick_menu_anchor: None,
             editor_drag_anchor: None,
             editor_table_column_widths: std::collections::BTreeMap::new(),
             editor_table_resize: None,

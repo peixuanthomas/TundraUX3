@@ -9,8 +9,10 @@ use tundra_apps::explorer::{
     EditorAwareOpenRouteResolver, ExplorerOpenRouteResolver, ExplorerOpenTarget,
 };
 use tundra_apps::rich_document::{
-    NodeId, ProjectedBlockKind, RichBlockKind, RichListKind, RichPosition,
+    InlineContent, InlineMarks, InlineNode, LinkAttributes, NodeId, ProjectedBlockKind, RichBlock,
+    RichBlockKind, RichDocument, RichLineEnding, RichListKind, RichPosition, RichText,
 };
+use tundra_apps::rich_edit::RichSelection;
 use tundra_platform::FileAttributes;
 
 fn rich_container(editor: &EditorState) -> NodeId {
@@ -257,6 +259,534 @@ fn typing_after_rich_formatting_never_exposes_markdown_markers() {
             .any(|span| span.text == "text" && span.marks.bold)
     );
     assert!(content.iter().all(|span| !span.text.contains("**")));
+}
+
+#[test]
+fn rich_heading_enter_handles_start_middle_end_and_empty_heading() {
+    let mut at_start = EditorState::from_document(EditorDocument::from_text(
+        None,
+        DocumentKind::Markdown,
+        "# title",
+    ));
+    let heading_id = rich_container(&at_start);
+    move_rich(&mut at_start, heading_id, 0);
+    at_start.apply(EditorCommand::InsertNewline);
+    let projection = at_start.rich_projection().unwrap();
+    assert_eq!(projection.blocks.len(), 2);
+    assert!(matches!(
+        projection.blocks[0].kind,
+        ProjectedBlockKind::Paragraph { .. }
+    ));
+    assert_eq!(projection.blocks[1].id, heading_id);
+    assert!(matches!(
+        projection.blocks[1].kind,
+        ProjectedBlockKind::Heading { level: 1, .. }
+    ));
+    assert_eq!(
+        at_start.rich_cursor(),
+        Some(RichPosition::new(projection.blocks[0].id, 0))
+    );
+    assert_eq!(at_start.export_text(), "\n\n# title");
+
+    at_start.apply(EditorCommand::Backspace);
+    let projection = at_start.rich_projection().unwrap();
+    assert_eq!(projection.blocks.len(), 1);
+    assert_eq!(projection.blocks[0].id, heading_id);
+    assert_eq!(
+        at_start.rich_cursor(),
+        Some(RichPosition::new(heading_id, 0))
+    );
+    assert_eq!(at_start.export_text(), "# title");
+
+    for (offset, expected_heading, expected_paragraph, expected_markdown) in [
+        (2, "ti", "tle", "# ti\n\ntle"),
+        (5, "title", "", "# title\n\n"),
+    ] {
+        let mut editor = EditorState::from_document(EditorDocument::from_text(
+            None,
+            DocumentKind::Markdown,
+            "# title",
+        ));
+        let heading_id = rich_container(&editor);
+        move_rich(&mut editor, heading_id, offset);
+
+        editor.apply(EditorCommand::InsertNewline);
+
+        let projection = editor.rich_projection().unwrap();
+        assert_eq!(projection.blocks.len(), 2);
+        let ProjectedBlockKind::Heading { level, content } = &projection.blocks[0].kind else {
+            panic!("expected the left block to remain a heading");
+        };
+        assert_eq!(*level, 1);
+        assert_eq!(
+            content
+                .iter()
+                .map(|span| span.text.as_str())
+                .collect::<String>(),
+            expected_heading
+        );
+        let ProjectedBlockKind::Paragraph { content } = &projection.blocks[1].kind else {
+            panic!("expected the right block to become a paragraph");
+        };
+        assert_eq!(
+            content
+                .iter()
+                .map(|span| span.text.as_str())
+                .collect::<String>(),
+            expected_paragraph
+        );
+        assert_eq!(
+            editor.rich_cursor(),
+            Some(RichPosition::new(projection.blocks[1].id, 0))
+        );
+        assert_eq!(editor.rich_selection(), None);
+        assert_eq!(editor.export_text(), expected_markdown);
+        assert_eq!(editor.history_depth(), (1, 0));
+
+        editor.apply(EditorCommand::Undo);
+        assert_eq!(editor.export_text(), "# title");
+        assert_eq!(editor.rich_projection().unwrap().blocks.len(), 1);
+        assert_eq!(editor.history_depth(), (0, 1));
+    }
+
+    let mut empty =
+        EditorState::from_document(EditorDocument::from_text(None, DocumentKind::Markdown, "#"));
+    let empty_heading_id = rich_container(&empty);
+    assert!(matches!(
+        empty.rich_projection().unwrap().blocks[0].kind,
+        ProjectedBlockKind::Heading { .. }
+    ));
+    empty.apply(EditorCommand::InsertNewline);
+    let projection = empty.rich_projection().unwrap();
+    assert_eq!(projection.blocks.len(), 1);
+    assert_eq!(projection.blocks[0].id, empty_heading_id);
+    assert!(matches!(
+        projection.blocks[0].kind,
+        ProjectedBlockKind::Paragraph { .. }
+    ));
+    assert_eq!(
+        empty.rich_cursor(),
+        Some(RichPosition::new(empty_heading_id, 0))
+    );
+    assert_eq!(empty.export_text(), "");
+    empty.apply(EditorCommand::Undo);
+    assert_eq!(empty.export_text(), "#");
+}
+
+#[test]
+fn rich_heading_enter_uses_crlf_and_reopens_as_heading_plus_paragraph() {
+    let mut editor = EditorState::from_document(EditorDocument::from_text(
+        None,
+        DocumentKind::Markdown,
+        "# title\r\n",
+    ));
+    let heading_id = rich_container(&editor);
+    move_rich(&mut editor, heading_id, 2);
+    editor.apply(EditorCommand::InsertNewline);
+
+    let exported = editor.export_text();
+    assert_eq!(exported, "# ti\r\n\r\ntle\r\n");
+    let reopened = EditorState::from_document(EditorDocument::from_text(
+        None,
+        DocumentKind::Markdown,
+        &exported,
+    ));
+    let projection = reopened.rich_projection().unwrap();
+    assert_eq!(projection.blocks.len(), 2);
+    assert!(matches!(
+        projection.blocks[0].kind,
+        ProjectedBlockKind::Heading { .. }
+    ));
+    assert!(matches!(
+        projection.blocks[1].kind,
+        ProjectedBlockKind::Paragraph { .. }
+    ));
+}
+
+#[test]
+fn rich_heading_enter_preserves_graphemes_marks_and_links_on_both_sides() {
+    let mut editor = EditorState::from_document(EditorDocument::from_text(
+        None,
+        DocumentKind::Markdown,
+        "# **A🙂[BC](https://example.com)D**",
+    ));
+    let heading_id = rich_container(&editor);
+    move_rich(&mut editor, heading_id, 3);
+
+    editor.apply(EditorCommand::InsertNewline);
+
+    let projection = editor.rich_projection().unwrap();
+    let ProjectedBlockKind::Heading { content: left, .. } = &projection.blocks[0].kind else {
+        panic!("expected heading");
+    };
+    let ProjectedBlockKind::Paragraph { content: right } = &projection.blocks[1].kind else {
+        panic!("expected paragraph");
+    };
+    assert_eq!(
+        left.iter()
+            .map(|span| span.text.as_str())
+            .collect::<String>(),
+        "A🙂B"
+    );
+    assert_eq!(
+        right
+            .iter()
+            .map(|span| span.text.as_str())
+            .collect::<String>(),
+        "CD"
+    );
+    assert!(left.iter().chain(right).all(|span| span.marks.bold));
+    assert!(left.iter().any(|span| {
+        span.text == "B"
+            && span
+                .link
+                .as_ref()
+                .is_some_and(|link| link.url == "https://example.com")
+    }));
+    assert!(right.iter().any(|span| {
+        span.text == "C"
+            && span
+                .link
+                .as_ref()
+                .is_some_and(|link| link.url == "https://example.com")
+    }));
+    assert_eq!(
+        editor.export_text(),
+        "# **A🙂**[**B**](https://example.com)\n\n[**C**](https://example.com)**D**"
+    );
+
+    editor.apply(EditorCommand::Backspace);
+    let projection = editor.rich_projection().unwrap();
+    assert_eq!(projection.blocks.len(), 1);
+    assert_eq!(projection.blocks[0].id, heading_id);
+    let ProjectedBlockKind::Heading { content, .. } = &projection.blocks[0].kind else {
+        panic!("expected merged heading");
+    };
+    assert_eq!(
+        content
+            .iter()
+            .map(|span| span.text.as_str())
+            .collect::<String>(),
+        "A🙂BCD"
+    );
+    assert!(content.iter().all(|span| span.marks.bold));
+    assert!(content.iter().any(|span| {
+        span.text == "BC"
+            && span
+                .link
+                .as_ref()
+                .is_some_and(|link| link.url == "https://example.com")
+    }));
+    assert_eq!(editor.rich_cursor(), Some(RichPosition::new(heading_id, 3)));
+    assert_eq!(editor.history_depth(), (2, 0));
+}
+
+#[test]
+fn rich_heading_enter_replaces_selection_and_undo_restores_it_once() {
+    let mut editor = EditorState::from_document(EditorDocument::from_text(
+        None,
+        DocumentKind::Markdown,
+        "# alphabet",
+    ));
+    let heading_id = rich_container(&editor);
+    select_rich(&mut editor, heading_id, 2, 5);
+
+    editor.apply(EditorCommand::InsertNewline);
+
+    let projection = editor.rich_projection().unwrap();
+    assert_eq!(editor.export_text(), "# al\n\nbet");
+    assert_eq!(
+        editor.rich_cursor(),
+        Some(RichPosition::new(projection.blocks[1].id, 0))
+    );
+    assert_eq!(editor.rich_selection(), None);
+    assert_eq!(editor.history_depth(), (1, 0));
+
+    editor.apply(EditorCommand::Undo);
+    assert_eq!(editor.export_text(), "# alphabet");
+    assert_eq!(editor.history_depth(), (0, 1));
+}
+
+#[test]
+fn multiline_paste_into_heading_ends_heading_and_round_trips_as_two_blocks() {
+    let mut editor = EditorState::from_document(EditorDocument::from_text(
+        None,
+        DocumentKind::Markdown,
+        "# title",
+    ));
+    let heading_id = rich_container(&editor);
+    move_rich(&mut editor, heading_id, 2);
+
+    editor.apply(EditorCommand::Paste("x\ny".to_owned()));
+
+    let projection = editor.rich_projection().unwrap();
+    assert_eq!(projection.blocks.len(), 2);
+    assert_eq!(projection.blocks[0].id, heading_id);
+    let ProjectedBlockKind::Heading { content: left, .. } = &projection.blocks[0].kind else {
+        panic!("expected heading");
+    };
+    let ProjectedBlockKind::Paragraph { content: right } = &projection.blocks[1].kind else {
+        panic!("expected paragraph");
+    };
+    assert_eq!(
+        left.iter()
+            .map(|span| span.text.as_str())
+            .collect::<String>(),
+        "tix"
+    );
+    assert_eq!(
+        right
+            .iter()
+            .map(|span| span.text.as_str())
+            .collect::<String>(),
+        "ytle"
+    );
+    assert_eq!(
+        editor.rich_cursor(),
+        Some(RichPosition::new(projection.blocks[1].id, 1))
+    );
+    let exported = editor.export_text();
+    assert_eq!(exported, "# tix\n\nytle");
+
+    let reopened = EditorState::from_document(EditorDocument::from_text(
+        None,
+        DocumentKind::Markdown,
+        &exported,
+    ));
+    let reopened_projection = reopened.rich_projection().unwrap();
+    assert_eq!(reopened_projection.blocks.len(), 2);
+    assert!(matches!(
+        reopened_projection.blocks[0].kind,
+        ProjectedBlockKind::Heading { .. }
+    ));
+    assert!(matches!(
+        reopened_projection.blocks[1].kind,
+        ProjectedBlockKind::Paragraph { .. }
+    ));
+}
+
+#[test]
+fn legacy_rich_draft_heading_breaks_migrate_in_place_and_remap_positions() {
+    let mut document = RichDocument::new();
+    document.preferred_line_ending = RichLineEnding::CrLf;
+    let heading_id = document.allocate_node_id();
+    let sibling_id = document.allocate_node_id();
+    document.blocks.push(RichBlock::new(
+        heading_id,
+        RichBlockKind::Heading {
+            level: 1,
+            content: InlineContent(vec![
+                InlineNode::Text(RichText {
+                    text: "A🙂".to_owned(),
+                    marks: InlineMarks {
+                        bold: true,
+                        ..InlineMarks::default()
+                    },
+                    link: None,
+                }),
+                InlineNode::SoftBreak,
+                InlineNode::Text(RichText::plain("    ")),
+                InlineNode::Text(RichText {
+                    text: "right".to_owned(),
+                    marks: InlineMarks {
+                        italic: true,
+                        ..InlineMarks::default()
+                    },
+                    link: Some(LinkAttributes {
+                        url: "https://example.com".to_owned(),
+                        title: Some("kept".to_owned()),
+                    }),
+                }),
+            ]),
+        },
+    ));
+    document.blocks.push(RichBlock::new(
+        sibling_id,
+        RichBlockKind::Paragraph {
+            content: InlineContent::plain("unchanged"),
+        },
+    ));
+
+    let mut editor = EditorState::new();
+    editor.install_rich_draft(
+        document,
+        Some(RichPosition::new(heading_id, 3)),
+        Some(RichSelection::new(
+            RichPosition::new(heading_id, 1),
+            RichPosition::new(heading_id, 4),
+        )),
+    );
+
+    let projection = editor.rich_projection().unwrap();
+    assert_eq!(projection.blocks.len(), 3);
+    assert_eq!(projection.blocks[0].id, heading_id);
+    assert_eq!(projection.blocks[2].id, sibling_id);
+    let paragraph_id = projection.blocks[1].id;
+    let ProjectedBlockKind::Heading { content: left, .. } = &projection.blocks[0].kind else {
+        panic!("expected migrated heading");
+    };
+    let ProjectedBlockKind::Paragraph { content: right } = &projection.blocks[1].kind else {
+        panic!("expected migrated paragraph");
+    };
+    assert_eq!(
+        left.iter()
+            .map(|span| span.text.as_str())
+            .collect::<String>(),
+        "A🙂"
+    );
+    assert!(left.iter().all(|span| span.marks.bold));
+    assert_eq!(
+        right
+            .iter()
+            .map(|span| span.text.as_str())
+            .collect::<String>(),
+        "    right"
+    );
+    assert!(right.iter().any(|span| {
+        span.text == "right"
+            && span.marks.italic
+            && span
+                .link
+                .as_ref()
+                .is_some_and(|link| link.url == "https://example.com")
+    }));
+    assert_eq!(
+        editor.rich_cursor(),
+        Some(RichPosition::new(paragraph_id, 0))
+    );
+    assert_eq!(
+        editor.rich_selection(),
+        Some(RichSelection::new(
+            RichPosition::new(heading_id, 1),
+            RichPosition::new(paragraph_id, 1),
+        ))
+    );
+    assert!(editor.export_text().contains("\r\n\r\n"));
+}
+
+#[test]
+fn legacy_nested_and_empty_heading_breaks_are_fully_normalized() {
+    let mut document = RichDocument::new();
+    let quote_id = document.allocate_node_id();
+    let nested_heading_id = document.allocate_node_id();
+    let empty_heading_id = document.allocate_node_id();
+    document.blocks.push(RichBlock::new(
+        quote_id,
+        RichBlockKind::Quote {
+            blocks: vec![RichBlock::new(
+                nested_heading_id,
+                RichBlockKind::Heading {
+                    level: 2,
+                    content: InlineContent(vec![
+                        InlineNode::SoftBreak,
+                        InlineNode::Text(RichText::plain("Nested")),
+                        InlineNode::HardBreak,
+                        InlineNode::Text(RichText::plain("tail")),
+                    ]),
+                },
+            )],
+        },
+    ));
+    document.blocks.push(RichBlock::new(
+        empty_heading_id,
+        RichBlockKind::Heading {
+            level: 3,
+            content: InlineContent(vec![InlineNode::SoftBreak]),
+        },
+    ));
+
+    let mut editor = EditorState::new();
+    editor.install_rich_draft(document, Some(RichPosition::new(empty_heading_id, 1)), None);
+
+    let projection = editor.rich_projection().unwrap();
+    assert_eq!(projection.blocks[0].id, quote_id);
+    let ProjectedBlockKind::Quote { blocks } = &projection.blocks[0].kind else {
+        panic!("expected quote");
+    };
+    assert_eq!(blocks.len(), 3);
+    assert!(matches!(
+        blocks.as_slice(),
+        [
+            tundra_apps::rich_document::ProjectedBlock {
+                kind: ProjectedBlockKind::Paragraph { .. },
+                ..
+            },
+            tundra_apps::rich_document::ProjectedBlock {
+                id,
+                kind: ProjectedBlockKind::Heading { level: 2, .. },
+            },
+            tundra_apps::rich_document::ProjectedBlock {
+                kind: ProjectedBlockKind::Paragraph { .. },
+                ..
+            }
+        ] if *id == nested_heading_id
+    ));
+    assert_eq!(projection.blocks[1].id, empty_heading_id);
+    assert!(matches!(
+        projection.blocks[1].kind,
+        ProjectedBlockKind::Paragraph { .. }
+    ));
+    assert_eq!(
+        editor.rich_cursor(),
+        Some(RichPosition::new(empty_heading_id, 0))
+    );
+    assert!(projection.blocks.iter().all(|block| match &block.kind {
+        ProjectedBlockKind::Heading { content, .. } => {
+            content.iter().all(|span| !span.text.contains('\n'))
+        }
+        ProjectedBlockKind::Quote { blocks } => blocks.iter().all(|block| match &block.kind {
+            ProjectedBlockKind::Heading { content, .. } => {
+                content.iter().all(|span| !span.text.contains('\n'))
+            }
+            _ => true,
+        }),
+        _ => true,
+    }));
+}
+
+#[test]
+fn rich_heading_enter_splits_nested_quote_and_list_blocks() {
+    let mut quote = EditorState::from_document(EditorDocument::from_text(
+        None,
+        DocumentKind::Markdown,
+        "> # title",
+    ));
+    let quote_heading_id = match &quote.rich_projection().unwrap().blocks[0].kind {
+        ProjectedBlockKind::Quote { blocks } => blocks[0].id,
+        other => panic!("expected quote, got {other:?}"),
+    };
+    move_rich(&mut quote, quote_heading_id, 2);
+    quote.apply(EditorCommand::InsertNewline);
+    let quote_projection = quote.rich_projection().unwrap();
+    assert!(matches!(
+        &quote_projection.blocks[0].kind,
+        ProjectedBlockKind::Quote { blocks }
+            if blocks.len() == 2
+                && matches!(blocks[0].kind, ProjectedBlockKind::Heading { .. })
+                && matches!(blocks[1].kind, ProjectedBlockKind::Paragraph { .. })
+    ));
+    assert_eq!(quote.export_text(), "> # ti\n>\n> tle");
+
+    let mut list = EditorState::from_document(EditorDocument::from_text(
+        None,
+        DocumentKind::Markdown,
+        "- # title",
+    ));
+    let list_heading_id = match &list.rich_projection().unwrap().blocks[0].kind {
+        ProjectedBlockKind::List { items, .. } => items[0].blocks[0].id,
+        other => panic!("expected list, got {other:?}"),
+    };
+    move_rich(&mut list, list_heading_id, 2);
+    list.apply(EditorCommand::InsertNewline);
+    let list_projection = list.rich_projection().unwrap();
+    assert!(matches!(
+        &list_projection.blocks[0].kind,
+        ProjectedBlockKind::List { items, .. }
+            if items[0].blocks.len() == 2
+                && matches!(items[0].blocks[0].kind, ProjectedBlockKind::Heading { .. })
+                && matches!(items[0].blocks[1].kind, ProjectedBlockKind::Paragraph { .. })
+    ));
+    assert_eq!(list.export_text(), "- # ti\n  \n  tle");
 }
 
 #[test]
@@ -529,6 +1059,182 @@ fn block_formats_change_semantic_block_kinds() {
             ..
         }
     ));
+}
+
+#[test]
+fn block_formats_apply_to_every_selected_paragraph_with_half_open_endpoints() {
+    let mut editor = EditorState::from_document(EditorDocument::from_text(
+        None,
+        DocumentKind::Markdown,
+        "one\n\ntwo\n\nthree",
+    ));
+    let projection = editor.rich_projection().unwrap();
+    let first = projection.blocks[0].id;
+    let second = projection.blocks[1].id;
+    let third = projection.blocks[2].id;
+
+    move_rich(&mut editor, first, 1);
+    editor.apply(EditorCommand::MoveTo {
+        position: EditorPosition::Rich(RichPosition::new(third, 0)),
+        extend_selection: true,
+    });
+    editor.apply(EditorCommand::ApplyFormat(FormatCommand::Heading(2)));
+
+    let projection = editor.rich_projection().unwrap();
+    assert!(matches!(
+        projection.blocks[0].kind,
+        ProjectedBlockKind::Heading { level: 2, .. }
+    ));
+    assert!(matches!(
+        projection.blocks[1].kind,
+        ProjectedBlockKind::Heading { level: 2, .. }
+    ));
+    assert!(matches!(
+        projection.blocks[2].kind,
+        ProjectedBlockKind::Paragraph { .. }
+    ));
+    assert_eq!(editor.export_text(), "## one\n\n## two\n\nthree");
+    assert_eq!(editor.history_depth(), (1, 0));
+
+    editor.apply(EditorCommand::MoveTo {
+        position: EditorPosition::Rich(RichPosition::new(second, 0)),
+        extend_selection: false,
+    });
+    editor.apply(EditorCommand::MoveTo {
+        position: EditorPosition::Rich(RichPosition::new(first, 0)),
+        extend_selection: true,
+    });
+    editor.apply(EditorCommand::ApplyFormat(FormatCommand::Paragraph));
+    assert_eq!(editor.export_text(), "one\n\n## two\n\nthree");
+}
+
+#[test]
+fn block_format_selection_query_requires_a_selected_paragraph_or_heading() {
+    let mut paragraph = EditorState::from_document(EditorDocument::from_text(
+        None,
+        DocumentKind::Markdown,
+        "paragraph",
+    ));
+    assert!(!paragraph.can_apply_block_format_to_selection());
+    let paragraph_id = paragraph.rich_projection().unwrap().blocks[0].id;
+    select_rich(&mut paragraph, paragraph_id, 0, 1);
+    assert!(paragraph.can_apply_block_format_to_selection());
+    paragraph.apply(EditorCommand::ApplyFormat(FormatCommand::Heading(1)));
+    select_rich(&mut paragraph, paragraph_id, 0, 1);
+    assert!(paragraph.can_apply_block_format_to_selection());
+
+    let mut code = EditorState::from_document(EditorDocument::from_text(
+        None,
+        DocumentKind::Markdown,
+        "```\ncode\n```",
+    ));
+    let code_id = code.rich_projection().unwrap().blocks[0].id;
+    select_rich(&mut code, code_id, 0, 1);
+    assert!(!code.can_apply_block_format_to_selection());
+    code.apply(EditorCommand::ApplyFormat(FormatCommand::Heading(1)));
+    assert_eq!(code.history_depth(), (0, 0));
+    assert!(matches!(
+        code.rich_projection().unwrap().blocks[0].kind,
+        ProjectedBlockKind::CodeBlock { .. }
+    ));
+
+    let mut table = EditorState::from_document(EditorDocument::from_text(
+        None,
+        DocumentKind::Markdown,
+        "| head |\n| --- |\n| body |",
+    ));
+    let cell_id = match &table.rich_projection().unwrap().blocks[0].kind {
+        ProjectedBlockKind::Table { header, .. } => header[0].id,
+        other => panic!("expected table, got {other:?}"),
+    };
+    select_rich(&mut table, cell_id, 0, 1);
+    assert!(!table.can_apply_block_format_to_selection());
+    table.apply(EditorCommand::ApplyFormat(FormatCommand::Heading(1)));
+    assert_eq!(table.history_depth(), (0, 0));
+
+    paragraph.apply(EditorCommand::ToggleMode);
+    assert!(!paragraph.can_apply_block_format_to_selection());
+}
+
+#[test]
+fn selected_block_formats_recurse_into_quotes_and_lists_but_skip_other_containers() {
+    let mut editor = EditorState::from_document(EditorDocument::from_text(
+        None,
+        DocumentKind::Markdown,
+        concat!(
+            "> quoted\n\n",
+            "- listed\n\n",
+            "```\ncode\n```\n\n",
+            "| cell |\n| --- |\n| body |\n\n",
+            "after",
+        ),
+    ));
+    let projection = editor.rich_projection().unwrap();
+    let quote_id = match &projection.blocks[0].kind {
+        ProjectedBlockKind::Quote { blocks } => blocks[0].id,
+        other => panic!("expected quote, got {other:?}"),
+    };
+    let list_id = match &projection.blocks[1].kind {
+        ProjectedBlockKind::List { items, .. } => items[0].blocks[0].id,
+        other => panic!("expected list, got {other:?}"),
+    };
+    let code_id = projection.blocks[2].id;
+    let table_id = projection.blocks[3].id;
+    let after_id = projection.blocks[4].id;
+
+    move_rich(&mut editor, quote_id, 1);
+    editor.apply(EditorCommand::MoveTo {
+        position: EditorPosition::Rich(RichPosition::new(after_id, 2)),
+        extend_selection: true,
+    });
+    assert!(editor.can_apply_block_format_to_selection());
+    editor.apply(EditorCommand::ApplyFormat(FormatCommand::Heading(3)));
+
+    let projection = editor.rich_projection().unwrap();
+    assert!(matches!(
+        &projection.blocks[0].kind,
+        ProjectedBlockKind::Quote { blocks }
+            if matches!(blocks[0].kind, ProjectedBlockKind::Heading { level: 3, .. })
+    ));
+    assert!(matches!(
+        &projection.blocks[1].kind,
+        ProjectedBlockKind::List { items, .. }
+            if items[0].blocks[0].id == list_id
+                && matches!(items[0].blocks[0].kind, ProjectedBlockKind::Heading { level: 3, .. })
+    ));
+    assert_eq!(projection.blocks[2].id, code_id);
+    assert!(matches!(
+        projection.blocks[2].kind,
+        ProjectedBlockKind::CodeBlock { .. }
+    ));
+    assert_eq!(projection.blocks[3].id, table_id);
+    assert!(matches!(
+        projection.blocks[3].kind,
+        ProjectedBlockKind::Table { .. }
+    ));
+    assert!(matches!(
+        projection.blocks[4].kind,
+        ProjectedBlockKind::Heading { level: 3, .. }
+    ));
+    assert_eq!(editor.history_depth(), (1, 0));
+
+    editor.apply(EditorCommand::ApplyFormat(FormatCommand::Paragraph));
+    let projection = editor.rich_projection().unwrap();
+    assert!(matches!(
+        &projection.blocks[0].kind,
+        ProjectedBlockKind::Quote { blocks }
+            if matches!(blocks[0].kind, ProjectedBlockKind::Paragraph { .. })
+    ));
+    assert!(matches!(
+        &projection.blocks[1].kind,
+        ProjectedBlockKind::List { items, .. }
+            if matches!(items[0].blocks[0].kind, ProjectedBlockKind::Paragraph { .. })
+    ));
+    assert!(matches!(
+        projection.blocks[4].kind,
+        ProjectedBlockKind::Paragraph { .. }
+    ));
+    assert_eq!(editor.history_depth(), (2, 0));
 }
 
 #[test]

@@ -12,8 +12,9 @@ use unicode_segmentation::UnicodeSegmentation;
 
 use crate::markdown_codec::{MarkdownCodec, MarkdownExport};
 use crate::rich_document::{
-    NodeId, ProjectedBlock, ProjectedBlockKind, ProjectedInline, RichDocument, RichLineEnding,
-    RichListKind, RichPosition, RichProjection, RichTableAlignment,
+    InlineContent, InlineNode, NodeId, ProjectedBlock, ProjectedBlockKind, ProjectedInline,
+    RewriteState, RichBlock, RichBlockKind, RichDocument, RichLineEnding, RichListKind,
+    RichPosition, RichProjection, RichTableAlignment,
 };
 use crate::rich_edit::{RichEditor, RichSelection};
 
@@ -634,6 +635,13 @@ impl EditorState {
         }
     }
 
+    pub fn can_apply_block_format_to_selection(&self) -> bool {
+        match &self.buffer {
+            EditorBuffer::Rich(buffer) => buffer.editor.can_apply_block_format_to_selection(),
+            EditorBuffer::Source(_) => false,
+        }
+    }
+
     pub fn source_buffer(&self) -> Option<&str> {
         match &self.buffer {
             EditorBuffer::Source(buffer) => Some(&buffer.text),
@@ -664,10 +672,11 @@ impl EditorState {
     pub fn install_rich_draft(
         &mut self,
         mut document: RichDocument,
-        cursor: Option<RichPosition>,
-        selection: Option<RichSelection>,
+        mut cursor: Option<RichPosition>,
+        mut selection: Option<RichSelection>,
     ) {
         document.repair_node_id_allocator();
+        normalize_legacy_recovered_heading_breaks(&mut document, &mut cursor, &mut selection);
         let mut editor = RichEditor::new(document);
         if let Some(cursor) = cursor.filter(|position| editor.contains_position(*position)) {
             editor.cursor = Some(cursor);
@@ -1121,7 +1130,7 @@ impl EditorController {
             EditorCommand::InsertNewline => {
                 match &state.buffer {
                     EditorBuffer::Rich(_) => {
-                        apply_insert_text(state, "\n");
+                        apply_insert_newline(state);
                     }
                     EditorBuffer::Source(_) => {
                         let newline = state.document.metadata.preferred_line_ending.as_str();
@@ -1287,6 +1296,224 @@ impl EditorController {
             }
         }
     }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct LegacyHeadingBreak {
+    heading_id: NodeId,
+    grapheme_offset: usize,
+}
+
+#[derive(Debug, Clone, Copy)]
+enum LegacyHeadingBreakMigration {
+    ParagraphBefore {
+        heading_id: NodeId,
+        paragraph_id: NodeId,
+    },
+    ParagraphAfter {
+        heading_id: NodeId,
+        paragraph_id: NodeId,
+        break_offset: usize,
+    },
+    HeadingToParagraph {
+        container_id: NodeId,
+    },
+}
+
+impl LegacyHeadingBreakMigration {
+    fn remap(self, position: RichPosition) -> RichPosition {
+        match self {
+            Self::ParagraphBefore {
+                heading_id,
+                paragraph_id,
+            } if position.container_id == heading_id => {
+                if position.grapheme_offset == 0 {
+                    RichPosition::new(paragraph_id, 0)
+                } else {
+                    RichPosition::new(heading_id, position.grapheme_offset - 1)
+                }
+            }
+            Self::ParagraphAfter {
+                heading_id,
+                paragraph_id,
+                break_offset,
+            } if position.container_id == heading_id && position.grapheme_offset > break_offset => {
+                RichPosition::new(paragraph_id, position.grapheme_offset - break_offset - 1)
+            }
+            Self::HeadingToParagraph { container_id } if position.container_id == container_id => {
+                RichPosition::new(container_id, 0)
+            }
+            _ => position,
+        }
+    }
+}
+
+/// Schema-two drafts written before Heading Enter became block-aware can
+/// contain inline breaks that Markdown headings cannot represent. Repair only
+/// those containers in place so unrelated node identities and opaque source
+/// stay untouched.
+fn normalize_legacy_recovered_heading_breaks(
+    document: &mut RichDocument,
+    cursor: &mut Option<RichPosition>,
+    selection: &mut Option<RichSelection>,
+) {
+    let block_separator = document.preferred_line_ending.as_str().repeat(2);
+    while let Some(legacy_break) = first_legacy_heading_break(&document.blocks) {
+        let paragraph_id = document.allocate_node_id();
+        let Some(migration) = split_legacy_heading_break(
+            &mut document.blocks,
+            legacy_break,
+            paragraph_id,
+            &block_separator,
+        ) else {
+            break;
+        };
+        document.mark_containing_block_dirty(legacy_break.heading_id);
+        *cursor = cursor.map(|position| migration.remap(position));
+        *selection = selection.map(|selection| {
+            RichSelection::new(
+                migration.remap(selection.anchor),
+                migration.remap(selection.focus),
+            )
+        });
+    }
+}
+
+fn first_legacy_heading_break(blocks: &[RichBlock]) -> Option<LegacyHeadingBreak> {
+    for block in blocks {
+        match &block.kind {
+            RichBlockKind::Heading { content, .. } => {
+                let mut grapheme_offset = 0usize;
+                for node in &content.0 {
+                    if matches!(node, InlineNode::SoftBreak | InlineNode::HardBreak) {
+                        return Some(LegacyHeadingBreak {
+                            heading_id: block.id,
+                            grapheme_offset,
+                        });
+                    }
+                    grapheme_offset = grapheme_offset.saturating_add(node.grapheme_len());
+                }
+            }
+            RichBlockKind::Quote { blocks } => {
+                if let Some(legacy_break) = first_legacy_heading_break(blocks) {
+                    return Some(legacy_break);
+                }
+            }
+            RichBlockKind::List { items, .. } => {
+                for item in items {
+                    if let Some(legacy_break) = first_legacy_heading_break(&item.blocks) {
+                        return Some(legacy_break);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+fn split_legacy_heading_break(
+    blocks: &mut Vec<RichBlock>,
+    legacy_break: LegacyHeadingBreak,
+    paragraph_id: NodeId,
+    block_separator: &str,
+) -> Option<LegacyHeadingBreakMigration> {
+    for index in 0..blocks.len() {
+        if blocks[index].id == legacy_break.heading_id {
+            let kind = std::mem::replace(&mut blocks[index].kind, RichBlockKind::Rule);
+            let RichBlockKind::Heading { level, content } = kind else {
+                blocks[index].kind = kind;
+                return None;
+            };
+            let content_len = content.grapheme_len();
+            let Some(break_index) = content
+                .0
+                .iter()
+                .position(|node| matches!(node, InlineNode::SoftBreak | InlineNode::HardBreak))
+            else {
+                blocks[index].kind = RichBlockKind::Heading { level, content };
+                return None;
+            };
+            let mut left_nodes = content.0;
+            let right_nodes = left_nodes.split_off(break_index + 1);
+            left_nodes.pop();
+            blocks[index].original_raw = None;
+            blocks[index].rewrite = RewriteState::Dirty;
+
+            if legacy_break.grapheme_offset == 0 && content_len == 1 {
+                blocks[index].kind = RichBlockKind::Paragraph {
+                    content: InlineContent::default(),
+                };
+                return Some(LegacyHeadingBreakMigration::HeadingToParagraph {
+                    container_id: legacy_break.heading_id,
+                });
+            }
+
+            if legacy_break.grapheme_offset == 0 {
+                blocks[index].kind = RichBlockKind::Heading {
+                    level,
+                    content: InlineContent(right_nodes),
+                };
+                let leading_trivia = std::mem::take(&mut blocks[index].leading_trivia);
+                blocks[index].leading_trivia = block_separator.to_owned();
+                let mut paragraph = RichBlock::new(
+                    paragraph_id,
+                    RichBlockKind::Paragraph {
+                        content: InlineContent::default(),
+                    },
+                );
+                paragraph.leading_trivia = leading_trivia;
+                blocks.insert(index, paragraph);
+                return Some(LegacyHeadingBreakMigration::ParagraphBefore {
+                    heading_id: legacy_break.heading_id,
+                    paragraph_id,
+                });
+            }
+
+            blocks[index].kind = RichBlockKind::Heading {
+                level,
+                content: InlineContent(left_nodes),
+            };
+            blocks.insert(
+                index + 1,
+                RichBlock::new(
+                    paragraph_id,
+                    RichBlockKind::Paragraph {
+                        content: InlineContent(right_nodes),
+                    },
+                ),
+            );
+            return Some(LegacyHeadingBreakMigration::ParagraphAfter {
+                heading_id: legacy_break.heading_id,
+                paragraph_id,
+                break_offset: legacy_break.grapheme_offset,
+            });
+        }
+
+        match &mut blocks[index].kind {
+            RichBlockKind::Quote { blocks } => {
+                if let Some(migration) =
+                    split_legacy_heading_break(blocks, legacy_break, paragraph_id, block_separator)
+                {
+                    return Some(migration);
+                }
+            }
+            RichBlockKind::List { items, .. } => {
+                for item in items {
+                    if let Some(migration) = split_legacy_heading_break(
+                        &mut item.blocks,
+                        legacy_break,
+                        paragraph_id,
+                        block_separator,
+                    ) {
+                        return Some(migration);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    None
 }
 
 fn import_rich_document(document: &EditorDocument) -> RichDocument {
@@ -1759,6 +1986,14 @@ fn apply_insert_text(state: &mut EditorState, text: &str) -> bool {
     let before = state.snapshot();
     if let EditorBuffer::Rich(buffer) = &mut state.buffer {
         buffer.editor.insert_text(text);
+    }
+    state.commit_edit(before, EditKind::Insert)
+}
+
+fn apply_insert_newline(state: &mut EditorState) -> bool {
+    let before = state.snapshot();
+    if let EditorBuffer::Rich(buffer) = &mut state.buffer {
+        buffer.editor.insert_newline();
     }
     state.commit_edit(before, EditKind::Insert)
 }

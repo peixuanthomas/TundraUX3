@@ -4,10 +4,11 @@ use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier};
 use tundra_ui::{
     EditorBlockArea, EditorBlockSourceMap, EditorDocumentPosition, EditorFocus, EditorHitTarget,
-    EditorMenu, EditorMenuAction, EditorMode, EditorRenderBlock, EditorRenderSpan, EditorSelection,
-    EditorSourceRange, EditorSourceSelection, EditorTableAlignment, EditorTableCell,
-    EditorTableEdge, EditorTextPosition, EditorToolbarAction, EditorViewModel, RichPosition,
-    RichRange, TundraTheme, editor_layout, render_editor,
+    EditorMenu, EditorMenuAction, EditorMode, EditorQuickAction, EditorQuickMenuViewModel,
+    EditorRenderBlock, EditorRenderSpan, EditorSelection, EditorSourceRange, EditorSourceSelection,
+    EditorTableAlignment, EditorTableCell, EditorTableEdge, EditorTextPosition,
+    EditorToolbarAction, EditorViewModel, RichPosition, RichRange, TundraTheme, editor_layout,
+    render_editor,
 };
 
 #[test]
@@ -208,6 +209,168 @@ fn open_menu_renders_a_clickable_overlay_above_the_toolbar_and_canvas() {
     let (bold_x, bold_y) = find_text(&terminal, "Bold");
     assert!(bold_y >= popup.y && bold_y < popup.bottom());
     assert!(bold_x >= popup.x && bold_x < popup.right());
+}
+
+#[test]
+fn quick_menu_orders_actions_renders_last_and_has_highest_hit_priority() {
+    let mut model = EditorViewModel::new(
+        "quick-menu.md",
+        vec![EditorRenderBlock::paragraph("canvas content")],
+    );
+    model.open_menu = Some(EditorMenu::Format);
+    model.quick_menu = Some(EditorQuickMenuViewModel {
+        anchor: (10, 5),
+        block_actions_enabled: true,
+    });
+    let layout = editor_layout(Rect::new(0, 0, 40, 14), &model);
+    let popup = layout.quick_menu_popup.expect("quick menu popup");
+    assert_eq!(popup, Rect::new(10, 6, 28, 3));
+    assert_eq!(
+        layout
+            .quick_menu_items
+            .iter()
+            .map(|item| item.action)
+            .collect::<Vec<_>>(),
+        vec![
+            EditorQuickAction::Bold,
+            EditorQuickAction::Italic,
+            EditorQuickAction::Paragraph,
+            EditorQuickAction::Heading(1),
+            EditorQuickAction::Heading(2),
+            EditorQuickAction::Heading(3),
+        ]
+    );
+    assert!(layout.quick_menu_items.iter().all(|item| item.enabled));
+
+    let heading = layout
+        .quick_menu_items
+        .iter()
+        .find(|item| item.action == EditorQuickAction::Heading(1))
+        .expect("H1 quick action");
+    assert_eq!(
+        layout.hit_test(heading.area.x + 1, heading.area.y),
+        Some(EditorHitTarget::QuickMenuAction(
+            EditorQuickAction::Heading(1)
+        ))
+    );
+    assert_eq!(
+        layout.hit_test(popup.x, popup.y),
+        Some(EditorHitTarget::QuickMenuPopup)
+    );
+
+    let terminal = render(&model, 40, 14);
+    let heading_cell = &terminal.backend().buffer()[(heading.area.x + 1, heading.area.y)];
+    assert_eq!(heading_cell.symbol(), "H");
+    assert_eq!(heading_cell.fg, TundraTheme::default_dark().accent);
+    assert!(heading_cell.modifier.contains(Modifier::BOLD));
+    assert!(heading_cell.modifier.contains(Modifier::UNDERLINED));
+
+    model.quick_menu = Some(EditorQuickMenuViewModel {
+        anchor: (10, 5),
+        block_actions_enabled: false,
+    });
+    let disabled_layout = editor_layout(Rect::new(0, 0, 40, 14), &model);
+    let paragraph = disabled_layout
+        .quick_menu_items
+        .iter()
+        .find(|item| item.action == EditorQuickAction::Paragraph)
+        .expect("Normal quick action");
+    assert!(!paragraph.enabled);
+    assert_eq!(
+        disabled_layout.hit_test(paragraph.area.x + 1, paragraph.area.y),
+        Some(EditorHitTarget::QuickMenuPopup)
+    );
+    assert!(
+        disabled_layout
+            .quick_menu_items
+            .iter()
+            .filter(|item| matches!(
+                item.action,
+                EditorQuickAction::Bold | EditorQuickAction::Italic
+            ))
+            .all(|item| item.enabled)
+    );
+}
+
+#[test]
+fn quick_menu_clamps_flips_wraps_and_hides_when_the_border_cannot_fit() {
+    let mut model = EditorViewModel::new(
+        "quick-menu.md",
+        vec![EditorRenderBlock::paragraph("canvas content")],
+    );
+    model.quick_menu = Some(EditorQuickMenuViewModel {
+        anchor: (16, 12),
+        block_actions_enabled: true,
+    });
+    let layout = editor_layout(Rect::new(5, 3, 12, 10), &model);
+    let popup = layout.quick_menu_popup.expect("wrapped popup above anchor");
+    assert_eq!(popup, Rect::new(5, 6, 12, 6));
+    assert_eq!(popup.bottom(), 12);
+    assert_eq!(
+        layout
+            .quick_menu_items
+            .iter()
+            .map(|item| item.area.y)
+            .collect::<Vec<_>>(),
+        vec![7, 7, 8, 9, 9, 10]
+    );
+    assert!(
+        layout
+            .quick_menu_items
+            .iter()
+            .all(|item| item.area.x >= popup.x + 1 && item.area.right() <= popup.right() - 1)
+    );
+
+    model.quick_menu = Some(EditorQuickMenuViewModel {
+        anchor: (8, 5),
+        block_actions_enabled: true,
+    });
+    let too_narrow = editor_layout(Rect::new(5, 3, 9, 10), &model);
+    assert_eq!(too_narrow.quick_menu_popup, None);
+    assert!(too_narrow.quick_menu_items.is_empty());
+
+    let too_short = editor_layout(Rect::new(5, 3, 10, 5), &model);
+    assert_eq!(too_short.quick_menu_popup, None);
+    assert!(too_short.quick_menu_items.is_empty());
+}
+
+#[test]
+fn rich_heading_levels_use_terminal_safe_accent_styles() {
+    let model = EditorViewModel::new(
+        "headings.md",
+        vec![
+            EditorRenderBlock::heading(1, "Heading One"),
+            EditorRenderBlock::heading(2, "Heading Two"),
+            EditorRenderBlock::heading(3, "Heading Three"),
+            EditorRenderBlock::heading(6, "Heading Six"),
+        ],
+    );
+    let terminal = render(&model, 60, 12);
+    let theme = TundraTheme::default_dark();
+
+    for text in ["Heading One", "Heading Two", "Heading Three", "Heading Six"] {
+        let (x, y) = find_text(&terminal, text);
+        let cell = &terminal.backend().buffer()[(x, y)];
+        assert_eq!(cell.fg, theme.accent, "{text}");
+        assert!(cell.modifier.contains(Modifier::BOLD), "{text}");
+    }
+
+    let (h1_x, h1_y) = find_text(&terminal, "Heading One");
+    let h1 = &terminal.backend().buffer()[(h1_x, h1_y)];
+    assert!(h1.modifier.contains(Modifier::UNDERLINED));
+    assert!(!h1.modifier.contains(Modifier::ITALIC));
+
+    let (h2_x, h2_y) = find_text(&terminal, "Heading Two");
+    let h2 = &terminal.backend().buffer()[(h2_x, h2_y)];
+    assert!(!h2.modifier.contains(Modifier::UNDERLINED));
+    assert!(!h2.modifier.contains(Modifier::ITALIC));
+
+    for text in ["Heading Three", "Heading Six"] {
+        let (x, y) = find_text(&terminal, text);
+        let cell = &terminal.backend().buffer()[(x, y)];
+        assert!(cell.modifier.contains(Modifier::ITALIC), "{text}");
+        assert!(!cell.modifier.contains(Modifier::UNDERLINED), "{text}");
+    }
 }
 
 #[test]

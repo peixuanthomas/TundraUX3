@@ -93,6 +93,12 @@ impl RichEditor {
             .is_some_and(|selection| !selection.is_collapsed())
     }
 
+    /// Returns whether the current non-empty selection touches at least one
+    /// paragraph or heading that supports a block format.
+    pub fn can_apply_block_format_to_selection(&self) -> bool {
+        self.has_selection() && !self.selected_block_format_targets().is_empty()
+    }
+
     pub fn contains_position(&self, position: RichPosition) -> bool {
         container_len(&self.document, position.container_id)
             .is_some_and(|len| position.grapheme_offset <= len)
@@ -235,6 +241,17 @@ impl RichEditor {
             self.delete_selection();
         }
         let normalized = text.replace("\r\n", "\n").replace('\r', "\n");
+        if normalized.contains('\n')
+            && self.cursor.is_some_and(|cursor| {
+                is_heading_container(&self.document.blocks, cursor.container_id)
+            })
+        {
+            return self.insert_multiline_heading_text(&normalized);
+        }
+        self.insert_normalized_text(&normalized)
+    }
+
+    fn insert_normalized_text(&mut self, normalized: &str) -> bool {
         let Some(position) = self.ensure_cursor() else {
             return false;
         };
@@ -265,6 +282,66 @@ impl RichEditor {
         true
     }
 
+    fn insert_multiline_heading_text(&mut self, normalized: &str) -> bool {
+        let Some((heading_text, paragraph_text)) = normalized.split_once('\n') else {
+            return self.insert_normalized_text(normalized);
+        };
+        if !heading_text.is_empty() && !self.insert_normalized_text(heading_text) {
+            return false;
+        }
+        if !self.split_heading_at_cursor() {
+            return false;
+        }
+        if !paragraph_text.is_empty() {
+            self.insert_normalized_text(paragraph_text);
+        }
+        true
+    }
+
+    pub(crate) fn insert_newline(&mut self) -> bool {
+        if self.has_selection() {
+            self.delete_selection();
+        }
+        if self.split_heading_at_cursor() {
+            return true;
+        }
+        self.insert_normalized_text("\n")
+    }
+
+    /// Enter inside a heading creates a paragraph at the caret boundary
+    /// instead of inserting an inline soft break into the heading container.
+    fn split_heading_at_cursor(&mut self) -> bool {
+        let Some(position) = self.cursor else {
+            return false;
+        };
+        if !is_heading_container(&self.document.blocks, position.container_id) {
+            return false;
+        }
+
+        let heading_len = container_len(&self.document, position.container_id).unwrap_or(0);
+        let paragraph_id = if heading_len == 0 {
+            position.container_id
+        } else {
+            self.document.allocate_node_id()
+        };
+        let block_separator = self.document.preferred_line_ending.as_str().repeat(2);
+        if !split_heading_block(
+            &mut self.document.blocks,
+            position.container_id,
+            position.grapheme_offset,
+            paragraph_id,
+            &block_separator,
+        ) {
+            return false;
+        }
+
+        self.document.mark_containing_block_dirty(paragraph_id);
+        self.cursor = Some(RichPosition::new(paragraph_id, 0));
+        self.selection = None;
+        self.preferred_column = None;
+        true
+    }
+
     pub fn backspace(&mut self) -> bool {
         if self.has_selection() {
             return self.delete_selection();
@@ -273,6 +350,15 @@ impl RichEditor {
             return false;
         };
         if position.grapheme_offset == 0 {
+            if let Some(heading_id) = remove_empty_paragraph_before_heading(
+                &mut self.document.blocks,
+                position.container_id,
+            ) {
+                self.cursor = Some(RichPosition::new(heading_id, 0));
+                self.selection = None;
+                self.preferred_column = None;
+                return true;
+            }
             let containers = self.ordered_containers();
             let Some(index) = containers
                 .iter()
@@ -280,10 +366,24 @@ impl RichEditor {
             else {
                 return false;
             };
-            if index == 0 || containers[index - 1].len == 0 {
+            if index == 0 {
                 return false;
             }
-            let previous = &containers[index - 1];
+            let previous = containers[index - 1];
+            if merge_heading_with_following_paragraph(
+                &mut self.document.blocks,
+                previous.id,
+                position.container_id,
+            ) {
+                self.document.mark_containing_block_dirty(previous.id);
+                self.cursor = Some(RichPosition::new(previous.id, previous.len));
+                self.selection = None;
+                self.preferred_column = None;
+                return true;
+            }
+            if previous.len == 0 {
+                return false;
+            }
             self.selection = Some(RichSelection::new(
                 RichPosition::new(previous.id, previous.len - 1),
                 RichPosition::new(previous.id, previous.len),
@@ -549,25 +649,91 @@ impl RichEditor {
         if level > 6 {
             return false;
         }
-        let Some(id) = self.cursor.map(|cursor| cursor.container_id) else {
+        let targets = self.block_format_targets();
+        if targets.is_empty() {
             return false;
-        };
-        let changed = change_block_kind(&mut self.document.blocks, id, |kind| match kind {
-            RichBlockKind::Paragraph { content } if level > 0 => {
-                Some(RichBlockKind::Heading { level, content })
+        }
+        let mut changed = false;
+        for id in targets {
+            let target_changed =
+                change_block_kind(&mut self.document.blocks, id, |kind| match kind {
+                    RichBlockKind::Paragraph { content } if level > 0 => {
+                        Some(RichBlockKind::Heading { level, content })
+                    }
+                    RichBlockKind::Heading { content, .. } if level == 0 => {
+                        Some(RichBlockKind::Paragraph { content })
+                    }
+                    RichBlockKind::Heading { content, .. } => {
+                        Some(RichBlockKind::Heading { level, content })
+                    }
+                    other => Some(other),
+                });
+            if target_changed {
+                self.document.mark_containing_block_dirty(id);
+                changed = true;
             }
-            RichBlockKind::Heading { content, .. } if level == 0 => {
-                Some(RichBlockKind::Paragraph { content })
-            }
-            RichBlockKind::Heading { content, .. } => {
-                Some(RichBlockKind::Heading { level, content })
-            }
-            other => Some(other),
-        });
-        if changed {
-            self.document.mark_containing_block_dirty(id);
         }
         changed
+    }
+
+    /// Block formats use half-open selection semantics. A selection ending at
+    /// offset zero of the next container must not format that next block, and
+    /// a selection beginning at the end of the previous container must not
+    /// format the previous block. Containers fully enclosed between the two
+    /// endpoints remain targets, including empty paragraphs.
+    fn block_format_targets(&self) -> Vec<NodeId> {
+        if self.has_selection() {
+            return self.selected_block_format_targets();
+        }
+        self.cursor
+            .filter(|cursor| is_block_format_container(&self.document.blocks, cursor.container_id))
+            .map(|cursor| vec![cursor.container_id])
+            .unwrap_or_default()
+    }
+
+    fn selected_block_format_targets(&self) -> Vec<NodeId> {
+        let Some(selection) = self.selection.filter(|selection| !selection.is_collapsed()) else {
+            return Vec::new();
+        };
+        let containers = self.ordered_containers();
+        let Some(anchor_index) = containers
+            .iter()
+            .position(|container| container.id == selection.anchor.container_id)
+        else {
+            return Vec::new();
+        };
+        let Some(focus_index) = containers
+            .iter()
+            .position(|container| container.id == selection.focus.container_id)
+        else {
+            return Vec::new();
+        };
+        let (start, end, start_index, end_index) = if anchor_index < focus_index
+            || (anchor_index == focus_index
+                && selection.anchor.grapheme_offset <= selection.focus.grapheme_offset)
+        {
+            (selection.anchor, selection.focus, anchor_index, focus_index)
+        } else {
+            (selection.focus, selection.anchor, focus_index, anchor_index)
+        };
+        containers[start_index..=end_index]
+            .iter()
+            .enumerate()
+            .filter_map(|(relative, container)| {
+                let index = start_index + relative;
+                let selected = if start_index == end_index {
+                    true
+                } else if index == start_index {
+                    start.grapheme_offset < container.len
+                } else if index == end_index {
+                    end.grapheme_offset > 0
+                } else {
+                    true
+                };
+                (selected && is_block_format_container(&self.document.blocks, container.id))
+                    .then_some(container.id)
+            })
+            .collect()
     }
 
     fn toggle_quote(&mut self) -> bool {
@@ -1243,6 +1409,234 @@ fn change_block_kind(
                     if change_block_kind(&mut item.blocks, id, transform) {
                         return true;
                     }
+                }
+            }
+            _ => {}
+        }
+    }
+    false
+}
+
+fn is_heading_container(blocks: &[RichBlock], id: NodeId) -> bool {
+    for block in blocks {
+        if block.id == id {
+            return matches!(&block.kind, RichBlockKind::Heading { .. });
+        }
+        match &block.kind {
+            RichBlockKind::Quote { blocks } => {
+                if is_heading_container(blocks, id) {
+                    return true;
+                }
+            }
+            RichBlockKind::List { items, .. } => {
+                if items
+                    .iter()
+                    .any(|item| is_heading_container(&item.blocks, id))
+                {
+                    return true;
+                }
+            }
+            _ => {}
+        }
+    }
+    false
+}
+
+fn split_heading_block(
+    blocks: &mut Vec<RichBlock>,
+    id: NodeId,
+    grapheme_offset: usize,
+    paragraph_id: NodeId,
+    block_separator: &str,
+) -> bool {
+    for index in 0..blocks.len() {
+        if blocks[index].id == id {
+            let RichBlockKind::Heading { content, .. } = &mut blocks[index].kind else {
+                return false;
+            };
+            let mut left = inline_atoms(content);
+            let split_at = grapheme_offset.min(left.len());
+            if left.is_empty() {
+                blocks[index].kind = RichBlockKind::Paragraph {
+                    content: InlineContent::default(),
+                };
+                blocks[index].original_raw = None;
+                blocks[index].rewrite = RewriteState::Dirty;
+                return true;
+            }
+            if split_at == 0 {
+                let leading_trivia = std::mem::take(&mut blocks[index].leading_trivia);
+                blocks[index].leading_trivia = block_separator.to_owned();
+                blocks.insert(
+                    index,
+                    RichBlock {
+                        id: paragraph_id,
+                        leading_trivia,
+                        original_raw: None,
+                        rewrite: RewriteState::Dirty,
+                        kind: RichBlockKind::Paragraph {
+                            content: InlineContent::default(),
+                        },
+                    },
+                );
+                return true;
+            }
+            let right = left.split_off(split_at);
+            *content = atoms_to_inline(left);
+            blocks[index].original_raw = None;
+            blocks[index].rewrite = RewriteState::Dirty;
+            blocks.insert(
+                index + 1,
+                RichBlock::new(
+                    paragraph_id,
+                    RichBlockKind::Paragraph {
+                        content: atoms_to_inline(right),
+                    },
+                ),
+            );
+            return true;
+        }
+
+        match &mut blocks[index].kind {
+            RichBlockKind::Quote { blocks } => {
+                if split_heading_block(blocks, id, grapheme_offset, paragraph_id, block_separator) {
+                    return true;
+                }
+            }
+            RichBlockKind::List { items, .. } => {
+                for item in items {
+                    if split_heading_block(
+                        &mut item.blocks,
+                        id,
+                        grapheme_offset,
+                        paragraph_id,
+                        block_separator,
+                    ) {
+                        return true;
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    false
+}
+
+fn merge_heading_with_following_paragraph(
+    blocks: &mut Vec<RichBlock>,
+    heading_id: NodeId,
+    paragraph_id: NodeId,
+) -> bool {
+    for index in 0..blocks.len() {
+        if index + 1 < blocks.len()
+            && blocks[index].id == heading_id
+            && blocks[index + 1].id == paragraph_id
+            && matches!(&blocks[index].kind, RichBlockKind::Heading { .. })
+            && matches!(&blocks[index + 1].kind, RichBlockKind::Paragraph { .. })
+        {
+            let RichBlockKind::Paragraph { content: right } =
+                std::mem::replace(&mut blocks[index + 1].kind, RichBlockKind::Rule)
+            else {
+                unreachable!("paragraph kind checked above");
+            };
+            let RichBlockKind::Heading { content: left, .. } = &mut blocks[index].kind else {
+                unreachable!("heading kind checked above");
+            };
+            let mut atoms = inline_atoms(left);
+            atoms.extend(inline_atoms(&right));
+            *left = atoms_to_inline(atoms);
+            blocks[index].original_raw = None;
+            blocks[index].rewrite = RewriteState::Dirty;
+            blocks.remove(index + 1);
+            return true;
+        }
+
+        match &mut blocks[index].kind {
+            RichBlockKind::Quote { blocks } => {
+                if merge_heading_with_following_paragraph(blocks, heading_id, paragraph_id) {
+                    return true;
+                }
+            }
+            RichBlockKind::List { items, .. } => {
+                for item in items {
+                    if merge_heading_with_following_paragraph(
+                        &mut item.blocks,
+                        heading_id,
+                        paragraph_id,
+                    ) {
+                        return true;
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    false
+}
+
+fn remove_empty_paragraph_before_heading(
+    blocks: &mut Vec<RichBlock>,
+    paragraph_id: NodeId,
+) -> Option<NodeId> {
+    for index in 0..blocks.len() {
+        if index + 1 < blocks.len()
+            && blocks[index].id == paragraph_id
+            && matches!(
+                &blocks[index].kind,
+                RichBlockKind::Paragraph { content } if content.grapheme_len() == 0
+            )
+            && matches!(&blocks[index + 1].kind, RichBlockKind::Heading { .. })
+        {
+            let heading_id = blocks[index + 1].id;
+            let leading_trivia = std::mem::take(&mut blocks[index].leading_trivia);
+            blocks[index + 1].leading_trivia = leading_trivia;
+            blocks.remove(index);
+            return Some(heading_id);
+        }
+
+        match &mut blocks[index].kind {
+            RichBlockKind::Quote { blocks } => {
+                if let Some(heading_id) =
+                    remove_empty_paragraph_before_heading(blocks, paragraph_id)
+                {
+                    return Some(heading_id);
+                }
+            }
+            RichBlockKind::List { items, .. } => {
+                for item in items {
+                    if let Some(heading_id) =
+                        remove_empty_paragraph_before_heading(&mut item.blocks, paragraph_id)
+                    {
+                        return Some(heading_id);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+fn is_block_format_container(blocks: &[RichBlock], id: NodeId) -> bool {
+    for block in blocks {
+        if block.id == id {
+            return matches!(
+                &block.kind,
+                RichBlockKind::Paragraph { .. } | RichBlockKind::Heading { .. }
+            );
+        }
+        match &block.kind {
+            RichBlockKind::Quote { blocks } => {
+                if is_block_format_container(blocks, id) {
+                    return true;
+                }
+            }
+            RichBlockKind::List { items, .. } => {
+                if items
+                    .iter()
+                    .any(|item| is_block_format_container(&item.blocks, id))
+                {
+                    return true;
                 }
             }
             _ => {}

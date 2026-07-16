@@ -90,6 +90,7 @@ impl ShellState {
         self.editor_focus = tundra_ui::EditorFocus::Canvas;
         self.editor_open_menu = None;
         self.editor_selected_toolbar_action = None;
+        self.editor_quick_menu_anchor = None;
         self.editor_drag_anchor = None;
         self.editor_table_column_widths.clear();
         self.editor_table_resize = None;

@@ -224,6 +224,7 @@ pub struct ShellState {
     editor_focus: tundra_ui::EditorFocus,
     editor_open_menu: Option<tundra_ui::EditorMenu>,
     editor_selected_toolbar_action: Option<tundra_ui::EditorToolbarAction>,
+    editor_quick_menu_anchor: Option<CellPosition>,
     editor_drag_anchor: Option<tundra_apps::editor::EditorPosition>,
     editor_table_column_widths: std::collections::BTreeMap<tundra_ui::NodeId, Vec<usize>>,
     editor_table_resize: Option<EditorTableResizeState>,

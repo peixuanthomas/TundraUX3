@@ -7,6 +7,7 @@ impl ShellState {
         self.editor_focus = tundra_ui::EditorFocus::Canvas;
         self.editor_open_menu = None;
         self.editor_selected_toolbar_action = None;
+        self.editor_quick_menu_anchor = None;
         self.editor_drag_anchor = None;
         self.editor_table_column_widths.clear();
         self.editor_table_resize = None;
@@ -69,14 +70,24 @@ impl ShellState {
         model.mode = editor_mode_to_ui(state.mode);
         model.focus = self.editor_focus;
         model.open_menu = self.editor_open_menu;
+        let has_selection = state.selected_text().is_some();
+        model.quick_menu = self.editor_quick_menu_anchor.and_then(|anchor| {
+            (state.mode == tundra_apps::editor::EditorMode::Rich
+                && state.document.kind == tundra_apps::editor::DocumentKind::Markdown
+                && has_selection)
+                .then_some(tundra_ui::EditorQuickMenuViewModel {
+                    anchor,
+                    block_actions_enabled: state.can_apply_block_format_to_selection(),
+                })
+        });
         model.selected_toolbar_action = self.editor_selected_toolbar_action;
         model.scroll_line = state.viewport.top_line;
         model.horizontal_scroll = state.viewport.left_column;
         model.toolbar.can_save = state.document.path.is_some() || state.is_dirty();
         model.toolbar.can_undo = state.can_undo();
         model.toolbar.can_redo = state.can_redo();
-        model.toolbar.can_cut = state.selected_text().is_some();
-        model.toolbar.can_copy = state.selected_text().is_some();
+        model.toolbar.can_cut = has_selection;
+        model.toolbar.can_copy = has_selection;
         model.toolbar.can_paste = true;
         model.word_count = state.word_count();
         model.encoding = if state.document.metadata.utf8_bom {
@@ -511,6 +522,13 @@ impl ShellState {
         command: tundra_apps::editor::EditorCommand,
         platform: &dyn Platform,
     ) {
+        if matches!(
+            &command,
+            tundra_apps::editor::EditorCommand::SetMode(_)
+                | tundra_apps::editor::EditorCommand::ToggleMode
+        ) {
+            self.editor_quick_menu_anchor = None;
+        }
         if let tundra_apps::editor::EditorCommand::ApplyFormat(format) = &command {
             let Some(state) = self.editor_state.as_ref() else {
                 return;
@@ -544,6 +562,7 @@ impl ShellState {
         if mode_changed {
             self.editor_table_column_widths.clear();
             self.editor_table_resize = None;
+            self.editor_quick_menu_anchor = None;
         }
         for effect in effects {
             self.handle_editor_effect(effect, platform);
@@ -622,6 +641,10 @@ impl ShellState {
             if repeated {
                 return;
             }
+            if self.editor_quick_menu_anchor.take().is_some() {
+                self.editor_focus = tundra_ui::EditorFocus::Canvas;
+                return;
+            }
             if self.editor_open_menu.take().is_some()
                 || self.editor_selected_toolbar_action.take().is_some()
             {
@@ -631,6 +654,7 @@ impl ShellState {
         }
         self.editor_open_menu = None;
         self.editor_selected_toolbar_action = None;
+        self.editor_quick_menu_anchor = None;
         if key.key == InputKey::Function(6) {
             self.editor_focus = match self.editor_focus {
                 tundra_ui::EditorFocus::MenuBar => tundra_ui::EditorFocus::Toolbar,
@@ -703,6 +727,7 @@ impl ShellState {
                         );
                     } else {
                         self.editor_state = Some(EditorState::new());
+                        self.editor_quick_menu_anchor = None;
                         self.editor_table_column_widths.clear();
                         self.editor_table_resize = None;
                         self.editor_fingerprint = None;
@@ -806,6 +831,7 @@ impl ShellState {
     }
 
     fn handle_editor_paste(&mut self, value: String) {
+        self.editor_quick_menu_anchor = None;
         let platform = tundra_platform::native_platform();
         self.apply_editor_command(
             tundra_apps::editor::EditorCommand::Paste(value),
@@ -821,6 +847,7 @@ impl ShellState {
                 self.hovered_component = hit.map(|_| ShellComponent::Editor);
             }
             MouseInput::Scroll { direction, .. } => {
+                self.editor_quick_menu_anchor = None;
                 if let Some(state) = self.editor_state.as_mut() {
                     match direction {
                         ScrollDirection::Up => {
@@ -844,7 +871,16 @@ impl ShellState {
                 button: PointerButton::Left,
                 modifiers,
                 ..
-            } => match hit {
+            } => {
+                if !matches!(hit, Some(tundra_ui::EditorHitTarget::QuickMenuPopup)) {
+                    self.editor_quick_menu_anchor = None;
+                }
+                match hit {
+                Some(tundra_ui::EditorHitTarget::QuickMenuAction(action)) => {
+                    self.activate_editor_quick_action(action, platform);
+                    self.editor_focus = tundra_ui::EditorFocus::Canvas;
+                }
+                Some(tundra_ui::EditorHitTarget::QuickMenuPopup) => {}
                 Some(tundra_ui::EditorHitTarget::Menu(menu)) => {
                     self.editor_focus = tundra_ui::EditorFocus::MenuBar;
                     self.editor_open_menu = (self.editor_open_menu != Some(menu)).then_some(menu);
@@ -974,11 +1010,13 @@ impl ShellState {
                     self.scroll_editor_to(coordinates);
                 }
                 None => self.editor_open_menu = None,
-            },
+                }
+            }
             MouseInput::Down {
                 button: PointerButton::Right,
                 ..
             } => {
+                self.editor_quick_menu_anchor = None;
                 if let Some(tundra_ui::EditorHitTarget::RichTableEdge { table_id, edge }) = hit {
                     self.edit_editor_table_edge(
                         table_id,
@@ -986,12 +1024,22 @@ impl ShellState {
                         tundra_apps::editor::TableColumnEdit::Remove,
                         platform,
                     );
+                    return;
+                }
+                if matches!(hit, Some(tundra_ui::EditorHitTarget::Canvas(_)))
+                    && self.editor_quick_menu_is_available()
+                {
+                    self.editor_open_menu = None;
+                    self.editor_selected_toolbar_action = None;
+                    self.editor_focus = tundra_ui::EditorFocus::Canvas;
+                    self.editor_quick_menu_anchor = Some(coordinates);
                 }
             }
             MouseInput::Drag {
                 button: PointerButton::Left,
                 ..
             } => {
+                self.editor_quick_menu_anchor = None;
                 if self.editor_table_resize.is_some() {
                     self.resize_editor_table_column(coordinates.0);
                     return;
@@ -1115,6 +1163,41 @@ impl ShellState {
         self.editor_table_resize = None;
     }
 
+    fn editor_quick_menu_is_available(&self) -> bool {
+        self.editor_state.as_ref().is_some_and(|state| {
+            state.mode == tundra_apps::editor::EditorMode::Rich
+                && state.document.kind == tundra_apps::editor::DocumentKind::Markdown
+                && state.selected_text().is_some()
+        })
+    }
+
+    fn activate_editor_quick_action(
+        &mut self,
+        action: tundra_ui::EditorQuickAction,
+        platform: &dyn Platform,
+    ) {
+        use tundra_apps::editor::{EditorCommand, FormatCommand};
+        use tundra_ui::EditorQuickAction;
+
+        if matches!(
+            action,
+            EditorQuickAction::Paragraph | EditorQuickAction::Heading(_)
+        ) && !self
+            .editor_state
+            .as_ref()
+            .is_some_and(EditorState::can_apply_block_format_to_selection)
+        {
+            return;
+        }
+        let format = match action {
+            EditorQuickAction::Bold => FormatCommand::Bold,
+            EditorQuickAction::Italic => FormatCommand::Italic,
+            EditorQuickAction::Paragraph => FormatCommand::Paragraph,
+            EditorQuickAction::Heading(level) => FormatCommand::Heading(level),
+        };
+        self.apply_editor_command(EditorCommand::ApplyFormat(format), platform);
+    }
+
     fn activate_editor_toolbar(
         &mut self,
         action: tundra_ui::EditorToolbarAction,
@@ -1129,6 +1212,7 @@ impl ShellState {
                     .is_none_or(|state| !state.is_dirty())
                 {
                     self.editor_state = Some(EditorState::new());
+                    self.editor_quick_menu_anchor = None;
                     self.editor_table_column_widths.clear();
                     self.editor_table_resize = None;
                     self.editor_fingerprint = None;
@@ -1295,6 +1379,7 @@ impl ShellState {
         self.editor_focus = tundra_ui::EditorFocus::Canvas;
         self.editor_open_menu = None;
         self.editor_selected_toolbar_action = None;
+        self.editor_quick_menu_anchor = None;
         self.editor_drag_anchor = None;
         self.editor_table_column_widths.clear();
         self.editor_table_resize = None;
@@ -1641,6 +1726,7 @@ impl ShellState {
             state.document.path = None;
         }
         self.editor_state = Some(state);
+        self.editor_quick_menu_anchor = None;
         self.editor_table_column_widths.clear();
         self.editor_table_resize = None;
         self.editor_fingerprint = fingerprint;
@@ -1765,6 +1851,7 @@ impl ShellState {
         self.editor_fingerprint = None;
         self.editor_open_menu = None;
         self.editor_selected_toolbar_action = None;
+        self.editor_quick_menu_anchor = None;
         self.editor_drag_anchor = None;
         self.editor_table_column_widths.clear();
         self.editor_table_resize = None;
@@ -1772,8 +1859,17 @@ impl ShellState {
         self.editor_open_after_save = false;
         self.editor_discard_for_open = false;
         self.editor_message = None;
-        self.pop_to_home();
-        self.notify_status("Ready");
+        if self.active_screen() == ShellScreen::Editor {
+            self.screen_stack.pop();
+        }
+        if self.active_screen() == ShellScreen::Explorer && self.explorer_state.is_some() {
+            self.focused_component = ShellComponent::Explorer;
+            self.notify_status("Explorer");
+            self.refresh_hit_map();
+        } else {
+            self.pop_to_home();
+            self.notify_status("Ready");
+        }
     }
 
     fn report_editor_error(&mut self, message: impl Into<String>) {

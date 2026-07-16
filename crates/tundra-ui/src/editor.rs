@@ -64,6 +64,21 @@ pub enum EditorMenuAction {
     Mode(EditorMode),
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EditorQuickAction {
+    Bold,
+    Italic,
+    Paragraph,
+    Heading(u8),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct EditorQuickMenuViewModel {
+    /// Absolute terminal-cell coordinate used to anchor the popup.
+    pub anchor: (u16, u16),
+    pub block_actions_enabled: bool,
+}
+
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum EditorSpanColor {
     #[default]
@@ -533,6 +548,7 @@ pub struct EditorViewModel {
     pub mode: EditorMode,
     pub focus: EditorFocus,
     pub open_menu: Option<EditorMenu>,
+    pub quick_menu: Option<EditorQuickMenuViewModel>,
     pub selected_toolbar_action: Option<EditorToolbarAction>,
     pub blocks: Vec<EditorRenderBlock>,
     pub source_lines: Vec<String>,
@@ -580,6 +596,7 @@ impl EditorViewModel {
             mode: EditorMode::Rich,
             focus: EditorFocus::Canvas,
             open_menu: None,
+            quick_menu: None,
             selected_toolbar_action: None,
             blocks,
             source_lines: vec![String::new()],
@@ -648,6 +665,13 @@ pub struct EditorMenuItemLayout {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct EditorQuickMenuItemLayout {
+    pub action: EditorQuickAction,
+    pub area: Rect,
+    pub enabled: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct EditorToolbarItemLayout {
     pub action: EditorToolbarAction,
     pub area: Rect,
@@ -711,6 +735,8 @@ pub struct EditorTableEdgeHandle {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EditorHitTarget {
+    QuickMenuAction(EditorQuickAction),
+    QuickMenuPopup,
     Menu(EditorMenu),
     MenuAction(EditorMenuAction),
     MenuPopup,
@@ -802,6 +828,8 @@ pub struct EditorLayout {
     pub menus: Vec<EditorMenuLayout>,
     pub menu_popup: Option<Rect>,
     pub menu_items: Vec<EditorMenuItemLayout>,
+    pub quick_menu_popup: Option<Rect>,
+    pub quick_menu_items: Vec<EditorQuickMenuItemLayout>,
     pub toolbar_items: Vec<EditorToolbarItemLayout>,
     pub modes: Vec<EditorModeLayout>,
     pub line_areas: Vec<EditorLineLayout>,
@@ -825,6 +853,19 @@ pub struct EditorLayout {
 
 impl EditorLayout {
     pub fn hit_test(&self, x: u16, y: u16) -> Option<EditorHitTarget> {
+        if let Some(item) = self
+            .quick_menu_items
+            .iter()
+            .find(|item| item.enabled && contains(item.area, x, y))
+        {
+            return Some(EditorHitTarget::QuickMenuAction(item.action));
+        }
+        if self
+            .quick_menu_popup
+            .is_some_and(|area| contains(area, x, y))
+        {
+            return Some(EditorHitTarget::QuickMenuPopup);
+        }
         if let Some(item) = self.modes.iter().find(|item| contains(item.area, x, y)) {
             return Some(EditorHitTarget::Mode(item.mode));
         }
@@ -1105,6 +1146,7 @@ pub fn editor_layout(area: Rect, model: &EditorViewModel) -> EditorLayout {
         });
     let (menus, modes) = menu_layout(menu_bar);
     let (menu_popup, menu_items) = menu_popup_layout(area, &menus, model);
+    let (quick_menu_popup, quick_menu_items) = quick_menu_layout(area, model.quick_menu);
     let (toolbar_items, toolbar_overflow) = toolbar_layout(toolbar, model);
     let source_line_maps = display_lines
         .iter()
@@ -1140,6 +1182,8 @@ pub fn editor_layout(area: Rect, model: &EditorViewModel) -> EditorLayout {
         menus,
         menu_popup,
         menu_items,
+        quick_menu_popup,
+        quick_menu_items,
         toolbar_items,
         modes,
         line_areas,
@@ -1173,8 +1217,10 @@ pub fn render_editor(
     render_toolbar(frame, &layout, model, theme);
     render_canvas(frame, &layout, model, theme);
     render_status_bar(frame, &layout, model, theme);
-    // The popup overlaps the toolbar/canvas, so it must be painted last.
+    // Popups overlap the editor chrome and canvas. The local quick menu has
+    // the highest hit-test priority, so paint it above the regular menu too.
     render_menu_popup(frame, &layout, model, theme);
+    render_quick_menu(frame, &layout, theme);
     layout
 }
 
@@ -1330,6 +1376,47 @@ fn render_menu_popup(
         };
         frame.render_widget(
             Paragraph::new(format!(" {}", menu_action_label(item.action))).style(style),
+            item.area,
+        );
+    }
+}
+
+fn render_quick_menu(frame: &mut Frame<'_>, layout: &EditorLayout, theme: &TundraTheme) {
+    let Some(area) = layout.quick_menu_popup else {
+        return;
+    };
+    frame.render_widget(Clear, area);
+    frame.render_widget(
+        theme
+            .block()
+            .borders(Borders::ALL)
+            .style(Style::default().fg(theme.foreground).bg(theme.background)),
+        area,
+    );
+    for item in &layout.quick_menu_items {
+        let style = if !item.enabled {
+            theme.muted_style()
+        } else {
+            match item.action {
+                EditorQuickAction::Bold => theme.body_style().add_modifier(Modifier::BOLD),
+                EditorQuickAction::Italic => theme.body_style().add_modifier(Modifier::ITALIC),
+                EditorQuickAction::Paragraph => theme.body_style(),
+                EditorQuickAction::Heading(level) => {
+                    let mut style = Style::default()
+                        .fg(theme.accent)
+                        .bg(theme.background)
+                        .add_modifier(Modifier::BOLD);
+                    if level == 1 {
+                        style = style.add_modifier(Modifier::UNDERLINED);
+                    } else if level >= 3 {
+                        style = style.add_modifier(Modifier::ITALIC);
+                    }
+                    style
+                }
+            }
+        };
+        frame.render_widget(
+            Paragraph::new(format!(" {} ", quick_action_label(item.action))).style(style),
             item.area,
         );
     }
@@ -1750,12 +1837,9 @@ fn block_lines(
                 .cloned()
                 .map(|mut span| {
                     span.bold = true;
-                    span.color = if level <= 2 {
-                        EditorSpanColor::Accent
-                    } else {
-                        EditorSpanColor::Normal
-                    };
+                    span.color = EditorSpanColor::Accent;
                     span.underlined |= level == 1;
+                    span.italic |= level >= 3;
                     span
                 })
                 .collect();
@@ -2564,6 +2648,87 @@ fn menu_popup_layout(
     (Some(popup), items)
 }
 
+fn quick_menu_layout(
+    area: Rect,
+    menu: Option<EditorQuickMenuViewModel>,
+) -> (Option<Rect>, Vec<EditorQuickMenuItemLayout>) {
+    let Some(menu) = menu else {
+        return (None, Vec::new());
+    };
+    if area.is_empty() || !contains(area, menu.anchor.0, menu.anchor.1) {
+        return (None, Vec::new());
+    }
+
+    let actions = [
+        EditorQuickAction::Bold,
+        EditorQuickAction::Italic,
+        EditorQuickAction::Paragraph,
+        EditorQuickAction::Heading(1),
+        EditorQuickAction::Heading(2),
+        EditorQuickAction::Heading(3),
+    ];
+    let item_widths =
+        actions.map(|action| to_u16(quick_action_label(action).chars().count().saturating_add(2)));
+    let available_inner_width = area.width.saturating_sub(2);
+    let minimum_inner_width = item_widths.iter().copied().max().unwrap_or_default();
+    if available_inner_width < minimum_inner_width {
+        return (None, Vec::new());
+    }
+    let desired_inner_width = item_widths.iter().copied().fold(0u16, u16::saturating_add);
+    let inner_width = desired_inner_width.min(available_inner_width);
+
+    let mut placements = Vec::with_capacity(actions.len());
+    let mut row = 0u16;
+    let mut column = 0u16;
+    for (action, width) in actions.into_iter().zip(item_widths) {
+        if column > 0 && column.saturating_add(width) > inner_width {
+            row = row.saturating_add(1);
+            column = 0;
+        }
+        placements.push((action, column, row, width));
+        column = column.saturating_add(width);
+    }
+
+    let width = inner_width.saturating_add(2);
+    let height = row.saturating_add(3);
+    if width > area.width || height > area.height {
+        return (None, Vec::new());
+    }
+    let below_y = menu.anchor.1.saturating_add(1);
+    let y = if below_y <= area.bottom().saturating_sub(height) {
+        below_y
+    } else if menu.anchor.1 >= area.y.saturating_add(height) {
+        menu.anchor.1.saturating_sub(height)
+    } else {
+        return (None, Vec::new());
+    };
+    let x = menu
+        .anchor
+        .0
+        .max(area.x)
+        .min(area.right().saturating_sub(width));
+    let popup = Rect::new(x, y, width, height);
+    let items = placements
+        .into_iter()
+        .map(|(action, column, row, width)| EditorQuickMenuItemLayout {
+            action,
+            area: Rect::new(
+                popup.x.saturating_add(1).saturating_add(column),
+                popup.y.saturating_add(1).saturating_add(row),
+                width,
+                1,
+            ),
+            enabled: match action {
+                EditorQuickAction::Bold | EditorQuickAction::Italic => true,
+                EditorQuickAction::Paragraph | EditorQuickAction::Heading(_) => {
+                    menu.block_actions_enabled
+                }
+            },
+        })
+        .collect();
+    (Some(popup), items)
+}
+
 fn menu_actions(menu: EditorMenu) -> Vec<EditorMenuAction> {
     use EditorMenuAction::{Mode, Toolbar};
     use EditorToolbarAction as ToolbarAction;
@@ -2594,6 +2759,18 @@ fn menu_actions(menu: EditorMenu) -> Vec<EditorMenuAction> {
             Toolbar(ToolbarAction::Quote),
         ],
         EditorMenu::View => vec![Mode(EditorMode::Rich), Mode(EditorMode::Source)],
+    }
+}
+
+fn quick_action_label(action: EditorQuickAction) -> &'static str {
+    match action {
+        EditorQuickAction::Bold => "B",
+        EditorQuickAction::Italic => "I",
+        EditorQuickAction::Paragraph => "Normal",
+        EditorQuickAction::Heading(1) => "H1",
+        EditorQuickAction::Heading(2) => "H2",
+        EditorQuickAction::Heading(3) => "H3",
+        EditorQuickAction::Heading(_) => "H",
     }
 }
 

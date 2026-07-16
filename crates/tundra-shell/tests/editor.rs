@@ -10,12 +10,12 @@ use tundra_platform::{
 };
 use tundra_shell::{
     HomeModeOverride, InputEvent, InputKey, InputModifiers, InputPhase, KeyInput, PointerButton,
-    ShellAction, ShellComponent, ShellHomeMode, ShellLaunchConfig, ShellLaunchTarget, ShellScreen,
-    ShellState, ShellTerminalMode, prepare_shell_startup,
+    ScrollDirection, ShellAction, ShellComponent, ShellHomeMode, ShellLaunchConfig,
+    ShellLaunchTarget, ShellScreen, ShellState, ShellTerminalMode, prepare_shell_startup,
 };
 use tundra_ui::{
-    EditorDocumentPosition, EditorFocus, EditorMenu, EditorMenuAction, EditorMode,
-    EditorRenderBlock, EditorTextPosition, EditorToolbarAction, ShellLayout,
+    EditorDocumentPosition, EditorFocus, EditorHitTarget, EditorMenu, EditorMenuAction, EditorMode,
+    EditorQuickAction, EditorRenderBlock, EditorTextPosition, EditorToolbarAction, ShellLayout,
 };
 
 fn default_config() -> ShellLaunchConfig {
@@ -188,6 +188,67 @@ fn rich_space_and_enter_update_the_projection_immediately() {
     assert_eq!(
         third_layout.visual_position_for_document(EditorDocumentPosition::Rich(third_cursor)),
         Some(EditorTextPosition::new(2, 1))
+    );
+}
+
+#[test]
+fn enter_after_heading_starts_an_independent_paragraph() {
+    let fixture = FixtureRoot::new("heading-enter-paragraph");
+    let platform = mock_platform(fixture.path());
+    let mut state = new_user_home_state();
+    open_editor_from_home(&mut state, &platform);
+
+    type_text(&mut state, &platform, "Heading");
+    state.apply_input_with_platform(ctrl_alt('1'), &platform);
+    state.apply_input_with_platform(InputEvent::from_key_label("Enter"), &platform);
+    type_text(&mut state, &platform, "Body");
+
+    let rich = state.to_editor_view_model();
+    assert!(matches!(
+        rich.blocks.as_slice(),
+        [
+            EditorRenderBlock::Heading { level: 1, .. },
+            EditorRenderBlock::Paragraph(_)
+        ]
+    ));
+
+    state.apply_input_with_platform(ctrl_alt('2'), &platform);
+    assert!(matches!(
+        state.to_editor_view_model().blocks.as_slice(),
+        [
+            EditorRenderBlock::Heading { level: 1, .. },
+            EditorRenderBlock::Heading { level: 2, .. }
+        ]
+    ));
+
+    let layout = current_editor_layout(&state);
+    let paragraph = layout
+        .toolbar_items
+        .iter()
+        .find(|item| item.action == EditorToolbarAction::ParagraphStyle)
+        .expect("paragraph toolbar item");
+    state.apply_input_with_platform(
+        InputEvent::mouse_down(PointerButton::Left, (paragraph.area.x, paragraph.area.y)),
+        &platform,
+    );
+    assert!(matches!(
+        state.to_editor_view_model().blocks.as_slice(),
+        [
+            EditorRenderBlock::Heading { level: 1, .. },
+            EditorRenderBlock::Paragraph(_)
+        ]
+    ));
+
+    state.apply_input_with_platform(ctrl_shift('m'), &platform);
+    let source_lines = state.to_editor_view_model().source_lines;
+    assert_eq!(source_lines.first().map(String::as_str), Some("# Heading"));
+    assert_eq!(source_lines.last().map(String::as_str), Some("Body"));
+    assert_eq!(
+        source_lines
+            .iter()
+            .filter(|line| line.starts_with("# "))
+            .count(),
+        1
     );
 }
 
@@ -492,6 +553,127 @@ fn escape_closes_an_open_menu_before_closing_the_document() {
 
     state.apply_input_with_platform(InputEvent::from_key_label("Esc"), &platform);
     assert_eq!(state.active_screen(), ShellScreen::Home);
+}
+
+#[test]
+fn quick_menu_requires_a_rich_selection_and_preserves_it_when_opened() {
+    let fixture = FixtureRoot::new("quick-menu-gate");
+    let platform = mock_platform(fixture.path());
+    let mut state = new_user_home_state();
+    open_editor_from_home(&mut state, &platform);
+
+    let coordinates = editor_canvas_point(&state);
+    state.apply_input_with_platform(
+        InputEvent::mouse_down(PointerButton::Right, coordinates),
+        &platform,
+    );
+    assert_eq!(state.to_editor_view_model().quick_menu, None);
+
+    type_text(&mut state, &platform, "selected text");
+    state.apply_input_with_platform(ctrl('a'), &platform);
+    let selection = state
+        .to_editor_view_model()
+        .rich_selection
+        .expect("Rich selection before opening the quick menu");
+    let coordinates = open_editor_quick_menu(&mut state, &platform);
+    let editor = state.to_editor_view_model();
+    let menu = editor.quick_menu.expect("quick menu view model");
+    assert_eq!(menu.anchor, coordinates);
+    assert!(menu.block_actions_enabled);
+    assert_eq!(editor.rich_selection, Some(selection));
+
+    state.apply_input_with_platform(ctrl_shift('m'), &platform);
+    state.apply_input_with_platform(ctrl('a'), &platform);
+    let coordinates = editor_canvas_point(&state);
+    state.apply_input_with_platform(
+        InputEvent::mouse_down(PointerButton::Right, coordinates),
+        &platform,
+    );
+    assert_eq!(state.to_editor_view_model().mode, EditorMode::Source);
+    assert_eq!(state.to_editor_view_model().quick_menu, None);
+}
+
+#[test]
+fn quick_menu_dispatches_inline_and_heading_formats() {
+    let fixture = FixtureRoot::new("quick-menu-format");
+    let platform = mock_platform(fixture.path());
+    let mut bold = new_user_home_state();
+    open_editor_from_home(&mut bold, &platform);
+    type_text(&mut bold, &platform, "Bold");
+    bold.apply_input_with_platform(ctrl('a'), &platform);
+    open_editor_quick_menu(&mut bold, &platform);
+    click_editor_quick_action(&mut bold, &platform, EditorQuickAction::Bold);
+    assert_eq!(bold.to_editor_view_model().quick_menu, None);
+    bold.apply_input_with_platform(ctrl_shift('m'), &platform);
+    assert_eq!(
+        bold.to_editor_view_model().source_lines.join("\n"),
+        "**Bold**"
+    );
+
+    let mut heading = new_user_home_state();
+    open_editor_from_home(&mut heading, &platform);
+    type_text(&mut heading, &platform, "Heading");
+    heading.apply_input_with_platform(ctrl('a'), &platform);
+    open_editor_quick_menu(&mut heading, &platform);
+    click_editor_quick_action(&mut heading, &platform, EditorQuickAction::Heading(2));
+    assert_eq!(heading.to_editor_view_model().quick_menu, None);
+    heading.apply_input_with_platform(ctrl_shift('m'), &platform);
+    assert_eq!(
+        heading.to_editor_view_model().source_lines.join("\n"),
+        "## Heading"
+    );
+}
+
+#[test]
+fn quick_menu_popup_swallows_clicks_and_escape_scroll_and_external_click_close_it() {
+    let fixture = FixtureRoot::new("quick-menu-dismiss");
+    let platform = mock_platform(fixture.path());
+    let mut state = new_user_home_state();
+    open_editor_from_home(&mut state, &platform);
+    type_text(&mut state, &platform, "keep selected");
+    state.apply_input_with_platform(ctrl('a'), &platform);
+    let selection = state.to_editor_view_model().rich_selection;
+    let anchor = open_editor_quick_menu(&mut state, &platform);
+    let popup = current_editor_layout(&state)
+        .quick_menu_popup
+        .expect("quick menu popup");
+    assert_eq!(
+        current_editor_layout(&state).hit_test(popup.x, popup.y),
+        Some(EditorHitTarget::QuickMenuPopup)
+    );
+    state.apply_input_with_platform(
+        InputEvent::mouse_down(PointerButton::Left, (popup.x, popup.y)),
+        &platform,
+    );
+    assert!(state.to_editor_view_model().quick_menu.is_some());
+    assert_eq!(state.to_editor_view_model().rich_selection, selection);
+
+    state.apply_input_with_platform(InputEvent::from_key_label("Esc"), &platform);
+    assert_eq!(state.active_screen(), ShellScreen::Editor);
+    assert_eq!(state.to_editor_view_model().quick_menu, None);
+    assert_eq!(state.to_editor_view_model().rich_selection, selection);
+    assert!(state.to_notification_view_model().is_none());
+
+    open_editor_quick_menu(&mut state, &platform);
+    state.apply_input_with_platform(
+        InputEvent::mouse_scroll(ScrollDirection::Down, anchor),
+        &platform,
+    );
+    assert_eq!(state.to_editor_view_model().quick_menu, None);
+    assert_eq!(state.to_editor_view_model().rich_selection, selection);
+
+    open_editor_quick_menu(&mut state, &platform);
+    let layout = current_editor_layout(&state);
+    let outside = (layout.canvas.x, layout.canvas.y);
+    assert!(matches!(
+        layout.hit_test(outside.0, outside.1),
+        Some(EditorHitTarget::Canvas(_))
+    ));
+    state.apply_input_with_platform(
+        InputEvent::mouse_down(PointerButton::Left, outside),
+        &platform,
+    );
+    assert_eq!(state.to_editor_view_model().quick_menu, None);
 }
 
 #[test]
@@ -983,6 +1165,10 @@ fn rich_table_outer_edges_add_and_remove_columns_with_mouse_buttons() {
         Some(4)
     );
 
+    state.apply_input_with_platform(ctrl('a'), &platform);
+    open_editor_quick_menu(&mut state, &platform);
+    assert!(state.to_editor_view_model().quick_menu.is_some());
+
     let layout = current_editor_layout(&state);
     let left = layout
         .table_edge_handles
@@ -1000,6 +1186,7 @@ fn rich_table_outer_edges_add_and_remove_columns_with_mouse_buttons() {
         rich_table_column_count(&state.to_editor_view_model(), table_id),
         Some(3)
     );
+    assert_eq!(state.to_editor_view_model().quick_menu, None);
 
     let layout = current_editor_layout(&state);
     let right = layout
@@ -1089,6 +1276,67 @@ fn explorer_opens_markdown_and_ctrl_s_saves_the_edited_document() {
             .as_deref()
             .is_some_and(|message| message.starts_with("Saved "))
     );
+}
+
+#[test]
+fn closing_editor_returns_to_the_original_explorer_for_markdown_and_text_files() {
+    for (case, file_name, contents, expected_mode) in [
+        (
+            "close-to-explorer-markdown",
+            "note.md",
+            "# Title",
+            EditorMode::Rich,
+        ),
+        (
+            "close-to-explorer-text",
+            "note.txt",
+            "plain text",
+            EditorMode::Source,
+        ),
+    ] {
+        let fixture = FixtureRoot::new(case);
+        let platform = mock_platform(fixture.path());
+        bootstrap_with_shell(&platform);
+        fs::write(fixture.path().join("Documents").join(file_name), contents)
+            .expect("seed editor document");
+        let mut state = logged_in_state(&platform);
+
+        state.apply_input_with_platform(InputEvent::from_key_label("e"), &platform);
+        assert_eq!(state.active_screen(), ShellScreen::Explorer);
+        let explorer_before = state.to_explorer_view_model();
+        let entry_names_before = explorer_before
+            .entries
+            .iter()
+            .map(|entry| entry.name.clone())
+            .collect::<Vec<_>>();
+
+        state.apply_input_with_platform(InputEvent::from_key_label("Enter"), &platform);
+        assert_eq!(state.active_screen(), ShellScreen::Editor);
+        assert_eq!(state.to_editor_view_model().mode, expected_mode);
+
+        state.apply_input_with_platform(ctrl('w'), &platform);
+
+        assert_eq!(state.active_screen(), ShellScreen::Explorer);
+        assert_eq!(state.focused_component(), ShellComponent::Explorer);
+        assert_eq!(
+            state.screen_stack(),
+            &[ShellScreen::Home, ShellScreen::Explorer]
+        );
+        let explorer_after = state.to_explorer_view_model();
+        assert_eq!(explorer_after.current_path, explorer_before.current_path);
+        assert_eq!(
+            explorer_after.selected_index,
+            explorer_before.selected_index
+        );
+        assert_eq!(
+            explorer_after
+                .entries
+                .iter()
+                .map(|entry| entry.name.clone())
+                .collect::<Vec<_>>(),
+            entry_names_before
+        );
+    }
 }
 
 #[test]
@@ -1305,6 +1553,47 @@ fn click_toolbar_action(
         .copied()
         .unwrap_or_else(|| panic!("missing toolbar action: {action:?}"));
     assert!(item.enabled, "toolbar action is disabled: {action:?}");
+    state.apply_input_with_platform(
+        InputEvent::mouse_down(PointerButton::Left, (item.area.x, item.area.y)),
+        platform,
+    );
+}
+
+fn editor_canvas_point(state: &ShellState) -> (u16, u16) {
+    let layout = current_editor_layout(state);
+    let coordinates = (
+        layout.canvas.x + layout.canvas.width / 2,
+        layout.canvas.y + layout.canvas.height.saturating_sub(1),
+    );
+    assert!(matches!(
+        layout.hit_test(coordinates.0, coordinates.1),
+        Some(EditorHitTarget::Canvas(_))
+    ));
+    coordinates
+}
+
+fn open_editor_quick_menu(state: &mut ShellState, platform: &MockPlatform) -> (u16, u16) {
+    let coordinates = editor_canvas_point(state);
+    state.apply_input_with_platform(
+        InputEvent::mouse_down(PointerButton::Right, coordinates),
+        platform,
+    );
+    assert!(state.to_editor_view_model().quick_menu.is_some());
+    coordinates
+}
+
+fn click_editor_quick_action(
+    state: &mut ShellState,
+    platform: &MockPlatform,
+    action: EditorQuickAction,
+) {
+    let item = current_editor_layout(state)
+        .quick_menu_items
+        .iter()
+        .find(|item| item.action == action)
+        .copied()
+        .unwrap_or_else(|| panic!("missing quick action: {action:?}"));
+    assert!(item.enabled, "quick action is disabled: {action:?}");
     state.apply_input_with_platform(
         InputEvent::mouse_down(PointerButton::Left, (item.area.x, item.area.y)),
         platform,
