@@ -1,11 +1,11 @@
 impl ShellState {
-    fn logout_at(&mut self, now: Instant) {
+    fn logout_at(&mut self, now: Instant) -> bool {
         if self.diagnostics_restart_is_required() {
             self.notify_alert_with_tone(
                 "Restart TundraUX before signing out",
                 tundra_ui::NotificationTone::Warning,
             );
-            return;
+            return false;
         }
         if self.diagnostics_scanning
             || self
@@ -17,16 +17,25 @@ impl ShellState {
                 "Wait for the diagnostics task to finish before signing out",
                 tundra_ui::NotificationTone::Warning,
             );
-            return;
+            return false;
         }
         if !self.persist_editor_recovery_now(now) {
             self.notify_alert_with_tone(
                 "Could not save the Editor recovery; sign out was cancelled",
                 tundra_ui::NotificationTone::Error,
             );
-            return;
+            return false;
         }
         self.return_to_login_at("Signed out", now);
+        true
+    }
+
+    fn logout_to_lockscreen_at(&mut self, now: Instant) -> bool {
+        if !self.logout_at(now) {
+            return false;
+        }
+        self.prepare_return_to_lockscreen();
+        true
     }
 
     fn return_to_login(&mut self, status: &str) {

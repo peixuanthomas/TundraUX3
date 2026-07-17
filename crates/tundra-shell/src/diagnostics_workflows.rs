@@ -1525,8 +1525,9 @@ mod diagnostics_shell_tests {
         assert!(model.restart_required);
         assert!(!model.can_repair);
 
-        state.logout_at(Instant::now());
+        assert!(!state.logout_to_lockscreen_at(Instant::now()));
         assert!(state.diagnostics_restart_required);
         assert!(state.auth_session.is_some());
+        assert!(!state.return_to_lockscreen_requested);
     }
 }

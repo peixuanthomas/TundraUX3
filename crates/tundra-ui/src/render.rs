@@ -3911,9 +3911,9 @@ fn render_user_main(frame: &mut Frame<'_>, area: Rect, home: &HomeViewModel, the
     }
 
     let controls_text = if home.logout_visible() && home.entries().is_empty() {
-        "Tab: focus Logout / Clock    L: logout    Q / Esc: exit"
+        "Tab: focus Logout / Clock    L: Weathr    Q / Esc: exit"
     } else if home.logout_visible() {
-        "Arrows: select    Enter: open    E: explorer    U: users    L: logout    Q / Esc: exit"
+        "Arrows: select    Enter: open    E: explorer    U: users    L: Weathr    Q / Esc: exit"
     } else {
         "Arrows: select    Enter: open    E: explorer    U: users    Q / Esc: exit"
     };
@@ -3959,7 +3959,7 @@ fn render_authenticated_debug_main(
     );
     frame.render_widget(
         Paragraph::new(Line::from(
-            "Tab: focus Logout    L: logout    Q / Esc: exit",
+            "Tab: focus Logout    L: Weathr    Q / Esc: exit",
         ))
         .style(theme.muted_style())
         .wrap(Wrap { trim: true }),

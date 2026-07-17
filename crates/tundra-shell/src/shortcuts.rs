@@ -32,7 +32,7 @@ pub fn default_shell_shortcuts() -> Vec<ShellShortcut> {
         ShellShortcut {
             scope: ShortcutScope::Screen(ShellScreen::Home),
             binding: KeyBinding::from(&KeyInput::from_label("L")),
-            command: ShellCommand::Logout,
+            command: ShellCommand::LogoutToLockscreen,
         },
         ShellShortcut {
             scope: ShortcutScope::Screen(ShellScreen::Login),

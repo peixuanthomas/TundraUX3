@@ -147,7 +147,7 @@ impl ShellState {
                 if self.current_home_username().is_some()
                     && (key.is_character('l') || key.is_character('L')) =>
             {
-                (RoutedTarget::Global, ShellCommand::Logout)
+                (RoutedTarget::Global, ShellCommand::LogoutToLockscreen)
             }
             ShellScreen::Home if key.is_character('q') || matches!(&key.key, InputKey::Escape) => {
                 (RoutedTarget::Global, ShellCommand::RequestExit)

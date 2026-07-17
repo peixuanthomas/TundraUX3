@@ -161,6 +161,7 @@ impl ShellState {
                 | ShellCommand::ActivateSelectedHomeEntry
                 | ShellCommand::ActivateHomeEntryAt(_, ClickKind::Double)
                 | ShellCommand::Logout
+                | ShellCommand::LogoutToLockscreen
                 | ShellCommand::OpenExplorer
                 | ShellCommand::OpenEditor
                 | ShellCommand::OpenUserManagement
@@ -487,6 +488,13 @@ impl ShellState {
             ShellCommand::Logout => {
                 self.logout_at(received_at);
                 ShellAction::Redraw
+            }
+            ShellCommand::LogoutToLockscreen => {
+                if self.logout_to_lockscreen_at(received_at) {
+                    ShellAction::Exit
+                } else {
+                    ShellAction::Redraw
+                }
             }
             ShellCommand::SelectHomeEntryAt(coordinates) => {
                 if let Some(index) = self.home_entry_index_at(coordinates) {

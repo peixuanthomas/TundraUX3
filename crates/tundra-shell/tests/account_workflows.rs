@@ -705,7 +705,7 @@ fn login_f3_cannot_create_an_anonymous_session_and_focus_skips_guest() {
 }
 
 #[test]
-fn authenticated_logout_supports_shortcut_focus_and_mouse() {
+fn l_returns_to_weathr_while_focused_and_mouse_logout_stay_in_shell() {
     let fixture = FixtureRoot::new("logout-inputs");
     let platform = mock_platform(fixture.path());
     bootstrap_with_shell(&platform);
@@ -713,7 +713,12 @@ fn authenticated_logout_supports_shortcut_focus_and_mouse() {
     let startup = prepare_shell_startup(&platform, default_config()).expect("shortcut startup");
     let mut shortcut_state = ShellState::new_with_startup(default_config(), (120, 40), startup);
     login(&mut shortcut_state, "AdminUser", "StrongPass123");
-    shortcut_state.apply_input(InputEvent::from_key_label("l"));
+    let action = shortcut_state.apply_input(InputEvent::from_key_label("l"));
+    assert_eq!(action, ShellAction::Exit);
+    assert_eq!(
+        shortcut_state.last_command(),
+        Some(&tundra_shell::ShellCommand::LogoutToLockscreen)
+    );
     assert_eq!(shortcut_state.active_screen(), ShellScreen::Login);
     assert!(shortcut_state.auth_session().is_none());
 
@@ -722,7 +727,8 @@ fn authenticated_logout_supports_shortcut_focus_and_mouse() {
     login(&mut focus_state, "AdminUser", "StrongPass123");
     focus_state.apply_input(InputEvent::from_key_label("Tab"));
     assert_eq!(focus_state.focused_component(), ShellComponent::HomeLogout);
-    focus_state.apply_input(InputEvent::from_key_label("Enter"));
+    let action = focus_state.apply_input(InputEvent::from_key_label("Enter"));
+    assert_eq!(action, ShellAction::Redraw);
     assert_eq!(focus_state.active_screen(), ShellScreen::Login);
     assert!(focus_state.auth_session().is_none());
 
@@ -734,7 +740,8 @@ fn authenticated_logout_supports_shortcut_focus_and_mouse() {
         mouse_state.hit_target_at(logout),
         Some(ShellComponent::HomeLogout)
     );
-    mouse_state.apply_input(InputEvent::mouse_down(PointerButton::Left, logout));
+    let action = mouse_state.apply_input(InputEvent::mouse_down(PointerButton::Left, logout));
+    assert_eq!(action, ShellAction::Redraw);
     assert_eq!(mouse_state.active_screen(), ShellScreen::Login);
     assert!(mouse_state.auth_session().is_none());
 }

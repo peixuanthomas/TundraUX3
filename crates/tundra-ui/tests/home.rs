@@ -210,6 +210,7 @@ fn authenticated_user_and_debug_homes_render_single_line_account_logout() {
     assert!(user_output.contains("User: Strix  [Logout]"));
     assert!(!user_output.contains("Time:"));
     assert!(user_output.contains("Tab: focus Logout / Clock"));
+    assert!(user_output.contains("L: Weathr"));
     assert!(!user_output.contains("E: explorer"));
     assert!(!user_output.contains("U: users"));
     assert!(!user_output.contains("Arrows: select"));
@@ -236,6 +237,7 @@ fn authenticated_user_and_debug_homes_render_single_line_account_logout() {
 
     assert!(debug_output.contains("User: Admin  [Logout]"));
     assert!(debug_output.contains("Tick: 1"));
+    assert!(debug_output.contains("L: Weathr"));
     assert!(home_logout_area(main, &debug_home).width > 0);
 }
 

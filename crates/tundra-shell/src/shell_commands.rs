@@ -60,6 +60,7 @@ pub enum ShellCommand {
     HomeLastEntry,
     ActivateSelectedHomeEntry,
     Logout,
+    LogoutToLockscreen,
     SelectHomeEntryAt(CellPosition),
     ActivateHomeEntryAt(CellPosition, ClickKind),
     OpenExplorer,
