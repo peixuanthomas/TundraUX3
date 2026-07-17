@@ -1,5 +1,63 @@
 const EDITOR_RECOVERY_IDLE: Duration = Duration::from_secs(2);
 const EDITOR_RECOVERY_INTERVAL: Duration = Duration::from_secs(10);
+const EDITOR_CURSOR_TIME_STEP_MS: u32 = 250;
+const EDITOR_CURSOR_MIN_TIME_MS: u32 = 250;
+const EDITOR_CURSOR_MAX_TIME_MS: u32 = 10_000;
+const EDITOR_CURSOR_MIN_HORIZONTAL_STEP: u8 = 2;
+const EDITOR_CURSOR_MAX_HORIZONTAL_STEP: u8 = 16;
+const EDITOR_CURSOR_MIN_VERTICAL_STEP: u8 = 1;
+const EDITOR_CURSOR_MAX_VERTICAL_STEP: u8 = 8;
+
+fn editor_cursor_direction(key: &KeyInput) -> Option<EditorCursorDirection> {
+    if key.has_non_shift_modifier() {
+        return None;
+    }
+    match key.key {
+        InputKey::Left => Some(EditorCursorDirection::Left),
+        InputKey::Right => Some(EditorCursorDirection::Right),
+        InputKey::Up => Some(EditorCursorDirection::Up),
+        InputKey::Down => Some(EditorCursorDirection::Down),
+        _ => None,
+    }
+}
+
+fn normalized_editor_config(
+    mut config: tundra_storage::EditorConfig,
+) -> tundra_storage::EditorConfig {
+    config.cursor_acceleration_delay_ms = config
+        .cursor_acceleration_delay_ms
+        .clamp(EDITOR_CURSOR_MIN_TIME_MS, EDITOR_CURSOR_MAX_TIME_MS);
+    config.cursor_acceleration_ramp_ms = config
+        .cursor_acceleration_ramp_ms
+        .clamp(EDITOR_CURSOR_MIN_TIME_MS, EDITOR_CURSOR_MAX_TIME_MS);
+    config.cursor_horizontal_max_step = config.cursor_horizontal_max_step.clamp(
+        EDITOR_CURSOR_MIN_HORIZONTAL_STEP,
+        EDITOR_CURSOR_MAX_HORIZONTAL_STEP,
+    );
+    let vertical_maximum = EDITOR_CURSOR_MAX_VERTICAL_STEP
+        .min(config.cursor_horizontal_max_step.saturating_sub(1))
+        .max(EDITOR_CURSOR_MIN_VERTICAL_STEP);
+    config.cursor_vertical_max_step = config
+        .cursor_vertical_max_step
+        .clamp(EDITOR_CURSOR_MIN_VERTICAL_STEP, vertical_maximum);
+    config
+}
+
+fn adjust_u32_setting(value: u32, step: u32, increase: bool) -> u32 {
+    if increase {
+        value.saturating_add(step)
+    } else {
+        value.saturating_sub(step)
+    }
+}
+
+fn adjust_u8_setting(value: u8, increase: bool) -> u8 {
+    if increase {
+        value.saturating_add(1)
+    } else {
+        value.saturating_sub(1)
+    }
+}
 
 impl ShellState {
     fn advance_editor_document_generation(&mut self) {
@@ -16,6 +74,8 @@ impl ShellState {
         self.editor_read_session = None;
         self.advance_editor_document_generation();
         self.editor_state = Some(EditorState::new());
+        self.editor_cursor_acceleration = None;
+        self.editor_settings_dialog = None;
         self.editor_focus = tundra_ui::EditorFocus::Canvas;
         self.editor_open_menu = None;
         self.editor_selected_toolbar_action = None;
@@ -62,11 +122,14 @@ impl ShellState {
             model.path_hint = Some(load.path.display().to_string());
             model.read_only = true;
             model.cursor = None;
+            model.settings = self.editor_settings_view_model();
             model.status_message = Some(editor_load_status(load));
             return model;
         }
         let Some(state) = self.editor_state.as_ref() else {
-            return tundra_ui::EditorViewModel::new("Untitled.md", Vec::new());
+            let mut model = tundra_ui::EditorViewModel::new("Untitled.md", Vec::new());
+            model.settings = self.editor_settings_view_model();
+            return model;
         };
         let mut model = match state.mode {
             tundra_apps::editor::EditorMode::Rich => {
@@ -192,6 +255,7 @@ impl ShellState {
         model.mode = editor_mode_to_ui(state.mode);
         model.focus = self.editor_focus;
         model.open_menu = self.editor_open_menu;
+        model.settings = self.editor_settings_view_model();
         let has_selection = state.has_selection();
         model.quick_menu = self.editor_quick_menu_anchor.and_then(|anchor| {
             (!state.is_read_only()
@@ -229,6 +293,18 @@ impl ShellState {
             .or_else(|| self.editor_save_state.as_ref().map(editor_save_status))
             .or_else(|| self.editor_message.clone());
         model
+    }
+
+    fn editor_settings_view_model(&self) -> Option<tundra_ui::EditorSettingsViewModel> {
+        self.editor_settings_dialog
+            .map(|dialog| tundra_ui::EditorSettingsViewModel {
+                enabled: dialog.draft.cursor_acceleration_enabled,
+                activation_delay_ms: dialog.draft.cursor_acceleration_delay_ms,
+                ramp_duration_ms: dialog.draft.cursor_acceleration_ramp_ms,
+                horizontal_max_step: dialog.draft.cursor_horizontal_max_step,
+                vertical_max_step: dialog.draft.cursor_vertical_max_step,
+                selected: dialog.selected,
+            })
     }
 }
 
@@ -808,11 +884,39 @@ impl ShellState {
         }
     }
 
+    #[cfg(test)]
     fn handle_editor_key(&mut self, key: KeyInput, platform: &dyn Platform) {
+        self.handle_editor_key_at(key, platform, Instant::now());
+    }
+
+    fn handle_editor_key_at(
+        &mut self,
+        key: KeyInput,
+        platform: &dyn Platform,
+        received_at: Instant,
+    ) {
+        let cursor_direction = editor_cursor_direction(&key);
+        if key.phase == InputPhase::Release {
+            if self
+                .editor_cursor_acceleration
+                .is_some_and(|state| Some(state.direction) == cursor_direction)
+            {
+                self.editor_cursor_acceleration = None;
+            }
+            return;
+        }
         if !key.phase.is_press_like() {
             return;
         }
         let repeated = key.phase == InputPhase::Repeat;
+        if self.editor_settings_dialog.is_some() {
+            self.editor_cursor_acceleration = None;
+            self.handle_editor_settings_key(&key, repeated);
+            return;
+        }
+        if cursor_direction.is_none() {
+            self.editor_cursor_acceleration = None;
+        }
         if self.editor_save_state.is_some() {
             return;
         }
@@ -983,6 +1087,26 @@ impl ShellState {
             return;
         }
 
+        if let Some(direction) = cursor_direction {
+            let movement = match direction {
+                EditorCursorDirection::Left => tundra_apps::editor::CursorMove::Left,
+                EditorCursorDirection::Right => tundra_apps::editor::CursorMove::Right,
+                EditorCursorDirection::Up => tundra_apps::editor::CursorMove::Up,
+                EditorCursorDirection::Down => tundra_apps::editor::CursorMove::Down,
+            };
+            let step_count = self.editor_cursor_step_count(direction, key.phase, received_at);
+            for _ in 0..step_count {
+                self.apply_editor_command(
+                    tundra_apps::editor::EditorCommand::MoveCursor {
+                        movement,
+                        extend_selection: key.modifiers.shift,
+                    },
+                    platform,
+                );
+            }
+            return;
+        }
+
         let command = match key.key {
             InputKey::Escape => tundra_apps::editor::EditorCommand::RequestClose,
             InputKey::Enter => tundra_apps::editor::EditorCommand::InsertNewline,
@@ -993,22 +1117,6 @@ impl ShellState {
                 self.editor_message = Some("Outdent is not available for this block".to_string());
                 return;
             }
-            InputKey::Left => tundra_apps::editor::EditorCommand::MoveCursor {
-                movement: tundra_apps::editor::CursorMove::Left,
-                extend_selection: key.modifiers.shift,
-            },
-            InputKey::Right => tundra_apps::editor::EditorCommand::MoveCursor {
-                movement: tundra_apps::editor::CursorMove::Right,
-                extend_selection: key.modifiers.shift,
-            },
-            InputKey::Up => tundra_apps::editor::EditorCommand::MoveCursor {
-                movement: tundra_apps::editor::CursorMove::Up,
-                extend_selection: key.modifiers.shift,
-            },
-            InputKey::Down => tundra_apps::editor::EditorCommand::MoveCursor {
-                movement: tundra_apps::editor::CursorMove::Down,
-                extend_selection: key.modifiers.shift,
-            },
             InputKey::Home => tundra_apps::editor::EditorCommand::MoveCursor {
                 movement: tundra_apps::editor::CursorMove::LineStart,
                 extend_selection: key.modifiers.shift,
@@ -1037,7 +1145,208 @@ impl ShellState {
         self.apply_editor_command(command, platform);
     }
 
+    fn editor_cursor_step_count(
+        &mut self,
+        direction: EditorCursorDirection,
+        phase: InputPhase,
+        received_at: Instant,
+    ) -> u8 {
+        if !self.editor_config.cursor_acceleration_enabled {
+            self.editor_cursor_acceleration = None;
+            return 1;
+        }
+        if phase == InputPhase::Press
+            || self
+                .editor_cursor_acceleration
+                .is_none_or(|state| state.direction != direction)
+        {
+            self.editor_cursor_acceleration = Some(EditorCursorAccelerationState {
+                direction,
+                started_at: received_at,
+            });
+            return 1;
+        }
+        let Some(state) = self.editor_cursor_acceleration else {
+            return 1;
+        };
+        let held_ms = received_at
+            .saturating_duration_since(state.started_at)
+            .as_millis();
+        let delay_ms = u128::from(self.editor_config.cursor_acceleration_delay_ms);
+        if held_ms <= delay_ms {
+            return 1;
+        }
+        let maximum = match direction {
+            EditorCursorDirection::Left | EditorCursorDirection::Right => {
+                self.editor_config.cursor_horizontal_max_step
+            }
+            EditorCursorDirection::Up | EditorCursorDirection::Down => {
+                self.editor_config.cursor_vertical_max_step
+            }
+        }
+        .max(1);
+        let ramp_ms = u128::from(self.editor_config.cursor_acceleration_ramp_ms.max(1));
+        let accelerated_ms = held_ms.saturating_sub(delay_ms).min(ramp_ms);
+        let numerator = u128::from(maximum.saturating_sub(1))
+            .saturating_mul(accelerated_ms)
+            .saturating_mul(accelerated_ms);
+        let denominator = ramp_ms.saturating_mul(ramp_ms).max(1);
+        let extra = numerator.saturating_add(denominator - 1) / denominator;
+        1u8.saturating_add(extra as u8).min(maximum)
+    }
+
+    fn handle_editor_settings_key(&mut self, key: &KeyInput, repeated: bool) {
+        let Some(selected) = self.editor_settings_dialog.map(|dialog| dialog.selected) else {
+            return;
+        };
+        match key.key {
+            InputKey::Escape if !repeated => self.editor_settings_dialog = None,
+            InputKey::Tab | InputKey::Down => {
+                self.select_editor_setting(selected.next());
+            }
+            InputKey::BackTab | InputKey::Up => {
+                self.select_editor_setting(selected.previous());
+            }
+            InputKey::Left => self.adjust_editor_setting(selected, -1),
+            InputKey::Right => self.adjust_editor_setting(selected, 1),
+            InputKey::Enter | InputKey::Character(' ') if !repeated => {
+                self.activate_editor_setting(selected)
+            }
+            _ => {}
+        }
+    }
+
+    fn open_editor_settings(&mut self) {
+        self.editor_open_menu = None;
+        self.editor_selected_toolbar_action = None;
+        self.editor_quick_menu_anchor = None;
+        self.editor_cursor_acceleration = None;
+        self.editor_settings_dialog = Some(EditorSettingsDialogState {
+            draft: self.editor_config,
+            selected: tundra_ui::EditorSettingsField::Enabled,
+        });
+    }
+
+    fn activate_editor_settings_control(&mut self, control: tundra_ui::EditorSettingsControl) {
+        use tundra_ui::{EditorSettingsControl as Control, EditorSettingsField as Field};
+        match control {
+            Control::ToggleEnabled => {
+                self.select_editor_setting(Field::Enabled);
+                self.activate_editor_setting(Field::Enabled);
+            }
+            Control::Decrease(field) => {
+                self.select_editor_setting(field);
+                self.adjust_editor_setting(field, -1);
+            }
+            Control::Increase(field) => {
+                self.select_editor_setting(field);
+                self.adjust_editor_setting(field, 1);
+            }
+            Control::RestoreDefaults => {
+                self.select_editor_setting(Field::RestoreDefaults);
+                self.activate_editor_setting(Field::RestoreDefaults);
+            }
+            Control::Save => {
+                self.select_editor_setting(Field::Save);
+                self.activate_editor_setting(Field::Save);
+            }
+            Control::Cancel => {
+                self.select_editor_setting(Field::Cancel);
+                self.activate_editor_setting(Field::Cancel);
+            }
+        }
+    }
+
+    fn select_editor_setting(&mut self, field: tundra_ui::EditorSettingsField) {
+        if let Some(dialog) = self.editor_settings_dialog.as_mut() {
+            dialog.selected = field;
+        }
+    }
+
+    fn activate_editor_setting(&mut self, field: tundra_ui::EditorSettingsField) {
+        use tundra_ui::EditorSettingsField as Field;
+        match field {
+            Field::Enabled => {
+                if let Some(dialog) = self.editor_settings_dialog.as_mut() {
+                    dialog.draft.cursor_acceleration_enabled =
+                        !dialog.draft.cursor_acceleration_enabled;
+                }
+            }
+            Field::ActivationDelay
+            | Field::RampDuration
+            | Field::HorizontalMaxStep
+            | Field::VerticalMaxStep => self.adjust_editor_setting(field, 1),
+            Field::RestoreDefaults => {
+                if let Some(dialog) = self.editor_settings_dialog.as_mut() {
+                    dialog.draft = tundra_storage::EditorConfig::default();
+                }
+            }
+            Field::Save => self.save_editor_settings(),
+            Field::Cancel => self.editor_settings_dialog = None,
+        }
+    }
+
+    fn adjust_editor_setting(&mut self, field: tundra_ui::EditorSettingsField, direction: i8) {
+        let Some(dialog) = self.editor_settings_dialog.as_mut() else {
+            return;
+        };
+        let increase = direction >= 0;
+        match field {
+            tundra_ui::EditorSettingsField::ActivationDelay => {
+                dialog.draft.cursor_acceleration_delay_ms = adjust_u32_setting(
+                    dialog.draft.cursor_acceleration_delay_ms,
+                    EDITOR_CURSOR_TIME_STEP_MS,
+                    increase,
+                );
+            }
+            tundra_ui::EditorSettingsField::RampDuration => {
+                dialog.draft.cursor_acceleration_ramp_ms = adjust_u32_setting(
+                    dialog.draft.cursor_acceleration_ramp_ms,
+                    EDITOR_CURSOR_TIME_STEP_MS,
+                    increase,
+                );
+            }
+            tundra_ui::EditorSettingsField::HorizontalMaxStep => {
+                dialog.draft.cursor_horizontal_max_step =
+                    adjust_u8_setting(dialog.draft.cursor_horizontal_max_step, increase);
+            }
+            tundra_ui::EditorSettingsField::VerticalMaxStep => {
+                dialog.draft.cursor_vertical_max_step =
+                    adjust_u8_setting(dialog.draft.cursor_vertical_max_step, increase);
+            }
+            tundra_ui::EditorSettingsField::Enabled
+            | tundra_ui::EditorSettingsField::RestoreDefaults
+            | tundra_ui::EditorSettingsField::Save
+            | tundra_ui::EditorSettingsField::Cancel => return,
+        }
+        dialog.draft = normalized_editor_config(dialog.draft);
+    }
+
+    fn save_editor_settings(&mut self) {
+        let Some(dialog) = self.editor_settings_dialog else {
+            return;
+        };
+        let editor = normalized_editor_config(dialog.draft);
+        if let Some(storage) = self.storage_manager.as_ref() {
+            let result = storage.load_config().and_then(|mut config| {
+                config.editor = editor;
+                storage.save_config(&config)
+            });
+            if let Err(error) = result {
+                self.editor_message = Some(format!("Could not save Editor settings: {error}"));
+                return;
+            }
+            self.editor_message = Some("Editor settings saved".to_string());
+        } else {
+            self.editor_message = Some("Editor settings applied for this session".to_string());
+        }
+        self.editor_config = editor;
+        self.editor_cursor_acceleration = None;
+        self.editor_settings_dialog = None;
+    }
+
     fn handle_editor_paste(&mut self, value: String) {
+        self.editor_cursor_acceleration = None;
         self.editor_quick_menu_anchor = None;
         let platform = tundra_platform::native_platform();
         self.apply_editor_command(
@@ -1049,6 +1358,42 @@ impl ShellState {
     fn handle_editor_pointer(&mut self, mouse: MouseInput, platform: &dyn Platform) {
         let coordinates = mouse.coordinates();
         let (hit, document_hit) = self.editor_hit_targets_at(coordinates);
+        if !matches!(mouse, MouseInput::Moved { .. }) {
+            self.editor_cursor_acceleration = None;
+        }
+        if self.editor_settings_dialog.is_some() {
+            match mouse {
+                MouseInput::Moved { .. } => {
+                    self.hovered_component = Some(ShellComponent::Editor);
+                }
+                MouseInput::Down {
+                    button: PointerButton::Left,
+                    ..
+                } => match hit {
+                    Some(tundra_ui::EditorHitTarget::SettingsControl(control)) => {
+                        self.activate_editor_settings_control(control);
+                    }
+                    Some(tundra_ui::EditorHitTarget::SettingsField(field)) => {
+                        self.select_editor_setting(field);
+                    }
+                    _ => {}
+                },
+                MouseInput::Scroll { direction, .. } => match direction {
+                    ScrollDirection::Up | ScrollDirection::Left => {
+                        if let Some(dialog) = self.editor_settings_dialog {
+                            self.adjust_editor_setting(dialog.selected, -1);
+                        }
+                    }
+                    ScrollDirection::Down | ScrollDirection::Right => {
+                        if let Some(dialog) = self.editor_settings_dialog {
+                            self.adjust_editor_setting(dialog.selected, 1);
+                        }
+                    }
+                },
+                MouseInput::Down { .. } | MouseInput::Up { .. } | MouseInput::Drag { .. } => {}
+            }
+            return;
+        }
         match mouse {
             MouseInput::Moved { .. } => {
                 self.hovered_component = hit.map(|_| ShellComponent::Editor);
@@ -1089,9 +1434,13 @@ impl ShellState {
                     }
                     Some(tundra_ui::EditorHitTarget::QuickMenuPopup) => {}
                     Some(tundra_ui::EditorHitTarget::Menu(menu)) => {
-                        self.editor_focus = tundra_ui::EditorFocus::MenuBar;
-                        self.editor_open_menu =
-                            (self.editor_open_menu != Some(menu)).then_some(menu);
+                        if menu == tundra_ui::EditorMenu::Settings {
+                            self.open_editor_settings();
+                        } else {
+                            self.editor_focus = tundra_ui::EditorFocus::MenuBar;
+                            self.editor_open_menu =
+                                (self.editor_open_menu != Some(menu)).then_some(menu);
+                        }
                     }
                     Some(tundra_ui::EditorHitTarget::MenuAction(action)) => {
                         self.editor_open_menu = None;
@@ -1214,12 +1563,15 @@ impl ShellState {
                     }
                     Some(tundra_ui::EditorHitTarget::VerticalScrollbar) => {
                         self.editor_open_menu = None;
-                        self.scroll_editor_to(coordinates);
+                        self.begin_editor_scrollbar_drag(coordinates, ScrollbarAxis::Vertical);
                     }
                     Some(tundra_ui::EditorHitTarget::HorizontalScrollbar) => {
                         self.editor_open_menu = None;
-                        self.scroll_editor_horizontally_to(coordinates);
+                        self.begin_editor_scrollbar_drag(coordinates, ScrollbarAxis::Horizontal);
                     }
+                    Some(tundra_ui::EditorHitTarget::SettingsControl(_))
+                    | Some(tundra_ui::EditorHitTarget::SettingsField(_))
+                    | Some(tundra_ui::EditorHitTarget::SettingsDialog) => {}
                     None => self.editor_open_menu = None,
                 }
             }
@@ -1251,6 +1603,10 @@ impl ShellState {
                 ..
             } => {
                 self.editor_quick_menu_anchor = None;
+                if matches!(self.scrollbar_drag, Some(ScrollbarDragState::Editor { .. })) {
+                    self.drag_editor_scrollbar(coordinates);
+                    return;
+                }
                 if self.editor_table_resize.is_some() {
                     self.resize_editor_table_column(coordinates.0);
                     return;
@@ -1301,6 +1657,7 @@ impl ShellState {
                 button: PointerButton::Left,
                 ..
             } => {
+                self.clear_editor_scrollbar_drag();
                 self.editor_drag_anchor = None;
                 self.editor_table_resize = None;
             }
@@ -1526,27 +1883,37 @@ impl ShellState {
         )
     }
 
-    fn scroll_editor_to(&mut self, coordinates: CellPosition) {
+    fn begin_editor_scrollbar_drag(&mut self, coordinates: CellPosition, axis: ScrollbarAxis) {
         let area = Rect::new(0, 0, self.terminal_size.0, self.terminal_size.1);
         let editor_area = match tundra_ui::compute_shell_layout(area) {
             tundra_ui::ShellLayout::Compact(compact) => compact,
             tundra_ui::ShellLayout::Full { main, .. } => main,
         };
         let layout = tundra_ui::editor_layout(editor_area, &self.to_editor_view_model());
-        let Some(scrollbar) = layout.vertical_scrollbar else {
+        let scrollbar = match axis {
+            ScrollbarAxis::Vertical => layout.vertical_scrollbar,
+            ScrollbarAxis::Horizontal => layout.horizontal_scrollbar,
+        };
+        let Some(scrollbar) = scrollbar else {
             return;
         };
-        let offset = coordinates.1.saturating_sub(scrollbar.track.y) as usize;
-        let denominator = usize::from(scrollbar.track.height.saturating_sub(1)).max(1);
-        let maximum = layout
-            .document_line_count
-            .saturating_sub(layout.visible_capacity);
-        if let Some(state) = self.editor_state.as_mut() {
-            state.viewport.top_line = maximum.saturating_mul(offset) / denominator;
+        if !rect_contains(scrollbar.thumb, coordinates) {
+            self.clear_editor_scrollbar_drag();
+            return;
         }
+        let grab_offset = match axis {
+            ScrollbarAxis::Vertical => coordinates.1.saturating_sub(scrollbar.thumb.y),
+            ScrollbarAxis::Horizontal => coordinates.0.saturating_sub(scrollbar.thumb.x),
+        };
+        self.editor_drag_anchor = None;
+        self.editor_table_resize = None;
+        self.scrollbar_drag = Some(ScrollbarDragState::Editor { axis, grab_offset });
     }
 
-    fn scroll_editor_horizontally_to(&mut self, coordinates: CellPosition) {
+    fn drag_editor_scrollbar(&mut self, coordinates: CellPosition) {
+        let Some(ScrollbarDragState::Editor { axis, grab_offset }) = self.scrollbar_drag else {
+            return;
+        };
         let area = Rect::new(0, 0, self.terminal_size.0, self.terminal_size.1);
         let editor_area = match tundra_ui::compute_shell_layout(area) {
             tundra_ui::ShellLayout::Compact(compact) => compact,
@@ -1554,16 +1921,55 @@ impl ShellState {
         };
         let model = self.to_editor_view_model();
         let layout = tundra_ui::editor_layout(editor_area, &model);
-        let Some(scrollbar) = layout.horizontal_scrollbar else {
+        let scrollbar = match axis {
+            ScrollbarAxis::Vertical => layout.vertical_scrollbar,
+            ScrollbarAxis::Horizontal => layout.horizontal_scrollbar,
+        };
+        let Some(scrollbar) = scrollbar else {
+            self.clear_editor_scrollbar_drag();
             return;
         };
-        let offset = coordinates.0.saturating_sub(scrollbar.track.x) as usize;
-        let denominator = usize::from(scrollbar.track.width.saturating_sub(1)).max(1);
-        let maximum = model
-            .horizontal_content_width
-            .saturating_sub(usize::from(layout.canvas.width));
+
+        let window_start = match axis {
+            ScrollbarAxis::Vertical => scrollbar_window_start(
+                coordinates.1,
+                grab_offset,
+                scrollbar.track.y,
+                scrollbar.track.height,
+                scrollbar.thumb.height,
+                layout.document_line_count,
+                layout.visible_capacity,
+            ),
+            ScrollbarAxis::Horizontal => {
+                let visible_capacity = usize::from(layout.canvas.width);
+                let content_width = model
+                    .horizontal_content_width
+                    .max(model.horizontal_scroll.saturating_add(visible_capacity));
+                scrollbar_window_start(
+                    coordinates.0,
+                    grab_offset,
+                    scrollbar.track.x,
+                    scrollbar.track.width,
+                    scrollbar.thumb.width,
+                    content_width,
+                    visible_capacity,
+                )
+            }
+        };
         if let Some(state) = self.editor_state.as_mut() {
-            state.viewport.left_column = maximum.saturating_mul(offset) / denominator;
+            match axis {
+                ScrollbarAxis::Vertical => state.viewport.top_line = window_start,
+                ScrollbarAxis::Horizontal => state.viewport.left_column = window_start,
+            }
+        }
+    }
+
+    fn clear_editor_scrollbar_drag(&mut self) -> bool {
+        if matches!(self.scrollbar_drag, Some(ScrollbarDragState::Editor { .. })) {
+            self.scrollbar_drag = None;
+            true
+        } else {
+            false
         }
     }
 
@@ -1946,6 +2352,8 @@ impl ShellState {
                     blocks,
                 });
                 self.editor_state = Some(state);
+                self.editor_cursor_acceleration = None;
+                self.editor_settings_dialog = None;
                 self.editor_fingerprint = Some(fingerprint);
                 self.editor_focus = tundra_ui::EditorFocus::Canvas;
                 self.editor_open_menu = None;
@@ -2479,6 +2887,8 @@ impl ShellState {
         self.advance_editor_document_generation();
         self.editor_state = None;
         self.editor_rich_render_cache = None;
+        self.editor_cursor_acceleration = None;
+        self.editor_settings_dialog = None;
         self.editor_fingerprint = None;
         self.editor_open_menu = None;
         self.editor_selected_toolbar_action = None;

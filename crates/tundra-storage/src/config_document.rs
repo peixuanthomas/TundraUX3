@@ -20,6 +20,8 @@ pub struct StorageConfig {
     #[serde(default)]
     pub explorer: ExplorerConfig,
     #[serde(default)]
+    pub editor: EditorConfig,
+    #[serde(default)]
     pub launcher: LauncherConfig,
     #[serde(default)]
     pub security: SecurityConfig,
@@ -35,6 +37,7 @@ impl Default for StorageConfig {
             shortcuts: BTreeMap::new(),
             appearance: AppearanceConfig::default(),
             explorer: ExplorerConfig::default(),
+            editor: EditorConfig::default(),
             launcher: LauncherConfig::default(),
             security: SecurityConfig::default(),
         }
@@ -93,6 +96,28 @@ impl Default for ExplorerConfig {
             show_sidebar: true,
             sort_field: ExplorerSortField::Name,
             sort_direction: ExplorerSortDirection::Ascending,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(default)]
+pub struct EditorConfig {
+    pub cursor_acceleration_enabled: bool,
+    pub cursor_acceleration_delay_ms: u32,
+    pub cursor_acceleration_ramp_ms: u32,
+    pub cursor_horizontal_max_step: u8,
+    pub cursor_vertical_max_step: u8,
+}
+
+impl Default for EditorConfig {
+    fn default() -> Self {
+        Self {
+            cursor_acceleration_enabled: true,
+            cursor_acceleration_delay_ms: 2_000,
+            cursor_acceleration_ramp_ms: 3_000,
+            cursor_horizontal_max_step: 8,
+            cursor_vertical_max_step: 3,
         }
     }
 }

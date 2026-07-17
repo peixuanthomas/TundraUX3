@@ -526,8 +526,9 @@ impl ShellState {
         self.diagnostics_list_window_start = scrollbar_window_start(
             coordinates.1,
             grab_offset,
-            scrollbar.track,
-            scrollbar.thumb,
+            scrollbar.track.y,
+            scrollbar.track.height,
+            scrollbar.thumb.height,
             model.item_count(),
             layout.visible_capacity,
         );
@@ -748,6 +749,60 @@ impl ShellState {
                 );
             }
         }
+    }
+
+    fn open_diagnostics_logs_in_explorer(&mut self, platform: &dyn Platform) {
+        const AUDIT_RESOURCE: &str = "diagnostics.logs.explore";
+
+        if !self.diagnostics_can_view_details() {
+            self.record_diagnostics_audit(
+                PermissionAction::ViewDiagnosticsDetails,
+                AUDIT_RESOURCE,
+                AuditOutcome::Denied,
+                Some("insufficient_role"),
+            );
+            self.notify_alert_with_tone(
+                "Only administrators can explore the diagnostic log folder",
+                tundra_ui::NotificationTone::Warning,
+            );
+            return;
+        }
+
+        let Some(storage) = self.storage_manager.clone() else {
+            self.notify_alert_with_tone(
+                "Diagnostics log directory is unavailable",
+                tundra_ui::NotificationTone::Critical,
+            );
+            return;
+        };
+        let logs_path = storage.layout().logs_path.clone();
+        if !logs_path.is_dir() {
+            self.record_diagnostics_audit(
+                PermissionAction::ViewDiagnosticsDetails,
+                AUDIT_RESOURCE,
+                AuditOutcome::Failure,
+                Some("log_directory_unavailable"),
+            );
+            self.notify_alert_with_tone(
+                format!("Diagnostics log directory is unavailable: {}", logs_path.display()),
+                tundra_ui::NotificationTone::Critical,
+            );
+            return;
+        }
+
+        self.open_explorer_at(
+            platform,
+            &storage,
+            logs_path,
+            ExplorerPurpose::DiagnosticsLogs,
+        );
+        self.record_diagnostics_audit(
+            PermissionAction::ViewDiagnosticsDetails,
+            AUDIT_RESOURCE,
+            AuditOutcome::Success,
+            None,
+        );
+        self.notify_toast("Opened diagnostic log folder in Explorer");
     }
 
     fn open_selected_diagnostics_report(&mut self, _platform: &dyn Platform) {
@@ -1003,6 +1058,27 @@ mod diagnostics_shell_tests {
         state.diagnostics_snapshot = Some(snapshot());
         state.screen_stack = vec![ShellScreen::Home];
         state
+    }
+
+    fn install_temporary_storage(state: &mut ShellState) -> std::path::PathBuf {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "tundra-shell-diagnostics-storage-{}-{nonce}",
+            std::process::id()
+        ));
+        let app_paths = tundra_platform::AppPaths::from_parts(
+            root.join("config.toml"),
+            root.join("state"),
+            root.join("cache"),
+            root.join("logs"),
+            root.join("temp"),
+        )
+        .unwrap();
+        state.storage_manager = Some(StorageManager::open(app_paths).unwrap().manager);
+        root
     }
 
     #[test]
@@ -1427,11 +1503,71 @@ mod diagnostics_shell_tests {
                 .1,
             ShellCommand::DiagnosticsOpenReport
         );
+        assert_eq!(
+            state.route_diagnostics_key(&KeyInput::from_label("e")).1,
+            ShellCommand::DiagnosticsOpenLogsInExplorer
+        );
 
         state.set_diagnostics_tab(tundra_ui::DiagnosticsTab::Health);
         state.open_selected_diagnostics_report(&tundra_platform::mock::UnsupportedPlatform);
         assert_eq!(state.diagnostics_tab, tundra_ui::DiagnosticsTab::Logs);
         assert!(!state.notifications.has_active_modal());
+    }
+
+    #[test]
+    fn diagnostics_opens_log_directory_in_explorer_and_returns_on_close() {
+        let mut state = state(UserRole::Admin);
+        let root = install_temporary_storage(&mut state);
+        let logs_path = state
+            .storage_manager
+            .as_ref()
+            .unwrap()
+            .layout()
+            .logs_path
+            .clone();
+        std::fs::write(logs_path.join("audit.v1.log"), b"audit\n").unwrap();
+        state.open_diagnostics();
+
+        state.open_diagnostics_logs_in_explorer(&tundra_platform::mock::UnsupportedPlatform);
+
+        assert_eq!(state.active_screen(), ShellScreen::Explorer);
+        assert_eq!(state.explorer_purpose, ExplorerPurpose::DiagnosticsLogs);
+        assert_eq!(
+            state.explorer_state.as_ref().unwrap().current_path,
+            logs_path
+        );
+        assert!(
+            state
+                .explorer_state
+                .as_ref()
+                .unwrap()
+                .entries
+                .iter()
+                .any(|entry| entry.name == "audit.v1.log")
+        );
+
+        state.close_explorer();
+
+        assert_eq!(state.active_screen(), ShellScreen::Diagnostics);
+        assert_eq!(state.focused_component, ShellComponent::Diagnostics);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn diagnostics_log_directory_explorer_requires_detail_permission() {
+        let mut state = state(UserRole::User);
+        state.open_diagnostics();
+
+        state.open_diagnostics_logs_in_explorer(&tundra_platform::mock::UnsupportedPlatform);
+
+        assert_eq!(state.active_screen(), ShellScreen::Diagnostics);
+        assert!(
+            state
+                .notifications
+                .alert()
+                .as_deref()
+                .is_some_and(|message| message.contains("Only administrators"))
+        );
     }
 
     #[test]

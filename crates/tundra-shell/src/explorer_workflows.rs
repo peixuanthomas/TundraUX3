@@ -15,10 +15,6 @@ impl ShellState {
             return;
         };
 
-        let explorer_config = storage
-            .load_config()
-            .map(|config| config.explorer)
-            .unwrap_or_default();
         let user_dirs = platform.user_dirs().ok();
         let start_path = user_dirs
             .as_ref()
@@ -30,7 +26,27 @@ impl ShellState {
             storage.layout().data_path.clone()
         };
 
+        self.open_explorer_at(
+            platform,
+            &storage,
+            start_path,
+            ExplorerPurpose::Browse,
+        );
+    }
+
+    fn open_explorer_at(
+        &mut self,
+        platform: &dyn Platform,
+        storage: &StorageManager,
+        start_path: std::path::PathBuf,
+        purpose: ExplorerPurpose,
+    ) {
+        let explorer_config = storage
+            .load_config()
+            .map(|config| config.explorer)
+            .unwrap_or_default();
         self.explorer_state = Some(ExplorerState::with_config(start_path, &explorer_config));
+        self.explorer_purpose = purpose;
         self.refresh_explorer_quick_locations(platform);
         self.explorer_input_mode = ExplorerInputMode::Browse;
         self.explorer_input.clear();
@@ -49,6 +65,22 @@ impl ShellState {
         self.explorer_input_replace_all = false;
         self.explorer_overlay_mode = None;
         self.resolve_explorer_alert();
+        if matches!(self.explorer_purpose, ExplorerPurpose::DiagnosticsLogs) {
+            self.explorer_purpose = ExplorerPurpose::Browse;
+            self.explorer_state = None;
+            if self.active_screen() == ShellScreen::Explorer {
+                self.screen_stack.pop();
+            }
+            if self.active_screen() == ShellScreen::Diagnostics {
+                self.focused_component = ShellComponent::Diagnostics;
+                self.notify_status("Diagnostics");
+            } else {
+                self.pop_to_home();
+                self.notify_status("Ready");
+            }
+            self.refresh_hit_map();
+            return;
+        }
         if !matches!(self.explorer_purpose, ExplorerPurpose::Browse)
             && self.editor_state.is_some()
         {
@@ -1009,8 +1041,9 @@ impl ShellState {
         let window_start = scrollbar_window_start(
             coordinates.1,
             grab_offset,
-            scrollbar.track,
-            scrollbar.thumb,
+            scrollbar.track.y,
+            scrollbar.track.height,
+            scrollbar.thumb.height,
             model.entries.len(),
             layout.visible_capacity,
         );

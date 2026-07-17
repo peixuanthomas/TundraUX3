@@ -94,6 +94,8 @@ impl ShellState {
         self.advance_editor_document_generation();
         self.editor_state = None;
         self.editor_rich_render_cache = None;
+        self.editor_cursor_acceleration = None;
+        self.editor_settings_dialog = None;
         self.editor_focus = tundra_ui::EditorFocus::Canvas;
         self.editor_open_menu = None;
         self.editor_selected_toolbar_action = None;

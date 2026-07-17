@@ -5,7 +5,8 @@ use ratatui::style::{Color, Modifier};
 use tundra_ui::{
     EditorBlockArea, EditorBlockSourceMap, EditorDocumentPosition, EditorFocus, EditorHitTarget,
     EditorMenu, EditorMenuAction, EditorMode, EditorQuickAction, EditorQuickMenuViewModel,
-    EditorRenderBlock, EditorRenderSpan, EditorSelection, EditorSourceRange, EditorSourceSelection,
+    EditorRenderBlock, EditorRenderSpan, EditorSelection, EditorSettingsControl,
+    EditorSettingsField, EditorSettingsViewModel, EditorSourceRange, EditorSourceSelection,
     EditorSourceWindowLine, EditorTableAlignment, EditorTableCell, EditorTableEdge,
     EditorTextPosition, EditorToolbarAction, EditorViewModel, RichPosition, RichRange, TundraTheme,
     editor_layout, render_editor,
@@ -209,6 +210,54 @@ fn open_menu_renders_a_clickable_overlay_above_the_toolbar_and_canvas() {
     let (bold_x, bold_y) = find_text(&terminal, "Bold");
     assert!(bold_y >= popup.y && bold_y < popup.bottom());
     assert!(bold_x >= popup.x && bold_x < popup.right());
+}
+
+#[test]
+fn settings_button_opens_a_modal_acceleration_panel_with_clickable_controls() {
+    let mut model = EditorViewModel::new(
+        "settings.md",
+        vec![EditorRenderBlock::paragraph("canvas content")],
+    );
+    model.settings = Some(EditorSettingsViewModel {
+        enabled: true,
+        activation_delay_ms: 2_000,
+        ramp_duration_ms: 3_000,
+        horizontal_max_step: 8,
+        vertical_max_step: 3,
+        selected: EditorSettingsField::ActivationDelay,
+    });
+    let layout = editor_layout(Rect::new(0, 0, 100, 24), &model);
+    assert!(
+        layout
+            .menus
+            .iter()
+            .any(|menu| menu.menu == EditorMenu::Settings)
+    );
+    let settings = layout.settings.as_ref().expect("settings modal");
+    let increase_delay = settings
+        .controls
+        .iter()
+        .find(|control| {
+            control.control == EditorSettingsControl::Increase(EditorSettingsField::ActivationDelay)
+        })
+        .expect("increase delay control");
+    assert_eq!(
+        layout.hit_test(increase_delay.area.x, increase_delay.area.y),
+        Some(EditorHitTarget::SettingsControl(
+            EditorSettingsControl::Increase(EditorSettingsField::ActivationDelay)
+        ))
+    );
+    assert_eq!(
+        layout.hit_test(layout.area.x, layout.area.y),
+        Some(EditorHitTarget::SettingsDialog)
+    );
+
+    let output = terminal_output(&render(&model, 100, 24));
+    assert!(output.contains("Editor Settings"));
+    assert!(output.contains("Cursor acceleration"));
+    assert!(output.contains("2000 ms"));
+    assert!(output.contains("Horizontal maximum"));
+    assert!(output.contains("Restore defaults"));
 }
 
 #[test]
@@ -419,11 +468,11 @@ fn wide_source_line_exposes_and_renders_a_proportional_horizontal_scrollbar() {
     );
     assert_eq!(
         terminal.backend().buffer()[(scrollbar.track.x, scrollbar.track.y)].symbol(),
-        "─"
+        "-"
     );
     assert_eq!(
         terminal.backend().buffer()[(scrollbar.thumb.x, scrollbar.thumb.y)].symbol(),
-        "█"
+        "#"
     );
 }
 
@@ -1167,6 +1216,15 @@ fn overflowing_document_exposes_proportional_scrollbar_and_scrolled_hits() {
     assert_eq!(
         layout.hit_test(scrollbar.track.x, scrollbar.track.y),
         Some(EditorHitTarget::VerticalScrollbar)
+    );
+    let terminal = render(&model, 72, 14);
+    assert_eq!(
+        terminal.backend().buffer()[(scrollbar.track.x, scrollbar.track.y)].symbol(),
+        "|"
+    );
+    assert_eq!(
+        terminal.backend().buffer()[(scrollbar.thumb.x, scrollbar.thumb.y)].symbol(),
+        "#"
     );
 }
 

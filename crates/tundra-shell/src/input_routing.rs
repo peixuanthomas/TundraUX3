@@ -1,6 +1,17 @@
 impl ShellState {
     fn route_key_input(&self, key: &KeyInput) -> (RoutedTarget, ShellCommand) {
         if !key.phase.is_press_like() {
+            if self.active_screen() == ShellScreen::Editor
+                && matches!(
+                    key.key,
+                    InputKey::Left | InputKey::Right | InputKey::Up | InputKey::Down
+                )
+            {
+                return (
+                    RoutedTarget::Component(ShellComponent::Editor),
+                    ShellCommand::EditorKey(key.clone()),
+                );
+            }
             return (RoutedTarget::Global, ShellCommand::Noop);
         }
 
@@ -452,6 +463,9 @@ impl ShellState {
                 (target, ShellCommand::DiagnosticsPreviewAllRepairs)
             }
             InputKey::Character('c' | 'C') => (target, ShellCommand::DiagnosticsCopySummary),
+            InputKey::Character('e' | 'E') => {
+                (target, ShellCommand::DiagnosticsOpenLogsInExplorer)
+            }
             InputKey::Character('o' | 'O') => (target, ShellCommand::DiagnosticsOpenReport),
             InputKey::Enter
                 if matches!(
@@ -1011,6 +1025,22 @@ impl ShellState {
                     return (
                         RoutedTarget::Component(ShellComponent::Diagnostics),
                         ShellCommand::DiagnosticsScrollbarPointerUp,
+                    );
+                }
+                (
+                    Some(ScrollbarDragState::Editor { .. }),
+                    MouseInput::Drag {
+                        button: PointerButton::Left,
+                        ..
+                    }
+                    | MouseInput::Up {
+                        button: PointerButton::Left,
+                        ..
+                    },
+                ) => {
+                    return (
+                        RoutedTarget::Component(ShellComponent::Editor),
+                        ShellCommand::EditorPointer(mouse),
                     );
                 }
                 _ => {}

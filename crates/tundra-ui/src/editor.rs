@@ -35,6 +35,7 @@ pub enum EditorMenu {
     Insert,
     Format,
     View,
+    Settings,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -71,6 +72,68 @@ pub enum EditorQuickAction {
     Italic,
     Paragraph,
     Heading(u8),
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum EditorSettingsField {
+    #[default]
+    Enabled,
+    ActivationDelay,
+    RampDuration,
+    HorizontalMaxStep,
+    VerticalMaxStep,
+    RestoreDefaults,
+    Save,
+    Cancel,
+}
+
+impl EditorSettingsField {
+    pub const ALL: [Self; 8] = [
+        Self::Enabled,
+        Self::ActivationDelay,
+        Self::RampDuration,
+        Self::HorizontalMaxStep,
+        Self::VerticalMaxStep,
+        Self::RestoreDefaults,
+        Self::Save,
+        Self::Cancel,
+    ];
+
+    pub fn next(self) -> Self {
+        let index = Self::ALL
+            .iter()
+            .position(|field| *field == self)
+            .unwrap_or_default();
+        Self::ALL[(index + 1) % Self::ALL.len()]
+    }
+
+    pub fn previous(self) -> Self {
+        let index = Self::ALL
+            .iter()
+            .position(|field| *field == self)
+            .unwrap_or_default();
+        Self::ALL[(index + Self::ALL.len() - 1) % Self::ALL.len()]
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EditorSettingsControl {
+    ToggleEnabled,
+    Decrease(EditorSettingsField),
+    Increase(EditorSettingsField),
+    RestoreDefaults,
+    Save,
+    Cancel,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct EditorSettingsViewModel {
+    pub enabled: bool,
+    pub activation_delay_ms: u32,
+    pub ramp_duration_ms: u32,
+    pub horizontal_max_step: u8,
+    pub vertical_max_step: u8,
+    pub selected: EditorSettingsField,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -559,6 +622,7 @@ pub struct EditorViewModel {
     pub mode: EditorMode,
     pub focus: EditorFocus,
     pub open_menu: Option<EditorMenu>,
+    pub settings: Option<EditorSettingsViewModel>,
     pub quick_menu: Option<EditorQuickMenuViewModel>,
     pub selected_toolbar_action: Option<EditorToolbarAction>,
     pub blocks: Vec<EditorRenderBlock>,
@@ -625,6 +689,7 @@ impl EditorViewModel {
             mode: EditorMode::Rich,
             focus: EditorFocus::Canvas,
             open_menu: None,
+            settings: None,
             quick_menu: None,
             selected_toolbar_action: None,
             blocks,
@@ -749,6 +814,25 @@ pub struct EditorMenuItemLayout {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct EditorSettingsFieldLayout {
+    pub field: EditorSettingsField,
+    pub area: Rect,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct EditorSettingsControlLayout {
+    pub control: EditorSettingsControl,
+    pub area: Rect,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EditorSettingsLayout {
+    pub dialog: Rect,
+    pub fields: Vec<EditorSettingsFieldLayout>,
+    pub controls: Vec<EditorSettingsControlLayout>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct EditorReadWindowViewModel {
     pub start_byte: u64,
     pub total_bytes: u64,
@@ -858,6 +942,9 @@ pub struct EditorTableEdgeHandle {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EditorHitTarget {
+    SettingsControl(EditorSettingsControl),
+    SettingsField(EditorSettingsField),
+    SettingsDialog,
     QuickMenuAction(EditorQuickAction),
     QuickMenuPopup,
     Menu(EditorMenu),
@@ -952,6 +1039,7 @@ pub struct EditorLayout {
     pub menus: Vec<EditorMenuLayout>,
     pub menu_popup: Option<Rect>,
     pub menu_items: Vec<EditorMenuItemLayout>,
+    pub settings: Option<EditorSettingsLayout>,
     pub quick_menu_popup: Option<Rect>,
     pub quick_menu_items: Vec<EditorQuickMenuItemLayout>,
     pub toolbar_items: Vec<EditorToolbarItemLayout>,
@@ -983,6 +1071,23 @@ pub struct EditorLayout {
 
 impl EditorLayout {
     pub fn hit_test(&self, x: u16, y: u16) -> Option<EditorHitTarget> {
+        if let Some(settings) = self.settings.as_ref() {
+            if let Some(control) = settings
+                .controls
+                .iter()
+                .find(|control| contains(control.area, x, y))
+            {
+                return Some(EditorHitTarget::SettingsControl(control.control));
+            }
+            if let Some(field) = settings
+                .fields
+                .iter()
+                .find(|field| contains(field.area, x, y))
+            {
+                return Some(EditorHitTarget::SettingsField(field.field));
+            }
+            return Some(EditorHitTarget::SettingsDialog);
+        }
         if let Some(item) = self
             .quick_menu_items
             .iter()
@@ -1357,6 +1462,10 @@ pub fn editor_layout(area: Rect, model: &EditorViewModel) -> EditorLayout {
         });
     let (menus, modes) = menu_layout(menu_bar);
     let (menu_popup, menu_items) = menu_popup_layout(area, &menus, model);
+    let settings = model
+        .settings
+        .as_ref()
+        .and_then(|settings| settings_layout(area, settings));
     let (quick_menu_popup, quick_menu_items) = quick_menu_layout(
         area,
         (!model.read_only).then_some(model.quick_menu).flatten(),
@@ -1420,6 +1529,7 @@ pub fn editor_layout(area: Rect, model: &EditorViewModel) -> EditorLayout {
         menus,
         menu_popup,
         menu_items,
+        settings,
         quick_menu_popup,
         quick_menu_items,
         toolbar_items,
@@ -1458,10 +1568,11 @@ pub fn render_editor(
     render_toolbar(frame, &layout, model, theme);
     render_canvas(frame, &layout, model, theme);
     render_status_bar(frame, &layout, model, theme);
-    // Popups overlap the editor chrome and canvas. The local quick menu has
-    // the highest hit-test priority, so paint it above the regular menu too.
+    // Popups overlap the editor chrome and canvas. Settings is modal, so it
+    // is painted last and receives the highest hit-test priority.
     render_menu_popup(frame, &layout, model, theme);
     render_quick_menu(frame, &layout, theme);
+    render_settings(frame, &layout, model, theme);
     layout
 }
 
@@ -1594,7 +1705,8 @@ fn render_menu_bar(
         layout.menu_bar,
     );
     for item in &layout.menus {
-        let active = model.open_menu == Some(item.menu);
+        let active = model.open_menu == Some(item.menu)
+            || (item.menu == EditorMenu::Settings && model.settings.is_some());
         let style = if active {
             Style::default()
                 .fg(theme.background)
@@ -1704,6 +1816,169 @@ fn render_quick_menu(frame: &mut Frame<'_>, layout: &EditorLayout, theme: &Tundr
     }
 }
 
+fn render_settings(
+    frame: &mut Frame<'_>,
+    layout: &EditorLayout,
+    model: &EditorViewModel,
+    theme: &TundraTheme,
+) {
+    let (Some(settings_layout), Some(settings)) = (&layout.settings, model.settings.as_ref())
+    else {
+        return;
+    };
+    frame.render_widget(Clear, settings_layout.dialog);
+    frame.render_widget(
+        theme
+            .block()
+            .borders(Borders::ALL)
+            .title(" Editor Settings ")
+            .style(Style::default().fg(theme.foreground).bg(theme.background)),
+        settings_layout.dialog,
+    );
+    let description = Rect::new(
+        settings_layout.dialog.x.saturating_add(2),
+        settings_layout.dialog.y.saturating_add(1),
+        settings_layout.dialog.width.saturating_sub(4),
+        1,
+    );
+    frame.render_widget(
+        Paragraph::new("Hold one direction to accelerate with a quadratic curve.")
+            .style(theme.muted_style()),
+        description,
+    );
+
+    for field in &settings_layout.fields {
+        let selected = field.field == settings.selected;
+        let style = if selected {
+            Style::default()
+                .fg(theme.background)
+                .bg(theme.accent)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            theme.body_style()
+        };
+        frame.render_widget(Block::default().style(style), field.area);
+        let label = match field.field {
+            EditorSettingsField::Enabled => " Cursor acceleration",
+            EditorSettingsField::ActivationDelay => " Start delay",
+            EditorSettingsField::RampDuration => " Ramp to maximum",
+            EditorSettingsField::HorizontalMaxStep => " Horizontal maximum",
+            EditorSettingsField::VerticalMaxStep => " Vertical maximum",
+            EditorSettingsField::RestoreDefaults
+            | EditorSettingsField::Save
+            | EditorSettingsField::Cancel => "",
+        };
+        if !label.is_empty() {
+            frame.render_widget(Paragraph::new(label).style(style), field.area);
+        }
+    }
+
+    for control in &settings_layout.controls {
+        let field = settings_control_field(control.control);
+        let selected = field.is_some_and(|field| field == settings.selected);
+        let style = if selected {
+            Style::default()
+                .fg(theme.background)
+                .bg(theme.accent)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            theme.body_style()
+        };
+        let label = match control.control {
+            EditorSettingsControl::ToggleEnabled => {
+                if settings.enabled {
+                    "[ ON ]"
+                } else {
+                    "[OFF ]"
+                }
+            }
+            EditorSettingsControl::Decrease(_) => "[-]",
+            EditorSettingsControl::Increase(_) => "[+]",
+            EditorSettingsControl::RestoreDefaults => "[ Restore defaults ]",
+            EditorSettingsControl::Save => "[ Save ]",
+            EditorSettingsControl::Cancel => "[ Cancel ]",
+        };
+        frame.render_widget(Paragraph::new(label).style(style), control.area);
+    }
+
+    for (field, value) in [
+        (
+            EditorSettingsField::ActivationDelay,
+            format!("{} ms", settings.activation_delay_ms),
+        ),
+        (
+            EditorSettingsField::RampDuration,
+            format!("{} ms", settings.ramp_duration_ms),
+        ),
+        (
+            EditorSettingsField::HorizontalMaxStep,
+            format!("{} cells", settings.horizontal_max_step),
+        ),
+        (
+            EditorSettingsField::VerticalMaxStep,
+            format!("{} lines", settings.vertical_max_step),
+        ),
+    ] {
+        let Some(decrease) = settings_layout
+            .controls
+            .iter()
+            .find(|control| control.control == EditorSettingsControl::Decrease(field))
+        else {
+            continue;
+        };
+        let Some(increase) = settings_layout
+            .controls
+            .iter()
+            .find(|control| control.control == EditorSettingsControl::Increase(field))
+        else {
+            continue;
+        };
+        let value_area = Rect::new(
+            decrease.area.right(),
+            decrease.area.y,
+            increase.area.x.saturating_sub(decrease.area.right()),
+            1,
+        );
+        let width = usize::from(value_area.width);
+        let style = if settings.selected == field {
+            Style::default()
+                .fg(theme.background)
+                .bg(theme.accent)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            theme.body_style()
+        };
+        frame.render_widget(
+            Paragraph::new(format!("{value:^width$}")).style(style),
+            value_area,
+        );
+    }
+
+    let help = Rect::new(
+        settings_layout.dialog.x.saturating_add(2),
+        settings_layout.dialog.bottom().saturating_sub(4),
+        settings_layout.dialog.width.saturating_sub(4),
+        1,
+    );
+    frame.render_widget(
+        Paragraph::new("Tab select · Left/Right adjust · Enter activate · Esc cancel")
+            .style(theme.muted_style()),
+        help,
+    );
+}
+
+fn settings_control_field(control: EditorSettingsControl) -> Option<EditorSettingsField> {
+    match control {
+        EditorSettingsControl::ToggleEnabled => Some(EditorSettingsField::Enabled),
+        EditorSettingsControl::Decrease(field) | EditorSettingsControl::Increase(field) => {
+            Some(field)
+        }
+        EditorSettingsControl::RestoreDefaults => Some(EditorSettingsField::RestoreDefaults),
+        EditorSettingsControl::Save => Some(EditorSettingsField::Save),
+        EditorSettingsControl::Cancel => Some(EditorSettingsField::Cancel),
+    }
+}
+
 fn render_toolbar(
     frame: &mut Frame<'_>,
     layout: &EditorLayout,
@@ -1805,13 +2080,13 @@ fn render_canvas(
     if let Some(scrollbar) = layout.vertical_scrollbar {
         for y in scrollbar.track.y..scrollbar.track.bottom() {
             frame.render_widget(
-                Paragraph::new("│").style(theme.muted_style()),
+                Paragraph::new("|").style(theme.muted_style()),
                 Rect::new(scrollbar.track.x, y, 1, 1),
             );
         }
         for y in scrollbar.thumb.y..scrollbar.thumb.bottom() {
             frame.render_widget(
-                Paragraph::new("█").style(Style::default().fg(theme.accent)),
+                Paragraph::new("#").style(theme.title_style()),
                 Rect::new(scrollbar.thumb.x, y, 1, 1),
             );
         }
@@ -1820,13 +2095,13 @@ fn render_canvas(
     if let Some(scrollbar) = layout.horizontal_scrollbar {
         for x in scrollbar.track.x..scrollbar.track.right() {
             frame.render_widget(
-                Paragraph::new("─").style(theme.muted_style()),
+                Paragraph::new("-").style(theme.muted_style()),
                 Rect::new(x, scrollbar.track.y, 1, 1),
             );
         }
         for x in scrollbar.thumb.x..scrollbar.thumb.right() {
             frame.render_widget(
-                Paragraph::new("█").style(Style::default().fg(theme.accent)),
+                Paragraph::new("#").style(theme.title_style()),
                 Rect::new(x, scrollbar.thumb.y, 1, 1),
             );
         }
@@ -3113,6 +3388,7 @@ fn menu_layout(area: Rect) -> (Vec<EditorMenuLayout>, Vec<EditorModeLayout>) {
         (EditorMenu::Insert, 8u16),
         (EditorMenu::Format, 8u16),
         (EditorMenu::View, 6u16),
+        (EditorMenu::Settings, 10u16),
     ];
     let mut menus = Vec::new();
     x = area.x;
@@ -3180,6 +3456,114 @@ fn menu_popup_layout(
         })
         .collect();
     (Some(popup), items)
+}
+
+fn settings_layout(
+    area: Rect,
+    _settings: &EditorSettingsViewModel,
+) -> Option<EditorSettingsLayout> {
+    let width = area.width.min(64);
+    let height = area.height.min(15);
+    if width < 52 || height < 15 {
+        return None;
+    }
+    let dialog = Rect::new(
+        area.x.saturating_add(area.width.saturating_sub(width) / 2),
+        area.y
+            .saturating_add(area.height.saturating_sub(height) / 2),
+        width,
+        height,
+    );
+    let row_x = dialog.x.saturating_add(2);
+    let row_width = dialog.width.saturating_sub(4);
+    let setting_fields = [
+        EditorSettingsField::Enabled,
+        EditorSettingsField::ActivationDelay,
+        EditorSettingsField::RampDuration,
+        EditorSettingsField::HorizontalMaxStep,
+        EditorSettingsField::VerticalMaxStep,
+    ];
+    let mut fields = setting_fields
+        .into_iter()
+        .enumerate()
+        .map(|(index, field)| EditorSettingsFieldLayout {
+            field,
+            area: Rect::new(
+                row_x,
+                dialog.y.saturating_add(3).saturating_add(to_u16(index)),
+                row_width,
+                1,
+            ),
+        })
+        .collect::<Vec<_>>();
+    let button_y = dialog.bottom().saturating_sub(2);
+    let restore = Rect::new(row_x, button_y, 20, 1);
+    let cancel = Rect::new(dialog.right().saturating_sub(11), button_y, 10, 1);
+    let save = Rect::new(cancel.x.saturating_sub(10), button_y, 9, 1);
+    fields.extend([
+        EditorSettingsFieldLayout {
+            field: EditorSettingsField::RestoreDefaults,
+            area: restore,
+        },
+        EditorSettingsFieldLayout {
+            field: EditorSettingsField::Save,
+            area: save,
+        },
+        EditorSettingsFieldLayout {
+            field: EditorSettingsField::Cancel,
+            area: cancel,
+        },
+    ]);
+
+    let mut controls = vec![EditorSettingsControlLayout {
+        control: EditorSettingsControl::ToggleEnabled,
+        area: Rect::new(
+            dialog.right().saturating_sub(9),
+            dialog.y.saturating_add(3),
+            6,
+            1,
+        ),
+    }];
+    for (index, field) in [
+        EditorSettingsField::ActivationDelay,
+        EditorSettingsField::RampDuration,
+        EditorSettingsField::HorizontalMaxStep,
+        EditorSettingsField::VerticalMaxStep,
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let y = dialog.y.saturating_add(4).saturating_add(to_u16(index));
+        controls.extend([
+            EditorSettingsControlLayout {
+                control: EditorSettingsControl::Decrease(field),
+                area: Rect::new(dialog.right().saturating_sub(22), y, 3, 1),
+            },
+            EditorSettingsControlLayout {
+                control: EditorSettingsControl::Increase(field),
+                area: Rect::new(dialog.right().saturating_sub(6), y, 3, 1),
+            },
+        ]);
+    }
+    controls.extend([
+        EditorSettingsControlLayout {
+            control: EditorSettingsControl::RestoreDefaults,
+            area: restore,
+        },
+        EditorSettingsControlLayout {
+            control: EditorSettingsControl::Save,
+            area: save,
+        },
+        EditorSettingsControlLayout {
+            control: EditorSettingsControl::Cancel,
+            area: cancel,
+        },
+    ]);
+    Some(EditorSettingsLayout {
+        dialog,
+        fields,
+        controls,
+    })
 }
 
 fn quick_menu_layout(
@@ -3293,6 +3677,7 @@ fn menu_actions(menu: EditorMenu) -> Vec<EditorMenuAction> {
             Toolbar(ToolbarAction::Quote),
         ],
         EditorMenu::View => vec![Mode(EditorMode::Rich), Mode(EditorMode::Source)],
+        EditorMenu::Settings => Vec::new(),
     }
 }
 
@@ -3412,6 +3797,7 @@ fn menu_label(menu: EditorMenu) -> &'static str {
         EditorMenu::Insert => "Insert",
         EditorMenu::Format => "Format",
         EditorMenu::View => "View",
+        EditorMenu::Settings => "Settings",
     }
 }
 

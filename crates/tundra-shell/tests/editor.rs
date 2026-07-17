@@ -15,7 +15,8 @@ use tundra_shell::{
 };
 use tundra_ui::{
     EditorDocumentPosition, EditorFocus, EditorHitTarget, EditorMenu, EditorMenuAction, EditorMode,
-    EditorQuickAction, EditorRenderBlock, EditorTextPosition, EditorToolbarAction, ShellLayout,
+    EditorQuickAction, EditorRenderBlock, EditorSettingsControl, EditorSettingsField,
+    EditorTextPosition, EditorToolbarAction, ShellLayout,
 };
 
 fn default_config() -> ShellLaunchConfig {
@@ -140,14 +141,110 @@ fn source_caret_reveals_a_long_line_and_the_horizontal_scrollbar_moves_the_viewp
     let scrollbar = current_editor_layout(&state)
         .horizontal_scrollbar
         .expect("horizontal scrollbar");
+    let track_end = (scrollbar.track.right().saturating_sub(1), scrollbar.track.y);
+
+    // Match Explorer: the track is not itself a draggable grab target.
     state.apply_input_with_platform(
-        InputEvent::mouse_down(
-            PointerButton::Left,
-            (scrollbar.track.right().saturating_sub(1), scrollbar.track.y),
-        ),
+        InputEvent::mouse_down(PointerButton::Left, track_end),
         &platform,
     );
-    assert!(state.to_editor_view_model().horizontal_scroll > 0);
+    assert_eq!(state.to_editor_view_model().horizontal_scroll, 0);
+
+    let grab = (
+        scrollbar.thumb.x.saturating_add(scrollbar.thumb.width / 2),
+        scrollbar.thumb.y,
+    );
+    let captured_track_end = (track_end.0, 0);
+    state.apply_input_with_platform(InputEvent::mouse_down(PointerButton::Left, grab), &platform);
+    state.apply_input_with_platform(
+        InputEvent::mouse_drag(PointerButton::Left, captured_track_end),
+        &platform,
+    );
+    state.apply_input_with_platform(
+        InputEvent::mouse_up(PointerButton::Left, captured_track_end),
+        &platform,
+    );
+
+    let model = state.to_editor_view_model();
+    let layout = current_editor_layout(&state);
+    assert_eq!(
+        model.horizontal_scroll,
+        model
+            .horizontal_content_width
+            .saturating_sub(usize::from(layout.canvas.width))
+    );
+}
+
+#[test]
+fn editor_vertical_scrollbar_thumb_drags_to_both_ends() {
+    let fixture = FixtureRoot::new("vertical-scrollbar-drag");
+    let platform = mock_platform(fixture.path());
+    bootstrap_with_shell(&platform);
+    let contents = (0..160)
+        .map(|index| format!("line-{index:03}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    fs::write(fixture.path().join("Documents").join("long.log"), contents).expect("seed long log");
+    let mut state = logged_in_state(&platform);
+    open_only_document_in_editor(&mut state, &platform);
+
+    let scrollbar = current_editor_layout(&state)
+        .vertical_scrollbar
+        .expect("vertical scrollbar");
+    let initial_start = current_editor_layout(&state).visible_start;
+    let track_start = (scrollbar.track.x, scrollbar.track.y);
+
+    state.apply_input_with_platform(
+        InputEvent::mouse_down(PointerButton::Left, track_start),
+        &platform,
+    );
+    assert_eq!(current_editor_layout(&state).visible_start, initial_start);
+
+    let grab = (
+        scrollbar.thumb.x,
+        scrollbar.thumb.y.saturating_add(scrollbar.thumb.height / 2),
+    );
+    let captured_track_start = (0, track_start.1);
+    state.apply_input_with_platform(InputEvent::mouse_down(PointerButton::Left, grab), &platform);
+    state.apply_input_with_platform(
+        InputEvent::mouse_drag(PointerButton::Left, captured_track_start),
+        &platform,
+    );
+    state.apply_input_with_platform(
+        InputEvent::mouse_up(PointerButton::Left, captured_track_start),
+        &platform,
+    );
+    assert_eq!(current_editor_layout(&state).visible_start, 0);
+
+    let layout = current_editor_layout(&state);
+    let scrollbar = layout
+        .vertical_scrollbar
+        .expect("vertical scrollbar after dragging up");
+    let grab = (
+        scrollbar.thumb.x,
+        scrollbar.thumb.y.saturating_add(scrollbar.thumb.height / 2),
+    );
+    let track_end = (
+        scrollbar.track.x,
+        scrollbar.track.bottom().saturating_sub(1),
+    );
+    let captured_track_end = (0, track_end.1);
+    state.apply_input_with_platform(InputEvent::mouse_down(PointerButton::Left, grab), &platform);
+    state.apply_input_with_platform(
+        InputEvent::mouse_drag(PointerButton::Left, captured_track_end),
+        &platform,
+    );
+    state.apply_input_with_platform(
+        InputEvent::mouse_up(PointerButton::Left, captured_track_end),
+        &platform,
+    );
+    let layout = current_editor_layout(&state);
+    assert_eq!(
+        layout.visible_start,
+        layout
+            .document_line_count
+            .saturating_sub(layout.visible_capacity)
+    );
 }
 
 #[test]
@@ -806,6 +903,218 @@ fn repeated_command_shortcut_does_not_trigger_a_one_shot_action() {
     );
 
     assert_eq!(state.active_screen(), ShellScreen::Editor);
+}
+
+#[test]
+fn held_direction_keys_accelerate_non_linearly_with_slower_vertical_shift_selection() {
+    let mut state = ShellState::new(editor_config(), (120, 40));
+    for character in "01234567890123456789\n".repeat(20).chars() {
+        state.apply_input(InputEvent::from_key_label(character.to_string()));
+    }
+    state.apply_input(ctrl_shift('m'));
+    let started_at = Instant::now();
+    let shift = InputModifiers {
+        shift: true,
+        ..InputModifiers::none()
+    };
+
+    state.apply_input_at_for_test(
+        InputEvent::Key(KeyInput::new(InputKey::Up, shift, InputPhase::Press)),
+        started_at,
+    );
+    state.apply_input_at_for_test(
+        InputEvent::Key(KeyInput::new(InputKey::Up, shift, InputPhase::Repeat)),
+        started_at + Duration::from_millis(5_100),
+    );
+    let vertical = state.to_editor_view_model();
+    assert_eq!(vertical.cursor.map(|cursor| cursor.line), Some(16));
+    let selection = vertical.selection.expect("accelerated Shift selection");
+    assert_eq!(selection.anchor.line, 20);
+    assert_eq!(selection.active.line, 16);
+
+    state.apply_input_at_for_test(
+        InputEvent::Key(KeyInput::new(InputKey::Up, shift, InputPhase::Release)),
+        started_at + Duration::from_millis(5_200),
+    );
+    state.apply_input_at_for_test(
+        InputEvent::from_key_label("Home"),
+        started_at + Duration::from_millis(5_300),
+    );
+    state.apply_input_at_for_test(
+        InputEvent::Key(KeyInput::new(
+            InputKey::Right,
+            InputModifiers::none(),
+            InputPhase::Press,
+        )),
+        started_at + Duration::from_secs(6),
+    );
+    state.apply_input_at_for_test(
+        InputEvent::Key(KeyInput::new(
+            InputKey::Right,
+            InputModifiers::none(),
+            InputPhase::Repeat,
+        )),
+        started_at + Duration::from_millis(7_900),
+    );
+    assert_eq!(
+        state
+            .to_editor_view_model()
+            .cursor
+            .map(|cursor| cursor.column),
+        Some(2),
+        "the first two seconds should retain one-cell movement"
+    );
+    state.apply_input_at_for_test(
+        InputEvent::Key(KeyInput::new(
+            InputKey::Right,
+            InputModifiers::none(),
+            InputPhase::Repeat,
+        )),
+        started_at + Duration::from_millis(8_100),
+    );
+    assert_eq!(
+        state
+            .to_editor_view_model()
+            .cursor
+            .map(|cursor| cursor.column),
+        Some(4),
+        "the quadratic curve should begin after two seconds"
+    );
+    state.apply_input_at_for_test(
+        InputEvent::Key(KeyInput::new(
+            InputKey::Right,
+            InputModifiers::none(),
+            InputPhase::Repeat,
+        )),
+        started_at + Duration::from_millis(11_100),
+    );
+    assert_eq!(
+        state
+            .to_editor_view_model()
+            .cursor
+            .map(|cursor| cursor.column),
+        Some(12),
+        "horizontal movement should reach its higher eight-cell maximum"
+    );
+}
+
+#[test]
+fn editor_settings_restore_defaults_and_persist_saved_acceleration_values() {
+    let fixture = FixtureRoot::new("cursor-acceleration-settings");
+    let platform = mock_platform(fixture.path());
+    bootstrap_with_shell(&platform);
+    let mut state = logged_in_state(&platform);
+    open_editor_from_home(&mut state, &platform);
+
+    let settings_menu = current_editor_layout(&state)
+        .menus
+        .into_iter()
+        .find(|menu| menu.menu == EditorMenu::Settings)
+        .expect("Settings menu button");
+    state.apply_input_with_platform(
+        InputEvent::mouse_down(
+            PointerButton::Left,
+            (settings_menu.area.x, settings_menu.area.y),
+        ),
+        &platform,
+    );
+    let defaults = state
+        .to_editor_view_model()
+        .settings
+        .expect("settings window");
+    assert!(defaults.enabled);
+    assert_eq!(defaults.activation_delay_ms, 2_000);
+    assert_eq!(defaults.horizontal_max_step, 8);
+    assert_eq!(defaults.vertical_max_step, 3);
+
+    click_editor_setting(&mut state, &platform, EditorSettingsControl::ToggleEnabled);
+    click_editor_setting(
+        &mut state,
+        &platform,
+        EditorSettingsControl::Increase(EditorSettingsField::ActivationDelay),
+    );
+    click_editor_setting(
+        &mut state,
+        &platform,
+        EditorSettingsControl::RestoreDefaults,
+    );
+    let restored = state
+        .to_editor_view_model()
+        .settings
+        .expect("restored settings draft");
+    assert!(restored.enabled);
+    assert_eq!(restored.activation_delay_ms, 2_000);
+
+    click_editor_setting(&mut state, &platform, EditorSettingsControl::ToggleEnabled);
+    click_editor_setting(
+        &mut state,
+        &platform,
+        EditorSettingsControl::Increase(EditorSettingsField::ActivationDelay),
+    );
+    click_editor_setting(&mut state, &platform, EditorSettingsControl::Save);
+    assert!(state.to_editor_view_model().settings.is_none());
+
+    let stored = tundra_storage::StorageManager::open(app_paths(fixture.path()))
+        .expect("reopen storage")
+        .manager
+        .load_config()
+        .expect("load persisted config")
+        .editor;
+    assert!(!stored.cursor_acceleration_enabled);
+    assert_eq!(stored.cursor_acceleration_delay_ms, 2_250);
+    assert_eq!(stored.cursor_acceleration_ramp_ms, 3_000);
+    assert!(stored.cursor_vertical_max_step < stored.cursor_horizontal_max_step);
+
+    let mut reloaded = logged_in_state(&platform);
+    open_editor_from_home(&mut reloaded, &platform);
+    let settings_menu = current_editor_layout(&reloaded)
+        .menus
+        .into_iter()
+        .find(|menu| menu.menu == EditorMenu::Settings)
+        .expect("Settings menu after restart");
+    reloaded.apply_input_with_platform(
+        InputEvent::mouse_down(
+            PointerButton::Left,
+            (settings_menu.area.x, settings_menu.area.y),
+        ),
+        &platform,
+    );
+    let loaded = reloaded
+        .to_editor_view_model()
+        .settings
+        .expect("persisted settings window");
+    assert!(!loaded.enabled);
+    assert_eq!(loaded.activation_delay_ms, 2_250);
+    click_editor_setting(&mut reloaded, &platform, EditorSettingsControl::Cancel);
+
+    type_text(&mut reloaded, &platform, "abcdefghijklmnopqrst");
+    reloaded.apply_input_with_platform(ctrl_shift('m'), &platform);
+    reloaded.apply_input_with_platform(InputEvent::from_key_label("Home"), &platform);
+    let started_at = Instant::now();
+    reloaded.apply_input_at_for_test(
+        InputEvent::Key(KeyInput::new(
+            InputKey::Right,
+            InputModifiers::none(),
+            InputPhase::Press,
+        )),
+        started_at,
+    );
+    reloaded.apply_input_at_for_test(
+        InputEvent::Key(KeyInput::new(
+            InputKey::Right,
+            InputModifiers::none(),
+            InputPhase::Repeat,
+        )),
+        started_at + Duration::from_secs(6),
+    );
+    assert_eq!(
+        reloaded
+            .to_editor_view_model()
+            .cursor
+            .map(|cursor| cursor.column),
+        Some(2),
+        "the persisted off switch must keep held movement at one cell per event"
+    );
 }
 
 #[test]
@@ -1980,6 +2289,24 @@ fn current_editor_layout(state: &ShellState) -> tundra_ui::EditorLayout {
         ShellLayout::Full { main, .. } => main,
     };
     tundra_ui::editor_layout(editor_area, &state.to_editor_view_model())
+}
+
+fn click_editor_setting(
+    state: &mut ShellState,
+    platform: &MockPlatform,
+    expected: EditorSettingsControl,
+) {
+    let control = current_editor_layout(state)
+        .settings
+        .expect("settings layout")
+        .controls
+        .into_iter()
+        .find(|control| control.control == expected)
+        .unwrap_or_else(|| panic!("missing settings control: {expected:?}"));
+    state.apply_input_with_platform(
+        InputEvent::mouse_down(PointerButton::Left, (control.area.x, control.area.y)),
+        platform,
+    );
 }
 
 fn open_editor_from_home(state: &mut ShellState, platform: &MockPlatform) {

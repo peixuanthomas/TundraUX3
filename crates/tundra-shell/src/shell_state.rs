@@ -19,24 +19,39 @@ struct DragTracker {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ScrollbarDragState {
-    Explorer { grab_offset: u16 },
-    Diagnostics { grab_offset: u16 },
+    Explorer {
+        grab_offset: u16,
+    },
+    Diagnostics {
+        grab_offset: u16,
+    },
+    Editor {
+        axis: ScrollbarAxis,
+        grab_offset: u16,
+    },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ScrollbarAxis {
+    Vertical,
+    Horizontal,
 }
 
 fn scrollbar_window_start(
-    pointer_y: u16,
+    pointer_position: u16,
     grab_offset: u16,
-    track: Rect,
-    thumb: Rect,
-    item_count: usize,
-    visible_capacity: usize,
+    track_start: u16,
+    track_length: u16,
+    thumb_length: u16,
+    content_length: usize,
+    viewport_length: usize,
 ) -> usize {
-    let travel = usize::from(track.height.saturating_sub(thumb.height));
-    let maximum = item_count.saturating_sub(visible_capacity);
+    let travel = usize::from(track_length.saturating_sub(thumb_length));
+    let maximum = content_length.saturating_sub(viewport_length);
     if travel == 0 || maximum == 0 {
         return 0;
     }
-    let pointer_offset = usize::from(pointer_y.saturating_sub(track.y));
+    let pointer_offset = usize::from(pointer_position.saturating_sub(track_start));
     let thumb_start = pointer_offset
         .saturating_sub(usize::from(grab_offset))
         .min(travel);
@@ -52,6 +67,26 @@ struct EditorTableResizeState {
     column_index: usize,
     start_x: u16,
     start_width: usize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum EditorCursorDirection {
+    Left,
+    Right,
+    Up,
+    Down,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct EditorCursorAccelerationState {
+    direction: EditorCursorDirection,
+    started_at: Instant,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct EditorSettingsDialogState {
+    draft: tundra_storage::EditorConfig,
+    selected: tundra_ui::EditorSettingsField,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -201,6 +236,7 @@ enum ExplorerOverlayMode {
 enum ExplorerPurpose {
     #[default]
     Browse,
+    DiagnosticsLogs,
     EditorOpen,
     EditorSaveAs {
         snapshot: tundra_apps::editor::SaveSnapshot,
@@ -324,6 +360,9 @@ pub struct ShellState {
     editor_document_generation: u64,
     editor_state: Option<EditorState>,
     editor_rich_render_cache: Option<EditorRichRenderCache>,
+    editor_config: tundra_storage::EditorConfig,
+    editor_cursor_acceleration: Option<EditorCursorAccelerationState>,
+    editor_settings_dialog: Option<EditorSettingsDialogState>,
     editor_focus: tundra_ui::EditorFocus,
     editor_open_menu: Option<tundra_ui::EditorMenu>,
     editor_selected_toolbar_action: Option<tundra_ui::EditorToolbarAction>,

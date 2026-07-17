@@ -163,6 +163,7 @@ pub enum ShellCommand {
     DiagnosticsRepairToggleAction,
     DiagnosticsSelectRepairItem(usize),
     DiagnosticsCopySummary,
+    DiagnosticsOpenLogsInExplorer,
     DiagnosticsOpenReport,
     ClockOpenCreate,
     ClockCloseCreate,

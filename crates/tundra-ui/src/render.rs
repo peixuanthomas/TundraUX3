@@ -1316,7 +1316,10 @@ fn diagnostics_log_detail_lines(
         Line::from(format!("Modified: {}", log.modified_at)),
         Line::from(format!("Size: {} bytes", log.size_bytes)),
         Line::from(format!("Path: {}", log.path)),
-        Line::styled("Press O to open read-only", theme.muted_style()),
+        Line::styled(
+            "Press O to open read-only or E to explore the log folder",
+            theme.muted_style(),
+        ),
     ]
 }
 
@@ -1416,6 +1419,9 @@ fn render_diagnostics_footer(
                     DiagnosticsTab::Incidents => "O Open report",
                 },
             );
+        }
+        if model.can_view_details {
+            actions.insert(actions.len().saturating_sub(1), "E Log folder");
         }
         actions.join(" · ")
     };

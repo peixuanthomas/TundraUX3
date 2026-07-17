@@ -8,11 +8,11 @@ use tundra_platform::{
     AppPaths, Platform, UserDirs, build_macos_app_paths, build_windows_app_paths, cleanup_temp_path,
 };
 use tundra_storage::{
-    AppearanceConfig, BorderShape, ClockDocument, ClockEntryRecord, ClockProfile, ExplorerConfig,
-    ExplorerDateZone, ExplorerSizeFormat, ExplorerSortDirection, ExplorerSortField, LauncherConfig,
-    RecentFilesDocument, SCHEMA_VERSION, SecurityConfig, SessionsDocument, StateDocument,
-    StorageConfig, StorageError, StorageLayout, StorageManager, TrashDocument, TrashRecord,
-    USERS_SCHEMA_VERSION, UserRecord, UsersDocument,
+    AppearanceConfig, BorderShape, ClockDocument, ClockEntryRecord, ClockProfile, EditorConfig,
+    ExplorerConfig, ExplorerDateZone, ExplorerSizeFormat, ExplorerSortDirection, ExplorerSortField,
+    LauncherConfig, RecentFilesDocument, SCHEMA_VERSION, SecurityConfig, SessionsDocument,
+    StateDocument, StorageConfig, StorageError, StorageLayout, StorageManager, TrashDocument,
+    TrashRecord, USERS_SCHEMA_VERSION, UserRecord, UsersDocument,
 };
 
 #[test]
@@ -94,6 +94,13 @@ fn toml_and_json_documents_round_trip() {
             show_sidebar: false,
             sort_field: ExplorerSortField::Modified,
             sort_direction: ExplorerSortDirection::Descending,
+        },
+        editor: EditorConfig {
+            cursor_acceleration_enabled: false,
+            cursor_acceleration_delay_ms: 1_500,
+            cursor_acceleration_ramp_ms: 2_500,
+            cursor_horizontal_max_step: 10,
+            cursor_vertical_max_step: 4,
         },
         launcher: LauncherConfig {
             pinned_apps: vec!["notepad.exe".to_string()],
@@ -241,6 +248,7 @@ fn old_config_without_language_or_timezone_loads_with_defaults() {
     assert_eq!(config.language, "en-US");
     assert_eq!(config.timezone, "UTC");
     assert_eq!(config.appearance.border_shape, BorderShape::Rounded);
+    assert_eq!(config.editor, EditorConfig::default());
     assert_eq!(
         config.explorer,
         ExplorerConfig {

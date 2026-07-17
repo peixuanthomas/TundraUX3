@@ -556,7 +556,7 @@ impl ShellState {
                 ShellAction::Redraw
             }
             ShellCommand::EditorKey(key) => {
-                self.handle_editor_key(key, platform);
+                self.handle_editor_key_at(key, platform, received_at);
                 ShellAction::Redraw
             }
             ShellCommand::EditorPaste(value) => {
@@ -1079,6 +1079,10 @@ impl ShellState {
             }
             ShellCommand::DiagnosticsCopySummary => {
                 self.copy_diagnostics_summary(platform);
+                ShellAction::Redraw
+            }
+            ShellCommand::DiagnosticsOpenLogsInExplorer => {
+                self.open_diagnostics_logs_in_explorer(platform);
                 ShellAction::Redraw
             }
             ShellCommand::DiagnosticsOpenReport => {

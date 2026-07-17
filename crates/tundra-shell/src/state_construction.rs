@@ -115,6 +115,12 @@ impl ShellState {
         }
 
         let created_at = Instant::now();
+        let editor_config = startup
+            .storage_manager
+            .as_ref()
+            .and_then(|storage| storage.load_config().ok())
+            .map(|config| normalized_editor_config(config.editor))
+            .unwrap_or_default();
         let mut state = Self {
             home_mode,
             launch_target: launch_config.launch_target,
@@ -178,6 +184,9 @@ impl ShellState {
             editor_document_generation: 0,
             editor_state: None,
             editor_rich_render_cache: None,
+            editor_config,
+            editor_cursor_acceleration: None,
+            editor_settings_dialog: None,
             editor_focus: tundra_ui::EditorFocus::Canvas,
             editor_open_menu: None,
             editor_selected_toolbar_action: None,

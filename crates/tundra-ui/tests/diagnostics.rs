@@ -129,6 +129,7 @@ fn health_renderer_draws_two_columns_statuses_and_admin_details() {
     assert!(output.contains("F Repair"));
     assert!(output.contains("A Repair all"));
     assert!(output.contains("O Open logs"));
+    assert!(output.contains("E Log folder"));
     assert!(region_has_fg(
         &terminal,
         layout.rows[0].area,
@@ -193,8 +194,9 @@ fn logs_tab_lists_metadata_scrolls_and_exposes_log_hit_targets() {
     assert!(output.contains("service-10.log.1"));
     assert!(output.contains("Modified: 2026-07-17 12:10"));
     assert!(output.contains("Size: 1034 bytes"));
-    assert!(output.contains("Press O to open read-only"));
+    assert!(output.contains("Press O to open read-only or E to explore the log folder"));
     assert!(output.contains("O Open log"));
+    assert!(output.contains("E Log folder"));
     assert!(!output.contains("F Repair"));
     assert!(!output.contains("A Repair all"));
 }
@@ -207,6 +209,7 @@ fn logs_tab_redacts_availability_for_non_admins() {
     let output = terminal_output(&render(108, 20, &model));
 
     assert!(output.contains("Logs are restricted to administrators"));
+    assert!(!output.contains("E Log folder"));
     assert!(!output.contains("service-0.log.1"));
     assert!(!output.contains("/private/logs"));
 }
