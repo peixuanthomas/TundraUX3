@@ -957,6 +957,66 @@ impl ShellState {
             return self.route_diagnostics_mouse(mouse, hit_target);
         }
 
+        if !self.notifications.has_active_modal()
+            && !self.time_sync_dialog_visible
+            && self.active_popup.is_none()
+        {
+            match (self.scrollbar_drag, mouse) {
+                (
+                    Some(ScrollbarDragState::Explorer { .. }),
+                    MouseInput::Drag {
+                        button: PointerButton::Left,
+                        coordinates,
+                        modifiers,
+                    },
+                ) => {
+                    return (
+                        RoutedTarget::Component(ShellComponent::Explorer),
+                        ShellCommand::ExplorerDragUpdate(coordinates, modifiers),
+                    );
+                }
+                (
+                    Some(ScrollbarDragState::Explorer { .. }),
+                    MouseInput::Up {
+                        button: PointerButton::Left,
+                        coordinates,
+                        modifiers,
+                    },
+                ) => {
+                    return (
+                        RoutedTarget::Component(ShellComponent::Explorer),
+                        ShellCommand::ExplorerDrop(coordinates, modifiers),
+                    );
+                }
+                (
+                    Some(ScrollbarDragState::Diagnostics { .. }),
+                    MouseInput::Drag {
+                        button: PointerButton::Left,
+                        coordinates,
+                        ..
+                    },
+                ) => {
+                    return (
+                        RoutedTarget::Component(ShellComponent::Diagnostics),
+                        ShellCommand::DiagnosticsScrollbarDrag(coordinates),
+                    );
+                }
+                (
+                    Some(ScrollbarDragState::Diagnostics { .. }),
+                    MouseInput::Up {
+                        button: PointerButton::Left,
+                        ..
+                    },
+                ) => {
+                    return (
+                        RoutedTarget::Component(ShellComponent::Diagnostics),
+                        ShellCommand::DiagnosticsScrollbarPointerUp,
+                    );
+                }
+                _ => {}
+            }
+        }
+
         if hit_layer == Some(ShellHitLayer::ShellChrome) {
             return self.route_shell_chrome_mouse(mouse, hit_target);
         }
@@ -1105,6 +1165,7 @@ impl ShellState {
         if let Some(state) = self.explorer_state.as_mut() {
             state.drag = None;
         }
+        self.clear_explorer_scrollbar_drag();
         self.last_click = None;
     }
 
@@ -1321,6 +1382,14 @@ impl ShellState {
                 | Some(tundra_ui::DiagnosticsHitTarget::Log(index))
                 | Some(tundra_ui::DiagnosticsHitTarget::Incident(index)) => {
                     (routed, ShellCommand::DiagnosticsSelectIndex(index))
+                }
+                Some(tundra_ui::DiagnosticsHitTarget::Scrollbar)
+                    if self.diagnostics_repair_preview.is_empty() =>
+                {
+                    (
+                        routed,
+                        ShellCommand::DiagnosticsScrollbarPointerDown(coordinates),
+                    )
                 }
                 Some(tundra_ui::DiagnosticsHitTarget::RepairConfirm) => {
                     (routed, ShellCommand::DiagnosticsConfirmRepair)

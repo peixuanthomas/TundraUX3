@@ -3357,23 +3357,18 @@ fn render_explorer_table(
     }
 
     if let Some(scrollbar) = layout.scrollbar {
-        let total = model.entries.len().max(1);
-        let track = usize::from(scrollbar.height);
-        let thumb_height =
-            (track.saturating_mul(layout.visible_capacity) / total).clamp(1, track.max(1));
-        let travel = track.saturating_sub(thumb_height);
-        let max_start = total.saturating_sub(layout.visible_capacity).max(1);
-        let thumb_start = travel.saturating_mul(layout.visible_start) / max_start;
-        let lines = (0..track)
-            .map(|index| {
-                if (thumb_start..thumb_start.saturating_add(thumb_height)).contains(&index) {
-                    Line::styled("#", theme.title_style())
-                } else {
-                    Line::styled("|", theme.muted_style())
-                }
-            })
-            .collect::<Vec<_>>();
-        frame.render_widget(Paragraph::new(lines), scrollbar);
+        for y in scrollbar.track.y..scrollbar.track.bottom() {
+            frame.render_widget(
+                Paragraph::new("|").style(theme.muted_style()),
+                Rect::new(scrollbar.track.x, y, 1, 1),
+            );
+        }
+        for y in scrollbar.thumb.y..scrollbar.thumb.bottom() {
+            frame.render_widget(
+                Paragraph::new("#").style(theme.title_style()),
+                Rect::new(scrollbar.thumb.x, y, 1, 1),
+            );
+        }
     }
 }
 

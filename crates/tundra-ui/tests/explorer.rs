@@ -271,7 +271,11 @@ fn explorer_layout_keeps_focused_entry_visible_and_adds_scrollbar() {
     let model = ExplorerViewModel::new("/tmp", entries, Some(15));
     let layout = explorer_layout(Rect::new(0, 0, 80, 12), &model);
 
-    assert!(layout.scrollbar.is_some());
+    let scrollbar = layout.scrollbar.expect("overflowing Explorer scrollbar");
+    assert_eq!(
+        layout.hit_test(scrollbar.thumb.x, scrollbar.thumb.y),
+        Some(ExplorerHitTarget::Scrollbar)
+    );
     assert!(layout.visible_start > 0);
     assert!(layout.rows.iter().any(|row| row.index == 15));
 }

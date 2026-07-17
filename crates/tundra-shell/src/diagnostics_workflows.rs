@@ -180,6 +180,9 @@ impl ShellState {
         self.screen_stack.push(ShellScreen::Diagnostics);
         self.focused_component = ShellComponent::Diagnostics;
         self.diagnostics_tab = tundra_ui::DiagnosticsTab::Health;
+        self.diagnostics_list_window_start = 0;
+        self.diagnostics_list_window_is_explicit = false;
+        self.clear_diagnostics_scrollbar_drag();
         self.diagnostics_feedback = None;
         if self.diagnostics_task_runtime.is_some() {
             self.request_diagnostics_scan();
@@ -190,6 +193,7 @@ impl ShellState {
     }
 
     fn close_diagnostics(&mut self) {
+        self.clear_diagnostics_scrollbar_drag();
         if self.active_screen() == ShellScreen::Diagnostics {
             self.screen_stack.pop();
         }
@@ -461,11 +465,14 @@ impl ShellState {
         };
         *selected =
             ((*selected as isize) + delta).clamp(0, count.saturating_sub(1) as isize) as usize;
+        self.diagnostics_list_window_is_explicit = false;
     }
 
     fn set_diagnostics_tab(&mut self, tab: tundra_ui::DiagnosticsTab) {
         self.diagnostics_tab = tab;
         self.diagnostics_list_window_start = 0;
+        self.diagnostics_list_window_is_explicit = false;
+        self.clear_diagnostics_scrollbar_drag();
         self.clamp_diagnostics_selection();
     }
 
@@ -479,6 +486,63 @@ impl ShellState {
             tundra_ui::DiagnosticsTab::Health => self.diagnostics_selected_check = index,
             tundra_ui::DiagnosticsTab::Logs => self.diagnostics_selected_log = index,
             tundra_ui::DiagnosticsTab::Incidents => self.diagnostics_selected_incident = index,
+        }
+        self.diagnostics_list_window_is_explicit = false;
+    }
+
+    fn begin_diagnostics_scrollbar_drag(&mut self, coordinates: CellPosition) {
+        let area = Rect::new(0, 0, self.terminal_size.0, self.terminal_size.1);
+        let tundra_ui::ShellLayout::Full { main, .. } = tundra_ui::compute_shell_layout(area)
+        else {
+            return;
+        };
+        let layout = tundra_ui::diagnostics_layout(main, &self.to_diagnostics_view_model());
+        let Some(scrollbar) = layout.list_scrollbar else {
+            return;
+        };
+        if !rect_contains(scrollbar.thumb, coordinates) {
+            return;
+        }
+        self.scrollbar_drag = Some(ScrollbarDragState::Diagnostics {
+            grab_offset: coordinates.1.saturating_sub(scrollbar.thumb.y),
+        });
+    }
+
+    fn drag_diagnostics_scrollbar(&mut self, coordinates: CellPosition) {
+        let Some(ScrollbarDragState::Diagnostics { grab_offset }) = self.scrollbar_drag else {
+            return;
+        };
+        let area = Rect::new(0, 0, self.terminal_size.0, self.terminal_size.1);
+        let tundra_ui::ShellLayout::Full { main, .. } = tundra_ui::compute_shell_layout(area)
+        else {
+            return;
+        };
+        let model = self.to_diagnostics_view_model();
+        let layout = tundra_ui::diagnostics_layout(main, &model);
+        let Some(scrollbar) = layout.list_scrollbar else {
+            self.clear_diagnostics_scrollbar_drag();
+            return;
+        };
+        self.diagnostics_list_window_start = scrollbar_window_start(
+            coordinates.1,
+            grab_offset,
+            scrollbar.track,
+            scrollbar.thumb,
+            model.item_count(),
+            layout.visible_capacity,
+        );
+        self.diagnostics_list_window_is_explicit = true;
+    }
+
+    fn clear_diagnostics_scrollbar_drag(&mut self) -> bool {
+        if matches!(
+            self.scrollbar_drag,
+            Some(ScrollbarDragState::Diagnostics { .. })
+        ) {
+            self.scrollbar_drag = None;
+            true
+        } else {
+            false
         }
     }
 
@@ -1388,6 +1452,93 @@ mod diagnostics_shell_tests {
         assert_eq!(state.diagnostics_tab, tundra_ui::DiagnosticsTab::Incidents);
         state.close_diagnostics();
         assert_eq!(state.active_screen(), ShellScreen::Home);
+    }
+
+    #[test]
+    fn diagnostics_scrollbar_thumb_drags_to_the_end_without_moving_selection() {
+        let mut state = state(UserRole::Admin);
+        let template = state.diagnostics_snapshot.as_ref().unwrap().checks[0].clone();
+        state.diagnostics_snapshot.as_mut().unwrap().checks = (0..40)
+            .map(|index| {
+                let mut check = template.clone();
+                check.id = format!("check-{index}");
+                check.label = format!("Check {index}");
+                check
+            })
+            .collect();
+        state.open_diagnostics();
+
+        let area = Rect::new(0, 0, state.terminal_size.0, state.terminal_size.1);
+        let tundra_ui::ShellLayout::Full { main, .. } = tundra_ui::compute_shell_layout(area)
+        else {
+            panic!("Diagnostics scrollbar test requires a full layout");
+        };
+        let layout = tundra_ui::diagnostics_layout(main, &state.to_diagnostics_view_model());
+        let scrollbar = layout
+            .list_scrollbar
+            .expect("overflowing Diagnostics scrollbar");
+        let grab = (
+            scrollbar.thumb.x,
+            scrollbar.thumb.y.saturating_add(scrollbar.thumb.height / 2),
+        );
+        let bottom = (
+            scrollbar.track.x,
+            scrollbar.track.bottom().saturating_sub(1),
+        );
+        let platform = tundra_platform::mock::UnsupportedPlatform;
+
+        state.apply_input_with_platform(
+            InputEvent::mouse_down(PointerButton::Left, grab),
+            &platform,
+        );
+        state.apply_input_with_platform(
+            InputEvent::mouse_drag(PointerButton::Left, bottom),
+            &platform,
+        );
+        state.apply_input_with_platform(
+            InputEvent::mouse_up(PointerButton::Left, bottom),
+            &platform,
+        );
+
+        let model = state.to_diagnostics_view_model();
+        let final_layout = tundra_ui::diagnostics_layout(main, &model);
+        assert_eq!(model.selected_check, 0);
+        assert!(model.list_window_is_explicit);
+        assert_eq!(
+            final_layout.visible_start,
+            model
+                .item_count()
+                .saturating_sub(final_layout.visible_capacity)
+        );
+
+        let scrollbar = final_layout
+            .list_scrollbar
+            .expect("Diagnostics scrollbar after dragging down");
+        let grab = (
+            scrollbar.thumb.x,
+            scrollbar.thumb.y.saturating_add(scrollbar.thumb.height / 2),
+        );
+        let top = (scrollbar.track.x, scrollbar.track.y);
+        state.apply_input_with_platform(
+            InputEvent::mouse_down(PointerButton::Left, grab),
+            &platform,
+        );
+        state.apply_input_with_platform(
+            InputEvent::mouse_drag(PointerButton::Left, top),
+            &platform,
+        );
+        state.apply_input_with_platform(
+            InputEvent::mouse_up(PointerButton::Left, top),
+            &platform,
+        );
+
+        let model = state.to_diagnostics_view_model();
+        assert_eq!(model.selected_check, 0);
+        assert!(model.list_window_is_explicit);
+        assert_eq!(
+            tundra_ui::diagnostics_layout(main, &model).visible_start,
+            0
+        );
     }
 
     #[test]

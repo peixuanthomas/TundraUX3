@@ -200,6 +200,7 @@ impl ShellState {
             diagnostics_selected_log: 0,
             diagnostics_selected_incident: 0,
             diagnostics_list_window_start: 0,
+            diagnostics_list_window_is_explicit: false,
             diagnostics_scanning: false,
             diagnostics_rescan_pending: false,
             diagnostics_repair_preview: Vec::new(),
@@ -240,6 +241,7 @@ impl ShellState {
             ),
             last_click: None,
             drag_tracker: None,
+            scrollbar_drag: None,
         };
         state.refresh_hit_map();
         if !auth_gate_enabled {

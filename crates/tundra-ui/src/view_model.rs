@@ -472,6 +472,8 @@ pub struct DiagnosticsViewModel {
     pub selected_incident: usize,
     pub selected_log: usize,
     pub list_window_start: usize,
+    /// Keeps a pointer-scrolled viewport from snapping back to the selected row.
+    pub list_window_is_explicit: bool,
     pub scanning: bool,
     pub can_view_details: bool,
     pub can_repair: bool,

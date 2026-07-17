@@ -63,6 +63,10 @@ fn overflowing_checks_show_a_proportional_scrollbar_at_the_current_window() {
     assert_eq!(scrollbar.thumb.height, 4);
     assert_eq!(scrollbar.thumb.y, scrollbar.track.y.saturating_add(2));
     assert_eq!(
+        diagnostics_hit_test(&layout, (scrollbar.thumb.x, scrollbar.thumb.y)),
+        Some(DiagnosticsHitTarget::Scrollbar)
+    );
+    assert_eq!(
         layout.list_rows_area.right().saturating_add(1),
         scrollbar.track.x
     );
@@ -298,6 +302,7 @@ fn health_model() -> DiagnosticsViewModel {
         selected_incident: 0,
         selected_log: 0,
         list_window_start: 0,
+        list_window_is_explicit: false,
         scanning: false,
         can_view_details: false,
         can_repair: false,
