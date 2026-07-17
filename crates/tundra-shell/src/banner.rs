@@ -1,7 +1,4 @@
-use crate::{
-    BANNER_ASSET_KEY, BANNER_DISPLAY_DURATION, ShellTerminalSizeRequirement,
-    checked_current_terminal_size,
-};
+use crate::{BANNER_ASSET_KEY, ShellTerminalSizeRequirement, checked_current_terminal_size};
 use std::io::{self, Write};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -50,8 +47,7 @@ pub fn render_static_banner_with_assets(
 }
 
 pub fn display_banner(output: &mut impl Write) -> io::Result<()> {
-    let ascii_assets = tundra_ui::RuntimeAsciiAssets::load_default().map_err(asset_io_error)?;
-    display_animated_banner_with_assets(output, BANNER_DISPLAY_DURATION, &ascii_assets)
+    crate::startup_banner::display_startup_banner(output)
 }
 
 pub fn display_animated_banner(

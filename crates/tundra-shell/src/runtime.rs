@@ -49,7 +49,7 @@ fn run_not_fullscreen_with_assets(
     output: &mut impl Write,
     ascii_assets: &tundra_ui::RuntimeAsciiAssets,
 ) -> io::Result<()> {
-    display_animated_banner_with_assets(output, BANNER_DISPLAY_DURATION, ascii_assets)?;
+    display_startup_banner_with_assets(output, ascii_assets)?;
     write_smoke_loop_message(output)
 }
 
@@ -120,6 +120,7 @@ pub fn run_fullscreen_blocking_managed(
 ) -> io::Result<()> {
     let ascii_assets = load_validated_runtime_ascii_assets()?;
     let terminal_size_requirement = ShellTerminalSizeRequirement::from_assets(&ascii_assets);
+    checked_current_terminal_size(terminal_size_requirement)?;
     let platform = tundra_platform::native_platform();
     let shell_watchdog = process
         .register_app(shell_watchdog_descriptor())
@@ -134,6 +135,18 @@ pub fn run_fullscreen_blocking_managed(
     let time_sync_watchdog = shell_watchdog.child_component(ComponentId::from_static("time-sync"));
     let _time_sync_worker =
         spawn_time_sync_worker(time_sync_sender, &time_sync_watchdog).map_err(io::Error::other)?;
+    let initial_startup =
+        prepare_shell_startup(platform.as_ref(), config).map_err(io::Error::other)?;
+    let weather_prefetch_options =
+        startup_lockscreen_launch_options(&initial_startup, terminal_size_requirement);
+    let _weather_prefetch_worker =
+        spawn_weather_prefetch_worker(weather_prefetch_options, &weathr_watchdog)
+            .map_err(io::Error::other)?;
+    with_fullscreen(output, |output| {
+        display_startup_banner_with_assets(output, &ascii_assets)
+    })?;
+
+    let mut initial_startup = Some(initial_startup);
     let mut cached_time_sync = None;
     let mut force_lockscreen = false;
     let mut session_recoveries = VecDeque::new();
@@ -141,8 +154,10 @@ pub fn run_fullscreen_blocking_managed(
     let mut diagnostics_task_runtime: Option<ShellDiagnosticsTaskRuntime> = None;
 
     loop {
-        let mut startup =
-            prepare_shell_startup(platform.as_ref(), config).map_err(io::Error::other)?;
+        let mut startup = match initial_startup.take() {
+            Some(startup) => startup,
+            None => prepare_shell_startup(platform.as_ref(), config).map_err(io::Error::other)?,
+        };
         if explorer_task_runtime.is_none()
             && let Some(storage) = startup.storage_manager.as_ref()
         {
@@ -598,6 +613,27 @@ fn spawn_time_sync_worker(
                     tokio::time::sleep(TIME_SYNC_INTERVAL).await;
                 }
             });
+        },
+    )
+}
+
+fn spawn_weather_prefetch_worker(
+    options: tundra_weathr::LaunchOptions,
+    watchdog: &AppWatchdog,
+) -> Result<ManagedThreadHandle<()>, tundra_watchdog::WatchdogError> {
+    let group = watchdog
+        .child_component(ComponentId::from_static("startup-prefetch"))
+        .task_group("weather");
+    group.spawn_thread(
+        TaskSpec::one_shot(TaskId::from_static("refresh")),
+        move || {
+            let Ok(runtime) = tokio::runtime::Builder::new_multi_thread()
+                .enable_all()
+                .build()
+            else {
+                return;
+            };
+            let _ = runtime.block_on(tundra_weathr::prefetch_weather(options.clone()));
         },
     )
 }

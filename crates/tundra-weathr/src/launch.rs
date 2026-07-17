@@ -1,9 +1,10 @@
 use crate::app::AppRunOutcome;
 use crate::app_state::BottomHudPrompt;
-use crate::config::{Config, LocationDisplay};
-use crate::error::{ConfigError, TerminalError, WeatherAssetError};
+use crate::config::{Config, LocationDisplay, Provider};
+use crate::error::{ConfigError, TerminalError, WeatherAssetError, WeatherError};
 use crate::render::TerminalRenderer;
 use crate::theme::ThemeRegistry;
+use crate::weather::{OpenMeteoProvider, WeatherClient, WeatherData, WeatherLocation};
 use crate::{app, geolocation};
 use crossterm::{
     cursor, execute,
@@ -13,6 +14,8 @@ use crossterm::{
 use std::fmt;
 use std::io;
 use std::panic::AssertUnwindSafe;
+use std::sync::Arc;
+use std::time::Duration;
 use tundra_watchdog::{
     AppCriticality, AppDescriptor, AppId, AppWatchdog, BoundaryKind, BoundarySpec, CaughtPanic,
     ProcessWatchdog, RecoveryOutcome, WatchdogError,
@@ -365,6 +368,26 @@ fn load_config_for_launch(options: &LaunchOptions) -> Config {
             Config::default()
         }
     }
+}
+
+/// Starts a fresh Open-Meteo request without acquiring terminal ownership.
+///
+/// The request intentionally bypasses the normal five-minute weather cache so
+/// startup can refresh stale conditions while another component renders the
+/// Banner. A successful response is persisted before this future completes,
+/// allowing the later Weathr lockscreen to reuse it immediately.
+pub async fn prefetch_weather(options: LaunchOptions) -> Result<WeatherData, WeatherError> {
+    let mut config = load_config_for_launch(&options);
+    apply_launch_location(&mut config, &options);
+    let location = WeatherLocation {
+        latitude: config.location.latitude,
+        longitude: config.location.longitude,
+        elevation: None,
+    };
+    let client = WeatherClient::new(Arc::new(OpenMeteoProvider::new()), Duration::from_secs(300));
+    client
+        .refresh_current_weather_for_startup(&location, &config.units, Provider::OpenMeteo)
+        .await
 }
 
 fn minimum_terminal_size_for_assets(

@@ -15,7 +15,7 @@ const WEATHER_CACHE_DURATION_SECS: u64 = 300;
 static NEXT_CACHE_TASK_ID: AtomicU64 = AtomicU64::new(1);
 
 #[derive(Debug, thiserror::Error)]
-enum CacheWriteError {
+pub(crate) enum CacheWriteError {
     #[error("the operating system did not provide a cache directory")]
     CacheDirectoryUnavailable,
 
@@ -344,23 +344,32 @@ pub fn save_weather_cache_managed(
 ) -> Result<(), WatchdogError> {
     let weather = weather.clone();
     spawn_cache_write(watchdog, "weather", move || async move {
-        let cache_dir = get_cache_dir().ok_or(CacheWriteError::CacheDirectoryUnavailable)?;
-        fs::create_dir_all(&cache_dir)
-            .await
-            .map_err(|error| cache_io_error("create", cache_dir.clone(), error))?;
-
-        let cache = WeatherCache {
-            data: weather,
-            cached_at: current_timestamp(),
-            location_key: make_location_key(latitude, longitude),
-            provider,
-        };
-        let json = serde_json::to_string(&cache)?;
-        let cache_path = cache_dir.join("weather.json");
-        fs::write(&cache_path, json)
-            .await
-            .map_err(|error| cache_io_error("write", cache_path, error))
+        save_weather_cache_now(&weather, latitude, longitude, provider).await
     })
+}
+
+pub(crate) async fn save_weather_cache_now(
+    weather: &WeatherData,
+    latitude: f64,
+    longitude: f64,
+    provider: Provider,
+) -> Result<(), CacheWriteError> {
+    let cache_dir = get_cache_dir().ok_or(CacheWriteError::CacheDirectoryUnavailable)?;
+    fs::create_dir_all(&cache_dir)
+        .await
+        .map_err(|error| cache_io_error("create", cache_dir.clone(), error))?;
+
+    let cache = WeatherCache {
+        data: weather.clone(),
+        cached_at: current_timestamp(),
+        location_key: make_location_key(latitude, longitude),
+        provider,
+    };
+    let json = serde_json::to_string(&cache)?;
+    let cache_path = cache_dir.join("weather.json");
+    fs::write(&cache_path, json)
+        .await
+        .map_err(|error| cache_io_error("write", cache_path, error))
 }
 
 #[cfg(test)]
