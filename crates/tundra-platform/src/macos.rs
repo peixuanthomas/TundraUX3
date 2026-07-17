@@ -58,6 +58,7 @@ impl Platform for MacosPlatform {
     fn capabilities(&self) -> PlatformCapabilities {
         let mut capabilities = PlatformCapabilities::native_supported();
         capabilities.critical_dialog = CapabilityStatus::BestEffort;
+        capabilities.power = CapabilityStatus::Unsupported;
         capabilities
     }
 

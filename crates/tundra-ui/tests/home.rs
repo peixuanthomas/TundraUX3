@@ -27,7 +27,7 @@ fn debug_home_exposes_diagnostics_and_no_entries() {
         scroll_direction: Some("up".to_string()),
         drag_direction: Some("Right".to_string()),
         terminal_flags: vec!["alternate-screen".to_string(), "mouse-capture".to_string()],
-        platform_capability_summary: "Windows: 10 supported, 0 best-effort, 3 unsupported"
+        platform_capability_summary: "Windows: 15 supported, 0 best-effort, 0 unsupported"
             .to_string(),
     };
 
@@ -49,7 +49,7 @@ fn debug_home_renders_platform_capability_summary() {
         scroll_direction: None,
         drag_direction: None,
         terminal_flags: Vec::new(),
-        platform_capability_summary: "Windows: 10 supported, 0 best-effort, 3 unsupported"
+        platform_capability_summary: "Windows: 15 supported, 0 best-effort, 0 unsupported"
             .to_string(),
     };
     let home = HomeViewModel::debug(diagnostics);
@@ -89,7 +89,7 @@ fn debug_home_renders_platform_capability_summary() {
         .iter()
         .map(|cell| cell.symbol())
         .collect();
-    assert!(output.contains("Platform capabilities: Windows: 10 supported"));
+    assert!(output.contains("Platform capabilities: Windows: 15 supported"));
 }
 
 #[test]

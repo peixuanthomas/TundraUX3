@@ -10,6 +10,7 @@ pub enum ShellCommand {
     Shutdown,
     RequestExit,
     ConfirmExit,
+    PowerOff,
     CancelExit,
     OpenLatestCrashReport,
     CopyLatestCrashSummary,
@@ -290,6 +291,7 @@ pub struct ShortcutConflict {
 pub enum ShellAction {
     Redraw,
     Exit,
+    PowerOff,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

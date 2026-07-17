@@ -49,6 +49,12 @@ impl<W: Write> TerminalGuard<W> {
 
         Ok(())
     }
+
+    /// Prevents the drop guard from restoring the terminal after Windows has
+    /// accepted an immediate system power-off request.
+    pub fn skip_restore(&mut self) {
+        self.restored = true;
+    }
 }
 
 impl<W: Write> Drop for TerminalGuard<W> {

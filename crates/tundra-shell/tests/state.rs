@@ -1352,7 +1352,7 @@ fn debug_diagnostics_use_injected_platform_summary() {
     let diagnostics = home.diagnostics().expect("debug diagnostics");
     assert_eq!(
         diagnostics.platform_capability_summary,
-        "macOS: 1 supported, 0 best-effort, 16 unsupported"
+        "macOS: 1 supported, 0 best-effort, 14 unsupported"
     );
 }
 

@@ -26,10 +26,10 @@ pub use paths::{
 pub use platform::{
     CapabilityStatus, DirectoryEntryMetadata, DirectoryListing, DirectoryListingWarning,
     ExecutableKind, ExternalOpenPolicy, FileAttributes, FileOpenPolicy, LocalVolume, Platform,
-    PlatformCapabilities, PlatformError, PlatformKind, PowerAction, StartupPermissionStatus,
-    TrashEntry, TrashEntryId, TrashRestoreTarget, TrashStats, VolumeKind,
-    default_external_open_policy, default_file_attributes, default_file_open_policy,
-    default_read_directory, default_rename_path, native_platform,
+    PlatformCapabilities, PlatformError, PlatformKind, StartupPermissionStatus, TrashEntry,
+    TrashEntryId, TrashRestoreTarget, TrashStats, VolumeKind, default_external_open_policy,
+    default_file_attributes, default_file_open_policy, default_read_directory, default_rename_path,
+    native_platform,
 };
 pub use process::{ProcessExit, ProcessSpec, ProcessStream, validate_process_spec};
 pub use terminal::{

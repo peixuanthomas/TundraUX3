@@ -63,8 +63,6 @@ pub struct PlatformCapabilities {
     pub local_volumes: CapabilityStatus,
     pub trash: CapabilityStatus,
     pub critical_dialog: CapabilityStatus,
-    pub notifications: CapabilityStatus,
-    pub default_apps: CapabilityStatus,
     pub power: CapabilityStatus,
 }
 
@@ -85,9 +83,7 @@ impl PlatformCapabilities {
             local_volumes: CapabilityStatus::Supported,
             trash: CapabilityStatus::Supported,
             critical_dialog: CapabilityStatus::Supported,
-            notifications: CapabilityStatus::Unsupported,
-            default_apps: CapabilityStatus::Unsupported,
-            power: CapabilityStatus::Unsupported,
+            power: CapabilityStatus::Supported,
         }
     }
 
@@ -107,13 +103,11 @@ impl PlatformCapabilities {
             local_volumes: CapabilityStatus::Unsupported,
             trash: CapabilityStatus::Unsupported,
             critical_dialog: CapabilityStatus::Unsupported,
-            notifications: CapabilityStatus::Unsupported,
-            default_apps: CapabilityStatus::Unsupported,
             power: CapabilityStatus::Unsupported,
         }
     }
 
-    pub fn checks(&self) -> [(&'static str, CapabilityStatus); 17] {
+    pub fn checks(&self) -> [(&'static str, CapabilityStatus); 15] {
         [
             ("open_path", self.open_path),
             ("open_with", self.open_with),
@@ -129,8 +123,6 @@ impl PlatformCapabilities {
             ("local_volumes", self.local_volumes),
             ("trash", self.trash),
             ("critical_dialog", self.critical_dialog),
-            ("notifications", self.notifications),
-            ("default_apps", self.default_apps),
             ("power", self.power),
         ]
     }
@@ -189,14 +181,6 @@ pub enum TrashRestoreTarget {
     DestinationPath(PathBuf),
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PowerAction {
-    Lock,
-    Sleep,
-    Shutdown,
-    Restart,
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum StartupPermissionStatus {
     Ready,
@@ -208,17 +192,6 @@ impl StartupPermissionStatus {
         Self::ActionRequired {
             name: name.into(),
             message: message.into(),
-        }
-    }
-}
-
-impl PowerAction {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Lock => "lock",
-            Self::Sleep => "sleep",
-            Self::Shutdown => "shutdown",
-            Self::Restart => "restart",
         }
     }
 }
@@ -484,12 +457,6 @@ pub trait Platform: Send + Sync {
         })
     }
 
-    fn show_notification(&self, _title: &str, _body: &str) -> Result<(), PlatformError> {
-        Err(PlatformError::Unsupported {
-            capability: "notifications",
-        })
-    }
-
     /// Displays a process-level critical error after an interactive terminal
     /// can no longer provide a reliable error surface.
     fn show_critical_error(&self, _title: &str, _body: &str) -> Result<(), PlatformError> {
@@ -508,20 +475,9 @@ pub trait Platform: Send + Sync {
         })
     }
 
-    fn default_app_for_path(&self, _path: &Path) -> Result<Option<PathBuf>, PlatformError> {
+    fn poweroff(&self) -> Result<(), PlatformError> {
         Err(PlatformError::Unsupported {
-            capability: "default_apps",
-        })
-    }
-
-    fn power_action(&self, action: PowerAction) -> Result<(), PlatformError> {
-        Err(PlatformError::Unsupported {
-            capability: match action {
-                PowerAction::Lock => "power.lock",
-                PowerAction::Sleep => "power.sleep",
-                PowerAction::Shutdown => "power.shutdown",
-                PowerAction::Restart => "power.restart",
-            },
+            capability: "power.poweroff",
         })
     }
 }

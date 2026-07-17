@@ -304,6 +304,7 @@ fn run_fullscreen_shell_session(
     }
     let tick_rate = Duration::from_millis(250);
     let mut terminal_size_error = None;
+    let mut restore_terminal_on_exit = true;
 
     loop {
         if let Err(error) = terminal_size_requirement.validate(crossterm::terminal::size()?) {
@@ -434,9 +435,17 @@ fn run_fullscreen_shell_session(
         if action == ShellAction::Exit {
             break;
         }
+        if action == ShellAction::PowerOff {
+            restore_terminal_on_exit = false;
+            break;
+        }
     }
 
-    guard.restore()?;
+    if restore_terminal_on_exit {
+        guard.restore()?;
+    } else {
+        guard.skip_restore();
+    }
     drop(guard);
 
     if let Some(error) = terminal_size_error {

@@ -98,7 +98,7 @@ impl ShellState {
         let mut action = self.apply_routed_event_once(routed, platform, received_at);
         let mut steps = 0_usize;
 
-        while action != ShellAction::Exit {
+        while action == ShellAction::Redraw {
             let Some(command) = self.pending_notification_commands.pop_front() else {
                 break;
             };
@@ -123,7 +123,7 @@ impl ShellState {
             );
         }
 
-        if action == ShellAction::Exit {
+        if action != ShellAction::Redraw {
             self.pending_notification_commands.clear();
         }
         self.finish_modal_focus_transition();
@@ -181,24 +181,7 @@ impl ShellState {
                 }
                 self.active_popup = None;
                 self.notify_status("Confirm exit");
-                self.notify_modal_with_options(
-                    ShellNotification::modal(
-                        "Exit TundraUX 3",
-                        "Leave the shell and restore the terminal?",
-                        tundra_ui::NotificationTone::Warning,
-                        vec![
-                            ShellNotificationAction::new("confirm", "Exit")
-                                .with_shortcut(InputKey::Character('y'))
-                                .with_follow_up(ShellCommand::ConfirmExit),
-                            ShellNotificationAction::new("cancel", "Cancel")
-                                .with_shortcut(InputKey::Character('n'))
-                                .cancel()
-                                .with_follow_up(ShellCommand::CancelExit),
-                        ],
-                    )
-                    .with_key(EXIT_CONFIRM_NOTIFICATION_KEY)
-                    .with_component(ShellComponent::ExitDialog),
-                );
+                self.show_exit_confirmation_modal(platform);
                 self.refresh_hit_map();
                 ShellAction::Redraw
             }
@@ -209,6 +192,26 @@ impl ShellState {
                 }
                 self.shutdown_requested = true;
                 ShellAction::Exit
+            }
+            ShellCommand::PowerOff => {
+                if !self.persist_editor_recovery_now(received_at) {
+                    self.shutdown_requested = false;
+                    self.show_exit_confirmation_modal(platform);
+                    return ShellAction::Redraw;
+                }
+                match platform.poweroff() {
+                    Ok(()) => ShellAction::PowerOff,
+                    Err(error) => {
+                        self.shutdown_requested = false;
+                        self.show_exit_confirmation_modal(platform);
+                        self.notify_alert_with_tone(
+                            format!("Power off failed: {error}"),
+                            tundra_ui::NotificationTone::Error,
+                        );
+                        self.refresh_hit_map();
+                        ShellAction::Redraw
+                    }
+                }
             }
             ShellCommand::CancelExit => {
                 self.notifications
@@ -1377,5 +1380,44 @@ impl ShellState {
             ShellCommand::CaptureOverlayInput => ShellAction::Redraw,
             ShellCommand::RecordInput | ShellCommand::Noop => ShellAction::Redraw,
         }
+    }
+
+    fn show_exit_confirmation_modal(&mut self, platform: &dyn Platform) {
+        let poweroff_available = platform.kind() == PlatformKind::Windows
+            && platform.capabilities().power == CapabilityStatus::Supported;
+        let mut actions = vec![
+            ShellNotificationAction::new("restore-terminal", "Restore terminal")
+                .with_shortcut(InputKey::Character('y'))
+                .with_follow_up(ShellCommand::ConfirmExit),
+        ];
+        if poweroff_available {
+            actions.push(
+                ShellNotificationAction::new("poweroff", "Power off")
+                    .with_shortcut(InputKey::Character('p'))
+                    .with_follow_up(ShellCommand::PowerOff),
+            );
+        }
+        actions.push(
+            ShellNotificationAction::new("cancel", "Cancel")
+                .with_shortcut(InputKey::Character('n'))
+                .cancel()
+                .with_follow_up(ShellCommand::CancelExit),
+        );
+
+        let message = if poweroff_available {
+            "Restore the terminal and exit, power off this Windows PC, or cancel?"
+        } else {
+            "Leave the shell and restore the terminal?"
+        };
+        self.notify_modal_with_options(
+            ShellNotification::modal(
+                "Exit TundraUX 3",
+                message,
+                tundra_ui::NotificationTone::Warning,
+                actions,
+            )
+            .with_key(EXIT_CONFIRM_NOTIFICATION_KEY)
+            .with_component(ShellComponent::ExitDialog),
+        );
     }
 }
