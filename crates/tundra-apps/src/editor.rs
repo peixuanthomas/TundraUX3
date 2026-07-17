@@ -4,11 +4,17 @@
 //! working buffer and only synchronizes it at explicit mode/save boundaries.
 //! This keeps live UI input away from the persisted Markdown snapshot.
 
+use std::borrow::Cow;
+use std::collections::BTreeMap;
 use std::fmt;
+use std::io::{self, Write};
 use std::ops::Range;
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex, OnceLock};
 
-use unicode_segmentation::UnicodeSegmentation;
+use ropey::{Rope, RopeSlice};
+use unicode_segmentation::{GraphemeCursor, GraphemeIncomplete, UnicodeSegmentation};
+use unicode_width::UnicodeWidthStr;
 
 use crate::markdown_codec::{MarkdownCodec, MarkdownExport};
 use crate::rich_document::{
@@ -72,6 +78,29 @@ impl DocumentKind {
             Self::PlainText => "Untitled.txt",
         }
     }
+}
+
+/// Returns whether a path names a plain or numerically rotated log file.
+/// Matching is case-insensitive for the `.log` marker; compressed and named
+/// rotations such as `.log.gz` or `.log.old` are intentionally excluded.
+pub fn is_log_document_path(path: &Path) -> bool {
+    let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
+        return false;
+    };
+    if name
+        .rsplit_once('.')
+        .is_some_and(|(_, extension)| extension.eq_ignore_ascii_case("log"))
+    {
+        return true;
+    }
+    let Some((prefix, rotation)) = name.rsplit_once('.') else {
+        return false;
+    };
+    !rotation.is_empty()
+        && rotation.bytes().all(|byte| byte.is_ascii_digit())
+        && prefix
+            .rsplit_once('.')
+            .is_some_and(|(_, extension)| extension.eq_ignore_ascii_case("log"))
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -164,24 +193,85 @@ pub struct EditorDocument {
     pub path: Option<PathBuf>,
     pub kind: DocumentKind,
     pub metadata: TextMetadata,
-    source: String,
-    saved_source: String,
+    source: DocumentText,
+    saved_source: DocumentText,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum DocumentText {
+    Contiguous(Arc<String>),
+    Rope {
+        text: Rope,
+        word_count: usize,
+        line_endings: LineEndingStats,
+    },
+}
+
+impl DocumentText {
+    fn new(kind: DocumentKind, source: String) -> Self {
+        match kind {
+            DocumentKind::Markdown => Self::Contiguous(Arc::new(source)),
+            DocumentKind::PlainText => Self::Rope {
+                text: Rope::from_str(&source),
+                word_count: source.unicode_words().count(),
+                line_endings: LineEndingStats::from_text(&source),
+            },
+        }
+    }
+
+    fn from_arc(kind: DocumentKind, source: Arc<String>) -> Self {
+        match kind {
+            DocumentKind::Markdown => Self::Contiguous(source),
+            DocumentKind::PlainText => Self::Rope {
+                text: Rope::from_str(source.as_str()),
+                word_count: source.unicode_words().count(),
+                line_endings: LineEndingStats::from_text(source.as_str()),
+            },
+        }
+    }
+
+    fn text(&self) -> Cow<'_, str> {
+        match self {
+            Self::Contiguous(source) => Cow::Borrowed(source.as_str()),
+            Self::Rope { text, .. } => Cow::from(text),
+        }
+    }
+
+    fn rope(&self) -> Option<(&Rope, usize, LineEndingStats)> {
+        match self {
+            Self::Rope {
+                text,
+                word_count,
+                line_endings,
+            } => Some((text, *word_count, *line_endings)),
+            Self::Contiguous(_) => None,
+        }
+    }
+
+    fn as_contiguous(&self) -> Arc<String> {
+        match self {
+            Self::Contiguous(source) => Arc::clone(source),
+            Self::Rope { text, .. } => Arc::new(String::from(text)),
+        }
+    }
 }
 
 impl EditorDocument {
     pub fn untitled(kind: DocumentKind) -> Self {
+        let source = DocumentText::new(kind, String::new());
         Self {
             path: None,
             kind,
             metadata: TextMetadata::default(),
-            source: String::new(),
-            saved_source: String::new(),
+            saved_source: source.clone(),
+            source,
         }
     }
 
     pub fn from_text(path: Option<PathBuf>, kind: DocumentKind, source: impl Into<String>) -> Self {
         let source = source.into();
         let metadata = TextMetadata::from_source(&source, false);
+        let source = DocumentText::new(kind, source);
         Self {
             path,
             kind,
@@ -206,14 +296,42 @@ impl EditorDocument {
                 valid_up_to: error.valid_up_to(),
             })?
             .to_owned();
+        Ok(Self::from_decoded_text(path, kind, source, utf8_bom))
+    }
+
+    /// Decodes an owned UTF-8 buffer without copying its body for the common
+    /// no-BOM case. This is intended for asynchronous file readers that can
+    /// transfer ownership of their completed byte buffer to the editor.
+    pub fn from_owned_bytes(
+        path: Option<PathBuf>,
+        kind: DocumentKind,
+        mut bytes: Vec<u8>,
+    ) -> Result<Self, DocumentDecodeError> {
+        let utf8_bom = bytes.starts_with(UTF8_BOM);
+        if utf8_bom {
+            bytes.drain(..UTF8_BOM.len());
+        }
+        let source = String::from_utf8(bytes).map_err(|error| DocumentDecodeError {
+            valid_up_to: error.utf8_error().valid_up_to(),
+        })?;
+        Ok(Self::from_decoded_text(path, kind, source, utf8_bom))
+    }
+
+    fn from_decoded_text(
+        path: Option<PathBuf>,
+        kind: DocumentKind,
+        source: String,
+        utf8_bom: bool,
+    ) -> Self {
         let metadata = TextMetadata::from_source(&source, utf8_bom);
-        Ok(Self {
+        let source = DocumentText::new(kind, source);
+        Self {
             path,
             kind,
             metadata,
             saved_source: source.clone(),
             source,
-        })
+        }
     }
 
     pub fn open(path: impl Into<PathBuf>, bytes: &[u8]) -> Result<Self, DocumentDecodeError> {
@@ -222,17 +340,36 @@ impl EditorDocument {
         Self::from_bytes(Some(path), kind, bytes)
     }
 
-    pub fn source(&self) -> &str {
-        &self.source
+    pub fn open_owned(
+        path: impl Into<PathBuf>,
+        bytes: Vec<u8>,
+    ) -> Result<Self, DocumentDecodeError> {
+        let path = path.into();
+        let kind = DocumentKind::from_path(&path);
+        Self::from_owned_bytes(Some(path), kind, bytes)
+    }
+
+    pub fn source(&self) -> Cow<'_, str> {
+        self.source.text()
     }
 
     pub fn to_bytes(&self) -> Vec<u8> {
-        let mut bytes =
-            Vec::with_capacity(self.source.len() + usize::from(self.metadata.utf8_bom) * 3);
+        let source_len = match &self.source {
+            DocumentText::Contiguous(source) => source.len(),
+            DocumentText::Rope { text, .. } => text.len_bytes(),
+        };
+        let mut bytes = Vec::with_capacity(source_len + usize::from(self.metadata.utf8_bom) * 3);
         if self.metadata.utf8_bom {
             bytes.extend_from_slice(UTF8_BOM);
         }
-        bytes.extend_from_slice(self.source.as_bytes());
+        match &self.source {
+            DocumentText::Contiguous(source) => bytes.extend_from_slice(source.as_bytes()),
+            DocumentText::Rope { text, .. } => {
+                for chunk in text.chunks() {
+                    bytes.extend_from_slice(chunk.as_bytes());
+                }
+            }
+        }
         bytes
     }
 
@@ -245,7 +382,15 @@ impl EditorDocument {
             self.kind = DocumentKind::from_path(&path);
             self.path = Some(path);
         }
-        self.saved_source.clone_from(&self.source);
+        let storage_matches_kind = matches!(
+            (&self.source, self.kind),
+            (DocumentText::Contiguous(_), DocumentKind::Markdown)
+                | (DocumentText::Rope { .. }, DocumentKind::PlainText)
+        );
+        if !storage_matches_kind {
+            self.source = DocumentText::new(self.kind, self.source.text().into_owned());
+        }
+        self.saved_source = self.source.clone();
     }
 
     pub fn display_name(&self) -> String {
@@ -258,18 +403,25 @@ impl EditorDocument {
     }
 
     pub fn line_count(&self) -> usize {
-        line_ranges(&self.source).len()
+        match &self.source {
+            DocumentText::Contiguous(source) => line_ranges(source).len(),
+            DocumentText::Rope { text, .. } => text.len_lines(),
+        }
     }
 
     pub fn word_count(&self) -> usize {
-        self.source.unicode_words().count()
+        match &self.source {
+            DocumentText::Contiguous(source) => source.unicode_words().count(),
+            DocumentText::Rope { word_count, .. } => *word_count,
+        }
     }
 
     fn restore_source(&mut self, source: String) {
-        self.source = source;
+        self.source = DocumentText::new(self.kind, source);
         let fallback = self.metadata.preferred_line_ending;
+        let source = self.source();
         self.metadata =
-            TextMetadata::from_source_with_fallback(&self.source, self.metadata.utf8_bom, fallback);
+            TextMetadata::from_source_with_fallback(&source, self.metadata.utf8_bom, fallback);
     }
 }
 
@@ -438,11 +590,151 @@ impl EditorCommand {
     }
 }
 
-/// Immutable bytes exported from one exact editor revision.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// Immutable, owned content exported from one exact editor revision.
+#[derive(Debug, Clone)]
 pub struct SaveSnapshot {
     pub revision: u64,
-    pub bytes: Vec<u8>,
+    payload: Arc<SavePayload>,
+    prepared: Arc<OnceLock<PreparedSave>>,
+}
+
+impl PartialEq for SaveSnapshot {
+    fn eq(&self, other: &Self) -> bool {
+        self.revision == other.revision && self.payload == other.payload
+    }
+}
+
+impl Eq for SaveSnapshot {}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum SavePayload {
+    Source {
+        text: Rope,
+        word_count: usize,
+        line_endings: LineEndingStats,
+        utf8_bom: bool,
+    },
+    Rich {
+        document: RichDocument,
+        fallback: Arc<String>,
+        utf8_bom: bool,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct PreparedSave {
+    source: Option<Arc<String>>,
+    export: Option<MarkdownExport>,
+}
+
+impl SaveSnapshot {
+    fn source(
+        revision: u64,
+        text: Rope,
+        word_count: usize,
+        line_endings: LineEndingStats,
+        utf8_bom: bool,
+    ) -> Self {
+        Self {
+            revision,
+            payload: Arc::new(SavePayload::Source {
+                text,
+                word_count,
+                line_endings,
+                utf8_bom,
+            }),
+            prepared: Arc::new(OnceLock::new()),
+        }
+    }
+
+    fn rich(revision: u64, document: RichDocument, fallback: Arc<String>, utf8_bom: bool) -> Self {
+        Self {
+            revision,
+            payload: Arc::new(SavePayload::Rich {
+                document,
+                fallback,
+                utf8_bom,
+            }),
+            prepared: Arc::new(OnceLock::new()),
+        }
+    }
+
+    /// Serializes this exact revision to a writer. Source buffers are streamed
+    /// directly from Ropey chunks. Rich Markdown export occurs here, allowing
+    /// callers to invoke this method on a background worker.
+    pub fn write_to(&self, writer: &mut dyn Write) -> io::Result<()> {
+        match self.payload.as_ref() {
+            SavePayload::Source { text, utf8_bom, .. } => {
+                if *utf8_bom {
+                    writer.write_all(UTF8_BOM)?;
+                }
+                for chunk in text.chunks() {
+                    writer.write_all(chunk.as_bytes())?;
+                }
+                let _ = self.prepared.set(PreparedSave {
+                    source: None,
+                    export: None,
+                });
+            }
+            SavePayload::Rich {
+                document,
+                fallback,
+                utf8_bom,
+            } => {
+                let prepared =
+                    self.prepared
+                        .get_or_init(|| match MarkdownCodec::export(document) {
+                            Ok(export) => PreparedSave {
+                                source: Some(Arc::new(export.markdown.clone())),
+                                export: Some(export),
+                            },
+                            Err(_) => PreparedSave {
+                                source: Some(Arc::clone(fallback)),
+                                export: None,
+                            },
+                        });
+                if *utf8_bom {
+                    writer.write_all(UTF8_BOM)?;
+                }
+                writer.write_all(
+                    prepared
+                        .source
+                        .as_deref()
+                        .expect("Rich preparation always has source")
+                        .as_bytes(),
+                )?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Convenience materialization for tests and non-streaming integrations.
+    pub fn to_bytes(&self) -> io::Result<Vec<u8>> {
+        let mut bytes = Vec::new();
+        self.write_to(&mut bytes)?;
+        Ok(bytes)
+    }
+
+    fn prepared(&self) -> &PreparedSave {
+        self.prepared.get_or_init(|| match self.payload.as_ref() {
+            SavePayload::Source { .. } => PreparedSave {
+                source: None,
+                export: None,
+            },
+            SavePayload::Rich {
+                document, fallback, ..
+            } => match MarkdownCodec::export(document) {
+                Ok(export) => PreparedSave {
+                    source: Some(Arc::new(export.markdown.clone())),
+                    export: Some(export),
+                },
+                Err(_) => PreparedSave {
+                    source: Some(Arc::clone(fallback)),
+                    export: None,
+                },
+            },
+        })
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -475,7 +767,873 @@ pub struct RichBuffer {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SourceBuffer {
+    text: Rope,
+    word_count: usize,
+    line_endings: LineEndingStats,
+    non_ascii_bytes: usize,
+    display_widths: SourceDisplayWidthCache,
+}
+
+/// Derived Source-line metrics. The histogram makes the global maximum an
+/// O(1) query while allowing an edit to replace only the widths of the lines
+/// it touches. As derived state, it does not participate in document value
+/// equality.
+#[derive(Debug, Clone, Default)]
+struct SourceDisplayWidthCache {
+    line_width_counts: BTreeMap<usize, usize>,
+    max_width: usize,
+}
+
+impl SourceDisplayWidthCache {
+    fn insert(&mut self, width: usize) {
+        *self.line_width_counts.entry(width).or_default() += 1;
+        self.max_width = self.max_width.max(width);
+    }
+
+    fn remove(&mut self, width: usize) {
+        let count = self
+            .line_width_counts
+            .get_mut(&width)
+            .expect("cached Source line width must exist");
+        let remove_entry = {
+            *count = count.saturating_sub(1);
+            *count == 0
+        };
+        if remove_entry {
+            self.line_width_counts.remove(&width);
+        }
+        if width == self.max_width && !self.line_width_counts.contains_key(&width) {
+            self.max_width = self
+                .line_width_counts
+                .last_key_value()
+                .map_or(0, |(width, _)| *width);
+        }
+    }
+
+    const fn max_width(&self) -> usize {
+        self.max_width
+    }
+}
+
+impl PartialEq for SourceDisplayWidthCache {
+    fn eq(&self, _other: &Self) -> bool {
+        true
+    }
+}
+
+impl Eq for SourceDisplayWidthCache {}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+struct LineEndingStats {
+    lf: usize,
+    crlf: usize,
+    cr: usize,
+}
+
+/// A derived-value cache must not participate in document identity. Keeping
+/// equality independent from whether a caller happened to request the word
+/// count also preserves `EditorState`'s existing value semantics.
+#[derive(Debug, Default)]
+struct RichWordCountCache {
+    value: Mutex<Option<(u64, usize)>>,
+}
+
+impl RichWordCountCache {
+    fn get(&self) -> Option<(u64, usize)> {
+        *self
+            .value
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    fn set(&self, value: Option<(u64, usize)>) {
+        *self
+            .value
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = value;
+    }
+}
+
+impl Clone for RichWordCountCache {
+    fn clone(&self) -> Self {
+        Self {
+            value: Mutex::new(self.get()),
+        }
+    }
+}
+
+impl PartialEq for RichWordCountCache {
+    fn eq(&self, _other: &Self) -> bool {
+        true
+    }
+}
+
+impl Eq for RichWordCountCache {}
+
+impl LineEndingStats {
+    fn from_text(text: &str) -> Self {
+        let mut stats = Self::default();
+        let bytes = text.as_bytes();
+        let mut index = 0usize;
+        while index < bytes.len() {
+            match bytes[index] {
+                b'\r' if bytes.get(index + 1) == Some(&b'\n') => {
+                    stats.crlf += 1;
+                    index += 2;
+                }
+                b'\r' => {
+                    stats.cr += 1;
+                    index += 1;
+                }
+                b'\n' => {
+                    stats.lf += 1;
+                    index += 1;
+                }
+                _ => index += 1,
+            }
+        }
+        stats
+    }
+
+    fn replace_window(&mut self, old: Self, new: Self) {
+        self.lf = self.lf.saturating_sub(old.lf).saturating_add(new.lf);
+        self.crlf = self.crlf.saturating_sub(old.crlf).saturating_add(new.crlf);
+        self.cr = self.cr.saturating_sub(old.cr).saturating_add(new.cr);
+    }
+}
+
+/// One materialized Source-mode line. Text is copied only for the requested
+/// line window; the canonical document remains in the rope.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SourceLine {
+    pub line_index: usize,
+    pub byte_range: SourceRange,
     pub text: String,
+}
+
+/// A horizontally clipped Source-mode line suitable for direct viewport
+/// rendering. Both ranges use canonical UTF-8 byte offsets.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SourceViewportLine {
+    pub line_index: usize,
+    pub line_byte_range: SourceRange,
+    pub visible_byte_range: SourceRange,
+    pub start_column: usize,
+    pub end_column: usize,
+    pub truncated_left: bool,
+    pub truncated_right: bool,
+    pub text: String,
+}
+
+impl SourceBuffer {
+    pub fn from_text(text: impl AsRef<str>) -> Self {
+        let text = text.as_ref();
+        let mut buffer = Self {
+            text: Rope::from_str(text),
+            word_count: text.unicode_words().count(),
+            line_endings: LineEndingStats::from_text(text),
+            non_ascii_bytes: non_ascii_byte_count(text),
+            display_widths: SourceDisplayWidthCache::default(),
+        };
+        buffer.rebuild_display_width_cache();
+        buffer
+    }
+
+    fn from_rope(text: &Rope, word_count: usize, line_endings: LineEndingStats) -> Self {
+        let mut buffer = Self {
+            text: text.clone(),
+            word_count,
+            line_endings,
+            non_ascii_bytes: text.chunks().map(non_ascii_byte_count).sum(),
+            display_widths: SourceDisplayWidthCache::default(),
+        };
+        buffer.rebuild_display_width_cache();
+        buffer
+    }
+
+    pub fn len_bytes(&self) -> usize {
+        self.text.len_bytes()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.text.len_bytes() == 0
+    }
+
+    pub fn line_count(&self) -> usize {
+        self.text.len_lines()
+    }
+
+    pub fn word_count(&self) -> usize {
+        self.word_count
+    }
+
+    pub fn max_display_width(&self) -> usize {
+        self.display_widths.max_width()
+    }
+
+    fn line_display_widths(&self, line_range: Range<usize>) -> Vec<usize> {
+        let start = line_range.start.min(self.line_count());
+        let end = line_range.end.min(self.line_count()).max(start);
+        self.text
+            .lines_at(start)
+            .take(end.saturating_sub(start))
+            .map(|line| rope_slice_display_width(source_line_content(line)))
+            .collect()
+    }
+
+    fn rebuild_display_width_cache(&mut self) {
+        let mut display_widths = SourceDisplayWidthCache::default();
+        // `Rope::lines` advances sequentially through the tree. In
+        // particular, an all-ASCII log uses only cached RopeSlice lengths and
+        // never performs one `line_to_byte` lookup per short line.
+        for line in self.text.lines() {
+            display_widths.insert(rope_slice_display_width(source_line_content(line)));
+        }
+        self.display_widths = display_widths;
+    }
+
+    fn metadata(&self, utf8_bom: bool, fallback: LineEnding) -> TextMetadata {
+        let distinct = usize::from(self.line_endings.lf > 0)
+            + usize::from(self.line_endings.crlf > 0)
+            + usize::from(self.line_endings.cr > 0);
+        let preferred_line_ending = [
+            (self.line_endings.lf, LineEnding::Lf),
+            (self.line_endings.crlf, LineEnding::CrLf),
+            (self.line_endings.cr, LineEnding::Cr),
+        ]
+        .into_iter()
+        .max_by_key(|(count, _)| *count)
+        .filter(|(count, _)| *count > 0)
+        .map(|(_, ending)| ending)
+        .unwrap_or(fallback);
+        TextMetadata {
+            utf8_bom,
+            preferred_line_ending,
+            mixed_line_endings: distinct > 1,
+            has_final_newline: self
+                .text
+                .get_byte(self.len_bytes().saturating_sub(1))
+                .is_some_and(|byte| matches!(byte, b'\r' | b'\n')),
+        }
+    }
+
+    /// Returns the complete source, borrowing only when Ropey stores it in a
+    /// single contiguous leaf. Callers rendering a viewport should use
+    /// [`Self::lines`] instead to avoid flattening large documents.
+    pub fn text(&self) -> Cow<'_, str> {
+        Cow::from(&self.text)
+    }
+
+    pub fn to_string(&self) -> String {
+        String::from(&self.text)
+    }
+
+    pub fn byte_slice(&self, range: SourceRange) -> Option<String> {
+        self.validated_range(range.start..range.end)
+            .map(|range| self.text.byte_slice(range).to_string())
+    }
+
+    /// UTF-8 byte range of a line's visible content, excluding LF, CRLF, or
+    /// CR. The final empty line after a trailing newline is retained.
+    pub fn line_range(&self, line_index: usize) -> Option<SourceRange> {
+        if line_index >= self.line_count() {
+            return None;
+        }
+        let start = self.text.line_to_byte(line_index);
+        let mut end = if line_index + 1 < self.line_count() {
+            self.text.line_to_byte(line_index + 1)
+        } else {
+            self.len_bytes()
+        };
+        if end > start && self.text.byte(end - 1) == b'\n' {
+            end -= 1;
+            if end > start && self.text.byte(end - 1) == b'\r' {
+                end -= 1;
+            }
+        } else if end > start && self.text.byte(end - 1) == b'\r' {
+            end -= 1;
+        }
+        Some(SourceRange::new(start, end))
+    }
+
+    /// Materializes only the requested half-open line range. Out-of-bounds
+    /// ends are clamped, making it convenient for viewport + overscan reads.
+    pub fn lines(&self, line_range: Range<usize>) -> Vec<SourceLine> {
+        let start = line_range.start.min(self.line_count());
+        let end = line_range.end.min(self.line_count()).max(start);
+        (start..end)
+            .filter_map(|line_index| {
+                let byte_range = self.line_range(line_index)?;
+                let text = self
+                    .text
+                    .byte_slice(byte_range.start..byte_range.end)
+                    .to_string();
+                Some(SourceLine {
+                    line_index,
+                    byte_range,
+                    text,
+                })
+            })
+            .collect()
+    }
+
+    /// Materializes a bounded vertical and horizontal window. Grapheme
+    /// boundaries are resolved directly against Ropey chunks, so a multi-MiB
+    /// single line is not flattened merely to display its first screenful.
+    pub fn viewport_lines(
+        &self,
+        line_range: Range<usize>,
+        left_column: usize,
+        width: usize,
+    ) -> Vec<SourceViewportLine> {
+        let start = line_range.start.min(self.line_count());
+        let end = line_range.end.min(self.line_count()).max(start);
+        (start..end)
+            .filter_map(|line_index| self.viewport_line(line_index, left_column, width))
+            .collect()
+    }
+
+    fn viewport_line(
+        &self,
+        line_index: usize,
+        left_column: usize,
+        width: usize,
+    ) -> Option<SourceViewportLine> {
+        let line = self.line_range(line_index)?;
+        if self.non_ascii_bytes == 0 && width > 0 {
+            return Some(self.ascii_viewport_line(line_index, line, left_column, width));
+        }
+        let right_column = left_column.saturating_add(width);
+        let mut cursor = GraphemeCursor::new(line.start, self.len_bytes(), true);
+        let mut byte = line.start;
+        let mut column = 0usize;
+        let mut visible_start = None;
+        let mut visible_end = line.start;
+        let mut visible_start_column = left_column;
+        let mut visible_end_column = left_column;
+
+        while byte < line.end && width > 0 {
+            let Some(next) = next_rope_grapheme_boundary(&self.text, &mut cursor) else {
+                break;
+            };
+            let next = next.min(line.end);
+            if next <= byte {
+                break;
+            }
+            let grapheme = self.text.byte_slice(byte..next).to_string();
+            let grapheme_width = source_grapheme_display_width(&grapheme);
+            let next_column = column.saturating_add(grapheme_width);
+            let intersects = (next_column > left_column
+                || grapheme_width == 0 && column >= left_column)
+                && column < right_column;
+            if intersects {
+                if visible_start.is_none() {
+                    visible_start = Some(byte);
+                    visible_start_column = column;
+                }
+                visible_end = next;
+                visible_end_column = next_column;
+            } else if visible_start.is_some() && column >= right_column {
+                break;
+            }
+            byte = next;
+            column = next_column;
+        }
+
+        let visible_start = visible_start.unwrap_or_else(|| line.end.min(byte));
+        if visible_start == visible_end {
+            visible_end = visible_start;
+            visible_start_column = column;
+            visible_end_column = column;
+        }
+        let visible_byte_range = SourceRange::new(visible_start, visible_end);
+        let text = self
+            .text
+            .byte_slice(visible_byte_range.start..visible_byte_range.end)
+            .to_string();
+        Some(SourceViewportLine {
+            line_index,
+            line_byte_range: line,
+            visible_byte_range,
+            start_column: visible_start_column,
+            end_column: visible_end_column,
+            truncated_left: visible_start > line.start,
+            truncated_right: visible_end < line.end,
+            text,
+        })
+    }
+
+    fn ascii_viewport_line(
+        &self,
+        line_index: usize,
+        line: SourceRange,
+        left_column: usize,
+        width: usize,
+    ) -> SourceViewportLine {
+        // Every ASCII byte is one extended grapheme and is rendered as one
+        // terminal cell, including the control-picture substitution used for
+        // otherwise unsafe bytes. Line terminators are excluded by `line`.
+        let line_len = line.end.saturating_sub(line.start);
+        let start_column = left_column.min(line_len);
+        let end_column = left_column.saturating_add(width).min(line_len);
+        let visible_byte_range = SourceRange::new(
+            line.start.saturating_add(start_column),
+            line.start.saturating_add(end_column),
+        );
+        let text = self
+            .text
+            .byte_slice(visible_byte_range.start..visible_byte_range.end)
+            .to_string();
+        SourceViewportLine {
+            line_index,
+            line_byte_range: line,
+            visible_byte_range,
+            start_column,
+            end_column,
+            truncated_left: start_column > 0,
+            truncated_right: end_column < line_len,
+            text,
+        }
+    }
+
+    fn validated_range(&self, range: Range<usize>) -> Option<Range<usize>> {
+        (range.start <= range.end
+            && range.end <= self.len_bytes()
+            && self.is_cursor_boundary(range.start)
+            && self.is_cursor_boundary(range.end))
+        .then_some(range)
+    }
+
+    fn is_cursor_boundary(&self, position: usize) -> bool {
+        position <= self.len_bytes()
+            && self.text.try_byte_to_char(position).is_ok()
+            && !(position > 0
+                && position < self.len_bytes()
+                && self.text.byte(position - 1) == b'\r'
+                && self.text.byte(position) == b'\n')
+    }
+
+    fn normalize_position(&self, position: usize) -> usize {
+        let mut position = position.min(self.len_bytes());
+        while self.text.try_byte_to_char(position).is_err() {
+            position = position.saturating_sub(1);
+        }
+        if position > 0
+            && position < self.len_bytes()
+            && self.text.byte(position - 1) == b'\r'
+            && self.text.byte(position) == b'\n'
+        {
+            position -= 1;
+        }
+        position
+    }
+
+    fn replace_range(&mut self, range: Range<usize>, replacement: &str) -> Option<String> {
+        let range = self.validated_range(range)?;
+        self.replace_validated_range(range, replacement)
+    }
+
+    /// History may need to undo an edit that created a CRLF pair. One edge of
+    /// the inverse range can therefore sit between CR and LF even though a UI
+    /// cursor is never allowed there.
+    fn replace_history_range(&mut self, range: Range<usize>, replacement: &str) -> Option<String> {
+        if range.start > range.end
+            || range.end > self.len_bytes()
+            || self.text.try_byte_to_char(range.start).is_err()
+            || self.text.try_byte_to_char(range.end).is_err()
+        {
+            return None;
+        }
+        self.replace_validated_range(range, replacement)
+    }
+
+    fn replace_validated_range(
+        &mut self,
+        range: Range<usize>,
+        replacement: &str,
+    ) -> Option<String> {
+        let start_char = self.text.byte_to_char(range.start);
+        let end_char = self.text.byte_to_char(range.end);
+        let context_start = self.text.char_to_byte(start_char.saturating_sub(1));
+        let context_end = self
+            .text
+            .char_to_byte((end_char + 1).min(self.text.len_chars()));
+        let suffix_context_len = context_end.saturating_sub(range.end);
+        let old_line_endings = LineEndingStats::from_text(
+            &self.text.byte_slice(context_start..context_end).to_string(),
+        );
+        let old_start_line = self.text.byte_to_line(range.start);
+        let old_end_line = self.text.byte_to_line(range.end);
+        // Keep stable byte anchors around the edit. History ranges are
+        // allowed to start between CR and LF, where `byte_to_line` can change
+        // after the edit even though the neighboring content lines do not.
+        let old_display_start_line = old_start_line.saturating_sub(1);
+        let old_display_end_line = old_end_line.saturating_add(2).min(self.line_count());
+        let display_window_start_byte = self.text.line_to_byte(old_display_start_line);
+        let display_window_end_byte = if old_display_end_line < self.line_count() {
+            self.text.line_to_byte(old_display_end_line)
+        } else {
+            self.len_bytes()
+        };
+        let old_line_widths =
+            self.line_display_widths(old_display_start_line..old_display_end_line);
+        let old_window_start = self.line_range(old_start_line.saturating_sub(1))?.start;
+        let old_window_end = self
+            .line_range((old_end_line + 1).min(self.line_count().saturating_sub(1)))?
+            .end;
+        let word_suffix_len = old_window_end.saturating_sub(range.end);
+        let old_word_count = self
+            .text
+            .byte_slice(old_window_start..old_window_end)
+            .to_string()
+            .unicode_words()
+            .count();
+        let removed = self.text.byte_slice(range.clone()).to_string();
+        self.text.remove(start_char..end_char);
+        self.text.insert(start_char, replacement);
+        let new_end = range.start + replacement.len();
+        let new_context_end = new_end
+            .saturating_add(suffix_context_len)
+            .min(self.len_bytes());
+        let new_line_endings = LineEndingStats::from_text(
+            &self
+                .text
+                .byte_slice(context_start..new_context_end)
+                .to_string(),
+        );
+        self.line_endings
+            .replace_window(old_line_endings, new_line_endings);
+        let new_window_start = old_window_start;
+        let new_window_end = new_end
+            .saturating_add(word_suffix_len)
+            .min(self.len_bytes());
+        let new_word_count = self
+            .text
+            .byte_slice(new_window_start..new_window_end)
+            .to_string()
+            .unicode_words()
+            .count();
+        self.word_count = self
+            .word_count
+            .saturating_sub(old_word_count)
+            .saturating_add(new_word_count);
+        self.non_ascii_bytes = self
+            .non_ascii_bytes
+            .saturating_sub(non_ascii_byte_count(&removed))
+            .saturating_add(non_ascii_byte_count(replacement));
+        let new_display_start_line = self
+            .text
+            .byte_to_line(display_window_start_byte.min(self.len_bytes()));
+        let new_display_end_byte = display_window_end_byte
+            .saturating_sub(range.end.saturating_sub(range.start))
+            .saturating_add(replacement.len())
+            .min(self.len_bytes());
+        let new_display_end_line = if new_display_end_byte == self.len_bytes() {
+            self.line_count()
+        } else {
+            self.text.byte_to_line(new_display_end_byte)
+        };
+        let new_line_widths =
+            self.line_display_widths(new_display_start_line..new_display_end_line);
+        for width in old_line_widths {
+            self.display_widths.remove(width);
+        }
+        for width in new_line_widths {
+            self.display_widths.insert(width);
+        }
+        Some(removed)
+    }
+
+    fn previous_grapheme_boundary(&self, byte_offset: usize) -> usize {
+        let offset = self.normalize_position(byte_offset);
+        if offset == 0 {
+            return 0;
+        }
+        let mut cursor = GraphemeCursor::new(offset, self.len_bytes(), true);
+        previous_rope_grapheme_boundary(&self.text, &mut cursor).unwrap_or(offset)
+    }
+
+    fn next_grapheme_boundary(&self, byte_offset: usize) -> usize {
+        let offset = self.normalize_position(byte_offset);
+        if offset >= self.len_bytes() {
+            return self.len_bytes();
+        }
+        let mut cursor = GraphemeCursor::new(offset, self.len_bytes(), true);
+        next_rope_grapheme_boundary(&self.text, &mut cursor).unwrap_or(offset)
+    }
+
+    fn previous_word_boundary(&self, byte_offset: usize) -> usize {
+        let offset = self.normalize_position(byte_offset);
+        let mut line_index = self.text.byte_to_line(offset);
+        loop {
+            let Some(line) = self.line_range(line_index) else {
+                return 0;
+            };
+            let text = self.text.byte_slice(line.start..line.end).to_string();
+            let local_offset = if line_index == self.text.byte_to_line(offset) {
+                offset.saturating_sub(line.start).min(text.len())
+            } else {
+                text.len()
+            };
+            let mut previous = None;
+            for (start, word) in text.unicode_word_indices() {
+                let end = start + word.len();
+                if start >= local_offset {
+                    break;
+                }
+                if local_offset <= end {
+                    return line.start + start;
+                }
+                previous = Some(start);
+            }
+            if let Some(previous) = previous {
+                return line.start + previous;
+            }
+            let Some(previous_line) = line_index.checked_sub(1) else {
+                return 0;
+            };
+            line_index = previous_line;
+        }
+    }
+
+    fn next_word_boundary(&self, byte_offset: usize) -> usize {
+        let offset = self.normalize_position(byte_offset);
+        let initial_line = self.text.byte_to_line(offset);
+        for line_index in initial_line..self.line_count() {
+            let Some(line) = self.line_range(line_index) else {
+                break;
+            };
+            let text = self.text.byte_slice(line.start..line.end).to_string();
+            let local_offset = if line_index == initial_line {
+                offset.saturating_sub(line.start).min(text.len())
+            } else {
+                0
+            };
+            for (start, word) in text.unicode_word_indices() {
+                let end = start + word.len();
+                if local_offset < start {
+                    return line.start + start;
+                }
+                if local_offset < end {
+                    return line.start + end;
+                }
+            }
+        }
+        self.len_bytes()
+    }
+
+    fn byte_at_grapheme_column(&self, line_index: usize, column: usize) -> Option<usize> {
+        let line = self.line_range(line_index)?;
+        let mut byte = line.start;
+        let mut cursor = GraphemeCursor::new(byte, self.len_bytes(), true);
+        for _ in 0..column {
+            let Some(next) = next_rope_grapheme_boundary(&self.text, &mut cursor) else {
+                return Some(byte.min(line.end));
+            };
+            if next > line.end || next <= byte {
+                return Some(line.end);
+            }
+            byte = next;
+        }
+        Some(byte.min(line.end))
+    }
+
+    fn line_grapheme_column(&self, line: SourceRange, byte_offset: usize) -> usize {
+        let end = byte_offset.min(line.end);
+        if end <= line.start {
+            return 0;
+        }
+        let mut byte = line.start;
+        let mut column = 0usize;
+        let mut cursor = GraphemeCursor::new(byte, self.len_bytes(), true);
+        while byte < end {
+            let Some(next) = next_rope_grapheme_boundary(&self.text, &mut cursor) else {
+                break;
+            };
+            if next <= byte {
+                break;
+            }
+            column = column.saturating_add(1);
+            if next >= end || next > line.end {
+                break;
+            }
+            byte = next;
+        }
+        column
+    }
+
+    fn line_display_column(&self, line: SourceRange, byte_offset: usize) -> usize {
+        let end = byte_offset.min(line.end);
+        if end <= line.start {
+            return 0;
+        }
+        rope_slice_display_width(self.text.byte_slice(line.start..end))
+    }
+}
+
+fn source_line_content(line: RopeSlice<'_>) -> RopeSlice<'_> {
+    let mut end = line.len_bytes();
+    if end > 0 && line.byte(end - 1) == b'\n' {
+        end -= 1;
+        if end > 0 && line.byte(end - 1) == b'\r' {
+            end -= 1;
+        }
+    } else if end > 0 && line.byte(end - 1) == b'\r' {
+        end -= 1;
+    }
+    line.byte_slice(..end)
+}
+
+/// Computes terminal-cell width directly over Rope chunks. Contiguous
+/// graphemes stay borrowed; only a grapheme that itself crosses a chunk
+/// boundary is materialized.
+fn rope_slice_display_width(text: RopeSlice<'_>) -> usize {
+    if text.len_bytes() == text.len_chars() {
+        return text.len_bytes();
+    }
+    if let Some(text) = text.as_str() {
+        return text
+            .graphemes(true)
+            .map(source_grapheme_display_width)
+            .fold(0usize, usize::saturating_add);
+    }
+
+    let text_len = text.len_bytes();
+    let mut chunks = text.chunks();
+    let Some(mut chunk) = chunks.next() else {
+        return 0;
+    };
+    let mut chunk_start = 0usize;
+    let mut grapheme_start = 0usize;
+    let mut width = 0usize;
+    let mut cursor = GraphemeCursor::new(0, text_len, true);
+    loop {
+        match cursor.next_boundary(chunk, chunk_start) {
+            Ok(Some(grapheme_end)) => {
+                let grapheme = text.byte_slice(grapheme_start..grapheme_end);
+                if let Some(grapheme) = grapheme.as_str() {
+                    width = width.saturating_add(source_grapheme_display_width(grapheme));
+                } else {
+                    let grapheme = grapheme.to_string();
+                    width = width.saturating_add(source_grapheme_display_width(&grapheme));
+                }
+                grapheme_start = grapheme_end;
+            }
+            Ok(None) => break,
+            Err(GraphemeIncomplete::NextChunk) => {
+                chunk_start = chunk_start.saturating_add(chunk.len());
+                let Some(next_chunk) = chunks.next() else {
+                    break;
+                };
+                chunk = next_chunk;
+            }
+            Err(GraphemeIncomplete::PreContext(context_end)) => {
+                if context_end == 0 {
+                    break;
+                }
+                let (context, context_start, _, _) = text.chunk_at_byte(context_end - 1);
+                let context_len = context_end.saturating_sub(context_start);
+                cursor.provide_context(&context[..context_len], context_start);
+            }
+            Err(GraphemeIncomplete::PrevChunk | GraphemeIncomplete::InvalidOffset) => break,
+        }
+    }
+    width
+}
+
+fn non_ascii_byte_count(text: &str) -> usize {
+    text.as_bytes()
+        .iter()
+        .filter(|byte| !byte.is_ascii())
+        .count()
+}
+
+fn previous_rope_grapheme_boundary(rope: &Rope, cursor: &mut GraphemeCursor) -> Option<usize> {
+    if cursor.cur_cursor() == 0 {
+        return None;
+    }
+    let (mut chunk, mut chunk_start, _, _) = rope.chunk_at_byte(cursor.cur_cursor());
+    loop {
+        match cursor.prev_boundary(chunk, chunk_start) {
+            Ok(boundary) => return boundary,
+            Err(GraphemeIncomplete::PrevChunk) => {
+                if chunk_start == 0 {
+                    return None;
+                }
+                (chunk, chunk_start, _, _) = rope.chunk_at_byte(chunk_start - 1);
+            }
+            Err(GraphemeIncomplete::PreContext(context_end)) => {
+                if context_end == 0 {
+                    return None;
+                }
+                let (context, context_start, _, _) = rope.chunk_at_byte(context_end - 1);
+                let context_len = context_end.saturating_sub(context_start);
+                cursor.provide_context(&context[..context_len], context_start);
+            }
+            Err(GraphemeIncomplete::NextChunk | GraphemeIncomplete::InvalidOffset) => return None,
+        }
+    }
+}
+
+fn next_rope_grapheme_boundary(rope: &Rope, cursor: &mut GraphemeCursor) -> Option<usize> {
+    loop {
+        let offset = cursor.cur_cursor();
+        if offset >= rope.len_bytes() {
+            return None;
+        }
+        let (chunk, chunk_start, _, _) = rope.chunk_at_byte(offset);
+        match cursor.next_boundary(chunk, chunk_start) {
+            Ok(boundary) => return boundary,
+            Err(GraphemeIncomplete::NextChunk) => continue,
+            Err(GraphemeIncomplete::PreContext(context_end)) => {
+                if context_end == 0 {
+                    return None;
+                }
+                let (context, context_start, _, _) = rope.chunk_at_byte(context_end - 1);
+                let context_len = context_end.saturating_sub(context_start);
+                cursor.provide_context(&context[..context_len], context_start);
+            }
+            Err(GraphemeIncomplete::PrevChunk | GraphemeIncomplete::InvalidOffset) => return None,
+        }
+    }
+}
+
+fn source_grapheme_display_width(grapheme: &str) -> usize {
+    let safe;
+    let text = if grapheme.chars().any(is_terminal_unsafe_character) {
+        safe = grapheme
+            .chars()
+            .map(|character| match character {
+                '\u{0000}'..='\u{001f}' => {
+                    char::from_u32(0x2400 + u32::from(character)).unwrap_or('\u{fffd}')
+                }
+                '\u{007f}' => '\u{2421}',
+                '\u{0080}'..='\u{009f}' => '\u{fffd}',
+                character if is_unsafe_format_character(character) => '\u{fffd}',
+                character => character,
+            })
+            .collect::<String>();
+        safe.as_str()
+    } else {
+        grapheme
+    };
+    UnicodeWidthStr::width(text).max(1)
+}
+
+fn is_terminal_unsafe_character(character: char) -> bool {
+    character.is_control() || is_unsafe_format_character(character)
+}
+
+fn is_unsafe_format_character(character: char) -> bool {
+    matches!(
+        character,
+        '\u{061c}'
+            | '\u{200e}'
+            | '\u{200f}'
+            | '\u{202a}'..='\u{202e}'
+            | '\u{2060}'..='\u{206f}'
+            | '\u{feff}'
+    )
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -486,16 +1644,7 @@ pub enum EditorBuffer {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum EditorSnapshot {
-    Rich {
-        editor: RichEditor,
-        revision: u64,
-    },
-    Source {
-        source: String,
-        cursor: Cursor,
-        selection: Option<Selection>,
-        revision: u64,
-    },
+    Rich { editor: RichEditor, revision: u64 },
 }
 
 impl EditorSnapshot {
@@ -504,10 +1653,6 @@ impl EditorSnapshot {
             (Self::Rich { editor: left, .. }, Self::Rich { editor: right, .. }) => {
                 left.document == right.document
             }
-            (Self::Source { source: left, .. }, Self::Source { source: right, .. }) => {
-                left == right
-            }
-            _ => false,
         }
     }
 }
@@ -520,10 +1665,24 @@ enum EditKind {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct EditTransaction {
-    before: EditorSnapshot,
-    after: EditorSnapshot,
-    kind: EditKind,
+enum EditTransaction {
+    Rich {
+        before: EditorSnapshot,
+        after: EditorSnapshot,
+        kind: EditKind,
+    },
+    Source {
+        start: usize,
+        removed: String,
+        inserted: String,
+        before_cursor: Cursor,
+        before_selection: Option<Selection>,
+        before_revision: u64,
+        after_cursor: Cursor,
+        after_selection: Option<Selection>,
+        after_revision: u64,
+        kind: EditKind,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -533,13 +1692,6 @@ struct SourceSession {
     start_revision: u64,
     rich_redo: Vec<EditTransaction>,
     exported_source: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct PendingSave {
-    revision: u64,
-    source: String,
-    export: Option<MarkdownExport>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -560,7 +1712,8 @@ pub struct EditorState {
     saved_revision: u64,
     next_revision: u64,
     source_session: Option<SourceSession>,
-    pending_saves: Vec<PendingSave>,
+    pending_saves: Vec<SaveSnapshot>,
+    rich_word_count_cache: RichWordCountCache,
 }
 
 impl Default for EditorState {
@@ -582,11 +1735,29 @@ impl EditorState {
         Ok(Self::from_document(EditorDocument::open(path, bytes)?))
     }
 
+    pub fn open_owned(
+        path: impl Into<PathBuf>,
+        bytes: Vec<u8>,
+    ) -> Result<Self, DocumentDecodeError> {
+        Ok(Self::from_document(EditorDocument::open_owned(
+            path, bytes,
+        )?))
+    }
+
     pub fn open_read_only(
         path: impl Into<PathBuf>,
         bytes: &[u8],
     ) -> Result<Self, DocumentDecodeError> {
         Ok(Self::from_read_only_document(EditorDocument::open(
+            path, bytes,
+        )?))
+    }
+
+    pub fn open_read_only_owned(
+        path: impl Into<PathBuf>,
+        bytes: Vec<u8>,
+    ) -> Result<Self, DocumentDecodeError> {
+        Ok(Self::from_read_only_document(EditorDocument::open_owned(
             path, bytes,
         )?))
     }
@@ -605,9 +1776,16 @@ impl EditorState {
             EditorMode::Rich => EditorBuffer::Rich(RichBuffer {
                 editor: RichEditor::new(import_rich_document(&document)),
             }),
-            EditorMode::Source => EditorBuffer::Source(SourceBuffer {
-                text: document.source().to_owned(),
-            }),
+            EditorMode::Source => {
+                let buffer = document
+                    .source
+                    .rope()
+                    .map(|(text, word_count, line_endings)| {
+                        SourceBuffer::from_rope(text, word_count, line_endings)
+                    })
+                    .unwrap_or_else(|| SourceBuffer::from_text(document.source()));
+                EditorBuffer::Source(buffer)
+            }
         };
         Self {
             document,
@@ -625,6 +1803,7 @@ impl EditorState {
             next_revision: 1,
             source_session: None,
             pending_saves: Vec::new(),
+            rich_word_count_cache: RichWordCountCache::default(),
         }
     }
 
@@ -642,10 +1821,10 @@ impl EditorState {
 
     /// Source-mode text, or the last boundary Markdown snapshot in Rich mode.
     /// Rich input never refreshes this string.
-    pub fn source(&self) -> &str {
+    pub fn source(&self) -> Cow<'_, str> {
         match &self.buffer {
             EditorBuffer::Rich(_) => self.document.source(),
-            EditorBuffer::Source(buffer) => &buffer.text,
+            EditorBuffer::Source(buffer) => buffer.text(),
         }
     }
 
@@ -696,11 +1875,116 @@ impl EditorState {
         }
     }
 
-    pub fn source_buffer(&self) -> Option<&str> {
+    pub fn source_buffer(&self) -> Option<Cow<'_, str>> {
         match &self.buffer {
-            EditorBuffer::Source(buffer) => Some(&buffer.text),
+            EditorBuffer::Source(buffer) => Some(buffer.text()),
             EditorBuffer::Rich(_) => None,
         }
+    }
+
+    pub fn source_len_bytes(&self) -> Option<usize> {
+        match &self.buffer {
+            EditorBuffer::Source(buffer) => Some(buffer.len_bytes()),
+            EditorBuffer::Rich(_) => None,
+        }
+    }
+
+    pub fn source_line_count(&self) -> Option<usize> {
+        match &self.buffer {
+            EditorBuffer::Source(buffer) => Some(buffer.line_count()),
+            EditorBuffer::Rich(_) => None,
+        }
+    }
+
+    /// Returns the widest Source line in terminal display cells. Line
+    /// terminators and the virtual cell used to draw a caret at line end are
+    /// not included.
+    pub fn source_max_display_width(&self) -> Option<usize> {
+        match &self.buffer {
+            EditorBuffer::Source(buffer) => Some(buffer.max_display_width()),
+            EditorBuffer::Rich(_) => None,
+        }
+    }
+
+    pub fn source_line_range(&self, line_index: usize) -> Option<SourceRange> {
+        match &self.buffer {
+            EditorBuffer::Source(buffer) => buffer.line_range(line_index),
+            EditorBuffer::Rich(_) => None,
+        }
+    }
+
+    pub fn source_lines(&self, line_range: Range<usize>) -> Vec<SourceLine> {
+        match &self.buffer {
+            EditorBuffer::Source(buffer) => buffer.lines(line_range),
+            EditorBuffer::Rich(_) => Vec::new(),
+        }
+    }
+
+    pub fn source_viewport_lines(
+        &self,
+        line_range: Range<usize>,
+        left_column: usize,
+        width: usize,
+    ) -> Vec<SourceViewportLine> {
+        match &self.buffer {
+            EditorBuffer::Source(buffer) => buffer.viewport_lines(line_range, left_column, width),
+            EditorBuffer::Rich(_) => Vec::new(),
+        }
+    }
+
+    pub fn source_byte_slice(&self, range: SourceRange) -> Option<String> {
+        match &self.buffer {
+            EditorBuffer::Source(buffer) => buffer.byte_slice(range),
+            EditorBuffer::Rich(_) => None,
+        }
+    }
+
+    /// Resolves a canonical UTF-8 byte offset to `(line, Unicode-scalar
+    /// column)` in O(log n). This matches the Source UI's
+    /// text-position column semantics while avoiding a document-prefix scan.
+    pub fn source_position(&self, byte_offset: usize) -> Option<(usize, usize)> {
+        let EditorBuffer::Source(buffer) = &self.buffer else {
+            return None;
+        };
+        let offset = buffer.normalize_position(byte_offset);
+        let line = buffer.text.byte_to_line(offset);
+        let range = buffer.line_range(line)?;
+        let column = buffer
+            .text
+            .byte_to_char(offset.min(range.end))
+            .saturating_sub(buffer.text.byte_to_char(range.start));
+        Some((line, column))
+    }
+
+    /// Resolves a canonical UTF-8 byte offset to `(line, terminal-display
+    /// column)`. Unlike [`Self::source_position`], the column accounts for
+    /// extended grapheme clusters and wide glyphs. ASCII prefixes use Rope
+    /// metadata directly; Unicode prefixes are traversed chunk-by-chunk
+    /// without flattening the line.
+    pub fn source_display_position(&self, byte_offset: usize) -> Option<(usize, usize)> {
+        let EditorBuffer::Source(buffer) = &self.buffer else {
+            return None;
+        };
+        let offset = buffer.normalize_position(byte_offset);
+        let line = buffer.text.byte_to_line(offset);
+        let range = buffer.line_range(line)?;
+        Some((line, buffer.line_display_column(range, offset)))
+    }
+
+    /// Resolves a Source UI `(line, Unicode-scalar column)` to a canonical
+    /// UTF-8 byte offset. Columns beyond the line clamp to its content end.
+    pub fn source_offset(&self, line: usize, column: usize) -> Option<usize> {
+        let EditorBuffer::Source(buffer) = &self.buffer else {
+            return None;
+        };
+        let range = buffer.line_range(line)?;
+        let start_char = buffer.text.byte_to_char(range.start);
+        let end_char = buffer.text.byte_to_char(range.end);
+        Some(
+            buffer
+                .text
+                .char_to_byte(start_char.saturating_add(column).min(end_char)),
+        )
     }
 
     pub fn rich_projection(&self) -> Option<RichProjection> {
@@ -716,8 +2000,8 @@ impl EditorState {
         match &self.buffer {
             EditorBuffer::Rich(buffer) => MarkdownCodec::export(&buffer.editor.document)
                 .map(|export| export.markdown)
-                .unwrap_or_else(|_| self.document.source().to_owned()),
-            EditorBuffer::Source(buffer) => buffer.text.clone(),
+                .unwrap_or_else(|_| self.document.source().into_owned()),
+            EditorBuffer::Source(buffer) => buffer.to_string(),
         }
     }
 
@@ -761,7 +2045,7 @@ impl EditorState {
         if self.is_read_only() {
             return;
         }
-        self.buffer = EditorBuffer::Source(SourceBuffer { text });
+        self.buffer = EditorBuffer::Source(SourceBuffer::from_text(&text));
         self.mode = EditorMode::Source;
         self.cursor = Cursor {
             byte_offset: cursor,
@@ -789,24 +2073,35 @@ impl EditorState {
                 .map(|export| export.to_bytes(self.document.metadata.utf8_bom))
                 .unwrap_or_else(|_| self.document.to_bytes()),
             EditorBuffer::Source(buffer) => {
-                bytes_with_bom(&buffer.text, self.document.metadata.utf8_bom)
+                let text = buffer.text();
+                bytes_with_bom(&text, self.document.metadata.utf8_bom)
             }
         }
     }
 
     pub fn word_count(&self) -> usize {
         match &self.buffer {
-            EditorBuffer::Rich(buffer) => buffer.editor.word_count(),
-            EditorBuffer::Source(buffer) => buffer.text.unicode_words().count(),
+            EditorBuffer::Rich(buffer) => {
+                if let Some((revision, word_count)) = self.rich_word_count_cache.get()
+                    && revision == self.revision
+                {
+                    return word_count;
+                }
+                let word_count = buffer.editor.word_count();
+                self.rich_word_count_cache
+                    .set(Some((self.revision, word_count)));
+                word_count
+            }
+            EditorBuffer::Source(buffer) => buffer.word_count(),
         }
     }
 
     pub fn can_undo(&self) -> bool {
         self.undo_stack.last().is_some_and(|transaction| {
             matches!(
-                (&self.buffer, &transaction.before),
-                (EditorBuffer::Rich(_), EditorSnapshot::Rich { .. })
-                    | (EditorBuffer::Source(_), EditorSnapshot::Source { .. })
+                (&self.buffer, transaction),
+                (EditorBuffer::Rich(_), EditTransaction::Rich { .. })
+                    | (EditorBuffer::Source(_), EditTransaction::Source { .. })
             )
         })
     }
@@ -814,9 +2109,9 @@ impl EditorState {
     pub fn can_redo(&self) -> bool {
         self.redo_stack.last().is_some_and(|transaction| {
             matches!(
-                (&self.buffer, &transaction.after),
-                (EditorBuffer::Rich(_), EditorSnapshot::Rich { .. })
-                    | (EditorBuffer::Source(_), EditorSnapshot::Source { .. })
+                (&self.buffer, transaction),
+                (EditorBuffer::Rich(_), EditTransaction::Rich { .. })
+                    | (EditorBuffer::Source(_), EditTransaction::Source { .. })
             )
         })
     }
@@ -840,16 +2135,23 @@ impl EditorState {
             EditorBuffer::Rich(buffer) => buffer.editor.selected_text(),
             EditorBuffer::Source(buffer) => {
                 let range = self.selected_range()?;
-                buffer.text.get(range.start..range.end).map(str::to_owned)
+                buffer.byte_slice(range)
             }
+        }
+    }
+
+    pub fn has_selection(&self) -> bool {
+        match &self.buffer {
+            EditorBuffer::Rich(buffer) => buffer.editor.has_selection(),
+            EditorBuffer::Source(_) => self
+                .selection
+                .is_some_and(|selection| !selection.is_collapsed()),
         }
     }
 
     pub fn cursor_line_column(&self) -> (usize, usize) {
         match &self.buffer {
-            EditorBuffer::Source(buffer) => {
-                line_column_for_offset(&buffer.text, self.cursor.byte_offset)
-            }
+            EditorBuffer::Source(buffer) => line_column_for_offset(buffer, self.cursor.byte_offset),
             EditorBuffer::Rich(buffer) => rich_line_column(&buffer.editor),
         }
     }
@@ -859,7 +2161,7 @@ impl EditorState {
             EditorBuffer::Rich(buffer) => {
                 legacy_blocks_from_projection(&buffer.editor.projection())
             }
-            EditorBuffer::Source(buffer) => render_plain_text(&buffer.text),
+            EditorBuffer::Source(buffer) => render_plain_text(&buffer.text()),
         }
     }
 
@@ -870,7 +2172,7 @@ impl EditorState {
                 self.render_blocks().into_iter().find(|block| {
                     let range = block.source_range();
                     range.contains(cursor)
-                        || (cursor == range.end && range.end == buffer.text.len())
+                        || (cursor == range.end && range.end == buffer.len_bytes())
                 })
             }
             EditorBuffer::Rich(_) => self.render_blocks().into_iter().next(),
@@ -888,15 +2190,14 @@ impl EditorState {
         let EditorBuffer::Source(buffer) = &self.buffer else {
             return false;
         };
-        let Some(range) = validated_range(&buffer.text, range.start..range.end) else {
+        let Some(range) = buffer.validated_range(range.start..range.end) else {
             return false;
         };
-        let before = self.snapshot();
-        self.replace_edit_range(range.clone(), replacement);
-        self.cursor.byte_offset = range.start + replacement.len();
-        self.cursor.preferred_column = None;
-        self.selection = None;
-        self.commit_edit(before, EditKind::Insert)
+        let cursor = Cursor {
+            byte_offset: range.start + replacement.len(),
+            preferred_column: None,
+        };
+        self.commit_source_edit(range, replacement, cursor, None, EditKind::Insert)
     }
 
     fn snapshot(&self) -> EditorSnapshot {
@@ -905,12 +2206,9 @@ impl EditorState {
                 editor: buffer.editor.clone(),
                 revision: self.revision,
             },
-            EditorBuffer::Source(buffer) => EditorSnapshot::Source {
-                source: buffer.text.clone(),
-                cursor: self.cursor,
-                selection: self.selection,
-                revision: self.revision,
-            },
+            EditorBuffer::Source(_) => {
+                unreachable!("Source edits use range transactions instead of snapshots")
+            }
         }
     }
 
@@ -921,20 +2219,6 @@ impl EditorState {
                     editor: editor.clone(),
                 });
                 self.mode = EditorMode::Rich;
-                self.revision = *revision;
-            }
-            EditorSnapshot::Source {
-                source,
-                cursor,
-                selection,
-                revision,
-            } => {
-                self.buffer = EditorBuffer::Source(SourceBuffer {
-                    text: source.clone(),
-                });
-                self.mode = EditorMode::Source;
-                self.cursor = *cursor;
-                self.selection = *selection;
                 self.revision = *revision;
             }
         }
@@ -949,9 +2233,54 @@ impl EditorState {
         self.revision = self.next_revision;
         self.next_revision = self.next_revision.saturating_add(1).max(1);
         let after = self.snapshot();
-        self.undo_stack.push(EditTransaction {
+        self.undo_stack.push(EditTransaction::Rich {
             before,
             after,
+            kind,
+        });
+        if self.undo_stack.len() > self.history_limit {
+            self.undo_stack.remove(0);
+        }
+        self.redo_stack.clear();
+        true
+    }
+
+    fn commit_source_edit(
+        &mut self,
+        range: Range<usize>,
+        replacement: &str,
+        after_cursor: Cursor,
+        after_selection: Option<Selection>,
+        kind: EditKind,
+    ) -> bool {
+        let before_cursor = self.cursor;
+        let before_selection = self.selection;
+        let before_revision = self.revision;
+        let Some(removed) = (match &mut self.buffer {
+            EditorBuffer::Source(buffer) => buffer.replace_range(range.clone(), replacement),
+            EditorBuffer::Rich(_) => None,
+        }) else {
+            return false;
+        };
+        self.cursor = after_cursor;
+        self.selection = after_selection;
+        if removed == replacement {
+            return false;
+        }
+
+        self.refresh_metadata_from_active_source();
+        self.revision = self.next_revision;
+        self.next_revision = self.next_revision.saturating_add(1).max(1);
+        self.undo_stack.push(EditTransaction::Source {
+            start: range.start,
+            removed,
+            inserted: replacement.to_owned(),
+            before_cursor,
+            before_selection,
+            before_revision,
+            after_cursor,
+            after_selection,
+            after_revision: self.revision,
             kind,
         });
         if self.undo_stack.len() > self.history_limit {
@@ -964,11 +2293,11 @@ impl EditorState {
     fn clamp_positions(&mut self) {
         match &mut self.buffer {
             EditorBuffer::Source(buffer) => {
-                let cursor = normalize_position(&buffer.text, self.cursor.byte_offset);
+                let cursor = buffer.normalize_position(self.cursor.byte_offset);
                 let selection = self.selection.and_then(|selection| {
                     let selection = Selection::new(
-                        normalize_position(&buffer.text, selection.anchor),
-                        normalize_position(&buffer.text, selection.focus),
+                        buffer.normalize_position(selection.anchor),
+                        buffer.normalize_position(selection.focus),
                     );
                     (!selection.is_collapsed()).then_some(selection)
                 });
@@ -986,20 +2315,21 @@ impl EditorState {
         }
     }
 
-    fn replace_edit_range(&mut self, range: Range<usize>, replacement: &str) {
-        if let EditorBuffer::Source(buffer) = &mut self.buffer {
-            buffer.text.replace_range(range, replacement);
-            self.refresh_metadata_from_active_source();
-        }
-    }
-
     fn refresh_metadata_from_active_source(&mut self) {
         let fallback = self.document.metadata.preferred_line_ending;
-        self.document.metadata = TextMetadata::from_source_with_fallback(
-            self.source_buffer().unwrap_or(self.document.source()),
-            self.document.metadata.utf8_bom,
-            fallback,
-        );
+        self.document.metadata = match &self.buffer {
+            EditorBuffer::Source(buffer) => {
+                buffer.metadata(self.document.metadata.utf8_bom, fallback)
+            }
+            EditorBuffer::Rich(_) => {
+                let source = self.document.source();
+                TextMetadata::from_source_with_fallback(
+                    &source,
+                    self.document.metadata.utf8_bom,
+                    fallback,
+                )
+            }
+        };
     }
 
     fn set_mode(&mut self, mode: EditorMode) {
@@ -1027,9 +2357,7 @@ impl EditorState {
                 });
                 self.document.restore_source(export.markdown.clone());
                 let exported_source = export.markdown.clone();
-                self.buffer = EditorBuffer::Source(SourceBuffer {
-                    text: export.markdown,
-                });
+                self.buffer = EditorBuffer::Source(SourceBuffer::from_text(&export.markdown));
                 self.cursor = Cursor {
                     byte_offset: cursor,
                     preferred_column: None,
@@ -1048,7 +2376,7 @@ impl EditorState {
                 let EditorBuffer::Source(buffer) = &self.buffer else {
                     return;
                 };
-                let source = buffer.text.clone();
+                let source = buffer.to_string();
                 let source_cursor = self.cursor.byte_offset;
                 let source_selection = self.selection;
                 let source_unchanged = self
@@ -1087,7 +2415,7 @@ impl EditorState {
                     self.undo_stack.truncate(session.history_base);
                     let after = self.snapshot();
                     if !session.rich_before.same_content(&after) {
-                        self.undo_stack.push(EditTransaction {
+                        self.undo_stack.push(EditTransaction::Rich {
                             before: session.rich_before,
                             after,
                             kind: EditKind::Insert,
@@ -1108,24 +2436,24 @@ impl EditorState {
     }
 
     fn prepare_save_snapshot(&mut self) -> SaveSnapshot {
-        let (source, export) = match &self.buffer {
-            EditorBuffer::Rich(buffer) => match MarkdownCodec::export(&buffer.editor.document) {
-                Ok(export) => (export.markdown.clone(), Some(export)),
-                Err(_) => (self.document.source().to_owned(), None),
-            },
-            EditorBuffer::Source(buffer) => (buffer.text.clone(), None),
-        };
-        let snapshot = SaveSnapshot {
-            revision: self.revision,
-            bytes: bytes_with_bom(&source, self.document.metadata.utf8_bom),
+        let snapshot = match &self.buffer {
+            EditorBuffer::Rich(buffer) => SaveSnapshot::rich(
+                self.revision,
+                buffer.editor.document.clone(),
+                self.document.source.as_contiguous(),
+                self.document.metadata.utf8_bom,
+            ),
+            EditorBuffer::Source(buffer) => SaveSnapshot::source(
+                self.revision,
+                buffer.text.clone(),
+                buffer.word_count,
+                buffer.line_endings,
+                self.document.metadata.utf8_bom,
+            ),
         };
         self.pending_saves
             .retain(|pending| pending.revision != self.revision);
-        self.pending_saves.push(PendingSave {
-            revision: self.revision,
-            source,
-            export,
-        });
+        self.pending_saves.push(snapshot.clone());
         if self.pending_saves.len() > 8 {
             self.pending_saves.remove(0);
         }
@@ -1141,37 +2469,71 @@ impl EditorState {
             return;
         };
         let pending = self.pending_saves.remove(index);
+        // In the normal asynchronous path `write_to` populated this cache on
+        // the worker. The fallback keeps direct domain integrations correct.
+        let prepared = pending.prepared();
         if let Some(path) = path {
             self.document.kind = DocumentKind::from_path(&path);
             self.document.path = Some(path);
         }
-        self.document.saved_source.clone_from(&pending.source);
-        self.document.source.clone_from(&pending.source);
+        let document_source = match (self.document.kind, pending.payload.as_ref()) {
+            (
+                DocumentKind::PlainText,
+                SavePayload::Source {
+                    text,
+                    word_count,
+                    line_endings,
+                    ..
+                },
+            ) => DocumentText::Rope {
+                text: text.clone(),
+                word_count: *word_count,
+                line_endings: *line_endings,
+            },
+            _ => {
+                let source = prepared.source.as_ref().cloned().unwrap_or_else(|| {
+                    let SavePayload::Source { text, .. } = pending.payload.as_ref() else {
+                        unreachable!("Rich preparation always has source")
+                    };
+                    Arc::new(String::from(text))
+                });
+                DocumentText::from_arc(self.document.kind, source)
+            }
+        };
+        self.document.saved_source = document_source.clone();
+        self.document.source = document_source;
         self.saved_revision = revision;
 
         if self.revision == revision
-            && let (EditorBuffer::Rich(buffer), Some(export)) = (&mut self.buffer, &pending.export)
+            && let (EditorBuffer::Rich(buffer), Some(export)) = (&mut self.buffer, &prepared.export)
         {
             let _ = MarkdownCodec::accept_export(&mut buffer.editor.document, export);
         }
 
         if self.document.kind != DocumentKind::Markdown {
             if let EditorBuffer::Rich(buffer) = &self.buffer {
-                if let Ok(export) = MarkdownCodec::export(&buffer.editor.document) {
-                    let cursor = buffer
-                        .editor
-                        .cursor
-                        .and_then(|position| export.positions.source_offset_for(position))
-                        .unwrap_or(0);
-                    self.buffer = EditorBuffer::Source(SourceBuffer {
-                        text: export.markdown,
-                    });
-                    self.cursor = Cursor {
-                        byte_offset: cursor,
-                        preferred_column: None,
-                    };
-                    self.selection = None;
-                }
+                let cursor = buffer
+                    .editor
+                    .cursor
+                    .and_then(|position| {
+                        prepared
+                            .export
+                            .as_ref()
+                            .and_then(|export| export.positions.source_offset_for(position))
+                    })
+                    .unwrap_or(0);
+                let (text, word_count, line_endings) = self
+                    .document
+                    .source
+                    .rope()
+                    .expect("PlainText saved source is Rope-backed");
+                self.buffer =
+                    EditorBuffer::Source(SourceBuffer::from_rope(text, word_count, line_endings));
+                self.cursor = Cursor {
+                    byte_offset: cursor,
+                    preferred_column: None,
+                };
+                self.selection = None;
             }
             self.source_session = None;
             self.mode = EditorMode::Source;
@@ -1248,7 +2610,7 @@ impl EditorController {
                 match &mut state.buffer {
                     EditorBuffer::Rich(buffer) => buffer.editor.select_all(),
                     EditorBuffer::Source(buffer) => {
-                        let end = buffer.text.len();
+                        let end = buffer.len_bytes();
                         state.selection = (end > 0).then_some(Selection::new(0, end));
                         state.cursor.byte_offset = end;
                         state.cursor.preferred_column = None;
@@ -1583,8 +2945,9 @@ fn split_legacy_heading_break(
 }
 
 fn import_rich_document(document: &EditorDocument) -> RichDocument {
+    let source = document.source();
     MarkdownCodec::import_with_metadata(
-        document.source(),
+        &source,
         document.metadata.utf8_bom,
         rich_line_ending(document.metadata.preferred_line_ending),
     )
@@ -1597,9 +2960,9 @@ fn import_rich_document(document: &EditorDocument) -> RichDocument {
         rich.blocks.push(crate::rich_document::RichBlock::imported(
             id,
             String::new(),
-            document.source().to_owned(),
+            source.to_string(),
             crate::rich_document::RichBlockKind::OpaqueMarkdown {
-                raw: document.source().to_owned(),
+                raw: source.into_owned(),
                 reason: "Markdown could not be imported; edit this block in Source mode".to_owned(),
             },
         ));
@@ -2102,12 +3465,11 @@ fn insert_text(state: &mut EditorState, text: &str) -> bool {
         return false;
     }
     let range = active_edit_range(state);
-    let before = state.snapshot();
-    state.replace_edit_range(range.clone(), text);
-    state.cursor.byte_offset = range.start + text.len();
-    state.cursor.preferred_column = None;
-    state.selection = None;
-    state.commit_edit(before, EditKind::Insert)
+    let cursor = Cursor {
+        byte_offset: range.start + text.len(),
+        preferred_column: None,
+    };
+    state.commit_source_edit(range, text, cursor, None, EditKind::Insert)
 }
 
 fn backspace(state: &mut EditorState) -> bool {
@@ -2118,7 +3480,10 @@ fn backspace(state: &mut EditorState) -> bool {
     if cursor == 0 {
         return false;
     }
-    let start = previous_grapheme_boundary(state.source(), cursor);
+    let EditorBuffer::Source(buffer) = &state.buffer else {
+        return false;
+    };
+    let start = buffer.previous_grapheme_boundary(cursor);
     replace_for_delete(state, start..cursor)
 }
 
@@ -2127,10 +3492,13 @@ fn delete_forward(state: &mut EditorState) -> bool {
         return delete_selection(state, EditKind::Delete);
     }
     let cursor = state.cursor.byte_offset;
-    if cursor >= state.source().len() {
+    let EditorBuffer::Source(buffer) = &state.buffer else {
+        return false;
+    };
+    if cursor >= buffer.len_bytes() {
         return false;
     }
-    let end = next_grapheme_boundary(state.source(), cursor);
+    let end = buffer.next_grapheme_boundary(cursor);
     replace_for_delete(state, cursor..end)
 }
 
@@ -2139,23 +3507,21 @@ fn delete_selection(state: &mut EditorState, kind: EditKind) -> bool {
         return false;
     };
     let range = semantic_delete_range(state, range.start..range.end);
-    let before = state.snapshot();
-    state.replace_edit_range(range.clone(), "");
-    state.cursor.byte_offset = range.start;
-    state.cursor.preferred_column = None;
-    state.selection = None;
-    state.commit_edit(before, kind)
+    let cursor = Cursor {
+        byte_offset: range.start,
+        preferred_column: None,
+    };
+    state.commit_source_edit(range, "", cursor, None, kind)
 }
 
 fn replace_for_delete(state: &mut EditorState, range: Range<usize>) -> bool {
     let range = semantic_delete_range(state, range);
-    let before = state.snapshot();
     let start = range.start;
-    state.replace_edit_range(range, "");
-    state.cursor.byte_offset = start;
-    state.cursor.preferred_column = None;
-    state.selection = None;
-    state.commit_edit(before, EditKind::Delete)
+    let cursor = Cursor {
+        byte_offset: start,
+        preferred_column: None,
+    };
+    state.commit_source_edit(range, "", cursor, None, EditKind::Delete)
 }
 
 fn semantic_delete_range(_state: &EditorState, range: Range<usize>) -> Range<usize> {
@@ -2193,40 +3559,49 @@ fn move_cursor(state: &mut EditorState, movement: CursorMove, extend_selection: 
         }
     }
 
-    let source = state.source();
+    let EditorBuffer::Source(buffer) = &state.buffer else {
+        return;
+    };
     let current = state.cursor.byte_offset;
     let mut preferred_column = None;
     let target = match movement {
-        CursorMove::Left => previous_grapheme_boundary(source, current),
-        CursorMove::Right => next_grapheme_boundary(source, current),
-        CursorMove::WordLeft => previous_word_boundary(source, current),
-        CursorMove::WordRight => next_word_boundary(source, current),
+        CursorMove::Left => buffer.previous_grapheme_boundary(current),
+        CursorMove::Right => buffer.next_grapheme_boundary(current),
+        CursorMove::WordLeft => buffer.previous_word_boundary(current),
+        CursorMove::WordRight => buffer.next_word_boundary(current),
         CursorMove::DocumentStart => 0,
-        CursorMove::DocumentEnd => source.len(),
+        CursorMove::DocumentEnd => buffer.len_bytes(),
         CursorMove::LineStart => {
-            let (line, _) = line_column_for_offset(source, current);
-            line_ranges(source).get(line).map_or(0, |range| range.start)
+            let line = buffer.text.byte_to_line(buffer.normalize_position(current));
+            buffer.line_range(line).map_or(0, |range| range.start)
         }
         CursorMove::LineEnd => {
-            let (line, _) = line_column_for_offset(source, current);
-            line_ranges(source)
-                .get(line)
-                .map_or(source.len(), |range| range.end)
+            let line = buffer.text.byte_to_line(buffer.normalize_position(current));
+            buffer
+                .line_range(line)
+                .map_or(buffer.len_bytes(), |range| range.end)
         }
         CursorMove::Up | CursorMove::Down => {
-            let lines = line_ranges(source);
-            let (line, column) = line_column_for_offset(source, current);
-            let desired_column = state.cursor.preferred_column.unwrap_or(column);
-            preferred_column = Some(desired_column);
+            let current = buffer.normalize_position(current);
+            let line = buffer.text.byte_to_line(current);
             let target_line = if movement == CursorMove::Up {
                 line.saturating_sub(1)
             } else {
-                (line + 1).min(lines.len().saturating_sub(1))
+                (line + 1).min(buffer.line_count().saturating_sub(1))
             };
-            lines
-                .get(target_line)
-                .map(|range| byte_at_grapheme_column(source, range, desired_column))
-                .unwrap_or(current)
+            if target_line == line {
+                preferred_column = state.cursor.preferred_column;
+                current
+            } else {
+                let desired_column = state
+                    .cursor
+                    .preferred_column
+                    .unwrap_or_else(|| line_column_for_offset(buffer, current).1);
+                preferred_column = Some(desired_column);
+                buffer
+                    .byte_at_grapheme_column(target_line, desired_column)
+                    .unwrap_or(current)
+            }
         }
     };
     move_to(state, target, extend_selection);
@@ -2234,7 +3609,10 @@ fn move_cursor(state: &mut EditorState, movement: CursorMove, extend_selection: 
 }
 
 fn move_to(state: &mut EditorState, byte_offset: usize, extend_selection: bool) {
-    let target = normalize_position(state.source(), byte_offset);
+    let EditorBuffer::Source(buffer) = &state.buffer else {
+        return;
+    };
+    let target = buffer.normalize_position(byte_offset);
     let old_cursor = state.cursor.byte_offset;
     if extend_selection {
         let anchor = state
@@ -2253,15 +3631,35 @@ fn undo(state: &mut EditorState) -> bool {
         return false;
     };
     let mode_matches = matches!(
-        (&state.buffer, &transaction.before),
-        (EditorBuffer::Rich(_), EditorSnapshot::Rich { .. })
-            | (EditorBuffer::Source(_), EditorSnapshot::Source { .. })
+        (&state.buffer, transaction),
+        (EditorBuffer::Rich(_), EditTransaction::Rich { .. })
+            | (EditorBuffer::Source(_), EditTransaction::Source { .. })
     );
     if !mode_matches {
         return false;
     }
     let transaction = state.undo_stack.pop().expect("last transaction exists");
-    state.restore_snapshot(&transaction.before);
+    match &transaction {
+        EditTransaction::Rich { before, .. } => state.restore_snapshot(before),
+        EditTransaction::Source {
+            start,
+            removed,
+            inserted,
+            before_cursor,
+            before_selection,
+            before_revision,
+            ..
+        } => {
+            let EditorBuffer::Source(buffer) = &mut state.buffer else {
+                unreachable!("mode checked before applying Source undo")
+            };
+            let _ = buffer.replace_history_range(*start..*start + inserted.len(), removed);
+            state.cursor = *before_cursor;
+            state.selection = *before_selection;
+            state.revision = *before_revision;
+            state.refresh_metadata_from_active_source();
+        }
+    }
     state.redo_stack.push(transaction);
     true
 }
@@ -2271,15 +3669,35 @@ fn redo(state: &mut EditorState) -> bool {
         return false;
     };
     let mode_matches = matches!(
-        (&state.buffer, &transaction.after),
-        (EditorBuffer::Rich(_), EditorSnapshot::Rich { .. })
-            | (EditorBuffer::Source(_), EditorSnapshot::Source { .. })
+        (&state.buffer, transaction),
+        (EditorBuffer::Rich(_), EditTransaction::Rich { .. })
+            | (EditorBuffer::Source(_), EditTransaction::Source { .. })
     );
     if !mode_matches {
         return false;
     }
     let transaction = state.redo_stack.pop().expect("last transaction exists");
-    state.restore_snapshot(&transaction.after);
+    match &transaction {
+        EditTransaction::Rich { after, .. } => state.restore_snapshot(after),
+        EditTransaction::Source {
+            start,
+            removed,
+            inserted,
+            after_cursor,
+            after_selection,
+            after_revision,
+            ..
+        } => {
+            let EditorBuffer::Source(buffer) = &mut state.buffer else {
+                unreachable!("mode checked before applying Source redo")
+            };
+            let _ = buffer.replace_history_range(*start..*start + removed.len(), inserted);
+            state.cursor = *after_cursor;
+            state.selection = *after_selection;
+            state.revision = *after_revision;
+            state.refresh_metadata_from_active_source();
+        }
+    }
     state.undo_stack.push(transaction);
     true
 }
@@ -2308,106 +3726,61 @@ fn line_ranges(source: &str) -> Vec<Range<usize>> {
     ranges
 }
 
-fn line_column_for_offset(source: &str, byte_offset: usize) -> (usize, usize) {
-    let offset = normalize_position(source, byte_offset);
-    let lines = line_ranges(source);
-    let line_index = line_index_for_offset(&lines, offset);
-    let Some(line) = lines.get(line_index) else {
+fn line_column_for_offset(buffer: &SourceBuffer, byte_offset: usize) -> (usize, usize) {
+    let offset = buffer.normalize_position(byte_offset);
+    let line_index = buffer.text.byte_to_line(offset);
+    let Some(line) = buffer.line_range(line_index) else {
         return (0, 0);
     };
-    let end = offset.min(line.end);
-    let column = source[line.start..end].graphemes(true).count();
+    let column = buffer.line_grapheme_column(line, offset);
     (line_index, column)
 }
 
-fn line_index_for_offset(lines: &[Range<usize>], offset: usize) -> usize {
-    lines
-        .iter()
-        .position(|range| offset <= range.end)
-        .unwrap_or_else(|| lines.len().saturating_sub(1))
-}
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-fn byte_at_grapheme_column(source: &str, line: &Range<usize>, column: usize) -> usize {
-    source[line.clone()]
-        .grapheme_indices(true)
-        .nth(column)
-        .map_or(line.end, |(offset, _)| line.start + offset)
-}
+    #[test]
+    fn rich_word_count_cache_is_scoped_to_the_document_revision() {
+        fn assert_send_sync<T: Send + Sync>() {}
+        assert_send_sync::<EditorState>();
 
-fn previous_grapheme_boundary(source: &str, byte_offset: usize) -> usize {
-    let offset = normalize_position(source, byte_offset);
-    source[..offset]
-        .grapheme_indices(true)
-        .next_back()
-        .map_or(0, |(index, _)| index)
-}
+        let mut editor = EditorState::new();
+        assert_eq!(editor.rich_word_count_cache.get(), None);
 
-fn next_grapheme_boundary(source: &str, byte_offset: usize) -> usize {
-    let offset = normalize_position(source, byte_offset);
-    source[offset..]
-        .graphemes(true)
-        .next()
-        .map_or(source.len(), |grapheme| offset + grapheme.len())
-}
+        assert_eq!(editor.word_count(), 0);
+        assert_eq!(
+            editor.rich_word_count_cache.get(),
+            Some((editor.revision(), 0))
+        );
+        assert_eq!(editor.word_count(), 0);
 
-fn previous_word_boundary(source: &str, byte_offset: usize) -> usize {
-    let offset = normalize_position(source, byte_offset);
-    let mut previous = 0usize;
-    for (start, word) in source.unicode_word_indices() {
-        let end = start + word.len();
-        if start >= offset {
-            break;
-        }
-        if offset <= end {
-            return start;
-        }
-        previous = start;
+        editor.apply(EditorCommand::InsertText("one two".to_owned()));
+        assert_ne!(
+            editor
+                .rich_word_count_cache
+                .get()
+                .map(|(revision, _)| revision),
+            Some(editor.revision())
+        );
+        assert_eq!(editor.word_count(), 2);
+        assert_eq!(
+            editor.rich_word_count_cache.get(),
+            Some((editor.revision(), 2))
+        );
+
+        let clone = editor.clone();
+        clone.rich_word_count_cache.set(None);
+        assert_eq!(
+            editor, clone,
+            "derived caches must not affect value equality"
+        );
+
+        editor.apply(EditorCommand::Undo);
+        assert_eq!(editor.word_count(), 0);
+        assert_eq!(
+            editor.rich_word_count_cache.get(),
+            Some((editor.revision(), 0))
+        );
     }
-    previous
-}
-
-fn next_word_boundary(source: &str, byte_offset: usize) -> usize {
-    let offset = normalize_position(source, byte_offset);
-    for (start, word) in source.unicode_word_indices() {
-        let end = start + word.len();
-        if offset < start {
-            return start;
-        }
-        if offset < end {
-            return end;
-        }
-    }
-    source.len()
-}
-
-fn validated_range(source: &str, range: Range<usize>) -> Option<Range<usize>> {
-    (range.start <= range.end
-        && range.end <= source.len()
-        && is_cursor_boundary(source, range.start)
-        && is_cursor_boundary(source, range.end))
-    .then_some(range)
-}
-
-fn is_cursor_boundary(source: &str, position: usize) -> bool {
-    position <= source.len()
-        && source.is_char_boundary(position)
-        && !(position > 0
-            && position < source.len()
-            && source.as_bytes()[position - 1] == b'\r'
-            && source.as_bytes()[position] == b'\n')
-}
-
-fn normalize_position(source: &str, position: usize) -> usize {
-    let mut position = position.min(source.len());
-    while !source.is_char_boundary(position) {
-        position = position.saturating_sub(1);
-    }
-    if position > 0
-        && position < source.len()
-        && source.as_bytes()[position - 1] == b'\r'
-        && source.as_bytes()[position] == b'\n'
-    {
-        position -= 1;
-    }
-    position
 }

@@ -258,7 +258,9 @@ impl ShellExplorerTaskRuntime {
 
 impl fmt::Debug for ShellExplorerTaskRuntime {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.debug_struct("ShellExplorerTaskRuntime").finish_non_exhaustive()
+        formatter
+            .debug_struct("ShellExplorerTaskRuntime")
+            .finish_non_exhaustive()
     }
 }
 
@@ -293,12 +295,12 @@ impl ShellState {
                 if should_confirm {
                     false
                 } else {
-                let paths = self
-                    .explorer_state
-                    .as_ref()
-                    .map(|state| state.effective_selected_paths())
-                    .unwrap_or_default();
-                self.start_explorer_background_delete_paths(paths);
+                    let paths = self
+                        .explorer_state
+                        .as_ref()
+                        .map(|state| state.effective_selected_paths())
+                        .unwrap_or_default();
+                    self.start_explorer_background_delete_paths(paths);
                     true
                 }
             }
@@ -308,8 +310,7 @@ impl ShellState {
                         .pending_dialog
                         .as_ref()
                         .filter(|dialog| {
-                            dialog.kind
-                                == tundra_apps::explorer::ExplorerDialogKind::DeleteToTrash
+                            dialog.kind == tundra_apps::explorer::ExplorerDialogKind::DeleteToTrash
                         })
                         .map(|dialog| dialog.targets.clone())
                 }) else {
@@ -839,10 +840,10 @@ impl ShellState {
                     .map(ToString::to_string)
                     .unwrap_or_default();
                 let detail = [(!summary.cancelled && !fatal.is_empty()).then_some(fatal)]
-                .into_iter()
-                .flatten()
-                .collect::<Vec<_>>()
-                .join("; ");
+                    .into_iter()
+                    .flatten()
+                    .collect::<Vec<_>>()
+                    .join("; ");
                 let message = if summary.cancelled {
                     format!(
                         "Operation cancelled: {} succeeded, {} failed{}",
@@ -854,9 +855,7 @@ impl ShellState {
                             format!(" ({detail})")
                         }
                     )
-                } else if summary.failed_items > 0
-                    || summary.fatal_error.is_some()
-                {
+                } else if summary.failed_items > 0 || summary.fatal_error.is_some() {
                     format!(
                         "Operation finished with errors: {} succeeded, {} failed{}",
                         summary.succeeded_items,
@@ -1031,6 +1030,12 @@ mod explorer_task_workflow_tests {
             std::sync::OnceLock::new();
         WATCHDOG
             .get_or_init(|| {
+                let _ = default_editor_watchdog();
+                if let Some(process) = tundra_watchdog::ProcessWatchdog::global() {
+                    return process
+                        .register_app(tundra_apps::explorer_tasks::explorer_watchdog_descriptor())
+                        .expect("Explorer workflow watchdog registration");
+                }
                 let root = std::env::temp_dir().join(format!(
                     "tundra-shell-explorer-watchdog-tests-{}",
                     std::process::id()
@@ -1044,6 +1049,9 @@ mod explorer_task_workflow_tests {
                 );
                 let (runtime, process) = tundra_watchdog::WatchdogRuntime::start(config)
                     .expect("Explorer workflow test watchdog");
+                let process = process
+                    .install_global()
+                    .expect("install Explorer workflow test watchdog");
                 let _runtime = Box::leak(Box::new(runtime));
                 process
                     .register_app(tundra_apps::explorer_tasks::explorer_watchdog_descriptor())
@@ -1110,10 +1118,8 @@ mod explorer_task_workflow_tests {
         std::fs::write(&source, b"trash me").expect("source file");
 
         let storage = storage_at(&fixture);
-        let runtime = ShellExplorerTaskRuntime::new_managed(
-            storage.clone(),
-            test_explorer_watchdog(),
-        );
+        let runtime =
+            ShellExplorerTaskRuntime::new_managed(storage.clone(), test_explorer_watchdog());
         runtime
             .submit(
                 ExplorerTaskPlan::DeleteToTrash(ExplorerDeletePlan::new(vec![source.clone()])),
@@ -1159,10 +1165,8 @@ mod explorer_task_workflow_tests {
         std::fs::write(&replaced, b"old contents").expect("destination file");
 
         let storage = storage_at(&fixture);
-        let runtime = ShellExplorerTaskRuntime::new_managed(
-            storage.clone(),
-            test_explorer_watchdog(),
-        );
+        let runtime =
+            ShellExplorerTaskRuntime::new_managed(storage.clone(), test_explorer_watchdog());
         let mut plan =
             ExplorerTransferPlan::new(ExplorerTransferOperation::Copy, vec![source], &destination);
         plan.collisions = ExplorerCollisionPolicy::replace();

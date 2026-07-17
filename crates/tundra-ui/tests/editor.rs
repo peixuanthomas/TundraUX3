@@ -1,14 +1,14 @@
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
-use ratatui::layout::Rect;
+use ratatui::layout::{Position, Rect};
 use ratatui::style::{Color, Modifier};
 use tundra_ui::{
     EditorBlockArea, EditorBlockSourceMap, EditorDocumentPosition, EditorFocus, EditorHitTarget,
     EditorMenu, EditorMenuAction, EditorMode, EditorQuickAction, EditorQuickMenuViewModel,
     EditorRenderBlock, EditorRenderSpan, EditorSelection, EditorSourceRange, EditorSourceSelection,
-    EditorTableAlignment, EditorTableCell, EditorTableEdge, EditorTextPosition,
-    EditorToolbarAction, EditorViewModel, RichPosition, RichRange, TundraTheme, editor_layout,
-    render_editor,
+    EditorSourceWindowLine, EditorTableAlignment, EditorTableCell, EditorTableEdge,
+    EditorTextPosition, EditorToolbarAction, EditorViewModel, RichPosition, RichRange, TundraTheme,
+    editor_layout, render_editor,
 };
 
 #[test]
@@ -375,7 +375,7 @@ fn rich_heading_levels_use_terminal_safe_accent_styles() {
 
 #[test]
 fn source_horizontal_scroll_keeps_rendered_cells_and_mouse_positions_in_sync() {
-    let mut model = EditorViewModel::source("wide.md", "0123456789");
+    let mut model = EditorViewModel::source("wide.md", "0123456789".repeat(6));
     model.horizontal_scroll = 4;
     model.cursor = Some(EditorTextPosition::new(0, 6));
     let layout = editor_layout(Rect::new(0, 0, 50, 8), &model);
@@ -389,6 +389,159 @@ fn source_horizontal_scroll_keeps_rendered_cells_and_mouse_positions_in_sync() {
         layout.hit_test(layout.canvas.x + 2, layout.canvas.y),
         Some(EditorHitTarget::Canvas(EditorTextPosition::new(0, 6)))
     );
+}
+
+#[test]
+fn wide_source_line_exposes_and_renders_a_proportional_horizontal_scrollbar() {
+    let source = (0..100)
+        .map(|column| char::from(b'0' + (column % 10) as u8))
+        .collect::<String>();
+    let mut model = EditorViewModel::source("wide.log", source);
+    model.horizontal_scroll = 20;
+    let layout = editor_layout(Rect::new(0, 0, 50, 8), &model);
+    let scrollbar = layout
+        .horizontal_scrollbar
+        .expect("wide Source line has a horizontal scrollbar");
+    let terminal = render(&model, 50, 8);
+
+    assert_eq!(scrollbar.track.y, layout.canvas.bottom());
+    assert_eq!(scrollbar.track.width, layout.canvas.width);
+    assert!(scrollbar.thumb.width > 0);
+    assert!(scrollbar.thumb.width < scrollbar.track.width);
+    assert!(scrollbar.thumb.x > scrollbar.track.x);
+    assert_eq!(
+        layout.hit_test(scrollbar.track.x, scrollbar.track.y),
+        Some(EditorHitTarget::HorizontalScrollbar)
+    );
+    assert_eq!(
+        terminal.backend().buffer()[(layout.canvas.x, layout.canvas.y)].symbol(),
+        "0"
+    );
+    assert_eq!(
+        terminal.backend().buffer()[(scrollbar.track.x, scrollbar.track.y)].symbol(),
+        "─"
+    );
+    assert_eq!(
+        terminal.backend().buffer()[(scrollbar.thumb.x, scrollbar.thumb.y)].symbol(),
+        "█"
+    );
+}
+
+#[test]
+fn source_scrollbars_reach_a_fixed_point_without_overlapping() {
+    // Four lines require a vertical bar. That column reduces an exactly
+    // fitting 47-cell line plus its caret cell to 47 cells, which then also
+    // requires a horizontal bar; the new bottom row must keep the vertical
+    // bar necessary.
+    let source = format!("{}\na\nb\nc", "x".repeat(47));
+    let model = EditorViewModel::source("both.log", source);
+    let layout = editor_layout(Rect::new(0, 0, 50, 8), &model);
+    let vertical = layout.vertical_scrollbar.expect("vertical scrollbar");
+    let horizontal = layout.horizontal_scrollbar.expect("horizontal scrollbar");
+
+    assert_eq!(layout.canvas.width, 47);
+    assert_eq!(layout.canvas.height, 2);
+    assert_eq!(vertical.track.height, layout.canvas.height);
+    assert_eq!(horizontal.track.width, layout.canvas.width);
+    assert_eq!(vertical.track.bottom(), horizontal.track.y);
+    assert_eq!(horizontal.track.right(), vertical.track.x);
+    assert_eq!(
+        layout.hit_test(vertical.track.x, vertical.track.y),
+        Some(EditorHitTarget::VerticalScrollbar)
+    );
+    assert_eq!(
+        layout.hit_test(horizontal.track.x, horizontal.track.y),
+        Some(EditorHitTarget::HorizontalScrollbar)
+    );
+}
+
+#[test]
+fn viewport_only_source_uses_document_width_for_its_horizontal_scrollbar() {
+    let mut model = EditorViewModel::source_viewport(
+        "window.log",
+        0,
+        1,
+        vec![EditorSourceWindowLine::new(
+            EditorSourceRange::new(16, 20),
+            16,
+            "qrst",
+        )],
+    );
+    model.horizontal_scroll = 16;
+    model.horizontal_content_width = 100;
+    let layout = editor_layout(Rect::new(0, 0, 50, 8), &model);
+    let terminal = render(&model, 50, 8);
+
+    assert!(layout.horizontal_scrollbar.is_some());
+    assert_eq!(layout.horizontal_scroll, 16);
+    assert_eq!(
+        terminal.backend().buffer()[(layout.canvas.x, layout.canvas.y)].symbol(),
+        "q"
+    );
+    assert_eq!(
+        layout.hit_test(layout.canvas.x + 2, layout.canvas.y),
+        Some(EditorHitTarget::Canvas(EditorTextPosition::new(0, 18)))
+    );
+}
+
+#[test]
+fn source_horizontal_layout_handles_unicode_and_tiny_areas() {
+    let model = EditorViewModel::source("unicode.log", "好e\u{301}");
+    assert_eq!(model.horizontal_content_width, 4);
+
+    let wide = EditorViewModel::source("tiny.log", "x".repeat(100));
+    for width in 0..=2 {
+        for height in 0..=5 {
+            let layout = editor_layout(Rect::new(0, 0, width, height), &wide);
+            if let Some(scrollbar) = layout.horizontal_scrollbar {
+                assert!(scrollbar.track.width > 0);
+                assert_eq!(scrollbar.track.height, 1);
+                assert!(scrollbar.thumb.width > 0);
+                assert!(scrollbar.thumb.width <= scrollbar.track.width);
+            }
+        }
+    }
+}
+
+#[test]
+fn end_caret_on_an_exactly_fitting_source_line_remains_visible() {
+    let mut model = EditorViewModel::source("exact.log", "x".repeat(48));
+    model.horizontal_scroll = 1;
+    model.cursor = Some(EditorTextPosition::new(0, 48));
+    let layout = editor_layout(Rect::new(0, 0, 50, 8), &model);
+    let mut terminal = render(&model, 50, 8);
+
+    assert_eq!(model.horizontal_content_width, 49);
+    assert!(layout.horizontal_scrollbar.is_some());
+    assert_eq!(layout.horizontal_scroll, 1);
+    assert_eq!(
+        terminal.get_cursor_position().expect("End cursor position"),
+        Position::new(layout.canvas.right().saturating_sub(1), layout.canvas.y)
+    );
+}
+
+#[test]
+fn cursor_left_of_horizontal_viewport_is_not_drawn_at_canvas_origin() {
+    let mut model = EditorViewModel::source("wide.log", "x".repeat(100));
+    model.horizontal_scroll = 20;
+    model.cursor = Some(EditorTextPosition::new(0, 5));
+    let layout = editor_layout(Rect::new(0, 0, 50, 8), &model);
+    let mut terminal = Terminal::new(TestBackend::new(50, 8)).expect("terminal");
+    let sentinel = Position::new(49, 7);
+    terminal
+        .set_cursor_position(sentinel)
+        .expect("seed cursor position");
+    terminal
+        .draw(|frame| {
+            render_editor(frame, frame.area(), &model, &TundraTheme::default_dark());
+        })
+        .expect("render editor");
+
+    assert_eq!(
+        terminal.get_cursor_position().expect("cursor position"),
+        sentinel
+    );
+    assert_ne!(sentinel.x, layout.canvas.x);
 }
 
 #[test]
@@ -1053,7 +1206,7 @@ fn read_only_tail_editor_renders_access_window_and_reload_metadata() {
     let output = terminal_output(&terminal);
 
     assert!(output.contains("diagnostics.log [read-only] [tail]"));
-    assert!(output.contains("F5 Reload"));
+    assert!(output.contains("R Reload"));
     assert!(output.contains("Bytes 43-100 of 100"));
 
     model.read_window = Some(tundra_ui::EditorReadWindowViewModel {

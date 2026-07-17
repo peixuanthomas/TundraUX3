@@ -1,8 +1,9 @@
 use std::panic::AssertUnwindSafe;
 use tundra_watchdog::{
     AppCriticality, AppDescriptor, AppId, AppWatchdog, BoundaryKind, BoundarySpec, CaughtPanic,
-    ComponentId, IncidentKind, IncidentReceipt, ManagedThreadHandle, PanicAction, ProcessWatchdog,
-    RecoveryOutcome, ReplaySafety, RestartPolicy, RuntimeSnapshot, TaskId, TaskKind, TaskSpec,
+    ComponentId, IncidentKind, IncidentReceipt, ManagedTaskGroup, ManagedThreadHandle, PanicAction,
+    ProcessWatchdog, RecoveryOutcome, ReplaySafety, RestartPolicy, RuntimeSnapshot, TaskId,
+    TaskKind, TaskSpec,
 };
 
 pub fn run_without_animation(output: &mut impl Write) -> io::Result<()> {
@@ -298,6 +299,7 @@ fn run_fullscreen_shell_session(
         ascii_assets,
         explorer_task_runtime,
         diagnostics_task_runtime,
+        ShellEditorTaskRuntime::new_managed(shell_watchdog.clone()),
     );
     if let Some(cached) = cached_time_sync.as_ref() {
         cached.apply_to_state_at(&mut state, Instant::now());
@@ -332,6 +334,8 @@ fn run_fullscreen_shell_session(
                 )
             })
             .unwrap_or_default();
+        let active_screen = state.active_screen();
+        let content_screen = state.content_screen();
         let chrome = state.to_shell_chrome_view_model();
         let home = state.to_home_view_model();
         let clock = state
@@ -343,11 +347,9 @@ fn run_fullscreen_shell_session(
         let bootstrap_admin = state.to_bootstrap_admin_view_model();
         let user_management = state.to_user_management_view_model();
         let explorer = state.to_explorer_view_model();
-        let editor = state.to_editor_view_model();
+        let editor = (content_screen == ShellScreen::Editor).then(|| state.to_editor_view_model());
         let diagnostics = state.to_diagnostics_view_model();
         let notification = state.to_notification_view_model();
-        let active_screen = state.active_screen();
-        let content_screen = state.content_screen();
         let exit_confirmation = tundra_ui::ExitConfirmViewModel::new();
 
         guard.terminal_mut().draw(|frame| {
@@ -381,7 +383,15 @@ fn run_fullscreen_shell_session(
                     tundra_ui::render_explorer(frame, area, &chrome, &explorer, &theme);
                 }
                 ShellScreen::Editor => {
-                    tundra_ui::render_editor_app(frame, area, &chrome, &editor, &theme);
+                    tundra_ui::render_editor_app(
+                        frame,
+                        area,
+                        &chrome,
+                        editor
+                            .as_ref()
+                            .expect("Editor content requires its view model"),
+                        &theme,
+                    );
                 }
                 ShellScreen::Diagnostics => {
                     tundra_ui::render_diagnostics(frame, area, &chrome, &diagnostics, &theme);

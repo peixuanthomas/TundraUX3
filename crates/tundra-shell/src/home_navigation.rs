@@ -86,7 +86,14 @@ impl ShellState {
         self.explorer_input_replace_all = false;
         self.explorer_overlay_mode = None;
         self.explorer_purpose = ExplorerPurpose::Browse;
+        if let Some(load) = self.editor_load_state.take() {
+            self.editor_task_runtime.cancel(load.id);
+        }
+        self.editor_save_state = None;
+        self.editor_read_session = None;
+        self.advance_editor_document_generation();
         self.editor_state = None;
+        self.editor_rich_render_cache = None;
         self.editor_focus = tundra_ui::EditorFocus::Canvas;
         self.editor_open_menu = None;
         self.editor_selected_toolbar_action = None;

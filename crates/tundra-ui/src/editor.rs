@@ -1,6 +1,7 @@
 use std::borrow::Cow;
 use std::cmp::{max, min};
 use std::collections::BTreeMap;
+use std::sync::Arc;
 
 use ratatui::Frame;
 use ratatui::layout::Rect;
@@ -561,9 +562,25 @@ pub struct EditorViewModel {
     pub quick_menu: Option<EditorQuickMenuViewModel>,
     pub selected_toolbar_action: Option<EditorToolbarAction>,
     pub blocks: Vec<EditorRenderBlock>,
+    /// Optional shared Rich projection. When present this is authoritative
+    /// over the legacy `blocks` vector, allowing callers to reuse a cached
+    /// projection without deep-cloning every block for each frame.
+    pub shared_blocks: Option<Arc<[EditorRenderBlock]>>,
     pub source_lines: Vec<String>,
+    /// Cached half-open byte ranges for Source-mode lines. This is populated
+    /// alongside `source_lines` by [`EditorViewModel::source`] so layout can
+    /// prepare a viewport without rescanning or allocating for the full file.
+    pub source_line_ranges: Vec<EditorSourceRange>,
+    /// Optional viewport-only Source data. When present it is authoritative
+    /// for layout and avoids materializing the full document in the UI model.
+    pub source_window: Option<EditorSourceWindow>,
     pub scroll_line: usize,
     pub horizontal_scroll: usize,
+    /// Source-mode horizontal extent in terminal cells: the widest line plus
+    /// its trailing caret cell, with an empty document therefore measuring
+    /// one cell. Viewport-only callers supply this from the document model so
+    /// layout never needs to rescan a large file merely to size the scrollbar.
+    pub horizontal_content_width: usize,
     pub cursor: Option<EditorTextPosition>,
     pub selection: Option<EditorSelection>,
     /// Logical Rich-mode cursor. When present, this is authoritative and the
@@ -611,9 +628,13 @@ impl EditorViewModel {
             quick_menu: None,
             selected_toolbar_action: None,
             blocks,
+            shared_blocks: None,
             source_lines: vec![String::new()],
+            source_line_ranges: Vec::new(),
+            source_window: None,
             scroll_line: 0,
             horizontal_scroll: 0,
+            horizontal_content_width: 1,
             cursor: Some(EditorTextPosition::default()),
             selection: None,
             rich_cursor: None,
@@ -638,11 +659,56 @@ impl EditorViewModel {
         let mut model = Self::new(file_name, Vec::new());
         model.mode = EditorMode::Source;
         model.source = Some(source.to_owned());
-        model.source_lines = source_display_lines(source);
+        model.source_line_ranges = source_display_line_ranges(source);
+        model.horizontal_content_width =
+            source_horizontal_content_width(source, &model.source_line_ranges);
+        model.source_lines = model
+            .source_line_ranges
+            .iter()
+            .map(|range| {
+                source
+                    .get(range.start..range.end)
+                    .unwrap_or_default()
+                    .to_owned()
+            })
+            .collect();
         if model.source_lines.is_empty() {
             model.source_lines.push(String::new());
         }
         model.word_count = source.split_whitespace().count();
+        model
+    }
+
+    pub fn new_shared(file_name: impl Into<String>, blocks: Arc<[EditorRenderBlock]>) -> Self {
+        let mut model = Self::new(file_name, Vec::new());
+        model.shared_blocks = Some(blocks);
+        model
+    }
+
+    /// Builds a Source-mode model from a bounded, globally-addressed window.
+    /// The caller may update the remaining editor metadata and cursor fields
+    /// exactly as it would for [`Self::source`].
+    pub fn source_viewport(
+        file_name: impl Into<String>,
+        first_line: usize,
+        total_line_count: usize,
+        lines: Vec<EditorSourceWindowLine>,
+    ) -> Self {
+        let mut model = Self::new(file_name, Vec::new());
+        model.mode = EditorMode::Source;
+        // Keep the legacy projection bounded to the same window. Small
+        // documents therefore preserve callers that inspect `source_lines`,
+        // while large documents never regain a full-text duplicate.
+        model.source_lines = lines
+            .iter()
+            .map(|line| line.text.as_ref().to_owned())
+            .collect();
+        model.scroll_line = first_line;
+        model.source_window = Some(EditorSourceWindow {
+            first_line,
+            total_line_count,
+            lines,
+        });
         model
     }
 
@@ -660,6 +726,12 @@ impl EditorViewModel {
                 .map(Vec::as_slice),
             None => self.table_column_widths.get(block_index).map(Vec::as_slice),
         }
+    }
+
+    /// Rich blocks used by layout and rendering, regardless of whether the
+    /// caller supplied the legacy owned vector or a cached shared projection.
+    pub fn render_blocks(&self) -> &[EditorRenderBlock] {
+        self.shared_blocks.as_deref().unwrap_or(&self.blocks)
     }
 }
 
@@ -680,6 +752,39 @@ pub struct EditorMenuItemLayout {
 pub struct EditorReadWindowViewModel {
     pub start_byte: u64,
     pub total_bytes: u64,
+}
+
+/// One horizontally clipped Source-mode line. Byte offsets and display
+/// columns remain global to the canonical document even though only the
+/// visible text is materialized.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EditorSourceWindowLine {
+    pub visible_byte_range: EditorSourceRange,
+    pub start_column: usize,
+    pub text: Arc<str>,
+}
+
+impl EditorSourceWindowLine {
+    pub fn new(
+        visible_byte_range: EditorSourceRange,
+        start_column: usize,
+        text: impl Into<Arc<str>>,
+    ) -> Self {
+        Self {
+            visible_byte_range,
+            start_column,
+            text: text.into(),
+        }
+    }
+}
+
+/// Materialized Source-mode viewport. `first_line` and `total_line_count`
+/// keep scrolling and hit testing in global document coordinates.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EditorSourceWindow {
+    pub first_line: usize,
+    pub total_line_count: usize,
+    pub lines: Vec<EditorSourceWindowLine>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -783,6 +888,7 @@ pub enum EditorHitTarget {
     },
     Canvas(EditorTextPosition),
     VerticalScrollbar,
+    HorizontalScrollbar,
     StatusBar,
 }
 
@@ -857,6 +963,7 @@ pub struct EditorLayout {
     pub table_edge_handles: Vec<EditorTableEdgeHandle>,
     pub table_resize_handles: Vec<EditorTableResizeHandle>,
     pub vertical_scrollbar: Option<EditorScrollbarLayout>,
+    pub horizontal_scrollbar: Option<EditorScrollbarLayout>,
     pub visible_start: usize,
     pub visible_capacity: usize,
     pub document_line_count: usize,
@@ -867,6 +974,11 @@ pub struct EditorLayout {
     /// Rich-mode visual mapping. Unlike `source_line_maps`, this contains only
     /// stable node identities and grapheme offsets.
     pub rich_line_maps: Vec<EditorRichLineMap>,
+    /// Display content prepared for this exact viewport. Keeping it in the
+    /// layout lets rendering reuse layout work instead of flattening the
+    /// document a second time.
+    prepared_lines: Vec<DisplayLine>,
+    prepared_start: usize,
 }
 
 impl EditorLayout {
@@ -912,6 +1024,12 @@ impl EditorLayout {
             .is_some_and(|scrollbar| contains(scrollbar.track, x, y))
         {
             return Some(EditorHitTarget::VerticalScrollbar);
+        }
+        if self
+            .horizontal_scrollbar
+            .is_some_and(|scrollbar| contains(scrollbar.track, x, y))
+        {
+            return Some(EditorHitTarget::HorizontalScrollbar);
         }
         if let Some(handle) = self
             .table_edge_handles
@@ -1087,27 +1205,78 @@ pub fn editor_layout(area: Rect, model: &EditorViewModel) -> EditorLayout {
     } else {
         canvas_panel
     };
-    let mut display_lines = flatten_document(model, usize::from(base_canvas.width.max(1)));
     let mut canvas = base_canvas;
-    if display_lines.len() > usize::from(base_canvas.height) && base_canvas.width > 1 {
-        canvas.width = canvas.width.saturating_sub(1);
-        display_lines = flatten_document(model, usize::from(canvas.width.max(1)));
-    }
-    let document_line_count = display_lines.len().max(1);
+    let horizontal_scroll = model.horizontal_scroll;
+    let (document_line_count, rich_lines) = match model.mode {
+        EditorMode::Source => {
+            let line_count = source_document_line_count(model);
+            // Horizontal and vertical scrollbars affect one another: adding a
+            // horizontal bar can make the document vertically overflow, while
+            // adding a vertical bar can make the widest line overflow. Start
+            // with the full canvas and grow reservations monotonically until
+            // both decisions stabilize.
+            let mut reserve_vertical = false;
+            let mut reserve_horizontal = false;
+            loop {
+                let candidate_width = base_canvas
+                    .width
+                    .saturating_sub(u16::from(reserve_vertical));
+                let candidate_height = base_canvas
+                    .height
+                    .saturating_sub(u16::from(reserve_horizontal));
+                let next_vertical = base_canvas.width > 1
+                    && candidate_height > 0
+                    && line_count > usize::from(candidate_height);
+                let next_horizontal = base_canvas.height > 1
+                    && candidate_width > 0
+                    && model.horizontal_content_width > usize::from(candidate_width);
+                if next_vertical == reserve_vertical && next_horizontal == reserve_horizontal {
+                    break;
+                }
+                reserve_vertical |= next_vertical;
+                reserve_horizontal |= next_horizontal;
+            }
+            canvas.width = canvas.width.saturating_sub(u16::from(reserve_vertical));
+            canvas.height = canvas.height.saturating_sub(u16::from(reserve_horizontal));
+            (line_count, None)
+        }
+        EditorMode::Rich => {
+            let base_width = usize::from(base_canvas.width.max(1));
+            if base_canvas.width > 1
+                && !rich_document_fits_height(model, base_width, usize::from(base_canvas.height))
+            {
+                canvas.width = canvas.width.saturating_sub(1);
+            }
+            // Measure first so the expensive, allocation-heavy projection is
+            // built only once, at the final width. Previously a scrolling
+            // document was flattened at the full width and then flattened in
+            // its entirety again after reserving the scrollbar column.
+            let lines = flatten_rich_document(model, usize::from(canvas.width.max(1)));
+            (lines.len().max(1), Some(lines))
+        }
+    };
     let visible_capacity = usize::from(canvas.height);
     let max_start = document_line_count.saturating_sub(visible_capacity);
     let visible_start = model.scroll_line.min(max_start);
     let visible_end = visible_start
         .saturating_add(visible_capacity)
         .min(document_line_count);
+    let prepared_lines = match rich_lines {
+        Some(lines) => lines
+            .into_iter()
+            .skip(visible_start)
+            .take(visible_end.saturating_sub(visible_start))
+            .collect(),
+        None => source_display_lines_for_viewport(model, visible_start, visible_end),
+    };
     let line_areas = (visible_start..visible_end)
         .map(|document_line| EditorLineLayout {
             document_line,
-            block_index: display_lines
-                .get(document_line)
+            block_index: prepared_lines
+                .get(document_line.saturating_sub(visible_start))
                 .and_then(|line| line.block_index),
-            horizontally_scrollable: display_lines
-                .get(document_line)
+            horizontally_scrollable: prepared_lines
+                .get(document_line.saturating_sub(visible_start))
                 .is_some_and(|line| model.mode == EditorMode::Source || line.no_wrap),
             area: Rect::new(
                 canvas.x,
@@ -1143,7 +1312,7 @@ pub fn editor_layout(area: Rect, model: &EditorViewModel) -> EditorLayout {
         .copied()
         .filter(|entry| {
             matches!(
-                model.blocks.get(entry.block_index),
+                model.render_blocks().get(entry.block_index),
                 Some(EditorRenderBlock::Image { .. })
             )
         })
@@ -1151,21 +1320,39 @@ pub fn editor_layout(area: Rect, model: &EditorViewModel) -> EditorLayout {
     let table_resize_handles = if model.read_only {
         Vec::new()
     } else {
-        table_resize_handles(canvas, model.horizontal_scroll, &block_areas, model)
+        table_resize_handles(canvas, horizontal_scroll, &block_areas, model)
     };
     let table_edge_handles = if model.read_only {
         Vec::new()
     } else {
-        table_edge_handles(canvas, model.horizontal_scroll, &block_areas, model)
+        table_edge_handles(canvas, horizontal_scroll, &block_areas, model)
     };
 
-    let vertical_scrollbar = (document_line_count > visible_capacity && base_canvas.width > 1)
+    let vertical_scrollbar =
+        (document_line_count > visible_capacity && base_canvas.width > 1 && canvas.height > 0)
+            .then(|| {
+                scrollbar_layout(
+                    Rect::new(
+                        base_canvas.x,
+                        base_canvas.y,
+                        base_canvas.width,
+                        canvas.height,
+                    ),
+                    document_line_count,
+                    visible_start,
+                    visible_capacity,
+                )
+            });
+    let horizontal_scrollbar = (model.mode == EditorMode::Source
+        && model.horizontal_content_width > usize::from(canvas.width)
+        && base_canvas.height > 1
+        && canvas.width > 0)
         .then(|| {
-            scrollbar_layout(
-                base_canvas,
-                document_line_count,
-                visible_start,
-                visible_capacity,
+            horizontal_scrollbar_layout(
+                Rect::new(canvas.x, canvas.bottom(), canvas.width, 1),
+                model.horizontal_content_width,
+                horizontal_scroll,
+                usize::from(canvas.width),
             )
         });
     let (menus, modes) = menu_layout(menu_bar);
@@ -1175,28 +1362,52 @@ pub fn editor_layout(area: Rect, model: &EditorViewModel) -> EditorLayout {
         (!model.read_only).then_some(model.quick_menu).flatten(),
     );
     let (toolbar_items, toolbar_overflow) = toolbar_layout(toolbar, model);
-    let source_line_maps = display_lines
-        .iter()
-        .enumerate()
-        .filter_map(|(document_line, line)| {
-            let boundaries = display_line_source_boundaries(line);
-            (!boundaries.is_empty()).then_some(EditorSourceLineMap {
-                document_line,
-                boundaries,
+    let rich_line_maps = if model.mode == EditorMode::Rich {
+        prepared_lines
+            .iter()
+            .enumerate()
+            .filter_map(|(relative_line, line)| {
+                let horizontal_start = usize::from(line.no_wrap).saturating_mul(horizontal_scroll);
+                let boundaries = display_line_rich_boundaries(
+                    line,
+                    model.source.as_deref(),
+                    horizontal_start,
+                    usize::from(canvas.width),
+                );
+                (!boundaries.is_empty()).then_some(EditorRichLineMap {
+                    document_line: visible_start.saturating_add(relative_line),
+                    boundaries,
+                })
             })
-        })
-        .collect();
-    let rich_line_maps = display_lines
-        .iter()
-        .enumerate()
-        .filter_map(|(document_line, line)| {
-            let boundaries = display_line_rich_boundaries(line);
-            (!boundaries.is_empty()).then_some(EditorRichLineMap {
-                document_line,
-                boundaries,
+            .collect::<Vec<_>>()
+    } else {
+        Vec::new()
+    };
+    // Source maps are authoritative in Source mode. Rich mode retains the
+    // legacy source-backed fallback only when no logical Rich mapping exists.
+    let source_line_maps = if model.mode == EditorMode::Source || rich_line_maps.is_empty() {
+        prepared_lines
+            .iter()
+            .enumerate()
+            .filter_map(|(relative_line, line)| {
+                let horizontal_start =
+                    usize::from(model.mode == EditorMode::Source || line.no_wrap)
+                        .saturating_mul(horizontal_scroll);
+                let boundaries = display_line_source_boundaries(
+                    line,
+                    model.source.as_deref(),
+                    horizontal_start,
+                    usize::from(canvas.width),
+                );
+                (!boundaries.is_empty()).then_some(EditorSourceLineMap {
+                    document_line: visible_start.saturating_add(relative_line),
+                    boundaries,
+                })
             })
-        })
-        .collect();
+            .collect::<Vec<_>>()
+    } else {
+        Vec::new()
+    };
 
     EditorLayout {
         mode: model.mode,
@@ -1219,14 +1430,17 @@ pub fn editor_layout(area: Rect, model: &EditorViewModel) -> EditorLayout {
         table_edge_handles,
         table_resize_handles,
         vertical_scrollbar,
+        horizontal_scrollbar,
         visible_start,
         visible_capacity,
         document_line_count,
-        horizontal_scroll: model.horizontal_scroll,
+        horizontal_scroll,
         toolbar_overflow,
         canvas_framed,
         source_line_maps,
         rich_line_maps,
+        prepared_lines,
+        prepared_start: visible_start,
     }
 }
 
@@ -1251,12 +1465,32 @@ pub fn render_editor(
     layout
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 struct DisplayRun {
-    text: String,
+    text: DisplayText,
     style: EditorRenderSpan,
     source: DisplaySource,
     rich: DisplayRich,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum DisplayText {
+    Owned(String),
+    Shared(Arc<str>),
+    /// A zero-copy slice of `EditorViewModel::source`.
+    SourceRange(EditorSourceRange),
+}
+
+impl DisplayText {
+    fn resolve<'a>(&'a self, source: Option<&'a str>) -> &'a str {
+        match self {
+            Self::Owned(text) => text,
+            Self::Shared(text) => text,
+            Self::SourceRange(range) => source
+                .and_then(|source| source.get(range.start..range.end))
+                .unwrap_or_default(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1276,7 +1510,7 @@ enum DisplayRich {
 impl DisplayRun {
     fn unmapped(text: impl Into<String>, style: EditorRenderSpan) -> Self {
         Self {
-            text: text.into(),
+            text: DisplayText::Owned(text.into()),
             style,
             source: DisplaySource::Unmapped,
             rich: DisplayRich::Unmapped,
@@ -1289,11 +1523,29 @@ impl DisplayRun {
         byte_offset: Option<usize>,
     ) -> Self {
         Self {
-            text: text.into(),
+            text: DisplayText::Owned(text.into()),
             style,
             source: byte_offset
                 .map(DisplaySource::Virtual)
                 .unwrap_or(DisplaySource::Unmapped),
+            rich: DisplayRich::Unmapped,
+        }
+    }
+
+    fn source_range(range: EditorSourceRange) -> Self {
+        Self {
+            text: DisplayText::SourceRange(range),
+            style: EditorRenderSpan::plain(""),
+            source: DisplaySource::Range(range),
+            rich: DisplayRich::Unmapped,
+        }
+    }
+
+    fn shared_source(text: Arc<str>, range: EditorSourceRange) -> Self {
+        Self {
+            text: DisplayText::Shared(text),
+            style: EditorRenderSpan::plain(""),
+            source: DisplaySource::Range(range),
             rich: DisplayRich::Unmapped,
         }
     }
@@ -1318,11 +1570,14 @@ impl DisplayRun {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 struct DisplayLine {
     runs: Vec<DisplayRun>,
     block_index: Option<usize>,
     no_wrap: bool,
+    /// Absolute display column of the first run. Non-zero only for a
+    /// horizontally clipped Source viewport.
+    column_start: usize,
 }
 
 fn render_menu_bar(
@@ -1525,9 +1780,12 @@ fn render_canvas(
         return;
     }
 
-    let display_lines = flatten_document(model, usize::from(layout.canvas.width.max(1)));
     for line_layout in &layout.line_areas {
-        let Some(display_line) = display_lines.get(line_layout.document_line) else {
+        let Some(display_line) = layout.prepared_lines.get(
+            line_layout
+                .document_line
+                .saturating_sub(layout.prepared_start),
+        ) else {
             continue;
         };
         let line = styled_line(
@@ -1559,17 +1817,35 @@ fn render_canvas(
         }
     }
 
+    if let Some(scrollbar) = layout.horizontal_scrollbar {
+        for x in scrollbar.track.x..scrollbar.track.right() {
+            frame.render_widget(
+                Paragraph::new("─").style(theme.muted_style()),
+                Rect::new(x, scrollbar.track.y, 1, 1),
+            );
+        }
+        for x in scrollbar.thumb.x..scrollbar.thumb.right() {
+            frame.render_widget(
+                Paragraph::new("█").style(Style::default().fg(theme.accent)),
+                Rect::new(x, scrollbar.thumb.y, 1, 1),
+            );
+        }
+    }
+
     if model.focus == EditorFocus::Canvas
         && let Some(cursor) = effective_cursor(layout, model)
         && cursor.line >= layout.visible_start
         && cursor.line < layout.visible_start.saturating_add(layout.visible_capacity)
     {
-        let horizontal_scroll = display_lines
-            .get(cursor.line)
+        let horizontal_scroll = layout
+            .prepared_lines
+            .get(cursor.line.saturating_sub(layout.prepared_start))
             .filter(|line| model.mode == EditorMode::Source || line.no_wrap)
-            .map_or(0, |_| model.horizontal_scroll);
-        let cursor_column = cursor.column.saturating_sub(horizontal_scroll);
-        if cursor_column < usize::from(layout.canvas.width) {
+            .map_or(0, |_| layout.horizontal_scroll);
+        if cursor.column >= horizontal_scroll
+            && cursor.column.saturating_sub(horizontal_scroll) < usize::from(layout.canvas.width)
+        {
+            let cursor_column = cursor.column - horizontal_scroll;
             frame.set_cursor_position((
                 layout.canvas.x.saturating_add(to_u16(cursor_column)),
                 layout
@@ -1619,7 +1895,7 @@ fn render_status_bar(
             "Ready"
         });
     let left = if model.reload_available {
-        format!("{left} · F5 Reload")
+        format!("{left} · R Reload")
     } else {
         left.to_string()
     };
@@ -1665,17 +1941,31 @@ fn styled_line(
     width: usize,
 ) -> Line<'static> {
     let scroll = if model.mode == EditorMode::Source || line.no_wrap {
-        model.horizontal_scroll
+        layout.horizontal_scroll
     } else {
         0
     };
     let mut output = Vec::new();
-    let mut column = 0usize;
+    let mut column = line.column_start;
     let mut visible_width = 0usize;
     for run in &line.runs {
         let base_style = span_style(&run.style, theme);
-        let run_span = Span::raw(run.text.clone());
+        let run_text = run.text.resolve(model.source.as_deref());
+        let run_span = Span::raw(run_text);
+        let mut relative_byte = 0usize;
+        let mut relative_grapheme = 0usize;
         for grapheme in run_span.styled_graphemes(Style::default()) {
+            let grapheme_start = relative_byte;
+            relative_byte = relative_byte.saturating_add(grapheme.symbol.len());
+            let grapheme_source = display_source_for_segment(
+                run.source,
+                run_text.len(),
+                grapheme_start,
+                relative_byte,
+            );
+            let grapheme_rich =
+                display_rich_for_grapheme(run.rich, relative_grapheme, relative_grapheme + 1);
+            relative_grapheme = relative_grapheme.saturating_add(1);
             let safe = terminal_safe_text(grapheme.symbol).into_owned();
             let cell_width = Span::raw(safe.as_str()).width().max(1);
             let start = column;
@@ -1700,7 +1990,9 @@ fn styled_line(
                                 .is_some_and(|selection| selection.contains(position))
                         }
                     },
-                    |selection| rich_run_is_selected(run, layout, selection, position),
+                    |selection| {
+                        rich_mapping_is_selected(grapheme_rich, layout, selection, position)
+                    },
                 ),
                 EditorMode::Source => model.selection_offsets.map_or_else(
                     || {
@@ -1708,7 +2000,7 @@ fn styled_line(
                             .selection
                             .is_some_and(|selection| selection.contains(position))
                     },
-                    |selection| source_run_is_selected(run, selection),
+                    |selection| source_mapping_is_selected(grapheme_source, selection),
                 ),
             };
             let style = if selected {
@@ -1752,13 +2044,13 @@ fn effective_cursor(layout: &EditorLayout, model: &EditorViewModel) -> Option<Ed
     }
 }
 
-fn rich_run_is_selected(
-    run: &DisplayRun,
+fn rich_mapping_is_selected(
+    mapping: DisplayRich,
     layout: &EditorLayout,
     selection: RichRange,
     visual: EditorTextPosition,
 ) -> bool {
-    if selection.is_empty() || !matches!(run.rich, DisplayRich::Range(_)) {
+    if selection.is_empty() || !matches!(mapping, DisplayRich::Range(_)) {
         return false;
     }
     let Some(anchor) = layout.visual_position_for_rich(selection.start) else {
@@ -1776,11 +2068,15 @@ fn rich_run_is_selected(
 }
 
 fn source_run_is_selected(run: &DisplayRun, selection: EditorSourceSelection) -> bool {
+    source_mapping_is_selected(run.source, selection)
+}
+
+fn source_mapping_is_selected(mapping: DisplaySource, selection: EditorSourceSelection) -> bool {
     let selected = selection.normalized();
     if selected.is_empty() {
         return false;
     }
-    match run.source {
+    match mapping {
         DisplaySource::Range(range) => range.start < selected.end && selected.start < range.end,
         DisplaySource::Unmapped | DisplaySource::Virtual(_) => false,
     }
@@ -1813,45 +2109,220 @@ fn span_style(span: &EditorRenderSpan, theme: &TundraTheme) -> Style {
     style
 }
 
-fn flatten_document(model: &EditorViewModel, width: usize) -> Vec<DisplayLine> {
-    let width = width.max(1);
-    if model.mode == EditorMode::Source {
-        let mut lines = if let Some(source) = model.source.as_deref() {
-            source_display_line_ranges(source)
-                .into_iter()
-                .map(|range| DisplayLine {
-                    runs: mapped_text_runs(
-                        source.get(range.start..range.end).unwrap_or_default(),
-                        EditorRenderSpan::plain(""),
-                        Some(range),
-                        Some(source),
-                    ),
-                    block_index: None,
-                    no_wrap: true,
-                })
-                .collect::<Vec<_>>()
-        } else {
-            model
-                .source_lines
-                .iter()
-                .map(|line| DisplayLine {
-                    runs: vec![DisplayRun::unmapped(
-                        line.clone(),
-                        EditorRenderSpan::plain(""),
-                    )],
-                    block_index: None,
-                    no_wrap: true,
-                })
-                .collect::<Vec<_>>()
-        };
-        if lines.is_empty() {
-            lines.push(empty_display_line(None));
-        }
-        return lines;
+/// Returns whether the Rich document fits without a vertical scrollbar.
+///
+/// This mirrors the line-counting semantics of [`block_lines`] without
+/// constructing `DisplayRun`s. Wrapped blocks stop as soon as the supplied
+/// height is exceeded, so a large document normally measures only a bounded
+/// prefix before being flattened once at the final canvas width.
+fn rich_document_fits_height(model: &EditorViewModel, width: usize, height: usize) -> bool {
+    let blocks = model.render_blocks();
+    if blocks.is_empty() {
+        return height >= 1;
     }
 
+    let width = width.max(1);
+    let mut line_count = 0usize;
+    for block in blocks {
+        let remaining = height.saturating_sub(line_count);
+        let Some(block_line_count) = rich_block_line_count_up_to(block, width, remaining) else {
+            return false;
+        };
+        line_count = line_count.saturating_add(block_line_count);
+    }
+    line_count <= height
+}
+
+fn rich_block_line_count_up_to(
+    block: &EditorRenderBlock,
+    width: usize,
+    limit: usize,
+) -> Option<usize> {
+    match block {
+        EditorRenderBlock::Paragraph(spans) | EditorRenderBlock::Heading { spans, .. } => {
+            wrapped_line_count_up_to("", spans, width, limit)
+        }
+        EditorRenderBlock::BulletListItem {
+            depth,
+            checked,
+            spans,
+        } => {
+            let marker = match checked {
+                Some(true) => "☒ ",
+                Some(false) => "☐ ",
+                None => "• ",
+            };
+            let prefix = format!("{}{}", "  ".repeat(usize::from(*depth)), marker);
+            wrapped_line_count_up_to(&prefix, spans, width, limit)
+        }
+        EditorRenderBlock::OrderedListItem {
+            depth,
+            number,
+            spans,
+        } => {
+            let prefix = format!("{}{}. ", "  ".repeat(usize::from(*depth)), number);
+            wrapped_line_count_up_to(&prefix, spans, width, limit)
+        }
+        EditorRenderBlock::Quote { depth, spans } => {
+            let prefix = "│ ".repeat(usize::from((*depth).max(1)));
+            wrapped_line_count_up_to(&prefix, spans, width, limit)
+        }
+        EditorRenderBlock::Footnote { label, spans } => {
+            let prefix = format!("[^{label}] ");
+            wrapped_line_count_up_to(&prefix, spans, width, limit)
+        }
+        EditorRenderBlock::CodeBlock { lines, .. } => {
+            fixed_line_count_up_to(lines.len().saturating_add(2), limit)
+        }
+        EditorRenderBlock::Table { header, rows, .. }
+        | EditorRenderBlock::RichTable { header, rows, .. } => {
+            let has_columns = !header.is_empty() || rows.iter().any(|row| !row.is_empty());
+            let line_count = if !has_columns {
+                1
+            } else {
+                rows.len()
+                    .saturating_add(2)
+                    .saturating_add(usize::from(!header.is_empty()).saturating_mul(2))
+            };
+            fixed_line_count_up_to(line_count, limit)
+        }
+        EditorRenderBlock::HorizontalRule
+        | EditorRenderBlock::RawHtml(_)
+        | EditorRenderBlock::Image { .. }
+        | EditorRenderBlock::Blank => fixed_line_count_up_to(1, limit),
+    }
+}
+
+fn fixed_line_count_up_to(line_count: usize, limit: usize) -> Option<usize> {
+    (line_count <= limit).then_some(line_count)
+}
+
+/// Counts the lines produced by [`wrap_runs`] without creating one owned
+/// `DisplayRun` per grapheme. `None` means the count exceeded `limit`.
+fn wrapped_line_count_up_to(
+    prefix: &str,
+    spans: &[EditorRenderSpan],
+    width: usize,
+    limit: usize,
+) -> Option<usize> {
+    let prefix_width = Span::raw(terminal_safe_text(prefix)).width();
+    let mut measure = WrappedLineMeasure {
+        width,
+        limit,
+        prefix_width,
+        line_count: 0,
+        current_width: prefix_width,
+        current_has_runs: !prefix.is_empty(),
+        continuation_has_runs: prefix_width > 0,
+    };
+
+    for span in spans {
+        // `mapped_text_runs` emits one empty run for an empty span. It affects
+        // whether a final empty visual line exists even though it has no width.
+        if span.text.is_empty() {
+            measure.current_has_runs = true;
+            continue;
+        }
+
+        let bytes = span.text.as_bytes();
+        let mut segment_start = 0usize;
+        let mut index = 0usize;
+        while index < bytes.len() {
+            let newline_len = match bytes[index] {
+                b'\r' if bytes.get(index + 1) == Some(&b'\n') => 2,
+                b'\r' | b'\n' => 1,
+                _ => {
+                    index += 1;
+                    continue;
+                }
+            };
+            if !measure.push_segment(&span.text[segment_start..index]) {
+                return None;
+            }
+            let mapped_boundary = span.source_range.is_some() || span.rich_range.is_some();
+            if !measure.push_newline(mapped_boundary) {
+                return None;
+            }
+            index += newline_len;
+            segment_start = index;
+        }
+        if !measure.push_segment(&span.text[segment_start..]) {
+            return None;
+        }
+    }
+
+    measure.finish()
+}
+
+struct WrappedLineMeasure {
+    width: usize,
+    limit: usize,
+    prefix_width: usize,
+    line_count: usize,
+    current_width: usize,
+    current_has_runs: bool,
+    continuation_has_runs: bool,
+}
+
+impl WrappedLineMeasure {
+    fn push_segment(&mut self, segment: &str) -> bool {
+        if segment.is_empty() {
+            return true;
+        }
+        let span = Span::raw(segment);
+        for grapheme in span.styled_graphemes(Style::default()) {
+            let run_width = Span::raw(terminal_safe_text(grapheme.symbol)).width();
+            if self.current_width > self.prefix_width
+                && self.current_width.saturating_add(run_width) > self.width
+                && !self.push_line()
+            {
+                return false;
+            }
+            self.current_width = self.current_width.saturating_add(run_width);
+            self.current_has_runs = true;
+        }
+        true
+    }
+
+    fn push_newline(&mut self, mapped_boundary: bool) -> bool {
+        if !self.push_line() {
+            return false;
+        }
+        self.current_width = self.prefix_width;
+        self.current_has_runs = self.continuation_has_runs || mapped_boundary;
+        true
+    }
+
+    fn push_line(&mut self) -> bool {
+        self.line_count = self.line_count.saturating_add(1);
+        if self.line_count > self.limit {
+            return false;
+        }
+        self.current_width = self.prefix_width;
+        self.current_has_runs = self.continuation_has_runs;
+        true
+    }
+
+    fn finish(mut self) -> Option<usize> {
+        if (self.current_has_runs || self.line_count == 0) && !self.push_line() {
+            return None;
+        }
+        Some(self.line_count)
+    }
+}
+
+#[cfg(test)]
+std::thread_local! {
+    static RICH_FLATTEN_CALL_COUNT: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+fn flatten_rich_document(model: &EditorViewModel, width: usize) -> Vec<DisplayLine> {
+    #[cfg(test)]
+    RICH_FLATTEN_CALL_COUNT.with(|count| count.set(count.get().saturating_add(1)));
+
+    let width = width.max(1);
     let mut output = Vec::new();
-    for (block_index, block) in model.blocks.iter().enumerate() {
+    for (block_index, block) in model.render_blocks().iter().enumerate() {
         let table_widths = model.table_widths_for_block(block_index, block.table_id());
         let lines = block_lines(
             block,
@@ -1880,11 +2351,11 @@ fn block_lines(
     let anchor = block_source.map(EditorBlockSourceMap::anchor);
     match block {
         EditorRenderBlock::Paragraph(spans) => {
-            wrap_runs(Vec::new(), spans.clone(), width, block_index, false, source)
+            wrap_runs(Vec::new(), spans, width, block_index, false, source)
         }
         EditorRenderBlock::Heading { level, spans } => {
             let level = (*level).clamp(1, 6);
-            let styled = spans
+            let styled: Vec<_> = spans
                 .iter()
                 .cloned()
                 .map(|mut span| {
@@ -1895,7 +2366,7 @@ fn block_lines(
                     span
                 })
                 .collect();
-            wrap_runs(Vec::new(), styled, width, block_index, false, source)
+            wrap_runs(Vec::new(), &styled, width, block_index, false, source)
         }
         EditorRenderBlock::BulletListItem {
             depth,
@@ -1910,7 +2381,7 @@ fn block_lines(
             let prefix = format!("{}{}", "  ".repeat(usize::from(*depth)), marker);
             wrap_runs(
                 vec![DisplayRun::virtual_text(prefix, accent_span(), anchor)],
-                spans.clone(),
+                spans,
                 width,
                 block_index,
                 false,
@@ -1925,7 +2396,7 @@ fn block_lines(
             let prefix = format!("{}{}. ", "  ".repeat(usize::from(*depth)), number);
             wrap_runs(
                 vec![DisplayRun::virtual_text(prefix, accent_span(), anchor)],
-                spans.clone(),
+                spans,
                 width,
                 block_index,
                 false,
@@ -1934,7 +2405,7 @@ fn block_lines(
         }
         EditorRenderBlock::Quote { depth, spans } => {
             let prefix = "│ ".repeat(usize::from((*depth).max(1)));
-            let quote_spans = spans
+            let quote_spans: Vec<_> = spans
                 .iter()
                 .cloned()
                 .map(|mut span| {
@@ -1944,7 +2415,7 @@ fn block_lines(
                 .collect();
             wrap_runs(
                 vec![DisplayRun::virtual_text(prefix, accent_span(), anchor)],
-                quote_spans,
+                &quote_spans,
                 width,
                 block_index,
                 false,
@@ -1961,6 +2432,7 @@ fn block_lines(
                 )],
                 block_index: Some(block_index),
                 no_wrap: true,
+                column_start: 0,
             }];
             let line_ranges = code_line_source_ranges(lines, block_source, source);
             output.extend(lines.iter().enumerate().map(|(index, line)| {
@@ -1977,6 +2449,7 @@ fn block_lines(
                     runs,
                     block_index: Some(block_index),
                     no_wrap: true,
+                    column_start: 0,
                 }
             }));
             let end_anchor = block_source
@@ -1987,6 +2460,7 @@ fn block_lines(
                 runs: vec![DisplayRun::virtual_text("└─", accent_span(), end_anchor)],
                 block_index: Some(block_index),
                 no_wrap: true,
+                column_start: 0,
             });
             output
         }
@@ -2017,6 +2491,7 @@ fn block_lines(
             )],
             block_index: Some(block_index),
             no_wrap: true,
+            column_start: 0,
         }],
         EditorRenderBlock::RawHtml(html) => {
             let mut runs = vec![DisplayRun::virtual_text("HTML ", warning_span(), anchor)];
@@ -2030,6 +2505,7 @@ fn block_lines(
                 runs,
                 block_index: Some(block_index),
                 no_wrap: true,
+                column_start: 0,
             }]
         }
         EditorRenderBlock::Image { markdown } => vec![DisplayLine {
@@ -2041,6 +2517,7 @@ fn block_lines(
             ),
             block_index: Some(block_index),
             no_wrap: true,
+            column_start: 0,
         }],
         EditorRenderBlock::Footnote { label, spans } => wrap_runs(
             vec![DisplayRun::virtual_text(
@@ -2048,7 +2525,7 @@ fn block_lines(
                 accent_span(),
                 anchor,
             )],
-            spans.clone(),
+            spans,
             width,
             block_index,
             false,
@@ -2221,6 +2698,7 @@ fn table_row_line(
         runs,
         block_index: Some(block_index),
         no_wrap: true,
+        column_start: 0,
     }
 }
 
@@ -2270,6 +2748,7 @@ fn table_border_line(
         runs,
         block_index: Some(block_index),
         no_wrap: true,
+        column_start: 0,
     }
 }
 
@@ -2289,7 +2768,7 @@ fn table_padding(
 ) -> DisplayRun {
     match byte_offset {
         Some(byte_offset) => DisplayRun {
-            text,
+            text: DisplayText::Owned(text),
             style: table_span(header),
             source: DisplaySource::Range(EditorSourceRange::new(byte_offset, byte_offset)),
             rich: rich_position
@@ -2402,7 +2881,7 @@ fn table_resize_handles(
 ) -> Vec<EditorTableResizeHandle> {
     let mut handles = Vec::new();
     for block_area in block_areas {
-        let Some(block) = model.blocks.get(block_area.block_index) else {
+        let Some(block) = model.render_blocks().get(block_area.block_index) else {
             continue;
         };
         let (table_id, header, rows) = match block {
@@ -2454,7 +2933,7 @@ fn table_edge_handles(
 ) -> Vec<EditorTableEdgeHandle> {
     let mut handles = Vec::new();
     for block_area in block_areas {
-        let Some(block) = model.blocks.get(block_area.block_index) else {
+        let Some(block) = model.render_blocks().get(block_area.block_index) else {
             continue;
         };
         let (table_id, header, rows) = match block {
@@ -2518,7 +2997,7 @@ fn table_edge_handles(
 
 fn wrap_runs(
     prefix: Vec<DisplayRun>,
-    spans: Vec<EditorRenderSpan>,
+    spans: &[EditorRenderSpan],
     width: usize,
     block_index: usize,
     no_wrap: bool,
@@ -2555,7 +3034,7 @@ fn wrap_runs(
     for span in spans {
         let span_range = span.source_range;
         for run in mapped_text_runs(&span.text, span.clone(), span_range, source) {
-            if is_display_newline(&run.text) {
+            if is_display_newline(run.text.resolve(source)) {
                 let before = display_run_start(&run);
                 let rich_before = display_run_rich_start(&run);
                 if before.is_some() || rich_before.is_some() {
@@ -2568,6 +3047,7 @@ fn wrap_runs(
                     runs: std::mem::take(&mut current),
                     block_index: Some(block_index),
                     no_wrap,
+                    column_start: 0,
                 });
                 current = continuation_prefix.clone();
                 let after = display_run_end(&run);
@@ -2587,6 +3067,7 @@ fn wrap_runs(
                     runs: std::mem::take(&mut current),
                     block_index: Some(block_index),
                     no_wrap,
+                    column_start: 0,
                 });
                 current = continuation_prefix.clone();
                 current_width = prefix_width;
@@ -2600,6 +3081,7 @@ fn wrap_runs(
             runs: current,
             block_index: Some(block_index),
             no_wrap,
+            column_start: 0,
         });
     }
     lines
@@ -2997,6 +3479,36 @@ fn scrollbar_layout(
     }
 }
 
+fn horizontal_scrollbar_layout(
+    track: Rect,
+    content_total: usize,
+    start: usize,
+    capacity: usize,
+) -> EditorScrollbarLayout {
+    // A viewport-only Source window has already been clipped at `start` by
+    // the caller. Keep that raw offset authoritative even if content metadata
+    // is temporarily stale, while still keeping the thumb within its track.
+    let total = content_total.max(start.saturating_add(capacity));
+    let track_width = usize::from(track.width);
+    let thumb_width = max(1, track_width.saturating_mul(capacity) / total.max(1));
+    let max_start = total.saturating_sub(capacity);
+    let max_offset = track_width.saturating_sub(thumb_width);
+    let offset = if max_start == 0 {
+        0
+    } else {
+        max_offset.saturating_mul(start) / max_start
+    };
+    EditorScrollbarLayout {
+        track,
+        thumb: Rect::new(
+            track.x.saturating_add(to_u16(offset)),
+            track.y,
+            to_u16(thumb_width),
+            1,
+        ),
+    }
+}
+
 fn cell_text(cell: &EditorTableCell) -> String {
     cell.spans
         .iter()
@@ -3022,7 +3534,7 @@ fn runs_width(runs: &[DisplayRun]) -> usize {
 }
 
 fn display_run_width(run: &DisplayRun) -> usize {
-    Span::raw(terminal_safe_text(&run.text)).width()
+    Span::raw(terminal_safe_text(run.text.resolve(None))).width()
 }
 
 fn display_run_anchor(run: &DisplayRun) -> Option<usize> {
@@ -3034,11 +3546,23 @@ fn display_run_anchor(run: &DisplayRun) -> Option<usize> {
 }
 
 fn display_run_start(run: &DisplayRun) -> Option<usize> {
-    display_run_anchor(run)
+    display_source_start(run.source)
 }
 
 fn display_run_end(run: &DisplayRun) -> Option<usize> {
-    match run.source {
+    display_source_end(run.source)
+}
+
+fn display_source_start(mapping: DisplaySource) -> Option<usize> {
+    match mapping {
+        DisplaySource::Unmapped => None,
+        DisplaySource::Range(range) => Some(range.start),
+        DisplaySource::Virtual(offset) => Some(offset),
+    }
+}
+
+fn display_source_end(mapping: DisplaySource) -> Option<usize> {
+    match mapping {
         DisplaySource::Unmapped => None,
         DisplaySource::Range(range) => Some(range.end),
         DisplaySource::Virtual(offset) => Some(offset),
@@ -3109,7 +3633,7 @@ fn mapped_text_runs(
     if runs.is_empty() {
         let rich = empty_rich_mapping(style.rich_range);
         runs.push(DisplayRun {
-            text: String::new(),
+            text: DisplayText::Owned(String::new()),
             style,
             source: exact
                 .map(DisplaySource::Range)
@@ -3172,7 +3696,7 @@ fn push_mapped_text_run(
         (None, None) => DisplaySource::Unmapped,
     };
     runs.push(DisplayRun {
-        text: text.to_owned(),
+        text: DisplayText::Owned(text.to_owned()),
         style: style.clone(),
         source,
         rich: rich_mapping(style.rich_range, grapheme_start, grapheme_end),
@@ -3216,11 +3740,68 @@ fn rich_mapping(
     ))
 }
 
-fn display_line_source_boundaries(line: &DisplayLine) -> Vec<EditorSourceBoundary> {
+fn display_source_for_segment(
+    mapping: DisplaySource,
+    text_len: usize,
+    relative_start: usize,
+    relative_end: usize,
+) -> DisplaySource {
+    match mapping {
+        DisplaySource::Range(range)
+            if range.end.saturating_sub(range.start) == text_len
+                && relative_start <= relative_end =>
+        {
+            DisplaySource::Range(EditorSourceRange::new(
+                range.start.saturating_add(relative_start).min(range.end),
+                range.start.saturating_add(relative_end).min(range.end),
+            ))
+        }
+        mapping => mapping,
+    }
+}
+
+fn display_rich_for_grapheme(
+    mapping: DisplayRich,
+    relative_start: usize,
+    relative_end: usize,
+) -> DisplayRich {
+    match mapping {
+        DisplayRich::Range(range)
+            if range.start.container_id == range.end.container_id
+                && range
+                    .end
+                    .grapheme_offset
+                    .saturating_sub(range.start.grapheme_offset)
+                    >= relative_end =>
+        {
+            DisplayRich::Range(RichRange::between(
+                RichPosition::in_node(
+                    range.start.container_id,
+                    range.start.grapheme_offset.saturating_add(relative_start),
+                ),
+                RichPosition::in_node(
+                    range.start.container_id,
+                    range.start.grapheme_offset.saturating_add(relative_end),
+                ),
+            ))
+        }
+        mapping => mapping,
+    }
+}
+
+fn display_line_source_boundaries(
+    line: &DisplayLine,
+    source: Option<&str>,
+    horizontal_start: usize,
+    width: usize,
+) -> Vec<EditorSourceBoundary> {
     let mut boundaries = Vec::new();
-    let mut column = 0usize;
+    let mut fallback_boundary = None;
+    let mut column = line.column_start;
+    let horizontal_end = horizontal_start.saturating_add(width);
     for run in &line.runs {
-        if run.text.is_empty() {
+        let text = run.text.resolve(source);
+        if text.is_empty() {
             if let Some(offset) = display_run_start(run) {
                 push_source_boundary(
                     &mut boundaries,
@@ -3239,36 +3820,69 @@ fn display_line_source_boundaries(line: &DisplayLine) -> Vec<EditorSourceBoundar
             }
             continue;
         }
-        let span = Span::raw(run.text.clone());
+        let span = Span::raw(text);
+        let mut relative_byte = 0usize;
         for grapheme in span.styled_graphemes(Style::default()) {
-            if let Some(offset) = display_run_start(run) {
+            let relative_start = relative_byte;
+            relative_byte = relative_byte.saturating_add(grapheme.symbol.len());
+            let mapping =
+                display_source_for_segment(run.source, text.len(), relative_start, relative_byte);
+            let safe = terminal_safe_text(grapheme.symbol);
+            let next_column = column.saturating_add(Span::raw(safe).width().max(1));
+            let intersects = next_column >= horizontal_start && column <= horizontal_end;
+            if let Some(offset) = display_source_end(mapping) {
+                fallback_boundary = Some(EditorSourceBoundary {
+                    column: next_column,
+                    byte_offset: offset,
+                    editable: matches!(mapping, DisplaySource::Range(_)),
+                });
+            }
+            if intersects && let Some(offset) = display_source_start(mapping) {
                 push_source_boundary(
                     &mut boundaries,
                     column,
                     offset,
-                    matches!(run.source, DisplaySource::Range(_)),
+                    matches!(mapping, DisplaySource::Range(_)),
                 );
             }
-            let safe = terminal_safe_text(grapheme.symbol);
-            column = column.saturating_add(Span::raw(safe).width().max(1));
-            if let Some(offset) = display_run_end(run) {
+            column = next_column;
+            if intersects && let Some(offset) = display_source_end(mapping) {
                 push_source_boundary(
                     &mut boundaries,
                     column,
                     offset,
-                    matches!(run.source, DisplaySource::Range(_)),
+                    matches!(mapping, DisplaySource::Range(_)),
                 );
+            }
+            if column > horizontal_end {
+                break;
             }
         }
+        if column > horizontal_end {
+            break;
+        }
+    }
+    if boundaries.is_empty()
+        && let Some(boundary) = fallback_boundary
+    {
+        boundaries.push(boundary);
     }
     boundaries
 }
 
-fn display_line_rich_boundaries(line: &DisplayLine) -> Vec<EditorRichBoundary> {
+fn display_line_rich_boundaries(
+    line: &DisplayLine,
+    source: Option<&str>,
+    horizontal_start: usize,
+    width: usize,
+) -> Vec<EditorRichBoundary> {
     let mut boundaries = Vec::new();
-    let mut column = 0usize;
+    let mut fallback_boundary = None;
+    let mut column = line.column_start;
+    let horizontal_end = horizontal_start.saturating_add(width);
     for run in &line.runs {
-        if run.text.is_empty() {
+        let text = run.text.resolve(source);
+        if text.is_empty() {
             if let Some(position) = display_run_rich_start(run) {
                 push_rich_boundary(
                     &mut boundaries,
@@ -3287,33 +3901,64 @@ fn display_line_rich_boundaries(line: &DisplayLine) -> Vec<EditorRichBoundary> {
             }
             continue;
         }
-        let span = Span::raw(run.text.clone());
+        let span = Span::raw(text);
+        let mut relative_grapheme = 0usize;
         for grapheme in span.styled_graphemes(Style::default()) {
-            if let Some(position) = display_run_rich_start(run) {
+            let mapping = display_rich_for_grapheme(
+                run.rich,
+                relative_grapheme,
+                relative_grapheme.saturating_add(1),
+            );
+            relative_grapheme = relative_grapheme.saturating_add(1);
+            let safe = terminal_safe_text(grapheme.symbol);
+            let next_column = column.saturating_add(Span::raw(safe).width().max(1));
+            let intersects = next_column >= horizontal_start && column <= horizontal_end;
+            if let Some(position) = display_rich_end(mapping) {
+                fallback_boundary = Some(EditorRichBoundary {
+                    column: next_column,
+                    position,
+                    editable: matches!(mapping, DisplayRich::Range(_)),
+                });
+            }
+            if intersects && let Some(position) = display_rich_start(mapping) {
                 push_rich_boundary(
                     &mut boundaries,
                     column,
                     position,
-                    matches!(run.rich, DisplayRich::Range(_)),
+                    matches!(mapping, DisplayRich::Range(_)),
                 );
             }
-            let safe = terminal_safe_text(grapheme.symbol);
-            column = column.saturating_add(Span::raw(safe).width().max(1));
-            if let Some(position) = display_run_rich_end(run) {
+            column = next_column;
+            if intersects && let Some(position) = display_rich_end(mapping) {
                 push_rich_boundary(
                     &mut boundaries,
                     column,
                     position,
-                    matches!(run.rich, DisplayRich::Range(_)),
+                    matches!(mapping, DisplayRich::Range(_)),
                 );
+            }
+            if column > horizontal_end {
+                break;
             }
         }
+        if column > horizontal_end {
+            break;
+        }
+    }
+    if boundaries.is_empty()
+        && let Some(boundary) = fallback_boundary
+    {
+        boundaries.push(boundary);
     }
     boundaries
 }
 
 fn display_run_rich_start(run: &DisplayRun) -> Option<RichPosition> {
-    match run.rich {
+    display_rich_start(run.rich)
+}
+
+fn display_rich_start(mapping: DisplayRich) -> Option<RichPosition> {
+    match mapping {
         DisplayRich::Unmapped => None,
         DisplayRich::Range(range) => Some(range.start),
         DisplayRich::Virtual(position) => Some(position),
@@ -3321,7 +3966,11 @@ fn display_run_rich_start(run: &DisplayRun) -> Option<RichPosition> {
 }
 
 fn display_run_rich_end(run: &DisplayRun) -> Option<RichPosition> {
-    match run.rich {
+    display_rich_end(run.rich)
+}
+
+fn display_rich_end(mapping: DisplayRich) -> Option<RichPosition> {
+    match mapping {
         DisplayRich::Unmapped => None,
         DisplayRich::Range(range) => Some(range.end),
         DisplayRich::Virtual(position) => Some(position),
@@ -3553,16 +4202,112 @@ fn is_unsafe_format_character(character: char) -> bool {
     )
 }
 
-fn source_display_lines(source: &str) -> Vec<String> {
-    source_display_line_ranges(source)
-        .into_iter()
-        .map(|range| {
-            source
-                .get(range.start..range.end)
-                .unwrap_or_default()
-                .to_owned()
+fn source_document_line_count(model: &EditorViewModel) -> usize {
+    if let Some(window) = &model.source_window {
+        return window.total_line_count.max(1);
+    }
+    if let Some(ranges) = cached_source_line_ranges(model) {
+        return ranges.len().max(1);
+    }
+    model
+        .source
+        .as_deref()
+        .map(source_line_count)
+        .unwrap_or_else(|| model.source_lines.len().max(1))
+}
+
+fn source_display_lines_for_viewport(
+    model: &EditorViewModel,
+    start: usize,
+    end: usize,
+) -> Vec<DisplayLine> {
+    if let Some(window) = &model.source_window {
+        return (start..end)
+            .map(|document_line| {
+                document_line
+                    .checked_sub(window.first_line)
+                    .and_then(|relative| window.lines.get(relative))
+                    .map_or_else(
+                        || empty_display_line(None),
+                        |line| DisplayLine {
+                            runs: vec![DisplayRun::shared_source(
+                                Arc::clone(&line.text),
+                                line.visible_byte_range,
+                            )],
+                            block_index: None,
+                            no_wrap: true,
+                            column_start: line.start_column,
+                        },
+                    )
+            })
+            .collect();
+    }
+    if let Some(source) = model.source.as_deref() {
+        let fallback;
+        let ranges = if let Some(ranges) = cached_source_line_ranges(model) {
+            ranges
+        } else {
+            fallback = source_display_line_ranges(source);
+            &fallback
+        };
+        return ranges
+            .get(start.min(ranges.len())..end.min(ranges.len()))
+            .unwrap_or_default()
+            .iter()
+            .copied()
+            .map(|range| DisplayLine {
+                runs: vec![DisplayRun::source_range(range)],
+                block_index: None,
+                no_wrap: true,
+                column_start: 0,
+            })
+            .collect();
+    }
+
+    model
+        .source_lines
+        .get(start.min(model.source_lines.len())..end.min(model.source_lines.len()))
+        .unwrap_or_default()
+        .iter()
+        .map(|line| DisplayLine {
+            runs: vec![DisplayRun::unmapped(
+                line.clone(),
+                EditorRenderSpan::plain(""),
+            )],
+            block_index: None,
+            no_wrap: true,
+            column_start: 0,
         })
         .collect()
+}
+
+fn cached_source_line_ranges(model: &EditorViewModel) -> Option<&[EditorSourceRange]> {
+    let source = model.source.as_deref()?;
+    let ranges = model.source_line_ranges.as_slice();
+    let valid = !ranges.is_empty()
+        && ranges.first().is_some_and(|range| range.start == 0)
+        && ranges.last().is_some_and(|range| range.end == source.len());
+    valid.then_some(ranges)
+}
+
+fn source_line_count(source: &str) -> usize {
+    let bytes = source.as_bytes();
+    let mut lines = 1usize;
+    let mut index = 0usize;
+    while index < bytes.len() {
+        match bytes[index] {
+            b'\r' if bytes.get(index + 1) == Some(&b'\n') => {
+                lines = lines.saturating_add(1);
+                index += 2;
+            }
+            b'\r' | b'\n' => {
+                lines = lines.saturating_add(1);
+                index += 1;
+            }
+            _ => index += 1,
+        }
+    }
+    lines
 }
 
 fn source_display_line_ranges(source: &str) -> Vec<EditorSourceRange> {
@@ -3587,6 +4332,17 @@ fn source_display_line_ranges(source: &str) -> Vec<EditorSourceRange> {
     }
     lines.push(EditorSourceRange::new(start, source.len()));
     lines
+}
+
+fn source_horizontal_content_width(source: &str, ranges: &[EditorSourceRange]) -> usize {
+    ranges
+        .iter()
+        .filter_map(|range| source.get(range.start..range.end))
+        .map(|line| Span::raw(terminal_safe_text(line)).width())
+        .max()
+        .unwrap_or(0)
+        .saturating_add(1)
+        .max(1)
 }
 
 fn accent_span() -> EditorRenderSpan {
@@ -3624,6 +4380,7 @@ fn empty_display_line_at(block_index: Option<usize>, byte_offset: Option<usize>)
         )],
         block_index,
         no_wrap: false,
+        column_start: 0,
     }
 }
 
@@ -3647,6 +4404,132 @@ fn contains(area: Rect, x: u16, y: u16) -> bool {
 
 fn to_u16(value: usize) -> u16 {
     min(value, usize::from(u16::MAX)) as u16
+}
+
+#[cfg(test)]
+mod rich_layout_measurement_tests {
+    use super::*;
+
+    fn mapped(text: &str) -> EditorRenderSpan {
+        EditorRenderSpan::plain(text).with_rich_range(RichRange::new(
+            42,
+            0,
+            Span::raw(text).styled_graphemes(Style::default()).count(),
+        ))
+    }
+
+    fn representative_blocks() -> Vec<EditorRenderBlock> {
+        vec![
+            EditorRenderBlock::Paragraph(Vec::new()),
+            EditorRenderBlock::Paragraph(vec![EditorRenderSpan::plain("")]),
+            EditorRenderBlock::Paragraph(vec![EditorRenderSpan::plain(
+                "plain 好 e\u{301} 🙂 text that wraps",
+            )]),
+            EditorRenderBlock::Paragraph(vec![mapped("first\r\nsecond\rthird\n")]),
+            EditorRenderBlock::Heading {
+                level: 2,
+                spans: vec![mapped("a heading that wraps")],
+            },
+            EditorRenderBlock::BulletListItem {
+                depth: 2,
+                checked: Some(false),
+                spans: vec![mapped("task item with a continuation")],
+            },
+            EditorRenderBlock::OrderedListItem {
+                depth: 1,
+                number: 123,
+                spans: vec![mapped("ordered item")],
+            },
+            EditorRenderBlock::Quote {
+                depth: 2,
+                spans: vec![mapped("quoted text\nwith a break")],
+            },
+            EditorRenderBlock::Footnote {
+                label: "note".to_string(),
+                spans: vec![mapped("footnote body")],
+            },
+            EditorRenderBlock::CodeBlock {
+                language: Some("rust".to_string()),
+                lines: vec!["fn main() {}".to_string(), "// line 2".to_string()],
+            },
+            EditorRenderBlock::Table {
+                header: vec![EditorTableCell::text("A"), EditorTableCell::text("B")],
+                rows: vec![vec![
+                    EditorTableCell::text("one"),
+                    EditorTableCell::text("two"),
+                ]],
+                alignments: vec![EditorTableAlignment::Left, EditorTableAlignment::Right],
+            },
+            EditorRenderBlock::Table {
+                header: Vec::new(),
+                rows: Vec::new(),
+                alignments: Vec::new(),
+            },
+            EditorRenderBlock::HorizontalRule,
+            EditorRenderBlock::RawHtml("<div>raw\nhtml</div>".to_string()),
+            EditorRenderBlock::Image {
+                markdown: "![preview](image.png)".to_string(),
+            },
+            EditorRenderBlock::Blank,
+        ]
+    }
+
+    #[test]
+    fn bounded_measurement_matches_materialized_block_line_counts() {
+        for block in representative_blocks() {
+            for width in 1..=24 {
+                let expected = block_lines(&block, 0, width, None, None, None).len();
+                for limit in 0..=expected.saturating_add(1) {
+                    assert_eq!(
+                        rich_block_line_count_up_to(&block, width, limit),
+                        (expected <= limit).then_some(expected),
+                        "block={block:?}, width={width}, limit={limit}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn rich_scrollbar_layout_flattens_the_document_only_once() {
+        let blocks: Arc<[EditorRenderBlock]> = (0..10_000)
+            .map(|index| EditorRenderBlock::paragraph(format!("line {index}")))
+            .collect::<Vec<_>>()
+            .into();
+        let mut model = EditorViewModel::new_shared("large.md", blocks);
+        model.scroll_line = 5_000;
+
+        RICH_FLATTEN_CALL_COUNT.with(|count| count.set(0));
+        let layout = editor_layout(Rect::new(0, 0, 80, 12), &model);
+        let flatten_calls = RICH_FLATTEN_CALL_COUNT.with(std::cell::Cell::get);
+
+        assert_eq!(flatten_calls, 1);
+        assert_eq!(layout.document_line_count, 10_000);
+        assert_eq!(layout.visible_start, 5_000);
+        assert!(layout.vertical_scrollbar.is_some());
+        assert_eq!(layout.prepared_lines.len(), layout.visible_capacity);
+    }
+
+    #[test]
+    fn scrollbar_measurement_preserves_the_wide_layout_fixed_point() {
+        // At full width this is exactly one line. Reserving a scrollbar first
+        // would wrap it and incorrectly make the scrollbar self-fulfilling.
+        let fitting =
+            EditorViewModel::new("fit.md", vec![EditorRenderBlock::paragraph("x".repeat(20))]);
+        let fitting_layout = editor_layout(Rect::new(0, 0, 20, 4), &fitting);
+        assert_eq!(fitting_layout.canvas.width, 20);
+        assert_eq!(fitting_layout.document_line_count, 1);
+        assert!(fitting_layout.vertical_scrollbar.is_none());
+
+        let overflowing = EditorViewModel::new(
+            "overflow.md",
+            vec![EditorRenderBlock::paragraph("x".repeat(21))],
+        );
+        let overflowing_layout = editor_layout(Rect::new(0, 0, 20, 4), &overflowing);
+        assert_eq!(overflowing_layout.canvas.width, 19);
+        assert_eq!(overflowing_layout.document_line_count, 2);
+        assert!(overflowing_layout.vertical_scrollbar.is_some());
+    }
 }
 
 #[cfg(test)]
@@ -3809,5 +4692,144 @@ mod rich_newline_position_tests {
             .expect("second source line is hittable");
         assert_eq!(hit.position, EditorDocumentPosition::Source(after_newline));
         assert!(hit.editable);
+    }
+}
+
+#[cfg(test)]
+mod shared_rich_blocks_tests {
+    use super::*;
+
+    #[test]
+    fn shared_projection_is_authoritative_and_reused_by_layout() {
+        let blocks: Arc<[EditorRenderBlock]> = vec![
+            EditorRenderBlock::paragraph("shared paragraph"),
+            EditorRenderBlock::Image {
+                markdown: "![shared](preview.png)".to_string(),
+            },
+        ]
+        .into();
+        let retained = Arc::clone(&blocks);
+        let model = EditorViewModel::new_shared("shared.md", blocks);
+
+        assert!(model.blocks.is_empty());
+        assert!(Arc::ptr_eq(
+            model.shared_blocks.as_ref().expect("shared projection"),
+            &retained
+        ));
+        assert_eq!(model.render_blocks().len(), 2);
+        let layout = editor_layout(Rect::new(0, 0, 80, 14), &model);
+        assert_eq!(layout.document_line_count, 2);
+        assert_eq!(layout.image_areas.len(), 1);
+        assert_eq!(layout.image_areas[0].block_index, 1);
+    }
+}
+
+#[cfg(test)]
+mod source_virtualization_tests {
+    use super::*;
+
+    #[test]
+    fn coalesced_source_run_preserves_unicode_byte_boundaries() {
+        let source = "A好e\u{301}🙂";
+        let model = EditorViewModel::source("unicode.log", source);
+        let layout = editor_layout(Rect::new(0, 0, 60, 10), &model);
+
+        assert_eq!(layout.prepared_lines.len(), 1);
+        assert_eq!(layout.prepared_lines[0].runs.len(), 1);
+        assert_eq!(
+            layout.prepared_lines[0].runs[0].text,
+            DisplayText::SourceRange(EditorSourceRange::new(0, source.len()))
+        );
+        let boundaries = &layout.source_line_maps[0].boundaries;
+        assert!(
+            boundaries
+                .iter()
+                .any(|boundary| { boundary.column == 3 && boundary.byte_offset == "A好".len() })
+        );
+        assert!(boundaries.iter().any(|boundary| {
+            boundary.column == 4 && boundary.byte_offset == "A好e\u{301}".len()
+        }));
+        assert!(layout.rich_line_maps.is_empty());
+    }
+
+    #[test]
+    fn long_source_line_prepares_one_run_and_bounded_hit_boundaries() {
+        let source = "x".repeat(1_000_000);
+        let model = EditorViewModel::source("single-line.log", &source);
+        let layout = editor_layout(Rect::new(0, 0, 80, 12), &model);
+
+        assert_eq!(layout.document_line_count, 1);
+        assert_eq!(layout.prepared_lines.len(), 1);
+        assert_eq!(layout.prepared_lines[0].runs.len(), 1);
+        assert!(
+            layout.source_line_maps[0].boundaries.len()
+                <= usize::from(layout.canvas.width).saturating_add(2)
+        );
+    }
+
+    #[test]
+    fn many_source_lines_prepare_only_the_scrolled_viewport() {
+        let source = (0..100_000)
+            .map(|line| format!("line {line}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let mut model = EditorViewModel::source("many-lines.log", source);
+        model.scroll_line = 50_000;
+        let layout = editor_layout(Rect::new(0, 0, 80, 12), &model);
+
+        assert_eq!(layout.document_line_count, 100_000);
+        assert_eq!(layout.visible_start, 50_000);
+        assert_eq!(layout.prepared_lines.len(), layout.visible_capacity);
+        assert!(layout.prepared_lines.len() < 100_000);
+        assert_eq!(layout.source_line_maps.len(), layout.visible_capacity);
+        assert!(
+            layout
+                .prepared_lines
+                .iter()
+                .all(|line| line.runs.len() == 1)
+        );
+        assert_eq!(
+            layout
+                .source_line_maps
+                .first()
+                .map(|line| line.document_line),
+            Some(50_000)
+        );
+        assert!(layout.rich_line_maps.is_empty());
+    }
+
+    #[test]
+    fn viewport_only_source_keeps_global_lines_columns_and_byte_offsets() {
+        let first_line = 50_000;
+        let first_byte = 900_000;
+        let lines = (0..32)
+            .map(|relative| {
+                let text = if relative == 0 { "好x" } else { "row" };
+                let start = first_byte + relative * 16;
+                EditorSourceWindowLine::new(
+                    EditorSourceRange::new(start, start + text.len()),
+                    200,
+                    text,
+                )
+            })
+            .collect();
+        let mut model = EditorViewModel::source_viewport("window.log", first_line, 100_000, lines);
+        model.horizontal_scroll = 200;
+        model.horizontal_content_width = 400;
+        let layout = editor_layout(Rect::new(0, 0, 80, 12), &model);
+
+        assert_eq!(layout.document_line_count, 100_000);
+        assert_eq!(layout.visible_start, first_line);
+        assert_eq!(layout.prepared_lines.len(), layout.visible_capacity);
+        assert_eq!(layout.prepared_lines[0].column_start, 200);
+        assert!(matches!(
+            layout.prepared_lines[0].runs[0].text,
+            DisplayText::Shared(_)
+        ));
+        let hit = layout
+            .hit_test_source(layout.canvas.x + 2, layout.canvas.y)
+            .expect("window line remains globally addressable");
+        assert_eq!(hit.visual, EditorTextPosition::new(first_line, 202));
+        assert_eq!(hit.byte_offset, first_byte + "好".len());
     }
 }

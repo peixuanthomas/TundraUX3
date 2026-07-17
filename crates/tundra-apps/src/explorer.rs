@@ -21,6 +21,8 @@ use tundra_storage::{
     StorageError, StorageManager,
 };
 
+use crate::editor::is_log_document_path;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ExplorerLocation {
     Directory(PathBuf),
@@ -748,9 +750,10 @@ pub fn is_editor_document_path(path: &Path) -> bool {
         .extension()
         .and_then(|extension| extension.to_str())
         .unwrap_or_default();
-    ["md", "markdown", "mdown", "mkd", "txt"]
-        .iter()
-        .any(|candidate| extension.eq_ignore_ascii_case(candidate))
+    is_log_document_path(path)
+        || ["md", "markdown", "mdown", "mkd", "txt"]
+            .iter()
+            .any(|candidate| extension.eq_ignore_ascii_case(candidate))
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

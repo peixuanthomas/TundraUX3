@@ -3,7 +3,7 @@ mod clock_scheduler;
 use clock_scheduler::{
     ClockEntryKind as ScheduledClockEntryKind, ClockScheduler, ClockSchedulerError, DueEvent,
 };
-use tundra_apps::editor::EditorState;
+use tundra_apps::editor::{EditorState, is_log_document_path};
 use tundra_apps::explorer::{
     ExplorerCommand, ExplorerConflictAction, ExplorerController, ExplorerEffect,
     ExplorerOpenTarget, ExplorerState,
@@ -96,6 +96,7 @@ include!("account_workflows.rs");
 include!("clock_workflows.rs");
 include!("explorer_workflows.rs");
 include!("explorer_task_workflows.rs");
+include!("editor_task_workflows.rs");
 include!("editor_workflows.rs");
 include!("diagnostics_workflows.rs");
 include!("user_management_workflows.rs");

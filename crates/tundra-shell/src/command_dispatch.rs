@@ -32,9 +32,7 @@ impl ShellState {
         self.expire_login_password_visibility_at(received_at);
         let requests_shutdown = match &input {
             InputEvent::Shutdown => true,
-            InputEvent::Key(key) => {
-                key.is_ctrl_c() && self.active_screen() != ShellScreen::Editor
-            }
+            InputEvent::Key(key) => key.is_ctrl_c() && self.active_screen() != ShellScreen::Editor,
             _ => false,
         };
         if self.login_idle_tracking_active()
@@ -143,6 +141,44 @@ impl ShellState {
         self.last_routed_target = Some(routed.target);
         self.last_command = Some(routed.command.clone());
 
+        if self.editor_save_state.is_some()
+            && matches!(
+                &routed.command,
+                ShellCommand::Shutdown | ShellCommand::ConfirmExit | ShellCommand::PowerOff
+            )
+        {
+            let status = "Wait for the Editor save to finish before exiting";
+            self.editor_message = Some(status.to_string());
+            self.notify_status(status);
+            self.refresh_hit_map();
+            return ShellAction::Redraw;
+        }
+
+        let editor_task_busy = self.editor_load_state.is_some() || self.editor_save_state.is_some();
+        let changes_screen = matches!(
+            &routed.command,
+            ShellCommand::RequestExit
+                | ShellCommand::ActivateSelectedHomeEntry
+                | ShellCommand::ActivateHomeEntryAt(_, ClickKind::Double)
+                | ShellCommand::Logout
+                | ShellCommand::OpenExplorer
+                | ShellCommand::OpenEditor
+                | ShellCommand::OpenUserManagement
+                | ShellCommand::OpenClock
+                | ShellCommand::OpenDiagnostics
+        );
+        if editor_task_busy && changes_screen {
+            let status = if self.editor_save_state.is_some() {
+                "Wait for the Editor save to finish before switching applications"
+            } else {
+                "Press Esc to cancel loading before switching applications"
+            };
+            self.editor_message = Some(status.to_string());
+            self.notify_status(status);
+            self.refresh_hit_map();
+            return ShellAction::Redraw;
+        }
+
         match routed.command {
             ShellCommand::Shutdown => {
                 let _ = self.persist_editor_recovery_now(received_at);
@@ -155,6 +191,7 @@ impl ShellState {
                 self.advance_clock_background();
                 self.poll_explorer_background_tasks(platform);
                 self.drain_diagnostics_events();
+                self.poll_editor_background_tasks(platform);
                 self.persist_editor_recovery_if_due(received_at);
                 ShellAction::Redraw
             }

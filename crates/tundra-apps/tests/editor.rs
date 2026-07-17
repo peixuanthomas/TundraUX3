@@ -1,9 +1,12 @@
+use std::io::{self, Write};
 use std::path::PathBuf;
+
+use unicode_segmentation::UnicodeSegmentation;
 
 use tundra_apps::editor::{
     CursorMove, DocumentKind, EditorAccess, EditorCommand, EditorDocument, EditorEffect,
     EditorMode, EditorPosition, EditorState, FormatCommand, LineEnding, SaveSnapshot, Selection,
-    SourceRange, TableColumnEdge, TableColumnEdit,
+    SourceRange, TableColumnEdge, TableColumnEdit, is_log_document_path,
 };
 use tundra_apps::explorer::{
     EditorAwareOpenRouteResolver, ExplorerOpenRouteResolver, ExplorerOpenTarget,
@@ -80,7 +83,7 @@ fn utf8_bom_and_mixed_newlines_round_trip_without_normalization() {
         effects => panic!("expected save effect, got {effects:?}"),
     };
     assert_eq!(snapshot.revision, 0);
-    assert_eq!(snapshot.bytes, bytes);
+    assert_eq!(snapshot.to_bytes().unwrap(), bytes);
 }
 
 #[test]
@@ -88,6 +91,363 @@ fn invalid_utf8_is_rejected_without_lossy_decoding() {
     let error = EditorDocument::from_bytes(None, DocumentKind::PlainText, &[b'a', 0xff])
         .expect_err("invalid UTF-8 must be rejected");
     assert_eq!(error.valid_up_to, 1);
+}
+
+#[test]
+fn owned_bytes_open_preserves_utf8_and_bom_metadata() {
+    let document = EditorDocument::open_owned(
+        PathBuf::from("owned.log"),
+        b"\xEF\xBB\xBFalpha\r\nbeta".to_vec(),
+    )
+    .expect("valid owned UTF-8 document");
+    assert_eq!(document.source(), "alpha\r\nbeta");
+    assert!(document.metadata.utf8_bom);
+    assert_eq!(document.metadata.preferred_line_ending, LineEnding::CrLf);
+
+    let error = EditorDocument::from_owned_bytes(None, DocumentKind::PlainText, vec![b'a', 0xff])
+        .expect_err("invalid owned UTF-8 must be rejected");
+    assert_eq!(error.valid_up_to, 1);
+}
+
+#[test]
+fn source_viewport_access_materializes_only_requested_lines() {
+    let source = "zero\r\none\ntwo\rthree\n";
+    let editor =
+        EditorState::open_read_only_owned(PathBuf::from("app.log"), source.as_bytes().to_vec())
+            .expect("valid log document");
+
+    assert_eq!(editor.source_len_bytes(), Some(source.len()));
+    assert_eq!(editor.source_line_count(), Some(5));
+    assert_eq!(editor.source_line_range(1), Some(SourceRange::new(6, 9)));
+    assert_eq!(
+        editor.source_byte_slice(SourceRange::new(6, 9)).as_deref(),
+        Some("one")
+    );
+    assert_eq!(editor.source_position(8), Some((1, 2)));
+    assert_eq!(editor.source_offset(1, 2), Some(8));
+    assert_eq!(editor.source_offset(1, usize::MAX), Some(9));
+
+    let lines = editor.source_lines(1..4);
+    assert_eq!(lines.len(), 3);
+    assert_eq!(lines[0].line_index, 1);
+    assert_eq!(lines[0].text, "one");
+    assert_eq!(lines[1].text, "two");
+    assert_eq!(lines[2].text, "three");
+    assert_eq!(editor.source_lines(99..120), Vec::new());
+}
+
+#[test]
+fn source_viewport_clips_long_lines_without_flattening_them_into_the_result() {
+    let source = format!("{}\nshort", "x".repeat(2 * 1024 * 1024));
+    let long_line_len = 2 * 1024 * 1024;
+    let editor = EditorState::open_read_only_owned(PathBuf::from("huge.log"), source.into_bytes())
+        .expect("valid log document");
+    assert_eq!(
+        editor.source_position(long_line_len),
+        Some((0, long_line_len))
+    );
+    assert_eq!(editor.source_max_display_width(), Some(long_line_len));
+    assert_eq!(
+        editor.source_display_position(long_line_len - 96),
+        Some((0, long_line_len - 96))
+    );
+    assert_eq!(editor.source_offset(0, long_line_len), Some(long_line_len));
+    let viewport = editor.source_viewport_lines(0..1, 0, 80);
+    assert_eq!(viewport.len(), 1);
+    assert_eq!(viewport[0].text, "x".repeat(80));
+    assert_eq!(viewport[0].visible_byte_range, SourceRange::new(0, 80));
+    assert!(!viewport[0].truncated_left);
+    assert!(viewport[0].truncated_right);
+
+    let deep_start = long_line_len - 96;
+    let viewport = editor.source_viewport_lines(0..1, deep_start, 80);
+    assert_eq!(viewport.len(), 1);
+    assert_eq!(viewport[0].text, "x".repeat(80));
+    assert_eq!(
+        viewport[0].visible_byte_range,
+        SourceRange::new(deep_start, deep_start + 80)
+    );
+    assert_eq!(viewport[0].start_column, deep_start);
+    assert_eq!(viewport[0].end_column, deep_start + 80);
+    assert!(viewport[0].truncated_left);
+    assert!(viewport[0].truncated_right);
+
+    let viewport = editor.source_viewport_lines(0..1, long_line_len + 500, 80);
+    assert_eq!(viewport[0].text, "");
+    assert_eq!(
+        viewport[0].visible_byte_range,
+        SourceRange::new(long_line_len, long_line_len)
+    );
+    assert_eq!(viewport[0].start_column, long_line_len);
+    assert_eq!(viewport[0].end_column, long_line_len);
+
+    let unicode = EditorState::open_read_only_owned(
+        PathBuf::from("unicode.log"),
+        "a好🙂b".as_bytes().to_vec(),
+    )
+    .expect("valid Unicode log");
+    let viewport = unicode.source_viewport_lines(0..1, 1, 2);
+    assert_eq!(viewport[0].text, "好");
+    assert_eq!(viewport[0].start_column, 1);
+    assert_eq!(viewport[0].end_column, 3);
+    assert!(viewport[0].truncated_left);
+    assert!(viewport[0].truncated_right);
+    assert_eq!(unicode.source_position(8), Some((0, 3)));
+    assert_eq!(unicode.source_offset(0, 3), Some(8));
+}
+
+#[test]
+fn source_display_positions_and_max_width_use_terminal_cells() {
+    let ascii = "1234567";
+    let unicode = "a好🙂e\u{301}\t\u{0001}";
+    let source = format!("{ascii}\n{unicode}");
+    let editor = EditorState::from_document(EditorDocument::from_text(
+        None,
+        DocumentKind::PlainText,
+        source,
+    ));
+    let line_start = ascii.len() + 1;
+
+    assert_eq!(editor.source_max_display_width(), Some(8));
+    assert_eq!(editor.source_display_position(line_start), Some((1, 0)));
+    assert_eq!(
+        editor.source_display_position(line_start + "a".len()),
+        Some((1, 1))
+    );
+    assert_eq!(
+        editor.source_display_position(line_start + "a好".len()),
+        Some((1, 3))
+    );
+    assert_eq!(
+        editor.source_display_position(line_start + "a好🙂".len()),
+        Some((1, 5))
+    );
+    assert_eq!(
+        editor.source_display_position(line_start + "a好🙂e\u{301}".len()),
+        Some((1, 6))
+    );
+    assert_eq!(
+        editor.source_display_position(line_start + unicode.len()),
+        Some((1, 8))
+    );
+    assert_eq!(
+        editor.source_position(line_start + unicode.len()),
+        Some((1, 7)),
+        "Unicode-scalar and terminal-cell columns must remain distinct"
+    );
+}
+
+#[test]
+fn source_max_display_width_initializes_many_short_ascii_lines_sequentially() {
+    let mut source = "short log line\n".repeat(100_000);
+    source.push_str(&"x".repeat(257));
+    let editor = EditorState::open_read_only_owned(PathBuf::from("many.log"), source.into_bytes())
+        .expect("valid ASCII log");
+
+    assert_eq!(editor.source_line_count(), Some(100_001));
+    assert_eq!(editor.source_max_display_width(), Some(257));
+}
+
+#[test]
+fn source_max_display_width_tracks_edits_and_history_incrementally() {
+    let mut editor = EditorState::from_document(EditorDocument::from_text(
+        None,
+        DocumentKind::PlainText,
+        "longest\nwide\nmid",
+    ));
+    assert_eq!(editor.source_max_display_width(), Some(7));
+
+    assert!(editor.replace_source_range(SourceRange::new(0, 7), "x"));
+    assert_eq!(editor.source_buffer().as_deref(), Some("x\nwide\nmid"));
+    assert_eq!(editor.source_max_display_width(), Some(4));
+
+    editor.apply(EditorCommand::Undo);
+    assert_eq!(editor.source_max_display_width(), Some(7));
+    editor.apply(EditorCommand::Redo);
+    assert_eq!(editor.source_max_display_width(), Some(4));
+
+    assert!(editor.replace_source_range(SourceRange::new(1, 2), ""));
+    assert_eq!(editor.source_buffer().as_deref(), Some("xwide\nmid"));
+    assert_eq!(editor.source_max_display_width(), Some(5));
+    editor.apply(EditorCommand::Undo);
+    assert_eq!(editor.source_max_display_width(), Some(4));
+    editor.apply(EditorCommand::Redo);
+    assert_eq!(editor.source_max_display_width(), Some(5));
+}
+
+#[test]
+fn source_max_display_width_handles_ties_and_unicode_replacements() {
+    let mut tied = EditorState::from_document(EditorDocument::from_text(
+        None,
+        DocumentKind::PlainText,
+        "abcd\nwxyz\nq",
+    ));
+    assert_eq!(tied.source_max_display_width(), Some(4));
+    assert!(tied.replace_source_range(SourceRange::new(0, 4), "a"));
+    assert_eq!(tied.source_max_display_width(), Some(4));
+    assert!(tied.replace_source_range(SourceRange::new(2, 6), "b"));
+    assert_eq!(tied.source_buffer().as_deref(), Some("a\nb\nq"));
+    assert_eq!(tied.source_max_display_width(), Some(1));
+
+    let mut unicode = EditorState::from_document(EditorDocument::from_text(
+        None,
+        DocumentKind::PlainText,
+        "a好🙂\n12345",
+    ));
+    assert_eq!(unicode.source_max_display_width(), Some(5));
+    assert!(unicode.replace_source_range(SourceRange::new(1, 4), "e\u{301}"));
+    assert_eq!(unicode.source_max_display_width(), Some(5));
+    assert!(unicode.replace_source_range(SourceRange::new(9, 14), "x"));
+    assert_eq!(unicode.source_buffer().as_deref(), Some("ae\u{301}🙂\nx"));
+    assert_eq!(unicode.source_max_display_width(), Some(4));
+    unicode.apply(EditorCommand::Undo);
+    assert_eq!(unicode.source_max_display_width(), Some(5));
+    unicode.apply(EditorCommand::Undo);
+    assert_eq!(unicode.source_buffer().as_deref(), Some("a好🙂\n12345"));
+    assert_eq!(unicode.source_max_display_width(), Some(5));
+}
+
+#[test]
+fn source_selection_query_and_delta_history_preserve_byte_offsets() {
+    let mut editor = EditorState::from_document(EditorDocument::from_text(
+        None,
+        DocumentKind::PlainText,
+        "a🙂b",
+    ));
+    editor.apply(EditorCommand::MoveTo {
+        position: EditorPosition::Source(1),
+        extend_selection: false,
+    });
+    editor.apply(EditorCommand::MoveTo {
+        position: EditorPosition::Source(5),
+        extend_selection: true,
+    });
+    assert!(editor.has_selection());
+    editor.apply(EditorCommand::InsertText("好".to_owned()));
+    assert!(!editor.has_selection());
+    assert_eq!(editor.source_buffer().as_deref(), Some("a好b"));
+    assert_eq!(editor.position(), Some(EditorPosition::Source(4)));
+
+    editor.apply(EditorCommand::Undo);
+    assert_eq!(editor.source_buffer().as_deref(), Some("a🙂b"));
+    assert_eq!(editor.selection, Some(Selection::new(1, 5)));
+    editor.apply(EditorCommand::Redo);
+    assert_eq!(editor.source_buffer().as_deref(), Some("a好b"));
+    assert_eq!(editor.position(), Some(EditorPosition::Source(4)));
+}
+
+#[test]
+fn source_delta_history_retains_the_latest_256_edits() {
+    let mut editor = EditorState::untitled(DocumentKind::PlainText);
+    for _ in 0..300 {
+        editor.apply(EditorCommand::InsertText("x".to_owned()));
+    }
+    assert_eq!(editor.history_depth(), (256, 0));
+    for _ in 0..256 {
+        editor.apply(EditorCommand::Undo);
+    }
+    assert_eq!(editor.source_len_bytes(), Some(44));
+    assert_eq!(editor.history_depth(), (0, 256));
+}
+
+#[test]
+fn source_edits_increment_cached_words_and_line_endings() {
+    let mut editor = EditorState::from_document(EditorDocument::from_text(
+        None,
+        DocumentKind::PlainText,
+        "one\rtwo",
+    ));
+    assert_eq!(editor.word_count(), 2);
+    assert_eq!(editor.source_max_display_width(), Some(3));
+    assert_eq!(
+        editor.document.metadata.preferred_line_ending,
+        LineEnding::Cr
+    );
+
+    assert!(editor.replace_source_range(SourceRange::new(4, 4), "\n"));
+    assert_eq!(editor.source_buffer().as_deref(), Some("one\r\ntwo"));
+    assert_eq!(editor.word_count(), 2);
+    assert_eq!(editor.source_max_display_width(), Some(3));
+    assert_eq!(
+        editor.document.metadata.preferred_line_ending,
+        LineEnding::CrLf
+    );
+    assert!(!editor.document.metadata.mixed_line_endings);
+
+    assert!(editor.replace_source_range(SourceRange::new(3, 5), ""));
+    assert_eq!(editor.source_buffer().as_deref(), Some("onetwo"));
+    assert_eq!(editor.word_count(), 1);
+    assert_eq!(editor.source_max_display_width(), Some(6));
+    assert!(!editor.document.metadata.has_final_newline);
+
+    editor.apply(EditorCommand::Undo);
+    assert_eq!(editor.source_buffer().as_deref(), Some("one\r\ntwo"));
+    assert_eq!(editor.word_count(), 2);
+    assert_eq!(editor.source_max_display_width(), Some(3));
+    assert_eq!(
+        editor.document.metadata.preferred_line_ending,
+        LineEnding::CrLf
+    );
+    editor.apply(EditorCommand::Undo);
+    assert_eq!(editor.source_buffer().as_deref(), Some("one\rtwo"));
+    assert_eq!(
+        editor.document.metadata.preferred_line_ending,
+        LineEnding::Cr
+    );
+    editor.apply(EditorCommand::Redo);
+    editor.apply(EditorCommand::Redo);
+    assert_eq!(editor.source_buffer().as_deref(), Some("onetwo"));
+    assert_eq!(editor.word_count(), 1);
+}
+
+#[test]
+fn source_save_snapshot_streams_rope_chunks() {
+    #[derive(Default)]
+    struct RecordingWriter {
+        bytes: Vec<u8>,
+        writes: usize,
+        largest_write: usize,
+    }
+
+    impl Write for RecordingWriter {
+        fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+            self.writes += 1;
+            self.largest_write = self.largest_write.max(bytes.len());
+            self.bytes.extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    let source = "source line\n".repeat(200_000);
+    let mut editor = EditorState::from_document(EditorDocument::from_text(
+        Some(PathBuf::from("large.txt")),
+        DocumentKind::PlainText,
+        source.clone(),
+    ));
+    editor.apply(EditorCommand::MoveCursor {
+        movement: CursorMove::DocumentEnd,
+        extend_selection: false,
+    });
+    editor.apply(EditorCommand::InsertText("tail".to_owned()));
+    let effects = editor.apply(EditorCommand::RequestSave);
+    let [EditorEffect::SaveFile { snapshot, .. }] = effects.as_slice() else {
+        panic!("expected SaveFile effect");
+    };
+    let mut writer = RecordingWriter::default();
+    snapshot.write_to(&mut writer).expect("streamed save");
+    assert_eq!(writer.bytes.len(), source.len() + 4);
+    assert!(writer.writes > 1);
+    assert!(writer.largest_write < writer.bytes.len());
+
+    editor.apply(EditorCommand::MarkSaved {
+        path: Some(PathBuf::from("large.txt")),
+        revision: snapshot.revision,
+    });
+    assert!(!editor.is_dirty());
 }
 
 #[test]
@@ -127,6 +487,7 @@ fn read_only_editor_blocks_mutating_commands_and_direct_source_replacement() {
     assert!(editor.is_read_only());
     assert_eq!(editor.export_text(), original);
     assert_eq!(editor.revision(), revision);
+    assert_eq!(editor.history_depth(), (0, 0));
     assert!(!editor.replace_source_range(SourceRange::new(0, 1), "X"));
     assert_eq!(editor.export_text(), original);
 }
@@ -205,8 +566,133 @@ fn source_crlf_is_one_cursor_step_and_one_delete_unit() {
         extend_selection: false,
     });
     editor.apply(EditorCommand::Backspace);
-    assert_eq!(editor.source_buffer(), Some("ab"));
+    assert_eq!(editor.source_buffer().as_deref(), Some("ab"));
     assert_eq!(editor.position(), Some(EditorPosition::Source(1)));
+}
+
+#[test]
+fn source_navigation_steps_unicode_graphemes_in_a_multi_megabyte_line() {
+    let prefix_len = 2 * 1024 * 1024;
+    let mut source = "x".repeat(prefix_len);
+    source.push_str("e\u{301}🙂\r\nz");
+    let combining_start = prefix_len;
+    let emoji_start = combining_start + "e\u{301}".len();
+    let first_line_end = emoji_start + "🙂".len();
+    let second_line_start = first_line_end + "\r\n".len();
+    let mut editor = EditorState::from_document(EditorDocument::from_text(
+        None,
+        DocumentKind::PlainText,
+        source,
+    ));
+    editor.apply(EditorCommand::MoveTo {
+        position: EditorPosition::Source(first_line_end),
+        extend_selection: false,
+    });
+
+    editor.apply(EditorCommand::MoveCursor {
+        movement: CursorMove::Left,
+        extend_selection: false,
+    });
+    assert_eq!(editor.position(), Some(EditorPosition::Source(emoji_start)));
+    editor.apply(EditorCommand::MoveCursor {
+        movement: CursorMove::Left,
+        extend_selection: false,
+    });
+    assert_eq!(
+        editor.position(),
+        Some(EditorPosition::Source(combining_start))
+    );
+
+    editor.apply(EditorCommand::MoveCursor {
+        movement: CursorMove::Right,
+        extend_selection: false,
+    });
+    assert_eq!(editor.position(), Some(EditorPosition::Source(emoji_start)));
+    editor.apply(EditorCommand::MoveCursor {
+        movement: CursorMove::Right,
+        extend_selection: false,
+    });
+    assert_eq!(
+        editor.position(),
+        Some(EditorPosition::Source(first_line_end))
+    );
+    editor.apply(EditorCommand::MoveCursor {
+        movement: CursorMove::Right,
+        extend_selection: false,
+    });
+    assert_eq!(
+        editor.position(),
+        Some(EditorPosition::Source(second_line_start))
+    );
+    editor.apply(EditorCommand::MoveCursor {
+        movement: CursorMove::Left,
+        extend_selection: false,
+    });
+    assert_eq!(
+        editor.position(),
+        Some(EditorPosition::Source(first_line_end))
+    );
+}
+
+#[test]
+fn source_navigation_matches_grapheme_boundaries_across_rope_chunks() {
+    let source = "Ae\u{301}👨‍👩‍👧‍👦👍🏽🇨🇳क्‍ष\r\n".repeat(128);
+    let mut boundaries = source
+        .grapheme_indices(true)
+        .map(|(offset, _)| offset)
+        .collect::<Vec<_>>();
+    boundaries.push(source.len());
+    let mut editor = EditorState::from_document(EditorDocument::from_text(
+        None,
+        DocumentKind::PlainText,
+        source,
+    ));
+
+    for &boundary in &boundaries[1..] {
+        editor.apply(EditorCommand::MoveCursor {
+            movement: CursorMove::Right,
+            extend_selection: false,
+        });
+        assert_eq!(editor.position(), Some(EditorPosition::Source(boundary)));
+    }
+    for &boundary in boundaries[..boundaries.len() - 1].iter().rev() {
+        editor.apply(EditorCommand::MoveCursor {
+            movement: CursorMove::Left,
+            extend_selection: false,
+        });
+        assert_eq!(editor.position(), Some(EditorPosition::Source(boundary)));
+    }
+}
+
+#[test]
+fn source_vertical_navigation_preserves_grapheme_columns_without_line_strings() {
+    // The first line's third grapheme starts at byte 8 even though its prior
+    // graphemes contain a combining sequence and a four-byte emoji.
+    let source = "Ae\u{301}🙂Z\n01234";
+    let second_line_column_three = "Ae\u{301}🙂Z\n".len() + 3;
+    let mut editor = EditorState::from_document(EditorDocument::from_text(
+        None,
+        DocumentKind::PlainText,
+        source,
+    ));
+    editor.apply(EditorCommand::MoveTo {
+        position: EditorPosition::Source(second_line_column_three),
+        extend_selection: false,
+    });
+
+    editor.apply(EditorCommand::MoveCursor {
+        movement: CursorMove::Up,
+        extend_selection: false,
+    });
+    assert_eq!(editor.position(), Some(EditorPosition::Source(8)));
+    editor.apply(EditorCommand::MoveCursor {
+        movement: CursorMove::Down,
+        extend_selection: false,
+    });
+    assert_eq!(
+        editor.position(),
+        Some(EditorPosition::Source(second_line_column_three))
+    );
 }
 
 #[test]
@@ -297,21 +783,18 @@ fn rich_edits_stay_in_memory_until_an_explicit_boundary() {
     assert_eq!(editor.source(), "original");
     assert_eq!(editor.document.source(), "original");
     let revision = editor.revision();
-    assert_eq!(
-        editor.apply(EditorCommand::RequestSave),
-        vec![EditorEffect::SaveFile {
-            path: PathBuf::from("note.md"),
-            snapshot: SaveSnapshot {
-                revision,
-                bytes: b"original rich".to_vec(),
-            },
-        }]
-    );
+    let effects = editor.apply(EditorCommand::RequestSave);
+    let [EditorEffect::SaveFile { path, snapshot }] = effects.as_slice() else {
+        panic!("expected one SaveFile effect, got {effects:?}");
+    };
+    assert_eq!(path, &PathBuf::from("note.md"));
+    assert_eq!(snapshot.revision, revision);
+    assert_eq!(snapshot.to_bytes().unwrap(), b"original rich");
     assert_eq!(editor.document.source(), "original");
 
     editor.apply(EditorCommand::SetMode(EditorMode::Source));
     assert!(!editor.has_isolated_rich_buffer());
-    assert_eq!(editor.source_buffer(), Some("original rich"));
+    assert_eq!(editor.source_buffer().as_deref(), Some("original rich"));
     assert_eq!(editor.document.source(), "original rich");
 }
 
@@ -938,7 +1421,7 @@ fn source_and_plain_text_modes_reject_markdown_format_commands() {
     for format in formats {
         source.apply(EditorCommand::ApplyFormat(format));
     }
-    assert_eq!(source.source_buffer(), Some("plain source"));
+    assert_eq!(source.source_buffer().as_deref(), Some("plain source"));
     assert_eq!(source.selection, Some(Selection::new(0, 5)));
     assert_eq!(source.position(), Some(EditorPosition::Source(5)));
     assert_eq!(source.history_depth(), (0, 0));
@@ -1147,28 +1630,138 @@ fn block_formats_change_semantic_block_kinds() {
 }
 
 #[test]
-fn block_formats_apply_to_every_selected_paragraph_with_half_open_endpoints() {
+fn quote_and_list_actions_toggle_only_the_cursor_logical_line() {
+    let mut quote = EditorState::from_document(EditorDocument::from_text(
+        None,
+        DocumentKind::Markdown,
+        "one\ntwo\nthree",
+    ));
+    let line_id = quote.rich_projection().unwrap().blocks[0].id;
+    move_rich(&mut quote, line_id, 5);
+    quote.apply(EditorCommand::ApplyFormat(FormatCommand::Quote));
+    let projection = quote.rich_projection().unwrap();
+    assert!(matches!(
+        projection.blocks.as_slice(),
+        [
+            tundra_apps::rich_document::ProjectedBlock {
+                kind: ProjectedBlockKind::Paragraph { .. },
+                ..
+            },
+            tundra_apps::rich_document::ProjectedBlock {
+                kind: ProjectedBlockKind::Quote { .. },
+                ..
+            },
+            tundra_apps::rich_document::ProjectedBlock {
+                kind: ProjectedBlockKind::Paragraph { .. },
+                ..
+            }
+        ]
+    ));
+    assert_eq!(quote.export_text(), "one\n\n> two\n\nthree");
+    quote.apply(EditorCommand::ApplyFormat(FormatCommand::Quote));
+    assert!(
+        quote
+            .rich_projection()
+            .unwrap()
+            .blocks
+            .iter()
+            .all(|block| matches!(block.kind, ProjectedBlockKind::Paragraph { .. }))
+    );
+
+    for (format, expected_kind, expected_markdown) in [
+        (
+            FormatCommand::BulletList,
+            RichListKind::Bullet,
+            "one\n\n- two\n\nthree",
+        ),
+        (
+            FormatCommand::OrderedList,
+            RichListKind::Ordered,
+            "one\n\n1. two\n\nthree",
+        ),
+    ] {
+        let mut list = EditorState::from_document(EditorDocument::from_text(
+            None,
+            DocumentKind::Markdown,
+            "one\ntwo\nthree",
+        ));
+        let line_id = list.rich_projection().unwrap().blocks[0].id;
+        move_rich(&mut list, line_id, 5);
+        list.apply(EditorCommand::ApplyFormat(format.clone()));
+        let projection = list.rich_projection().unwrap();
+        assert!(matches!(
+            &projection.blocks[1].kind,
+            ProjectedBlockKind::List { kind, items, .. }
+                if *kind == expected_kind && items.len() == 1
+        ));
+        assert!(matches!(
+            projection.blocks[0].kind,
+            ProjectedBlockKind::Paragraph { .. }
+        ));
+        assert!(matches!(
+            projection.blocks[2].kind,
+            ProjectedBlockKind::Paragraph { .. }
+        ));
+        assert_eq!(list.export_text(), expected_markdown);
+        list.apply(EditorCommand::ApplyFormat(format));
+        assert!(
+            list.rich_projection()
+                .unwrap()
+                .blocks
+                .iter()
+                .all(|block| matches!(block.kind, ProjectedBlockKind::Paragraph { .. }))
+        );
+    }
+}
+
+#[test]
+fn inline_code_is_clipped_to_the_cursor_logical_line() {
     let mut editor = EditorState::from_document(EditorDocument::from_text(
         None,
         DocumentKind::Markdown,
-        "one\n\ntwo\n\nthree",
+        "one\ntwo\nthree",
     ));
-    let projection = editor.rich_projection().unwrap();
-    let first = projection.blocks[0].id;
-    let second = projection.blocks[1].id;
-    let third = projection.blocks[2].id;
+    let paragraph = editor.rich_projection().unwrap().blocks[0].id;
+    move_rich(&mut editor, paragraph, 5);
+    editor.apply(EditorCommand::ApplyFormat(FormatCommand::InlineCode));
+    assert_eq!(editor.export_text(), "one\n`two`\nthree");
 
-    move_rich(&mut editor, first, 1);
-    editor.apply(EditorCommand::MoveTo {
-        position: EditorPosition::Rich(RichPosition::new(third, 0)),
-        extend_selection: true,
-    });
+    let mut line_with_break = EditorState::from_document(EditorDocument::from_text(
+        None,
+        DocumentKind::Markdown,
+        "one\ntwo\nthree",
+    ));
+    let paragraph = line_with_break.rich_projection().unwrap().blocks[0].id;
+    select_rich(&mut line_with_break, paragraph, 4, 8);
+    line_with_break.apply(EditorCommand::ApplyFormat(FormatCommand::InlineCode));
+    assert_eq!(line_with_break.export_text(), "one\n`two`\nthree");
+
+    let mut cross_line = EditorState::from_document(EditorDocument::from_text(
+        None,
+        DocumentKind::Markdown,
+        "one\ntwo\nthree",
+    ));
+    let paragraph = cross_line.rich_projection().unwrap().blocks[0].id;
+    select_rich(&mut cross_line, paragraph, 0, 13);
+    cross_line.apply(EditorCommand::ApplyFormat(FormatCommand::InlineCode));
+    assert_eq!(cross_line.export_text(), "one\ntwo\n`three`");
+}
+
+#[test]
+fn block_formats_apply_only_to_the_cursor_logical_line() {
+    let mut editor = EditorState::from_document(EditorDocument::from_text(
+        None,
+        DocumentKind::Markdown,
+        "one\ntwo\nthree",
+    ));
+    let paragraph = editor.rich_projection().unwrap().blocks[0].id;
+    move_rich(&mut editor, paragraph, 5);
     editor.apply(EditorCommand::ApplyFormat(FormatCommand::Heading(2)));
 
     let projection = editor.rich_projection().unwrap();
     assert!(matches!(
         projection.blocks[0].kind,
-        ProjectedBlockKind::Heading { level: 2, .. }
+        ProjectedBlockKind::Paragraph { .. }
     ));
     assert!(matches!(
         projection.blocks[1].kind,
@@ -1178,19 +1771,19 @@ fn block_formats_apply_to_every_selected_paragraph_with_half_open_endpoints() {
         projection.blocks[2].kind,
         ProjectedBlockKind::Paragraph { .. }
     ));
-    assert_eq!(editor.export_text(), "## one\n\n## two\n\nthree");
+    assert_eq!(editor.export_text(), "one\n\n## two\n\nthree");
     assert_eq!(editor.history_depth(), (1, 0));
 
-    editor.apply(EditorCommand::MoveTo {
-        position: EditorPosition::Rich(RichPosition::new(second, 0)),
-        extend_selection: false,
-    });
-    editor.apply(EditorCommand::MoveTo {
-        position: EditorPosition::Rich(RichPosition::new(first, 0)),
-        extend_selection: true,
-    });
     editor.apply(EditorCommand::ApplyFormat(FormatCommand::Paragraph));
-    assert_eq!(editor.export_text(), "one\n\n## two\n\nthree");
+    assert!(
+        editor
+            .rich_projection()
+            .unwrap()
+            .blocks
+            .iter()
+            .all(|block| matches!(block.kind, ProjectedBlockKind::Paragraph { .. }))
+    );
+    assert_eq!(editor.export_text(), "one\n\ntwo\n\nthree");
 }
 
 #[test]
@@ -1242,84 +1835,58 @@ fn block_format_selection_query_requires_a_selected_paragraph_or_heading() {
 }
 
 #[test]
-fn selected_block_formats_recurse_into_quotes_and_lists_but_skip_other_containers() {
-    let mut editor = EditorState::from_document(EditorDocument::from_text(
+fn normal_extracts_only_the_cursor_line_from_quotes_and_lists() {
+    let mut quote = EditorState::from_document(EditorDocument::from_text(
         None,
         DocumentKind::Markdown,
-        concat!(
-            "> quoted\n\n",
-            "- listed\n\n",
-            "```\ncode\n```\n\n",
-            "| cell |\n| --- |\n| body |\n\n",
-            "after",
-        ),
+        "> one\n> two\n> three",
     ));
-    let projection = editor.rich_projection().unwrap();
-    let quote_id = match &projection.blocks[0].kind {
+    let quote_id = match &quote.rich_projection().unwrap().blocks[0].kind {
         ProjectedBlockKind::Quote { blocks } => blocks[0].id,
         other => panic!("expected quote, got {other:?}"),
     };
-    let list_id = match &projection.blocks[1].kind {
-        ProjectedBlockKind::List { items, .. } => items[0].blocks[0].id,
-        other => panic!("expected list, got {other:?}"),
-    };
-    let code_id = projection.blocks[2].id;
-    let table_id = projection.blocks[3].id;
-    let after_id = projection.blocks[4].id;
-
-    move_rich(&mut editor, quote_id, 1);
-    editor.apply(EditorCommand::MoveTo {
-        position: EditorPosition::Rich(RichPosition::new(after_id, 2)),
-        extend_selection: true,
-    });
-    assert!(editor.can_apply_block_format_to_selection());
-    editor.apply(EditorCommand::ApplyFormat(FormatCommand::Heading(3)));
-
-    let projection = editor.rich_projection().unwrap();
+    move_rich(&mut quote, quote_id, 5);
+    quote.apply(EditorCommand::ApplyFormat(FormatCommand::Paragraph));
+    let projection = quote.rich_projection().unwrap();
     assert!(matches!(
         &projection.blocks[0].kind,
-        ProjectedBlockKind::Quote { blocks }
-            if matches!(blocks[0].kind, ProjectedBlockKind::Heading { level: 3, .. })
+        ProjectedBlockKind::Quote { .. }
     ));
     assert!(matches!(
-        &projection.blocks[1].kind,
-        ProjectedBlockKind::List { items, .. }
-            if items[0].blocks[0].id == list_id
-                && matches!(items[0].blocks[0].kind, ProjectedBlockKind::Heading { level: 3, .. })
-    ));
-    assert_eq!(projection.blocks[2].id, code_id);
-    assert!(matches!(
-        projection.blocks[2].kind,
-        ProjectedBlockKind::CodeBlock { .. }
-    ));
-    assert_eq!(projection.blocks[3].id, table_id);
-    assert!(matches!(
-        projection.blocks[3].kind,
-        ProjectedBlockKind::Table { .. }
-    ));
-    assert!(matches!(
-        projection.blocks[4].kind,
-        ProjectedBlockKind::Heading { level: 3, .. }
-    ));
-    assert_eq!(editor.history_depth(), (1, 0));
-
-    editor.apply(EditorCommand::ApplyFormat(FormatCommand::Paragraph));
-    let projection = editor.rich_projection().unwrap();
-    assert!(matches!(
-        &projection.blocks[0].kind,
-        ProjectedBlockKind::Quote { blocks }
-            if matches!(blocks[0].kind, ProjectedBlockKind::Paragraph { .. })
-    ));
-    assert!(matches!(
-        &projection.blocks[1].kind,
-        ProjectedBlockKind::List { items, .. }
-            if matches!(items[0].blocks[0].kind, ProjectedBlockKind::Paragraph { .. })
-    ));
-    assert!(matches!(
-        projection.blocks[4].kind,
+        projection.blocks[1].kind,
         ProjectedBlockKind::Paragraph { .. }
     ));
-    assert_eq!(editor.history_depth(), (2, 0));
+    assert!(matches!(
+        projection.blocks[2].kind,
+        ProjectedBlockKind::Quote { .. }
+    ));
+    assert_eq!(quote.export_text(), "> one\n\ntwo\n\n> three");
+
+    let mut list = EditorState::from_document(EditorDocument::from_text(
+        None,
+        DocumentKind::Markdown,
+        "- one\n- two\n- three",
+    ));
+    let second_id = match &list.rich_projection().unwrap().blocks[0].kind {
+        ProjectedBlockKind::List { items, .. } => items[1].blocks[0].id,
+        other => panic!("expected list, got {other:?}"),
+    };
+    move_rich(&mut list, second_id, 1);
+    list.apply(EditorCommand::ApplyFormat(FormatCommand::Paragraph));
+    let projection = list.rich_projection().unwrap();
+    assert!(matches!(
+        &projection.blocks[0].kind,
+        ProjectedBlockKind::List { items, .. } if items.len() == 1
+    ));
+    assert!(matches!(
+        projection.blocks[1].kind,
+        ProjectedBlockKind::Paragraph { .. }
+    ));
+    assert!(matches!(
+        &projection.blocks[2].kind,
+        ProjectedBlockKind::List { items, .. } if items.len() == 1
+    ));
+    assert_eq!(list.export_text(), "- one\n\ntwo\n\n- three");
 }
 
 #[test]
@@ -1338,7 +1905,7 @@ fn source_edit_session_collapses_to_one_rich_history_transaction() {
 
     editor.apply(EditorCommand::ToggleMode);
     assert_eq!(editor.mode, EditorMode::Source);
-    assert_eq!(editor.source_buffer(), Some(original));
+    assert_eq!(editor.source_buffer().as_deref(), Some(original));
     editor.apply(EditorCommand::MoveTo {
         position: EditorPosition::Source(original.len()),
         extend_selection: false,
@@ -1564,16 +2131,19 @@ fn save_effect_is_revisioned_and_does_not_mark_saved_early() {
     let mut editor = EditorState::new();
     editor.apply(EditorCommand::InsertText("body".to_owned()));
     let revision = editor.revision();
-    assert_eq!(
-        editor.apply(EditorCommand::RequestSave),
-        vec![EditorEffect::SaveFilePicker {
-            suggested_name: "Untitled.md".to_owned(),
-            snapshot: SaveSnapshot {
-                revision,
-                bytes: b"body".to_vec(),
-            },
-        }]
-    );
+    let effects = editor.apply(EditorCommand::RequestSave);
+    let [
+        EditorEffect::SaveFilePicker {
+            suggested_name,
+            snapshot,
+        },
+    ] = effects.as_slice()
+    else {
+        panic!("expected one SaveFilePicker effect, got {effects:?}");
+    };
+    assert_eq!(suggested_name, "Untitled.md");
+    assert_eq!(snapshot.revision, revision);
+    assert_eq!(snapshot.to_bytes().unwrap(), b"body");
     assert!(editor.is_dirty());
     assert_eq!(editor.saved_revision(), 0);
     assert_eq!(
@@ -1618,7 +2188,7 @@ fn save_as_non_markdown_converts_the_session_to_source_after_success() {
     editor.apply(EditorCommand::InsertText("body".to_owned()));
     let cursor = editor.rich_cursor();
     let snapshot = picker_snapshot(editor.apply(EditorCommand::RequestSaveAs));
-    assert_eq!(snapshot.bytes, b"body");
+    assert_eq!(snapshot.to_bytes().unwrap(), b"body");
     assert_eq!(editor.mode, EditorMode::Rich);
     assert_eq!(editor.rich_cursor(), cursor);
 
@@ -1629,7 +2199,7 @@ fn save_as_non_markdown_converts_the_session_to_source_after_success() {
     assert_eq!(editor.document.kind, DocumentKind::PlainText);
     assert_eq!(editor.document.path, Some(PathBuf::from("note.txt")));
     assert_eq!(editor.mode, EditorMode::Source);
-    assert_eq!(editor.source_buffer(), Some("body"));
+    assert_eq!(editor.source_buffer().as_deref(), Some("body"));
     assert_eq!(editor.position(), Some(EditorPosition::Source(4)));
     assert!(!editor.is_dirty());
 }
@@ -1658,14 +2228,25 @@ fn explorer_editor_resolver_routes_supported_text_extensions() {
         "draft.mdown",
         "x.mkd",
         "plain.txt",
+        "app.log",
+        "APP.LOG",
+        "app.log.1",
     ] {
         assert_eq!(
             resolver.route(PathBuf::from(name).as_path(), &attributes),
             ExplorerOpenTarget::Editor
         );
     }
-    assert_eq!(
-        resolver.route(PathBuf::from("photo.png").as_path(), &attributes),
-        ExplorerOpenTarget::SystemDefault
-    );
+    for name in ["app.log.old", "app.log.gz", "catalog", "photo.png"] {
+        assert!(!is_log_document_path(PathBuf::from(name).as_path()));
+    }
+    for name in ["app.log", "APP.LOG", "app.LoG.1", "app.log.001"] {
+        assert!(is_log_document_path(PathBuf::from(name).as_path()));
+    }
+    for name in ["photo.png", "app.log.old", "app.log.gz", "catalog"] {
+        assert_eq!(
+            resolver.route(PathBuf::from(name).as_path(), &attributes),
+            ExplorerOpenTarget::SystemDefault
+        );
+    }
 }

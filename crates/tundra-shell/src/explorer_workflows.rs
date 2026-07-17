@@ -52,6 +52,10 @@ impl ShellState {
         if !matches!(self.explorer_purpose, ExplorerPurpose::Browse)
             && self.editor_state.is_some()
         {
+            if matches!(self.explorer_purpose, ExplorerPurpose::EditorSaveAs { .. }) {
+                self.editor_close_after_save = false;
+                self.editor_open_after_save = false;
+            }
             self.return_from_editor_picker();
             return;
         }

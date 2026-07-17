@@ -496,6 +496,11 @@ pub enum PlatformError {
         path: Option<PathBuf>,
         message: String,
     },
+    Interrupted {
+        operation: &'static str,
+        path: Option<PathBuf>,
+        message: String,
+    },
     CrossDevice {
         source: PathBuf,
         target: PathBuf,
@@ -527,6 +532,11 @@ impl fmt::Display for PlatformError {
             Self::InvalidInput { message } => formatter.write_str(message),
             Self::PathResolution(error) => error.fmt(formatter),
             Self::Io {
+                operation,
+                path,
+                message,
+            }
+            | Self::Interrupted {
                 operation,
                 path,
                 message,

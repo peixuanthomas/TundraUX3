@@ -15,9 +15,12 @@ pub use diagnostics::{
     check_directory_read_write, classify_windows_build, run_doctor, run_doctor_with,
 };
 pub use document::{
-    DocumentBytes, DocumentFingerprint, DocumentReadWindow, DocumentWriteError,
-    atomic_write_document, atomic_write_document_if_unchanged, document_fingerprint,
-    read_document_bytes, read_document_tail_bytes, validate_no_follow_path,
+    DocumentBytes, DocumentFingerprint, DocumentReadWindow, DocumentWriteError, MAX_DOCUMENT_BYTES,
+    atomic_write_document, atomic_write_document_if_unchanged,
+    atomic_write_document_if_unchanged_with, atomic_write_document_with, document_fingerprint,
+    read_document_bytes, read_document_bytes_limited, read_document_bytes_limited_with_progress,
+    read_document_prefix_snapshot_limited, read_document_prefix_snapshot_limited_with_progress,
+    read_document_tail_bytes, validate_no_follow_path,
 };
 pub use paths::{
     AppPaths, PathResolutionError, UserDirs, build_binary_dir_app_paths, build_macos_app_paths,

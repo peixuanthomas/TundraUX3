@@ -27,28 +27,72 @@ struct EditorTableResizeState {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum EditorReloadPolicy {
-    DiagnosticsLog {
-        path: std::path::PathBuf,
-        max_bytes: usize,
-    },
-    DiagnosticsReport {
-        path: std::path::PathBuf,
-    },
+    Log { path: std::path::PathBuf },
+    DiagnosticsReport { path: std::path::PathBuf },
 }
 
 impl EditorReloadPolicy {
     fn path(&self) -> &std::path::Path {
         match self {
-            Self::DiagnosticsLog { path, .. } | Self::DiagnosticsReport { path } => path,
+            Self::Log { path } | Self::DiagnosticsReport { path } => path,
         }
     }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct EditorDiagnosticSession {
+struct EditorReadSession {
     reload: EditorReloadPolicy,
-    start_byte: u64,
     total_bytes: u64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum EditorLoadNavigation {
+    Explorer,
+    EditorPicker,
+    Diagnostics,
+    Editor,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum EditorLoadOperation {
+    Open {
+        navigation: EditorLoadNavigation,
+        reload: Option<EditorReloadPolicy>,
+        replacing_dirty: bool,
+    },
+    Reload {
+        session: EditorReadSession,
+        was_at_bottom: bool,
+        visible_capacity: usize,
+        old_top_line: usize,
+        old_left_column: usize,
+        old_cursor: usize,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct EditorLoadState {
+    id: u64,
+    path: std::path::PathBuf,
+    stage: EditorTaskStage,
+    completed_bytes: u64,
+    total_bytes: Option<u64>,
+    operation: EditorLoadOperation,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct EditorSaveState {
+    id: u64,
+    path: std::path::PathBuf,
+    document_generation: u64,
+    revision: u64,
+    stage: EditorTaskStage,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct EditorRichRenderCache {
+    revision: u64,
+    blocks: std::sync::Arc<[tundra_ui::EditorRenderBlock]>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -151,7 +195,6 @@ impl Default for ClockCreateState {
     }
 }
 
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct TimedClick {
     target: Option<ShellComponent>,
@@ -246,7 +289,12 @@ pub struct ShellState {
     explorer_conflict_apply_to_remaining: bool,
     explorer_purpose: ExplorerPurpose,
     explorer_task_runtime: Option<ShellExplorerTaskRuntime>,
+    editor_task_runtime: ShellEditorTaskRuntime,
+    editor_load_state: Option<EditorLoadState>,
+    editor_save_state: Option<EditorSaveState>,
+    editor_document_generation: u64,
     editor_state: Option<EditorState>,
+    editor_rich_render_cache: Option<EditorRichRenderCache>,
     editor_focus: tundra_ui::EditorFocus,
     editor_open_menu: Option<tundra_ui::EditorMenu>,
     editor_selected_toolbar_action: Option<tundra_ui::EditorToolbarAction>,
@@ -261,7 +309,7 @@ pub struct ShellState {
     editor_message: Option<String>,
     editor_recovery_dirty_since: Option<Instant>,
     editor_last_recovery_write: Option<Instant>,
-    editor_diagnostic_session: Option<EditorDiagnosticSession>,
+    editor_read_session: Option<EditorReadSession>,
     diagnostics_task_runtime: Option<ShellDiagnosticsTaskRuntime>,
     diagnostics_snapshot: Option<tundra_apps::diagnostics::DiagnosticsSnapshot>,
     diagnostics_tab: tundra_ui::DiagnosticsTab,

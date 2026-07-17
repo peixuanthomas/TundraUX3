@@ -1,11 +1,21 @@
 use std::fmt;
 use std::fs::{self, File, OpenOptions};
-use std::io::{Read, Seek, SeekFrom, Write};
+use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::process;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::PlatformError;
+
+/// Default hard limit for document reads performed by the editor.
+///
+/// [`read_document_bytes`] intentionally remains unlimited for compatibility.
+/// New interactive open flows should use [`read_document_bytes_limited`] with
+/// this limit so a malformed or unexpectedly large file cannot force an
+/// unbounded allocation.
+pub const MAX_DOCUMENT_BYTES: u64 = 1024 * 1024 * 1024;
+
+const DOCUMENT_READ_CHUNK_BYTES: usize = 64 * 1024;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DocumentFingerprint {
@@ -76,36 +86,490 @@ enum WriteExpectation {
     Exact(Option<DocumentFingerprint>),
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DocumentReadConsistency {
+    Stable,
+    AppendablePrefix,
+}
+
 pub fn read_document_bytes(path: &Path) -> Result<DocumentBytes, PlatformError> {
+    read_document_bytes_limited(path, u64::MAX)
+}
+
+/// Reads a stable, regular-file snapshot without allocating more than
+/// `max_bytes` for document contents.
+///
+/// The file size is checked before allocation, reading is bounded to that
+/// preflight size, and metadata plus the no-follow path policy are rechecked
+/// after the read. A file that grows beyond `max_bytes` is rejected with an
+/// error containing both the observed and configured sizes. Other concurrent
+/// size or modification changes are reported as an unstable read.
+pub fn read_document_bytes_limited(
+    path: &Path,
+    max_bytes: u64,
+) -> Result<DocumentBytes, PlatformError> {
+    read_document_bytes_limited_with_progress(path, max_bytes, |_, _| true)
+}
+
+/// Progress-reporting and cooperatively cancellable variant of
+/// [`read_document_bytes_limited`].
+///
+/// `progress` is called after preflight with `(0, total_bytes)` and after each
+/// chunk of at most 64 KiB. Returning `false` stops before the next chunk and
+/// returns [`PlatformError::Interrupted`].
+pub fn read_document_bytes_limited_with_progress<F>(
+    path: &Path,
+    max_bytes: u64,
+    mut progress: F,
+) -> Result<DocumentBytes, PlatformError>
+where
+    F: FnMut(u64, u64) -> bool,
+{
+    let (bytes, fingerprint) = read_document_snapshot_with_progress(
+        path,
+        max_bytes,
+        true,
+        DocumentReadConsistency::Stable,
+        &mut progress,
+    )?;
+    Ok(DocumentBytes {
+        bytes: bytes.expect("document snapshot requested owned bytes"),
+        fingerprint,
+    })
+}
+
+/// Reads the prefix that existed when a regular file was opened.
+///
+/// Unlike [`read_document_bytes_limited`], appends that happen after preflight
+/// are permitted and are deliberately excluded from the returned bytes. The
+/// preflight length is still bounded by `max_bytes`; truncation, replacement,
+/// no-follow violations, and detectable rewrites within the original prefix
+/// are rejected. This is intended for append-only log snapshots.
+pub fn read_document_prefix_snapshot_limited(
+    path: &Path,
+    max_bytes: u64,
+) -> Result<DocumentBytes, PlatformError> {
+    read_document_prefix_snapshot_limited_with_progress(path, max_bytes, |_, _| true)
+}
+
+/// Progress-reporting and cooperatively cancellable variant of
+/// [`read_document_prefix_snapshot_limited`].
+///
+/// The progress total is the preflight prefix length, so appends do not move
+/// the goal while the snapshot is being read.
+pub fn read_document_prefix_snapshot_limited_with_progress<F>(
+    path: &Path,
+    max_bytes: u64,
+    mut progress: F,
+) -> Result<DocumentBytes, PlatformError>
+where
+    F: FnMut(u64, u64) -> bool,
+{
+    let (bytes, fingerprint) = read_document_snapshot_with_progress(
+        path,
+        max_bytes,
+        true,
+        DocumentReadConsistency::AppendablePrefix,
+        &mut progress,
+    )?;
+    Ok(DocumentBytes {
+        bytes: bytes.expect("document prefix snapshot requested owned bytes"),
+        fingerprint,
+    })
+}
+
+fn read_document_snapshot(
+    path: &Path,
+    max_bytes: u64,
+    collect_bytes: bool,
+    consistency: DocumentReadConsistency,
+) -> Result<(Option<Vec<u8>>, DocumentFingerprint), PlatformError> {
+    read_document_snapshot_with_progress(
+        path,
+        max_bytes,
+        collect_bytes,
+        consistency,
+        &mut |_, _| true,
+    )
+}
+
+fn read_document_snapshot_with_progress<F>(
+    path: &Path,
+    max_bytes: u64,
+    collect_bytes: bool,
+    consistency: DocumentReadConsistency,
+    progress: &mut F,
+) -> Result<(Option<Vec<u8>>, DocumentFingerprint), PlatformError>
+where
+    F: FnMut(u64, u64) -> bool,
+{
     validate_no_follow_path(path, true)?;
-    let mut file = File::open(path).map_err(|error| PlatformError::Io {
+    let file = File::open(path).map_err(|error| PlatformError::Io {
         operation: "open document",
         path: Some(path.to_path_buf()),
         message: error.to_string(),
     })?;
-    let mut bytes = Vec::new();
-    file.read_to_end(&mut bytes)
-        .map_err(|error| PlatformError::Io {
-            operation: "read document",
-            path: Some(path.to_path_buf()),
-            message: error.to_string(),
-        })?;
-    let metadata = file.metadata().map_err(|error| PlatformError::Io {
+    let initial_metadata = file.metadata().map_err(|error| PlatformError::Io {
         operation: "read document metadata",
         path: Some(path.to_path_buf()),
         message: error.to_string(),
     })?;
-    if !metadata.is_file() {
+    if !initial_metadata.is_file() {
         return Err(PlatformError::InvalidInput {
             message: format!("document is not a regular file: {}", path.display()),
         });
     }
-    let fingerprint = DocumentFingerprint {
-        len: metadata.len(),
-        modified: metadata.modified().ok(),
-        content_hash: stable_hash(&bytes),
+    validate_no_follow_path(path, true)?;
+
+    read_open_document_snapshot_with_progress(
+        path,
+        file,
+        initial_metadata,
+        max_bytes,
+        collect_bytes,
+        consistency,
+        progress,
+    )
+}
+
+#[cfg(test)]
+fn read_open_document_snapshot(
+    path: &Path,
+    file: File,
+    initial_metadata: fs::Metadata,
+    max_bytes: u64,
+    collect_bytes: bool,
+    consistency: DocumentReadConsistency,
+) -> Result<(Option<Vec<u8>>, DocumentFingerprint), PlatformError> {
+    read_open_document_snapshot_with_progress(
+        path,
+        file,
+        initial_metadata,
+        max_bytes,
+        collect_bytes,
+        consistency,
+        &mut |_, _| true,
+    )
+}
+
+fn read_open_document_snapshot_with_progress<F>(
+    path: &Path,
+    mut file: File,
+    initial_metadata: fs::Metadata,
+    max_bytes: u64,
+    collect_bytes: bool,
+    consistency: DocumentReadConsistency,
+    progress: &mut F,
+) -> Result<(Option<Vec<u8>>, DocumentFingerprint), PlatformError>
+where
+    F: FnMut(u64, u64) -> bool,
+{
+    let initial_len = initial_metadata.len();
+    ensure_document_size_within_limit(path, initial_len, max_bytes)?;
+    if !progress(0, initial_len) {
+        return Err(document_read_interrupted(path, 0, initial_len));
+    }
+    let initial_modified = initial_metadata.modified().ok();
+    let mut bytes = if collect_bytes {
+        let capacity = usize::try_from(initial_len).map_err(|_| PlatformError::InvalidInput {
+            message: format!(
+                "document is too large to fit in memory on this platform: {} ({} bytes)",
+                path.display(),
+                initial_len
+            ),
+        })?;
+        let mut bytes = Vec::new();
+        bytes
+            .try_reserve_exact(capacity)
+            .map_err(|error| PlatformError::InvalidInput {
+                message: format!(
+                    "could not reserve memory to read document: {} ({} bytes): {error}",
+                    path.display(),
+                    initial_len
+                ),
+            })?;
+        Some(bytes)
+    } else {
+        None
     };
-    Ok(DocumentBytes { bytes, fingerprint })
+    let mut hasher = StableHasher::new();
+    let mut remaining = initial_len;
+    let mut chunk = [0_u8; DOCUMENT_READ_CHUNK_BYTES];
+    while remaining > 0 {
+        let requested = remaining.min(DOCUMENT_READ_CHUNK_BYTES as u64) as usize;
+        let read = file
+            .read(&mut chunk[..requested])
+            .map_err(|error| PlatformError::Io {
+                operation: "read document",
+                path: Some(path.to_path_buf()),
+                message: error.to_string(),
+            })?;
+        if read == 0 {
+            let actual_len = file.metadata().ok().map(|metadata| metadata.len());
+            return Err(document_changed_while_reading(
+                path,
+                initial_len,
+                actual_len,
+            ));
+        }
+        hasher.write(&chunk[..read]);
+        if let Some(bytes) = bytes.as_mut() {
+            bytes.extend_from_slice(&chunk[..read]);
+        }
+        remaining -= read as u64;
+        let completed = initial_len - remaining;
+        if !progress(completed, initial_len) {
+            return Err(document_read_interrupted(path, completed, initial_len));
+        }
+    }
+
+    let has_extra_byte = if consistency == DocumentReadConsistency::Stable {
+        let mut extra = [0_u8; 1];
+        file.read(&mut extra).map_err(|error| PlatformError::Io {
+            operation: "verify document length",
+            path: Some(path.to_path_buf()),
+            message: error.to_string(),
+        })? != 0
+    } else {
+        false
+    };
+    let final_metadata = file.metadata().map_err(|error| PlatformError::Io {
+        operation: "verify document metadata",
+        path: Some(path.to_path_buf()),
+        message: error.to_string(),
+    })?;
+    let final_len = final_metadata.len();
+    match consistency {
+        DocumentReadConsistency::Stable => {
+            if final_len > max_bytes {
+                return Err(document_size_limit_error(path, final_len, max_bytes));
+            }
+            if has_extra_byte
+                || final_len != initial_len
+                || final_metadata.modified().ok() != initial_modified
+            {
+                return Err(document_changed_while_reading(
+                    path,
+                    initial_len,
+                    Some(final_len),
+                ));
+            }
+        }
+        DocumentReadConsistency::AppendablePrefix => {
+            if final_len < initial_len {
+                return Err(document_changed_while_reading(
+                    path,
+                    initial_len,
+                    Some(final_len),
+                ));
+            }
+            if !metadata_refers_to_same_file(&initial_metadata, &final_metadata) {
+                return Err(document_replaced_while_reading(path));
+            }
+            verify_document_prefix_samples(
+                &mut file,
+                bytes
+                    .as_deref()
+                    .expect("appendable prefix reads always collect bytes"),
+                path,
+            )?;
+        }
+    }
+    validate_no_follow_path(path, true)?;
+    let path_metadata = fs::symlink_metadata(path).map_err(|error| PlatformError::Io {
+        operation: "verify document path metadata",
+        path: Some(path.to_path_buf()),
+        message: error.to_string(),
+    })?;
+    match consistency {
+        DocumentReadConsistency::Stable => {
+            if !path_metadata.is_file()
+                || path_metadata.len() != final_len
+                || path_metadata.modified().ok() != final_metadata.modified().ok()
+            {
+                return Err(document_changed_while_reading(
+                    path,
+                    initial_len,
+                    Some(path_metadata.len()),
+                ));
+            }
+        }
+        DocumentReadConsistency::AppendablePrefix => {
+            if !path_metadata.is_file()
+                || !metadata_refers_to_same_file(&initial_metadata, &path_metadata)
+            {
+                return Err(document_replaced_while_reading(path));
+            }
+            if path_metadata.len() < initial_len {
+                return Err(document_changed_while_reading(
+                    path,
+                    initial_len,
+                    Some(path_metadata.len()),
+                ));
+            }
+            let append_observed = final_len > initial_len || path_metadata.len() > initial_len;
+            if !append_observed
+                && (final_metadata.modified().ok() != initial_modified
+                    || path_metadata.modified().ok() != initial_modified)
+            {
+                return Err(document_changed_while_reading(
+                    path,
+                    initial_len,
+                    Some(path_metadata.len()),
+                ));
+            }
+        }
+    }
+
+    let fingerprint = DocumentFingerprint {
+        len: initial_len,
+        modified: match consistency {
+            DocumentReadConsistency::Stable => final_metadata.modified().ok(),
+            DocumentReadConsistency::AppendablePrefix => initial_modified,
+        },
+        content_hash: hasher.finish(),
+    };
+    Ok((bytes, fingerprint))
+}
+
+fn ensure_document_size_within_limit(
+    path: &Path,
+    observed_bytes: u64,
+    max_bytes: u64,
+) -> Result<(), PlatformError> {
+    if observed_bytes > max_bytes {
+        Err(document_size_limit_error(path, observed_bytes, max_bytes))
+    } else {
+        Ok(())
+    }
+}
+
+fn document_size_limit_error(path: &Path, observed_bytes: u64, max_bytes: u64) -> PlatformError {
+    PlatformError::InvalidInput {
+        message: format!(
+            "document is too large to read: {} ({} bytes exceeds the {} byte limit)",
+            path.display(),
+            observed_bytes,
+            max_bytes
+        ),
+    }
+}
+
+fn document_changed_while_reading(
+    path: &Path,
+    initial_len: u64,
+    actual_len: Option<u64>,
+) -> PlatformError {
+    let actual = actual_len
+        .map(|len| format!("{len} bytes"))
+        .unwrap_or_else(|| "an unknown size".to_string());
+    PlatformError::Io {
+        operation: "read stable document",
+        path: Some(path.to_path_buf()),
+        message: format!(
+            "document changed while it was being read (started at {initial_len} bytes, ended at {actual})"
+        ),
+    }
+}
+
+fn document_read_interrupted(path: &Path, completed_bytes: u64, total_bytes: u64) -> PlatformError {
+    PlatformError::Interrupted {
+        operation: "read document",
+        path: Some(path.to_path_buf()),
+        message: format!("document read cancelled after {completed_bytes} of {total_bytes} bytes"),
+    }
+}
+
+fn document_replaced_while_reading(path: &Path) -> PlatformError {
+    PlatformError::Io {
+        operation: "read document snapshot",
+        path: Some(path.to_path_buf()),
+        message: "document path was replaced while it was being read".to_string(),
+    }
+}
+
+fn verify_document_prefix_samples(
+    file: &mut File,
+    expected: &[u8],
+    path: &Path,
+) -> Result<(), PlatformError> {
+    if expected.is_empty() {
+        return Ok(());
+    }
+    let sample_len = expected.len().min(DOCUMENT_READ_CHUNK_BYTES);
+    verify_document_prefix_sample(file, expected, 0, sample_len, path)?;
+    if expected.len() > sample_len {
+        verify_document_prefix_sample(
+            file,
+            expected,
+            expected.len() - sample_len,
+            sample_len,
+            path,
+        )?;
+    }
+    Ok(())
+}
+
+fn verify_document_prefix_sample(
+    file: &mut File,
+    expected: &[u8],
+    start: usize,
+    len: usize,
+    path: &Path,
+) -> Result<(), PlatformError> {
+    file.seek(SeekFrom::Start(start as u64))
+        .map_err(|error| PlatformError::Io {
+            operation: "verify document snapshot",
+            path: Some(path.to_path_buf()),
+            message: error.to_string(),
+        })?;
+    let mut actual = vec![0_u8; len];
+    file.read_exact(&mut actual)
+        .map_err(|error| PlatformError::Io {
+            operation: "verify document snapshot",
+            path: Some(path.to_path_buf()),
+            message: error.to_string(),
+        })?;
+    if actual != expected[start..start + len] {
+        return Err(PlatformError::Io {
+            operation: "read document snapshot",
+            path: Some(path.to_path_buf()),
+            message: "document contents changed within the opened snapshot while it was being read"
+                .to_string(),
+        });
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+fn metadata_refers_to_same_file(left: &fs::Metadata, right: &fs::Metadata) -> bool {
+    use std::os::unix::fs::MetadataExt;
+
+    left.dev() == right.dev() && left.ino() == right.ino()
+}
+
+#[cfg(windows)]
+fn metadata_refers_to_same_file(left: &fs::Metadata, right: &fs::Metadata) -> bool {
+    use std::os::windows::fs::MetadataExt;
+
+    match (
+        left.volume_serial_number(),
+        left.file_index(),
+        right.volume_serial_number(),
+        right.file_index(),
+    ) {
+        (Some(left_volume), Some(left_index), Some(right_volume), Some(right_index)) => {
+            left_volume == right_volume && left_index == right_index
+        }
+        _ => false,
+    }
+}
+
+#[cfg(not(any(unix, windows)))]
+fn metadata_refers_to_same_file(left: &fs::Metadata, right: &fs::Metadata) -> bool {
+    left.len() == right.len()
+        && left.created().ok() == right.created().ok()
+        && left.modified().ok() == right.modified().ok()
 }
 
 /// Reads at most `max_bytes` from the end of a regular UTF-8 document.
@@ -256,14 +720,31 @@ fn first_line_ending_end(bytes: &[u8]) -> Option<usize> {
 }
 
 pub fn document_fingerprint(path: &Path) -> Result<DocumentFingerprint, PlatformError> {
-    read_document_bytes(path).map(|document| document.fingerprint)
+    read_document_snapshot(path, u64::MAX, false, DocumentReadConsistency::Stable)
+        .map(|(_, fingerprint)| fingerprint)
 }
 
 pub fn atomic_write_document(
     path: &Path,
     bytes: &[u8],
 ) -> Result<DocumentFingerprint, PlatformError> {
-    match atomic_write_document_impl(path, bytes, WriteExpectation::Unchecked) {
+    atomic_write_document_with(path, |writer| writer.write_all(bytes))
+}
+
+/// Atomically writes a document using a streaming callback.
+///
+/// The callback may write any number of chunks to the supplied writer. The
+/// platform hashes and counts those chunks as they are written, applies the
+/// existing target permissions, syncs the temporary file, atomically installs
+/// it, and syncs the parent directory.
+pub fn atomic_write_document_with<F>(
+    path: &Path,
+    write: F,
+) -> Result<DocumentFingerprint, PlatformError>
+where
+    F: FnOnce(&mut dyn Write) -> io::Result<()>,
+{
+    match atomic_write_document_impl(path, WriteExpectation::Unchecked, write) {
         Ok(fingerprint) => Ok(fingerprint),
         Err(DocumentWriteError::Platform(error)) => Err(error),
         Err(DocumentWriteError::ExternalModification { .. }) => {
@@ -283,14 +764,33 @@ pub fn atomic_write_document_if_unchanged(
     bytes: &[u8],
     expected: Option<DocumentFingerprint>,
 ) -> Result<DocumentFingerprint, DocumentWriteError> {
-    atomic_write_document_impl(path, bytes, WriteExpectation::Exact(expected))
+    atomic_write_document_if_unchanged_with(path, expected, |writer| writer.write_all(bytes))
 }
 
-fn atomic_write_document_impl(
+/// Streaming variant of [`atomic_write_document_if_unchanged`].
+///
+/// The expectation is checked both before invoking `write` and immediately
+/// before installation. If the callback fails, the temporary file is removed
+/// and the original target is left untouched.
+pub fn atomic_write_document_if_unchanged_with<F>(
     path: &Path,
-    bytes: &[u8],
+    expected: Option<DocumentFingerprint>,
+    write: F,
+) -> Result<DocumentFingerprint, DocumentWriteError>
+where
+    F: FnOnce(&mut dyn Write) -> io::Result<()>,
+{
+    atomic_write_document_impl(path, WriteExpectation::Exact(expected), write)
+}
+
+fn atomic_write_document_impl<F>(
+    path: &Path,
     expectation: WriteExpectation,
-) -> Result<DocumentFingerprint, DocumentWriteError> {
+    write: F,
+) -> Result<DocumentFingerprint, DocumentWriteError>
+where
+    F: FnOnce(&mut dyn Write) -> io::Result<()>,
+{
     validate_no_follow_path(path, false)?;
     let parent = path.parent().ok_or_else(|| PlatformError::InvalidInput {
         message: format!("document path has no parent: {}", path.display()),
@@ -306,7 +806,7 @@ fn atomic_write_document_impl(
 
     for attempt in 0..64_u8 {
         let temporary = temporary_path(path, attempt);
-        let mut file = match OpenOptions::new()
+        let file = match OpenOptions::new()
             .create_new(true)
             .write(true)
             .open(&temporary)
@@ -322,16 +822,22 @@ fn atomic_write_document_impl(
                 .into());
             }
         };
+        let mut temporary_document = TemporaryDocument::new(temporary.clone(), file);
 
-        let write_result = file.write_all(bytes).and_then(|_| {
+        let (write_result, written_len, content_hash) = {
+            let mut writer = FingerprintingWriter::new(temporary_document.file_mut());
+            let result = write(&mut writer).and_then(|_| writer.flush());
+            let written_len = writer.len;
+            let content_hash = writer.hasher.finish();
+            (result, written_len, content_hash)
+        };
+        let write_result = write_result.and_then(|_| {
             if let Some(permissions) = target_permissions.clone() {
-                file.set_permissions(permissions)?;
+                temporary_document.file_mut().set_permissions(permissions)?;
             }
-            file.sync_all()
+            temporary_document.file_mut().sync_all()
         });
         if let Err(error) = write_result {
-            drop(file);
-            let _ = fs::remove_file(&temporary);
             return Err(PlatformError::Io {
                 operation: "write temporary document",
                 path: Some(temporary),
@@ -339,12 +845,10 @@ fn atomic_write_document_impl(
             }
             .into());
         }
-        drop(file);
+        temporary_document.close();
 
-        if let Err(error) = verify_write_expectation(path, expectation) {
-            let _ = fs::remove_file(&temporary);
-            return Err(error);
-        }
+        verify_write_expectation(path, expectation)?;
+        validate_no_follow_path(path, false)?;
         let install_result = match expectation {
             WriteExpectation::Exact(None) => install_new_file(&temporary, path),
             WriteExpectation::Unchecked | WriteExpectation::Exact(Some(_)) => {
@@ -352,7 +856,6 @@ fn atomic_write_document_impl(
             }
         };
         if let Err(error) = install_result {
-            let _ = fs::remove_file(&temporary);
             if matches!(expectation, WriteExpectation::Exact(_))
                 && let Err(conflict) = verify_write_expectation(path, expectation)
             {
@@ -370,7 +873,8 @@ fn atomic_write_document_impl(
             path: Some(parent.to_path_buf()),
             message: error.to_string(),
         })?;
-        return document_fingerprint(path).map_err(DocumentWriteError::Platform);
+        return fingerprint_installed_document(path, written_len, content_hash)
+            .map_err(DocumentWriteError::Platform);
     }
 
     Err(PlatformError::Io {
@@ -476,6 +980,102 @@ fn temporary_path(path: &Path, attempt: u8) -> PathBuf {
     ))
 }
 
+struct TemporaryDocument {
+    path: PathBuf,
+    file: Option<File>,
+}
+
+impl TemporaryDocument {
+    fn new(path: PathBuf, file: File) -> Self {
+        Self {
+            path,
+            file: Some(file),
+        }
+    }
+
+    fn file_mut(&mut self) -> &mut File {
+        self.file
+            .as_mut()
+            .expect("temporary document file is still open")
+    }
+
+    fn close(&mut self) {
+        self.file.take();
+    }
+}
+
+impl Drop for TemporaryDocument {
+    fn drop(&mut self) {
+        self.file.take();
+        let _ = fs::remove_file(&self.path);
+    }
+}
+
+struct FingerprintingWriter<'a> {
+    inner: &'a mut File,
+    hasher: StableHasher,
+    len: u64,
+}
+
+impl<'a> FingerprintingWriter<'a> {
+    fn new(inner: &'a mut File) -> Self {
+        Self {
+            inner,
+            hasher: StableHasher::new(),
+            len: 0,
+        }
+    }
+}
+
+impl Write for FingerprintingWriter<'_> {
+    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+        let written = self.inner.write(bytes)?;
+        self.len = self
+            .len
+            .checked_add(written as u64)
+            .ok_or_else(|| io::Error::other("document length overflow while writing"))?;
+        self.hasher.write(&bytes[..written]);
+        Ok(written)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.inner.flush()
+    }
+}
+
+fn fingerprint_installed_document(
+    path: &Path,
+    written_len: u64,
+    content_hash: u64,
+) -> Result<DocumentFingerprint, PlatformError> {
+    validate_no_follow_path(path, true)?;
+    let metadata = fs::symlink_metadata(path).map_err(|error| PlatformError::Io {
+        operation: "verify saved document metadata",
+        path: Some(path.to_path_buf()),
+        message: error.to_string(),
+    })?;
+    if !metadata.is_file() {
+        return Err(PlatformError::InvalidInput {
+            message: format!("saved document is not a regular file: {}", path.display()),
+        });
+    }
+    if metadata.len() != written_len {
+        return Err(PlatformError::Io {
+            operation: "verify saved document",
+            path: Some(path.to_path_buf()),
+            message: format!(
+                "saved document length changed unexpectedly (wrote {written_len} bytes, found {} bytes)",
+                metadata.len()
+            ),
+        });
+    }
+    Ok(DocumentFingerprint {
+        len: written_len,
+        modified: metadata.modified().ok(),
+        content_hash,
+    })
+}
+
 struct StableHasher(u64);
 
 impl StableHasher {
@@ -495,12 +1095,6 @@ impl StableHasher {
     fn finish(self) -> u64 {
         self.0
     }
-}
-
-fn stable_hash(bytes: &[u8]) -> u64 {
-    let mut hasher = StableHasher::new();
-    hasher.write(bytes);
-    hasher.finish()
 }
 
 #[cfg(not(windows))]
@@ -661,6 +1255,312 @@ mod tests {
         let loaded = read_document_bytes(&path).unwrap();
         assert_eq!(loaded.bytes, b"# Tundra\n");
         assert_eq!(loaded.fingerprint, fingerprint);
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn limited_read_accepts_a_document_at_the_limit() {
+        let directory = unique_temp_dir();
+        let path = directory.join("bounded.log");
+        let contents = b"exactly eight bytes";
+        fs::write(&path, contents).unwrap();
+
+        let loaded = read_document_bytes_limited(&path, contents.len() as u64).unwrap();
+
+        assert_eq!(loaded.bytes, contents);
+        assert_eq!(loaded.fingerprint.len, contents.len() as u64);
+        assert_eq!(loaded.fingerprint, document_fingerprint(&path).unwrap());
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    fn assert_monotonic_progress(progress: &[(u64, u64)], total: u64) {
+        assert_eq!(progress.first(), Some(&(0, total)));
+        assert_eq!(progress.last(), Some(&(total, total)));
+        assert!(
+            progress
+                .iter()
+                .all(|(_, observed_total)| *observed_total == total)
+        );
+        for pair in progress.windows(2) {
+            assert!(pair[0].0 <= pair[1].0);
+            assert!(pair[1].0 - pair[0].0 <= DOCUMENT_READ_CHUNK_BYTES as u64);
+        }
+    }
+
+    #[test]
+    fn strict_limited_read_reports_monotonic_progress_and_supports_cancellation() {
+        let directory = unique_temp_dir();
+        let path = directory.join("strict-progress.log");
+        let contents = vec![b'x'; DOCUMENT_READ_CHUNK_BYTES * 2 + 17];
+        fs::write(&path, &contents).unwrap();
+        let total = contents.len() as u64;
+        let mut progress = Vec::new();
+
+        let loaded = read_document_bytes_limited_with_progress(&path, total, |completed, total| {
+            progress.push((completed, total));
+            true
+        })
+        .unwrap();
+
+        assert_eq!(loaded.bytes, contents);
+        assert_monotonic_progress(&progress, total);
+
+        let error =
+            read_document_bytes_limited_with_progress(&path, total, |completed, _| completed == 0)
+                .expect_err("returning false after the first chunk must cancel the read");
+        assert!(matches!(
+            &error,
+            PlatformError::Interrupted {
+                operation: "read document",
+                path: interrupted_path,
+                ..
+            } if interrupted_path.as_deref() == Some(path.as_path())
+        ));
+        assert!(error.to_string().contains("cancelled after 65536"));
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn prefix_snapshot_reports_monotonic_progress_and_supports_cancellation() {
+        let directory = unique_temp_dir();
+        let path = directory.join("prefix-progress.log");
+        let contents = vec![b'y'; DOCUMENT_READ_CHUNK_BYTES * 2 + 31];
+        fs::write(&path, &contents).unwrap();
+        let total = contents.len() as u64;
+        let mut progress = Vec::new();
+
+        let loaded = read_document_prefix_snapshot_limited_with_progress(
+            &path,
+            total,
+            |completed, total| {
+                progress.push((completed, total));
+                true
+            },
+        )
+        .unwrap();
+
+        assert_eq!(loaded.bytes, contents);
+        assert_monotonic_progress(&progress, total);
+
+        let error =
+            read_document_prefix_snapshot_limited_with_progress(&path, total, |completed, _| {
+                completed == 0
+            })
+            .expect_err("returning false after the first prefix chunk must cancel the read");
+        assert!(matches!(error, PlatformError::Interrupted { .. }));
+        assert!(error.to_string().contains("cancelled after 65536"));
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn limited_read_rejects_preflight_size_and_legacy_read_remains_compatible() {
+        let directory = unique_temp_dir();
+        let path = directory.join("bounded.log");
+        let contents = b"larger than the configured test limit";
+        fs::write(&path, contents).unwrap();
+
+        let error = read_document_bytes_limited(&path, 8).expect_err("limit must be enforced");
+
+        assert!(matches!(error, PlatformError::InvalidInput { .. }));
+        assert!(error.to_string().contains(&contents.len().to_string()));
+        assert!(error.to_string().contains("8 byte limit"));
+        assert_eq!(read_document_bytes(&path).unwrap().bytes, contents);
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn limited_read_rejects_a_sparse_file_before_reading_contents() {
+        let directory = unique_temp_dir();
+        let path = directory.join("sparse.log");
+        File::create(&path).unwrap().set_len(4096).unwrap();
+
+        let error = read_document_bytes_limited(&path, 32).expect_err("sparse size must count");
+
+        assert!(matches!(error, PlatformError::InvalidInput { .. }));
+        assert!(error.to_string().contains("4096 bytes"));
+        assert!(error.to_string().contains("32 byte limit"));
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn limited_read_rejects_growth_beyond_the_preflight_limit() {
+        let directory = unique_temp_dir();
+        let path = directory.join("growing.log");
+        fs::write(&path, b"start").unwrap();
+        let file = File::open(&path).unwrap();
+        let preflight = file.metadata().unwrap();
+        OpenOptions::new()
+            .append(true)
+            .open(&path)
+            .unwrap()
+            .write_all(b" grew")
+            .unwrap();
+
+        let error = read_open_document_snapshot(
+            &path,
+            file,
+            preflight,
+            5,
+            true,
+            DocumentReadConsistency::Stable,
+        )
+        .expect_err("growth after preflight must exceed the hard limit");
+
+        assert!(matches!(error, PlatformError::InvalidInput { .. }));
+        assert!(error.to_string().contains("10 bytes"));
+        assert!(error.to_string().contains("5 byte limit"));
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn limited_read_rejects_truncation_after_preflight() {
+        let directory = unique_temp_dir();
+        let path = directory.join("shrinking.log");
+        fs::write(&path, b"original").unwrap();
+        let file = File::open(&path).unwrap();
+        let preflight = file.metadata().unwrap();
+        fs::write(&path, b"cut").unwrap();
+
+        let error = read_open_document_snapshot(
+            &path,
+            file,
+            preflight,
+            64,
+            true,
+            DocumentReadConsistency::Stable,
+        )
+        .expect_err("truncation after preflight must be unstable");
+
+        assert!(matches!(
+            error,
+            PlatformError::Io {
+                operation: "read stable document",
+                ..
+            }
+        ));
+        assert!(error.to_string().contains("started at 8 bytes"));
+        assert!(error.to_string().contains("ended at 3 bytes"));
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn prefix_snapshot_allows_append_beyond_the_limit_and_excludes_new_bytes() {
+        let directory = unique_temp_dir();
+        let path = directory.join("active.log");
+        fs::write(&path, b"start").unwrap();
+        let file = File::open(&path).unwrap();
+        let preflight = file.metadata().unwrap();
+        OpenOptions::new()
+            .append(true)
+            .open(&path)
+            .unwrap()
+            .write_all(b" appended past the limit")
+            .unwrap();
+
+        let (bytes, fingerprint) = read_open_document_snapshot(
+            &path,
+            file,
+            preflight,
+            5,
+            true,
+            DocumentReadConsistency::AppendablePrefix,
+        )
+        .expect("append-only growth must not invalidate the opened prefix");
+
+        assert_eq!(bytes.unwrap(), b"start");
+        assert_eq!(fingerprint.len, 5);
+        assert!(fs::metadata(&path).unwrap().len() > 5);
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn prefix_snapshot_rejects_truncation_after_preflight() {
+        let directory = unique_temp_dir();
+        let path = directory.join("active.log");
+        fs::write(&path, b"original").unwrap();
+        let file = File::open(&path).unwrap();
+        let preflight = file.metadata().unwrap();
+        fs::write(&path, b"cut").unwrap();
+
+        let error = read_open_document_snapshot(
+            &path,
+            file,
+            preflight,
+            64,
+            true,
+            DocumentReadConsistency::AppendablePrefix,
+        )
+        .expect_err("truncating an opened prefix must fail");
+
+        assert!(matches!(
+            error,
+            PlatformError::Io {
+                operation: "read stable document",
+                ..
+            }
+        ));
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn prefix_snapshot_rejects_path_replacement() {
+        let directory = unique_temp_dir();
+        let path = directory.join("active.log");
+        let moved = directory.join("rotated.log");
+        fs::write(&path, b"opened").unwrap();
+        let file = File::open(&path).unwrap();
+        let preflight = file.metadata().unwrap();
+        fs::rename(&path, &moved).unwrap();
+        fs::write(&path, b"newlog").unwrap();
+
+        let error = read_open_document_snapshot(
+            &path,
+            file,
+            preflight,
+            64,
+            true,
+            DocumentReadConsistency::AppendablePrefix,
+        )
+        .expect_err("replacing the opened path must fail");
+
+        assert!(matches!(
+            error,
+            PlatformError::Io {
+                operation: "read document snapshot",
+                ..
+            }
+        ));
+        assert!(error.to_string().contains("path was replaced"));
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn limited_read_rechecks_the_no_follow_policy_after_preflight() {
+        use std::os::unix::fs::symlink;
+
+        let directory = unique_temp_dir();
+        let path = directory.join("opened.log");
+        let replacement = directory.join("replacement.log");
+        fs::write(&path, b"opened").unwrap();
+        fs::write(&replacement, b"replacement").unwrap();
+        let file = File::open(&path).unwrap();
+        let preflight = file.metadata().unwrap();
+        fs::remove_file(&path).unwrap();
+        symlink(&replacement, &path).unwrap();
+
+        let error = read_open_document_snapshot(
+            &path,
+            file,
+            preflight,
+            64,
+            true,
+            DocumentReadConsistency::Stable,
+        )
+        .expect_err("a link introduced after preflight must be rejected");
+
+        assert!(matches!(error, PlatformError::InvalidInput { .. }));
+        assert!(error.to_string().contains("symbolic links"));
         fs::remove_dir_all(directory).unwrap();
     }
 
@@ -832,6 +1732,72 @@ mod tests {
         let loaded = read_document_bytes(&path).unwrap();
         assert_eq!(loaded.bytes, b"editor edit\n");
         assert_eq!(loaded.fingerprint, saved);
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn conditional_streaming_write_succeeds_and_returns_the_written_fingerprint() {
+        let directory = unique_temp_dir();
+        let path = directory.join("streamed.md");
+        let expected = atomic_write_document(&path, b"opened\n").unwrap();
+
+        let saved = atomic_write_document_if_unchanged_with(&path, Some(expected), |writer| {
+            writer.write_all(b"first chunk\n")?;
+            writer.write_all(b"second chunk\n")
+        })
+        .unwrap();
+
+        assert_eq!(fs::read(&path).unwrap(), b"first chunk\nsecond chunk\n");
+        assert_eq!(saved, document_fingerprint(&path).unwrap());
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn conditional_streaming_write_detects_a_conflict_after_streaming() {
+        let directory = unique_temp_dir();
+        let path = directory.join("streamed.md");
+        let expected = atomic_write_document(&path, b"opened\n").unwrap();
+
+        let error = atomic_write_document_if_unchanged_with(&path, Some(expected), |writer| {
+            writer.write_all(b"editor edit\n")?;
+            fs::write(&path, b"external edit\n")
+        })
+        .expect_err("the second expectation check must detect the external edit");
+
+        assert!(matches!(
+            error,
+            DocumentWriteError::ExternalModification {
+                expected: Some(actual_expected),
+                actual: Some(_),
+                ..
+            } if actual_expected == expected
+        ));
+        assert_eq!(fs::read(&path).unwrap(), b"external edit\n");
+        assert_eq!(fs::read_dir(&directory).unwrap().count(), 1);
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn streaming_write_error_keeps_the_target_and_cleans_up_the_temporary_file() {
+        let directory = unique_temp_dir();
+        let path = directory.join("streamed.md");
+        fs::write(&path, b"original\n").unwrap();
+
+        let error = atomic_write_document_with(&path, |writer| -> io::Result<()> {
+            writer.write_all(b"partial replacement\n")?;
+            Err(io::Error::other("injected stream failure"))
+        })
+        .expect_err("stream failure must abort the atomic write");
+
+        assert!(matches!(
+            error,
+            PlatformError::Io {
+                operation: "write temporary document",
+                ..
+            }
+        ));
+        assert_eq!(fs::read(&path).unwrap(), b"original\n");
+        assert_eq!(fs::read_dir(&directory).unwrap().count(), 1);
         fs::remove_dir_all(directory).unwrap();
     }
 

@@ -56,6 +56,7 @@ impl ShellState {
             .storage_manager
             .as_ref()
             .map(|storage| ShellDiagnosticsTaskRuntime::new(storage.clone()));
+        let editor_task_runtime = ShellEditorTaskRuntime::new();
         Self::new_with_runtime_services(
             launch_config,
             terminal_size,
@@ -63,6 +64,7 @@ impl ShellState {
             ascii_assets,
             explorer_task_runtime,
             diagnostics_task_runtime,
+            editor_task_runtime,
         )
     }
 
@@ -73,6 +75,7 @@ impl ShellState {
         ascii_assets: tundra_ui::RuntimeAsciiAssets,
         explorer_task_runtime: Option<ShellExplorerTaskRuntime>,
         diagnostics_task_runtime: Option<ShellDiagnosticsTaskRuntime>,
+        editor_task_runtime: ShellEditorTaskRuntime,
     ) -> Self {
         let diagnostics_restart_required = diagnostics_task_runtime
             .as_ref()
@@ -169,7 +172,12 @@ impl ShellState {
             explorer_conflict_apply_to_remaining: false,
             explorer_purpose: ExplorerPurpose::Browse,
             explorer_task_runtime,
+            editor_task_runtime,
+            editor_load_state: None,
+            editor_save_state: None,
+            editor_document_generation: 0,
             editor_state: None,
+            editor_rich_render_cache: None,
             editor_focus: tundra_ui::EditorFocus::Canvas,
             editor_open_menu: None,
             editor_selected_toolbar_action: None,
@@ -184,7 +192,7 @@ impl ShellState {
             editor_message: None,
             editor_recovery_dirty_since: None,
             editor_last_recovery_write: None,
-            editor_diagnostic_session: None,
+            editor_read_session: None,
             diagnostics_task_runtime,
             diagnostics_snapshot: None,
             diagnostics_tab: tundra_ui::DiagnosticsTab::Health,

@@ -448,9 +448,9 @@ impl RichEditor {
             FormatCommand::Bold => self.toggle_mark(MarkKind::Bold),
             FormatCommand::Italic => self.toggle_mark(MarkKind::Italic),
             FormatCommand::Strikethrough => self.toggle_mark(MarkKind::Strikethrough),
-            FormatCommand::InlineCode => self.toggle_mark(MarkKind::Code),
+            FormatCommand::InlineCode => self.toggle_code_on_current_line(),
             FormatCommand::Heading(level) => self.set_heading(*level),
-            FormatCommand::Paragraph => self.set_heading(0),
+            FormatCommand::Paragraph => self.set_paragraph(),
             FormatCommand::Quote => self.toggle_quote(),
             FormatCommand::BulletList => self.toggle_list(RichListKind::Bullet),
             FormatCommand::OrderedList => self.toggle_list(RichListKind::Ordered),
@@ -596,6 +596,54 @@ impl RichEditor {
         true
     }
 
+    /// Inline code is exposed as a line-oriented toolbar action. Preserve a
+    /// precise selection when it stays on the caret's logical line, but never
+    /// let a cross-line selection carry code formatting into adjacent lines.
+    fn toggle_code_on_current_line(&mut self) -> bool {
+        let Some(cursor) = self.cursor else {
+            return false;
+        };
+        let Some(content) = find_inline(&self.document.blocks, cursor.container_id) else {
+            return false;
+        };
+        let text = content.plain_text();
+        if let Some(selection) = self.selection.filter(|selection| {
+            !selection.is_collapsed()
+                && selection.anchor.container_id == cursor.container_id
+                && selection.focus.container_id == cursor.container_id
+        }) {
+            let start = selection
+                .anchor
+                .grapheme_offset
+                .min(selection.focus.grapheme_offset);
+            let end = selection
+                .anchor
+                .grapheme_offset
+                .max(selection.focus.grapheme_offset);
+            let selected_line_end = logical_line_end(&text, start);
+            let trailing_break_end = selected_line_end
+                .saturating_add((selected_line_end < content.grapheme_len()) as usize);
+            if end <= trailing_break_end && start < selected_line_end {
+                self.selection = Some(RichSelection::new(
+                    RichPosition::new(cursor.container_id, start),
+                    RichPosition::new(cursor.container_id, end.min(selected_line_end)),
+                ));
+                return self.toggle_mark(MarkKind::Code);
+            }
+        }
+
+        let line_start = logical_line_start(&text, cursor.grapheme_offset);
+        let line_end = logical_line_end(&text, cursor.grapheme_offset);
+        if line_start == line_end {
+            return false;
+        }
+        self.selection = Some(RichSelection::new(
+            RichPosition::new(cursor.container_id, line_start),
+            RichPosition::new(cursor.container_id, line_end),
+        ));
+        self.toggle_mark(MarkKind::Code)
+    }
+
     fn apply_link(&mut self, url: &str, title: Option<String>) -> bool {
         let Some(selection) = self.selection.filter(|selection| !selection.is_collapsed()) else {
             return false;
@@ -649,46 +697,137 @@ impl RichEditor {
         if level > 6 {
             return false;
         }
-        let targets = self.block_format_targets();
-        if targets.is_empty() {
+        let Some(id) = self.isolate_cursor_line() else {
             return false;
-        }
-        let mut changed = false;
-        for id in targets {
-            let target_changed =
-                change_block_kind(&mut self.document.blocks, id, |kind| match kind {
-                    RichBlockKind::Paragraph { content } if level > 0 => {
-                        Some(RichBlockKind::Heading { level, content })
-                    }
-                    RichBlockKind::Heading { content, .. } if level == 0 => {
-                        Some(RichBlockKind::Paragraph { content })
-                    }
-                    RichBlockKind::Heading { content, .. } => {
-                        Some(RichBlockKind::Heading { level, content })
-                    }
-                    other => Some(other),
-                });
-            if target_changed {
-                self.document.mark_containing_block_dirty(id);
-                changed = true;
+        };
+        let changed = change_block_kind(&mut self.document.blocks, id, |kind| match kind {
+            RichBlockKind::Paragraph { content } if level > 0 => {
+                Some(RichBlockKind::Heading { level, content })
             }
+            RichBlockKind::Heading { content, .. } if level == 0 => {
+                Some(RichBlockKind::Paragraph { content })
+            }
+            RichBlockKind::Heading { content, .. } => {
+                Some(RichBlockKind::Heading { level, content })
+            }
+            other => Some(other),
+        });
+        if changed {
+            self.document.mark_containing_block_dirty(id);
         }
         changed
     }
 
-    /// Block formats use half-open selection semantics. A selection ending at
-    /// offset zero of the next container must not format that next block, and
-    /// a selection beginning at the end of the previous container must not
-    /// format the previous block. Containers fully enclosed between the two
-    /// endpoints remain targets, including empty paragraphs.
-    fn block_format_targets(&self) -> Vec<NodeId> {
-        if self.has_selection() {
-            return self.selected_block_format_targets();
+    fn set_paragraph(&mut self) -> bool {
+        let Some(id) = self.isolate_cursor_line() else {
+            return false;
+        };
+        let extracted = self.extract_current_top_level_line(id);
+        let changed = change_block_kind(&mut self.document.blocks, id, |kind| match kind {
+            RichBlockKind::Heading { content, .. } => Some(RichBlockKind::Paragraph { content }),
+            other => Some(other),
+        });
+        if changed {
+            self.document.mark_containing_block_dirty(id);
         }
-        self.cursor
-            .filter(|cursor| is_block_format_container(&self.document.blocks, cursor.container_id))
-            .map(|cursor| vec![cursor.container_id])
-            .unwrap_or_default()
+        extracted || changed
+    }
+
+    /// Splits the caret's visual/logical line out of an inline container while
+    /// retaining the target container id. Block formatting can then operate on
+    /// exactly that line without changing its neighbors.
+    fn isolate_cursor_line(&mut self) -> Option<NodeId> {
+        let cursor = self.cursor?;
+        let content = find_inline(&self.document.blocks, cursor.container_id)?;
+        let text = content.plain_text();
+        let line_start = logical_line_start(&text, cursor.grapheme_offset);
+        let line_end = logical_line_end(&text, cursor.grapheme_offset);
+        let len = content.grapheme_len();
+        self.selection = None;
+        self.preferred_column = None;
+        if line_start == 0 && line_end == len {
+            return Some(cursor.container_id);
+        }
+
+        let before_id = (line_start > 0).then(|| self.document.allocate_node_id());
+        let after_id = (line_end < len).then(|| self.document.allocate_node_id());
+        if !split_inline_block_line(
+            &mut self.document.blocks,
+            cursor.container_id,
+            line_start,
+            line_end,
+            before_id,
+            after_id,
+        ) {
+            return None;
+        }
+        self.cursor = Some(RichPosition::new(
+            cursor.container_id,
+            cursor.grapheme_offset.saturating_sub(line_start),
+        ));
+        self.document
+            .mark_containing_block_dirty(cursor.container_id);
+        Some(cursor.container_id)
+    }
+
+    fn current_top_level_line_context(&self, id: NodeId) -> Option<TopLevelLineContext> {
+        self.document
+            .blocks
+            .iter()
+            .find_map(|block| match &block.kind {
+                RichBlockKind::Quote { blocks } if blocks.iter().any(|nested| nested.id == id) => {
+                    Some(TopLevelLineContext::Quote)
+                }
+                RichBlockKind::List { kind, items, .. }
+                    if items
+                        .iter()
+                        .any(|item| item.blocks.iter().any(|nested| nested.id == id)) =>
+                {
+                    Some(TopLevelLineContext::List(*kind))
+                }
+                _ if block.id == id => Some(TopLevelLineContext::Direct),
+                _ => None,
+            })
+    }
+
+    /// Pulls one isolated line out of a top-level quote or list, splitting the
+    /// surrounding container so preceding and following lines retain their
+    /// original format.
+    fn extract_current_top_level_line(&mut self, id: NodeId) -> bool {
+        let Some(index) = self.document.blocks.iter().position(|block| {
+            matches!(
+                &block.kind,
+                RichBlockKind::Quote { blocks }
+                    if blocks.iter().any(|nested| nested.id == id)
+            ) || matches!(
+                &block.kind,
+                RichBlockKind::List { items, .. }
+                    if items
+                        .iter()
+                        .any(|item| item.blocks.iter().any(|nested| nested.id == id))
+            )
+        }) else {
+            return false;
+        };
+
+        let wrapper_ids = [
+            self.document.allocate_node_id(),
+            self.document.allocate_node_id(),
+        ];
+        let split_item_id = self.document.allocate_node_id();
+        let current = self.document.blocks.remove(index);
+        let Some(mut replacements) =
+            extract_line_from_top_level_container(current.clone(), id, wrapper_ids, split_item_id)
+        else {
+            self.document.blocks.insert(index, current);
+            return false;
+        };
+        if let Some(first) = replacements.first_mut() {
+            first.leading_trivia = current.leading_trivia;
+        }
+        self.document.blocks.splice(index..index, replacements);
+        self.document.mark_containing_block_dirty(id);
+        true
     }
 
     fn selected_block_format_targets(&self) -> Vec<NodeId> {
@@ -737,134 +876,94 @@ impl RichEditor {
     }
 
     fn toggle_quote(&mut self) -> bool {
-        let Some(id) = self.cursor.map(|cursor| cursor.container_id) else {
+        let Some(id) = self.isolate_cursor_line() else {
             return false;
         };
-        let Some(index) = self
-            .document
-            .blocks
-            .iter()
-            .position(|block| block.contains_node(id))
-        else {
+        if matches!(
+            self.current_top_level_line_context(id),
+            Some(TopLevelLineContext::Quote)
+        ) {
+            return self.extract_current_top_level_line(id);
+        }
+        self.extract_current_top_level_line(id);
+        let Some(index) = self.document.blocks.iter().position(|block| block.id == id) else {
             return false;
         };
         let current = self.document.blocks.remove(index);
-        let replacement = match current.kind {
-            RichBlockKind::Quote { mut blocks } if blocks.len() == 1 => {
-                let mut block = blocks.remove(0);
-                block.leading_trivia = current.leading_trivia;
-                block.original_raw = None;
-                block.rewrite = RewriteState::Dirty;
-                block
-            }
-            kind => {
-                let nested = RichBlock {
-                    id: current.id,
-                    leading_trivia: String::new(),
-                    original_raw: None,
-                    rewrite: RewriteState::Dirty,
-                    kind,
-                };
-                let wrapper_id = self.document.allocate_node_id();
-                RichBlock {
-                    id: wrapper_id,
-                    leading_trivia: current.leading_trivia,
-                    original_raw: None,
-                    rewrite: RewriteState::Dirty,
-                    kind: RichBlockKind::Quote {
-                        blocks: vec![nested],
-                    },
-                }
-            }
+        let nested = RichBlock {
+            id: current.id,
+            leading_trivia: String::new(),
+            original_raw: None,
+            rewrite: RewriteState::Dirty,
+            kind: current.kind,
         };
-        self.document.blocks.insert(index, replacement);
+        let wrapper_id = self.document.allocate_node_id();
+        self.document.blocks.insert(
+            index,
+            RichBlock {
+                id: wrapper_id,
+                leading_trivia: current.leading_trivia,
+                original_raw: None,
+                rewrite: RewriteState::Dirty,
+                kind: RichBlockKind::Quote {
+                    blocks: vec![nested],
+                },
+            },
+        );
         true
     }
 
     fn toggle_list(&mut self, target: RichListKind) -> bool {
-        let Some(id) = self.cursor.map(|cursor| cursor.container_id) else {
+        let Some(id) = self.isolate_cursor_line() else {
             return false;
         };
-        let Some(index) = self
-            .document
-            .blocks
-            .iter()
-            .position(|block| block.contains_node(id))
-        else {
+        if matches!(
+            self.current_top_level_line_context(id),
+            Some(TopLevelLineContext::List(kind)) if kind == target
+        ) {
+            return self.extract_current_top_level_line(id);
+        }
+        self.extract_current_top_level_line(id);
+        let Some(index) = self.document.blocks.iter().position(|block| block.id == id) else {
             return false;
         };
         let current = self.document.blocks.remove(index);
-        let leading = current.leading_trivia.clone();
-        let replacement = match current.kind {
-            RichBlockKind::List { kind, items, .. } if kind == target => {
-                let mut nodes = Vec::new();
-                for (item_index, item) in items.into_iter().enumerate() {
-                    if item_index > 0 {
-                        nodes.push(InlineNode::SoftBreak);
-                    }
-                    if let Some(block) = item.blocks.into_iter().next() {
-                        match block.kind {
-                            RichBlockKind::Paragraph { content }
-                            | RichBlockKind::Heading { content, .. } => nodes.extend(content.0),
-                            _ => {}
-                        }
-                    }
-                }
-                RichBlock {
-                    id: current.id,
-                    leading_trivia: leading,
-                    original_raw: None,
-                    rewrite: RewriteState::Dirty,
-                    kind: RichBlockKind::Paragraph {
-                        content: InlineContent(nodes),
-                    },
-                }
-            }
-            RichBlockKind::Paragraph { content } | RichBlockKind::Heading { content, .. } => {
-                let lines = split_inline_lines(content);
-                let mut items = Vec::new();
-                for line in lines {
-                    let item_id = self.document.allocate_node_id();
-                    let paragraph_id = self.document.allocate_node_id();
-                    items.push(RichListItem {
+        if !matches!(
+            current.kind,
+            RichBlockKind::Paragraph { .. } | RichBlockKind::Heading { .. }
+        ) {
+            self.document.blocks.insert(index, current);
+            return false;
+        }
+        let leading = current.leading_trivia;
+        let item_id = self.document.allocate_node_id();
+        let wrapper_id = self.document.allocate_node_id();
+        let nested = RichBlock {
+            id: current.id,
+            leading_trivia: String::new(),
+            original_raw: None,
+            rewrite: RewriteState::Dirty,
+            kind: current.kind,
+        };
+        self.document.blocks.insert(
+            index,
+            RichBlock {
+                id: wrapper_id,
+                leading_trivia: leading,
+                original_raw: None,
+                rewrite: RewriteState::Dirty,
+                kind: RichBlockKind::List {
+                    kind: target,
+                    start: 1,
+                    tight: true,
+                    items: vec![RichListItem {
                         id: item_id,
                         checked: (target == RichListKind::Task).then_some(false),
-                        blocks: vec![RichBlock {
-                            id: paragraph_id,
-                            leading_trivia: String::new(),
-                            original_raw: None,
-                            rewrite: RewriteState::Dirty,
-                            kind: RichBlockKind::Paragraph { content: line },
-                        }],
-                    });
-                }
-                let wrapper_id = self.document.allocate_node_id();
-                RichBlock {
-                    id: wrapper_id,
-                    leading_trivia: leading,
-                    original_raw: None,
-                    rewrite: RewriteState::Dirty,
-                    kind: RichBlockKind::List {
-                        kind: target,
-                        start: 1,
-                        tight: true,
-                        items,
-                    },
-                }
-            }
-            kind => RichBlock {
-                id: current.id,
-                leading_trivia: leading,
-                original_raw: current.original_raw,
-                rewrite: current.rewrite,
-                kind,
+                        blocks: vec![nested],
+                    }],
+                },
             },
-        };
-        let cursor = replacement.first_editable_position();
-        self.document.blocks.insert(index, replacement);
-        if let Some(cursor) = cursor {
-            self.cursor = Some(cursor);
-        }
+        );
         true
     }
 
@@ -953,6 +1052,13 @@ struct SelectionSegment {
     id: NodeId,
     start: usize,
     end: usize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TopLevelLineContext {
+    Direct,
+    Quote,
+    List(RichListKind),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1377,6 +1483,229 @@ fn set_mark(marks: &mut InlineMarks, mark: MarkKind, enabled: bool) {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+enum InlineBlockStyle {
+    Paragraph,
+    Heading(u8),
+}
+
+fn split_inline_block_line(
+    blocks: &mut Vec<RichBlock>,
+    id: NodeId,
+    line_start: usize,
+    line_end: usize,
+    before_id: Option<NodeId>,
+    after_id: Option<NodeId>,
+) -> bool {
+    for index in 0..blocks.len() {
+        if blocks[index].id == id {
+            let current = blocks.remove(index);
+            let (style, content) = match current.kind {
+                RichBlockKind::Paragraph { content } => (InlineBlockStyle::Paragraph, content),
+                RichBlockKind::Heading { level, content } => {
+                    (InlineBlockStyle::Heading(level), content)
+                }
+                kind => {
+                    blocks.insert(index, RichBlock { kind, ..current });
+                    return false;
+                }
+            };
+            let atoms = inline_atoms(&content);
+            let start = line_start.min(atoms.len());
+            let end = line_end.min(atoms.len()).max(start);
+            let before_end =
+                start.saturating_sub((start > 0 && is_break_atom(&atoms[start - 1])) as usize);
+            let after_start =
+                end.saturating_add((end < atoms.len() && is_break_atom(&atoms[end])) as usize);
+            let mut replacements = Vec::with_capacity(3);
+            if let Some(before_id) = before_id {
+                replacements.push(inline_line_block(
+                    before_id,
+                    style,
+                    atoms[..before_end].to_vec(),
+                ));
+            }
+            replacements.push(inline_line_block(id, style, atoms[start..end].to_vec()));
+            if let Some(after_id) = after_id {
+                replacements.push(inline_line_block(
+                    after_id,
+                    style,
+                    atoms[after_start.min(atoms.len())..].to_vec(),
+                ));
+            }
+            if let Some(first) = replacements.first_mut() {
+                first.leading_trivia = current.leading_trivia;
+            }
+            blocks.splice(index..index, replacements);
+            return true;
+        }
+
+        match &mut blocks[index].kind {
+            RichBlockKind::Quote { blocks } => {
+                if split_inline_block_line(blocks, id, line_start, line_end, before_id, after_id) {
+                    return true;
+                }
+            }
+            RichBlockKind::List { items, .. } => {
+                for item in items {
+                    if split_inline_block_line(
+                        &mut item.blocks,
+                        id,
+                        line_start,
+                        line_end,
+                        before_id,
+                        after_id,
+                    ) {
+                        return true;
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    false
+}
+
+fn is_break_atom(atom: &Atom) -> bool {
+    matches!(atom, Atom::SoftBreak | Atom::HardBreak)
+}
+
+fn inline_line_block(id: NodeId, style: InlineBlockStyle, atoms: Vec<Atom>) -> RichBlock {
+    let content = atoms_to_inline(atoms);
+    let kind = match style {
+        InlineBlockStyle::Paragraph => RichBlockKind::Paragraph { content },
+        InlineBlockStyle::Heading(level) => RichBlockKind::Heading { level, content },
+    };
+    RichBlock {
+        id,
+        leading_trivia: String::new(),
+        original_raw: None,
+        rewrite: RewriteState::Dirty,
+        kind,
+    }
+}
+
+fn extract_line_from_top_level_container(
+    current: RichBlock,
+    id: NodeId,
+    wrapper_ids: [NodeId; 2],
+    split_item_id: NodeId,
+) -> Option<Vec<RichBlock>> {
+    match current.kind {
+        RichBlockKind::Quote { mut blocks } => {
+            let index = blocks.iter().position(|block| block.id == id)?;
+            let after = blocks.split_off(index + 1);
+            let mut target = blocks.pop()?;
+            target.leading_trivia.clear();
+            target.original_raw = None;
+            target.rewrite = RewriteState::Dirty;
+
+            let mut replacements = Vec::with_capacity(3);
+            if !blocks.is_empty() {
+                replacements.push(quote_block(wrapper_ids[0], blocks));
+            }
+            replacements.push(target);
+            if !after.is_empty() {
+                replacements.push(quote_block(wrapper_ids[1], after));
+            }
+            Some(replacements)
+        }
+        RichBlockKind::List {
+            kind,
+            start,
+            tight,
+            mut items,
+        } => {
+            let (item_index, block_index) =
+                items.iter().enumerate().find_map(|(item, candidate)| {
+                    candidate
+                        .blocks
+                        .iter()
+                        .position(|block| block.id == id)
+                        .map(|block| (item, block))
+                })?;
+            let mut after_items = items.split_off(item_index + 1);
+            let mut target_item = items.pop()?;
+            let mut after_blocks = target_item.blocks.split_off(block_index + 1);
+            let mut target = target_item.blocks.pop()?;
+            target.leading_trivia.clear();
+            target.original_raw = None;
+            target.rewrite = RewriteState::Dirty;
+
+            if !target_item.blocks.is_empty() {
+                items.push(RichListItem {
+                    id: target_item.id,
+                    checked: target_item.checked,
+                    blocks: target_item.blocks,
+                });
+            }
+            let prefix_len = items.len();
+            if !after_blocks.is_empty() {
+                after_items.insert(
+                    0,
+                    RichListItem {
+                        id: if prefix_len > item_index {
+                            split_item_id
+                        } else {
+                            target_item.id
+                        },
+                        checked: target_item.checked,
+                        blocks: std::mem::take(&mut after_blocks),
+                    },
+                );
+            }
+
+            let mut replacements = Vec::with_capacity(3);
+            if !items.is_empty() {
+                replacements.push(list_block(wrapper_ids[0], kind, start, tight, items));
+            }
+            replacements.push(target);
+            if !after_items.is_empty() {
+                replacements.push(list_block(
+                    wrapper_ids[1],
+                    kind,
+                    start.saturating_add(prefix_len).saturating_add(1),
+                    tight,
+                    after_items,
+                ));
+            }
+            Some(replacements)
+        }
+        _ => None,
+    }
+}
+
+fn quote_block(id: NodeId, blocks: Vec<RichBlock>) -> RichBlock {
+    RichBlock {
+        id,
+        leading_trivia: String::new(),
+        original_raw: None,
+        rewrite: RewriteState::Dirty,
+        kind: RichBlockKind::Quote { blocks },
+    }
+}
+
+fn list_block(
+    id: NodeId,
+    kind: RichListKind,
+    start: usize,
+    tight: bool,
+    items: Vec<RichListItem>,
+) -> RichBlock {
+    RichBlock {
+        id,
+        leading_trivia: String::new(),
+        original_raw: None,
+        rewrite: RewriteState::Dirty,
+        kind: RichBlockKind::List {
+            kind,
+            start,
+            tight,
+            items,
+        },
+    }
+}
+
 fn change_block_kind(
     blocks: &mut [RichBlock],
     id: NodeId,
@@ -1643,17 +1972,6 @@ fn is_block_format_container(blocks: &[RichBlock], id: NodeId) -> bool {
         }
     }
     false
-}
-
-fn split_inline_lines(content: InlineContent) -> Vec<InlineContent> {
-    let mut lines = vec![Vec::new()];
-    for node in content.0 {
-        match node {
-            InlineNode::SoftBreak | InlineNode::HardBreak => lines.push(Vec::new()),
-            other => lines.last_mut().expect("at least one line").push(other),
-        }
-    }
-    lines.into_iter().map(InlineContent).collect()
 }
 
 fn insert_cell(row: &mut Vec<RichTableCell>, edge: TableColumnEdge, id: NodeId) {

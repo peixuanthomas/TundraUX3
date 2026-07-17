@@ -100,7 +100,54 @@ fn editor_accepts_unicode_and_inserts_spaces_for_tab() {
     assert_eq!(editor.mode, EditorMode::Source);
     assert_eq!(editor.source_lines.join("\n"), "你好🙂    ");
     assert!(editor.dirty);
-    assert_eq!(editor.cursor.map(|cursor| cursor.column), Some(7));
+    assert_eq!(editor.cursor.map(|cursor| cursor.column), Some(10));
+}
+
+#[test]
+fn source_caret_reveals_a_long_line_and_the_horizontal_scrollbar_moves_the_viewport() {
+    let fixture = FixtureRoot::new("source-horizontal-caret");
+    let platform = mock_platform(fixture.path());
+    bootstrap_with_shell(&platform);
+    fs::write(
+        fixture.path().join("Documents").join("wide.log"),
+        "0123456789".repeat(30),
+    )
+    .expect("seed wide log");
+    let mut state = logged_in_state(&platform);
+    open_only_document_in_editor(&mut state, &platform);
+    assert!(state.to_editor_view_model().read_only);
+
+    state.apply_input_with_platform(InputEvent::from_key_label("Home"), &platform);
+    let home = state.to_editor_view_model();
+    let home_layout = current_editor_layout(&state);
+    assert_eq!(home.horizontal_scroll, 0);
+    assert!(home_layout.horizontal_scrollbar.is_some());
+
+    state.apply_input_with_platform(InputEvent::from_key_label("End"), &platform);
+    let end = state.to_editor_view_model();
+    let end_layout = current_editor_layout(&state);
+    let cursor = end.cursor.expect("Source caret");
+    assert!(end.horizontal_scroll > 0);
+    assert!(cursor.column >= end.horizontal_scroll);
+    assert!(
+        cursor.column
+            < end
+                .horizontal_scroll
+                .saturating_add(usize::from(end_layout.canvas.width))
+    );
+
+    state.apply_input_with_platform(InputEvent::from_key_label("Home"), &platform);
+    let scrollbar = current_editor_layout(&state)
+        .horizontal_scrollbar
+        .expect("horizontal scrollbar");
+    state.apply_input_with_platform(
+        InputEvent::mouse_down(
+            PointerButton::Left,
+            (scrollbar.track.right().saturating_sub(1), scrollbar.track.y),
+        ),
+        &platform,
+    );
+    assert!(state.to_editor_view_model().horizontal_scroll > 0);
 }
 
 #[test]
@@ -117,10 +164,10 @@ fn rich_source_toggle_preserves_markdown_and_rendered_content() {
     assert_eq!(rich.source, None);
     assert!(rich.rich_cursor.is_some());
     assert!(matches!(
-        rich.blocks.as_slice(),
+        rich.render_blocks(),
         [EditorRenderBlock::Heading { level: 2, .. }]
     ));
-    assert!(!rich.blocks.is_empty());
+    assert!(!rich.render_blocks().is_empty());
 
     state.apply_input_with_platform(ctrl_shift('m'), &platform);
     let source = state.to_editor_view_model();
@@ -133,7 +180,7 @@ fn rich_source_toggle_preserves_markdown_and_rendered_content() {
     assert_eq!(rich_again.source, None);
     assert_eq!(rich_again.word_count, rich.word_count);
     assert!(matches!(
-        rich_again.blocks.as_slice(),
+        rich_again.render_blocks(),
         [EditorRenderBlock::Heading { level: 2, .. }]
     ));
 }
@@ -205,7 +252,7 @@ fn enter_after_heading_starts_an_independent_paragraph() {
 
     let rich = state.to_editor_view_model();
     assert!(matches!(
-        rich.blocks.as_slice(),
+        rich.render_blocks(),
         [
             EditorRenderBlock::Heading { level: 1, .. },
             EditorRenderBlock::Paragraph(_)
@@ -214,7 +261,7 @@ fn enter_after_heading_starts_an_independent_paragraph() {
 
     state.apply_input_with_platform(ctrl_alt('2'), &platform);
     assert!(matches!(
-        state.to_editor_view_model().blocks.as_slice(),
+        state.to_editor_view_model().render_blocks(),
         [
             EditorRenderBlock::Heading { level: 1, .. },
             EditorRenderBlock::Heading { level: 2, .. }
@@ -232,7 +279,7 @@ fn enter_after_heading_starts_an_independent_paragraph() {
         &platform,
     );
     assert!(matches!(
-        state.to_editor_view_model().blocks.as_slice(),
+        state.to_editor_view_model().render_blocks(),
         [
             EditorRenderBlock::Heading { level: 1, .. },
             EditorRenderBlock::Paragraph(_)
@@ -308,6 +355,63 @@ fn collapsed_inline_toolbar_action_keeps_the_document_stable_and_restores_the_ca
 }
 
 #[test]
+fn inline_code_toolbar_formats_only_the_caret_line_without_a_selection() {
+    let fixture = FixtureRoot::new("caret-line-inline-code");
+    let platform = mock_platform(fixture.path());
+    let mut state = new_user_home_state();
+    open_editor_from_home(&mut state, &platform);
+    type_text(&mut state, &platform, "one");
+    state.apply_input_with_platform(InputEvent::from_key_label("Enter"), &platform);
+    type_text(&mut state, &platform, "two");
+    state.apply_input_with_platform(InputEvent::from_key_label("Enter"), &platform);
+    type_text(&mut state, &platform, "three");
+
+    let layout = current_editor_layout(&state);
+    let code = layout
+        .toolbar_items
+        .iter()
+        .find(|item| item.action == EditorToolbarAction::InlineCode)
+        .expect("Code toolbar item");
+    state.apply_input_with_platform(
+        InputEvent::mouse_down(PointerButton::Left, (code.area.x, code.area.y)),
+        &platform,
+    );
+
+    let rich = state.to_editor_view_model();
+    let spans = rich
+        .render_blocks()
+        .iter()
+        .flat_map(|block| match block {
+            EditorRenderBlock::Paragraph(spans) => spans.as_slice(),
+            _ => &[],
+        })
+        .collect::<Vec<_>>();
+    assert!(
+        spans
+            .iter()
+            .any(|span| span.text == "three" && span.inline_code)
+    );
+    assert!(
+        spans
+            .iter()
+            .filter(|span| span.text == "one" || span.text == "two")
+            .all(|span| !span.inline_code)
+    );
+    assert!(
+        !rich
+            .status_message
+            .as_deref()
+            .is_some_and(|message| message.contains("Select text"))
+    );
+
+    state.apply_input_with_platform(ctrl_shift('m'), &platform);
+    assert_eq!(
+        state.to_editor_view_model().source_lines.join("\n"),
+        "one\ntwo\n`three`"
+    );
+}
+
+#[test]
 fn selected_text_formats_from_the_toolbar_without_exposing_markers_in_rich_view() {
     let fixture = FixtureRoot::new("selected-toolbar-format");
     let platform = mock_platform(fixture.path());
@@ -333,7 +437,7 @@ fn selected_text_formats_from_the_toolbar_without_exposing_markers_in_rich_view(
     assert_eq!(editor.rich_selection, None);
     assert_eq!(editor.focus, EditorFocus::Canvas);
     let rich_text = editor
-        .blocks
+        .render_blocks()
         .iter()
         .flat_map(|block| match block {
             tundra_ui::EditorRenderBlock::Paragraph(spans) => spans.as_slice(),
@@ -400,7 +504,7 @@ fn source_mode_rejects_markdown_toolbar_and_shortcut_actions() {
     type_text(&mut state, &platform, "source text");
     state.apply_input_with_platform(ctrl_shift('m'), &platform);
     state.apply_input_with_platform(ctrl('a'), &platform);
-    let original = state.to_editor_view_model().source.clone();
+    let original = state.to_editor_view_model().source_lines.join("\n");
 
     for shortcut in [
         ctrl('b'),
@@ -411,7 +515,10 @@ fn source_mode_rejects_markdown_toolbar_and_shortcut_actions() {
     ] {
         state.apply_input_with_platform(shortcut, &platform);
     }
-    assert_eq!(state.to_editor_view_model().source, original);
+    assert_eq!(
+        state.to_editor_view_model().source_lines.join("\n"),
+        original
+    );
 
     let layout = current_editor_layout(&state);
     for action in [
@@ -438,7 +545,10 @@ fn source_mode_rejects_markdown_toolbar_and_shortcut_actions() {
             &platform,
         );
     }
-    assert_eq!(state.to_editor_view_model().source, original);
+    assert_eq!(
+        state.to_editor_view_model().source_lines.join("\n"),
+        original
+    );
 }
 
 #[test]
@@ -487,7 +597,7 @@ fn rich_canvas_click_edits_a_logical_grapheme_position() {
     let editor = state.to_editor_view_model();
     assert_eq!(editor.source, None);
     let heading_range = editor
-        .blocks
+        .render_blocks()
         .iter()
         .find_map(|block| match block {
             EditorRenderBlock::Heading { spans, .. } => {
@@ -721,7 +831,7 @@ fn word_style_heading_and_link_shortcuts_edit_the_native_rich_model() {
     assert_eq!(rich.mode, EditorMode::Rich);
     assert_eq!(rich.source, None);
     let link = rich
-        .blocks
+        .render_blocks()
         .iter()
         .flat_map(block_spans)
         .find(|span| span.text == "Heading")
@@ -859,6 +969,7 @@ fn discard_then_open_replaces_the_buffer_only_after_a_file_is_selected() {
         state.apply_input_with_platform(InputEvent::from_key_label("Down"), &platform);
     }
     state.apply_input_with_platform(InputEvent::from_key_label("Enter"), &platform);
+    wait_for_editor_background_tasks(&mut state, &platform);
 
     let editor = state.to_editor_view_model();
     assert_eq!(state.active_screen(), ShellScreen::Editor);
@@ -894,6 +1005,7 @@ fn save_then_open_continues_to_the_picker_after_the_save_succeeds() {
 
     state.apply_input_with_platform(ctrl('o'), &platform);
     state.apply_input_with_platform(InputEvent::from_key_label("Enter"), &platform);
+    wait_for_editor_background_tasks(&mut state, &platform);
 
     assert_eq!(state.active_screen(), ShellScreen::Explorer);
     assert_eq!(
@@ -909,6 +1021,7 @@ fn save_then_open_continues_to_the_picker_after_the_save_succeeds() {
         state.apply_input_with_platform(InputEvent::from_key_label("Down"), &platform);
     }
     state.apply_input_with_platform(InputEvent::from_key_label("Enter"), &platform);
+    wait_for_editor_background_tasks(&mut state, &platform);
 
     let editor = state.to_editor_view_model();
     assert_eq!(state.active_screen(), ShellScreen::Editor);
@@ -939,7 +1052,7 @@ fn pasted_markdown_syntax_remains_plain_rich_text() {
     let editor = state.to_editor_view_model();
     assert_eq!(editor.mode, EditorMode::Rich);
     assert_eq!(editor.source, None);
-    assert!(editor.blocks.iter().all(|block| {
+    assert!(editor.render_blocks().iter().all(|block| {
         !matches!(
             block,
             EditorRenderBlock::Table { .. } | EditorRenderBlock::RichTable { .. }
@@ -959,12 +1072,18 @@ fn pasted_markdown_syntax_remains_plain_rich_text() {
     let source = state.to_editor_view_model().source_lines.join("\n");
     assert!(source.contains("\\|"));
     state.apply_input_with_platform(ctrl_shift('m'), &platform);
-    assert!(state.to_editor_view_model().blocks.iter().all(|block| {
-        !matches!(
-            block,
-            EditorRenderBlock::Table { .. } | EditorRenderBlock::RichTable { .. }
-        )
-    }));
+    assert!(
+        state
+            .to_editor_view_model()
+            .render_blocks()
+            .iter()
+            .all(|block| {
+                !matches!(
+                    block,
+                    EditorRenderBlock::Table { .. } | EditorRenderBlock::RichTable { .. }
+                )
+            })
+    );
 }
 
 #[test]
@@ -982,10 +1101,10 @@ fn typed_markdown_punctuation_never_changes_rich_structure() {
     assert_eq!(rich.source, None);
     assert_eq!(rendered_text(&rich), literal);
     assert!(matches!(
-        rich.blocks.as_slice(),
+        rich.render_blocks(),
         [EditorRenderBlock::Paragraph(_)]
     ));
-    assert!(rich.blocks.iter().all(|block| {
+    assert!(rich.render_blocks().iter().all(|block| {
         !matches!(
             block,
             EditorRenderBlock::Heading { .. }
@@ -1017,7 +1136,7 @@ fn rich_table_cells_accept_direct_input_and_column_edges_resize() {
     let editor = state.to_editor_view_model();
     assert_eq!(editor.source, None);
     let (table_id, empty_cell) = editor
-        .blocks
+        .render_blocks()
         .iter()
         .find_map(|block| match block {
             EditorRenderBlock::RichTable { table_id, rows, .. } => rows
@@ -1218,7 +1337,7 @@ fn new_table_exposes_an_editable_paragraph_below_it() {
     let editor = state.to_editor_view_model();
     assert_eq!(editor.source, None);
     let paragraph_index = editor
-        .blocks
+        .render_blocks()
         .iter()
         .position(|block| matches!(block, EditorRenderBlock::Paragraph(_)))
         .expect("paragraph below table");
@@ -1242,7 +1361,7 @@ fn new_table_exposes_an_editable_paragraph_below_it() {
     let edited = state.to_editor_view_model();
     assert_eq!(edited.source, None);
     assert!(
-        matches!(edited.blocks.last(), Some(EditorRenderBlock::Paragraph(spans)) if spans.iter().map(|span| span.text.as_str()).collect::<String>() == "below")
+        matches!(edited.render_blocks().last(), Some(EditorRenderBlock::Paragraph(spans)) if spans.iter().map(|span| span.text.as_str()).collect::<String>() == "below")
     );
 }
 
@@ -1258,6 +1377,7 @@ fn explorer_opens_markdown_and_ctrl_s_saves_the_edited_document() {
     open_only_document_in_editor(&mut state, &platform);
     type_text(&mut state, &platform, "edited ");
     state.apply_input_with_platform(ctrl('s'), &platform);
+    wait_for_editor_background_tasks(&mut state, &platform);
 
     assert_eq!(state.active_screen(), ShellScreen::Editor);
     assert_eq!(
@@ -1275,6 +1395,210 @@ fn explorer_opens_markdown_and_ctrl_s_saves_the_edited_document() {
             .status_message
             .as_deref()
             .is_some_and(|message| message.starts_with("Saved "))
+    );
+}
+
+#[test]
+fn save_locks_editor_input_until_the_background_write_finishes() {
+    let fixture = FixtureRoot::new("save-locks-input");
+    let platform = mock_platform(fixture.path());
+    bootstrap_with_shell(&platform);
+    let path = fixture.path().join("Documents").join("notes.txt");
+    fs::write(&path, "original").expect("seed text document");
+    let mut state = logged_in_state(&platform);
+    open_only_document_in_editor(&mut state, &platform);
+    type_text(&mut state, &platform, "saved ");
+
+    state.apply_input_with_platform(ctrl('s'), &platform);
+    assert!(
+        state
+            .to_editor_view_model()
+            .status_message
+            .as_deref()
+            .is_some_and(|message| message.starts_with("Saving"))
+    );
+    type_text(&mut state, &platform, "ignored ");
+    wait_for_editor_background_tasks(&mut state, &platform);
+
+    assert_eq!(
+        fs::read_to_string(&path).expect("saved text document"),
+        "saved original"
+    );
+    let editor = state.to_editor_view_model();
+    assert_eq!(editor.source_lines.join("\n"), "saved original");
+    assert!(!editor.dirty);
+}
+
+#[test]
+fn log_name_variants_open_read_only_at_the_document_bottom() {
+    for (case, file_name) in [
+        ("readonly-log", "service.log"),
+        ("readonly-uppercase-log", "service.LOG"),
+        ("readonly-rotated-log", "service.log.1"),
+    ] {
+        let fixture = FixtureRoot::new(case);
+        let platform = mock_platform(fixture.path());
+        bootstrap_with_shell(&platform);
+        let contents = (0..100)
+            .map(|line| format!("line {line}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        fs::write(fixture.path().join("Documents").join(file_name), contents).expect("seed log");
+        let mut state = logged_in_state(&platform);
+
+        open_only_document_in_editor(&mut state, &platform);
+
+        let editor = state.to_editor_view_model();
+        assert_eq!(editor.mode, EditorMode::Source);
+        assert!(editor.read_only, "{file_name} must be read-only");
+        assert!(editor.reload_available, "{file_name} must support reload");
+        assert_eq!(editor.cursor.map(|cursor| cursor.line), Some(99));
+        assert_eq!(
+            editor.source_lines.last().map(String::as_str),
+            Some("line 99")
+        );
+        assert!(editor.source_lines.iter().any(|line| line == "line 90"));
+        let layout = current_editor_layout(&state);
+        assert_eq!(
+            layout.visible_start,
+            layout
+                .document_line_count
+                .saturating_sub(layout.visible_capacity)
+        );
+
+        type_text(&mut state, &platform, "x");
+        let unchanged = state.to_editor_view_model();
+        assert_eq!(
+            unchanged.source_lines.last().map(String::as_str),
+            Some("line 99")
+        );
+        assert!(!unchanged.dirty);
+    }
+}
+
+#[test]
+fn log_snapshot_changes_only_after_r_reload() {
+    let fixture = FixtureRoot::new("log-reload-snapshot");
+    let platform = mock_platform(fixture.path());
+    bootstrap_with_shell(&platform);
+    let path = fixture.path().join("Documents").join("service.log");
+    fs::write(&path, "first\nsecond").expect("seed log");
+    let mut state = logged_in_state(&platform);
+    open_only_document_in_editor(&mut state, &platform);
+
+    assert_eq!(
+        state.to_editor_view_model().source_lines.join("\n"),
+        "first\nsecond"
+    );
+    fs::write(&path, "first\nsecond\nthird").expect("append log snapshot");
+    for _ in 0..3 {
+        state.apply_input_with_platform(InputEvent::Tick, &platform);
+        std::thread::yield_now();
+    }
+    assert_eq!(
+        state.to_editor_view_model().source_lines.join("\n"),
+        "first\nsecond",
+        "an open log must not follow file changes automatically"
+    );
+
+    state.apply_input_with_platform(InputEvent::from_key_label("R"), &platform);
+    assert!(
+        state
+            .to_editor_view_model()
+            .status_message
+            .as_deref()
+            .is_some_and(|message| message.starts_with("Reloading"))
+    );
+    wait_for_editor_background_tasks(&mut state, &platform);
+
+    let reloaded = state.to_editor_view_model();
+    assert!(reloaded.read_only);
+    assert!(reloaded.reload_available);
+    assert!(reloaded.source_lines.join("\n").ends_with("third"));
+    assert_eq!(reloaded.cursor.map(|cursor| cursor.line), Some(2));
+}
+
+#[test]
+fn non_log_text_document_remains_editable() {
+    let fixture = FixtureRoot::new("editable-text");
+    let platform = mock_platform(fixture.path());
+    bootstrap_with_shell(&platform);
+    fs::write(
+        fixture.path().join("Documents").join("notes.txt"),
+        "editable",
+    )
+    .expect("seed text document");
+    let mut state = logged_in_state(&platform);
+    open_only_document_in_editor(&mut state, &platform);
+
+    let opened = state.to_editor_view_model();
+    assert!(!opened.read_only);
+    assert!(!opened.reload_available);
+    type_text(&mut state, &platform, "x");
+
+    let edited = state.to_editor_view_model();
+    assert_eq!(edited.source_lines.join("\n"), "xeditable");
+    assert!(edited.dirty);
+}
+
+#[test]
+fn escape_cancels_an_in_flight_large_file_open() {
+    let fixture = FixtureRoot::new("cancel-large-open");
+    let platform = mock_platform(fixture.path());
+    bootstrap_with_shell(&platform);
+    fs::write(
+        fixture.path().join("Documents").join("large.txt"),
+        vec![b'x'; 8 * 1024 * 1024],
+    )
+    .expect("seed large log");
+    let mut state = logged_in_state(&platform);
+    state.apply_input_with_platform(InputEvent::from_key_label("e"), &platform);
+    assert_eq!(state.active_screen(), ShellScreen::Explorer);
+
+    state.apply_input_with_platform(InputEvent::from_key_label("Enter"), &platform);
+    assert!(
+        state
+            .to_editor_view_model()
+            .status_message
+            .as_deref()
+            .is_some_and(|message| message.starts_with("Loading"))
+    );
+    state.apply_input_with_platform(InputEvent::from_key_label("Esc"), &platform);
+    assert_eq!(state.active_screen(), ShellScreen::Explorer);
+    wait_for_editor_background_tasks(&mut state, &platform);
+    assert_eq!(state.active_screen(), ShellScreen::Explorer);
+}
+
+#[test]
+fn editor_rejects_documents_above_the_one_gibibyte_limit_without_allocating_them() {
+    let fixture = FixtureRoot::new("open-size-limit");
+    let platform = mock_platform(fixture.path());
+    bootstrap_with_shell(&platform);
+    let path = fixture.path().join("Documents").join("oversized.txt");
+    let file = fs::OpenOptions::new()
+        .create(true)
+        .truncate(true)
+        .write(true)
+        .open(&path)
+        .expect("create sparse oversized document");
+    file.set_len(tundra_platform::MAX_DOCUMENT_BYTES + 1)
+        .expect("size sparse oversized document");
+    let mut state = logged_in_state(&platform);
+
+    state.apply_input_with_platform(InputEvent::from_key_label("e"), &platform);
+    state.apply_input_with_platform(InputEvent::from_key_label("Enter"), &platform);
+    wait_for_editor_background_tasks(&mut state, &platform);
+
+    assert_eq!(state.active_screen(), ShellScreen::Explorer);
+    assert!(
+        state
+            .to_shell_chrome_view_model()
+            .status
+            .error
+            .as_deref()
+            .is_some_and(|message| {
+                message.contains("too large") && message.contains("1073741824")
+            })
     );
 }
 
@@ -1311,6 +1635,7 @@ fn closing_editor_returns_to_the_original_explorer_for_markdown_and_text_files()
             .collect::<Vec<_>>();
 
         state.apply_input_with_platform(InputEvent::from_key_label("Enter"), &platform);
+        wait_for_editor_background_tasks(&mut state, &platform);
         assert_eq!(state.active_screen(), ShellScreen::Editor);
         assert_eq!(state.to_editor_view_model().mode, expected_mode);
 
@@ -1352,6 +1677,7 @@ fn save_refuses_to_overwrite_a_file_changed_outside_the_editor() {
     fs::write(&path, "external").expect("external update");
 
     state.apply_input_with_platform(ctrl('s'), &platform);
+    wait_for_editor_background_tasks(&mut state, &platform);
 
     assert_eq!(
         fs::read_to_string(&path).expect("external contents"),
@@ -1382,6 +1708,7 @@ fn save_as_does_not_clobber_an_existing_document() {
     assert_eq!(state.active_screen(), ShellScreen::Explorer);
     type_text(&mut state, &platform, "taken.md");
     state.apply_input_with_platform(InputEvent::from_key_label("Enter"), &platform);
+    wait_for_editor_background_tasks(&mut state, &platform);
 
     assert_eq!(
         fs::read_to_string(&existing).expect("existing file"),
@@ -1413,6 +1740,7 @@ fn failed_save_keeps_the_document_dirty() {
     fs::write(&documents, "not a directory").expect("replace parent with a file");
 
     state.apply_input_with_platform(ctrl('s'), &platform);
+    wait_for_editor_background_tasks(&mut state, &platform);
 
     assert!(!path.exists());
     let editor = state.to_editor_view_model();
@@ -1517,7 +1845,7 @@ fn block_spans(block: &EditorRenderBlock) -> &[tundra_ui::EditorRenderSpan] {
 
 fn rendered_text(model: &tundra_ui::EditorViewModel) -> String {
     let mut output = String::new();
-    for block in &model.blocks {
+    for block in model.render_blocks() {
         match block {
             EditorRenderBlock::Paragraph(_)
             | EditorRenderBlock::Heading { .. }
@@ -1601,14 +1929,17 @@ fn click_editor_quick_action(
 }
 
 fn rich_table_id(model: &tundra_ui::EditorViewModel) -> Option<tundra_ui::NodeId> {
-    model.blocks.iter().find_map(EditorRenderBlock::table_id)
+    model
+        .render_blocks()
+        .iter()
+        .find_map(EditorRenderBlock::table_id)
 }
 
 fn rich_table_column_count(
     model: &tundra_ui::EditorViewModel,
     table_id: tundra_ui::NodeId,
 ) -> Option<usize> {
-    model.blocks.iter().find_map(|block| match block {
+    model.render_blocks().iter().find_map(|block| match block {
         EditorRenderBlock::RichTable {
             table_id: candidate,
             header,
@@ -1624,7 +1955,7 @@ fn rich_table_cell_text(
     row: usize,
     column: usize,
 ) -> Option<String> {
-    model.blocks.iter().find_map(|block| match block {
+    model.render_blocks().iter().find_map(|block| match block {
         EditorRenderBlock::RichTable {
             table_id: candidate,
             rows,
@@ -1662,7 +1993,30 @@ fn open_only_document_in_editor(state: &mut ShellState, platform: &MockPlatform)
     assert_eq!(state.active_screen(), ShellScreen::Explorer);
     assert_eq!(state.to_explorer_view_model().entries.len(), 1);
     state.apply_input_with_platform(InputEvent::from_key_label("Enter"), platform);
+    wait_for_editor_background_tasks(state, platform);
     assert_eq!(state.active_screen(), ShellScreen::Editor);
+}
+
+fn wait_for_editor_background_tasks(state: &mut ShellState, platform: &MockPlatform) {
+    for _ in 0..400 {
+        state.apply_input_with_platform(InputEvent::Tick, platform);
+        let status = state.to_editor_view_model().status_message;
+        let busy = status.as_deref().is_some_and(|message| {
+            ["Loading", "Reloading", "Saving"]
+                .iter()
+                .any(|prefix| message.starts_with(prefix))
+        });
+        if !busy {
+            return;
+        }
+        std::thread::yield_now();
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    panic!(
+        "Editor background task did not finish in time: screen={:?}, status={:?}",
+        state.active_screen(),
+        state.to_editor_view_model().status_message
+    );
 }
 
 fn type_text(state: &mut ShellState, platform: &MockPlatform, text: &str) {

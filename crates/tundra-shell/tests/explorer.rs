@@ -76,6 +76,7 @@ fn mouse_single_click_selects_and_double_click_opens_file() {
         InputEvent::mouse_down(PointerButton::Left, first_entry),
         &platform,
     );
+    drive_editor_tasks_until_idle(&mut state, &platform);
 
     assert_eq!(state.active_screen(), ShellScreen::Editor);
     let editor = state.to_editor_view_model();
@@ -84,7 +85,7 @@ fn mouse_single_click_selects_and_double_click_opens_file() {
         editor.path_hint.as_deref(),
         Some(target.to_string_lossy().as_ref())
     );
-    assert_eq!(editor.source.as_deref(), Some("alpha"));
+    assert_eq!(editor.source_lines.join("\n"), "alpha");
 }
 
 #[test]
@@ -108,6 +109,7 @@ fn mouse_double_click_on_first_rendered_row_does_not_open_second_entry() {
         InputEvent::mouse_down(PointerButton::Left, first_entry),
         &platform,
     );
+    drive_editor_tasks_until_idle(&mut state, &platform);
 
     assert_eq!(state.active_screen(), ShellScreen::Editor);
     let editor = state.to_editor_view_model();
@@ -116,7 +118,7 @@ fn mouse_double_click_on_first_rendered_row_does_not_open_second_entry() {
         editor.path_hint.as_deref(),
         Some(alpha.to_string_lossy().as_ref())
     );
-    assert_eq!(editor.source.as_deref(), Some("alpha"));
+    assert_eq!(editor.source_lines.join("\n"), "alpha");
 }
 
 #[test]
@@ -450,6 +452,28 @@ fn drive_explorer_tasks_until(
     panic!(
         "Explorer background task did not finish in time: operation={:?}, dialog={:?}, error={:?}, message={:?}",
         explorer.operation, explorer.pending_dialog, explorer.error, explorer.message
+    );
+}
+
+fn drive_editor_tasks_until_idle(state: &mut ShellState, platform: &MockPlatform) {
+    for _ in 0..400 {
+        state.apply_input_with_platform(InputEvent::Tick, platform);
+        let status = state.to_editor_view_model().status_message;
+        let busy = status.as_deref().is_some_and(|message| {
+            ["Loading", "Reloading", "Saving"]
+                .iter()
+                .any(|prefix| message.starts_with(prefix))
+        });
+        if !busy {
+            return;
+        }
+        std::thread::yield_now();
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    panic!(
+        "Editor background task did not finish in time: screen={:?}, status={:?}",
+        state.active_screen(),
+        state.to_editor_view_model().status_message
     );
 }
 

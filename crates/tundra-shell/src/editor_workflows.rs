@@ -2,8 +2,19 @@ const EDITOR_RECOVERY_IDLE: Duration = Duration::from_secs(2);
 const EDITOR_RECOVERY_INTERVAL: Duration = Duration::from_secs(10);
 
 impl ShellState {
+    fn advance_editor_document_generation(&mut self) {
+        self.editor_document_generation = self.editor_document_generation.wrapping_add(1).max(1);
+    }
+
     fn open_editor(&mut self) {
-        self.editor_diagnostic_session = None;
+        if self.editor_load_state.is_some() || self.editor_save_state.is_some() {
+            self.report_editor_error(
+                "Finish or cancel the active Editor file operation before creating a document",
+            );
+            return;
+        }
+        self.editor_read_session = None;
+        self.advance_editor_document_generation();
         self.editor_state = Some(EditorState::new());
         self.editor_focus = tundra_ui::EditorFocus::Canvas;
         self.editor_open_menu = None;
@@ -18,6 +29,7 @@ impl ShellState {
         self.editor_discard_for_open = false;
         self.editor_message = Some("New Markdown document".to_string());
         self.restore_editor_recovery_if_present();
+        self.rebuild_editor_rich_render_cache();
         if self.active_screen() != ShellScreen::Editor {
             self.screen_stack.push(ShellScreen::Editor);
         }
@@ -27,16 +39,61 @@ impl ShellState {
         self.refresh_hit_map();
     }
 
+    fn rebuild_editor_rich_render_cache(&mut self) {
+        self.editor_rich_render_cache = self.editor_state.as_ref().and_then(|state| {
+            let projection = state.rich_projection()?;
+            Some(EditorRichRenderCache {
+                revision: state.revision(),
+                blocks: std::sync::Arc::from(editor_rich_render_blocks(&projection)),
+            })
+        });
+    }
+
     pub fn to_editor_view_model(&self) -> tundra_ui::EditorViewModel {
+        if let Some(load) = self.editor_load_state.as_ref()
+            && matches!(load.operation, EditorLoadOperation::Open { .. })
+        {
+            let file_name = load
+                .path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or("Loading document");
+            let mut model = tundra_ui::EditorViewModel::source(file_name, "");
+            model.path_hint = Some(load.path.display().to_string());
+            model.read_only = true;
+            model.cursor = None;
+            model.status_message = Some(editor_load_status(load));
+            return model;
+        }
         let Some(state) = self.editor_state.as_ref() else {
             return tundra_ui::EditorViewModel::new("Untitled.md", Vec::new());
         };
         let mut model = match state.mode {
             tundra_apps::editor::EditorMode::Rich => {
-                let blocks = state
-                    .rich_projection()
-                    .map_or_else(Vec::new, |projection| editor_rich_render_blocks(&projection));
-                let mut model = tundra_ui::EditorViewModel::new(state.document.display_name(), blocks);
+                let mut model = if let Some(cache) = self
+                    .editor_rich_render_cache
+                    .as_ref()
+                    .filter(|cache| cache.revision == state.revision())
+                {
+                    if state.document.source().len() <= 64 * 1024 && cache.blocks.len() <= 512 {
+                        // Preserve the long-standing owned projection for
+                        // small documents and external view-model consumers.
+                        tundra_ui::EditorViewModel::new(
+                            state.document.display_name(),
+                            cache.blocks.to_vec(),
+                        )
+                    } else {
+                        tundra_ui::EditorViewModel::new_shared(
+                            state.document.display_name(),
+                            std::sync::Arc::clone(&cache.blocks),
+                        )
+                    }
+                } else {
+                    let blocks = state.rich_projection().map_or_else(Vec::new, |projection| {
+                        editor_rich_render_blocks(&projection)
+                    });
+                    tundra_ui::EditorViewModel::new(state.document.display_name(), blocks)
+                };
                 model.rich_table_column_widths = self.editor_table_column_widths.clone();
                 model.rich_cursor = state.rich_cursor().map(editor_rich_position_to_ui);
                 model.rich_selection = state.rich_selection().map(|selection| {
@@ -48,13 +105,63 @@ impl ShellState {
                 model
             }
             tundra_apps::editor::EditorMode::Source => {
-                let source = state.source_buffer().unwrap_or_default();
-                let mut model = tundra_ui::EditorViewModel::source(state.document.display_name(), source);
-                model.cursor = Some(editor_text_position(source, state.cursor.byte_offset));
-                model.selection = state.selection.map(|selection| tundra_ui::EditorSelection {
-                    anchor: editor_text_position(source, selection.anchor),
-                    active: editor_text_position(source, selection.focus),
+                let total_line_count = state.source_line_count().unwrap_or(1).max(1);
+                let requested_top_line = state
+                    .viewport
+                    .top_line
+                    .min(total_line_count.saturating_sub(1));
+                // The canvas is always smaller than the terminal. Two-sided
+                // overscan also covers layout clamping when a log starts at
+                // its final line or the terminal grows.
+                let line_budget = usize::from(self.terminal_size.1).saturating_add(4);
+                let first_line = requested_top_line.saturating_sub(line_budget);
+                let end_line = requested_top_line
+                    .saturating_add(line_budget)
+                    .min(total_line_count);
+                let column_budget = usize::from(self.terminal_size.0).saturating_add(4);
+                let lines = state
+                    .source_viewport_lines(
+                        first_line..end_line,
+                        state.viewport.left_column,
+                        column_budget,
+                    )
+                    .into_iter()
+                    .map(|line| {
+                        tundra_ui::EditorSourceWindowLine::new(
+                            tundra_ui::EditorSourceRange::new(
+                                line.visible_byte_range.start,
+                                line.visible_byte_range.end,
+                            ),
+                            line.start_column,
+                            line.text,
+                        )
+                    })
+                    .collect();
+                let mut model = tundra_ui::EditorViewModel::source_viewport(
+                    state.document.display_name(),
+                    first_line,
+                    total_line_count,
+                    lines,
+                );
+                model.cursor = state
+                    .source_display_position(state.cursor.byte_offset)
+                    .map(|(line, column)| tundra_ui::EditorTextPosition::new(line, column));
+                model.selection = state.selection.and_then(|selection| {
+                    let (anchor_line, anchor_column) =
+                        state.source_display_position(selection.anchor)?;
+                    let (active_line, active_column) =
+                        state.source_display_position(selection.focus)?;
+                    Some(tundra_ui::EditorSelection {
+                        anchor: tundra_ui::EditorTextPosition::new(anchor_line, anchor_column),
+                        active: tundra_ui::EditorTextPosition::new(active_line, active_column),
+                    })
                 });
+                // Include the virtual caret cell after the longest line so a
+                // caret at line end can remain visible at maximum scroll.
+                model.horizontal_content_width = state
+                    .source_max_display_width()
+                    .unwrap_or_default()
+                    .saturating_add(1);
                 model.cursor_offset = Some(state.cursor.byte_offset);
                 model.selection_offsets = state.selection.map(|selection| {
                     tundra_ui::EditorSourceSelection::new(selection.anchor, selection.focus)
@@ -68,20 +175,27 @@ impl ShellState {
             .as_ref()
             .map(|path| path.display().to_string());
         model.dirty = state.is_dirty();
-        model.read_only = state.is_read_only();
-        model.read_window = self.editor_diagnostic_session.as_ref().map(|session| {
-            tundra_ui::EditorReadWindowViewModel {
-                start_byte: session.start_byte,
-                total_bytes: session.total_bytes,
-            }
-        });
-        model.reload_available = self.editor_diagnostic_session.is_some();
+        let saving = self.editor_save_state.is_some();
+        model.read_only = state.is_read_only() || saving;
+        model.read_window =
+            self.editor_read_session
+                .as_ref()
+                .map(|session| tundra_ui::EditorReadWindowViewModel {
+                    start_byte: 0,
+                    total_bytes: session.total_bytes,
+                });
+        model.reload_available = self
+            .editor_read_session
+            .as_ref()
+            .is_some_and(|session| matches!(session.reload, EditorReloadPolicy::Log { .. }))
+            && !saving;
         model.mode = editor_mode_to_ui(state.mode);
         model.focus = self.editor_focus;
         model.open_menu = self.editor_open_menu;
-        let has_selection = state.selected_text().is_some();
+        let has_selection = state.has_selection();
         model.quick_menu = self.editor_quick_menu_anchor.and_then(|anchor| {
             (!state.is_read_only()
+                && !saving
                 && state.mode == tundra_apps::editor::EditorMode::Rich
                 && state.document.kind == tundra_apps::editor::DocumentKind::Markdown
                 && has_selection)
@@ -94,12 +208,12 @@ impl ShellState {
         model.scroll_line = state.viewport.top_line;
         model.horizontal_scroll = state.viewport.left_column;
         model.toolbar.can_save =
-            !state.is_read_only() && (state.document.path.is_some() || state.is_dirty());
-        model.toolbar.can_undo = !state.is_read_only() && state.can_undo();
-        model.toolbar.can_redo = !state.is_read_only() && state.can_redo();
-        model.toolbar.can_cut = !state.is_read_only() && has_selection;
+            !state.is_read_only() && !saving && (state.document.path.is_some() || state.is_dirty());
+        model.toolbar.can_undo = !state.is_read_only() && !saving && state.can_undo();
+        model.toolbar.can_redo = !state.is_read_only() && !saving && state.can_redo();
+        model.toolbar.can_cut = !state.is_read_only() && !saving && has_selection;
         model.toolbar.can_copy = has_selection;
-        model.toolbar.can_paste = !state.is_read_only();
+        model.toolbar.can_paste = !state.is_read_only() && !saving;
         model.word_count = state.word_count();
         model.encoding = if state.document.metadata.utf8_bom {
             "UTF-8 BOM".to_string()
@@ -108,8 +222,34 @@ impl ShellState {
         };
         model.line_ending = editor_line_ending_label(state.document.metadata);
         model.image_protocol = tundra_ui::EditorImageProtocolStatus::Unsupported;
-        model.status_message = self.editor_message.clone();
+        model.status_message = self
+            .editor_load_state
+            .as_ref()
+            .map(editor_load_status)
+            .or_else(|| self.editor_save_state.as_ref().map(editor_save_status))
+            .or_else(|| self.editor_message.clone());
         model
+    }
+}
+
+fn editor_save_status(save: &EditorSaveState) -> String {
+    format!("Saving · {} · {}", save.stage.label(), save.path.display())
+}
+
+fn editor_load_status(load: &EditorLoadState) -> String {
+    let action = if matches!(load.operation, EditorLoadOperation::Reload { .. }) {
+        "Reloading"
+    } else {
+        "Loading"
+    };
+    match load.total_bytes {
+        Some(total) if total > 0 => format!(
+            "{action} · {} · {} / {} bytes · Esc Cancel",
+            load.stage.label(),
+            load.completed_bytes.min(total),
+            total
+        ),
+        _ => format!("{action} · {} · Esc Cancel", load.stage.label()),
     }
 }
 
@@ -133,7 +273,6 @@ fn editor_format_requires_selection(format: &tundra_apps::editor::FormatCommand)
         tundra_apps::editor::FormatCommand::Bold
             | tundra_apps::editor::FormatCommand::Italic
             | tundra_apps::editor::FormatCommand::Strikethrough
-            | tundra_apps::editor::FormatCommand::InlineCode
     )
 }
 
@@ -152,39 +291,11 @@ fn editor_rich_position_from_ui(
     )
 }
 
-fn editor_rich_range_to_ui(
-    range: tundra_apps::rich_document::RichRange,
-) -> tundra_ui::RichRange {
+fn editor_rich_range_to_ui(range: tundra_apps::rich_document::RichRange) -> tundra_ui::RichRange {
     tundra_ui::RichRange::between(
         editor_rich_position_to_ui(range.start),
         editor_rich_position_to_ui(range.end),
     )
-}
-
-fn editor_text_position(source: &str, byte_offset: usize) -> tundra_ui::EditorTextPosition {
-    let offset = byte_offset.min(source.len());
-    let prefix = source.get(..offset).unwrap_or(source);
-    let line = prefix.bytes().filter(|byte| *byte == b'\n').count();
-    let line_start = prefix.rfind('\n').map_or(0, |index| index + 1);
-    let column = prefix[line_start..].chars().count();
-    tundra_ui::EditorTextPosition { line, column }
-}
-
-fn editor_byte_offset(source: &str, position: tundra_ui::EditorTextPosition) -> usize {
-    let mut line_start = 0usize;
-    for _ in 0..position.line {
-        let Some(relative) = source[line_start..].find('\n') else {
-            return source.len();
-        };
-        line_start += relative + 1;
-    }
-    let line_end = source[line_start..]
-        .find('\n')
-        .map_or(source.len(), |relative| line_start + relative);
-    source[line_start..line_end]
-        .char_indices()
-        .nth(position.column)
-        .map_or(line_end, |(relative, _)| line_start + relative)
 }
 
 fn editor_line_ending_label(metadata: tundra_apps::editor::TextMetadata) -> String {
@@ -244,15 +355,9 @@ fn editor_recovery_rich_line_ending(
     ending: tundra_apps::editor::LineEnding,
 ) -> tundra_apps::rich_document::RichLineEnding {
     match ending {
-        tundra_apps::editor::LineEnding::Lf => {
-            tundra_apps::rich_document::RichLineEnding::Lf
-        }
-        tundra_apps::editor::LineEnding::CrLf => {
-            tundra_apps::rich_document::RichLineEnding::CrLf
-        }
-        tundra_apps::editor::LineEnding::Cr => {
-            tundra_apps::rich_document::RichLineEnding::Cr
-        }
+        tundra_apps::editor::LineEnding::Lf => tundra_apps::rich_document::RichLineEnding::Lf,
+        tundra_apps::editor::LineEnding::CrLf => tundra_apps::rich_document::RichLineEnding::CrLf,
+        tundra_apps::editor::LineEnding::Cr => tundra_apps::rich_document::RichLineEnding::Cr,
     }
 }
 
@@ -282,7 +387,12 @@ fn editor_recovery_base(
 fn restore_editor_recovery_v2(
     record: tundra_apps::editor_recovery::EditorRecoveryRecordV2,
     warning: Option<String>,
-) -> (EditorState, Option<DocumentFingerprint>, bool, Option<String>) {
+) -> (
+    EditorState,
+    Option<DocumentFingerprint>,
+    bool,
+    Option<String>,
+) {
     let kind = match record.document_kind {
         tundra_apps::editor_recovery::RecoveryDocumentKind::Markdown => {
             tundra_apps::editor::DocumentKind::Markdown
@@ -291,11 +401,8 @@ fn restore_editor_recovery_v2(
             tundra_apps::editor::DocumentKind::PlainText
         }
     };
-    let (mut state, fingerprint, unbound) = editor_recovery_base(
-        record.path.as_ref(),
-        record.saved_content_hash,
-        kind,
-    );
+    let (mut state, fingerprint, unbound) =
+        editor_recovery_base(record.path.as_ref(), record.saved_content_hash, kind);
     state.document.metadata = editor_metadata_from_recovery(record.metadata);
     match record.payload {
         tundra_apps::editor_recovery::EditorRecoveryPayload::Rich {
@@ -357,10 +464,7 @@ fn append_editor_rich_block(
     use tundra_apps::rich_document::{ProjectedBlockKind, RichListKind};
     match &block.kind {
         ProjectedBlockKind::Paragraph { content } => output.push(
-            tundra_ui::EditorRenderBlock::Paragraph(editor_rich_spans_in(
-                block.id,
-                content,
-            )),
+            tundra_ui::EditorRenderBlock::Paragraph(editor_rich_spans_in(block.id, content)),
         ),
         ProjectedBlockKind::Heading { level, content } => {
             output.push(tundra_ui::EditorRenderBlock::Heading {
@@ -397,7 +501,9 @@ fn append_editor_rich_block(
                 for item_block in &item.blocks {
                     match &item_block.kind {
                         ProjectedBlockKind::Paragraph { content }
-                        | ProjectedBlockKind::Heading { content, .. } if primary.is_empty() => {
+                        | ProjectedBlockKind::Heading { content, .. }
+                            if primary.is_empty() =>
+                        {
                             primary = editor_rich_spans_in(item_block.id, content);
                         }
                         _ => nested.push(item_block),
@@ -533,6 +639,9 @@ impl ShellState {
         command: tundra_apps::editor::EditorCommand,
         platform: &dyn Platform,
     ) {
+        if self.editor_save_state.is_some() || self.editor_load_state.is_some() {
+            return;
+        }
         if matches!(
             &command,
             tundra_apps::editor::EditorCommand::SetMode(_)
@@ -551,12 +660,20 @@ impl ShellState {
                     Some("Markdown formatting is available in Rich mode".to_string());
                 return;
             }
-            if editor_format_requires_selection(format) && state.selected_text().is_none() {
+            if editor_format_requires_selection(format) && !state.has_selection() {
                 self.editor_message =
                     Some("Select text before applying inline formatting".to_string());
                 return;
             }
         }
+        let caret_navigation = matches!(
+            &command,
+            tundra_apps::editor::EditorCommand::MoveCursor { .. }
+                | tundra_apps::editor::EditorCommand::MoveTo { .. }
+                | tundra_apps::editor::EditorCommand::SelectAll
+                | tundra_apps::editor::EditorCommand::SetMode(_)
+                | tundra_apps::editor::EditorCommand::ToggleMode
+        );
         let Some(state) = self.editor_state.as_mut() else {
             return;
         };
@@ -564,6 +681,7 @@ impl ShellState {
         let mode_before = state.mode;
         let effects = state.apply(command);
         let mode_changed = state.mode != mode_before;
+        let projection_changed = mode_changed || state.revision() != revision_before;
         if state.revision() != revision_before {
             self.editor_recovery_dirty_since = Some(Instant::now());
         }
@@ -577,6 +695,53 @@ impl ShellState {
         }
         for effect in effects {
             self.handle_editor_effect(effect, platform);
+        }
+        if projection_changed {
+            self.rebuild_editor_rich_render_cache();
+        }
+        if caret_navigation || projection_changed {
+            self.reveal_source_caret();
+        }
+    }
+
+    /// Keeps the Source caret inside the horizontal text viewport after a
+    /// caret-moving command. Manual scrollbar and wheel scrolling deliberately
+    /// bypass this hook, so users can inspect another column until their next
+    /// keyboard or editing action.
+    fn reveal_source_caret(&mut self) {
+        let Some(state) = self
+            .editor_state
+            .as_ref()
+            .filter(|state| state.mode == tundra_apps::editor::EditorMode::Source)
+        else {
+            return;
+        };
+        let Some((_, cursor_column)) = state.source_display_position(state.cursor.byte_offset)
+        else {
+            return;
+        };
+        let left_column = state.viewport.left_column;
+
+        let area = Rect::new(0, 0, self.terminal_size.0, self.terminal_size.1);
+        let editor_area = match tundra_ui::compute_shell_layout(area) {
+            tundra_ui::ShellLayout::Compact(compact) => compact,
+            tundra_ui::ShellLayout::Full { main, .. } => main,
+        };
+        let layout = tundra_ui::editor_layout(editor_area, &self.to_editor_view_model());
+        let visible_width = usize::from(layout.canvas.width);
+        if visible_width == 0 {
+            return;
+        }
+
+        let next_left = if cursor_column < left_column {
+            cursor_column
+        } else if cursor_column >= left_column.saturating_add(visible_width) {
+            cursor_column.saturating_add(1).saturating_sub(visible_width)
+        } else {
+            left_column
+        };
+        if let Some(state) = self.editor_state.as_mut() {
+            state.viewport.left_column = next_left;
         }
     }
 
@@ -648,9 +813,24 @@ impl ShellState {
             return;
         }
         let repeated = key.phase == InputPhase::Repeat;
-        if key.key == InputKey::Function(5) && self.editor_diagnostic_session.is_some() {
+        if self.editor_save_state.is_some() {
+            return;
+        }
+        if self.editor_load_state.is_some() {
+            if key.key == InputKey::Escape && !repeated {
+                self.cancel_editor_load();
+            }
+            return;
+        }
+        if matches!(key.key, InputKey::Character('r' | 'R'))
+            && key.modifiers == InputModifiers::none()
+            && self
+                .editor_read_session
+                .as_ref()
+                .is_some_and(|session| matches!(session.reload, EditorReloadPolicy::Log { .. }))
+        {
             if !repeated {
-                self.reload_diagnostics_editor();
+                self.reload_log_editor();
             }
             return;
         }
@@ -751,12 +931,14 @@ impl ShellState {
                                 .to_string(),
                         );
                     } else {
+                        self.advance_editor_document_generation();
                         self.editor_state = Some(EditorState::new());
                         self.editor_quick_menu_anchor = None;
                         self.editor_table_column_widths.clear();
                         self.editor_table_resize = None;
                         self.editor_fingerprint = None;
                         self.editor_message = Some("New Markdown document".to_string());
+                        self.rebuild_editor_rich_render_cache();
                     }
                     return;
                 }
@@ -901,140 +1083,144 @@ impl ShellState {
                     self.editor_quick_menu_anchor = None;
                 }
                 match hit {
-                Some(tundra_ui::EditorHitTarget::QuickMenuAction(action)) => {
-                    self.activate_editor_quick_action(action, platform);
-                    self.editor_focus = tundra_ui::EditorFocus::Canvas;
-                }
-                Some(tundra_ui::EditorHitTarget::QuickMenuPopup) => {}
-                Some(tundra_ui::EditorHitTarget::Menu(menu)) => {
-                    self.editor_focus = tundra_ui::EditorFocus::MenuBar;
-                    self.editor_open_menu = (self.editor_open_menu != Some(menu)).then_some(menu);
-                }
-                Some(tundra_ui::EditorHitTarget::MenuAction(action)) => {
-                    self.editor_open_menu = None;
-                    self.editor_selected_toolbar_action = None;
-                    match action {
-                        tundra_ui::EditorMenuAction::Toolbar(action) => {
-                            self.activate_editor_toolbar(action, platform);
+                    Some(tundra_ui::EditorHitTarget::QuickMenuAction(action)) => {
+                        self.activate_editor_quick_action(action, platform);
+                        self.editor_focus = tundra_ui::EditorFocus::Canvas;
+                    }
+                    Some(tundra_ui::EditorHitTarget::QuickMenuPopup) => {}
+                    Some(tundra_ui::EditorHitTarget::Menu(menu)) => {
+                        self.editor_focus = tundra_ui::EditorFocus::MenuBar;
+                        self.editor_open_menu =
+                            (self.editor_open_menu != Some(menu)).then_some(menu);
+                    }
+                    Some(tundra_ui::EditorHitTarget::MenuAction(action)) => {
+                        self.editor_open_menu = None;
+                        self.editor_selected_toolbar_action = None;
+                        match action {
+                            tundra_ui::EditorMenuAction::Toolbar(action) => {
+                                self.activate_editor_toolbar(action, platform);
+                            }
+                            tundra_ui::EditorMenuAction::Mode(mode) => self.apply_editor_command(
+                                tundra_apps::editor::EditorCommand::SetMode(editor_mode_from_ui(
+                                    mode,
+                                )),
+                                platform,
+                            ),
                         }
-                        tundra_ui::EditorMenuAction::Mode(mode) => self.apply_editor_command(
+                        self.editor_focus = tundra_ui::EditorFocus::Canvas;
+                    }
+                    Some(tundra_ui::EditorHitTarget::MenuPopup) => {}
+                    Some(tundra_ui::EditorHitTarget::Toolbar(action)) => {
+                        self.editor_open_menu = None;
+                        self.editor_selected_toolbar_action = Some(action);
+                        self.activate_editor_toolbar(action, platform);
+                        self.editor_selected_toolbar_action = None;
+                        self.editor_focus = tundra_ui::EditorFocus::Canvas;
+                    }
+                    Some(tundra_ui::EditorHitTarget::Mode(mode)) => {
+                        self.editor_open_menu = None;
+                        self.apply_editor_command(
                             tundra_apps::editor::EditorCommand::SetMode(editor_mode_from_ui(mode)),
                             platform,
-                        ),
+                        );
+                        self.editor_focus = tundra_ui::EditorFocus::Canvas;
                     }
-                    self.editor_focus = tundra_ui::EditorFocus::Canvas;
-                }
-                Some(tundra_ui::EditorHitTarget::MenuPopup) => {}
-                Some(tundra_ui::EditorHitTarget::Toolbar(action)) => {
-                    self.editor_open_menu = None;
-                    self.editor_selected_toolbar_action = Some(action);
-                    self.activate_editor_toolbar(action, platform);
-                    self.editor_selected_toolbar_action = None;
-                    self.editor_focus = tundra_ui::EditorFocus::Canvas;
-                }
-                Some(tundra_ui::EditorHitTarget::Mode(mode)) => {
-                    self.editor_open_menu = None;
-                    self.apply_editor_command(
-                        tundra_apps::editor::EditorCommand::SetMode(editor_mode_from_ui(mode)),
-                        platform,
-                    );
-                    self.editor_focus = tundra_ui::EditorFocus::Canvas;
-                }
-                Some(tundra_ui::EditorHitTarget::TableEdge {
-                    ..
-                }) => {
-                    self.editor_message = Some("Switch to Rich mode to edit table structure".to_string());
-                }
-                Some(tundra_ui::EditorHitTarget::RichTableEdge { table_id, edge }) => {
-                    self.edit_editor_table_edge(
-                        table_id,
-                        edge,
-                        tundra_apps::editor::TableColumnEdit::Insert,
-                        platform,
-                    );
-                }
-                Some(tundra_ui::EditorHitTarget::TableResize {
-                    ..
-                }) => {
-                    self.editor_message = Some("Switch to Rich mode to resize table columns".to_string());
-                }
-                Some(tundra_ui::EditorHitTarget::RichTableResize {
-                    table_id,
-                    column_index,
-                    width,
-                }) => {
-                    self.editor_open_menu = None;
-                    self.editor_focus = tundra_ui::EditorFocus::Canvas;
-                    self.editor_drag_anchor = None;
-                    self.editor_table_resize = Some(EditorTableResizeState {
+                    Some(tundra_ui::EditorHitTarget::TableEdge { .. }) => {
+                        self.editor_message =
+                            Some("Switch to Rich mode to edit table structure".to_string());
+                    }
+                    Some(tundra_ui::EditorHitTarget::RichTableEdge { table_id, edge }) => {
+                        self.edit_editor_table_edge(
+                            table_id,
+                            edge,
+                            tundra_apps::editor::TableColumnEdit::Insert,
+                            platform,
+                        );
+                    }
+                    Some(tundra_ui::EditorHitTarget::TableResize { .. }) => {
+                        self.editor_message =
+                            Some("Switch to Rich mode to resize table columns".to_string());
+                    }
+                    Some(tundra_ui::EditorHitTarget::RichTableResize {
                         table_id,
                         column_index,
-                        start_x: coordinates.0,
-                        start_width: width,
-                    });
-                    self.editor_message = Some(format!(
-                        "Resizing table column {} ({width} cells)",
-                        column_index + 1
-                    ));
-                }
-                Some(tundra_ui::EditorHitTarget::Canvas(position)) => {
-                    self.editor_open_menu = None;
-                    self.editor_focus = tundra_ui::EditorFocus::Canvas;
-                    let rich_mode = self.editor_state.as_ref().is_some_and(|state| {
-                        state.mode == tundra_apps::editor::EditorMode::Rich
-                    });
-                    let position = match document_hit {
-                        Some(hit) if hit.editable => match hit.position {
-                            tundra_ui::EditorDocumentPosition::Rich(position) => {
-                                tundra_apps::editor::EditorPosition::Rich(
-                                    editor_rich_position_from_ui(position),
-                                )
+                        width,
+                    }) => {
+                        self.editor_open_menu = None;
+                        self.editor_focus = tundra_ui::EditorFocus::Canvas;
+                        self.editor_drag_anchor = None;
+                        self.editor_table_resize = Some(EditorTableResizeState {
+                            table_id,
+                            column_index,
+                            start_x: coordinates.0,
+                            start_width: width,
+                        });
+                        self.editor_message = Some(format!(
+                            "Resizing table column {} ({width} cells)",
+                            column_index + 1
+                        ));
+                    }
+                    Some(tundra_ui::EditorHitTarget::Canvas(position)) => {
+                        self.editor_open_menu = None;
+                        self.editor_focus = tundra_ui::EditorFocus::Canvas;
+                        let rich_mode = self.editor_state.as_ref().is_some_and(|state| {
+                            state.mode == tundra_apps::editor::EditorMode::Rich
+                        });
+                        let position = match document_hit {
+                            Some(hit) if hit.editable => match hit.position {
+                                tundra_ui::EditorDocumentPosition::Rich(position) => {
+                                    tundra_apps::editor::EditorPosition::Rich(
+                                        editor_rich_position_from_ui(position),
+                                    )
+                                }
+                                tundra_ui::EditorDocumentPosition::Source(offset) => {
+                                    tundra_apps::editor::EditorPosition::Source(offset)
+                                }
+                            },
+                            Some(_) => {
+                                self.editor_message = Some(
+                                    "This Rich decoration is not directly editable; click its text"
+                                        .to_string(),
+                                );
+                                return;
                             }
-                            tundra_ui::EditorDocumentPosition::Source(offset) => {
-                                tundra_apps::editor::EditorPosition::Source(offset)
+                            None if rich_mode => {
+                                self.editor_message = Some(
+                                    "This Rich cell has no editable text position".to_string(),
+                                );
+                                return;
                             }
-                        },
-                        Some(_) => {
-                            self.editor_message = Some(
-                                "This Rich decoration is not directly editable; click its text"
-                                    .to_string(),
-                            );
-                            return;
-                        }
-                        None if rich_mode => {
-                            self.editor_message =
-                                Some("This Rich cell has no editable text position".to_string());
-                            return;
-                        }
-                        None => self
-                            .editor_state
-                            .as_ref()
-                            .and_then(EditorState::source_buffer)
-                            .map(|source| {
-                                tundra_apps::editor::EditorPosition::Source(editor_byte_offset(
-                                    source, position,
-                                ))
-                            })
-                            .unwrap_or(tundra_apps::editor::EditorPosition::Source(0)),
-                    };
-                    self.editor_drag_anchor = Some(position);
-                    self.apply_editor_command(
-                        tundra_apps::editor::EditorCommand::MoveTo {
-                            position,
-                            extend_selection: modifiers.shift,
-                        },
-                        platform,
-                    );
-                }
-                Some(tundra_ui::EditorHitTarget::StatusBar) => {
-                    self.editor_open_menu = None;
-                    self.editor_focus = tundra_ui::EditorFocus::StatusBar;
-                }
-                Some(tundra_ui::EditorHitTarget::VerticalScrollbar) => {
-                    self.editor_open_menu = None;
-                    self.scroll_editor_to(coordinates);
-                }
-                None => self.editor_open_menu = None,
+                            None => self
+                                .editor_state
+                                .as_ref()
+                                .and_then(|state| {
+                                    state.source_offset(position.line, position.column)
+                                })
+                                .map(tundra_apps::editor::EditorPosition::Source)
+                                .unwrap_or(tundra_apps::editor::EditorPosition::Source(0)),
+                        };
+                        self.editor_drag_anchor = Some(position);
+                        self.apply_editor_command(
+                            tundra_apps::editor::EditorCommand::MoveTo {
+                                position,
+                                extend_selection: modifiers.shift,
+                            },
+                            platform,
+                        );
+                    }
+                    Some(tundra_ui::EditorHitTarget::StatusBar) => {
+                        self.editor_open_menu = None;
+                        self.editor_focus = tundra_ui::EditorFocus::StatusBar;
+                    }
+                    Some(tundra_ui::EditorHitTarget::VerticalScrollbar) => {
+                        self.editor_open_menu = None;
+                        self.scroll_editor_to(coordinates);
+                    }
+                    Some(tundra_ui::EditorHitTarget::HorizontalScrollbar) => {
+                        self.editor_open_menu = None;
+                        self.scroll_editor_horizontally_to(coordinates);
+                    }
+                    None => self.editor_open_menu = None,
                 }
             }
             MouseInput::Down {
@@ -1070,9 +1256,10 @@ impl ShellState {
                     return;
                 }
                 if let Some(tundra_ui::EditorHitTarget::Canvas(position)) = hit {
-                    let rich_mode = self.editor_state.as_ref().is_some_and(|state| {
-                        state.mode == tundra_apps::editor::EditorMode::Rich
-                    });
+                    let rich_mode = self
+                        .editor_state
+                        .as_ref()
+                        .is_some_and(|state| state.mode == tundra_apps::editor::EditorMode::Rich);
                     let position = match document_hit {
                         Some(hit) if hit.editable => match hit.position {
                             tundra_ui::EditorDocumentPosition::Rich(position) => {
@@ -1097,12 +1284,8 @@ impl ShellState {
                         None => self
                             .editor_state
                             .as_ref()
-                            .and_then(EditorState::source_buffer)
-                            .map(|source| {
-                                tundra_apps::editor::EditorPosition::Source(editor_byte_offset(
-                                    source, position,
-                                ))
-                            })
+                            .and_then(|state| state.source_offset(position.line, position.column))
+                            .map(tundra_apps::editor::EditorPosition::Source)
                             .unwrap_or(tundra_apps::editor::EditorPosition::Source(0)),
                     };
                     self.apply_editor_command(
@@ -1192,7 +1375,7 @@ impl ShellState {
         self.editor_state.as_ref().is_some_and(|state| {
             state.mode == tundra_apps::editor::EditorMode::Rich
                 && state.document.kind == tundra_apps::editor::DocumentKind::Markdown
-                && state.selected_text().is_some()
+                && state.has_selection()
         })
     }
 
@@ -1248,11 +1431,13 @@ impl ShellState {
                     .as_ref()
                     .is_none_or(|state| !state.is_dirty())
                 {
+                    self.advance_editor_document_generation();
                     self.editor_state = Some(EditorState::new());
                     self.editor_quick_menu_anchor = None;
                     self.editor_table_column_widths.clear();
                     self.editor_table_resize = None;
                     self.editor_fingerprint = None;
+                    self.rebuild_editor_rich_render_cache();
                 } else {
                     self.editor_message =
                         Some("Save or close the current document first".to_string());
@@ -1361,6 +1546,27 @@ impl ShellState {
         }
     }
 
+    fn scroll_editor_horizontally_to(&mut self, coordinates: CellPosition) {
+        let area = Rect::new(0, 0, self.terminal_size.0, self.terminal_size.1);
+        let editor_area = match tundra_ui::compute_shell_layout(area) {
+            tundra_ui::ShellLayout::Compact(compact) => compact,
+            tundra_ui::ShellLayout::Full { main, .. } => main,
+        };
+        let model = self.to_editor_view_model();
+        let layout = tundra_ui::editor_layout(editor_area, &model);
+        let Some(scrollbar) = layout.horizontal_scrollbar else {
+            return;
+        };
+        let offset = coordinates.0.saturating_sub(scrollbar.track.x) as usize;
+        let denominator = usize::from(scrollbar.track.width.saturating_sub(1)).max(1);
+        let maximum = model
+            .horizontal_content_width
+            .saturating_sub(usize::from(layout.canvas.width));
+        if let Some(state) = self.editor_state.as_mut() {
+            state.viewport.left_column = maximum.saturating_mul(offset) / denominator;
+        }
+    }
+
     fn open_diagnostics_editor(&mut self, reload: EditorReloadPolicy) -> Result<(), String> {
         if self
             .editor_state
@@ -1372,52 +1578,77 @@ impl ShellState {
                     .to_string(),
             );
         }
-
         let path = reload.path().to_path_buf();
-        let open_at_bottom = matches!(reload, EditorReloadPolicy::DiagnosticsLog { .. });
-        let (mut state, fingerprint, start_byte, total_bytes) =
-            Self::load_diagnostics_editor_document(&reload)?;
-        if open_at_bottom {
-            let _ = state.apply(tundra_apps::editor::EditorCommand::MoveCursor {
-                movement: tundra_apps::editor::CursorMove::DocumentEnd,
-                extend_selection: false,
-            });
-            state.viewport.top_line = state.document.line_count().saturating_sub(1);
-        }
+        self.begin_editor_open_task(path, EditorTaskAccess::ReadOnly, Some(reload), false)
+    }
 
-        self.editor_state = Some(state);
-        self.editor_fingerprint = fingerprint;
-        self.editor_diagnostic_session = Some(EditorDiagnosticSession {
-            reload,
-            start_byte,
-            total_bytes,
+    fn begin_editor_open_task(
+        &mut self,
+        path: std::path::PathBuf,
+        access: EditorTaskAccess,
+        reload: Option<EditorReloadPolicy>,
+        replacing_dirty: bool,
+    ) -> Result<(), String> {
+        if self.editor_load_state.is_some() {
+            return Err("another Editor document is already loading".to_string());
+        }
+        if self.editor_save_state.is_some() {
+            return Err("the current Editor document is still saving".to_string());
+        }
+        let navigation = match self.active_screen() {
+            ShellScreen::Explorer
+                if matches!(self.explorer_purpose, ExplorerPurpose::EditorOpen) =>
+            {
+                EditorLoadNavigation::EditorPicker
+            }
+            ShellScreen::Explorer => EditorLoadNavigation::Explorer,
+            ShellScreen::Diagnostics => EditorLoadNavigation::Diagnostics,
+            _ => EditorLoadNavigation::Editor,
+        };
+        let id = next_editor_task_id();
+        self.editor_task_runtime
+            .submit_load(id, path.clone(), access)?;
+
+        if navigation == EditorLoadNavigation::EditorPicker
+            && self.active_screen() == ShellScreen::Explorer
+        {
+            self.screen_stack.pop();
+        }
+        if self.active_screen() != ShellScreen::Editor {
+            self.screen_stack.push(ShellScreen::Editor);
+        }
+        self.editor_load_state = Some(EditorLoadState {
+            id,
+            path: path.clone(),
+            stage: EditorTaskStage::Inspecting,
+            completed_bytes: 0,
+            total_bytes: None,
+            operation: EditorLoadOperation::Open {
+                navigation,
+                reload,
+                replacing_dirty,
+            },
         });
         self.editor_focus = tundra_ui::EditorFocus::Canvas;
         self.editor_open_menu = None;
         self.editor_selected_toolbar_action = None;
         self.editor_quick_menu_anchor = None;
         self.editor_drag_anchor = None;
-        self.editor_table_column_widths.clear();
-        self.editor_table_resize = None;
-        self.editor_close_after_save = false;
-        self.editor_open_after_save = false;
-        self.editor_discard_for_open = false;
-        self.editor_recovery_dirty_since = None;
-        self.editor_last_recovery_write = None;
-        self.editor_message = Some(format!("Read-only: {}", path.display()));
         self.active_popup = None;
-        if self.active_screen() != ShellScreen::Editor {
-            self.screen_stack.push(ShellScreen::Editor);
-        }
         self.focused_component = ShellComponent::Editor;
+        self.editor_message = Some(format!("Loading {}", path.display()));
+        self.notify_status(format!("Loading {}", path.display()));
         self.refresh_hit_map();
         Ok(())
     }
 
-    fn reload_diagnostics_editor(&mut self) {
-        let Some(session) = self.editor_diagnostic_session.clone() else {
+    fn reload_log_editor(&mut self) {
+        let Some(session) = self.editor_read_session.clone() else {
             return;
         };
+        if !matches!(session.reload, EditorReloadPolicy::Log { .. }) {
+            return;
+        }
         let path = session.reload.path().to_path_buf();
         let model = self.to_editor_view_model();
         let area = Rect::new(0, 0, self.terminal_size.0, self.terminal_size.1);
@@ -1427,9 +1658,7 @@ impl ShellState {
         };
         let layout = tundra_ui::editor_layout(editor_area, &model);
         let visible_capacity = layout.visible_capacity.max(1);
-        let old_maximum = layout
-            .document_line_count
-            .saturating_sub(visible_capacity);
+        let old_maximum = layout.document_line_count.saturating_sub(visible_capacity);
         let was_at_bottom = layout.visible_start >= old_maximum;
         let old_top_line = layout.visible_start;
         let (old_left_column, old_cursor) = self
@@ -1437,74 +1666,368 @@ impl ShellState {
             .as_ref()
             .map(|state| (state.viewport.left_column, state.cursor.byte_offset))
             .unwrap_or_default();
-
-        let (mut state, fingerprint, start_byte, total_bytes) =
-            match Self::load_diagnostics_editor_document(&session.reload) {
-                Ok(loaded) => loaded,
-                Err(error) => {
-                    self.report_editor_error(format!(
-                        "Could not reload {}: {error}",
-                        path.display()
-                    ));
-                    return;
-                }
-            };
-        let new_line_count = state.document.line_count().max(1);
-        let new_maximum = new_line_count.saturating_sub(visible_capacity);
-        state.viewport.left_column = old_left_column;
-        state.selection = None;
-        if was_at_bottom {
-            let _ = state.apply(tundra_apps::editor::EditorCommand::MoveCursor {
-                movement: tundra_apps::editor::CursorMove::DocumentEnd,
-                extend_selection: false,
-            });
-            state.viewport.top_line = new_maximum;
-        } else {
-            let _ = state.apply(tundra_apps::editor::EditorCommand::MoveTo {
-                position: tundra_apps::editor::EditorPosition::Source(old_cursor),
-                extend_selection: false,
-            });
-            state.viewport.top_line = old_top_line.min(new_maximum);
+        let id = next_editor_task_id();
+        if let Err(error) =
+            self.editor_task_runtime
+                .submit_load(id, path.clone(), EditorTaskAccess::ReadOnly)
+        {
+            self.report_editor_error(format!("Could not reload {}: {error}", path.display()));
+            return;
         }
-
-        self.editor_state = Some(state);
-        self.editor_fingerprint = fingerprint;
-        self.editor_diagnostic_session = Some(EditorDiagnosticSession {
-            reload: session.reload,
-            start_byte,
-            total_bytes,
+        self.editor_load_state = Some(EditorLoadState {
+            id,
+            path: path.clone(),
+            stage: EditorTaskStage::Inspecting,
+            completed_bytes: 0,
+            total_bytes: None,
+            operation: EditorLoadOperation::Reload {
+                session,
+                was_at_bottom,
+                visible_capacity,
+                old_top_line,
+                old_left_column,
+                old_cursor,
+            },
         });
-        self.editor_quick_menu_anchor = None;
-        self.editor_drag_anchor = None;
-        self.editor_message = Some(format!("Reloaded {}", path.display()));
+        self.editor_message = Some(format!("Reloading {}", path.display()));
         self.refresh_hit_map();
     }
 
-    fn load_diagnostics_editor_document(
-        reload: &EditorReloadPolicy,
-    ) -> Result<(EditorState, Option<DocumentFingerprint>, u64, u64), String> {
-        let path = reload.path();
-        let (bytes, fingerprint, start_byte, total_bytes) = match reload {
-            EditorReloadPolicy::DiagnosticsLog { max_bytes, .. } => {
-                let window = tundra_platform::read_document_tail_bytes(path, *max_bytes)
-                    .map_err(|error| error.to_string())?;
-                (
-                    window.bytes,
-                    None,
-                    window.start_byte,
-                    window.total_bytes,
-                )
-            }
-            EditorReloadPolicy::DiagnosticsReport { .. } => {
-                let document = tundra_platform::read_document_bytes(path)
-                    .map_err(|error| error.to_string())?;
-                let total_bytes = document.fingerprint.len;
-                (document.bytes, Some(document.fingerprint), 0, total_bytes)
-            }
+    fn cancel_editor_load(&mut self) {
+        let Some(load) = self.editor_load_state.take() else {
+            return;
         };
-        let state = EditorState::open_read_only(path.to_path_buf(), &bytes)
-            .map_err(|error| error.to_string())?;
-        Ok((state, fingerprint, start_byte, total_bytes))
+        self.editor_task_runtime.cancel(load.id);
+        self.restore_editor_load_navigation(&load.operation);
+        self.editor_message = Some("Loading cancelled".to_string());
+        self.notify_status("Loading cancelled");
+        self.refresh_hit_map();
+    }
+
+    fn restore_editor_load_navigation(&mut self, operation: &EditorLoadOperation) {
+        let EditorLoadOperation::Open { navigation, .. } = operation else {
+            if self.active_screen() == ShellScreen::Editor {
+                self.focused_component = ShellComponent::Editor;
+            }
+            return;
+        };
+        match navigation {
+            EditorLoadNavigation::EditorPicker => {
+                if self.active_screen() == ShellScreen::Editor {
+                    self.screen_stack.push(ShellScreen::Explorer);
+                } else if let Some(editor_index) = self
+                    .screen_stack
+                    .iter()
+                    .rposition(|screen| *screen == ShellScreen::Editor)
+                {
+                    let explorer_index = editor_index.saturating_add(1);
+                    if self.screen_stack.get(explorer_index) != Some(&ShellScreen::Explorer) {
+                        self.screen_stack
+                            .insert(explorer_index, ShellScreen::Explorer);
+                    }
+                }
+                if self.active_screen() == ShellScreen::Explorer {
+                    self.focused_component = ShellComponent::Explorer;
+                }
+            }
+            EditorLoadNavigation::Explorer => {
+                if let Some(editor_index) = (1..self.screen_stack.len()).rev().find(|index| {
+                    self.screen_stack[*index] == ShellScreen::Editor
+                        && self.screen_stack[index.saturating_sub(1)] == ShellScreen::Explorer
+                }) {
+                    self.screen_stack.remove(editor_index);
+                }
+                if self.active_screen() == ShellScreen::Explorer {
+                    self.focused_component = ShellComponent::Explorer;
+                }
+            }
+            EditorLoadNavigation::Diagnostics => {
+                if let Some(editor_index) = (1..self.screen_stack.len()).rev().find(|index| {
+                    self.screen_stack[*index] == ShellScreen::Editor
+                        && self.screen_stack[index.saturating_sub(1)] == ShellScreen::Diagnostics
+                }) {
+                    self.screen_stack.remove(editor_index);
+                }
+                if self.active_screen() == ShellScreen::Diagnostics {
+                    self.focused_component = ShellComponent::Diagnostics;
+                }
+            }
+            EditorLoadNavigation::Editor => {
+                if self.active_screen() == ShellScreen::Editor {
+                    self.focused_component = ShellComponent::Editor;
+                }
+            }
+        }
+    }
+
+    fn poll_editor_background_tasks(&mut self, platform: &dyn Platform) {
+        let events = self.editor_task_runtime.drain_events();
+        if events.is_empty() {
+            return;
+        }
+        for event in events {
+            match event {
+                EditorTaskEvent::Progress {
+                    id,
+                    stage,
+                    completed_bytes,
+                    total_bytes,
+                } => {
+                    if let Some(load) = self.editor_load_state.as_mut().filter(|load| load.id == id)
+                    {
+                        load.stage = stage;
+                        load.completed_bytes = completed_bytes;
+                        load.total_bytes = total_bytes;
+                    }
+                    if let Some(save) = self.editor_save_state.as_mut().filter(|save| save.id == id)
+                    {
+                        save.stage = stage;
+                    }
+                }
+                EditorTaskEvent::LoadFinished { id, result } => {
+                    let Some(load) = self.editor_load_state.take_if(|load| load.id == id) else {
+                        continue;
+                    };
+                    match *result {
+                        Ok(document) => self.finish_editor_load(load, document),
+                        Err(error) => {
+                            let action =
+                                if matches!(load.operation, EditorLoadOperation::Reload { .. }) {
+                                    "reload"
+                                } else {
+                                    "open"
+                                };
+                            self.restore_editor_load_navigation(&load.operation);
+                            if error != "Editor load cancelled" {
+                                self.record_editor_file_audit(
+                                    PermissionAction::ReadFile,
+                                    &load.path,
+                                    AuditOutcome::Failure,
+                                    Some("read_failed"),
+                                );
+                                self.report_editor_error(format!(
+                                    "Could not {action} {}: {error}",
+                                    load.path.display()
+                                ));
+                            }
+                        }
+                    }
+                }
+                EditorTaskEvent::SaveFinished { id, result } => {
+                    let Some(save) = self.editor_save_state.take_if(|save| save.id == id) else {
+                        continue;
+                    };
+                    self.finish_editor_save(save, result, platform);
+                }
+            }
+        }
+        self.refresh_hit_map();
+    }
+
+    fn finish_editor_save(
+        &mut self,
+        save: EditorSaveState,
+        result: Result<DocumentFingerprint, EditorSaveTaskError>,
+        platform: &dyn Platform,
+    ) {
+        if save.document_generation != self.editor_document_generation {
+            self.editor_close_after_save = false;
+            self.editor_open_after_save = false;
+            return;
+        }
+        let path = save.path;
+        match result {
+            Ok(fingerprint) => {
+                if let Some(state) = self.editor_state.as_mut() {
+                    state.apply(tundra_apps::editor::EditorCommand::MarkSaved {
+                        path: Some(path.clone()),
+                        revision: save.revision,
+                    });
+                }
+                self.editor_fingerprint = Some(fingerprint);
+                self.clear_editor_recovery();
+                if self
+                    .editor_state
+                    .as_ref()
+                    .is_some_and(EditorState::is_dirty)
+                {
+                    self.editor_recovery_dirty_since = Some(Instant::now());
+                }
+                self.record_editor_file_audit(
+                    PermissionAction::WriteFile,
+                    &path,
+                    AuditOutcome::Success,
+                    Some("editor_save"),
+                );
+                self.error_message = None;
+                self.resolve_notification_alert(EDITOR_ALERT_KEY);
+                self.editor_message = Some(format!("Saved {}", path.display()));
+                self.notify_toast(format!("Saved {}", path.display()));
+                let close_after_save = std::mem::take(&mut self.editor_close_after_save);
+                let open_after_save = std::mem::take(&mut self.editor_open_after_save);
+                let clean = self
+                    .editor_state
+                    .as_ref()
+                    .is_none_or(|state| !state.is_dirty());
+                if close_after_save && clean {
+                    self.finish_editor_close(false);
+                } else if open_after_save && clean {
+                    self.continue_editor_open_after_save(platform);
+                } else if !clean && (close_after_save || open_after_save) {
+                    self.editor_message = Some(
+                        "Saved an earlier revision; newer edits are still unsaved".to_string(),
+                    );
+                }
+            }
+            Err(EditorSaveTaskError::ExternalModification) => {
+                self.editor_close_after_save = false;
+                self.editor_open_after_save = false;
+                self.record_editor_file_audit(
+                    PermissionAction::WriteFile,
+                    &path,
+                    AuditOutcome::Failure,
+                    Some("external_modification"),
+                );
+                self.report_editor_error(
+                    "The file changed outside the Editor. Use Save As or reload it before saving.",
+                );
+            }
+            Err(EditorSaveTaskError::Write(error)) => {
+                self.editor_close_after_save = false;
+                self.editor_open_after_save = false;
+                self.record_editor_file_audit(
+                    PermissionAction::WriteFile,
+                    &path,
+                    AuditOutcome::Failure,
+                    Some("write_failed"),
+                );
+                self.report_editor_error(format!("Could not save {}: {error}", path.display()));
+            }
+        }
+    }
+
+    fn finish_editor_load(&mut self, load: EditorLoadState, document: EditorLoadedTaskDocument) {
+        self.advance_editor_document_generation();
+        let path = load.path;
+        let EditorLoadedTaskDocument {
+            mut state,
+            fingerprint,
+            total_bytes,
+            rich_blocks,
+        } = document;
+        match load.operation {
+            EditorLoadOperation::Open {
+                navigation,
+                reload,
+                replacing_dirty,
+            } => {
+                let open_at_bottom = reload
+                    .as_ref()
+                    .is_some_and(|reload| matches!(reload, EditorReloadPolicy::Log { .. }));
+                if open_at_bottom {
+                    let _ = state.apply(tundra_apps::editor::EditorCommand::MoveCursor {
+                        movement: tundra_apps::editor::CursorMove::DocumentEnd,
+                        extend_selection: false,
+                    });
+                    state.viewport.top_line = state
+                        .source_line_count()
+                        .unwrap_or_else(|| state.document.line_count())
+                        .saturating_sub(1);
+                }
+                if replacing_dirty {
+                    self.clear_editor_recovery();
+                }
+                self.editor_read_session = reload.map(|reload| EditorReadSession {
+                    reload,
+                    total_bytes,
+                });
+                self.editor_rich_render_cache = rich_blocks.map(|blocks| EditorRichRenderCache {
+                    revision: state.revision(),
+                    blocks,
+                });
+                self.editor_state = Some(state);
+                self.editor_fingerprint = Some(fingerprint);
+                self.editor_focus = tundra_ui::EditorFocus::Canvas;
+                self.editor_open_menu = None;
+                self.editor_selected_toolbar_action = None;
+                self.editor_quick_menu_anchor = None;
+                self.editor_drag_anchor = None;
+                self.editor_table_column_widths.clear();
+                self.editor_table_resize = None;
+                self.editor_close_after_save = false;
+                self.editor_open_after_save = false;
+                self.editor_discard_for_open = false;
+                self.editor_recovery_dirty_since = None;
+                self.editor_last_recovery_write = None;
+                if navigation == EditorLoadNavigation::EditorPicker {
+                    self.explorer_purpose = ExplorerPurpose::Browse;
+                    self.explorer_state = None;
+                }
+                let read_only = self
+                    .editor_state
+                    .as_ref()
+                    .is_some_and(EditorState::is_read_only);
+                self.editor_message = Some(if read_only {
+                    format!("Read-only: {}", path.display())
+                } else {
+                    format!("Opened {}", path.display())
+                });
+                self.record_editor_file_audit(
+                    PermissionAction::ReadFile,
+                    &path,
+                    AuditOutcome::Success,
+                    Some("editor_open"),
+                );
+            }
+            EditorLoadOperation::Reload {
+                session,
+                was_at_bottom,
+                visible_capacity,
+                old_top_line,
+                old_left_column,
+                old_cursor,
+            } => {
+                let new_line_count = state
+                    .source_line_count()
+                    .unwrap_or_else(|| state.document.line_count())
+                    .max(1);
+                let new_maximum = new_line_count.saturating_sub(visible_capacity);
+                state.viewport.left_column = old_left_column;
+                state.selection = None;
+                if was_at_bottom {
+                    let _ = state.apply(tundra_apps::editor::EditorCommand::MoveCursor {
+                        movement: tundra_apps::editor::CursorMove::DocumentEnd,
+                        extend_selection: false,
+                    });
+                    state.viewport.top_line = new_maximum;
+                } else {
+                    let _ = state.apply(tundra_apps::editor::EditorCommand::MoveTo {
+                        position: tundra_apps::editor::EditorPosition::Source(old_cursor),
+                        extend_selection: false,
+                    });
+                    state.viewport.top_line = old_top_line.min(new_maximum);
+                }
+                self.editor_state = Some(state);
+                self.editor_rich_render_cache = rich_blocks.map(|blocks| EditorRichRenderCache {
+                    revision: self.editor_state.as_ref().map_or(0, EditorState::revision),
+                    blocks,
+                });
+                self.editor_fingerprint = Some(fingerprint);
+                self.editor_read_session = Some(EditorReadSession {
+                    reload: session.reload,
+                    total_bytes,
+                });
+                self.editor_quick_menu_anchor = None;
+                self.editor_drag_anchor = None;
+                self.editor_message = Some(format!("Reloaded {}", path.display()));
+            }
+        }
+        if self.active_screen() == ShellScreen::Editor {
+            self.active_popup = None;
+            self.focused_component = ShellComponent::Editor;
+        }
+        self.notify_status(format!("Editor: {}", path.display()));
+        self.refresh_hit_map();
     }
 
     fn open_editor_path(&mut self, path: std::path::PathBuf) -> bool {
@@ -1521,71 +2044,26 @@ impl ShellState {
         if !self.authorize_editor_file(PermissionAction::ReadFile, &path) {
             return false;
         }
-        let resource = path.display().to_string();
-        let loaded = match tundra_platform::read_document_bytes(&path) {
-            Ok(loaded) => loaded,
+        let is_log = is_log_document_path(&path);
+        let access = if is_log {
+            EditorTaskAccess::ReadOnly
+        } else {
+            EditorTaskAccess::Editable
+        };
+        let reload = is_log.then(|| EditorReloadPolicy::Log { path: path.clone() });
+        match self.begin_editor_open_task(path.clone(), access, reload, replacing_dirty) {
+            Ok(()) => true,
             Err(error) => {
                 self.record_editor_file_audit(
                     PermissionAction::ReadFile,
                     &path,
                     AuditOutcome::Failure,
-                    Some("read_failed"),
+                    Some("worker_unavailable"),
                 );
-                self.report_editor_error(format!("Could not open {resource}: {error}"));
-                return false;
+                self.report_editor_error(format!("Could not open {}: {error}", path.display()));
+                false
             }
-        };
-        let state = match EditorState::open(path.clone(), &loaded.bytes) {
-            Ok(state) => state,
-            Err(error) => {
-                self.record_editor_file_audit(
-                    PermissionAction::ReadFile,
-                    &path,
-                    AuditOutcome::Failure,
-                    Some("invalid_utf8"),
-                );
-                self.report_editor_error(format!("Could not open {resource}: {error}"));
-                return false;
-            }
-        };
-        self.record_editor_file_audit(
-            PermissionAction::ReadFile,
-            &path,
-            AuditOutcome::Success,
-            Some("editor_open"),
-        );
-        if replacing_dirty {
-            self.clear_editor_recovery();
         }
-        self.editor_state = Some(state);
-        self.editor_fingerprint = Some(loaded.fingerprint);
-        self.editor_diagnostic_session = None;
-        self.editor_focus = tundra_ui::EditorFocus::Canvas;
-        self.editor_open_menu = None;
-        self.editor_selected_toolbar_action = None;
-        self.editor_quick_menu_anchor = None;
-        self.editor_drag_anchor = None;
-        self.editor_table_column_widths.clear();
-        self.editor_table_resize = None;
-        self.editor_message = Some(format!("Opened {resource}"));
-        self.editor_recovery_dirty_since = None;
-        self.editor_last_recovery_write = None;
-        self.editor_open_after_save = false;
-        self.editor_discard_for_open = false;
-
-        if self.active_screen() == ShellScreen::Explorer
-            && matches!(self.explorer_purpose, ExplorerPurpose::EditorOpen)
-        {
-            self.screen_stack.pop();
-            self.explorer_purpose = ExplorerPurpose::Browse;
-            self.explorer_state = None;
-        } else if self.active_screen() != ShellScreen::Editor {
-            self.screen_stack.push(ShellScreen::Editor);
-        }
-        self.focused_component = ShellComponent::Editor;
-        self.notify_status(format!("Editor: {resource}"));
-        self.refresh_hit_map();
-        true
     }
 
     fn confirm_editor_open(&mut self) {
@@ -1615,6 +2093,8 @@ impl ShellState {
             self.explorer_purpose = ExplorerPurpose::EditorOpen;
             self.notify_status("Choose a Markdown or text document");
         } else {
+            self.editor_open_after_save = false;
+            self.editor_discard_for_open = false;
             self.report_editor_error("Could not open the file picker");
         }
     }
@@ -1628,6 +2108,7 @@ impl ShellState {
         self.open_explorer(platform);
         if self.active_screen() != ShellScreen::Explorer {
             self.editor_close_after_save = false;
+            self.editor_open_after_save = false;
             self.report_editor_error("Could not open the Save As picker");
             return;
         }
@@ -1701,8 +2182,11 @@ impl ShellState {
         &mut self,
         path: std::path::PathBuf,
         snapshot: tundra_apps::editor::SaveSnapshot,
-        platform: &dyn Platform,
+        _platform: &dyn Platform,
     ) -> bool {
+        if self.editor_save_state.is_some() || self.editor_load_state.is_some() {
+            return false;
+        }
         if !self.authorize_editor_file(PermissionAction::WriteFile, &path) {
             self.editor_close_after_save = false;
             self.editor_open_after_save = false;
@@ -1714,81 +2198,39 @@ impl ShellState {
             .and_then(|state| state.document.path.as_ref())
             == Some(&path);
         let expected = is_current_path.then_some(self.editor_fingerprint).flatten();
-        match tundra_platform::atomic_write_document_if_unchanged(
-            &path,
-            &snapshot.bytes,
-            expected,
-        ) {
-            Ok(fingerprint) => {
-                if let Some(state) = self.editor_state.as_mut() {
-                    state.apply(tundra_apps::editor::EditorCommand::MarkSaved {
-                        path: Some(path.clone()),
-                        revision: snapshot.revision,
-                    });
-                }
-                self.editor_fingerprint = Some(fingerprint);
-                self.clear_editor_recovery();
-                if self
-                    .editor_state
-                    .as_ref()
-                    .is_some_and(EditorState::is_dirty)
-                {
-                    self.editor_recovery_dirty_since = Some(Instant::now());
-                }
-                self.record_editor_file_audit(
-                    PermissionAction::WriteFile,
-                    &path,
-                    AuditOutcome::Success,
-                    Some("editor_save"),
-                );
-                self.error_message = None;
-                self.resolve_notification_alert(EDITOR_ALERT_KEY);
-                self.editor_message = Some(format!("Saved {}", path.display()));
-                self.notify_toast(format!("Saved {}", path.display()));
-                let close_after_save = std::mem::take(&mut self.editor_close_after_save);
-                let open_after_save = std::mem::take(&mut self.editor_open_after_save);
-                let clean = self
-                    .editor_state
-                    .as_ref()
-                    .is_none_or(|state| !state.is_dirty());
-                if close_after_save && clean {
-                    self.finish_editor_close(false);
-                } else if open_after_save && clean {
-                    self.continue_editor_open_after_save(platform);
-                } else if !clean && (close_after_save || open_after_save) {
-                    self.editor_message = Some(
-                        "Saved an earlier revision; newer edits are still unsaved".to_string(),
-                    );
-                }
-                true
-            }
-            Err(tundra_platform::DocumentWriteError::ExternalModification { .. }) => {
-                self.editor_close_after_save = false;
-                self.editor_open_after_save = false;
-                self.record_editor_file_audit(
-                    PermissionAction::WriteFile,
-                    &path,
-                    AuditOutcome::Failure,
-                    Some("external_modification"),
-                );
-                self.report_editor_error(
-                    "The file changed outside the Editor. Use Save As or reload it before saving.",
-                );
-                false
-            }
-            Err(error) => {
-                self.editor_close_after_save = false;
-                self.editor_open_after_save = false;
-                self.record_editor_file_audit(
-                    PermissionAction::WriteFile,
-                    &path,
-                    AuditOutcome::Failure,
-                    Some("write_failed"),
-                );
-                self.report_editor_error(format!("Could not save {}: {error}", path.display()));
-                false
-            }
+        let id = next_editor_task_id();
+        let revision = snapshot.revision;
+        if let Err(error) =
+            self.editor_task_runtime
+                .submit_save(id, path.clone(), snapshot, expected)
+        {
+            self.editor_close_after_save = false;
+            self.editor_open_after_save = false;
+            self.record_editor_file_audit(
+                PermissionAction::WriteFile,
+                &path,
+                AuditOutcome::Failure,
+                Some("worker_unavailable"),
+            );
+            self.report_editor_error(format!("Could not save {}: {error}", path.display()));
+            return false;
         }
+        if self.active_screen() == ShellScreen::Explorer
+            && matches!(self.explorer_purpose, ExplorerPurpose::EditorSaveAs { .. })
+        {
+            self.return_from_editor_picker();
+        }
+        self.editor_save_state = Some(EditorSaveState {
+            id,
+            path: path.clone(),
+            document_generation: self.editor_document_generation,
+            revision,
+            stage: EditorTaskStage::Writing,
+        });
+        self.editor_message = Some(format!("Saving {}", path.display()));
+        self.notify_status(format!("Saving {}", path.display()));
+        self.refresh_hit_map();
+        true
     }
 
     fn continue_editor_open_after_save(&mut self, platform: &dyn Platform) {
@@ -1874,11 +2316,8 @@ impl ShellState {
                 } else {
                     tundra_apps::editor::DocumentKind::PlainText
                 };
-                let (mut state, fingerprint, unbound) = editor_recovery_base(
-                    record.path.as_ref(),
-                    record.saved_content_hash,
-                    kind,
-                );
+                let (mut state, fingerprint, unbound) =
+                    editor_recovery_base(record.path.as_ref(), record.saved_content_hash, kind);
                 if record.source_mode || kind == tundra_apps::editor::DocumentKind::PlainText {
                     state.install_source_draft(record.source, record.cursor, None);
                 } else {
@@ -1909,6 +2348,7 @@ impl ShellState {
         if unbound {
             state.document.path = None;
         }
+        self.advance_editor_document_generation();
         self.editor_state = Some(state);
         self.editor_quick_menu_anchor = None;
         self.editor_table_column_widths.clear();
@@ -1982,7 +2422,7 @@ impl ShellState {
             }
         } else {
             tundra_apps::editor_recovery::EditorRecoveryPayload::Source {
-                text: state.source_buffer().unwrap_or_default().to_owned(),
+                text: state.source_buffer().unwrap_or_default().into_owned(),
                 cursor: state.cursor.byte_offset,
                 selection: state.selection.map(|selection| {
                     tundra_apps::editor_recovery::RecoverySourceSelection {
@@ -2030,11 +2470,15 @@ impl ShellState {
     fn finish_editor_close(&mut self, _discard: bool) {
         self.notifications
             .dismiss_modal_by_key(EDITOR_CLOSE_NOTIFICATION_KEY);
-        let closing_diagnostics_viewer = self.editor_diagnostic_session.is_some();
-        if !closing_diagnostics_viewer {
+        if self.editor_read_session.is_none() {
             self.clear_editor_recovery();
         }
+        if let Some(load) = self.editor_load_state.take() {
+            self.editor_task_runtime.cancel(load.id);
+        }
+        self.advance_editor_document_generation();
         self.editor_state = None;
+        self.editor_rich_render_cache = None;
         self.editor_fingerprint = None;
         self.editor_open_menu = None;
         self.editor_selected_toolbar_action = None;
@@ -2046,7 +2490,7 @@ impl ShellState {
         self.editor_open_after_save = false;
         self.editor_discard_for_open = false;
         self.editor_message = None;
-        self.editor_diagnostic_session = None;
+        self.editor_read_session = None;
         if self.active_screen() == ShellScreen::Editor {
             self.screen_stack.pop();
         }

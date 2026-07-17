@@ -1,5 +1,3 @@
-const DIAGNOSTICS_LOG_TAIL_BYTES: usize = 5 * 1024 * 1024;
-
 #[derive(Clone)]
 struct ShellDiagnosticsTaskRuntime {
     shared: Arc<ShellDiagnosticsTaskShared>,
@@ -438,15 +436,15 @@ impl ShellState {
             .and_then(|current| current.logs.get(self.diagnostics_selected_log))
             .map(|log| log.relative_path.clone());
         self.diagnostics_snapshot = Some(snapshot);
-        if let Some(relative_path) = selected_log_path {
-            if let Some(index) = self.diagnostics_snapshot.as_ref().and_then(|current| {
+        if let Some(relative_path) = selected_log_path
+            && let Some(index) = self.diagnostics_snapshot.as_ref().and_then(|current| {
                 current
                     .logs
                     .iter()
                     .position(|log| log.relative_path == relative_path)
-            }) {
-                self.diagnostics_selected_log = index;
-            }
+            })
+        {
+            self.diagnostics_selected_log = index;
         }
         self.clamp_diagnostics_selection();
     }
@@ -713,54 +711,48 @@ impl ShellState {
             return;
         }
 
-        let (reload, audit_resource, missing_message, opened_message) =
-            match self.diagnostics_tab {
-                tundra_ui::DiagnosticsTab::Logs => {
-                    let path = self
-                        .diagnostics_snapshot
-                        .as_ref()
-                        .and_then(|snapshot| snapshot.logs.get(self.diagnostics_selected_log))
-                        .map(|log| log.path.clone());
-                    let Some(path) = path else {
-                        self.notify_status("No diagnostic log is selected");
-                        return;
-                    };
-                    (
-                        EditorReloadPolicy::DiagnosticsLog {
-                            path,
-                            max_bytes: DIAGNOSTICS_LOG_TAIL_BYTES,
-                        },
-                        "diagnostics.log.open",
-                        "Could not open diagnostic log",
-                        "Opened diagnostic log read-only",
-                    )
-                }
-                tundra_ui::DiagnosticsTab::Incidents => {
-                    let path = self
-                        .diagnostics_snapshot
-                        .as_ref()
-                        .and_then(|snapshot| {
-                            snapshot.incidents.get(self.diagnostics_selected_incident)
-                        })
-                        .map(|incident| {
-                            incident
-                                .text_report_path
-                                .clone()
-                                .unwrap_or_else(|| incident.json_report_path.clone())
-                        });
-                    let Some(path) = path else {
-                        self.notify_status("No incident report is selected");
-                        return;
-                    };
-                    (
-                        EditorReloadPolicy::DiagnosticsReport { path },
-                        "diagnostics.report.open",
-                        "Could not open diagnostics report",
-                        "Opened diagnostics report read-only",
-                    )
-                }
-                tundra_ui::DiagnosticsTab::Health => unreachable!(),
-            };
+        let (reload, audit_resource, missing_message, opened_message) = match self.diagnostics_tab {
+            tundra_ui::DiagnosticsTab::Logs => {
+                let path = self
+                    .diagnostics_snapshot
+                    .as_ref()
+                    .and_then(|snapshot| snapshot.logs.get(self.diagnostics_selected_log))
+                    .map(|log| log.path.clone());
+                let Some(path) = path else {
+                    self.notify_status("No diagnostic log is selected");
+                    return;
+                };
+                (
+                    EditorReloadPolicy::Log { path },
+                    "diagnostics.log.open",
+                    "Could not open diagnostic log",
+                    "Opened diagnostic log read-only",
+                )
+            }
+            tundra_ui::DiagnosticsTab::Incidents => {
+                let path = self
+                    .diagnostics_snapshot
+                    .as_ref()
+                    .and_then(|snapshot| snapshot.incidents.get(self.diagnostics_selected_incident))
+                    .map(|incident| {
+                        incident
+                            .text_report_path
+                            .clone()
+                            .unwrap_or_else(|| incident.json_report_path.clone())
+                    });
+                let Some(path) = path else {
+                    self.notify_status("No incident report is selected");
+                    return;
+                };
+                (
+                    EditorReloadPolicy::DiagnosticsReport { path },
+                    "diagnostics.report.open",
+                    "Could not open diagnostics report",
+                    "Opened diagnostics report read-only",
+                )
+            }
+            tundra_ui::DiagnosticsTab::Health => unreachable!(),
+        };
 
         match self.open_diagnostics_editor(reload) {
             Ok(()) => {
@@ -855,6 +847,27 @@ impl ShellState {
 mod diagnostics_shell_tests {
     use super::*;
 
+    struct TestEditorTaskDriver;
+
+    impl TestEditorTaskDriver {
+        fn install(state: &mut ShellState) -> Self {
+            state.editor_task_runtime = ShellEditorTaskRuntime::new();
+            Self
+        }
+
+        fn complete_next_load(&self, state: &mut ShellState) {
+            for _ in 0..400 {
+                state.poll_editor_background_tasks(&tundra_platform::mock::UnsupportedPlatform);
+                if state.editor_load_state.is_none() {
+                    return;
+                }
+                std::thread::yield_now();
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            panic!("Editor load task did not finish in time");
+        }
+    }
+
     fn temporary_document(name: &str, contents: &[u8]) -> (std::path::PathBuf, std::path::PathBuf) {
         let nonce = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -865,13 +878,19 @@ mod diagnostics_shell_tests {
             std::process::id()
         ));
         std::fs::create_dir_all(&directory).unwrap();
+        let directory = std::fs::canonicalize(directory).unwrap();
         let path = directory.join(name);
         std::fs::write(&path, contents).unwrap();
         (directory, path)
     }
 
-    fn log_file(path: std::path::PathBuf, relative_path: &str) -> tundra_apps::diagnostics::DiagnosticLogFile {
-        let size_bytes = std::fs::metadata(&path).map(|metadata| metadata.len()).unwrap_or(0);
+    fn log_file(
+        path: std::path::PathBuf,
+        relative_path: &str,
+    ) -> tundra_apps::diagnostics::DiagnosticLogFile {
+        let size_bytes = std::fs::metadata(&path)
+            .map(|metadata| metadata.len())
+            .unwrap_or(0);
         tundra_apps::diagnostics::DiagnosticLogFile {
             path,
             relative_path: std::path::PathBuf::from(relative_path),
@@ -970,15 +989,17 @@ mod diagnostics_shell_tests {
             .push(log_file(path.clone(), "audit.v1.log"));
         state.open_diagnostics();
         state.set_diagnostics_tab(tundra_ui::DiagnosticsTab::Logs);
+        let editor_tasks = TestEditorTaskDriver::install(&mut state);
 
         let platform = tundra_platform::mock::UnsupportedPlatform;
         state.open_selected_diagnostics_report(&platform);
+        editor_tasks.complete_next_load(&mut state);
 
         assert_eq!(state.active_screen(), ShellScreen::Editor);
         let editor = state.editor_state.as_ref().unwrap();
         assert!(editor.is_read_only());
-        assert_eq!(editor.source_buffer(), Some("first\nsecond\n"));
-        assert!(state.editor_diagnostic_session.is_some());
+        assert_eq!(editor.source_buffer().as_deref(), Some("first\nsecond\n"));
+        assert!(state.editor_read_session.is_some());
 
         state.handle_editor_key(
             KeyInput::new(
@@ -995,7 +1016,12 @@ mod diagnostics_shell_tests {
         state.activate_editor_toolbar(tundra_ui::EditorToolbarAction::Open, &platform);
         assert_eq!(state.active_screen(), ShellScreen::Editor);
         assert_eq!(
-            state.editor_state.as_ref().unwrap().source_buffer(),
+            state
+                .editor_state
+                .as_ref()
+                .unwrap()
+                .source_buffer()
+                .as_deref(),
             Some("first\nsecond\n")
         );
         assert!(!state.editor_state.as_ref().unwrap().is_dirty());
@@ -1019,36 +1045,56 @@ mod diagnostics_shell_tests {
             .push(log_file(path.clone(), "reload.log"));
         state.open_diagnostics();
         state.set_diagnostics_tab(tundra_ui::DiagnosticsTab::Logs);
+        let editor_tasks = TestEditorTaskDriver::install(&mut state);
         state.open_selected_diagnostics_report(&tundra_platform::mock::UnsupportedPlatform);
+        editor_tasks.complete_next_load(&mut state);
 
         std::fs::write(&path, b"before\nafter\n").unwrap();
         state.handle_editor_key(
             KeyInput::new(
-                InputKey::Function(5),
+                InputKey::Character('r'),
                 InputModifiers::none(),
                 InputPhase::Press,
             ),
             &tundra_platform::mock::UnsupportedPlatform,
         );
+        editor_tasks.complete_next_load(&mut state);
         assert_eq!(
-            state.editor_state.as_ref().unwrap().source_buffer(),
+            state
+                .editor_state
+                .as_ref()
+                .unwrap()
+                .source_buffer()
+                .as_deref(),
             Some("before\nafter\n")
         );
 
         std::fs::remove_file(&path).unwrap();
         state.handle_editor_key(
             KeyInput::new(
-                InputKey::Function(5),
+                InputKey::Character('r'),
                 InputModifiers::none(),
                 InputPhase::Press,
             ),
             &tundra_platform::mock::UnsupportedPlatform,
         );
+        editor_tasks.complete_next_load(&mut state);
         assert_eq!(
-            state.editor_state.as_ref().unwrap().source_buffer(),
+            state
+                .editor_state
+                .as_ref()
+                .unwrap()
+                .source_buffer()
+                .as_deref(),
             Some("before\nafter\n")
         );
-        assert!(state.editor_message.as_deref().unwrap().contains("Could not reload"));
+        assert!(
+            state
+                .editor_message
+                .as_deref()
+                .unwrap()
+                .contains("Could not reload")
+        );
         std::fs::remove_dir_all(directory).unwrap();
     }
 
@@ -1068,7 +1114,9 @@ mod diagnostics_shell_tests {
         state.open_diagnostics();
         state.set_diagnostics_tab(tundra_ui::DiagnosticsTab::Logs);
         let platform = tundra_platform::mock::UnsupportedPlatform;
+        let editor_tasks = TestEditorTaskDriver::install(&mut state);
         state.open_selected_diagnostics_report(&platform);
+        editor_tasks.complete_next_load(&mut state);
 
         let editor_layout = |state: &ShellState| {
             let area = Rect::new(0, 0, state.terminal_size.0, state.terminal_size.1);
@@ -1095,12 +1143,13 @@ mod diagnostics_shell_tests {
         std::fs::write(&path, appended).unwrap();
         state.handle_editor_key(
             KeyInput::new(
-                InputKey::Function(5),
+                InputKey::Character('r'),
                 InputModifiers::none(),
                 InputPhase::Press,
             ),
             &platform,
         );
+        editor_tasks.complete_next_load(&mut state);
         let layout = editor_layout(&state);
         assert_eq!(
             layout.visible_start,
@@ -1114,20 +1163,21 @@ mod diagnostics_shell_tests {
         std::fs::write(&path, before).unwrap();
         state.handle_editor_key(
             KeyInput::new(
-                InputKey::Function(5),
+                InputKey::Character('r'),
                 InputModifiers::none(),
                 InputPhase::Press,
             ),
             &platform,
         );
+        editor_tasks.complete_next_load(&mut state);
         assert_eq!(state.editor_state.as_ref().unwrap().viewport.top_line, 2);
         state.request_editor_close(&platform);
         std::fs::remove_dir_all(directory).unwrap();
     }
 
     #[test]
-    fn diagnostics_log_editor_caps_a_single_long_line_to_five_mib() {
-        let contents = vec![b'x'; DIAGNOSTICS_LOG_TAIL_BYTES + 137];
+    fn diagnostics_log_editor_loads_a_single_long_line_in_full() {
+        let contents = vec![b'x'; 5 * 1024 * 1024 + 137];
         let (directory, path) = temporary_document("large.log", &contents);
         let mut state = state(UserRole::Admin);
         state
@@ -1138,13 +1188,20 @@ mod diagnostics_shell_tests {
             .push(log_file(path, "large.log"));
         state.open_diagnostics();
         state.set_diagnostics_tab(tundra_ui::DiagnosticsTab::Logs);
+        let editor_tasks = TestEditorTaskDriver::install(&mut state);
 
         state.open_selected_diagnostics_report(&tundra_platform::mock::UnsupportedPlatform);
+        editor_tasks.complete_next_load(&mut state);
 
-        let source = state.editor_state.as_ref().unwrap().source_buffer().unwrap();
-        assert_eq!(source.len(), DIAGNOSTICS_LOG_TAIL_BYTES);
-        let session = state.editor_diagnostic_session.as_ref().unwrap();
-        assert_eq!(session.start_byte, 137);
+        let source = state
+            .editor_state
+            .as_ref()
+            .unwrap()
+            .source_buffer()
+            .unwrap();
+        assert_eq!(source.len(), contents.len());
+        assert_eq!(source.as_bytes(), contents);
+        let session = state.editor_read_session.as_ref().unwrap();
         assert_eq!(session.total_bytes, contents.len() as u64);
         state.request_editor_close(&tundra_platform::mock::UnsupportedPlatform);
         std::fs::remove_dir_all(directory).unwrap();
@@ -1174,7 +1231,7 @@ mod diagnostics_shell_tests {
         let editor = state.editor_state.as_ref().unwrap();
         assert!(editor.is_dirty());
         assert_eq!(editor.export_text(), "unsaved");
-        assert!(state.editor_diagnostic_session.is_none());
+        assert!(state.editor_read_session.is_none());
         std::fs::remove_dir_all(directory).unwrap();
     }
 
@@ -1202,10 +1259,17 @@ mod diagnostics_shell_tests {
         state.open_diagnostics();
         state.set_diagnostics_tab(tundra_ui::DiagnosticsTab::Incidents);
         let platform = tundra_platform::mock::UnsupportedPlatform;
+        let editor_tasks = TestEditorTaskDriver::install(&mut state);
 
         state.open_selected_diagnostics_report(&platform);
+        editor_tasks.complete_next_load(&mut state);
         assert_eq!(
-            state.editor_state.as_ref().unwrap().source_buffer(),
+            state
+                .editor_state
+                .as_ref()
+                .unwrap()
+                .source_buffer()
+                .as_deref(),
             Some("text report\n")
         );
         assert!(state.editor_state.as_ref().unwrap().is_read_only());
@@ -1213,22 +1277,38 @@ mod diagnostics_shell_tests {
         std::fs::write(&text_path, b"updated text report\n").unwrap();
         state.handle_editor_key(
             KeyInput::new(
-                InputKey::Function(5),
+                InputKey::Character('r'),
                 InputModifiers::none(),
                 InputPhase::Press,
             ),
             &platform,
         );
         assert_eq!(
-            state.editor_state.as_ref().unwrap().source_buffer(),
-            Some("updated text report\n")
+            state
+                .editor_state
+                .as_ref()
+                .unwrap()
+                .source_buffer()
+                .as_deref(),
+            Some("text report\n")
         );
         state.request_editor_close(&platform);
 
         state.diagnostics_snapshot.as_mut().unwrap().incidents[0].text_report_path = None;
         state.open_selected_diagnostics_report(&platform);
+        editor_tasks.complete_next_load(&mut state);
+        assert!(
+            state.editor_state.is_some(),
+            "JSON incident should load: {:?}",
+            state.editor_message
+        );
         assert_eq!(
-            state.editor_state.as_ref().unwrap().source_buffer(),
+            state
+                .editor_state
+                .as_ref()
+                .unwrap()
+                .source_buffer()
+                .as_deref(),
             Some("{\"source\":\"json\"}\n")
         );
         state.request_editor_close(&platform);
@@ -1278,7 +1358,9 @@ mod diagnostics_shell_tests {
             ShellCommand::RecordInput
         );
         assert_eq!(
-            state.route_diagnostics_key(&KeyInput::from_label("Enter")).1,
+            state
+                .route_diagnostics_key(&KeyInput::from_label("Enter"))
+                .1,
             ShellCommand::DiagnosticsOpenReport
         );
 
