@@ -178,6 +178,79 @@ fn normal_directory_click_release_does_not_start_a_drag_move() {
 }
 
 #[test]
+fn explorer_scrollbar_thumb_drags_to_the_end_without_starting_a_file_drag() {
+    let fixture = FixtureRoot::new("scrollbar-drag");
+    let platform = mock_platform(fixture.path());
+    bootstrap_with_shell(&platform);
+    let documents = fixture.path().join("Documents");
+    for index in 0..80 {
+        fs::write(
+            documents.join(format!("file-{index:03}.txt")),
+            index.to_string(),
+        )
+        .expect("overflowing Explorer fixture");
+    }
+    let mut state = logged_in_state(&platform);
+    state.apply_input_with_platform(InputEvent::from_key_label("e"), &platform);
+
+    let area = Rect::new(0, 0, state.terminal_size().0, state.terminal_size().1);
+    let tundra_ui::ShellLayout::Full { main, .. } = tundra_ui::compute_shell_layout(area) else {
+        panic!("Explorer scrollbar test requires a full layout");
+    };
+    let layout = tundra_ui::explorer_layout(main, &state.to_explorer_view_model());
+    let scrollbar = layout.scrollbar.expect("overflowing Explorer scrollbar");
+    let grab = (
+        scrollbar.thumb.x,
+        scrollbar.thumb.y.saturating_add(scrollbar.thumb.height / 2),
+    );
+    let bottom = (
+        scrollbar.track.x,
+        scrollbar.track.bottom().saturating_sub(1),
+    );
+
+    state.apply_input_with_platform(InputEvent::mouse_down(PointerButton::Left, grab), &platform);
+    state.apply_input_with_platform(
+        InputEvent::mouse_drag(PointerButton::Left, bottom),
+        &platform,
+    );
+    state.apply_input_with_platform(InputEvent::mouse_up(PointerButton::Left, bottom), &platform);
+
+    let model = state.to_explorer_view_model();
+    let final_layout = tundra_ui::explorer_layout(main, &model);
+    assert!(!model.viewport_follows_focus);
+    assert_eq!(
+        final_layout.visible_start,
+        model
+            .entries
+            .len()
+            .saturating_sub(final_layout.visible_capacity)
+    );
+
+    let scrollbar = final_layout
+        .scrollbar
+        .expect("Explorer scrollbar after dragging down");
+    let grab = (
+        scrollbar.thumb.x,
+        scrollbar.thumb.y.saturating_add(scrollbar.thumb.height / 2),
+    );
+    let top = (scrollbar.track.x, scrollbar.track.y);
+    state.apply_input_with_platform(InputEvent::mouse_down(PointerButton::Left, grab), &platform);
+    state.apply_input_with_platform(
+        InputEvent::mouse_drag(PointerButton::Left, top),
+        &platform,
+    );
+    state.apply_input_with_platform(InputEvent::mouse_up(PointerButton::Left, top), &platform);
+
+    let model = state.to_explorer_view_model();
+    assert_eq!(
+        tundra_ui::explorer_layout(main, &model).visible_start,
+        0
+    );
+    assert!(model.operation.is_none());
+    assert!(model.error.is_none());
+}
+
+#[test]
 fn context_menu_supports_arrow_and_enter_keyboard_activation() {
     let fixture = FixtureRoot::new("context-keyboard");
     let platform = mock_platform(fixture.path());

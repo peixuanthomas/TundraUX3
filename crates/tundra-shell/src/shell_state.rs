@@ -18,6 +18,35 @@ struct DragTracker {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ScrollbarDragState {
+    Explorer { grab_offset: u16 },
+    Diagnostics { grab_offset: u16 },
+}
+
+fn scrollbar_window_start(
+    pointer_y: u16,
+    grab_offset: u16,
+    track: Rect,
+    thumb: Rect,
+    item_count: usize,
+    visible_capacity: usize,
+) -> usize {
+    let travel = usize::from(track.height.saturating_sub(thumb.height));
+    let maximum = item_count.saturating_sub(visible_capacity);
+    if travel == 0 || maximum == 0 {
+        return 0;
+    }
+    let pointer_offset = usize::from(pointer_y.saturating_sub(track.y));
+    let thumb_start = pointer_offset
+        .saturating_sub(usize::from(grab_offset))
+        .min(travel);
+    maximum
+        .saturating_mul(thumb_start)
+        .saturating_add(travel / 2)
+        / travel
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct EditorTableResizeState {
     table_id: tundra_ui::NodeId,
     column_index: usize,
@@ -269,6 +298,7 @@ pub struct ShellState {
     diagnostics_selected_log: usize,
     diagnostics_selected_incident: usize,
     diagnostics_list_window_start: usize,
+    diagnostics_list_window_is_explicit: bool,
     diagnostics_scanning: bool,
     diagnostics_rescan_pending: bool,
     diagnostics_repair_preview: Vec<tundra_apps::diagnostics::DiagnosticsRepairAction>,
@@ -306,4 +336,5 @@ pub struct ShellState {
     platform_capability_summary: String,
     last_click: Option<TimedClick>,
     drag_tracker: Option<DragTracker>,
+    scrollbar_drag: Option<ScrollbarDragState>,
 }

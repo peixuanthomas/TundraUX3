@@ -991,6 +991,18 @@ impl ShellState {
                 self.select_diagnostics_index(index);
                 ShellAction::Redraw
             }
+            ShellCommand::DiagnosticsScrollbarPointerDown(coordinates) => {
+                self.begin_diagnostics_scrollbar_drag(coordinates);
+                ShellAction::Redraw
+            }
+            ShellCommand::DiagnosticsScrollbarDrag(coordinates) => {
+                self.drag_diagnostics_scrollbar(coordinates);
+                ShellAction::Redraw
+            }
+            ShellCommand::DiagnosticsScrollbarPointerUp => {
+                self.clear_diagnostics_scrollbar_drag();
+                ShellAction::Redraw
+            }
             ShellCommand::DiagnosticsRescan => {
                 self.request_diagnostics_scan();
                 ShellAction::Redraw

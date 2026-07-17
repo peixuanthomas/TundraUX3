@@ -179,6 +179,7 @@ impl ShellState {
             selected_log: self.diagnostics_selected_log,
             selected_incident: self.diagnostics_selected_incident,
             list_window_start: self.diagnostics_list_window_start,
+            list_window_is_explicit: self.diagnostics_list_window_is_explicit,
             scanning: self.diagnostics_scanning
                 || self
                     .diagnostics_task_runtime

@@ -61,6 +61,12 @@ pub struct DiagnosticsScrollbarLayout {
     pub thumb: Rect,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ExplorerScrollbarLayout {
+    pub track: Rect,
+    pub thumb: Rect,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DiagnosticsRepairDialogLayout {
     pub dialog: Rect,
@@ -80,6 +86,7 @@ pub enum DiagnosticsHitTarget {
     Check(usize),
     Incident(usize),
     Log(usize),
+    Scrollbar,
     RepairItem(usize),
     RepairConfirm,
     RepairCancel,
@@ -122,6 +129,12 @@ impl DiagnosticsLayout {
 
         if let Some(tab) = self.tabs.iter().find(|tab| rect_contains(tab.area, x, y)) {
             return Some(DiagnosticsHitTarget::Tab(tab.tab));
+        }
+        if self
+            .list_scrollbar
+            .is_some_and(|scrollbar| rect_contains(scrollbar.track, x, y))
+        {
+            return Some(DiagnosticsHitTarget::Scrollbar);
         }
         self.rows
             .iter()
@@ -340,6 +353,7 @@ pub fn diagnostics_layout(main: Rect, model: &DiagnosticsViewModel) -> Diagnosti
         model.selected_index(),
         model.list_window_start,
         visible_capacity,
+        model.list_window_is_explicit,
     );
     let list_scrollbar = diagnostics_scrollbar_layout(
         list_inner,
@@ -462,6 +476,7 @@ fn diagnostics_visible_start(
     selected_index: usize,
     requested_start: usize,
     visible_capacity: usize,
+    requested_start_is_explicit: bool,
 ) -> usize {
     if item_count == 0 || visible_capacity == 0 {
         return 0;
@@ -470,10 +485,12 @@ fn diagnostics_visible_start(
     let selected = selected_index.min(item_count.saturating_sub(1));
     let max_start = item_count.saturating_sub(visible_capacity);
     let mut start = requested_start.min(max_start);
-    if selected < start {
-        start = selected;
-    } else if selected >= start.saturating_add(visible_capacity) {
-        start = selected.saturating_add(1).saturating_sub(visible_capacity);
+    if !requested_start_is_explicit {
+        if selected < start {
+            start = selected;
+        } else if selected >= start.saturating_add(visible_capacity) {
+            start = selected.saturating_add(1).saturating_sub(visible_capacity);
+        }
     }
     start.min(max_start)
 }
@@ -510,6 +527,7 @@ fn diagnostics_repair_dialog_layout(
         model.selected,
         model.scroll_offset,
         visible_capacity,
+        false,
     );
     let rows = (visible_start..model.items.len())
         .take(visible_capacity)
@@ -1157,7 +1175,7 @@ pub struct ExplorerLayout {
     pub columns: Vec<ExplorerColumnLayout>,
     pub table_body: Rect,
     pub rows: Vec<ExplorerRowLayout>,
-    pub scrollbar: Option<Rect>,
+    pub scrollbar: Option<ExplorerScrollbarLayout>,
     pub footer: Rect,
     pub cancel_operation: Option<Rect>,
     pub visible_start: usize,
@@ -1217,7 +1235,7 @@ impl ExplorerLayout {
         }
         if self
             .scrollbar
-            .is_some_and(|scrollbar| rect_contains(scrollbar, x, y))
+            .is_some_and(|scrollbar| rect_contains(scrollbar.track, x, y))
         {
             return Some(ExplorerHitTarget::Scrollbar);
         }
@@ -1370,14 +1388,33 @@ pub fn explorer_layout(area: Rect, model: &ExplorerViewModel) -> ExplorerLayout 
     let visible_start = explorer_visible_start(model, visible_capacity);
     let show_scrollbar = visible_capacity > 0 && model.entries.len() > visible_capacity;
     let scrollbar = show_scrollbar.then(|| {
-        Rect::new(
+        let track = Rect::new(
             table_body
                 .x
                 .saturating_add(table_body.width.saturating_sub(1)),
             table_body.y,
             u16::from(table_body.width > 0),
             table_body.height,
-        )
+        );
+        let track_height = usize::from(track.height);
+        let total = model.entries.len().max(1);
+        let thumb_height = track_height
+            .saturating_mul(visible_capacity)
+            .checked_div(total)
+            .unwrap_or_default()
+            .clamp(1, track_height.max(1));
+        let travel = track_height.saturating_sub(thumb_height);
+        let max_start = total.saturating_sub(visible_capacity).max(1);
+        let thumb_start = travel.saturating_mul(visible_start) / max_start;
+        ExplorerScrollbarLayout {
+            track,
+            thumb: Rect::new(
+                track.x,
+                track.y.saturating_add(usize_to_u16(thumb_start)),
+                track.width,
+                usize_to_u16(thumb_height),
+            ),
+        }
     });
     let row_width = table_body.width.saturating_sub(u16::from(show_scrollbar));
     let rows = (visible_start..model.entries.len())

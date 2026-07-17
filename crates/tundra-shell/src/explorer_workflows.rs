@@ -490,8 +490,12 @@ impl ShellState {
         platform: &dyn Platform,
     ) {
         let Some(hit_target) = self.explorer_hit_target_at(coordinates) else {
+            self.clear_explorer_scrollbar_drag();
             return;
         };
+        if !matches!(&hit_target, tundra_ui::ExplorerHitTarget::Scrollbar) {
+            self.clear_explorer_scrollbar_drag();
+        }
         let index = match hit_target {
             tundra_ui::ExplorerHitTarget::Entry(index) => index,
             tundra_ui::ExplorerHitTarget::Toolbar(action) => {
@@ -560,8 +564,11 @@ impl ShellState {
                 }
                 return;
             }
-            tundra_ui::ExplorerHitTarget::Scrollbar
-            | tundra_ui::ExplorerHitTarget::OverlaySurface => return,
+            tundra_ui::ExplorerHitTarget::Scrollbar => {
+                self.begin_explorer_scrollbar_drag(coordinates);
+                return;
+            }
+            tundra_ui::ExplorerHitTarget::OverlaySurface => return,
         };
         let selection_mode = if modifiers.shift {
             tundra_apps::explorer::ExplorerSelectionMode::Range
@@ -889,6 +896,13 @@ impl ShellState {
         modifiers: InputModifiers,
         platform: &dyn Platform,
     ) {
+        if matches!(
+            self.scrollbar_drag,
+            Some(ScrollbarDragState::Explorer { .. })
+        ) {
+            self.drag_explorer_scrollbar(coordinates);
+            return;
+        }
         let left_start_cell = self
             .drag_tracker
             .filter(|tracker| tracker.button == PointerButton::Left)
@@ -919,6 +933,12 @@ impl ShellState {
         modifiers: InputModifiers,
         platform: &dyn Platform,
     ) {
+        if self.clear_explorer_scrollbar_drag() {
+            if let Some(state) = self.explorer_state.as_mut() {
+                state.drag = None;
+            }
+            return;
+        }
         // A normal click also creates a potential drag so keyboard/mouse selection stays unified.
         // Only a preceding terminal Drag event may activate it; mouse-up by itself must never turn
         // a click into a move (especially a self-drop on a directory row).
@@ -944,6 +964,68 @@ impl ShellState {
             },
             platform,
         );
+    }
+
+    fn begin_explorer_scrollbar_drag(&mut self, coordinates: CellPosition) {
+        let area = Rect::new(0, 0, self.terminal_size.0, self.terminal_size.1);
+        let tundra_ui::ShellLayout::Full { main, .. } = tundra_ui::compute_shell_layout(area)
+        else {
+            return;
+        };
+        let layout = tundra_ui::explorer_layout(main, &self.to_explorer_view_model());
+        let Some(scrollbar) = layout.scrollbar else {
+            return;
+        };
+        if !rect_contains(scrollbar.thumb, coordinates) {
+            return;
+        }
+        if let Some(state) = self.explorer_state.as_mut() {
+            state.drag = None;
+        }
+        self.scrollbar_drag = Some(ScrollbarDragState::Explorer {
+            grab_offset: coordinates.1.saturating_sub(scrollbar.thumb.y),
+        });
+    }
+
+    fn drag_explorer_scrollbar(&mut self, coordinates: CellPosition) {
+        let Some(ScrollbarDragState::Explorer { grab_offset }) = self.scrollbar_drag else {
+            return;
+        };
+        let area = Rect::new(0, 0, self.terminal_size.0, self.terminal_size.1);
+        let tundra_ui::ShellLayout::Full { main, .. } = tundra_ui::compute_shell_layout(area)
+        else {
+            return;
+        };
+        let model = self.to_explorer_view_model();
+        let layout = tundra_ui::explorer_layout(main, &model);
+        let Some(scrollbar) = layout.scrollbar else {
+            self.clear_explorer_scrollbar_drag();
+            return;
+        };
+        let window_start = scrollbar_window_start(
+            coordinates.1,
+            grab_offset,
+            scrollbar.track,
+            scrollbar.thumb,
+            model.entries.len(),
+            layout.visible_capacity,
+        );
+        if let Some(state) = self.explorer_state.as_mut() {
+            state.viewport_offset = window_start;
+            state.viewport_follows_focus = false;
+        }
+    }
+
+    fn clear_explorer_scrollbar_drag(&mut self) -> bool {
+        if matches!(
+            self.scrollbar_drag,
+            Some(ScrollbarDragState::Explorer { .. })
+        ) {
+            self.scrollbar_drag = None;
+            true
+        } else {
+            false
+        }
     }
 
     fn explorer_index_at(&self, coordinates: CellPosition) -> Option<usize> {
