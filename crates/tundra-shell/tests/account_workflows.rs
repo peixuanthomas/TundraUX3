@@ -3,7 +3,6 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use chrono::Utc;
-use tundra_core::AuditService;
 use tundra_platform::mock::MockPlatform;
 use tundra_platform::{PlatformCapabilities, PlatformKind, UserDirs, build_windows_app_paths};
 use tundra_shell::{
@@ -667,7 +666,6 @@ fn login_f3_cannot_create_an_anonymous_session_and_focus_skips_guest() {
     let manager = startup.storage_manager.clone().expect("storage manager");
     let users_before = read_optional_file(&manager.layout().users_path);
     let clock_before = read_optional_file(&manager.layout().clock_path);
-    let audit_before = read_optional_file(&manager.layout().audit_log_path);
     let mut state = ShellState::new_with_startup(default_config(), (120, 40), startup);
 
     assert_eq!(state.active_screen(), ShellScreen::Login);
@@ -704,29 +702,17 @@ fn login_f3_cannot_create_an_anonymous_session_and_focus_skips_guest() {
         read_optional_file(&manager.layout().clock_path),
         clock_before
     );
-    assert_eq!(
-        read_optional_file(&manager.layout().audit_log_path),
-        audit_before
-    );
 }
 
 #[test]
-fn authenticated_logout_supports_shortcut_focus_and_mouse_and_audits_each_session() {
+fn authenticated_logout_supports_shortcut_focus_and_mouse() {
     let fixture = FixtureRoot::new("logout-inputs");
     let platform = mock_platform(fixture.path());
     bootstrap_with_shell(&platform);
 
     let startup = prepare_shell_startup(&platform, default_config()).expect("shortcut startup");
-    let manager = startup.storage_manager.clone().expect("storage manager");
     let mut shortcut_state = ShellState::new_with_startup(default_config(), (120, 40), startup);
     login(&mut shortcut_state, "AdminUser", "StrongPass123");
-    let first_actor = shortcut_state.auth_session().expect("signed in").clone();
-    let baseline_logout_count = AuditService::new(manager.clone())
-        .read_records(&first_actor)
-        .expect("read baseline audit")
-        .into_iter()
-        .filter(|record| record.action == "Logout")
-        .count();
     shortcut_state.apply_input(InputEvent::from_key_label("l"));
     assert_eq!(shortcut_state.active_screen(), ShellScreen::Login);
     assert!(shortcut_state.auth_session().is_none());
@@ -743,7 +729,6 @@ fn authenticated_logout_supports_shortcut_focus_and_mouse_and_audits_each_sessio
     let startup = prepare_shell_startup(&platform, default_config()).expect("mouse startup");
     let mut mouse_state = ShellState::new_with_startup(default_config(), (120, 40), startup);
     login(&mut mouse_state, "AdminUser", "StrongPass123");
-    let last_actor = mouse_state.auth_session().expect("signed in").clone();
     let logout = component_center(&mouse_state, ShellComponent::HomeLogout);
     assert_eq!(
         mouse_state.hit_target_at(logout),
@@ -752,20 +737,6 @@ fn authenticated_logout_supports_shortcut_focus_and_mouse_and_audits_each_sessio
     mouse_state.apply_input(InputEvent::mouse_down(PointerButton::Left, logout));
     assert_eq!(mouse_state.active_screen(), ShellScreen::Login);
     assert!(mouse_state.auth_session().is_none());
-
-    let records = AuditService::new(manager)
-        .read_records(&last_actor)
-        .expect("read logout audit records");
-    let logout_records = records
-        .iter()
-        .filter(|record| record.action == "Logout")
-        .collect::<Vec<_>>();
-    assert_eq!(logout_records.len(), baseline_logout_count + 3);
-    for record in logout_records.iter().rev().take(3) {
-        assert_eq!(record.outcome, "Success");
-        assert_eq!(record.reason.as_deref(), Some("logout"));
-        assert_eq!(record.actor_username.as_deref(), Some("AdminUser"));
-    }
 }
 
 #[test]

@@ -1,6 +1,6 @@
 //! Crash-durable file primitives shared by journals, run markers and reports.
 //!
-//! The Windows implementation is the only audited unsafe code in this crate. It
+//! The Windows implementation is the only reviewed unsafe code in this crate. It
 //! calls the documented wide-character file replacement APIs with NUL-terminated
 //! paths owned by this function. Both paths are on the same directory/volume.
 

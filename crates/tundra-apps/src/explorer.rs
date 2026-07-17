@@ -8,9 +8,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use tundra_core::{
-    AuditOutcome, AuditService, AuthSession, CoreError, PermissionAction, PermissionService,
-};
+use tundra_core::{AuthSession, PermissionAction, PermissionService};
 use tundra_platform::{
     ExecutableKind, FileAttributes, FileOpenPolicy, Platform, PlatformError, TrashEntry,
     TrashEntryId, TrashRestoreTarget,
@@ -1355,7 +1353,7 @@ impl ExplorerFileService {
     ) -> Result<(Vec<ExplorerEntry>, usize), ExplorerError> {
         match location {
             ExplorerLocation::Directory(path) => {
-                self.authorize(session, storage, PermissionAction::ReadFile, path)?;
+                self.authorize(session, PermissionAction::ReadFile, path)?;
                 let listing = platform.read_directory(path)?;
                 let warning_count = listing.warnings.len();
                 let entries = listing
@@ -1375,7 +1373,6 @@ impl ExplorerFileService {
             ExplorerLocation::Trash => {
                 self.authorize(
                     session,
-                    storage,
                     PermissionAction::ReadFile,
                     &storage.layout().data_path,
                 )?;
@@ -1405,25 +1402,9 @@ impl ExplorerFileService {
         }
         match &entry.open_policy {
             FileOpenPolicy::Blocked { reason } => {
-                self.audit(
-                    storage,
-                    session,
-                    PermissionAction::OpenExternal,
-                    &entry.path,
-                    AuditOutcome::Denied,
-                    "unsafe_path_blocked",
-                )?;
                 return Err(ExplorerError::BlockedPath(reason.clone()));
             }
             FileOpenPolicy::LauncherRequired { kind, reason } => {
-                self.audit(
-                    storage,
-                    session,
-                    PermissionAction::OpenExternal,
-                    &entry.path,
-                    AuditOutcome::Denied,
-                    "launcher_required",
-                )?;
                 state.error = Some(format!(
                     "blocked: {reason}; Launcher is not implemented ({})",
                     kind.label()
@@ -1448,7 +1429,7 @@ impl ExplorerFileService {
         } else {
             PermissionAction::OpenExternal
         };
-        self.authorize(session, storage, permission, &entry.path)?;
+        self.authorize(session, permission, &entry.path)?;
         Ok(ExplorerEffect::OpenRequested(ExplorerOpenRequest {
             path: entry.path.clone(),
             target,
@@ -1464,20 +1445,12 @@ impl ExplorerFileService {
         name: &str,
     ) -> Result<(), ExplorerError> {
         let path = child_path(&state.current_path, name)?;
-        self.authorize(session, storage, PermissionAction::WriteFile, &path)?;
+        self.authorize(session, PermissionAction::WriteFile, &path)?;
         fs::create_dir(&path).map_err(|error| ExplorerError::Io {
             operation: "create folder",
             path: path.clone(),
             message: error.to_string(),
         })?;
-        self.audit(
-            storage,
-            session,
-            PermissionAction::WriteFile,
-            &path,
-            AuditOutcome::Success,
-            "create_folder",
-        )?;
         state.set_success(format!("Created folder {}", path.display()));
         self.refresh(state, session, platform, storage)
     }
@@ -1491,7 +1464,7 @@ impl ExplorerFileService {
         name: &str,
     ) -> Result<(), ExplorerError> {
         let path = child_path(&state.current_path, name)?;
-        self.authorize(session, storage, PermissionAction::WriteFile, &path)?;
+        self.authorize(session, PermissionAction::WriteFile, &path)?;
         OpenOptions::new()
             .write(true)
             .create_new(true)
@@ -1502,14 +1475,6 @@ impl ExplorerFileService {
                 path: path.clone(),
                 message: error.to_string(),
             })?;
-        self.audit(
-            storage,
-            session,
-            PermissionAction::WriteFile,
-            &path,
-            AuditOutcome::Success,
-            "create_text_file",
-        )?;
         state.set_success(format!("Created file {}", path.display()));
         self.refresh(state, session, platform, storage)
     }
@@ -1527,16 +1492,8 @@ impl ExplorerFileService {
             .parent()
             .ok_or_else(|| ExplorerError::InvalidOperation("selected item has no parent".into()))?;
         let target = child_path(parent, name)?;
-        self.authorize(session, storage, PermissionAction::WriteFile, path)?;
+        self.authorize(session, PermissionAction::WriteFile, path)?;
         platform.rename_path(path, &target)?;
-        self.audit(
-            storage,
-            session,
-            PermissionAction::WriteFile,
-            &target,
-            AuditOutcome::Success,
-            "rename",
-        )?;
         state.set_success(format!("Renamed to {}", target.display()));
         self.refresh(state, session, platform, storage)
     }
@@ -1550,7 +1507,7 @@ impl ExplorerFileService {
         paths: &[PathBuf],
     ) -> Result<(), ExplorerError> {
         for path in paths {
-            self.authorize(session, storage, PermissionAction::DeleteFile, path)?;
+            self.authorize(session, PermissionAction::DeleteFile, path)?;
         }
         state.operation = Some(ExplorerOperationProgress {
             phase: ExplorerOperationPhase::Executing,
@@ -1579,31 +1536,14 @@ impl ExplorerFileService {
         state.operation = None;
         state.pending_dialog = None;
         state.clear_selection();
-        let mut post_commit_warnings = Vec::new();
-        for path in paths {
-            if let Err(error) = self.audit(
-                storage,
-                session,
-                PermissionAction::DeleteFile,
-                path,
-                AuditOutcome::Success,
-                "move_to_system_trash",
-            ) {
-                post_commit_warnings.push(error.to_string());
-            }
-        }
         if let Err(error) = self.refresh(state, session, platform, storage) {
-            post_commit_warnings.push(format!("could not refresh Explorer: {error}"));
-        }
-        if post_commit_warnings.is_empty() {
-            state.set_success(format!("Moved {} item(s) to system Trash", paths.len()));
-        } else {
             state.message = None;
             state.error = Some(format!(
-                "Moved {} item(s) to system Trash, but {}",
-                paths.len(),
-                post_commit_warnings.join("; ")
+                "Moved {} item(s) to system Trash, but could not refresh Explorer: {error}",
+                paths.len()
             ));
+        } else {
+            state.set_success(format!("Moved {} item(s) to system Trash", paths.len()));
         }
         Ok(())
     }
@@ -1632,7 +1572,7 @@ impl ExplorerFileService {
                 parent.display()
             )));
         }
-        self.authorize(session, storage, PermissionAction::WriteFile, &target)?;
+        self.authorize(session, PermissionAction::WriteFile, &target)?;
         let id = entry
             .trash_id
             .clone()
@@ -1684,7 +1624,7 @@ impl ExplorerFileService {
             }
             ExplorerConflictAction::Replace => {
                 // The native restore consumes the Trash identity on success. Clear the pending
-                // action before entering the transaction so an audit/refresh/rollback warning can
+                // action before entering the transaction so a refresh/rollback warning can
                 // never replay a now-stale identity.
                 state.pending_restore = None;
                 self.replace_with_restored_item(state, session, platform, storage, &pending)
@@ -1771,14 +1711,7 @@ impl ExplorerFileService {
             return Err(error.into());
         }
         let _ = fs::remove_dir(&backup_dir);
-        self.finish_restore_commit(
-            state,
-            session,
-            platform,
-            storage,
-            restored,
-            "restore_replace",
-        )
+        self.finish_restore_commit(state, session, platform, storage, restored)
     }
 
     fn perform_restore(
@@ -1792,14 +1725,7 @@ impl ExplorerFileService {
     ) -> Result<(), ExplorerError> {
         let restored = platform.restore_trash_item(id, target)?;
         state.pending_restore = None;
-        self.finish_restore_commit(
-            state,
-            session,
-            platform,
-            storage,
-            restored,
-            "restore_from_system_trash",
-        )
+        self.finish_restore_commit(state, session, platform, storage, restored)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1810,31 +1736,15 @@ impl ExplorerFileService {
         platform: &dyn Platform,
         storage: &StorageManager,
         restored: PathBuf,
-        audit_reason: &'static str,
     ) -> Result<(), ExplorerError> {
-        let mut post_commit_warnings = Vec::new();
-        if let Err(error) = self.audit(
-            storage,
-            session,
-            PermissionAction::WriteFile,
-            &restored,
-            AuditOutcome::Success,
-            audit_reason,
-        ) {
-            post_commit_warnings.push(error.to_string());
-        }
         if let Err(error) = self.refresh(state, session, platform, storage) {
-            post_commit_warnings.push(format!("could not refresh Explorer: {error}"));
-        }
-        if post_commit_warnings.is_empty() {
-            state.set_success(format!("Restored {}", restored.display()));
-        } else {
             state.message = None;
             state.error = Some(format!(
-                "Restored {}, but {}",
+                "Restored {}, but could not refresh Explorer: {error}",
                 restored.display(),
-                post_commit_warnings.join("; ")
             ));
+        } else {
+            state.set_success(format!("Restored {}", restored.display()));
         }
         Ok(())
     }
@@ -1879,7 +1789,7 @@ impl ExplorerFileService {
                 ExplorerClipboardMode::Copy => PermissionAction::WriteFile,
                 ExplorerClipboardMode::Cut => PermissionAction::MoveFile,
             };
-            self.authorize(session, storage, permission, &target)?;
+            self.authorize(session, permission, &target)?;
             if path_exists_no_follow(&target)? {
                 conflicts.push((source.clone(), target));
             }
@@ -2043,33 +1953,15 @@ impl ExplorerFileService {
             match clipboard.mode {
                 ExplorerClipboardMode::Copy => {
                     copy_path_staged(source, &target)?;
-                    self.audit(
-                        storage,
-                        session,
-                        PermissionAction::WriteFile,
-                        &target,
-                        AuditOutcome::Success,
-                        "copy_paste",
-                    )?;
                 }
-                ExplorerClipboardMode::Cut => {
-                    match platform.rename_path(source, &target) {
-                        Ok(()) => {}
-                        Err(PlatformError::CrossDevice { .. }) => {
-                            copy_path_staged(source, &target)?;
-                            remove_source_path(source)?;
-                        }
-                        Err(error) => return Err(error.into()),
+                ExplorerClipboardMode::Cut => match platform.rename_path(source, &target) {
+                    Ok(()) => {}
+                    Err(PlatformError::CrossDevice { .. }) => {
+                        copy_path_staged(source, &target)?;
+                        remove_source_path(source)?;
                     }
-                    self.audit(
-                        storage,
-                        session,
-                        PermissionAction::MoveFile,
-                        &target,
-                        AuditOutcome::Success,
-                        "cut_paste",
-                    )?;
-                }
+                    Err(error) => return Err(error.into()),
+                },
             }
             succeeded.push(target);
             if let Some(operation) = state.operation.as_mut() {
@@ -2098,7 +1990,6 @@ impl ExplorerFileService {
     fn authorize(
         &self,
         session: Option<&AuthSession>,
-        storage: &StorageManager,
         action: PermissionAction,
         resource: &Path,
     ) -> Result<(), ExplorerError> {
@@ -2113,39 +2004,11 @@ impl ExplorerFileService {
         let reason = authorization
             .reason
             .unwrap_or_else(|| "permission_denied".to_string());
-        self.audit(
-            storage,
-            session,
-            action,
-            resource,
-            AuditOutcome::Denied,
-            reason.as_str(),
-        )?;
         Err(ExplorerError::PermissionDenied {
             action,
             reason,
             path: resource.to_path_buf(),
         })
-    }
-
-    fn audit(
-        &self,
-        storage: &StorageManager,
-        session: Option<&AuthSession>,
-        action: PermissionAction,
-        resource: &Path,
-        outcome: AuditOutcome,
-        reason: &str,
-    ) -> Result<(), ExplorerError> {
-        AuditService::with_permission_service(storage.clone(), self.permission_service.clone())
-            .record(
-                session,
-                action,
-                Some(resource.display().to_string().as_str()),
-                outcome,
-                Some(reason),
-            )?;
-        Ok(())
     }
 }
 
@@ -2172,7 +2035,6 @@ pub enum ExplorerError {
     },
     Platform(PlatformError),
     Storage(StorageError),
-    Core(CoreError),
 }
 
 impl fmt::Display for ExplorerError {
@@ -2201,7 +2063,6 @@ impl fmt::Display for ExplorerError {
             ),
             Self::Platform(error) => write!(formatter, "{error}"),
             Self::Storage(error) => write!(formatter, "{error}"),
-            Self::Core(error) => write!(formatter, "{error}"),
         }
     }
 }
@@ -2217,12 +2078,6 @@ impl From<PlatformError> for ExplorerError {
 impl From<StorageError> for ExplorerError {
     fn from(value: StorageError) -> Self {
         Self::Storage(value)
-    }
-}
-
-impl From<CoreError> for ExplorerError {
-    fn from(value: CoreError) -> Self {
-        Self::Core(value)
     }
 }
 

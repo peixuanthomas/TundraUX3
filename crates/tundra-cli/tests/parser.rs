@@ -524,7 +524,7 @@ fn new_command_clears_saved_content_and_recreates_default_storage() {
     fs::write(&layout.config_path, "custom config").expect("custom config fixture");
     fs::write(layout.data_path.join("extra-state.txt"), "state").expect("extra state fixture");
     fs::write(layout.cache_path.join("cached.txt"), "cache").expect("cache fixture");
-    fs::write(layout.logs_path.join("audit.v1.log"), "audit").expect("audit fixture");
+    fs::write(layout.logs_path.join("application.log"), "log").expect("log fixture");
     fs::write(layout.temp_path.join("temp.txt"), "temp").expect("temp fixture");
 
     let exit_code = run_with_platform(["new"], &platform, &mut stdout, &mut stderr);
@@ -541,7 +541,7 @@ fn new_command_clears_saved_content_and_recreates_default_storage() {
     assert!(layout.sessions_path.is_file());
     assert!(!layout.data_path.join("extra-state.txt").exists());
     assert!(!layout.cache_path.join("cached.txt").exists());
-    assert!(!layout.logs_path.join("audit.v1.log").exists());
+    assert!(!layout.logs_path.join("application.log").exists());
     assert!(!layout.temp_path.join("temp.txt").exists());
 
     let manager = StorageManager::open(app_paths).expect("reset storage should reopen");
@@ -660,12 +660,6 @@ fn doctor_command_passes_and_bootstraps_storage_with_injected_macos_platform() {
             .join("Home/Library/Application Support/TundraUX3/state/state.v1.json")
             .exists()
     );
-    assert!(
-        !tree
-            .path()
-            .join("Home/Library/Logs/TundraUX3/audit.v1.log")
-            .exists()
-    );
 }
 
 #[test]
@@ -757,7 +751,6 @@ fn assert_storage_labels(output: &str) {
     assert!(output.contains("Recent files:"));
     assert!(output.contains("Sessions file:"));
     assert!(output.contains("Users file:"));
-    assert!(output.contains("Audit log:"));
 }
 
 fn assert_windows_resolved_path_markers(output: &str) {
@@ -777,7 +770,6 @@ fn assert_windows_storage_file_markers(output: &str) {
     assert!(normalized.contains("Local/TundraUX3/state/recent-files.v1.json"));
     assert!(normalized.contains("Local/TundraUX3/state/sessions.v1.json"));
     assert!(normalized.contains("Local/TundraUX3/state/users.v2.json"));
-    assert!(normalized.contains("Local/TundraUX3/logs/audit.v1.log"));
 }
 
 fn assert_macos_resolved_path_markers(output: &str) {
@@ -802,7 +794,6 @@ fn assert_macos_storage_file_markers(output: &str) {
         normalized.contains("Home/Library/Application Support/TundraUX3/state/sessions.v1.json")
     );
     assert!(normalized.contains("Home/Library/Application Support/TundraUX3/state/users.v2.json"));
-    assert!(normalized.contains("Home/Library/Logs/TundraUX3/audit.v1.log"));
 }
 
 fn mock_windows_platform(base: &Path) -> MockPlatform {

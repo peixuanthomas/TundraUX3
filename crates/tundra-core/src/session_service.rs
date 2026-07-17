@@ -1,7 +1,6 @@
 use tundra_storage::StorageManager;
 
-use crate::audit_log::{AuditOutcome, AuditService};
-use crate::authorization::{PermissionAction, UserRole};
+use crate::authorization::UserRole;
 use crate::credentials::verify_password;
 use crate::error::CoreError;
 use crate::identity::{AuthSession, find_user_index};
@@ -39,13 +38,6 @@ impl SessionService {
         }
 
         let Some(index) = find_user_index(&document, username) else {
-            AuditService::new(self.storage.clone()).record(
-                None,
-                PermissionAction::Login,
-                Some(username),
-                AuditOutcome::Failure,
-                Some("invalid_credentials"),
-            )?;
             return Err(CoreError::InvalidCredentials);
         };
 
@@ -65,18 +57,6 @@ impl SessionService {
         }
 
         if let Err(error) = result {
-            let reason = match &error {
-                CoreError::AccountDisabled => "account_disabled",
-                CoreError::AccountLocked { .. } => "account_locked",
-                _ => "login_denied",
-            };
-            AuditService::new(self.storage.clone()).record(
-                None,
-                PermissionAction::Login,
-                Some(username),
-                AuditOutcome::Denied,
-                Some(reason),
-            )?;
             return Err(error);
         }
 
@@ -90,21 +70,6 @@ impl SessionService {
             }
             record.updated_at_epoch_ms = now;
             self.storage.save_users(&document)?;
-            AuditService::new(self.storage.clone()).record(
-                None,
-                PermissionAction::Login,
-                Some(username),
-                if locked {
-                    AuditOutcome::Denied
-                } else {
-                    AuditOutcome::Failure
-                },
-                Some(if locked {
-                    "account_locked"
-                } else {
-                    "invalid_credentials"
-                }),
-            )?;
             return if locked {
                 Err(CoreError::AccountLocked {
                     locked_until_epoch_ms: now.saturating_add(LOCKOUT_DURATION_MS),
@@ -127,32 +92,12 @@ impl SessionService {
             started_at_epoch_ms: now,
         };
         self.storage.save_users(&document)?;
-        AuditService::new(self.storage.clone()).record(
-            Some(&session),
-            PermissionAction::Login,
-            Some(&session.username),
-            AuditOutcome::Success,
-            Some("login_success"),
-        )?;
         self.current_session = Some(session.clone());
         Ok(session)
     }
 
     pub fn logout(&mut self) -> Result<(), CoreError> {
-        if let Some(session) = self.current_session.take() {
-            self.logout_session(&session)?;
-        }
-        Ok(())
-    }
-
-    pub fn logout_session(&self, session: &AuthSession) -> Result<(), CoreError> {
-        AuditService::new(self.storage.clone()).record(
-            Some(session),
-            PermissionAction::Logout,
-            Some(&session.username),
-            AuditOutcome::Success,
-            Some("logout"),
-        )?;
+        self.current_session = None;
         Ok(())
     }
 }

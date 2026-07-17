@@ -678,15 +678,6 @@ impl ShellState {
                 let reason = authorization
                     .reason
                     .unwrap_or_else(|| "permission_denied".to_string());
-                if let Some(storage) = self.storage_manager.clone() {
-                    let _ = AuditService::with_permission_service(storage, service.clone()).record(
-                        self.auth_session.as_ref(),
-                        action,
-                        Some(display.as_str()),
-                        AuditOutcome::Denied,
-                        Some(reason.as_str()),
-                    );
-                }
                 return Err(format!(
                     "Permission denied for {}: {reason}",
                     resource.display()
@@ -752,21 +743,9 @@ impl ShellState {
                     operation.total_bytes = Some(progress.total_bytes);
                 }
             }
-            ExplorerTaskEvent::ItemCompleted { id, source, target } => {
-                if let Some(context) = self.explorer_task_context(id) {
-                    self.record_explorer_task_success(context.kind, &source, target.as_deref());
-                }
-            }
+            ExplorerTaskEvent::ItemCompleted { .. } => {}
             ExplorerTaskEvent::ItemSkipped { .. } => {}
-            ExplorerTaskEvent::ItemFailed { id, failure } => {
-                if let Some(context) = self.explorer_task_context(id) {
-                    self.record_explorer_task_failure(
-                        context.kind,
-                        &failure.source,
-                        &failure.error.to_string(),
-                    );
-                }
-            }
+            ExplorerTaskEvent::ItemFailed { .. } => {}
             ExplorerTaskEvent::Panicked {
                 id,
                 incident_id,
@@ -923,59 +902,6 @@ impl ShellState {
                 }
             }
         }
-    }
-
-    fn record_explorer_task_success(
-        &self,
-        kind: ShellExplorerTaskKind,
-        source: &Path,
-        target: Option<&Path>,
-    ) {
-        let Some(storage) = self.storage_manager.clone() else {
-            return;
-        };
-        let (action, reason) = match kind {
-            ShellExplorerTaskKind::Copy => (PermissionAction::WriteFile, "copy_paste"),
-            ShellExplorerTaskKind::Move { .. } => (PermissionAction::MoveFile, "cut_paste"),
-            ShellExplorerTaskKind::Delete => (PermissionAction::DeleteFile, "delete_to_trash"),
-        };
-        let resource_path = if kind == ShellExplorerTaskKind::Delete {
-            source
-        } else {
-            target.unwrap_or(source)
-        };
-        let resource = resource_path.display().to_string();
-        let _ = AuditService::new(storage.clone()).record(
-            self.auth_session.as_ref(),
-            action,
-            Some(resource.as_str()),
-            AuditOutcome::Success,
-            Some(reason),
-        );
-    }
-
-    fn record_explorer_task_failure(
-        &self,
-        kind: ShellExplorerTaskKind,
-        source: &Path,
-        reason: &str,
-    ) {
-        let Some(storage) = self.storage_manager.clone() else {
-            return;
-        };
-        let action = match kind {
-            ShellExplorerTaskKind::Copy => PermissionAction::WriteFile,
-            ShellExplorerTaskKind::Move { .. } => PermissionAction::MoveFile,
-            ShellExplorerTaskKind::Delete => PermissionAction::DeleteFile,
-        };
-        let resource = source.display().to_string();
-        let _ = AuditService::new(storage).record(
-            self.auth_session.as_ref(),
-            action,
-            Some(resource.as_str()),
-            AuditOutcome::Failure,
-            Some(reason),
-        );
     }
 
     fn sync_explorer_background_conflict_notification(&mut self) {

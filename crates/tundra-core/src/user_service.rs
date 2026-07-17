@@ -1,6 +1,5 @@
 use tundra_storage::{StorageManager, UserRecord, UsersDocument};
 
-use crate::audit_log::{AuditOutcome, AuditService};
 use crate::authorization::{DebugPolicy, PermissionAction, PermissionService, UserRole};
 use crate::credentials::{hash_password, normalize_password_hint, validate_password};
 use crate::error::CoreError;
@@ -71,13 +70,6 @@ impl UserService {
         };
         document.users.push(record.clone());
         self.storage.save_users(&document)?;
-        AuditService::new(self.storage.clone()).record(
-            None,
-            PermissionAction::ManageUsers,
-            Some(&record.username),
-            AuditOutcome::Success,
-            Some("bootstrap_admin"),
-        )?;
         Ok(UserAccount::from_record(&record))
     }
 
@@ -157,13 +149,6 @@ impl UserService {
         };
         document.users.push(record.clone());
         self.storage.save_users(&document)?;
-        AuditService::new(self.storage.clone()).record(
-            Some(actor),
-            PermissionAction::ManageUsers,
-            Some(&record.username),
-            AuditOutcome::Success,
-            Some("create_user"),
-        )?;
         Ok(UserAccount::from_record(&record))
     }
 
@@ -177,21 +162,13 @@ impl UserService {
         let Some(index) = find_user_index(&document, username) else {
             return Err(CoreError::UserNotFound);
         };
-        let action =
-            self.authorize_user_data_operation(actor, &document.users[index], "update_user_info")?;
+        self.authorize_user_data_operation(actor, &document.users[index], "update_user_info")?;
         let display_name = normalize_display_name(display_name, &document.users[index].username)?;
         let now = unix_millis();
         document.users[index].display_name = display_name;
         document.users[index].updated_at_epoch_ms = now;
         let account = UserAccount::from_record(&document.users[index]);
         self.storage.save_users(&document)?;
-        AuditService::new(self.storage.clone()).record(
-            Some(actor),
-            action,
-            Some(&account.username),
-            AuditOutcome::Success,
-            Some("update_user_info"),
-        )?;
         Ok(account)
     }
 
@@ -205,23 +182,14 @@ impl UserService {
         let Some(index) = find_user_index(&document, username) else {
             return Err(CoreError::UserNotFound);
         };
-        let action =
-            self.authorize_user_data_operation(actor, &document.users[index], "set_user_password")?;
+        self.authorize_user_data_operation(actor, &document.users[index], "set_user_password")?;
         validate_password(&document.users[index].username, password)?;
-        let resource = document.users[index].username.clone();
         let now = unix_millis();
         document.users[index].password_hash = hash_password(password)?;
         document.users[index].failed_login_attempts = 0;
         document.users[index].locked_until_epoch_ms = None;
         document.users[index].updated_at_epoch_ms = now;
         self.storage.save_users(&document)?;
-        AuditService::new(self.storage.clone()).record(
-            Some(actor),
-            action,
-            Some(&resource),
-            AuditOutcome::Success,
-            Some("set_user_password"),
-        )?;
         Ok(())
     }
 
@@ -295,18 +263,10 @@ impl UserService {
         let Some(index) = find_user_index(&document, username) else {
             return Err(CoreError::UserNotFound);
         };
-        let action =
-            self.authorize_user_data_operation(actor, &document.users[index], "delete_user")?;
+        self.authorize_user_data_operation(actor, &document.users[index], "delete_user")?;
         ensure_can_remove_enabled_admin(&document, index)?;
-        let removed = document.users.remove(index);
+        document.users.remove(index);
         self.storage.save_users(&document)?;
-        AuditService::new(self.storage.clone()).record(
-            Some(actor),
-            action,
-            Some(&removed.username),
-            AuditOutcome::Success,
-            Some("delete_user"),
-        )?;
         Ok(())
     }
 
@@ -322,16 +282,8 @@ impl UserService {
         let Some(index) = find_user_index(&document, username) else {
             return Err(CoreError::UserNotFound);
         };
-        let resource = document.users[index].username.clone();
         update(&mut document, index, unix_millis())?;
         self.storage.save_users(&document)?;
-        AuditService::new(self.storage.clone()).record(
-            Some(actor),
-            PermissionAction::ManageUsers,
-            Some(&resource),
-            AuditOutcome::Success,
-            Some(operation),
-        )?;
         Ok(())
     }
 
@@ -340,17 +292,17 @@ impl UserService {
         actor: &AuthSession,
         target: &UserRecord,
         operation: &'static str,
-    ) -> Result<PermissionAction, CoreError> {
+    ) -> Result<(), CoreError> {
         if is_same_user(actor, target) {
             if !target.enabled {
                 return Err(CoreError::AccountDisabled);
             }
             self.authorize_manage_own_user(actor, operation)?;
-            return Ok(PermissionAction::ManageOwnUser);
+            return Ok(());
         }
 
         self.authorize_manage_users(actor, operation)?;
-        Ok(PermissionAction::ManageUsers)
+        Ok(())
     }
 
     fn authorize_manage_own_user(
@@ -370,13 +322,6 @@ impl UserService {
         let reason = permission
             .reason
             .unwrap_or_else(|| "permission_denied".to_string());
-        AuditService::new(self.storage.clone()).record(
-            Some(actor),
-            PermissionAction::ManageOwnUser,
-            Some(operation),
-            AuditOutcome::Denied,
-            Some(&reason),
-        )?;
         Err(CoreError::PermissionDenied {
             action: PermissionAction::ManageOwnUser,
             reason,
@@ -409,13 +354,6 @@ impl UserService {
                 .reason
                 .unwrap_or_else(|| "permission_denied".to_string())
         };
-        AuditService::new(self.storage.clone()).record(
-            Some(actor),
-            PermissionAction::ManageUsers,
-            Some(operation),
-            AuditOutcome::Denied,
-            Some(&reason),
-        )?;
         Err(CoreError::PermissionDenied {
             action: PermissionAction::ManageUsers,
             reason,

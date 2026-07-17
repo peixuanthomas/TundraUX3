@@ -1,4 +1,4 @@
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use tundra_platform::AppPaths;
 
@@ -21,7 +21,6 @@ pub struct StorageLayout {
     pub clock_path: PathBuf,
     pub trash_path: PathBuf,
     pub trash_manifest_path: PathBuf,
-    pub audit_log_path: PathBuf,
 }
 
 impl StorageLayout {
@@ -43,11 +42,6 @@ impl StorageLayout {
             clock_path: data_path.join(CLOCK_DESCRIPTOR.file_name),
             trash_manifest_path: trash_path.join(VERSIONED_JSON_DESCRIPTORS[5].file_name),
             trash_path,
-            audit_log_path: app_paths.logs_path().join("audit.v1.log"),
         }
-    }
-
-    pub fn audit_path(&self) -> &Path {
-        &self.audit_log_path
     }
 }

@@ -36,7 +36,6 @@ fn first_open_creates_storage_directories_and_default_files() {
     assert!(layout.clock_path.is_file());
     assert!(layout.trash_path.is_dir());
     assert!(layout.trash_manifest_path.is_file());
-    assert!(!layout.audit_log_path.exists());
     assert_eq!(
         opened
             .manager
@@ -534,30 +533,6 @@ fn legacy_v1_users_are_migrated_to_disabled_v2_records() {
     assert!(users.users[0].password_hash.is_empty());
     assert_eq!(users.users[0].password_hint, None);
     assert_eq!(opened.report.migrated_files, vec![layout.users_path]);
-
-    cleanup(&base);
-}
-
-#[test]
-fn audit_lines_append_and_read_round_trip() {
-    let base = unique_temp_root("audit-lines");
-    let opened = StorageManager::open(app_paths(&base)).expect("storage should open");
-    let manager = opened.manager;
-
-    manager
-        .append_audit_line("{\"sequence\":1}")
-        .expect("first line should append");
-    manager
-        .append_audit_line("{\"sequence\":2}")
-        .expect("second line should append");
-
-    assert_eq!(
-        manager.read_audit_lines().expect("audit should read"),
-        vec![
-            "{\"sequence\":1}".to_string(),
-            "{\"sequence\":2}".to_string()
-        ]
-    );
 
     cleanup(&base);
 }

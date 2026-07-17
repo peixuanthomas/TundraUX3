@@ -2205,12 +2205,6 @@ impl ShellState {
                                 };
                             self.restore_editor_load_navigation(&load.operation);
                             if error != "Editor load cancelled" {
-                                self.record_editor_file_audit(
-                                    PermissionAction::ReadFile,
-                                    &load.path,
-                                    AuditOutcome::Failure,
-                                    Some("read_failed"),
-                                );
                                 self.report_editor_error(format!(
                                     "Could not {action} {}: {error}",
                                     load.path.display()
@@ -2259,12 +2253,6 @@ impl ShellState {
                 {
                     self.editor_recovery_dirty_since = Some(Instant::now());
                 }
-                self.record_editor_file_audit(
-                    PermissionAction::WriteFile,
-                    &path,
-                    AuditOutcome::Success,
-                    Some("editor_save"),
-                );
                 self.error_message = None;
                 self.resolve_notification_alert(EDITOR_ALERT_KEY);
                 self.editor_message = Some(format!("Saved {}", path.display()));
@@ -2288,12 +2276,6 @@ impl ShellState {
             Err(EditorSaveTaskError::ExternalModification) => {
                 self.editor_close_after_save = false;
                 self.editor_open_after_save = false;
-                self.record_editor_file_audit(
-                    PermissionAction::WriteFile,
-                    &path,
-                    AuditOutcome::Failure,
-                    Some("external_modification"),
-                );
                 self.report_editor_error(
                     "The file changed outside the Editor. Use Save As or reload it before saving.",
                 );
@@ -2301,12 +2283,6 @@ impl ShellState {
             Err(EditorSaveTaskError::Write(error)) => {
                 self.editor_close_after_save = false;
                 self.editor_open_after_save = false;
-                self.record_editor_file_audit(
-                    PermissionAction::WriteFile,
-                    &path,
-                    AuditOutcome::Failure,
-                    Some("write_failed"),
-                );
                 self.report_editor_error(format!("Could not save {}: {error}", path.display()));
             }
         }
@@ -2380,12 +2356,6 @@ impl ShellState {
                 } else {
                     format!("Opened {}", path.display())
                 });
-                self.record_editor_file_audit(
-                    PermissionAction::ReadFile,
-                    &path,
-                    AuditOutcome::Success,
-                    Some("editor_open"),
-                );
             }
             EditorLoadOperation::Reload {
                 session,
@@ -2462,12 +2432,6 @@ impl ShellState {
         match self.begin_editor_open_task(path.clone(), access, reload, replacing_dirty) {
             Ok(()) => true,
             Err(error) => {
-                self.record_editor_file_audit(
-                    PermissionAction::ReadFile,
-                    &path,
-                    AuditOutcome::Failure,
-                    Some("worker_unavailable"),
-                );
                 self.report_editor_error(format!("Could not open {}: {error}", path.display()));
                 false
             }
@@ -2614,12 +2578,6 @@ impl ShellState {
         {
             self.editor_close_after_save = false;
             self.editor_open_after_save = false;
-            self.record_editor_file_audit(
-                PermissionAction::WriteFile,
-                &path,
-                AuditOutcome::Failure,
-                Some("worker_unavailable"),
-            );
             self.report_editor_error(format!("Could not save {}: {error}", path.display()));
             return false;
         }
@@ -2672,33 +2630,8 @@ impl ShellState {
         let reason = authorization
             .reason
             .unwrap_or_else(|| "permission_denied".to_string());
-        self.record_editor_file_audit(action, path, AuditOutcome::Denied, Some(reason.as_str()));
         self.report_editor_error(format!("Permission denied: {reason}"));
         false
-    }
-
-    fn record_editor_file_audit(
-        &self,
-        action: PermissionAction,
-        path: &std::path::Path,
-        outcome: AuditOutcome,
-        reason: Option<&str>,
-    ) {
-        let Some(storage) = self.storage_manager.clone() else {
-            return;
-        };
-        let resource = path.display().to_string();
-        let _ = AuditService::with_permission_service(
-            storage,
-            PermissionService::new(self.debug_policy),
-        )
-        .record(
-            self.auth_session.as_ref(),
-            action,
-            Some(resource.as_str()),
-            outcome,
-            reason,
-        );
     }
 
     fn restore_editor_recovery_if_present(&mut self) {

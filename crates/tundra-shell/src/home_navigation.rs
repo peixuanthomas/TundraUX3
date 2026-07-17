@@ -26,25 +26,7 @@ impl ShellState {
             );
             return;
         }
-        let audit_error = self
-            .auth_session
-            .as_ref()
-            .zip(self.storage_manager.clone())
-            .and_then(|(session, storage)| {
-                SessionService::new(storage)
-                    .logout_session(session)
-                    .err()
-                    .map(|error| error.to_string())
-            });
-
         self.return_to_login_at("Signed out", now);
-        if let Some(error) = audit_error {
-            self.notify_alert_with_key(
-                "auth.logout-audit",
-                format!("Signed out, but logout audit failed: {error}"),
-                tundra_ui::NotificationTone::Warning,
-            );
-        }
     }
 
     fn return_to_login(&mut self, status: &str) {

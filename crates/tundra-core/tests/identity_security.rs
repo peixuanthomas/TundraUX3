@@ -1,11 +1,9 @@
-use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use tundra_core::{
-    AuditOutcome, AuditService, CoreError, DebugPolicy, FAILED_LOGIN_LOCK_THRESHOLD,
-    PASSWORD_HINT_MAX_LEN, PermissionAction, PermissionService, SessionService, UserRole,
-    UserService, verify_password,
+    CoreError, DebugPolicy, FAILED_LOGIN_LOCK_THRESHOLD, PASSWORD_HINT_MAX_LEN, PermissionAction,
+    PermissionService, SessionService, UserRole, UserService, verify_password,
 };
 use tundra_platform::{AppPaths, cleanup_temp_path};
 use tundra_storage::{ClockProfile, StorageManager, UserRecord};
@@ -20,11 +18,6 @@ fn permission_matrix_uses_admin_as_the_only_management_role() {
     let admin = session("admin", UserRole::Admin);
 
     assert!(
-        service
-            .authorize(None, PermissionAction::Login, None)
-            .allowed
-    );
-    assert!(
         !service
             .authorize(None, PermissionAction::ReadFile, None)
             .allowed
@@ -37,11 +30,6 @@ fn permission_matrix_uses_admin_as_the_only_management_role() {
     assert!(
         !service
             .authorize(Some(&user), PermissionAction::ManageUsers, None)
-            .allowed
-    );
-    assert!(
-        service
-            .authorize(Some(&admin), PermissionAction::ViewAuditLog, None)
             .allowed
     );
     assert!(
@@ -152,67 +140,8 @@ fn bootstrap_login_and_password_hashing_work_without_plaintext_storage() {
         Some("AdminUser")
     );
 
-    sessions.logout().expect("logout should audit");
+    sessions.logout().expect("logout should succeed");
     assert!(sessions.current_session().is_none());
-
-    let records = AuditService::new(manager)
-        .read_records(&session)
-        .expect("admin should read audit records");
-    let logout = records.last().expect("logout audit record");
-    assert_eq!(
-        logout.actor_user_id.as_deref(),
-        Some(session.user_id.as_str())
-    );
-    assert_eq!(
-        logout.actor_username.as_deref(),
-        Some(session.username.as_str())
-    );
-    assert_eq!(
-        logout.session_id.as_deref(),
-        Some(session.session_id.as_str())
-    );
-    assert_eq!(logout.action, "Logout");
-    assert_eq!(logout.resource.as_deref(), Some(session.username.as_str()));
-    assert_eq!(logout.outcome, "Success");
-    assert_eq!(logout.reason.as_deref(), Some("logout"));
-}
-
-#[test]
-fn logout_session_audits_an_existing_borrowed_session() {
-    let fixture = FixtureRoot::new("explicit-logout");
-    let manager = storage(fixture.path());
-    let session = session("admin", UserRole::Admin);
-    let sessions = SessionService::new(manager.clone());
-
-    sessions
-        .logout_session(&session)
-        .expect("explicit logout should audit");
-
-    assert!(sessions.current_session().is_none());
-    let records = AuditService::new(manager.clone())
-        .read_records(&session)
-        .expect("admin should read audit records");
-    assert_eq!(records.len(), 1);
-    let logout = &records[0];
-    assert_eq!(
-        logout.actor_user_id.as_deref(),
-        Some(session.user_id.as_str())
-    );
-    assert_eq!(
-        logout.actor_username.as_deref(),
-        Some(session.username.as_str())
-    );
-    assert_eq!(
-        logout.session_id.as_deref(),
-        Some(session.session_id.as_str())
-    );
-    assert_eq!(logout.action, "Logout");
-    assert_eq!(logout.resource.as_deref(), Some(session.username.as_str()));
-    assert_eq!(logout.outcome, "Success");
-    assert_eq!(logout.reason.as_deref(), Some("logout"));
-    AuditService::new(manager)
-        .verify_chain()
-        .expect("logout audit chain should verify");
 }
 
 #[test]
@@ -523,56 +452,6 @@ fn delete_user_removes_accounts_but_preserves_last_enabled_admin() {
         CoreError::LastPrivilegedUserRequired.to_string(),
         "at least one enabled admin is required"
     );
-}
-
-#[test]
-fn audit_chain_verifies_and_detects_tampering() {
-    let fixture = FixtureRoot::new("audit");
-    let manager = storage(fixture.path());
-    let audit = AuditService::new(manager.clone());
-    let admin = session("admin", UserRole::Admin);
-
-    audit
-        .record(
-            Some(&admin),
-            PermissionAction::Login,
-            Some("admin"),
-            AuditOutcome::Success,
-            Some("login_success"),
-        )
-        .expect("first audit");
-    audit
-        .record(
-            Some(&admin),
-            PermissionAction::ManageUsers,
-            Some("user"),
-            AuditOutcome::Success,
-            Some("create_user"),
-        )
-        .expect("second audit");
-    audit.verify_chain().expect("chain should verify");
-    assert_eq!(
-        audit
-            .read_records(&admin)
-            .expect("admin can read audit")
-            .len(),
-        2
-    );
-
-    let user = session("user", UserRole::User);
-    assert!(matches!(
-        audit.read_records(&user),
-        Err(CoreError::PermissionDenied { .. })
-    ));
-
-    let mut contents = fs::read_to_string(manager.layout().audit_path()).expect("audit file");
-    contents = contents.replacen("login_success", "tampered", 1);
-    fs::write(manager.layout().audit_path(), contents).expect("tamper audit");
-
-    assert!(matches!(
-        audit.verify_chain(),
-        Err(CoreError::AuditIntegrity(_))
-    ));
 }
 
 fn session(username: &str, role: UserRole) -> tundra_core::AuthSession {

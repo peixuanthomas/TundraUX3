@@ -1,10 +1,7 @@
-use std::fs::{File, OpenOptions};
-use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
 
 use tundra_platform::{AppPaths, Platform};
 
-use crate::atomic_write::create_dir;
 use crate::clock_document::ClockDocument;
 use crate::config_document::StorageConfig;
 use crate::descriptors::{CLOCK_DESCRIPTOR, CONFIG_DESCRIPTOR};
@@ -114,55 +111,6 @@ impl StorageManager {
 
     pub fn save_trash(&self, trash: &TrashDocument) -> Result<(), StorageError> {
         save_json_document(&self.layout.trash_manifest_path, "trash", trash)
-    }
-
-    pub fn append_audit_line(&self, line: &str) -> Result<(), StorageError> {
-        let parent =
-            self.layout
-                .audit_log_path
-                .parent()
-                .ok_or_else(|| StorageError::MissingParent {
-                    path: self.layout.audit_log_path.clone(),
-                })?;
-        create_dir(parent, "create audit log directory")?;
-
-        let mut file = OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&self.layout.audit_log_path)
-            .map_err(|error| StorageError::Io {
-                operation: "open audit log",
-                path: self.layout.audit_log_path.clone(),
-                message: error.to_string(),
-            })?;
-        file.write_all(line.as_bytes())
-            .and_then(|_| file.write_all(b"\n"))
-            .and_then(|_| file.sync_all())
-            .map_err(|error| StorageError::Io {
-                operation: "append audit log",
-                path: self.layout.audit_log_path.clone(),
-                message: error.to_string(),
-            })
-    }
-
-    pub fn read_audit_lines(&self) -> Result<Vec<String>, StorageError> {
-        if !self.layout.audit_log_path.exists() {
-            return Ok(Vec::new());
-        }
-
-        let file = File::open(&self.layout.audit_log_path).map_err(|error| StorageError::Io {
-            operation: "open audit log",
-            path: self.layout.audit_log_path.clone(),
-            message: error.to_string(),
-        })?;
-        BufReader::new(file)
-            .lines()
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(|error| StorageError::Io {
-                operation: "read audit log",
-                path: self.layout.audit_log_path.clone(),
-                message: error.to_string(),
-            })
     }
 }
 

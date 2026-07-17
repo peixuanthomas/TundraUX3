@@ -622,31 +622,10 @@ impl ShellState {
                 PermissionAction::EnterDebugMode,
                 None,
             );
-            if let Some(storage) = self.storage_manager.clone() {
-                let audit = AuditService::new(storage);
-                if permission.allowed {
-                    self.home_mode = ShellHomeMode::Debug;
-                    let _ = audit.record(
-                        Some(&session),
-                        PermissionAction::EnterDebugMode,
-                        None,
-                        AuditOutcome::Success,
-                        Some("debug_entered"),
-                    );
-                } else {
-                    let reason = permission
-                        .reason
-                        .as_deref()
-                        .unwrap_or("debug_policy_denied");
-                    let _ = audit.record(
-                        Some(&session),
-                        PermissionAction::EnterDebugMode,
-                        None,
-                        AuditOutcome::Denied,
-                        Some(reason),
-                    );
-                    self.notify_toast("Debug mode denied");
-                }
+            if permission.allowed {
+                self.home_mode = ShellHomeMode::Debug;
+            } else {
+                self.notify_toast("Debug mode denied");
             }
         }
 

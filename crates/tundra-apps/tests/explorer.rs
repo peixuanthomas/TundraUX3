@@ -56,7 +56,7 @@ fn refresh_lists_directory_entries_and_filters_hidden_files() {
 }
 
 #[test]
-fn file_operations_create_rename_copy_cut_paste_and_trash_with_audit() {
+fn file_operations_create_rename_copy_cut_paste_and_trash() {
     let fixture = Fixture::new("file-ops");
     let storage = fixture.storage();
     let controller = ExplorerController::default();
@@ -175,14 +175,10 @@ fn file_operations_create_rename_copy_cut_paste_and_trash_with_audit() {
         0,
         "system Trash operations must never write the legacy private manifest"
     );
-    let audit = storage.read_audit_lines().expect("audit lines").join("\n");
-    assert!(audit.contains("WriteFile"));
-    assert!(audit.contains("MoveFile"));
-    assert!(audit.contains("DeleteFile"));
 }
 
 #[test]
-fn guest_permissions_are_denied_and_audited_without_mutating_files() {
+fn guest_permissions_are_denied_without_mutating_files() {
     let fixture = Fixture::new("permission-denied");
     let storage = fixture.storage();
     let controller = ExplorerController::default();
@@ -203,13 +199,6 @@ fn guest_permissions_are_denied_and_audited_without_mutating_files() {
             .as_deref()
             .unwrap_or_default()
             .contains("not_authenticated")
-    );
-    assert!(
-        storage
-            .read_audit_lines()
-            .expect("audit")
-            .join("\n")
-            .contains("Denied")
     );
 }
 

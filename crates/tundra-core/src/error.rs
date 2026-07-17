@@ -8,7 +8,6 @@ use crate::authorization::PermissionAction;
 #[derive(Debug)]
 pub enum CoreError {
     Storage(StorageError),
-    Json(String),
     PasswordHash(String),
     InvalidUsername,
     InvalidUserInfo(String),
@@ -27,14 +26,12 @@ pub enum CoreError {
         reason: String,
     },
     LastPrivilegedUserRequired,
-    AuditIntegrity(String),
 }
 
 impl fmt::Display for CoreError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Storage(error) => write!(formatter, "{error}"),
-            Self::Json(message) => formatter.write_str(message),
             Self::PasswordHash(message) => formatter.write_str(message),
             Self::InvalidUsername => formatter.write_str("invalid username"),
             Self::InvalidUserInfo(message) => write!(formatter, "invalid user info: {message}"),
@@ -54,7 +51,6 @@ impl fmt::Display for CoreError {
             Self::LastPrivilegedUserRequired => {
                 formatter.write_str("at least one enabled admin is required")
             }
-            Self::AuditIntegrity(message) => write!(formatter, "audit integrity error: {message}"),
         }
     }
 }
@@ -64,12 +60,6 @@ impl std::error::Error for CoreError {}
 impl From<StorageError> for CoreError {
     fn from(value: StorageError) -> Self {
         Self::Storage(value)
-    }
-}
-
-impl From<serde_json::Error> for CoreError {
-    fn from(value: serde_json::Error) -> Self {
-        Self::Json(value.to_string())
     }
 }
 

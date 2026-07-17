@@ -76,11 +76,6 @@ fn assert_storage_layout(storage: &StorageLayout, app_paths: &AppPaths) {
         &storage.trash_path,
         "trash.v1.json",
     );
-
-    assert_eq!(
-        storage.audit_log_path,
-        storage.logs_path.join("audit.v1.log")
-    );
 }
 
 fn assert_state_file(path: &Path, data_path: &Path, file_name: &str) {

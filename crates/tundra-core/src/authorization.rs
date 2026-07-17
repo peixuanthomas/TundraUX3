@@ -37,8 +37,6 @@ impl fmt::Display for UserRole {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum PermissionAction {
-    Login,
-    Logout,
     ReadFile,
     WriteFile,
     DeleteFile,
@@ -46,7 +44,6 @@ pub enum PermissionAction {
     OpenExternal,
     ManageOwnUser,
     ManageUsers,
-    ViewAuditLog,
     ViewDiagnosticsDetails,
     RepairDiagnostics,
     ChangeSettings,
@@ -56,8 +53,6 @@ pub enum PermissionAction {
 impl PermissionAction {
     pub fn as_str(self) -> &'static str {
         match self {
-            Self::Login => "Login",
-            Self::Logout => "Logout",
             Self::ReadFile => "ReadFile",
             Self::WriteFile => "WriteFile",
             Self::DeleteFile => "DeleteFile",
@@ -65,7 +60,6 @@ impl PermissionAction {
             Self::OpenExternal => "OpenExternal",
             Self::ManageOwnUser => "ManageOwnUser",
             Self::ManageUsers => "ManageUsers",
-            Self::ViewAuditLog => "ViewAuditLog",
             Self::ViewDiagnosticsDetails => "ViewDiagnosticsDetails",
             Self::RepairDiagnostics => "RepairDiagnostics",
             Self::ChangeSettings => "ChangeSettings",
@@ -147,7 +141,6 @@ impl PermissionService {
             .map(|session| session.role)
             .unwrap_or(UserRole::Guest);
         match action {
-            PermissionAction::Login | PermissionAction::Logout => Authorization::allow(),
             PermissionAction::ReadFile
             | PermissionAction::WriteFile
             | PermissionAction::DeleteFile
@@ -161,7 +154,6 @@ impl PermissionService {
                 UserRole::Guest => Authorization::deny("not_authenticated"),
             },
             PermissionAction::ManageUsers
-            | PermissionAction::ViewAuditLog
             | PermissionAction::ViewDiagnosticsDetails
             | PermissionAction::RepairDiagnostics
             | PermissionAction::ChangeSettings => match role {

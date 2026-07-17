@@ -238,7 +238,7 @@ impl ShellState {
             platform,
             &storage,
         );
-        self.handle_explorer_effect(effect, platform, &storage, session.as_ref());
+        self.handle_explorer_effect(effect, platform, &storage);
         let (pending_dialog, pending_conflict, explorer_error, explorer_message) = self
             .explorer_state
             .as_ref()
@@ -319,7 +319,6 @@ impl ShellState {
         effect: ExplorerEffect,
         platform: &dyn Platform,
         storage: &StorageManager,
-        session: Option<&AuthSession>,
     ) {
         match effect {
             ExplorerEffect::None => {}
@@ -343,21 +342,6 @@ impl ShellState {
             ExplorerEffect::OpenRequested(request) => match request.target {
                 ExplorerOpenTarget::SystemDefault => {
                     let result = platform.open_path(&request.path);
-                    let (outcome, reason) = match &result {
-                        Ok(()) => (AuditOutcome::Success, "open_path"),
-                        Err(_) => (AuditOutcome::Failure, "open_path_failed"),
-                    };
-                    let _ = AuditService::with_permission_service(
-                        storage.clone(),
-                        PermissionService::default(),
-                    )
-                    .record(
-                        session,
-                        PermissionAction::OpenExternal,
-                        Some(request.path.display().to_string().as_str()),
-                        outcome,
-                        Some(reason),
-                    );
                     if let Some(state) = self.explorer_state.as_mut() {
                         match result {
                             Ok(()) => {

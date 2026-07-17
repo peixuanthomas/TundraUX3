@@ -261,12 +261,6 @@ impl ShellState {
             }
             ShellCommand::OpenLatestCrashReport => {
                 if !self.diagnostics_can_view_details() {
-                    self.record_diagnostics_audit(
-                        PermissionAction::ViewDiagnosticsDetails,
-                        "watchdog.report.open",
-                        AuditOutcome::Denied,
-                        Some("insufficient_role"),
-                    );
                     self.notify_alert_with_tone(
                         "Only administrators can open watchdog reports",
                         tundra_ui::NotificationTone::Warning,
@@ -275,21 +269,9 @@ impl ShellState {
                     match self.latest_watchdog_report.clone() {
                         Some(path) => match platform.open_path(&path) {
                             Ok(()) => {
-                                self.record_diagnostics_audit(
-                                    PermissionAction::ViewDiagnosticsDetails,
-                                    "watchdog.report.open",
-                                    AuditOutcome::Success,
-                                    None,
-                                );
                                 self.notify_toast("Opened watchdog crash report");
                             }
                             Err(error) => {
-                                self.record_diagnostics_audit(
-                                    PermissionAction::ViewDiagnosticsDetails,
-                                    "watchdog.report.open",
-                                    AuditOutcome::Failure,
-                                    Some(&error.to_string()),
-                                );
                                 self.notify_alert_with_tone(
                                     format!("Could not open crash report: {error}"),
                                     tundra_ui::NotificationTone::Critical,
@@ -306,12 +288,6 @@ impl ShellState {
             }
             ShellCommand::CopyLatestCrashSummary => {
                 if !self.diagnostics_can_view_details() {
-                    self.record_diagnostics_audit(
-                        PermissionAction::ViewDiagnosticsDetails,
-                        "watchdog.summary.copy",
-                        AuditOutcome::Denied,
-                        Some("insufficient_role"),
-                    );
                     self.notify_alert_with_tone(
                         "Only administrators can copy full watchdog summaries",
                         tundra_ui::NotificationTone::Warning,
@@ -320,21 +296,9 @@ impl ShellState {
                     match self.latest_watchdog_summary.clone() {
                         Some(summary) => match platform.write_clipboard_text(&summary) {
                             Ok(()) => {
-                                self.record_diagnostics_audit(
-                                    PermissionAction::ViewDiagnosticsDetails,
-                                    "watchdog.summary.copy",
-                                    AuditOutcome::Success,
-                                    None,
-                                );
                                 self.notify_toast("Copied watchdog incident summary");
                             }
                             Err(error) => {
-                                self.record_diagnostics_audit(
-                                    PermissionAction::ViewDiagnosticsDetails,
-                                    "watchdog.summary.copy",
-                                    AuditOutcome::Failure,
-                                    Some(&error.to_string()),
-                                );
                                 self.notify_alert_with_tone(
                                     format!("Could not copy crash summary: {error}"),
                                     tundra_ui::NotificationTone::Critical,

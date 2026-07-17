@@ -5,7 +5,6 @@ struct ShellDiagnosticsTaskRuntime {
 
 struct ShellDiagnosticsTaskShared {
     engine: Mutex<Option<tundra_apps::diagnostics::DiagnosticsTaskRuntime>>,
-    repair_initiator: Mutex<Option<AuthSession>>,
     storage: StorageManager,
     process: Option<ProcessWatchdog>,
     watchdog: Option<AppWatchdog>,
@@ -54,7 +53,6 @@ impl ShellDiagnosticsTaskRuntime {
         Self {
             shared: Arc::new(ShellDiagnosticsTaskShared {
                 engine: Mutex::new(None),
-                repair_initiator: Mutex::new(None),
                 storage,
                 process,
                 watchdog,
@@ -110,24 +108,13 @@ impl ShellDiagnosticsTaskRuntime {
     fn request_repair(
         &self,
         actions: Vec<tundra_apps::diagnostics::DiagnosticsRepairAction>,
-        initiator: AuthSession,
     ) -> Result<(), String> {
-        let mut pending_initiator = self
-            .shared
-            .repair_initiator
-            .lock()
-            .map_err(|_| "Diagnostics repair initiator lock poisoned".to_string())?;
-        if pending_initiator.is_some() {
-            return Err("a diagnostics repair is already pending completion".to_string());
-        }
         let engine = self.ensure_engine()?;
         engine
             .as_ref()
             .expect("Diagnostics engine initialized")
             .request_repair(actions)
-            .map_err(|error| error.to_string())?;
-        *pending_initiator = Some(initiator);
-        Ok(())
+            .map_err(|error| error.to_string())
     }
 
     fn is_busy(&self) -> bool {
@@ -156,14 +143,6 @@ impl ShellDiagnosticsTaskRuntime {
             .ok()
             .and_then(|engine| engine.as_ref().map(|engine| engine.restart_required()))
             .unwrap_or(false)
-    }
-
-    fn take_repair_initiator(&self) -> Option<AuthSession> {
-        self.shared
-            .repair_initiator
-            .lock()
-            .ok()
-            .and_then(|mut initiator| initiator.take())
     }
 }
 
@@ -297,15 +276,10 @@ impl ShellState {
                     restart_required,
                 } => {
                     self.diagnostics_scanning = false;
-                    let initiator = self
-                        .diagnostics_task_runtime
-                        .as_ref()
-                        .and_then(ShellDiagnosticsTaskRuntime::take_repair_initiator);
                     self.diagnostics_repair_preview.clear();
                     self.diagnostics_repair_selected = 0;
                     self.diagnostics_repair_scroll_offset = 0;
                     self.diagnostics_repair_confirm_selected = true;
-                    self.record_diagnostics_repair_audits(&results, initiator.as_ref());
                     let succeeded = results.iter().filter(|result| result.success).count();
                     let failed = results.len().saturating_sub(succeeded);
                     let backups = results
@@ -317,7 +291,7 @@ impl ShellState {
                         if backups == 0 {
                             String::new()
                         } else {
-                            format!(", {backups} backup(s) recorded in the audit log")
+                            format!(", {backups} backup(s) created")
                         }
                     ));
                     if let Some(snapshot) = snapshot {
@@ -624,19 +598,11 @@ impl ShellState {
         if actions.is_empty() {
             return;
         }
-        let Some(initiator) = self.auth_session.clone() else {
-            self.diagnostics_repair_preview = actions;
-            self.notify_alert_with_tone(
-                "Diagnostics repair requires an authenticated administrator",
-                tundra_ui::NotificationTone::Warning,
-            );
-            return;
-        };
         let result = self
             .diagnostics_task_runtime
             .as_ref()
             .ok_or_else(|| "Diagnostics runtime is unavailable".to_string())
-            .and_then(|runtime| runtime.request_repair(actions.clone(), initiator));
+            .and_then(|runtime| runtime.request_repair(actions.clone()));
         match result {
             Ok(()) => {
                 self.diagnostics_scanning = true;
@@ -674,12 +640,6 @@ impl ShellState {
                 "diagnostics_task_in_progress".to_string()
             }
         });
-        self.record_diagnostics_audit(
-            PermissionAction::RepairDiagnostics,
-            "diagnostics.repair",
-            AuditOutcome::Denied,
-            Some(&reason),
-        );
         self.notify_alert_with_tone(
             format!("Diagnostics repair denied: {reason}"),
             tundra_ui::NotificationTone::Warning,
@@ -724,25 +684,9 @@ impl ShellState {
         let text = lines.join("\n");
         match platform.write_clipboard_text(&text) {
             Ok(()) => {
-                if full {
-                    self.record_diagnostics_audit(
-                        PermissionAction::ViewDiagnosticsDetails,
-                        "diagnostics.summary.copy",
-                        AuditOutcome::Success,
-                        None,
-                    );
-                }
                 self.notify_toast("Copied diagnostics summary");
             }
             Err(error) => {
-                if full {
-                    self.record_diagnostics_audit(
-                        PermissionAction::ViewDiagnosticsDetails,
-                        "diagnostics.summary.copy",
-                        AuditOutcome::Failure,
-                        Some(&error.to_string()),
-                    );
-                }
                 self.notify_alert_with_tone(
                     format!("Could not copy diagnostics summary: {error}"),
                     tundra_ui::NotificationTone::Critical,
@@ -752,15 +696,7 @@ impl ShellState {
     }
 
     fn open_diagnostics_logs_in_explorer(&mut self, platform: &dyn Platform) {
-        const AUDIT_RESOURCE: &str = "diagnostics.logs.explore";
-
         if !self.diagnostics_can_view_details() {
-            self.record_diagnostics_audit(
-                PermissionAction::ViewDiagnosticsDetails,
-                AUDIT_RESOURCE,
-                AuditOutcome::Denied,
-                Some("insufficient_role"),
-            );
             self.notify_alert_with_tone(
                 "Only administrators can explore the diagnostic log folder",
                 tundra_ui::NotificationTone::Warning,
@@ -777,14 +713,11 @@ impl ShellState {
         };
         let logs_path = storage.layout().logs_path.clone();
         if !logs_path.is_dir() {
-            self.record_diagnostics_audit(
-                PermissionAction::ViewDiagnosticsDetails,
-                AUDIT_RESOURCE,
-                AuditOutcome::Failure,
-                Some("log_directory_unavailable"),
-            );
             self.notify_alert_with_tone(
-                format!("Diagnostics log directory is unavailable: {}", logs_path.display()),
+                format!(
+                    "Diagnostics log directory is unavailable: {}",
+                    logs_path.display()
+                ),
                 tundra_ui::NotificationTone::Critical,
             );
             return;
@@ -796,12 +729,6 @@ impl ShellState {
             logs_path,
             ExplorerPurpose::DiagnosticsLogs,
         );
-        self.record_diagnostics_audit(
-            PermissionAction::ViewDiagnosticsDetails,
-            AUDIT_RESOURCE,
-            AuditOutcome::Success,
-            None,
-        );
         self.notify_toast("Opened diagnostic log folder in Explorer");
     }
 
@@ -812,17 +739,6 @@ impl ShellState {
             return;
         }
         if !self.diagnostics_can_view_details() {
-            let audit_resource = match self.diagnostics_tab {
-                tundra_ui::DiagnosticsTab::Logs => "diagnostics.log.open",
-                tundra_ui::DiagnosticsTab::Incidents => "diagnostics.report.open",
-                tundra_ui::DiagnosticsTab::Health => unreachable!(),
-            };
-            self.record_diagnostics_audit(
-                PermissionAction::ViewDiagnosticsDetails,
-                audit_resource,
-                AuditOutcome::Denied,
-                Some("insufficient_role"),
-            );
             self.notify_alert_with_tone(
                 "Only administrators can open diagnostic logs and reports",
                 tundra_ui::NotificationTone::Warning,
@@ -830,7 +746,7 @@ impl ShellState {
             return;
         }
 
-        let (reload, audit_resource, missing_message, opened_message) = match self.diagnostics_tab {
+        let (reload, missing_message, opened_message) = match self.diagnostics_tab {
             tundra_ui::DiagnosticsTab::Logs => {
                 let path = self
                     .diagnostics_snapshot
@@ -843,7 +759,6 @@ impl ShellState {
                 };
                 (
                     EditorReloadPolicy::Log { path },
-                    "diagnostics.log.open",
                     "Could not open diagnostic log",
                     "Opened diagnostic log read-only",
                 )
@@ -865,7 +780,6 @@ impl ShellState {
                 };
                 (
                     EditorReloadPolicy::DiagnosticsReport { path },
-                    "diagnostics.report.open",
                     "Could not open diagnostics report",
                     "Opened diagnostics report read-only",
                 )
@@ -875,90 +789,15 @@ impl ShellState {
 
         match self.open_diagnostics_editor(reload) {
             Ok(()) => {
-                self.record_diagnostics_audit(
-                    PermissionAction::ViewDiagnosticsDetails,
-                    audit_resource,
-                    AuditOutcome::Success,
-                    None,
-                );
                 self.notify_toast(opened_message);
             }
             Err(error) => {
-                self.record_diagnostics_audit(
-                    PermissionAction::ViewDiagnosticsDetails,
-                    audit_resource,
-                    AuditOutcome::Failure,
-                    Some("open_failed"),
-                );
                 self.notify_alert_with_tone(
                     format!("{missing_message}: {error}"),
                     tundra_ui::NotificationTone::Critical,
                 );
             }
         }
-    }
-
-    fn record_diagnostics_repair_audits(
-        &mut self,
-        results: &[tundra_apps::diagnostics::DiagnosticsRepairResult],
-        initiator: Option<&AuthSession>,
-    ) {
-        for result in results {
-            let resource = format!("diagnostics.repair.{}", result.action.label());
-            let detail = if result.success {
-                result
-                    .backup_path
-                    .as_ref()
-                    .map(|path| format!("backup={}", path.display()))
-            } else {
-                Some(result.message.clone())
-            };
-            self.record_diagnostics_audit_for_session(
-                initiator,
-                PermissionAction::RepairDiagnostics,
-                &resource,
-                if result.success {
-                    AuditOutcome::Success
-                } else {
-                    AuditOutcome::Failure
-                },
-                detail.as_deref(),
-            );
-        }
-    }
-
-    fn record_diagnostics_audit(
-        &self,
-        action: PermissionAction,
-        resource: &str,
-        outcome: AuditOutcome,
-        reason: Option<&str>,
-    ) {
-        self.record_diagnostics_audit_for_session(
-            self.auth_session.as_ref(),
-            action,
-            resource,
-            outcome,
-            reason,
-        );
-    }
-
-    fn record_diagnostics_audit_for_session(
-        &self,
-        session: Option<&AuthSession>,
-        action: PermissionAction,
-        resource: &str,
-        outcome: AuditOutcome,
-        reason: Option<&str>,
-    ) {
-        let Some(storage) = self.storage_manager.clone() else {
-            return;
-        };
-        let _ = AuditService::with_permission_service(
-            storage,
-            PermissionService::new(self.debug_policy),
-        )
-        .record(session, action, Some(resource), outcome, reason);
     }
 }
 
@@ -1119,14 +958,14 @@ mod diagnostics_shell_tests {
 
     #[test]
     fn diagnostics_log_opens_read_only_in_editor_and_returns_to_logs() {
-        let (directory, path) = temporary_document("audit.v1.log", b"first\nsecond\n");
+        let (directory, path) = temporary_document("application.log", b"first\nsecond\n");
         let mut state = state(UserRole::Admin);
         state
             .diagnostics_snapshot
             .as_mut()
             .unwrap()
             .logs
-            .push(log_file(path.clone(), "audit.v1.log"));
+            .push(log_file(path.clone(), "application.log"));
         state.open_diagnostics();
         state.set_diagnostics_tab(tundra_ui::DiagnosticsTab::Logs);
         let editor_tasks = TestEditorTaskDriver::install(&mut state);
@@ -1525,7 +1364,7 @@ mod diagnostics_shell_tests {
             .layout()
             .logs_path
             .clone();
-        std::fs::write(logs_path.join("audit.v1.log"), b"audit\n").unwrap();
+        std::fs::write(logs_path.join("application.log"), b"application\n").unwrap();
         state.open_diagnostics();
 
         state.open_diagnostics_logs_in_explorer(&tundra_platform::mock::UnsupportedPlatform);
@@ -1543,7 +1382,7 @@ mod diagnostics_shell_tests {
                 .unwrap()
                 .entries
                 .iter()
-                .any(|entry| entry.name == "audit.v1.log")
+                .any(|entry| entry.name == "application.log")
         );
 
         state.close_explorer();

@@ -1,4 +1,3 @@
-mod audit_log;
 mod authorization;
 mod credentials;
 mod error;
@@ -7,9 +6,6 @@ mod session_service;
 mod time;
 mod user_service;
 
-pub use audit_log::{
-    AUDIT_GENESIS_HASH, AUDIT_SCHEMA_VERSION, AuditOutcome, AuditRecord, AuditService,
-};
 pub use authorization::{
     Authorization, DebugPolicy, PermissionAction, PermissionService, UserRole,
 };
