@@ -528,6 +528,14 @@ impl ShellState {
                 ShellAction::Redraw
             }
             ShellCommand::EditorSaveAndClose => {
+                if self
+                    .editor_state
+                    .as_ref()
+                    .is_some_and(EditorState::is_read_only)
+                {
+                    self.editor_message = Some("This document is read-only".to_string());
+                    return ShellAction::Redraw;
+                }
                 self.editor_close_after_save = true;
                 self.apply_editor_command(
                     tundra_apps::editor::EditorCommand::RequestSave,
@@ -548,6 +556,14 @@ impl ShellState {
                 ShellAction::Redraw
             }
             ShellCommand::EditorSaveAndOpen => {
+                if self
+                    .editor_state
+                    .as_ref()
+                    .is_some_and(EditorState::is_read_only)
+                {
+                    self.editor_message = Some("This document is read-only".to_string());
+                    return ShellAction::Redraw;
+                }
                 self.editor_open_after_save = true;
                 self.editor_discard_for_open = false;
                 self.notifications
@@ -559,6 +575,14 @@ impl ShellState {
                 ShellAction::Redraw
             }
             ShellCommand::EditorDiscardAndOpen => {
+                if self
+                    .editor_state
+                    .as_ref()
+                    .is_some_and(EditorState::is_read_only)
+                {
+                    self.editor_message = Some("This document is read-only".to_string());
+                    return ShellAction::Redraw;
+                }
                 self.editor_open_after_save = false;
                 self.editor_discard_for_open = true;
                 self.notifications
@@ -926,6 +950,10 @@ impl ShellState {
             }
             ShellCommand::DiagnosticsHealthTab => {
                 self.set_diagnostics_tab(tundra_ui::DiagnosticsTab::Health);
+                ShellAction::Redraw
+            }
+            ShellCommand::DiagnosticsLogsTab => {
+                self.set_diagnostics_tab(tundra_ui::DiagnosticsTab::Logs);
                 ShellAction::Redraw
             }
             ShellCommand::DiagnosticsIncidentsTab => {

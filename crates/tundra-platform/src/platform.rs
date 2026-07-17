@@ -197,6 +197,21 @@ pub enum PowerAction {
     Restart,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum StartupPermissionStatus {
+    Ready,
+    ActionRequired { name: String, message: String },
+}
+
+impl StartupPermissionStatus {
+    pub fn action_required(name: impl Into<String>, message: impl Into<String>) -> Self {
+        Self::ActionRequired {
+            name: name.into(),
+            message: message.into(),
+        }
+    }
+}
+
 impl PowerAction {
     pub fn as_str(self) -> &'static str {
         match self {
@@ -358,6 +373,19 @@ pub trait Platform: Send + Sync {
     /// effects from `kind()` alone.
     fn is_native_backend(&self) -> bool {
         false
+    }
+
+    /// Checks permissions that must be granted before the application starts.
+    /// This method must be read-only so diagnostics can call it without
+    /// opening operating-system settings or displaying prompts.
+    fn startup_permission_status(&self) -> Result<StartupPermissionStatus, PlatformError> {
+        Ok(StartupPermissionStatus::Ready)
+    }
+
+    /// Opens the operating system's permission flow for a status returned by
+    /// [`Platform::startup_permission_status`].
+    fn request_startup_permissions(&self) -> Result<(), PlatformError> {
+        Ok(())
     }
 
     fn user_dirs(&self) -> Result<UserDirs, PlatformError>;

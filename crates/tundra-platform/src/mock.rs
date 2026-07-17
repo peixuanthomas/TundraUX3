@@ -5,11 +5,13 @@ use std::sync::Mutex;
 use crate::{
     AppPaths, DirectoryListing, FileAttributes, FileOpenPolicy, LocalVolume, Platform,
     PlatformCapabilities, PlatformError, PlatformKind, ProcessExit, ProcessSpec, ProcessStream,
-    TrashEntry, TrashEntryId, TrashRestoreTarget, TrashStats, UserDirs,
+    StartupPermissionStatus, TrashEntry, TrashEntryId, TrashRestoreTarget, TrashStats, UserDirs,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MockCall {
+    StartupPermissionStatus,
+    RequestStartupPermissions,
     OpenPath(PathBuf),
     OpenWith {
         path: PathBuf,
@@ -48,6 +50,8 @@ pub struct MockPlatform {
     user_dirs: UserDirs,
     app_paths: AppPaths,
     clipboard_text: Mutex<String>,
+    startup_permission_status: Mutex<Result<StartupPermissionStatus, PlatformError>>,
+    request_startup_permissions_result: Mutex<Result<(), PlatformError>>,
     critical_error_result: Mutex<Result<(), PlatformError>>,
     process_alive_results: Mutex<BTreeMap<u32, Result<bool, PlatformError>>>,
     calls: Mutex<Vec<MockCall>>,
@@ -72,6 +76,8 @@ impl MockPlatform {
             user_dirs,
             app_paths,
             clipboard_text: Mutex::new(String::new()),
+            startup_permission_status: Mutex::new(Ok(StartupPermissionStatus::Ready)),
+            request_startup_permissions_result: Mutex::new(Ok(())),
             critical_error_result: Mutex::new(Ok(())),
             process_alive_results: Mutex::new(BTreeMap::new()),
             calls: Mutex::new(Vec::new()),
@@ -100,6 +106,23 @@ impl MockPlatform {
 
     pub fn set_clipboard_text(&self, text: impl Into<String>) {
         *self.clipboard_text.lock().expect("clipboard lock poisoned") = text.into();
+    }
+
+    pub fn set_startup_permission_status(
+        &self,
+        status: Result<StartupPermissionStatus, PlatformError>,
+    ) {
+        *self
+            .startup_permission_status
+            .lock()
+            .expect("startup permission status lock poisoned") = status;
+    }
+
+    pub fn set_request_startup_permissions_result(&self, result: Result<(), PlatformError>) {
+        *self
+            .request_startup_permissions_result
+            .lock()
+            .expect("startup permission request lock poisoned") = result;
     }
 
     pub fn set_critical_error_result(&self, result: Result<(), PlatformError>) {
@@ -241,6 +264,22 @@ impl Platform for MockPlatform {
 
     fn capabilities(&self) -> PlatformCapabilities {
         self.capabilities.clone()
+    }
+
+    fn startup_permission_status(&self) -> Result<StartupPermissionStatus, PlatformError> {
+        self.record(MockCall::StartupPermissionStatus);
+        self.startup_permission_status
+            .lock()
+            .expect("startup permission status lock poisoned")
+            .clone()
+    }
+
+    fn request_startup_permissions(&self) -> Result<(), PlatformError> {
+        self.record(MockCall::RequestStartupPermissions);
+        self.request_startup_permissions_result
+            .lock()
+            .expect("startup permission request lock poisoned")
+            .clone()
     }
 
     fn user_dirs(&self) -> Result<UserDirs, PlatformError> {

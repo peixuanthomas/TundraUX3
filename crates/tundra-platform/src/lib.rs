@@ -15,9 +15,9 @@ pub use diagnostics::{
     check_directory_read_write, classify_windows_build, run_doctor, run_doctor_with,
 };
 pub use document::{
-    DocumentBytes, DocumentFingerprint, DocumentWriteError, atomic_write_document,
-    atomic_write_document_if_unchanged, document_fingerprint, read_document_bytes,
-    validate_no_follow_path,
+    DocumentBytes, DocumentFingerprint, DocumentReadWindow, DocumentWriteError,
+    atomic_write_document, atomic_write_document_if_unchanged, document_fingerprint,
+    read_document_bytes, read_document_tail_bytes, validate_no_follow_path,
 };
 pub use paths::{
     AppPaths, PathResolutionError, UserDirs, build_binary_dir_app_paths, build_macos_app_paths,
@@ -26,10 +26,10 @@ pub use paths::{
 pub use platform::{
     CapabilityStatus, DirectoryEntryMetadata, DirectoryListing, DirectoryListingWarning,
     ExecutableKind, ExternalOpenPolicy, FileAttributes, FileOpenPolicy, LocalVolume, Platform,
-    PlatformCapabilities, PlatformError, PlatformKind, PowerAction, TrashEntry, TrashEntryId,
-    TrashRestoreTarget, TrashStats, VolumeKind, default_external_open_policy,
-    default_file_attributes, default_file_open_policy, default_read_directory, default_rename_path,
-    native_platform,
+    PlatformCapabilities, PlatformError, PlatformKind, PowerAction, StartupPermissionStatus,
+    TrashEntry, TrashEntryId, TrashRestoreTarget, TrashStats, VolumeKind,
+    default_external_open_policy, default_file_attributes, default_file_open_policy,
+    default_read_directory, default_rename_path, native_platform,
 };
 pub use process::{ProcessExit, ProcessSpec, ProcessStream, validate_process_spec};
 pub use terminal::{

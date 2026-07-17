@@ -4,10 +4,10 @@ use ratatui::layout::Rect;
 use ratatui::style::Color;
 use tundra_ui::{
     DiagnosticsCheckViewModel, DiagnosticsHitTarget, DiagnosticsIncidentViewModel,
-    DiagnosticsRepairDialogViewModel, DiagnosticsRepairItemViewModel, DiagnosticsStatus,
-    DiagnosticsTab, DiagnosticsViewModel, HomeDisplayMode, NotificationTone, ShellChromeViewModel,
-    ShellLayout, StatusViewModel, TundraTheme, compute_shell_layout, diagnostics_hit_test,
-    diagnostics_layout, render_diagnostics,
+    DiagnosticsLogViewModel, DiagnosticsRepairDialogViewModel, DiagnosticsRepairItemViewModel,
+    DiagnosticsStatus, DiagnosticsTab, DiagnosticsViewModel, HomeDisplayMode, NotificationTone,
+    ShellChromeViewModel, ShellLayout, StatusViewModel, TundraTheme, compute_shell_layout,
+    diagnostics_hit_test, diagnostics_layout, render_diagnostics,
 };
 
 #[test]
@@ -122,6 +122,9 @@ fn health_renderer_draws_two_columns_statuses_and_admin_details() {
     assert!(output.contains("Detail: private detail 1"));
     assert!(output.contains("Recommended: repair guidance 1"));
     assert!(output.contains("Repair available"));
+    assert!(output.contains("F Repair"));
+    assert!(output.contains("A Repair all"));
+    assert!(output.contains("O Open logs"));
     assert!(region_has_fg(
         &terminal,
         layout.rows[0].area,
@@ -152,6 +155,56 @@ fn incident_renderer_redacts_sensitive_fields_for_non_admins_at_108x20() {
     assert!(!output.contains("SECRET stack trace"));
     assert!(!output.contains("/private/reports/incident-7.json"));
     assert!(!output.contains("incident-7"));
+}
+
+#[test]
+fn logs_tab_lists_metadata_scrolls_and_exposes_log_hit_targets() {
+    let mut model = health_model();
+    model.tab = DiagnosticsTab::Logs;
+    model.can_view_details = true;
+    model.can_repair = true;
+    model.logs = (0..12).map(log).collect();
+    model.selected_log = 10;
+    let layout = diagnostics_layout(full_main(108, 20), &model);
+
+    assert_eq!(layout.visible_start, 4);
+    assert_eq!(layout.rows.last().map(|row| row.index), Some(10));
+    let logs_tab = layout
+        .tabs
+        .iter()
+        .find(|tab| tab.tab == DiagnosticsTab::Logs)
+        .expect("logs tab");
+    assert_eq!(
+        diagnostics_hit_test(&layout, (logs_tab.area.x, logs_tab.area.y)),
+        Some(DiagnosticsHitTarget::Tab(DiagnosticsTab::Logs))
+    );
+    let selected = layout.rows.last().expect("selected log row");
+    assert_eq!(
+        diagnostics_hit_test(&layout, (selected.area.x, selected.area.y)),
+        Some(DiagnosticsHitTarget::Log(10))
+    );
+
+    let output = terminal_output(&render(140, 32, &model));
+    assert!(output.contains("Logs"));
+    assert!(output.contains("service-10.log.1"));
+    assert!(output.contains("Modified: 2026-07-17 12:10"));
+    assert!(output.contains("Size: 1034 bytes"));
+    assert!(output.contains("Press O to open read-only"));
+    assert!(output.contains("O Open log"));
+    assert!(!output.contains("F Repair"));
+    assert!(!output.contains("A Repair all"));
+}
+
+#[test]
+fn logs_tab_redacts_availability_for_non_admins() {
+    let mut model = health_model();
+    model.tab = DiagnosticsTab::Logs;
+    model.logs = vec![log(0)];
+    let output = terminal_output(&render(108, 20, &model));
+
+    assert!(output.contains("Logs are restricted to administrators"));
+    assert!(!output.contains("service-0.log.1"));
+    assert!(!output.contains("/private/logs"));
 }
 
 #[test]
@@ -240,8 +293,10 @@ fn health_model() -> DiagnosticsViewModel {
         tab: DiagnosticsTab::Health,
         checks: vec![check(0, DiagnosticsStatus::Warning)],
         incidents: Vec::new(),
+        logs: Vec::new(),
         selected_check: 0,
         selected_incident: 0,
+        selected_log: 0,
         list_window_start: 0,
         scanning: false,
         can_view_details: false,
@@ -250,6 +305,15 @@ fn health_model() -> DiagnosticsViewModel {
         repair_dialog: None,
         feedback: None,
         scanned_at: Some("2026-07-13 14:33".to_string()),
+    }
+}
+
+fn log(index: usize) -> DiagnosticsLogViewModel {
+    DiagnosticsLogViewModel {
+        relative_path: format!("nested/service-{index}.log.1"),
+        path: format!("/private/logs/nested/service-{index}.log.1"),
+        modified_at: format!("2026-07-17 12:{index:02}"),
+        size_bytes: 1024 + index as u64,
     }
 }
 

@@ -5,10 +5,11 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use tundra_platform::mock::{MockCall, MockPlatform, UnsupportedPlatform};
 use tundra_platform::{
     AppPaths, CapabilityStatus, CheckStatus, FileAttributes, Platform, PlatformError, PlatformKind,
-    ProcessSpec, UserDirs, build_binary_dir_app_paths, build_macos_app_paths,
-    build_windows_app_paths, check_directory_read_write, classify_windows_build, cleanup_temp_path,
-    create_temp_dir, create_temp_file, default_file_attributes, is_windows_terminal_session,
-    run_doctor_with, terminal_environment_check_with, validate_process_spec,
+    ProcessSpec, StartupPermissionStatus, UserDirs, build_binary_dir_app_paths,
+    build_macos_app_paths, build_windows_app_paths, check_directory_read_write,
+    classify_windows_build, cleanup_temp_path, create_temp_dir, create_temp_file,
+    default_file_attributes, is_windows_terminal_session, run_doctor_with,
+    terminal_environment_check_with, validate_process_spec,
 };
 
 #[test]
@@ -255,6 +256,37 @@ fn mock_platform_records_process_clipboard_and_open_calls() {
             MockCall::SpawnDetached(spec.clone()),
             MockCall::SpawnWait(spec),
         ]
+    );
+}
+
+#[test]
+fn doctor_fails_when_a_required_startup_permission_is_missing() {
+    let base = unique_temp_root("doctor-startup-permission");
+    let platform = mock_platform(&base).with_kind(PlatformKind::Macos);
+    platform.set_startup_permission_status(Ok(StartupPermissionStatus::action_required(
+        "Full Disk Access",
+        "enable it and restart",
+    )));
+
+    let report = run_doctor_with(&platform).expect("doctor should report missing permission");
+    let check = report
+        .environment_checks
+        .iter()
+        .find(|check| check.label == "Startup permissions")
+        .expect("startup permission check");
+
+    assert_eq!(check.status, CheckStatus::Fail);
+    assert!(check.message.contains("Full Disk Access"));
+    assert!(report.has_failures());
+    assert!(
+        platform
+            .calls()
+            .contains(&MockCall::StartupPermissionStatus)
+    );
+    assert!(
+        !platform
+            .calls()
+            .contains(&MockCall::RequestStartupPermissions)
     );
 }
 

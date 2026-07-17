@@ -1004,6 +1004,7 @@ fn render_diagnostics_main(
             .block()
             .title(match model.tab {
                 DiagnosticsTab::Health => "Checks",
+                DiagnosticsTab::Logs => "Logs",
                 DiagnosticsTab::Incidents => "Incidents",
             })
             .borders(Borders::ALL)
@@ -1129,6 +1130,13 @@ fn render_diagnostics_rows(
         } else {
             match model.tab {
                 DiagnosticsTab::Health => "  No checks available",
+                DiagnosticsTab::Logs => {
+                    if model.can_view_details {
+                        "  No logs found"
+                    } else {
+                        "  Logs are restricted to administrators"
+                    }
+                }
                 DiagnosticsTab::Incidents => "  No incidents recorded",
             }
         };
@@ -1187,6 +1195,26 @@ fn render_diagnostics_rows(
                     ),
                     incident.severity,
                     row.index == model.selected_incident,
+                )
+            }
+            DiagnosticsTab::Logs => {
+                let Some(log) = model.logs.get(row.index) else {
+                    continue;
+                };
+                (
+                    format!(
+                        "{} {}  {}  {} bytes",
+                        if row.index == model.selected_log {
+                            ">"
+                        } else {
+                            " "
+                        },
+                        log.relative_path,
+                        log.modified_at,
+                        log.size_bytes,
+                    ),
+                    DiagnosticsStatus::Pass,
+                    row.index == model.selected_log,
                 )
             }
         };
@@ -1255,6 +1283,14 @@ fn render_diagnostics_detail(
             || vec![Line::styled("No incident selected", theme.muted_style())],
             |incident| diagnostics_incident_detail_lines(incident, model, theme),
         ),
+        DiagnosticsTab::Logs if !model.can_view_details => vec![Line::styled(
+            "Logs are restricted to administrators",
+            theme.muted_style(),
+        )],
+        DiagnosticsTab::Logs => model.selected_log().map_or_else(
+            || vec![Line::styled("No log selected", theme.muted_style())],
+            |log| diagnostics_log_detail_lines(log, model, theme),
+        ),
     };
     frame.render_widget(
         Paragraph::new(lines)
@@ -1262,6 +1298,26 @@ fn render_diagnostics_detail(
             .wrap(Wrap { trim: true }),
         inner,
     );
+}
+
+fn diagnostics_log_detail_lines(
+    log: &crate::DiagnosticsLogViewModel,
+    model: &DiagnosticsViewModel,
+    theme: &TundraTheme,
+) -> Vec<Line<'static>> {
+    if !model.can_view_details {
+        return vec![Line::styled(
+            "Logs are restricted to administrators",
+            theme.muted_style(),
+        )];
+    }
+    vec![
+        Line::styled(log.relative_path.clone(), theme.title_style()),
+        Line::from(format!("Modified: {}", log.modified_at)),
+        Line::from(format!("Size: {} bytes", log.size_bytes)),
+        Line::from(format!("Path: {}", log.path)),
+        Line::styled("Press O to open read-only", theme.muted_style()),
+    ]
 }
 
 fn diagnostics_check_detail_lines(
@@ -1347,15 +1403,16 @@ fn render_diagnostics_footer(
         "Scanning... · Esc Home".to_string()
     } else {
         let mut actions = vec!["R Rescan", "Tab Switch", "C Copy", "Esc Home"];
-        if model.can_repair {
+        if model.can_repair && model.tab == DiagnosticsTab::Health {
             actions.insert(1, "F Repair");
             actions.insert(2, "A Repair all");
         }
-        if model.can_view_details {
+        if model.tab == DiagnosticsTab::Health || model.can_view_details {
             actions.insert(
                 actions.len().saturating_sub(1),
                 match model.tab {
                     DiagnosticsTab::Health => "O Open logs",
+                    DiagnosticsTab::Logs => "O Open log",
                     DiagnosticsTab::Incidents => "O Open report",
                 },
             );

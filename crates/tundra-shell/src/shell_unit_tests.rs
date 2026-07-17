@@ -500,6 +500,8 @@ mod tests {
         };
         let options = startup_lockscreen_launch_options(&startup, terminal_size_requirement);
 
+        assert!(!options.load_config_file);
+        assert!(!options.prefer_config_location);
         assert_eq!(options.timezone_id.as_deref(), Some("Asia/Shanghai"));
         assert_eq!(options.minimum_terminal_size, Some((108, 20)));
         let location = options.location_override.expect("mapped location");

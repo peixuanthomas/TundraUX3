@@ -519,6 +519,12 @@ impl EditorToolbarState {
         read_only: bool,
         mode: EditorMode,
     ) -> bool {
+        if read_only {
+            return matches!(
+                action,
+                EditorToolbarAction::Find | EditorToolbarAction::More
+            );
+        }
         match action {
             EditorToolbarAction::Save => self.can_save,
             EditorToolbarAction::Undo => self.can_undo,
@@ -545,6 +551,10 @@ pub struct EditorViewModel {
     pub path_hint: Option<String>,
     pub dirty: bool,
     pub read_only: bool,
+    /// Byte range currently loaded for a read-only, potentially tailed document.
+    pub read_window: Option<EditorReadWindowViewModel>,
+    /// Whether the backing diagnostic document can be reloaded from the editor.
+    pub reload_available: bool,
     pub mode: EditorMode,
     pub focus: EditorFocus,
     pub open_menu: Option<EditorMenu>,
@@ -593,6 +603,8 @@ impl EditorViewModel {
             path_hint: None,
             dirty: false,
             read_only: false,
+            read_window: None,
+            reload_available: false,
             mode: EditorMode::Rich,
             focus: EditorFocus::Canvas,
             open_menu: None,
@@ -662,6 +674,12 @@ pub struct EditorMenuItemLayout {
     pub action: EditorMenuAction,
     pub area: Rect,
     pub enabled: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct EditorReadWindowViewModel {
+    pub start_byte: u64,
+    pub total_bytes: u64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1130,10 +1148,16 @@ pub fn editor_layout(area: Rect, model: &EditorViewModel) -> EditorLayout {
             )
         })
         .collect();
-    let table_resize_handles =
-        table_resize_handles(canvas, model.horizontal_scroll, &block_areas, model);
-    let table_edge_handles =
-        table_edge_handles(canvas, model.horizontal_scroll, &block_areas, model);
+    let table_resize_handles = if model.read_only {
+        Vec::new()
+    } else {
+        table_resize_handles(canvas, model.horizontal_scroll, &block_areas, model)
+    };
+    let table_edge_handles = if model.read_only {
+        Vec::new()
+    } else {
+        table_edge_handles(canvas, model.horizontal_scroll, &block_areas, model)
+    };
 
     let vertical_scrollbar = (document_line_count > visible_capacity && base_canvas.width > 1)
         .then(|| {
@@ -1146,7 +1170,10 @@ pub fn editor_layout(area: Rect, model: &EditorViewModel) -> EditorLayout {
         });
     let (menus, modes) = menu_layout(menu_bar);
     let (menu_popup, menu_items) = menu_popup_layout(area, &menus, model);
-    let (quick_menu_popup, quick_menu_items) = quick_menu_layout(area, model.quick_menu);
+    let (quick_menu_popup, quick_menu_items) = quick_menu_layout(
+        area,
+        (!model.read_only).then_some(model.quick_menu).flatten(),
+    );
     let (toolbar_items, toolbar_overflow) = toolbar_layout(toolbar, model);
     let source_line_maps = display_lines
         .iter()
@@ -1473,6 +1500,12 @@ fn render_canvas(
         if model.read_only {
             title.push_str(" [read-only]");
         }
+        if model
+            .read_window
+            .is_some_and(|window| window.start_byte > 0)
+        {
+            title.push_str(" [tail]");
+        }
         let title = terminal_safe_text(&title).into_owned();
         frame.render_widget(
             theme
@@ -1564,6 +1597,19 @@ fn render_status_bar(
         EditorImageProtocolStatus::Available => "image:terminal",
     };
     let mode = mode_label(model.mode);
+    let read_window = model.read_window.map(|window| {
+        if window.total_bytes == 0 {
+            "Bytes 0 of 0".to_string()
+        } else {
+            let start = window.start_byte.min(window.total_bytes.saturating_sub(1));
+            format!(
+                "Bytes {}-{} of {}",
+                start.saturating_add(1),
+                window.total_bytes,
+                window.total_bytes
+            )
+        }
+    });
     let left = model
         .status_message
         .as_deref()
@@ -1572,15 +1618,21 @@ fn render_status_bar(
         } else {
             "Ready"
         });
+    let left = if model.reload_available {
+        format!("{left} · F5 Reload")
+    } else {
+        left.to_string()
+    };
     let right = format!(
-        "{}  Ln {}, Col {}  {} words  {}/{}  {}",
+        "{}  Ln {}, Col {}  {} words  {}/{}  {}{}",
         mode,
         cursor.line.saturating_add(1),
         cursor.column.saturating_add(1),
         model.word_count,
         model.encoding,
         model.line_ending,
-        image
+        image,
+        read_window.map_or_else(String::new, |window| format!("  {window}")),
     );
     let available = usize::from(layout.status_bar.width);
     let text = if available == 0 {

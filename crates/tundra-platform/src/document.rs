@@ -1,6 +1,6 @@
 use std::fmt;
 use std::fs::{self, File, OpenOptions};
-use std::io::{Read, Write};
+use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::process;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -18,6 +18,20 @@ pub struct DocumentFingerprint {
 pub struct DocumentBytes {
     pub bytes: Vec<u8>,
     pub fingerprint: DocumentFingerprint,
+}
+
+/// A UTF-8-safe suffix of a document.
+///
+/// `start_byte` is the byte position in the source document where `bytes`
+/// begins. `total_bytes` is the source length. `truncated` is true when bytes
+/// before the returned window were omitted, including when a partial first
+/// line was discarded.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DocumentReadWindow {
+    pub bytes: Vec<u8>,
+    pub start_byte: u64,
+    pub total_bytes: u64,
+    pub truncated: bool,
 }
 
 /// Failure from a conditional document save.
@@ -92,6 +106,153 @@ pub fn read_document_bytes(path: &Path) -> Result<DocumentBytes, PlatformError> 
         content_hash: stable_hash(&bytes),
     };
     Ok(DocumentBytes { bytes, fingerprint })
+}
+
+/// Reads at most `max_bytes` from the end of a regular UTF-8 document.
+///
+/// When the requested byte window begins inside a UTF-8 code point, the
+/// leading code-point fragment is omitted. If the file was truncated and the
+/// window contains a line ending, a leading partial line is also omitted so
+/// callers never display a misleading fragment of an earlier line. A single
+/// line longer than the window is retained as a tail instead of becoming an
+/// empty document.
+pub fn read_document_tail_bytes(
+    path: &Path,
+    max_bytes: usize,
+) -> Result<DocumentReadWindow, PlatformError> {
+    validate_no_follow_path(path, true)?;
+    let mut file = File::open(path).map_err(|error| PlatformError::Io {
+        operation: "open document tail",
+        path: Some(path.to_path_buf()),
+        message: error.to_string(),
+    })?;
+    let metadata = file.metadata().map_err(|error| PlatformError::Io {
+        operation: "read document tail metadata",
+        path: Some(path.to_path_buf()),
+        message: error.to_string(),
+    })?;
+    if !metadata.is_file() {
+        return Err(PlatformError::InvalidInput {
+            message: format!("document is not a regular file: {}", path.display()),
+        });
+    }
+
+    let total_bytes = metadata.len();
+    let initial_modified = metadata.modified().ok();
+    let requested_start = total_bytes.saturating_sub(max_bytes as u64);
+    let prefix_len = requested_start.min(3) as usize;
+    let read_start = requested_start.saturating_sub(prefix_len as u64);
+    let read_len = total_bytes.saturating_sub(read_start);
+    let capacity = usize::try_from(read_len).map_err(|_| PlatformError::InvalidInput {
+        message: format!("document tail is too large to read: {}", path.display()),
+    })?;
+    file.seek(SeekFrom::Start(read_start))
+        .map_err(|error| PlatformError::Io {
+            operation: "seek document tail",
+            path: Some(path.to_path_buf()),
+            message: error.to_string(),
+        })?;
+    let mut bytes = Vec::with_capacity(capacity);
+    Read::by_ref(&mut file)
+        .take(read_len)
+        .read_to_end(&mut bytes)
+        .map_err(|error| PlatformError::Io {
+            operation: "read document tail",
+            path: Some(path.to_path_buf()),
+            message: error.to_string(),
+        })?;
+
+    let utf8_start = utf8_tail_start(&bytes, prefix_len, path)?;
+    let mut start_byte = read_start + utf8_start as u64;
+    if utf8_start > 0 {
+        bytes.drain(..utf8_start);
+    }
+    if requested_start > 0
+        && !starts_after_line_ending(&mut file, start_byte, path)?
+        && let Some(discarded) = first_line_ending_end(&bytes)
+    {
+        bytes.drain(..discarded);
+        start_byte += discarded as u64;
+    }
+
+    let final_metadata = file.metadata().map_err(|error| PlatformError::Io {
+        operation: "verify document tail metadata",
+        path: Some(path.to_path_buf()),
+        message: error.to_string(),
+    })?;
+    if final_metadata.len() != total_bytes || final_metadata.modified().ok() != initial_modified {
+        return Err(PlatformError::Io {
+            operation: "read stable document tail",
+            path: Some(path.to_path_buf()),
+            message: "document changed while it was being read".to_string(),
+        });
+    }
+    validate_no_follow_path(path, true)?;
+
+    Ok(DocumentReadWindow {
+        bytes,
+        start_byte,
+        total_bytes,
+        truncated: start_byte > 0,
+    })
+}
+
+fn utf8_tail_start(
+    bytes: &[u8],
+    requested_index: usize,
+    path: &Path,
+) -> Result<usize, PlatformError> {
+    for candidate in 0..=requested_index.min(bytes.len()) {
+        let Ok(text) = std::str::from_utf8(&bytes[candidate..]) else {
+            continue;
+        };
+        let requested = requested_index.saturating_sub(candidate).min(text.len());
+        if text.is_char_boundary(requested) {
+            return Ok(candidate + requested);
+        }
+        if let Some(next) =
+            (requested.saturating_add(1)..=text.len()).find(|index| text.is_char_boundary(*index))
+        {
+            return Ok(candidate + next);
+        }
+    }
+    Err(PlatformError::InvalidInput {
+        message: format!("document tail is not valid UTF-8: {}", path.display()),
+    })
+}
+
+fn starts_after_line_ending(
+    file: &mut File,
+    start_offset: u64,
+    path: &Path,
+) -> Result<bool, PlatformError> {
+    if start_offset == 0 {
+        return Ok(true);
+    }
+    file.seek(SeekFrom::Start(start_offset - 1))
+        .and_then(|_| {
+            let mut previous = [0_u8; 1];
+            file.read_exact(&mut previous)
+                .map(|_| matches!(previous[0], b'\n' | b'\r'))
+        })
+        .map_err(|error| PlatformError::Io {
+            operation: "inspect document tail line boundary",
+            path: Some(path.to_path_buf()),
+            message: error.to_string(),
+        })
+}
+
+fn first_line_ending_end(bytes: &[u8]) -> Option<usize> {
+    let index = bytes
+        .iter()
+        .position(|byte| matches!(*byte, b'\n' | b'\r'))?;
+    Some(
+        if bytes[index] == b'\r' && bytes.get(index + 1) == Some(&b'\n') {
+            index + 2
+        } else {
+            index + 1
+        },
+    )
 }
 
 pub fn document_fingerprint(path: &Path) -> Result<DocumentFingerprint, PlatformError> {
@@ -315,12 +476,31 @@ fn temporary_path(path: &Path, attempt: u8) -> PathBuf {
     ))
 }
 
-fn stable_hash(bytes: &[u8]) -> u64 {
+struct StableHasher(u64);
+
+impl StableHasher {
     const OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
     const PRIME: u64 = 0x0000_0100_0000_01b3;
-    bytes.iter().fold(OFFSET, |hash, byte| {
-        (hash ^ u64::from(*byte)).wrapping_mul(PRIME)
-    })
+
+    fn new() -> Self {
+        Self(Self::OFFSET)
+    }
+
+    fn write(&mut self, bytes: &[u8]) {
+        for byte in bytes {
+            self.0 = (self.0 ^ u64::from(*byte)).wrapping_mul(Self::PRIME);
+        }
+    }
+
+    fn finish(self) -> u64 {
+        self.0
+    }
+}
+
+fn stable_hash(bytes: &[u8]) -> u64 {
+    let mut hasher = StableHasher::new();
+    hasher.write(bytes);
+    hasher.finish()
 }
 
 #[cfg(not(windows))]
@@ -485,6 +665,120 @@ mod tests {
     }
 
     #[test]
+    fn tail_read_returns_complete_small_document() {
+        let directory = unique_temp_dir();
+        let path = directory.join("report.txt");
+        let contents = b"first line\nsecond line\n";
+        fs::write(&path, contents).unwrap();
+
+        let tail = read_document_tail_bytes(&path, 4096).unwrap();
+
+        assert_eq!(tail.bytes, contents);
+        assert_eq!(tail.start_byte, 0);
+        assert_eq!(tail.total_bytes, contents.len() as u64);
+        assert!(!tail.truncated);
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn tail_read_drops_a_partial_first_line() {
+        let directory = unique_temp_dir();
+        let path = directory.join("report.txt");
+        let contents = b"first line\nsecond line\nthird line\n";
+        fs::write(&path, contents).unwrap();
+
+        let tail = read_document_tail_bytes(&path, 18).unwrap();
+
+        assert_eq!(tail.bytes, b"third line\n");
+        assert_eq!(tail.start_byte, "first line\nsecond line\n".len() as u64);
+        assert_eq!(tail.total_bytes, contents.len() as u64);
+        assert!(tail.truncated);
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn tail_read_preserves_a_window_that_starts_on_a_line_boundary() {
+        let directory = unique_temp_dir();
+        let path = directory.join("report.txt");
+        fs::write(&path, b"head\nkept\n").unwrap();
+
+        let tail = read_document_tail_bytes(&path, b"kept\n".len()).unwrap();
+
+        assert_eq!(tail.bytes, b"kept\n");
+        assert_eq!(tail.start_byte, b"head\n".len() as u64);
+        assert!(tail.truncated);
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn tail_read_aligns_utf8_before_dropping_the_partial_line() {
+        let directory = unique_temp_dir();
+        let path = directory.join("report.txt");
+        let contents = "header\n😀 partial line\nfinal line\n";
+        fs::write(&path, contents).unwrap();
+        let final_start = contents.find("final line").unwrap() as u64;
+
+        let tail = read_document_tail_bytes(&path, 23).unwrap();
+
+        assert_eq!(tail.bytes, b"final line\n");
+        assert_eq!(tail.start_byte, final_start);
+        assert!(std::str::from_utf8(&tail.bytes).is_ok());
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn tail_read_rejects_invalid_utf8() {
+        let directory = unique_temp_dir();
+        let path = directory.join("report.txt");
+        fs::write(&path, [b'o', b'k', b'\n', 0xff]).unwrap();
+
+        let error = read_document_tail_bytes(&path, 16).expect_err("invalid UTF-8 must fail");
+
+        assert!(matches!(error, PlatformError::InvalidInput { .. }));
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn tail_read_rejects_an_invalid_continuation_at_the_window_start() {
+        let directory = unique_temp_dir();
+        let path = directory.join("report.txt");
+        fs::write(&path, [b'a', 0x80, b'b']).unwrap();
+
+        let error = read_document_tail_bytes(&path, 2).expect_err("invalid UTF-8 must fail");
+
+        assert!(matches!(error, PlatformError::InvalidInput { .. }));
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn tail_read_keeps_the_suffix_of_a_single_oversized_line() {
+        let directory = unique_temp_dir();
+        let path = directory.join("single-line.log");
+        fs::write(&path, b"0123456789").unwrap();
+
+        let tail = read_document_tail_bytes(&path, 5).unwrap();
+
+        assert_eq!(tail.bytes, b"56789");
+        assert_eq!(tail.start_byte, 5);
+        assert!(tail.truncated);
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn tail_read_recognizes_cr_only_line_endings() {
+        let directory = unique_temp_dir();
+        let path = directory.join("cr.log");
+        let contents = b"first\rsecond\rthird\r";
+        fs::write(&path, contents).unwrap();
+
+        let tail = read_document_tail_bytes(&path, 10).unwrap();
+
+        assert_eq!(tail.bytes, b"third\r");
+        assert_eq!(tail.start_byte, b"first\rsecond\r".len() as u64);
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
     fn conditional_write_refuses_to_overwrite_an_external_edit() {
         let directory = unique_temp_dir();
         let path = directory.join("note.md");
@@ -569,6 +863,7 @@ mod tests {
         let link = directory.join("link.md");
         symlink(&real, &link).unwrap();
         assert!(read_document_bytes(&link).is_err());
+        assert!(read_document_tail_bytes(&link, 1024).is_err());
         assert!(atomic_write_document(&link, b"unsafe").is_err());
         fs::remove_dir_all(directory).unwrap();
     }

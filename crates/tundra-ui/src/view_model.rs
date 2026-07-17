@@ -373,15 +373,17 @@ pub struct DebugDiagnosticsViewModel {
 pub enum DiagnosticsTab {
     #[default]
     Health,
+    Logs,
     Incidents,
 }
 
 impl DiagnosticsTab {
-    pub const ALL: [Self; 2] = [Self::Health, Self::Incidents];
+    pub const ALL: [Self; 3] = [Self::Health, Self::Logs, Self::Incidents];
 
     pub const fn label(self) -> &'static str {
         match self {
             Self::Health => "Health",
+            Self::Logs => "Logs",
             Self::Incidents => "Incidents",
         }
     }
@@ -439,6 +441,14 @@ pub struct DiagnosticsIncidentViewModel {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DiagnosticsLogViewModel {
+    pub relative_path: String,
+    pub path: String,
+    pub modified_at: String,
+    pub size_bytes: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DiagnosticsRepairItemViewModel {
     pub id: String,
     pub label: String,
@@ -457,8 +467,10 @@ pub struct DiagnosticsViewModel {
     pub tab: DiagnosticsTab,
     pub checks: Vec<DiagnosticsCheckViewModel>,
     pub incidents: Vec<DiagnosticsIncidentViewModel>,
+    pub logs: Vec<DiagnosticsLogViewModel>,
     pub selected_check: usize,
     pub selected_incident: usize,
+    pub selected_log: usize,
     pub list_window_start: usize,
     pub scanning: bool,
     pub can_view_details: bool,
@@ -478,10 +490,16 @@ impl DiagnosticsViewModel {
         self.incidents.get(self.selected_incident)
     }
 
+    pub fn selected_log(&self) -> Option<&DiagnosticsLogViewModel> {
+        self.logs.get(self.selected_log)
+    }
+
     pub fn item_count(&self) -> usize {
         match self.tab {
             DiagnosticsTab::Health => self.checks.len(),
             DiagnosticsTab::Incidents => self.incidents.len(),
+            DiagnosticsTab::Logs if self.can_view_details => self.logs.len(),
+            DiagnosticsTab::Logs => 0,
         }
     }
 
@@ -489,6 +507,7 @@ impl DiagnosticsViewModel {
         match self.tab {
             DiagnosticsTab::Health => self.selected_check,
             DiagnosticsTab::Incidents => self.selected_incident,
+            DiagnosticsTab::Logs => self.selected_log,
         }
     }
 }

@@ -79,6 +79,7 @@ pub enum DiagnosticsHitTarget {
     Tab(DiagnosticsTab),
     Check(usize),
     Incident(usize),
+    Log(usize),
     RepairItem(usize),
     RepairConfirm,
     RepairCancel,
@@ -128,6 +129,7 @@ impl DiagnosticsLayout {
             .map(|row| match self.active_tab {
                 DiagnosticsTab::Health => DiagnosticsHitTarget::Check(row.index),
                 DiagnosticsTab::Incidents => DiagnosticsHitTarget::Incident(row.index),
+                DiagnosticsTab::Logs => DiagnosticsHitTarget::Log(row.index),
             })
     }
 }

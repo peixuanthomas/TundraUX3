@@ -1,7 +1,9 @@
 use crate::{ShellComponent, ShellPopup};
 use std::path::PathBuf;
 use tundra_core::DebugPolicy;
-use tundra_platform::{AppPaths, Platform, PlatformCapabilities, PlatformError, PlatformKind};
+use tundra_platform::{
+    AppPaths, Platform, PlatformCapabilities, PlatformError, PlatformKind, StartupPermissionStatus,
+};
 use tundra_storage::{StorageError, StorageLoadReport, StorageManager, UserRecord};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -282,6 +284,7 @@ pub fn prepare_shell_startup(
     launch_config: ShellLaunchConfig,
 ) -> Result<ShellStartupState, ShellStartupError> {
     let _ = launch_config;
+    ensure_startup_permissions(platform)?;
     let platform_kind = platform.kind();
     let platform_capabilities = platform.capabilities();
     let storage_open = StorageManager::open_from_platform(platform)?;
@@ -309,6 +312,25 @@ pub fn prepare_shell_startup(
         login_users,
         debug_policy,
     })
+}
+
+fn ensure_startup_permissions(platform: &dyn Platform) -> Result<(), ShellStartupError> {
+    let StartupPermissionStatus::ActionRequired { name, message } =
+        platform.startup_permission_status()?
+    else {
+        return Ok(());
+    };
+
+    let request_error = platform.request_startup_permissions().err();
+    let request_detail = request_error
+        .map(|error| {
+            format!(" The operating-system permission screen could not be opened: {error}")
+        })
+        .unwrap_or_default();
+    Err(ShellStartupError::Platform(PlatformError::Native {
+        operation: "startup permission check",
+        message: format!("{name} is required. {message}{request_detail}"),
+    }))
 }
 
 pub(crate) fn app_paths_from_storage_layout(

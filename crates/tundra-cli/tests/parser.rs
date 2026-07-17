@@ -325,6 +325,8 @@ fn weathr_command_passes_setup_timezone_location_to_launcher() {
     assert!(stderr.is_empty());
 
     let options = captured.expect("launcher receives options");
+    assert!(!options.load_config_file);
+    assert!(!options.prefer_config_location);
     assert_eq!(options.timezone_id.as_deref(), Some("Asia/Shanghai"));
     let location = options
         .location_override
@@ -356,7 +358,11 @@ fn weathr_command_uses_default_options_when_storage_config_is_missing() {
     assert_eq!(exit_code, 0);
     assert!(stdout.is_empty());
     assert!(stderr.is_empty());
-    assert_eq!(captured, Some(tundra_weathr::LaunchOptions::default()));
+    let options = captured.expect("launcher receives options");
+    assert!(!options.load_config_file);
+    assert!(!options.prefer_config_location);
+    assert_eq!(options.location_override, None);
+    assert_eq!(options.timezone_id, None);
 }
 
 #[test]
@@ -388,7 +394,11 @@ fn weathr_command_uses_default_options_when_storage_config_is_corrupt() {
     assert_eq!(exit_code, 0);
     assert!(stdout.is_empty());
     assert!(stderr.is_empty());
-    assert_eq!(captured, Some(tundra_weathr::LaunchOptions::default()));
+    let options = captured.expect("launcher receives options");
+    assert!(!options.load_config_file);
+    assert!(!options.prefer_config_location);
+    assert_eq!(options.location_override, None);
+    assert_eq!(options.timezone_id, None);
 }
 
 #[test]

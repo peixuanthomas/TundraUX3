@@ -414,6 +414,9 @@ impl ShellState {
             InputKey::Escape => (RoutedTarget::Global, ShellCommand::CloseDiagnostics),
             InputKey::Tab | InputKey::Right => match self.diagnostics_tab {
                 tundra_ui::DiagnosticsTab::Health => {
+                    (target, ShellCommand::DiagnosticsLogsTab)
+                }
+                tundra_ui::DiagnosticsTab::Logs => {
                     (target, ShellCommand::DiagnosticsIncidentsTab)
                 }
                 tundra_ui::DiagnosticsTab::Incidents => {
@@ -424,8 +427,11 @@ impl ShellState {
                 tundra_ui::DiagnosticsTab::Health => {
                     (target, ShellCommand::DiagnosticsIncidentsTab)
                 }
-                tundra_ui::DiagnosticsTab::Incidents => {
+                tundra_ui::DiagnosticsTab::Logs => {
                     (target, ShellCommand::DiagnosticsHealthTab)
+                }
+                tundra_ui::DiagnosticsTab::Incidents => {
+                    (target, ShellCommand::DiagnosticsLogsTab)
                 }
             },
             InputKey::Up => (target, ShellCommand::DiagnosticsPrevious),
@@ -435,12 +441,26 @@ impl ShellState {
             InputKey::Home => (target, ShellCommand::DiagnosticsFirst),
             InputKey::End => (target, ShellCommand::DiagnosticsLast),
             InputKey::Character('r' | 'R') => (target, ShellCommand::DiagnosticsRescan),
-            InputKey::Character('f' | 'F') => {
+            InputKey::Character('f' | 'F')
+                if self.diagnostics_tab == tundra_ui::DiagnosticsTab::Health =>
+            {
                 (target, ShellCommand::DiagnosticsPreviewSelectedRepair)
             }
-            InputKey::Character('a' | 'A') => (target, ShellCommand::DiagnosticsPreviewAllRepairs),
+            InputKey::Character('a' | 'A')
+                if self.diagnostics_tab == tundra_ui::DiagnosticsTab::Health =>
+            {
+                (target, ShellCommand::DiagnosticsPreviewAllRepairs)
+            }
             InputKey::Character('c' | 'C') => (target, ShellCommand::DiagnosticsCopySummary),
             InputKey::Character('o' | 'O') => (target, ShellCommand::DiagnosticsOpenReport),
+            InputKey::Enter
+                if matches!(
+                    self.diagnostics_tab,
+                    tundra_ui::DiagnosticsTab::Logs | tundra_ui::DiagnosticsTab::Incidents
+                ) =>
+            {
+                (target, ShellCommand::DiagnosticsOpenReport)
+            }
             _ => (target, ShellCommand::RecordInput),
         }
     }
@@ -1291,10 +1311,14 @@ impl ShellState {
                 Some(tundra_ui::DiagnosticsHitTarget::Tab(tundra_ui::DiagnosticsTab::Health)) => {
                     (routed, ShellCommand::DiagnosticsHealthTab)
                 }
+                Some(tundra_ui::DiagnosticsHitTarget::Tab(tundra_ui::DiagnosticsTab::Logs)) => {
+                    (routed, ShellCommand::DiagnosticsLogsTab)
+                }
                 Some(tundra_ui::DiagnosticsHitTarget::Tab(
                     tundra_ui::DiagnosticsTab::Incidents,
                 )) => (routed, ShellCommand::DiagnosticsIncidentsTab),
                 Some(tundra_ui::DiagnosticsHitTarget::Check(index))
+                | Some(tundra_ui::DiagnosticsHitTarget::Log(index))
                 | Some(tundra_ui::DiagnosticsHitTarget::Incident(index)) => {
                     (routed, ShellCommand::DiagnosticsSelectIndex(index))
                 }

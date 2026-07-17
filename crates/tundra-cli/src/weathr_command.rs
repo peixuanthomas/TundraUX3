@@ -146,6 +146,12 @@ fn incident_report(incidents: &[IncidentReceipt], incident_id: &str) -> Option<S
 }
 
 fn weathr_launch_options(platform: &dyn Platform) -> LaunchOptions {
+    let mut options = LaunchOptions {
+        load_config_file: false,
+        prefer_config_location: false,
+        ..LaunchOptions::default()
+    };
+
     let Some(config) = platform
         .app_paths()
         .ok()
@@ -153,13 +159,10 @@ fn weathr_launch_options(platform: &dyn Platform) -> LaunchOptions {
         .map(StorageManager::from_layout)
         .and_then(|storage| storage.load_config().ok())
     else {
-        return LaunchOptions::default();
+        return options;
     };
 
-    let mut options = LaunchOptions {
-        timezone_id: Some(config.timezone.clone()),
-        ..LaunchOptions::default()
-    };
+    options.timezone_id = Some(config.timezone.clone());
 
     if let Some(timezone) = tundra_ui::setup_timezone_options()
         .into_iter()

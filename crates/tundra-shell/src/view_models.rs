@@ -38,7 +38,7 @@ impl ShellState {
     pub fn to_diagnostics_view_model(&self) -> tundra_ui::DiagnosticsViewModel {
         let can_view_details = self.diagnostics_can_view_details();
         let can_repair = self.diagnostics_can_repair();
-        let (checks, incidents, scanned_at) = self
+        let (checks, logs, incidents, scanned_at) = self
             .diagnostics_snapshot
             .as_ref()
             .map(|snapshot| {
@@ -120,8 +120,26 @@ impl ShellState {
                         }
                     })
                     .collect();
+                let logs = if can_view_details {
+                    snapshot
+                        .logs
+                        .iter()
+                        .map(|log| tundra_ui::DiagnosticsLogViewModel {
+                            relative_path: log.relative_path.display().to_string(),
+                            path: log.path.display().to_string(),
+                            modified_at: log
+                                .modified_at
+                                .format("%Y-%m-%d %H:%M:%S UTC")
+                                .to_string(),
+                            size_bytes: log.size_bytes,
+                        })
+                        .collect()
+                } else {
+                    Vec::new()
+                };
                 (
                     checks,
+                    logs,
                     incidents,
                     Some(
                         snapshot
@@ -131,7 +149,7 @@ impl ShellState {
                     ),
                 )
             })
-            .unwrap_or_else(|| (Vec::new(), Vec::new(), None));
+            .unwrap_or_else(|| (Vec::new(), Vec::new(), Vec::new(), None));
 
         let repair_dialog = (!self.diagnostics_repair_preview.is_empty()).then(|| {
             tundra_ui::DiagnosticsRepairDialogViewModel {
@@ -155,8 +173,10 @@ impl ShellState {
         tundra_ui::DiagnosticsViewModel {
             tab: self.diagnostics_tab,
             checks,
+            logs,
             incidents,
             selected_check: self.diagnostics_selected_check,
+            selected_log: self.diagnostics_selected_log,
             selected_incident: self.diagnostics_selected_incident,
             list_window_start: self.diagnostics_list_window_start,
             scanning: self.diagnostics_scanning

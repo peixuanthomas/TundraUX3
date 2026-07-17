@@ -1,7 +1,7 @@
 #[cfg(target_os = "macos")]
 use std::collections::{BTreeMap, BTreeSet};
 #[cfg(target_os = "macos")]
-use std::ffi::{CString, c_void};
+use std::ffi::{CStr, CString, c_char, c_void};
 use std::ffi::{OsStr, OsString};
 use std::io::Write;
 #[cfg(target_os = "macos")]
@@ -15,7 +15,8 @@ use crate::paths::home_dir_from_env;
 use crate::{
     AppPaths, CapabilityStatus, DirectoryListing, FileAttributes, FileOpenPolicy, LocalVolume,
     Platform, PlatformCapabilities, PlatformError, PlatformKind, ProcessExit, ProcessSpec,
-    TrashEntry, TrashEntryId, TrashRestoreTarget, TrashStats, UserDirs, build_macos_app_paths,
+    StartupPermissionStatus, TrashEntry, TrashEntryId, TrashRestoreTarget, TrashStats, UserDirs,
+    build_macos_app_paths,
 };
 
 const OPEN: &str = "/usr/bin/open";
@@ -23,12 +24,28 @@ const PBCOPY: &str = "/usr/bin/pbcopy";
 const PBPASTE: &str = "/usr/bin/pbpaste";
 #[cfg(target_os = "macos")]
 const OSASCRIPT: &str = "/usr/bin/osascript";
+const FULL_DISK_ACCESS_SETTINGS_URI: &str =
+    "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles";
 
 #[cfg(target_os = "macos")]
 unsafe extern "C" {
     fn kill(pid: i32, signal: i32) -> i32;
     fn __error() -> *mut i32;
 }
+
+#[cfg(target_os = "macos")]
+#[link(name = "objc")]
+unsafe extern "C" {
+    fn objc_getClass(name: *const c_char) -> *mut c_void;
+    fn sel_registerName(name: *const c_char) -> *mut c_void;
+    fn objc_msgSend();
+}
+
+// Loading Foundation explicitly makes NSFileManager available even when
+// tundra-platform is exercised by its standalone native smoke test.
+#[cfg(target_os = "macos")]
+#[link(name = "Foundation", kind = "framework")]
+unsafe extern "C" {}
 
 #[derive(Debug, Clone, Copy, Default)]
 pub struct MacosPlatform;
@@ -46,6 +63,36 @@ impl Platform for MacosPlatform {
 
     fn is_native_backend(&self) -> bool {
         true
+    }
+
+    fn startup_permission_status(&self) -> Result<StartupPermissionStatus, PlatformError> {
+        if macos_full_disk_access_ready()? {
+            Ok(StartupPermissionStatus::Ready)
+        } else {
+            Ok(StartupPermissionStatus::action_required(
+                "Full Disk Access",
+                "TundraUX3 Explorer needs access to the system Trash. Enable TundraUX3 in System Settings > Privacy & Security > Full Disk Access, then quit and reopen the application.",
+            ))
+        }
+    }
+
+    fn request_startup_permissions(&self) -> Result<(), PlatformError> {
+        let dialog_error = macos_show_critical_error(
+            "TundraUX3 needs Full Disk Access",
+            "Explorer needs Full Disk Access to list, restore, and empty the macOS Trash. Add and enable TundraUX3 in System Settings, then quit and reopen the application.",
+        )
+        .err();
+        let settings_result = run_open([OsString::from(FULL_DISK_ACCESS_SETTINGS_URI)]);
+        match (settings_result, dialog_error) {
+            (Ok(()), _) => Ok(()),
+            (Err(settings_error), None) => Err(settings_error),
+            (Err(settings_error), Some(dialog_error)) => Err(PlatformError::Native {
+                operation: "request Full Disk Access",
+                message: format!(
+                    "could not show the permission prompt ({dialog_error}) or open System Settings ({settings_error})"
+                ),
+            }),
+        }
     }
 
     fn user_dirs(&self) -> Result<UserDirs, PlatformError> {
@@ -216,6 +263,50 @@ impl Platform for MacosPlatform {
     fn file_open_policy(&self, path: &Path, attributes: &FileAttributes) -> FileOpenPolicy {
         crate::default_file_open_policy(PlatformKind::Macos, path, attributes)
     }
+}
+
+#[cfg(target_os = "macos")]
+fn macos_full_disk_access_ready() -> Result<bool, PlatformError> {
+    let home = home_dir_from_env()?;
+    let trash = home.join(".Trash");
+    match std::fs::read_dir(&trash) {
+        Ok(_) => return Ok(true),
+        Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => return Ok(false),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => {
+            return Err(macos_io(
+                "check Full Disk Access using the system Trash",
+                Some(&trash),
+                error,
+            ));
+        }
+    }
+
+    // A new account may not have created ~/.Trash yet. The per-user TCC
+    // database is always protected by Full Disk Access, so it is a reliable
+    // non-mutating fallback probe when present.
+    let tcc_database = home
+        .join("Library")
+        .join("Application Support")
+        .join("com.apple.TCC")
+        .join("TCC.db");
+    match std::fs::File::open(&tcc_database) {
+        Ok(_) => Ok(true),
+        Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => Ok(false),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(macos_io(
+            "check Full Disk Access using the TCC database",
+            Some(&tcc_database),
+            error,
+        )),
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn macos_full_disk_access_ready() -> Result<bool, PlatformError> {
+    Err(PlatformError::Unsupported {
+        capability: "full_disk_access.macos",
+    })
 }
 
 #[cfg(target_os = "macos")]
@@ -518,17 +609,11 @@ fn macos_move_to_trash(platform: &MacosPlatform, paths: &[PathBuf]) -> Result<()
     let mut index = load_trash_index(platform)?;
     for source in paths {
         validate_trash_source(source)?;
-        let trash_root = trash_root_for_source(source)?;
-        ensure_trash_root(&trash_root)?;
-        let name = source
-            .file_name()
-            .ok_or_else(|| PlatformError::InvalidInput {
-                message: format!(
-                    "cannot move a filesystem root to Trash: {}",
-                    source.display()
-                ),
-            })?;
-        let trash_path = unique_trash_path(&trash_root, name);
+        // NSFileManager owns Trash placement on macOS. Directly renaming into
+        // ~/.Trash bypasses the system service and is rejected by macOS privacy
+        // controls for ordinary applications. The returned URL is authoritative
+        // because the system may choose a volume-specific root or a unique name.
+        let trash_path = macos_native_move_to_trash(source)?;
         let id = unique_trash_id(&index);
         index.insert(
             id.clone(),
@@ -538,32 +623,100 @@ fn macos_move_to_trash(platform: &MacosPlatform, paths: &[PathBuf]) -> Result<()
                 original_path: source.clone(),
             },
         );
-        save_trash_index(platform, &index)?;
-        if let Err(error) = macos_rename_exclusive(source, &trash_path) {
+        if let Err(index_error) = save_trash_index(platform, &index) {
             index.remove(&id);
-            let cleanup_error = save_trash_index(platform, &index).err();
-            let mut mapped = if error.raw_os_error() == Some(18) {
-                PlatformError::CrossDevice {
-                    source: source.clone(),
-                    target: trash_path,
-                    message: "the source volume does not expose its per-user system Trash"
-                        .to_string(),
-                }
-            } else {
-                macos_io("move item to Trash", Some(source), error)
-            };
-            if let Some(cleanup_error) = cleanup_error {
-                mapped = PlatformError::Native {
+            if let Err(rollback_error) = macos_rename_exclusive(&trash_path, source) {
+                return Err(PlatformError::Native {
                     operation: "move item to Trash",
                     message: format!(
-                        "{mapped}; additionally failed to roll back Trash index: {cleanup_error}"
+                        "{index_error}; additionally failed to restore the item after the Trash index could not be saved: {rollback_error}"
                     ),
-                };
+                });
             }
-            return Err(mapped);
+            return Err(index_error);
         }
     }
     Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn macos_native_move_to_trash(source: &Path) -> Result<PathBuf, PlatformError> {
+    use std::os::unix::ffi::{OsStrExt, OsStringExt};
+
+    let source_metadata = std::fs::symlink_metadata(source)
+        .map_err(|error| macos_io("locate item to move to Trash", Some(source), error))?;
+    let source_c =
+        CString::new(source.as_os_str().as_bytes()).map_err(|_| PlatformError::InvalidInput {
+            message: "Trash source contains an invalid NUL byte".to_string(),
+        })?;
+    let _pool = MacosAutoreleasePool::new()?;
+
+    let url_class = objc_class(c"NSURL")?;
+    let file_manager_class = objc_class(c"NSFileManager")?;
+    let source_url = unsafe {
+        objc_send_file_url(
+            url_class,
+            objc_selector(c"fileURLWithFileSystemRepresentation:isDirectory:relativeToURL:"),
+            source_c.as_ptr(),
+            i8::from(source_metadata.is_dir()),
+            std::ptr::null_mut(),
+        )
+    };
+    if source_url.is_null() {
+        return Err(PlatformError::Native {
+            operation: "NSURL::fileURLWithFileSystemRepresentation",
+            message: "Foundation returned a null file URL".to_string(),
+        });
+    }
+
+    let file_manager =
+        unsafe { objc_send_object(file_manager_class, objc_selector(c"defaultManager")) };
+    if file_manager.is_null() {
+        return Err(PlatformError::Native {
+            operation: "NSFileManager::defaultManager",
+            message: "Foundation returned a null file manager".to_string(),
+        });
+    }
+
+    let mut resulting_url = std::ptr::null_mut();
+    let mut native_error = std::ptr::null_mut();
+    let moved = unsafe {
+        objc_send_trash_item(
+            file_manager,
+            objc_selector(c"trashItemAtURL:resultingItemURL:error:"),
+            source_url,
+            &mut resulting_url,
+            &mut native_error,
+        )
+    };
+    if moved == 0 {
+        return Err(PlatformError::Native {
+            operation: "NSFileManager::trashItemAtURL",
+            message: macos_foundation_error_message(native_error),
+        });
+    }
+    if resulting_url.is_null() {
+        return Err(PlatformError::Native {
+            operation: "NSFileManager::trashItemAtURL",
+            message: "Foundation moved the item but did not return its Trash URL".to_string(),
+        });
+    }
+
+    let representation =
+        unsafe { objc_send_c_string(resulting_url, objc_selector(c"fileSystemRepresentation")) };
+    if representation.is_null() {
+        return Err(PlatformError::Native {
+            operation: "NSURL::fileSystemRepresentation",
+            message: "Foundation returned a null Trash path".to_string(),
+        });
+    }
+    let path = PathBuf::from(OsString::from_vec(
+        unsafe { CStr::from_ptr(representation) }
+            .to_bytes()
+            .to_vec(),
+    ));
+    validate_lexically_safe_absolute_path(&path, "resulting Trash path")?;
+    Ok(path)
 }
 
 #[cfg(target_os = "macos")]
@@ -716,21 +869,6 @@ fn validate_restore_destination(destination: &Path) -> Result<(), PlatformError>
 }
 
 #[cfg(target_os = "macos")]
-fn trash_root_for_source(source: &Path) -> Result<PathBuf, PlatformError> {
-    validate_lexically_safe_absolute_path(source, "Trash source")?;
-    let volumes = macos_local_volumes()?;
-    let volume = volume_for_path(source, &volumes)?;
-    if volume.root == Path::new("/") {
-        Ok(home_dir_from_env()?.join(".Trash"))
-    } else {
-        Ok(volume
-            .root
-            .join(".Trashes")
-            .join(effective_uid().to_string()))
-    }
-}
-
-#[cfg(target_os = "macos")]
 fn macos_trash_roots() -> Result<Vec<PathBuf>, PlatformError> {
     let home_trash = home_dir_from_env()?.join(".Trash");
     let mut roots = Vec::new();
@@ -776,44 +914,6 @@ unsafe extern "C" {
         state: *mut c_void,
         flags: u32,
     ) -> i32;
-}
-
-#[cfg(target_os = "macos")]
-fn ensure_trash_root(root: &Path) -> Result<(), PlatformError> {
-    use std::os::unix::fs::PermissionsExt;
-    let home_trash = home_dir_from_env()?.join(".Trash");
-    if root != home_trash {
-        let recognized = macos_local_volumes()?
-            .into_iter()
-            .filter(|volume| volume.root != Path::new("/"))
-            .any(|volume| {
-                root == volume
-                    .root
-                    .join(".Trashes")
-                    .join(effective_uid().to_string())
-            });
-        if !recognized {
-            return Err(PlatformError::InvalidInput {
-                message: format!("unrecognized system Trash directory: {}", root.display()),
-            });
-        }
-        let container = root.parent().expect("external Trash root has a parent");
-        if !real_directory_exists(container, "inspect volume Trash directory")? {
-            std::fs::create_dir(container).map_err(|error| {
-                macos_io("create volume Trash directory", Some(container), error)
-            })?;
-            std::fs::set_permissions(container, std::fs::Permissions::from_mode(0o1777)).map_err(
-                |error| macos_io("secure volume Trash directory", Some(container), error),
-            )?;
-        }
-    }
-    if !validate_existing_trash_root(root)? {
-        std::fs::create_dir(root)
-            .map_err(|error| macos_io("create per-user Trash directory", Some(root), error))?;
-    }
-    std::fs::set_permissions(root, std::fs::Permissions::from_mode(0o700))
-        .map_err(|error| macos_io("secure per-user Trash directory", Some(root), error))?;
-    Ok(())
 }
 
 #[cfg(target_os = "macos")]
@@ -909,26 +1009,6 @@ fn validate_existing_trash_root(root: &Path) -> Result<bool, PlatformError> {
         }
     }
     real_directory_exists(root, "inspect per-user Trash directory")
-}
-
-#[cfg(target_os = "macos")]
-fn unique_trash_path(root: &Path, name: &OsStr) -> PathBuf {
-    let original = Path::new(name);
-    let stem = original.file_stem().unwrap_or(name).to_os_string();
-    let extension = original.extension().map(|value| value.to_os_string());
-    let mut candidate = root.join(name);
-    let mut suffix = 2u64;
-    while std::fs::symlink_metadata(&candidate).is_ok() {
-        let mut candidate_name = stem.clone();
-        candidate_name.push(format!(" {suffix}"));
-        if let Some(extension) = &extension {
-            candidate_name.push(".");
-            candidate_name.push(extension);
-        }
-        candidate = root.join(candidate_name);
-        suffix += 1;
-    }
-    candidate
 }
 
 #[cfg(target_os = "macos")]
@@ -1097,6 +1177,140 @@ fn macos_rename_exclusive(source: &Path, destination: &Path) -> Result<(), std::
         Ok(())
     } else {
         Err(std::io::Error::last_os_error())
+    }
+}
+
+#[cfg(target_os = "macos")]
+struct MacosAutoreleasePool {
+    raw: *mut c_void,
+}
+
+#[cfg(target_os = "macos")]
+impl MacosAutoreleasePool {
+    fn new() -> Result<Self, PlatformError> {
+        let class = objc_class(c"NSAutoreleasePool")?;
+        let allocated = unsafe { objc_send_object(class, objc_selector(c"alloc")) };
+        let raw = unsafe { objc_send_object(allocated, objc_selector(c"init")) };
+        if raw.is_null() {
+            Err(PlatformError::Native {
+                operation: "NSAutoreleasePool::init",
+                message: "Foundation returned a null autorelease pool".to_string(),
+            })
+        } else {
+            Ok(Self { raw })
+        }
+    }
+}
+
+#[cfg(target_os = "macos")]
+impl Drop for MacosAutoreleasePool {
+    fn drop(&mut self) {
+        unsafe { objc_send_void(self.raw, objc_selector(c"drain")) };
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn objc_class(name: &CStr) -> Result<*mut c_void, PlatformError> {
+    let class = unsafe { objc_getClass(name.as_ptr()) };
+    if class.is_null() {
+        Err(PlatformError::Native {
+            operation: "objc_getClass",
+            message: format!(
+                "Objective-C class {} is unavailable",
+                name.to_string_lossy()
+            ),
+        })
+    } else {
+        Ok(class)
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn objc_selector(name: &CStr) -> *mut c_void {
+    unsafe { sel_registerName(name.as_ptr()) }
+}
+
+#[cfg(target_os = "macos")]
+unsafe fn objc_send_object(receiver: *mut c_void, selector: *mut c_void) -> *mut c_void {
+    let send: unsafe extern "C" fn(*mut c_void, *mut c_void) -> *mut c_void =
+        unsafe { std::mem::transmute(objc_msgSend as unsafe extern "C" fn()) };
+    unsafe { send(receiver, selector) }
+}
+
+#[cfg(target_os = "macos")]
+unsafe fn objc_send_file_url(
+    receiver: *mut c_void,
+    selector: *mut c_void,
+    representation: *const c_char,
+    is_directory: i8,
+    relative_to: *mut c_void,
+) -> *mut c_void {
+    let send: unsafe extern "C" fn(
+        *mut c_void,
+        *mut c_void,
+        *const c_char,
+        i8,
+        *mut c_void,
+    ) -> *mut c_void = unsafe { std::mem::transmute(objc_msgSend as unsafe extern "C" fn()) };
+    unsafe {
+        send(
+            receiver,
+            selector,
+            representation,
+            is_directory,
+            relative_to,
+        )
+    }
+}
+
+#[cfg(target_os = "macos")]
+unsafe fn objc_send_trash_item(
+    receiver: *mut c_void,
+    selector: *mut c_void,
+    source_url: *mut c_void,
+    resulting_url: *mut *mut c_void,
+    error: *mut *mut c_void,
+) -> i8 {
+    let send: unsafe extern "C" fn(
+        *mut c_void,
+        *mut c_void,
+        *mut c_void,
+        *mut *mut c_void,
+        *mut *mut c_void,
+    ) -> i8 = unsafe { std::mem::transmute(objc_msgSend as unsafe extern "C" fn()) };
+    unsafe { send(receiver, selector, source_url, resulting_url, error) }
+}
+
+#[cfg(target_os = "macos")]
+unsafe fn objc_send_c_string(receiver: *mut c_void, selector: *mut c_void) -> *const c_char {
+    let send: unsafe extern "C" fn(*mut c_void, *mut c_void) -> *const c_char =
+        unsafe { std::mem::transmute(objc_msgSend as unsafe extern "C" fn()) };
+    unsafe { send(receiver, selector) }
+}
+
+#[cfg(target_os = "macos")]
+unsafe fn objc_send_void(receiver: *mut c_void, selector: *mut c_void) {
+    let send: unsafe extern "C" fn(*mut c_void, *mut c_void) =
+        unsafe { std::mem::transmute(objc_msgSend as unsafe extern "C" fn()) };
+    unsafe { send(receiver, selector) };
+}
+
+#[cfg(target_os = "macos")]
+fn macos_foundation_error_message(error: *mut c_void) -> String {
+    if error.is_null() {
+        return "Foundation did not provide an NSError".to_string();
+    }
+    let description = unsafe { objc_send_object(error, objc_selector(c"localizedDescription")) };
+    if description.is_null() {
+        return "Foundation returned an NSError without a localized description".to_string();
+    }
+    let utf8 = unsafe { objc_send_c_string(description, objc_selector(c"UTF8String")) };
+    if utf8.is_null() {
+        "Foundation returned an NSError with an unreadable description".to_string()
+    } else {
+        unsafe { CStr::from_ptr(utf8) }
+            .to_string_lossy()
+            .into_owned()
     }
 }
 

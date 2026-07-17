@@ -1,12 +1,13 @@
 use std::collections::HashSet;
 use std::fmt;
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 
 use chrono::{DateTime, Utc};
-use tundra_platform::{AppPaths, CheckStatus, Platform};
+use tundra_platform::{AppPaths, CheckStatus, Platform, validate_no_follow_path};
 use tundra_storage::{
     StorageDocumentKind, StorageDocumentStatus, StorageManager, StorageRepairReport,
 };
@@ -102,11 +103,24 @@ pub struct DiagnosticCheck {
     pub repair: Option<DiagnosticsRepairAction>,
 }
 
+/// A regular log file retained beneath the application's logs directory.
+///
+/// `path` is the file system path used to open the file; `relative_path` is
+/// retained separately so callers can display a non-sensitive, stable label.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DiagnosticLogFile {
+    pub path: PathBuf,
+    pub relative_path: PathBuf,
+    pub modified_at: DateTime<Utc>,
+    pub size_bytes: u64,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DiagnosticsSnapshot {
     pub scanned_at: DateTime<Utc>,
     pub checks: Vec<DiagnosticCheck>,
     pub incidents: Vec<IncidentReportSummary>,
+    pub logs: Vec<DiagnosticLogFile>,
     pub warnings: Vec<String>,
 }
 
@@ -475,6 +489,9 @@ pub fn scan_diagnostics(
         }
     }
 
+    let (logs, log_warnings) = scan_diagnostic_logs(app_paths.logs_path());
+    warnings.extend(log_warnings);
+
     let incident_catalog = process.list_incident_reports();
     for (index, warning) in incident_catalog.warnings.into_iter().enumerate() {
         checks.push(DiagnosticCheck {
@@ -493,8 +510,163 @@ pub fn scan_diagnostics(
         scanned_at: Utc::now(),
         checks,
         incidents: incident_catalog.reports,
+        logs,
         warnings,
     })
+}
+
+/// Recursively enumerates regular `.log` and rotated `.log.*` files below
+/// `logs_root`. The `crashes` directory and all symbolic links are skipped so
+/// diagnostics never traverse or surface paths outside the application log
+/// root. Traversal failures are returned as user-visible warnings.
+pub fn scan_diagnostic_logs(logs_root: &Path) -> (Vec<DiagnosticLogFile>, Vec<String>) {
+    let mut logs = Vec::new();
+    let mut warnings = Vec::new();
+
+    if let Err(error) = validate_no_follow_path(logs_root, false) {
+        warnings.push(format!(
+            "Log history: could not validate log root {}: {error}",
+            logs_root.display()
+        ));
+        return (logs, warnings);
+    }
+    if !logs_root.exists() {
+        return (logs, warnings);
+    }
+    let mut directories = vec![logs_root.to_path_buf()];
+    while let Some(directory) = directories.pop() {
+        scan_diagnostic_log_directory(
+            logs_root,
+            &directory,
+            &mut directories,
+            &mut logs,
+            &mut warnings,
+        );
+    }
+    logs.sort_by(|left, right| {
+        right
+            .modified_at
+            .cmp(&left.modified_at)
+            .then_with(|| left.relative_path.cmp(&right.relative_path))
+    });
+    (logs, warnings)
+}
+
+fn scan_diagnostic_log_directory(
+    logs_root: &Path,
+    directory: &Path,
+    directories: &mut Vec<PathBuf>,
+    logs: &mut Vec<DiagnosticLogFile>,
+    warnings: &mut Vec<String>,
+) {
+    let entries = match fs::read_dir(directory) {
+        Ok(entries) => entries,
+        Err(error) => {
+            warnings.push(format!(
+                "Log history: could not read diagnostic log directory {}: {error}",
+                display_log_relative_path(logs_root, directory)
+            ));
+            return;
+        }
+    };
+
+    for entry in entries {
+        let entry = match entry {
+            Ok(entry) => entry,
+            Err(error) => {
+                warnings.push(format!(
+                    "Log history: could not enumerate a log entry: {error}"
+                ));
+                continue;
+            }
+        };
+        let path = entry.path();
+        if let Err(error) = validate_no_follow_path(&path, true) {
+            warnings.push(format!(
+                "Log history: skipped unsafe log entry {}: {error}",
+                display_log_relative_path(logs_root, &path)
+            ));
+            continue;
+        }
+        let file_type = match entry.file_type() {
+            Ok(file_type) => file_type,
+            Err(error) => {
+                warnings.push(format!(
+                    "Log history: could not inspect log entry {}: {error}",
+                    display_log_relative_path(logs_root, &path)
+                ));
+                continue;
+            }
+        };
+
+        // `file_type` reports links without following them. Skipping every
+        // link prevents recursive cycles and links that escape `logs_root`.
+        if file_type.is_symlink() {
+            continue;
+        }
+        if file_type.is_dir() {
+            if path
+                .file_name()
+                .is_some_and(|name| name.to_string_lossy().eq_ignore_ascii_case("crashes"))
+            {
+                continue;
+            }
+            directories.push(path);
+            continue;
+        }
+        if !file_type.is_file() || !is_diagnostic_log_file(&path) {
+            continue;
+        }
+
+        let metadata = match entry.metadata() {
+            Ok(metadata) => metadata,
+            Err(error) => {
+                warnings.push(format!(
+                    "Log history: could not read log metadata for {}: {error}",
+                    display_log_relative_path(logs_root, &path)
+                ));
+                continue;
+            }
+        };
+        let modified_at = match metadata.modified() {
+            Ok(modified_at) => DateTime::<Utc>::from(modified_at),
+            Err(error) => {
+                warnings.push(format!(
+                    "Log history: could not read log timestamp for {}: {error}",
+                    display_log_relative_path(logs_root, &path)
+                ));
+                continue;
+            }
+        };
+        let relative_path = path
+            .strip_prefix(logs_root)
+            .expect("log traversal only descends from its root")
+            .to_path_buf();
+        logs.push(DiagnosticLogFile {
+            path,
+            relative_path,
+            modified_at,
+            size_bytes: metadata.len(),
+        });
+    }
+}
+
+fn is_diagnostic_log_file(path: &Path) -> bool {
+    path.file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| {
+            let lower = name.to_ascii_lowercase();
+            lower.ends_with(".log") || lower.contains(".log.")
+        })
+}
+
+fn display_log_relative_path(logs_root: &Path, path: &Path) -> String {
+    path.strip_prefix(logs_root)
+        .ok()
+        .filter(|relative| !relative.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."))
+        .display()
+        .to_string()
 }
 
 fn diagnostic_asset_checks(root: &Path) -> Vec<DiagnosticCheck> {
@@ -747,6 +919,7 @@ mod tests {
                 },
             ],
             incidents: Vec::new(),
+            logs: Vec::new(),
             warnings: Vec::new(),
         };
 
@@ -781,6 +954,110 @@ mod tests {
                 .iter()
                 .all(|check| check.detail.contains(&runtime_theme_path))
         );
+    }
+
+    #[test]
+    fn diagnostic_log_scan_recurses_sorts_and_excludes_crashes() {
+        let root = std::env::temp_dir().join(format!(
+            "tundra-diagnostic-logs-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(root.join("nested")).expect("nested fixture directory");
+        std::fs::create_dir_all(root.join("Crashes")).expect("crash fixture directory");
+        std::fs::write(root.join("older.log"), b"old").expect("older log fixture");
+        std::thread::sleep(Duration::from_millis(20));
+        std::fs::write(root.join("nested/newer.LOG.1"), b"new").expect("newer log fixture");
+        std::fs::write(root.join("nested/ignore.txt"), b"ignore").expect("non-log fixture");
+        std::fs::write(root.join("Crashes/panic.log"), b"crash").expect("crash log fixture");
+
+        let (logs, warnings) = scan_diagnostic_logs(&root);
+
+        assert!(warnings.is_empty());
+        assert_eq!(
+            logs.iter()
+                .map(|log| log.relative_path.clone())
+                .collect::<Vec<_>>(),
+            vec![
+                PathBuf::from("nested/newer.LOG.1"),
+                PathBuf::from("older.log")
+            ]
+        );
+        assert_eq!(logs[0].size_bytes, 3);
+        assert!(logs.iter().all(|log| log.path.starts_with(&root)));
+
+        std::fs::remove_dir_all(root).expect("fixture cleanup");
+    }
+
+    #[test]
+    fn diagnostic_log_scan_reports_unreadable_root() {
+        let root = std::env::temp_dir().join(format!(
+            "tundra-diagnostic-log-root-file-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos()
+        ));
+        std::fs::write(&root, b"not a directory").expect("root file fixture");
+
+        let (logs, warnings) = scan_diagnostic_logs(&root);
+
+        assert!(logs.is_empty());
+        assert_eq!(warnings.len(), 1);
+        assert!(warnings[0].contains("Log history: could not read diagnostic log directory"));
+        std::fs::remove_file(root).expect("fixture cleanup");
+    }
+
+    #[test]
+    fn diagnostic_log_scan_treats_a_missing_root_as_empty() {
+        let root = std::env::temp_dir().join(format!(
+            "tundra-diagnostic-log-missing-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos()
+        ));
+
+        let (logs, warnings) = scan_diagnostic_logs(&root);
+
+        assert!(logs.is_empty());
+        assert!(warnings.is_empty());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn diagnostic_log_scan_does_not_follow_symbolic_links() {
+        use std::os::unix::fs::symlink;
+
+        let root = std::env::temp_dir().join(format!(
+            "tundra-diagnostic-log-link-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos()
+        ));
+        let outside = root.with_extension("outside");
+        std::fs::create_dir_all(&root).expect("log root fixture");
+        std::fs::create_dir_all(&outside).expect("outside fixture");
+        std::fs::write(outside.join("secret.log"), b"secret").expect("outside log fixture");
+        symlink(&outside, root.join("linked")).expect("directory symlink fixture");
+
+        let (logs, warnings) = scan_diagnostic_logs(&root);
+
+        assert!(logs.is_empty());
+        assert!(
+            warnings
+                .iter()
+                .all(|warning| warning.starts_with("Log history:"))
+        );
+        std::fs::remove_dir_all(root).expect("root cleanup");
+        std::fs::remove_dir_all(outside).expect("outside cleanup");
     }
 
     #[test]

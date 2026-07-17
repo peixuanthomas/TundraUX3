@@ -611,6 +611,8 @@ fn startup_lockscreen_launch_options(
     terminal_size_requirement: ShellTerminalSizeRequirement,
 ) -> tundra_weathr::LaunchOptions {
     let mut options = tundra_weathr::LaunchOptions {
+        load_config_file: false,
+        prefer_config_location: false,
         minimum_terminal_size: Some(terminal_size_requirement.as_terminal_size()),
         ..tundra_weathr::LaunchOptions::default()
     };

@@ -28,6 +28,14 @@ pub enum EditorMode {
     Source,
 }
 
+/// Controls whether an editor document may be changed through domain commands.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum EditorAccess {
+    #[default]
+    Editable,
+    ReadOnly,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum DocumentKind {
     #[default]
@@ -411,6 +419,25 @@ pub enum EditorCommand {
     },
 }
 
+impl EditorCommand {
+    /// Whether this command may run against a read-only editor. Read-only
+    /// documents retain view operations (including mode changes), selection,
+    /// copying, and closing while rejecting edit and file-operation commands.
+    pub const fn is_allowed_in_read_only(&self) -> bool {
+        matches!(
+            self,
+            Self::MoveCursor { .. }
+                | Self::MoveTo { .. }
+                | Self::SelectAll
+                | Self::ClearSelection
+                | Self::SetMode(_)
+                | Self::ToggleMode
+                | Self::Copy
+                | Self::RequestClose
+        )
+    }
+}
+
 /// Immutable bytes exported from one exact editor revision.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SaveSnapshot {
@@ -519,12 +546,13 @@ struct PendingSave {
 pub struct EditorState {
     pub document: EditorDocument,
     pub mode: EditorMode,
+    access: EditorAccess,
     /// Source-mode caret retained for compatibility. Rich mode uses
     /// [`RichEditor::cursor`] and never interprets this as a Markdown offset.
     pub cursor: Cursor,
     pub selection: Option<Selection>,
     pub viewport: EditorViewport,
-    pub buffer: EditorBuffer,
+    buffer: EditorBuffer,
     undo_stack: Vec<EditTransaction>,
     redo_stack: Vec<EditTransaction>,
     history_limit: usize,
@@ -554,7 +582,24 @@ impl EditorState {
         Ok(Self::from_document(EditorDocument::open(path, bytes)?))
     }
 
+    pub fn open_read_only(
+        path: impl Into<PathBuf>,
+        bytes: &[u8],
+    ) -> Result<Self, DocumentDecodeError> {
+        Ok(Self::from_read_only_document(EditorDocument::open(
+            path, bytes,
+        )?))
+    }
+
     pub fn from_document(document: EditorDocument) -> Self {
+        Self::from_document_with_access(document, EditorAccess::Editable)
+    }
+
+    pub fn from_read_only_document(document: EditorDocument) -> Self {
+        Self::from_document_with_access(document, EditorAccess::ReadOnly)
+    }
+
+    fn from_document_with_access(document: EditorDocument, access: EditorAccess) -> Self {
         let mode = document.kind.initial_mode();
         let buffer = match mode {
             EditorMode::Rich => EditorBuffer::Rich(RichBuffer {
@@ -567,6 +612,7 @@ impl EditorState {
         Self {
             document,
             mode,
+            access,
             cursor: Cursor::default(),
             selection: None,
             viewport: EditorViewport::default(),
@@ -580,6 +626,14 @@ impl EditorState {
             source_session: None,
             pending_saves: Vec::new(),
         }
+    }
+
+    pub const fn access(&self) -> EditorAccess {
+        self.access
+    }
+
+    pub const fn is_read_only(&self) -> bool {
+        matches!(self.access, EditorAccess::ReadOnly)
     }
 
     pub fn is_dirty(&self) -> bool {
@@ -675,6 +729,9 @@ impl EditorState {
         mut cursor: Option<RichPosition>,
         mut selection: Option<RichSelection>,
     ) {
+        if self.is_read_only() {
+            return;
+        }
         document.repair_node_id_allocator();
         normalize_legacy_recovered_heading_breaks(&mut document, &mut cursor, &mut selection);
         let mut editor = RichEditor::new(document);
@@ -701,6 +758,9 @@ impl EditorState {
         cursor: usize,
         selection: Option<Selection>,
     ) {
+        if self.is_read_only() {
+            return;
+        }
         self.buffer = EditorBuffer::Source(SourceBuffer { text });
         self.mode = EditorMode::Source;
         self.cursor = Cursor {
@@ -822,6 +882,9 @@ impl EditorState {
     }
 
     pub fn replace_source_range(&mut self, range: SourceRange, replacement: &str) -> bool {
+        if self.is_read_only() {
+            return false;
+        }
         let EditorBuffer::Source(buffer) = &self.buffer else {
             return false;
         };
@@ -1122,6 +1185,9 @@ pub struct EditorController;
 
 impl EditorController {
     pub fn apply(self, state: &mut EditorState, command: EditorCommand) -> Vec<EditorEffect> {
+        if state.is_read_only() && !command.is_allowed_in_read_only() {
+            return Vec::new();
+        }
         match command {
             EditorCommand::InsertText(text) | EditorCommand::Paste(text) => {
                 apply_insert_text(state, &text);

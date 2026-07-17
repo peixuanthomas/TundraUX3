@@ -25,6 +25,32 @@ struct EditorTableResizeState {
     start_width: usize,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum EditorReloadPolicy {
+    DiagnosticsLog {
+        path: std::path::PathBuf,
+        max_bytes: usize,
+    },
+    DiagnosticsReport {
+        path: std::path::PathBuf,
+    },
+}
+
+impl EditorReloadPolicy {
+    fn path(&self) -> &std::path::Path {
+        match self {
+            Self::DiagnosticsLog { path, .. } | Self::DiagnosticsReport { path } => path,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct EditorDiagnosticSession {
+    reload: EditorReloadPolicy,
+    start_byte: u64,
+    total_bytes: u64,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum UserManagementFormField {
     Username,
@@ -235,10 +261,12 @@ pub struct ShellState {
     editor_message: Option<String>,
     editor_recovery_dirty_since: Option<Instant>,
     editor_last_recovery_write: Option<Instant>,
+    editor_diagnostic_session: Option<EditorDiagnosticSession>,
     diagnostics_task_runtime: Option<ShellDiagnosticsTaskRuntime>,
     diagnostics_snapshot: Option<tundra_apps::diagnostics::DiagnosticsSnapshot>,
     diagnostics_tab: tundra_ui::DiagnosticsTab,
     diagnostics_selected_check: usize,
+    diagnostics_selected_log: usize,
     diagnostics_selected_incident: usize,
     diagnostics_list_window_start: usize,
     diagnostics_scanning: bool,

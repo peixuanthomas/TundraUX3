@@ -1,9 +1,9 @@
 use std::path::PathBuf;
 
 use tundra_apps::editor::{
-    CursorMove, DocumentKind, EditorCommand, EditorDocument, EditorEffect, EditorMode,
-    EditorPosition, EditorState, FormatCommand, LineEnding, SaveSnapshot, Selection,
-    TableColumnEdge, TableColumnEdit,
+    CursorMove, DocumentKind, EditorAccess, EditorCommand, EditorDocument, EditorEffect,
+    EditorMode, EditorPosition, EditorState, FormatCommand, LineEnding, SaveSnapshot, Selection,
+    SourceRange, TableColumnEdge, TableColumnEdit,
 };
 use tundra_apps::explorer::{
     EditorAwareOpenRouteResolver, ExplorerOpenRouteResolver, ExplorerOpenTarget,
@@ -88,6 +88,91 @@ fn invalid_utf8_is_rejected_without_lossy_decoding() {
     let error = EditorDocument::from_bytes(None, DocumentKind::PlainText, &[b'a', 0xff])
         .expect_err("invalid UTF-8 must be rejected");
     assert_eq!(error.valid_up_to, 1);
+}
+
+#[test]
+fn read_only_editor_blocks_mutating_commands_and_direct_source_replacement() {
+    let mut editor = EditorState::open_read_only(PathBuf::from("app.log"), b"initial")
+        .expect("valid log document");
+    let original = editor.export_text();
+    let revision = editor.revision();
+
+    for command in [
+        EditorCommand::InsertText(" text".to_owned()),
+        EditorCommand::InsertNewline,
+        EditorCommand::Paste(" paste".to_owned()),
+        EditorCommand::Backspace,
+        EditorCommand::DeleteForward,
+        EditorCommand::DeleteSelection,
+        EditorCommand::Undo,
+        EditorCommand::Redo,
+        EditorCommand::RequestPaste,
+        EditorCommand::RequestOpen,
+        EditorCommand::RequestSave,
+        EditorCommand::RequestSaveAs,
+        EditorCommand::ReplaceDocument(EditorDocument::from_text(
+            None,
+            DocumentKind::PlainText,
+            "replacement",
+        )),
+        EditorCommand::MarkSaved {
+            path: Some(PathBuf::from("other.log")),
+            revision: 0,
+        },
+    ] {
+        assert!(editor.apply(command).is_empty());
+    }
+
+    assert_eq!(editor.access(), EditorAccess::ReadOnly);
+    assert!(editor.is_read_only());
+    assert_eq!(editor.export_text(), original);
+    assert_eq!(editor.revision(), revision);
+    assert!(!editor.replace_source_range(SourceRange::new(0, 1), "X"));
+    assert_eq!(editor.export_text(), original);
+}
+
+#[test]
+fn read_only_editor_keeps_navigation_selection_copy_and_close_available() {
+    let mut editor = EditorState::open_read_only(PathBuf::from("app.log"), b"alpha beta")
+        .expect("valid log document");
+
+    editor.apply(EditorCommand::MoveTo {
+        position: EditorPosition::Source(6),
+        extend_selection: false,
+    });
+    editor.apply(EditorCommand::MoveTo {
+        position: EditorPosition::Source(10),
+        extend_selection: true,
+    });
+
+    assert_eq!(editor.selected_text().as_deref(), Some("beta"));
+    assert_eq!(
+        editor.apply(EditorCommand::Copy),
+        vec![EditorEffect::WriteClipboard("beta".to_owned())]
+    );
+    assert_eq!(
+        editor.apply(EditorCommand::RequestClose),
+        vec![EditorEffect::Close]
+    );
+}
+
+#[test]
+fn read_only_editor_allows_view_mode_changes() {
+    let document = EditorDocument::from_text(
+        Some(PathBuf::from("report.md")),
+        DocumentKind::Markdown,
+        "# report",
+    );
+    let mut editor = EditorState::from_read_only_document(document);
+
+    assert!(EditorCommand::SetMode(EditorMode::Source).is_allowed_in_read_only());
+    assert!(EditorCommand::ToggleMode.is_allowed_in_read_only());
+    assert!(!EditorCommand::RequestSave.is_allowed_in_read_only());
+    editor.apply(EditorCommand::SetMode(EditorMode::Source));
+    assert_eq!(editor.mode, EditorMode::Source);
+    editor.apply(EditorCommand::ToggleMode);
+    assert_eq!(editor.mode, EditorMode::Rich);
+    assert!(!editor.is_dirty());
 }
 
 #[test]

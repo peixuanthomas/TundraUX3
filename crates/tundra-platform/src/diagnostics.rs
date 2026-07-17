@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use std::process;
 
 use crate::paths::timestamp_nanos;
-use crate::{AppPaths, Platform, PlatformError, PlatformKind};
+use crate::{AppPaths, Platform, PlatformError, PlatformKind, StartupPermissionStatus};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WindowsBuildClass {
@@ -81,6 +81,7 @@ pub fn run_doctor_with(platform: &dyn Platform) -> Result<DoctorReport, Platform
     let mut environment_checks = Vec::new();
     environment_checks.push(platform_check(platform));
     environment_checks.push(crate::terminal_environment_check(platform.kind()));
+    environment_checks.push(startup_permission_check(platform));
     environment_checks.extend(capability_checks(platform));
 
     let path_checks = vec![
@@ -97,6 +98,26 @@ pub fn run_doctor_with(platform: &dyn Platform) -> Result<DoctorReport, Platform
         environment_checks,
         path_checks,
     })
+}
+
+fn startup_permission_check(platform: &dyn Platform) -> EnvironmentCheck {
+    match platform.startup_permission_status() {
+        Ok(StartupPermissionStatus::Ready) => EnvironmentCheck {
+            label: "Startup permissions".to_string(),
+            status: CheckStatus::Pass,
+            message: "required startup permissions are available".to_string(),
+        },
+        Ok(StartupPermissionStatus::ActionRequired { name, message }) => EnvironmentCheck {
+            label: "Startup permissions".to_string(),
+            status: CheckStatus::Fail,
+            message: format!("{name}: {message}"),
+        },
+        Err(error) => EnvironmentCheck {
+            label: "Startup permissions".to_string(),
+            status: CheckStatus::Fail,
+            message: error.to_string(),
+        },
+    }
 }
 
 pub fn check_directory_read_write(label: impl Into<String>, directory: &Path) -> PathCheck {

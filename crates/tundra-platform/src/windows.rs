@@ -686,7 +686,7 @@ fn known_folder_item(folder_id: &Guid) -> Result<ComPtr, PlatformError> {
 }
 
 fn shell_item_from_path(path: &Path) -> Result<ComPtr, PlatformError> {
-    let path_wide = to_wide(path.as_os_str());
+    let path_wide = shell_parsing_name_wide(path)?;
     let mut raw = ptr::null_mut();
     let status = unsafe {
         SHCreateItemFromParsingName(
@@ -1101,6 +1101,56 @@ fn to_wide(value: &OsStr) -> Vec<u16> {
     value.encode_wide().chain(std::iter::once(0)).collect()
 }
 
+fn shell_parsing_name_wide(path: &Path) -> Result<Vec<u16>, PlatformError> {
+    const BACKSLASH: u16 = b'\\' as u16;
+    const VERBATIM_PREFIX: [u16; 4] = [BACKSLASH, BACKSLASH, b'?' as u16, BACKSLASH];
+
+    let wide = path.as_os_str().encode_wide().collect::<Vec<_>>();
+    if wide.contains(&0) {
+        return Err(PlatformError::InvalidInput {
+            message: "Shell paths must not contain NUL characters".to_string(),
+        });
+    }
+
+    let mut normalized = if !wide.starts_with(&VERBATIM_PREFIX) {
+        wide
+    } else if wide.len() >= 8
+        && ascii_u16_eq_ignore_case(wide[4], b'U')
+        && ascii_u16_eq_ignore_case(wide[5], b'N')
+        && ascii_u16_eq_ignore_case(wide[6], b'C')
+        && wide[7] == BACKSLASH
+    {
+        let mut normalized = Vec::with_capacity(wide.len() - 2);
+        normalized.extend_from_slice(&[BACKSLASH, BACKSLASH]);
+        normalized.extend_from_slice(&wide[8..]);
+        normalized
+    } else if wide.len() >= 7
+        && ascii_u16_is_drive_letter(wide[4])
+        && wide[5] == b':' as u16
+        && wide[6] == BACKSLASH
+    {
+        wide[4..].to_vec()
+    } else {
+        return Err(PlatformError::InvalidInput {
+            message: format!(
+                "Windows Shell does not support this verbatim path: {}",
+                path.display()
+            ),
+        });
+    };
+
+    normalized.push(0);
+    Ok(normalized)
+}
+
+fn ascii_u16_eq_ignore_case(value: u16, expected: u8) -> bool {
+    u8::try_from(value).is_ok_and(|value| value.eq_ignore_ascii_case(&expected))
+}
+
+fn ascii_u16_is_drive_letter(value: u16) -> bool {
+    u8::try_from(value).is_ok_and(|value| value.is_ascii_alphabetic())
+}
+
 fn quote_windows_argument(value: &OsStr) -> String {
     let text = value.to_string_lossy();
     format!("\"{}\"", text.replace('"', "\\\""))
@@ -1369,7 +1419,7 @@ const IID_IFILE_OPERATION: Guid = Guid {
     data1: 0x947AAB5F,
     data2: 0x0A5C,
     data3: 0x4C13,
-    data4: [0xB4, 0xD6, 0x4E, 0xBB, 0xB5, 0x0C, 0xB1, 0x3E],
+    data4: [0xB4, 0xD6, 0x4B, 0xF7, 0x83, 0x6F, 0xC9, 0xF8],
 };
 const PKEY_ORIGINAL_FILE_NAME: PropertyKey = PropertyKey {
     format_id: Guid {
@@ -1513,4 +1563,45 @@ unsafe extern "system" {
     fn GlobalLock(h_mem: *mut c_void) -> *mut c_void;
     fn GlobalUnlock(h_mem: *mut c_void) -> i32;
     fn GlobalFree(h_mem: *mut c_void) -> *mut c_void;
+}
+
+#[cfg(test)]
+mod tests {
+    use std::ffi::OsStr;
+    use std::path::Path;
+
+    use super::{ComApartment, create_file_operation, shell_parsing_name_wide, to_wide};
+
+    #[test]
+    fn file_operation_com_class_exposes_the_declared_interface() {
+        let _apartment = ComApartment::enter().expect("initialize COM");
+        create_file_operation().expect("FileOperation should expose IFileOperation");
+    }
+
+    #[test]
+    fn shell_parsing_name_removes_verbatim_drive_prefix() {
+        assert_eq!(
+            shell_parsing_name_wide(Path::new(r"\\?\C:\Users\Example\file.txt"))
+                .expect("convert verbatim drive path"),
+            to_wide(OsStr::new(r"C:\Users\Example\file.txt"))
+        );
+    }
+
+    #[test]
+    fn shell_parsing_name_converts_verbatim_unc_prefix() {
+        assert_eq!(
+            shell_parsing_name_wide(Path::new(r"\\?\UNC\server\share\file.txt"))
+                .expect("convert verbatim UNC path"),
+            to_wide(OsStr::new(r"\\server\share\file.txt"))
+        );
+    }
+
+    #[test]
+    fn shell_parsing_name_preserves_regular_paths() {
+        assert_eq!(
+            shell_parsing_name_wide(Path::new(r"C:\Users\Example\file.txt"))
+                .expect("preserve regular path"),
+            to_wide(OsStr::new(r"C:\Users\Example\file.txt"))
+        );
+    }
 }

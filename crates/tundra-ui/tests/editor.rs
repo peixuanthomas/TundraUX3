@@ -1017,6 +1017,54 @@ fn overflowing_document_exposes_proportional_scrollbar_and_scrolled_hits() {
     );
 }
 
+#[test]
+fn read_only_editor_disables_mutating_toolbar_controls() {
+    let mut model = EditorViewModel::source("diagnostics.log", "diagnostic output");
+    model.read_only = true;
+    let layout = editor_layout(Rect::new(0, 0, 100, 24), &model);
+
+    assert!(!toolbar_item(&layout, EditorToolbarAction::Save).enabled);
+    assert!(!toolbar_item(&layout, EditorToolbarAction::Undo).enabled);
+    assert!(!toolbar_item(&layout, EditorToolbarAction::Open).enabled);
+
+    let mut rich = sample_model();
+    rich.read_only = true;
+    rich.quick_menu = Some(tundra_ui::EditorQuickMenuViewModel {
+        anchor: (10, 10),
+        block_actions_enabled: true,
+    });
+    let rich_layout = editor_layout(Rect::new(0, 0, 100, 30), &rich);
+    assert!(rich_layout.table_edge_handles.is_empty());
+    assert!(rich_layout.table_resize_handles.is_empty());
+    assert!(rich_layout.quick_menu_items.is_empty());
+}
+
+#[test]
+fn read_only_tail_editor_renders_access_window_and_reload_metadata() {
+    let mut model = EditorViewModel::source("diagnostics.log", "tail content");
+    model.read_only = true;
+    model.reload_available = true;
+    model.read_window = Some(tundra_ui::EditorReadWindowViewModel {
+        start_byte: 42,
+        total_bytes: 100,
+    });
+
+    let terminal = render(&model, 120, 24);
+    let output = terminal_output(&terminal);
+
+    assert!(output.contains("diagnostics.log [read-only] [tail]"));
+    assert!(output.contains("F5 Reload"));
+    assert!(output.contains("Bytes 43-100 of 100"));
+
+    model.read_window = Some(tundra_ui::EditorReadWindowViewModel {
+        start_byte: 0,
+        total_bytes: 12,
+    });
+    let output = terminal_output(&render(&model, 120, 24));
+    assert!(output.contains("diagnostics.log [read-only]"));
+    assert!(!output.contains("[tail]"));
+}
+
 fn sample_model() -> EditorViewModel {
     let mut strong = EditorRenderSpan::strong("strong");
     strong.color = tundra_ui::EditorSpanColor::Normal;

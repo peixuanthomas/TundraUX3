@@ -2,9 +2,10 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use tundra_platform::mock::{MockPlatform, UnsupportedPlatform};
+use tundra_platform::mock::{MockCall, MockPlatform, UnsupportedPlatform};
 use tundra_platform::{
-    PlatformCapabilities, PlatformKind, UserDirs, build_macos_app_paths, build_windows_app_paths,
+    PlatformCapabilities, PlatformError, PlatformKind, StartupPermissionStatus, UserDirs,
+    build_macos_app_paths, build_windows_app_paths,
 };
 use tundra_shell::{ShellLaunchConfig, ShellStartupError, prepare_shell_startup};
 use tundra_storage::{BorderShape as StorageBorderShape, StorageError, StorageManager};
@@ -77,6 +78,42 @@ fn prepare_shell_startup_uses_macos_mock_app_paths() {
     assert_eq!(startup.platform_capabilities, capabilities);
     assert_eq!(startup.storage_report.app_paths.as_ref(), Some(&app_paths));
     assert!(startup.storage_report.warnings.is_empty());
+}
+
+#[test]
+fn prepare_shell_startup_requests_missing_platform_permission_before_storage_opens() {
+    let fixture = FixtureRoot::new("missing-startup-permission");
+    let base = fixture.path();
+    let app_paths =
+        build_macos_app_paths(base.join("home"), base.join("temp")).expect("valid macOS paths");
+    let platform =
+        MockPlatform::new(user_dirs(base), app_paths.clone()).with_kind(PlatformKind::Macos);
+    platform.set_startup_permission_status(Ok(StartupPermissionStatus::action_required(
+        "Full Disk Access",
+        "enable it and restart",
+    )));
+
+    let error = prepare_shell_startup(&platform, ShellLaunchConfig::default())
+        .expect_err("startup must stop while required permission is missing");
+
+    assert!(matches!(
+        error,
+        ShellStartupError::Platform(PlatformError::Native {
+            operation: "startup permission check",
+            ..
+        })
+    ));
+    assert_eq!(
+        platform.calls(),
+        vec![
+            MockCall::StartupPermissionStatus,
+            MockCall::RequestStartupPermissions
+        ]
+    );
+    assert!(
+        !app_paths.data_path().exists(),
+        "storage must not initialize before startup permission is granted"
+    );
 }
 
 #[test]

@@ -104,6 +104,7 @@ impl ShellState {
         self.diagnostics_snapshot = None;
         self.diagnostics_tab = tundra_ui::DiagnosticsTab::Health;
         self.diagnostics_selected_check = 0;
+        self.diagnostics_selected_log = 0;
         self.diagnostics_selected_incident = 0;
         self.diagnostics_list_window_start = 0;
         self.diagnostics_scanning = false;

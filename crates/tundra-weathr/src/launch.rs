@@ -27,6 +27,11 @@ pub struct LaunchLocation {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct LaunchOptions {
+    /// Whether Weathr should read its standalone config file.
+    ///
+    /// Embedders that supply their own settings should disable this so Weathr
+    /// does not depend on a second config file under the user's config dir.
+    pub load_config_file: bool,
     pub prefer_config_location: bool,
     pub location_override: Option<LaunchLocation>,
     pub timezone_id: Option<String>,
@@ -36,6 +41,7 @@ pub struct LaunchOptions {
 impl Default for LaunchOptions {
     fn default() -> Self {
         Self {
+            load_config_file: true,
             prefer_config_location: true,
             location_override: None,
             timezone_id: None,
@@ -293,13 +299,7 @@ async fn run_with_options(
     mode: LaunchRunMode,
     watchdog: AppWatchdog,
 ) -> Result<ShellLockscreenResult, WeathrRunError> {
-    let mut config = match Config::load() {
-        Ok(config) => config,
-        Err(error) => {
-            eprintln!("Warning: could not load weathr config: {error}");
-            Config::default()
-        }
-    };
+    let mut config = load_config_for_launch(&options);
 
     let timezone_id = options.timezone_id.clone();
     apply_launch_location(&mut config, &options);
@@ -350,6 +350,20 @@ async fn run_with_options(
         (Ok(result), Ok(())) => Ok(result),
         (Err(error), _) => Err(error),
         (Ok(_), Err(error)) => Err(error),
+    }
+}
+
+fn load_config_for_launch(options: &LaunchOptions) -> Config {
+    if !options.load_config_file {
+        return Config::default();
+    }
+
+    match Config::load() {
+        Ok(config) => config,
+        Err(error) => {
+            eprintln!("Warning: could not load weathr config: {error}");
+            Config::default()
+        }
     }
 }
 
@@ -455,6 +469,28 @@ mod tests {
             LaunchRunMode::ShellLockscreen.bottom_hud_prompt(),
             BottomHudPrompt::Start
         );
+    }
+
+    #[test]
+    fn standalone_launch_keeps_config_file_loading_enabled() {
+        assert!(LaunchOptions::default().load_config_file);
+    }
+
+    #[test]
+    fn embedded_launch_can_skip_the_standalone_config_file() {
+        let options = LaunchOptions {
+            load_config_file: false,
+            ..LaunchOptions::default()
+        };
+
+        let config = load_config_for_launch(&options);
+        assert_eq!(config.location.latitude, crate::config::default_latitude());
+        assert_eq!(
+            config.location.longitude,
+            crate::config::default_longitude()
+        );
+        assert!(config.location.auto);
+        assert_eq!(config.normalized_theme(), crate::config::DEFAULT_THEME);
     }
 
     #[test]

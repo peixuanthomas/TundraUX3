@@ -3,6 +3,7 @@ const EDITOR_RECOVERY_INTERVAL: Duration = Duration::from_secs(10);
 
 impl ShellState {
     fn open_editor(&mut self) {
+        self.editor_diagnostic_session = None;
         self.editor_state = Some(EditorState::new());
         self.editor_focus = tundra_ui::EditorFocus::Canvas;
         self.editor_open_menu = None;
@@ -67,12 +68,21 @@ impl ShellState {
             .as_ref()
             .map(|path| path.display().to_string());
         model.dirty = state.is_dirty();
+        model.read_only = state.is_read_only();
+        model.read_window = self.editor_diagnostic_session.as_ref().map(|session| {
+            tundra_ui::EditorReadWindowViewModel {
+                start_byte: session.start_byte,
+                total_bytes: session.total_bytes,
+            }
+        });
+        model.reload_available = self.editor_diagnostic_session.is_some();
         model.mode = editor_mode_to_ui(state.mode);
         model.focus = self.editor_focus;
         model.open_menu = self.editor_open_menu;
         let has_selection = state.selected_text().is_some();
         model.quick_menu = self.editor_quick_menu_anchor.and_then(|anchor| {
-            (state.mode == tundra_apps::editor::EditorMode::Rich
+            (!state.is_read_only()
+                && state.mode == tundra_apps::editor::EditorMode::Rich
                 && state.document.kind == tundra_apps::editor::DocumentKind::Markdown
                 && has_selection)
                 .then_some(tundra_ui::EditorQuickMenuViewModel {
@@ -83,12 +93,13 @@ impl ShellState {
         model.selected_toolbar_action = self.editor_selected_toolbar_action;
         model.scroll_line = state.viewport.top_line;
         model.horizontal_scroll = state.viewport.left_column;
-        model.toolbar.can_save = state.document.path.is_some() || state.is_dirty();
-        model.toolbar.can_undo = state.can_undo();
-        model.toolbar.can_redo = state.can_redo();
-        model.toolbar.can_cut = has_selection;
+        model.toolbar.can_save =
+            !state.is_read_only() && (state.document.path.is_some() || state.is_dirty());
+        model.toolbar.can_undo = !state.is_read_only() && state.can_undo();
+        model.toolbar.can_redo = !state.is_read_only() && state.can_redo();
+        model.toolbar.can_cut = !state.is_read_only() && has_selection;
         model.toolbar.can_copy = has_selection;
-        model.toolbar.can_paste = true;
+        model.toolbar.can_paste = !state.is_read_only();
         model.word_count = state.word_count();
         model.encoding = if state.document.metadata.utf8_bom {
             "UTF-8 BOM".to_string()
@@ -637,6 +648,12 @@ impl ShellState {
             return;
         }
         let repeated = key.phase == InputPhase::Repeat;
+        if key.key == InputKey::Function(5) && self.editor_diagnostic_session.is_some() {
+            if !repeated {
+                self.reload_diagnostics_editor();
+            }
+            return;
+        }
         if key.key == InputKey::Escape {
             if repeated {
                 return;
@@ -716,6 +733,14 @@ impl ShellState {
             }
             let command = match (character, key.modifiers.shift) {
                 ('n', _) => {
+                    if self
+                        .editor_state
+                        .as_ref()
+                        .is_some_and(EditorState::is_read_only)
+                    {
+                        self.editor_message = Some("This document is read-only".to_string());
+                        return;
+                    }
                     if self
                         .editor_state
                         .as_ref()
@@ -1204,6 +1229,18 @@ impl ShellState {
         platform: &dyn Platform,
     ) {
         use tundra_apps::editor::{EditorCommand, FormatCommand};
+        if self
+            .editor_state
+            .as_ref()
+            .is_some_and(EditorState::is_read_only)
+            && !matches!(
+                action,
+                tundra_ui::EditorToolbarAction::Find | tundra_ui::EditorToolbarAction::More
+            )
+        {
+            self.editor_message = Some("This document is read-only".to_string());
+            return;
+        }
         let command = match action {
             tundra_ui::EditorToolbarAction::New => {
                 if self
@@ -1324,6 +1361,152 @@ impl ShellState {
         }
     }
 
+    fn open_diagnostics_editor(&mut self, reload: EditorReloadPolicy) -> Result<(), String> {
+        if self
+            .editor_state
+            .as_ref()
+            .is_some_and(EditorState::is_dirty)
+        {
+            return Err(
+                "the current Editor document has unsaved changes; close it before opening diagnostics"
+                    .to_string(),
+            );
+        }
+
+        let path = reload.path().to_path_buf();
+        let open_at_bottom = matches!(reload, EditorReloadPolicy::DiagnosticsLog { .. });
+        let (mut state, fingerprint, start_byte, total_bytes) =
+            Self::load_diagnostics_editor_document(&reload)?;
+        if open_at_bottom {
+            let _ = state.apply(tundra_apps::editor::EditorCommand::MoveCursor {
+                movement: tundra_apps::editor::CursorMove::DocumentEnd,
+                extend_selection: false,
+            });
+            state.viewport.top_line = state.document.line_count().saturating_sub(1);
+        }
+
+        self.editor_state = Some(state);
+        self.editor_fingerprint = fingerprint;
+        self.editor_diagnostic_session = Some(EditorDiagnosticSession {
+            reload,
+            start_byte,
+            total_bytes,
+        });
+        self.editor_focus = tundra_ui::EditorFocus::Canvas;
+        self.editor_open_menu = None;
+        self.editor_selected_toolbar_action = None;
+        self.editor_quick_menu_anchor = None;
+        self.editor_drag_anchor = None;
+        self.editor_table_column_widths.clear();
+        self.editor_table_resize = None;
+        self.editor_close_after_save = false;
+        self.editor_open_after_save = false;
+        self.editor_discard_for_open = false;
+        self.editor_recovery_dirty_since = None;
+        self.editor_last_recovery_write = None;
+        self.editor_message = Some(format!("Read-only: {}", path.display()));
+        self.active_popup = None;
+        if self.active_screen() != ShellScreen::Editor {
+            self.screen_stack.push(ShellScreen::Editor);
+        }
+        self.focused_component = ShellComponent::Editor;
+        self.refresh_hit_map();
+        Ok(())
+    }
+
+    fn reload_diagnostics_editor(&mut self) {
+        let Some(session) = self.editor_diagnostic_session.clone() else {
+            return;
+        };
+        let path = session.reload.path().to_path_buf();
+        let model = self.to_editor_view_model();
+        let area = Rect::new(0, 0, self.terminal_size.0, self.terminal_size.1);
+        let editor_area = match tundra_ui::compute_shell_layout(area) {
+            tundra_ui::ShellLayout::Compact(compact) => compact,
+            tundra_ui::ShellLayout::Full { main, .. } => main,
+        };
+        let layout = tundra_ui::editor_layout(editor_area, &model);
+        let visible_capacity = layout.visible_capacity.max(1);
+        let old_maximum = layout
+            .document_line_count
+            .saturating_sub(visible_capacity);
+        let was_at_bottom = layout.visible_start >= old_maximum;
+        let old_top_line = layout.visible_start;
+        let (old_left_column, old_cursor) = self
+            .editor_state
+            .as_ref()
+            .map(|state| (state.viewport.left_column, state.cursor.byte_offset))
+            .unwrap_or_default();
+
+        let (mut state, fingerprint, start_byte, total_bytes) =
+            match Self::load_diagnostics_editor_document(&session.reload) {
+                Ok(loaded) => loaded,
+                Err(error) => {
+                    self.report_editor_error(format!(
+                        "Could not reload {}: {error}",
+                        path.display()
+                    ));
+                    return;
+                }
+            };
+        let new_line_count = state.document.line_count().max(1);
+        let new_maximum = new_line_count.saturating_sub(visible_capacity);
+        state.viewport.left_column = old_left_column;
+        state.selection = None;
+        if was_at_bottom {
+            let _ = state.apply(tundra_apps::editor::EditorCommand::MoveCursor {
+                movement: tundra_apps::editor::CursorMove::DocumentEnd,
+                extend_selection: false,
+            });
+            state.viewport.top_line = new_maximum;
+        } else {
+            let _ = state.apply(tundra_apps::editor::EditorCommand::MoveTo {
+                position: tundra_apps::editor::EditorPosition::Source(old_cursor),
+                extend_selection: false,
+            });
+            state.viewport.top_line = old_top_line.min(new_maximum);
+        }
+
+        self.editor_state = Some(state);
+        self.editor_fingerprint = fingerprint;
+        self.editor_diagnostic_session = Some(EditorDiagnosticSession {
+            reload: session.reload,
+            start_byte,
+            total_bytes,
+        });
+        self.editor_quick_menu_anchor = None;
+        self.editor_drag_anchor = None;
+        self.editor_message = Some(format!("Reloaded {}", path.display()));
+        self.refresh_hit_map();
+    }
+
+    fn load_diagnostics_editor_document(
+        reload: &EditorReloadPolicy,
+    ) -> Result<(EditorState, Option<DocumentFingerprint>, u64, u64), String> {
+        let path = reload.path();
+        let (bytes, fingerprint, start_byte, total_bytes) = match reload {
+            EditorReloadPolicy::DiagnosticsLog { max_bytes, .. } => {
+                let window = tundra_platform::read_document_tail_bytes(path, *max_bytes)
+                    .map_err(|error| error.to_string())?;
+                (
+                    window.bytes,
+                    None,
+                    window.start_byte,
+                    window.total_bytes,
+                )
+            }
+            EditorReloadPolicy::DiagnosticsReport { .. } => {
+                let document = tundra_platform::read_document_bytes(path)
+                    .map_err(|error| error.to_string())?;
+                let total_bytes = document.fingerprint.len;
+                (document.bytes, Some(document.fingerprint), 0, total_bytes)
+            }
+        };
+        let state = EditorState::open_read_only(path.to_path_buf(), &bytes)
+            .map_err(|error| error.to_string())?;
+        Ok((state, fingerprint, start_byte, total_bytes))
+    }
+
     fn open_editor_path(&mut self, path: std::path::PathBuf) -> bool {
         let replacing_dirty = self
             .editor_state
@@ -1376,6 +1559,7 @@ impl ShellState {
         }
         self.editor_state = Some(state);
         self.editor_fingerprint = Some(loaded.fingerprint);
+        self.editor_diagnostic_session = None;
         self.editor_focus = tundra_ui::EditorFocus::Canvas;
         self.editor_open_menu = None;
         self.editor_selected_toolbar_action = None;
@@ -1846,7 +2030,10 @@ impl ShellState {
     fn finish_editor_close(&mut self, _discard: bool) {
         self.notifications
             .dismiss_modal_by_key(EDITOR_CLOSE_NOTIFICATION_KEY);
-        self.clear_editor_recovery();
+        let closing_diagnostics_viewer = self.editor_diagnostic_session.is_some();
+        if !closing_diagnostics_viewer {
+            self.clear_editor_recovery();
+        }
         self.editor_state = None;
         self.editor_fingerprint = None;
         self.editor_open_menu = None;
@@ -1859,12 +2046,17 @@ impl ShellState {
         self.editor_open_after_save = false;
         self.editor_discard_for_open = false;
         self.editor_message = None;
+        self.editor_diagnostic_session = None;
         if self.active_screen() == ShellScreen::Editor {
             self.screen_stack.pop();
         }
         if self.active_screen() == ShellScreen::Explorer && self.explorer_state.is_some() {
             self.focused_component = ShellComponent::Explorer;
             self.notify_status("Explorer");
+            self.refresh_hit_map();
+        } else if self.active_screen() == ShellScreen::Diagnostics {
+            self.focused_component = ShellComponent::Diagnostics;
+            self.notify_status("Diagnostics");
             self.refresh_hit_map();
         } else {
             self.pop_to_home();

@@ -140,6 +140,7 @@ pub enum ShellCommand {
     OpenDiagnostics,
     CloseDiagnostics,
     DiagnosticsHealthTab,
+    DiagnosticsLogsTab,
     DiagnosticsIncidentsTab,
     DiagnosticsPrevious,
     DiagnosticsNext,
