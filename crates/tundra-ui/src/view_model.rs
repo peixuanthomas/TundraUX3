@@ -1760,10 +1760,14 @@ impl HomeViewModel {
         }
     }
 
+    /// Enables Debug presentation while preserving the normal Home content.
+    pub fn with_debug_diagnostics(mut self, diagnostics: DebugDiagnosticsViewModel) -> Self {
+        self.display_mode = HomeDisplayMode::Debug;
+        self.diagnostics = Some(diagnostics);
+        self
+    }
+
     /// Adds an authenticated account summary and its Logout control.
-    ///
-    /// This is also the opt-in path for authenticated Debug homes; a plain
-    /// [`HomeViewModel::debug`] remains the storage-free development view.
     pub fn with_account_logout(mut self, current_user: impl Into<String>, selected: bool) -> Self {
         self.current_user = Some(current_user.into());
         self.logout_visible = true;

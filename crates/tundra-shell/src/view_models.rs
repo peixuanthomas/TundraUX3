@@ -1,8 +1,16 @@
 impl ShellState {
     pub fn to_home_view_model(&self) -> tundra_ui::HomeViewModel {
+        let user = self.current_home_username().unwrap_or("Unauthenticated");
+        let model = tundra_ui::HomeViewModel::user_with_selection_and_icon_assets(
+            user,
+            self.current_time_label(),
+            self.user_home_entries(),
+            self.selected_home_entry_index(),
+            self.ascii_assets.clone(),
+        );
         let model = match self.home_mode {
             ShellHomeMode::Debug => {
-                tundra_ui::HomeViewModel::debug(tundra_ui::DebugDiagnosticsViewModel {
+                model.with_debug_diagnostics(tundra_ui::DebugDiagnosticsViewModel {
                     tick_count: self.tick_count,
                     last_key_event: self.last_key_event.clone(),
                     last_mouse_event: self.last_mouse_event.clone(),
@@ -14,16 +22,7 @@ impl ShellState {
                     platform_capability_summary: self.platform_capability_summary.clone(),
                 })
             }
-            ShellHomeMode::User => {
-                let user = self.current_home_username().unwrap_or("Unauthenticated");
-                tundra_ui::HomeViewModel::user_with_selection_and_icon_assets(
-                    user,
-                    self.current_time_label(),
-                    self.user_home_entries(),
-                    self.selected_home_entry_index(),
-                    self.ascii_assets.clone(),
-                )
-            }
+            ShellHomeMode::User => model,
         };
         if let Some(username) = self.current_home_username() {
             model.with_account_logout(
@@ -906,15 +905,20 @@ impl ShellState {
     }
 
     pub fn to_shell_chrome_view_model(&self) -> tundra_ui::ShellChromeViewModel {
-        let status = if self.home_mode == ShellHomeMode::Debug
-            && self.active_screen() == ShellScreen::Home
-        {
+        let status = if self.home_mode == ShellHomeMode::Debug {
+            let mouse_position = self
+                .mouse_coordinates
+                .map(|(x, y)| format!("{x},{y}"))
+                .unwrap_or_else(|| "none".to_string());
             format!(
-                "{} | Key: {} | Mouse: {} | Resize: {}",
+                "{} | Last Key: {} | Mouse position: {} | Size: {}x{} | Scroll: {} | Drag: {}",
                 self.notifications.status(),
                 self.last_key_event.as_deref().unwrap_or("none"),
-                self.last_mouse_event.as_deref().unwrap_or("none"),
-                self.last_resize_event.as_deref().unwrap_or("none")
+                mouse_position,
+                self.terminal_size.0,
+                self.terminal_size.1,
+                self.mouse_scroll_direction.as_deref().unwrap_or("none"),
+                self.mouse_drag_direction.as_deref().unwrap_or("none")
             )
         } else {
             self.notifications.status().to_string()

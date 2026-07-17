@@ -3827,24 +3827,9 @@ fn render_top(
 
 fn render_main(frame: &mut Frame<'_>, area: Rect, home: &HomeViewModel, theme: &TundraTheme) {
     match home.display_mode() {
-        HomeDisplayMode::Debug => {
-            if home.logout_visible() {
-                render_authenticated_debug_main(frame, area, home, theme);
-                return;
-            }
-            let main = Paragraph::new(debug_lines(home))
-                .block(
-                    theme
-                        .block()
-                        .title("Home")
-                        .borders(Borders::ALL)
-                        .style(theme.body_style()),
-                )
-                .wrap(Wrap { trim: true });
-
-            frame.render_widget(main, area);
+        HomeDisplayMode::Debug | HomeDisplayMode::User | HomeDisplayMode::Auth => {
+            render_user_main(frame, area, home, theme)
         }
-        HomeDisplayMode::User | HomeDisplayMode::Auth => render_user_main(frame, area, home, theme),
     }
 }
 
@@ -3921,48 +3906,6 @@ fn render_user_main(frame: &mut Frame<'_>, area: Rect, home: &HomeViewModel, the
         Paragraph::new(Line::from(controls_text))
             .style(theme.muted_style())
             .wrap(Wrap { trim: true }),
-        controls,
-    );
-}
-
-fn render_authenticated_debug_main(
-    frame: &mut Frame<'_>,
-    area: Rect,
-    home: &HomeViewModel,
-    theme: &TundraTheme,
-) {
-    frame.render_widget(
-        theme
-            .block()
-            .title("Home")
-            .borders(Borders::ALL)
-            .style(theme.body_style()),
-        area,
-    );
-    let summary = home_summary_area(area);
-    render_home_account_summary(frame, area, summary, home, theme);
-
-    let content = home_content_area(area);
-    let controls = home_controls_area(area);
-    let diagnostics_y = summary.y.saturating_add(summary.height);
-    let diagnostics = Rect::new(
-        content.x,
-        diagnostics_y,
-        content.width,
-        controls.y.saturating_sub(diagnostics_y),
-    );
-    frame.render_widget(
-        Paragraph::new(debug_lines(home))
-            .style(theme.body_style())
-            .wrap(Wrap { trim: true }),
-        diagnostics,
-    );
-    frame.render_widget(
-        Paragraph::new(Line::from(
-            "Tab: focus Logout    L: Logout    Q / Esc: exit",
-        ))
-        .style(theme.muted_style())
-        .wrap(Wrap { trim: true }),
         controls,
     );
 }
@@ -4191,55 +4134,6 @@ fn render_status_time_button(
 
     frame.render_widget(Clear, area);
     frame.render_widget(button, area);
-}
-
-fn debug_lines(home: &HomeViewModel) -> Vec<Line<'static>> {
-    let Some(diagnostics) = home.diagnostics() else {
-        return vec![Line::from("Diagnostics unavailable")];
-    };
-
-    vec![
-        Line::from(format!("Tick: {}", diagnostics.tick_count)),
-        Line::from(format!(
-            "Last key: {}",
-            optional_text(&diagnostics.last_key_event)
-        )),
-        Line::from(format!(
-            "Last mouse: {}",
-            optional_text(&diagnostics.last_mouse_event)
-        )),
-        Line::from(format!(
-            "Last resize: {}",
-            optional_text(&diagnostics.last_resize_event)
-        )),
-        Line::from(format!(
-            "Mouse: {}",
-            diagnostics
-                .mouse_coordinates
-                .map(|(x, y)| format!("{x},{y}"))
-                .unwrap_or_else(|| "none".to_string())
-        )),
-        Line::from(format!(
-            "Scroll: {}",
-            optional_text(&diagnostics.scroll_direction)
-        )),
-        Line::from(format!(
-            "Drag: {}",
-            optional_text(&diagnostics.drag_direction)
-        )),
-        Line::from(format!(
-            "Flags: {}",
-            if diagnostics.terminal_flags.is_empty() {
-                "none".to_string()
-            } else {
-                diagnostics.terminal_flags.join(", ")
-            }
-        )),
-        Line::from(format!(
-            "Platform capabilities: {}",
-            diagnostics.platform_capability_summary
-        )),
-    ]
 }
 
 fn bootstrap_lines(model: &BootstrapAdminViewModel) -> Vec<Line<'static>> {
@@ -4498,10 +4392,6 @@ fn rect_contains(rect: Rect, coordinates: (u16, u16)) -> bool {
         && coordinates.0 < right
         && coordinates.1 >= rect.y
         && coordinates.1 < bottom
-}
-
-fn optional_text(value: &Option<String>) -> &str {
-    value.as_deref().unwrap_or("none")
 }
 
 fn centered_rect(area: Rect, width: u16, height: u16) -> Rect {

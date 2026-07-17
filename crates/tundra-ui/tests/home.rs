@@ -39,7 +39,7 @@ fn debug_home_exposes_diagnostics_and_no_entries() {
 }
 
 #[test]
-fn debug_home_renders_platform_capability_summary() {
+fn debug_home_renders_normal_entries_and_keeps_diagnostics_out_of_main_content() {
     let diagnostics = DebugDiagnosticsViewModel {
         tick_count: 0,
         last_key_event: None,
@@ -52,7 +52,15 @@ fn debug_home_renders_platform_capability_summary() {
         platform_capability_summary: "Windows: 15 supported, 0 best-effort, 0 unsupported"
             .to_string(),
     };
-    let home = HomeViewModel::debug(diagnostics);
+    let home = HomeViewModel::user(
+        "Developer",
+        "2026-07-01 09:30",
+        vec![ShellEntry::new(
+            "Explorer",
+            "Browse files and pinned places",
+        )],
+    )
+    .with_debug_diagnostics(diagnostics);
     let chrome = ShellChromeViewModel {
         app_name: "TundraUX 3".to_string(),
         build_mode: "debug".to_string(),
@@ -60,7 +68,9 @@ fn debug_home_renders_platform_capability_summary() {
         terminal_size: (100, 30),
         screen_stack: vec!["Home".to_string()],
         status: StatusViewModel {
-            status: "Ready".to_string(),
+            status:
+                "Last Key: none | Mouse position: none | Size: 100x30 | Scroll: none | Drag: none"
+                    .to_string(),
             toast: None,
             error: None,
             alert_tone: NotificationTone::Info,
@@ -89,7 +99,10 @@ fn debug_home_renders_platform_capability_summary() {
         .iter()
         .map(|cell| cell.symbol())
         .collect();
-    assert!(output.contains("Platform capabilities: Windows: 15 supported"));
+    assert!(output.contains("Explorer"));
+    assert!(output.contains("Last Key: none"));
+    assert!(!output.contains("Platform capabilities:"));
+    assert!(!output.contains("Tick:"));
 }
 
 #[test]
@@ -210,14 +223,22 @@ fn authenticated_user_and_debug_homes_render_single_line_account_logout() {
     assert!(user_output.contains("User: Strix  [Logout]"));
     assert!(!user_output.contains("Time:"));
     assert!(user_output.contains("Tab: focus Logout / Clock"));
-    assert!(user_output.contains("L: Weathr"));
+    assert!(user_output.contains("L: Logout"));
     assert!(!user_output.contains("E: explorer"));
     assert!(!user_output.contains("U: users"));
     assert!(!user_output.contains("Arrows: select"));
     assert!(logout.width > 0 && logout.height == 1);
     assert!(region_has_fg(&user_terminal, logout, theme.accent));
 
-    let debug_home = HomeViewModel::debug(DebugDiagnosticsViewModel {
+    let debug_home = HomeViewModel::user(
+        "ignored",
+        "2026-07-01 09:30",
+        vec![ShellEntry::new(
+            "Explorer",
+            "Browse files and pinned places",
+        )],
+    )
+    .with_debug_diagnostics(DebugDiagnosticsViewModel {
         tick_count: 1,
         last_key_event: None,
         last_mouse_event: None,
@@ -236,8 +257,10 @@ fn authenticated_user_and_debug_homes_render_single_line_account_logout() {
     let debug_output = terminal_output(&debug_terminal);
 
     assert!(debug_output.contains("User: Admin  [Logout]"));
-    assert!(debug_output.contains("Tick: 1"));
-    assert!(debug_output.contains("L: Weathr"));
+    assert!(debug_output.contains("Explorer"));
+    assert!(debug_output.contains("Arrows: select"));
+    assert!(!debug_output.contains("Tick: 1"));
+    assert!(debug_output.contains("L: Logout"));
     assert!(home_logout_area(main, &debug_home).width > 0);
 }
 
@@ -475,6 +498,58 @@ fn status_bar_renders_selectable_time_button_on_the_right() {
         region_has_fg(&terminal, button, TundraTheme::default_dark().accent),
         "selected time button should use the accent style"
     );
+}
+
+#[test]
+fn debug_status_returns_after_a_notification_clears() {
+    let home = HomeViewModel::debug(DebugDiagnosticsViewModel {
+        tick_count: 0,
+        last_key_event: Some("x".to_string()),
+        last_mouse_event: None,
+        last_resize_event: None,
+        mouse_coordinates: Some((12, 7)),
+        scroll_direction: Some("Down".to_string()),
+        drag_direction: None,
+        terminal_flags: Vec::new(),
+        platform_capability_summary: "Windows: ready".to_string(),
+    });
+    let mut chrome = ShellChromeViewModel {
+        app_name: "TundraUX 3".to_string(),
+        build_mode: "debug".to_string(),
+        display_mode: HomeDisplayMode::Debug,
+        terminal_size: (120, 30),
+        screen_stack: vec!["Home".to_string()],
+        status: StatusViewModel {
+            status: "Last Key: x | Mouse position: 12,7 | Size: 120x30 | Scroll: Down | Drag: none"
+                .to_string(),
+            toast: Some("Saved".to_string()),
+            error: None,
+            alert_tone: NotificationTone::Info,
+            time_button_label: None,
+            time_button_selected: false,
+        },
+    };
+    let theme = TundraTheme::default_dark();
+    let mut notification_terminal =
+        Terminal::new(TestBackend::new(120, 30)).expect("notification terminal");
+
+    notification_terminal
+        .draw(|frame| render_home(frame, frame.area(), &chrome, &home, &theme))
+        .expect("render notification");
+    let notification_output = terminal_output(&notification_terminal);
+    assert!(notification_output.contains("Saved"));
+    assert!(!notification_output.contains("Last Key: x"));
+
+    chrome.status.toast = None;
+    let mut restored_terminal =
+        Terminal::new(TestBackend::new(120, 30)).expect("restored terminal");
+    restored_terminal
+        .draw(|frame| render_home(frame, frame.area(), &chrome, &home, &theme))
+        .expect("render restored status");
+    let restored_output = terminal_output(&restored_terminal);
+    assert!(restored_output.contains("Last Key: x"));
+    assert!(restored_output.contains("Mouse position: 12,7"));
+    assert!(!restored_output.contains("Saved"));
 }
 
 #[test]

@@ -383,6 +383,9 @@ fn debug_state_builds_debug_home_view_model() {
     let home = state.to_home_view_model();
 
     assert_eq!(home.display_mode(), HomeDisplayMode::Debug);
+    assert!(home.entries().iter().any(|entry| entry.label == "Explorer"));
+    assert!(home.entries().iter().any(|entry| entry.label == "Editor"));
+    assert!(home.home_icon_catalog().is_some());
     let diagnostics = home.diagnostics().expect("debug diagnostics");
     assert_eq!(diagnostics.tick_count, 1);
     assert_eq!(diagnostics.last_key_event.as_deref(), Some("x"));
@@ -424,9 +427,44 @@ fn debug_status_bar_includes_recent_input_diagnostics() {
 
     let chrome = state.to_shell_chrome_view_model();
 
-    assert!(chrome.status.status.contains("Key: x"));
-    assert!(chrome.status.status.contains("Mouse: Mouse Scroll Down"));
-    assert!(chrome.status.status.contains("Resize: none"));
+    assert!(chrome.status.status.contains("Last Key: x"));
+    assert!(chrome.status.status.contains("Mouse position: 12,7"));
+    assert!(chrome.status.status.contains("Size: 120x40"));
+    assert!(chrome.status.status.contains("Scroll: Down"));
+    assert!(chrome.status.status.contains("Drag: none"));
+}
+
+#[test]
+fn debug_home_and_status_survive_an_editor_round_trip() {
+    let mut state = ShellState::new(debug_config(), (120, 40));
+
+    state.apply_input(InputEvent::from_key_label("Right"));
+    state.apply_input(InputEvent::from_key_label("Right"));
+    state.apply_input(InputEvent::from_key_label("Enter"));
+
+    assert_eq!(state.active_screen(), ShellScreen::Editor);
+    assert!(
+        state
+            .to_shell_chrome_view_model()
+            .status
+            .status
+            .contains("Last Key: Enter")
+    );
+
+    state.apply_input(InputEvent::from_key_label("Esc"));
+
+    assert_eq!(state.active_screen(), ShellScreen::Home);
+    let home = state.to_home_view_model();
+    assert_eq!(home.display_mode(), HomeDisplayMode::Debug);
+    assert!(home.entries().iter().any(|entry| entry.label == "Editor"));
+    assert!(home.diagnostics().is_some());
+    assert!(
+        state
+            .to_shell_chrome_view_model()
+            .status
+            .status
+            .contains("Last Key: Esc")
+    );
 }
 
 #[test]
@@ -1302,7 +1340,16 @@ fn state_builds_shell_chrome_view_model() {
         chrome.screen_stack,
         vec!["Home".to_string(), "ExitConfirm".to_string()]
     );
-    assert_eq!(chrome.status.status, "Confirm exit");
+    assert!(
+        chrome
+            .status
+            .status
+            .starts_with("Confirm exit | Last Key: q")
+    );
+    assert!(chrome.status.status.contains("Mouse position: none"));
+    assert!(chrome.status.status.contains("Size: 120x40"));
+    assert!(chrome.status.status.contains("Scroll: none"));
+    assert!(chrome.status.status.contains("Drag: none"));
     assert_eq!(chrome.status.toast, None);
     assert_eq!(chrome.status.error, None);
 }
