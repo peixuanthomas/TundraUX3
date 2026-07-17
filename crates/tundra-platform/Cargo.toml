@@ -7,3 +7,4 @@ edition.workspace = true
 path = "src/lib.rs"
 
 [dependencies]
+same-file = "1"

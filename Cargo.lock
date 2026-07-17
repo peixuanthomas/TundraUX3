@@ -2724,6 +2724,9 @@ dependencies = [
 [[package]]
 name = "tundra-platform"
 version = "0.1.0"
+dependencies = [
+ "same-file",
+]
 
 [[package]]
 name = "tundra-shell"

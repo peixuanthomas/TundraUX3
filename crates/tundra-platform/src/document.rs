@@ -363,9 +363,6 @@ where
                     Some(final_len),
                 ));
             }
-            if !metadata_refers_to_same_file(&initial_metadata, &final_metadata) {
-                return Err(document_replaced_while_reading(path));
-            }
             verify_document_prefix_samples(
                 &mut file,
                 bytes
@@ -396,7 +393,11 @@ where
         }
         DocumentReadConsistency::AppendablePrefix => {
             if !path_metadata.is_file()
-                || !metadata_refers_to_same_file(&initial_metadata, &path_metadata)
+                || !open_file_refers_to_path(&file, path).map_err(|error| PlatformError::Io {
+                    operation: "verify document identity",
+                    path: Some(path.to_path_buf()),
+                    message: error.to_string(),
+                })?
             {
                 return Err(document_replaced_while_reading(path));
             }
@@ -541,35 +542,10 @@ fn verify_document_prefix_sample(
     Ok(())
 }
 
-#[cfg(unix)]
-fn metadata_refers_to_same_file(left: &fs::Metadata, right: &fs::Metadata) -> bool {
-    use std::os::unix::fs::MetadataExt;
-
-    left.dev() == right.dev() && left.ino() == right.ino()
-}
-
-#[cfg(windows)]
-fn metadata_refers_to_same_file(left: &fs::Metadata, right: &fs::Metadata) -> bool {
-    use std::os::windows::fs::MetadataExt;
-
-    match (
-        left.volume_serial_number(),
-        left.file_index(),
-        right.volume_serial_number(),
-        right.file_index(),
-    ) {
-        (Some(left_volume), Some(left_index), Some(right_volume), Some(right_index)) => {
-            left_volume == right_volume && left_index == right_index
-        }
-        _ => false,
-    }
-}
-
-#[cfg(not(any(unix, windows)))]
-fn metadata_refers_to_same_file(left: &fs::Metadata, right: &fs::Metadata) -> bool {
-    left.len() == right.len()
-        && left.created().ok() == right.created().ok()
-        && left.modified().ok() == right.modified().ok()
+fn open_file_refers_to_path(file: &File, path: &Path) -> io::Result<bool> {
+    let open_file = same_file::Handle::from_file(file.try_clone()?)?;
+    let path_file = same_file::Handle::from_path(path)?;
+    Ok(open_file == path_file)
 }
 
 /// Reads at most `max_bytes` from the end of a regular UTF-8 document.
