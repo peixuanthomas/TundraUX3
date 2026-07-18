@@ -56,6 +56,16 @@ fn weathr_arg_dispatches_weathr() {
 }
 
 #[test]
+fn animation_test_args_dispatch_independent_previews() {
+    assert_eq!(parse_args(["test-frost"]), Ok(CliCommand::TestFrost));
+    assert_eq!(parse_args(["test-matrix"]), Ok(CliCommand::TestMatrix));
+    assert_eq!(
+        parse_args(["test-matrix", "extra"]),
+        Err(CliError::UnexpectedArgument("extra".to_string()))
+    );
+}
+
+#[test]
 fn config_args_parse_safe_get_and_set_commands() {
     assert_eq!(
         parse_args(["config"]),
@@ -119,10 +129,12 @@ fn help_command_writes_usage_to_stdout() {
     assert_eq!(exit_code, 0);
     assert!(stderr.is_empty());
     let stdout = String::from_utf8(stdout).expect("help output should be utf8");
-    assert!(stdout.contains("Usage: tundra-cli <config|doctor|editor|explain|new|paths|weathr>"));
+    assert!(stdout.contains("test-frost|test-matrix|weathr>"));
     assert!(stdout.contains("config  View or update user config"));
     assert!(stdout.contains("new     Clear saved TundraUX3 data"));
     assert!(stdout.contains("editor  Launch the shell directly into the Markdown editor"));
+    assert!(stdout.contains("test-frost  Play only the startup frost banner animation"));
+    assert!(stdout.contains("test-matrix Play only the first-run Matrix banner animation"));
     assert!(stdout.contains("weathr  Launch the terminal weather scene"));
     assert!(!stdout.contains("Windows 11"));
     assert!(!stdout.contains("Windows Terminal"));
@@ -144,7 +156,9 @@ fn explain_command_prints_startup_and_boundary_notes() {
     assert!(stdout.contains("UI boundary"));
     assert!(stdout.contains("tundra-platform"));
     assert!(stdout.contains("tundra-shell"));
-    assert!(stdout.contains("doctor, editor, paths, explain, new, weathr"));
+    assert!(
+        stdout.contains("doctor, editor, paths, explain, new, test-frost, test-matrix, weathr")
+    );
     assert!(!stdout.contains("Windows 11"));
     assert!(!stdout.contains("Windows Terminal"));
 }
@@ -426,6 +440,33 @@ fn config_set_theme_updates_config_without_changing_users() {
     assert_eq!(
         opened.manager.load_users().expect("users reload"),
         users_before
+    );
+}
+
+#[test]
+fn config_set_rejects_non_english_language() {
+    let mut stdout = Vec::new();
+    let mut stderr = Vec::new();
+    let tree = TempTree::new("config-set-non-english");
+    let platform = mock_windows_platform(tree.path());
+    let app_paths = platform.app_paths().expect("mock app paths");
+    let opened = StorageManager::open(app_paths).expect("storage initializes");
+
+    let exit_code = run_with_platform(
+        ["config", "set", "language", "zh-Hans"],
+        &platform,
+        &mut stdout,
+        &mut stderr,
+    );
+
+    assert_ne!(exit_code, 0);
+    assert!(stdout.is_empty());
+    let stderr = String::from_utf8(stderr).expect("config error should be utf8");
+    assert!(stderr.contains("unsupported language"));
+    assert!(stderr.contains("available values: en-US"));
+    assert_eq!(
+        opened.manager.load_config().expect("config").language,
+        "en-US"
     );
 }
 
@@ -734,7 +775,7 @@ fn unknown_command_exits_two_and_writes_error_to_stderr() {
     assert!(stdout.is_empty());
     let stderr = String::from_utf8(stderr).expect("error output should be utf8");
     assert!(stderr.contains("ERROR: unknown command: repair"));
-    assert!(stderr.contains("Usage: tundra-cli <config|doctor|editor|explain|new|paths|weathr>"));
+    assert!(stderr.contains("test-frost|test-matrix|weathr>"));
 }
 
 fn assert_path_labels(output: &str) {

@@ -8,8 +8,8 @@ use crate::clock_document::ClockDocument;
 use crate::config_document::StorageConfig;
 use crate::descriptors::{CLOCK_DESCRIPTOR, CONFIG_DESCRIPTOR};
 use crate::document_io::{
-    load_json_document, save_json_document, save_toml_document, validate_existing_schema,
-    validate_json_document, validate_toml_document,
+    load_json_document, load_toml_document, save_json_document, save_toml_document,
+    validate_existing_schema, validate_json_document, validate_toml_document,
 };
 use crate::error::StorageError;
 use crate::manager::{StorageLoadReport, StorageManager};
@@ -32,6 +32,7 @@ impl StorageManager {
             CONFIG_DESCRIPTOR.name,
             &StorageConfig::default(),
         )?;
+        self.normalize_config_language(&mut report)?;
         self.ensure_users_document(&mut report)?;
         self.ensure_json_document(
             &mut report,
@@ -65,6 +66,23 @@ impl StorageManager {
         )?;
 
         Ok(report)
+    }
+
+    fn normalize_config_language(
+        &self,
+        report: &mut StorageLoadReport,
+    ) -> Result<(), StorageError> {
+        let mut config =
+            load_toml_document::<StorageConfig>(&self.layout.config_path, CONFIG_DESCRIPTOR.name)?;
+        if !config.normalize_language() {
+            return Ok(());
+        }
+
+        save_toml_document(&self.layout.config_path, CONFIG_DESCRIPTOR.name, &config)?;
+        if !report.migrated_files.contains(&self.layout.config_path) {
+            report.migrated_files.push(self.layout.config_path.clone());
+        }
+        Ok(())
     }
 
     fn check_existing_future_schemas(&self) -> Result<(), StorageError> {

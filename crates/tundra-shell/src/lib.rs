@@ -60,6 +60,7 @@ const CLOCK_DUE_NOTIFICATION_KEY_PREFIX: &str = "clock.due";
 // Public models and low-coupling services live in regular modules. Re-exports
 // preserve the crate-root API used by the binary and integration tests.
 mod banner;
+mod first_run_banner;
 mod input_events;
 mod launch_args;
 mod notification_center;
@@ -73,6 +74,7 @@ mod terminal_session;
 mod terminal_size;
 
 pub use banner::*;
+pub use first_run_banner::*;
 pub use input_events::*;
 pub use launch_args::*;
 pub use notification_center::*;

@@ -8,6 +8,8 @@ pub enum CliCommand {
     Explain,
     New,
     Paths,
+    TestFrost,
+    TestMatrix,
     Weathr,
     Help,
 }
@@ -91,6 +93,8 @@ where
         "explain" => parse_no_extra_args(&args, CliCommand::Explain),
         "new" => parse_no_extra_args(&args, CliCommand::New),
         "paths" => parse_no_extra_args(&args, CliCommand::Paths),
+        "test-frost" => parse_no_extra_args(&args, CliCommand::TestFrost),
+        "test-matrix" => parse_no_extra_args(&args, CliCommand::TestMatrix),
         "weathr" => parse_no_extra_args(&args, CliCommand::Weathr),
         "-h" | "--help" | "help" => Ok(CliCommand::Help),
         other => Err(CliError::UnknownCommand(other.to_string())),

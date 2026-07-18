@@ -112,10 +112,15 @@ fn toml_and_json_documents_round_trip() {
     manager
         .save_config(&config)
         .expect("config should save atomically");
-    assert_eq!(manager.load_config().expect("config should reload"), config);
+    let mut expected_config = config.clone();
+    expected_config.language = "en-US".to_string();
+    assert_eq!(
+        manager.load_config().expect("config should reload"),
+        expected_config
+    );
     let config_contents =
         fs::read_to_string(&manager.layout().config_path).expect("config should be readable");
-    assert!(config_contents.contains("language = \"zh-Hans\""));
+    assert!(config_contents.contains("language = \"en-US\""));
     assert!(config_contents.contains("timezone = \"Asia/Shanghai\""));
     assert!(config_contents.contains("[appearance]"));
     assert!(config_contents.contains("border_shape = \"square\""));
@@ -257,6 +262,33 @@ fn old_config_without_language_or_timezone_loads_with_defaults() {
     );
     assert!(opened.report.recovered_files.is_empty());
     assert!(opened.report.warnings.is_empty());
+
+    cleanup(&base);
+}
+
+#[test]
+fn existing_non_english_config_is_migrated_to_english_on_open() {
+    let base = unique_temp_root("non-english-config");
+    let paths = app_paths(&base);
+    let layout = StorageLayout::from_app_paths(&paths);
+    fs::create_dir_all(layout.config_path.parent().expect("config parent"))
+        .expect("config parent should be writable");
+    fs::write(
+        &layout.config_path,
+        "schema_version = 1\ntheme = \"dark\"\nlanguage = \"zh-Hans\"\ntimezone = \"UTC\"\n",
+    )
+    .expect("legacy language fixture");
+
+    let opened = StorageManager::open(paths).expect("config migration should succeed");
+
+    assert_eq!(
+        opened.manager.load_config().expect("config").language,
+        "en-US"
+    );
+    assert!(opened.report.migrated_files.contains(&layout.config_path));
+    let contents = fs::read_to_string(&layout.config_path).expect("migrated config is readable");
+    assert!(contents.contains("language = \"en-US\""));
+    assert!(!contents.contains("zh-Hans"));
 
     cleanup(&base);
 }

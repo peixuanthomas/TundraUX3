@@ -17,25 +17,22 @@ const SETUP_CONTROLS_WIDTH: u16 = 48;
 const LEGACY_LONGITUDE_BAND_MIN_CELLS: usize = 6;
 
 #[test]
-fn setup_catalog_exposes_required_language_and_timezone_labels() {
+fn setup_catalog_exposes_only_english_and_required_timezones() {
     let languages = setup_language_options();
     let language_labels = languages
         .iter()
         .map(|language| format!("{} ({})", language.label, language.code))
         .collect::<Vec<_>>()
         .join(" ");
-    let compact_language_labels: String = language_labels
-        .chars()
-        .filter(|character| !character.is_whitespace())
-        .collect();
     let timezones = setup_timezone_options();
     let timezone_ids: Vec<&str> = timezones
         .iter()
         .map(|timezone| timezone.id.as_str())
         .collect();
 
+    assert_eq!(languages.len(), 1);
     assert!(language_labels.contains("English (en-US)"));
-    assert!(compact_language_labels.contains("简体中文(zh-Hans)"));
+    assert!(!language_labels.contains("zh-Hans"));
     assert!(timezone_ids.contains(&"UTC"));
     assert!(timezone_ids.contains(&"America/Los_Angeles"));
     assert!(timezone_ids.contains(&"Pacific/Auckland"));
@@ -49,7 +46,7 @@ fn setup_language_page_is_step_specific() {
 
     assert!(output.contains("Step: Language"));
     assert!(output.contains("English (en-US)"));
-    assert!(output.contains("Selected language: zh-Hans"));
+    assert!(output.contains("Selected language: en-US"));
     assert!(output.contains("continue"));
     assert!(output.contains("help"));
     assert!(!output.contains("Timezone"));
@@ -393,7 +390,7 @@ fn sample_model_with_timezone(
         step,
         languages,
         timezones,
-        selected_language_index: 1,
+        selected_language_index: 0,
         selected_timezone_index,
         timezone_window_start: selected_timezone_index.saturating_sub(2),
         admin_username: "AdminUser".to_string(),

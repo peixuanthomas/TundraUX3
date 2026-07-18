@@ -152,6 +152,12 @@ where
         Ok(CliCommand::New) => run_new(platform, stdout, stderr),
         Ok(CliCommand::Paths) => run_paths(platform, stdout, stderr),
         Ok(CliCommand::Doctor) => run_doctor(platform, stdout, stderr, None),
+        Ok(CliCommand::TestFrost) => run_animation_preview(stderr, "frost", || {
+            tundra_shell::run_frost_animation_preview(stdout)
+        }),
+        Ok(CliCommand::TestMatrix) => run_animation_preview(stderr, "Matrix", || {
+            tundra_shell::run_matrix_animation_preview(stdout)
+        }),
         Ok(CliCommand::Editor) => run_editor(stderr, || {
             tundra_shell::run_shell_blocking_managed(
                 stdout,
@@ -241,6 +247,12 @@ where
         Ok(CliCommand::New) => run_new(platform, stdout, stderr),
         Ok(CliCommand::Paths) => run_paths(platform, stdout, stderr),
         Ok(CliCommand::Doctor) => run_doctor(platform, stdout, stderr, asset_root),
+        Ok(CliCommand::TestFrost) => run_animation_preview(stderr, "frost", || {
+            tundra_shell::run_frost_animation_preview(stdout)
+        }),
+        Ok(CliCommand::TestMatrix) => run_animation_preview(stderr, "Matrix", || {
+            tundra_shell::run_matrix_animation_preview(stdout)
+        }),
         Ok(CliCommand::Editor) => run_editor(stderr, || {
             tundra_shell::run_shell_blocking(stdout, tundra_shell::ShellLaunchConfig::editor())
         }),
@@ -263,6 +275,25 @@ where
         Ok(()) => 0,
         Err(error) => {
             let _ = writeln!(stderr, "ERROR: could not launch editor: {error}");
+            1
+        }
+    }
+}
+
+fn run_animation_preview<Stderr, Launcher, LaunchError>(
+    stderr: &mut Stderr,
+    name: &str,
+    launcher: Launcher,
+) -> i32
+where
+    Stderr: Write,
+    Launcher: FnOnce() -> Result<(), LaunchError>,
+    LaunchError: fmt::Display,
+{
+    match launcher() {
+        Ok(()) => 0,
+        Err(error) => {
+            let _ = writeln!(stderr, "ERROR: could not play {name} animation: {error}");
             1
         }
     }

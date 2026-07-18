@@ -54,10 +54,10 @@ fn first_run_setup_signs_in_persists_config_and_hint_without_plaintext_password(
     let manager = startup.storage_manager.clone().expect("storage manager");
     let mut state = ShellState::new_with_startup(default_config(), (120, 40), startup);
 
-    let expected_language = setup_language_code(&tundra_ui::setup_language_options(), 1);
+    let expected_language = setup_language_code(&tundra_ui::setup_language_options(), 0);
     let expected_timezone = setup_timezone_id(&tundra_ui::setup_timezone_options(), 2);
 
-    complete_first_run_setup(&mut state, 1, 2, "AdminUser", "StrongPass123", "First pet");
+    complete_first_run_setup(&mut state, 0, 2, "AdminUser", "StrongPass123", "First pet");
 
     assert_eq!(state.active_screen(), ShellScreen::Home);
     assert_eq!(
@@ -370,7 +370,7 @@ fn first_run_setup_routes_keys_focus_and_mouse_before_home_shortcuts() {
     assert_eq!(state.active_popup(), None);
 
     state.apply_input(InputEvent::from_key_label("Right"));
-    assert_eq!(state.to_setup_view_model().selected_language_index, 1);
+    assert_eq!(state.to_setup_view_model().selected_language_index, 0);
     state.apply_input(InputEvent::mouse_down(
         PointerButton::Left,
         setup_hit_map_row_coordinates(&state, ShellComponent::SetupLanguage, 0),

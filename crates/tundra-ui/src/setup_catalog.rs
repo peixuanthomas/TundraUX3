@@ -1,16 +1,10 @@
 use crate::view_model::{SetupLanguageOption, SetupTimezoneOption};
 
 pub fn setup_language_options() -> Vec<SetupLanguageOption> {
-    vec![
-        SetupLanguageOption {
-            code: "en-US".to_string(),
-            label: "English".to_string(),
-        },
-        SetupLanguageOption {
-            code: "zh-Hans".to_string(),
-            label: "简体中文".to_string(),
-        },
-    ]
+    vec![SetupLanguageOption {
+        code: "en-US".to_string(),
+        label: "English".to_string(),
+    }]
 }
 
 pub fn setup_timezone_options() -> Vec<SetupTimezoneOption> {

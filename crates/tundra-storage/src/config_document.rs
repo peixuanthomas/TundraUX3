@@ -4,6 +4,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::schema::{SCHEMA_VERSION, VersionedDocument};
 
+pub const SUPPORTED_LANGUAGE: &str = "en-US";
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct StorageConfig {
     pub schema_version: u32,
@@ -25,6 +27,16 @@ pub struct StorageConfig {
     pub launcher: LauncherConfig,
     #[serde(default)]
     pub security: SecurityConfig,
+}
+
+impl StorageConfig {
+    pub(crate) fn normalize_language(&mut self) -> bool {
+        if self.language == SUPPORTED_LANGUAGE {
+            return false;
+        }
+        self.language = SUPPORTED_LANGUAGE.to_string();
+        true
+    }
 }
 
 impl Default for StorageConfig {
@@ -172,7 +184,7 @@ fn default_theme() -> String {
 }
 
 fn default_language() -> String {
-    "en-US".to_string()
+    SUPPORTED_LANGUAGE.to_string()
 }
 
 fn default_timezone() -> String {

@@ -113,6 +113,20 @@ pub fn run_fullscreen_blocking(
     run_fullscreen_blocking_managed(output, config, process)
 }
 
+pub fn run_frost_animation_preview(output: &mut impl Write) -> io::Result<()> {
+    let ascii_assets = load_validated_runtime_ascii_assets()?;
+    with_fullscreen(output, |output| {
+        display_startup_banner_with_assets(output, &ascii_assets)
+    })
+}
+
+pub fn run_matrix_animation_preview(output: &mut impl Write) -> io::Result<()> {
+    let ascii_assets = load_validated_runtime_ascii_assets()?;
+    with_fullscreen(output, |output| {
+        display_first_run_banner_with_assets(output, &ascii_assets)
+    })
+}
+
 pub fn run_fullscreen_blocking_managed(
     output: &mut impl Write,
     config: ShellLaunchConfig,
@@ -133,6 +147,8 @@ pub fn run_fullscreen_blocking_managed(
         .map_err(io::Error::other)?;
     let (time_sync_sender, time_sync_receiver) = mpsc::channel();
     let time_sync_watchdog = shell_watchdog.child_component(ComponentId::from_static("time-sync"));
+    // Both network jobs must be live before the blocking frost animation so
+    // normal login can consume time calibration and prefetched weather data.
     let _time_sync_worker =
         spawn_time_sync_worker(time_sync_sender, &time_sync_watchdog).map_err(io::Error::other)?;
     let initial_startup =
@@ -145,7 +161,6 @@ pub fn run_fullscreen_blocking_managed(
     with_fullscreen(output, |output| {
         display_startup_banner_with_assets(output, &ascii_assets)
     })?;
-
     let mut initial_startup = Some(initial_startup);
     let mut cached_time_sync = None;
     let mut force_lockscreen = false;
@@ -305,6 +320,9 @@ fn run_fullscreen_shell_session(
     let initial_size = checked_current_terminal_size(terminal_size_requirement)?;
     let terminal_control = TerminalControlHandler::install();
     let mut guard = TerminalGuard::enter(output)?;
+    if startup.auth_bootstrap_required {
+        display_first_run_banner_with_assets(guard.terminal_mut().backend_mut(), &ascii_assets)?;
+    }
     let theme =
         tundra_ui::TundraTheme::default_dark().with_border_shape(startup.app_config.border_shape);
     let mut state = ShellState::new_with_runtime_services(

@@ -47,11 +47,16 @@ impl StorageManager {
     }
 
     pub fn load_config(&self) -> Result<StorageConfig, StorageError> {
-        load_toml_document(&self.layout.config_path, CONFIG_DESCRIPTOR.name)
+        let mut config: StorageConfig =
+            load_toml_document(&self.layout.config_path, CONFIG_DESCRIPTOR.name)?;
+        config.normalize_language();
+        Ok(config)
     }
 
     pub fn save_config(&self, config: &StorageConfig) -> Result<(), StorageError> {
-        save_toml_document(&self.layout.config_path, CONFIG_DESCRIPTOR.name, config)
+        let mut config = config.clone();
+        config.normalize_language();
+        save_toml_document(&self.layout.config_path, CONFIG_DESCRIPTOR.name, &config)
     }
 
     pub fn load_users(&self) -> Result<UsersDocument, StorageError> {
