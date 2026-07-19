@@ -14,9 +14,9 @@ use crate::VolumeKind;
 use crate::paths::home_dir_from_env;
 use crate::{
     AppPaths, CapabilityStatus, DirectoryListing, FileAttributes, FileOpenPolicy, LocalVolume,
-    Platform, PlatformCapabilities, PlatformError, PlatformKind, ProcessExit, ProcessSpec,
-    StartupPermissionStatus, TrashEntry, TrashEntryId, TrashRestoreTarget, TrashStats, UserDirs,
-    build_macos_app_paths,
+    Platform, PlatformCapabilities, PlatformError, PlatformIcon, PlatformKind, ProcessExit,
+    ProcessSpec, StartupPermissionStatus, TrashEntry, TrashEntryId, TrashRestoreTarget, TrashStats,
+    UserDirs, build_macos_app_paths,
 };
 
 const OPEN: &str = "/usr/bin/open";
@@ -46,6 +46,30 @@ unsafe extern "C" {
 #[cfg(target_os = "macos")]
 #[link(name = "Foundation", kind = "framework")]
 unsafe extern "C" {}
+
+#[cfg(target_os = "macos")]
+#[link(name = "AppKit", kind = "framework")]
+unsafe extern "C" {}
+
+#[cfg(target_os = "macos")]
+#[link(name = "CoreGraphics", kind = "framework")]
+unsafe extern "C" {
+    fn CGImageGetWidth(image: *mut c_void) -> usize;
+    fn CGImageGetHeight(image: *mut c_void) -> usize;
+    fn CGColorSpaceCreateDeviceRGB() -> *mut c_void;
+    fn CGColorSpaceRelease(space: *mut c_void);
+    fn CGBitmapContextCreate(
+        data: *mut c_void,
+        width: usize,
+        height: usize,
+        bits_per_component: usize,
+        bytes_per_row: usize,
+        space: *mut c_void,
+        bitmap_info: u32,
+    ) -> *mut c_void;
+    fn CGContextDrawImage(context: *mut c_void, rect: CGRect, image: *mut c_void);
+    fn CGContextRelease(context: *mut c_void);
+}
 
 #[derive(Debug, Clone, Copy, Default)]
 pub struct MacosPlatform;
@@ -112,6 +136,14 @@ impl Platform for MacosPlatform {
 
     fn app_paths(&self) -> Result<AppPaths, PlatformError> {
         build_macos_app_paths(home_dir_from_env()?, std::env::temp_dir()).map_err(Into::into)
+    }
+
+    fn file_icon(
+        &self,
+        path: &Path,
+        preferred_size: u32,
+    ) -> Result<Option<PlatformIcon>, PlatformError> {
+        macos_file_icon(path, preferred_size)
     }
 
     fn open_path(&self, path: &Path) -> Result<(), PlatformError> {
@@ -1611,6 +1643,359 @@ fn apply_macos_file_flags(
     _attributes: &mut FileAttributes,
 ) -> Result<(), PlatformError> {
     Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn macos_file_icon(
+    path: &Path,
+    preferred_size: u32,
+) -> Result<Option<PlatformIcon>, PlatformError> {
+    use std::os::unix::ffi::OsStrExt;
+
+    if preferred_size == 0 || path.as_os_str().as_bytes().contains(&0) {
+        return Ok(None);
+    }
+
+    let _pool = AutoreleasePool::new()?;
+    let path = ObjcRetained::ns_string(path.as_os_str().as_bytes())?;
+    if path.0.is_null() {
+        return Ok(None);
+    }
+    let workspace = unsafe {
+        objc_send_id0(
+            objc_class(b"NSWorkspace\0")?,
+            objc_selector(b"sharedWorkspace\0")?,
+        )
+    };
+    if workspace.is_null() {
+        return Ok(None);
+    }
+    let image = unsafe { objc_send_id1(workspace, objc_selector(b"iconForFile:\0")?, path.0) };
+    if image.is_null() {
+        return Ok(None);
+    }
+
+    let size = f64::from(preferred_size.clamp(1, 512));
+    unsafe {
+        objc_send_void_size(
+            image,
+            objc_selector(b"setSize:\0")?,
+            NSSize {
+                width: size,
+                height: size,
+            },
+        );
+    }
+    let image = unsafe {
+        objc_send_cg_image(
+            image,
+            objc_selector(b"CGImageForProposedRect:context:hints:\0")?,
+            std::ptr::null(),
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+        )
+    };
+    if image.is_null() {
+        return Ok(None);
+    }
+
+    let width = unsafe { CGImageGetWidth(image) };
+    let height = unsafe { CGImageGetHeight(image) };
+    if width == 0 || height == 0 || width > 512 || height > 512 {
+        return Ok(None);
+    }
+    let byte_len = width
+        .checked_mul(height)
+        .and_then(|pixels| pixels.checked_mul(4))
+        .ok_or_else(|| PlatformError::InvalidInput {
+            message: "macOS icon dimensions are too large".to_string(),
+        })?;
+    let color_space = unsafe { CGColorSpaceCreateDeviceRGB() };
+    if color_space.is_null() {
+        return Ok(None);
+    }
+    let _color_space = ColorSpace(color_space);
+    let mut rgba = vec![0u8; byte_len];
+    let context = unsafe {
+        CGBitmapContextCreate(
+            rgba.as_mut_ptr().cast(),
+            width,
+            height,
+            8,
+            width * 4,
+            color_space,
+            0x4001, // kCGImageAlphaPremultipliedLast | kCGBitmapByteOrder32Big
+        )
+    };
+    if context.is_null() {
+        return Ok(None);
+    }
+    let _context = GraphicsContext(context);
+    unsafe {
+        CGContextDrawImage(
+            context,
+            CGRect {
+                origin: CGPoint { x: 0.0, y: 0.0 },
+                size: CGSize {
+                    width: width as f64,
+                    height: height as f64,
+                },
+            },
+            image,
+        );
+    }
+    unpremultiply_rgba(&mut rgba);
+    PlatformIcon::new(width as u32, height as u32, rgba).map(Some)
+}
+
+#[cfg(not(target_os = "macos"))]
+fn macos_file_icon(
+    _path: &Path,
+    _preferred_size: u32,
+) -> Result<Option<PlatformIcon>, PlatformError> {
+    Ok(None)
+}
+
+#[cfg(target_os = "macos")]
+#[repr(C)]
+struct NSSize {
+    width: f64,
+    height: f64,
+}
+
+#[cfg(target_os = "macos")]
+#[repr(C)]
+struct CGPoint {
+    x: f64,
+    y: f64,
+}
+
+#[cfg(target_os = "macos")]
+#[repr(C)]
+struct CGSize {
+    width: f64,
+    height: f64,
+}
+
+#[cfg(target_os = "macos")]
+#[repr(C)]
+struct CGRect {
+    origin: CGPoint,
+    size: CGSize,
+}
+
+#[cfg(target_os = "macos")]
+struct ObjcRetained(*mut c_void);
+
+#[cfg(target_os = "macos")]
+impl ObjcRetained {
+    fn ns_string(bytes: &[u8]) -> Result<Self, PlatformError> {
+        let class = objc_class(b"NSString\0")?;
+        let allocated = unsafe { objc_send_id0(class, objc_selector(b"alloc\0")?) };
+        if allocated.is_null() {
+            return Err(macos_icon_error("allocate NSString"));
+        }
+        let string = unsafe {
+            objc_send_id_bytes_len_encoding(
+                allocated,
+                objc_selector(b"initWithBytes:length:encoding:\0")?,
+                bytes.as_ptr().cast(),
+                bytes.len(),
+                4, // NSUTF8StringEncoding
+            )
+        };
+        if string.is_null() {
+            unsafe { objc_send_void0(allocated, objc_selector(b"release\0")?) };
+            return Ok(Self(std::ptr::null_mut()));
+        }
+        Ok(Self(string))
+    }
+}
+
+#[cfg(target_os = "macos")]
+impl Drop for ObjcRetained {
+    fn drop(&mut self) {
+        if !self.0.is_null() {
+            unsafe {
+                if let Ok(selector) = objc_selector(b"release\0") {
+                    objc_send_void0(self.0, selector);
+                }
+            }
+        }
+    }
+}
+
+#[cfg(target_os = "macos")]
+struct AutoreleasePool(*mut c_void);
+
+#[cfg(target_os = "macos")]
+impl AutoreleasePool {
+    fn new() -> Result<Self, PlatformError> {
+        let class = objc_class(b"NSAutoreleasePool\0")?;
+        let allocated = unsafe { objc_send_id0(class, objc_selector(b"alloc\0")?) };
+        let pool = unsafe { objc_send_id0(allocated, objc_selector(b"init\0")?) };
+        if pool.is_null() {
+            Err(macos_icon_error("create autorelease pool"))
+        } else {
+            Ok(Self(pool))
+        }
+    }
+}
+
+#[cfg(target_os = "macos")]
+impl Drop for AutoreleasePool {
+    fn drop(&mut self) {
+        unsafe {
+            if let Ok(selector) = objc_selector(b"drain\0") {
+                objc_send_void0(self.0, selector);
+            }
+        }
+    }
+}
+
+#[cfg(target_os = "macos")]
+struct ColorSpace(*mut c_void);
+
+#[cfg(target_os = "macos")]
+impl Drop for ColorSpace {
+    fn drop(&mut self) {
+        unsafe { CGColorSpaceRelease(self.0) }
+    }
+}
+
+#[cfg(target_os = "macos")]
+struct GraphicsContext(*mut c_void);
+
+#[cfg(target_os = "macos")]
+impl Drop for GraphicsContext {
+    fn drop(&mut self) {
+        unsafe { CGContextRelease(self.0) }
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn objc_class(name: &'static [u8]) -> Result<*mut c_void, PlatformError> {
+    let class = unsafe { objc_getClass(name.as_ptr().cast()) };
+    (!class.is_null())
+        .then_some(class)
+        .ok_or_else(|| macos_icon_error("resolve Objective-C class"))
+}
+
+#[cfg(target_os = "macos")]
+fn objc_selector(name: &'static [u8]) -> Result<*mut c_void, PlatformError> {
+    let selector = unsafe { sel_registerName(name.as_ptr().cast()) };
+    (!selector.is_null())
+        .then_some(selector)
+        .ok_or_else(|| macos_icon_error("resolve Objective-C selector"))
+}
+
+#[cfg(target_os = "macos")]
+fn macos_icon_error(operation: &'static str) -> PlatformError {
+    PlatformError::Native {
+        operation: "read macOS file icon",
+        message: format!("could not {operation}"),
+    }
+}
+
+#[cfg(target_os = "macos")]
+unsafe fn objc_send_id0(receiver: *mut c_void, selector: *mut c_void) -> *mut c_void {
+    unsafe {
+        std::mem::transmute::<
+            unsafe extern "C" fn(),
+            unsafe extern "C" fn(*mut c_void, *mut c_void) -> *mut c_void,
+        >(objc_msgSend)(receiver, selector)
+    }
+}
+
+#[cfg(target_os = "macos")]
+unsafe fn objc_send_id1(
+    receiver: *mut c_void,
+    selector: *mut c_void,
+    value: *mut c_void,
+) -> *mut c_void {
+    unsafe {
+        std::mem::transmute::<
+            unsafe extern "C" fn(),
+            unsafe extern "C" fn(*mut c_void, *mut c_void, *mut c_void) -> *mut c_void,
+        >(objc_msgSend)(receiver, selector, value)
+    }
+}
+
+#[cfg(target_os = "macos")]
+unsafe fn objc_send_id_bytes_len_encoding(
+    receiver: *mut c_void,
+    selector: *mut c_void,
+    bytes: *const c_void,
+    len: usize,
+    encoding: usize,
+) -> *mut c_void {
+    unsafe {
+        std::mem::transmute::<
+            unsafe extern "C" fn(),
+            unsafe extern "C" fn(
+                *mut c_void,
+                *mut c_void,
+                *const c_void,
+                usize,
+                usize,
+            ) -> *mut c_void,
+        >(objc_msgSend)(receiver, selector, bytes, len, encoding)
+    }
+}
+
+#[cfg(target_os = "macos")]
+unsafe fn objc_send_void0(receiver: *mut c_void, selector: *mut c_void) {
+    unsafe {
+        std::mem::transmute::<unsafe extern "C" fn(), unsafe extern "C" fn(*mut c_void, *mut c_void)>(
+            objc_msgSend,
+        )(receiver, selector)
+    }
+}
+
+#[cfg(target_os = "macos")]
+unsafe fn objc_send_void_size(receiver: *mut c_void, selector: *mut c_void, size: NSSize) {
+    unsafe {
+        std::mem::transmute::<
+            unsafe extern "C" fn(),
+            unsafe extern "C" fn(*mut c_void, *mut c_void, NSSize),
+        >(objc_msgSend)(receiver, selector, size)
+    }
+}
+
+#[cfg(target_os = "macos")]
+unsafe fn objc_send_cg_image(
+    receiver: *mut c_void,
+    selector: *mut c_void,
+    rect: *const CGRect,
+    context: *mut c_void,
+    hints: *mut c_void,
+) -> *mut c_void {
+    unsafe {
+        std::mem::transmute::<
+            unsafe extern "C" fn(),
+            unsafe extern "C" fn(
+                *mut c_void,
+                *mut c_void,
+                *const CGRect,
+                *mut c_void,
+                *mut c_void,
+            ) -> *mut c_void,
+        >(objc_msgSend)(receiver, selector, rect, context, hints)
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn unpremultiply_rgba(rgba: &mut [u8]) {
+    for pixel in rgba.chunks_exact_mut(4) {
+        let alpha = u16::from(pixel[3]);
+        if alpha == 0 {
+            pixel[..3].fill(0);
+        } else if alpha < 255 {
+            for channel in &mut pixel[..3] {
+                *channel = ((u16::from(*channel) * 255 + alpha / 2) / alpha).min(255) as u8;
+            }
+        }
+    }
 }
 
 fn run_open<I, S>(args: I) -> Result<(), PlatformError>

@@ -10,10 +10,7 @@ use tundra_storage::{ClockProfile, StorageManager, UserRecord};
 
 #[test]
 fn permission_matrix_uses_admin_as_the_only_management_role() {
-    let service = PermissionService::new(DebugPolicy {
-        debug_build: true,
-        allow_release_debug: false,
-    });
+    let service = PermissionService::new(DebugPolicy { debug_build: true });
     let user = session("user", UserRole::User);
     let admin = session("admin", UserRole::Admin);
 
@@ -30,6 +27,16 @@ fn permission_matrix_uses_admin_as_the_only_management_role() {
     assert!(
         !service
             .authorize(Some(&user), PermissionAction::ManageUsers, None)
+            .allowed
+    );
+    assert!(
+        !service
+            .authorize(Some(&user), PermissionAction::ManageLauncher, None)
+            .allowed
+    );
+    assert!(
+        service
+            .authorize(Some(&admin), PermissionAction::ManageLauncher, None)
             .allowed
     );
     assert!(
@@ -76,31 +83,13 @@ fn permission_matrix_uses_admin_as_the_only_management_role() {
 
 #[test]
 fn release_debug_policy_denies_debug_mode_even_for_admin() {
-    let service = PermissionService::new(DebugPolicy {
-        debug_build: false,
-        allow_release_debug: false,
-    });
+    let service = PermissionService::new(DebugPolicy { debug_build: false });
     let admin = session("admin", UserRole::Admin);
 
     let result = service.authorize(Some(&admin), PermissionAction::EnterDebugMode, None);
 
     assert!(!result.allowed);
     assert_eq!(result.reason.as_deref(), Some("debug_policy_denied"));
-}
-
-#[test]
-fn release_debug_override_allows_debug_mode_for_admin() {
-    let service = PermissionService::new(DebugPolicy {
-        debug_build: false,
-        allow_release_debug: true,
-    });
-    let admin = session("admin", UserRole::Admin);
-
-    assert!(
-        service
-            .authorize(Some(&admin), PermissionAction::EnterDebugMode, None)
-            .allowed
-    );
 }
 
 #[test]

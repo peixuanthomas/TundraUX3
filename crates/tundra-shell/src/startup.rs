@@ -36,17 +36,25 @@ impl Default for ShellLaunchConfig {
     fn default() -> Self {
         Self {
             terminal_mode: ShellTerminalMode::Fullscreen,
-            home_mode_override: HomeModeOverride::BuildDefault,
+            home_mode_override: Self::profile_home_mode_override(),
             launch_target: ShellLaunchTarget::Home,
         }
     }
 }
 
 impl ShellLaunchConfig {
+    const fn profile_home_mode_override() -> HomeModeOverride {
+        if cfg!(debug_assertions) {
+            HomeModeOverride::Debug
+        } else {
+            HomeModeOverride::BuildDefault
+        }
+    }
+
     pub const fn editor() -> Self {
         Self {
             terminal_mode: ShellTerminalMode::Fullscreen,
-            home_mode_override: HomeModeOverride::BuildDefault,
+            home_mode_override: Self::profile_home_mode_override(),
             launch_target: ShellLaunchTarget::Editor,
         }
     }
@@ -67,6 +75,7 @@ pub enum ShellScreen {
     Clock,
     Diagnostics,
     Explorer,
+    Launcher,
     Editor,
     UserManagement,
     ExitConfirm,
@@ -294,7 +303,7 @@ pub fn prepare_shell_startup(
     let sessions = storage_open.manager.load_sessions()?;
     let storage_report =
         ShellStorageReport::from_storage_load_report(Some(app_paths), storage_open.report);
-    let debug_policy = DebugPolicy::current_build(storage_config.security.allow_release_debug);
+    let debug_policy = DebugPolicy::current_build();
     let login_users = users
         .users
         .iter()

@@ -212,6 +212,7 @@ impl ShellState {
         self.selected_home_entry_index = index;
         match entry.label.as_str() {
             "Explorer" => self.open_explorer(platform),
+            "Launcher" => self.open_launcher(platform),
             "Editor" => self.open_editor(),
             "Diagnostics" => self.open_diagnostics(),
             "User Management" | "User Profile" => self.open_user_management(),

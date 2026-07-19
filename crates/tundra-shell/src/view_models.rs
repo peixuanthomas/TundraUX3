@@ -726,6 +726,16 @@ impl ShellState {
                     is_trash,
                     !state.entries.is_empty(),
                     self.explorer_overlay_selection,
+                    self.can_manage_launcher(),
+                    state
+                        .effective_selected_paths()
+                        .iter()
+                        .filter(|path| {
+                            state.entries.iter().any(|entry| {
+                                entry.path == **path && entry.open_policy.requires_launcher()
+                            })
+                        })
+                        .count(),
                 ),
                 ExplorerOverlayMode::Sort { anchor } => explorer_sort_menu_view_model(
                     anchor,

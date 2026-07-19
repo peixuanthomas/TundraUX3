@@ -4,14 +4,19 @@ use std::sync::Mutex;
 
 use crate::{
     AppPaths, DirectoryListing, FileAttributes, FileOpenPolicy, LocalVolume, Platform,
-    PlatformCapabilities, PlatformError, PlatformKind, ProcessExit, ProcessSpec, ProcessStream,
-    StartupPermissionStatus, TrashEntry, TrashEntryId, TrashRestoreTarget, TrashStats, UserDirs,
+    PlatformCapabilities, PlatformError, PlatformIcon, PlatformKind, ProcessExit, ProcessSpec,
+    ProcessStream, StartupPermissionStatus, TrashEntry, TrashEntryId, TrashRestoreTarget,
+    TrashStats, UserDirs,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MockCall {
     StartupPermissionStatus,
     RequestStartupPermissions,
+    FileIcon {
+        path: PathBuf,
+        preferred_size: u32,
+    },
     OpenPath(PathBuf),
     OpenWith {
         path: PathBuf,
@@ -58,6 +63,7 @@ pub struct MockPlatform {
     file_attributes: Mutex<BTreeMap<PathBuf, Result<FileAttributes, PlatformError>>>,
     directory_listings: Mutex<BTreeMap<PathBuf, Result<DirectoryListing, PlatformError>>>,
     file_open_policies: Mutex<BTreeMap<PathBuf, FileOpenPolicy>>,
+    file_icons: Mutex<BTreeMap<PathBuf, Result<Option<PlatformIcon>, PlatformError>>>,
     rename_results: Mutex<BTreeMap<(PathBuf, PathBuf), Result<(), PlatformError>>>,
     local_volumes: Mutex<Result<Vec<LocalVolume>, PlatformError>>,
     trash_entries: Mutex<Result<Vec<TrashEntry>, PlatformError>>,
@@ -84,6 +90,7 @@ impl MockPlatform {
             file_attributes: Mutex::new(BTreeMap::new()),
             directory_listings: Mutex::new(BTreeMap::new()),
             file_open_policies: Mutex::new(BTreeMap::new()),
+            file_icons: Mutex::new(BTreeMap::new()),
             rename_results: Mutex::new(BTreeMap::new()),
             local_volumes: Mutex::new(Ok(Vec::new())),
             trash_entries: Mutex::new(Ok(Vec::new())),
@@ -172,6 +179,21 @@ impl MockPlatform {
             .lock()
             .expect("file open policies lock poisoned")
             .insert(path, policy);
+    }
+
+    pub fn set_file_icon(&self, path: PathBuf, icon: Option<PlatformIcon>) {
+        self.set_file_icon_result(path, Ok(icon));
+    }
+
+    pub fn set_file_icon_result(
+        &self,
+        path: PathBuf,
+        result: Result<Option<PlatformIcon>, PlatformError>,
+    ) {
+        self.file_icons
+            .lock()
+            .expect("file icons lock poisoned")
+            .insert(path, result);
     }
 
     pub fn set_rename_result(
@@ -288,6 +310,23 @@ impl Platform for MockPlatform {
 
     fn app_paths(&self) -> Result<AppPaths, PlatformError> {
         Ok(self.app_paths.clone())
+    }
+
+    fn file_icon(
+        &self,
+        path: &Path,
+        preferred_size: u32,
+    ) -> Result<Option<PlatformIcon>, PlatformError> {
+        self.record(MockCall::FileIcon {
+            path: path.to_path_buf(),
+            preferred_size,
+        });
+        self.file_icons
+            .lock()
+            .expect("file icons lock poisoned")
+            .get(path)
+            .cloned()
+            .unwrap_or(Ok(None))
     }
 
     fn open_path(&self, path: &Path) -> Result<(), PlatformError> {

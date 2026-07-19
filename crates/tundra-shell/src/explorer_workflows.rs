@@ -65,6 +65,22 @@ impl ShellState {
         self.explorer_input_replace_all = false;
         self.explorer_overlay_mode = None;
         self.resolve_explorer_alert();
+        if self.launcher_picker_active {
+            self.launcher_picker_active = false;
+            self.explorer_state = None;
+            if self.active_screen() == ShellScreen::Explorer {
+                self.screen_stack.pop();
+            }
+            if self.active_screen() == ShellScreen::Launcher {
+                self.focused_component = ShellComponent::Launcher;
+                self.notify_status("Launcher");
+            } else {
+                self.pop_to_home();
+                self.notify_status("Ready");
+            }
+            self.refresh_hit_map();
+            return;
+        }
         if matches!(self.explorer_purpose, ExplorerPurpose::DiagnosticsLogs) {
             self.explorer_purpose = ExplorerPurpose::Browse;
             self.explorer_state = None;
@@ -359,12 +375,7 @@ impl ShellState {
                     self.open_editor_path(request.path);
                 }
                 ExplorerOpenTarget::Launcher => {
-                    if let Some(state) = self.explorer_state.as_mut()
-                        && state.error.is_none()
-                    {
-                        state.error = Some("Launcher is not implemented".to_string());
-                        state.message = None;
-                    }
+                    self.open_launcher_for_path(request.path, platform);
                 }
             },
         }
@@ -710,6 +721,7 @@ impl ShellState {
                 self.close_explorer_popup();
                 match item.id.as_str() {
                     "open" => self.apply_explorer_command(ExplorerCommand::OpenSelected, platform),
+                    "add-to-launcher" => self.add_selected_explorer_to_launcher(platform),
                     "cut" => self.apply_explorer_command(ExplorerCommand::Cut, platform),
                     "copy" => self.apply_explorer_command(ExplorerCommand::Copy, platform),
                     "rename" => self.begin_explorer_input(ExplorerInputMode::Rename),

@@ -163,6 +163,7 @@ impl ShellState {
                 | ShellCommand::Logout
                 | ShellCommand::LogoutToLockscreen
                 | ShellCommand::OpenExplorer
+                | ShellCommand::OpenLauncher
                 | ShellCommand::OpenEditor
                 | ShellCommand::OpenUserManagement
                 | ShellCommand::OpenClock
@@ -517,6 +518,82 @@ impl ShellState {
             }
             ShellCommand::CloseExplorer => {
                 self.close_explorer();
+                ShellAction::Redraw
+            }
+            ShellCommand::OpenLauncher => {
+                self.open_launcher(platform);
+                ShellAction::Redraw
+            }
+            ShellCommand::CloseLauncher => {
+                self.close_launcher();
+                ShellAction::Redraw
+            }
+            ShellCommand::LauncherNext => {
+                self.select_launcher_delta(1);
+                ShellAction::Redraw
+            }
+            ShellCommand::LauncherPrevious => {
+                self.select_launcher_delta(-1);
+                ShellAction::Redraw
+            }
+            ShellCommand::LauncherPageUp => {
+                self.select_launcher_delta(-6);
+                ShellAction::Redraw
+            }
+            ShellCommand::LauncherPageDown => {
+                self.select_launcher_delta(6);
+                ShellAction::Redraw
+            }
+            ShellCommand::LauncherFirst => {
+                self.select_launcher_index(0);
+                ShellAction::Redraw
+            }
+            ShellCommand::LauncherLast => {
+                self.select_launcher_last();
+                ShellAction::Redraw
+            }
+            ShellCommand::LauncherActivate => {
+                self.request_launcher_launch(platform);
+                ShellAction::Redraw
+            }
+            ShellCommand::LauncherToggleView => {
+                self.toggle_launcher_view();
+                ShellAction::Redraw
+            }
+            ShellCommand::LauncherAdd => {
+                self.begin_launcher_add(platform);
+                ShellAction::Redraw
+            }
+            ShellCommand::LauncherRemove => {
+                self.request_launcher_remove();
+                ShellAction::Redraw
+            }
+            ShellCommand::LauncherReapprove => {
+                self.reapprove_selected_launcher_item(platform);
+                ShellAction::Redraw
+            }
+            ShellCommand::LauncherRefresh => {
+                self.refresh_launcher(platform);
+                ShellAction::Redraw
+            }
+            ShellCommand::LauncherConfirm => {
+                self.confirm_launcher_action(platform);
+                ShellAction::Redraw
+            }
+            ShellCommand::LauncherCancelConfirmation => {
+                self.launcher_pending_confirmation = None;
+                ShellAction::Redraw
+            }
+            ShellCommand::LauncherPointer(coordinates, click) => {
+                self.activate_launcher_at(coordinates, click, platform);
+                ShellAction::Redraw
+            }
+            ShellCommand::LauncherScroll(delta) => {
+                self.select_launcher_delta(delta as isize);
+                ShellAction::Redraw
+            }
+            ShellCommand::ExplorerAddToLauncher => {
+                self.add_selected_explorer_to_launcher(platform);
                 ShellAction::Redraw
             }
             ShellCommand::OpenEditor => {

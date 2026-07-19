@@ -42,6 +42,7 @@ pub enum PermissionAction {
     DeleteFile,
     MoveFile,
     OpenExternal,
+    ManageLauncher,
     ManageOwnUser,
     ManageUsers,
     ViewDiagnosticsDetails,
@@ -58,6 +59,7 @@ impl PermissionAction {
             Self::DeleteFile => "DeleteFile",
             Self::MoveFile => "MoveFile",
             Self::OpenExternal => "OpenExternal",
+            Self::ManageLauncher => "ManageLauncher",
             Self::ManageOwnUser => "ManageOwnUser",
             Self::ManageUsers => "ManageUsers",
             Self::ViewDiagnosticsDetails => "ViewDiagnosticsDetails",
@@ -99,25 +101,23 @@ impl Authorization {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DebugPolicy {
     pub debug_build: bool,
-    pub allow_release_debug: bool,
 }
 
 impl DebugPolicy {
-    pub fn current_build(allow_release_debug: bool) -> Self {
+    pub fn current_build() -> Self {
         Self {
             debug_build: cfg!(debug_assertions),
-            allow_release_debug,
         }
     }
 
-    fn allows_debug(self) -> bool {
-        self.debug_build || self.allow_release_debug
+    pub const fn allows_debug(self) -> bool {
+        self.debug_build
     }
 }
 
 impl Default for DebugPolicy {
     fn default() -> Self {
-        Self::current_build(false)
+        Self::current_build()
     }
 }
 
@@ -154,6 +154,7 @@ impl PermissionService {
                 UserRole::Guest => Authorization::deny("not_authenticated"),
             },
             PermissionAction::ManageUsers
+            | PermissionAction::ManageLauncher
             | PermissionAction::ViewDiagnosticsDetails
             | PermissionAction::RepairDiagnostics
             | PermissionAction::ChangeSettings => match role {

@@ -62,12 +62,18 @@ fn shell_can_enter_smoke_loop_without_animation() {
 }
 
 #[test]
-fn shell_default_config_uses_fullscreen_and_build_default_home() {
+fn shell_default_config_uses_fullscreen_and_profile_home_mode() {
+    let expected_home_mode = if cfg!(debug_assertions) {
+        HomeModeOverride::Debug
+    } else {
+        HomeModeOverride::BuildDefault
+    };
+
     assert_eq!(
         parse_shell_args(std::iter::empty::<&str>()).expect("empty args should parse"),
         ShellLaunchConfig {
             terminal_mode: ShellTerminalMode::Fullscreen,
-            home_mode_override: HomeModeOverride::BuildDefault,
+            home_mode_override: expected_home_mode,
             launch_target: ShellLaunchTarget::Home,
         }
     );
@@ -75,13 +81,12 @@ fn shell_default_config_uses_fullscreen_and_build_default_home() {
 
 #[test]
 fn shell_can_be_started_without_fullscreen_explicitly() {
+    let mut expected = ShellLaunchConfig::default();
+    expected.terminal_mode = ShellTerminalMode::NotFullscreen;
+
     assert_eq!(
         parse_shell_args(["-notfullscreen"]).expect("flag should parse"),
-        ShellLaunchConfig {
-            terminal_mode: ShellTerminalMode::NotFullscreen,
-            home_mode_override: HomeModeOverride::BuildDefault,
-            launch_target: ShellLaunchTarget::Home,
-        }
+        expected
     );
 }
 

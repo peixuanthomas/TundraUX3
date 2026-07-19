@@ -68,6 +68,17 @@ fn debug_override_selects_debug_home() {
 }
 
 #[test]
+fn launcher_view_model_is_safe_before_launcher_state_is_loaded() {
+    let state = ShellState::new(debug_config(), (120, 40));
+
+    let launcher = state.to_launcher_view_model();
+
+    assert!(launcher.items.is_empty());
+    assert_eq!(launcher.selected_index, None);
+    assert_eq!(launcher.view_mode, tundra_ui::LauncherViewMode::LargeIcons);
+}
+
+#[test]
 fn build_default_selects_expected_home_for_build_profile() {
     let state = ShellState::new(build_default_config(), (120, 40));
     let expected = if cfg!(debug_assertions) {
@@ -77,6 +88,36 @@ fn build_default_selects_expected_home_for_build_profile() {
     };
 
     assert_eq!(state.home_mode(), expected);
+}
+
+#[test]
+fn release_policy_rejects_an_explicit_debug_home() {
+    let mut startup = ShellStartupState::clean(
+        PlatformKind::Windows,
+        PlatformCapabilities::native_supported(),
+    );
+    startup.debug_policy = tundra_core::DebugPolicy { debug_build: false };
+
+    let state = ShellState::new_with_startup(debug_config(), (120, 40), startup);
+
+    assert_eq!(state.home_mode(), ShellHomeMode::User);
+}
+
+#[test]
+fn release_policy_rejects_a_restored_debug_home() {
+    let mut startup = ShellStartupState::clean(
+        PlatformKind::Windows,
+        PlatformCapabilities::native_supported(),
+    );
+    startup.debug_policy = tundra_core::DebugPolicy { debug_build: false };
+    startup.restored_session = Some(ShellRestoredSession::new(
+        ShellHomeMode::Debug,
+        ShellComponent::Home,
+    ));
+
+    let state = ShellState::new_with_startup(build_default_config(), (120, 40), startup);
+
+    assert_eq!(state.home_mode(), ShellHomeMode::User);
 }
 
 #[test]
@@ -1265,7 +1306,7 @@ fn enter_on_home_explorer_entry_routes_activation() {
 }
 
 #[test]
-fn enter_on_unimplemented_home_entry_shows_placeholder_status() {
+fn enter_on_launcher_without_an_authenticated_storage_session_stays_on_home() {
     let mut state =
         ShellState::new_for_home_mode(build_default_config(), (120, 40), ShellHomeMode::User);
 
@@ -1276,7 +1317,8 @@ fn enter_on_unimplemented_home_entry_shows_placeholder_status() {
         state.last_command(),
         Some(&ShellCommand::ActivateSelectedHomeEntry)
     );
-    assert_eq!(state.status(), "Launcher is not implemented yet");
+    assert_eq!(state.active_screen(), ShellScreen::Home);
+    assert_eq!(state.status(), "Home: Launcher");
 }
 
 #[test]
@@ -1299,7 +1341,7 @@ fn mouse_single_click_on_home_entry_selects_that_entry() {
 }
 
 #[test]
-fn mouse_double_click_on_unimplemented_home_entry_shows_placeholder_status() {
+fn mouse_double_click_on_launcher_without_authentication_stays_on_home() {
     let mut state =
         ShellState::new_for_home_mode(build_default_config(), (120, 40), ShellHomeMode::User);
     let launcher = home_entry_coordinates(&state, 1);
@@ -1315,7 +1357,8 @@ fn mouse_double_click_on_unimplemented_home_entry_shows_placeholder_status() {
             ClickKind::Double
         ))
     );
-    assert_eq!(state.status(), "Launcher is not implemented yet");
+    assert_eq!(state.active_screen(), ShellScreen::Home);
+    assert_eq!(state.status(), "Home: Launcher");
 }
 
 #[test]

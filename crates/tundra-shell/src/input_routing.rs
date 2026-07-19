@@ -70,6 +70,10 @@ impl ShellState {
             return self.route_explorer_key(key);
         }
 
+        if self.active_screen() == ShellScreen::Launcher {
+            return self.route_launcher_key(key);
+        }
+
         if self.active_screen() == ShellScreen::Editor {
             return (
                 RoutedTarget::Component(ShellComponent::Editor),
@@ -705,6 +709,12 @@ impl ShellState {
             .explorer_state
             .as_ref()
             .is_some_and(|state| state.current_location.is_trash());
+        if self.launcher_picker_active
+            && matches!(key.key, InputKey::Enter | InputKey::Character('a' | 'A'))
+            && !key.has_non_shift_modifier()
+        {
+            return (target, ShellCommand::ExplorerAddToLauncher);
+        }
         match &key.key {
             InputKey::Escape => (RoutedTarget::Global, ShellCommand::CloseExplorer),
             InputKey::Character('l' | 'L') if key.modifiers.control || key.modifiers.super_key => {
@@ -743,6 +753,39 @@ impl ShellState {
                 (target, ShellCommand::BeginExplorerRename)
             }
             InputKey::Character('/') => (target, ShellCommand::BeginExplorerSearch),
+            _ => (target, ShellCommand::RecordInput),
+        }
+    }
+
+    fn route_launcher_key(&self, key: &KeyInput) -> (RoutedTarget, ShellCommand) {
+        let target = RoutedTarget::Component(ShellComponent::Launcher);
+        if self.launcher_pending_confirmation.is_some() {
+            return match key.key {
+                InputKey::Enter | InputKey::Character('y' | 'Y') => {
+                    (target, ShellCommand::LauncherConfirm)
+                }
+                InputKey::Escape | InputKey::Character('n' | 'N') => {
+                    (target, ShellCommand::LauncherCancelConfirmation)
+                }
+                _ => (target, ShellCommand::CaptureOverlayInput),
+            };
+        }
+        match key.key {
+            InputKey::Escape => (RoutedTarget::Global, ShellCommand::CloseLauncher),
+            InputKey::Left | InputKey::Up => (target, ShellCommand::LauncherPrevious),
+            InputKey::Right | InputKey::Down => (target, ShellCommand::LauncherNext),
+            InputKey::PageUp => (target, ShellCommand::LauncherPageUp),
+            InputKey::PageDown => (target, ShellCommand::LauncherPageDown),
+            InputKey::Home => (target, ShellCommand::LauncherFirst),
+            InputKey::End => (target, ShellCommand::LauncherLast),
+            InputKey::Enter => (target, ShellCommand::LauncherActivate),
+            InputKey::Delete => (target, ShellCommand::LauncherRemove),
+            InputKey::Character('a' | 'A') => (target, ShellCommand::LauncherAdd),
+            InputKey::Character('v' | 'V') => (target, ShellCommand::LauncherToggleView),
+            InputKey::Character('r' | 'R') if key.modifiers.control || key.modifiers.super_key => {
+                (target, ShellCommand::LauncherReapprove)
+            }
+            InputKey::Character('r' | 'R') => (target, ShellCommand::LauncherRefresh),
             _ => (target, ShellCommand::RecordInput),
         }
     }
@@ -1094,6 +1137,10 @@ impl ShellState {
             return self.route_explorer_mouse(mouse, hit_target, received_at);
         }
 
+        if self.active_screen() == ShellScreen::Launcher {
+            return self.route_launcher_mouse(mouse, received_at);
+        }
+
         if self.active_screen() == ShellScreen::Editor {
             return (
                 RoutedTarget::Component(ShellComponent::Editor),
@@ -1156,6 +1203,35 @@ impl ShellState {
                 }
             }
             _ => (target_route(hit_target), ShellCommand::RecordInput),
+        }
+    }
+
+    fn route_launcher_mouse(
+        &mut self,
+        mouse: MouseInput,
+        received_at: Instant,
+    ) -> (RoutedTarget, ShellCommand) {
+        let target = RoutedTarget::Component(ShellComponent::Launcher);
+        match mouse {
+            MouseInput::Scroll { direction, .. } => {
+                let delta = match direction {
+                    ScrollDirection::Up => -1,
+                    ScrollDirection::Down => 1,
+                    _ => 0,
+                };
+                (target, ShellCommand::LauncherScroll(delta))
+            }
+            MouseInput::Down { button: PointerButton::Left, coordinates, .. } => {
+                let click = self.register_click(
+                    Some(ShellComponent::Launcher),
+                    coordinates,
+                    PointerButton::Left,
+                    received_at,
+                );
+                (target, ShellCommand::LauncherPointer(coordinates, click))
+            }
+            MouseInput::Moved { .. } => (target, ShellCommand::Hover(Some(ShellComponent::Launcher))),
+            _ => (target, ShellCommand::CaptureOverlayInput),
         }
     }
 

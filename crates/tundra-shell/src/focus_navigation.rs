@@ -92,6 +92,9 @@ impl ShellState {
         if self.active_screen() == ShellScreen::Explorer {
             return vec![ShellComponent::Explorer];
         }
+        if self.active_screen() == ShellScreen::Launcher {
+            return vec![ShellComponent::Launcher];
+        }
         if self.active_screen() == ShellScreen::Editor {
             return vec![ShellComponent::Editor];
         }

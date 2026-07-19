@@ -49,13 +49,13 @@ impl StorageManager {
     pub fn load_config(&self) -> Result<StorageConfig, StorageError> {
         let mut config: StorageConfig =
             load_toml_document(&self.layout.config_path, CONFIG_DESCRIPTOR.name)?;
-        config.normalize_language();
+        config.normalize();
         Ok(config)
     }
 
     pub fn save_config(&self, config: &StorageConfig) -> Result<(), StorageError> {
         let mut config = config.clone();
-        config.normalize_language();
+        config.normalize();
         save_toml_document(&self.layout.config_path, CONFIG_DESCRIPTOR.name, &config)
     }
 

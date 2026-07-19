@@ -3,15 +3,17 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use ratatui::layout::Rect;
-use tundra_platform::mock::MockPlatform;
+use tundra_platform::mock::{MockCall, MockPlatform};
 use tundra_platform::{
-    PlatformCapabilities, PlatformKind, UserDirs, build_windows_app_paths, cleanup_temp_path,
+    Platform, PlatformCapabilities, PlatformKind, UserDirs, build_windows_app_paths,
+    cleanup_temp_path,
 };
 use tundra_shell::{
     HomeModeOverride, InputEvent, InputKey, InputModifiers, InputPhase, KeyInput, PointerButton,
     ShellComponent, ShellHomeMode, ShellLaunchConfig, ShellLaunchTarget, ShellScreen, ShellState,
     ShellTerminalMode, prepare_shell_startup,
 };
+use tundra_storage::StorageManager;
 use tundra_ui::NotificationTone;
 
 fn default_config() -> ShellLaunchConfig {
@@ -237,17 +239,11 @@ fn explorer_scrollbar_thumb_drags_to_the_end_without_starting_a_file_drag() {
     );
     let top = (scrollbar.track.x, scrollbar.track.y);
     state.apply_input_with_platform(InputEvent::mouse_down(PointerButton::Left, grab), &platform);
-    state.apply_input_with_platform(
-        InputEvent::mouse_drag(PointerButton::Left, top),
-        &platform,
-    );
+    state.apply_input_with_platform(InputEvent::mouse_drag(PointerButton::Left, top), &platform);
     state.apply_input_with_platform(InputEvent::mouse_up(PointerButton::Left, top), &platform);
 
     let model = state.to_explorer_view_model();
-    assert_eq!(
-        tundra_ui::explorer_layout(main, &model).visible_start,
-        0
-    );
+    assert_eq!(tundra_ui::explorer_layout(main, &model).visible_start, 0);
     assert!(model.operation.is_none());
     assert!(model.error.is_none());
 }
@@ -271,6 +267,104 @@ fn context_menu_supports_arrow_and_enter_keyboard_activation() {
 
     assert!(state.active_popup().is_none());
     assert!(state.to_explorer_view_model().entry_presentations[0].cut);
+}
+
+#[test]
+fn admin_batch_adds_launcher_targets_and_high_risk_launch_requires_confirmation() {
+    let fixture = FixtureRoot::new("launcher-context");
+    let platform = mock_platform(fixture.path());
+    bootstrap_with_shell(&platform);
+    let executable = fixture.path().join("Documents").join("program.exe");
+    let script = fixture.path().join("Documents").join("script.cmd");
+    fs::write(&executable, "program").expect("executable");
+    fs::write(&script, "echo launcher").expect("script");
+    let mut state = logged_in_state(&platform);
+
+    state.apply_input_with_platform(InputEvent::from_key_label("e"), &platform);
+    state.apply_input_with_platform(ctrl_key('a'), &platform);
+    let first_entry = first_entry_coordinates(&state);
+    state.apply_input_with_platform(
+        InputEvent::mouse_down(PointerButton::Right, first_entry),
+        &platform,
+    );
+
+    let explorer = state.to_explorer_view_model();
+    let menu = match explorer.overlay.as_ref() {
+        Some(tundra_ui::ExplorerOverlayViewModel::ContextMenu(menu)) => menu,
+        other => panic!("expected Explorer context menu, got {other:?}"),
+    };
+    assert!(menu.items.iter().any(|item| {
+        item.id == "add-to-launcher" && item.label == "Add to launcher" && item.enabled
+    }));
+
+    state.apply_input_with_platform(InputEvent::from_key_label("Down"), &platform);
+    state.apply_input_with_platform(InputEvent::from_key_label("Enter"), &platform);
+    assert!(state.active_popup().is_none());
+
+    state.apply_input_with_platform(InputEvent::from_key_label("Esc"), &platform);
+    state.apply_input_with_platform(InputEvent::from_key_label("Right"), &platform);
+    state.apply_input_with_platform(InputEvent::from_key_label("Enter"), &platform);
+    assert_eq!(state.active_screen(), ShellScreen::Launcher);
+    assert_eq!(state.focused_component(), ShellComponent::Launcher);
+    assert_eq!(state.to_launcher_view_model().items.len(), 2);
+
+    state.apply_input_with_platform(InputEvent::from_key_label("a"), &platform);
+    assert_eq!(state.active_screen(), ShellScreen::Explorer);
+    state.apply_input_with_platform(ctrl_key('a'), &platform);
+    assert_eq!(state.to_explorer_view_model().selected_count, 2);
+    state.apply_input_with_platform(InputEvent::from_key_label("Enter"), &platform);
+    assert_eq!(state.active_screen(), ShellScreen::Launcher);
+
+    let launcher = state.to_launcher_view_model();
+    assert_eq!(launcher.items.len(), 2);
+    assert!(
+        launcher
+            .items
+            .iter()
+            .all(|item| { item.status == tundra_ui::LauncherItemStatus::Ready })
+    );
+    assert!(
+        launcher
+            .toolbar
+            .iter()
+            .any(|button| { button.action == tundra_ui::LauncherToolbarAction::Add })
+    );
+
+    state.apply_input_with_platform(InputEvent::from_key_label("v"), &platform);
+    assert_eq!(
+        state.to_launcher_view_model().view_mode,
+        tundra_ui::LauncherViewMode::Details
+    );
+    state.apply_input_with_platform(InputEvent::from_key_label("End"), &platform);
+    assert_eq!(
+        state
+            .to_launcher_view_model()
+            .selected_item()
+            .map(|item| item.name.as_str()),
+        Some("script.cmd")
+    );
+    state.apply_input_with_platform(InputEvent::from_key_label("Enter"), &platform);
+    assert!(state.to_launcher_view_model().confirmation.is_some());
+    assert!(!platform.calls().iter().any(|call| {
+        matches!(call, MockCall::OpenPath(path) if path.file_name().is_some_and(|name| name == "script.cmd"))
+    }));
+
+    state.apply_input_with_platform(InputEvent::from_key_label("Enter"), &platform);
+    assert!(state.to_launcher_view_model().confirmation.is_none());
+    assert!(platform.calls().iter().any(|call| {
+        matches!(call, MockCall::OpenPath(path) if path.file_name().is_some_and(|name| name == "script.cmd"))
+    }));
+
+    let storage = StorageManager::open(platform.app_paths().expect("app paths"))
+        .expect("storage")
+        .manager;
+    let persisted = storage.load_state().expect("Launcher view state");
+    assert!(
+        persisted
+            .values
+            .iter()
+            .any(|(key, value)| { key.starts_with("launcher.view.") && value == "details" })
+    );
 }
 
 #[test]
@@ -472,6 +566,17 @@ fn type_text(state: &mut ShellState, platform: &MockPlatform, text: &str) {
         state
             .apply_input_with_platform(InputEvent::from_key_label(character.to_string()), platform);
     }
+}
+
+fn ctrl_key(character: char) -> InputEvent {
+    InputEvent::Key(KeyInput::new(
+        InputKey::Character(character),
+        InputModifiers {
+            control: true,
+            ..InputModifiers::none()
+        },
+        InputPhase::Press,
+    ))
 }
 
 fn complete_first_run_setup(

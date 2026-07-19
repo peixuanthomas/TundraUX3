@@ -47,6 +47,25 @@ fn fresh_startup_requires_first_run_setup_and_debug_flag_does_not_bypass_auth() 
 }
 
 #[test]
+fn profile_default_home_mode_survives_admin_authentication() {
+    let fixture = FixtureRoot::new("profile-default-home");
+    let platform = mock_platform(fixture.path());
+    let launch_config = ShellLaunchConfig::default();
+    let startup = prepare_shell_startup(&platform, launch_config).expect("startup");
+    let mut state = ShellState::new_with_startup(launch_config, (120, 40), startup);
+
+    complete_first_run_setup(&mut state, 0, 0, "AdminUser", "StrongPass123", "");
+
+    let expected = if cfg!(debug_assertions) {
+        ShellHomeMode::Debug
+    } else {
+        ShellHomeMode::User
+    };
+    assert_eq!(state.active_screen(), ShellScreen::Home);
+    assert_eq!(state.home_mode(), expected);
+}
+
+#[test]
 fn first_run_setup_signs_in_persists_config_and_hint_without_plaintext_password() {
     let fixture = FixtureRoot::new("first-run-setup");
     let platform = mock_platform(fixture.path());

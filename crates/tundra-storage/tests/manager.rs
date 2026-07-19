@@ -10,9 +10,10 @@ use tundra_platform::{
 use tundra_storage::{
     AppearanceConfig, BorderShape, ClockDocument, ClockEntryRecord, ClockProfile, EditorConfig,
     ExplorerConfig, ExplorerDateZone, ExplorerSizeFormat, ExplorerSortDirection, ExplorerSortField,
-    LauncherConfig, RecentFilesDocument, SCHEMA_VERSION, SecurityConfig, SessionsDocument,
-    StateDocument, StorageConfig, StorageError, StorageLayout, StorageManager, TrashDocument,
-    TrashRecord, USERS_SCHEMA_VERSION, UserRecord, UsersDocument,
+    LauncherConfig, LauncherEntryRecord, LauncherExecutableKind, LauncherFingerprint,
+    RecentFilesDocument, SCHEMA_VERSION, SecurityConfig, SessionsDocument, StateDocument,
+    StorageConfig, StorageError, StorageLayout, StorageManager, TrashDocument, TrashRecord,
+    USERS_SCHEMA_VERSION, UserRecord, UsersDocument,
 };
 
 #[test]
@@ -102,8 +103,20 @@ fn toml_and_json_documents_round_trip() {
             cursor_vertical_max_step: 4,
         },
         launcher: LauncherConfig {
-            pinned_apps: vec!["notepad.exe".to_string()],
             pinned_dirs: vec!["C:/Projects".to_string()],
+            entries: vec![LauncherEntryRecord {
+                id: "notepad".to_string(),
+                path: "C:/Windows/notepad.exe".to_string(),
+                executable_kind: Some(LauncherExecutableKind::NativeBinary),
+                fingerprint: Some(LauncherFingerprint {
+                    sha256: "abc123".to_string(),
+                    byte_len: 42,
+                    modified_at_epoch_ms: Some(100),
+                }),
+                added_by_user_id: "admin".to_string(),
+                added_at_epoch_ms: 99,
+            }],
+            ..LauncherConfig::default()
         },
         security: SecurityConfig {
             allow_release_debug: true,
@@ -262,6 +275,44 @@ fn old_config_without_language_or_timezone_loads_with_defaults() {
     );
     assert!(opened.report.recovered_files.is_empty());
     assert!(opened.report.warnings.is_empty());
+
+    cleanup(&base);
+}
+
+#[test]
+fn legacy_pinned_apps_migrate_to_unapproved_launcher_entries() {
+    let base = unique_temp_root("legacy-launcher-pins");
+    let paths = app_paths(&base);
+    let layout = StorageLayout::from_app_paths(&paths);
+    fs::create_dir_all(layout.config_path.parent().expect("config parent"))
+        .expect("config parent should be writable");
+    fs::write(
+        &layout.config_path,
+        "schema_version = 1\ntheme = \"dark\"\n\n[launcher]\npinned_apps = [\"C:/Apps/Legacy.exe\", \"C:/Apps/Legacy.exe\"]\npinned_dirs = [\"C:/Projects\"]\n",
+    )
+    .expect("legacy config fixture");
+
+    let opened = StorageManager::open(paths).expect("legacy config should migrate");
+    let config = opened
+        .manager
+        .load_config()
+        .expect("migrated config should load");
+
+    assert_eq!(config.launcher.entries.len(), 1);
+    let entry = &config.launcher.entries[0];
+    assert_eq!(entry.path, "C:/Apps/Legacy.exe");
+    assert_eq!(entry.executable_kind, None);
+    assert_eq!(entry.fingerprint, None);
+    assert_eq!(entry.added_by_user_id, "legacy");
+    assert!(entry.id.starts_with("legacy-"));
+    assert!(config.launcher.pinned_apps.is_empty());
+    assert_eq!(config.launcher.pinned_dirs, vec!["C:/Projects"]);
+    assert!(opened.report.migrated_files.contains(&layout.config_path));
+
+    let contents = fs::read_to_string(&layout.config_path).expect("migrated config is readable");
+    assert!(contents.contains("[[launcher.entries]]"));
+    assert!(!contents.contains("pinned_apps"));
+    assert!(contents.contains("pinned_dirs = [\"C:/Projects\"]"));
 
     cleanup(&base);
 }

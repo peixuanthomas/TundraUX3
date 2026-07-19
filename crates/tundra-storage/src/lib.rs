@@ -18,7 +18,8 @@ mod user_document;
 pub use clock_document::{ClockDocument, ClockEntryRecord, ClockProfile};
 pub use config_document::{
     AppearanceConfig, BorderShape, EditorConfig, ExplorerConfig, ExplorerDateZone,
-    ExplorerSizeFormat, ExplorerSortDirection, ExplorerSortField, LauncherConfig, SecurityConfig,
+    ExplorerSizeFormat, ExplorerSortDirection, ExplorerSortField, LauncherConfig,
+    LauncherEntryRecord, LauncherExecutableKind, LauncherFingerprint, SecurityConfig,
     StorageConfig,
 };
 pub use descriptors::{

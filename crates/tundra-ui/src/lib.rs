@@ -5,6 +5,7 @@ mod focus;
 mod hit_test;
 mod home_icons;
 mod input;
+mod launcher;
 mod layout;
 mod render;
 mod setup_catalog;
@@ -36,6 +37,13 @@ pub use input::{
     InputEvent, Key, KeyCode, KeyEvent, KeyModifiers, KeyStroke, MouseAction, MouseButton,
     MouseEvent, MouseEventKind, Point, RouteTarget, RoutedEvent, RoutedTarget, ScrollDirection,
     UiId,
+};
+pub use launcher::{
+    LauncherConfirmationKind, LauncherConfirmationLayout, LauncherConfirmationViewModel,
+    LauncherHitTarget, LauncherIconRenderer, LauncherItemLayout, LauncherItemStatus,
+    LauncherItemViewModel, LauncherLayout, LauncherToolbarAction, LauncherToolbarButtonLayout,
+    LauncherToolbarButtonViewModel, LauncherViewMode, LauncherViewModel, launcher_layout,
+    render_launcher, render_launcher_with_icons,
 };
 pub use layout::{
     ClockCreateDialogLayout, ClockEntryKind, ClockEntryRowLayout, ClockPageLayout, ClockPageMode,

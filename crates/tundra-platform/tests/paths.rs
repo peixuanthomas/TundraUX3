@@ -9,7 +9,8 @@ use tundra_platform::{
     build_macos_app_paths, build_windows_app_paths, check_directory_read_write,
     classify_windows_build, cleanup_temp_path, create_temp_dir, create_temp_file,
     default_file_attributes, is_windows_terminal_session, run_doctor_with,
-    terminal_environment_check_with, validate_process_spec,
+    terminal_environment_check_with, terminal_environment_check_with_graphics_protocol,
+    validate_process_spec,
 };
 
 #[test]
@@ -633,12 +634,38 @@ fn terminal_environment_check_is_reported_by_platform_layer() {
         terminal_environment_check_with(PlatformKind::Windows, Some("session-id"));
     let conhost = terminal_environment_check_with(PlatformKind::Windows, None);
     let macos_terminal = terminal_environment_check_with(PlatformKind::Macos, None);
+    let graphics_terminal =
+        terminal_environment_check_with_graphics_protocol(PlatformKind::Macos, None, Some("Kitty"));
 
-    assert_eq!(windows_terminal.status, CheckStatus::Pass);
-    assert_eq!(windows_terminal.message, "Windows Terminal detected");
+    assert_eq!(windows_terminal.status, CheckStatus::Warning);
+    assert!(
+        windows_terminal
+            .message
+            .contains("no inline graphics protocol")
+    );
     assert_eq!(conhost.status, CheckStatus::Warning);
-    assert!(conhost.message.contains("best-effort"));
-    assert_eq!(macos_terminal.status, CheckStatus::Pass);
+    assert!(conhost.message.contains("text-only"));
+    assert_eq!(macos_terminal.status, CheckStatus::Warning);
+    assert!(macos_terminal.message.contains("text-only"));
+    assert_eq!(graphics_terminal.status, CheckStatus::Pass);
+    assert!(
+        graphics_terminal
+            .message
+            .contains("Kitty graphics protocol")
+    );
+    assert!(
+        graphics_terminal
+            .message
+            .contains("advanced UI features are supported")
+    );
+}
+
+#[test]
+fn empty_graphics_protocol_does_not_pass_terminal_diagnostics() {
+    let check =
+        terminal_environment_check_with_graphics_protocol(PlatformKind::Macos, None, Some("  "));
+
+    assert_eq!(check.status, CheckStatus::Warning);
 }
 
 #[test]

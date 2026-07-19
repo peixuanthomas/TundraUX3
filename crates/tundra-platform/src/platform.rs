@@ -336,6 +336,70 @@ impl ExternalOpenPolicy {
     }
 }
 
+/// A decoded platform file icon in straight RGBA byte order.
+///
+/// The byte buffer always contains exactly `width * height * 4` bytes.  Use
+/// [`PlatformIcon::new`] rather than assembling this type directly so callers
+/// cannot accidentally hand a renderer a malformed image.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PlatformIcon {
+    width: u32,
+    height: u32,
+    rgba: Vec<u8>,
+}
+
+impl PlatformIcon {
+    pub fn new(width: u32, height: u32, rgba: Vec<u8>) -> Result<Self, PlatformError> {
+        let expected_len = usize::try_from(width)
+            .ok()
+            .and_then(|width| {
+                usize::try_from(height)
+                    .ok()
+                    .and_then(|height| width.checked_mul(height))
+            })
+            .and_then(|pixels| pixels.checked_mul(4))
+            .ok_or_else(|| PlatformError::InvalidInput {
+                message: "platform icon dimensions are invalid or too large".to_string(),
+            })?;
+
+        if width == 0 || height == 0 {
+            return Err(PlatformError::InvalidInput {
+                message: "platform icon dimensions must be non-zero".to_string(),
+            });
+        }
+        if rgba.len() != expected_len {
+            return Err(PlatformError::InvalidInput {
+                message: format!(
+                    "platform icon RGBA length must be {expected_len} bytes, got {}",
+                    rgba.len()
+                ),
+            });
+        }
+
+        Ok(Self {
+            width,
+            height,
+            rgba,
+        })
+    }
+
+    pub fn width(&self) -> u32 {
+        self.width
+    }
+
+    pub fn height(&self) -> u32 {
+        self.height
+    }
+
+    pub fn rgba(&self) -> &[u8] {
+        &self.rgba
+    }
+
+    pub fn into_rgba(self) -> Vec<u8> {
+        self.rgba
+    }
+}
+
 pub trait Platform: Send + Sync {
     fn kind(&self) -> PlatformKind;
     fn capabilities(&self) -> PlatformCapabilities;
@@ -363,6 +427,17 @@ pub trait Platform: Send + Sync {
 
     fn user_dirs(&self) -> Result<UserDirs, PlatformError>;
     fn app_paths(&self) -> Result<AppPaths, PlatformError>;
+    /// Returns a decoded file or file-association icon when the backend can
+    /// provide one. `None` is a normal fallback condition, including on
+    /// unsupported platforms and when the platform cannot resolve an icon.
+    /// Implementations must not assume they are called from a UI thread.
+    fn file_icon(
+        &self,
+        _path: &Path,
+        _preferred_size: u32,
+    ) -> Result<Option<PlatformIcon>, PlatformError> {
+        Ok(None)
+    }
     fn open_path(&self, path: &Path) -> Result<(), PlatformError>;
     fn open_with(&self, path: &Path, application: &Path) -> Result<(), PlatformError>;
     fn open_uri(&self, uri: &str) -> Result<(), PlatformError>;

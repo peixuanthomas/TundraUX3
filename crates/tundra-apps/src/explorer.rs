@@ -1406,7 +1406,7 @@ impl ExplorerFileService {
             }
             FileOpenPolicy::LauncherRequired { kind, reason } => {
                 state.error = Some(format!(
-                    "blocked: {reason}; Launcher is not implemented ({})",
+                    "blocked: {reason}; open with Launcher ({})",
                     kind.label()
                 ));
                 state.message = None;

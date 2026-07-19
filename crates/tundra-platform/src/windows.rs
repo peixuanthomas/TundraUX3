@@ -8,9 +8,9 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use crate::{
     AppPaths, DirectoryEntryMetadata, DirectoryListing, DirectoryListingWarning, FileAttributes,
-    FileOpenPolicy, LocalVolume, Platform, PlatformCapabilities, PlatformError, PlatformKind,
-    ProcessExit, ProcessSpec, TrashEntry, TrashEntryId, TrashRestoreTarget, TrashStats, UserDirs,
-    VolumeKind, build_windows_app_paths,
+    FileOpenPolicy, LocalVolume, Platform, PlatformCapabilities, PlatformError, PlatformIcon,
+    PlatformKind, ProcessExit, ProcessSpec, TrashEntry, TrashEntryId, TrashRestoreTarget,
+    TrashStats, UserDirs, VolumeKind, build_windows_app_paths,
 };
 
 const SW_SHOWNORMAL: i32 = 1;
@@ -67,6 +67,10 @@ const RECYCLE_OPERATION_FLAGS: u32 = FILE_OPERATION_FLAGS | FOF_ALLOWUNDO | FOFX
 const SHERB_NOCONFIRMATION: u32 = 0x1;
 const SHERB_NOPROGRESSUI: u32 = 0x2;
 const SHERB_NOSOUND: u32 = 0x4;
+const SHGFI_ICON: u32 = 0x0000_0100;
+const SHGFI_LARGEICON: u32 = 0x0000_0000;
+const DI_NORMAL: u32 = 0x0003;
+const BI_RGB: u32 = 0;
 
 #[derive(Debug, Clone, Copy, Default)]
 pub struct WindowsPlatform;
@@ -104,6 +108,14 @@ impl Platform for WindowsPlatform {
             std::env::temp_dir(),
         )
         .map_err(Into::into)
+    }
+
+    fn file_icon(
+        &self,
+        path: &Path,
+        preferred_size: u32,
+    ) -> Result<Option<PlatformIcon>, PlatformError> {
+        windows_file_icon(path, preferred_size)
     }
 
     fn open_path(&self, path: &Path) -> Result<(), PlatformError> {
@@ -1066,6 +1078,101 @@ fn shell_execute(
     }
 }
 
+fn windows_file_icon(
+    path: &Path,
+    preferred_size: u32,
+) -> Result<Option<PlatformIcon>, PlatformError> {
+    if preferred_size == 0 || path.as_os_str().is_empty() {
+        return Ok(None);
+    }
+
+    let path = to_wide(path.as_os_str());
+    let mut info: ShFileInfoW = unsafe { std::mem::zeroed() };
+    let result = unsafe {
+        SHGetFileInfoW(
+            path.as_ptr(),
+            0,
+            &mut info,
+            std::mem::size_of::<ShFileInfoW>() as u32,
+            SHGFI_ICON | SHGFI_LARGEICON,
+        )
+    };
+    if result == 0 || info.icon.is_null() {
+        return Ok(None);
+    }
+
+    let _icon = IconHandle(info.icon);
+    let size = preferred_size.clamp(1, 512) as i32;
+    let Some(mut rgba) = render_icon_rgba(info.icon, size) else {
+        return Ok(None);
+    };
+    unpremultiply_rgba(&mut rgba);
+    PlatformIcon::new(size as u32, size as u32, rgba).map(Some)
+}
+
+fn render_icon_rgba(icon: *mut c_void, size: i32) -> Option<Vec<u8>> {
+    let dc = unsafe { CreateCompatibleDC(ptr::null_mut()) };
+    if dc.is_null() {
+        return None;
+    }
+    let _dc = DeviceContext(dc);
+    let mut bitmap_info = BitmapInfo {
+        header: BitmapInfoHeader {
+            size: std::mem::size_of::<BitmapInfoHeader>() as u32,
+            width: size,
+            height: -size,
+            planes: 1,
+            bit_count: 32,
+            compression: BI_RGB,
+            size_image: 0,
+            x_pels_per_meter: 0,
+            y_pels_per_meter: 0,
+            clr_used: 0,
+            clr_important: 0,
+        },
+        colors: [RgbQuad::default()],
+    };
+    let mut pixels = ptr::null_mut();
+    let bitmap =
+        unsafe { CreateDIBSection(dc, &mut bitmap_info, 0, &mut pixels, ptr::null_mut(), 0) };
+    if bitmap.is_null() || pixels.is_null() {
+        return None;
+    }
+    let _bitmap = GdiObject(bitmap);
+    let previous = unsafe { SelectObject(dc, bitmap) };
+    if previous.is_null() || previous as isize == -1 {
+        return None;
+    }
+    let _selection = SelectedObject { dc, previous };
+    if unsafe { DrawIconEx(dc, 0, 0, icon, size, size, 0, ptr::null_mut(), DI_NORMAL) } == 0 {
+        return None;
+    }
+
+    let byte_len = usize::try_from(size)
+        .ok()?
+        .checked_mul(usize::try_from(size).ok()?)?
+        .checked_mul(4)?;
+    let bgra = unsafe { std::slice::from_raw_parts(pixels.cast::<u8>(), byte_len) };
+    let mut rgba = Vec::with_capacity(byte_len);
+    for pixel in bgra.chunks_exact(4) {
+        rgba.extend_from_slice(&[pixel[2], pixel[1], pixel[0], pixel[3]]);
+    }
+    Some(rgba)
+}
+
+fn unpremultiply_rgba(rgba: &mut [u8]) {
+    for pixel in rgba.chunks_exact_mut(4) {
+        let alpha = u16::from(pixel[3]);
+        if alpha == 0 {
+            pixel[..3].fill(0);
+        } else if alpha < 255 {
+            for channel in &mut pixel[..3] {
+                *channel = ((u16::from(*channel) * 255 + alpha / 2) / alpha).min(255) as u8;
+            }
+        }
+    }
+}
+
 fn known_folder_path(folder_id: &Guid) -> Result<PathBuf, PlatformError> {
     let mut raw_path: *mut u16 = ptr::null_mut();
     let status = unsafe {
@@ -1303,7 +1410,7 @@ impl Drop for ShutdownPrivilege {
             AdjustTokenPrivileges(
                 self.token,
                 0,
-            &self.previous,
+                &self.previous,
                 0,
                 ptr::null_mut(),
                 ptr::null_mut(),
@@ -1371,6 +1478,88 @@ struct Win32FindDataW {
     reserved1: u32,
     file_name: [u16; 260],
     alternate_file_name: [u16; 14],
+}
+
+#[repr(C)]
+struct ShFileInfoW {
+    icon: *mut c_void,
+    icon_index: i32,
+    attributes: u32,
+    display_name: [u16; 260],
+    type_name: [u16; 80],
+}
+
+#[repr(C)]
+struct BitmapInfoHeader {
+    size: u32,
+    width: i32,
+    height: i32,
+    planes: u16,
+    bit_count: u16,
+    compression: u32,
+    size_image: u32,
+    x_pels_per_meter: i32,
+    y_pels_per_meter: i32,
+    clr_used: u32,
+    clr_important: u32,
+}
+
+#[derive(Default)]
+#[repr(C)]
+struct RgbQuad {
+    blue: u8,
+    green: u8,
+    red: u8,
+    reserved: u8,
+}
+
+#[repr(C)]
+struct BitmapInfo {
+    header: BitmapInfoHeader,
+    colors: [RgbQuad; 1],
+}
+
+struct IconHandle(*mut c_void);
+
+impl Drop for IconHandle {
+    fn drop(&mut self) {
+        unsafe {
+            DestroyIcon(self.0);
+        }
+    }
+}
+
+struct DeviceContext(*mut c_void);
+
+impl Drop for DeviceContext {
+    fn drop(&mut self) {
+        unsafe {
+            DeleteDC(self.0);
+        }
+    }
+}
+
+struct GdiObject(*mut c_void);
+
+impl Drop for GdiObject {
+    fn drop(&mut self) {
+        unsafe {
+            DeleteObject(self.0);
+        }
+    }
+}
+
+struct SelectedObject {
+    dc: *mut c_void,
+    previous: *mut c_void,
+}
+
+impl Drop for SelectedObject {
+    fn drop(&mut self) {
+        unsafe {
+            SelectObject(self.dc, self.previous);
+        }
+    }
 }
 
 #[repr(C)]
@@ -1628,6 +1817,13 @@ unsafe extern "system" {
 
     fn SHQueryRecycleBinW(root_path: *const u16, info: *mut ShQueryRecycleBinInfo) -> i32;
     fn SHEmptyRecycleBinW(hwnd: *mut c_void, root_path: *const u16, flags: u32) -> i32;
+    fn SHGetFileInfoW(
+        path: *const u16,
+        file_attributes: u32,
+        info: *mut ShFileInfoW,
+        cb_file_info: u32,
+        flags: u32,
+    ) -> usize;
 }
 
 #[link(name = "ole32")]
@@ -1658,6 +1854,34 @@ unsafe extern "system" {
     fn GetClipboardData(u_format: u32) -> *mut c_void;
     fn SetClipboardData(u_format: u32, h_mem: *mut c_void) -> *mut c_void;
     fn ExitWindowsEx(u_flags: u32, dw_reason: u32) -> i32;
+    fn DestroyIcon(icon: *mut c_void) -> i32;
+    fn DrawIconEx(
+        dc: *mut c_void,
+        x_left: i32,
+        y_top: i32,
+        icon: *mut c_void,
+        width: i32,
+        height: i32,
+        step_if_ani_cur: u32,
+        brush_flicker_free_draw: *mut c_void,
+        flags: u32,
+    ) -> i32;
+}
+
+#[link(name = "gdi32")]
+unsafe extern "system" {
+    fn CreateCompatibleDC(dc: *mut c_void) -> *mut c_void;
+    fn DeleteDC(dc: *mut c_void) -> i32;
+    fn CreateDIBSection(
+        dc: *mut c_void,
+        bitmap_info: *mut BitmapInfo,
+        usage: u32,
+        bits: *mut *mut c_void,
+        section: *mut c_void,
+        offset: u32,
+    ) -> *mut c_void;
+    fn SelectObject(dc: *mut c_void, object: *mut c_void) -> *mut c_void;
+    fn DeleteObject(object: *mut c_void) -> i32;
 }
 
 #[link(name = "advapi32")]

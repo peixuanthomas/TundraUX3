@@ -135,7 +135,8 @@ pub fn run_fullscreen_blocking_managed(
     let ascii_assets = load_validated_runtime_ascii_assets()?;
     let terminal_size_requirement = ShellTerminalSizeRequirement::from_assets(&ascii_assets);
     checked_current_terminal_size(terminal_size_requirement)?;
-    let platform = tundra_platform::native_platform();
+    let platform: std::sync::Arc<dyn Platform> =
+        std::sync::Arc::from(tundra_platform::native_platform());
     let shell_watchdog = process
         .register_app(shell_watchdog_descriptor())
         .map_err(io::Error::other)?;
@@ -233,7 +234,7 @@ pub fn run_fullscreen_blocking_managed(
                     config,
                     startup,
                     ascii_assets.clone(),
-                    platform.as_ref(),
+                    std::sync::Arc::clone(&platform),
                     &time_sync_receiver,
                     &mut cached_time_sync,
                     &shell_watchdog,
@@ -284,9 +285,194 @@ enum CachedTimeSyncResult {
 }
 
 #[derive(Debug)]
+struct LauncherIconRequest {
+    id: String,
+    path: std::path::PathBuf,
+}
+
+#[derive(Debug)]
+struct LauncherIconResult {
+    id: String,
+    icon: Result<Option<PlatformIcon>, String>,
+}
+
+struct CachedLauncherIcon {
+    area: Rect,
+    image: tundra_ui::PreparedEditorImage,
+}
+
+struct LauncherIconRuntime {
+    picker: tundra_ui::EditorImagePicker,
+    requests: mpsc::Sender<LauncherIconRequest>,
+    results: mpsc::Receiver<LauncherIconResult>,
+    pending: HashSet<String>,
+    unavailable: HashSet<String>,
+    source_icons: HashMap<String, PlatformIcon>,
+    prepared: HashMap<String, CachedLauncherIcon>,
+    _worker: ManagedThreadHandle<()>,
+}
+
+impl LauncherIconRuntime {
+    fn detect_and_spawn(
+        platform: std::sync::Arc<dyn Platform>,
+        watchdog: &AppWatchdog,
+    ) -> Result<Option<Self>, String> {
+        let picker =
+            tundra_ui::EditorImagePicker::detect_stdio().map_err(|error| error.to_string())?;
+        let Some(picker) = picker else {
+            return Ok(None);
+        };
+        let (request_sender, request_receiver) = mpsc::channel::<LauncherIconRequest>();
+        let (result_sender, result_receiver) = mpsc::channel::<LauncherIconResult>();
+        let group = watchdog
+            .child_component(ComponentId::from_static("launcher-icons"))
+            .task_group("native-icons");
+        let worker = group
+            .spawn_thread(
+                TaskSpec {
+                    id: TaskId::from_static("loader"),
+                    kind: TaskKind::LongRunning,
+                    panic_action: PanicAction::ReportOnly,
+                    replay_safety: ReplaySafety::Never,
+                    restart_policy: RestartPolicy::never(),
+                },
+                move || {
+                    while let Ok(request) = request_receiver.recv() {
+                        let icon = platform
+                            .file_icon(&request.path, 128)
+                            .map_err(|error| error.to_string());
+                        if result_sender
+                            .send(LauncherIconResult {
+                                id: request.id,
+                                icon,
+                            })
+                            .is_err()
+                        {
+                            break;
+                        }
+                    }
+                },
+            )
+            .map_err(|error| error.to_string())?;
+        Ok(Some(Self {
+            picker,
+            requests: request_sender,
+            results: result_receiver,
+            pending: HashSet::new(),
+            unavailable: HashSet::new(),
+            source_icons: HashMap::new(),
+            prepared: HashMap::new(),
+            _worker: worker,
+        }))
+    }
+
+    fn protocol(&self) -> tundra_ui::EditorGraphicsProtocol {
+        self.picker.protocol()
+    }
+
+    fn sync(&mut self, model: &tundra_ui::LauncherViewModel, main: Rect) {
+        while let Ok(result) = self.results.try_recv() {
+            self.pending.remove(&result.id);
+            match result.icon {
+                Ok(Some(icon)) => {
+                    self.source_icons.insert(result.id, icon);
+                }
+                Ok(None) | Err(_) => {
+                    self.unavailable.insert(result.id);
+                }
+            }
+        }
+        let ids = model
+            .items
+            .iter()
+            .map(|item| item.id.as_str())
+            .collect::<HashSet<_>>();
+        self.pending.retain(|id| ids.contains(id.as_str()));
+        self.unavailable.retain(|id| ids.contains(id.as_str()));
+        self.source_icons.retain(|id, _| ids.contains(id.as_str()));
+        self.prepared.retain(|id, _| ids.contains(id.as_str()));
+        if model.view_mode != tundra_ui::LauncherViewMode::LargeIcons {
+            return;
+        }
+
+        let layout = tundra_ui::launcher_layout(main, model);
+        for item_layout in &layout.items {
+            let Some(item) = model.items.get(item_layout.index) else {
+                continue;
+            };
+            let needs_prepare = self
+                .prepared
+                .get(&item.id)
+                .is_none_or(|cached| cached.area != item_layout.icon_area);
+            if needs_prepare
+                && let Some(icon) = self.source_icons.get(&item.id)
+                && let Ok(image) = self.picker.prepare_rgba(
+                    icon.width(),
+                    icon.height(),
+                    icon.rgba().to_vec(),
+                    item_layout.icon_area,
+                )
+            {
+                self.prepared.insert(
+                    item.id.clone(),
+                    CachedLauncherIcon {
+                        area: item_layout.icon_area,
+                        image,
+                    },
+                );
+            }
+            if !self.source_icons.contains_key(&item.id)
+                && !self.pending.contains(&item.id)
+                && !self.unavailable.contains(&item.id)
+                && self
+                    .requests
+                    .send(LauncherIconRequest {
+                        id: item.id.clone(),
+                        path: std::path::PathBuf::from(&item.path),
+                    })
+                    .is_ok()
+            {
+                self.pending.insert(item.id.clone());
+            }
+        }
+    }
+}
+
+impl tundra_ui::LauncherIconRenderer for LauncherIconRuntime {
+    fn render_icon(&self, item_id: &str, frame: &mut ratatui::Frame<'_>, area: Rect) -> bool {
+        let Some(icon) = self.prepared.get(item_id) else {
+            return false;
+        };
+        icon.image.render(frame, area);
+        true
+    }
+}
+
+#[derive(Debug)]
 struct TimedTimeSyncResult {
     result: TimeSyncResult,
     received_at: Instant,
+}
+
+struct TimeSyncWorker {
+    stop_sender: mpsc::Sender<()>,
+    handle: Option<ManagedThreadHandle<()>>,
+}
+
+impl TimeSyncWorker {
+    fn stop_and_join(&mut self) {
+        let _ = self.stop_sender.send(());
+        if let Some(handle) = self.handle.take() {
+            handle.cancel();
+            let _ = handle.join();
+        }
+    }
+}
+
+impl Drop for TimeSyncWorker {
+    fn drop(&mut self) {
+        self.stop_and_join();
+    }
 }
 
 impl CachedTimeSyncResult {
@@ -308,7 +494,7 @@ fn run_fullscreen_shell_session(
     config: ShellLaunchConfig,
     startup: ShellStartupState,
     ascii_assets: tundra_ui::RuntimeAsciiAssets,
-    platform: &dyn Platform,
+    platform: std::sync::Arc<dyn Platform>,
     time_sync_receiver: &mpsc::Receiver<TimedTimeSyncResult>,
     cached_time_sync: &mut Option<CachedTimeSyncResult>,
     shell_watchdog: &AppWatchdog,
@@ -320,6 +506,17 @@ fn run_fullscreen_shell_session(
     let initial_size = checked_current_terminal_size(terminal_size_requirement)?;
     let terminal_control = TerminalControlHandler::install();
     let mut guard = TerminalGuard::enter(output)?;
+    let launcher_icon_result =
+        LauncherIconRuntime::detect_and_spawn(std::sync::Arc::clone(&platform), shell_watchdog);
+    let terminal_graphics_protocol = launcher_icon_result
+        .as_ref()
+        .ok()
+        .and_then(|runtime| runtime.as_ref())
+        .map(LauncherIconRuntime::protocol);
+    if let Some(diagnostics) = diagnostics_task_runtime.as_ref() {
+        diagnostics.set_terminal_graphics_protocol(platform.kind(), terminal_graphics_protocol);
+    }
+    let mut launcher_icons = launcher_icon_result.unwrap_or(None);
     if startup.auth_bootstrap_required {
         display_first_run_banner_with_assets(guard.terminal_mut().backend_mut(), &ascii_assets)?;
     }
@@ -380,6 +577,15 @@ fn run_fullscreen_shell_session(
         let bootstrap_admin = state.to_bootstrap_admin_view_model();
         let user_management = state.to_user_management_view_model();
         let explorer = state.to_explorer_view_model();
+        let launcher = state.to_launcher_view_model();
+        if content_screen == ShellScreen::Launcher
+            && let Some(icon_runtime) = launcher_icons.as_mut()
+            && let tundra_ui::ShellLayout::Full { main, .. } = tundra_ui::compute_shell_layout(
+                Rect::new(0, 0, state.terminal_size().0, state.terminal_size().1),
+            )
+        {
+            icon_runtime.sync(&launcher, main);
+        }
         let editor = (content_screen == ShellScreen::Editor).then(|| state.to_editor_view_model());
         let diagnostics = state.to_diagnostics_view_model();
         let notification = state.to_notification_view_model();
@@ -414,6 +620,18 @@ fn run_fullscreen_shell_session(
                 }
                 ShellScreen::Explorer => {
                     tundra_ui::render_explorer(frame, area, &chrome, &explorer, &theme);
+                }
+                ShellScreen::Launcher => {
+                    tundra_ui::render_launcher_with_icons(
+                        frame,
+                        area,
+                        &chrome,
+                        &launcher,
+                        &theme,
+                        launcher_icons
+                            .as_ref()
+                            .map(|runtime| runtime as &dyn tundra_ui::LauncherIconRenderer),
+                    );
                 }
                 ShellScreen::Editor => {
                     tundra_ui::render_editor_app(
@@ -451,7 +669,7 @@ fn run_fullscreen_shell_session(
         })?;
 
         if terminal_control.shutdown_requested() {
-            state.apply_input_with_platform(InputEvent::Shutdown, platform);
+            state.apply_input_with_platform(InputEvent::Shutdown, platform.as_ref());
         }
         if state.shutdown_requested() {
             break;
@@ -470,9 +688,12 @@ fn run_fullscreen_shell_session(
                 terminal_size_error = Some(io::Error::other(error));
                 break;
             }
-            state.apply_input_with_platform(crossterm_event_to_input(terminal_event), platform)
+            state.apply_input_with_platform(
+                crossterm_event_to_input(terminal_event),
+                platform.as_ref(),
+            )
         } else {
-            state.apply_input_with_platform(InputEvent::Tick, platform)
+            state.apply_input_with_platform(InputEvent::Tick, platform.as_ref())
         };
 
         if action == ShellAction::Exit {
@@ -589,9 +810,10 @@ mod runtime_preflight_tests {
 fn spawn_time_sync_worker(
     sender: mpsc::Sender<TimedTimeSyncResult>,
     watchdog: &AppWatchdog,
-) -> Result<ManagedThreadHandle<()>, tundra_watchdog::WatchdogError> {
+) -> Result<TimeSyncWorker, tundra_watchdog::WatchdogError> {
+    let (stop_sender, stop_receiver) = mpsc::channel();
     let group = watchdog.task_group("network-clock");
-    group.spawn_thread(
+    let handle = group.spawn_thread(
         TaskSpec {
             id: TaskId::from_static("refresh-loop"),
             kind: TaskKind::LongRunning,
@@ -616,8 +838,12 @@ fn spawn_time_sync_worker(
                 return;
             };
 
-            runtime.block_on(async move {
+            runtime.block_on(async {
                 loop {
+                    match stop_receiver.try_recv() {
+                        Ok(()) | Err(mpsc::TryRecvError::Disconnected) => break,
+                        Err(mpsc::TryRecvError::Empty) => {}
+                    }
                     let result = tundra_weathr::network_clock::fetch_standard_time().await;
                     if sender
                         .send(TimedTimeSyncResult {
@@ -628,11 +854,18 @@ fn spawn_time_sync_worker(
                     {
                         break;
                     }
-                    tokio::time::sleep(TIME_SYNC_INTERVAL).await;
+                    match stop_receiver.recv_timeout(TIME_SYNC_INTERVAL) {
+                        Err(mpsc::RecvTimeoutError::Timeout) => {}
+                        Ok(()) | Err(mpsc::RecvTimeoutError::Disconnected) => break,
+                    }
                 }
             });
         },
-    )
+    )?;
+    Ok(TimeSyncWorker {
+        stop_sender,
+        handle: Some(handle),
+    })
 }
 
 fn spawn_weather_prefetch_worker(

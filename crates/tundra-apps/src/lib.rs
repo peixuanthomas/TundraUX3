@@ -3,6 +3,7 @@ pub mod editor;
 pub mod editor_recovery;
 pub mod explorer;
 pub mod explorer_tasks;
+pub mod launcher;
 pub mod markdown_codec;
 pub mod rich_document;
 pub mod rich_edit;

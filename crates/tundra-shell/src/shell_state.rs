@@ -244,6 +244,19 @@ enum ExplorerPurpose {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+enum LauncherPendingConfirmation {
+    Launch {
+        id: String,
+        path: std::path::PathBuf,
+        kind: LauncherExecutableKind,
+    },
+    Remove {
+        ids: Vec<String>,
+        label: String,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 struct ClockCreateState {
     input: String,
     error: Option<String>,
@@ -345,6 +358,12 @@ pub struct ShellState {
     user_management_feedback_tone: UserManagementFeedbackTone,
     user_management_mode: UserManagementMode,
     selected_home_entry_index: usize,
+    launcher_state: Option<LauncherState>,
+    launcher_selected_index: usize,
+    launcher_view_mode: tundra_ui::LauncherViewMode,
+    launcher_viewport_offset: usize,
+    launcher_pending_confirmation: Option<LauncherPendingConfirmation>,
+    launcher_picker_active: bool,
     explorer_state: Option<ExplorerState>,
     explorer_input_mode: ExplorerInputMode,
     explorer_input: String,

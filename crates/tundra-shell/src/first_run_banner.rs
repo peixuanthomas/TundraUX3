@@ -1,8 +1,9 @@
 use crate::{
     BANNER_ASSET_KEY, ShellTerminalSizeRequirement, asset_io_error, checked_current_terminal_size,
 };
+use std::fmt::Write as _;
 use std::io::{self, Write};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 const MATRIX_FRAME_INTERVAL: Duration = Duration::from_millis(33);
 const MATRIX_RAIN_DURATION: Duration = Duration::from_secs(1);
@@ -103,12 +104,17 @@ fn display_first_run_banner_with_timing_and_size_check(
     }
 
     write!(output, "{RESET_STYLE}{BLACK_BACKGROUND}{CLEAR_SCREEN}")?;
+    output.flush()?;
+    let mut frame_buffer = MatrixFrame::new();
+    let mut terminal_buffer = String::new();
     render_matrix_phase(
         output,
         banner_lines,
         MatrixPhase::Rain,
         timing.rain,
         &mut check_size,
+        &mut frame_buffer,
+        &mut terminal_buffer,
     )?;
     render_matrix_phase(
         output,
@@ -116,6 +122,8 @@ fn display_first_run_banner_with_timing_and_size_check(
         MatrixPhase::Assemble,
         timing.assemble,
         &mut check_size,
+        &mut frame_buffer,
+        &mut terminal_buffer,
     )?;
     wait_with_size_checks(timing.hold, &mut check_size)?;
     write!(output, "{RESET_STYLE}{CLEAR_SCREEN}")?;
@@ -128,44 +136,80 @@ fn render_matrix_phase(
     phase: MatrixPhase,
     duration: Duration,
     check_size: &mut impl FnMut() -> io::Result<(u16, u16)>,
+    frame: &mut MatrixFrame,
+    terminal_buffer: &mut String,
 ) -> io::Result<()> {
     let interval_ms = MATRIX_FRAME_INTERVAL.as_millis().max(1);
     let frame_count =
-        u32::try_from((duration.as_millis() / interval_ms).max(1)).unwrap_or(u32::MAX);
-    let frame_delay = duration / frame_count;
+        u32::try_from(duration.as_millis().div_ceil(interval_ms).max(1)).unwrap_or(u32::MAX);
+    let started_at = Instant::now();
 
-    for frame_index in 0..=frame_count {
+    for frame_index in 0..frame_count {
+        if frame_index > 0 {
+            let deadline_progress = frame_index as f64 / (frame_count - 1) as f64;
+            let deadline = started_at + duration.mul_f64(deadline_progress);
+            wait_until_with_size_checks(deadline, check_size)?;
+        }
         let terminal_size = check_size()?;
-        let progress = frame_index as f32 / frame_count as f32;
+        // Start with visible motion instead of spending the first interval on
+        // an empty frame. The final frame still lands exactly at 1.0.
+        let progress = (frame_index + 1) as f32 / frame_count as f32;
         let (rain_progress, banner_progress) = match phase {
             MatrixPhase::Rain => (progress, 0.0),
             MatrixPhase::Assemble => (1.0 + progress * 0.45, progress),
         };
-        let frame = matrix_frame(banner_lines, terminal_size, rain_progress, banner_progress);
-        render_matrix_frame(output, &frame)?;
-        if frame_index < frame_count {
-            wait_with_size_checks(frame_delay, check_size)?;
-        }
+        update_matrix_frame(
+            frame,
+            banner_lines,
+            terminal_size,
+            rain_progress,
+            banner_progress,
+        );
+        render_matrix_frame(output, frame, terminal_buffer)?;
     }
 
     Ok(())
 }
 
+#[cfg(test)]
 fn matrix_frame(
     banner_lines: &[String],
     (terminal_width, terminal_height): (u16, u16),
     rain_progress: f32,
     banner_progress: f32,
 ) -> MatrixFrame {
+    let mut frame = MatrixFrame::new();
+    update_matrix_frame(
+        &mut frame,
+        banner_lines,
+        (terminal_width, terminal_height),
+        rain_progress,
+        banner_progress,
+    );
+    frame
+}
+
+fn update_matrix_frame(
+    frame: &mut MatrixFrame,
+    banner_lines: &[String],
+    (terminal_width, terminal_height): (u16, u16),
+    rain_progress: f32,
+    banner_progress: f32,
+) {
     let width = usize::from(terminal_width);
     let height = usize::from(terminal_height);
     let rain_progress = rain_progress.max(0.0);
     let banner_progress = banner_progress.clamp(0.0, 1.0);
-    let mut frame = vec![vec![None; width]; height];
+    if frame.len() != height || frame.first().is_some_and(|row| row.len() != width) {
+        *frame = vec![vec![None; width]; height];
+    } else {
+        for row in frame.iter_mut() {
+            row.fill(None);
+        }
+    }
 
-    render_ambient_rain(&mut frame, rain_progress, 1.0 - banner_progress);
-    render_falling_banner_glyphs(&mut frame, banner_lines, banner_progress);
-    frame
+    render_ambient_rain(frame, rain_progress, 1.0 - banner_progress);
+    render_falling_banner_glyphs(frame, banner_lines, banner_progress);
 }
 
 fn render_ambient_rain(frame: &mut MatrixFrame, rain_progress: f32, opacity: f32) {
@@ -270,31 +314,63 @@ fn render_falling_banner_glyphs(frame: &mut MatrixFrame, banner_lines: &[String]
     }
 }
 
-fn render_matrix_frame(output: &mut impl Write, frame: &MatrixFrame) -> io::Result<()> {
+fn render_matrix_frame(
+    output: &mut impl Write,
+    frame: &MatrixFrame,
+    terminal_buffer: &mut String,
+) -> io::Result<()> {
+    terminal_buffer.clear();
+    let estimated_width = frame.first().map_or(0, Vec::len);
+    terminal_buffer.reserve(frame.len().saturating_mul(estimated_width + 24));
+    let mut active_tone = None;
+
     for (row, cells) in frame.iter().enumerate() {
-        write!(output, "\x1B[{};1H{CLEAR_LINE}", row + 1)?;
+        write!(terminal_buffer, "\x1B[{};1H{CLEAR_LINE}", row + 1)
+            .expect("writing terminal commands to a String cannot fail");
         let Some(last_visible) = cells.iter().rposition(Option::is_some) else {
             continue;
         };
 
-        let mut active_tone = None;
         for cell in &cells[..=last_visible] {
             match cell {
                 Some(cell) => {
                     if active_tone != Some(cell.tone) {
-                        write!(output, "{}", cell.tone.ansi())?;
+                        terminal_buffer.push_str(cell.tone.ansi());
                         active_tone = Some(cell.tone);
                     }
-                    write!(output, "{}", cell.glyph)?;
+                    terminal_buffer.push(cell.glyph);
                 }
-                None => write!(output, " ")?,
+                None => terminal_buffer.push(' '),
             }
         }
-        if active_tone.is_some() {
-            write!(output, "{RESET_STYLE}{BLACK_BACKGROUND}")?;
+    }
+    if active_tone.is_some() {
+        terminal_buffer.push_str(RESET_STYLE);
+        terminal_buffer.push_str(BLACK_BACKGROUND);
+    }
+
+    output.write_all(terminal_buffer.as_bytes())?;
+    output.flush()
+}
+
+fn wait_until_with_size_checks(
+    deadline: Instant,
+    check_size: &mut impl FnMut() -> io::Result<(u16, u16)>,
+) -> io::Result<()> {
+    loop {
+        let now = Instant::now();
+        if now >= deadline {
+            return Ok(());
+        }
+
+        let remaining = deadline.duration_since(now);
+        if remaining > TERMINAL_SIZE_POLL_INTERVAL {
+            std::thread::sleep(TERMINAL_SIZE_POLL_INTERVAL);
+            let _ = check_size()?;
+        } else {
+            std::thread::sleep(remaining);
         }
     }
-    output.flush()
 }
 
 fn wait_with_size_checks(
@@ -344,6 +420,26 @@ fn hash(row: usize, column: usize, salt: u32) -> u32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[derive(Default)]
+    struct CountingWriter {
+        bytes: Vec<u8>,
+        writes: usize,
+        flushes: usize,
+    }
+
+    impl Write for CountingWriter {
+        fn write(&mut self, buffer: &[u8]) -> io::Result<usize> {
+            self.writes += 1;
+            self.bytes.extend_from_slice(buffer);
+            Ok(buffer.len())
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            self.flushes += 1;
+            Ok(())
+        }
+    }
 
     fn assets() -> tundra_ui::RuntimeAsciiAssets {
         let asset_root =
@@ -423,6 +519,34 @@ mod tests {
         assert!(green_count > white_count);
         assert!(white_count > 0);
         assert!(occupied_rows > frame.len() / 2);
+    }
+
+    #[test]
+    fn matrix_frame_is_submitted_to_the_terminal_in_one_write() {
+        let frame = vec![
+            vec![
+                Some(MatrixCell {
+                    glyph: 'A',
+                    tone: MatrixTone::Green,
+                }),
+                None,
+            ],
+            vec![
+                None,
+                Some(MatrixCell {
+                    glyph: 'B',
+                    tone: MatrixTone::White,
+                }),
+            ],
+        ];
+        let mut output = CountingWriter::default();
+        let mut terminal_buffer = String::new();
+
+        render_matrix_frame(&mut output, &frame, &mut terminal_buffer).expect("rendered frame");
+
+        assert_eq!(output.writes, 1);
+        assert_eq!(output.flushes, 1);
+        assert_eq!(output.bytes, terminal_buffer.as_bytes());
     }
 
     #[test]

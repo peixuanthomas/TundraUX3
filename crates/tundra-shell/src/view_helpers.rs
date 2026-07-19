@@ -22,6 +22,7 @@ fn clock_button_active_for_screen(screen: ShellScreen) -> bool {
         screen,
         ShellScreen::Home
             | ShellScreen::Explorer
+            | ShellScreen::Launcher
             | ShellScreen::Editor
             | ShellScreen::UserManagement
             | ShellScreen::Diagnostics
@@ -211,6 +212,8 @@ fn explorer_context_menu_view_model(
     is_trash: bool,
     trash_has_items: bool,
     focused_index: usize,
+    can_manage_launcher: bool,
+    launcher_eligible_count: usize,
 ) -> tundra_ui::ExplorerOverlayViewModel {
     let item = |id: &str, label: &str, enabled: bool, dangerous: bool| {
         tundra_ui::ExplorerContextMenuItemViewModel {
@@ -234,14 +237,25 @@ fn explorer_context_menu_view_model(
             item("options", "Advanced options", true, false),
         ]
     } else if selected_count > 0 {
-        vec![
+        let mut items = vec![
             item("open", "Open", selected_count == 1, false),
+        ];
+        if can_manage_launcher && launcher_eligible_count > 0 {
+            items.push(item(
+                "add-to-launcher",
+                "Add to launcher",
+                true,
+                false,
+            ));
+        }
+        items.extend([
             item("cut", "Cut", true, false),
             item("copy", "Copy", true, false),
             item("rename", "Rename", selected_count == 1, false),
             item("delete", "Delete", true, true),
             item("properties", "Properties", selected_count == 1, false),
-        ]
+        ]);
+        items
     } else {
         vec![
             item("new-folder", "New folder", true, false),
@@ -589,7 +603,7 @@ fn resolved_home_mode(
     launch_config: ShellLaunchConfig,
     startup: &ShellStartupState,
 ) -> ShellHomeMode {
-    match launch_config.home_mode_override {
+    let requested_mode = match launch_config.home_mode_override {
         HomeModeOverride::Debug => ShellHomeMode::Debug,
         HomeModeOverride::BuildDefault => startup
             .restored_session
@@ -597,6 +611,12 @@ fn resolved_home_mode(
             .map(|session| session.display_mode)
             .or(startup.app_config.home_mode)
             .unwrap_or_else(|| ShellState::legacy_default_home_mode(launch_config)),
+    };
+
+    if requested_mode == ShellHomeMode::Debug && !startup.debug_policy.allows_debug() {
+        ShellHomeMode::User
+    } else {
+        requested_mode
     }
 }
 

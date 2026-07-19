@@ -1,7 +1,7 @@
 use std::fmt;
 use std::path::Path;
 
-use image::{DynamicImage, ImageReader};
+use image::{DynamicImage, ImageReader, RgbaImage};
 use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui_image::Image;
@@ -83,6 +83,22 @@ impl EditorImagePicker {
         })
     }
 
+    /// Prepares a native RGBA icon for rendering through the detected terminal
+    /// graphics protocol. `rgba` must contain exactly four bytes per pixel.
+    ///
+    /// This is intentionally owned input: platform icon APIs commonly hand out
+    /// temporary buffers, while a prepared terminal image may outlive that API
+    /// call until the next render pass.
+    pub fn prepare_rgba(
+        &self,
+        width: u32,
+        height: u32,
+        rgba: Vec<u8>,
+        area: Rect,
+    ) -> Result<PreparedEditorImage, EditorMediaError> {
+        self.prepare(rgba_image(width, height, rgba)?, area)
+    }
+
     fn from_picker(picker: Picker) -> Result<Option<Self>, EditorMediaError> {
         let protocol = match picker.protocol_type() {
             ProtocolType::Halfblocks => return Ok(None),
@@ -113,7 +129,16 @@ impl PreparedEditorImage {
 pub enum EditorMediaError {
     Protocol(ratatui_image::errors::Errors),
     Decode(String),
-    TooLarge { width: u32, height: u32 },
+    TooLarge {
+        width: u32,
+        height: u32,
+    },
+    InvalidRgbaLength {
+        width: u32,
+        height: u32,
+        expected: usize,
+        actual: usize,
+    },
 }
 
 impl fmt::Display for EditorMediaError {
@@ -125,11 +150,41 @@ impl fmt::Display for EditorMediaError {
                 formatter,
                 "image dimensions {width}x{height} exceed the Editor safety limit"
             ),
+            Self::InvalidRgbaLength {
+                width,
+                height,
+                expected,
+                actual,
+            } => write!(
+                formatter,
+                "RGBA buffer for {width}x{height} image has {actual} bytes; expected {expected}"
+            ),
         }
     }
 }
 
 impl std::error::Error for EditorMediaError {}
+
+fn rgba_image(width: u32, height: u32, rgba: Vec<u8>) -> Result<DynamicImage, EditorMediaError> {
+    let pixels = u64::from(width).saturating_mul(u64::from(height));
+    if pixels > EDITOR_IMAGE_MAX_PIXELS {
+        return Err(EditorMediaError::TooLarge { width, height });
+    }
+    // The pixel limit guarantees this conversion and multiplication are safe on
+    // every supported target, including 32-bit builds.
+    let expected = usize::try_from(pixels.saturating_mul(4)).expect("bounded RGBA byte count");
+    let actual = rgba.len();
+    if actual != expected {
+        return Err(EditorMediaError::InvalidRgbaLength {
+            width,
+            height,
+            expected,
+            actual,
+        });
+    }
+    let image = RgbaImage::from_raw(width, height, rgba).expect("validated RGBA dimensions");
+    Ok(DynamicImage::ImageRgba8(image))
+}
 
 #[cfg(test)]
 mod tests {
@@ -141,5 +196,26 @@ mod tests {
         if picker.protocol_type() == ProtocolType::Halfblocks {
             assert!(EditorImagePicker::from_picker(picker).unwrap().is_none());
         }
+    }
+
+    #[test]
+    fn rgba_preparation_rejects_wrong_buffer_length() {
+        let error = rgba_image(2, 3, vec![0; 23]).unwrap_err();
+        assert!(matches!(
+            error,
+            EditorMediaError::InvalidRgbaLength {
+                width: 2,
+                height: 3,
+                expected: 24,
+                actual: 23,
+            }
+        ));
+    }
+
+    #[test]
+    fn rgba_preparation_constructs_an_rgba_image() {
+        let image = rgba_image(2, 1, vec![255; 8]).expect("valid RGBA bytes");
+        assert_eq!(image.width(), 2);
+        assert_eq!(image.height(), 1);
     }
 }

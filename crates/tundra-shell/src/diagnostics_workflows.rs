@@ -5,6 +5,7 @@ struct ShellDiagnosticsTaskRuntime {
 
 struct ShellDiagnosticsTaskShared {
     engine: Mutex<Option<tundra_apps::diagnostics::DiagnosticsTaskRuntime>>,
+    terminal_check: Mutex<Option<tundra_platform::EnvironmentCheck>>,
     storage: StorageManager,
     process: Option<ProcessWatchdog>,
     watchdog: Option<AppWatchdog>,
@@ -53,6 +54,7 @@ impl ShellDiagnosticsTaskRuntime {
         Self {
             shared: Arc::new(ShellDiagnosticsTaskShared {
                 engine: Mutex::new(None),
+                terminal_check: Mutex::new(None),
                 storage,
                 process,
                 watchdog,
@@ -126,14 +128,49 @@ impl ShellDiagnosticsTaskRuntime {
             .unwrap_or(false)
     }
 
+    fn set_terminal_graphics_protocol(
+        &self,
+        kind: tundra_platform::PlatformKind,
+        protocol: Option<tundra_ui::EditorGraphicsProtocol>,
+    ) {
+        let wt_session = std::env::var("WT_SESSION").ok();
+        let check = tundra_platform::terminal_environment_check_with_graphics_protocol(
+            kind,
+            wt_session.as_deref(),
+            protocol.map(tundra_ui::EditorGraphicsProtocol::label),
+        );
+        if let Ok(mut terminal_check) = self.shared.terminal_check.lock() {
+            *terminal_check = Some(check);
+        }
+    }
+
     fn drain_events(&self) -> Vec<tundra_apps::diagnostics::DiagnosticsTaskEvent> {
         let Ok(engine) = self.shared.engine.lock() else {
             return Vec::new();
         };
-        engine
+        let mut events = engine
             .as_ref()
             .map(|engine| engine.drain_events())
-            .unwrap_or_default()
+            .unwrap_or_default();
+        let terminal_check = self
+            .shared
+            .terminal_check
+            .lock()
+            .ok()
+            .and_then(|check| check.clone());
+        for event in &mut events {
+            match event {
+                tundra_apps::diagnostics::DiagnosticsTaskEvent::ScanCompleted(Ok(snapshot)) => {
+                    apply_terminal_environment_check(snapshot, terminal_check.as_ref());
+                }
+                tundra_apps::diagnostics::DiagnosticsTaskEvent::RepairCompleted {
+                    snapshot: Some(snapshot),
+                    ..
+                } => apply_terminal_environment_check(snapshot, terminal_check.as_ref()),
+                _ => {}
+            }
+        }
+        events
     }
 
     fn restart_required(&self) -> bool {
@@ -144,6 +181,41 @@ impl ShellDiagnosticsTaskRuntime {
             .and_then(|engine| engine.as_ref().map(|engine| engine.restart_required()))
             .unwrap_or(false)
     }
+}
+
+fn apply_terminal_environment_check(
+    snapshot: &mut tundra_apps::diagnostics::DiagnosticsSnapshot,
+    terminal_check: Option<&tundra_platform::EnvironmentCheck>,
+) {
+    let Some(terminal_check) = terminal_check else {
+        return;
+    };
+    let Some(check) = snapshot.checks.iter_mut().find(|check| {
+        check.category == tundra_apps::diagnostics::DiagnosticCategory::Environment
+            && check.label == "Terminal"
+    }) else {
+        return;
+    };
+
+    let (status, remediation) = match terminal_check.status {
+        tundra_platform::CheckStatus::Pass => {
+            (tundra_apps::diagnostics::DiagnosticStatus::Pass, None)
+        }
+        tundra_platform::CheckStatus::Warning => (
+            tundra_apps::diagnostics::DiagnosticStatus::Warning,
+            Some(
+                "Use a terminal with Kitty, Sixel, or iTerm2 graphics protocol support".to_string(),
+            ),
+        ),
+        tundra_platform::CheckStatus::Fail => (
+            tundra_apps::diagnostics::DiagnosticStatus::Fail,
+            Some("Use a supported platform and terminal configuration".to_string()),
+        ),
+    };
+    check.status = status;
+    check.summary.clone_from(&terminal_check.message);
+    check.detail.clone_from(&terminal_check.message);
+    check.remediation = remediation;
 }
 
 impl ShellState {
@@ -891,12 +963,62 @@ mod diagnostics_shell_tests {
         }
     }
 
+    fn terminal_snapshot(
+        status: tundra_apps::diagnostics::DiagnosticStatus,
+    ) -> tundra_apps::diagnostics::DiagnosticsSnapshot {
+        let mut snapshot = snapshot();
+        snapshot.checks = vec![tundra_apps::diagnostics::DiagnosticCheck {
+            id: "environment.terminal".to_string(),
+            category: tundra_apps::diagnostics::DiagnosticCategory::Environment,
+            label: "Terminal".to_string(),
+            status,
+            summary: "legacy terminal result".to_string(),
+            detail: "legacy terminal result".to_string(),
+            remediation: None,
+            repair: None,
+        }];
+        snapshot
+    }
+
     fn state(role: UserRole) -> ShellState {
         let mut state = ShellState::new(ShellLaunchConfig::default(), (120, 30));
         state.auth_session = Some(session(role));
         state.diagnostics_snapshot = Some(snapshot());
         state.screen_stack = vec![ShellScreen::Home];
         state
+    }
+
+    #[test]
+    fn probed_graphics_protocol_controls_terminal_diagnostic_status() {
+        let mut snapshot = terminal_snapshot(tundra_apps::diagnostics::DiagnosticStatus::Pass);
+        let text_only = tundra_platform::terminal_environment_check_with_graphics_protocol(
+            tundra_platform::PlatformKind::Macos,
+            None,
+            None,
+        );
+
+        apply_terminal_environment_check(&mut snapshot, Some(&text_only));
+        let check = &snapshot.checks[0];
+        assert_eq!(
+            check.status,
+            tundra_apps::diagnostics::DiagnosticStatus::Warning
+        );
+        assert!(check.summary.contains("text-only"));
+        assert!(check.remediation.is_some());
+
+        let graphics = tundra_platform::terminal_environment_check_with_graphics_protocol(
+            tundra_platform::PlatformKind::Macos,
+            None,
+            Some("Sixel"),
+        );
+        apply_terminal_environment_check(&mut snapshot, Some(&graphics));
+        let check = &snapshot.checks[0];
+        assert_eq!(
+            check.status,
+            tundra_apps::diagnostics::DiagnosticStatus::Pass
+        );
+        assert!(check.summary.contains("Sixel graphics protocol"));
+        assert!(check.remediation.is_none());
     }
 
     fn install_temporary_storage(state: &mut ShellState) -> std::path::PathBuf {

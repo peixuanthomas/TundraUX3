@@ -8,22 +8,26 @@ use tundra_apps::explorer::{
     ExplorerCommand, ExplorerConflictAction, ExplorerController, ExplorerEffect,
     ExplorerOpenTarget, ExplorerState,
 };
+use tundra_apps::launcher::{
+    LauncherAddOutcome, LauncherCommand, LauncherController, LauncherEffect,
+    LauncherItemStatus as DomainLauncherItemStatus, LauncherState,
+};
 use tundra_core::{
     AuthSession, CoreError, DebugPolicy, PASSWORD_MAX_LEN, PASSWORD_MIN_LEN, PermissionAction,
     PermissionService, SessionService, UserAccount, UserRole, UserService,
 };
-use tundra_storage::{ClockProfile, StorageError, StorageManager};
+use tundra_storage::{ClockProfile, LauncherExecutableKind, StorageError, StorageManager};
 
 use chrono::{DateTime, Timelike, Utc};
 use crossterm::event;
 use ratatui::layout::Rect;
-use std::collections::VecDeque;
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::io::{self, Write};
 use std::sync::mpsc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tundra_platform::{
     CapabilityStatus, DocumentFingerprint, FileAttributes, Platform, PlatformCapabilities,
-    PlatformKind, TerminalControlHandler,
+    PlatformIcon, PlatformKind, TerminalControlHandler,
 };
 use tundra_weathr::network_clock::{NetworkClock, TimeSyncResult};
 
@@ -101,6 +105,7 @@ include!("view_models.rs");
 include!("account_workflows.rs");
 include!("clock_workflows.rs");
 include!("explorer_workflows.rs");
+include!("launcher_workflows.rs");
 include!("explorer_task_workflows.rs");
 include!("editor_task_workflows.rs");
 include!("editor_workflows.rs");

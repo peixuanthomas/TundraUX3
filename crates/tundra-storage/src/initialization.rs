@@ -74,7 +74,7 @@ impl StorageManager {
     ) -> Result<(), StorageError> {
         let mut config =
             load_toml_document::<StorageConfig>(&self.layout.config_path, CONFIG_DESCRIPTOR.name)?;
-        if !config.normalize_language() {
+        if !config.normalize() {
             return Ok(());
         }
 

@@ -2327,7 +2327,7 @@ fn render_auth_screen(
     }
 }
 
-fn render_compact_home(
+pub(crate) fn render_compact_home(
     frame: &mut Frame<'_>,
     area: Rect,
     chrome: &ShellChromeViewModel,
@@ -3790,7 +3790,7 @@ fn legacy_explorer_icon_key(entry: &ExplorerEntryViewModel) -> &'static str {
     }
 }
 
-fn render_top(
+pub(crate) fn render_top(
     frame: &mut Frame<'_>,
     area: Rect,
     chrome: &ShellChromeViewModel,
@@ -3967,7 +3967,7 @@ fn centered_home_tile_value(text: &str, measured_width: usize, content_width: us
     format!("{padding}{text}")
 }
 
-fn render_status(
+pub(crate) fn render_status(
     frame: &mut Frame<'_>,
     area: Rect,
     chrome: &ShellChromeViewModel,

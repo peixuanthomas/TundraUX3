@@ -39,32 +39,58 @@ pub fn terminal_environment_check_with(
     kind: PlatformKind,
     wt_session: Option<&str>,
 ) -> EnvironmentCheck {
+    terminal_environment_check_with_graphics_protocol(kind, wt_session, None)
+}
+
+/// Builds the terminal diagnostics result from an already-probed inline
+/// graphics protocol. Merely identifying a terminal emulator is not enough:
+/// the current UI requires capabilities such as native image rendering before
+/// the terminal check can pass.
+pub fn terminal_environment_check_with_graphics_protocol(
+    kind: PlatformKind,
+    wt_session: Option<&str>,
+    graphics_protocol: Option<&str>,
+) -> EnvironmentCheck {
+    if let Some(protocol) = graphics_protocol.filter(|value| !value.trim().is_empty()) {
+        return EnvironmentCheck {
+            label: "Terminal".to_string(),
+            status: CheckStatus::Pass,
+            message: format!(
+                "{} graphics protocol detected; image and advanced UI features are supported",
+                protocol.trim()
+            ),
+        };
+    }
+
     match kind {
         PlatformKind::Windows => {
             if is_windows_terminal_session(wt_session) {
                 EnvironmentCheck {
                     label: "Terminal".to_string(),
-                    status: CheckStatus::Pass,
-                    message: "Windows Terminal detected".to_string(),
+                    status: CheckStatus::Warning,
+                    message: "Windows Terminal detected, but no inline graphics protocol was detected; text-only UI is available"
+                        .to_string(),
                 }
             } else {
                 EnvironmentCheck {
                     label: "Terminal".to_string(),
                     status: CheckStatus::Warning,
-                    message: "Windows Terminal not detected; conhost is best-effort only"
+                    message: "No inline graphics protocol detected; this terminal is text-only and advanced UI features are unavailable"
                         .to_string(),
                 }
             }
         }
         PlatformKind::Macos => EnvironmentCheck {
             label: "Terminal".to_string(),
-            status: CheckStatus::Pass,
-            message: "macOS terminal session supported".to_string(),
+            status: CheckStatus::Warning,
+            message: "No inline graphics protocol detected; this terminal is text-only and advanced UI features are unavailable"
+                .to_string(),
         },
         PlatformKind::Unsupported => EnvironmentCheck {
             label: "Terminal".to_string(),
             status: CheckStatus::Warning,
-            message: "terminal support is unsupported on this platform".to_string(),
+            message: "No supported inline graphics protocol detected on this platform; only text UI can be assumed"
+                .to_string(),
         },
     }
 }
