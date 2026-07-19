@@ -246,25 +246,6 @@ impl ShellState {
         }
     }
 
-    fn begin_launcher_add(&mut self, platform: &dyn Platform) {
-        if !self.can_manage_launcher() {
-            if let Some(state) = self.launcher_state.as_mut() {
-                state.error = Some("Only administrators can add Launcher items".to_string());
-            }
-            return;
-        }
-        let Some(storage) = self.storage_manager.clone() else { return };
-        let start_path = platform
-            .user_dirs()
-            .ok()
-            .map(|dirs| dirs.documents().to_path_buf())
-            .filter(|path| path.exists())
-            .unwrap_or_else(|| storage.layout().data_path.clone());
-        self.launcher_picker_active = true;
-        self.open_explorer_at(platform, &storage, start_path, ExplorerPurpose::Browse);
-        self.notify_status("Select executable files, then use Add to launcher");
-    }
-
     fn add_selected_explorer_to_launcher(&mut self, platform: &dyn Platform) {
         let paths = self
             .explorer_state
@@ -272,15 +253,8 @@ impl ShellState {
             .map(ExplorerState::effective_selected_paths)
             .unwrap_or_default();
         if paths.is_empty() { return; }
+        self.close_explorer_popup();
         self.apply_launcher_command(LauncherCommand::AddPaths(paths), platform);
-        if self.launcher_picker_active {
-            self.launcher_picker_active = false;
-            self.explorer_state = None;
-            if self.active_screen() == ShellScreen::Explorer { self.screen_stack.pop(); }
-            self.focused_component = ShellComponent::Launcher;
-            self.notify_status("Launcher");
-            self.refresh_hit_map();
-        }
     }
 
     fn open_launcher_for_path(&mut self, path: std::path::PathBuf, platform: &dyn Platform) {
@@ -316,7 +290,6 @@ impl ShellState {
                 if click == ClickKind::Double { self.request_launcher_launch(platform); }
             }
             Some(tundra_ui::LauncherHitTarget::Toolbar(action)) => match action {
-                tundra_ui::LauncherToolbarAction::Add => self.begin_launcher_add(platform),
                 tundra_ui::LauncherToolbarAction::Remove => self.request_launcher_remove(),
                 tundra_ui::LauncherToolbarAction::Reapprove => self.reapprove_selected_launcher_item(platform),
                 tundra_ui::LauncherToolbarAction::Refresh => self.refresh_launcher(platform),

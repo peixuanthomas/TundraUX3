@@ -65,22 +65,6 @@ impl ShellState {
         self.explorer_input_replace_all = false;
         self.explorer_overlay_mode = None;
         self.resolve_explorer_alert();
-        if self.launcher_picker_active {
-            self.launcher_picker_active = false;
-            self.explorer_state = None;
-            if self.active_screen() == ShellScreen::Explorer {
-                self.screen_stack.pop();
-            }
-            if self.active_screen() == ShellScreen::Launcher {
-                self.focused_component = ShellComponent::Launcher;
-                self.notify_status("Launcher");
-            } else {
-                self.pop_to_home();
-                self.notify_status("Ready");
-            }
-            self.refresh_hit_map();
-            return;
-        }
         if matches!(self.explorer_purpose, ExplorerPurpose::DiagnosticsLogs) {
             self.explorer_purpose = ExplorerPurpose::Browse;
             self.explorer_state = None;

@@ -131,14 +131,13 @@ fn toolbar_management_actions_are_admin_only() {
             .map(|button| button.action)
             .collect::<Vec<_>>(),
         vec![
-            LauncherToolbarAction::Add,
             LauncherToolbarAction::Remove,
             LauncherToolbarAction::Reapprove,
             LauncherToolbarAction::Refresh,
             LauncherToolbarAction::ToggleView,
         ]
     );
-    assert!(admin.toolbar[2].enabled);
+    assert!(admin.toolbar[1].enabled);
     assert_eq!(
         user.toolbar
             .iter()
@@ -167,7 +166,7 @@ fn layouts_keep_selection_visible_and_hit_test_toolbar_items_and_scrollbar() {
     let button = layout.toolbar_buttons[0];
     assert_eq!(
         layout.hit_test(button.area.x, button.area.y),
-        Some(LauncherHitTarget::Toolbar(LauncherToolbarAction::Add))
+        Some(LauncherHitTarget::Toolbar(LauncherToolbarAction::Remove))
     );
     let visible_item = layout.items[0];
     assert_eq!(
@@ -179,6 +178,23 @@ fn layouts_keep_selection_visible_and_hit_test_toolbar_items_and_scrollbar() {
         layout.hit_test(scrollbar.x, scrollbar.y),
         Some(LauncherHitTarget::Scrollbar)
     );
+}
+
+#[test]
+fn empty_launcher_directs_users_to_explorer_without_an_add_action() {
+    for view_mode in [LauncherViewMode::LargeIcons, LauncherViewMode::Details] {
+        let model = LauncherViewModel::new(vec![], None, view_mode, true);
+        let output = render(&model, 100, 30);
+
+        assert!(output.contains("Go to Explorer, select a file"));
+        assert!(output.contains("right-click and choose Add to Launcher"));
+        assert!(
+            model
+                .toolbar
+                .iter()
+                .all(|button| button.action != LauncherToolbarAction::Remove)
+        );
+    }
 }
 
 #[test]

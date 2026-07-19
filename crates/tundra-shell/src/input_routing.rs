@@ -709,12 +709,6 @@ impl ShellState {
             .explorer_state
             .as_ref()
             .is_some_and(|state| state.current_location.is_trash());
-        if self.launcher_picker_active
-            && matches!(key.key, InputKey::Enter | InputKey::Character('a' | 'A'))
-            && !key.has_non_shift_modifier()
-        {
-            return (target, ShellCommand::ExplorerAddToLauncher);
-        }
         match &key.key {
             InputKey::Escape => (RoutedTarget::Global, ShellCommand::CloseExplorer),
             InputKey::Character('l' | 'L') if key.modifiers.control || key.modifiers.super_key => {
@@ -732,6 +726,9 @@ impl ShellState {
             InputKey::Function(2) if !is_trash => (target, ShellCommand::BeginExplorerRename),
             InputKey::Character('a' | 'A') if key.modifiers.control || key.modifiers.super_key => {
                 (target, ShellCommand::ExplorerSelectAll)
+            }
+            InputKey::Character('a' | 'A') if !is_trash && self.can_manage_launcher() => {
+                (target, ShellCommand::ExplorerAddToLauncher)
             }
             InputKey::Character(' ') => (target, ShellCommand::ExplorerToggleFocused),
             InputKey::Character('f' | 'F') if key.modifiers.control || key.modifiers.super_key => {
@@ -780,7 +777,6 @@ impl ShellState {
             InputKey::End => (target, ShellCommand::LauncherLast),
             InputKey::Enter => (target, ShellCommand::LauncherActivate),
             InputKey::Delete => (target, ShellCommand::LauncherRemove),
-            InputKey::Character('a' | 'A') => (target, ShellCommand::LauncherAdd),
             InputKey::Character('v' | 'V') => (target, ShellCommand::LauncherToggleView),
             InputKey::Character('r' | 'R') if key.modifiers.control || key.modifiers.super_key => {
                 (target, ShellCommand::LauncherReapprove)
@@ -954,12 +950,22 @@ impl ShellState {
             if key.phase != InputPhase::Press || key.has_non_shift_modifier() {
                 return (target, ShellCommand::CaptureOverlayInput);
             }
+            let can_add_to_launcher = matches!(
+                self.to_explorer_view_model().overlay.as_ref(),
+                Some(tundra_ui::ExplorerOverlayViewModel::ContextMenu(menu))
+                    if menu.items.iter().any(|item| {
+                        item.id == "add-to-launcher" && item.enabled
+                    })
+            );
             return match &key.key {
                 InputKey::Escape => (target, ShellCommand::ClosePopup),
                 InputKey::Up | InputKey::BackTab => (target, ShellCommand::ExplorerOverlayPrevious),
                 InputKey::Down | InputKey::Tab => (target, ShellCommand::ExplorerOverlayNext),
                 InputKey::Enter | InputKey::Character(' ') => {
                     (target, ShellCommand::ExplorerOverlayActivate)
+                }
+                InputKey::Character('a' | 'A') if can_add_to_launcher => {
+                    (target, ShellCommand::ExplorerAddToLauncher)
                 }
                 _ => (target, ShellCommand::CaptureOverlayInput),
             };

@@ -175,7 +175,6 @@ impl ShellState {
             launcher_view_mode: tundra_ui::LauncherViewMode::LargeIcons,
             launcher_viewport_offset: 0,
             launcher_pending_confirmation: None,
-            launcher_picker_active: false,
             explorer_state: None,
             explorer_input_mode: ExplorerInputMode::Browse,
             explorer_input: String::new(),

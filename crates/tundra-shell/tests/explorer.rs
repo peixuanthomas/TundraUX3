@@ -10,8 +10,8 @@ use tundra_platform::{
 };
 use tundra_shell::{
     HomeModeOverride, InputEvent, InputKey, InputModifiers, InputPhase, KeyInput, PointerButton,
-    ShellComponent, ShellHomeMode, ShellLaunchConfig, ShellLaunchTarget, ShellScreen, ShellState,
-    ShellTerminalMode, prepare_shell_startup,
+    ShellCommand, ShellComponent, ShellHomeMode, ShellLaunchConfig, ShellLaunchTarget, ShellScreen,
+    ShellState, ShellTerminalMode, prepare_shell_startup,
 };
 use tundra_storage::StorageManager;
 use tundra_ui::NotificationTone;
@@ -294,12 +294,26 @@ fn admin_batch_adds_launcher_targets_and_high_risk_launch_requires_confirmation(
         other => panic!("expected Explorer context menu, got {other:?}"),
     };
     assert!(menu.items.iter().any(|item| {
-        item.id == "add-to-launcher" && item.label == "Add to launcher" && item.enabled
+        item.id == "add-to-launcher"
+            && item.label == "Add to Launcher"
+            && item.shortcut.as_deref() == Some("A")
+            && item.enabled
     }));
 
-    state.apply_input_with_platform(InputEvent::from_key_label("Down"), &platform);
-    state.apply_input_with_platform(InputEvent::from_key_label("Enter"), &platform);
+    state.apply_input_with_platform(InputEvent::from_key_label("a"), &platform);
     assert!(state.active_popup().is_none());
+    assert_eq!(
+        state.last_command(),
+        Some(&ShellCommand::ExplorerAddToLauncher)
+    );
+    assert_eq!(state.active_screen(), ShellScreen::Explorer);
+
+    state.apply_input_with_platform(InputEvent::from_key_label("a"), &platform);
+    assert_eq!(
+        state.last_command(),
+        Some(&ShellCommand::ExplorerAddToLauncher)
+    );
+    assert_eq!(state.active_screen(), ShellScreen::Explorer);
 
     state.apply_input_with_platform(InputEvent::from_key_label("Esc"), &platform);
     state.apply_input_with_platform(InputEvent::from_key_label("Right"), &platform);
@@ -307,13 +321,6 @@ fn admin_batch_adds_launcher_targets_and_high_risk_launch_requires_confirmation(
     assert_eq!(state.active_screen(), ShellScreen::Launcher);
     assert_eq!(state.focused_component(), ShellComponent::Launcher);
     assert_eq!(state.to_launcher_view_model().items.len(), 2);
-
-    state.apply_input_with_platform(InputEvent::from_key_label("a"), &platform);
-    assert_eq!(state.active_screen(), ShellScreen::Explorer);
-    state.apply_input_with_platform(ctrl_key('a'), &platform);
-    assert_eq!(state.to_explorer_view_model().selected_count, 2);
-    state.apply_input_with_platform(InputEvent::from_key_label("Enter"), &platform);
-    assert_eq!(state.active_screen(), ShellScreen::Launcher);
 
     let launcher = state.to_launcher_view_model();
     assert_eq!(launcher.items.len(), 2);
@@ -323,11 +330,18 @@ fn admin_batch_adds_launcher_targets_and_high_risk_launch_requires_confirmation(
             .iter()
             .all(|item| { item.status == tundra_ui::LauncherItemStatus::Ready })
     );
-    assert!(
+    assert_eq!(
         launcher
             .toolbar
             .iter()
-            .any(|button| { button.action == tundra_ui::LauncherToolbarAction::Add })
+            .map(|button| button.action)
+            .collect::<Vec<_>>(),
+        vec![
+            tundra_ui::LauncherToolbarAction::Remove,
+            tundra_ui::LauncherToolbarAction::Reapprove,
+            tundra_ui::LauncherToolbarAction::Refresh,
+            tundra_ui::LauncherToolbarAction::ToggleView,
+        ]
     );
 
     state.apply_input_with_platform(InputEvent::from_key_label("v"), &platform);

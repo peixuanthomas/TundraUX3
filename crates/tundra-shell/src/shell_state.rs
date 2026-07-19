@@ -363,7 +363,6 @@ pub struct ShellState {
     launcher_view_mode: tundra_ui::LauncherViewMode,
     launcher_viewport_offset: usize,
     launcher_pending_confirmation: Option<LauncherPendingConfirmation>,
-    launcher_picker_active: bool,
     explorer_state: Option<ExplorerState>,
     explorer_input_mode: ExplorerInputMode,
     explorer_input: String,

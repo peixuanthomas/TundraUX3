@@ -443,7 +443,7 @@ impl tundra_ui::LauncherIconRenderer for LauncherIconRuntime {
         let Some(icon) = self.prepared.get(item_id) else {
             return false;
         };
-        icon.image.render(frame, area);
+        icon.image.render_centered(frame, area);
         true
     }
 }

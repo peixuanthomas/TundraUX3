@@ -12,6 +12,7 @@ use crate::{
 
 const GRID_TILE_MIN_WIDTH: u16 = 20;
 const GRID_TILE_HEIGHT: u16 = 9;
+const EMPTY_MESSAGE: &str = "No Launcher items. Go to Explorer, select a file, then right-click and choose Add to Launcher.";
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum LauncherViewMode {
@@ -91,7 +92,6 @@ impl LauncherItemViewModel {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LauncherToolbarAction {
-    Add,
     Remove,
     Reapprove,
     Refresh,
@@ -101,7 +101,6 @@ pub enum LauncherToolbarAction {
 impl LauncherToolbarAction {
     pub const fn label(self) -> &'static str {
         match self {
-            Self::Add => "Add",
             Self::Remove => "Remove",
             Self::Reapprove => "Reapprove",
             Self::Refresh => "Refresh",
@@ -111,7 +110,6 @@ impl LauncherToolbarAction {
 
     pub const fn shortcut(self) -> &'static str {
         match self {
-            Self::Add => "A",
             Self::Remove => "Del",
             Self::Reapprove => "Ctrl+R",
             Self::Refresh => "R",
@@ -191,11 +189,7 @@ impl LauncherViewModel {
             .and_then(|index| items.get(index))
             .is_some_and(|item| item.status.requires_approval());
         let mut toolbar = Vec::new();
-        if can_manage {
-            toolbar.push(LauncherToolbarButtonViewModel::new(
-                LauncherToolbarAction::Add,
-                true,
-            ));
+        if can_manage && has_selection {
             toolbar.push(LauncherToolbarButtonViewModel::new(
                 LauncherToolbarAction::Remove,
                 has_selection,
@@ -648,12 +642,10 @@ fn render_launcher_grid(
 ) {
     if model.items.is_empty() {
         frame.render_widget(
-            Paragraph::new(
-                "No approved Launcher items. An administrator can add files from Explorer.",
-            )
-            .style(theme.muted_style())
-            .alignment(Alignment::Center)
-            .wrap(Wrap { trim: true }),
+            Paragraph::new(EMPTY_MESSAGE)
+                .style(theme.muted_style())
+                .alignment(Alignment::Center)
+                .wrap(Wrap { trim: true }),
             layout.content,
         );
         return;
@@ -737,6 +729,21 @@ fn render_launcher_details(
 ) {
     let scrollbar_width = u16::from(layout.scrollbar.is_some());
     let width = layout.content.width.saturating_sub(scrollbar_width);
+    if model.items.is_empty() {
+        frame.render_widget(
+            Paragraph::new(EMPTY_MESSAGE)
+                .style(theme.muted_style())
+                .alignment(Alignment::Center)
+                .wrap(Wrap { trim: true }),
+            Rect::new(
+                layout.content.x,
+                layout.content.y,
+                width,
+                layout.content.height,
+            ),
+        );
+        return;
+    }
     let widths = detail_widths(width);
     frame.render_widget(
         Paragraph::new(detail_line("Name", "Type", "Integrity", "Path", widths))
@@ -748,21 +755,6 @@ fn render_launcher_details(
             u16::from(layout.content.height > 0),
         ),
     );
-    if model.items.is_empty() {
-        let empty = Rect::new(
-            layout.content.x,
-            layout.content.y.saturating_add(1),
-            width,
-            layout.content.height.saturating_sub(1),
-        );
-        frame.render_widget(
-            Paragraph::new("No approved Launcher items")
-                .style(theme.muted_style())
-                .alignment(Alignment::Center),
-            empty,
-        );
-        return;
-    }
     for item_layout in &layout.items {
         let Some(item) = model.items.get(item_layout.index) else {
             continue;

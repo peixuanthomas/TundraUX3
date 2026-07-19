@@ -560,10 +560,6 @@ impl ShellState {
                 self.toggle_launcher_view();
                 ShellAction::Redraw
             }
-            ShellCommand::LauncherAdd => {
-                self.begin_launcher_add(platform);
-                ShellAction::Redraw
-            }
             ShellCommand::LauncherRemove => {
                 self.request_launcher_remove();
                 ShellAction::Redraw

@@ -1656,21 +1656,21 @@ fn macos_file_icon(
         return Ok(None);
     }
 
-    let _pool = AutoreleasePool::new()?;
+    let _pool = MacosAutoreleasePool::new()?;
     let path = ObjcRetained::ns_string(path.as_os_str().as_bytes())?;
     if path.0.is_null() {
         return Ok(None);
     }
     let workspace = unsafe {
         objc_send_id0(
-            objc_class(b"NSWorkspace\0")?,
-            objc_selector(b"sharedWorkspace\0")?,
+            objc_class(c"NSWorkspace")?,
+            objc_selector(c"sharedWorkspace"),
         )
     };
     if workspace.is_null() {
         return Ok(None);
     }
-    let image = unsafe { objc_send_id1(workspace, objc_selector(b"iconForFile:\0")?, path.0) };
+    let image = unsafe { objc_send_id1(workspace, objc_selector(c"iconForFile:"), path.0) };
     if image.is_null() {
         return Ok(None);
     }
@@ -1679,7 +1679,7 @@ fn macos_file_icon(
     unsafe {
         objc_send_void_size(
             image,
-            objc_selector(b"setSize:\0")?,
+            objc_selector(c"setSize:"),
             NSSize {
                 width: size,
                 height: size,
@@ -1689,7 +1689,7 @@ fn macos_file_icon(
     let image = unsafe {
         objc_send_cg_image(
             image,
-            objc_selector(b"CGImageForProposedRect:context:hints:\0")?,
+            objc_selector(c"CGImageForProposedRect:context:hints:"),
             std::ptr::null(),
             std::ptr::null_mut(),
             std::ptr::null_mut(),
@@ -1790,22 +1790,22 @@ struct ObjcRetained(*mut c_void);
 #[cfg(target_os = "macos")]
 impl ObjcRetained {
     fn ns_string(bytes: &[u8]) -> Result<Self, PlatformError> {
-        let class = objc_class(b"NSString\0")?;
-        let allocated = unsafe { objc_send_id0(class, objc_selector(b"alloc\0")?) };
+        let class = objc_class(c"NSString")?;
+        let allocated = unsafe { objc_send_id0(class, objc_selector(c"alloc")) };
         if allocated.is_null() {
             return Err(macos_icon_error("allocate NSString"));
         }
         let string = unsafe {
             objc_send_id_bytes_len_encoding(
                 allocated,
-                objc_selector(b"initWithBytes:length:encoding:\0")?,
+                objc_selector(c"initWithBytes:length:encoding:"),
                 bytes.as_ptr().cast(),
                 bytes.len(),
                 4, // NSUTF8StringEncoding
             )
         };
         if string.is_null() {
-            unsafe { objc_send_void0(allocated, objc_selector(b"release\0")?) };
+            unsafe { objc_send_void0(allocated, objc_selector(c"release")) };
             return Ok(Self(std::ptr::null_mut()));
         }
         Ok(Self(string))
@@ -1816,39 +1816,7 @@ impl ObjcRetained {
 impl Drop for ObjcRetained {
     fn drop(&mut self) {
         if !self.0.is_null() {
-            unsafe {
-                if let Ok(selector) = objc_selector(b"release\0") {
-                    objc_send_void0(self.0, selector);
-                }
-            }
-        }
-    }
-}
-
-#[cfg(target_os = "macos")]
-struct AutoreleasePool(*mut c_void);
-
-#[cfg(target_os = "macos")]
-impl AutoreleasePool {
-    fn new() -> Result<Self, PlatformError> {
-        let class = objc_class(b"NSAutoreleasePool\0")?;
-        let allocated = unsafe { objc_send_id0(class, objc_selector(b"alloc\0")?) };
-        let pool = unsafe { objc_send_id0(allocated, objc_selector(b"init\0")?) };
-        if pool.is_null() {
-            Err(macos_icon_error("create autorelease pool"))
-        } else {
-            Ok(Self(pool))
-        }
-    }
-}
-
-#[cfg(target_os = "macos")]
-impl Drop for AutoreleasePool {
-    fn drop(&mut self) {
-        unsafe {
-            if let Ok(selector) = objc_selector(b"drain\0") {
-                objc_send_void0(self.0, selector);
-            }
+            unsafe { objc_send_void0(self.0, objc_selector(c"release")) }
         }
     }
 }
@@ -1871,22 +1839,6 @@ impl Drop for GraphicsContext {
     fn drop(&mut self) {
         unsafe { CGContextRelease(self.0) }
     }
-}
-
-#[cfg(target_os = "macos")]
-fn objc_class(name: &'static [u8]) -> Result<*mut c_void, PlatformError> {
-    let class = unsafe { objc_getClass(name.as_ptr().cast()) };
-    (!class.is_null())
-        .then_some(class)
-        .ok_or_else(|| macos_icon_error("resolve Objective-C class"))
-}
-
-#[cfg(target_os = "macos")]
-fn objc_selector(name: &'static [u8]) -> Result<*mut c_void, PlatformError> {
-    let selector = unsafe { sel_registerName(name.as_ptr().cast()) };
-    (!selector.is_null())
-        .then_some(selector)
-        .ok_or_else(|| macos_icon_error("resolve Objective-C selector"))
 }
 
 #[cfg(target_os = "macos")]

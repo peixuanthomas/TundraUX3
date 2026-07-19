@@ -123,6 +123,16 @@ impl PreparedEditorImage {
     pub fn render(&self, frame: &mut Frame<'_>, area: Rect) {
         frame.render_widget(Image::new(&self.protocol), area);
     }
+
+    /// Render a fixed-size image centered inside a larger allocation.
+    ///
+    /// `ratatui-image` preserves the image aspect ratio but anchors the resulting
+    /// protocol area at the allocation's left edge. Launcher tiles allocate the
+    /// whole tile width to an icon, so center the actual protocol footprint here.
+    pub fn render_centered(&self, frame: &mut Frame<'_>, area: Rect) {
+        let centered = centered_protocol_area(area, self.protocol.area());
+        frame.render_widget(Image::new(&self.protocol), centered);
+    }
 }
 
 #[derive(Debug)]
@@ -164,6 +174,21 @@ impl fmt::Display for EditorMediaError {
 }
 
 impl std::error::Error for EditorMediaError {}
+
+fn centered_protocol_area(allocation: Rect, protocol_area: Rect) -> Rect {
+    let width = protocol_area.width.min(allocation.width);
+    let height = protocol_area.height.min(allocation.height);
+    Rect::new(
+        allocation
+            .x
+            .saturating_add(allocation.width.saturating_sub(width) / 2),
+        allocation
+            .y
+            .saturating_add(allocation.height.saturating_sub(height) / 2),
+        width,
+        height,
+    )
+}
 
 fn rgba_image(width: u32, height: u32, rgba: Vec<u8>) -> Result<DynamicImage, EditorMediaError> {
     let pixels = u64::from(width).saturating_mul(u64::from(height));
@@ -217,5 +242,17 @@ mod tests {
         let image = rgba_image(2, 1, vec![255; 8]).expect("valid RGBA bytes");
         assert_eq!(image.width(), 2);
         assert_eq!(image.height(), 1);
+    }
+
+    #[test]
+    fn protocol_footprint_is_centered_and_clamped_inside_its_allocation() {
+        assert_eq!(
+            centered_protocol_area(Rect::new(10, 5, 20, 6), Rect::new(0, 0, 8, 4)),
+            Rect::new(16, 6, 8, 4)
+        );
+        assert_eq!(
+            centered_protocol_area(Rect::new(10, 5, 4, 2), Rect::new(0, 0, 8, 4)),
+            Rect::new(10, 5, 4, 2)
+        );
     }
 }

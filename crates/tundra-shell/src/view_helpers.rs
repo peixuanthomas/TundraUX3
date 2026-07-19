@@ -241,12 +241,14 @@ fn explorer_context_menu_view_model(
             item("open", "Open", selected_count == 1, false),
         ];
         if can_manage_launcher && launcher_eligible_count > 0 {
-            items.push(item(
+            let mut add_to_launcher = item(
                 "add-to-launcher",
-                "Add to launcher",
+                "Add to Launcher",
                 true,
                 false,
-            ));
+            );
+            add_to_launcher.shortcut = Some("A".to_string());
+            items.push(add_to_launcher);
         }
         items.extend([
             item("cut", "Cut", true, false),

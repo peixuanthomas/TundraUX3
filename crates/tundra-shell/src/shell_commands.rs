@@ -75,7 +75,6 @@ pub enum ShellCommand {
     LauncherLast,
     LauncherActivate,
     LauncherToggleView,
-    LauncherAdd,
     LauncherRemove,
     LauncherReapprove,
     LauncherRefresh,
