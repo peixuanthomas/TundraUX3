@@ -2233,18 +2233,20 @@ fn compare_optional<T: Ord + Copy>(
 }
 
 fn natural_name_compare(left: &str, right: &str, case_sensitive: bool) -> Ordering {
-    let left = if case_sensitive {
-        left.to_string()
-    } else {
-        left.to_lowercase()
-    };
-    let right = if case_sensitive {
-        right.to_string()
-    } else {
-        right.to_lowercase()
-    };
-    let left = left.as_bytes();
-    let right = right.as_bytes();
+    if case_sensitive {
+        return natural_byte_compare(left.as_bytes(), right.as_bytes(), false);
+    }
+
+    if left.is_ascii() && right.is_ascii() {
+        return natural_byte_compare(left.as_bytes(), right.as_bytes(), true);
+    }
+
+    let left = left.to_lowercase();
+    let right = right.to_lowercase();
+    natural_byte_compare(left.as_bytes(), right.as_bytes(), false)
+}
+
+fn natural_byte_compare(left: &[u8], right: &[u8], fold_ascii_case: bool) -> Ordering {
     let mut left_index = 0usize;
     let mut right_index = 0usize;
 
@@ -2269,7 +2271,17 @@ fn natural_name_compare(left: &str, right: &str, case_sensitive: bool) -> Orderi
             continue;
         }
 
-        let order = left[left_index].cmp(&right[right_index]);
+        let left_byte = if fold_ascii_case {
+            left[left_index].to_ascii_lowercase()
+        } else {
+            left[left_index]
+        };
+        let right_byte = if fold_ascii_case {
+            right[right_index].to_ascii_lowercase()
+        } else {
+            right[right_index]
+        };
+        let order = left_byte.cmp(&right_byte);
         if order != Ordering::Equal {
             return order;
         }
@@ -2660,4 +2672,33 @@ fn unix_millis() -> u64 {
         .duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_millis() as u64)
         .unwrap_or(0)
+}
+
+#[cfg(test)]
+mod natural_sort_tests {
+    use super::*;
+
+    #[test]
+    fn ascii_case_insensitive_sort_is_natural() {
+        assert_eq!(
+            natural_name_compare("FILE2.txt", "file10.TXT", false),
+            Ordering::Less
+        );
+        assert_eq!(
+            natural_name_compare("File02.txt", "file2.txt", false),
+            Ordering::Greater
+        );
+        assert_eq!(
+            natural_name_compare("README", "readme", false),
+            Ordering::Equal
+        );
+    }
+
+    #[test]
+    fn unicode_case_folding_keeps_natural_numeric_order() {
+        assert_eq!(
+            natural_name_compare("Ä2.txt", "ä10.txt", false),
+            Ordering::Less
+        );
+    }
 }

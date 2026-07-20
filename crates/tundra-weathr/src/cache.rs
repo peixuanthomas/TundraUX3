@@ -1,4 +1,4 @@
-use crate::weather::WeatherData;
+use crate::weather::{WeatherData, WeatherLocation, WeatherUnits};
 use crate::{config::Provider, geolocation::GeoLocation};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -85,7 +85,8 @@ struct LocationCache {
 struct WeatherCache {
     data: WeatherData,
     cached_at: u64,
-    location_key: String,
+    location: WeatherLocation,
+    units: WeatherUnits,
     provider: Provider,
 }
 
@@ -150,7 +151,7 @@ pub async fn load_cached_location() -> Option<GeoLocation> {
     let cache: LocationCache = serde_json::from_str(&contents).ok()?;
 
     let now = current_timestamp();
-    if now - cache.cached_at < LOCATION_CACHE_DURATION_SECS {
+    if now.saturating_sub(cache.cached_at) < LOCATION_CACHE_DURATION_SECS {
         Some(cache.location)
     } else {
         None
@@ -257,7 +258,7 @@ pub async fn load_cached_geocode(latitude: f64, longitude: f64, language: &str) 
     }
 
     let now = current_timestamp();
-    if now - cache.cached_at < LOCATION_CACHE_DURATION_SECS {
+    if now.saturating_sub(cache.cached_at) < LOCATION_CACHE_DURATION_SECS {
         Some(cache.city_name)
     } else {
         None
@@ -304,21 +305,20 @@ pub fn save_geocode_cache_managed(
 }
 
 pub async fn load_cached_weather(
-    latitude: f64,
-    longitude: f64,
+    location: WeatherLocation,
+    units: WeatherUnits,
     provider: Provider,
 ) -> Option<WeatherData> {
     let cache_path = get_cache_dir()?.join("weather.json");
     let contents = fs::read_to_string(&cache_path).await.ok()?;
     let cache: WeatherCache = serde_json::from_str(&contents).ok()?;
 
-    let location_key = make_location_key(latitude, longitude);
-    if cache.location_key != location_key || cache.provider != provider {
+    if cache.location != location || cache.units != units || cache.provider != provider {
         return None;
     }
 
     let now = current_timestamp();
-    if now - cache.cached_at < WEATHER_CACHE_DURATION_SECS {
+    if now.saturating_sub(cache.cached_at) < WEATHER_CACHE_DURATION_SECS {
         Some(cache.data)
     } else {
         None
@@ -327,31 +327,31 @@ pub async fn load_cached_weather(
 
 pub fn save_weather_cache(
     weather: &WeatherData,
-    latitude: f64,
-    longitude: f64,
+    location: WeatherLocation,
+    units: WeatherUnits,
     provider: Provider,
 ) -> Result<(), WatchdogError> {
     let watchdog = AppWatchdog::current().ok_or(WatchdogError::NotInstalled)?;
-    save_weather_cache_managed(&watchdog, weather, latitude, longitude, provider)
+    save_weather_cache_managed(&watchdog, weather, location, units, provider)
 }
 
 pub fn save_weather_cache_managed(
     watchdog: &AppWatchdog,
     weather: &WeatherData,
-    latitude: f64,
-    longitude: f64,
+    location: WeatherLocation,
+    units: WeatherUnits,
     provider: Provider,
 ) -> Result<(), WatchdogError> {
     let weather = weather.clone();
     spawn_cache_write(watchdog, "weather", move || async move {
-        save_weather_cache_now(&weather, latitude, longitude, provider).await
+        save_weather_cache_now(&weather, location, units, provider).await
     })
 }
 
 pub(crate) async fn save_weather_cache_now(
     weather: &WeatherData,
-    latitude: f64,
-    longitude: f64,
+    location: WeatherLocation,
+    units: WeatherUnits,
     provider: Provider,
 ) -> Result<(), CacheWriteError> {
     let cache_dir = get_cache_dir().ok_or(CacheWriteError::CacheDirectoryUnavailable)?;
@@ -362,7 +362,8 @@ pub(crate) async fn save_weather_cache_now(
     let cache = WeatherCache {
         data: weather.clone(),
         cached_at: current_timestamp(),
-        location_key: make_location_key(latitude, longitude),
+        location,
+        units,
         provider,
     };
     let json = serde_json::to_string(&cache)?;

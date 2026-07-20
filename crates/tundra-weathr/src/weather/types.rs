@@ -216,7 +216,7 @@ pub struct WeatherData {
     pub attribution: String,
 }
 
-#[derive(Debug, Clone, Copy, serde::Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct WeatherUnits {
     pub temperature: TemperatureUnit,
@@ -248,7 +248,7 @@ impl Default for WeatherUnits {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 #[allow(dead_code)]
 pub struct WeatherLocation {
     pub latitude: f64,

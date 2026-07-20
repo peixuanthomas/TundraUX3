@@ -76,6 +76,7 @@ pub struct TerminalRenderer {
     height: u16,
     buffer: Vec<Cell>,
     last_buffer: Vec<Cell>,
+    last_buffer_valid: bool,
     capabilities: TerminalCapabilities,
     min_width: u16,
     min_height: u16,
@@ -109,6 +110,7 @@ impl TerminalRenderer {
             height,
             buffer: vec![Cell::default(); buffer_size],
             last_buffer: vec![Cell::default(); buffer_size],
+            last_buffer_valid: true,
             capabilities,
             min_width,
             min_height,
@@ -138,7 +140,9 @@ impl TerminalRenderer {
             let buffer_size = (width as usize) * (height as usize);
             self.buffer = vec![Cell::default(); buffer_size];
             self.last_buffer = vec![Cell::default(); buffer_size];
+            self.last_buffer_valid = false;
             execute!(self.stdout, Clear(ClearType::All))?;
+            self.last_buffer_valid = true;
         }
         Ok(())
     }
@@ -236,21 +240,32 @@ impl TerminalRenderer {
     }
 
     pub fn flush(&mut self) -> io::Result<()> {
+        let result = self.flush_changed_cells();
+        self.last_buffer_valid = result.is_ok();
+        result
+    }
+
+    fn flush_changed_cells(&mut self) -> io::Result<()> {
         let mut current_color = Color::Reset;
         let mut last_pos: Option<(u16, u16)> = None;
+        let width = usize::from(self.width);
+        let redraw_all = !self.last_buffer_valid;
 
-        for y in 0..self.height {
-            for x in 0..self.width {
-                let idx = (y as usize) * (self.width as usize) + (x as usize);
+        if redraw_all {
+            queue!(self.stdout, ResetColor)?;
+        }
 
-                if idx >= self.buffer.len() || idx >= self.last_buffer.len() {
-                    continue;
-                }
-
-                let cell = self.buffer[idx];
-                let last_cell = self.last_buffer[idx];
-
-                if cell != last_cell {
+        debug_assert_eq!(self.buffer.len(), self.last_buffer.len());
+        for (y, (row, last_row)) in self
+            .buffer
+            .chunks_exact(width)
+            .zip(self.last_buffer.chunks_exact_mut(width))
+            .enumerate()
+        {
+            for (x, (&cell, last_cell)) in row.iter().zip(last_row).enumerate() {
+                if redraw_all || cell != *last_cell {
+                    let x = x as u16;
+                    let y = y as u16;
                     let expected_pos = last_pos.map(|(lx, ly)| (lx + 1, ly));
                     if expected_pos != Some((x, y)) {
                         queue!(self.stdout, cursor::MoveTo(x, y))?;
@@ -263,6 +278,7 @@ impl TerminalRenderer {
 
                     queue!(self.stdout, Print(cell.character))?;
                     last_pos = Some((x, y));
+                    *last_cell = cell;
                 }
             }
         }
@@ -272,7 +288,6 @@ impl TerminalRenderer {
         }
 
         self.stdout.flush()?;
-        self.last_buffer.copy_from_slice(&self.buffer);
         Ok(())
     }
 }

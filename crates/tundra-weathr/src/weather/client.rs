@@ -18,8 +18,26 @@ pub struct WeatherClient {
 }
 
 struct CachedWeather {
+    request: WeatherRequest,
     data: WeatherData,
     fetched_at: Instant,
+}
+
+#[derive(Clone, Copy, PartialEq)]
+struct WeatherRequest {
+    location: WeatherLocation,
+    units: WeatherUnits,
+    provider: Provider,
+}
+
+impl WeatherRequest {
+    fn new(location: &WeatherLocation, units: &WeatherUnits, provider: Provider) -> Self {
+        Self {
+            location: *location,
+            units: *units,
+            provider,
+        }
+    }
 }
 
 impl WeatherClient {
@@ -51,22 +69,23 @@ impl WeatherClient {
         units: &WeatherUnits,
         provider: Provider,
     ) -> Result<WeatherData, WeatherError> {
+        let request = WeatherRequest::new(location, units, provider);
         {
             let cache = self.cache.read().await;
             if let Some(cached) = cache.as_ref()
+                && cached.request == request
                 && cached.fetched_at.elapsed() < self.cache_duration
             {
                 return Ok(cached.data.clone());
             }
         }
 
-        if let Some(cached_data) =
-            cache::load_cached_weather(location.latitude, location.longitude, provider).await
-            && std::env::var("CACHE_DISABLED").is_err()
-        // Should've done this sooner
+        if std::env::var_os("CACHE_DISABLED").is_none()
+            && let Some(cached_data) = cache::load_cached_weather(*location, *units, provider).await
         {
             let mut cache = self.cache.write().await;
             *cache = Some(CachedWeather {
+                request,
                 data: cached_data.clone(),
                 fetched_at: Instant::now(),
             });
@@ -106,38 +125,25 @@ impl WeatherClient {
         let response = self.provider.get_current_weather(location, units).await?;
 
         let data = WeatherNormalizer::normalize(response);
+        let request = WeatherRequest::new(location, units, provider);
 
         {
             let mut cache = self.cache.write().await;
             *cache = Some(CachedWeather {
+                request,
                 data: data.clone(),
                 fetched_at: Instant::now(),
             });
         }
 
         if await_cache_write {
-            let _ = cache::save_weather_cache_now(
-                &data,
-                location.latitude,
-                location.longitude,
-                provider,
-            )
-            .await;
+            let _ = cache::save_weather_cache_now(&data, *location, *units, provider).await;
         } else {
             let _ = match self.watchdog.as_ref() {
-                Some(watchdog) => cache::save_weather_cache_managed(
-                    watchdog,
-                    &data,
-                    location.latitude,
-                    location.longitude,
-                    provider,
-                ),
-                None => cache::save_weather_cache(
-                    &data,
-                    location.latitude,
-                    location.longitude,
-                    provider,
-                ),
+                Some(watchdog) => {
+                    cache::save_weather_cache_managed(watchdog, &data, *location, *units, provider)
+                }
+                None => cache::save_weather_cache(&data, *location, *units, provider),
             };
         }
 
@@ -227,5 +233,53 @@ mod tests {
             .expect("second refresh");
 
         assert_eq!(calls.load(Ordering::SeqCst), 2);
+    }
+
+    #[tokio::test]
+    async fn memory_cache_is_scoped_to_the_complete_request() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let client = WeatherClient::new(
+            Arc::new(CountingProvider {
+                calls: calls.clone(),
+            }),
+            Duration::from_secs(300),
+        );
+        let first_location = WeatherLocation {
+            latitude: 12.345_678,
+            longitude: 98.765_432,
+            elevation: Some(50.0),
+        };
+        let second_location = WeatherLocation {
+            latitude: -23.456_789,
+            longitude: -87.654_321,
+            elevation: Some(500.0),
+        };
+        let metric = WeatherUnits::metric();
+        let imperial = WeatherUnits::imperial();
+
+        client
+            .refresh_current_weather(&first_location, &metric, Provider::OpenMeteo)
+            .await
+            .expect("prime memory cache");
+        client
+            .get_current_weather(&first_location, &metric, Provider::OpenMeteo)
+            .await
+            .expect("matching request uses memory cache");
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+
+        client
+            .get_current_weather(&second_location, &metric, Provider::OpenMeteo)
+            .await
+            .expect("different location bypasses memory cache");
+        client
+            .get_current_weather(&second_location, &imperial, Provider::OpenMeteo)
+            .await
+            .expect("different units bypass memory cache");
+        client
+            .get_current_weather(&second_location, &imperial, Provider::MetOffice)
+            .await
+            .expect("different provider bypasses memory cache");
+
+        assert_eq!(calls.load(Ordering::SeqCst), 4);
     }
 }
