@@ -481,23 +481,25 @@ const THEME_RELOAD_INTERVAL: Duration = Duration::from_millis(250);
 const THEME_RELOAD_NOTIFICATION_KEY: &str = "shell.theme-reload";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct ConfigFileSignature {
+struct ThemeFileSignature {
     modified: Option<SystemTime>,
     byte_len: u64,
 }
 
-struct ThemeConfigReloader {
+struct UserThemeReloader {
     storage: Option<StorageManager>,
-    last_observed: Option<Result<ConfigFileSignature, String>>,
+    last_observed: Option<Result<ThemeFileSignature, String>>,
+    active_user_id: Option<String>,
     next_check: Instant,
 }
 
-impl ThemeConfigReloader {
+impl UserThemeReloader {
     fn new(storage: Option<StorageManager>, now: Instant) -> Self {
-        let last_observed = storage.as_ref().map(config_file_signature);
+        let last_observed = storage.as_ref().map(users_file_signature);
         Self {
             storage,
             last_observed,
+            active_user_id: None,
             next_check: now.checked_add(THEME_RELOAD_INTERVAL).unwrap_or(now),
         }
     }
@@ -508,7 +510,11 @@ impl ThemeConfigReloader {
         theme: &mut tundra_ui::TundraTheme,
         state: &mut ShellState,
     ) {
-        if now < self.next_check {
+        let active_user_id = state
+            .auth_session()
+            .map(|session| session.user_id.clone());
+        let user_changed = self.active_user_id != active_user_id;
+        if !user_changed && now < self.next_check {
             return;
         }
         self.next_check = now.checked_add(THEME_RELOAD_INTERVAL).unwrap_or(now);
@@ -516,16 +522,39 @@ impl ThemeConfigReloader {
         let Some(storage) = self.storage.as_ref() else {
             return;
         };
-        let observed = config_file_signature(storage);
-        if self.last_observed.as_ref() == Some(&observed) {
+
+        if active_user_id.is_none() {
+            let app_config = ShellAppConfig::default();
+            theme.border_shape = app_config.border_shape;
+            theme.border_color = app_config.border_color;
+            theme.accent_color = app_config.accent_color;
+            self.active_user_id = None;
+            state
+                .notifications
+                .dismiss_modal_by_key(THEME_RELOAD_NOTIFICATION_KEY);
+            state.finish_modal_focus_transition();
+            return;
+        }
+
+        let observed = users_file_signature(storage);
+        if !user_changed && self.last_observed.as_ref() == Some(&observed) {
             return;
         }
         self.last_observed = Some(observed.clone());
 
-        let result = observed.and_then(|_| storage.load_config().map_err(|error| error.to_string()));
+        let result = observed.and_then(|_| {
+            let users = storage.load_users().map_err(|error| error.to_string())?;
+            let user_id = active_user_id.as_deref().unwrap_or_default();
+            users
+                .users
+                .iter()
+                .find(|user| user.id == user_id)
+                .map(|user| ShellAppConfig::from_appearance(&user.appearance))
+                .ok_or_else(|| format!("active user {user_id:?} is missing"))
+        });
+        self.active_user_id = active_user_id;
         match result {
-            Ok(config) => {
-                let app_config = ShellAppConfig::from_storage_config(&config);
+            Ok(app_config) => {
                 theme.border_shape = app_config.border_shape;
                 theme.border_color = app_config.border_color;
                 theme.accent_color = app_config.accent_color;
@@ -538,7 +567,7 @@ impl ThemeConfigReloader {
                 let notification = ShellNotification::modal(
                     "Theme reload failed",
                     format!(
-                        "Could not reload theme configuration: {error}. The last valid theme is still active."
+                        "Could not reload the active user's theme: {error}. The last valid theme is still active."
                     ),
                     tundra_ui::NotificationTone::Error,
                     vec![
@@ -554,11 +583,11 @@ impl ThemeConfigReloader {
     }
 }
 
-fn config_file_signature(storage: &StorageManager) -> Result<ConfigFileSignature, String> {
-    let path = &storage.layout().config_path;
+fn users_file_signature(storage: &StorageManager) -> Result<ThemeFileSignature, String> {
+    let path = &storage.layout().users_path;
     let metadata = std::fs::metadata(path)
         .map_err(|error| format!("could not inspect {}: {error}", path.display()))?;
-    Ok(ConfigFileSignature {
+    Ok(ThemeFileSignature {
         modified: metadata.modified().ok(),
         byte_len: metadata.len(),
     })
@@ -630,10 +659,7 @@ fn run_fullscreen_shell_session(
             startup.app_config.border_color,
         )?;
     }
-    let mut theme = tundra_ui::TundraTheme::default_dark()
-        .with_border_shape(startup.app_config.border_shape)
-        .with_border_color(startup.app_config.border_color)
-        .with_accent_color(startup.app_config.accent_color);
+    let mut theme = tundra_ui::TundraTheme::default_dark();
     let mut state = ShellState::new_with_runtime_services(
         config,
         initial_size,
@@ -650,7 +676,7 @@ fn run_fullscreen_shell_session(
     if let Some(cached) = cached_time_sync.as_ref() {
         cached.apply_to_state_at(&mut state, Instant::now());
     }
-    let mut theme_reloader = ThemeConfigReloader::new(theme_storage, Instant::now());
+    let mut theme_reloader = UserThemeReloader::new(theme_storage, Instant::now());
     let tick_rate = Duration::from_millis(250);
     let mut terminal_size_error = None;
     let mut restore_terminal_on_exit = true;
@@ -925,7 +951,7 @@ mod runtime_preflight_tests {
     }
 
     #[test]
-    fn theme_reloader_applies_valid_changes_and_recovers_from_invalid_config() {
+    fn theme_reloader_applies_active_user_changes_and_recovers_from_invalid_users() {
         let root = std::env::temp_dir().join(format!(
             "tundra-theme-reload-{}-{}",
             std::process::id(),
@@ -944,19 +970,31 @@ mod runtime_preflight_tests {
             .expect("test storage")
             .manager;
         let started_at = Instant::now();
-        let mut reloader = ThemeConfigReloader::new(Some(storage.clone()), started_at);
+        let appearance = tundra_storage::AppearanceConfig {
+            border_shape: tundra_storage::BorderShape::Square,
+            border_color: tundra_storage::BorderColor::Rgb(0x38, 0xBD, 0xF8),
+            accent_color: tundra_storage::BorderColor::LightMagenta,
+        };
+        UserService::new(storage.clone())
+            .bootstrap_admin_with_hint_and_appearance(
+                "AdminUser",
+                "StrongPass123",
+                None,
+                appearance.clone(),
+            )
+            .expect("bootstrap admin with appearance");
+        let session = SessionService::new(storage.clone())
+            .login("AdminUser", "StrongPass123")
+            .expect("login");
+        let mut reloader = UserThemeReloader::new(Some(storage.clone()), started_at);
         let mut theme = tundra_ui::TundraTheme::default_dark();
         let mut state = ShellState::new_for_home_mode(
             ShellLaunchConfig::default(),
             (120, 40),
             ShellHomeMode::User,
         );
+        state.complete_login(session);
 
-        let mut config = storage.load_config().expect("default config");
-        config.appearance.border_shape = tundra_storage::BorderShape::Square;
-        config.appearance.border_color = tundra_storage::BorderColor::Rgb(0x38, 0xBD, 0xF8);
-        config.appearance.accent_color = tundra_storage::BorderColor::LightMagenta;
-        storage.save_config(&config).expect("updated config");
         reloader.last_observed = None;
         reloader.next_check = started_at;
         reloader.poll_at(started_at, &mut theme, &mut state);
@@ -964,8 +1002,8 @@ mod runtime_preflight_tests {
         assert_eq!(theme.border_color, ratatui::style::Color::Rgb(0x38, 0xBD, 0xF8));
         assert_eq!(theme.accent_color, ratatui::style::Color::LightMagenta);
 
-        std::fs::write(&storage.layout().config_path, "not valid toml = [")
-            .expect("corrupt config fixture");
+        std::fs::write(&storage.layout().users_path, "{ not valid json")
+            .expect("corrupt users fixture");
         let failure_at = started_at + THEME_RELOAD_INTERVAL;
         reloader.last_observed = None;
         reloader.next_check = failure_at;
@@ -980,13 +1018,102 @@ mod runtime_preflight_tests {
             "Theme reload failed"
         );
 
-        std::fs::remove_file(&storage.layout().config_path).expect("remove corrupt config");
-        storage.save_config(&config).expect("repaired config");
+        std::fs::remove_file(&storage.layout().users_path).expect("remove corrupt users");
+        let mut users = tundra_storage::UsersDocument::default();
+        let now = unix_millis();
+        users.users.push(tundra_storage::UserRecord {
+            id: state.auth_session().expect("session").user_id.clone(),
+            username: "AdminUser".to_string(),
+            display_name: "AdminUser".to_string(),
+            role: "Admin".to_string(),
+            password_hash: String::new(),
+            password_hint: None,
+            appearance,
+            enabled: true,
+            failed_login_attempts: 0,
+            locked_until_epoch_ms: None,
+            created_at_epoch_ms: now,
+            updated_at_epoch_ms: now,
+            last_login_at_epoch_ms: Some(now),
+        });
+        storage.save_users(&users).expect("repaired users");
         let recovery_at = failure_at + THEME_RELOAD_INTERVAL;
         reloader.last_observed = None;
         reloader.next_check = recovery_at;
         reloader.poll_at(recovery_at, &mut theme, &mut state);
         assert!(state.to_notification_view_model().is_none());
+
+        tundra_platform::cleanup_temp_path(&root).expect("clean test root");
+    }
+
+    #[test]
+    fn theme_reloader_switches_from_custom_admin_theme_to_managed_user_defaults() {
+        let root = std::env::temp_dir().join(format!(
+            "tundra-user-theme-switch-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos()
+        ));
+        let app_paths = tundra_platform::build_windows_app_paths(
+            root.join("roaming"),
+            root.join("local"),
+            root.join("temp"),
+        )
+        .expect("test paths");
+        let storage = StorageManager::open(app_paths)
+            .expect("test storage")
+            .manager;
+        let custom = tundra_storage::AppearanceConfig {
+            border_shape: tundra_storage::BorderShape::Square,
+            border_color: tundra_storage::BorderColor::LightGreen,
+            accent_color: tundra_storage::BorderColor::LightMagenta,
+        };
+        let users = UserService::new(storage.clone());
+        users
+            .bootstrap_admin_with_hint_and_appearance(
+                "AdminUser",
+                "StrongPass123",
+                None,
+                custom,
+            )
+            .expect("bootstrap");
+        let admin_session = SessionService::new(storage.clone())
+            .login("AdminUser", "StrongPass123")
+            .expect("admin login");
+        users
+            .create_user(
+                &admin_session,
+                "ManagedUser",
+                "Managed User",
+                UserRole::User,
+                "ManagedPass123",
+            )
+            .expect("managed user");
+        let managed_session = SessionService::new(storage.clone())
+            .login("ManagedUser", "ManagedPass123")
+            .expect("managed login");
+
+        let started_at = Instant::now();
+        let mut reloader = UserThemeReloader::new(Some(storage), started_at);
+        let mut theme = tundra_ui::TundraTheme::default_dark();
+        let mut state = ShellState::new_for_home_mode(
+            ShellLaunchConfig::default(),
+            (120, 40),
+            ShellHomeMode::User,
+        );
+        state.complete_login(admin_session);
+        reloader.poll_at(started_at, &mut theme, &mut state);
+        assert_eq!(theme.border_shape, tundra_ui::BorderShape::Square);
+        assert_eq!(theme.border_color, ratatui::style::Color::LightGreen);
+        assert_eq!(theme.accent_color, ratatui::style::Color::LightMagenta);
+
+        state.complete_login(managed_session);
+        reloader.poll_at(started_at, &mut theme, &mut state);
+        assert_eq!(theme.border_shape, tundra_ui::BorderShape::Rounded);
+        assert_eq!(theme.border_color, ratatui::style::Color::White);
+        assert_eq!(theme.accent_color, ratatui::style::Color::Cyan);
 
         tundra_platform::cleanup_temp_path(&root).expect("clean test root");
     }

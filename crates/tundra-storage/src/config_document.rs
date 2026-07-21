@@ -377,7 +377,7 @@ fn parse_rgb(value: &str) -> Result<BorderColor, BorderColorParseError> {
     };
     let hex = value
         .strip_prefix('#')
-        .filter(|hex| hex.len() == 6)
+        .filter(|hex| hex.len() == 6 && hex.is_ascii())
         .ok_or_else(invalid)?;
     let red = u8::from_str_radix(&hex[0..2], 16).map_err(|_| invalid())?;
     let green = u8::from_str_radix(&hex[2..4], 16).map_err(|_| invalid())?;

@@ -6,7 +6,9 @@ use tundra_core::{
     PermissionService, SessionService, UserRole, UserService, verify_password,
 };
 use tundra_platform::{AppPaths, cleanup_temp_path};
-use tundra_storage::{ClockProfile, StorageManager, UserRecord};
+use tundra_storage::{
+    AppearanceConfig, BorderColor, BorderShape, ClockProfile, StorageManager, UserRecord,
+};
 
 #[test]
 fn permission_matrix_uses_admin_as_the_only_management_role() {
@@ -186,6 +188,32 @@ fn bootstrap_admin_with_trimmed_hint_persists_and_login_still_works() {
 }
 
 #[test]
+fn bootstrap_admin_persists_the_selected_user_appearance() {
+    let fixture = FixtureRoot::new("bootstrap-appearance");
+    let manager = storage(fixture.path());
+    let appearance = AppearanceConfig {
+        border_shape: BorderShape::Square,
+        border_color: BorderColor::Rgb(0x38, 0xBD, 0xF8),
+        accent_color: BorderColor::LightMagenta,
+    };
+
+    let account = UserService::new(manager.clone())
+        .bootstrap_admin_with_hint_and_appearance(
+            "AdminUser",
+            "StrongPass123",
+            None,
+            appearance.clone(),
+        )
+        .expect("bootstrap");
+
+    assert_eq!(account.appearance, appearance);
+    assert_eq!(
+        manager.load_users().expect("users").users[0].appearance,
+        appearance
+    );
+}
+
+#[test]
 fn bootstrap_admin_with_blank_hint_stores_none() {
     let fixture = FixtureRoot::new("blank-hint");
     let manager = storage(fixture.path());
@@ -275,6 +303,7 @@ fn user_service_management_requires_admin_session() {
         )
         .expect("admin can create users");
     assert_eq!(created.role, UserRole::User);
+    assert_eq!(created.appearance, AppearanceConfig::default());
 
     let mut normal_login = SessionService::new(manager.clone());
     let user_session = normal_login

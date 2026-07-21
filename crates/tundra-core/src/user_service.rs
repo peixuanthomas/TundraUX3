@@ -1,4 +1,4 @@
-use tundra_storage::{StorageManager, UserRecord, UsersDocument};
+use tundra_storage::{AppearanceConfig, StorageManager, UserRecord, UsersDocument};
 
 use crate::authorization::{DebugPolicy, PermissionAction, PermissionService, UserRole};
 use crate::credentials::{hash_password, normalize_password_hint, validate_password};
@@ -45,13 +45,33 @@ impl UserService {
         password: &str,
         password_hint: Option<&str>,
     ) -> Result<UserAccount, CoreError> {
-        let mut document = self.storage.load_users()?;
-        if !document.users.is_empty() {
-            return Err(CoreError::BootstrapAlreadyExists);
-        }
+        self.bootstrap_admin_with_hint_and_appearance(
+            username,
+            password,
+            password_hint,
+            AppearanceConfig::default(),
+        )
+    }
 
-        validate_username(username)?;
-        validate_password(username, password)?;
+    pub fn validate_bootstrap_admin(
+        &self,
+        username: &str,
+        password: &str,
+        password_hint: Option<&str>,
+    ) -> Result<(), CoreError> {
+        let document = self.storage.load_users()?;
+        validate_bootstrap_admin_input(&document, username, password, password_hint)
+    }
+
+    pub fn bootstrap_admin_with_hint_and_appearance(
+        &self,
+        username: &str,
+        password: &str,
+        password_hint: Option<&str>,
+        appearance: AppearanceConfig,
+    ) -> Result<UserAccount, CoreError> {
+        let mut document = self.storage.load_users()?;
+        validate_bootstrap_admin_input(&document, username, password, password_hint)?;
         let password_hint = normalize_password_hint(password_hint, password)?;
         let now = unix_millis();
         let record = UserRecord {
@@ -61,6 +81,7 @@ impl UserService {
             role: UserRole::Admin.as_str().to_string(),
             password_hash: hash_password(password)?,
             password_hint,
+            appearance,
             enabled: true,
             failed_login_attempts: 0,
             locked_until_epoch_ms: None,
@@ -140,6 +161,7 @@ impl UserService {
             role: role.as_str().to_string(),
             password_hash: hash_password(password)?,
             password_hint: None,
+            appearance: AppearanceConfig::default(),
             enabled: true,
             failed_login_attempts: 0,
             locked_until_epoch_ms: None,
@@ -359,4 +381,19 @@ impl UserService {
             reason,
         })
     }
+}
+
+fn validate_bootstrap_admin_input(
+    document: &UsersDocument,
+    username: &str,
+    password: &str,
+    password_hint: Option<&str>,
+) -> Result<(), CoreError> {
+    if !document.users.is_empty() {
+        return Err(CoreError::BootstrapAlreadyExists);
+    }
+    validate_username(username)?;
+    validate_password(username, password)?;
+    normalize_password_hint(password_hint, password)?;
+    Ok(())
 }

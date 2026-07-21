@@ -8,7 +8,8 @@ use tundra_ui::{
     HomeDisplayMode, NotificationTone, SetupField, SetupPasswordRequirementViewModel, SetupStep,
     SetupTimezoneOption, SetupViewModel, ShellChromeViewModel, ShellLayout, StatusViewModel,
     TundraTheme, compute_shell_layout, render_setup, setup_admin_field_area,
-    setup_language_options, setup_timezone_options,
+    setup_appearance_palette_option_areas, setup_language_options, setup_standard_color_options,
+    setup_timezone_options,
 };
 
 const WIDE_SETUP_WIDTH: u16 = 120;
@@ -144,6 +145,117 @@ fn setup_admin_page_highlights_focused_text_box() {
         theme.accent_color,
         "focused admin password border should use the accent color"
     );
+}
+
+#[test]
+fn setup_appearance_page_shows_shape_palettes_custom_buttons_and_preview() {
+    let mut model = sample_model(SetupStep::Appearance, None);
+    model.focused_field = SetupField::AppearanceShape;
+    let terminal = render_terminal(&model, 120, 34, TundraTheme::default_dark());
+    let output = terminal_output(&terminal);
+
+    assert!(output.contains("Step: Appearance"));
+    assert!(output.contains("Frame shape"));
+    assert!(output.contains("Rounded"));
+    assert!(output.contains("Square"));
+    assert!(output.contains("Theme color"));
+    assert!(output.contains("Accent color"));
+    assert!(output.contains("White"));
+    assert!(output.contains("Cyan"));
+    assert!(output.contains("custom theme color"));
+    assert!(output.contains("custom accent color"));
+    assert!(output.contains("Live preview"));
+    assert!(output.contains("Finish setup"));
+    assert!(!output.contains("Admin password"));
+}
+
+#[test]
+fn setup_appearance_page_applies_selected_shape_and_colors_to_live_preview() {
+    let mut model = sample_model(SetupStep::Appearance, None);
+    model.border_shape = tundra_ui::BorderShape::Square;
+    model.theme_color = Color::LightGreen;
+    model.theme_color_value = "#38BDF8".to_string();
+    model.accent_color = Color::LightMagenta;
+    model.accent_color_value = "light-magenta".to_string();
+    let terminal = render_terminal(&model, 120, 34, TundraTheme::default_dark());
+    let main = setup_main_rect(120, 34);
+    let corner = terminal
+        .backend()
+        .buffer()
+        .cell((main.x, main.y))
+        .expect("setup border corner");
+
+    assert_eq!(corner.symbol(), "┌");
+    assert_eq!(corner.fg, Color::LightGreen);
+    assert!(
+        terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .any(|cell| cell.fg == Color::LightMagenta && cell.symbol() != " ")
+    );
+}
+
+#[test]
+fn setup_appearance_disables_the_accent_option_matching_the_theme_color() {
+    let theme = TundraTheme::default_dark();
+    let mut model = sample_model(SetupStep::Appearance, None);
+    model.focused_field = SetupField::AppearanceAccentColor;
+    model.theme_color = Color::Cyan;
+    model.theme_color_value = "cyan".to_string();
+    model.accent_color = Color::Blue;
+    model.accent_color_value = "blue".to_string();
+    let terminal = render_terminal(&model, 120, 34, theme);
+    let output = terminal_output(&terminal);
+    let cyan_index = setup_standard_color_options()
+        .iter()
+        .position(|option| option.value == "cyan")
+        .expect("cyan is a standard setup color");
+    let cyan_area = setup_appearance_palette_option_areas(
+        setup_main_rect(120, 34),
+        SetupField::AppearanceAccentColor,
+    )
+    .into_iter()
+    .find_map(|(index, area)| (index == cyan_index).then_some(area))
+    .expect("cyan accent option is visible");
+
+    assert!(output.contains("[xCyan]"));
+    assert!(region_has_fg(&terminal, cyan_area, theme.muted));
+    assert!(!region_has_fg(&terminal, cyan_area, Color::Cyan));
+}
+
+#[test]
+fn setup_custom_color_dialog_shows_input_and_validation_feedback() {
+    let mut model = sample_model(SetupStep::Appearance, None);
+    model.focused_field = SetupField::AppearanceThemeCustom;
+    model.custom_color_target = Some(tundra_ui::SetupCustomColorTarget::Theme);
+    model.custom_color_input = "#12GG00".to_string();
+    model.custom_color_error =
+        Some("Invalid color. Use #RRGGBB or a supported color name.".to_string());
+    let terminal = render_terminal(&model, 120, 34, TundraTheme::default_dark());
+    let output = terminal_output(&terminal);
+
+    assert!(output.contains("Custom theme color"));
+    assert!(output.contains("Color code"));
+    assert!(output.contains("#12GG00"));
+    assert!(output.contains("Invalid color"));
+    assert!(output.contains("Enter: apply"));
+    assert!(output.contains("Esc: cancel"));
+}
+
+#[test]
+fn setup_custom_accent_dialog_rejects_the_theme_color() {
+    let mut model = sample_model(SetupStep::Appearance, None);
+    model.focused_field = SetupField::AppearanceAccentCustom;
+    model.custom_color_target = Some(tundra_ui::SetupCustomColorTarget::Accent);
+    model.custom_color_input = "white".to_string();
+    model.custom_color_conflicts_with_theme = true;
+    let terminal = render_terminal(&model, 120, 34, TundraTheme::default_dark());
+    let output = terminal_output(&terminal);
+
+    assert!(!model.custom_color_valid);
+    assert!(output.contains("Accent color must differ from the theme color"));
 }
 
 #[test]
@@ -410,6 +522,16 @@ fn sample_model_with_timezone(
         password_hint: "Stored in 1Password".to_string(),
         focused_field: SetupField::AdminPassword,
         can_submit: true,
+        border_shape: tundra_ui::BorderShape::Rounded,
+        theme_color: Color::White,
+        theme_color_value: "white".to_string(),
+        accent_color: Color::Cyan,
+        accent_color_value: "cyan".to_string(),
+        custom_color_target: None,
+        custom_color_input: String::new(),
+        custom_color_valid: false,
+        custom_color_conflicts_with_theme: false,
+        custom_color_error: None,
         error,
     }
 }

@@ -1,5 +1,5 @@
 use rand_core::{OsRng, RngCore};
-use tundra_storage::{UserRecord, UsersDocument};
+use tundra_storage::{AppearanceConfig, UserRecord, UsersDocument};
 
 use crate::authorization::UserRole;
 use crate::error::CoreError;
@@ -23,6 +23,7 @@ pub struct UserAccount {
     pub failed_login_attempts: u32,
     pub locked_until_epoch_ms: Option<u64>,
     pub password_hint: Option<String>,
+    pub appearance: AppearanceConfig,
     pub created_at_epoch_ms: u64,
     pub updated_at_epoch_ms: u64,
     pub last_login_at_epoch_ms: Option<u64>,
@@ -39,6 +40,7 @@ impl UserAccount {
             failed_login_attempts: record.failed_login_attempts,
             locked_until_epoch_ms: record.locked_until_epoch_ms,
             password_hint: record.password_hint.clone(),
+            appearance: record.appearance.clone(),
             created_at_epoch_ms: record.created_at_epoch_ms,
             updated_at_epoch_ms: record.updated_at_epoch_ms,
             last_login_at_epoch_ms: record.last_login_at_epoch_ms,

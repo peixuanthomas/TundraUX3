@@ -445,6 +445,34 @@ impl ShellState {
                 self.submit_first_run_setup();
                 ShellAction::Redraw
             }
+            ShellCommand::SetupPreviousAppearanceChoice => {
+                self.setup_select_appearance_choice(-1);
+                ShellAction::Redraw
+            }
+            ShellCommand::SetupNextAppearanceChoice => {
+                self.setup_select_appearance_choice(1);
+                ShellAction::Redraw
+            }
+            ShellCommand::AppendSetupCustomColorChar(character) => {
+                self.append_setup_custom_color_char(character);
+                ShellAction::Redraw
+            }
+            ShellCommand::SetupCustomColorBackspace => {
+                self.setup_custom_color_backspace();
+                ShellAction::Redraw
+            }
+            ShellCommand::ApplySetupCustomColor => {
+                self.apply_setup_custom_color();
+                ShellAction::Redraw
+            }
+            ShellCommand::CancelSetupCustomColor => {
+                self.cancel_setup_custom_color();
+                ShellAction::Redraw
+            }
+            ShellCommand::SubmitSetupAppearance => {
+                self.activate_setup_appearance_control();
+                ShellAction::Redraw
+            }
             ShellCommand::ActivateSetup {
                 target,
                 coordinates,

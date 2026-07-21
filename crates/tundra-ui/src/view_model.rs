@@ -651,6 +651,7 @@ pub enum SetupStep {
     Language,
     Timezone,
     Admin,
+    Appearance,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -662,6 +663,18 @@ pub enum SetupField {
     AdminPasswordConfirm,
     PasswordHint,
     Submit,
+    AppearanceShape,
+    AppearanceThemeColor,
+    AppearanceThemeCustom,
+    AppearanceAccentColor,
+    AppearanceAccentCustom,
+    AppearanceSubmit,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SetupCustomColorTarget {
+    Theme,
+    Accent,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -709,6 +722,16 @@ pub struct SetupViewModel {
     pub password_hint: String,
     pub focused_field: SetupField,
     pub can_submit: bool,
+    pub border_shape: crate::BorderShape,
+    pub theme_color: ratatui::style::Color,
+    pub theme_color_value: String,
+    pub accent_color: ratatui::style::Color,
+    pub accent_color_value: String,
+    pub custom_color_target: Option<SetupCustomColorTarget>,
+    pub custom_color_input: String,
+    pub custom_color_valid: bool,
+    pub custom_color_conflicts_with_theme: bool,
+    pub custom_color_error: Option<String>,
     pub error: Option<String>,
 }
 
