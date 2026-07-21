@@ -151,6 +151,27 @@ pub struct LauncherConfirmationViewModel {
     pub confirm_selected: bool,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LauncherDropSide {
+    Before,
+    After,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LauncherDropTarget {
+    pub item_index: usize,
+    pub side: LauncherDropSide,
+}
+
+impl LauncherDropTarget {
+    pub const fn insertion_index(self) -> usize {
+        match self.side {
+            LauncherDropSide::Before => self.item_index,
+            LauncherDropSide::After => self.item_index.saturating_add(1),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LauncherViewModel {
     pub items: Vec<LauncherItemViewModel>,
@@ -161,6 +182,7 @@ pub struct LauncherViewModel {
     pub message: Option<String>,
     pub error: Option<String>,
     pub confirmation: Option<LauncherConfirmationViewModel>,
+    pub drop_target: Option<LauncherDropTarget>,
     ascii_assets: RuntimeAsciiAssets,
 }
 
@@ -217,6 +239,7 @@ impl LauncherViewModel {
             message: None,
             error: None,
             confirmation: None,
+            drop_target: None,
             ascii_assets: RuntimeAsciiAssets::load_default()?,
         })
     }
@@ -280,6 +303,7 @@ pub struct LauncherLayout {
     pub visible_start: usize,
     pub visible_capacity: usize,
     pub scrollbar: Option<Rect>,
+    pub drop_indicator: Option<Rect>,
     pub confirmation: Option<LauncherConfirmationLayout>,
 }
 
@@ -309,6 +333,47 @@ impl LauncherLayout {
         }
         contains(self.content, x, y).then_some(LauncherHitTarget::EmptyContent)
     }
+
+    pub fn large_icon_drop_target(&self, x: u16, y: u16) -> Option<LauncherDropTarget> {
+        if !contains(self.content, x, y) || self.items.is_empty() {
+            return None;
+        }
+
+        let items_on_row = self
+            .items
+            .iter()
+            .filter(|item| y >= item.area.y && y < item.area.bottom())
+            .collect::<Vec<_>>();
+        if let Some(last) = items_on_row.last() {
+            for item in &items_on_row {
+                let midpoint = item.area.x.saturating_add(item.area.width / 2);
+                if x < midpoint {
+                    return Some(LauncherDropTarget {
+                        item_index: item.index,
+                        side: LauncherDropSide::Before,
+                    });
+                }
+            }
+            return Some(LauncherDropTarget {
+                item_index: last.index,
+                side: LauncherDropSide::After,
+            });
+        }
+
+        let first = self.items.first()?;
+        let last = self.items.last()?;
+        Some(if y < first.area.y {
+            LauncherDropTarget {
+                item_index: first.index,
+                side: LauncherDropSide::Before,
+            }
+        } else {
+            LauncherDropTarget {
+                item_index: last.index,
+                side: LauncherDropSide::After,
+            }
+        })
+    }
 }
 
 pub fn launcher_layout(main: Rect, model: &LauncherViewModel) -> LauncherLayout {
@@ -337,6 +402,27 @@ pub fn launcher_layout(main: Rect, model: &LauncherViewModel) -> LauncherLayout 
         .confirmation
         .as_ref()
         .map(|_| launcher_confirmation_layout(main));
+    let drop_indicator = if model.view_mode == LauncherViewMode::LargeIcons {
+        model.drop_target.and_then(|target| {
+            items
+                .iter()
+                .find(|item| item.index == target.item_index)
+                .map(|item| {
+                    let x = match target.side {
+                        LauncherDropSide::Before => item.area.x,
+                        LauncherDropSide::After => item.area.right().saturating_sub(1),
+                    };
+                    Rect::new(
+                        x,
+                        item.area.y,
+                        u16::from(item.area.width > 0),
+                        item.area.height,
+                    )
+                })
+        })
+    } else {
+        None
+    };
     LauncherLayout {
         panel,
         toolbar,
@@ -347,6 +433,7 @@ pub fn launcher_layout(main: Rect, model: &LauncherViewModel) -> LauncherLayout 
         visible_start,
         visible_capacity,
         scrollbar,
+        drop_indicator,
         confirmation,
     }
 }
@@ -598,12 +685,24 @@ fn render_launcher_main(
         LauncherViewMode::LargeIcons => render_launcher_grid(frame, &layout, model, theme, icons),
         LauncherViewMode::Details => render_launcher_details(frame, &layout, model, theme),
     }
+    if let Some(indicator) = layout.drop_indicator {
+        render_launcher_drop_indicator(frame, indicator, theme);
+    }
     render_launcher_footer(frame, layout.footer, model, theme);
     if let Some(scrollbar) = layout.scrollbar {
         render_launcher_scrollbar(frame, scrollbar, &layout, model, theme);
     }
     if let (Some(dialog), Some(dialog_layout)) = (&model.confirmation, layout.confirmation) {
         render_launcher_confirmation(frame, dialog_layout, dialog, theme);
+    }
+}
+
+fn render_launcher_drop_indicator(frame: &mut Frame<'_>, area: Rect, theme: &TundraTheme) {
+    for row in 0..area.height {
+        frame.render_widget(
+            Paragraph::new("┃").style(theme.title_style()),
+            Rect::new(area.x, area.y.saturating_add(row), area.width, 1),
+        );
     }
 }
 

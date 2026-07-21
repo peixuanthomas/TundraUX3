@@ -40,10 +40,11 @@ pub use input::{
 };
 pub use launcher::{
     LauncherConfirmationKind, LauncherConfirmationLayout, LauncherConfirmationViewModel,
-    LauncherHitTarget, LauncherIconRenderer, LauncherItemLayout, LauncherItemStatus,
-    LauncherItemViewModel, LauncherLayout, LauncherToolbarAction, LauncherToolbarButtonLayout,
-    LauncherToolbarButtonViewModel, LauncherViewMode, LauncherViewModel, launcher_layout,
-    render_launcher, render_launcher_with_icons,
+    LauncherDropSide, LauncherDropTarget, LauncherHitTarget, LauncherIconRenderer,
+    LauncherItemLayout, LauncherItemStatus, LauncherItemViewModel, LauncherLayout,
+    LauncherToolbarAction, LauncherToolbarButtonLayout, LauncherToolbarButtonViewModel,
+    LauncherViewMode, LauncherViewModel, launcher_layout, render_launcher,
+    render_launcher_with_icons,
 };
 pub use layout::{
     ClockCreateDialogLayout, ClockEntryKind, ClockEntryRowLayout, ClockPageLayout, ClockPageMode,

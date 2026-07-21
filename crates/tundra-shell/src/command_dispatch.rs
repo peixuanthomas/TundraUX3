@@ -584,6 +584,18 @@ impl ShellState {
                 self.activate_launcher_at(coordinates, click, platform);
                 ShellAction::Redraw
             }
+            ShellCommand::LauncherDragUpdate(coordinates) => {
+                self.update_launcher_drag(coordinates);
+                ShellAction::Redraw
+            }
+            ShellCommand::LauncherDrop(coordinates) => {
+                self.drop_launcher_drag(coordinates, platform);
+                ShellAction::Redraw
+            }
+            ShellCommand::LauncherCancelDrag => {
+                self.launcher_drag = None;
+                ShellAction::Redraw
+            }
             ShellCommand::LauncherScroll(delta) => {
                 self.select_launcher_delta(delta as isize);
                 ShellAction::Redraw

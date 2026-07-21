@@ -39,12 +39,14 @@ impl ShellState {
         }
         self.focused_component = ShellComponent::Launcher;
         self.launcher_pending_confirmation = None;
+        self.launcher_drag = None;
         self.notify_status("Launcher");
         self.refresh_hit_map();
     }
 
     fn close_launcher(&mut self) {
         self.launcher_pending_confirmation = None;
+        self.launcher_drag = None;
         if self.active_screen() == ShellScreen::Launcher {
             self.screen_stack.pop();
         }
@@ -79,6 +81,7 @@ impl ShellState {
     }
 
     fn toggle_launcher_view(&mut self) {
+        self.launcher_drag = None;
         self.launcher_view_mode = match self.launcher_view_mode {
             tundra_ui::LauncherViewMode::LargeIcons => tundra_ui::LauncherViewMode::Details,
             tundra_ui::LauncherViewMode::Details => tundra_ui::LauncherViewMode::LargeIcons,
@@ -281,13 +284,24 @@ impl ShellState {
         click: ClickKind,
         platform: &dyn Platform,
     ) {
+        self.launcher_drag = None;
         let area = Rect::new(0, 0, self.terminal_size.0, self.terminal_size.1);
         let tundra_ui::ShellLayout::Full { main, .. } = tundra_ui::compute_shell_layout(area) else { return };
         let model = self.to_launcher_view_model();
         match tundra_ui::launcher_layout(main, &model).hit_test(coordinates.0, coordinates.1) {
             Some(tundra_ui::LauncherHitTarget::Item(index)) => {
                 self.select_launcher_index(index);
-                if click == ClickKind::Double { self.request_launcher_launch(platform); }
+                if click == ClickKind::Double {
+                    self.request_launcher_launch(platform);
+                } else if self.launcher_view_mode == tundra_ui::LauncherViewMode::LargeIcons
+                    && self.can_manage_launcher()
+                    && let Some(item_id) = self.selected_launcher_id()
+                {
+                    self.launcher_drag = Some(LauncherDragState {
+                        item_id,
+                        target: None,
+                    });
+                }
             }
             Some(tundra_ui::LauncherHitTarget::Toolbar(action)) => match action {
                 tundra_ui::LauncherToolbarAction::Remove => self.request_launcher_remove(),
@@ -298,6 +312,52 @@ impl ShellState {
             Some(tundra_ui::LauncherHitTarget::Confirm) => self.confirm_launcher_action(platform),
             Some(tundra_ui::LauncherHitTarget::Cancel) => self.launcher_pending_confirmation = None,
             _ => {}
+        }
+    }
+
+    fn update_launcher_drag(&mut self, coordinates: CellPosition) {
+        if self.launcher_view_mode != tundra_ui::LauncherViewMode::LargeIcons {
+            self.launcher_drag = None;
+            return;
+        }
+        let area = Rect::new(0, 0, self.terminal_size.0, self.terminal_size.1);
+        let tundra_ui::ShellLayout::Full { main, .. } = tundra_ui::compute_shell_layout(area) else {
+            self.launcher_drag = None;
+            return;
+        };
+        let model = self.to_launcher_view_model();
+        let target = tundra_ui::launcher_layout(main, &model)
+            .large_icon_drop_target(coordinates.0, coordinates.1);
+        if let Some(drag) = self.launcher_drag.as_mut() {
+            drag.target = target;
+        }
+    }
+
+    fn drop_launcher_drag(&mut self, coordinates: CellPosition, platform: &dyn Platform) {
+        let Some(drag) = self.launcher_drag.take() else { return };
+        if self.launcher_view_mode != tundra_ui::LauncherViewMode::LargeIcons {
+            return;
+        }
+        let area = Rect::new(0, 0, self.terminal_size.0, self.terminal_size.1);
+        let tundra_ui::ShellLayout::Full { main, .. } = tundra_ui::compute_shell_layout(area) else { return };
+        let model = self.to_launcher_view_model();
+        let Some(target) = tundra_ui::launcher_layout(main, &model)
+            .large_icon_drop_target(coordinates.0, coordinates.1)
+        else { return };
+        self.apply_launcher_command(
+            LauncherCommand::Reorder {
+                id: drag.item_id.clone(),
+                insertion_index: target.insertion_index(),
+            },
+            platform,
+        );
+        if let Some(index) = self.launcher_state.as_ref().and_then(|state| {
+            state
+                .items
+                .iter()
+                .position(|item| item.record.id == drag.item_id)
+        }) {
+            self.launcher_selected_index = index;
         }
     }
 
@@ -335,6 +395,7 @@ impl ShellState {
             .map(|last_index| self.launcher_selected_index.min(last_index));
         let mut model = tundra_ui::LauncherViewModel::new(items, selected, self.launcher_view_mode, self.can_manage_launcher());
         model.viewport_offset = self.launcher_viewport_offset;
+        model.drop_target = self.launcher_drag.as_ref().and_then(|drag| drag.target);
         if let Some(state) = self.launcher_state.as_ref() {
             model.message = state.message.clone();
             model.error = state.error.clone();

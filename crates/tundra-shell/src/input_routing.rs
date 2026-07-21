@@ -767,6 +767,9 @@ impl ShellState {
                 _ => (target, ShellCommand::CaptureOverlayInput),
             };
         }
+        if self.launcher_drag.is_some() && matches!(key.key, InputKey::Escape) {
+            return (target, ShellCommand::LauncherCancelDrag);
+        }
         match key.key {
             InputKey::Escape => (RoutedTarget::Global, ShellCommand::CloseLauncher),
             InputKey::Left | InputKey::Up => (target, ShellCommand::LauncherPrevious),
@@ -1024,6 +1027,31 @@ impl ShellState {
             && !self.time_sync_dialog_visible
             && self.active_popup.is_none()
         {
+            if self.launcher_drag.is_some() {
+                match mouse {
+                    MouseInput::Drag {
+                        button: PointerButton::Left,
+                        coordinates,
+                        ..
+                    } => {
+                        return (
+                            RoutedTarget::Component(ShellComponent::Launcher),
+                            ShellCommand::LauncherDragUpdate(coordinates),
+                        );
+                    }
+                    MouseInput::Up {
+                        button: PointerButton::Left,
+                        coordinates,
+                        ..
+                    } => {
+                        return (
+                            RoutedTarget::Component(ShellComponent::Launcher),
+                            ShellCommand::LauncherDrop(coordinates),
+                        );
+                    }
+                    _ => {}
+                }
+            }
             match (self.scrollbar_drag, mouse) {
                 (
                     Some(ScrollbarDragState::Explorer { .. }),
@@ -1236,6 +1264,16 @@ impl ShellState {
                 );
                 (target, ShellCommand::LauncherPointer(coordinates, click))
             }
+            MouseInput::Drag {
+                button: PointerButton::Left,
+                coordinates,
+                ..
+            } => (target, ShellCommand::LauncherDragUpdate(coordinates)),
+            MouseInput::Up {
+                button: PointerButton::Left,
+                coordinates,
+                ..
+            } => (target, ShellCommand::LauncherDrop(coordinates)),
             MouseInput::Moved { .. } => (target, ShellCommand::Hover(Some(ShellComponent::Launcher))),
             _ => (target, ShellCommand::CaptureOverlayInput),
         }

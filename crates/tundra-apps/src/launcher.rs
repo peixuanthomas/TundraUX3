@@ -48,7 +48,7 @@ pub struct LauncherState {
 
 impl LauncherState {
     pub fn from_config(config: &LauncherConfig) -> Self {
-        let mut state = Self {
+        Self {
             items: config
                 .entries
                 .iter()
@@ -64,22 +64,11 @@ impl LauncherState {
                 .collect(),
             message: None,
             error: None,
-        };
-        state.sort();
-        state
+        }
     }
 
     fn reset(&mut self, config: &LauncherConfig) {
         *self = Self::from_config(config);
-    }
-
-    fn sort(&mut self) {
-        self.items.sort_by(|left, right| {
-            display_name(&left.record.path)
-                .to_lowercase()
-                .cmp(&display_name(&right.record.path).to_lowercase())
-                .then_with(|| left.record.path.cmp(&right.record.path))
-        });
     }
 
     fn set_status(&mut self, id: &str, status: LauncherItemStatus) {
@@ -120,6 +109,7 @@ pub enum LauncherEffect {
 pub enum LauncherCommand {
     Refresh,
     AddPaths(Vec<PathBuf>),
+    Reorder { id: String, insertion_index: usize },
     Remove(Vec<String>),
     Reapprove(Vec<String>),
     RequestLaunch(String),
@@ -190,6 +180,10 @@ impl LauncherController {
         let result = match command {
             LauncherCommand::Refresh => self.refresh(state, platform),
             LauncherCommand::AddPaths(paths) => self.add(state, paths, session, platform, storage),
+            LauncherCommand::Reorder {
+                id,
+                insertion_index,
+            } => self.reorder(state, &id, insertion_index, session, storage),
             LauncherCommand::Remove(ids) => self.remove(state, &ids, session, storage),
             LauncherCommand::Reapprove(ids) => {
                 self.reapprove(state, &ids, session, platform, storage)
@@ -268,6 +262,51 @@ impl LauncherController {
             .count();
         state.message = Some(format!("{count} Launcher item(s) added"));
         Ok(LauncherEffect::Added(results))
+    }
+
+    fn reorder(
+        &self,
+        state: &mut LauncherState,
+        id: &str,
+        insertion_index: usize,
+        session: Option<&AuthSession>,
+        storage: &StorageManager,
+    ) -> Result<LauncherEffect, LauncherError> {
+        self.authorize(session, PermissionAction::ManageLauncher)?;
+        let mut config = storage.load_config()?;
+        let source_index = config
+            .launcher
+            .entries
+            .iter()
+            .position(|entry| entry.id == id)
+            .ok_or_else(|| LauncherError::MissingEntry(id.to_string()))?;
+        let boundary = insertion_index.min(config.launcher.entries.len());
+        let destination_index = if source_index < boundary {
+            boundary.saturating_sub(1)
+        } else {
+            boundary
+        }
+        .min(config.launcher.entries.len().saturating_sub(1));
+
+        if destination_index == source_index {
+            state.message = Some("Launcher item order unchanged".to_string());
+            return Ok(LauncherEffect::None);
+        }
+
+        let entry = config.launcher.entries.remove(source_index);
+        config.launcher.entries.insert(destination_index, entry);
+        storage.save_config(&config)?;
+
+        if let Some(current_index) = state.items.iter().position(|item| item.record.id == id) {
+            let item = state.items.remove(current_index);
+            state
+                .items
+                .insert(destination_index.min(state.items.len()), item);
+        } else {
+            state.reset(&config.launcher);
+        }
+        state.message = Some("Launcher item moved".to_string());
+        Ok(LauncherEffect::None)
     }
 
     fn remove(
@@ -566,12 +605,6 @@ fn needs_confirmation(kind: LauncherExecutableKind) -> bool {
             | LauncherExecutableKind::Installer
             | LauncherExecutableKind::Shortcut
     )
-}
-fn display_name(path: &str) -> String {
-    Path::new(path)
-        .file_name()
-        .map(|name| name.to_string_lossy().into_owned())
-        .unwrap_or_else(|| path.to_string())
 }
 fn same_path(left: &Path, right: &Path) -> bool {
     #[cfg(windows)]

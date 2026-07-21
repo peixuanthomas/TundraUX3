@@ -344,6 +344,104 @@ fn admin_batch_adds_launcher_targets_and_high_risk_launch_requires_confirmation(
         ]
     );
 
+    let area = Rect::new(0, 0, state.terminal_size().0, state.terminal_size().1);
+    let tundra_ui::ShellLayout::Full { main, .. } = tundra_ui::compute_shell_layout(area) else {
+        panic!("Launcher drag test requires the full shell layout");
+    };
+    let layout = tundra_ui::launcher_layout(main, &launcher);
+    let source = layout.items[0].area;
+    let destination = layout.items[1].area;
+    let source_point = (
+        source.x.saturating_add(source.width / 2),
+        source.y.saturating_add(1),
+    );
+    let after_destination = (
+        destination.right().saturating_sub(1),
+        destination.y.saturating_add(1),
+    );
+    state.apply_input_with_platform(
+        InputEvent::mouse_down(PointerButton::Left, source_point),
+        &platform,
+    );
+    state.apply_input_with_platform(
+        InputEvent::mouse_drag(PointerButton::Left, after_destination),
+        &platform,
+    );
+    let dragging = state.to_launcher_view_model();
+    assert_eq!(
+        dragging
+            .drop_target
+            .map(tundra_ui::LauncherDropTarget::insertion_index),
+        Some(2)
+    );
+    assert!(
+        tundra_ui::launcher_layout(main, &dragging)
+            .drop_indicator
+            .is_some()
+    );
+    state.apply_input_with_platform(
+        InputEvent::mouse_up(PointerButton::Left, after_destination),
+        &platform,
+    );
+    assert_eq!(
+        state
+            .to_launcher_view_model()
+            .items
+            .iter()
+            .map(|item| item.name.as_str())
+            .collect::<Vec<_>>(),
+        vec!["script.cmd", "program.exe"]
+    );
+
+    let launcher = state.to_launcher_view_model();
+    let layout = tundra_ui::launcher_layout(main, &launcher);
+    let source = layout.items[1].area;
+    let destination = layout.items[0].area;
+    let source_point = (
+        source.x.saturating_add(source.width / 2),
+        source.y.saturating_add(1),
+    );
+    let before_destination = (destination.x, destination.y.saturating_add(1));
+    state.apply_input_with_platform(
+        InputEvent::mouse_down(PointerButton::Left, source_point),
+        &platform,
+    );
+    state.apply_input_with_platform(
+        InputEvent::mouse_drag(PointerButton::Left, before_destination),
+        &platform,
+    );
+    state.apply_input_with_platform(
+        InputEvent::mouse_up(PointerButton::Left, before_destination),
+        &platform,
+    );
+    let launcher = state.to_launcher_view_model();
+    assert_eq!(
+        launcher
+            .items
+            .iter()
+            .map(|item| item.name.as_str())
+            .collect::<Vec<_>>(),
+        vec!["program.exe", "script.cmd"]
+    );
+    let storage = StorageManager::open(platform.app_paths().expect("app paths"))
+        .expect("storage")
+        .manager;
+    assert_eq!(
+        storage
+            .load_config()
+            .expect("Launcher order")
+            .launcher
+            .entries
+            .iter()
+            .map(|entry| entry.id.as_str())
+            .collect::<Vec<_>>(),
+        launcher
+            .items
+            .iter()
+            .map(|item| item.id.as_str())
+            .collect::<Vec<_>>()
+    );
+
     state.apply_input_with_platform(InputEvent::from_key_label("v"), &platform);
     assert_eq!(
         state.to_launcher_view_model().view_mode,

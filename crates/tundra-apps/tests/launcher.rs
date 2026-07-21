@@ -195,6 +195,117 @@ fn content_changes_block_launch_and_scripts_require_fresh_confirmation() {
     );
 }
 
+#[test]
+fn launcher_keeps_addition_order_and_manual_reorder_persists_in_both_directions() {
+    let fixture = Fixture::new("manual-order");
+    let charlie = fixture.file("charlie.exe", b"charlie");
+    let alpha = fixture.file("alpha.exe", b"alpha");
+    let bravo = fixture.file("bravo.exe", b"bravo");
+    for executable in [&charlie, &alpha, &bravo] {
+        fixture.approve(executable, ExecutableKind::NativeBinary);
+    }
+    let storage = fixture.storage();
+    let controller = LauncherController::default();
+    let mut state = LauncherState::default();
+    controller.apply(
+        &mut state,
+        LauncherCommand::AddPaths(vec![charlie, alpha, bravo]),
+        Some(&admin()),
+        &fixture.platform,
+        &storage,
+    );
+
+    assert_eq!(
+        item_names(&state),
+        vec!["charlie.exe", "alpha.exe", "bravo.exe"]
+    );
+    let charlie_id = state.items[0].record.id.clone();
+    controller.apply(
+        &mut state,
+        LauncherCommand::Reorder {
+            id: charlie_id.clone(),
+            insertion_index: 3,
+        },
+        Some(&admin()),
+        &fixture.platform,
+        &storage,
+    );
+    assert_eq!(
+        item_names(&state),
+        vec!["alpha.exe", "bravo.exe", "charlie.exe"]
+    );
+    assert!(
+        state
+            .items
+            .iter()
+            .all(|item| item.status == LauncherItemStatus::Ready)
+    );
+
+    let persisted = storage.load_config().expect("reordered config");
+    assert_eq!(
+        persisted
+            .launcher
+            .entries
+            .iter()
+            .map(|entry| entry.id.as_str())
+            .collect::<Vec<_>>(),
+        state
+            .items
+            .iter()
+            .map(|item| item.record.id.as_str())
+            .collect::<Vec<_>>()
+    );
+    let reloaded = controller.load(&storage).expect("reloaded Launcher state");
+    assert_eq!(
+        item_names(&reloaded),
+        vec!["alpha.exe", "bravo.exe", "charlie.exe"]
+    );
+
+    controller.apply(
+        &mut state,
+        LauncherCommand::Reorder {
+            id: charlie_id,
+            insertion_index: 0,
+        },
+        Some(&admin()),
+        &fixture.platform,
+        &storage,
+    );
+    assert_eq!(
+        item_names(&state),
+        vec!["charlie.exe", "alpha.exe", "bravo.exe"]
+    );
+
+    let alpha_id = state.items[1].record.id.clone();
+    controller.apply(
+        &mut state,
+        LauncherCommand::Reorder {
+            id: alpha_id,
+            insertion_index: 2,
+        },
+        Some(&admin()),
+        &fixture.platform,
+        &storage,
+    );
+    assert_eq!(
+        item_names(&state),
+        vec!["charlie.exe", "alpha.exe", "bravo.exe"]
+    );
+}
+
+fn item_names(state: &LauncherState) -> Vec<&str> {
+    state
+        .items
+        .iter()
+        .map(|item| {
+            Path::new(&item.record.path)
+                .file_name()
+                .and_then(|name| name.to_str())
+                .expect("Launcher item file name")
+        })
+        .collect()
+}
+
 struct Fixture {
     root: PathBuf,
     documents: PathBuf,

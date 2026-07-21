@@ -257,6 +257,12 @@ enum LauncherPendingConfirmation {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+struct LauncherDragState {
+    item_id: String,
+    target: Option<tundra_ui::LauncherDropTarget>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 struct ClockCreateState {
     input: String,
     error: Option<String>,
@@ -363,6 +369,7 @@ pub struct ShellState {
     launcher_view_mode: tundra_ui::LauncherViewMode,
     launcher_viewport_offset: usize,
     launcher_pending_confirmation: Option<LauncherPendingConfirmation>,
+    launcher_drag: Option<LauncherDragState>,
     explorer_state: Option<ExplorerState>,
     explorer_input_mode: ExplorerInputMode,
     explorer_input: String,

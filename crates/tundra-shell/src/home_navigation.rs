@@ -71,6 +71,7 @@ impl ShellState {
         self.user_management_mode = UserManagementMode::Browse;
         self.user_management_message = None;
         self.selected_home_entry_index = 0;
+        self.launcher_drag = None;
         self.explorer_state = None;
         self.explorer_input_mode = ExplorerInputMode::Browse;
         self.explorer_input.clear();
