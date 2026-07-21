@@ -145,7 +145,7 @@ fn renderer_draws_detailed_table_status_precedence_and_current_marker() {
     assert!(region_has_fg(
         &terminal,
         layout.rows[0].area,
-        TundraTheme::default_dark().accent
+        TundraTheme::default_dark().accent_color
     ));
 }
 
@@ -220,7 +220,7 @@ fn create_form_is_a_modal_with_role_password_and_action_focus() {
     assert!(region_has_fg(
         &terminal,
         form.submit,
-        TundraTheme::default_dark().accent
+        TundraTheme::default_dark().accent_color
     ));
 }
 

@@ -99,7 +99,7 @@ fn wide_renderer_draws_ascii_hands_digital_time_and_grouped_entries() {
     assert!(region_has_fg(
         &terminal,
         selected_row.area,
-        TundraTheme::default_dark().accent,
+        TundraTheme::default_dark().accent_color,
     ));
 }
 
@@ -173,7 +173,7 @@ fn create_dialog_renders_placeholder_error_and_both_focusable_actions() {
     assert!(region_has_fg(
         &terminal,
         dialog.create_countdown,
-        TundraTheme::default_dark().accent,
+        TundraTheme::default_dark().accent_color,
     ));
 }
 

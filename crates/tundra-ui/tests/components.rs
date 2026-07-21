@@ -1,6 +1,6 @@
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
-use ratatui::style::Modifier;
+use ratatui::style::{Color, Modifier};
 use ratatui::widgets::BorderType;
 use tundra_ui::components::{
     Button, CommandPalette, CommandPaletteCommand, ComponentEvent, ComponentId, ContextMenu,
@@ -62,6 +62,43 @@ fn theme_defaults_to_rounded_borders_and_square_uses_ratatui_plain() {
     assert_eq!(square_buffer.cell((0, 0)).unwrap().symbol(), "┌");
 }
 
+#[test]
+fn themed_borders_keep_the_configured_color_when_controls_are_focused() {
+    let area = Rect::new(0, 0, 16, 3);
+    let theme = TundraTheme::default().with_border_color(Color::LightGreen);
+
+    let mut button = Button::new("save", "Save");
+    button.set_focused(true);
+    let mut button_buffer = Buffer::empty(area);
+    button.render(area, &mut button_buffer, &theme);
+    assert_eq!(button_buffer.cell((0, 0)).unwrap().fg, Color::LightGreen);
+
+    let mut input = TextInput::new("query");
+    input.set_focused(true);
+    let mut input_buffer = Buffer::empty(area);
+    input.render(area, &mut input_buffer, &theme);
+    assert_eq!(input_buffer.cell((0, 0)).unwrap().fg, Color::LightGreen);
+}
+
+#[test]
+fn selected_controls_use_accent_borders_without_changing_regular_border_color() {
+    let area = Rect::new(0, 0, 16, 3);
+    let theme = TundraTheme::default()
+        .with_border_color(Color::LightGreen)
+        .with_accent_color(Color::LightMagenta);
+
+    let mut button = Button::new("save", "Save");
+    button.state.selected = true;
+    let mut button_buffer = Buffer::empty(area);
+    button.render(area, &mut button_buffer, &theme);
+    assert_eq!(button_buffer.cell((0, 0)).unwrap().fg, Color::LightMagenta);
+
+    let mut input = TextInput::new("query");
+    input.state.selected = true;
+    let mut input_buffer = Buffer::empty(area);
+    input.render(area, &mut input_buffer, &theme);
+    assert_eq!(input_buffer.cell((0, 0)).unwrap().fg, Color::LightMagenta);
+}
 #[test]
 fn list_supports_keyboard_selection_mouse_selection_and_activation() {
     let mut list = List::new(

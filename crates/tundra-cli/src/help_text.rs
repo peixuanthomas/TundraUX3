@@ -8,7 +8,7 @@ pub(crate) fn write_help(output: &mut impl Write) -> std::io::Result<()> {
     )?;
     writeln!(
         output,
-        "  config  View or update user config: get [field], set <theme|language|timezone|address> <value>"
+        "  config  View or update user config: get [field], set <border-shape|border-color|accent-color|language|timezone|address> <value>"
     )?;
     writeln!(
         output,

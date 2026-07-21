@@ -1,7 +1,8 @@
 use crate::{
     BANNER_ASSET_KEY, BANNER_ENTER_DURATION, BANNER_EXIT_DURATION, BANNER_HOLD_DURATION,
-    ShellTerminalSizeRequirement, asset_io_error, checked_current_terminal_size,
+    ShellTerminalSizeRequirement, ansi_foreground, asset_io_error, checked_current_terminal_size,
 };
+use ratatui::style::Color;
 use std::io::{self, Write};
 use std::time::Duration;
 
@@ -39,19 +40,34 @@ impl StartupBannerTiming {
 /// Plays the production startup sequence: frost crystallization, a two-second
 /// readable hold, and frost sublimation.
 pub fn display_startup_banner(output: &mut impl Write) -> io::Result<()> {
+    display_startup_banner_colored(output, Color::White)
+}
+
+/// Plays the production frost sequence using `color` for every logo frame.
+pub fn display_startup_banner_colored(output: &mut impl Write, color: Color) -> io::Result<()> {
     let ascii_assets = tundra_ui::RuntimeAsciiAssets::load_default().map_err(asset_io_error)?;
-    display_startup_banner_with_assets(output, &ascii_assets)
+    display_startup_banner_with_assets_colored(output, &ascii_assets, color)
 }
 
 pub fn display_startup_banner_with_assets(
     output: &mut impl Write,
     ascii_assets: &tundra_ui::RuntimeAsciiAssets,
 ) -> io::Result<()> {
+    display_startup_banner_with_assets_colored(output, ascii_assets, Color::White)
+}
+
+/// Plays the supplied frost sequence using `color` for every logo frame.
+pub fn display_startup_banner_with_assets_colored(
+    output: &mut impl Write,
+    ascii_assets: &tundra_ui::RuntimeAsciiAssets,
+    color: Color,
+) -> io::Result<()> {
     let requirement = ShellTerminalSizeRequirement::from_assets(ascii_assets);
     display_startup_banner_with_timing_and_size_check(
         output,
         ascii_assets,
         StartupBannerTiming::PRODUCTION,
+        color,
         || checked_current_terminal_size(requirement),
     )
 }
@@ -60,6 +76,7 @@ fn display_startup_banner_with_timing_and_size_check(
     output: &mut impl Write,
     ascii_assets: &tundra_ui::RuntimeAsciiAssets,
     timing: StartupBannerTiming,
+    color: Color,
     mut check_size: impl FnMut() -> io::Result<(u16, u16)>,
 ) -> io::Result<()> {
     let _ = check_size()?;
@@ -76,6 +93,7 @@ fn display_startup_banner_with_timing_and_size_check(
         banner_lines,
         FrostPhase::Enter,
         timing.enter,
+        color,
         &mut check_size,
     )?;
     wait_with_size_checks(timing.hold, &mut check_size)?;
@@ -84,6 +102,7 @@ fn display_startup_banner_with_timing_and_size_check(
         banner_lines,
         FrostPhase::Exit,
         timing.exit,
+        color,
         &mut check_size,
     )?;
     write!(output, "{CLEAR_SCREEN}")?;
@@ -95,6 +114,7 @@ fn render_phase(
     banner_lines: &[String],
     phase: FrostPhase,
     duration: Duration,
+    color: Color,
     check_size: &mut impl FnMut() -> io::Result<(u16, u16)>,
 ) -> io::Result<()> {
     let frame_interval_ms = FROST_FRAME_INTERVAL.as_millis().max(1);
@@ -109,6 +129,7 @@ fn render_phase(
             output,
             &frost_frame(banner_lines, phase, progress),
             terminal_size,
+            color,
         )?;
         if frame_index < frame_count {
             wait_with_size_checks(frame_delay, check_size)?;
@@ -121,6 +142,7 @@ fn render_frame(
     output: &mut impl Write,
     frame: &[String],
     (terminal_width, terminal_height): (u16, u16),
+    color: Color,
 ) -> io::Result<()> {
     let frame_width = frame
         .iter()
@@ -135,9 +157,11 @@ fn render_frame(
         writeln!(output)?;
     }
     let indent = " ".repeat(left_padding);
+    write!(output, "{}", ansi_foreground(color))?;
     for line in frame {
         writeln!(output, "{indent}{}", line.trim_end())?;
     }
+    write!(output, "\x1B[0m")?;
     output.flush()
 }
 
@@ -337,6 +361,7 @@ mod tests {
             &mut output,
             &assets,
             StartupBannerTiming::ZERO,
+            Color::White,
             || Ok((120, 40)),
         )
         .expect("zero-duration frost sequence");
@@ -356,12 +381,12 @@ mod tests {
         let frame = vec!["ABCDE".to_string(), "  X  ".to_string()];
         let mut output = Vec::new();
 
-        render_frame(&mut output, &frame, (15, 8)).expect("centered frame renders");
+        render_frame(&mut output, &frame, (15, 8), Color::White).expect("centered frame renders");
 
         let output = String::from_utf8(output).unwrap();
         assert_eq!(
             output,
-            format!("{CLEAR_SCREEN}\n\n\n     ABCDE\n       X\n")
+            format!("{CLEAR_SCREEN}\n\n\n\x1B[97m     ABCDE\n       X\n\x1B[0m")
         );
     }
 
@@ -375,6 +400,7 @@ mod tests {
             &mut output,
             &assets,
             StartupBannerTiming::ZERO,
+            Color::White,
             || {
                 checks += 1;
                 if checks >= 4 {
@@ -390,5 +416,21 @@ mod tests {
         assert!(error.to_string().contains("too small"));
         assert!(output.contains("ooooooooooooo"));
         assert!(!output.ends_with(CLEAR_SCREEN));
+    }
+
+    #[test]
+    fn frost_frame_uses_requested_rgb_color_and_resets() {
+        let mut output = Vec::new();
+        render_frame(
+            &mut output,
+            &["TUNDRA".to_string()],
+            (12, 3),
+            Color::Rgb(18, 52, 86),
+        )
+        .expect("colored frost frame renders");
+
+        let output = String::from_utf8(output).expect("UTF-8 terminal output");
+        assert!(output.contains("\x1B[38;2;18;52;86m"));
+        assert!(output.ends_with("\x1B[0m"));
     }
 }

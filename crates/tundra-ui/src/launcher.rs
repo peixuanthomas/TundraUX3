@@ -2,7 +2,7 @@ use ratatui::Frame;
 use ratatui::layout::{Alignment, Rect};
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Clear, Paragraph, Wrap};
+use ratatui::widgets::{Borders, Clear, Paragraph, Wrap};
 
 use crate::render::{render_compact_home, render_status, render_top};
 use crate::{
@@ -658,7 +658,11 @@ fn render_launcher_grid(
         let selected = focused || item.selected;
         let style = item_style(item.status, selected, theme);
         frame.render_widget(
-            theme.block().borders(Borders::ALL).style(style),
+            theme
+                .block()
+                .borders(Borders::ALL)
+                .style(style)
+                .border_style(theme.selectable_border_style(selected)),
             item_layout.area,
         );
         let rendered_native =
@@ -874,10 +878,10 @@ fn render_launcher_confirmation(
 ) {
     frame.render_widget(Clear, layout.area);
     frame.render_widget(
-        Block::default()
+        theme
+            .block()
             .title(dialog.title.clone())
             .borders(Borders::ALL)
-            .border_type(theme.border_type())
             .style(theme.body_style()),
         layout.area,
     );

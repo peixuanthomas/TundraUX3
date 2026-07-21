@@ -1,4 +1,5 @@
 use crate::{BANNER_ASSET_KEY, ShellTerminalSizeRequirement, checked_current_terminal_size};
+use ratatui::style::Color;
 use std::io::{self, Write};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -28,34 +29,64 @@ pub fn startup_lines() -> Vec<String> {
 }
 
 pub fn render_static_banner(output: &mut impl Write) -> io::Result<()> {
+    render_static_banner_colored(output, Color::White)
+}
+
+/// Renders the static logo using `color` as its terminal foreground color.
+pub fn render_static_banner_colored(output: &mut impl Write, color: Color) -> io::Result<()> {
     let ascii_assets = tundra_ui::RuntimeAsciiAssets::load_default().map_err(asset_io_error)?;
-    render_static_banner_with_assets(output, &ascii_assets)
+    render_static_banner_with_assets_colored(output, &ascii_assets, color)
 }
 
 pub fn render_static_banner_with_assets(
     output: &mut impl Write,
     ascii_assets: &tundra_ui::RuntimeAsciiAssets,
 ) -> io::Result<()> {
+    render_static_banner_with_assets_colored(output, ascii_assets, Color::White)
+}
+
+/// Renders the supplied static logo using `color` as its terminal foreground color.
+pub fn render_static_banner_with_assets_colored(
+    output: &mut impl Write,
+    ascii_assets: &tundra_ui::RuntimeAsciiAssets,
+    color: Color,
+) -> io::Result<()> {
+    write!(output, "{}", ansi_foreground(color))?;
     for line in ascii_assets
         .banner_lines(BANNER_ASSET_KEY)
         .map_err(asset_io_error)?
     {
         writeln!(output, "{line}")?;
     }
+    write!(output, "\x1B[0m")?;
 
     Ok(())
 }
 
 pub fn display_banner(output: &mut impl Write) -> io::Result<()> {
-    crate::startup_banner::display_startup_banner(output)
+    display_banner_colored(output, Color::White)
+}
+
+/// Plays the frost startup logo using `color` as its terminal foreground color.
+pub fn display_banner_colored(output: &mut impl Write, color: Color) -> io::Result<()> {
+    crate::startup_banner::display_startup_banner_colored(output, color)
 }
 
 pub fn display_animated_banner(
     output: &mut impl Write,
     total_duration: Duration,
 ) -> io::Result<()> {
+    display_animated_banner_colored(output, total_duration, Color::White)
+}
+
+/// Plays the legacy line-by-line logo using `color` as its terminal foreground color.
+pub fn display_animated_banner_colored(
+    output: &mut impl Write,
+    total_duration: Duration,
+    color: Color,
+) -> io::Result<()> {
     let ascii_assets = tundra_ui::RuntimeAsciiAssets::load_default().map_err(asset_io_error)?;
-    display_animated_banner_with_assets(output, total_duration, &ascii_assets)
+    display_animated_banner_with_assets_colored(output, total_duration, &ascii_assets, color)
 }
 
 pub fn display_animated_banner_with_assets(
@@ -63,16 +94,32 @@ pub fn display_animated_banner_with_assets(
     total_duration: Duration,
     ascii_assets: &tundra_ui::RuntimeAsciiAssets,
 ) -> io::Result<()> {
+    display_animated_banner_with_assets_colored(output, total_duration, ascii_assets, Color::White)
+}
+
+/// Plays the supplied legacy line-by-line logo using `color` as its terminal
+/// foreground color.
+pub fn display_animated_banner_with_assets_colored(
+    output: &mut impl Write,
+    total_duration: Duration,
+    ascii_assets: &tundra_ui::RuntimeAsciiAssets,
+    color: Color,
+) -> io::Result<()> {
     let requirement = ShellTerminalSizeRequirement::from_assets(ascii_assets);
-    display_animated_banner_with_assets_and_size_check(output, total_duration, ascii_assets, || {
-        checked_current_terminal_size(requirement).map(|_| ())
-    })
+    display_animated_banner_with_assets_and_size_check(
+        output,
+        total_duration,
+        ascii_assets,
+        color,
+        || checked_current_terminal_size(requirement).map(|_| ()),
+    )
 }
 
 fn display_animated_banner_with_assets_and_size_check(
     output: &mut impl Write,
     total_duration: Duration,
     ascii_assets: &tundra_ui::RuntimeAsciiAssets,
+    color: Color,
     mut check_size: impl FnMut() -> io::Result<()>,
 ) -> io::Result<()> {
     check_size()?;
@@ -89,9 +136,11 @@ fn display_animated_banner_with_assets_and_size_check(
     for revealed_lines in 1..=banner_lines.len() {
         check_size()?;
         write!(output, "\x1B[2J\x1B[H")?;
+        write!(output, "{}", ansi_foreground(color))?;
         for line in banner_lines.iter().take(revealed_lines) {
             writeln!(output, "{line}")?;
         }
+        write!(output, "\x1B[0m")?;
         output.flush()?;
 
         wait_with_size_checks(frame_delay, &mut check_size)?;
@@ -122,6 +171,32 @@ pub(crate) fn asset_io_error(error: tundra_ui::AssetError) -> io::Error {
     io::Error::other(error.to_string())
 }
 
+/// Encodes a ratatui color as an ANSI foreground sequence. Named colors use
+/// standard ANSI SGR codes; RGB and indexed colors retain their exact values.
+pub(crate) fn ansi_foreground(color: Color) -> String {
+    match color {
+        Color::Reset => "\x1B[39m".to_string(),
+        Color::Black => "\x1B[30m".to_string(),
+        Color::Red => "\x1B[31m".to_string(),
+        Color::Green => "\x1B[32m".to_string(),
+        Color::Yellow => "\x1B[33m".to_string(),
+        Color::Blue => "\x1B[34m".to_string(),
+        Color::Magenta => "\x1B[35m".to_string(),
+        Color::Cyan => "\x1B[36m".to_string(),
+        Color::Gray => "\x1B[37m".to_string(),
+        Color::DarkGray => "\x1B[90m".to_string(),
+        Color::LightRed => "\x1B[91m".to_string(),
+        Color::LightGreen => "\x1B[92m".to_string(),
+        Color::LightYellow => "\x1B[93m".to_string(),
+        Color::LightBlue => "\x1B[94m".to_string(),
+        Color::LightMagenta => "\x1B[95m".to_string(),
+        Color::LightCyan => "\x1B[96m".to_string(),
+        Color::White => "\x1B[97m".to_string(),
+        Color::Rgb(red, green, blue) => format!("\x1B[38;2;{red};{green};{blue}m"),
+        Color::Indexed(index) => format!("\x1B[38;5;{index}m"),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -144,6 +219,7 @@ mod tests {
             &mut output,
             Duration::ZERO,
             &assets,
+            Color::White,
             || {
                 checks += 1;
                 if checks >= 3 {
@@ -159,5 +235,14 @@ mod tests {
         assert!(error.to_string().contains("too small"));
         assert!(output.contains(&banner_lines[0]));
         assert!(!output.contains(&banner_lines[1]));
+    }
+
+    #[test]
+    fn ansi_foreground_preserves_named_and_rgb_colors() {
+        assert_eq!(ansi_foreground(Color::Red), "\x1B[31m");
+        assert_eq!(
+            ansi_foreground(Color::Rgb(18, 52, 86)),
+            "\x1B[38;2;18;52;86m"
+        );
     }
 }

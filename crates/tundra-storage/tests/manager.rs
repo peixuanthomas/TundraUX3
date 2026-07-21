@@ -8,12 +8,12 @@ use tundra_platform::{
     AppPaths, Platform, UserDirs, build_macos_app_paths, build_windows_app_paths, cleanup_temp_path,
 };
 use tundra_storage::{
-    AppearanceConfig, BorderShape, ClockDocument, ClockEntryRecord, ClockProfile, EditorConfig,
-    ExplorerConfig, ExplorerDateZone, ExplorerSizeFormat, ExplorerSortDirection, ExplorerSortField,
-    LauncherConfig, LauncherEntryRecord, LauncherExecutableKind, LauncherFingerprint,
-    RecentFilesDocument, SCHEMA_VERSION, SecurityConfig, SessionsDocument, StateDocument,
-    StorageConfig, StorageError, StorageLayout, StorageManager, TrashDocument, TrashRecord,
-    USERS_SCHEMA_VERSION, UserRecord, UsersDocument,
+    AppearanceConfig, BorderColor, BorderShape, ClockDocument, ClockEntryRecord, ClockProfile,
+    EditorConfig, ExplorerConfig, ExplorerDateZone, ExplorerSizeFormat, ExplorerSortDirection,
+    ExplorerSortField, LauncherConfig, LauncherEntryRecord, LauncherExecutableKind,
+    LauncherFingerprint, RecentFilesDocument, SCHEMA_VERSION, SecurityConfig, SessionsDocument,
+    StateDocument, StorageConfig, StorageError, StorageLayout, StorageManager, TrashDocument,
+    TrashRecord, USERS_SCHEMA_VERSION, UserRecord, UsersDocument,
 };
 
 #[test]
@@ -80,6 +80,8 @@ fn toml_and_json_documents_round_trip() {
         shortcuts,
         appearance: AppearanceConfig {
             border_shape: BorderShape::Square,
+            border_color: BorderColor::Rgb(0x38, 0xBD, 0xF8),
+            accent_color: BorderColor::LightMagenta,
         },
         explorer: ExplorerConfig {
             show_hidden: true,
@@ -126,6 +128,7 @@ fn toml_and_json_documents_round_trip() {
         .save_config(&config)
         .expect("config should save atomically");
     let mut expected_config = config.clone();
+    expected_config.theme = "dark".to_string();
     expected_config.language = "en-US".to_string();
     assert_eq!(
         manager.load_config().expect("config should reload"),
@@ -137,6 +140,9 @@ fn toml_and_json_documents_round_trip() {
     assert!(config_contents.contains("timezone = \"Asia/Shanghai\""));
     assert!(config_contents.contains("[appearance]"));
     assert!(config_contents.contains("border_shape = \"square\""));
+    assert!(config_contents.contains("border_color = \"#38BDF8\""));
+    assert!(config_contents.contains("accent_color = \"light-magenta\""));
+    assert!(!config_contents.contains("theme ="));
     assert!(config_contents.contains("size_format = \"bytes\""));
     assert!(config_contents.contains("date_zone = \"utc\""));
     assert!(config_contents.contains("sort_field = \"modified\""));
@@ -265,6 +271,8 @@ fn old_config_without_language_or_timezone_loads_with_defaults() {
     assert_eq!(config.language, "en-US");
     assert_eq!(config.timezone, "UTC");
     assert_eq!(config.appearance.border_shape, BorderShape::Rounded);
+    assert_eq!(config.appearance.border_color, BorderColor::White);
+    assert_eq!(config.appearance.accent_color, BorderColor::Cyan);
     assert_eq!(config.editor, EditorConfig::default());
     assert_eq!(
         config.explorer,
@@ -277,6 +285,35 @@ fn old_config_without_language_or_timezone_loads_with_defaults() {
     assert!(opened.report.warnings.is_empty());
 
     cleanup(&base);
+}
+
+#[test]
+fn border_color_parses_named_hex_and_default_values_canonically() {
+    assert_eq!("WHITE".parse::<BorderColor>().unwrap(), BorderColor::White);
+    assert_eq!(
+        "default".parse::<BorderColor>().unwrap(),
+        BorderColor::White
+    );
+    assert_eq!(
+        "#38bdf8".parse::<BorderColor>().unwrap(),
+        BorderColor::Rgb(0x38, 0xBD, 0xF8)
+    );
+    assert_eq!(BorderColor::Rgb(0x38, 0xBD, 0xF8).to_string(), "#38BDF8");
+    assert!("#RGB".parse::<BorderColor>().is_err());
+    assert!("orange".parse::<BorderColor>().is_err());
+}
+
+#[test]
+fn accent_color_default_and_legacy_default_value_are_cyan() {
+    let config: StorageConfig =
+        toml::from_str("schema_version = 1\n\n[appearance]\naccent_color = \"default\"\n")
+            .expect("accent default should parse");
+
+    assert_eq!(
+        StorageConfig::default().appearance.accent_color,
+        BorderColor::Cyan
+    );
+    assert_eq!(config.appearance.accent_color, BorderColor::Cyan);
 }
 
 #[test]

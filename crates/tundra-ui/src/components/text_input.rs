@@ -2,7 +2,7 @@ use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::widgets::{Borders, Paragraph, Widget};
 
-use crate::{TundraTheme, theme::solid_border_style};
+use crate::TundraTheme;
 
 use super::{
     ComponentEvent, ComponentId, ComponentState, InputEvent, Key, MouseButton, MouseKind,
@@ -141,8 +141,8 @@ impl TextInput {
         let block = theme
             .block()
             .borders(Borders::ALL)
-            .border_style(solid_border_style(style))
-            .style(style);
+            .style(style)
+            .border_style(theme.selectable_border_style(self.state.selected));
         let inner = block.inner(area);
         block.render(area, buffer);
 

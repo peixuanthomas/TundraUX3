@@ -90,7 +90,7 @@ fn rich_renderer_covers_markdown_blocks_and_terminal_fallbacks() {
     let theme = TundraTheme::default_dark();
     let (heading_x, heading_y) = find_text(&terminal, "Terminal Editor");
     let heading = &terminal.backend().buffer()[(heading_x, heading_y)];
-    assert_eq!(heading.fg, theme.accent);
+    assert_eq!(heading.fg, theme.accent_color);
     assert!(heading.modifier.contains(Modifier::BOLD));
     assert!(heading.modifier.contains(Modifier::UNDERLINED));
 
@@ -113,7 +113,7 @@ fn rich_renderer_covers_markdown_blocks_and_terminal_fallbacks() {
     );
     let (link_x, link_y) = find_text(&terminal, "linked text");
     let link = &terminal.backend().buffer()[(link_x, link_y)];
-    assert_eq!(link.fg, theme.accent);
+    assert_eq!(link.fg, theme.accent_color);
     assert!(link.modifier.contains(Modifier::UNDERLINED));
 }
 
@@ -135,9 +135,9 @@ fn source_mode_preserves_markdown_and_highlights_the_selection() {
     assert!(output.contains("- [x] remains source"));
     let first = &terminal.backend().buffer()[(layout.canvas.x, layout.canvas.y)];
     assert_eq!(first.symbol(), "#");
-    assert_eq!(first.bg, TundraTheme::default_dark().accent);
+    assert_eq!(first.bg, TundraTheme::default_dark().accent_color);
     let unselected = &terminal.backend().buffer()[(layout.canvas.x + 4, layout.canvas.y)];
-    assert_ne!(unselected.bg, TundraTheme::default_dark().accent);
+    assert_ne!(unselected.bg, TundraTheme::default_dark().accent_color);
 
     let source = layout
         .modes
@@ -145,7 +145,7 @@ fn source_mode_preserves_markdown_and_highlights_the_selection() {
         .find(|item| item.mode == EditorMode::Source)
         .expect("source mode");
     let source_cell = &terminal.backend().buffer()[(source.area.x, source.area.y)];
-    assert_eq!(source_cell.bg, TundraTheme::default_dark().accent);
+    assert_eq!(source_cell.bg, TundraTheme::default_dark().accent_color);
 }
 
 #[test]
@@ -310,7 +310,7 @@ fn quick_menu_orders_actions_renders_last_and_has_highest_hit_priority() {
     let terminal = render(&model, 40, 14);
     let heading_cell = &terminal.backend().buffer()[(heading.area.x + 1, heading.area.y)];
     assert_eq!(heading_cell.symbol(), "H");
-    assert_eq!(heading_cell.fg, TundraTheme::default_dark().accent);
+    assert_eq!(heading_cell.fg, TundraTheme::default_dark().accent_color);
     assert!(heading_cell.modifier.contains(Modifier::BOLD));
     assert!(heading_cell.modifier.contains(Modifier::UNDERLINED));
 
@@ -400,7 +400,7 @@ fn rich_heading_levels_use_terminal_safe_accent_styles() {
     for text in ["Heading One", "Heading Two", "Heading Three", "Heading Six"] {
         let (x, y) = find_text(&terminal, text);
         let cell = &terminal.backend().buffer()[(x, y)];
-        assert_eq!(cell.fg, theme.accent, "{text}");
+        assert_eq!(cell.fg, theme.accent_color, "{text}");
         assert!(cell.modifier.contains(Modifier::BOLD), "{text}");
     }
 
@@ -1142,7 +1142,7 @@ fn rich_and_source_views_preserve_the_same_cursor_and_selection_offsets() {
 
     let terminal = render(&rich, 60, 10);
     let first_selected = &terminal.backend().buffer()[(rich_layout.canvas.x, rich_layout.canvas.y)];
-    assert_eq!(first_selected.bg, TundraTheme::default_dark().accent);
+    assert_eq!(first_selected.bg, TundraTheme::default_dark().accent_color);
 }
 
 #[test]

@@ -133,7 +133,7 @@ fn health_renderer_draws_two_columns_statuses_and_admin_details() {
     assert!(region_has_fg(
         &terminal,
         layout.rows[0].area,
-        TundraTheme::default_dark().accent
+        TundraTheme::default_dark().accent_color
     ));
     assert!(region_has_fg(&terminal, layout.rows[1].area, Color::Yellow));
     assert!(region_has_fg(

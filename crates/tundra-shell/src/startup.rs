@@ -81,22 +81,64 @@ pub enum ShellScreen {
     ExitConfirm,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ShellAppConfig {
     pub home_mode: Option<ShellHomeMode>,
     pub border_shape: tundra_ui::BorderShape,
+    pub border_color: ratatui::style::Color,
+    pub accent_color: ratatui::style::Color,
+}
+
+impl Default for ShellAppConfig {
+    fn default() -> Self {
+        Self {
+            home_mode: None,
+            border_shape: tundra_ui::BorderShape::Rounded,
+            border_color: ratatui::style::Color::White,
+            accent_color: ratatui::style::Color::Cyan,
+        }
+    }
 }
 
 impl ShellAppConfig {
-    fn from_storage_config(config: &tundra_storage::StorageConfig) -> Self {
+    pub(crate) fn from_storage_config(config: &tundra_storage::StorageConfig) -> Self {
         let border_shape = match config.appearance.border_shape {
             tundra_storage::BorderShape::Rounded => tundra_ui::BorderShape::Rounded,
             tundra_storage::BorderShape::Square => tundra_ui::BorderShape::Square,
         };
+        let border_color = ui_theme_color(config.appearance.border_color);
+        let accent_color = ui_theme_color(config.appearance.accent_color);
         Self {
             border_shape,
+            border_color,
+            accent_color,
             ..Self::default()
         }
+    }
+}
+
+pub(crate) const fn ui_theme_color(color: tundra_storage::BorderColor) -> ratatui::style::Color {
+    use ratatui::style::Color;
+    use tundra_storage::BorderColor;
+
+    match color {
+        BorderColor::Black => Color::Black,
+        BorderColor::Red => Color::Red,
+        BorderColor::Green => Color::Green,
+        BorderColor::Yellow => Color::Yellow,
+        BorderColor::Blue => Color::Blue,
+        BorderColor::Magenta => Color::Magenta,
+        BorderColor::Cyan => Color::Cyan,
+        BorderColor::Gray => Color::Gray,
+        BorderColor::DarkGray => Color::DarkGray,
+        BorderColor::LightRed => Color::LightRed,
+        BorderColor::LightGreen => Color::LightGreen,
+        BorderColor::LightYellow => Color::LightYellow,
+        BorderColor::LightBlue => Color::LightBlue,
+        BorderColor::LightMagenta => Color::LightMagenta,
+        BorderColor::LightCyan => Color::LightCyan,
+        BorderColor::White => Color::White,
+        BorderColor::Rgb(red, green, blue) => Color::Rgb(red, green, blue),
     }
 }
 

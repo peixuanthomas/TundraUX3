@@ -1710,10 +1710,10 @@ fn render_menu_bar(
         let style = if active {
             Style::default()
                 .fg(theme.background)
-                .bg(theme.accent)
+                .bg(theme.accent_color)
                 .add_modifier(Modifier::BOLD)
         } else if model.focus == EditorFocus::MenuBar {
-            Style::default().fg(theme.accent).bg(Color::DarkGray)
+            Style::default().fg(theme.accent_color).bg(Color::DarkGray)
         } else {
             Style::default().fg(theme.foreground).bg(Color::DarkGray)
         };
@@ -1727,7 +1727,7 @@ fn render_menu_bar(
         let style = if active {
             Style::default()
                 .fg(theme.background)
-                .bg(theme.accent)
+                .bg(theme.accent_color)
                 .add_modifier(Modifier::BOLD)
         } else {
             Style::default().fg(theme.muted).bg(Color::DarkGray)
@@ -1763,7 +1763,7 @@ fn render_menu_popup(
         } else if active_mode {
             Style::default()
                 .fg(theme.background)
-                .bg(theme.accent)
+                .bg(theme.accent_color)
                 .add_modifier(Modifier::BOLD)
         } else {
             theme.body_style()
@@ -1797,7 +1797,7 @@ fn render_quick_menu(frame: &mut Frame<'_>, layout: &EditorLayout, theme: &Tundr
                 EditorQuickAction::Paragraph => theme.body_style(),
                 EditorQuickAction::Heading(level) => {
                     let mut style = Style::default()
-                        .fg(theme.accent)
+                        .fg(theme.accent_color)
                         .bg(theme.background)
                         .add_modifier(Modifier::BOLD);
                     if level == 1 {
@@ -1852,7 +1852,7 @@ fn render_settings(
         let style = if selected {
             Style::default()
                 .fg(theme.background)
-                .bg(theme.accent)
+                .bg(theme.accent_color)
                 .add_modifier(Modifier::BOLD)
         } else {
             theme.body_style()
@@ -1879,7 +1879,7 @@ fn render_settings(
         let style = if selected {
             Style::default()
                 .fg(theme.background)
-                .bg(theme.accent)
+                .bg(theme.accent_color)
                 .add_modifier(Modifier::BOLD)
         } else {
             theme.body_style()
@@ -1943,7 +1943,7 @@ fn render_settings(
         let style = if settings.selected == field {
             Style::default()
                 .fg(theme.background)
-                .bg(theme.accent)
+                .bg(theme.accent_color)
                 .add_modifier(Modifier::BOLD)
         } else {
             theme.body_style()
@@ -2001,7 +2001,7 @@ fn render_toolbar(
         } else if active || selected {
             Style::default()
                 .fg(theme.background)
-                .bg(theme.accent)
+                .bg(theme.accent_color)
                 .add_modifier(Modifier::BOLD)
         } else {
             theme.body_style()
@@ -2200,7 +2200,7 @@ fn render_status_bar(
     };
     let text = terminal_safe_text(&text).into_owned();
     let style = if model.focus == EditorFocus::StatusBar {
-        Style::default().fg(theme.background).bg(theme.accent)
+        Style::default().fg(theme.background).bg(theme.accent_color)
     } else {
         Style::default().fg(theme.foreground).bg(Color::DarkGray)
     };
@@ -2281,7 +2281,7 @@ fn styled_line(
             let style = if selected {
                 base_style
                     .fg(theme.background)
-                    .bg(theme.accent)
+                    .bg(theme.accent_color)
                     .add_modifier(Modifier::BOLD)
             } else {
                 base_style
@@ -2360,7 +2360,7 @@ fn source_mapping_is_selected(mapping: DisplaySource, selection: EditorSourceSel
 fn span_style(span: &EditorRenderSpan, theme: &TundraTheme) -> Style {
     let foreground = match span.color {
         EditorSpanColor::Normal => theme.foreground,
-        EditorSpanColor::Accent => theme.accent,
+        EditorSpanColor::Accent => theme.accent_color,
         EditorSpanColor::Muted => theme.muted,
         EditorSpanColor::Warning => Color::Yellow,
         EditorSpanColor::Error => theme.error,

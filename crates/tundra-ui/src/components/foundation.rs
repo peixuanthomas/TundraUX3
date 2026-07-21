@@ -242,10 +242,10 @@ pub(crate) fn interactive_style(state: ComponentState, theme: &TundraTheme) -> S
     if state.selected {
         style = style
             .fg(theme.background)
-            .bg(theme.accent)
+            .bg(theme.accent_color)
             .add_modifier(Modifier::BOLD);
     } else if state.hovered {
-        style = style.fg(theme.accent);
+        style = style.fg(theme.accent_color);
     }
 
     if state.focused {

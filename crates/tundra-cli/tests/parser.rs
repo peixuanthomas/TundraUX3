@@ -11,7 +11,7 @@ use tundra_platform::mock::{MockCall, MockPlatform, UnsupportedPlatform};
 use tundra_platform::{
     Platform, PlatformKind, UserDirs, build_macos_app_paths, build_windows_app_paths,
 };
-use tundra_storage::{StorageConfig, StorageLayout, StorageManager};
+use tundra_storage::{BorderColor, BorderShape, StorageConfig, StorageLayout, StorageManager};
 use tundra_watchdog::{
     BoundaryKind, BoundarySpec, ProcessWatchdog, RecoveryOutcome, WatchdogConfig, WatchdogRuntime,
 };
@@ -79,9 +79,25 @@ fn config_args_parse_safe_get_and_set_commands() {
     );
     assert_eq!(
         parse_args(["config", "set", "theme", "light"]),
-        Ok(CliCommand::Config(ConfigAction::Set(ConfigUpdate::Theme(
-            "light".to_string()
-        ))))
+        Err(CliError::ReadOnlyConfigField("theme".to_string()))
+    );
+    assert_eq!(
+        parse_args(["config", "set", "border-shape", "square"]),
+        Ok(CliCommand::Config(ConfigAction::Set(
+            ConfigUpdate::BorderShape("square".to_string())
+        )))
+    );
+    assert_eq!(
+        parse_args(["config", "set", "border_color", "#aBc123"]),
+        Ok(CliCommand::Config(ConfigAction::Set(
+            ConfigUpdate::BorderColor("#aBc123".to_string())
+        )))
+    );
+    assert_eq!(
+        parse_args(["config", "set", "accent_color", "light-magenta"]),
+        Ok(CliCommand::Config(ConfigAction::Set(
+            ConfigUpdate::AccentColor("light-magenta".to_string())
+        )))
     );
     assert_eq!(
         parse_args(["config", "set", "address", "New", "York"]),
@@ -416,17 +432,17 @@ fn weathr_command_uses_default_options_when_storage_config_is_corrupt() {
 }
 
 #[test]
-fn config_set_theme_updates_config_without_changing_users() {
+fn config_set_border_theme_fields_normalizes_and_preserves_users() {
     let mut stdout = Vec::new();
     let mut stderr = Vec::new();
-    let tree = TempTree::new("config-set-theme");
+    let tree = TempTree::new("config-set-border-theme-fields");
     let platform = mock_windows_platform(tree.path());
     let app_paths = platform.app_paths().expect("mock app paths");
     let opened = StorageManager::open(app_paths).expect("storage initializes");
     let users_before = opened.manager.load_users().expect("users load");
 
     let exit_code = run_with_platform(
-        ["config", "set", "theme", "light"],
+        ["config", "set", "border-shape", "square"],
         &platform,
         &mut stdout,
         &mut stderr,
@@ -435,11 +451,288 @@ fn config_set_theme_updates_config_without_changing_users() {
     assert_eq!(exit_code, 0);
     assert!(stderr.is_empty());
     let stdout = String::from_utf8(stdout).expect("config output should be utf8");
-    assert!(stdout.contains("Updated theme: light"));
-    assert_eq!(opened.manager.load_config().expect("config").theme, "light");
+    assert!(stdout.contains("Updated border shape: square"));
+    assert_eq!(
+        opened
+            .manager
+            .load_config()
+            .expect("config")
+            .appearance
+            .border_shape,
+        BorderShape::Square
+    );
+
+    let mut stdout = Vec::new();
+    let mut stderr = Vec::new();
+    let exit_code = run_with_platform(
+        ["config", "set", "border-color", "LiGhT-CyAn"],
+        &platform,
+        &mut stdout,
+        &mut stderr,
+    );
+
+    assert_eq!(exit_code, 0);
+    assert!(stderr.is_empty());
+    assert_eq!(
+        String::from_utf8(stdout).expect("config output should be utf8"),
+        "Updated border color: light-cyan\n"
+    );
+    assert_eq!(
+        opened
+            .manager
+            .load_config()
+            .expect("config")
+            .appearance
+            .border_color,
+        BorderColor::LightCyan
+    );
     assert_eq!(
         opened.manager.load_users().expect("users reload"),
         users_before
+    );
+}
+
+#[test]
+fn config_border_color_accepts_hex_and_default_then_reports_canonical_values() {
+    let mut stdout = Vec::new();
+    let mut stderr = Vec::new();
+    let tree = TempTree::new("config-border-color-canonical-values");
+    let platform = mock_windows_platform(tree.path());
+    let app_paths = platform.app_paths().expect("mock app paths");
+    let opened = StorageManager::open(app_paths).expect("storage initializes");
+
+    assert_eq!(
+        run_with_platform(
+            ["config", "set", "border-color", "#aBc123"],
+            &platform,
+            &mut stdout,
+            &mut stderr,
+        ),
+        0
+    );
+    assert!(stderr.is_empty());
+    assert_eq!(
+        String::from_utf8(stdout).expect("config output should be utf8"),
+        "Updated border color: #ABC123\n"
+    );
+    assert_eq!(
+        opened
+            .manager
+            .load_config()
+            .expect("config")
+            .appearance
+            .border_color,
+        BorderColor::Rgb(0xAB, 0xC1, 0x23)
+    );
+
+    let mut stdout = Vec::new();
+    let mut stderr = Vec::new();
+    assert_eq!(
+        run_with_platform(
+            ["config", "set", "border-color", "default"],
+            &platform,
+            &mut stdout,
+            &mut stderr,
+        ),
+        0
+    );
+    assert!(stderr.is_empty());
+    assert_eq!(
+        String::from_utf8(stdout).expect("config output should be utf8"),
+        "Updated border color: white\n"
+    );
+    assert_eq!(
+        opened
+            .manager
+            .load_config()
+            .expect("config")
+            .appearance
+            .border_color,
+        BorderColor::White
+    );
+}
+
+#[test]
+fn config_accent_color_accepts_hex_and_default_then_reports_canonical_values() {
+    let mut stdout = Vec::new();
+    let mut stderr = Vec::new();
+    let tree = TempTree::new("config-accent-color-canonical-values");
+    let platform = mock_windows_platform(tree.path());
+    let app_paths = platform.app_paths().expect("mock app paths");
+    let opened = StorageManager::open(app_paths).expect("storage initializes");
+
+    assert_eq!(
+        run_with_platform(
+            ["config", "set", "accent-color", "#aBc123"],
+            &platform,
+            &mut stdout,
+            &mut stderr,
+        ),
+        0
+    );
+    assert!(stderr.is_empty());
+    assert_eq!(
+        String::from_utf8(stdout).expect("config output should be utf8"),
+        "Updated accent color: #ABC123\n"
+    );
+    assert_eq!(
+        opened
+            .manager
+            .load_config()
+            .expect("config")
+            .appearance
+            .accent_color,
+        BorderColor::Rgb(0xAB, 0xC1, 0x23)
+    );
+
+    let mut stdout = Vec::new();
+    let mut stderr = Vec::new();
+    assert_eq!(
+        run_with_platform(
+            ["config", "set", "accent-color", "default"],
+            &platform,
+            &mut stdout,
+            &mut stderr,
+        ),
+        0
+    );
+    assert!(stderr.is_empty());
+    assert_eq!(
+        String::from_utf8(stdout).expect("config output should be utf8"),
+        "Updated accent color: cyan\n"
+    );
+    assert_eq!(
+        opened
+            .manager
+            .load_config()
+            .expect("config")
+            .appearance
+            .accent_color,
+        BorderColor::Cyan
+    );
+
+    let mut stdout = Vec::new();
+    let mut stderr = Vec::new();
+    assert_eq!(
+        run_with_platform(
+            ["config", "set", "accent-color", "LiGhT-MaGeNtA"],
+            &platform,
+            &mut stdout,
+            &mut stderr,
+        ),
+        0
+    );
+    assert!(stderr.is_empty());
+    assert_eq!(
+        String::from_utf8(stdout).expect("config output should be utf8"),
+        "Updated accent color: light-magenta\n"
+    );
+
+    let mut stdout = Vec::new();
+    let mut stderr = Vec::new();
+    assert_eq!(
+        run_with_platform(
+            ["config", "get", "accent-color"],
+            &platform,
+            &mut stdout,
+            &mut stderr,
+        ),
+        0
+    );
+    assert!(stderr.is_empty());
+    assert_eq!(
+        String::from_utf8(stdout).expect("config output should be utf8"),
+        "accent-color = light-magenta\n"
+    );
+}
+
+#[test]
+fn config_get_theme_and_full_config_include_border_summary() {
+    let mut stdout = Vec::new();
+    let mut stderr = Vec::new();
+    let tree = TempTree::new("config-get-theme-summary");
+    let platform = mock_windows_platform(tree.path());
+
+    assert_eq!(
+        run_with_platform(
+            ["config", "get", "theme"],
+            &platform,
+            &mut stdout,
+            &mut stderr,
+        ),
+        0
+    );
+    assert!(stderr.is_empty());
+    assert_eq!(
+        String::from_utf8(stdout).expect("config output should be utf8"),
+        "border-shape = rounded\nborder-color = white\naccent-color = cyan\n"
+    );
+
+    let mut stdout = Vec::new();
+    let mut stderr = Vec::new();
+    assert_eq!(
+        run_with_platform(["config", "get"], &platform, &mut stdout, &mut stderr),
+        0
+    );
+    assert!(stderr.is_empty());
+    let stdout = String::from_utf8(stdout).expect("config output should be utf8");
+    assert!(
+        stdout.starts_with("border-shape = rounded\nborder-color = white\naccent-color = cyan\n")
+    );
+}
+
+#[test]
+fn config_rejects_invalid_border_values_without_writing_config() {
+    let tree = TempTree::new("config-reject-invalid-border-values");
+    let platform = mock_windows_platform(tree.path());
+    let app_paths = platform.app_paths().expect("mock app paths");
+    let opened = StorageManager::open(app_paths).expect("storage initializes");
+    let config_before = fs::read(&opened.manager.layout().config_path).expect("config file reads");
+
+    for args in [
+        ["config", "set", "border-shape", "pill"],
+        ["config", "set", "border-color", "#12345G"],
+        ["config", "set", "accent-color", "#12345G"],
+    ] {
+        let mut stdout = Vec::new();
+        let mut stderr = Vec::new();
+        let exit_code = run_with_platform(args, &platform, &mut stdout, &mut stderr);
+
+        assert_ne!(exit_code, 0);
+        assert!(stdout.is_empty());
+        assert!(!stderr.is_empty());
+        assert_eq!(
+            fs::read(&opened.manager.layout().config_path).expect("config file remains readable"),
+            config_before
+        );
+    }
+}
+
+#[test]
+fn config_set_theme_is_read_only_and_does_not_write_config() {
+    let mut stdout = Vec::new();
+    let mut stderr = Vec::new();
+    let tree = TempTree::new("config-set-theme-read-only");
+    let platform = mock_windows_platform(tree.path());
+    let app_paths = platform.app_paths().expect("mock app paths");
+    let opened = StorageManager::open(app_paths).expect("storage initializes");
+    let config_before = fs::read(&opened.manager.layout().config_path).expect("config file reads");
+
+    let exit_code = run_with_platform(
+        ["config", "set", "theme", "light"],
+        &platform,
+        &mut stdout,
+        &mut stderr,
+    );
+
+    assert_eq!(exit_code, 2);
+    assert!(stdout.is_empty());
+    let stderr = String::from_utf8(stderr).expect("config error should be utf8");
+    assert!(stderr.contains("read-only summary"));
+    assert!(stderr.contains("accent-color instead"));
+    assert_eq!(
+        fs::read(&opened.manager.layout().config_path).expect("config file remains readable"),
+        config_before
     );
 }
 

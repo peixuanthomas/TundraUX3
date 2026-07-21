@@ -23,6 +23,9 @@ pub enum ConfigAction {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ConfigField {
     Theme,
+    BorderShape,
+    BorderColor,
+    AccentColor,
     Language,
     Timezone,
     Address,
@@ -30,7 +33,9 @@ pub enum ConfigField {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ConfigUpdate {
-    Theme(String),
+    BorderShape(String),
+    BorderColor(String),
+    AccentColor(String),
     Language(String),
     Timezone(String),
     Address(String),
@@ -40,6 +45,7 @@ pub enum ConfigUpdate {
 pub enum CliError {
     ForbiddenConfigField(String),
     MissingArgument(&'static str),
+    ReadOnlyConfigField(String),
     UnknownCommand(String),
     UnknownConfigCommand(String),
     UnsupportedConfigField(String),
@@ -56,6 +62,10 @@ impl fmt::Display for CliError {
                 )
             }
             Self::MissingArgument(argument) => write!(formatter, "missing argument: {argument}"),
+            Self::ReadOnlyConfigField(field) => write!(
+                formatter,
+                "config field {field:?} is a read-only summary; set border-shape, border-color, or accent-color instead"
+            ),
             Self::UnknownCommand(command) => write!(formatter, "unknown command: {command}"),
             Self::UnknownConfigCommand(command) => {
                 write!(formatter, "unknown config command: {command}")
@@ -136,7 +146,10 @@ fn parse_config_set(args: &[String]) -> Result<ConfigAction, CliError> {
     let value = joined_config_value(&args[1..]).ok_or(CliError::MissingArgument("config value"))?;
 
     match parse_config_field(field)? {
-        ConfigField::Theme => Ok(ConfigAction::Set(ConfigUpdate::Theme(value))),
+        ConfigField::Theme => Err(CliError::ReadOnlyConfigField(field.clone())),
+        ConfigField::BorderShape => Ok(ConfigAction::Set(ConfigUpdate::BorderShape(value))),
+        ConfigField::BorderColor => Ok(ConfigAction::Set(ConfigUpdate::BorderColor(value))),
+        ConfigField::AccentColor => Ok(ConfigAction::Set(ConfigUpdate::AccentColor(value))),
         ConfigField::Language => Ok(ConfigAction::Set(ConfigUpdate::Language(value))),
         ConfigField::Timezone => Ok(ConfigAction::Set(ConfigUpdate::Timezone(value))),
         ConfigField::Address => Ok(ConfigAction::Set(ConfigUpdate::Address(value))),
@@ -159,6 +172,9 @@ fn joined_config_value(args: &[String]) -> Option<String> {
 fn parse_config_field(field: &str) -> Result<ConfigField, CliError> {
     match field {
         "theme" => Ok(ConfigField::Theme),
+        "border-shape" | "border_shape" => Ok(ConfigField::BorderShape),
+        "border-color" | "border_color" => Ok(ConfigField::BorderColor),
+        "accent-color" | "accent_color" => Ok(ConfigField::AccentColor),
         "language" | "locale" => Ok(ConfigField::Language),
         "timezone" | "time-zone" | "tz" => Ok(ConfigField::Timezone),
         "address" | "location" => Ok(ConfigField::Address),

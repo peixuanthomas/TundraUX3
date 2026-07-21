@@ -131,8 +131,18 @@ fn setup_admin_page_highlights_focused_text_box() {
     let password_area = setup_admin_field_area(main, SetupField::AdminPassword);
 
     assert!(
-        region_has_fg(&terminal, password_area, theme.accent),
+        region_has_fg(&terminal, password_area, theme.accent_color),
         "focused admin password box should use the accent style"
+    );
+    assert_eq!(
+        terminal
+            .backend()
+            .buffer()
+            .cell((password_area.x, password_area.y))
+            .expect("focused password field has a border")
+            .fg,
+        theme.accent_color,
+        "focused admin password border should use the accent color"
     );
 }
 
@@ -183,7 +193,7 @@ fn setup_renderer_draws_timezone_map_layers() {
 
     let gray_map_cells = map_cells_with_fg(&terminal, theme.muted);
     let selected_timezone_cells = map_cells_with_fg(&terminal, Color::White);
-    let marker_cells = map_cells_with_fg(&terminal, theme.accent);
+    let marker_cells = map_cells_with_fg(&terminal, theme.accent_color);
 
     assert!(
         !gray_map_cells.is_empty(),
@@ -493,9 +503,10 @@ fn map_test_theme() -> TundraTheme {
     TundraTheme {
         background: Color::Black,
         foreground: Color::Blue,
-        accent: Color::LightMagenta,
+        accent_color: Color::LightMagenta,
         muted: Color::Gray,
         error: Color::Red,
+        border_color: Color::White,
         border_shape: tundra_ui::BorderShape::Rounded,
     }
 }

@@ -21,9 +21,11 @@ impl BorderShape {
 pub struct TundraTheme {
     pub background: Color,
     pub foreground: Color,
-    pub accent: Color,
+    /// Color used for selected items, focus affordances, and other emphasis.
+    pub accent_color: Color,
     pub muted: Color,
     pub error: Color,
+    pub border_color: Color,
     pub border_shape: BorderShape,
 }
 
@@ -32,9 +34,10 @@ impl TundraTheme {
         Self {
             background: Color::Black,
             foreground: Color::Gray,
-            accent: Color::Cyan,
+            accent_color: Color::Cyan,
             muted: Color::DarkGray,
             error: Color::Red,
+            border_color: Color::White,
             border_shape: BorderShape::Rounded,
         }
     }
@@ -44,17 +47,44 @@ impl TundraTheme {
         self
     }
 
+    pub fn with_border_color(mut self, border_color: Color) -> Self {
+        self.border_color = border_color;
+        self
+    }
+
+    pub fn with_accent_color(mut self, accent_color: Color) -> Self {
+        self.accent_color = accent_color;
+        self
+    }
+
     pub const fn border_type(&self) -> BorderType {
         self.border_shape.border_type()
     }
 
     pub fn block(&self) -> Block<'static> {
-        Block::default().border_type(self.border_type())
+        Block::default()
+            .border_type(self.border_type())
+            .border_style(self.border_style())
+    }
+
+    pub fn border_style(&self) -> Style {
+        solid_border_style(Style::default().fg(self.border_color).bg(self.background))
+    }
+
+    /// Border style for a selectable control. A selected control is outlined
+    /// with the accent color; every other state keeps the configured border.
+    pub fn selectable_border_style(&self, selected: bool) -> Style {
+        let color = if selected {
+            self.accent_color
+        } else {
+            self.border_color
+        };
+        solid_border_style(Style::default().fg(color).bg(self.background))
     }
 
     pub fn title_style(&self) -> Style {
         Style::default()
-            .fg(self.accent)
+            .fg(self.accent_color)
             .bg(self.background)
             .add_modifier(Modifier::BOLD)
     }

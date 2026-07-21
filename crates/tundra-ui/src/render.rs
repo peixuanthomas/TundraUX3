@@ -796,6 +796,7 @@ pub fn render_time_sync_failure_dialog(
                 .block()
                 .title("Time Sync")
                 .borders(Borders::ALL)
+                .border_style(solid_border_style(theme.error_style()))
                 .style(theme.error_style()),
         )
         .alignment(Alignment::Center)
@@ -2056,8 +2057,10 @@ fn render_login_user_list(
                 .title("Users")
                 .title_style(block_style)
                 .borders(Borders::ALL)
-                .border_style(solid_border_style(block_style))
-                .style(block_style),
+                .style(block_style)
+                .border_style(
+                    theme.selectable_border_style(model.focused_field == LoginField::UserList),
+                ),
         )
         .highlight_symbol("> ")
         .highlight_style(theme.title_style());
@@ -2141,8 +2144,10 @@ fn render_login_password_field(
                     .title("Password")
                     .title_style(block_style)
                     .borders(Borders::ALL)
-                    .border_style(solid_border_style(block_style))
-                    .style(block_style),
+                    .style(block_style)
+                    .border_style(
+                        theme.selectable_border_style(model.focused_field == LoginField::Password),
+                    ),
             )
             .wrap(Wrap { trim: true }),
         area,
@@ -2714,8 +2719,8 @@ fn render_setup_admin_field(
         .title(title)
         .title_style(box_style)
         .borders(Borders::ALL)
-        .border_style(solid_border_style(box_style))
-        .style(box_style);
+        .style(box_style)
+        .border_style(theme.selectable_border_style(focused));
     let inner = block.inner(field_area);
     frame.render_widget(block, field_area);
 
@@ -3885,8 +3890,8 @@ fn render_user_main(frame: &mut Frame<'_>, area: Rect, home: &HomeViewModel, the
                 theme
                     .block()
                     .borders(Borders::ALL)
-                    .border_style(solid_border_style(style))
                     .style(style)
+                    .border_style(theme.selectable_border_style(selected))
                     .title(if selected { "Selected" } else { "" })
                     .title_style(style),
             )
@@ -4126,8 +4131,8 @@ fn render_status_time_button(
             theme
                 .block()
                 .borders(Borders::ALL)
-                .border_style(solid_border_style(style))
-                .style(style),
+                .style(style)
+                .border_style(theme.selectable_border_style(selected)),
         )
         .alignment(Alignment::Center)
         .wrap(Wrap { trim: true });

@@ -3,6 +3,7 @@ use std::io::Write;
 use std::path::Path;
 
 use tundra_platform::Platform;
+use tundra_storage::{BorderColor, StorageConfig, StorageLayout, StorageManager};
 use tundra_watchdog::{AppWatchdog, ProcessWatchdog};
 use tundra_weathr::LaunchOptions;
 
@@ -152,12 +153,16 @@ where
         Ok(CliCommand::New) => run_new(platform, stdout, stderr),
         Ok(CliCommand::Paths) => run_paths(platform, stdout, stderr),
         Ok(CliCommand::Doctor) => run_doctor(platform, stdout, stderr, None),
-        Ok(CliCommand::TestFrost) => run_animation_preview(stderr, "frost", || {
-            tundra_shell::run_frost_animation_preview(stdout)
-        }),
-        Ok(CliCommand::TestMatrix) => run_animation_preview(stderr, "Matrix", || {
-            tundra_shell::run_matrix_animation_preview(stdout)
-        }),
+        Ok(CliCommand::TestFrost) => {
+            run_configured_animation_preview(platform, stderr, "frost", |color| {
+                tundra_shell::run_frost_animation_preview_with_color(stdout, color)
+            })
+        }
+        Ok(CliCommand::TestMatrix) => {
+            run_configured_animation_preview(platform, stderr, "Matrix", |color| {
+                tundra_shell::run_matrix_animation_preview_with_color(stdout, color)
+            })
+        }
         Ok(CliCommand::Editor) => run_editor(stderr, || {
             tundra_shell::run_shell_blocking_managed(
                 stdout,
@@ -247,12 +252,16 @@ where
         Ok(CliCommand::New) => run_new(platform, stdout, stderr),
         Ok(CliCommand::Paths) => run_paths(platform, stdout, stderr),
         Ok(CliCommand::Doctor) => run_doctor(platform, stdout, stderr, asset_root),
-        Ok(CliCommand::TestFrost) => run_animation_preview(stderr, "frost", || {
-            tundra_shell::run_frost_animation_preview(stdout)
-        }),
-        Ok(CliCommand::TestMatrix) => run_animation_preview(stderr, "Matrix", || {
-            tundra_shell::run_matrix_animation_preview(stdout)
-        }),
+        Ok(CliCommand::TestFrost) => {
+            run_configured_animation_preview(platform, stderr, "frost", |color| {
+                tundra_shell::run_frost_animation_preview_with_color(stdout, color)
+            })
+        }
+        Ok(CliCommand::TestMatrix) => {
+            run_configured_animation_preview(platform, stderr, "Matrix", |color| {
+                tundra_shell::run_matrix_animation_preview_with_color(stdout, color)
+            })
+        }
         Ok(CliCommand::Editor) => run_editor(stderr, || {
             tundra_shell::run_shell_blocking(stdout, tundra_shell::ShellLaunchConfig::editor())
         }),
@@ -297,4 +306,40 @@ where
             1
         }
     }
+}
+
+fn run_configured_animation_preview<Stderr, Launcher, LaunchError>(
+    platform: &dyn Platform,
+    stderr: &mut Stderr,
+    name: &str,
+    launcher: Launcher,
+) -> i32
+where
+    Stderr: Write,
+    Launcher: FnOnce(BorderColor) -> Result<(), LaunchError>,
+    LaunchError: fmt::Display,
+{
+    let color = match configured_border_color(platform) {
+        Ok(color) => color,
+        Err(error) => {
+            let _ = writeln!(
+                stderr,
+                "ERROR: could not load theme for {name} preview: {error}"
+            );
+            return 1;
+        }
+    };
+    run_animation_preview(stderr, name, || launcher(color))
+}
+
+fn configured_border_color(platform: &dyn Platform) -> Result<BorderColor, String> {
+    let paths = platform.app_paths().map_err(|error| error.to_string())?;
+    let storage = StorageManager::from_layout(StorageLayout::from_app_paths(&paths));
+    if !storage.layout().config_path.exists() {
+        return Ok(StorageConfig::default().appearance.border_color);
+    }
+    storage
+        .load_config()
+        .map(|config| config.appearance.border_color)
+        .map_err(|error| error.to_string())
 }

@@ -2,7 +2,7 @@ use ratatui::buffer::Buffer;
 use ratatui::layout::{Alignment, Rect};
 use ratatui::widgets::{Borders, Paragraph, Widget};
 
-use crate::{TundraTheme, theme::solid_border_style};
+use crate::TundraTheme;
 
 use super::{
     ComponentEvent, ComponentId, ComponentState, InputEvent, Key, MouseKind, contains_point,
@@ -107,8 +107,8 @@ impl Button {
                 theme
                     .block()
                     .borders(Borders::ALL)
-                    .border_style(solid_border_style(style))
-                    .style(style),
+                    .style(style)
+                    .border_style(theme.selectable_border_style(self.state.selected)),
             );
 
         button.render(area, buffer);

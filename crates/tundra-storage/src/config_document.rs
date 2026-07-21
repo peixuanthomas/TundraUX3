@@ -1,6 +1,8 @@
 use std::collections::BTreeMap;
+use std::fmt;
+use std::str::FromStr;
 
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::schema::{SCHEMA_VERSION, VersionedDocument};
 
@@ -9,7 +11,7 @@ pub const SUPPORTED_LANGUAGE: &str = "en-US";
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct StorageConfig {
     pub schema_version: u32,
-    #[serde(default = "default_theme")]
+    #[serde(default = "default_theme", skip_serializing)]
     pub theme: String,
     #[serde(default = "default_language")]
     pub language: String,
@@ -63,10 +65,23 @@ impl VersionedDocument for StorageConfig {
     }
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(default)]
 pub struct AppearanceConfig {
     pub border_shape: BorderShape,
+    pub border_color: BorderColor,
+    #[serde(deserialize_with = "deserialize_accent_color")]
+    pub accent_color: AccentColor,
+}
+
+impl Default for AppearanceConfig {
+    fn default() -> Self {
+        Self {
+            border_shape: BorderShape::default(),
+            border_color: BorderColor::default(),
+            accent_color: default_accent_color(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -180,6 +195,194 @@ pub struct LauncherConfig {
     /// Legacy directory pins remain readable for backwards compatibility, but Launcher does not
     /// treat directories as executable entries.
     pub pinned_dirs: Vec<String>,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum BorderColor {
+    Black,
+    Red,
+    Green,
+    Yellow,
+    Blue,
+    Magenta,
+    Cyan,
+    Gray,
+    DarkGray,
+    LightRed,
+    LightGreen,
+    LightYellow,
+    LightBlue,
+    LightMagenta,
+    LightCyan,
+    #[default]
+    White,
+    Rgb(u8, u8, u8),
+}
+
+/// A semantic alias for colors used to emphasize selected and focused UI elements.
+///
+/// Accent and border colors intentionally share the same serialized color vocabulary.
+pub type AccentColor = BorderColor;
+
+/// The legacy UI visual accent: cyan.
+pub const DEFAULT_ACCENT_COLOR: AccentColor = AccentColor::Cyan;
+
+fn default_accent_color() -> AccentColor {
+    DEFAULT_ACCENT_COLOR
+}
+
+fn deserialize_accent_color<'de, DeserializerType>(
+    deserializer: DeserializerType,
+) -> Result<AccentColor, DeserializerType::Error>
+where
+    DeserializerType: Deserializer<'de>,
+{
+    let value = String::deserialize(deserializer)?;
+    if value.trim().eq_ignore_ascii_case("default") {
+        Ok(DEFAULT_ACCENT_COLOR)
+    } else {
+        value.parse().map_err(serde::de::Error::custom)
+    }
+}
+
+impl BorderColor {
+    pub const NAMED_VALUES: &'static [&'static str] = &[
+        "black",
+        "red",
+        "green",
+        "yellow",
+        "blue",
+        "magenta",
+        "cyan",
+        "gray",
+        "dark-gray",
+        "light-red",
+        "light-green",
+        "light-yellow",
+        "light-blue",
+        "light-magenta",
+        "light-cyan",
+        "white",
+    ];
+
+    pub const fn rgb(self) -> Option<(u8, u8, u8)> {
+        match self {
+            Self::Rgb(red, green, blue) => Some((red, green, blue)),
+            _ => None,
+        }
+    }
+}
+
+impl fmt::Display for BorderColor {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let name = match self {
+            Self::Black => "black",
+            Self::Red => "red",
+            Self::Green => "green",
+            Self::Yellow => "yellow",
+            Self::Blue => "blue",
+            Self::Magenta => "magenta",
+            Self::Cyan => "cyan",
+            Self::Gray => "gray",
+            Self::DarkGray => "dark-gray",
+            Self::LightRed => "light-red",
+            Self::LightGreen => "light-green",
+            Self::LightYellow => "light-yellow",
+            Self::LightBlue => "light-blue",
+            Self::LightMagenta => "light-magenta",
+            Self::LightCyan => "light-cyan",
+            Self::White => "white",
+            Self::Rgb(red, green, blue) => {
+                return write!(formatter, "#{red:02X}{green:02X}{blue:02X}");
+            }
+        };
+        formatter.write_str(name)
+    }
+}
+
+impl FromStr for BorderColor {
+    type Err = BorderColorParseError;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        let value = value.trim();
+        let normalized = value.to_ascii_lowercase();
+        let color = match normalized.as_str() {
+            "black" => Self::Black,
+            "red" => Self::Red,
+            "green" => Self::Green,
+            "yellow" => Self::Yellow,
+            "blue" => Self::Blue,
+            "magenta" => Self::Magenta,
+            "cyan" => Self::Cyan,
+            "gray" => Self::Gray,
+            "dark-gray" => Self::DarkGray,
+            "light-red" => Self::LightRed,
+            "light-green" => Self::LightGreen,
+            "light-yellow" => Self::LightYellow,
+            "light-blue" => Self::LightBlue,
+            "light-magenta" => Self::LightMagenta,
+            "light-cyan" => Self::LightCyan,
+            "white" | "default" => Self::White,
+            _ => parse_rgb(value)?,
+        };
+        Ok(color)
+    }
+}
+
+impl Serialize for BorderColor {
+    fn serialize<SerializerType>(
+        &self,
+        serializer: SerializerType,
+    ) -> Result<SerializerType::Ok, SerializerType::Error>
+    where
+        SerializerType: Serializer,
+    {
+        serializer.serialize_str(&self.to_string())
+    }
+}
+
+impl<'de> Deserialize<'de> for BorderColor {
+    fn deserialize<DeserializerType>(
+        deserializer: DeserializerType,
+    ) -> Result<Self, DeserializerType::Error>
+    where
+        DeserializerType: Deserializer<'de>,
+    {
+        let value = String::deserialize(deserializer)?;
+        value.parse().map_err(serde::de::Error::custom)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BorderColorParseError {
+    value: String,
+}
+
+impl fmt::Display for BorderColorParseError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            formatter,
+            "unsupported border color {:?}; use #RRGGBB or one of: {}",
+            self.value,
+            BorderColor::NAMED_VALUES.join(", ")
+        )
+    }
+}
+
+impl std::error::Error for BorderColorParseError {}
+
+fn parse_rgb(value: &str) -> Result<BorderColor, BorderColorParseError> {
+    let invalid = || BorderColorParseError {
+        value: value.to_string(),
+    };
+    let hex = value
+        .strip_prefix('#')
+        .filter(|hex| hex.len() == 6)
+        .ok_or_else(invalid)?;
+    let red = u8::from_str_radix(&hex[0..2], 16).map_err(|_| invalid())?;
+    let green = u8::from_str_radix(&hex[2..4], 16).map_err(|_| invalid())?;
+    let blue = u8::from_str_radix(&hex[4..6], 16).map_err(|_| invalid())?;
+    Ok(BorderColor::Rgb(red, green, blue))
 }
 
 impl LauncherConfig {

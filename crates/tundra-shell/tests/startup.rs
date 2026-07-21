@@ -8,7 +8,10 @@ use tundra_platform::{
     build_macos_app_paths, build_windows_app_paths,
 };
 use tundra_shell::{ShellLaunchConfig, ShellStartupError, prepare_shell_startup};
-use tundra_storage::{BorderShape as StorageBorderShape, StorageError, StorageManager};
+use tundra_storage::{
+    BorderColor as StorageBorderColor, BorderShape as StorageBorderShape, StorageError,
+    StorageManager,
+};
 use tundra_ui::BorderShape as UiBorderShape;
 
 #[test]
@@ -34,6 +37,7 @@ fn prepare_shell_startup_uses_windows_mock_app_paths() {
     assert!(startup.storage_report.warnings.is_empty());
     assert_eq!(startup.app_config.home_mode, None);
     assert_eq!(startup.app_config.border_shape, UiBorderShape::Rounded);
+    assert_eq!(startup.app_config.accent_color, ratatui::style::Color::Cyan);
     assert_eq!(startup.restored_session, None);
 }
 
@@ -49,6 +53,8 @@ fn prepare_shell_startup_maps_persisted_square_border_shape() {
         .manager;
     let mut config = manager.load_config().expect("config should load");
     config.appearance.border_shape = StorageBorderShape::Square;
+    config.appearance.border_color = StorageBorderColor::Rgb(0x38, 0xBD, 0xF8);
+    config.appearance.accent_color = StorageBorderColor::LightMagenta;
     manager.save_config(&config).expect("config should save");
     let platform = MockPlatform::new(user_dirs(base), app_paths)
         .with_kind(PlatformKind::Windows)
@@ -58,6 +64,14 @@ fn prepare_shell_startup_maps_persisted_square_border_shape() {
         prepare_shell_startup(&platform, ShellLaunchConfig::default()).expect("startup state");
 
     assert_eq!(startup.app_config.border_shape, UiBorderShape::Square);
+    assert_eq!(
+        startup.app_config.border_color,
+        ratatui::style::Color::Rgb(0x38, 0xBD, 0xF8)
+    );
+    assert_eq!(
+        startup.app_config.accent_color,
+        ratatui::style::Color::LightMagenta
+    );
 }
 
 #[test]

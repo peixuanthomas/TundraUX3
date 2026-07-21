@@ -1,7 +1,10 @@
 use std::io::Write;
 
 use tundra_platform::Platform;
-use tundra_storage::{StorageConfig, StorageLayout, StorageManager};
+use tundra_storage::{
+    AccentColor, BorderColor, BorderShape, DEFAULT_ACCENT_COLOR, StorageConfig, StorageLayout,
+    StorageManager,
+};
 
 use crate::arguments::{ConfigAction, ConfigField, ConfigUpdate};
 
@@ -69,7 +72,20 @@ fn load_or_default_config(storage: &StorageManager) -> Result<StorageConfig, Str
 fn write_config_value(output: &mut impl Write, config: &StorageConfig, field: Option<ConfigField>) {
     match field {
         Some(ConfigField::Theme) => {
-            let _ = writeln!(output, "theme = {}", config.theme);
+            write_theme_summary(output, config);
+        }
+        Some(ConfigField::BorderShape) => {
+            let _ = writeln!(
+                output,
+                "border-shape = {}",
+                border_shape_name(config.appearance.border_shape)
+            );
+        }
+        Some(ConfigField::BorderColor) => {
+            let _ = writeln!(output, "border-color = {}", config.appearance.border_color);
+        }
+        Some(ConfigField::AccentColor) => {
+            let _ = writeln!(output, "accent-color = {}", config.appearance.accent_color);
         }
         Some(ConfigField::Language) => {
             let _ = writeln!(output, "language = {}", config.language);
@@ -81,7 +97,7 @@ fn write_config_value(output: &mut impl Write, config: &StorageConfig, field: Op
             let _ = writeln!(output, "address = {}", config_address_summary(config));
         }
         None => {
-            let _ = writeln!(output, "theme = {}", config.theme);
+            write_theme_summary(output, config);
             let _ = writeln!(output, "language = {}", config.language);
             let _ = writeln!(output, "timezone = {}", config.timezone);
             let _ = writeln!(output, "address = {}", config_address_summary(config));
@@ -91,10 +107,36 @@ fn write_config_value(output: &mut impl Write, config: &StorageConfig, field: Op
 
 fn apply_config_update(config: &mut StorageConfig, update: ConfigUpdate) -> Result<String, String> {
     match update {
-        ConfigUpdate::Theme(value) => {
-            let value = clean_config_value("theme", value)?;
-            config.theme = value.clone();
-            Ok(format!("Updated theme: {value}"))
+        ConfigUpdate::BorderShape(value) => {
+            let value = clean_config_value("border-shape", value)?;
+            let border_shape = match value.to_ascii_lowercase().as_str() {
+                "rounded" => BorderShape::Rounded,
+                "square" => BorderShape::Square,
+                _ => {
+                    return Err(format!(
+                        "unsupported border shape {value:?}; available values: rounded, square"
+                    ));
+                }
+            };
+            config.appearance.border_shape = border_shape;
+            Ok(format!(
+                "Updated border shape: {}",
+                border_shape_name(border_shape)
+            ))
+        }
+        ConfigUpdate::BorderColor(value) => {
+            let value = clean_config_value("border-color", value)?;
+            let color = value
+                .parse::<BorderColor>()
+                .map_err(|error| error.to_string())?;
+            config.appearance.border_color = color;
+            Ok(format!("Updated border color: {color}"))
+        }
+        ConfigUpdate::AccentColor(value) => {
+            let value = clean_config_value("accent-color", value)?;
+            let color = parse_accent_color(&value)?;
+            config.appearance.accent_color = color;
+            Ok(format!("Updated accent color: {color}"))
         }
         ConfigUpdate::Language(value) => {
             let language = resolve_language(&value)?;
@@ -117,6 +159,33 @@ fn apply_config_update(config: &mut StorageConfig, update: ConfigUpdate) -> Resu
             config.timezone = timezone.id.clone();
             Ok(format!("Updated address: {}", timezone_summary(&timezone)))
         }
+    }
+}
+
+fn write_theme_summary(output: &mut impl Write, config: &StorageConfig) {
+    let _ = writeln!(
+        output,
+        "border-shape = {}",
+        border_shape_name(config.appearance.border_shape)
+    );
+    let _ = writeln!(output, "border-color = {}", config.appearance.border_color);
+    let _ = writeln!(output, "accent-color = {}", config.appearance.accent_color);
+}
+
+fn parse_accent_color(value: &str) -> Result<AccentColor, String> {
+    if value.eq_ignore_ascii_case("default") {
+        Ok(DEFAULT_ACCENT_COLOR)
+    } else {
+        value
+            .parse::<AccentColor>()
+            .map_err(|error| error.to_string())
+    }
+}
+
+const fn border_shape_name(border_shape: BorderShape) -> &'static str {
+    match border_shape {
+        BorderShape::Rounded => "rounded",
+        BorderShape::Square => "square",
     }
 }
 

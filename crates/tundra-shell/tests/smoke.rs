@@ -40,7 +40,16 @@ fn static_banner_renders_all_logo_lines() {
     render_static_banner(&mut output).expect("banner should render");
 
     let output = String::from_utf8(output).expect("banner should be utf8");
-    let actual_lines = output.lines().map(str::to_string).collect::<Vec<String>>();
+    assert!(output.starts_with("\x1B[97m"));
+    assert!(output.ends_with("\x1B[0m"));
+    let visible_output = output
+        .strip_prefix("\x1B[97m")
+        .and_then(|output| output.strip_suffix("\x1B[0m"))
+        .expect("static banner should wrap its output in white and reset ANSI sequences");
+    let actual_lines = visible_output
+        .lines()
+        .map(str::to_string)
+        .collect::<Vec<String>>();
     assert_eq!(actual_lines, expected_lines);
 }
 

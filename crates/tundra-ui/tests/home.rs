@@ -201,7 +201,11 @@ fn user_home_renders_ascii_entry_tiles_with_selected_accent() {
     let main = main_rect(100, 30);
     let selected_tile = tundra_ui::home_entry_tile_areas(main, home.entries().len())[1];
     assert!(
-        region_has_fg(&terminal, selected_tile, TundraTheme::default_dark().accent),
+        region_has_fg(
+            &terminal,
+            selected_tile,
+            TundraTheme::default_dark().accent_color
+        ),
         "selected home tile should use the accent style"
     );
 }
@@ -228,7 +232,7 @@ fn authenticated_user_and_debug_homes_render_single_line_account_logout() {
     assert!(!user_output.contains("U: users"));
     assert!(!user_output.contains("Arrows: select"));
     assert!(logout.width > 0 && logout.height == 1);
-    assert!(region_has_fg(&user_terminal, logout, theme.accent));
+    assert!(region_has_fg(&user_terminal, logout, theme.accent_color));
 
     let debug_home = HomeViewModel::user(
         "ignored",
@@ -388,7 +392,7 @@ fn default_dark_theme_exposes_expected_colors_and_styles() {
 
     assert_eq!(theme.background, Color::Black);
     assert_eq!(theme.foreground, Color::Gray);
-    assert_eq!(theme.accent, Color::Cyan);
+    assert_eq!(theme.accent_color, Color::Cyan);
     assert_eq!(theme.muted, Color::DarkGray);
     assert_eq!(theme.error, Color::Red);
     assert_eq!(theme.title_style().fg, Some(Color::Cyan));
@@ -495,7 +499,7 @@ fn status_bar_renders_selectable_time_button_on_the_right() {
         u16::try_from(label.chars().count()).unwrap() + 4
     );
     assert!(
-        region_has_fg(&terminal, button, TundraTheme::default_dark().accent),
+        region_has_fg(&terminal, button, TundraTheme::default_dark().accent_color),
         "selected time button should use the accent style"
     );
 }
@@ -811,6 +815,51 @@ fn modal_notification_tones_have_text_labels() {
 }
 
 #[test]
+fn notification_dialogs_keep_semantic_border_colors() {
+    let theme = TundraTheme::default().with_border_color(Color::LightMagenta);
+    let model = NotificationViewModel::new(
+        "warning",
+        NotificationLevel::Modal,
+        NotificationTone::Warning,
+        "Warning",
+        "Message",
+        vec![NotificationActionViewModel::new("ok", "OK")],
+    );
+    let area = Rect::new(0, 0, 80, 24);
+    let NotificationLayout::Dialog(layout) = notification_layout(area, &model) else {
+        panic!("notification should fit test terminal");
+    };
+    let mut notification_terminal = Terminal::new(TestBackend::new(80, 24)).expect("test terminal");
+    notification_terminal
+        .draw(|frame| render_notification_overlay(frame, area, &model, &theme))
+        .expect("render notification");
+    assert_eq!(
+        notification_terminal
+            .backend()
+            .buffer()
+            .cell((layout.dialog.x, layout.dialog.y))
+            .unwrap()
+            .fg,
+        theme.accent_color
+    );
+
+    let mut sync_terminal = Terminal::new(TestBackend::new(80, 24)).expect("test terminal");
+    sync_terminal
+        .draw(|frame| {
+            render_time_sync_failure_dialog(
+                frame,
+                frame.area(),
+                &TimeSyncDialogViewModel::new(),
+                &theme,
+            );
+        })
+        .expect("render time sync dialog");
+    assert_eq!(
+        sync_terminal.backend().buffer().cell((23, 9)).unwrap().fg,
+        theme.error
+    );
+}
+#[test]
 fn notification_layout_uses_nominal_size_and_adapts_to_full_shell_widths() {
     let model = NotificationViewModel::new(
         "42",
@@ -901,7 +950,7 @@ fn notification_layout_and_renderer_share_wrapped_message_and_stacked_action_rec
     assert!(region_has_fg(
         &terminal,
         layout.actions[0].area,
-        TundraTheme::default_dark().accent,
+        TundraTheme::default_dark().accent_color,
     ));
     assert!(region_has_fg(
         &terminal,
@@ -964,13 +1013,17 @@ fn login_renderer_masks_password_length() {
         usize::from(list_area.height.saturating_sub(2))
     );
     assert!(
-        region_has_fg(&terminal, password_area, TundraTheme::default_dark().accent),
+        region_has_fg(
+            &terminal,
+            password_area,
+            TundraTheme::default_dark().accent_color
+        ),
         "focused password field should use the accent style"
     );
 }
 
 #[test]
-fn login_focused_boxes_keep_solid_regular_weight_vertical_borders() {
+fn login_focused_boxes_use_accent_colored_solid_regular_weight_vertical_borders() {
     let chrome = chrome_for("Login");
     let theme = TundraTheme::default_dark();
     let main = main_rect(80, 24);
@@ -994,7 +1047,7 @@ fn login_focused_boxes_keep_solid_regular_weight_vertical_borders() {
             .draw(|frame| render_login(frame, frame.area(), &chrome, &model, &theme))
             .expect("render focused login field");
 
-        assert_regular_weight_vertical_border(&terminal, focused_area, theme.accent);
+        assert_regular_weight_vertical_border(&terminal, focused_area, theme.accent_color);
         let title_cell = terminal
             .backend()
             .buffer()
@@ -1045,7 +1098,7 @@ fn login_renderer_reveals_only_explicit_plaintext_and_focuses_visibility_control
     assert!(region_has_fg(
         &terminal,
         visibility,
-        TundraTheme::default_dark().accent,
+        TundraTheme::default_dark().accent_color,
     ));
 }
 

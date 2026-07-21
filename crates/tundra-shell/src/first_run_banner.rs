@@ -1,6 +1,8 @@
 use crate::{
-    BANNER_ASSET_KEY, ShellTerminalSizeRequirement, asset_io_error, checked_current_terminal_size,
+    BANNER_ASSET_KEY, ShellTerminalSizeRequirement, ansi_foreground, asset_io_error,
+    checked_current_terminal_size,
 };
+use ratatui::style::Color;
 use std::fmt::Write as _;
 use std::io::{self, Write};
 use std::time::{Duration, Instant};
@@ -24,15 +26,17 @@ enum MatrixTone {
     Green,
     BrightGreen,
     White,
+    Banner(Color),
 }
 
 impl MatrixTone {
-    const fn ansi(self) -> &'static str {
+    fn ansi(self) -> String {
         match self {
-            Self::DimGreen => "\x1B[38;2;0;82;32m",
-            Self::Green => "\x1B[38;2;0;178;70m",
-            Self::BrightGreen => "\x1B[1;38;2;88;255;144m",
-            Self::White => "\x1B[1;38;2;255;255;255m",
+            Self::DimGreen => "\x1B[38;2;0;82;32m".to_string(),
+            Self::Green => "\x1B[38;2;0;178;70m".to_string(),
+            Self::BrightGreen => "\x1B[1;38;2;88;255;144m".to_string(),
+            Self::White => "\x1B[1;38;2;255;255;255m".to_string(),
+            Self::Banner(color) => ansi_foreground(color),
         }
     }
 }
@@ -73,18 +77,29 @@ impl MatrixTiming {
     };
 }
 
-/// Plays the first-run-only Matrix sequence. Ambient glyphs fall across the
-/// terminal while white copies of the banner glyphs descend into their final
-/// positions, leaving a completely white banner before the screen is cleared.
+/// Plays the first-run-only Matrix sequence with the default white Banner.
+/// Ambient glyphs keep their independent Matrix palette while copies of the
+/// Banner glyphs descend into their final positions before the screen clears.
 pub fn display_first_run_banner_with_assets(
     output: &mut impl Write,
     ascii_assets: &tundra_ui::RuntimeAsciiAssets,
+) -> io::Result<()> {
+    display_first_run_banner_with_assets_colored(output, ascii_assets, Color::White)
+}
+
+/// Plays the first-run-only Matrix sequence using `color` for the assembled
+/// logo while preserving the Matrix rain's original green tones.
+pub fn display_first_run_banner_with_assets_colored(
+    output: &mut impl Write,
+    ascii_assets: &tundra_ui::RuntimeAsciiAssets,
+    color: Color,
 ) -> io::Result<()> {
     let requirement = ShellTerminalSizeRequirement::from_assets(ascii_assets);
     display_first_run_banner_with_timing_and_size_check(
         output,
         ascii_assets,
         MatrixTiming::PRODUCTION,
+        color,
         || checked_current_terminal_size(requirement),
     )
 }
@@ -93,6 +108,7 @@ fn display_first_run_banner_with_timing_and_size_check(
     output: &mut impl Write,
     ascii_assets: &tundra_ui::RuntimeAsciiAssets,
     timing: MatrixTiming,
+    color: Color,
     mut check_size: impl FnMut() -> io::Result<(u16, u16)>,
 ) -> io::Result<()> {
     let banner_lines = ascii_assets
@@ -112,6 +128,7 @@ fn display_first_run_banner_with_timing_and_size_check(
         banner_lines,
         MatrixPhase::Rain,
         timing.rain,
+        color,
         &mut check_size,
         &mut frame_buffer,
         &mut terminal_buffer,
@@ -121,6 +138,7 @@ fn display_first_run_banner_with_timing_and_size_check(
         banner_lines,
         MatrixPhase::Assemble,
         timing.assemble,
+        color,
         &mut check_size,
         &mut frame_buffer,
         &mut terminal_buffer,
@@ -135,6 +153,7 @@ fn render_matrix_phase(
     banner_lines: &[String],
     phase: MatrixPhase,
     duration: Duration,
+    color: Color,
     check_size: &mut impl FnMut() -> io::Result<(u16, u16)>,
     frame: &mut MatrixFrame,
     terminal_buffer: &mut String,
@@ -164,6 +183,7 @@ fn render_matrix_phase(
             terminal_size,
             rain_progress,
             banner_progress,
+            color,
         );
         render_matrix_frame(output, frame, terminal_buffer)?;
     }
@@ -177,6 +197,7 @@ fn matrix_frame(
     (terminal_width, terminal_height): (u16, u16),
     rain_progress: f32,
     banner_progress: f32,
+    color: Color,
 ) -> MatrixFrame {
     let mut frame = MatrixFrame::new();
     update_matrix_frame(
@@ -185,6 +206,7 @@ fn matrix_frame(
         (terminal_width, terminal_height),
         rain_progress,
         banner_progress,
+        color,
     );
     frame
 }
@@ -195,6 +217,7 @@ fn update_matrix_frame(
     (terminal_width, terminal_height): (u16, u16),
     rain_progress: f32,
     banner_progress: f32,
+    color: Color,
 ) {
     let width = usize::from(terminal_width);
     let height = usize::from(terminal_height);
@@ -209,7 +232,7 @@ fn update_matrix_frame(
     }
 
     render_ambient_rain(frame, rain_progress, 1.0 - banner_progress);
-    render_falling_banner_glyphs(frame, banner_lines, banner_progress);
+    render_falling_banner_glyphs(frame, banner_lines, banner_progress, color);
 }
 
 fn render_ambient_rain(frame: &mut MatrixFrame, rain_progress: f32, opacity: f32) {
@@ -261,7 +284,12 @@ fn render_ambient_rain(frame: &mut MatrixFrame, rain_progress: f32, opacity: f32
     }
 }
 
-fn render_falling_banner_glyphs(frame: &mut MatrixFrame, banner_lines: &[String], progress: f32) {
+fn render_falling_banner_glyphs(
+    frame: &mut MatrixFrame,
+    banner_lines: &[String],
+    progress: f32,
+    color: Color,
+) {
     if frame.is_empty() || frame[0].is_empty() {
         return;
     }
@@ -293,7 +321,7 @@ fn render_falling_banner_glyphs(frame: &mut MatrixFrame, banner_lines: &[String]
             if progress >= landing {
                 frame[target_row][target_column] = Some(MatrixCell {
                     glyph,
-                    tone: MatrixTone::White,
+                    tone: MatrixTone::Banner(color),
                 });
                 continue;
             }
@@ -307,7 +335,7 @@ fn render_falling_banner_glyphs(frame: &mut MatrixFrame, banner_lines: &[String]
             if falling_row < frame.len() {
                 frame[falling_row][target_column] = Some(MatrixCell {
                     glyph,
-                    tone: MatrixTone::White,
+                    tone: MatrixTone::Banner(color),
                 });
             }
         }
@@ -335,7 +363,7 @@ fn render_matrix_frame(
             match cell {
                 Some(cell) => {
                     if active_tone != Some(cell.tone) {
-                        terminal_buffer.push_str(cell.tone.ansi());
+                        terminal_buffer.push_str(&cell.tone.ansi());
                         active_tone = Some(cell.tone);
                     }
                     terminal_buffer.push(cell.glyph);
@@ -457,7 +485,7 @@ mod tests {
                 .banner_lines(BANNER_ASSET_KEY)
                 .expect("default banner"),
         );
-        let frame = matrix_frame(banner, (120, 40), 1.45, 1.0);
+        let frame = matrix_frame(banner, (120, 40), 1.45, 1.0, Color::White);
         let banner_width = banner
             .iter()
             .map(|line| line.chars().count())
@@ -481,7 +509,7 @@ mod tests {
                 match (cell, expected) {
                     (Some(cell), Some(glyph)) => {
                         assert_eq!(cell.glyph, glyph);
-                        assert_eq!(cell.tone, MatrixTone::White);
+                        assert_eq!(cell.tone, MatrixTone::Banner(Color::White));
                     }
                     (None, None) => {}
                     _ => panic!("matrix final frame differs at ({column}, {row})"),
@@ -498,18 +526,18 @@ mod tests {
                 .banner_lines(BANNER_ASSET_KEY)
                 .expect("default banner"),
         );
-        let frame = matrix_frame(banner, (120, 40), 1.225, 0.5);
+        let frame = matrix_frame(banner, (120, 40), 1.225, 0.5, Color::White);
         let green_count = frame
             .iter()
             .flatten()
             .flatten()
-            .filter(|cell| cell.tone != MatrixTone::White)
+            .filter(|cell| !matches!(cell.tone, MatrixTone::Banner(_)))
             .count();
         let white_count = frame
             .iter()
             .flatten()
             .flatten()
-            .filter(|cell| cell.tone == MatrixTone::White)
+            .filter(|cell| cell.tone == MatrixTone::Banner(Color::White))
             .count();
         let occupied_rows = frame
             .iter()
@@ -565,7 +593,7 @@ mod tests {
                 .banner_lines(BANNER_ASSET_KEY)
                 .expect("default banner"),
         );
-        render_falling_banner_glyphs(&mut frame, banner, 0.0);
+        render_falling_banner_glyphs(&mut frame, banner, 0.0, Color::White);
         assert!(frame.iter().flatten().all(Option::is_none));
     }
 
@@ -584,12 +612,13 @@ mod tests {
             &mut output,
             &assets,
             MatrixTiming::ZERO,
+            Color::White,
             || Ok((120, 40)),
         )
         .expect("zero-duration Matrix sequence");
 
         let output = String::from_utf8(output).unwrap();
-        assert!(output.contains(MatrixTone::White.ansi()));
+        assert!(output.contains(&MatrixTone::Banner(Color::White).ansi()));
         assert!(output.contains(first_visible_line.trim_end()));
         assert!(output.ends_with(&format!("{RESET_STYLE}{CLEAR_SCREEN}")));
     }
@@ -604,6 +633,7 @@ mod tests {
             &mut output,
             &assets,
             MatrixTiming::ZERO,
+            Color::White,
             || {
                 checks += 1;
                 if checks >= 2 {
@@ -617,5 +647,39 @@ mod tests {
 
         assert!(error.to_string().contains("too small"));
         assert!(!String::from_utf8(output).unwrap().ends_with(CLEAR_SCREEN));
+    }
+
+    #[test]
+    fn matrix_banner_uses_requested_rgb_tone_while_rain_stays_green() {
+        let assets = assets();
+        let banner = visible_banner_lines(
+            assets
+                .banner_lines(BANNER_ASSET_KEY)
+                .expect("default banner"),
+        );
+        let color = Color::Rgb(18, 52, 86);
+        let frame = matrix_frame(banner, (120, 40), 1.225, 0.5, color);
+        assert!(
+            frame
+                .iter()
+                .flatten()
+                .flatten()
+                .any(|cell| cell.tone == MatrixTone::Banner(color))
+        );
+        assert!(frame.iter().flatten().flatten().any(|cell| {
+            matches!(
+                cell.tone,
+                MatrixTone::DimGreen | MatrixTone::Green | MatrixTone::BrightGreen
+            )
+        }));
+
+        let mut output = CountingWriter::default();
+        let mut terminal_buffer = String::new();
+        render_matrix_frame(&mut output, &frame, &mut terminal_buffer)
+            .expect("colored Matrix frame renders");
+        let output = String::from_utf8(output.bytes).expect("UTF-8 terminal output");
+        assert!(output.contains("\x1B[38;2;18;52;86m"));
+        assert!(output.contains(MatrixTone::Green.ansi().as_str()));
+        assert!(output.ends_with(BLACK_BACKGROUND));
     }
 }

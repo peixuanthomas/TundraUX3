@@ -114,16 +114,30 @@ pub fn run_fullscreen_blocking(
 }
 
 pub fn run_frost_animation_preview(output: &mut impl Write) -> io::Result<()> {
+    run_frost_animation_preview_with_color(output, tundra_storage::BorderColor::White)
+}
+
+pub fn run_frost_animation_preview_with_color(
+    output: &mut impl Write,
+    color: tundra_storage::BorderColor,
+) -> io::Result<()> {
     let ascii_assets = load_validated_runtime_ascii_assets()?;
     with_fullscreen(output, |output| {
-        display_startup_banner_with_assets(output, &ascii_assets)
+        display_startup_banner_with_assets_colored(output, &ascii_assets, ui_theme_color(color))
     })
 }
 
 pub fn run_matrix_animation_preview(output: &mut impl Write) -> io::Result<()> {
+    run_matrix_animation_preview_with_color(output, tundra_storage::BorderColor::White)
+}
+
+pub fn run_matrix_animation_preview_with_color(
+    output: &mut impl Write,
+    color: tundra_storage::BorderColor,
+) -> io::Result<()> {
     let ascii_assets = load_validated_runtime_ascii_assets()?;
     with_fullscreen(output, |output| {
-        display_first_run_banner_with_assets(output, &ascii_assets)
+        display_first_run_banner_with_assets_colored(output, &ascii_assets, ui_theme_color(color))
     })
 }
 
@@ -160,7 +174,11 @@ pub fn run_fullscreen_blocking_managed(
         spawn_weather_prefetch_worker(weather_prefetch_options, &weathr_watchdog)
             .map_err(io::Error::other)?;
     with_fullscreen(output, |output| {
-        display_startup_banner_with_assets(output, &ascii_assets)
+        display_startup_banner_with_assets_colored(
+            output,
+            &ascii_assets,
+            initial_startup.app_config.border_color,
+        )
     })?;
     let mut initial_startup = Some(initial_startup);
     let mut cached_time_sync = None;
@@ -459,6 +477,93 @@ struct TimeSyncWorker {
     handle: Option<ManagedThreadHandle<()>>,
 }
 
+const THEME_RELOAD_INTERVAL: Duration = Duration::from_millis(250);
+const THEME_RELOAD_NOTIFICATION_KEY: &str = "shell.theme-reload";
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ConfigFileSignature {
+    modified: Option<SystemTime>,
+    byte_len: u64,
+}
+
+struct ThemeConfigReloader {
+    storage: Option<StorageManager>,
+    last_observed: Option<Result<ConfigFileSignature, String>>,
+    next_check: Instant,
+}
+
+impl ThemeConfigReloader {
+    fn new(storage: Option<StorageManager>, now: Instant) -> Self {
+        let last_observed = storage.as_ref().map(config_file_signature);
+        Self {
+            storage,
+            last_observed,
+            next_check: now.checked_add(THEME_RELOAD_INTERVAL).unwrap_or(now),
+        }
+    }
+
+    fn poll_at(
+        &mut self,
+        now: Instant,
+        theme: &mut tundra_ui::TundraTheme,
+        state: &mut ShellState,
+    ) {
+        if now < self.next_check {
+            return;
+        }
+        self.next_check = now.checked_add(THEME_RELOAD_INTERVAL).unwrap_or(now);
+
+        let Some(storage) = self.storage.as_ref() else {
+            return;
+        };
+        let observed = config_file_signature(storage);
+        if self.last_observed.as_ref() == Some(&observed) {
+            return;
+        }
+        self.last_observed = Some(observed.clone());
+
+        let result = observed.and_then(|_| storage.load_config().map_err(|error| error.to_string()));
+        match result {
+            Ok(config) => {
+                let app_config = ShellAppConfig::from_storage_config(&config);
+                theme.border_shape = app_config.border_shape;
+                theme.border_color = app_config.border_color;
+                theme.accent_color = app_config.accent_color;
+                state
+                    .notifications
+                    .dismiss_modal_by_key(THEME_RELOAD_NOTIFICATION_KEY);
+                state.finish_modal_focus_transition();
+            }
+            Err(error) => {
+                let notification = ShellNotification::modal(
+                    "Theme reload failed",
+                    format!(
+                        "Could not reload theme configuration: {error}. The last valid theme is still active."
+                    ),
+                    tundra_ui::NotificationTone::Error,
+                    vec![
+                        ShellNotificationAction::new("ok", "OK")
+                            .with_shortcut(InputKey::Escape)
+                            .cancel(),
+                    ],
+                )
+                .with_key(THEME_RELOAD_NOTIFICATION_KEY);
+                state.notify_modal_with_options(notification);
+            }
+        }
+    }
+}
+
+fn config_file_signature(storage: &StorageManager) -> Result<ConfigFileSignature, String> {
+    let path = &storage.layout().config_path;
+    let metadata = std::fs::metadata(path)
+        .map_err(|error| format!("could not inspect {}: {error}", path.display()))?;
+    Ok(ConfigFileSignature {
+        modified: metadata.modified().ok(),
+        byte_len: metadata.len(),
+    })
+}
+
 impl TimeSyncWorker {
     fn stop_and_join(&mut self) {
         let _ = self.stop_sender.send(());
@@ -517,11 +622,18 @@ fn run_fullscreen_shell_session(
         diagnostics.set_terminal_graphics_protocol(platform.kind(), terminal_graphics_protocol);
     }
     let mut launcher_icons = launcher_icon_result.unwrap_or(None);
+    let theme_storage = startup.storage_manager.clone();
     if startup.auth_bootstrap_required {
-        display_first_run_banner_with_assets(guard.terminal_mut().backend_mut(), &ascii_assets)?;
+        display_first_run_banner_with_assets_colored(
+            guard.terminal_mut().backend_mut(),
+            &ascii_assets,
+            startup.app_config.border_color,
+        )?;
     }
-    let theme =
-        tundra_ui::TundraTheme::default_dark().with_border_shape(startup.app_config.border_shape);
+    let mut theme = tundra_ui::TundraTheme::default_dark()
+        .with_border_shape(startup.app_config.border_shape)
+        .with_border_color(startup.app_config.border_color)
+        .with_accent_color(startup.app_config.accent_color);
     let mut state = ShellState::new_with_runtime_services(
         config,
         initial_size,
@@ -534,6 +646,7 @@ fn run_fullscreen_shell_session(
     if let Some(cached) = cached_time_sync.as_ref() {
         cached.apply_to_state_at(&mut state, Instant::now());
     }
+    let mut theme_reloader = ThemeConfigReloader::new(theme_storage, Instant::now());
     let tick_rate = Duration::from_millis(250);
     let mut terminal_size_error = None;
     let mut restore_terminal_on_exit = true;
@@ -552,6 +665,7 @@ fn run_fullscreen_shell_session(
             ..RuntimeSnapshot::default()
         });
         let frame_now = Instant::now();
+        theme_reloader.poll_at(frame_now, &mut theme, &mut state);
         let clock_snapshot = state.network_clock.snapshot();
         state.advance_clock_background_at(&clock_snapshot, frame_now);
         let terminal_cell_aspect_ratio = crossterm::terminal::window_size()
@@ -804,6 +918,73 @@ mod runtime_preflight_tests {
                 .is_err()
         );
         assert!(fullscreen_output.is_empty());
+    }
+
+    #[test]
+    fn theme_reloader_applies_valid_changes_and_recovers_from_invalid_config() {
+        let root = std::env::temp_dir().join(format!(
+            "tundra-theme-reload-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos()
+        ));
+        let app_paths = tundra_platform::build_windows_app_paths(
+            root.join("roaming"),
+            root.join("local"),
+            root.join("temp"),
+        )
+        .expect("test paths");
+        let storage = StorageManager::open(app_paths)
+            .expect("test storage")
+            .manager;
+        let started_at = Instant::now();
+        let mut reloader = ThemeConfigReloader::new(Some(storage.clone()), started_at);
+        let mut theme = tundra_ui::TundraTheme::default_dark();
+        let mut state = ShellState::new_for_home_mode(
+            ShellLaunchConfig::default(),
+            (120, 40),
+            ShellHomeMode::User,
+        );
+
+        let mut config = storage.load_config().expect("default config");
+        config.appearance.border_shape = tundra_storage::BorderShape::Square;
+        config.appearance.border_color = tundra_storage::BorderColor::Rgb(0x38, 0xBD, 0xF8);
+        config.appearance.accent_color = tundra_storage::BorderColor::LightMagenta;
+        storage.save_config(&config).expect("updated config");
+        reloader.last_observed = None;
+        reloader.next_check = started_at;
+        reloader.poll_at(started_at, &mut theme, &mut state);
+        assert_eq!(theme.border_shape, tundra_ui::BorderShape::Square);
+        assert_eq!(theme.border_color, ratatui::style::Color::Rgb(0x38, 0xBD, 0xF8));
+        assert_eq!(theme.accent_color, ratatui::style::Color::LightMagenta);
+
+        std::fs::write(&storage.layout().config_path, "not valid toml = [")
+            .expect("corrupt config fixture");
+        let failure_at = started_at + THEME_RELOAD_INTERVAL;
+        reloader.last_observed = None;
+        reloader.next_check = failure_at;
+        reloader.poll_at(failure_at, &mut theme, &mut state);
+        assert_eq!(theme.border_color, ratatui::style::Color::Rgb(0x38, 0xBD, 0xF8));
+        assert_eq!(theme.accent_color, ratatui::style::Color::LightMagenta);
+        assert_eq!(
+            state
+                .to_notification_view_model()
+                .expect("reload failure modal")
+                .title,
+            "Theme reload failed"
+        );
+
+        std::fs::remove_file(&storage.layout().config_path).expect("remove corrupt config");
+        storage.save_config(&config).expect("repaired config");
+        let recovery_at = failure_at + THEME_RELOAD_INTERVAL;
+        reloader.last_observed = None;
+        reloader.next_check = recovery_at;
+        reloader.poll_at(recovery_at, &mut theme, &mut state);
+        assert!(state.to_notification_view_model().is_none());
+
+        tundra_platform::cleanup_temp_path(&root).expect("clean test root");
     }
 }
 

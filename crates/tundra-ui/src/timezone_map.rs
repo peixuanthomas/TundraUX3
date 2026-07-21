@@ -472,11 +472,11 @@ impl TimezoneMapColors {
     pub fn from_theme(theme: &TundraTheme) -> Self {
         Self {
             background: theme.background,
-            border: theme.foreground,
-            title: theme.accent,
+            border: theme.border_color,
+            title: theme.accent_color,
             unselected: theme.muted,
             selected: Color::White,
-            marker: theme.accent,
+            marker: theme.accent_color,
         }
     }
 }
@@ -1456,6 +1456,15 @@ mod tests {
         assert_eq!(buffer.cell((0, 0)).unwrap().symbol(), "┌");
     }
 
+    #[test]
+    fn themed_widget_uses_themes_border_color() {
+        let theme = TundraTheme::default().with_border_color(Color::LightMagenta);
+        let mut buffer = Buffer::empty(Rect::new(0, 0, 48, 14));
+
+        TimezoneMapWidget::themed(&sample_boundaries(), &theme).render(buffer.area, &mut buffer);
+
+        assert_eq!(buffer.cell((0, 0)).unwrap().fg, Color::LightMagenta);
+    }
     #[test]
     fn missing_selected_boundary_keeps_base_map_and_marker() {
         let boundaries = sample_boundaries();
