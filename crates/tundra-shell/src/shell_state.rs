@@ -370,6 +370,8 @@ pub struct ShellState {
     launcher_viewport_offset: usize,
     launcher_pending_confirmation: Option<LauncherPendingConfirmation>,
     launcher_drag: Option<LauncherDragState>,
+    launcher_task_runtime: Option<ShellLauncherTaskRuntime>,
+    launcher_refresh_request: Option<u64>,
     explorer_state: Option<ExplorerState>,
     explorer_input_mode: ExplorerInputMode,
     explorer_input: String,

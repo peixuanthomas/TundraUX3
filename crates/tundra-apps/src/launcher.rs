@@ -71,7 +71,7 @@ impl LauncherState {
         *self = Self::from_config(config);
     }
 
-    fn set_status(&mut self, id: &str, status: LauncherItemStatus) {
+    pub fn set_item_status(&mut self, id: &str, status: LauncherItemStatus) {
         if let Some(item) = self.items.iter_mut().find(|item| item.record.id == id) {
             item.status = status;
         }
@@ -379,7 +379,7 @@ impl LauncherController {
             .find(|entry| entry.id == id)
             .ok_or_else(|| LauncherError::MissingEntry(id.to_string()))?;
         let status = verify(entry, platform)?;
-        state.set_status(id, status);
+        state.set_item_status(id, status);
         if status != LauncherItemStatus::Ready {
             return Ok(LauncherEffect::None);
         }
@@ -509,6 +509,20 @@ fn verify(
         Err(LauncherError::Io { .. }) => Ok(LauncherItemStatus::Missing),
         Err(_) => Ok(LauncherItemStatus::Unsupported),
     }
+}
+
+/// Revalidates one persisted Launcher entry without mutating application state.
+///
+/// Shell runtimes use this entry-level API to perform the full content digest on
+/// a worker thread and publish results back to the UI incrementally. Launch
+/// authorization still calls the same verifier immediately before opening a
+/// target, so moving list refreshes off the UI thread does not weaken integrity
+/// checks.
+pub fn verify_launcher_entry(
+    entry: &LauncherEntryRecord,
+    platform: &dyn Platform,
+) -> Result<LauncherItemStatus, LauncherError> {
+    verify(entry, platform)
 }
 
 /// Full SHA-256 of a regular, non-link file. Modification time is informational;

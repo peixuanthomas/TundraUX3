@@ -176,6 +176,8 @@ impl ShellState {
             launcher_viewport_offset: 0,
             launcher_pending_confirmation: None,
             launcher_drag: None,
+            launcher_task_runtime: None,
+            launcher_refresh_request: None,
             explorer_state: None,
             explorer_input_mode: ExplorerInputMode::Browse,
             explorer_input: String::new(),

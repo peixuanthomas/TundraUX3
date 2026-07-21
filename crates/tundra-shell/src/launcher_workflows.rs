@@ -208,6 +208,49 @@ impl ShellState {
     }
 
     fn refresh_launcher(&mut self, platform: &dyn Platform) {
+        if self.launcher_refresh_request.is_some() {
+            if let Some(state) = self.launcher_state.as_mut() {
+                state.message = Some("Launcher refresh already in progress".to_string());
+            }
+            return;
+        }
+        if let Some(runtime) = self.launcher_task_runtime.as_ref() {
+            let entries = self
+                .launcher_state
+                .as_ref()
+                .map(|state| {
+                    state
+                        .items
+                        .iter()
+                        .map(|item| item.record.clone())
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
+            match runtime.submit(entries) {
+                Ok(request_id) => {
+                    self.launcher_refresh_request = Some(request_id);
+                    if let Some(state) = self.launcher_state.as_mut() {
+                        state.error = None;
+                        state.message = Some("Checking Launcher items…".to_string());
+                        for item in &mut state.items {
+                            item.status = if item.record.fingerprint.is_some()
+                                && item.record.executable_kind.is_some()
+                            {
+                                DomainLauncherItemStatus::Checking
+                            } else {
+                                DomainLauncherItemStatus::NeedsApproval
+                            };
+                        }
+                    }
+                }
+                Err(error) => {
+                    if let Some(state) = self.launcher_state.as_mut() {
+                        state.error = Some(error);
+                    }
+                }
+            }
+            return;
+        }
         self.apply_launcher_command(LauncherCommand::Refresh, platform);
     }
 

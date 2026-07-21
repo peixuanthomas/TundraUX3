@@ -643,6 +643,10 @@ fn run_fullscreen_shell_session(
         diagnostics_task_runtime,
         ShellEditorTaskRuntime::new_managed(shell_watchdog.clone()),
     );
+    state.launcher_task_runtime = Some(ShellLauncherTaskRuntime::new_managed(
+        std::sync::Arc::clone(&platform),
+        shell_watchdog.clone(),
+    ));
     if let Some(cached) = cached_time_sync.as_ref() {
         cached.apply_to_state_at(&mut state, Instant::now());
     }

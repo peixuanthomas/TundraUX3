@@ -105,6 +105,7 @@ include!("view_models.rs");
 include!("account_workflows.rs");
 include!("clock_workflows.rs");
 include!("explorer_workflows.rs");
+include!("launcher_task_workflows.rs");
 include!("launcher_workflows.rs");
 include!("explorer_task_workflows.rs");
 include!("editor_task_workflows.rs");

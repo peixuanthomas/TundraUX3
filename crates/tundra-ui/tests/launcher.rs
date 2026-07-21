@@ -1,11 +1,13 @@
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use ratatui::layout::Rect;
+use ratatui::style::Color;
 use tundra_ui::{
     HomeDisplayMode, LauncherConfirmationKind, LauncherConfirmationViewModel, LauncherDropSide,
     LauncherDropTarget, LauncherHitTarget, LauncherItemStatus, LauncherItemViewModel,
     LauncherToolbarAction, LauncherViewMode, LauncherViewModel, NotificationTone,
-    ShellChromeViewModel, StatusViewModel, TundraTheme, launcher_layout, render_launcher,
+    ShellChromeViewModel, ShellLayout, StatusViewModel, TundraTheme, compute_shell_layout,
+    launcher_layout, render_launcher,
 };
 
 fn item(index: usize, status: LauncherItemStatus) -> LauncherItemViewModel {
@@ -36,7 +38,7 @@ fn chrome(size: (u16, u16)) -> ShellChromeViewModel {
     }
 }
 
-fn render(model: &LauncherViewModel, width: u16, height: u16) -> String {
+fn render_terminal(model: &LauncherViewModel, width: u16, height: u16) -> Terminal<TestBackend> {
     let mut terminal = Terminal::new(TestBackend::new(width, height)).expect("test terminal");
     terminal
         .draw(|frame| {
@@ -50,12 +52,49 @@ fn render(model: &LauncherViewModel, width: u16, height: u16) -> String {
         })
         .expect("render launcher");
     terminal
+}
+
+fn render(model: &LauncherViewModel, width: u16, height: u16) -> String {
+    let terminal = render_terminal(model, width, height);
+    terminal
         .backend()
         .buffer()
         .content()
         .iter()
         .map(|cell| cell.symbol())
         .collect()
+}
+
+fn text_has_fg(
+    terminal: &Terminal<TestBackend>,
+    area: Rect,
+    text: &str,
+    foreground: Color,
+) -> bool {
+    let symbols = text
+        .chars()
+        .map(|symbol| symbol.to_string())
+        .collect::<Vec<_>>();
+    let Ok(text_width) = u16::try_from(symbols.len()) else {
+        return false;
+    };
+    if text_width == 0 || area.width < text_width {
+        return false;
+    }
+    let buffer = terminal.backend().buffer();
+    let last_x = area.right().saturating_sub(text_width);
+    (area.y..area.bottom()).any(|y| {
+        (area.x..=last_x).any(|x| {
+            symbols.iter().enumerate().all(|(offset, symbol)| {
+                let Ok(offset) = u16::try_from(offset) else {
+                    return false;
+                };
+                buffer
+                    .cell((x.saturating_add(offset), y))
+                    .is_some_and(|cell| cell.symbol() == symbol && cell.fg == foreground)
+            })
+        })
+    })
 }
 
 #[test]
@@ -79,6 +118,50 @@ fn large_icons_render_the_default_application_ascii_icon_when_native_icons_are_u
     assert!(output.contains("Application 0"));
     assert!(!icon_line.is_empty());
     assert!(output.contains(icon_line));
+}
+
+#[test]
+fn selected_ready_status_uses_the_accent_color_in_large_icons() {
+    let width = 100;
+    let height = 30;
+    let theme = TundraTheme::default_dark();
+    let selected = LauncherViewModel::new(
+        vec![item(0, LauncherItemStatus::Ready)],
+        Some(0),
+        LauncherViewMode::LargeIcons,
+        false,
+    );
+    let ShellLayout::Full { main, .. } = compute_shell_layout(Rect::new(0, 0, width, height))
+    else {
+        panic!("Launcher color test requires the full shell layout");
+    };
+    let item_area = launcher_layout(main, &selected).items[0].area;
+    let selected_terminal = render_terminal(&selected, width, height);
+
+    assert!(text_has_fg(
+        &selected_terminal,
+        item_area,
+        "Ready",
+        theme.accent_color,
+    ));
+
+    let unselected = LauncherViewModel::new(
+        vec![
+            item(0, LauncherItemStatus::Ready),
+            item(1, LauncherItemStatus::Ready),
+        ],
+        Some(1),
+        LauncherViewMode::LargeIcons,
+        false,
+    );
+    let unselected_item_area = launcher_layout(main, &unselected).items[0].area;
+    let unselected_terminal = render_terminal(&unselected, width, height);
+    assert!(text_has_fg(
+        &unselected_terminal,
+        unselected_item_area,
+        "Ready",
+        theme.foreground,
+    ));
 }
 
 #[test]

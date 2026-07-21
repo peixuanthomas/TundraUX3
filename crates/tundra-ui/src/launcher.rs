@@ -782,7 +782,7 @@ fn render_launcher_grid(
         );
         frame.render_widget(
             Paragraph::new(item.status.label())
-                .style(status_style(item.status, theme))
+                .style(style)
                 .alignment(Alignment::Center),
             Rect::new(
                 inner.x,

@@ -192,6 +192,7 @@ impl ShellState {
                 self.notifications.tick();
                 self.advance_clock_background();
                 self.poll_explorer_background_tasks(platform);
+                self.poll_launcher_background_tasks();
                 self.drain_diagnostics_events();
                 self.poll_editor_background_tasks(platform);
                 self.persist_editor_recovery_if_due(received_at);
