@@ -2,6 +2,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 
+use crate::AppearanceConfig;
 use crate::schema::{USERS_SCHEMA_VERSION, VersionedDocument};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -42,6 +43,7 @@ impl UsersDocument {
                     role: "User".to_string(),
                     password_hash: String::new(),
                     password_hint: None,
+                    appearance: AppearanceConfig::default(),
                     enabled: false,
                     failed_login_attempts: 0,
                     locked_until_epoch_ms: None,
@@ -68,6 +70,8 @@ pub struct UserRecord {
     pub password_hash: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub password_hint: Option<String>,
+    #[serde(default)]
+    pub appearance: AppearanceConfig,
     pub enabled: bool,
     pub failed_login_attempts: u32,
     pub locked_until_epoch_ms: Option<u64>,

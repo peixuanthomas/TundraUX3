@@ -296,13 +296,58 @@ impl ShellState {
                 self.setup_focused_field = tundra_ui::SetupField::AdminUsername;
                 self.focused_component = ShellComponent::SetupAdminUsername;
             }
-            tundra_ui::SetupStep::Admin => {}
+            tundra_ui::SetupStep::Admin | tundra_ui::SetupStep::Appearance => {}
         }
         self.error_message = None;
         self.refresh_hit_map();
     }
 
     fn move_setup_admin_focus(&mut self, direction: i8) {
+        if self.setup_step == tundra_ui::SetupStep::Appearance {
+            let order = [
+                (
+                    tundra_ui::SetupField::AppearanceShape,
+                    ShellComponent::SetupAppearanceShape,
+                ),
+                (
+                    tundra_ui::SetupField::AppearanceThemeColor,
+                    ShellComponent::SetupAppearanceThemeColor,
+                ),
+                (
+                    tundra_ui::SetupField::AppearanceThemeCustom,
+                    ShellComponent::SetupAppearanceThemeCustom,
+                ),
+                (
+                    tundra_ui::SetupField::AppearanceAccentColor,
+                    ShellComponent::SetupAppearanceAccentColor,
+                ),
+                (
+                    tundra_ui::SetupField::AppearanceAccentCustom,
+                    ShellComponent::SetupAppearanceAccentCustom,
+                ),
+                (
+                    tundra_ui::SetupField::AppearanceSubmit,
+                    ShellComponent::SetupAppearanceSubmit,
+                ),
+            ];
+            let next = match order
+                .iter()
+                .position(|(field, _)| *field == self.setup_focused_field)
+            {
+                Some(current) => {
+                    (current as isize + direction as isize).rem_euclid(order.len() as isize)
+                        as usize
+                }
+                None if direction < 0 => order.len().saturating_sub(1),
+                None => 0,
+            };
+            let (field, component) = order[next];
+            self.setup_focused_field = field;
+            self.focused_component = component;
+            self.error_message = None;
+            return;
+        }
+
         let order = [
             (
                 tundra_ui::SetupField::AdminUsername,
@@ -361,6 +406,18 @@ impl ShellState {
                     component
                 } else {
                     ShellComponent::SetupAdminUsername
+                }
+            }
+            tundra_ui::SetupStep::Appearance => {
+                if self.setup_custom_color_target.is_some() {
+                    ShellComponent::SetupCustomColorDialog
+                } else {
+                    let component = setup_component_for_field(self.setup_focused_field);
+                    if setup_component_active_for_step(component, self.setup_step) {
+                        component
+                    } else {
+                        ShellComponent::SetupAppearanceShape
+                    }
                 }
             }
         }
@@ -425,7 +482,240 @@ impl ShellState {
                     self.submit_first_run_setup();
                 }
             }
+            tundra_ui::SetupStep::Appearance => {
+                self.activate_setup_appearance(target, coordinates);
+            }
         }
+    }
+
+    fn activate_setup_appearance(
+        &mut self,
+        target: ShellComponent,
+        coordinates: CellPosition,
+    ) {
+        if self.setup_custom_color_target.is_some() {
+            return;
+        }
+        self.error_message = None;
+
+        match target {
+            ShellComponent::SetupAppearanceShape => {
+                if let Some(main) = setup_main_rect(self.terminal_size) {
+                    for (shape, area) in tundra_ui::setup_appearance_shape_option_areas(main) {
+                        if rect_contains(area, coordinates) {
+                            self.setup_border_shape = match shape {
+                                tundra_ui::BorderShape::Rounded => {
+                                    tundra_storage::BorderShape::Rounded
+                                }
+                                tundra_ui::BorderShape::Square => {
+                                    tundra_storage::BorderShape::Square
+                                }
+                            };
+                            break;
+                        }
+                    }
+                }
+                self.focus_setup_component(target);
+            }
+            ShellComponent::SetupAppearanceThemeColor
+            | ShellComponent::SetupAppearanceAccentColor => {
+                if let Some(main) = setup_main_rect(self.terminal_size) {
+                    let field = if target == ShellComponent::SetupAppearanceThemeColor {
+                        tundra_ui::SetupField::AppearanceThemeColor
+                    } else {
+                        tundra_ui::SetupField::AppearanceAccentColor
+                    };
+                    if let Some((index, _)) =
+                        tundra_ui::setup_appearance_palette_option_areas(main, field)
+                            .into_iter()
+                            .find(|(_, area)| rect_contains(*area, coordinates))
+                    {
+                        self.set_setup_standard_color(field, index);
+                    }
+                }
+                self.focus_setup_component(target);
+            }
+            ShellComponent::SetupAppearanceThemeCustom => {
+                self.focus_setup_component(target);
+                self.open_setup_custom_color(tundra_ui::SetupCustomColorTarget::Theme);
+            }
+            ShellComponent::SetupAppearanceAccentCustom => {
+                self.focus_setup_component(target);
+                self.open_setup_custom_color(tundra_ui::SetupCustomColorTarget::Accent);
+            }
+            ShellComponent::SetupAppearanceSubmit => {
+                self.focus_setup_component(target);
+                self.finish_first_run_setup();
+            }
+            ShellComponent::SetupCustomColorDialog => {}
+            _ => {}
+        }
+        self.refresh_hit_map();
+    }
+
+    fn setup_select_appearance_choice(&mut self, delta: isize) {
+        match self.setup_focused_field {
+            tundra_ui::SetupField::AppearanceShape => {
+                self.setup_border_shape = match self.setup_border_shape {
+                    tundra_storage::BorderShape::Rounded => tundra_storage::BorderShape::Square,
+                    tundra_storage::BorderShape::Square => tundra_storage::BorderShape::Rounded,
+                };
+            }
+            field @ (tundra_ui::SetupField::AppearanceThemeColor
+            | tundra_ui::SetupField::AppearanceAccentColor) => {
+                let options = tundra_ui::setup_standard_color_options();
+                if options.is_empty() {
+                    return;
+                }
+                let current_value = match field {
+                    tundra_ui::SetupField::AppearanceThemeColor => {
+                        self.setup_theme_color.to_string()
+                    }
+                    _ => self.setup_accent_color.to_string(),
+                };
+                let current = options
+                    .iter()
+                    .position(|option| option.value.eq_ignore_ascii_case(&current_value));
+                let mut next = current.unwrap_or_else(|| {
+                    if delta < 0 {
+                        0
+                    } else {
+                        options.len() - 1
+                    }
+                });
+                for _ in 0..options.len() {
+                    next = (next as isize + delta).rem_euclid(options.len() as isize) as usize;
+                    let Ok(candidate) = options[next].value.parse::<tundra_storage::BorderColor>()
+                    else {
+                        continue;
+                    };
+                    if field == tundra_ui::SetupField::AppearanceAccentColor
+                        && candidate == self.setup_theme_color
+                    {
+                        continue;
+                    }
+                    self.set_setup_standard_color(field, next);
+                    break;
+                }
+            }
+            _ => return,
+        }
+        self.error_message = None;
+    }
+
+    fn set_setup_standard_color(&mut self, field: tundra_ui::SetupField, index: usize) {
+        let Some(option) = tundra_ui::setup_standard_color_options().get(index) else {
+            return;
+        };
+        let Ok(color) = option.value.parse::<tundra_storage::BorderColor>() else {
+            return;
+        };
+        match field {
+            tundra_ui::SetupField::AppearanceThemeColor => {
+                self.setup_theme_color = color;
+                self.ensure_setup_accent_differs();
+            }
+            tundra_ui::SetupField::AppearanceAccentColor
+                if color != self.setup_theme_color =>
+            {
+                self.setup_accent_color = color;
+            }
+            _ => {}
+        }
+    }
+
+    fn ensure_setup_accent_differs(&mut self) {
+        if self.setup_accent_color != self.setup_theme_color {
+            return;
+        }
+        if let Some(color) = tundra_ui::setup_standard_color_options()
+            .iter()
+            .filter_map(|option| option.value.parse::<tundra_storage::BorderColor>().ok())
+            .find(|color| *color != self.setup_theme_color)
+        {
+            self.setup_accent_color = color;
+        }
+    }
+
+    fn activate_setup_appearance_control(&mut self) {
+        match self.setup_focused_field {
+            tundra_ui::SetupField::AppearanceThemeCustom => {
+                self.open_setup_custom_color(tundra_ui::SetupCustomColorTarget::Theme);
+            }
+            tundra_ui::SetupField::AppearanceAccentCustom => {
+                self.open_setup_custom_color(tundra_ui::SetupCustomColorTarget::Accent);
+            }
+            tundra_ui::SetupField::AppearanceSubmit => self.finish_first_run_setup(),
+            _ => self.move_setup_admin_focus(1),
+        }
+        self.refresh_hit_map();
+    }
+
+    fn open_setup_custom_color(&mut self, target: tundra_ui::SetupCustomColorTarget) {
+        self.setup_custom_color_target = Some(target);
+        self.setup_custom_color_input = match target {
+            tundra_ui::SetupCustomColorTarget::Theme => self.setup_theme_color.to_string(),
+            tundra_ui::SetupCustomColorTarget::Accent => self.setup_accent_color.to_string(),
+        };
+        self.setup_custom_color_error = None;
+        self.focused_component = ShellComponent::SetupCustomColorDialog;
+    }
+
+    fn append_setup_custom_color_char(&mut self, character: char) {
+        if self.setup_custom_color_target.is_none()
+            || character.is_control()
+            || self.setup_custom_color_input.chars().count() >= 32
+        {
+            return;
+        }
+        self.setup_custom_color_input.push(character);
+        self.setup_custom_color_error = None;
+    }
+
+    fn setup_custom_color_backspace(&mut self) {
+        if self.setup_custom_color_target.is_some() {
+            self.setup_custom_color_input.pop();
+            self.setup_custom_color_error = None;
+        }
+    }
+
+    fn apply_setup_custom_color(&mut self) {
+        let Some(target) = self.setup_custom_color_target else {
+            return;
+        };
+        let color = match self
+            .setup_custom_color_input
+            .parse::<tundra_storage::BorderColor>()
+        {
+            Ok(color) => color,
+            Err(_) => {
+                self.setup_custom_color_error = Some(
+                    "Invalid color. Use #RRGGBB or a supported color name.".to_string(),
+                );
+                return;
+            }
+        };
+        match target {
+            tundra_ui::SetupCustomColorTarget::Theme => {
+                self.setup_theme_color = color;
+                self.ensure_setup_accent_differs();
+            }
+            tundra_ui::SetupCustomColorTarget::Accent if color == self.setup_theme_color => {
+                self.setup_custom_color_error =
+                    Some("Accent color must be different from the theme color.".to_string());
+                return;
+            }
+            tundra_ui::SetupCustomColorTarget::Accent => self.setup_accent_color = color,
+        }
+        self.cancel_setup_custom_color();
+    }
+
+    fn cancel_setup_custom_color(&mut self) {
+        self.setup_custom_color_target = None;
+        self.setup_custom_color_input.clear();
+        self.setup_custom_color_error = None;
+        self.focused_component = setup_component_for_field(self.setup_focused_field);
+        self.refresh_hit_map();
     }
 
     fn activate_login(&mut self, target: ShellComponent, coordinates: CellPosition) {
@@ -579,27 +869,66 @@ impl ShellState {
         }
         self.set_clock_timezone(Some(selected_timezone));
 
-        let users = UserService::with_debug_policy(storage.clone(), self.debug_policy);
-        match users.bootstrap_admin_with_hint(&username, &password, hint.as_deref()) {
-            Ok(account) => {
-                let mut sessions = SessionService::new(storage);
-                match sessions.login(&account.username, &password) {
-                    Ok(session) => {
-                        self.setup_admin_password.clear();
-                        self.setup_admin_password_confirm.clear();
-                        self.complete_login(session);
-                    }
-                    Err(error) => {
-                        self.setup_admin_password.clear();
-                        self.setup_admin_password_confirm.clear();
-                        self.error_message = Some(format_core_error(&error));
-                        self.notify_status("Login failed");
-                    }
-                }
+        let users = UserService::with_debug_policy(storage, self.debug_policy);
+        match users.validate_bootstrap_admin(&username, &password, hint.as_deref()) {
+            Ok(()) => {
+                self.setup_step = tundra_ui::SetupStep::Appearance;
+                self.setup_focused_field = tundra_ui::SetupField::AppearanceShape;
+                self.focused_component = ShellComponent::SetupAppearanceShape;
+                self.error_message = None;
+                self.notify_status("Choose appearance");
+                self.refresh_hit_map();
             }
             Err(error) => {
                 self.error_message = Some(format_core_error(&error));
                 self.notify_status("Setup failed");
+            }
+        }
+    }
+
+    fn finish_first_run_setup(&mut self) {
+        let Some(storage) = self.storage_manager.clone() else {
+            self.error_message = Some("Storage unavailable".to_string());
+            return;
+        };
+
+        let username = self.setup_admin_username.trim().to_string();
+        let password = self.setup_admin_password.clone();
+        if self.setup_theme_color == self.setup_accent_color {
+            self.setup_focused_field = tundra_ui::SetupField::AppearanceAccentColor;
+            self.focused_component = ShellComponent::SetupAppearanceAccentColor;
+            self.error_message =
+                Some("Accent color must be different from the theme color.".to_string());
+            self.notify_status("Setup incomplete");
+            return;
+        }
+        let hint = self.setup_admin_password_hint.trim().to_string();
+        let hint = (!hint.is_empty()).then_some(hint);
+        let appearance = tundra_storage::AppearanceConfig {
+            border_shape: self.setup_border_shape,
+            border_color: self.setup_theme_color,
+            accent_color: self.setup_accent_color,
+        };
+        let users = UserService::with_debug_policy(storage.clone(), self.debug_policy);
+        if let Err(error) = users.bootstrap_admin_with_hint_and_appearance(
+            &username,
+            &password,
+            hint.as_deref(),
+            appearance,
+        ) {
+            self.error_message = Some(format_core_error(&error));
+            self.notify_status("Setup failed");
+            return;
+        }
+
+        let mut sessions = SessionService::new(storage);
+        match sessions.login(&username, &password) {
+            Ok(session) => self.complete_login(session),
+            Err(error) => {
+                self.setup_admin_password.clear();
+                self.setup_admin_password_confirm.clear();
+                self.error_message = Some(format_core_error(&error));
+                self.notify_status("Login failed");
             }
         }
     }

@@ -561,6 +561,18 @@ impl ShellState {
         let target_component = self.setup_active_key_component();
         let target = RoutedTarget::Component(target_component);
 
+        if self.setup_custom_color_target.is_some() {
+            return match &key.key {
+                InputKey::Escape => (target, ShellCommand::CancelSetupCustomColor),
+                InputKey::Enter => (target, ShellCommand::ApplySetupCustomColor),
+                InputKey::Backspace => (target, ShellCommand::SetupCustomColorBackspace),
+                InputKey::Character(character) => {
+                    (target, ShellCommand::AppendSetupCustomColorChar(*character))
+                }
+                _ => (target, ShellCommand::CaptureOverlayInput),
+            };
+        }
+
         if matches!(&key.key, InputKey::Escape) {
             return (RoutedTarget::Global, ShellCommand::RequestExit);
         }
@@ -599,6 +611,19 @@ impl ShellState {
                     if setup_admin_text_field(self.setup_focused_field) =>
                 {
                     (target, ShellCommand::AppendSetupAdminChar(*character))
+                }
+                _ => (target, ShellCommand::RecordInput),
+            },
+            tundra_ui::SetupStep::Appearance => match &key.key {
+                InputKey::BackTab => (target, ShellCommand::SetupFocusPrevious),
+                InputKey::Tab if key.modifiers.shift => (target, ShellCommand::SetupFocusPrevious),
+                InputKey::Tab => (target, ShellCommand::SetupFocusNext),
+                InputKey::Up => (target, ShellCommand::SetupFocusPrevious),
+                InputKey::Down => (target, ShellCommand::SetupFocusNext),
+                InputKey::Left => (target, ShellCommand::SetupPreviousAppearanceChoice),
+                InputKey::Right => (target, ShellCommand::SetupNextAppearanceChoice),
+                InputKey::Enter | InputKey::Character(' ') => {
+                    (target, ShellCommand::SubmitSetupAppearance)
                 }
                 _ => (target, ShellCommand::RecordInput),
             },

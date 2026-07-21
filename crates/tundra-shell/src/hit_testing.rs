@@ -5,6 +5,7 @@ fn build_shell_hit_map(
     exit_confirmation_visible: bool,
     active_popup: Option<ShellPopup>,
     setup_step: tundra_ui::SetupStep,
+    setup_custom_color_dialog_visible: bool,
     generation: u64,
     time_button_label: Option<&str>,
     time_sync_dialog_visible: bool,
@@ -36,6 +37,13 @@ fn build_shell_hit_map(
             match content_screen {
                 ShellScreen::FirstRunSetup => {
                     regions.extend(setup_hit_regions(main, setup_step));
+                    if setup_custom_color_dialog_visible {
+                        regions.push(ShellHitRegion {
+                            component: ShellComponent::SetupCustomColorDialog,
+                            area: tundra_ui::setup_custom_color_dialog_area(main),
+                            layer: ShellHitLayer::AppOverlay,
+                        });
+                    }
                 }
                 ShellScreen::Login => {
                     let layout = tundra_ui::login_layout(main);
@@ -314,6 +322,56 @@ fn setup_hit_regions(
                 layer: ShellHitLayer::AppContent,
             },
         ],
+        tundra_ui::SetupStep::Appearance => vec![
+            ShellHitRegion {
+                component: ShellComponent::SetupAppearanceShape,
+                area: tundra_ui::setup_appearance_field_area(
+                    main,
+                    tundra_ui::SetupField::AppearanceShape,
+                ),
+                layer: ShellHitLayer::AppContent,
+            },
+            ShellHitRegion {
+                component: ShellComponent::SetupAppearanceThemeColor,
+                area: tundra_ui::setup_appearance_field_area(
+                    main,
+                    tundra_ui::SetupField::AppearanceThemeColor,
+                ),
+                layer: ShellHitLayer::AppContent,
+            },
+            ShellHitRegion {
+                component: ShellComponent::SetupAppearanceThemeCustom,
+                area: tundra_ui::setup_appearance_field_area(
+                    main,
+                    tundra_ui::SetupField::AppearanceThemeCustom,
+                ),
+                layer: ShellHitLayer::AppContent,
+            },
+            ShellHitRegion {
+                component: ShellComponent::SetupAppearanceAccentColor,
+                area: tundra_ui::setup_appearance_field_area(
+                    main,
+                    tundra_ui::SetupField::AppearanceAccentColor,
+                ),
+                layer: ShellHitLayer::AppContent,
+            },
+            ShellHitRegion {
+                component: ShellComponent::SetupAppearanceAccentCustom,
+                area: tundra_ui::setup_appearance_field_area(
+                    main,
+                    tundra_ui::SetupField::AppearanceAccentCustom,
+                ),
+                layer: ShellHitLayer::AppContent,
+            },
+            ShellHitRegion {
+                component: ShellComponent::SetupAppearanceSubmit,
+                area: tundra_ui::setup_appearance_field_area(
+                    main,
+                    tundra_ui::SetupField::AppearanceSubmit,
+                ),
+                layer: ShellHitLayer::AppContent,
+            },
+        ],
     }
 }
 
@@ -397,6 +455,24 @@ fn setup_field_for_component(component: ShellComponent) -> Option<tundra_ui::Set
         }
         ShellComponent::SetupAdminHint => Some(tundra_ui::SetupField::PasswordHint),
         ShellComponent::SetupSubmit => Some(tundra_ui::SetupField::Submit),
+        ShellComponent::SetupAppearanceShape => {
+            Some(tundra_ui::SetupField::AppearanceShape)
+        }
+        ShellComponent::SetupAppearanceThemeColor => {
+            Some(tundra_ui::SetupField::AppearanceThemeColor)
+        }
+        ShellComponent::SetupAppearanceThemeCustom => {
+            Some(tundra_ui::SetupField::AppearanceThemeCustom)
+        }
+        ShellComponent::SetupAppearanceAccentColor => {
+            Some(tundra_ui::SetupField::AppearanceAccentColor)
+        }
+        ShellComponent::SetupAppearanceAccentCustom => {
+            Some(tundra_ui::SetupField::AppearanceAccentCustom)
+        }
+        ShellComponent::SetupAppearanceSubmit => {
+            Some(tundra_ui::SetupField::AppearanceSubmit)
+        }
         _ => None,
     }
 }
@@ -410,6 +486,18 @@ fn setup_component_for_field(field: tundra_ui::SetupField) -> ShellComponent {
         tundra_ui::SetupField::AdminPasswordConfirm => ShellComponent::SetupAdminPasswordConfirm,
         tundra_ui::SetupField::PasswordHint => ShellComponent::SetupAdminHint,
         tundra_ui::SetupField::Submit => ShellComponent::SetupSubmit,
+        tundra_ui::SetupField::AppearanceShape => ShellComponent::SetupAppearanceShape,
+        tundra_ui::SetupField::AppearanceThemeColor => ShellComponent::SetupAppearanceThemeColor,
+        tundra_ui::SetupField::AppearanceThemeCustom => {
+            ShellComponent::SetupAppearanceThemeCustom
+        }
+        tundra_ui::SetupField::AppearanceAccentColor => {
+            ShellComponent::SetupAppearanceAccentColor
+        }
+        tundra_ui::SetupField::AppearanceAccentCustom => {
+            ShellComponent::SetupAppearanceAccentCustom
+        }
+        tundra_ui::SetupField::AppearanceSubmit => ShellComponent::SetupAppearanceSubmit,
     }
 }
 
@@ -429,6 +517,15 @@ fn setup_component_active_for_step(component: ShellComponent, step: tundra_ui::S
                 | ShellComponent::SetupAdminPasswordConfirm
                 | ShellComponent::SetupAdminHint
                 | ShellComponent::SetupSubmit
+        ) | (
+            tundra_ui::SetupStep::Appearance,
+            ShellComponent::SetupAppearanceShape
+                | ShellComponent::SetupAppearanceThemeColor
+                | ShellComponent::SetupAppearanceThemeCustom
+                | ShellComponent::SetupAppearanceAccentColor
+                | ShellComponent::SetupAppearanceAccentCustom
+                | ShellComponent::SetupAppearanceSubmit
+                | ShellComponent::SetupCustomColorDialog
         )
     )
 }

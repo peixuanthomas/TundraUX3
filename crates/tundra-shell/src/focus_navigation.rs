@@ -22,6 +22,7 @@ impl ShellState {
             active_screen == ShellScreen::ExitConfirm,
             self.active_popup,
             self.setup_step,
+            self.setup_custom_color_target.is_some(),
             self.hit_map_generation,
             time_button_label.as_deref(),
             self.time_sync_dialog_visible,
@@ -63,6 +64,17 @@ impl ShellState {
                     ShellComponent::SetupAdminPasswordConfirm,
                     ShellComponent::SetupAdminHint,
                     ShellComponent::SetupSubmit,
+                ],
+                tundra_ui::SetupStep::Appearance if self.setup_custom_color_target.is_some() => {
+                    vec![ShellComponent::SetupCustomColorDialog]
+                }
+                tundra_ui::SetupStep::Appearance => vec![
+                    ShellComponent::SetupAppearanceShape,
+                    ShellComponent::SetupAppearanceThemeColor,
+                    ShellComponent::SetupAppearanceThemeCustom,
+                    ShellComponent::SetupAppearanceAccentColor,
+                    ShellComponent::SetupAppearanceAccentCustom,
+                    ShellComponent::SetupAppearanceSubmit,
                 ],
             };
         }

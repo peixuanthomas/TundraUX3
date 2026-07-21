@@ -11,7 +11,7 @@ use tundra_shell::{
     ShellHomeMode, ShellLaunchConfig, ShellLaunchTarget, ShellScreen, ShellState,
     ShellTerminalMode, prepare_shell_startup,
 };
-use tundra_storage::{ClockEntryRecord, ClockProfile};
+use tundra_storage::{BorderColor, BorderShape, ClockEntryRecord, ClockProfile};
 use tundra_ui::NotificationTone;
 
 fn debug_config() -> ShellLaunchConfig {
@@ -92,6 +92,145 @@ fn first_run_setup_signs_in_persists_config_and_hint_without_plaintext_password(
     assert!(!stored.contains("StrongPass123"));
     assert!(stored.contains("First pet"));
     assert!(stored.contains("$argon2"));
+}
+
+#[test]
+fn appearance_setup_validates_custom_colors_and_persists_all_choices() {
+    let fixture = FixtureRoot::new("first-run-appearance");
+    let platform = mock_platform(fixture.path());
+    let startup = prepare_shell_startup(&platform, default_config()).expect("startup");
+    let manager = startup.storage_manager.clone().expect("storage manager");
+    let mut state = ShellState::new_with_startup(default_config(), (120, 40), startup);
+
+    complete_first_run_admin(&mut state, 0, 0, "AdminUser", "StrongPass123", "");
+    assert_eq!(
+        setup_hit_components(&state),
+        vec![
+            ShellComponent::SetupAppearanceShape,
+            ShellComponent::SetupAppearanceThemeColor,
+            ShellComponent::SetupAppearanceThemeCustom,
+            ShellComponent::SetupAppearanceAccentColor,
+            ShellComponent::SetupAppearanceAccentCustom,
+            ShellComponent::SetupAppearanceSubmit,
+        ]
+    );
+
+    state.apply_input(InputEvent::from_key_label("Right"));
+    assert_eq!(
+        state.to_setup_view_model().border_shape,
+        tundra_ui::BorderShape::Square
+    );
+
+    state.apply_input(InputEvent::from_key_label("Tab"));
+    state.apply_input(InputEvent::from_key_label("Tab"));
+    state.apply_input(InputEvent::from_key_label("Enter"));
+    assert_eq!(
+        state.focused_component(),
+        ShellComponent::SetupCustomColorDialog
+    );
+    for _ in 0..5 {
+        state.apply_input(InputEvent::from_key_label("Backspace"));
+    }
+    type_text(&mut state, "#38BDF8");
+    assert!(state.to_setup_view_model().custom_color_valid);
+    state.apply_input(InputEvent::from_key_label("Enter"));
+    assert_eq!(state.to_setup_view_model().theme_color_value, "#38BDF8");
+
+    state.apply_input(InputEvent::from_key_label("Tab"));
+    state.apply_input(InputEvent::from_key_label("Tab"));
+    state.apply_input(InputEvent::from_key_label("Enter"));
+    for _ in 0..4 {
+        state.apply_input(InputEvent::from_key_label("Backspace"));
+    }
+    type_text(&mut state, "#12GG00");
+    assert!(!state.to_setup_view_model().custom_color_valid);
+    state.apply_input(InputEvent::from_key_label("Enter"));
+    assert_eq!(
+        state.focused_component(),
+        ShellComponent::SetupCustomColorDialog
+    );
+    assert_eq!(
+        state.to_setup_view_model().custom_color_error.as_deref(),
+        Some("Invalid color. Use #RRGGBB or a supported color name.")
+    );
+    for _ in 0..7 {
+        state.apply_input(InputEvent::from_key_label("Backspace"));
+    }
+    type_text(&mut state, "#AABBCC");
+    state.apply_input(InputEvent::from_key_label("Enter"));
+    state.apply_input(InputEvent::from_key_label("Tab"));
+    assert_eq!(
+        state.focused_component(),
+        ShellComponent::SetupAppearanceSubmit
+    );
+    state.apply_input(InputEvent::from_key_label("Enter"));
+
+    assert_eq!(state.active_screen(), ShellScreen::Home);
+    let users = manager.load_users().expect("users");
+    let admin = users
+        .users
+        .iter()
+        .find(|user| user.username == "AdminUser")
+        .expect("admin user");
+    assert_eq!(admin.appearance.border_shape, BorderShape::Square);
+    assert_eq!(
+        admin.appearance.border_color,
+        BorderColor::Rgb(0x38, 0xBD, 0xF8)
+    );
+    assert_eq!(
+        admin.appearance.accent_color,
+        BorderColor::Rgb(0xAA, 0xBB, 0xCC)
+    );
+}
+
+#[test]
+fn appearance_setup_prevents_matching_theme_and_accent_colors() {
+    let (_fixture, mut state) = fresh_setup_state("first-run-distinct-colors");
+
+    complete_first_run_admin(&mut state, 0, 0, "AdminUser", "StrongPass123", "");
+
+    state.apply_input(InputEvent::from_key_label("Tab"));
+    assert_eq!(
+        state.focused_component(),
+        ShellComponent::SetupAppearanceThemeColor
+    );
+    state.apply_input(InputEvent::from_key_label("Right"));
+    let model = state.to_setup_view_model();
+    assert_eq!(model.theme_color_value, "cyan");
+    assert_eq!(model.accent_color_value, "white");
+
+    state.apply_input(InputEvent::from_key_label("Tab"));
+    state.apply_input(InputEvent::from_key_label("Tab"));
+    assert_eq!(
+        state.focused_component(),
+        ShellComponent::SetupAppearanceAccentColor
+    );
+    state.apply_input(InputEvent::from_key_label("Right"));
+    assert_eq!(state.to_setup_view_model().accent_color_value, "blue");
+
+    state.apply_input(InputEvent::from_key_label("Tab"));
+    state.apply_input(InputEvent::from_key_label("Enter"));
+    assert_eq!(
+        state.focused_component(),
+        ShellComponent::SetupCustomColorDialog
+    );
+    for _ in 0..4 {
+        state.apply_input(InputEvent::from_key_label("Backspace"));
+    }
+    type_text(&mut state, "cyan");
+    let model = state.to_setup_view_model();
+    assert!(model.custom_color_conflicts_with_theme);
+    assert!(!model.custom_color_valid);
+
+    state.apply_input(InputEvent::from_key_label("Enter"));
+    assert_eq!(
+        state.focused_component(),
+        ShellComponent::SetupCustomColorDialog
+    );
+    assert_eq!(
+        state.to_setup_view_model().custom_color_error.as_deref(),
+        Some("Accent color must be different from the theme color.")
+    );
 }
 
 #[test]
@@ -454,6 +593,19 @@ fn first_run_setup_routes_keys_focus_and_mouse_before_home_shortcuts() {
         PointerButton::Left,
         setup_hit_map_row_coordinates(&state, ShellComponent::SetupSubmit, 0),
     ));
+    assert_eq!(
+        state.to_setup_view_model().step,
+        tundra_ui::SetupStep::Appearance
+    );
+    assert_eq!(
+        state.focused_component(),
+        ShellComponent::SetupAppearanceShape
+    );
+    state.apply_input(InputEvent::from_key_label("Right"));
+    for _ in 0..5 {
+        state.apply_input(InputEvent::from_key_label("Tab"));
+    }
+    state.apply_input(InputEvent::from_key_label("Enter"));
     assert_eq!(state.active_screen(), ShellScreen::Home);
     assert_eq!(
         state
@@ -821,6 +973,7 @@ fn admin_can_manage_users_and_user_can_only_open_own_profile() {
     bootstrap_with_shell(&platform);
 
     let startup = prepare_shell_startup(&platform, default_config()).expect("admin startup");
+    let manager = startup.storage_manager.clone().expect("storage manager");
     let mut admin_state = ShellState::new_with_startup(default_config(), (120, 40), startup);
     login(&mut admin_state, "AdminUser", "StrongPass123");
     admin_state.apply_input(InputEvent::from_key_label("u"));
@@ -842,6 +995,17 @@ fn admin_can_manage_users_and_user_can_only_open_own_profile() {
             .filter(|user| user.username == "user2")
             .count(),
         1
+    );
+    let created_record = manager
+        .load_users()
+        .expect("users")
+        .users
+        .into_iter()
+        .find(|user| user.username == "user2")
+        .expect("created user record");
+    assert_eq!(
+        created_record.appearance,
+        tundra_storage::AppearanceConfig::default()
     );
 
     let startup = prepare_shell_startup(&platform, default_config()).expect("user startup");
@@ -1764,6 +1928,13 @@ fn setup_hit_components(state: &ShellState) -> Vec<ShellComponent> {
                     | ShellComponent::SetupAdminPasswordConfirm
                     | ShellComponent::SetupAdminHint
                     | ShellComponent::SetupSubmit
+                    | ShellComponent::SetupAppearanceShape
+                    | ShellComponent::SetupAppearanceThemeColor
+                    | ShellComponent::SetupAppearanceThemeCustom
+                    | ShellComponent::SetupAppearanceAccentColor
+                    | ShellComponent::SetupAppearanceAccentCustom
+                    | ShellComponent::SetupAppearanceSubmit
+                    | ShellComponent::SetupCustomColorDialog
             )
         })
         .collect()
@@ -1830,6 +2001,32 @@ fn complete_first_run_setup(
     password: &str,
     hint: &str,
 ) {
+    complete_first_run_admin(
+        state,
+        language_steps,
+        timezone_steps,
+        username,
+        password,
+        hint,
+    );
+    for _ in 0..5 {
+        state.apply_input(InputEvent::from_key_label("Tab"));
+    }
+    assert_eq!(
+        state.focused_component(),
+        ShellComponent::SetupAppearanceSubmit
+    );
+    state.apply_input(InputEvent::from_key_label("Enter"));
+}
+
+fn complete_first_run_admin(
+    state: &mut ShellState,
+    language_steps: usize,
+    timezone_steps: usize,
+    username: &str,
+    password: &str,
+    hint: &str,
+) {
     assert_eq!(state.active_screen(), ShellScreen::FirstRunSetup);
     for _ in 0..language_steps {
         state.apply_input(InputEvent::from_key_label("Right"));
@@ -1849,6 +2046,14 @@ fn complete_first_run_setup(
     state.apply_input(InputEvent::from_key_label("Enter"));
     assert_eq!(state.focused_component(), ShellComponent::SetupSubmit);
     state.apply_input(InputEvent::from_key_label("Enter"));
+    assert_eq!(
+        state.to_setup_view_model().step,
+        tundra_ui::SetupStep::Appearance
+    );
+    assert_eq!(
+        state.focused_component(),
+        ShellComponent::SetupAppearanceShape
+    );
 }
 
 fn setup_language_code(

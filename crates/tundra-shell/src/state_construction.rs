@@ -122,6 +122,7 @@ impl ShellState {
             .and_then(|storage| storage.load_config().ok())
             .map(|config| normalized_editor_config(config.editor))
             .unwrap_or_default();
+        let setup_appearance = tundra_storage::AppearanceConfig::default();
         let mut state = Self {
             home_mode,
             launch_target: launch_config.launch_target,
@@ -160,6 +161,12 @@ impl ShellState {
             setup_admin_password_hint: String::new(),
             setup_focused_field: tundra_ui::SetupField::LanguageList,
             setup_timezone_window_start: 0,
+            setup_border_shape: setup_appearance.border_shape,
+            setup_theme_color: setup_appearance.border_color,
+            setup_accent_color: setup_appearance.accent_color,
+            setup_custom_color_target: None,
+            setup_custom_color_input: String::new(),
+            setup_custom_color_error: None,
             bootstrap_username: String::new(),
             bootstrap_password: String::new(),
             user_management_users: Vec::new(),

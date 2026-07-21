@@ -69,10 +69,14 @@ pub use render::{
     render_bootstrap_admin, render_clock, render_clock_placeholder, render_diagnostics,
     render_editor_app, render_exit_confirmation, render_explorer, render_home, render_login,
     render_notification_overlay, render_setup, render_time_sync_failure_dialog,
-    render_user_management, setup_admin_field_area, setup_language_list_area,
+    render_user_management, setup_admin_field_area, setup_appearance_field_area,
+    setup_appearance_palette_option_areas, setup_appearance_shape_option_areas,
+    setup_custom_color_dialog_area, setup_custom_color_input_area, setup_language_list_area,
     setup_timezone_list_area, setup_timezone_visible_rows, status_time_button_area,
 };
-pub use setup_catalog::{setup_language_options, setup_timezone_options};
+pub use setup_catalog::{
+    SetupColorOption, setup_language_options, setup_standard_color_options, setup_timezone_options,
+};
 pub use theme::{BorderShape, TundraTheme};
 pub use timezone_map::{
     TimezoneBoundary, TimezoneBoundaryIndex, TimezoneCoordinate, TimezoneMapCity,
@@ -96,9 +100,9 @@ pub use view_model::{
     ExplorerToolbarButtonViewModel, ExplorerToolbarViewModel, ExplorerViewModel, HomeDisplayMode,
     HomeViewModel, LoginField, LoginUserOptionViewModel, LoginViewModel,
     NotificationActionViewModel, NotificationLevel, NotificationTone, NotificationViewModel,
-    SetupField, SetupLanguageOption, SetupPasswordRequirementViewModel, SetupStep,
-    SetupTimezoneOption, SetupViewModel, ShellChromeViewModel, ShellEntry, StatusViewModel,
-    TerminalCellAspectRatio, TimeSyncDialogViewModel, UserManagementAction,
+    SetupCustomColorTarget, SetupField, SetupLanguageOption, SetupPasswordRequirementViewModel,
+    SetupStep, SetupTimezoneOption, SetupViewModel, ShellChromeViewModel, ShellEntry,
+    StatusViewModel, TerminalCellAspectRatio, TimeSyncDialogViewModel, UserManagementAction,
     UserManagementActionViewModel, UserManagementFeedbackTone, UserManagementField,
     UserManagementFocus, UserManagementFormKind, UserManagementFormViewModel,
     UserManagementUserViewModel, UserManagementViewModel,

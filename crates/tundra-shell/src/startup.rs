@@ -101,13 +101,13 @@ impl Default for ShellAppConfig {
 }
 
 impl ShellAppConfig {
-    pub(crate) fn from_storage_config(config: &tundra_storage::StorageConfig) -> Self {
-        let border_shape = match config.appearance.border_shape {
+    pub(crate) fn from_appearance(appearance: &tundra_storage::AppearanceConfig) -> Self {
+        let border_shape = match appearance.border_shape {
             tundra_storage::BorderShape::Rounded => tundra_ui::BorderShape::Rounded,
             tundra_storage::BorderShape::Square => tundra_ui::BorderShape::Square,
         };
-        let border_color = ui_theme_color(config.appearance.border_color);
-        let accent_color = ui_theme_color(config.appearance.accent_color);
+        let border_color = ui_theme_color(appearance.border_color);
+        let accent_color = ui_theme_color(appearance.accent_color);
         Self {
             border_shape,
             border_color,
@@ -340,7 +340,6 @@ pub fn prepare_shell_startup(
     let platform_capabilities = platform.capabilities();
     let storage_open = StorageManager::open_from_platform(platform)?;
     let app_paths = app_paths_from_storage_layout(storage_open.manager.layout())?;
-    let storage_config = storage_open.manager.load_config()?;
     let users = storage_open.manager.load_users()?;
     let sessions = storage_open.manager.load_sessions()?;
     let storage_report =
@@ -353,7 +352,7 @@ pub fn prepare_shell_startup(
         .collect::<Vec<_>>();
 
     Ok(ShellStartupState {
-        app_config: ShellAppConfig::from_storage_config(&storage_config),
+        app_config: ShellAppConfig::default(),
         storage_report,
         platform_kind,
         platform_capabilities,

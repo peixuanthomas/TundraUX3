@@ -19,11 +19,11 @@ use crate::{
     ExplorerOverlayViewModel, ExplorerSearchViewModel, ExplorerSortColumn, ExplorerToolbarAction,
     ExplorerViewModel, HomeDisplayMode, HomeViewModel, LoginField, LoginViewModel,
     NOTIFICATION_TOO_SMALL_MESSAGE, NotificationLayout, NotificationLevel, NotificationTone,
-    NotificationViewModel, RuntimeAsciiAssets, SetupField, SetupStep, SetupViewModel,
-    ShellChromeViewModel, ShellLayout, TimeSyncDialogViewModel, TundraTheme,
+    NotificationViewModel, RuntimeAsciiAssets, SetupCustomColorTarget, SetupField, SetupStep,
+    SetupViewModel, ShellChromeViewModel, ShellLayout, TimeSyncDialogViewModel, TundraTheme,
     UserManagementFeedbackTone, UserManagementField, UserManagementFocus, UserManagementFormKind,
     UserManagementFormViewModel, UserManagementUserViewModel, UserManagementViewModel,
-    compute_shell_layout, notification_layout,
+    compute_shell_layout, notification_layout, setup_standard_color_options,
     timezone_map::{TimezoneMapWidget, boundary_id_for_timezone},
 };
 
@@ -55,6 +55,19 @@ const SETUP_ADMIN_HINT_LINE: u16 = 15;
 const SETUP_ADMIN_SUBMIT_LINE: u16 = 19;
 const SETUP_ADMIN_ERROR_LINE: u16 = 21;
 const SETUP_ADMIN_STACKED_CHECKLIST_LINE: u16 = 21;
+const SETUP_APPEARANCE_HEADER_HEIGHT: u16 = 3;
+const SETUP_APPEARANCE_SHAPE_LINE: u16 = 3;
+const SETUP_APPEARANCE_SHAPE_HEIGHT: u16 = 3;
+const SETUP_APPEARANCE_THEME_LINE: u16 = 6;
+const SETUP_APPEARANCE_PALETTE_HEIGHT: u16 = 4;
+const SETUP_APPEARANCE_THEME_CUSTOM_LINE: u16 = 10;
+const SETUP_APPEARANCE_ACCENT_LINE: u16 = 12;
+const SETUP_APPEARANCE_ACCENT_CUSTOM_LINE: u16 = 16;
+const SETUP_APPEARANCE_PREVIEW_LINE: u16 = 18;
+const SETUP_APPEARANCE_PREVIEW_HEIGHT: u16 = 4;
+const SETUP_APPEARANCE_SUBMIT_LINE: u16 = 23;
+const SETUP_APPEARANCE_ERROR_LINE: u16 = 25;
+const SETUP_APPEARANCE_BUTTON_GAP: u16 = 1;
 const HOME_SUMMARY_HEIGHT: u16 = 1;
 const HOME_CONTROLS_HEIGHT: u16 = 2;
 const HOME_TILE_MAX_HEIGHT: u16 = 8;
@@ -938,6 +951,16 @@ pub fn render_setup(
     model: &SetupViewModel,
     theme: &TundraTheme,
 ) {
+    let appearance_theme = if model.step == SetupStep::Appearance {
+        theme
+            .with_border_shape(model.border_shape)
+            .with_border_color(model.theme_color)
+            .with_accent_color(model.accent_color)
+    } else {
+        *theme
+    };
+    let theme = &appearance_theme;
+
     match compute_shell_layout(area) {
         ShellLayout::Compact(compact) => render_compact_home(frame, compact, chrome, theme),
         ShellLayout::Full { top, main, status } => {
@@ -2411,6 +2434,7 @@ fn render_setup_controls(
         SetupStep::Language => render_setup_language_page(frame, controls, model, theme),
         SetupStep::Timezone => render_setup_timezone_page(frame, main, controls, model, theme),
         SetupStep::Admin => render_setup_admin_page(frame, controls, model, theme),
+        SetupStep::Appearance => render_setup_appearance_page(frame, controls, model, theme),
     }
 }
 
@@ -2595,6 +2619,344 @@ fn render_setup_admin_page(
             setup_admin_error_area(area),
         );
     }
+}
+
+fn render_setup_appearance_page(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    model: &SetupViewModel,
+    theme: &TundraTheme,
+) {
+    frame.render_widget(setup_block(theme), area);
+
+    let content = setup_inner_area(area);
+    let header = Rect::new(
+        content.x,
+        content.y,
+        content.width,
+        SETUP_APPEARANCE_HEADER_HEIGHT.min(content.height),
+    );
+    frame.render_widget(
+        Paragraph::new(vec![
+            Line::styled(
+                format!("Step: {}", setup_step_label(model.step)),
+                theme.title_style(),
+            ),
+            Line::from("Choose the frame shape, theme color, and accent color."),
+            Line::styled(
+                "Tab / Up / Down: move    Left / Right: choose    Enter: activate",
+                theme.muted_style(),
+            ),
+        ])
+        .wrap(Wrap { trim: true }),
+        header,
+    );
+
+    render_setup_shape_buttons(frame, area, model, theme);
+    render_setup_color_palette(
+        frame,
+        area,
+        model,
+        SetupField::AppearanceThemeColor,
+        "Theme color",
+        &model.theme_color_value,
+        theme,
+    );
+    render_setup_custom_color_button(
+        frame,
+        area,
+        model,
+        SetupField::AppearanceThemeCustom,
+        "Use a custom theme color...",
+        theme,
+    );
+    render_setup_color_palette(
+        frame,
+        area,
+        model,
+        SetupField::AppearanceAccentColor,
+        "Accent color",
+        &model.accent_color_value,
+        theme,
+    );
+    render_setup_custom_color_button(
+        frame,
+        area,
+        model,
+        SetupField::AppearanceAccentCustom,
+        "Use a custom accent color...",
+        theme,
+    );
+
+    let preview = setup_appearance_preview_area(area);
+    if preview.width > 0 && preview.height > 0 {
+        frame.render_widget(
+            Paragraph::new(vec![
+                Line::styled("Live preview", theme.title_style()),
+                Line::from(format!(
+                    "Theme: {}    Accent: {}",
+                    model.theme_color_value, model.accent_color_value
+                )),
+            ])
+            .block(
+                theme
+                    .block()
+                    .title("Preview")
+                    .title_style(theme.title_style())
+                    .borders(Borders::ALL)
+                    .style(theme.body_style()),
+            ),
+            preview,
+        );
+    }
+
+    let submit_focused = model.focused_field == SetupField::AppearanceSubmit;
+    let submit = Line::styled(
+        format!("{}Finish setup", focus_marker(submit_focused)),
+        if submit_focused {
+            theme.title_style()
+        } else {
+            theme.body_style()
+        },
+    );
+    frame.render_widget(
+        Paragraph::new(submit),
+        setup_appearance_field_area(area, SetupField::AppearanceSubmit),
+    );
+
+    if let Some(error) = &model.error {
+        frame.render_widget(
+            Paragraph::new(Line::styled(format!("Error: {error}"), theme.error_style()))
+                .wrap(Wrap { trim: true }),
+            setup_appearance_error_area(area),
+        );
+    }
+
+    if model.custom_color_target.is_some() {
+        render_setup_custom_color_dialog(frame, area, model, theme);
+    }
+}
+
+fn render_setup_shape_buttons(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    model: &SetupViewModel,
+    theme: &TundraTheme,
+) {
+    let field = SetupField::AppearanceShape;
+    let outer = setup_appearance_field_area(area, field);
+    if outer.width == 0 || outer.height == 0 {
+        return;
+    }
+
+    let focused = model.focused_field == field;
+    frame.render_widget(
+        theme
+            .block()
+            .title("Frame shape")
+            .title_style(if focused {
+                theme.title_style()
+            } else {
+                theme.body_style()
+            })
+            .borders(Borders::ALL)
+            .style(theme.body_style())
+            .border_style(theme.selectable_border_style(focused)),
+        outer,
+    );
+
+    for (shape, button_area) in setup_appearance_shape_option_areas(area) {
+        let selected = model.border_shape == shape;
+        let label = match shape {
+            crate::BorderShape::Rounded => "Rounded",
+            crate::BorderShape::Square => "Square",
+        };
+        let style = if selected {
+            theme.title_style()
+        } else {
+            theme.body_style()
+        };
+        frame.render_widget(
+            Paragraph::new(format!("[{} {label}]", if selected { "x" } else { " " })).style(style),
+            button_area,
+        );
+    }
+}
+
+fn render_setup_color_palette(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    model: &SetupViewModel,
+    field: SetupField,
+    title: &'static str,
+    selected_value: &str,
+    theme: &TundraTheme,
+) {
+    let outer = setup_appearance_field_area(area, field);
+    if outer.width == 0 || outer.height == 0 {
+        return;
+    }
+
+    let focused = model.focused_field == field;
+    frame.render_widget(
+        theme
+            .block()
+            .title(title)
+            .title_style(if focused {
+                theme.title_style()
+            } else {
+                theme.body_style()
+            })
+            .borders(Borders::ALL)
+            .style(theme.body_style())
+            .border_style(theme.selectable_border_style(focused)),
+        outer,
+    );
+
+    for (index, button_area) in setup_appearance_palette_option_areas(area, field) {
+        let option = setup_standard_color_options()[index];
+        let selected = option.value.eq_ignore_ascii_case(selected_value);
+        let disabled =
+            field == SetupField::AppearanceAccentColor && option.color == model.theme_color;
+        let style = if disabled {
+            theme.muted_style()
+        } else {
+            Style::default()
+                .fg(option.color)
+                .bg(theme.background)
+                .add_modifier(if selected {
+                    Modifier::BOLD
+                } else {
+                    Modifier::empty()
+                })
+        };
+        frame.render_widget(
+            Paragraph::new(format!(
+                "[{}{}]",
+                if disabled {
+                    "x"
+                } else if selected {
+                    ">"
+                } else {
+                    " "
+                },
+                option.label
+            ))
+            .style(style),
+            button_area,
+        );
+    }
+}
+
+fn render_setup_custom_color_button(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    model: &SetupViewModel,
+    field: SetupField,
+    label: &'static str,
+    theme: &TundraTheme,
+) {
+    let focused = model.focused_field == field;
+    frame.render_widget(
+        Paragraph::new(format!("{}[ {label} ]", focus_marker(focused))).style(if focused {
+            theme.title_style()
+        } else {
+            theme.body_style()
+        }),
+        setup_appearance_field_area(area, field),
+    );
+}
+
+fn render_setup_custom_color_dialog(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    model: &SetupViewModel,
+    theme: &TundraTheme,
+) {
+    let dialog = setup_custom_color_dialog_area(area);
+    if dialog.width == 0 || dialog.height == 0 {
+        return;
+    }
+    let target_label = match model.custom_color_target {
+        Some(SetupCustomColorTarget::Theme) => "theme",
+        Some(SetupCustomColorTarget::Accent) => "accent",
+        None => return,
+    };
+
+    frame.render_widget(Clear, dialog);
+    frame.render_widget(
+        theme
+            .block()
+            .title(format!("Custom {target_label} color"))
+            .title_style(theme.title_style())
+            .borders(Borders::ALL)
+            .style(theme.body_style()),
+        dialog,
+    );
+
+    let inner = setup_inner_area(dialog);
+    let instruction = Rect::new(inner.x, inner.y, inner.width, 1.min(inner.height));
+    frame.render_widget(
+        Paragraph::new("Enter #RRGGBB or a supported color name.").style(theme.muted_style()),
+        instruction,
+    );
+
+    let input_area = setup_custom_color_input_area(area);
+    if input_area.width > 0 && input_area.height > 0 {
+        let input_block = theme
+            .block()
+            .title("Color code")
+            .title_style(theme.title_style())
+            .borders(Borders::ALL)
+            .style(theme.body_style())
+            .border_style(theme.selectable_border_style(true));
+        let input_inner = input_block.inner(input_area);
+        frame.render_widget(input_block, input_area);
+        frame.render_widget(
+            Paragraph::new(if model.custom_color_input.is_empty() {
+                "#38BDF8".to_string()
+            } else {
+                model.custom_color_input.clone()
+            })
+            .style(if model.custom_color_input.is_empty() {
+                theme.muted_style()
+            } else {
+                theme.body_style()
+            }),
+            input_inner,
+        );
+    }
+
+    let feedback = if let Some(error) = &model.custom_color_error {
+        Line::styled(error.clone(), theme.error_style())
+    } else if model.custom_color_conflicts_with_theme {
+        Line::styled(
+            "Accent color must differ from the theme color",
+            theme.error_style(),
+        )
+    } else if model.custom_color_valid {
+        Line::styled("Valid color - press Enter to apply", theme.title_style())
+    } else {
+        Line::styled("Enter a complete color code", theme.muted_style())
+    };
+    let feedback_area = Rect::new(
+        inner.x,
+        inner.y.saturating_add(5),
+        inner.width,
+        1.min(inner.height.saturating_sub(5)),
+    );
+    frame.render_widget(Paragraph::new(feedback), feedback_area);
+
+    let actions_area = Rect::new(
+        inner.x,
+        inner.y.saturating_add(6),
+        inner.width,
+        1.min(inner.height.saturating_sub(6)),
+    );
+    frame.render_widget(
+        Paragraph::new("Enter: apply    Esc: cancel").style(theme.muted_style()),
+        actions_area,
+    );
 }
 
 fn setup_block(theme: &TundraTheme) -> Block<'static> {
@@ -2821,11 +3183,124 @@ pub fn setup_admin_field_area(main: Rect, field: SetupField) -> Rect {
         }
         SetupField::PasswordHint => (SETUP_ADMIN_HINT_LINE, SETUP_ADMIN_FIELD_HEIGHT),
         SetupField::Submit => (SETUP_ADMIN_SUBMIT_LINE, 1),
-        SetupField::LanguageList | SetupField::TimezoneList => {
-            (SETUP_ADMIN_USERNAME_LINE, SETUP_ADMIN_FIELD_HEIGHT)
-        }
+        SetupField::LanguageList
+        | SetupField::TimezoneList
+        | SetupField::AppearanceShape
+        | SetupField::AppearanceThemeColor
+        | SetupField::AppearanceThemeCustom
+        | SetupField::AppearanceAccentColor
+        | SetupField::AppearanceAccentCustom
+        | SetupField::AppearanceSubmit => (SETUP_ADMIN_USERNAME_LINE, SETUP_ADMIN_FIELD_HEIGHT),
     };
     setup_admin_line_area(main, line, height)
+}
+
+pub fn setup_appearance_field_area(main: Rect, field: SetupField) -> Rect {
+    let (line, height) = match field {
+        SetupField::AppearanceShape => (SETUP_APPEARANCE_SHAPE_LINE, SETUP_APPEARANCE_SHAPE_HEIGHT),
+        SetupField::AppearanceThemeColor => {
+            (SETUP_APPEARANCE_THEME_LINE, SETUP_APPEARANCE_PALETTE_HEIGHT)
+        }
+        SetupField::AppearanceThemeCustom => (SETUP_APPEARANCE_THEME_CUSTOM_LINE, 1),
+        SetupField::AppearanceAccentColor => (
+            SETUP_APPEARANCE_ACCENT_LINE,
+            SETUP_APPEARANCE_PALETTE_HEIGHT,
+        ),
+        SetupField::AppearanceAccentCustom => (SETUP_APPEARANCE_ACCENT_CUSTOM_LINE, 1),
+        SetupField::AppearanceSubmit => (SETUP_APPEARANCE_SUBMIT_LINE, 1),
+        _ => (SETUP_APPEARANCE_SHAPE_LINE, 0),
+    };
+    setup_line_area(main, line, height)
+}
+
+pub fn setup_appearance_shape_option_areas(main: Rect) -> [(crate::BorderShape, Rect); 2] {
+    let outer = setup_appearance_field_area(main, SetupField::AppearanceShape);
+    let inner = setup_inner_area(outer);
+    let rounded_width = 13.min(inner.width);
+    let square_x = inner
+        .x
+        .saturating_add(rounded_width)
+        .saturating_add(SETUP_APPEARANCE_BUTTON_GAP);
+    let square_width = 12.min(inner.x.saturating_add(inner.width).saturating_sub(square_x));
+    [
+        (
+            crate::BorderShape::Rounded,
+            Rect::new(inner.x, inner.y, rounded_width, inner.height.min(1)),
+        ),
+        (
+            crate::BorderShape::Square,
+            Rect::new(square_x, inner.y, square_width, inner.height.min(1)),
+        ),
+    ]
+}
+
+pub fn setup_appearance_palette_option_areas(main: Rect, field: SetupField) -> Vec<(usize, Rect)> {
+    if !matches!(
+        field,
+        SetupField::AppearanceThemeColor | SetupField::AppearanceAccentColor
+    ) {
+        return Vec::new();
+    }
+
+    let outer = setup_appearance_field_area(main, field);
+    let inner = setup_inner_area(outer);
+    if inner.width == 0 || inner.height == 0 {
+        return Vec::new();
+    }
+
+    let right = inner.x.saturating_add(inner.width);
+    let bottom = inner.y.saturating_add(inner.height);
+    let mut x = inner.x;
+    let mut y = inner.y;
+    let mut areas = Vec::new();
+    for (index, option) in setup_standard_color_options().iter().enumerate() {
+        let desired_width = u16::try_from(option.label.chars().count())
+            .unwrap_or(u16::MAX)
+            .saturating_add(3);
+        if x > inner.x && x.saturating_add(desired_width) > right {
+            x = inner.x;
+            y = y.saturating_add(1);
+        }
+        if y >= bottom {
+            break;
+        }
+        let width = desired_width.min(right.saturating_sub(x));
+        if width == 0 {
+            break;
+        }
+        areas.push((index, Rect::new(x, y, width, 1)));
+        x = x
+            .saturating_add(width)
+            .saturating_add(SETUP_APPEARANCE_BUTTON_GAP);
+    }
+    areas
+}
+
+fn setup_appearance_preview_area(main: Rect) -> Rect {
+    setup_line_area(
+        main,
+        SETUP_APPEARANCE_PREVIEW_LINE,
+        SETUP_APPEARANCE_PREVIEW_HEIGHT,
+    )
+}
+
+fn setup_appearance_error_area(main: Rect) -> Rect {
+    setup_line_area(main, SETUP_APPEARANCE_ERROR_LINE, 2)
+}
+
+pub fn setup_custom_color_dialog_area(main: Rect) -> Rect {
+    centered_rect(main, main.width.min(58), main.height.min(10))
+}
+
+pub fn setup_custom_color_input_area(main: Rect) -> Rect {
+    let dialog = setup_custom_color_dialog_area(main);
+    let inner = setup_inner_area(dialog);
+    Rect::new(
+        inner.x,
+        inner.y.saturating_add(2),
+        inner.width,
+        3.min(inner.height.saturating_sub(2)),
+    )
 }
 
 fn setup_admin_form_area(area: Rect) -> Rect {
@@ -3084,6 +3559,7 @@ fn setup_step_label(step: SetupStep) -> &'static str {
         SetupStep::Language => "Language",
         SetupStep::Timezone => "Timezone",
         SetupStep::Admin => "Admin",
+        SetupStep::Appearance => "Appearance",
     }
 }
 

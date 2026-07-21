@@ -324,6 +324,13 @@ impl ShellState {
             && password_requirements
                 .iter()
                 .all(|requirement| requirement.met);
+        let custom_color = self
+            .setup_custom_color_input
+            .parse::<tundra_storage::BorderColor>()
+            .ok();
+        let custom_color_conflicts_with_theme = self.setup_custom_color_target
+            == Some(tundra_ui::SetupCustomColorTarget::Accent)
+            && custom_color == Some(self.setup_theme_color);
 
         tundra_ui::SetupViewModel {
             step: self.setup_step,
@@ -339,6 +346,21 @@ impl ShellState {
             password_hint: self.setup_admin_password_hint.clone(),
             focused_field: self.setup_focused_field,
             can_submit,
+            border_shape: match self.setup_border_shape {
+                tundra_storage::BorderShape::Rounded => tundra_ui::BorderShape::Rounded,
+                tundra_storage::BorderShape::Square => tundra_ui::BorderShape::Square,
+            },
+            theme_color: ui_theme_color(self.setup_theme_color),
+            theme_color_value: self.setup_theme_color.to_string(),
+            accent_color: ui_theme_color(self.setup_accent_color),
+            accent_color_value: self.setup_accent_color.to_string(),
+            custom_color_target: self.setup_custom_color_target,
+            custom_color_input: self.setup_custom_color_input.clone(),
+            custom_color_valid: !self.setup_custom_color_input.trim().is_empty()
+                && custom_color.is_some()
+                && !custom_color_conflicts_with_theme,
+            custom_color_conflicts_with_theme,
+            custom_color_error: self.setup_custom_color_error.clone(),
             error: self.error_message.clone(),
         }
     }

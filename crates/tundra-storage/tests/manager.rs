@@ -157,6 +157,7 @@ fn toml_and_json_documents_round_trip() {
             role: "User".to_string(),
             password_hash: "$argon2id$placeholder".to_string(),
             password_hint: Some("project password".to_string()),
+            appearance: AppearanceConfig::default(),
             enabled: true,
             failed_login_attempts: 0,
             locked_until_epoch_ms: None,
@@ -300,6 +301,7 @@ fn border_color_parses_named_hex_and_default_values_canonically() {
     );
     assert_eq!(BorderColor::Rgb(0x38, 0xBD, 0xF8).to_string(), "#38BDF8");
     assert!("#RGB".parse::<BorderColor>().is_err());
+    assert!("#🙂ab".parse::<BorderColor>().is_err());
     assert!("orange".parse::<BorderColor>().is_err());
 }
 
@@ -398,6 +400,7 @@ fn old_users_without_password_hint_load_with_none() {
 
     assert_eq!(users.users.len(), 1);
     assert_eq!(users.users[0].password_hint, None);
+    assert_eq!(users.users[0].appearance, AppearanceConfig::default());
     assert!(opened.report.recovered_files.is_empty());
     assert!(opened.report.warnings.is_empty());
 
@@ -652,6 +655,7 @@ fn legacy_v1_users_are_migrated_to_disabled_v2_records() {
     assert!(!users.users[0].enabled);
     assert!(users.users[0].password_hash.is_empty());
     assert_eq!(users.users[0].password_hint, None);
+    assert_eq!(users.users[0].appearance, AppearanceConfig::default());
     assert_eq!(opened.report.migrated_files, vec![layout.users_path]);
 
     cleanup(&base);

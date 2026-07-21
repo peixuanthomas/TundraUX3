@@ -42,7 +42,7 @@ fn prepare_shell_startup_uses_windows_mock_app_paths() {
 }
 
 #[test]
-fn prepare_shell_startup_maps_persisted_square_border_shape() {
+fn prepare_shell_startup_uses_default_theme_before_any_user_logs_in() {
     let fixture = FixtureRoot::new("square-border");
     let base = fixture.path();
     let app_paths =
@@ -63,15 +63,12 @@ fn prepare_shell_startup_maps_persisted_square_border_shape() {
     let startup =
         prepare_shell_startup(&platform, ShellLaunchConfig::default()).expect("startup state");
 
-    assert_eq!(startup.app_config.border_shape, UiBorderShape::Square);
+    assert_eq!(startup.app_config.border_shape, UiBorderShape::Rounded);
     assert_eq!(
         startup.app_config.border_color,
-        ratatui::style::Color::Rgb(0x38, 0xBD, 0xF8)
+        ratatui::style::Color::White
     );
-    assert_eq!(
-        startup.app_config.accent_color,
-        ratatui::style::Color::LightMagenta
-    );
+    assert_eq!(startup.app_config.accent_color, ratatui::style::Color::Cyan);
 }
 
 #[test]

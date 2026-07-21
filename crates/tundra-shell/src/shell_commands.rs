@@ -44,6 +44,13 @@ pub enum ShellCommand {
     AppendSetupAdminChar(char),
     SetupAdminBackspace,
     SubmitSetup,
+    SetupPreviousAppearanceChoice,
+    SetupNextAppearanceChoice,
+    AppendSetupCustomColorChar(char),
+    SetupCustomColorBackspace,
+    ApplySetupCustomColor,
+    CancelSetupCustomColor,
+    SubmitSetupAppearance,
     ActivateSetup {
         target: ShellComponent,
         coordinates: CellPosition,
