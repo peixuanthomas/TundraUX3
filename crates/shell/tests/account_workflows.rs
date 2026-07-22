@@ -8,33 +8,28 @@ use platform::{PlatformCapabilities, PlatformKind, UserDirs, build_windows_app_p
 use shell::{
     HomeModeOverride, InputEvent, InputKey, InputModifiers, InputPhase, KeyInput,
     LOGIN_IDLE_TIMEOUT, PASSWORD_REVEAL_DURATION, PointerButton, ShellAction, ShellComponent,
-    ShellHomeMode, ShellLaunchConfig, ShellLaunchTarget, ShellScreen, ShellSession,
-    ShellTerminalMode, prepare_shell_startup,
+    ShellHomeMode, ShellLaunchConfig, ShellScreen, ShellSession, prepare_shell_startup,
 };
 use storage::{BorderColor, BorderShape, ClockEntryRecord, ClockProfile};
 use ui::NotificationTone;
 
 fn debug_config() -> ShellLaunchConfig {
     ShellLaunchConfig {
-        terminal_mode: ShellTerminalMode::Fullscreen,
         home_mode_override: HomeModeOverride::Debug,
-        launch_target: ShellLaunchTarget::Home,
     }
 }
 
 fn default_config() -> ShellLaunchConfig {
     ShellLaunchConfig {
-        terminal_mode: ShellTerminalMode::Fullscreen,
         home_mode_override: HomeModeOverride::BuildDefault,
-        launch_target: ShellLaunchTarget::Home,
     }
 }
 
 #[test]
-fn fresh_startup_requires_first_run_setup_and_debug_flag_does_not_bypass_auth() {
+fn fresh_startup_requires_first_run_setup_even_for_debug_test_state() {
     let fixture = FixtureRoot::new("fresh-bootstrap");
     let platform = mock_platform(fixture.path());
-    let startup = prepare_shell_startup(&platform, debug_config()).expect("startup");
+    let startup = prepare_shell_startup(&platform).expect("startup");
 
     let state = ShellSession::new_with_startup(debug_config(), (120, 40), startup);
 
@@ -48,7 +43,7 @@ fn profile_default_home_mode_survives_admin_authentication() {
     let fixture = FixtureRoot::new("profile-default-home");
     let platform = mock_platform(fixture.path());
     let launch_config = ShellLaunchConfig::default();
-    let startup = prepare_shell_startup(&platform, launch_config).expect("startup");
+    let startup = prepare_shell_startup(&platform).expect("startup");
     let mut state = ShellSession::new_with_startup(launch_config, (120, 40), startup);
 
     complete_first_run_setup(&mut state, 0, 0, "AdminUser", "StrongPass123", "");
@@ -66,7 +61,7 @@ fn profile_default_home_mode_survives_admin_authentication() {
 fn first_run_setup_signs_in_persists_config_and_hint_without_plaintext_password() {
     let fixture = FixtureRoot::new("first-run-setup");
     let platform = mock_platform(fixture.path());
-    let startup = prepare_shell_startup(&platform, default_config()).expect("startup");
+    let startup = prepare_shell_startup(&platform).expect("startup");
     let manager = startup.storage_manager.clone().expect("storage manager");
     let mut state = ShellSession::new_with_startup(default_config(), (120, 40), startup);
 
@@ -95,7 +90,7 @@ fn first_run_setup_signs_in_persists_config_and_hint_without_plaintext_password(
 fn appearance_setup_validates_custom_colors_and_persists_all_choices() {
     let fixture = FixtureRoot::new("first-run-appearance");
     let platform = mock_platform(fixture.path());
-    let startup = prepare_shell_startup(&platform, default_config()).expect("startup");
+    let startup = prepare_shell_startup(&platform).expect("startup");
     let manager = startup.storage_manager.clone().expect("storage manager");
     let mut state = ShellSession::new_with_startup(default_config(), (120, 40), startup);
 
@@ -492,7 +487,7 @@ fn admin_setup_rejects_mismatched_reentered_password() {
 fn first_run_setup_routes_keys_focus_and_mouse_before_home_shortcuts() {
     let fixture = FixtureRoot::new("setup-routing");
     let platform = mock_platform(fixture.path());
-    let startup = prepare_shell_startup(&platform, default_config()).expect("startup");
+    let startup = prepare_shell_startup(&platform).expect("startup");
     let mut state = ShellSession::new_with_startup(default_config(), (120, 40), startup);
 
     state.apply_input(InputEvent::from_key_label("e"));
@@ -589,7 +584,7 @@ fn first_run_setup_routes_keys_focus_and_mouse_before_home_shortcuts() {
 fn first_run_setup_keeps_global_exit_keys() {
     let fixture = FixtureRoot::new("setup-exit");
     let platform = mock_platform(fixture.path());
-    let startup = prepare_shell_startup(&platform, default_config()).expect("startup");
+    let startup = prepare_shell_startup(&platform).expect("startup");
     let mut state = ShellSession::new_with_startup(default_config(), (120, 40), startup);
 
     state.apply_input(InputEvent::from_key_label("Esc"));
@@ -608,7 +603,7 @@ fn restart_requires_login_and_bad_password_stays_on_login() {
     let platform = mock_platform(fixture.path());
     bootstrap_with_shell(&platform);
 
-    let startup = prepare_shell_startup(&platform, default_config()).expect("restart startup");
+    let startup = prepare_shell_startup(&platform).expect("restart startup");
     let mut state = ShellSession::new_with_startup(default_config(), (120, 40), startup);
     assert_eq!(state.active_screen(), ShellScreen::Login);
 
@@ -624,7 +619,7 @@ fn restart_requires_login_and_bad_password_stays_on_login() {
         Some("Password hint: Recovery hint")
     );
 
-    let startup = prepare_shell_startup(&platform, default_config()).expect("second restart");
+    let startup = prepare_shell_startup(&platform).expect("second restart");
     let mut state = ShellSession::new_with_startup(default_config(), (120, 40), startup);
     select_login_user(&mut state, "AdminUser");
     state.apply_input(InputEvent::from_key_label("Tab"));
@@ -644,12 +639,12 @@ fn restart_requires_login_and_bad_password_stays_on_login() {
 fn login_bad_password_without_hint_shows_invalid_credentials() {
     let fixture = FixtureRoot::new("restart-login-no-hint");
     let platform = mock_platform(fixture.path());
-    let startup = prepare_shell_startup(&platform, default_config()).expect("startup");
+    let startup = prepare_shell_startup(&platform).expect("startup");
     let mut state = ShellSession::new_with_startup(default_config(), (120, 40), startup);
     complete_first_run_setup(&mut state, 0, 0, "AdminUser", "StrongPass123", "");
     assert_eq!(state.active_screen(), ShellScreen::Home);
 
-    let startup = prepare_shell_startup(&platform, default_config()).expect("restart startup");
+    let startup = prepare_shell_startup(&platform).expect("restart startup");
     let mut state = ShellSession::new_with_startup(default_config(), (120, 40), startup);
     select_login_user(&mut state, "AdminUser");
     state.apply_input(InputEvent::from_key_label("Enter"));
@@ -669,7 +664,7 @@ fn login_idle_timeout_uses_exact_sixty_second_boundary_and_only_resets_for_activ
     let platform = mock_platform(fixture.path());
     bootstrap_with_shell(&platform);
 
-    let startup = prepare_shell_startup(&platform, default_config()).expect("login startup");
+    let startup = prepare_shell_startup(&platform).expect("login startup");
     let mut state = ShellSession::new_with_startup(default_config(), (120, 40), startup);
     state.apply_input(InputEvent::from_key_label("Tab"));
     type_text(&mut state, "WrongPass123");
@@ -742,7 +737,7 @@ fn login_password_reveal_handles_unicode_expires_at_five_seconds_and_does_not_ex
     let platform = mock_platform(fixture.path());
     bootstrap_with_shell(&platform);
 
-    let startup = prepare_shell_startup(&platform, default_config()).expect("login startup");
+    let startup = prepare_shell_startup(&platform).expect("login startup");
     let mut state = ShellSession::new_with_startup(default_config(), (120, 40), startup);
     state.apply_input(InputEvent::from_key_label("Tab"));
     type_text(&mut state, "密碼🙂");
@@ -803,7 +798,7 @@ fn login_f3_cannot_create_an_anonymous_session_and_focus_skips_guest() {
     let platform = mock_platform(fixture.path());
     bootstrap_with_shell(&platform);
 
-    let startup = prepare_shell_startup(&platform, default_config()).expect("login startup");
+    let startup = prepare_shell_startup(&platform).expect("login startup");
     let manager = startup.storage_manager.clone().expect("storage manager");
     let users_before = read_optional_file(&manager.layout().users_path);
     let clock_before = read_optional_file(&manager.layout().clock_path);
@@ -851,7 +846,7 @@ fn l_returns_to_weathr_while_focused_and_mouse_logout_stay_in_shell() {
     let platform = mock_platform(fixture.path());
     bootstrap_with_shell(&platform);
 
-    let startup = prepare_shell_startup(&platform, default_config()).expect("shortcut startup");
+    let startup = prepare_shell_startup(&platform).expect("shortcut startup");
     let mut shortcut_state = ShellSession::new_with_startup(default_config(), (120, 40), startup);
     login(&mut shortcut_state, "AdminUser", "StrongPass123");
     let action = shortcut_state.apply_input(InputEvent::from_key_label("l"));
@@ -863,7 +858,7 @@ fn l_returns_to_weathr_while_focused_and_mouse_logout_stay_in_shell() {
     assert_eq!(shortcut_state.active_screen(), ShellScreen::Login);
     assert!(shortcut_state.auth_session().is_none());
 
-    let startup = prepare_shell_startup(&platform, default_config()).expect("focus startup");
+    let startup = prepare_shell_startup(&platform).expect("focus startup");
     let mut focus_state = ShellSession::new_with_startup(default_config(), (120, 40), startup);
     login(&mut focus_state, "AdminUser", "StrongPass123");
     focus_state.apply_input(InputEvent::from_key_label("Tab"));
@@ -873,7 +868,7 @@ fn l_returns_to_weathr_while_focused_and_mouse_logout_stay_in_shell() {
     assert_eq!(focus_state.active_screen(), ShellScreen::Login);
     assert!(focus_state.auth_session().is_none());
 
-    let startup = prepare_shell_startup(&platform, default_config()).expect("mouse startup");
+    let startup = prepare_shell_startup(&platform).expect("mouse startup");
     let mut mouse_state = ShellSession::new_with_startup(default_config(), (120, 40), startup);
     login(&mut mouse_state, "AdminUser", "StrongPass123");
     let logout = component_center(&mouse_state, ShellComponent::HomeLogout);
@@ -894,7 +889,7 @@ fn login_and_logout_hit_regions_share_render_geometry_at_supported_sizes() {
     bootstrap_with_shell(&platform);
 
     for terminal_size in [(80, 24), (50, 12)] {
-        let startup = prepare_shell_startup(&platform, default_config()).expect("login startup");
+        let startup = prepare_shell_startup(&platform).expect("login startup");
         let mut state = ShellSession::new_with_startup(default_config(), terminal_size, startup);
         let password = component_area(&state, ShellComponent::LoginPassword);
         let visibility = component_area(&state, ShellComponent::LoginPasswordVisibility);
@@ -924,7 +919,7 @@ fn login_and_logout_hit_regions_share_render_geometry_at_supported_sizes() {
         );
     }
 
-    let startup = prepare_shell_startup(&platform, default_config()).expect("compact startup");
+    let startup = prepare_shell_startup(&platform).expect("compact startup");
     let compact = ShellSession::new_with_startup(default_config(), (49, 11), startup);
     assert!(compact.hit_map().regions().iter().all(|region| {
         !matches!(
@@ -942,7 +937,7 @@ fn admin_can_manage_users_and_user_can_only_open_own_profile() {
     let platform = mock_platform(fixture.path());
     bootstrap_with_shell(&platform);
 
-    let startup = prepare_shell_startup(&platform, default_config()).expect("admin startup");
+    let startup = prepare_shell_startup(&platform).expect("admin startup");
     let manager = startup.storage_manager.clone().expect("storage manager");
     let mut admin_state = ShellSession::new_with_startup(default_config(), (120, 40), startup);
     login(&mut admin_state, "AdminUser", "StrongPass123");
@@ -978,7 +973,7 @@ fn admin_can_manage_users_and_user_can_only_open_own_profile() {
         storage::AppearanceConfig::default()
     );
 
-    let startup = prepare_shell_startup(&platform, default_config()).expect("user startup");
+    let startup = prepare_shell_startup(&platform).expect("user startup");
     let mut user_state = ShellSession::new_with_startup(default_config(), (120, 40), startup);
     login(&mut user_state, "user2", "userPass2123!");
     assert_eq!(user_state.active_screen(), ShellScreen::Home);
@@ -998,7 +993,7 @@ fn user_management_refresh_failure_is_visible_preserves_users_and_resolves_after
     let platform = mock_platform(fixture.path());
     bootstrap_with_shell(&platform);
 
-    let startup = prepare_shell_startup(&platform, default_config()).expect("admin startup");
+    let startup = prepare_shell_startup(&platform).expect("admin startup");
     let manager = startup.storage_manager.clone().expect("storage manager");
     let users_path = manager.layout().users_path.clone();
     let mut state = ShellSession::new_with_startup(default_config(), (120, 40), startup);
@@ -1045,7 +1040,7 @@ fn login_mouse_click_selects_user_and_focuses_password() {
     let platform = mock_platform(fixture.path());
     bootstrap_with_shell(&platform);
 
-    let startup = prepare_shell_startup(&platform, default_config()).expect("admin startup");
+    let startup = prepare_shell_startup(&platform).expect("admin startup");
     let mut admin_state = ShellSession::new_with_startup(default_config(), (120, 40), startup);
     login(&mut admin_state, "AdminUser", "StrongPass123");
     admin_state.apply_input(InputEvent::from_key_label("u"));
@@ -1058,7 +1053,7 @@ fn login_mouse_click_selects_user_and_focuses_password() {
     type_text(&mut admin_state, "userPass2123!");
     admin_state.apply_input(InputEvent::from_key_label("Enter"));
 
-    let startup = prepare_shell_startup(&platform, default_config()).expect("user startup");
+    let startup = prepare_shell_startup(&platform).expect("user startup");
     let mut state = ShellSession::new_with_startup(default_config(), (120, 40), startup);
     assert_eq!(state.active_screen(), ShellScreen::Login);
     assert_eq!(state.focused_component(), ShellComponent::LoginUserList);
@@ -1102,7 +1097,7 @@ fn user_management_forms_edit_password_and_delete_accounts() {
     let platform = mock_platform(fixture.path());
     bootstrap_with_shell(&platform);
 
-    let startup = prepare_shell_startup(&platform, default_config()).expect("admin startup");
+    let startup = prepare_shell_startup(&platform).expect("admin startup");
     let manager = startup.storage_manager.clone().expect("storage manager");
     let mut state = ShellSession::new_with_startup(default_config(), (120, 40), startup);
     login(&mut state, "AdminUser", "StrongPass123");
@@ -1217,7 +1212,7 @@ fn compact_user_management_captures_hidden_actions_and_only_escape_leaves() {
     let platform = mock_platform(fixture.path());
     bootstrap_with_shell(&platform);
 
-    let startup = prepare_shell_startup(&platform, default_config()).expect("admin startup");
+    let startup = prepare_shell_startup(&platform).expect("admin startup");
     let mut state = ShellSession::new_with_startup(default_config(), (120, 40), startup);
     login(&mut state, "AdminUser", "StrongPass123");
     state.apply_input(InputEvent::from_key_label("u"));
@@ -1249,7 +1244,7 @@ fn user_management_create_role_and_action_focus_use_one_keyboard_flow() {
     let platform = mock_platform(fixture.path());
     bootstrap_with_shell(&platform);
 
-    let startup = prepare_shell_startup(&platform, default_config()).expect("admin startup");
+    let startup = prepare_shell_startup(&platform).expect("admin startup");
     let mut state = ShellSession::new_with_startup(default_config(), (120, 40), startup);
     login(&mut state, "AdminUser", "StrongPass123");
     state.apply_input(InputEvent::from_key_label("u"));
@@ -1342,7 +1337,7 @@ fn user_management_mouse_uses_shared_rows_actions_forms_and_scroll_geometry() {
     let platform = mock_platform(fixture.path());
     bootstrap_with_shell(&platform);
 
-    let startup = prepare_shell_startup(&platform, default_config()).expect("admin startup");
+    let startup = prepare_shell_startup(&platform).expect("admin startup");
     let mut state = ShellSession::new_with_startup(default_config(), (120, 40), startup);
     login(&mut state, "AdminUser", "StrongPass123");
     state.apply_input(InputEvent::from_key_label("u"));
@@ -1432,7 +1427,7 @@ fn user_management_clock_button_opens_clock_and_returns_to_user_management() {
     let platform = mock_platform(fixture.path());
     bootstrap_with_shell(&platform);
 
-    let startup = prepare_shell_startup(&platform, default_config()).expect("admin startup");
+    let startup = prepare_shell_startup(&platform).expect("admin startup");
     let mut state = ShellSession::new_with_startup(default_config(), (120, 40), startup);
     login(&mut state, "AdminUser", "StrongPass123");
     state.apply_input(InputEvent::from_key_label("u"));
@@ -1467,7 +1462,7 @@ fn last_admin_actions_are_skipped_and_self_delete_defaults_to_cancel() {
     let platform = mock_platform(fixture.path());
     bootstrap_with_shell(&platform);
 
-    let startup = prepare_shell_startup(&platform, default_config()).expect("admin startup");
+    let startup = prepare_shell_startup(&platform).expect("admin startup");
     let mut state = ShellSession::new_with_startup(default_config(), (120, 40), startup);
     login(&mut state, "AdminUser", "StrongPass123");
     state.apply_input(InputEvent::from_key_label("u"));
@@ -1555,7 +1550,7 @@ fn last_admin_actions_are_skipped_and_self_delete_defaults_to_cancel() {
 fn clock_keyboard_flow_creates_manages_and_persists_entries() {
     let fixture = FixtureRoot::new("clock-keyboard-flow");
     let platform = mock_platform(fixture.path());
-    let startup = prepare_shell_startup(&platform, default_config()).expect("startup");
+    let startup = prepare_shell_startup(&platform).expect("startup");
     let manager = startup.storage_manager.clone().expect("storage manager");
     let mut state = ShellSession::new_with_startup(default_config(), (120, 40), startup);
     complete_first_run_setup(&mut state, 0, 0, "AdminUser", "StrongPass123", "Clock hint");
@@ -1617,7 +1612,7 @@ fn expired_countdown_waits_for_initial_sync_then_is_delivered_and_removed() {
     let platform = mock_platform(fixture.path());
     bootstrap_with_shell(&platform);
 
-    let startup = prepare_shell_startup(&platform, default_config()).expect("startup");
+    let startup = prepare_shell_startup(&platform).expect("startup");
     let manager = startup.storage_manager.clone().expect("storage manager");
     let user_id = manager
         .load_users()
@@ -1737,7 +1732,7 @@ fn read_optional_file(path: &Path) -> Option<Vec<u8>> {
 }
 
 fn bootstrap_with_shell(platform: &MockPlatform) {
-    let startup = prepare_shell_startup(platform, default_config()).expect("startup");
+    let startup = prepare_shell_startup(platform).expect("startup");
     let mut state = ShellSession::new_with_startup(default_config(), (120, 40), startup);
     complete_first_run_setup(
         &mut state,
@@ -1831,7 +1826,7 @@ fn rect_center(area: ratatui::layout::Rect) -> (u16, u16) {
 fn fresh_setup_state(case: &str) -> (FixtureRoot, ShellSession) {
     let fixture = FixtureRoot::new(case);
     let platform = mock_platform(fixture.path());
-    let startup = prepare_shell_startup(&platform, default_config()).expect("startup");
+    let startup = prepare_shell_startup(&platform).expect("startup");
     let state = ShellSession::new_with_startup(default_config(), (120, 40), startup);
     (fixture, state)
 }

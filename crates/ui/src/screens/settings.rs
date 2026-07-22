@@ -41,7 +41,7 @@ impl SettingsCategory {
             Self::Appearance => "Your colors and borders",
             Self::RegionTime => "Language, city and timezone",
             Self::FileExplorer => "Display, sorting and safety",
-            Self::Editor => "Cursor acceleration",
+            Self::Editor => "Cursor and file associations",
         }
     }
 }
@@ -53,6 +53,8 @@ pub enum SettingsField {
     AccentColor,
     Language,
     Timezone,
+    TimeSyncSource,
+    TimeSyncServer,
     WeatherLocation,
     ShowHidden,
     ShowSystem,
@@ -66,6 +68,7 @@ pub enum SettingsField {
     SortDirection,
     ConfirmDelete,
     ConfirmNameConflicts,
+    ExplorerOpenExtensions,
     CursorAcceleration,
     CursorDelay,
     CursorRamp,
@@ -215,6 +218,19 @@ pub struct SettingsWeatherLocationEditorViewModel {
     pub error: Option<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SettingsFileExtensionsEditorViewModel {
+    pub value: String,
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SettingsTimeSyncServerEditorViewModel {
+    pub value: String,
+    pub error: Option<String>,
+    pub validating: bool,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct SettingsViewModel {
     pub selected_category: SettingsCategory,
@@ -227,6 +243,8 @@ pub struct SettingsViewModel {
     pub picker: Option<SettingsPickerViewModel>,
     pub color_editor: Option<SettingsColorEditorViewModel>,
     pub weather_location_editor: Option<SettingsWeatherLocationEditorViewModel>,
+    pub file_extensions_editor: Option<SettingsFileExtensionsEditorViewModel>,
+    pub time_sync_server_editor: Option<SettingsTimeSyncServerEditorViewModel>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -254,6 +272,8 @@ pub enum SettingsHitTarget {
     PickerOption(usize),
     ColorEditor,
     WeatherLocationEditor,
+    FileExtensionsEditor,
+    TimeSyncServerEditor,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -264,6 +284,8 @@ pub struct SettingsLayout {
     pub picker_options: Vec<SettingsPickerOptionLayout>,
     pub color_editor: Option<Rect>,
     pub weather_location_editor: Option<Rect>,
+    pub file_extensions_editor: Option<Rect>,
+    pub time_sync_server_editor: Option<Rect>,
 }
 
 pub fn render_settings(
@@ -416,10 +438,28 @@ pub fn settings_layout(area: Rect, model: &SettingsViewModel) -> SettingsLayout 
             .weather_location_editor
             .as_ref()
             .map(|_| centered(area, area.width.min(68), area.height.min(11))),
+        file_extensions_editor: model
+            .file_extensions_editor
+            .as_ref()
+            .map(|_| centered(area, area.width.min(72), area.height.min(11))),
+        time_sync_server_editor: model
+            .time_sync_server_editor
+            .as_ref()
+            .map(|_| centered(area, area.width.min(76), area.height.min(11))),
     }
 }
 
 pub fn settings_hit_test(layout: &SettingsLayout, point: (u16, u16)) -> Option<SettingsHitTarget> {
+    if let Some(area) = layout.time_sync_server_editor
+        && contains(area, point)
+    {
+        return Some(SettingsHitTarget::TimeSyncServerEditor);
+    }
+    if let Some(area) = layout.file_extensions_editor
+        && contains(area, point)
+    {
+        return Some(SettingsHitTarget::FileExtensionsEditor);
+    }
     if let Some(area) = layout.weather_location_editor
         && contains(area, point)
     {
@@ -541,6 +581,12 @@ fn render_settings_content(
     }
     if let Some(editor) = &model.weather_location_editor {
         render_weather_location_editor(frame, layout.main, editor, theme);
+    }
+    if let Some(editor) = &model.file_extensions_editor {
+        render_file_extensions_editor(frame, layout.main, editor, theme);
+    }
+    if let Some(editor) = &model.time_sync_server_editor {
+        render_time_sync_server_editor(frame, layout.main, editor, theme);
     }
 }
 
@@ -774,6 +820,84 @@ fn render_weather_location_editor(
                 theme
                     .block()
                     .title(" Weather location ")
+                    .borders(Borders::ALL),
+            )
+            .wrap(Wrap { trim: true }),
+        dialog,
+    );
+}
+
+fn render_file_extensions_editor(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    editor: &SettingsFileExtensionsEditorViewModel,
+    theme: &TundraTheme,
+) {
+    let dialog = centered(area, area.width.min(72), area.height.min(11));
+    frame.render_widget(Clear, dialog);
+    let lines = vec![
+        Line::from("Enter comma-separated filename suffixes Explorer should open here."),
+        Line::styled(format!("> {}_", editor.value), theme.title_style()),
+        Line::styled(
+            editor.error.clone().unwrap_or_default(),
+            theme.error_style(),
+        ),
+        Line::styled(
+            "Examples: .md, .txt, .rs, .d.ts (matching is case-insensitive)",
+            theme.muted_style(),
+        ),
+        Line::styled(
+            "Leave empty to always use the system default.  Enter: save  Esc: cancel",
+            theme.muted_style(),
+        ),
+    ];
+    frame.render_widget(
+        Paragraph::new(lines)
+            .block(
+                theme
+                    .block()
+                    .title(" Explorer files opened in Editor ")
+                    .borders(Borders::ALL),
+            )
+            .wrap(Wrap { trim: true }),
+        dialog,
+    );
+}
+
+fn render_time_sync_server_editor(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    editor: &SettingsTimeSyncServerEditorViewModel,
+    theme: &TundraTheme,
+) {
+    let dialog = centered(area, area.width.min(76), area.height.min(11));
+    frame.render_widget(Clear, dialog);
+    let status = if editor.validating {
+        "Synchronizing with this server…"
+    } else {
+        editor.error.as_deref().unwrap_or_default()
+    };
+    let status_style = if editor.validating {
+        theme.muted_style()
+    } else {
+        theme.error_style()
+    };
+    let lines = vec![
+        Line::from("Enter an HTTP(S) endpoint that returns a valid Date response header."),
+        Line::styled(format!("> {}_", editor.value), theme.title_style()),
+        Line::styled(status, status_style),
+        Line::styled(
+            "The address is saved only after a successful synchronization test.",
+            theme.muted_style(),
+        ),
+        Line::styled("Enter: test and save    Esc: cancel", theme.muted_style()),
+    ];
+    frame.render_widget(
+        Paragraph::new(lines)
+            .block(
+                theme
+                    .block()
+                    .title(" Time synchronization server ")
                     .borders(Borders::ALL),
             )
             .wrap(Wrap { trim: true }),

@@ -2,6 +2,11 @@ use std::sync::Arc;
 use watchdog::{ProcessWatchdog, WatchdogConfig, WatchdogRuntime};
 
 fn main() {
+    if let Err(error) = shell::parse_shell_args(std::env::args().skip(1)) {
+        eprintln!("tundra-shell failed: {error}");
+        std::process::exit(2);
+    }
+
     let (watchdog_runtime, process_watchdog) = match start_watchdog() {
         Ok(value) => value,
         Err(error) => {
@@ -13,19 +18,11 @@ fn main() {
         process_watchdog.register_emergency_cleanup(Arc::new(shell::restore_terminal_best_effort));
 
     let mut stdout = std::io::stdout();
-    let exit_code = match shell::parse_shell_args(std::env::args().skip(1)) {
-        Ok(config) => {
-            match shell::run_shell_blocking_managed(&mut stdout, config, process_watchdog) {
-                Ok(()) => 0,
-                Err(error) => {
-                    eprintln!("tundra-shell failed: {error}");
-                    1
-                }
-            }
-        }
+    let exit_code = match shell::run_shell_blocking_managed(&mut stdout, process_watchdog) {
+        Ok(()) => 0,
         Err(error) => {
             eprintln!("tundra-shell failed: {error}");
-            2
+            1
         }
     };
 

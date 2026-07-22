@@ -427,6 +427,14 @@ pub trait Platform: Send + Sync {
 
     fn user_dirs(&self) -> Result<UserDirs, PlatformError>;
     fn app_paths(&self) -> Result<AppPaths, PlatformError>;
+    /// Reads the current UTC-capable wall clock from the operating system.
+    /// Platform-independent callers must use this boundary instead of reading
+    /// `SystemTime` directly when the configured time source is the OS.
+    fn system_time(&self) -> Result<SystemTime, PlatformError> {
+        Err(PlatformError::Unsupported {
+            capability: "system_time",
+        })
+    }
     /// Returns a decoded file or file-association icon when the backend can
     /// provide one. `None` is a normal fallback condition, including on
     /// unsupported platforms and when the platform cannot resolve an icon.

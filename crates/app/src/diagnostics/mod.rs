@@ -884,6 +884,20 @@ mod tests {
     use std::time::{Duration, SystemTime, UNIX_EPOCH};
     use watchdog::{WatchdogConfig, WatchdogRuntime};
 
+    fn diagnostic_test_path(prefix: &str) -> PathBuf {
+        let temp_root = std::env::temp_dir()
+            .canonicalize()
+            .expect("temporary directory should resolve to a link-free path");
+        temp_root.join(format!(
+            "{prefix}-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos()
+        ))
+    }
+
     #[test]
     fn overall_status_and_repair_plan_are_deterministic() {
         let snapshot = DiagnosticsSnapshot {
@@ -955,14 +969,7 @@ mod tests {
 
     #[test]
     fn diagnostic_log_scan_recurses_sorts_and_excludes_crashes() {
-        let root = std::env::temp_dir().join(format!(
-            "tundra-diagnostic-logs-{}-{}",
-            std::process::id(),
-            SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_nanos()
-        ));
+        let root = diagnostic_test_path("tundra-diagnostic-logs");
         std::fs::create_dir_all(root.join("nested")).expect("nested fixture directory");
         std::fs::create_dir_all(root.join("Crashes")).expect("crash fixture directory");
         std::fs::write(root.join("older.log"), b"old").expect("older log fixture");
@@ -991,14 +998,7 @@ mod tests {
 
     #[test]
     fn diagnostic_log_scan_reports_unreadable_root() {
-        let root = std::env::temp_dir().join(format!(
-            "tundra-diagnostic-log-root-file-{}-{}",
-            std::process::id(),
-            SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_nanos()
-        ));
+        let root = diagnostic_test_path("tundra-diagnostic-log-root-file");
         std::fs::write(&root, b"not a directory").expect("root file fixture");
 
         let (logs, warnings) = scan_diagnostic_logs(&root);
@@ -1011,14 +1011,7 @@ mod tests {
 
     #[test]
     fn diagnostic_log_scan_treats_a_missing_root_as_empty() {
-        let root = std::env::temp_dir().join(format!(
-            "tundra-diagnostic-log-missing-{}-{}",
-            std::process::id(),
-            SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_nanos()
-        ));
+        let root = diagnostic_test_path("tundra-diagnostic-log-missing");
 
         let (logs, warnings) = scan_diagnostic_logs(&root);
 
@@ -1031,14 +1024,7 @@ mod tests {
     fn diagnostic_log_scan_does_not_follow_symbolic_links() {
         use std::os::unix::fs::symlink;
 
-        let root = std::env::temp_dir().join(format!(
-            "tundra-diagnostic-log-link-{}-{}",
-            std::process::id(),
-            SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_nanos()
-        ));
+        let root = diagnostic_test_path("tundra-diagnostic-log-link");
         let outside = root.with_extension("outside");
         std::fs::create_dir_all(&root).expect("log root fixture");
         std::fs::create_dir_all(&outside).expect("outside fixture");
@@ -1093,14 +1079,7 @@ mod tests {
 
     #[test]
     fn managed_runtime_scans_and_latches_after_changed_storage_repair() {
-        let root = std::env::temp_dir().join(format!(
-            "tundra-diagnostics-runtime-{}-{}",
-            std::process::id(),
-            SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_nanos()
-        ));
+        let root = diagnostic_test_path("tundra-diagnostics-runtime");
         let paths = AppPaths::from_parts(
             root.join("config/config.toml"),
             root.join("data"),

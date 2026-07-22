@@ -117,9 +117,11 @@ pub(in crate::session) struct ShellEditorTaskRuntime {
 }
 
 impl ShellEditorTaskRuntime {
+    #[cfg(test)]
     pub(in crate::session) fn new() -> Self {
-        let watchdog = default_editor_watchdog();
-        watchdog.map_or_else(Self::unavailable, Self::new_managed)
+        default_editor_watchdog()
+            .map(Self::new_managed)
+            .unwrap_or_else(Self::unavailable)
     }
 
     pub(in crate::session) fn unavailable() -> Self {

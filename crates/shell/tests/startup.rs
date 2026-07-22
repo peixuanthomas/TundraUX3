@@ -7,7 +7,7 @@ use platform::{
     PlatformCapabilities, PlatformError, PlatformKind, StartupPermissionStatus, UserDirs,
     build_macos_app_paths, build_windows_app_paths,
 };
-use shell::{ShellLaunchConfig, ShellStartupError, prepare_shell_startup};
+use shell::{ShellStartupError, prepare_shell_startup};
 use storage::{
     BorderColor as StorageBorderColor, BorderShape as StorageBorderShape, StorageError,
     StorageManager,
@@ -25,8 +25,7 @@ fn prepare_shell_startup_uses_windows_mock_app_paths() {
         .with_kind(PlatformKind::Windows)
         .with_capabilities(PlatformCapabilities::native_supported());
 
-    let startup =
-        prepare_shell_startup(&platform, ShellLaunchConfig::default()).expect("startup state");
+    let startup = prepare_shell_startup(&platform).expect("startup state");
 
     assert_eq!(startup.platform_kind, PlatformKind::Windows);
     assert_eq!(
@@ -60,8 +59,7 @@ fn prepare_shell_startup_uses_default_theme_before_any_user_logs_in() {
         .with_kind(PlatformKind::Windows)
         .with_capabilities(PlatformCapabilities::native_supported());
 
-    let startup =
-        prepare_shell_startup(&platform, ShellLaunchConfig::default()).expect("startup state");
+    let startup = prepare_shell_startup(&platform).expect("startup state");
 
     assert_eq!(startup.app_config.border_shape, UiBorderShape::Rounded);
     assert_eq!(
@@ -82,8 +80,7 @@ fn prepare_shell_startup_uses_macos_mock_app_paths() {
         .with_kind(PlatformKind::Macos)
         .with_capabilities(capabilities.clone());
 
-    let startup =
-        prepare_shell_startup(&platform, ShellLaunchConfig::default()).expect("startup state");
+    let startup = prepare_shell_startup(&platform).expect("startup state");
 
     assert_eq!(startup.platform_kind, PlatformKind::Macos);
     assert_eq!(startup.platform_capabilities, capabilities);
@@ -104,7 +101,7 @@ fn prepare_shell_startup_requests_missing_platform_permission_before_storage_ope
         "enable it and restart",
     )));
 
-    let error = prepare_shell_startup(&platform, ShellLaunchConfig::default())
+    let error = prepare_shell_startup(&platform)
         .expect_err("startup must stop while required permission is missing");
 
     assert!(matches!(
@@ -129,7 +126,7 @@ fn prepare_shell_startup_requests_missing_platform_permission_before_storage_ope
 
 #[test]
 fn prepare_shell_startup_returns_platform_error_when_app_paths_fail() {
-    let error = prepare_shell_startup(&UnsupportedPlatform, ShellLaunchConfig::default())
+    let error = prepare_shell_startup(&UnsupportedPlatform)
         .expect_err("unsupported platform cannot resolve app paths");
 
     assert!(matches!(

@@ -163,13 +163,6 @@ where
                 shell::run_matrix_animation_preview_with_color(stdout, color)
             })
         }
-        Ok(CliCommand::Editor) => run_editor(stderr, || {
-            shell::run_shell_blocking_managed(
-                stdout,
-                shell::ShellLaunchConfig::editor(),
-                process_watchdog.clone(),
-            )
-        }),
         Ok(CliCommand::Weathr) => {
             routed_by_weathr = true;
             run_weathr_managed(
@@ -262,29 +255,11 @@ where
                 shell::run_matrix_animation_preview_with_color(stdout, color)
             })
         }
-        Ok(CliCommand::Editor) => run_editor(stderr, || {
-            shell::run_shell_blocking(stdout, shell::ShellLaunchConfig::editor())
-        }),
         Ok(CliCommand::Weathr) => run_weathr(platform, stderr, weathr_launcher),
         Err(error) => {
             let _ = writeln!(stderr, "ERROR: {error}");
             let _ = write_help(stderr);
             2
-        }
-    }
-}
-
-fn run_editor<Stderr, Launcher, LaunchError>(stderr: &mut Stderr, launcher: Launcher) -> i32
-where
-    Stderr: Write,
-    Launcher: FnOnce() -> Result<(), LaunchError>,
-    LaunchError: fmt::Display,
-{
-    match launcher() {
-        Ok(()) => 0,
-        Err(error) => {
-            let _ = writeln!(stderr, "ERROR: could not launch editor: {error}");
-            1
         }
     }
 }

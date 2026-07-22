@@ -7,37 +7,20 @@ use std::path::PathBuf;
 use storage::{StorageError, StorageLoadReport, StorageManager, UserRecord};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ShellTerminalMode {
-    Fullscreen,
-    NotFullscreen,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HomeModeOverride {
     BuildDefault,
     Debug,
 }
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub enum ShellLaunchTarget {
-    #[default]
-    Home,
-    Editor,
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ShellLaunchConfig {
-    pub terminal_mode: ShellTerminalMode,
     pub home_mode_override: HomeModeOverride,
-    pub launch_target: ShellLaunchTarget,
 }
 
 impl Default for ShellLaunchConfig {
     fn default() -> Self {
         Self {
-            terminal_mode: ShellTerminalMode::Fullscreen,
             home_mode_override: Self::profile_home_mode_override(),
-            launch_target: ShellLaunchTarget::Home,
         }
     }
 }
@@ -48,14 +31,6 @@ impl ShellLaunchConfig {
             HomeModeOverride::Debug
         } else {
             HomeModeOverride::BuildDefault
-        }
-    }
-
-    pub const fn editor() -> Self {
-        Self {
-            terminal_mode: ShellTerminalMode::Fullscreen,
-            home_mode_override: Self::profile_home_mode_override(),
-            launch_target: ShellLaunchTarget::Editor,
         }
     }
 }
@@ -333,9 +308,7 @@ impl From<StorageError> for ShellStartupError {
 
 pub fn prepare_shell_startup(
     platform: &dyn Platform,
-    launch_config: ShellLaunchConfig,
 ) -> Result<ShellStartupState, ShellStartupError> {
-    let _ = launch_config;
     ensure_startup_permissions(platform)?;
     let platform_kind = platform.kind();
     let platform_capabilities = platform.capabilities();

@@ -1,6 +1,7 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
+use std::time::SystemTime;
 
 use crate::{
     AppPaths, DirectoryListing, FileAttributes, FileOpenPolicy, LocalVolume, Platform,
@@ -13,6 +14,7 @@ use crate::{
 pub enum MockCall {
     StartupPermissionStatus,
     RequestStartupPermissions,
+    SystemTime,
     FileIcon {
         path: PathBuf,
         preferred_size: u32,
@@ -57,6 +59,7 @@ pub struct MockPlatform {
     clipboard_text: Mutex<String>,
     startup_permission_status: Mutex<Result<StartupPermissionStatus, PlatformError>>,
     request_startup_permissions_result: Mutex<Result<(), PlatformError>>,
+    system_time_result: Mutex<Result<SystemTime, PlatformError>>,
     critical_error_result: Mutex<Result<(), PlatformError>>,
     process_alive_results: Mutex<BTreeMap<u32, Result<bool, PlatformError>>>,
     calls: Mutex<Vec<MockCall>>,
@@ -84,6 +87,7 @@ impl MockPlatform {
             clipboard_text: Mutex::new(String::new()),
             startup_permission_status: Mutex::new(Ok(StartupPermissionStatus::Ready)),
             request_startup_permissions_result: Mutex::new(Ok(())),
+            system_time_result: Mutex::new(Ok(SystemTime::now())),
             critical_error_result: Mutex::new(Ok(())),
             process_alive_results: Mutex::new(BTreeMap::new()),
             calls: Mutex::new(Vec::new()),
@@ -130,6 +134,13 @@ impl MockPlatform {
             .request_startup_permissions_result
             .lock()
             .expect("startup permission request lock poisoned") = result;
+    }
+
+    pub fn set_system_time_result(&self, result: Result<SystemTime, PlatformError>) {
+        *self
+            .system_time_result
+            .lock()
+            .expect("system time result lock poisoned") = result;
     }
 
     pub fn set_critical_error_result(&self, result: Result<(), PlatformError>) {
@@ -310,6 +321,14 @@ impl Platform for MockPlatform {
 
     fn app_paths(&self) -> Result<AppPaths, PlatformError> {
         Ok(self.app_paths.clone())
+    }
+
+    fn system_time(&self) -> Result<SystemTime, PlatformError> {
+        self.record(MockCall::SystemTime);
+        self.system_time_result
+            .lock()
+            .expect("system time result lock poisoned")
+            .clone()
     }
 
     fn file_icon(

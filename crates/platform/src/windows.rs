@@ -110,6 +110,10 @@ impl Platform for WindowsPlatform {
         .map_err(Into::into)
     }
 
+    fn system_time(&self) -> Result<SystemTime, PlatformError> {
+        Ok(SystemTime::now())
+    }
+
     fn file_icon(
         &self,
         path: &Path,

@@ -734,12 +734,45 @@ impl ExplorerOpenRouteResolver for SystemDefaultOpenRouteResolver {
 
 /// Routes documents supported by the built-in editor while leaving every
 /// other file type with the operating system.
-#[derive(Debug, Default)]
-pub struct EditorAwareOpenRouteResolver;
+#[derive(Debug, Clone)]
+pub struct EditorAwareOpenRouteResolver {
+    extensions: Vec<String>,
+}
+
+impl EditorAwareOpenRouteResolver {
+    pub fn new(extensions: Vec<String>) -> Self {
+        let extensions =
+            extensions
+                .into_iter()
+                .fold(Vec::new(), |mut normalized_extensions, extension| {
+                    if let Some(extension) =
+                        storage::normalize_editor_explorer_open_extension(&extension)
+                        && normalized_extensions.len()
+                            < storage::MAX_EDITOR_EXPLORER_OPEN_EXTENSIONS
+                        && !normalized_extensions.contains(&extension)
+                    {
+                        normalized_extensions.push(extension);
+                    }
+                    normalized_extensions
+                });
+        Self { extensions }
+    }
+}
+
+impl Default for EditorAwareOpenRouteResolver {
+    fn default() -> Self {
+        Self::new(
+            storage::DEFAULT_EDITOR_EXPLORER_OPEN_EXTENSIONS
+                .iter()
+                .map(|extension| (*extension).to_string())
+                .collect(),
+        )
+    }
+}
 
 impl ExplorerOpenRouteResolver for EditorAwareOpenRouteResolver {
     fn route(&self, path: &Path, attributes: &FileAttributes) -> ExplorerOpenTarget {
-        if attributes.is_file && is_editor_document_path(path) {
+        if attributes.is_file && is_editor_document_path_with_extensions(path, &self.extensions) {
             ExplorerOpenTarget::Editor
         } else {
             ExplorerOpenTarget::SystemDefault
@@ -748,14 +781,22 @@ impl ExplorerOpenRouteResolver for EditorAwareOpenRouteResolver {
 }
 
 pub fn is_editor_document_path(path: &Path) -> bool {
-    let extension = path
-        .extension()
-        .and_then(|extension| extension.to_str())
-        .unwrap_or_default();
-    is_log_document_path(path)
-        || ["md", "markdown", "mdown", "mkd", "txt"]
-            .iter()
-            .any(|candidate| extension.eq_ignore_ascii_case(candidate))
+    is_editor_document_path_with_extensions(path, storage::DEFAULT_EDITOR_EXPLORER_OPEN_EXTENSIONS)
+}
+
+pub fn is_editor_document_path_with_extensions(
+    path: &Path,
+    extensions: &[impl AsRef<str>],
+) -> bool {
+    let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
+        return false;
+    };
+    let name = name.to_ascii_lowercase();
+    extensions.iter().any(|extension| {
+        let extension = extension.as_ref();
+        (extension.eq_ignore_ascii_case("log") && is_log_document_path(path))
+            || name.ends_with(&format!(".{}", extension.to_ascii_lowercase()))
+    })
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -822,12 +863,17 @@ impl ExplorerController {
     pub fn new(file_service: ExplorerFileService) -> Self {
         Self {
             file_service,
-            open_resolver: Arc::new(EditorAwareOpenRouteResolver),
+            open_resolver: Arc::new(EditorAwareOpenRouteResolver::default()),
         }
     }
 
     pub fn with_open_resolver(mut self, resolver: Arc<dyn ExplorerOpenRouteResolver>) -> Self {
         self.open_resolver = resolver;
+        self
+    }
+
+    pub fn with_editor_extensions(mut self, extensions: Vec<String>) -> Self {
+        self.open_resolver = Arc::new(EditorAwareOpenRouteResolver::new(extensions));
         self
     }
 

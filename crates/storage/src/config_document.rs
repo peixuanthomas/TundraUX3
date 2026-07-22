@@ -17,6 +17,8 @@ pub struct StorageConfig {
     pub language: String,
     #[serde(default = "default_timezone")]
     pub timezone: String,
+    #[serde(default)]
+    pub time_sync: TimeSyncConfig,
     /// Optional English address text used only by Weathr.
     /// `None` keeps weather tied to the configured timezone location.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -38,6 +40,8 @@ pub struct StorageConfig {
 impl StorageConfig {
     pub(crate) fn normalize(&mut self) -> bool {
         let mut changed = self.launcher.migrate_legacy_pinned_apps();
+        changed |= self.editor.normalize();
+        changed |= self.time_sync.normalize();
         if self.language != SUPPORTED_LANGUAGE {
             self.language = SUPPORTED_LANGUAGE.to_string();
             changed = true;
@@ -53,6 +57,7 @@ impl Default for StorageConfig {
             theme: default_theme(),
             language: default_language(),
             timezone: default_timezone(),
+            time_sync: TimeSyncConfig::default(),
             weather_location: None,
             shortcuts: BTreeMap::new(),
             appearance: AppearanceConfig::default(),
@@ -68,6 +73,48 @@ impl VersionedDocument for StorageConfig {
     fn schema_version(&self) -> u32 {
         self.schema_version
     }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(default)]
+pub struct TimeSyncConfig {
+    pub source: TimeSyncSource,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub server_url: Option<String>,
+}
+
+impl Default for TimeSyncConfig {
+    fn default() -> Self {
+        Self {
+            source: TimeSyncSource::NetworkServer,
+            server_url: None,
+        }
+    }
+}
+
+impl TimeSyncConfig {
+    fn normalize(&mut self) -> bool {
+        let normalized = self
+            .server_url
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string);
+        if normalized == self.server_url {
+            false
+        } else {
+            self.server_url = normalized;
+            true
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum TimeSyncSource {
+    #[default]
+    NetworkServer,
+    OperatingSystem,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -133,9 +180,19 @@ impl Default for ExplorerConfig {
     }
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+pub const DEFAULT_EDITOR_EXPLORER_OPEN_EXTENSIONS: &[&str] =
+    &["md", "markdown", "mdown", "mkd", "txt", "log"];
+pub const MAX_EDITOR_EXPLORER_OPEN_EXTENSIONS: usize = 64;
+pub const MAX_EDITOR_EXPLORER_OPEN_EXTENSION_LEN: usize = 64;
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(default)]
 pub struct EditorConfig {
+    /// Filename suffixes that Explorer routes to the built-in editor.
+    ///
+    /// Values omit the leading dot, are matched case-insensitively, and may
+    /// contain multiple components such as `d.ts`.
+    pub explorer_open_extensions: Vec<String>,
     pub cursor_acceleration_enabled: bool,
     pub cursor_acceleration_delay_ms: u32,
     pub cursor_acceleration_ramp_ms: u32,
@@ -146,6 +203,10 @@ pub struct EditorConfig {
 impl Default for EditorConfig {
     fn default() -> Self {
         Self {
+            explorer_open_extensions: DEFAULT_EDITOR_EXPLORER_OPEN_EXTENSIONS
+                .iter()
+                .map(|extension| (*extension).to_string())
+                .collect(),
             cursor_acceleration_enabled: true,
             cursor_acceleration_delay_ms: 2_000,
             cursor_acceleration_ramp_ms: 3_000,
@@ -153,6 +214,47 @@ impl Default for EditorConfig {
             cursor_vertical_max_step: 3,
         }
     }
+}
+
+impl EditorConfig {
+    fn normalize(&mut self) -> bool {
+        let normalized = self
+            .explorer_open_extensions
+            .iter()
+            .filter_map(|extension| normalize_editor_explorer_open_extension(extension))
+            .fold(Vec::new(), |mut extensions, extension| {
+                if extensions.len() < MAX_EDITOR_EXPLORER_OPEN_EXTENSIONS
+                    && !extensions.contains(&extension)
+                {
+                    extensions.push(extension);
+                }
+                extensions
+            });
+        if normalized == self.explorer_open_extensions {
+            false
+        } else {
+            self.explorer_open_extensions = normalized;
+            true
+        }
+    }
+}
+
+/// Normalizes one configurable Explorer suffix. The leading dot is optional;
+/// path separators and empty compound-extension components are rejected.
+pub fn normalize_editor_explorer_open_extension(value: &str) -> Option<String> {
+    let value = value.trim().trim_start_matches('.').to_ascii_lowercase();
+    if value.is_empty()
+        || value.len() > MAX_EDITOR_EXPLORER_OPEN_EXTENSION_LEN
+        || value.starts_with('.')
+        || value.ends_with('.')
+        || value.contains("..")
+        || !value.chars().all(|character| {
+            character.is_ascii_alphanumeric() || matches!(character, '_' | '-' | '+' | '.')
+        })
+    {
+        return None;
+    }
+    Some(value)
 }
 
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]

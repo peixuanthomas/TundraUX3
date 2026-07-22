@@ -7,6 +7,7 @@ use std::time::{Duration, Instant};
 pub const TIME_SYNC_INTERVAL: Duration = Duration::from_secs(5 * 60);
 
 const TIME_SYNC_TIMEOUT: Duration = Duration::from_secs(5);
+pub const MAX_TIME_SERVER_URL_LEN: usize = 2_048;
 const TIME_SYNC_SOURCES: &[&str] = &[
     "https://www.google.com/generate_204",
     "https://www.cloudflare.com/cdn-cgi/trace",
@@ -37,7 +38,7 @@ pub struct TimeSyncError {
 }
 
 impl TimeSyncError {
-    fn new(failures: Vec<String>) -> Self {
+    pub fn new(failures: Vec<String>) -> Self {
         Self { failures }
     }
 }
@@ -190,6 +191,38 @@ pub async fn fetch_standard_time() -> TimeSyncResult {
     fetch_standard_time_with_client(&client, TIME_SYNC_SOURCES).await
 }
 
+pub async fn fetch_time_from_server(server_url: &str) -> TimeSyncResult {
+    let server_url =
+        normalize_time_server_url(server_url).map_err(|error| TimeSyncError::new(vec![error]))?;
+    let client = reqwest::Client::builder()
+        .timeout(TIME_SYNC_TIMEOUT)
+        .connect_timeout(TIME_SYNC_TIMEOUT)
+        .build()
+        .map_err(|error| TimeSyncError::new(vec![format!("client setup failed: {error}")]))?;
+    fetch_standard_time_with_client(&client, &[server_url.as_str()]).await
+}
+
+pub fn normalize_time_server_url(value: &str) -> Result<String, String> {
+    let value = value.trim();
+    if value.is_empty() {
+        return Err("time server address must not be empty".to_string());
+    }
+    if value.len() > MAX_TIME_SERVER_URL_LEN {
+        return Err(format!(
+            "time server address is limited to {MAX_TIME_SERVER_URL_LEN} characters"
+        ));
+    }
+    let parsed =
+        reqwest::Url::parse(value).map_err(|error| format!("invalid time server URL: {error}"))?;
+    if !matches!(parsed.scheme(), "http" | "https") {
+        return Err("time server URL must use http:// or https://".to_string());
+    }
+    if parsed.host_str().is_none() {
+        return Err("time server URL must include a host".to_string());
+    }
+    Ok(parsed.to_string())
+}
+
 async fn fetch_standard_time_with_client(
     client: &reqwest::Client,
     sources: &[&str],
@@ -258,6 +291,16 @@ mod tests {
         assert_eq!(parsed.hour(), 8);
         assert_eq!(parsed.minute(), 12);
         assert_eq!(parsed.second(), 31);
+    }
+
+    #[test]
+    fn time_server_urls_require_http_and_are_canonicalized() {
+        assert_eq!(
+            normalize_time_server_url(" https://time.example.test ").unwrap(),
+            "https://time.example.test/"
+        );
+        assert!(normalize_time_server_url("ntp://time.example.test").is_err());
+        assert!(normalize_time_server_url("not a URL").is_err());
     }
 
     #[test]

@@ -10,17 +10,15 @@ use platform::{
 use ratatui::layout::Rect;
 use shell::{
     HomeModeOverride, InputEvent, InputKey, InputModifiers, InputPhase, KeyInput, PointerButton,
-    ShellCommand, ShellComponent, ShellHomeMode, ShellLaunchConfig, ShellLaunchTarget, ShellScreen,
-    ShellSession, ShellTerminalMode, prepare_shell_startup,
+    ShellCommand, ShellComponent, ShellHomeMode, ShellLaunchConfig, ShellScreen, ShellSession,
+    prepare_shell_startup,
 };
 use storage::StorageManager;
 use ui::NotificationTone;
 
 fn default_config() -> ShellLaunchConfig {
     ShellLaunchConfig {
-        terminal_mode: ShellTerminalMode::Fullscreen,
         home_mode_override: HomeModeOverride::BuildDefault,
-        launch_target: ShellLaunchTarget::Home,
     }
 }
 
@@ -88,6 +86,35 @@ fn mouse_single_click_selects_and_double_click_opens_file() {
         Some(target.to_string_lossy().as_ref())
     );
     assert_eq!(editor.source_lines.join("\n"), "alpha");
+}
+
+#[test]
+fn configured_suffix_opens_in_editor_from_explorer() {
+    let fixture = FixtureRoot::new("configured-editor-suffix");
+    let platform = mock_platform(fixture.path());
+    bootstrap_with_shell(&platform);
+    let storage = StorageManager::open(platform.app_paths().expect("app paths"))
+        .expect("storage")
+        .manager;
+    let mut config = storage.load_config().expect("config");
+    config.editor.explorer_open_extensions = vec!["rs".to_string()];
+    storage.save_config(&config).expect("save config");
+    let target = fixture.path().join("Documents").join("main.RS");
+    fs::write(&target, "fn main() {}\n").expect("rust source");
+
+    let mut state = logged_in_state(&platform);
+    state.apply_input_with_platform(InputEvent::from_key_label("e"), &platform);
+    state.apply_input_with_platform(InputEvent::from_key_label("Enter"), &platform);
+    drive_editor_tasks_until_idle(&mut state, &platform);
+
+    assert_eq!(state.active_screen(), ShellScreen::Editor);
+    assert_eq!(state.to_editor_view_model().file_name, "main.RS");
+    assert!(
+        !platform
+            .calls()
+            .iter()
+            .any(|call| matches!(call, MockCall::OpenPath(path) if path == &target))
+    );
 }
 
 #[test]
@@ -513,7 +540,7 @@ fn delete_key_moves_selection_to_system_trash() {
         target.exists(),
         "the mock platform must not mutate the filesystem"
     );
-    let storage = prepare_shell_startup(&platform, default_config())
+    let storage = prepare_shell_startup(&platform)
         .expect("startup")
         .storage_manager
         .expect("storage");
@@ -629,7 +656,7 @@ fn explorer_alert_resolves_after_success_and_close_without_clearing_unrelated_al
 }
 
 fn bootstrap_with_shell(platform: &MockPlatform) {
-    let startup = prepare_shell_startup(platform, default_config()).expect("startup");
+    let startup = prepare_shell_startup(platform).expect("startup");
     let mut state = ShellSession::new_with_startup(default_config(), (120, 40), startup);
     complete_first_run_setup(
         &mut state,
@@ -642,7 +669,7 @@ fn bootstrap_with_shell(platform: &MockPlatform) {
 }
 
 fn logged_in_state(platform: &MockPlatform) -> ShellSession {
-    let startup = prepare_shell_startup(platform, default_config()).expect("startup");
+    let startup = prepare_shell_startup(platform).expect("startup");
     let mut state = ShellSession::new_with_startup(default_config(), (120, 40), startup);
     select_login_user(&mut state, platform, "AdminUser");
     state.apply_input_with_platform(InputEvent::from_key_label("Tab"), platform);

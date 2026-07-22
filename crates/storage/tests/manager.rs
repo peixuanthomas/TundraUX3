@@ -12,8 +12,8 @@ use storage::{
     EditorConfig, ExplorerConfig, ExplorerDateZone, ExplorerSizeFormat, ExplorerSortDirection,
     ExplorerSortField, LauncherConfig, LauncherEntryRecord, LauncherExecutableKind,
     LauncherFingerprint, RecentFilesDocument, SCHEMA_VERSION, SecurityConfig, SessionsDocument,
-    StateDocument, StorageConfig, StorageError, StorageLayout, StorageManager, TrashDocument,
-    TrashRecord, USERS_SCHEMA_VERSION, UserRecord, UsersDocument,
+    StateDocument, StorageConfig, StorageError, StorageLayout, StorageManager, TimeSyncConfig,
+    TimeSyncSource, TrashDocument, TrashRecord, USERS_SCHEMA_VERSION, UserRecord, UsersDocument,
 };
 
 #[test]
@@ -77,6 +77,10 @@ fn toml_and_json_documents_round_trip() {
         theme: "light".to_string(),
         language: "zh-Hans".to_string(),
         timezone: "Asia/Shanghai".to_string(),
+        time_sync: TimeSyncConfig {
+            source: TimeSyncSource::OperatingSystem,
+            server_url: Some("https://time.example.test/".to_string()),
+        },
         weather_location: Some("Pudong, Shanghai, China".to_string()),
         shortcuts,
         appearance: AppearanceConfig {
@@ -99,6 +103,7 @@ fn toml_and_json_documents_round_trip() {
             sort_direction: ExplorerSortDirection::Descending,
         },
         editor: EditorConfig {
+            explorer_open_extensions: vec!["md".to_string(), "rs".to_string()],
             cursor_acceleration_enabled: false,
             cursor_acceleration_delay_ms: 1_500,
             cursor_acceleration_ramp_ms: 2_500,
@@ -273,6 +278,7 @@ fn old_config_without_language_or_timezone_loads_with_defaults() {
     assert_eq!(config.theme, "light");
     assert_eq!(config.language, "en-US");
     assert_eq!(config.timezone, "UTC");
+    assert_eq!(config.time_sync, TimeSyncConfig::default());
     assert_eq!(config.weather_location, None);
     assert_eq!(config.appearance.border_shape, BorderShape::Rounded);
     assert_eq!(config.appearance.border_color, BorderColor::White);
