@@ -214,6 +214,58 @@ fn bootstrap_admin_persists_the_selected_user_appearance() {
 }
 
 #[test]
+fn appearance_updates_are_self_managed_for_users_and_admins() {
+    let fixture = FixtureRoot::new("self-managed-appearance");
+    let manager = storage(fixture.path());
+    let users = UserService::new(manager.clone());
+    users
+        .bootstrap_admin("AdminUser", "StrongPass123")
+        .expect("bootstrap");
+    let admin = SessionService::new(manager.clone())
+        .login("AdminUser", "StrongPass123")
+        .expect("admin login");
+    users
+        .create_user(
+            &admin,
+            "NormalUser",
+            "Normal User",
+            UserRole::User,
+            "NormalPass123",
+        )
+        .expect("create normal user");
+    let normal = SessionService::new(manager.clone())
+        .login("NormalUser", "NormalPass123")
+        .expect("normal login");
+    let appearance = AppearanceConfig {
+        border_shape: BorderShape::Square,
+        border_color: BorderColor::LightGreen,
+        accent_color: BorderColor::LightMagenta,
+    };
+
+    let updated = users
+        .update_user_appearance(&normal, "NormalUser", appearance.clone())
+        .expect("user can update own appearance");
+    assert_eq!(updated.appearance, appearance);
+    assert!(matches!(
+        users.update_user_appearance(&normal, "AdminUser", AppearanceConfig::default()),
+        Err(CoreError::PermissionDenied {
+            action: PermissionAction::ManageOwnUser,
+            ..
+        })
+    ));
+    assert!(matches!(
+        users.update_user_appearance(&admin, "NormalUser", AppearanceConfig::default()),
+        Err(CoreError::PermissionDenied {
+            action: PermissionAction::ManageOwnUser,
+            ..
+        })
+    ));
+    users
+        .update_user_appearance(&admin, "AdminUser", appearance)
+        .expect("admin can update own appearance");
+}
+
+#[test]
 fn bootstrap_admin_with_blank_hint_stores_none() {
     let fixture = FixtureRoot::new("blank-hint");
     let manager = storage(fixture.path());

@@ -486,6 +486,7 @@ mod tests {
         let opened = StorageManager::open(app_paths).expect("storage opens");
         let mut config = opened.manager.load_config().expect("config loads");
         config.timezone = "Asia/Shanghai".to_string();
+        config.weather_location = Some("Pudong, Shanghai, China".to_string());
         opened.manager.save_config(&config).expect("config saves");
 
         let mut startup = ShellStartupState::clean(
@@ -503,6 +504,10 @@ mod tests {
         assert!(!options.load_config_file);
         assert!(!options.prefer_config_location);
         assert_eq!(options.timezone_id.as_deref(), Some("Asia/Shanghai"));
+        assert_eq!(
+            options.location_query.as_deref(),
+            Some("Pudong, Shanghai, China")
+        );
         assert_eq!(options.minimum_terminal_size, Some((108, 20)));
         let location = options.location_override.expect("mapped location");
         assert_eq!(location.city.as_deref(), Some("Shanghai"));

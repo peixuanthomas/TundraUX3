@@ -77,6 +77,7 @@ pub enum ShellScreen {
     Explorer,
     Launcher,
     Editor,
+    Settings,
     UserManagement,
     ExitConfirm,
 }

@@ -334,6 +334,7 @@ fn weathr_command_passes_setup_timezone_location_to_launcher() {
     let opened = StorageManager::open(app_paths).expect("storage initializes");
     let config = StorageConfig {
         timezone: "Asia/Shanghai".to_string(),
+        weather_location: Some("Pudong, Shanghai, China".to_string()),
         ..StorageConfig::default()
     };
     opened.manager.save_config(&config).expect("config saves");
@@ -358,6 +359,10 @@ fn weathr_command_passes_setup_timezone_location_to_launcher() {
     assert!(!options.load_config_file);
     assert!(!options.prefer_config_location);
     assert_eq!(options.timezone_id.as_deref(), Some("Asia/Shanghai"));
+    assert_eq!(
+        options.location_query.as_deref(),
+        Some("Pudong, Shanghai, China")
+    );
     let location = options
         .location_override
         .expect("setup timezone should map to location");
@@ -392,6 +397,7 @@ fn weathr_command_uses_default_options_when_storage_config_is_missing() {
     assert!(!options.load_config_file);
     assert!(!options.prefer_config_location);
     assert_eq!(options.location_override, None);
+    assert_eq!(options.location_query, None);
     assert_eq!(options.timezone_id, None);
 }
 
@@ -428,6 +434,7 @@ fn weathr_command_uses_default_options_when_storage_config_is_corrupt() {
     assert!(!options.load_config_file);
     assert!(!options.prefer_config_location);
     assert_eq!(options.location_override, None);
+    assert_eq!(options.location_query, None);
     assert_eq!(options.timezone_id, None);
 }
 

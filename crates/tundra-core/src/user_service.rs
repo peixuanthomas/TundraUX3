@@ -194,6 +194,34 @@ impl UserService {
         Ok(account)
     }
 
+    pub fn update_user_appearance(
+        &self,
+        actor: &AuthSession,
+        username: &str,
+        appearance: AppearanceConfig,
+    ) -> Result<UserAccount, CoreError> {
+        let mut document = self.storage.load_users()?;
+        let Some(index) = find_user_index(&document, username) else {
+            return Err(CoreError::UserNotFound);
+        };
+        let target = &document.users[index];
+        if !is_same_user(actor, target) {
+            return Err(CoreError::PermissionDenied {
+                action: PermissionAction::ManageOwnUser,
+                reason: "appearance_is_self_managed".to_string(),
+            });
+        }
+        if !target.enabled {
+            return Err(CoreError::AccountDisabled);
+        }
+        self.authorize_manage_own_user(actor, "update_user_appearance")?;
+        document.users[index].appearance = appearance;
+        document.users[index].updated_at_epoch_ms = unix_millis();
+        let account = UserAccount::from_record(&document.users[index]);
+        self.storage.save_users(&document)?;
+        Ok(account)
+    }
+
     pub fn set_user_password(
         &self,
         actor: &AuthSession,

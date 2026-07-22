@@ -89,6 +89,47 @@ struct EditorSettingsDialogState {
     selected: tundra_ui::EditorSettingsField,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SettingsFocus {
+    Categories,
+    Fields,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct SettingsPickerState {
+    kind: tundra_ui::SettingsPickerKind,
+    query: String,
+    selected_index: usize,
+    window_start: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct SettingsColorEditorState {
+    kind: tundra_ui::SettingsPickerKind,
+    value: String,
+    error: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct SettingsWeatherLocationEditorState {
+    value: String,
+    error: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct SettingsState {
+    category: tundra_ui::SettingsCategory,
+    selected_field: tundra_ui::SettingsField,
+    focus: SettingsFocus,
+    config: tundra_storage::StorageConfig,
+    appearance: tundra_storage::AppearanceConfig,
+    status: String,
+    scroll_offset: u16,
+    picker: Option<SettingsPickerState>,
+    color_editor: Option<SettingsColorEditorState>,
+    weather_location_editor: Option<SettingsWeatherLocationEditorState>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum EditorReloadPolicy {
     Log { path: std::path::PathBuf },
@@ -370,6 +411,7 @@ pub struct ShellState {
     user_management_feedback_tone: UserManagementFeedbackTone,
     user_management_mode: UserManagementMode,
     selected_home_entry_index: usize,
+    settings_state: Option<SettingsState>,
     launcher_state: Option<LauncherState>,
     launcher_selected_index: usize,
     launcher_view_mode: tundra_ui::LauncherViewMode,

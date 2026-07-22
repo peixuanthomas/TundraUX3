@@ -36,6 +36,9 @@ pub struct LaunchOptions {
     /// does not depend on a second config file under the user's config dir.
     pub load_config_file: bool,
     pub prefer_config_location: bool,
+    /// A free-form address query. If search fails, Weathr falls back to
+    /// `location_override` (or its normal configured/default location).
+    pub location_query: Option<String>,
     pub location_override: Option<LaunchLocation>,
     pub timezone_id: Option<String>,
     pub minimum_terminal_size: Option<(u16, u16)>,
@@ -46,6 +49,7 @@ impl Default for LaunchOptions {
         Self {
             load_config_file: true,
             prefer_config_location: true,
+            location_query: None,
             location_override: None,
             timezone_id: None,
             minimum_terminal_size: None,
@@ -305,7 +309,7 @@ async fn run_with_options(
     let mut config = load_config_for_launch(&options);
 
     let timezone_id = options.timezone_id.clone();
-    apply_launch_location(&mut config, &options);
+    apply_launch_location(&mut config, &options, Some(&watchdog)).await;
 
     let mut theme_registry = ThemeRegistry::new();
     let theme_id = config.normalized_theme();
@@ -378,7 +382,7 @@ fn load_config_for_launch(options: &LaunchOptions) -> Config {
 /// allowing the later Weathr lockscreen to reuse it immediately.
 pub async fn prefetch_weather(options: LaunchOptions) -> Result<WeatherData, WeatherError> {
     let mut config = load_config_for_launch(&options);
-    apply_launch_location(&mut config, &options);
+    apply_launch_location(&mut config, &options, None).await;
     let location = WeatherLocation {
         latitude: config.location.latitude,
         longitude: config.location.longitude,
@@ -404,8 +408,38 @@ fn minimum_terminal_size_for_assets(
     )
 }
 
-fn apply_launch_location(config: &mut Config, options: &LaunchOptions) {
-    let geo_loc = if let Some(location) = &options.location_override {
+async fn apply_launch_location(
+    config: &mut Config,
+    options: &LaunchOptions,
+    watchdog: Option<&AppWatchdog>,
+) {
+    let searched_location = if let Some(query) = options
+        .location_query
+        .as_deref()
+        .map(str::trim)
+        .filter(|query| !query.is_empty())
+    {
+        let result = match watchdog {
+            Some(watchdog) => geolocation::search_address_managed(watchdog, query).await,
+            None => geolocation::search_address(query).await,
+        };
+        match result {
+            Ok(location) => Some(location),
+            Err(error) => {
+                eprintln!(
+                    "Warning: weather location search for {query:?} failed: {}",
+                    error.user_friendly_message().replace('\n', " ")
+                );
+                None
+            }
+        }
+    } else {
+        None
+    };
+
+    let geo_loc = if let Some(location) = searched_location {
+        location
+    } else if let Some(location) = &options.location_override {
         geolocation::GeoLocation {
             latitude: location.latitude,
             longitude: location.longitude,

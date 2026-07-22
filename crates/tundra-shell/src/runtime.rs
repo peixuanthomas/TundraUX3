@@ -731,6 +731,8 @@ fn run_fullscreen_shell_session(
             icon_runtime.sync(&launcher, main);
         }
         let editor = (content_screen == ShellScreen::Editor).then(|| state.to_editor_view_model());
+        let settings =
+            (content_screen == ShellScreen::Settings).then(|| state.to_settings_view_model()).flatten();
         let diagnostics = state.to_diagnostics_view_model();
         let notification = state.to_notification_view_model();
         let exit_confirmation = tundra_ui::ExitConfirmViewModel::new();
@@ -785,6 +787,17 @@ fn run_fullscreen_shell_session(
                         editor
                             .as_ref()
                             .expect("Editor content requires its view model"),
+                        &theme,
+                    );
+                }
+                ShellScreen::Settings => {
+                    tundra_ui::render_settings(
+                        frame,
+                        area,
+                        &chrome,
+                        settings
+                            .as_ref()
+                            .expect("Settings content requires its view model"),
                         &theme,
                     );
                 }

@@ -109,6 +109,13 @@ fn build_shell_hit_map(
                         layer: ShellHitLayer::AppContent,
                     });
                 }
+                ShellScreen::Settings => {
+                    regions.push(ShellHitRegion {
+                        component: ShellComponent::Settings,
+                        area: main,
+                        layer: ShellHitLayer::AppContent,
+                    });
+                }
                 ShellScreen::Diagnostics => {
                     regions.push(ShellHitRegion {
                         component: ShellComponent::Diagnostics,

@@ -110,6 +110,7 @@ include!("launcher_workflows.rs");
 include!("explorer_task_workflows.rs");
 include!("editor_task_workflows.rs");
 include!("editor_workflows.rs");
+include!("settings_workflows.rs");
 include!("diagnostics_workflows.rs");
 include!("user_management_workflows.rs");
 include!("home_navigation.rs");

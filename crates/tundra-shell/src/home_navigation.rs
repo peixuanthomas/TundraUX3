@@ -71,6 +71,7 @@ impl ShellState {
         self.user_management_mode = UserManagementMode::Browse;
         self.user_management_message = None;
         self.selected_home_entry_index = 0;
+        self.settings_state = None;
         self.launcher_drag = None;
         self.explorer_state = None;
         self.explorer_input_mode = ExplorerInputMode::Browse;
@@ -215,6 +216,7 @@ impl ShellState {
             "Explorer" => self.open_explorer(platform),
             "Launcher" => self.open_launcher(platform),
             "Editor" => self.open_editor(),
+            "Settings" => self.open_settings(),
             "Diagnostics" => self.open_diagnostics(),
             "User Management" | "User Profile" => self.open_user_management(),
             label => {

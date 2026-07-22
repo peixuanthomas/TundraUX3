@@ -81,6 +81,13 @@ impl ShellState {
             );
         }
 
+        if self.active_screen() == ShellScreen::Settings {
+            return (
+                RoutedTarget::Component(ShellComponent::Settings),
+                ShellCommand::SettingsKey(key.clone()),
+            );
+        }
+
         if matches!(&key.key, InputKey::BackTab)
             || (matches!(&key.key, InputKey::Tab) && key.modifiers.shift)
         {
@@ -1204,6 +1211,13 @@ impl ShellState {
             return (
                 RoutedTarget::Component(ShellComponent::Editor),
                 ShellCommand::EditorPointer(mouse),
+            );
+        }
+
+        if self.active_screen() == ShellScreen::Settings {
+            return (
+                RoutedTarget::Component(ShellComponent::Settings),
+                ShellCommand::SettingsPointer(mouse),
             );
         }
 

@@ -165,6 +165,7 @@ impl ShellState {
                 | ShellCommand::OpenExplorer
                 | ShellCommand::OpenLauncher
                 | ShellCommand::OpenEditor
+                | ShellCommand::OpenSettings
                 | ShellCommand::OpenUserManagement
                 | ShellCommand::OpenClock
                 | ShellCommand::OpenDiagnostics
@@ -651,6 +652,30 @@ impl ShellState {
             }
             ShellCommand::EditorPointer(mouse) => {
                 self.handle_editor_pointer(mouse, platform);
+                ShellAction::Redraw
+            }
+            ShellCommand::OpenSettings => {
+                self.open_settings();
+                ShellAction::Redraw
+            }
+            ShellCommand::CloseSettings => {
+                self.close_settings();
+                ShellAction::Redraw
+            }
+            ShellCommand::SettingsKey(key) => {
+                self.handle_settings_key(&key);
+                ShellAction::Redraw
+            }
+            ShellCommand::SettingsPointer(mouse) => {
+                self.handle_settings_pointer(mouse);
+                ShellAction::Redraw
+            }
+            ShellCommand::SettingsRestoreDefaultsConfirmed => {
+                self.restore_settings_defaults();
+                ShellAction::Redraw
+            }
+            ShellCommand::SettingsWeatherLocationConfirmed => {
+                self.save_settings_weather_location();
                 ShellAction::Redraw
             }
             ShellCommand::EditorSaveAndClose => {

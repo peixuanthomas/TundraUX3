@@ -8,6 +8,7 @@ mod input;
 mod launcher;
 mod layout;
 mod render;
+mod settings;
 mod setup_catalog;
 mod theme;
 pub mod timezone_map;
@@ -73,6 +74,14 @@ pub use render::{
     setup_appearance_palette_option_areas, setup_appearance_shape_option_areas,
     setup_custom_color_dialog_area, setup_custom_color_input_area, setup_language_list_area,
     setup_timezone_list_area, setup_timezone_visible_rows, status_time_button_area,
+};
+pub use settings::{
+    SettingsAppearancePreview, SettingsCardViewModel, SettingsCategory, SettingsCategoryLayout,
+    SettingsColorEditorViewModel, SettingsControl, SettingsControlKind, SettingsField,
+    SettingsFieldLayout, SettingsHitTarget, SettingsItemViewModel, SettingsLayout,
+    SettingsPickerKind, SettingsPickerOptionLayout, SettingsPickerOptionViewModel,
+    SettingsPickerViewModel, SettingsViewModel, SettingsWeatherLocationEditorViewModel,
+    render_settings, settings_hit_test, settings_layout,
 };
 pub use setup_catalog::{
     SetupColorOption, setup_language_options, setup_standard_color_options, setup_timezone_options,

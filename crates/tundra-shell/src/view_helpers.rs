@@ -24,6 +24,7 @@ fn clock_button_active_for_screen(screen: ShellScreen) -> bool {
             | ShellScreen::Explorer
             | ShellScreen::Launcher
             | ShellScreen::Editor
+            | ShellScreen::Settings
             | ShellScreen::UserManagement
             | ShellScreen::Diagnostics
             | ShellScreen::Clock
@@ -647,6 +648,7 @@ fn startup_lockscreen_launch_options(
     };
 
     options.timezone_id = Some(config.timezone.clone());
+    options.location_query = config.weather_location.clone();
 
     if let Some(timezone) = tundra_ui::setup_timezone_options()
         .into_iter()

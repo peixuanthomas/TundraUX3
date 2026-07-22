@@ -163,6 +163,7 @@ fn weathr_launch_options(platform: &dyn Platform) -> LaunchOptions {
     };
 
     options.timezone_id = Some(config.timezone.clone());
+    options.location_query = config.weather_location.clone();
 
     if let Some(timezone) = tundra_ui::setup_timezone_options()
         .into_iter()

@@ -177,6 +177,7 @@ impl ShellState {
             user_management_feedback_tone: UserManagementFeedbackTone::Info,
             user_management_mode: UserManagementMode::Browse,
             selected_home_entry_index: 0,
+            settings_state: None,
             launcher_state: None,
             launcher_selected_index: 0,
             launcher_view_mode: tundra_ui::LauncherViewMode::LargeIcons,

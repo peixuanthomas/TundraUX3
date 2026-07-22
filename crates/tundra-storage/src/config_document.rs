@@ -17,6 +17,10 @@ pub struct StorageConfig {
     pub language: String,
     #[serde(default = "default_timezone")]
     pub timezone: String,
+    /// Optional English address text used only by Weathr.
+    /// `None` keeps weather tied to the configured timezone location.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub weather_location: Option<String>,
     #[serde(default)]
     pub shortcuts: BTreeMap<String, String>,
     #[serde(default)]
@@ -49,6 +53,7 @@ impl Default for StorageConfig {
             theme: default_theme(),
             language: default_language(),
             timezone: default_timezone(),
+            weather_location: None,
             shortcuts: BTreeMap::new(),
             appearance: AppearanceConfig::default(),
             explorer: ExplorerConfig::default(),

@@ -77,6 +77,7 @@ fn toml_and_json_documents_round_trip() {
         theme: "light".to_string(),
         language: "zh-Hans".to_string(),
         timezone: "Asia/Shanghai".to_string(),
+        weather_location: Some("Pudong, Shanghai, China".to_string()),
         shortcuts,
         appearance: AppearanceConfig {
             border_shape: BorderShape::Square,
@@ -138,6 +139,7 @@ fn toml_and_json_documents_round_trip() {
         fs::read_to_string(&manager.layout().config_path).expect("config should be readable");
     assert!(config_contents.contains("language = \"en-US\""));
     assert!(config_contents.contains("timezone = \"Asia/Shanghai\""));
+    assert!(config_contents.contains("weather_location = \"Pudong, Shanghai, China\""));
     assert!(config_contents.contains("[appearance]"));
     assert!(config_contents.contains("border_shape = \"square\""));
     assert!(config_contents.contains("border_color = \"#38BDF8\""));
@@ -271,6 +273,7 @@ fn old_config_without_language_or_timezone_loads_with_defaults() {
     assert_eq!(config.theme, "light");
     assert_eq!(config.language, "en-US");
     assert_eq!(config.timezone, "UTC");
+    assert_eq!(config.weather_location, None);
     assert_eq!(config.appearance.border_shape, BorderShape::Rounded);
     assert_eq!(config.appearance.border_color, BorderColor::White);
     assert_eq!(config.appearance.accent_color, BorderColor::Cyan);
