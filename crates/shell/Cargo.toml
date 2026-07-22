@@ -1,0 +1,29 @@
+[package]
+name = "shell"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "tundra-shell"
+path = "src/main.rs"
+
+[dependencies]
+chrono = { version = "0.4", features = ["serde"] }
+chrono-tz = "0.10"
+crossterm = "0.28"
+ratatui = "0.29"
+tokio = { version = "1", features = ["rt-multi-thread", "time"] }
+platform = { path = "../platform" }
+app = { path = "../app" }
+identity = { path = "../identity" }
+storage = { path = "../storage" }
+ui = { path = "../ui" }
+watchdog = { path = "../watchdog", features = ["tokio"] }
+weathr = { path = "../weathr" }
+time = { version = "0.1.0", path = "../time" }
+
+[build-dependencies]
+ascii-assets = { path = "../ascii-assets" }

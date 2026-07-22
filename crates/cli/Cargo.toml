@@ -1,0 +1,23 @@
+[package]
+name = "cli"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "tundra-cli"
+path = "src/main.rs"
+
+[dependencies]
+app = { path = "../app" }
+ascii-assets = { path = "../ascii-assets" }
+platform = { path = "../platform" }
+shell = { path = "../shell" }
+storage = { path = "../storage" }
+watchdog = { path = "../watchdog", features = ["tokio"] }
+weathr = { path = "../weathr" }
+
+[build-dependencies]
+ascii-assets = { path = "../ascii-assets" }

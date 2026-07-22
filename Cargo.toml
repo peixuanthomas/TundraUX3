@@ -1,15 +1,15 @@
 [workspace]
 members = [
-    "crates/tundra-apps",
-    "crates/tundra-ascii-assets",
-    "crates/tundra-cli",
-    "crates/tundra-core",
-    "crates/tundra-platform",
-    "crates/tundra-shell",
-    "crates/tundra-storage",
-    "crates/tundra-ui",
-    "crates/tundra-watchdog",
-    "crates/tundra-weathr",
+    "crates/app",
+    "crates/ascii-assets",
+    "crates/cli",
+    "crates/identity",
+    "crates/platform",
+    "crates/shell",
+    "crates/storage", "crates/time",
+    "crates/ui",
+    "crates/watchdog",
+    "crates/weathr",
 ]
 resolver = "3"
 
