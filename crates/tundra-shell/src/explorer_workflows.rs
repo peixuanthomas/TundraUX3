@@ -1,4 +1,14 @@
 impl ShellState {
+    fn can_change_explorer_settings(&self) -> bool {
+        PermissionService::new(self.debug_policy)
+            .authorize(
+                self.auth_session.as_ref(),
+                PermissionAction::ChangeSettings,
+                None,
+            )
+            .allowed
+    }
+
     fn open_explorer(&mut self, platform: &dyn Platform) {
         self.explorer_purpose = ExplorerPurpose::Browse;
         if self.is_strict_guest() {
@@ -209,6 +219,7 @@ impl ShellState {
             return;
         }
         let command_kind = command.clone();
+        let can_change_settings = self.can_change_explorer_settings();
         let Some(storage) = self.storage_manager.clone() else {
             let message = "Storage unavailable".to_string();
             self.error_message = Some(message.clone());
@@ -231,6 +242,21 @@ impl ShellState {
             return;
         };
 
+        // Explorer's advanced options are global defaults.  A regular user may still
+        // rearrange the current view, but must not be able to alter those defaults.
+        if explorer_command_requires_global_settings_permission(&command_kind)
+            && !can_change_settings
+        {
+            state.error = None;
+            state.message = Some(
+                "Explorer options are read-only. Administrator permission is required."
+                    .to_string(),
+            );
+            self.notify_status("Explorer options are read-only");
+            self.refresh_hit_map();
+            return;
+        }
+
         let effect = ExplorerController::default().apply(
             state,
             command,
@@ -238,7 +264,7 @@ impl ShellState {
             platform,
             &storage,
         );
-        self.handle_explorer_effect(effect, platform, &storage);
+        self.handle_explorer_effect(effect, platform, &storage, can_change_settings);
         let (pending_dialog, pending_conflict, explorer_error, explorer_message) = self
             .explorer_state
             .as_ref()
@@ -319,9 +345,22 @@ impl ShellState {
         effect: ExplorerEffect,
         platform: &dyn Platform,
         storage: &StorageManager,
+        can_change_settings: bool,
     ) {
         match effect {
             ExplorerEffect::None => {}
+            ExplorerEffect::PersistConfig(_explorer) if !can_change_settings => {
+                // Sorting is deliberately session-local for non-admin users.  The
+                // controller has already updated the in-memory projection; skip its
+                // persistence effect so the shared default remains unchanged.
+                if let Some(state) = self.explorer_state.as_mut() {
+                    state.error = None;
+                    state.message = Some(
+                        "Sort applied for this session; Explorer defaults are read-only."
+                            .to_string(),
+                    );
+                }
+            }
             ExplorerEffect::PersistConfig(explorer) => match storage.load_config() {
                 Ok(mut config) => {
                     config.explorer = explorer;
@@ -1115,6 +1154,22 @@ fn explorer_copy_modifier(kind: PlatformKind, modifiers: InputModifiers) -> bool
         PlatformKind::Macos => modifiers.alt,
         PlatformKind::Windows | PlatformKind::Unsupported => modifiers.control,
     }
+}
+
+fn explorer_command_requires_global_settings_permission(command: &ExplorerCommand) -> bool {
+    matches!(
+        command,
+        ExplorerCommand::ToggleHidden
+            | ExplorerCommand::ToggleSystem
+            | ExplorerCommand::ToggleExtensions
+            | ExplorerCommand::ToggleFoldersFirst
+            | ExplorerCommand::ToggleCaseSensitiveSort
+            | ExplorerCommand::ToggleSidebar
+            | ExplorerCommand::ToggleSizeFormat
+            | ExplorerCommand::ToggleDateZone
+            | ExplorerCommand::ToggleDeleteConfirmation
+            | ExplorerCommand::ToggleConflictConfirmation
+    )
 }
 
 fn explorer_sort_field(

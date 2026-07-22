@@ -219,6 +219,7 @@ fn settings_button_opens_a_modal_acceleration_panel_with_clickable_controls() {
         vec![EditorRenderBlock::paragraph("canvas content")],
     );
     model.settings = Some(EditorSettingsViewModel {
+        editable: true,
         enabled: true,
         activation_delay_ms: 2_000,
         ramp_duration_ms: 3_000,

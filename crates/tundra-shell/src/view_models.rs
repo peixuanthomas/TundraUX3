@@ -765,7 +765,11 @@ impl ShellState {
                     self.explorer_overlay_selection,
                 ),
                 ExplorerOverlayMode::Options => {
-                    explorer_options_view_model(state, self.explorer_overlay_selection)
+                    explorer_options_view_model(
+                        state,
+                        self.explorer_overlay_selection,
+                        self.can_change_explorer_settings(),
+                    )
                 }
                 ExplorerOverlayMode::Properties => {
                     explorer_properties_view_model(state, self.clock_timezone_id.as_deref())

@@ -128,6 +128,7 @@ pub enum EditorSettingsControl {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct EditorSettingsViewModel {
+    pub editable: bool,
     pub enabled: bool,
     pub activation_delay_ms: u32,
     pub ramp_duration_ms: u32,
@@ -1841,15 +1842,22 @@ fn render_settings(
         settings_layout.dialog.width.saturating_sub(4),
         1,
     );
+    let description_text = if settings.editable {
+        "Hold one direction to accelerate with a quadratic curve."
+    } else {
+        "Read-only: administrator permission is required to change these settings."
+    };
     frame.render_widget(
-        Paragraph::new("Hold one direction to accelerate with a quadratic curve.")
-            .style(theme.muted_style()),
+        Paragraph::new(description_text).style(theme.muted_style()),
         description,
     );
 
     for field in &settings_layout.fields {
         let selected = field.field == settings.selected;
-        let style = if selected {
+        let locked = !settings.editable && field.field != EditorSettingsField::Cancel;
+        let style = if locked {
+            theme.muted_style()
+        } else if selected {
             Style::default()
                 .fg(theme.background)
                 .bg(theme.accent_color)
@@ -1876,7 +1884,11 @@ fn render_settings(
     for control in &settings_layout.controls {
         let field = settings_control_field(control.control);
         let selected = field.is_some_and(|field| field == settings.selected);
-        let style = if selected {
+        let locked =
+            !settings.editable && !matches!(control.control, EditorSettingsControl::Cancel);
+        let style = if locked {
+            theme.muted_style()
+        } else if selected {
             Style::default()
                 .fg(theme.background)
                 .bg(theme.accent_color)
@@ -1940,7 +1952,9 @@ fn render_settings(
             1,
         );
         let width = usize::from(value_area.width);
-        let style = if settings.selected == field {
+        let style = if !settings.editable {
+            theme.muted_style()
+        } else if settings.selected == field {
             Style::default()
                 .fg(theme.background)
                 .bg(theme.accent_color)

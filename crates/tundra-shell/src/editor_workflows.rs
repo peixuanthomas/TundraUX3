@@ -60,6 +60,23 @@ fn adjust_u8_setting(value: u8, increase: bool) -> u8 {
 }
 
 impl ShellState {
+    fn can_change_editor_settings(&self) -> bool {
+        PermissionService::new(self.debug_policy)
+            .authorize(
+                self.auth_session.as_ref(),
+                PermissionAction::ChangeSettings,
+                None,
+            )
+            .allowed
+    }
+
+    fn reject_editor_settings_change(&mut self) {
+        self.editor_message = Some(
+            "Editor settings are read-only. Administrator permission is required.".to_string(),
+        );
+        self.notify_status("Editor settings are read-only");
+    }
+
     fn advance_editor_document_generation(&mut self) {
         self.editor_document_generation = self.editor_document_generation.wrapping_add(1).max(1);
     }
@@ -298,6 +315,7 @@ impl ShellState {
     fn editor_settings_view_model(&self) -> Option<tundra_ui::EditorSettingsViewModel> {
         self.editor_settings_dialog
             .map(|dialog| tundra_ui::EditorSettingsViewModel {
+                editable: self.can_change_editor_settings(),
                 enabled: dialog.draft.cursor_acceleration_enabled,
                 activation_delay_ms: dialog.draft.cursor_acceleration_delay_ms,
                 ramp_duration_ms: dialog.draft.cursor_acceleration_ramp_ms,
@@ -1225,6 +1243,9 @@ impl ShellState {
             draft: self.editor_config,
             selected: tundra_ui::EditorSettingsField::Enabled,
         });
+        if !self.can_change_editor_settings() {
+            self.reject_editor_settings_change();
+        }
     }
 
     fn activate_editor_settings_control(&mut self, control: tundra_ui::EditorSettingsControl) {
@@ -1265,6 +1286,10 @@ impl ShellState {
 
     fn activate_editor_setting(&mut self, field: tundra_ui::EditorSettingsField) {
         use tundra_ui::EditorSettingsField as Field;
+        if field != Field::Cancel && !self.can_change_editor_settings() {
+            self.reject_editor_settings_change();
+            return;
+        }
         match field {
             Field::Enabled => {
                 if let Some(dialog) = self.editor_settings_dialog.as_mut() {
@@ -1287,6 +1312,10 @@ impl ShellState {
     }
 
     fn adjust_editor_setting(&mut self, field: tundra_ui::EditorSettingsField, direction: i8) {
+        if !self.can_change_editor_settings() {
+            self.reject_editor_settings_change();
+            return;
+        }
         let Some(dialog) = self.editor_settings_dialog.as_mut() else {
             return;
         };
@@ -1323,6 +1352,10 @@ impl ShellState {
     }
 
     fn save_editor_settings(&mut self) {
+        if !self.can_change_editor_settings() {
+            self.reject_editor_settings_change();
+            return;
+        }
         let Some(dialog) = self.editor_settings_dialog else {
             return;
         };

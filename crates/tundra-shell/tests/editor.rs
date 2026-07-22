@@ -2466,6 +2466,14 @@ fn complete_first_run_setup(
     type_text(state, platform, hint);
     state.apply_input_with_platform(InputEvent::from_key_label("Enter"), platform);
     state.apply_input_with_platform(InputEvent::from_key_label("Enter"), platform);
+    for _ in 0..5 {
+        state.apply_input_with_platform(InputEvent::from_key_label("Tab"), platform);
+    }
+    assert_eq!(
+        state.focused_component(),
+        ShellComponent::SetupAppearanceSubmit
+    );
+    state.apply_input_with_platform(InputEvent::from_key_label("Enter"), platform);
 }
 
 fn user_dirs(base: &Path) -> UserDirs {

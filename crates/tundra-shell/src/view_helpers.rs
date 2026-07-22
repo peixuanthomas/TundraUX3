@@ -315,12 +315,13 @@ fn explorer_sort_menu_view_model(
 fn explorer_options_view_model(
     state: &ExplorerState,
     focused_index: usize,
+    enabled: bool,
 ) -> tundra_ui::ExplorerOverlayViewModel {
     let toggle = |id: &str, label: &str, value: bool| tundra_ui::ExplorerOptionViewModel {
         id: id.to_string(),
         label: label.to_string(),
         value: if value { "On" } else { "Off" }.to_string(),
-        enabled: true,
+        enabled,
         selected: value,
         focused: false,
     };
@@ -342,7 +343,7 @@ fn explorer_options_view_model(
                 tundra_storage::ExplorerSizeFormat::Bytes => "Bytes",
             }
             .to_string(),
-            enabled: true,
+            enabled,
             selected: false,
             focused: false,
         },
@@ -354,7 +355,7 @@ fn explorer_options_view_model(
                 tundra_storage::ExplorerDateZone::Utc => "UTC",
             }
             .to_string(),
-            enabled: true,
+            enabled,
             selected: false,
             focused: false,
         },
