@@ -32,8 +32,9 @@ pub use launcher::{
 pub use settings::{
     SettingsAppearancePreview, SettingsCardViewModel, SettingsCategory, SettingsCategoryLayout,
     SettingsColorEditorViewModel, SettingsControl, SettingsControlKind, SettingsField,
-    SettingsFieldLayout, SettingsHitTarget, SettingsItemViewModel, SettingsLayout,
-    SettingsPickerKind, SettingsPickerOptionLayout, SettingsPickerOptionViewModel,
-    SettingsPickerViewModel, SettingsViewModel, SettingsWeatherLocationEditorViewModel,
-    render_settings, settings_hit_test, settings_layout,
+    SettingsFieldLayout, SettingsFileExtensionsEditorViewModel, SettingsHitTarget,
+    SettingsItemViewModel, SettingsLayout, SettingsPickerKind, SettingsPickerOptionLayout,
+    SettingsPickerOptionViewModel, SettingsPickerViewModel, SettingsTimeSyncServerEditorViewModel,
+    SettingsViewModel, SettingsWeatherLocationEditorViewModel, render_settings, settings_hit_test,
+    settings_layout,
 };

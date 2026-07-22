@@ -57,7 +57,15 @@ impl ShellSession {
             .storage_manager
             .as_ref()
             .map(|storage| ShellDiagnosticsTaskRuntime::new(storage.clone()));
-        let editor_task_runtime = ShellEditorTaskRuntime::new();
+        let task_watchdog = default_editor_watchdog();
+        let editor_task_runtime = task_watchdog.clone().map_or_else(
+            ShellEditorTaskRuntime::unavailable,
+            ShellEditorTaskRuntime::new_managed,
+        );
+        let settings_task_runtime = task_watchdog.map_or_else(
+            ShellSettingsTaskRuntime::unavailable,
+            ShellSettingsTaskRuntime::new_managed,
+        );
         Self::new_with_runtime_services(
             launch_config,
             terminal_size,
@@ -66,6 +74,7 @@ impl ShellSession {
             explorer_task_runtime,
             diagnostics_task_runtime,
             editor_task_runtime,
+            settings_task_runtime,
         )
     }
 
@@ -77,6 +86,7 @@ impl ShellSession {
         explorer_task_runtime: Option<ShellExplorerTaskRuntime>,
         diagnostics_task_runtime: Option<ShellDiagnosticsTaskRuntime>,
         editor_task_runtime: ShellEditorTaskRuntime,
+        settings_task_runtime: ShellSettingsTaskRuntime,
     ) -> Self {
         let diagnostics_restart_required = diagnostics_task_runtime
             .as_ref()
@@ -90,10 +100,7 @@ impl ShellSession {
                 ShellScreen::Login
             }
         } else {
-            match launch_config.launch_target {
-                ShellLaunchTarget::Home => ShellScreen::Home,
-                ShellLaunchTarget::Editor => ShellScreen::Editor,
-            }
+            ShellScreen::Home
         };
         let initial_focus = match initial_screen {
             ShellScreen::FirstRunSetup => ShellComponent::SetupLanguage,
@@ -128,7 +135,6 @@ impl ShellSession {
         let setup_appearance = storage::AppearanceConfig::default();
         let ui = UiSessionState {
             home_mode,
-            launch_target: launch_config.launch_target,
             ascii_assets,
             screen_stack: vec![initial_screen],
             storage_manager: startup.storage_manager.clone(),
@@ -143,7 +149,7 @@ impl ShellSession {
             time_sync_attempted: false,
             time_sync_dialog_visible: false,
             time_sync_failure_message: None,
-            requested_debug_mode: launch_config.home_mode_override == HomeModeOverride::Debug,
+            debug_home_after_login: launch_config.home_mode_override == HomeModeOverride::Debug,
             debug_policy: startup.debug_policy,
             login_users,
             login_selected_user,
@@ -177,6 +183,7 @@ impl ShellSession {
             user_management_mode: UserManagementMode::Browse,
             selected_home_entry_index: 0,
             settings_state: None,
+            settings_task_runtime,
             launcher_selected_index: 0,
             launcher_view_mode: app::launcher::LauncherViewMode::LargeIcons,
             launcher_viewport_offset: 0,
@@ -266,13 +273,8 @@ impl ShellSession {
         let mut state = Self { app, ui };
         state.refresh_hit_map();
         if !auth_gate_enabled {
-            match launch_config.launch_target {
-                ShellLaunchTarget::Home => {
-                    if let Some(restored_session) = startup.restored_session.as_ref() {
-                        state.apply_restored_session(restored_session);
-                    }
-                }
-                ShellLaunchTarget::Editor => state.open_editor(),
+            if let Some(restored_session) = startup.restored_session.as_ref() {
+                state.apply_restored_session(restored_session);
             }
         }
         state

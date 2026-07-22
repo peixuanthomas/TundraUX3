@@ -10,8 +10,8 @@ use platform::{
 use ratatui::layout::Rect;
 use shell::{
     HomeModeOverride, InputEvent, InputKey, InputModifiers, InputPhase, KeyInput, PointerButton,
-    ScrollDirection, ShellAction, ShellComponent, ShellHomeMode, ShellLaunchConfig,
-    ShellLaunchTarget, ShellScreen, ShellSession, ShellTerminalMode, prepare_shell_startup,
+    ScrollDirection, ShellAction, ShellComponent, ShellHomeMode, ShellLaunchConfig, ShellScreen,
+    ShellSession, prepare_shell_startup,
 };
 use ui::{
     EditorDocumentPosition, EditorFocus, EditorHitTarget, EditorMenu, EditorMenuAction, EditorMode,
@@ -21,49 +21,8 @@ use ui::{
 
 fn default_config() -> ShellLaunchConfig {
     ShellLaunchConfig {
-        terminal_mode: ShellTerminalMode::Fullscreen,
         home_mode_override: HomeModeOverride::BuildDefault,
-        launch_target: ShellLaunchTarget::Home,
     }
-}
-
-fn editor_config() -> ShellLaunchConfig {
-    ShellLaunchConfig::editor()
-}
-
-#[test]
-fn editor_launch_target_starts_directly_without_an_auth_gate() {
-    let state = ShellSession::new(editor_config(), (120, 40));
-
-    assert_eq!(state.active_screen(), ShellScreen::Editor);
-    assert_eq!(state.focused_component(), ShellComponent::Editor);
-    assert_eq!(state.screen_stack(), &[ShellScreen::Editor]);
-    assert_eq!(state.to_editor_view_model().file_name, "Untitled.md");
-}
-
-#[test]
-fn editor_launch_target_waits_for_login_then_opens_editor() {
-    let fixture = FixtureRoot::new("direct-editor-login");
-    let platform = mock_platform(fixture.path());
-    bootstrap_with_shell(&platform);
-    let startup = prepare_shell_startup(&platform, editor_config()).expect("editor startup");
-    let mut state = ShellSession::new_with_startup(editor_config(), (120, 40), startup);
-
-    assert_eq!(state.active_screen(), ShellScreen::Login);
-    assert_eq!(state.to_editor_view_model().file_name, "Untitled.md");
-
-    select_login_user(&mut state, &platform, "AdminUser");
-    state.apply_input_with_platform(InputEvent::from_key_label("Tab"), &platform);
-    type_text(&mut state, &platform, "StrongPass123");
-    state.apply_input_with_platform(InputEvent::from_key_label("Enter"), &platform);
-
-    assert_eq!(state.active_screen(), ShellScreen::Editor);
-    assert_eq!(state.focused_component(), ShellComponent::Editor);
-    assert_eq!(
-        state.screen_stack(),
-        &[ShellScreen::Home, ShellScreen::Editor]
-    );
-    assert_eq!(state.to_editor_view_model().file_name, "Untitled.md");
 }
 
 #[test]
@@ -907,7 +866,11 @@ fn repeated_command_shortcut_does_not_trigger_a_one_shot_action() {
 
 #[test]
 fn held_direction_keys_accelerate_non_linearly_with_slower_vertical_shift_selection() {
-    let mut state = ShellSession::new(editor_config(), (120, 40));
+    let mut state = new_user_home_state();
+    state.apply_input(InputEvent::from_key_label("Right"));
+    state.apply_input(InputEvent::from_key_label("Right"));
+    state.apply_input(InputEvent::from_key_label("Enter"));
+    assert_eq!(state.active_screen(), ShellScreen::Editor);
     for character in "01234567890123456789\n".repeat(20).chars() {
         state.apply_input(InputEvent::from_key_label(character.to_string()));
     }
@@ -1011,6 +974,12 @@ fn editor_settings_restore_defaults_and_persist_saved_acceleration_values() {
     let fixture = FixtureRoot::new("cursor-acceleration-settings");
     let platform = mock_platform(fixture.path());
     bootstrap_with_shell(&platform);
+    let manager = storage::StorageManager::open(app_paths(fixture.path()))
+        .expect("open storage")
+        .manager;
+    let mut config = manager.load_config().expect("load config");
+    config.editor.explorer_open_extensions = vec!["rs".to_string()];
+    manager.save_config(&config).expect("save custom suffix");
     let mut state = logged_in_state(&platform);
     open_editor_from_home(&mut state, &platform);
 
@@ -1072,6 +1041,7 @@ fn editor_settings_restore_defaults_and_persist_saved_acceleration_values() {
     assert_eq!(stored.cursor_acceleration_delay_ms, 2_250);
     assert_eq!(stored.cursor_acceleration_ramp_ms, 3_000);
     assert!(stored.cursor_vertical_max_step < stored.cursor_horizontal_max_step);
+    assert_eq!(stored.explorer_open_extensions, vec!["rs".to_string()]);
 
     let mut reloaded = logged_in_state(&platform);
     open_editor_from_home(&mut reloaded, &platform);
@@ -2410,7 +2380,7 @@ fn mock_platform(base: &Path) -> MockPlatform {
 }
 
 fn bootstrap_with_shell(platform: &MockPlatform) {
-    let startup = prepare_shell_startup(platform, default_config()).expect("startup");
+    let startup = prepare_shell_startup(platform).expect("startup");
     let mut state = ShellSession::new_with_startup(default_config(), (120, 40), startup);
     complete_first_run_setup(
         &mut state,
@@ -2423,7 +2393,7 @@ fn bootstrap_with_shell(platform: &MockPlatform) {
 }
 
 fn logged_in_state(platform: &MockPlatform) -> ShellSession {
-    let startup = prepare_shell_startup(platform, default_config()).expect("startup");
+    let startup = prepare_shell_startup(platform).expect("startup");
     let mut state = ShellSession::new_with_startup(default_config(), (120, 40), startup);
     select_login_user(&mut state, platform, "AdminUser");
     state.apply_input_with_platform(InputEvent::from_key_label("Tab"), platform);

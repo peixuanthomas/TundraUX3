@@ -1,25 +1,25 @@
 use std::fs;
+use std::io::{Read, Write};
+use std::net::TcpListener;
 use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use identity::{SessionService, UserRole, UserService};
-use platform::mock::MockPlatform;
+use platform::mock::{MockCall, MockPlatform};
 use platform::{
     AppPaths, PlatformCapabilities, PlatformKind, UserDirs, build_windows_app_paths,
     cleanup_temp_path,
 };
 use shell::{
-    HomeModeOverride, InputEvent, ShellLaunchConfig, ShellLaunchTarget, ShellScreen, ShellSession,
-    ShellTerminalMode, prepare_shell_startup,
+    HomeModeOverride, InputEvent, ShellLaunchConfig, ShellScreen, ShellSession,
+    prepare_shell_startup,
 };
-use storage::{BorderShape, StorageManager};
+use storage::{BorderShape, StorageManager, TimeSyncSource};
 use ui::{SettingsCategory, SettingsField};
 
 fn default_config() -> ShellLaunchConfig {
     ShellLaunchConfig {
-        terminal_mode: ShellTerminalMode::Fullscreen,
         home_mode_override: HomeModeOverride::BuildDefault,
-        launch_target: ShellLaunchTarget::Home,
     }
 }
 
@@ -91,8 +91,9 @@ fn weather_location_rejects_non_english_input_and_saves_only_after_warning() {
     open_settings_from_home(&mut state, &platform);
     press(&mut state, &platform, "Right");
     press(&mut state, &platform, "Enter");
-    press(&mut state, &platform, "Down");
-    press(&mut state, &platform, "Down");
+    for _ in 0..2 {
+        press(&mut state, &platform, "Down");
+    }
     assert_eq!(
         state.to_settings_view_model().unwrap().selected_field,
         SettingsField::WeatherLocation
@@ -130,6 +131,184 @@ fn weather_location_rejects_non_english_input_and_saves_only_after_warning() {
             .to_settings_view_model()
             .unwrap()
             .weather_location_editor
+            .is_none()
+    );
+}
+
+#[test]
+fn operating_system_time_source_uses_platform_boundary_and_persists() {
+    let fixture = FixtureRoot::new("system-time-source");
+    let platform = mock_platform(fixture.path());
+    let manager = initialize_users(&platform, false, false);
+    let system_time = UNIX_EPOCH + Duration::from_secs(1_700_000_000);
+    platform.set_system_time_result(Ok(system_time));
+    let mut state = logged_in_state(&platform, "AdminUser", "StrongPass123");
+
+    open_settings_from_home(&mut state, &platform);
+    press(&mut state, &platform, "Right");
+    press(&mut state, &platform, "Enter");
+    press(&mut state, &platform, "Down");
+    press(&mut state, &platform, "Down");
+    press(&mut state, &platform, "Down");
+    assert_eq!(
+        state.to_settings_view_model().unwrap().selected_field,
+        SettingsField::TimeSyncSource
+    );
+    press(&mut state, &platform, "Enter");
+
+    assert_eq!(
+        manager.load_config().unwrap().time_sync.source,
+        TimeSyncSource::OperatingSystem
+    );
+    assert!(
+        platform
+            .calls()
+            .iter()
+            .any(|call| matches!(call, MockCall::SystemTime))
+    );
+    assert!(!state.time_sync_failure_dialog_visible());
+}
+
+#[test]
+fn time_server_is_saved_only_after_successful_synchronization() {
+    let fixture = FixtureRoot::new("valid-time-server");
+    let platform = mock_platform(fixture.path());
+    let manager = initialize_users(&platform, false, false);
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind test time server");
+    let address = listener.local_addr().expect("time server address");
+    let server = std::thread::spawn(move || {
+        let (mut stream, _) = listener.accept().expect("accept time request");
+        let mut request = [0_u8; 2048];
+        let _ = stream.read(&mut request);
+        stream
+            .write_all(
+                b"HTTP/1.1 204 No Content\r\nDate: Tue, 15 Nov 1994 08:12:31 GMT\r\nConnection: close\r\n\r\n",
+            )
+            .expect("write time response");
+    });
+    let mut state = logged_in_state(&platform, "AdminUser", "StrongPass123");
+
+    open_time_server_editor(&mut state, &platform);
+    let url = format!("http://{address}/clock");
+    for character in url.chars() {
+        press(&mut state, &platform, &character.to_string());
+    }
+    press(&mut state, &platform, "Enter");
+    assert_eq!(manager.load_config().unwrap().time_sync.server_url, None);
+
+    drive_settings_until(&mut state, &platform, |state| {
+        state
+            .to_settings_view_model()
+            .is_some_and(|model| model.time_sync_server_editor.is_none())
+    });
+    server.join().expect("time server thread");
+    assert_eq!(
+        manager
+            .load_config()
+            .unwrap()
+            .time_sync
+            .server_url
+            .as_deref(),
+        Some(format!("http://{address}/clock").as_str())
+    );
+}
+
+#[test]
+fn failed_time_server_validation_shows_error_and_does_not_save() {
+    let fixture = FixtureRoot::new("invalid-time-server");
+    let platform = mock_platform(fixture.path());
+    let manager = initialize_users(&platform, false, false);
+    let listener = TcpListener::bind("127.0.0.1:0").expect("reserve unused port");
+    let address = listener.local_addr().expect("unused address");
+    drop(listener);
+    let mut state = logged_in_state(&platform, "AdminUser", "StrongPass123");
+
+    open_time_server_editor(&mut state, &platform);
+    for character in format!("http://{address}/clock").chars() {
+        press(&mut state, &platform, &character.to_string());
+    }
+    press(&mut state, &platform, "Enter");
+    drive_settings_until(&mut state, &platform, |state| {
+        state.time_sync_failure_dialog_visible()
+    });
+
+    assert_eq!(manager.load_config().unwrap().time_sync.server_url, None);
+    assert!(
+        state
+            .time_sync_failure_message()
+            .is_some_and(|message| message.contains("setting was not saved"))
+    );
+}
+
+#[test]
+fn malformed_time_server_shows_error_and_does_not_save() {
+    let fixture = FixtureRoot::new("malformed-time-server");
+    let platform = mock_platform(fixture.path());
+    let manager = initialize_users(&platform, false, false);
+    let mut state = logged_in_state(&platform, "AdminUser", "StrongPass123");
+
+    open_time_server_editor(&mut state, &platform);
+    for character in "not a URL".chars() {
+        press(&mut state, &platform, &character.to_string());
+    }
+    press(&mut state, &platform, "Enter");
+
+    assert_eq!(manager.load_config().unwrap().time_sync.server_url, None);
+    assert!(state.time_sync_failure_dialog_visible());
+    assert!(
+        state
+            .time_sync_failure_message()
+            .is_some_and(|message| message.contains("setting was not saved"))
+    );
+}
+
+#[test]
+fn editor_settings_save_normalized_explorer_open_suffixes() {
+    let fixture = FixtureRoot::new("editor-open-suffixes");
+    let platform = mock_platform(fixture.path());
+    let manager = initialize_users(&platform, false, false);
+    let mut state = logged_in_state(&platform, "AdminUser", "StrongPass123");
+
+    open_settings_from_home(&mut state, &platform);
+    for _ in 0..3 {
+        press(&mut state, &platform, "Right");
+    }
+    press(&mut state, &platform, "Enter");
+    assert_eq!(
+        state.to_settings_view_model().unwrap().selected_field,
+        SettingsField::ExplorerOpenExtensions
+    );
+
+    press(&mut state, &platform, "Enter");
+    let existing_len = state
+        .to_settings_view_model()
+        .unwrap()
+        .file_extensions_editor
+        .expect("file suffix editor")
+        .value
+        .chars()
+        .count();
+    for _ in 0..existing_len {
+        press(&mut state, &platform, "Backspace");
+    }
+    for character in ".RS, rs; .d.ts".chars() {
+        press(&mut state, &platform, &character.to_string());
+    }
+    press(&mut state, &platform, "Enter");
+
+    assert_eq!(
+        manager
+            .load_config()
+            .unwrap()
+            .editor
+            .explorer_open_extensions,
+        vec!["rs".to_string(), "d.ts".to_string()]
+    );
+    assert!(
+        state
+            .to_settings_view_model()
+            .unwrap()
+            .file_extensions_editor
             .is_none()
     );
 }
@@ -266,7 +445,7 @@ fn initialize_users(
 }
 
 fn logged_in_state(platform: &MockPlatform, username: &str, password: &str) -> ShellSession {
-    let startup = prepare_shell_startup(platform, default_config()).expect("startup");
+    let startup = prepare_shell_startup(platform).expect("startup");
     let mut state = ShellSession::new_with_startup(default_config(), (120, 40), startup);
     assert_eq!(state.active_screen(), ShellScreen::Login);
     let target = state
@@ -299,6 +478,42 @@ fn open_settings_from_home(state: &mut ShellSession, platform: &MockPlatform) {
         press(state, platform, "Right");
     }
     press(state, platform, "Enter");
+}
+
+fn open_time_server_editor(state: &mut ShellSession, platform: &MockPlatform) {
+    open_settings_from_home(state, platform);
+    press(state, platform, "Right");
+    press(state, platform, "Enter");
+    for _ in 0..4 {
+        press(state, platform, "Down");
+    }
+    assert_eq!(
+        state.to_settings_view_model().unwrap().selected_field,
+        SettingsField::TimeSyncServer
+    );
+    press(state, platform, "Enter");
+    assert!(
+        state
+            .to_settings_view_model()
+            .unwrap()
+            .time_sync_server_editor
+            .is_some()
+    );
+}
+
+fn drive_settings_until(
+    state: &mut ShellSession,
+    platform: &MockPlatform,
+    done: impl Fn(&ShellSession) -> bool,
+) {
+    for _ in 0..1_000 {
+        state.apply_input_with_platform(InputEvent::Tick, platform);
+        if done(state) {
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    panic!("Settings background task did not finish in time");
 }
 
 fn press(state: &mut ShellSession, platform: &MockPlatform, key: &str) {

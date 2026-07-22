@@ -3,6 +3,7 @@ pub(in crate::session) const SETTINGS_RESTORE_NOTIFICATION_KEY: &str = "settings
 pub(in crate::session) const SETTINGS_WEATHER_LOCATION_NOTIFICATION_KEY: &str =
     "settings.weather-location";
 pub(in crate::session) const WEATHER_LOCATION_MAX_LEN: usize = 120;
+pub(in crate::session) const EDITOR_EXTENSIONS_INPUT_MAX_LEN: usize = 1_024;
 
 pub(in crate::session) const APPEARANCE_SETTINGS_FIELDS: &[ui::SettingsField] = &[
     ui::SettingsField::BorderShape,
@@ -14,6 +15,8 @@ pub(in crate::session) const REGION_SETTINGS_FIELDS: &[ui::SettingsField] = &[
     ui::SettingsField::Language,
     ui::SettingsField::Timezone,
     ui::SettingsField::WeatherLocation,
+    ui::SettingsField::TimeSyncSource,
+    ui::SettingsField::TimeSyncServer,
     ui::SettingsField::RestoreDefaults,
 ];
 pub(in crate::session) const EXPLORER_SETTINGS_FIELDS: &[ui::SettingsField] = &[
@@ -32,6 +35,7 @@ pub(in crate::session) const EXPLORER_SETTINGS_FIELDS: &[ui::SettingsField] = &[
     ui::SettingsField::RestoreDefaults,
 ];
 pub(in crate::session) const EDITOR_SETTINGS_FIELDS: &[ui::SettingsField] = &[
+    ui::SettingsField::ExplorerOpenExtensions,
     ui::SettingsField::CursorAcceleration,
     ui::SettingsField::CursorDelay,
     ui::SettingsField::CursorRamp,
@@ -92,6 +96,9 @@ impl ShellSession {
             picker: None,
             color_editor: None,
             weather_location_editor: None,
+            file_extensions_editor: None,
+            time_sync_server_editor: None,
+            time_sync_validation_request_id: None,
         });
         if self.active_screen() != ShellScreen::Settings {
             self.screen_stack.push(ShellScreen::Settings);
@@ -129,8 +136,28 @@ impl ShellSession {
             .allowed
     }
 
-    pub(in crate::session) fn handle_settings_key(&mut self, key: &KeyInput) {
+    pub(in crate::session) fn handle_settings_key(
+        &mut self,
+        key: &KeyInput,
+        platform: &dyn Platform,
+    ) {
         if self.settings_state.is_none() {
+            return;
+        }
+        if self
+            .settings_state
+            .as_ref()
+            .is_some_and(|state| state.time_sync_server_editor.is_some())
+        {
+            self.handle_settings_time_sync_server_key(key);
+            return;
+        }
+        if self
+            .settings_state
+            .as_ref()
+            .is_some_and(|state| state.file_extensions_editor.is_some())
+        {
+            self.handle_settings_file_extensions_key(key);
             return;
         }
         if self
@@ -196,17 +223,25 @@ impl ShellSession {
             }
             (InputKey::PageUp, Some(SettingsFocus::Fields)) => self.scroll_settings(-6),
             (InputKey::PageDown, Some(SettingsFocus::Fields)) => self.scroll_settings(6),
-            (InputKey::Left, Some(SettingsFocus::Fields)) => self.adjust_selected_setting(-1),
-            (InputKey::Right, Some(SettingsFocus::Fields)) => self.adjust_selected_setting(1),
+            (InputKey::Left, Some(SettingsFocus::Fields)) => {
+                self.adjust_selected_setting(-1, platform)
+            }
+            (InputKey::Right, Some(SettingsFocus::Fields)) => {
+                self.adjust_selected_setting(1, platform)
+            }
             (InputKey::Enter | InputKey::Char(' '), Some(SettingsFocus::Fields)) => {
-                self.activate_selected_setting()
+                self.activate_selected_setting(platform)
             }
             _ => {}
         }
         self.refresh_hit_map();
     }
 
-    pub(in crate::session) fn handle_settings_pointer(&mut self, input: MouseInput) {
+    pub(in crate::session) fn handle_settings_pointer(
+        &mut self,
+        input: MouseInput,
+        platform: &dyn Platform,
+    ) {
         if self.settings_state.is_none() {
             return;
         }
@@ -258,7 +293,7 @@ impl ShellSession {
                     state.focus = SettingsFocus::Fields;
                     state.selected_field = field;
                 }
-                self.activate_selected_setting();
+                self.activate_selected_setting(platform);
             }
             Some(ui::SettingsHitTarget::PickerOption(index)) => {
                 if let Some(state) = self.settings_state.as_mut()
@@ -270,6 +305,8 @@ impl ShellSession {
             }
             Some(ui::SettingsHitTarget::ColorEditor)
             | Some(ui::SettingsHitTarget::WeatherLocationEditor)
+            | Some(ui::SettingsHitTarget::FileExtensionsEditor)
+            | Some(ui::SettingsHitTarget::TimeSyncServerEditor)
             | None => {}
         }
         self.refresh_hit_map();
@@ -297,6 +334,9 @@ impl ShellSession {
             state.picker = None;
             state.color_editor = None;
             state.weather_location_editor = None;
+            state.file_extensions_editor = None;
+            state.time_sync_server_editor = None;
+            state.time_sync_validation_request_id = None;
             state.status = "Ready".to_string();
         }
         self.notify_status(format!("Settings: {}", category.label()));
@@ -334,7 +374,7 @@ impl ShellSession {
         }
     }
 
-    pub(in crate::session) fn activate_selected_setting(&mut self) {
+    pub(in crate::session) fn activate_selected_setting(&mut self, platform: &dyn Platform) {
         let Some(field) = self
             .settings_state
             .as_ref()
@@ -355,13 +395,19 @@ impl ShellSession {
             ui::SettingsField::Timezone => {
                 self.open_settings_picker(ui::SettingsPickerKind::Timezone)
             }
+            ui::SettingsField::TimeSyncServer => self.open_settings_time_sync_server(),
             ui::SettingsField::WeatherLocation => self.open_settings_weather_location(),
+            ui::SettingsField::ExplorerOpenExtensions => self.open_settings_file_extensions(),
             ui::SettingsField::RestoreDefaults => self.request_settings_restore_defaults(),
-            _ => self.adjust_selected_setting(1),
+            _ => self.adjust_selected_setting(1, platform),
         }
     }
 
-    pub(in crate::session) fn adjust_selected_setting(&mut self, direction: i8) {
+    pub(in crate::session) fn adjust_selected_setting(
+        &mut self,
+        direction: i8,
+        platform: &dyn Platform,
+    ) {
         let Some(field) = self
             .settings_state
             .as_ref()
@@ -376,8 +422,10 @@ impl ShellSession {
                 | ui::SettingsField::Language
                 | ui::SettingsField::Timezone
                 | ui::SettingsField::WeatherLocation
+                | ui::SettingsField::ExplorerOpenExtensions
+                | ui::SettingsField::TimeSyncServer
         ) {
-            self.activate_selected_setting();
+            self.activate_selected_setting(platform);
             return;
         }
         if field == ui::SettingsField::RestoreDefaults {
@@ -393,6 +441,10 @@ impl ShellSession {
                 storage::BorderShape::Square => storage::BorderShape::Rounded,
             };
             self.save_settings_appearance(appearance, "Border shape");
+            return;
+        }
+        if field == ui::SettingsField::TimeSyncSource {
+            self.change_time_sync_source(platform);
             return;
         }
         self.save_global_setting(field, direction);
@@ -567,6 +619,10 @@ impl ShellSession {
                 window_start: selected_index.saturating_sub(4),
             });
             state.color_editor = None;
+            state.weather_location_editor = None;
+            state.file_extensions_editor = None;
+            state.time_sync_server_editor = None;
+            state.time_sync_validation_request_id = None;
             state.status = "Choose a value".to_string();
         }
     }
@@ -821,8 +877,371 @@ impl ShellSession {
                 Some(SettingsWeatherLocationEditorState { value, error: None });
             state.picker = None;
             state.color_editor = None;
+            state.file_extensions_editor = None;
+            state.time_sync_server_editor = None;
+            state.time_sync_validation_request_id = None;
             state.status = "Enter an English weather location".to_string();
         }
+    }
+
+    pub(in crate::session) fn open_settings_file_extensions(&mut self) {
+        if !self.can_change_global_settings() {
+            self.set_settings_error("Administrator permission is required");
+            return;
+        }
+        let value = format_editor_explorer_open_extensions(
+            &self.app.storage_config().editor.explorer_open_extensions,
+        );
+        if let Some(state) = self.settings_state.as_mut() {
+            state.file_extensions_editor =
+                Some(SettingsFileExtensionsEditorState { value, error: None });
+            state.picker = None;
+            state.color_editor = None;
+            state.weather_location_editor = None;
+            state.time_sync_server_editor = None;
+            state.time_sync_validation_request_id = None;
+            state.status = "Enter Explorer file suffixes".to_string();
+        }
+    }
+
+    pub(in crate::session) fn open_settings_time_sync_server(&mut self) {
+        if !self.can_change_global_settings() {
+            self.set_settings_error("Administrator permission is required");
+            return;
+        }
+        if self.app.storage_config().time_sync.source != storage::TimeSyncSource::NetworkServer {
+            self.set_settings_error("Choose Network server as the time source first");
+            return;
+        }
+        let value = self
+            .app
+            .storage_config()
+            .time_sync
+            .server_url
+            .clone()
+            .unwrap_or_default();
+        if let Some(state) = self.settings_state.as_mut() {
+            state.time_sync_server_editor = Some(SettingsTimeSyncServerEditorState {
+                value,
+                error: None,
+                validating: false,
+            });
+            state.time_sync_validation_request_id = None;
+            state.picker = None;
+            state.color_editor = None;
+            state.weather_location_editor = None;
+            state.file_extensions_editor = None;
+            state.status = "Enter a time synchronization server".to_string();
+        }
+    }
+
+    pub(in crate::session) fn handle_settings_time_sync_server_key(&mut self, key: &KeyInput) {
+        if key.has_non_shift_modifier() {
+            return;
+        }
+        let validating = self
+            .settings_state
+            .as_ref()
+            .and_then(|state| state.time_sync_server_editor.as_ref())
+            .is_some_and(|editor| editor.validating);
+        match &key.key {
+            InputKey::Escape => {
+                if let Some(state) = self.settings_state.as_mut() {
+                    state.time_sync_server_editor = None;
+                    state.time_sync_validation_request_id = None;
+                    state.status = "Ready".to_string();
+                }
+            }
+            _ if validating => {}
+            InputKey::Backspace => {
+                if let Some(editor) = self
+                    .settings_state
+                    .as_mut()
+                    .and_then(|state| state.time_sync_server_editor.as_mut())
+                {
+                    editor.value.pop();
+                    editor.error = None;
+                }
+            }
+            InputKey::Char(character) if !character.is_control() => {
+                if let Some(editor) = self
+                    .settings_state
+                    .as_mut()
+                    .and_then(|state| state.time_sync_server_editor.as_mut())
+                {
+                    if editor.value.len() >= time::MAX_TIME_SERVER_URL_LEN {
+                        editor.error = Some(format!(
+                            "The server address is limited to {} characters",
+                            time::MAX_TIME_SERVER_URL_LEN
+                        ));
+                    } else {
+                        editor.value.push(*character);
+                        editor.error = None;
+                    }
+                }
+            }
+            InputKey::Enter => self.validate_settings_time_sync_server(),
+            _ => {}
+        }
+    }
+
+    pub(in crate::session) fn validate_settings_time_sync_server(&mut self) {
+        let Some(value) = self
+            .settings_state
+            .as_ref()
+            .and_then(|state| state.time_sync_server_editor.as_ref())
+            .map(|editor| editor.value.clone())
+        else {
+            return;
+        };
+        let server_url = match time::normalize_time_server_url(&value) {
+            Ok(server_url) => server_url,
+            Err(error) => {
+                if let Some(editor) = self
+                    .settings_state
+                    .as_mut()
+                    .and_then(|state| state.time_sync_server_editor.as_mut())
+                {
+                    editor.error = Some(error.clone());
+                }
+                self.show_time_sync_failure_dialog(format!(
+                    "Could not validate the time synchronization server: {error}. The setting was not saved."
+                ));
+                return;
+            }
+        };
+        self.begin_settings_time_sync_validation(storage::TimeSyncConfig {
+            source: storage::TimeSyncSource::NetworkServer,
+            server_url: Some(server_url),
+        });
+    }
+
+    pub(in crate::session) fn change_time_sync_source(&mut self, platform: &dyn Platform) {
+        if !self.can_change_global_settings() {
+            self.set_settings_error("Administrator permission is required");
+            return;
+        }
+        let current = self.app.storage_config().time_sync.clone();
+        match current.source {
+            storage::TimeSyncSource::NetworkServer => match platform.system_time() {
+                Ok(system_time) => {
+                    let mut config = current;
+                    config.source = storage::TimeSyncSource::OperatingSystem;
+                    self.persist_validated_time_sync_config(
+                        config,
+                        DateTime::<Utc>::from(system_time),
+                    );
+                }
+                Err(error) => self.show_time_sync_failure_dialog(format!(
+                    "Could not read the operating system time: {error}"
+                )),
+            },
+            storage::TimeSyncSource::OperatingSystem => {
+                let mut config = current;
+                config.source = storage::TimeSyncSource::NetworkServer;
+                self.begin_settings_time_sync_validation(config);
+            }
+        }
+    }
+
+    pub(in crate::session) fn begin_settings_time_sync_validation(
+        &mut self,
+        config: storage::TimeSyncConfig,
+    ) {
+        if self
+            .settings_state
+            .as_ref()
+            .is_some_and(|state| state.time_sync_validation_request_id.is_some())
+        {
+            self.set_settings_error("A time sync validation is already running");
+            return;
+        }
+        match self
+            .settings_task_runtime
+            .submit_time_sync_validation(config)
+        {
+            Ok(request_id) => {
+                if let Some(state) = self.settings_state.as_mut() {
+                    state.time_sync_validation_request_id = Some(request_id);
+                    state.status = "Testing time synchronization…".to_string();
+                    if let Some(editor) = state.time_sync_server_editor.as_mut() {
+                        editor.validating = true;
+                        editor.error = None;
+                    }
+                }
+                self.notify_status("Testing time synchronization…");
+            }
+            Err(error) => self.show_time_sync_failure_dialog(error),
+        }
+    }
+
+    pub(in crate::session) fn poll_settings_background_tasks(&mut self) {
+        let events = self
+            .settings_task_runtime
+            .drain_time_sync_validation_events();
+        for event in events {
+            let active = self.settings_state.as_ref().is_some_and(|state| {
+                state.time_sync_validation_request_id == Some(event.request_id)
+            });
+            if !active {
+                continue;
+            }
+            if let Some(state) = self.settings_state.as_mut() {
+                state.time_sync_validation_request_id = None;
+                if let Some(editor) = state.time_sync_server_editor.as_mut() {
+                    editor.validating = false;
+                }
+            }
+            match event.result {
+                Ok(utc) => self.persist_validated_time_sync_config(event.config, utc),
+                Err(error) => {
+                    let message = match event.config.server_url.as_deref() {
+                        Some(server) => format!(
+                            "Could not synchronize with {server}: {error}. The setting was not saved."
+                        ),
+                        None => format!(
+                            "Could not synchronize with the default time servers: {error}. The setting was not saved."
+                        ),
+                    };
+                    if let Some(state) = self.settings_state.as_mut() {
+                        state.status = "Time synchronization test failed".to_string();
+                        if let Some(editor) = state.time_sync_server_editor.as_mut() {
+                            editor.error =
+                                Some("Synchronization failed; review the error dialog".to_string());
+                        }
+                    }
+                    self.show_time_sync_failure_dialog(message);
+                }
+            }
+        }
+    }
+
+    pub(in crate::session) fn persist_validated_time_sync_config(
+        &mut self,
+        time_sync: storage::TimeSyncConfig,
+        utc: DateTime<Utc>,
+    ) {
+        let Some(storage) = self.storage_manager.clone() else {
+            self.set_settings_error("Storage unavailable");
+            return;
+        };
+        let mut config = match storage.load_config() {
+            Ok(config) => config,
+            Err(error) => {
+                self.set_settings_error(format!("Could not load Settings: {error}"));
+                return;
+            }
+        };
+        config.time_sync = time_sync;
+        if let Err(error) = storage.save_config(&config) {
+            self.set_settings_error(format!("Could not save Settings: {error}"));
+            return;
+        }
+        self.replace_storage_config(config);
+        self.apply_time_sync_utc(utc);
+        if let Some(state) = self.settings_state.as_mut() {
+            state.time_sync_server_editor = None;
+            state.time_sync_validation_request_id = None;
+            state.status = "Saved time synchronization settings".to_string();
+        }
+        self.notify_status("Saved time synchronization settings");
+    }
+
+    pub(in crate::session) fn handle_settings_file_extensions_key(&mut self, key: &KeyInput) {
+        if key.has_non_shift_modifier() {
+            return;
+        }
+        match &key.key {
+            InputKey::Escape => {
+                if let Some(state) = self.settings_state.as_mut() {
+                    state.file_extensions_editor = None;
+                    state.status = "Ready".to_string();
+                }
+            }
+            InputKey::Backspace => {
+                if let Some(editor) = self
+                    .settings_state
+                    .as_mut()
+                    .and_then(|state| state.file_extensions_editor.as_mut())
+                {
+                    editor.value.pop();
+                    editor.error = None;
+                }
+            }
+            InputKey::Char(character) => {
+                let Some(editor) = self
+                    .settings_state
+                    .as_mut()
+                    .and_then(|state| state.file_extensions_editor.as_mut())
+                else {
+                    return;
+                };
+                if !is_editor_extension_input_character(*character) {
+                    editor.error = Some(
+                        "Use ASCII letters, numbers, dots, commas, spaces, +, - or _".to_string(),
+                    );
+                } else if editor.value.len() >= EDITOR_EXTENSIONS_INPUT_MAX_LEN {
+                    editor.error = Some(format!(
+                        "The suffix list is limited to {EDITOR_EXTENSIONS_INPUT_MAX_LEN} characters"
+                    ));
+                } else {
+                    editor.value.push(*character);
+                    editor.error = None;
+                }
+            }
+            InputKey::Enter => self.save_settings_file_extensions(),
+            _ => {}
+        }
+    }
+
+    pub(in crate::session) fn save_settings_file_extensions(&mut self) {
+        if !self.can_change_global_settings() {
+            self.set_settings_error("Administrator permission is required");
+            return;
+        }
+        let Some(value) = self
+            .settings_state
+            .as_ref()
+            .and_then(|state| state.file_extensions_editor.as_ref())
+            .map(|editor| editor.value.clone())
+        else {
+            return;
+        };
+        let extensions = match parse_editor_explorer_open_extensions(&value) {
+            Ok(extensions) => extensions,
+            Err(error) => {
+                if let Some(editor) = self
+                    .settings_state
+                    .as_mut()
+                    .and_then(|state| state.file_extensions_editor.as_mut())
+                {
+                    editor.error = Some(error);
+                }
+                return;
+            }
+        };
+        let Some(storage) = self.storage_manager.clone() else {
+            self.set_settings_error("Storage unavailable");
+            return;
+        };
+        let mut config = match storage.load_config() {
+            Ok(config) => config,
+            Err(error) => {
+                self.set_settings_error(format!("Could not load Settings: {error}"));
+                return;
+            }
+        };
+        config.editor.explorer_open_extensions = extensions;
+        if let Err(error) = storage.save_config(&config) {
+            self.set_settings_error(format!("Could not save Settings: {error}"));
+            return;
+        }
+        self.replace_storage_config(config);
+        if let Some(state) = self.settings_state.as_mut() {
+            state.file_extensions_editor = None;
+            state.status = "Saved Explorer file suffixes".to_string();
+        }
+        self.notify_status("Saved Explorer file suffixes");
     }
 
     pub(in crate::session) fn handle_settings_weather_location_key(&mut self, key: &KeyInput) {
@@ -1073,6 +1492,7 @@ impl ShellSession {
             ui::SettingsCategory::RegionTime => {
                 config.language = defaults.language;
                 config.timezone = defaults.timezone;
+                config.time_sync = defaults.time_sync;
                 config.weather_location = defaults.weather_location;
             }
             ui::SettingsCategory::FileExplorer => config.explorer = defaults.explorer,
@@ -1144,6 +1564,19 @@ impl ShellSession {
                 error: editor.error.clone(),
             }
         });
+        let file_extensions_editor = state.file_extensions_editor.as_ref().map(|editor| {
+            ui::SettingsFileExtensionsEditorViewModel {
+                value: editor.value.clone(),
+                error: editor.error.clone(),
+            }
+        });
+        let time_sync_server_editor = state.time_sync_server_editor.as_ref().map(|editor| {
+            ui::SettingsTimeSyncServerEditorViewModel {
+                value: editor.value.clone(),
+                error: editor.error.clone(),
+                validating: editor.validating,
+            }
+        });
         Some(ui::SettingsViewModel {
             selected_category: state.category,
             selected_field: state.selected_field,
@@ -1156,6 +1589,8 @@ impl ShellSession {
             picker,
             color_editor,
             weather_location_editor,
+            file_extensions_editor,
+            time_sync_server_editor,
         })
     }
 }
@@ -1267,6 +1702,34 @@ pub(in crate::session) fn settings_cards(
                     .enabled(global_enabled),
                 ],
             ),
+            Card::new(
+                "Time synchronization",
+                vec![
+                    Item::new(
+                        Field::TimeSyncSource,
+                        "Time source",
+                        time_sync_source_label(config.time_sync.source),
+                        "Use a network time server or the operating system clock.",
+                        Kind::Cycle,
+                    )
+                    .enabled(global_enabled),
+                    Item::new(
+                        Field::TimeSyncServer,
+                        "Synchronization server",
+                        config
+                            .time_sync
+                            .server_url
+                            .as_deref()
+                            .unwrap_or("Automatic default servers"),
+                        "Set an HTTP(S) server; it must synchronize successfully before saving.",
+                        Kind::Picker,
+                    )
+                    .enabled(
+                        global_enabled
+                            && config.time_sync.source == storage::TimeSyncSource::NetworkServer,
+                    ),
+                ],
+            ),
             Card::new("Reset", vec![reset(global_enabled)]),
         ],
         ui::SettingsCategory::FileExplorer => vec![
@@ -1376,6 +1839,19 @@ pub(in crate::session) fn settings_cards(
             Card::new("Reset", vec![reset(global_enabled)]),
         ],
         ui::SettingsCategory::Editor => vec![
+            Card::new(
+                "Explorer file opening",
+                vec![
+                    Item::new(
+                        Field::ExplorerOpenExtensions,
+                        "Open in Editor",
+                        editor_extensions_summary(&config.editor.explorer_open_extensions),
+                        "Choose filename suffixes that Explorer opens in the built-in Editor.",
+                        Kind::Picker,
+                    )
+                    .enabled(global_enabled),
+                ],
+            ),
             Card::new(
                 "Cursor acceleration",
                 vec![
@@ -1513,6 +1989,13 @@ pub(in crate::session) fn timezone_label(id: &str) -> String {
         .unwrap_or_else(|| id.to_string())
 }
 
+pub(in crate::session) fn time_sync_source_label(source: storage::TimeSyncSource) -> &'static str {
+    match source {
+        storage::TimeSyncSource::NetworkServer => "Network server",
+        storage::TimeSyncSource::OperatingSystem => "Operating system",
+    }
+}
+
 pub(in crate::session) fn cycle_explorer_sort_field(
     value: storage::ExplorerSortField,
     delta: isize,
@@ -1541,6 +2024,7 @@ pub(in crate::session) fn settings_field_label(field: ui::SettingsField) -> &'st
         ui::SettingsField::SortDirection => "Sort direction",
         ui::SettingsField::ConfirmDelete => "Delete confirmation",
         ui::SettingsField::ConfirmNameConflicts => "Conflict confirmation",
+        ui::SettingsField::ExplorerOpenExtensions => "Explorer file suffixes",
         ui::SettingsField::CursorAcceleration => "Cursor acceleration",
         ui::SettingsField::CursorDelay => "Cursor delay",
         ui::SettingsField::CursorRamp => "Cursor ramp",
@@ -1551,6 +2035,8 @@ pub(in crate::session) fn settings_field_label(field: ui::SettingsField) -> &'st
         ui::SettingsField::AccentColor => "Accent color",
         ui::SettingsField::Language => "Language",
         ui::SettingsField::Timezone => "Timezone",
+        ui::SettingsField::TimeSyncSource => "Time source",
+        ui::SettingsField::TimeSyncServer => "Time synchronization server",
         ui::SettingsField::WeatherLocation => "Weather location",
         ui::SettingsField::RestoreDefaults => "Defaults",
     }
@@ -1559,6 +2045,63 @@ pub(in crate::session) fn settings_field_label(field: ui::SettingsField) -> &'st
 pub(in crate::session) fn is_weather_location_character(character: char) -> bool {
     character.is_ascii_alphanumeric()
         || matches!(character, ' ' | ',' | '.' | '-' | '\'' | '/' | '(' | ')')
+}
+
+pub(in crate::session) fn is_editor_extension_input_character(character: char) -> bool {
+    character.is_ascii_alphanumeric()
+        || character.is_ascii_whitespace()
+        || matches!(character, '.' | ',' | ';' | '_' | '-' | '+')
+}
+
+pub(in crate::session) fn parse_editor_explorer_open_extensions(
+    value: &str,
+) -> Result<Vec<String>, String> {
+    let mut extensions = Vec::new();
+    for raw in value.split(|character: char| {
+        character == ',' || character == ';' || character.is_ascii_whitespace()
+    }) {
+        if raw.is_empty() {
+            continue;
+        }
+        let Some(extension) = storage::normalize_editor_explorer_open_extension(raw) else {
+            return Err(format!(
+                "Invalid suffix {raw:?}; use values such as .md, .rs or .d.ts"
+            ));
+        };
+        if extensions.contains(&extension) {
+            continue;
+        }
+        if extensions.len() >= storage::MAX_EDITOR_EXPLORER_OPEN_EXTENSIONS {
+            return Err(format!(
+                "At most {} suffixes are allowed",
+                storage::MAX_EDITOR_EXPLORER_OPEN_EXTENSIONS
+            ));
+        }
+        extensions.push(extension);
+    }
+    Ok(extensions)
+}
+
+pub(in crate::session) fn format_editor_explorer_open_extensions(extensions: &[String]) -> String {
+    extensions
+        .iter()
+        .map(|extension| format!(".{extension}"))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+pub(in crate::session) fn editor_extensions_summary(extensions: &[String]) -> String {
+    if extensions.is_empty() {
+        return "System default".to_string();
+    }
+    if extensions.len() <= 4 {
+        return format_editor_explorer_open_extensions(extensions);
+    }
+    format!(
+        "{}, +{} more",
+        format_editor_explorer_open_extensions(&extensions[..3]),
+        extensions.len() - 3
+    )
 }
 
 pub(in crate::session) fn size_format_label(value: storage::ExplorerSizeFormat) -> &'static str {

@@ -2204,7 +2204,7 @@ fn save_as_non_markdown_converts_the_session_to_source_after_success() {
 
 #[test]
 fn explorer_editor_resolver_routes_supported_text_extensions() {
-    let resolver = EditorAwareOpenRouteResolver;
+    let resolver = EditorAwareOpenRouteResolver::default();
     let attributes = FileAttributes {
         path: PathBuf::from("README.MD"),
         is_file: true,
@@ -2242,6 +2242,43 @@ fn explorer_editor_resolver_routes_supported_text_extensions() {
         assert!(is_log_document_path(PathBuf::from(name).as_path()));
     }
     for name in ["photo.png", "app.log.old", "app.log.gz", "catalog"] {
+        assert_eq!(
+            resolver.route(PathBuf::from(name).as_path(), &attributes),
+            ExplorerOpenTarget::SystemDefault
+        );
+    }
+}
+
+#[test]
+fn explorer_editor_resolver_uses_normalized_custom_compound_extensions() {
+    let resolver = EditorAwareOpenRouteResolver::new(vec![
+        ".D.TS".to_string(),
+        "d.ts".to_string(),
+        "rs".to_string(),
+    ]);
+    let attributes = FileAttributes {
+        path: PathBuf::from("types.d.ts"),
+        is_file: true,
+        is_dir: false,
+        len: 0,
+        readonly: false,
+        modified: None,
+        hidden: false,
+        system: false,
+        archive: false,
+        symlink: false,
+        junction: false,
+        reparse_point: false,
+        shortcut: false,
+    };
+
+    for name in ["types.d.ts", "types.D.TS", "main.rs"] {
+        assert_eq!(
+            resolver.route(PathBuf::from(name).as_path(), &attributes),
+            ExplorerOpenTarget::Editor
+        );
+    }
+    for name in ["README.md", "types.ts", "app.log.1"] {
         assert_eq!(
             resolver.route(PathBuf::from(name).as_path(), &attributes),
             ExplorerOpenTarget::SystemDefault

@@ -8,26 +8,22 @@ use ratatui::layout::Rect;
 use shell::{
     ClickKind, HomeModeOverride, InputEvent, InputKey, InputModifiers, InputPhase, KeyInput,
     PointerButton, ScrollDirection, ShellAction, ShellAppConfig, ShellCommand, ShellComponent,
-    ShellHomeMode, ShellLaunchConfig, ShellLaunchTarget, ShellNotificationAction,
-    ShellRestoredSession, ShellScreen, ShellSession, ShellStartupState, ShellStorageReport,
-    ShellTerminalMode, default_shell_shortcuts, detect_shortcut_conflicts,
+    ShellHomeMode, ShellLaunchConfig, ShellNotificationAction, ShellRestoredSession, ShellScreen,
+    ShellSession, ShellStartupState, ShellStorageReport, default_shell_shortcuts,
+    detect_shortcut_conflicts,
 };
 use storage::StorageManager;
 use ui::{HomeDisplayMode, NotificationLayout, NotificationTone};
 
 fn debug_config() -> ShellLaunchConfig {
     ShellLaunchConfig {
-        terminal_mode: ShellTerminalMode::Fullscreen,
         home_mode_override: HomeModeOverride::Debug,
-        launch_target: ShellLaunchTarget::Home,
     }
 }
 
 fn build_default_config() -> ShellLaunchConfig {
     ShellLaunchConfig {
-        terminal_mode: ShellTerminalMode::Fullscreen,
         home_mode_override: HomeModeOverride::BuildDefault,
-        launch_target: ShellLaunchTarget::Home,
     }
 }
 
@@ -1242,9 +1238,7 @@ fn successful_time_sync_clears_failure_dialog_and_updates_anchor() {
 #[test]
 fn explicit_user_mode_shows_product_entries_without_diagnostics() {
     let config = ShellLaunchConfig {
-        terminal_mode: ShellTerminalMode::Fullscreen,
         home_mode_override: HomeModeOverride::BuildDefault,
-        launch_target: ShellLaunchTarget::Home,
     };
     let state = ShellSession::new_for_home_mode(config, (120, 35), ShellHomeMode::User);
 

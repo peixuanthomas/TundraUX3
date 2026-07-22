@@ -4,7 +4,6 @@ use std::fmt;
 pub enum CliCommand {
     Config(ConfigAction),
     Doctor,
-    Editor,
     Explain,
     New,
     Paths,
@@ -99,7 +98,6 @@ where
     match command.as_str() {
         "config" => parse_config_args(&args).map(CliCommand::Config),
         "doctor" => parse_no_extra_args(&args, CliCommand::Doctor),
-        "editor" => parse_no_extra_args(&args, CliCommand::Editor),
         "explain" => parse_no_extra_args(&args, CliCommand::Explain),
         "new" => parse_no_extra_args(&args, CliCommand::New),
         "paths" => parse_no_extra_args(&args, CliCommand::Paths),

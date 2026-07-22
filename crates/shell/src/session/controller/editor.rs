@@ -62,7 +62,7 @@ pub(in crate::session) fn adjust_u8_setting(value: u8, increase: bool) -> u8 {
 
 impl ShellSession {
     pub(in crate::session) fn current_editor_config(&self) -> storage::EditorConfig {
-        normalized_editor_config(self.app.storage_config().editor)
+        normalized_editor_config(self.app.storage_config().editor.clone())
     }
 
     pub(in crate::session) fn can_change_editor_settings(&self) -> bool {
@@ -321,6 +321,7 @@ impl ShellSession {
         &self,
     ) -> Option<ui::EditorSettingsViewModel> {
         self.editor_settings_dialog
+            .as_ref()
             .map(|dialog| ui::EditorSettingsViewModel {
                 editable: self.can_change_editor_settings(),
                 enabled: dialog.draft.cursor_acceleration_enabled,
@@ -1179,7 +1180,11 @@ impl ShellSession {
         key: &KeyInput,
         repeated: bool,
     ) {
-        let Some(selected) = self.editor_settings_dialog.map(|dialog| dialog.selected) else {
+        let Some(selected) = self
+            .editor_settings_dialog
+            .as_ref()
+            .map(|dialog| dialog.selected)
+        else {
             return;
         };
         match key.key {
@@ -1271,7 +1276,11 @@ impl ShellSession {
             | Field::VerticalMaxStep => self.adjust_editor_setting(field, 1),
             Field::RestoreDefaults => {
                 if let Some(dialog) = self.editor_settings_dialog.as_mut() {
-                    dialog.draft = storage::EditorConfig::default();
+                    let explorer_open_extensions = dialog.draft.explorer_open_extensions.clone();
+                    dialog.draft = storage::EditorConfig {
+                        explorer_open_extensions,
+                        ..storage::EditorConfig::default()
+                    };
                 }
             }
             Field::Save => self.save_editor_settings(),
@@ -1320,7 +1329,7 @@ impl ShellSession {
             | ui::EditorSettingsField::Save
             | ui::EditorSettingsField::Cancel => return,
         }
-        dialog.draft = normalized_editor_config(dialog.draft);
+        dialog.draft = normalized_editor_config(dialog.draft.clone());
     }
 
     pub(in crate::session) fn save_editor_settings(&mut self) {
@@ -1328,7 +1337,7 @@ impl ShellSession {
             self.reject_editor_settings_change();
             return;
         }
-        let Some(dialog) = self.editor_settings_dialog else {
+        let Some(dialog) = self.editor_settings_dialog.clone() else {
             return;
         };
         let editor = normalized_editor_config(dialog.draft);
@@ -1406,13 +1415,21 @@ impl ShellSession {
                     ..
                 } => match direction {
                     ScrollDirection::Up | ScrollDirection::Left => {
-                        if let Some(dialog) = self.editor_settings_dialog {
-                            self.adjust_editor_setting(dialog.selected, -1);
+                        if let Some(selected) = self
+                            .editor_settings_dialog
+                            .as_ref()
+                            .map(|dialog| dialog.selected)
+                        {
+                            self.adjust_editor_setting(selected, -1);
                         }
                     }
                     ScrollDirection::Down | ScrollDirection::Right => {
-                        if let Some(dialog) = self.editor_settings_dialog {
-                            self.adjust_editor_setting(dialog.selected, 1);
+                        if let Some(selected) = self
+                            .editor_settings_dialog
+                            .as_ref()
+                            .map(|dialog| dialog.selected)
+                        {
+                            self.adjust_editor_setting(selected, 1);
                         }
                     }
                 },

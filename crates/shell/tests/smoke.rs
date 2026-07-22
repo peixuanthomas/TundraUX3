@@ -1,9 +1,9 @@
 use std::io::Write;
+use std::process::Command;
 
 use shell::{
-    ENTER_FULLSCREEN_SEQUENCE, EXIT_FULLSCREEN_SEQUENCE, HomeModeOverride, ShellArgError,
-    ShellLaunchConfig, ShellLaunchTarget, ShellTerminalMode, banner_lines, parse_shell_args,
-    render_static_banner, startup_lines,
+    ENTER_FULLSCREEN_SEQUENCE, EXIT_FULLSCREEN_SEQUENCE, ShellArgError, banner_lines,
+    parse_shell_args, render_static_banner, startup_lines,
 };
 
 #[test]
@@ -71,135 +71,50 @@ fn shell_can_enter_smoke_loop_without_animation() {
 }
 
 #[test]
-fn shell_default_config_uses_fullscreen_and_profile_home_mode() {
-    let expected_home_mode = if cfg!(debug_assertions) {
-        HomeModeOverride::Debug
-    } else {
-        HomeModeOverride::BuildDefault
-    };
+fn shell_accepts_only_an_empty_argument_list() {
+    assert_eq!(parse_shell_args(std::iter::empty::<&str>()), Ok(()));
+}
 
+#[test]
+fn former_flags_help_and_positional_arguments_are_all_rejected() {
+    for argument in [
+        "-notfullscreen",
+        "-debug",
+        "-editor",
+        "--help",
+        "document.md",
+    ] {
+        let error = parse_shell_args([argument]).expect_err("every argument must be rejected");
+        assert_eq!(
+            error,
+            ShellArgError::ArgumentNotAllowed(argument.to_string())
+        );
+        assert_eq!(
+            error.to_string(),
+            format!("tundra-shell does not accept arguments: {argument}")
+        );
+    }
+}
+
+#[test]
+fn multiple_arguments_are_rejected_at_the_process_boundary() {
     assert_eq!(
-        parse_shell_args(std::iter::empty::<&str>()).expect("empty args should parse"),
-        ShellLaunchConfig {
-            terminal_mode: ShellTerminalMode::Fullscreen,
-            home_mode_override: expected_home_mode,
-            launch_target: ShellLaunchTarget::Home,
-        }
+        parse_shell_args(["-debug", "-editor"]),
+        Err(ShellArgError::ArgumentNotAllowed("-debug".to_string()))
     );
 }
 
 #[test]
-fn shell_can_be_started_without_fullscreen_explicitly() {
-    let mut expected = ShellLaunchConfig::default();
-    expected.terminal_mode = ShellTerminalMode::NotFullscreen;
+fn shell_binary_rejects_arguments_before_starting_the_ui() {
+    let output = Command::new(env!("CARGO_BIN_EXE_tundra-shell"))
+        .arg("--help")
+        .output()
+        .expect("run tundra-shell with a prohibited argument");
 
-    assert_eq!(
-        parse_shell_args(["-notfullscreen"]).expect("flag should parse"),
-        expected
-    );
-}
-
-#[test]
-fn debug_flag_forces_debug_home() {
-    assert_eq!(
-        parse_shell_args(["-debug"]).expect("debug flag should parse"),
-        ShellLaunchConfig {
-            terminal_mode: ShellTerminalMode::Fullscreen,
-            home_mode_override: HomeModeOverride::Debug,
-            launch_target: ShellLaunchTarget::Home,
-        }
-    );
-}
-
-#[test]
-fn editor_flag_targets_editor_without_changing_home_mode() {
-    assert_eq!(
-        parse_shell_args(["-editor"]).expect("editor flag should parse"),
-        ShellLaunchConfig::editor()
-    );
-}
-
-#[test]
-fn notfullscreen_and_debug_can_be_combined() {
-    let expected = ShellLaunchConfig {
-        terminal_mode: ShellTerminalMode::NotFullscreen,
-        home_mode_override: HomeModeOverride::Debug,
-        launch_target: ShellLaunchTarget::Home,
-    };
-
-    assert_eq!(
-        parse_shell_args(["-notfullscreen", "-debug"]).expect("flags should parse"),
-        expected
-    );
-    assert_eq!(
-        parse_shell_args(["-debug", "-notfullscreen"]).expect("flags should parse in either order"),
-        expected
-    );
-}
-
-#[test]
-fn editor_target_combines_with_terminal_and_debug_options_in_any_order() {
-    let expected = ShellLaunchConfig {
-        terminal_mode: ShellTerminalMode::NotFullscreen,
-        home_mode_override: HomeModeOverride::Debug,
-        launch_target: ShellLaunchTarget::Editor,
-    };
-
-    assert_eq!(
-        parse_shell_args(["-editor", "-debug", "-notfullscreen"])
-            .expect("editor target should combine with existing options"),
-        expected
-    );
-    assert_eq!(
-        parse_shell_args(["-notfullscreen", "-editor", "-debug"])
-            .expect("combined flags should be order independent"),
-        expected
-    );
-}
-
-#[test]
-fn duplicate_debug_flag_is_an_error() {
-    let error = parse_shell_args(["-debug", "-debug"]).expect_err("duplicate flag should fail");
-
-    assert_eq!(
-        error,
-        ShellArgError::DuplicateArgument("-debug".to_string())
-    );
-    assert_eq!(error.to_string(), "duplicate argument: -debug");
-}
-
-#[test]
-fn duplicate_editor_flag_is_an_error() {
-    let error = parse_shell_args(["-editor", "-editor"]).expect_err("duplicate flag should fail");
-
-    assert_eq!(
-        error,
-        ShellArgError::DuplicateArgument("-editor".to_string())
-    );
-    assert_eq!(error.to_string(), "duplicate argument: -editor");
-}
-
-#[test]
-fn duplicate_notfullscreen_flag_is_an_error() {
-    let error = parse_shell_args(["-notfullscreen", "-notfullscreen"])
-        .expect_err("duplicate flag should fail");
-
-    assert_eq!(
-        error,
-        ShellArgError::DuplicateArgument("-notfullscreen".to_string())
-    );
-    assert_eq!(error.to_string(), "duplicate argument: -notfullscreen");
-}
-
-#[test]
-fn unknown_flag_is_an_error() {
-    let error = parse_shell_args(["-surprise"]).expect_err("unknown flag should fail");
-
-    assert_eq!(
-        error,
-        ShellArgError::UnknownArgument("-surprise".to_string())
-    );
-    assert_eq!(error.to_string(), "unknown argument: -surprise");
+    assert_eq!(output.status.code(), Some(2));
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8(output.stderr).expect("argument error should be utf8");
+    assert!(stderr.contains("tundra-shell does not accept arguments: --help"));
 }
 
 #[test]
@@ -219,13 +134,13 @@ fn fullscreen_mode_enters_and_exits_alternate_screen() {
 }
 
 #[test]
-fn notfullscreen_mode_does_not_write_alternate_screen_sequences() {
+fn static_banner_does_not_write_alternate_screen_sequences() {
     let mut output = Vec::new();
 
-    render_static_banner(&mut output).expect("notfullscreen render should complete");
+    render_static_banner(&mut output).expect("static banner should render");
     writeln!(output, "Entering smoke loop").expect("smoke marker should render");
 
-    let output = String::from_utf8(output).expect("notfullscreen output should be utf8");
+    let output = String::from_utf8(output).expect("static banner output should be utf8");
     assert!(!output.contains(ENTER_FULLSCREEN_SEQUENCE));
     assert!(!output.contains(EXIT_FULLSCREEN_SEQUENCE));
     assert!(output.contains("Entering smoke loop"));

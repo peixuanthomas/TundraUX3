@@ -5,8 +5,9 @@ use ratatui::style::Color;
 use ui::{
     BorderShape, HomeDisplayMode, NotificationTone, SettingsAppearancePreview,
     SettingsCardViewModel, SettingsCategory, SettingsColorEditorViewModel, SettingsControlKind,
-    SettingsField, SettingsHitTarget, SettingsItemViewModel, SettingsPickerKind,
-    SettingsPickerOptionViewModel, SettingsPickerViewModel, SettingsViewModel,
+    SettingsField, SettingsFileExtensionsEditorViewModel, SettingsHitTarget, SettingsItemViewModel,
+    SettingsPickerKind, SettingsPickerOptionViewModel, SettingsPickerViewModel,
+    SettingsTimeSyncServerEditorViewModel, SettingsViewModel,
     SettingsWeatherLocationEditorViewModel, ShellChromeViewModel, StatusViewModel, TundraTheme,
     render_settings, settings_hit_test, settings_layout,
 };
@@ -144,6 +145,76 @@ fn color_editor_captures_clicks_above_settings_content() {
 }
 
 #[test]
+fn file_extensions_editor_captures_clicks_and_shows_examples() {
+    let mut model = sample_model();
+    model.file_extensions_editor = Some(SettingsFileExtensionsEditorViewModel {
+        value: ".md, .rs, .d.ts".to_string(),
+        error: None,
+    });
+    let layout = settings_layout(Rect::new(0, 0, 120, 32), &model);
+    let dialog = layout
+        .file_extensions_editor
+        .expect("file extensions editor layout");
+
+    assert_eq!(
+        settings_hit_test(&layout, (dialog.x, dialog.y)),
+        Some(SettingsHitTarget::FileExtensionsEditor)
+    );
+
+    let backend = TestBackend::new(120, 32);
+    let mut terminal = Terminal::new(backend).expect("terminal");
+    terminal
+        .draw(|frame| {
+            render_settings(
+                frame,
+                Rect::new(0, 0, 120, 32),
+                &chrome(),
+                &model,
+                &TundraTheme::default_dark(),
+            );
+        })
+        .expect("render file extensions editor");
+    let output = terminal_output(&terminal);
+    assert!(output.contains("Explorer files opened in Editor"));
+    assert!(output.contains(".d.ts"));
+}
+
+#[test]
+fn time_sync_server_editor_shows_validation_state_and_captures_clicks() {
+    let mut model = sample_model();
+    model.time_sync_server_editor = Some(SettingsTimeSyncServerEditorViewModel {
+        value: "https://time.example.test/".to_string(),
+        error: None,
+        validating: true,
+    });
+    let layout = settings_layout(Rect::new(0, 0, 120, 32), &model);
+    let dialog = layout
+        .time_sync_server_editor
+        .expect("time sync server editor layout");
+    assert_eq!(
+        settings_hit_test(&layout, (dialog.x, dialog.y)),
+        Some(SettingsHitTarget::TimeSyncServerEditor)
+    );
+
+    let backend = TestBackend::new(120, 32);
+    let mut terminal = Terminal::new(backend).expect("terminal");
+    terminal
+        .draw(|frame| {
+            render_settings(
+                frame,
+                Rect::new(0, 0, 120, 32),
+                &chrome(),
+                &model,
+                &TundraTheme::default_dark(),
+            );
+        })
+        .expect("render time sync server editor");
+    let output = terminal_output(&terminal);
+    assert!(output.contains("Time synchronization server"));
+    assert!(output.contains("Synchronizing with this server"));
+}
+
+#[test]
 fn weather_location_editor_captures_clicks_and_explains_timezone_fallback() {
     let mut model = sample_model();
     model.weather_location_editor = Some(SettingsWeatherLocationEditorViewModel {
@@ -264,6 +335,8 @@ fn sample_model() -> SettingsViewModel {
         picker: None,
         color_editor: None,
         weather_location_editor: None,
+        file_extensions_editor: None,
+        time_sync_server_editor: None,
     }
 }
 

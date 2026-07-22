@@ -24,16 +24,10 @@ pub(super) fn run_not_fullscreen_without_animation_with_loader(
 }
 
 pub fn run_with_banner_animation(output: &mut impl Write) -> io::Result<()> {
-    run_not_fullscreen(
-        output,
-        ShellLaunchConfig {
-            terminal_mode: ShellTerminalMode::NotFullscreen,
-            ..ShellLaunchConfig::default()
-        },
-    )
+    run_not_fullscreen(output)
 }
 
-pub fn run_not_fullscreen(output: &mut impl Write, _config: ShellLaunchConfig) -> io::Result<()> {
+pub fn run_not_fullscreen(output: &mut impl Write) -> io::Result<()> {
     run_not_fullscreen_with_loader(output, load_validated_runtime_ascii_assets)
 }
 
@@ -53,39 +47,18 @@ pub(super) fn run_not_fullscreen_with_assets(
     write_smoke_loop_message(output)
 }
 
-pub fn run_shell_blocking(output: &mut impl Write, config: ShellLaunchConfig) -> io::Result<()> {
+pub fn run_shell_blocking(output: &mut impl Write) -> io::Result<()> {
     let process = ProcessWatchdog::global().ok_or_else(|| {
         io::Error::other("the process watchdog must be installed before starting tundra-shell")
     })?;
-    run_shell_blocking_managed(output, config, process)
+    run_shell_blocking_managed(output, process)
 }
 
 pub fn run_shell_blocking_managed(
     output: &mut impl Write,
-    config: ShellLaunchConfig,
     process: ProcessWatchdog,
 ) -> io::Result<()> {
-    match config.terminal_mode {
-        ShellTerminalMode::Fullscreen => run_fullscreen_blocking_managed(output, config, process),
-        ShellTerminalMode::NotFullscreen => {
-            let shell = process
-                .register_app(shell_watchdog_descriptor())
-                .map_err(io::Error::other)?;
-            match shell.run_boundary(
-                BoundarySpec::new("shell.not-fullscreen", BoundaryKind::UiSession),
-                AssertUnwindSafe(|| run_not_fullscreen(output, config)),
-            ) {
-                Ok(result) => result,
-                Err(caught) => {
-                    let reason = caught.payload().to_string();
-                    let _ = caught.finalize(RecoveryOutcome::Unrecoverable(
-                        "the non-fullscreen shell session cannot be reconstructed".to_string(),
-                    ));
-                    Err(io::Error::other(format!("shell panicked: {reason}")))
-                }
-            }
-        }
-    }
+    run_fullscreen_blocking_managed(output, process)
 }
 
 pub fn run_fullscreen_once_without_animation(output: &mut impl Write) -> io::Result<()> {
@@ -103,14 +76,11 @@ pub(super) fn run_fullscreen_once_without_animation_with_loader(
     })
 }
 
-pub fn run_fullscreen_blocking(
-    output: &mut impl Write,
-    config: ShellLaunchConfig,
-) -> io::Result<()> {
+pub fn run_fullscreen_blocking(output: &mut impl Write) -> io::Result<()> {
     let process = ProcessWatchdog::global().ok_or_else(|| {
         io::Error::other("the process watchdog must be installed before starting tundra-shell")
     })?;
-    run_fullscreen_blocking_managed(output, config, process)
+    run_fullscreen_blocking_managed(output, process)
 }
 
 pub fn run_frost_animation_preview(output: &mut impl Write) -> io::Result<()> {
@@ -143,9 +113,9 @@ pub fn run_matrix_animation_preview_with_color(
 
 pub fn run_fullscreen_blocking_managed(
     output: &mut impl Write,
-    config: ShellLaunchConfig,
     process: ProcessWatchdog,
 ) -> io::Result<()> {
+    let config = ShellLaunchConfig::default();
     let ascii_assets = load_validated_runtime_ascii_assets()?;
     let terminal_size_requirement = ShellTerminalSizeRequirement::from_assets(&ascii_assets);
     checked_current_terminal_size(terminal_size_requirement)?;
@@ -159,14 +129,18 @@ pub fn run_fullscreen_blocking_managed(
     let diagnostics_watchdog = process
         .register_app(app::diagnostics::diagnostics_watchdog_descriptor())
         .map_err(io::Error::other)?;
+    let initial_startup = prepare_shell_startup(platform.as_ref()).map_err(io::Error::other)?;
     let (time_sync_sender, time_sync_receiver) = mpsc::channel();
     let time_sync_watchdog = shell_watchdog.child_component(ComponentId::from_static("time-sync"));
-    // Both network jobs must be live before the blocking frost animation so
+    // Both background jobs must be live before the blocking frost animation so
     // normal login can consume time calibration and prefetched weather data.
-    let _time_sync_worker =
-        spawn_time_sync_worker(time_sync_sender, &time_sync_watchdog).map_err(io::Error::other)?;
-    let initial_startup =
-        prepare_shell_startup(platform.as_ref(), config).map_err(io::Error::other)?;
+    let _time_sync_worker = spawn_time_sync_worker(
+        time_sync_sender,
+        &time_sync_watchdog,
+        initial_startup.storage_manager.clone(),
+        std::sync::Arc::clone(&platform),
+    )
+    .map_err(io::Error::other)?;
     let weather_prefetch_options =
         startup_lockscreen_launch_options(&initial_startup, terminal_size_requirement);
     let _weather_prefetch_worker =
@@ -189,7 +163,7 @@ pub fn run_fullscreen_blocking_managed(
     loop {
         let mut startup = match initial_startup.take() {
             Some(startup) => startup,
-            None => prepare_shell_startup(platform.as_ref(), config).map_err(io::Error::other)?,
+            None => prepare_shell_startup(platform.as_ref()).map_err(io::Error::other)?,
         };
         if explorer_task_runtime.is_none()
             && let Some(storage) = startup.storage_manager.as_ref()
@@ -237,7 +211,7 @@ pub fn run_fullscreen_blocking_managed(
                     continue;
                 }
             }
-            startup = prepare_shell_startup(platform.as_ref(), config).map_err(io::Error::other)?;
+            startup = prepare_shell_startup(platform.as_ref()).map_err(io::Error::other)?;
         }
 
         let session_result = shell_watchdog.run_boundary(
@@ -659,6 +633,7 @@ pub(super) fn run_fullscreen_shell_session(
         explorer_task_runtime,
         diagnostics_task_runtime,
         ShellEditorTaskRuntime::new_managed(shell_watchdog.clone()),
+        ShellSettingsTaskRuntime::new_managed(shell_watchdog.clone()),
     );
     state.launcher_task_runtime = Some(ShellLauncherTaskRuntime::new_managed(
         std::sync::Arc::clone(&platform),
@@ -925,6 +900,59 @@ mod runtime_preflight_tests {
     use super::*;
 
     #[test]
+    fn configured_operating_system_time_uses_platform_boundary() {
+        let root = std::env::temp_dir().join(format!(
+            "tundra-runtime-system-time-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos()
+        ));
+        let app_paths = platform::build_windows_app_paths(
+            root.join("roaming"),
+            root.join("local"),
+            root.join("temp"),
+        )
+        .expect("test app paths");
+        let user_dirs = platform::UserDirs::new(
+            root.join("desktop"),
+            root.join("documents"),
+            root.join("downloads"),
+            root.join("pictures"),
+            root.join("videos"),
+            root.join("music"),
+            root.join("roaming"),
+        )
+        .expect("test user dirs");
+        let platform = platform::mock::MockPlatform::new(user_dirs, app_paths);
+        let system_time = UNIX_EPOCH + Duration::from_secs(1_700_000_000);
+        platform.set_system_time_result(Ok(system_time));
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("test runtime");
+
+        let result = runtime
+            .block_on(synchronize_configured_time(
+                &storage::TimeSyncConfig {
+                    source: storage::TimeSyncSource::OperatingSystem,
+                    server_url: Some("https://ignored.example.test/".to_string()),
+                },
+                &platform,
+            ))
+            .expect("system time sync");
+
+        assert_eq!(result, DateTime::<Utc>::from(system_time));
+        assert!(
+            platform
+                .calls()
+                .iter()
+                .any(|call| { matches!(call, platform::mock::MockCall::SystemTime) })
+        );
+    }
+
+    #[test]
     fn failed_terminal_preflight_writes_no_banner_or_fullscreen_sequence() {
         let fail = || Err(io::Error::other("terminal is too small"));
 
@@ -1120,6 +1148,8 @@ mod runtime_preflight_tests {
 pub(super) fn spawn_time_sync_worker(
     sender: mpsc::Sender<TimedTimeSyncResult>,
     watchdog: &AppWatchdog,
+    storage: Option<StorageManager>,
+    platform: std::sync::Arc<dyn Platform>,
 ) -> Result<TimeSyncWorker, watchdog::WatchdogError> {
     let (stop_sender, stop_receiver) = mpsc::channel();
     let group = watchdog.task_group("network-clock");
@@ -1154,7 +1184,21 @@ pub(super) fn spawn_time_sync_worker(
                         Ok(()) | Err(mpsc::TryRecvError::Disconnected) => break,
                         Err(mpsc::TryRecvError::Empty) => {}
                     }
-                    let result = time::fetch_standard_time().await;
+                    let time_sync = match storage.as_ref() {
+                        Some(storage) => match storage.load_config() {
+                            Ok(config) => Ok(config.time_sync),
+                            Err(error) => Err(time::TimeSyncError::new(vec![format!(
+                                "could not load time sync settings: {error}"
+                            )])),
+                        },
+                        None => Ok(storage::TimeSyncConfig::default()),
+                    };
+                    let result = match time_sync {
+                        Ok(time_sync) => {
+                            synchronize_configured_time(&time_sync, platform.as_ref()).await
+                        }
+                        Err(error) => Err(error),
+                    };
                     if sender
                         .send(TimedTimeSyncResult {
                             result,
@@ -1176,6 +1220,26 @@ pub(super) fn spawn_time_sync_worker(
         stop_sender,
         handle: Some(handle),
     })
+}
+
+pub(super) async fn synchronize_configured_time(
+    config: &storage::TimeSyncConfig,
+    platform: &dyn Platform,
+) -> TimeSyncResult {
+    match config.source {
+        storage::TimeSyncSource::NetworkServer => match config.server_url.as_deref() {
+            Some(server_url) => time::fetch_time_from_server(server_url).await,
+            None => time::fetch_standard_time().await,
+        },
+        storage::TimeSyncSource::OperatingSystem => platform
+            .system_time()
+            .map(DateTime::<Utc>::from)
+            .map_err(|error| {
+                time::TimeSyncError::new(vec![format!(
+                    "could not read the operating system time: {error}"
+                )])
+            }),
+    }
 }
 
 pub(super) fn spawn_weather_prefetch_worker(

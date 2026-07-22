@@ -8,6 +8,7 @@ use std::io::Write;
 use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::time::SystemTime;
 
 #[cfg(target_os = "macos")]
 use crate::VolumeKind;
@@ -136,6 +137,10 @@ impl Platform for MacosPlatform {
 
     fn app_paths(&self) -> Result<AppPaths, PlatformError> {
         build_macos_app_paths(home_dir_from_env()?, std::env::temp_dir()).map_err(Into::into)
+    }
+
+    fn system_time(&self) -> Result<SystemTime, PlatformError> {
+        Ok(SystemTime::now())
     }
 
     fn file_icon(

@@ -4,7 +4,7 @@ pub(crate) fn write_help(output: &mut impl Write) -> std::io::Result<()> {
     writeln!(output, "TundraUX3 CLI")?;
     writeln!(
         output,
-        "Usage: tundra-cli <config|doctor|editor|explain|new|paths|test-frost|test-matrix|weathr>"
+        "Usage: tundra-cli <config|doctor|explain|new|paths|test-frost|test-matrix|weathr>"
     )?;
     writeln!(
         output,
@@ -13,10 +13,6 @@ pub(crate) fn write_help(output: &mut impl Write) -> std::io::Result<()> {
     writeln!(
         output,
         "  doctor  Check Windows/macOS, terminal, and app path readiness"
-    )?;
-    writeln!(
-        output,
-        "  editor  Launch the shell directly into the Markdown editor"
     )?;
     writeln!(
         output,
@@ -48,7 +44,7 @@ pub(crate) fn write_explain(output: &mut impl Write) -> std::io::Result<()> {
     )?;
     writeln!(
         output,
-        "  2. tundra-cli handles diagnostics, operator commands, config, and launchers: doctor, editor, paths, explain, new, test-frost, test-matrix, weathr."
+        "  2. tundra-cli handles diagnostics, operator commands, config, and launchers: doctor, paths, explain, new, test-frost, test-matrix, weathr."
     )?;
     writeln!(
         output,

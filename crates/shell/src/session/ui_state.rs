@@ -84,7 +84,7 @@ pub(super) struct EditorCursorAccelerationState {
     pub(super) started_at: Instant,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct EditorSettingsDialogState {
     pub(super) draft: storage::EditorConfig,
     pub(super) selected: ui::EditorSettingsField,
@@ -118,6 +118,19 @@ pub(super) struct SettingsWeatherLocationEditorState {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct SettingsFileExtensionsEditorState {
+    pub(super) value: String,
+    pub(super) error: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct SettingsTimeSyncServerEditorState {
+    pub(super) value: String,
+    pub(super) error: Option<String>,
+    pub(super) validating: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct SettingsState {
     pub(super) category: ui::SettingsCategory,
     pub(super) selected_field: ui::SettingsField,
@@ -127,6 +140,9 @@ pub(super) struct SettingsState {
     pub(super) picker: Option<SettingsPickerState>,
     pub(super) color_editor: Option<SettingsColorEditorState>,
     pub(super) weather_location_editor: Option<SettingsWeatherLocationEditorState>,
+    pub(super) file_extensions_editor: Option<SettingsFileExtensionsEditorState>,
+    pub(super) time_sync_server_editor: Option<SettingsTimeSyncServerEditorState>,
+    pub(super) time_sync_validation_request_id: Option<u64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -329,7 +345,6 @@ pub(super) struct TimedClick {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UiSessionState {
     pub(super) home_mode: ShellHomeMode,
-    pub(super) launch_target: ShellLaunchTarget,
     pub(super) ascii_assets: ui::RuntimeAsciiAssets,
     pub(super) screen_stack: Vec<ShellScreen>,
     pub(super) storage_manager: Option<StorageManager>,
@@ -344,7 +359,9 @@ pub struct UiSessionState {
     pub(super) time_sync_attempted: bool,
     pub(super) time_sync_dialog_visible: bool,
     pub(super) time_sync_failure_message: Option<String>,
-    pub(super) requested_debug_mode: bool,
+    /// Retains the build-policy-selected debug home across authentication.
+    /// This is internal session state and is not configurable by process args.
+    pub(super) debug_home_after_login: bool,
     pub(super) debug_policy: DebugPolicy,
     pub(super) login_users: Vec<ShellLoginUser>,
     pub(super) login_selected_user: usize,
@@ -378,6 +395,7 @@ pub struct UiSessionState {
     pub(super) user_management_mode: UserManagementMode,
     pub(super) selected_home_entry_index: usize,
     pub(super) settings_state: Option<SettingsState>,
+    pub(super) settings_task_runtime: ShellSettingsTaskRuntime,
     pub(super) launcher_selected_index: usize,
     pub(super) launcher_view_mode: app::launcher::LauncherViewMode,
     pub(super) launcher_viewport_offset: usize,

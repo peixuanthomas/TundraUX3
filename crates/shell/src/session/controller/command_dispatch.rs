@@ -195,6 +195,7 @@ impl ShellSession {
                 self.advance_clock_background();
                 self.poll_explorer_background_tasks(platform);
                 self.poll_launcher_background_tasks();
+                self.poll_settings_background_tasks();
                 self.drain_diagnostics_events();
                 self.poll_editor_background_tasks(platform);
                 self.persist_editor_recovery_if_due(received_at);
@@ -668,11 +669,11 @@ impl ShellSession {
                 ShellAction::Redraw
             }
             ShellCommand::SettingsKey(key) => {
-                self.handle_settings_key(&key);
+                self.handle_settings_key(&key, platform);
                 ShellAction::Redraw
             }
             ShellCommand::SettingsPointer(mouse) => {
-                self.handle_settings_pointer(mouse);
+                self.handle_settings_pointer(mouse, platform);
                 ShellAction::Redraw
             }
             ShellCommand::SettingsRestoreDefaultsConfirmed => {

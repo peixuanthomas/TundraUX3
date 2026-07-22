@@ -969,7 +969,7 @@ impl ShellSession {
         self.notify_status(format!("Signed in as {}", session.username));
         self.home_mode = ShellHomeMode::User;
 
-        if self.requested_debug_mode {
+        if self.debug_home_after_login {
             let permission = PermissionService::new(self.debug_policy).authorize(
                 Some(&session),
                 PermissionAction::EnterDebugMode,
@@ -988,10 +988,7 @@ impl ShellSession {
         if session.role != UserRole::Guest {
             self.load_clock_for_session(&session);
         }
-        match self.launch_target {
-            ShellLaunchTarget::Home => self.refresh_hit_map(),
-            ShellLaunchTarget::Editor => self.open_editor(),
-        }
+        self.refresh_hit_map();
     }
 
     pub(in crate::session) fn open_user_management(&mut self) {

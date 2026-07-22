@@ -309,11 +309,13 @@ impl AppState {
         storage: &storage::StorageManager,
         _at: Instant,
     ) -> (AppAction, ExplorerEffect) {
+        let controller = ExplorerController::default()
+            .with_editor_extensions(self.storage_config.editor.explorer_open_extensions.clone());
         let effect = self
             .explorer_state
             .as_mut()
             .map(|state| {
-                ExplorerController::default().apply(
+                controller.apply(
                     state,
                     command,
                     self.auth_session.as_ref(),

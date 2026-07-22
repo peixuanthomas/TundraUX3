@@ -15,6 +15,7 @@ mod launcher;
 mod launcher_tasks;
 mod notifications;
 mod settings;
+mod settings_tasks;
 mod time_sync;
 mod user_management;
 
@@ -24,3 +25,4 @@ pub(super) use editor_tasks::*;
 pub(super) use explorer_tasks::*;
 pub(super) use hit_testing::*;
 pub(super) use launcher_tasks::*;
+pub(super) use settings_tasks::*;

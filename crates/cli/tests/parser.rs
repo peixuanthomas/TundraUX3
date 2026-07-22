@@ -25,11 +25,10 @@ fn doctor_arg_dispatches_doctor() {
 }
 
 #[test]
-fn editor_arg_dispatches_editor() {
-    assert_eq!(parse_args(["editor"]), Ok(CliCommand::Editor));
+fn editor_command_is_not_a_shell_launch_bypass() {
     assert_eq!(
-        parse_args(["editor", "note.md"]),
-        Err(CliError::UnexpectedArgument("note.md".to_string()))
+        parse_args(["editor"]),
+        Err(CliError::UnknownCommand("editor".to_string()))
     );
 }
 
@@ -146,7 +145,7 @@ fn help_command_writes_usage_to_stdout() {
     assert!(stdout.contains("test-frost|test-matrix|weathr>"));
     assert!(stdout.contains("config  View or update user config"));
     assert!(stdout.contains("new     Clear saved TundraUX3 data"));
-    assert!(stdout.contains("editor  Launch the shell directly into the Markdown editor"));
+    assert!(!stdout.contains("Launch the shell directly"));
     assert!(stdout.contains("test-frost  Play only the startup frost banner animation"));
     assert!(stdout.contains("test-matrix Play only the first-run Matrix banner animation"));
     assert!(stdout.contains("weathr  Launch the terminal weather scene"));
@@ -170,9 +169,7 @@ fn explain_command_prints_startup_and_boundary_notes() {
     assert!(stdout.contains("UI boundary"));
     assert!(stdout.contains("platform"));
     assert!(stdout.contains("tundra-shell"));
-    assert!(
-        stdout.contains("doctor, editor, paths, explain, new, test-frost, test-matrix, weathr")
-    );
+    assert!(stdout.contains("doctor, paths, explain, new, test-frost, test-matrix, weathr"));
     assert!(!stdout.contains("Windows 11"));
     assert!(!stdout.contains("Windows Terminal"));
 }
