@@ -80,7 +80,7 @@ pub fn terminal_environment_check_with_graphics_protocol(
                 }
             }
         }
-        PlatformKind::Macos => EnvironmentCheck {
+        PlatformKind::Macos | PlatformKind::Linux => EnvironmentCheck {
             label: "Terminal".to_string(),
             status: CheckStatus::Warning,
             message: "No inline graphics protocol detected; this terminal is text-only and advanced UI features are unavailable"

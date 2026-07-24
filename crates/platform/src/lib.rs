@@ -1,5 +1,7 @@
 mod diagnostics;
 mod document;
+#[cfg(target_os = "linux")]
+pub mod linux;
 pub mod macos;
 pub mod mock;
 mod paths;
@@ -23,8 +25,9 @@ pub use document::{
     read_document_tail_bytes, validate_no_follow_path,
 };
 pub use paths::{
-    AppPaths, PathResolutionError, UserDirs, build_binary_dir_app_paths, build_macos_app_paths,
-    build_windows_app_paths, cleanup_temp_path, create_temp_dir, create_temp_file,
+    AppPaths, PathResolutionError, UserDirs, build_binary_dir_app_paths, build_linux_app_paths,
+    build_macos_app_paths, build_windows_app_paths, cleanup_temp_path, create_temp_dir,
+    create_temp_file,
 };
 pub use platform::{
     CapabilityStatus, DirectoryEntryMetadata, DirectoryListing, DirectoryListingWarning,

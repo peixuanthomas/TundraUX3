@@ -102,7 +102,11 @@ fn exe_requires_launcher_on_non_windows_platforms() {
     let path = PathBuf::from("portable.ExE");
     let attributes = file_attributes(path.clone());
 
-    for platform in [PlatformKind::Macos, PlatformKind::Unsupported] {
+    for platform in [
+        PlatformKind::Macos,
+        PlatformKind::Linux,
+        PlatformKind::Unsupported,
+    ] {
         assert!(matches!(
             default_file_open_policy(platform, &path, &attributes),
             FileOpenPolicy::LauncherRequired {

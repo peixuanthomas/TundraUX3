@@ -254,6 +254,11 @@ fn platform_check(platform: &dyn Platform) -> EnvironmentCheck {
             status: CheckStatus::Pass,
             message: "macOS platform supported".to_string(),
         },
+        PlatformKind::Linux => EnvironmentCheck {
+            label: "Platform".to_string(),
+            status: CheckStatus::Pass,
+            message: "Linux platform supported".to_string(),
+        },
         PlatformKind::Unsupported => EnvironmentCheck {
             label: "Platform".to_string(),
             status: CheckStatus::Fail,

@@ -4,7 +4,7 @@ TundraUX3 是一个使用 Rust 编写的终端桌面环境实验项目。它在�
 
 项目以 **crossterm** 负责终端输入输出适配，以 **Ratatui** 负责布局和绘制，并将应用状态、UI 基础设施、操作系统能力、持久化和进程监督拆分为独立 crate。workspace 内部 crate 使用功能名称；面向用户的二进制名称仍然是 **tundra-shell** 和 **tundra-cli**。
 
-> 当前主要支持 Windows 11 和 macOS。运行环境需要兼容 crossterm 的真实终端；默认资源集要求至少 108 × 20 个终端单元格，程序会根据实际加载的 ASCII 资源自动提高这个下限。
+> 当前支持 Windows 11、macOS 和 Linux 基础版。运行环境需要兼容 crossterm 的真实终端；默认资源集要求至少 108 × 20 个终端单元格，程序会根据实际加载的 ASCII 资源自动提高这个下限。
 
 ## 目录
 
@@ -39,8 +39,8 @@ TundraUX3 是一个使用 Rust 编写的终端桌面环境实验项目。它在�
 ### 环境要求
 
 1. 安装支持 Rust 2024 edition 的稳定版 Rust 和 Cargo。
-2. 使用 Windows 11 或 macOS。
-3. 在 Windows Terminal、WezTerm、iTerm2 等兼容 crossterm 的终端中运行。
+2. 使用 Windows 11、macOS 或 Linux 基础版。
+3. 在 Windows Terminal、WezTerm、iTerm2 或其他兼容 crossterm 的终端中运行；Linux 的外部打开功能需要 `xdg-open` 可用。
 4. 将终端窗口调整到至少 108 × 20；更大的自定义 ASCII 资源可能需要更多空间。
 
 ### 构建
@@ -173,7 +173,7 @@ flowchart TD
 | **cli** | tundra-cli 参数解析、诊断、路径查看、配置读写、存储重置、动画预览和 Weathr 启动命令。CLI 不依赖 ui。 |
 | **identity** | 用户、会话、授权、密码验证和登录锁定；身份记录由 storage 持久化。 |
 | **storage** | 平台路径上的 TOML/版本化 JSON 文档、原子写入、schema 校验、迁移与损坏文件恢复。 |
-| **platform** | Windows/macOS 的路径、终端能力、文件系统、回收站、程序启动、系统诊断和关机等 OS 边界。 |
+| **platform** | Windows/macOS/Linux 的路径、终端能力、文件系统、程序启动和系统诊断等 OS 边界；Linux 基础版不提供回收站、系统剪贴板、卷枚举、关键错误对话框或关机。 |
 | **time** | NetworkClock、ClockDisplay、ClockSnapshot、时间同步和 TIME_SYNC_INTERVAL；供 APP 与 Weathr 共用。 |
 | **weathr** | 天气提供方、缓存、地理位置、动画、ASCII 场景和锁屏运行时。它作为库被 CLI 与 Shell 托管。 |
 | **ascii-assets** | 主题清单、banner、图标、天气世界和时钟字体的加载、校验与尺寸统计。 |
@@ -286,15 +286,19 @@ Settings 的全局选项写入 StorageConfig 并同步更新 AppState；外观�
 
 ### 平台路径
 
-| 用途 | Windows | macOS |
-| --- | --- | --- |
-| 配置 | %APPDATA%\TundraUX3\config.toml | ~/Library/Application Support/TundraUX3/config.toml |
-| 状态 | %LOCALAPPDATA%\TundraUX3\state | ~/Library/Application Support/TundraUX3/state |
-| 缓存 | %LOCALAPPDATA%\TundraUX3\cache | ~/Library/Caches/TundraUX3 |
-| 日志 | %LOCALAPPDATA%\TundraUX3\logs | ~/Library/Logs/TundraUX3 |
-| 临时文件 | %TEMP%\TundraUX3 | 系统临时目录下的 TundraUX3 |
+| 用途 | Windows | macOS | Linux |
+| --- | --- | --- | --- |
+| 配置 | %APPDATA%\TundraUX3\config.toml | ~/Library/Application Support/TundraUX3/config.toml | $XDG_CONFIG_HOME/TundraUX3/config.toml（默认 ~/.config/TundraUX3/config.toml） |
+| 状态 | %LOCALAPPDATA%\TundraUX3\state | ~/Library/Application Support/TundraUX3/state | $XDG_DATA_HOME/TundraUX3/state（默认 ~/.local/share/TundraUX3/state） |
+| 缓存 | %LOCALAPPDATA%\TundraUX3\cache | ~/Library/Caches/TundraUX3 | $XDG_CACHE_HOME/TundraUX3（默认 ~/.cache/TundraUX3） |
+| 日志 | %LOCALAPPDATA%\TundraUX3\logs | ~/Library/Logs/TundraUX3 | $XDG_STATE_HOME/TundraUX3/logs（默认 ~/.local/state/TundraUX3/logs） |
+| 临时文件 | %TEMP%\TundraUX3 | 系统临时目录下的 TundraUX3 | 系统临时目录下的 TundraUX3 |
 
 可使用 tundra-cli paths 查看模板路径和当前机器解析后的绝对路径。
+
+### Linux 基础版限制
+
+Linux 基础版支持标准路径、文件系统、进程启动与等待和系统时间。`open_path` 与 `open_uri` 通过 `xdg-open` 尽力调用；缺少该命令或调用失败会返回可诊断错误，但不会阻止程序启动。系统剪贴板、Trash、卷枚举、关键错误对话框和关机目前不支持。
 
 ### 文档与 schema
 
@@ -447,7 +451,7 @@ tundra-cli doctor
 tundra-cli paths
 ~~~
 
-macOS 上 Explorer 的 Trash 操作可能需要 Full Disk Access；程序会在启动/诊断中给出系统设置提示。Windows 平台检查要求 Windows 11 build 22000 或更高。
+macOS 上 Explorer 的 Trash 操作可能需要 Full Disk Access；程序会在启动/诊断中给出系统设置提示。Windows 平台检查要求 Windows 11 build 22000 或更高。Linux 基础版不支持 Explorer Trash、系统剪贴板、卷枚举、关键错误对话框和关机；外部打开操作依赖 `xdg-open`。
 
 ### 配置损坏
 

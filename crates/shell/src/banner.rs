@@ -15,7 +15,7 @@ pub fn banner_lines() -> Result<Vec<String>, ui::AssetError> {
 pub fn startup_lines() -> Vec<String> {
     vec![
         "TundraUX3 shell - Phase 0 smoke".to_string(),
-        "Supported OS: Windows and macOS".to_string(),
+        "Supported OS: Windows, macOS, and Linux (basic)".to_string(),
         "Target terminal: crossterm-compatible terminal".to_string(),
         format!(
             "Config format: {} (schema v{})",

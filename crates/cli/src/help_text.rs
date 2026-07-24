@@ -12,7 +12,7 @@ pub(crate) fn write_help(output: &mut impl Write) -> std::io::Result<()> {
     )?;
     writeln!(
         output,
-        "  doctor  Check Windows/macOS, terminal, and app path readiness"
+        "  doctor  Check Windows/macOS/Linux, terminal, and app path readiness"
     )?;
     writeln!(
         output,

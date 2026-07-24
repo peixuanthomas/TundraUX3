@@ -1148,7 +1148,9 @@ pub(in crate::session) fn explorer_toggle_modifier(
 ) -> bool {
     match kind {
         PlatformKind::Macos => modifiers.super_key || modifiers.control,
-        PlatformKind::Windows | PlatformKind::Unsupported => modifiers.control,
+        PlatformKind::Windows | PlatformKind::Linux | PlatformKind::Unsupported => {
+            modifiers.control
+        }
     }
 }
 
@@ -1158,7 +1160,9 @@ pub(in crate::session) fn explorer_copy_modifier(
 ) -> bool {
     match kind {
         PlatformKind::Macos => modifiers.alt,
-        PlatformKind::Windows | PlatformKind::Unsupported => modifiers.control,
+        PlatformKind::Windows | PlatformKind::Linux | PlatformKind::Unsupported => {
+            modifiers.control
+        }
     }
 }
 
@@ -1188,5 +1192,32 @@ pub(in crate::session) fn explorer_sort_field(
         ui::ExplorerSortColumn::Type => app::explorer::ExplorerSortField::Type,
         ui::ExplorerSortColumn::Size => app::explorer::ExplorerSortField::Size,
         ui::ExplorerSortColumn::Modified => app::explorer::ExplorerSortField::Modified,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{explorer_copy_modifier, explorer_toggle_modifier};
+    use crate::InputModifiers;
+    use platform::PlatformKind;
+
+    #[test]
+    fn linux_explorer_selection_modifiers_use_control() {
+        assert!(explorer_toggle_modifier(
+            PlatformKind::Linux,
+            InputModifiers::CTRL
+        ));
+        assert!(explorer_copy_modifier(
+            PlatformKind::Linux,
+            InputModifiers::CTRL
+        ));
+        assert!(!explorer_toggle_modifier(
+            PlatformKind::Linux,
+            InputModifiers::ALT
+        ));
+        assert!(!explorer_copy_modifier(
+            PlatformKind::Linux,
+            InputModifiers::ALT
+        ));
     }
 }

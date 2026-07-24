@@ -80,35 +80,45 @@ impl AppPaths {
     pub const CONFIG_TEMPLATE: &'static str = "%APPDATA%\\TundraUX3\\config.toml";
     #[cfg(target_os = "macos")]
     pub const CONFIG_TEMPLATE: &'static str = "~/Library/Application Support/TundraUX3/config.toml";
-    #[cfg(not(any(windows, target_os = "macos")))]
+    #[cfg(target_os = "linux")]
+    pub const CONFIG_TEMPLATE: &'static str = "$XDG_CONFIG_HOME/TundraUX3/config.toml";
+    #[cfg(not(any(windows, target_os = "macos", target_os = "linux")))]
     pub const CONFIG_TEMPLATE: &'static str = "<unsupported>/TundraUX3/config.toml";
 
     #[cfg(windows)]
     pub const DATA_TEMPLATE: &'static str = "%LOCALAPPDATA%\\TundraUX3\\state";
     #[cfg(target_os = "macos")]
     pub const DATA_TEMPLATE: &'static str = "~/Library/Application Support/TundraUX3/state";
-    #[cfg(not(any(windows, target_os = "macos")))]
+    #[cfg(target_os = "linux")]
+    pub const DATA_TEMPLATE: &'static str = "$XDG_DATA_HOME/TundraUX3/state";
+    #[cfg(not(any(windows, target_os = "macos", target_os = "linux")))]
     pub const DATA_TEMPLATE: &'static str = "<unsupported>/TundraUX3/state";
 
     #[cfg(windows)]
     pub const CACHE_TEMPLATE: &'static str = "%LOCALAPPDATA%\\TundraUX3\\cache";
     #[cfg(target_os = "macos")]
     pub const CACHE_TEMPLATE: &'static str = "~/Library/Caches/TundraUX3";
-    #[cfg(not(any(windows, target_os = "macos")))]
+    #[cfg(target_os = "linux")]
+    pub const CACHE_TEMPLATE: &'static str = "$XDG_CACHE_HOME/TundraUX3";
+    #[cfg(not(any(windows, target_os = "macos", target_os = "linux")))]
     pub const CACHE_TEMPLATE: &'static str = "<unsupported>/TundraUX3/cache";
 
     #[cfg(windows)]
     pub const LOGS_TEMPLATE: &'static str = "%LOCALAPPDATA%\\TundraUX3\\logs";
     #[cfg(target_os = "macos")]
     pub const LOGS_TEMPLATE: &'static str = "~/Library/Logs/TundraUX3";
-    #[cfg(not(any(windows, target_os = "macos")))]
+    #[cfg(target_os = "linux")]
+    pub const LOGS_TEMPLATE: &'static str = "$XDG_STATE_HOME/TundraUX3/logs";
+    #[cfg(not(any(windows, target_os = "macos", target_os = "linux")))]
     pub const LOGS_TEMPLATE: &'static str = "<unsupported>/TundraUX3/logs";
 
     #[cfg(windows)]
     pub const TEMP_TEMPLATE: &'static str = "%TEMP%\\TundraUX3";
     #[cfg(target_os = "macos")]
     pub const TEMP_TEMPLATE: &'static str = "<temp-dir>/TundraUX3";
-    #[cfg(not(any(windows, target_os = "macos")))]
+    #[cfg(target_os = "linux")]
+    pub const TEMP_TEMPLATE: &'static str = "<temp-dir>/TundraUX3";
+    #[cfg(not(any(windows, target_os = "macos", target_os = "linux")))]
     pub const TEMP_TEMPLATE: &'static str = "<unsupported>/TundraUX3/temp";
 
     pub fn from_environment() -> Result<Self, PathResolutionError> {
@@ -227,6 +237,28 @@ pub fn build_macos_app_paths(
         app_support.join("state"),
         home_dir.join("Library").join("Caches").join("TundraUX3"),
         home_dir.join("Library").join("Logs").join("TundraUX3"),
+        temp_dir.join("TundraUX3"),
+    )
+}
+
+pub fn build_linux_app_paths(
+    config_home: impl Into<PathBuf>,
+    data_home: impl Into<PathBuf>,
+    cache_home: impl Into<PathBuf>,
+    state_home: impl Into<PathBuf>,
+    temp_dir: impl Into<PathBuf>,
+) -> Result<AppPaths, PathResolutionError> {
+    let config_home = require_absolute("XDG config home", config_home.into())?;
+    let data_home = require_absolute("XDG data home", data_home.into())?;
+    let cache_home = require_absolute("XDG cache home", cache_home.into())?;
+    let state_home = require_absolute("XDG state home", state_home.into())?;
+    let temp_dir = require_absolute("temporary directory", temp_dir.into())?;
+
+    AppPaths::from_parts(
+        config_home.join("TundraUX3").join("config.toml"),
+        data_home.join("TundraUX3").join("state"),
+        cache_home.join("TundraUX3"),
+        state_home.join("TundraUX3").join("logs"),
         temp_dir.join("TundraUX3"),
     )
 }

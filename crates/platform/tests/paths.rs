@@ -6,12 +6,15 @@ use platform::mock::{MockCall, MockPlatform, UnsupportedPlatform};
 use platform::{
     AppPaths, CapabilityStatus, CheckStatus, FileAttributes, Platform, PlatformError, PlatformKind,
     ProcessSpec, StartupPermissionStatus, UserDirs, build_binary_dir_app_paths,
-    build_macos_app_paths, build_windows_app_paths, check_directory_read_write,
-    classify_windows_build, cleanup_temp_path, create_temp_dir, create_temp_file,
-    default_file_attributes, is_windows_terminal_session, run_doctor_with,
+    build_linux_app_paths, build_macos_app_paths, build_windows_app_paths,
+    check_directory_read_write, classify_windows_build, cleanup_temp_path, create_temp_dir,
+    create_temp_file, default_file_attributes, is_windows_terminal_session, run_doctor_with,
     terminal_environment_check_with, terminal_environment_check_with_graphics_protocol,
     validate_process_spec,
 };
+
+#[cfg(target_os = "linux")]
+use platform::native_platform;
 
 #[test]
 fn windows_app_paths_follow_roaming_local_and_temp_roots() {
@@ -77,6 +80,34 @@ fn macos_app_paths_follow_library_and_temp_roots() {
 }
 
 #[test]
+fn linux_app_paths_follow_xdg_roots_and_temp_directory() {
+    let base = unique_temp_root("linux-native-paths");
+    let config = base.join("config");
+    let data = base.join("data");
+    let cache = base.join("cache");
+    let state = base.join("state");
+    let temp = base.join("tmp");
+
+    let paths = build_linux_app_paths(&config, &data, &cache, &state, &temp)
+        .expect("absolute XDG roots should resolve");
+
+    assert_eq!(
+        paths.config_path(),
+        config.join("TundraUX3").join("config.toml").as_path()
+    );
+    assert_eq!(
+        paths.data_path(),
+        data.join("TundraUX3").join("state").as_path()
+    );
+    assert_eq!(paths.cache_path(), cache.join("TundraUX3").as_path());
+    assert_eq!(
+        paths.logs_path(),
+        state.join("TundraUX3").join("logs").as_path()
+    );
+    assert_eq!(paths.temp_path(), temp.join("TundraUX3").as_path());
+}
+
+#[test]
 fn native_path_builders_reject_relative_roots() {
     let absolute = unique_temp_root("absolute-root");
 
@@ -87,6 +118,21 @@ fn native_path_builders_reject_relative_roots() {
     let macos_error = build_macos_app_paths("relative-home", &absolute)
         .expect_err("relative home directory should fail");
     assert_relative_error_mentions(macos_error, "home directory");
+}
+
+#[test]
+fn linux_app_path_builder_rejects_relative_xdg_roots() {
+    let absolute = unique_temp_root("linux-absolute-root");
+
+    let error = build_linux_app_paths(
+        "relative-config",
+        &absolute,
+        &absolute,
+        &absolute,
+        &absolute,
+    )
+    .expect_err("relative XDG config root should fail");
+    assert_relative_error_mentions(error, "config");
 }
 
 #[test]
@@ -149,7 +195,20 @@ fn app_path_templates_use_macos_native_locations() {
     assert_eq!(AppPaths::TEMP_TEMPLATE, "<temp-dir>/TundraUX3");
 }
 
-#[cfg(not(any(windows, target_os = "macos")))]
+#[cfg(target_os = "linux")]
+#[test]
+fn app_path_templates_use_linux_xdg_locations() {
+    assert_eq!(
+        AppPaths::CONFIG_TEMPLATE,
+        "$XDG_CONFIG_HOME/TundraUX3/config.toml"
+    );
+    assert_eq!(AppPaths::DATA_TEMPLATE, "$XDG_DATA_HOME/TundraUX3/state");
+    assert_eq!(AppPaths::CACHE_TEMPLATE, "$XDG_CACHE_HOME/TundraUX3");
+    assert_eq!(AppPaths::LOGS_TEMPLATE, "$XDG_STATE_HOME/TundraUX3/logs");
+    assert_eq!(AppPaths::TEMP_TEMPLATE, "<temp-dir>/TundraUX3");
+}
+
+#[cfg(not(any(windows, target_os = "macos", target_os = "linux")))]
 #[test]
 fn app_path_templates_mark_unsupported_platforms() {
     assert_eq!(
@@ -160,6 +219,14 @@ fn app_path_templates_mark_unsupported_platforms() {
     assert_eq!(AppPaths::CACHE_TEMPLATE, "<unsupported>/TundraUX3/cache");
     assert_eq!(AppPaths::LOGS_TEMPLATE, "<unsupported>/TundraUX3/logs");
     assert_eq!(AppPaths::TEMP_TEMPLATE, "<unsupported>/TundraUX3/temp");
+}
+
+#[test]
+fn platform_kind_names_include_linux() {
+    assert_eq!(PlatformKind::Windows.as_str(), "Windows");
+    assert_eq!(PlatformKind::Macos.as_str(), "macOS");
+    assert_eq!(PlatformKind::Linux.as_str(), "Linux");
+    assert_eq!(PlatformKind::Unsupported.as_str(), "Unsupported");
 }
 
 #[test]
@@ -204,6 +271,25 @@ fn mock_platform_drives_doctor_path_checks() {
         "doctor should report the mock temp capability"
     );
     assert!(!base.exists());
+}
+
+#[test]
+fn doctor_reports_linux_as_supported() {
+    let base = unique_temp_root("linux-doctor");
+    let platform = mock_platform(&base).with_kind(PlatformKind::Linux);
+
+    let report = run_doctor_with(&platform).expect("mock Linux doctor should run");
+    let platform_check = report
+        .environment_checks
+        .iter()
+        .find(|check| check.label == "Platform")
+        .expect("doctor should include a platform check");
+
+    assert_eq!(report.platform_kind, PlatformKind::Linux);
+    assert_eq!(platform_check.status, CheckStatus::Pass);
+    assert_eq!(platform_check.message, "Linux platform supported");
+
+    cleanup_temp_path(&base).expect("Linux doctor fixture should be removable");
 }
 
 #[test]
@@ -350,6 +436,116 @@ fn windows_platform_reports_the_current_process_as_alive() {
             .expect("current process liveness probe should pass")
     );
     assert!(!platform.is_process_alive(0).expect("PID zero probe"));
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn linux_native_backend_has_minimal_supported_capabilities() {
+    let platform = platform::linux::LinuxPlatform;
+    let capabilities = platform.capabilities();
+
+    assert_eq!(platform.kind(), PlatformKind::Linux);
+    assert!(platform.is_native_backend());
+    assert_eq!(capabilities.open_path, CapabilityStatus::BestEffort);
+    assert_eq!(capabilities.open_with, CapabilityStatus::BestEffort);
+    assert_eq!(capabilities.open_uri, CapabilityStatus::BestEffort);
+    assert_eq!(capabilities.spawn_detached, CapabilityStatus::Supported);
+    assert_eq!(capabilities.spawn_wait, CapabilityStatus::Supported);
+    assert_eq!(capabilities.user_dirs, CapabilityStatus::Supported);
+    assert_eq!(capabilities.app_paths, CapabilityStatus::Supported);
+    assert_eq!(capabilities.temp, CapabilityStatus::Supported);
+    assert_eq!(capabilities.file_attributes, CapabilityStatus::Supported);
+    assert_eq!(capabilities.directory_listing, CapabilityStatus::Supported);
+    assert_eq!(capabilities.clipboard_text, CapabilityStatus::Unsupported);
+    assert_eq!(capabilities.local_volumes, CapabilityStatus::Unsupported);
+    assert_eq!(capabilities.trash, CapabilityStatus::Unsupported);
+    assert_eq!(capabilities.critical_dialog, CapabilityStatus::Unsupported);
+    assert_eq!(capabilities.power, CapabilityStatus::Unsupported);
+
+    let checks = capabilities.checks();
+    assert_eq!(
+        checks
+            .iter()
+            .filter(|(_, status)| *status == CapabilityStatus::Supported)
+            .count(),
+        7
+    );
+    assert_eq!(
+        checks
+            .iter()
+            .filter(|(_, status)| *status == CapabilityStatus::BestEffort)
+            .count(),
+        3
+    );
+    assert_eq!(
+        checks
+            .iter()
+            .filter(|(_, status)| *status == CapabilityStatus::Unsupported)
+            .count(),
+        5
+    );
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn native_platform_selects_linux_backend() {
+    let platform = native_platform();
+
+    assert_eq!(platform.kind(), PlatformKind::Linux);
+    assert!(platform.is_native_backend());
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn linux_platform_reports_system_time_liveness_and_waited_process_results() {
+    let platform = platform::linux::LinuxPlatform;
+
+    assert!(
+        platform
+            .system_time()
+            .expect("Linux system time should be available")
+            .duration_since(UNIX_EPOCH)
+            .is_ok()
+    );
+    assert!(
+        platform
+            .is_process_alive(std::process::id())
+            .expect("current Linux PID should be alive")
+    );
+    assert!(
+        !platform
+            .is_process_alive(0)
+            .expect("PID zero should not be alive")
+    );
+
+    let exit = platform
+        .spawn_wait(&ProcessSpec::new("/bin/sh").args(["-c", "exit 7"]))
+        .expect("Linux should start and wait for /bin/sh");
+    assert_eq!(exit.code, Some(7));
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn linux_platform_explicitly_rejects_desktop_only_capabilities() {
+    let platform = platform::linux::LinuxPlatform;
+    let unsupported = [
+        platform.read_clipboard_text().map(|_| ()),
+        platform.write_clipboard_text("copied"),
+        platform.local_volumes().map(|_| ()),
+        platform.list_trash().map(|_| ()),
+        platform.trash_stats().map(|_| ()),
+        platform.move_to_trash(&[]),
+        platform.empty_trash(),
+        platform.show_critical_error("title", "body"),
+        platform.poweroff(),
+    ];
+
+    for result in unsupported {
+        assert!(
+            matches!(result, Err(PlatformError::Unsupported { .. })),
+            "Linux desktop-only capability should be explicitly unsupported: {result:?}"
+        );
+    }
 }
 
 #[test]
@@ -634,6 +830,7 @@ fn terminal_environment_check_is_reported_by_platform_layer() {
         terminal_environment_check_with(PlatformKind::Windows, Some("session-id"));
     let conhost = terminal_environment_check_with(PlatformKind::Windows, None);
     let macos_terminal = terminal_environment_check_with(PlatformKind::Macos, None);
+    let linux_terminal = terminal_environment_check_with(PlatformKind::Linux, None);
     let graphics_terminal =
         terminal_environment_check_with_graphics_protocol(PlatformKind::Macos, None, Some("Kitty"));
 
@@ -647,6 +844,8 @@ fn terminal_environment_check_is_reported_by_platform_layer() {
     assert!(conhost.message.contains("text-only"));
     assert_eq!(macos_terminal.status, CheckStatus::Warning);
     assert!(macos_terminal.message.contains("text-only"));
+    assert_eq!(linux_terminal.status, CheckStatus::Warning);
+    assert!(linux_terminal.message.contains("text-only"));
     assert_eq!(graphics_terminal.status, CheckStatus::Pass);
     assert!(
         graphics_terminal

@@ -13,6 +13,7 @@ use crate::{
 pub enum PlatformKind {
     Windows,
     Macos,
+    Linux,
     Unsupported,
 }
 
@@ -21,6 +22,7 @@ impl PlatformKind {
         match self {
             Self::Windows => "Windows",
             Self::Macos => "macOS",
+            Self::Linux => "Linux",
             Self::Unsupported => "Unsupported",
         }
     }
@@ -799,7 +801,9 @@ pub fn default_file_open_policy(
     match kind {
         PlatformKind::Windows => windows_file_open_policy(path, attributes),
         PlatformKind::Macos => macos_file_open_policy(path, attributes),
-        PlatformKind::Unsupported => unsupported_file_open_policy(path, attributes),
+        PlatformKind::Linux | PlatformKind::Unsupported => {
+            unix_like_file_open_policy(path, attributes)
+        }
     }
 }
 
@@ -882,7 +886,7 @@ pub(crate) fn macos_file_open_policy(path: &Path, attributes: &FileAttributes) -
     FileOpenPolicy::system_default()
 }
 
-pub(crate) fn unsupported_file_open_policy(
+pub(crate) fn unix_like_file_open_policy(
     path: &Path,
     attributes: &FileAttributes,
 ) -> FileOpenPolicy {
@@ -897,6 +901,7 @@ pub(crate) fn unsupported_file_open_policy(
     FileOpenPolicy::system_default()
 }
 
+#[cfg(windows)]
 pub(crate) fn windows_external_open_policy(
     path: &Path,
     attributes: &FileAttributes,
@@ -971,7 +976,12 @@ pub fn native_platform() -> Box<dyn Platform> {
         Box::new(crate::macos::MacosPlatform)
     }
 
-    #[cfg(not(any(windows, target_os = "macos")))]
+    #[cfg(target_os = "linux")]
+    {
+        Box::new(crate::linux::LinuxPlatform)
+    }
+
+    #[cfg(not(any(windows, target_os = "macos", target_os = "linux")))]
     {
         Box::new(crate::mock::UnsupportedPlatform)
     }
