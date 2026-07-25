@@ -40,6 +40,7 @@ impl TaskControl {
         }
     }
 
+    #[cfg(feature = "tokio")]
     fn add_abort(&self, abort: Arc<dyn Fn() + Send + Sync>) {
         self.aborts
             .lock()

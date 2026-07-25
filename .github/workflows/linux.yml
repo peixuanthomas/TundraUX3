@@ -8,13 +8,66 @@ permissions:
   contents: read
 
 jobs:
-  build-and-test:
-    runs-on: ubuntu-latest
+  ubuntu:
+    name: Ubuntu 24.04 (x86_64)
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v6
       - name: Install stable Rust
         run: rustup toolchain install stable --profile minimal && rustup default stable
-      - name: Build
-        run: cargo build --workspace --locked
-      - name: Test
-        run: cargo test --workspace --locked
+      - name: Locked build and tests
+        run: |
+          cargo build --workspace --locked
+          cargo test --workspace --locked
+      - name: Lint
+        run: cargo clippy --workspace --locked
+      - name: Shell pseudo-terminal mouse-flood smoke
+        run: python3 scripts/linux-shell-smoke.py target/debug/tundra-shell
+      - name: Build distributable packages
+        run: bash scripts/package-linux.sh
+      - name: Verify Debian installation
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes ./dist/tundraux3_*_amd64.deb
+          test -x /usr/bin/tundra-shell
+          test -x /usr/bin/tundra-cli
+          test -d /usr/share/tundraux3/assets
+          tundra-cli paths
+          verify_root="$(mktemp -d)"
+          mkdir -m 700 "$verify_root/config" "$verify_root/data" "$verify_root/cache" "$verify_root/state" "$verify_root/runtime"
+          env \
+            XDG_CONFIG_HOME="$verify_root/config" \
+            XDG_DATA_HOME="$verify_root/data" \
+            XDG_CACHE_HOME="$verify_root/cache" \
+            XDG_STATE_HOME="$verify_root/state" \
+            XDG_RUNTIME_DIR="$verify_root/runtime" \
+            tundra-cli doctor > "$verify_root/doctor.txt"
+          grep -F "[PASS] Required ASCII assets" "$verify_root/doctor.txt"
+          grep -F "/usr/share/tundraux3/assets" "$verify_root/doctor.txt"
+      - name: Upload Linux artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: tundraux3-linux-x86_64
+          path: |
+            dist/*.tar.gz
+            dist/*.deb
+            dist/SHA256SUMS
+
+  fedora:
+    name: Fedora 42 (x86_64)
+    runs-on: ubuntu-24.04
+    container: fedora:42
+    steps:
+      - name: Install checkout and build requirements
+        run: |
+          dnf install -y cmake curl gcc gcc-c++ git make openssl-devel perl pkgconf-pkg-config
+      - uses: actions/checkout@v6
+      - name: Install stable Rust
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+      - name: Locked build and tests
+        run: |
+          source "$HOME/.cargo/env"
+          cargo build --workspace --locked
+          cargo test --workspace --locked

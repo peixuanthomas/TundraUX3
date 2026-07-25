@@ -211,8 +211,8 @@ impl ShellSession {
     ) {
         match effect {
             LauncherEffect::None => {}
-            LauncherEffect::OpenRequested { path } => {
-                self.update_launcher_state(|state| match platform.open_path(&path) {
+            LauncherEffect::OpenRequested { path, kind } => {
+                self.update_launcher_state(|state| match platform.launch_approved(&path, kind) {
                     Ok(()) => {
                         state.message = Some(format!("Opened {}", path.display()));
                         state.error = None;

@@ -32,8 +32,8 @@ pub use paths::{
 pub use platform::{
     CapabilityStatus, DirectoryEntryMetadata, DirectoryListing, DirectoryListingWarning,
     ExecutableKind, ExternalOpenPolicy, FileAttributes, FileOpenPolicy, LocalVolume, Platform,
-    PlatformCapabilities, PlatformError, PlatformIcon, PlatformKind, StartupPermissionStatus,
-    TrashEntry, TrashEntryId, TrashRestoreTarget, TrashStats, VolumeKind,
+    PlatformCapabilities, PlatformError, PlatformIcon, PlatformKind, PlatformLifecycleEvent,
+    StartupPermissionStatus, TrashEntry, TrashEntryId, TrashRestoreTarget, TrashStats, VolumeKind,
     default_external_open_policy, default_file_attributes, default_file_open_policy,
     default_read_directory, default_rename_path, native_platform,
 };

@@ -84,7 +84,8 @@ fn user_can_launch_ready_entry_but_guest_cannot_manage_it() {
     assert_eq!(
         effect,
         LauncherEffect::OpenRequested {
-            path: approved_path
+            path: approved_path,
+            kind: ExecutableKind::NativeBinary,
         }
     );
     let denied = controller.apply(
@@ -187,7 +188,8 @@ fn content_changes_block_launch_and_scripts_require_fresh_confirmation() {
                     .expect("script")
                     .record
                     .path
-            )
+            ),
+            kind: ExecutableKind::Script,
         }
     );
 }

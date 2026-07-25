@@ -64,6 +64,47 @@ fn first_open_creates_storage_directories_and_default_files() {
     cleanup(&base);
 }
 
+#[cfg(unix)]
+#[test]
+fn reopening_storage_tightens_only_owned_paths() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let base = unique_temp_root("private-permissions");
+    let paths = app_paths(&base);
+    let layout = StorageLayout::from_app_paths(&paths);
+    StorageManager::open(paths.clone()).expect("initial storage open");
+
+    fs::set_permissions(&layout.data_path, fs::Permissions::from_mode(0o755)).unwrap();
+    fs::set_permissions(&layout.users_path, fs::Permissions::from_mode(0o644)).unwrap();
+    let editor_document = base.join("document-owned-by-user.txt");
+    fs::write(&editor_document, "leave this permission alone").unwrap();
+    fs::set_permissions(&editor_document, fs::Permissions::from_mode(0o644)).unwrap();
+
+    StorageManager::open(paths).expect("storage re-open tightens its own paths");
+
+    assert_eq!(
+        fs::metadata(&layout.data_path)
+            .unwrap()
+            .permissions()
+            .mode()
+            & 0o777,
+        0o700
+    );
+    assert_eq!(
+        fs::metadata(&layout.users_path)
+            .unwrap()
+            .permissions()
+            .mode()
+            & 0o777,
+        0o600
+    );
+    assert_eq!(
+        fs::metadata(&editor_document).unwrap().permissions().mode() & 0o777,
+        0o644
+    );
+    cleanup(&base);
+}
+
 #[test]
 fn toml_and_json_documents_round_trip() {
     let base = unique_temp_root("round-trip");

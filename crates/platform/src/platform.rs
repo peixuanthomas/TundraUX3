@@ -17,6 +17,16 @@ pub enum PlatformKind {
     Unsupported,
 }
 
+/// Process-level desktop lifecycle notifications surfaced by a platform
+/// backend. These are deliberately edge-triggered so the terminal runtime can
+/// poll them without blocking its UI loop.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PlatformLifecycleEvent {
+    PrepareForShutdown,
+    PrepareForSleep,
+    Resumed,
+}
+
 impl PlatformKind {
     pub fn as_str(self) -> &'static str {
         match self {
@@ -449,6 +459,15 @@ pub trait Platform: Send + Sync {
         Ok(None)
     }
     fn open_path(&self, path: &Path) -> Result<(), PlatformError>;
+    /// Launches a Launcher entry after application code has revalidated both
+    /// its persisted fingerprint and executable classification.
+    ///
+    /// Windows and macOS keep their established default-open behavior. Linux
+    /// overrides this boundary so native executables are started directly and
+    /// trusted desktop entries are delegated to the desktop entry service.
+    fn launch_approved(&self, path: &Path, _kind: ExecutableKind) -> Result<(), PlatformError> {
+        self.open_path(path)
+    }
     fn open_with(&self, path: &Path, application: &Path) -> Result<(), PlatformError>;
     fn open_uri(&self, uri: &str) -> Result<(), PlatformError>;
     fn spawn_detached(&self, spec: &ProcessSpec) -> Result<(), PlatformError>;
@@ -558,6 +577,28 @@ pub trait Platform: Send + Sync {
         Err(PlatformError::Unsupported {
             capability: "process_liveness",
         })
+    }
+
+    /// Returns the next pending process-level desktop lifecycle event without
+    /// blocking. Native Linux uses logind's PrepareForShutdown and
+    /// PrepareForSleep signals; other platforms may keep the default.
+    fn poll_lifecycle_event(&self) -> Result<Option<PlatformLifecycleEvent>, PlatformError> {
+        Ok(None)
+    }
+
+    /// Rebuilds session-scoped resources after resume (for example clipboard
+    /// and desktop-service connections). This must be safe to call after an
+    /// ordinary terminal focus gain as well.
+    fn refresh_session(&self) -> Result<(), PlatformError> {
+        Ok(())
+    }
+
+    /// Returns whether the current desktop session can authorize a power off.
+    ///
+    /// Backends with an interactive authorization flow should report both an
+    /// immediately allowed result and an authorization challenge as available.
+    fn can_poweroff(&self) -> Result<bool, PlatformError> {
+        Ok(self.capabilities().power == CapabilityStatus::Supported)
     }
 
     fn poweroff(&self) -> Result<(), PlatformError> {
@@ -890,14 +931,44 @@ pub(crate) fn unix_like_file_open_policy(
     path: &Path,
     attributes: &FileAttributes,
 ) -> FileOpenPolicy {
-    if attributes.is_file
-        && (extension_is(path, &["desktop", "appimage", "run"]) || native_executable_bit(path))
+    if !attributes.is_file {
+        return FileOpenPolicy::system_default();
+    }
+
+    if extension_is(path, &["desktop"]) {
+        return FileOpenPolicy::launcher_required(
+            ExecutableKind::Shortcut,
+            "desktop application entries must be opened through Launcher",
+        );
+    }
+
+    if extension_is(path, &["appimage"]) || is_elf(path) {
+        return FileOpenPolicy::launcher_required(
+            ExecutableKind::NativeBinary,
+            "native executable files must be opened through Launcher",
+        );
+    }
+
+    if has_shebang(path)
+        || (native_executable_bit(path)
+            && extension_is(
+                path,
+                &["run", "sh", "bash", "zsh", "fish", "py", "rb", "pl"],
+            ))
     {
+        return FileOpenPolicy::launcher_required(
+            ExecutableKind::Script,
+            "executable scripts must be opened through Launcher",
+        );
+    }
+
+    if native_executable_bit(path) {
         return FileOpenPolicy::launcher_required(
             ExecutableKind::NativeBinary,
             "executable files must be opened through Launcher",
         );
     }
+
     FileOpenPolicy::system_default()
 }
 
@@ -985,4 +1056,20 @@ pub fn native_platform() -> Box<dyn Platform> {
     {
         Box::new(crate::mock::UnsupportedPlatform)
     }
+}
+
+fn is_elf(path: &Path) -> bool {
+    let mut magic = [0_u8; 4];
+    fs::File::open(path)
+        .and_then(|mut file| file.read_exact(&mut magic))
+        .is_ok()
+        && magic == *b"\x7fELF"
+}
+
+fn has_shebang(path: &Path) -> bool {
+    let mut magic = [0_u8; 2];
+    fs::File::open(path)
+        .and_then(|mut file| file.read_exact(&mut magic))
+        .is_ok()
+        && magic == *b"#!"
 }

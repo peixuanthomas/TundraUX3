@@ -3,7 +3,7 @@ use std::path::Path;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 
-use crate::atomic_write::create_dir;
+use crate::atomic_write::{create_dir, tighten_file};
 use crate::clock_document::ClockDocument;
 use crate::config_document::StorageConfig;
 use crate::descriptors::{CLOCK_DESCRIPTOR, CONFIG_DESCRIPTOR};
@@ -24,8 +24,9 @@ impl StorageManager {
     pub(crate) fn initialize(&self) -> Result<StorageLoadReport, StorageError> {
         let mut report = StorageLoadReport::default();
 
-        self.check_existing_future_schemas()?;
         self.create_directories()?;
+        self.tighten_existing_application_files()?;
+        self.check_existing_future_schemas()?;
         self.ensure_toml_document(
             &mut report,
             &self.layout.config_path,
@@ -188,6 +189,26 @@ impl StorageManager {
         create_dir(&self.layout.logs_path, "create logs directory")?;
         create_dir(&self.layout.temp_path, "create temp directory")?;
         create_dir(&self.layout.trash_path, "create trash directory")?;
+
+        Ok(())
+    }
+
+    /// Storage owns the paths in `StorageLayout`, so it may safely tighten
+    /// stale permissions at startup. Editor documents are intentionally not in
+    /// this list: their permissions remain exclusively under the user's control.
+    fn tighten_existing_application_files(&self) -> Result<(), StorageError> {
+        for path in [
+            &self.layout.config_path,
+            &self.layout.users_path,
+            &self.layout.legacy_users_path,
+            &self.layout.state_path,
+            &self.layout.recent_files_path,
+            &self.layout.sessions_path,
+            &self.layout.clock_path,
+            &self.layout.trash_manifest_path,
+        ] {
+            tighten_file(path, "inspect application storage file")?;
+        }
 
         Ok(())
     }

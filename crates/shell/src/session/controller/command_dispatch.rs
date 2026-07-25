@@ -244,21 +244,8 @@ impl ShellSession {
                     self.show_exit_confirmation_modal(platform);
                     return ShellAction::Redraw;
                 }
-                match platform.poweroff() {
-                    Ok(()) => self
-                        .app
-                        .dispatch_at(app::AppCommand::RequestPowerOff, received_at),
-                    Err(error) => {
-                        self.shutdown_requested = false;
-                        self.show_exit_confirmation_modal(platform);
-                        self.notify_alert_with_tone(
-                            format!("Power off failed: {error}"),
-                            ui::NotificationTone::Error,
-                        );
-                        self.refresh_hit_map();
-                        ShellAction::Redraw
-                    }
-                }
+                self.app
+                    .dispatch_at(app::AppCommand::RequestPowerOff, received_at)
             }
             ShellCommand::CancelExit => {
                 self.notification_dismiss_modal_by_key(EXIT_CONFIRM_NOTIFICATION_KEY);
@@ -1545,8 +1532,8 @@ impl ShellSession {
     }
 
     pub(in crate::session) fn show_exit_confirmation_modal(&mut self, platform: &dyn Platform) {
-        let poweroff_available = platform.kind() == PlatformKind::Windows
-            && platform.capabilities().power == CapabilityStatus::Supported;
+        let poweroff_available = platform.capabilities().power == CapabilityStatus::Supported
+            && platform.can_poweroff().unwrap_or(false);
         let mut actions = vec![
             ShellNotificationAction::new("restore-terminal", "Restore terminal")
                 .with_shortcut(InputKey::Char('y'))
@@ -1567,7 +1554,7 @@ impl ShellSession {
         );
 
         let message = if poweroff_available {
-            "Restore the terminal and exit, power off this Windows PC, or cancel?"
+            "Restore the terminal and exit, power off this computer, or cancel?"
         } else {
             "Leave the shell and restore the terminal?"
         };

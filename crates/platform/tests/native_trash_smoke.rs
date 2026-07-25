@@ -1,4 +1,4 @@
-#![cfg(any(windows, target_os = "macos"))]
+#![cfg(any(windows, target_os = "macos", target_os = "linux"))]
 
 use std::fs;
 use std::path::Path;
@@ -40,8 +40,16 @@ fn unique_temp_path(kind: &str, extension: &str) -> std::path::PathBuf {
         .duration_since(UNIX_EPOCH)
         .expect("clock")
         .as_nanos();
-    std::env::temp_dir().join(format!(
-        "tundra-platform-trash-smoke-{kind}-{}-{nonce}.{extension}",
+    // Linux /tmp is commonly a separate tmpfs. A fixture there would use a
+    // per-volume Trash that is intentionally excluded from local block-volume
+    // enumeration, so place the native smoke fixture on the home filesystem.
+    #[cfg(target_os = "linux")]
+    let fixture_root =
+        std::path::PathBuf::from(std::env::var_os("HOME").expect("Linux HOME for Trash smoke"));
+    #[cfg(not(target_os = "linux"))]
+    let fixture_root = std::env::temp_dir();
+    fixture_root.join(format!(
+        ".tundra-platform-trash-smoke-{kind}-{}-{nonce}.{extension}",
         std::process::id(),
     ))
 }
@@ -57,7 +65,7 @@ fn round_trip(source: &Path) {
         );
         canonical
     };
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
     let source_for_trash = source.to_path_buf();
 
     platform

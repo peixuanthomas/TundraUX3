@@ -517,7 +517,7 @@ impl LauncherConfig {
 }
 
 /// A globally-managed application approved for Launcher execution.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(default)]
 pub struct LauncherEntryRecord {
     pub id: String,
@@ -529,19 +529,6 @@ pub struct LauncherEntryRecord {
     pub fingerprint: Option<LauncherFingerprint>,
     pub added_by_user_id: String,
     pub added_at_epoch_ms: i64,
-}
-
-impl Default for LauncherEntryRecord {
-    fn default() -> Self {
-        Self {
-            id: String::new(),
-            path: String::new(),
-            executable_kind: None,
-            fingerprint: None,
-            added_by_user_id: String::new(),
-            added_at_epoch_ms: 0,
-        }
-    }
 }
 
 /// The executable classification persisted with a Launcher approval.

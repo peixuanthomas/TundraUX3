@@ -98,6 +98,7 @@ pub enum LauncherEffect {
     Added(Vec<LauncherAddResult>),
     OpenRequested {
         path: PathBuf,
+        kind: PlatformExecutableKind,
     },
     ConfirmationRequired {
         id: String,
@@ -395,7 +396,10 @@ impl LauncherController {
                 kind,
             });
         }
-        Ok(LauncherEffect::OpenRequested { path })
+        Ok(LauncherEffect::OpenRequested {
+            path,
+            kind: platform_kind(kind),
+        })
     }
 
     fn new_record(
@@ -611,6 +615,16 @@ fn convert_kind(kind: PlatformExecutableKind) -> LauncherExecutableKind {
         PlatformExecutableKind::Script => LauncherExecutableKind::Script,
         PlatformExecutableKind::Shortcut => LauncherExecutableKind::Shortcut,
         PlatformExecutableKind::ApplicationBundle => LauncherExecutableKind::ApplicationBundle,
+    }
+}
+
+fn platform_kind(kind: LauncherExecutableKind) -> PlatformExecutableKind {
+    match kind {
+        LauncherExecutableKind::NativeBinary => PlatformExecutableKind::NativeBinary,
+        LauncherExecutableKind::Installer => PlatformExecutableKind::Installer,
+        LauncherExecutableKind::Script => PlatformExecutableKind::Script,
+        LauncherExecutableKind::Shortcut => PlatformExecutableKind::Shortcut,
+        LauncherExecutableKind::ApplicationBundle => PlatformExecutableKind::ApplicationBundle,
     }
 }
 fn needs_confirmation(kind: LauncherExecutableKind) -> bool {

@@ -8,3 +8,16 @@ path = "src/lib.rs"
 
 [dependencies]
 same-file = "1"
+watchdog = { path = "../watchdog" }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+# Keep desktop-only integrations out of the Windows and macOS dependency graph.
+arboard = { version = "3.6", default-features = false, features = ["wayland-data-control"] }
+freedesktop-desktop-entry = "0.8.1"
+image = { version = "0.25", default-features = false, features = ["png"] }
+libc = "0.2"
+resvg = { version = "0.47", default-features = false, features = ["text"] }
+zbus = { version = "5.18", features = ["blocking-api"] }
+
+[target.'cfg(unix)'.dependencies]
+signal-hook = "0.3"

@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=TundraUX3
+Comment=Launch the TundraUX3 terminal shell
+Exec=tundra-shell
+Terminal=true
+Categories=System;Utility;
+StartupNotify=true

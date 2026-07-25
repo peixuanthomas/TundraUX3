@@ -118,6 +118,42 @@ fn exe_requires_launcher_on_non_windows_platforms() {
 }
 
 #[test]
+fn linux_classifies_elf_shebang_appimage_and_desktop_entries() {
+    let base = unique_temp_root("linux-launcher-policy");
+    fs::create_dir_all(&base).expect("test root");
+    let elf = base.join("native");
+    let script = base.join("script");
+    let appimage = base.join("portable.AppImage");
+    let desktop = base.join("application.desktop");
+    fs::write(&elf, b"\x7fELFfixture").unwrap();
+    fs::write(&script, b"#!/bin/sh\nexit 0\n").unwrap();
+    fs::write(&appimage, b"fixture").unwrap();
+    fs::write(
+        &desktop,
+        b"[Desktop Entry]\nType=Application\nName=Fixture\nExec=/bin/true\n",
+    )
+    .unwrap();
+
+    for (path, expected) in [
+        (&elf, ExecutableKind::NativeBinary),
+        (&script, ExecutableKind::Script),
+        (&appimage, ExecutableKind::NativeBinary),
+        (&desktop, ExecutableKind::Shortcut),
+    ] {
+        assert!(matches!(
+            default_file_open_policy(
+                PlatformKind::Linux,
+                path,
+                &file_attributes(path.to_path_buf()),
+            ),
+            FileOpenPolicy::LauncherRequired { kind, .. } if kind == expected
+        ));
+    }
+
+    cleanup_temp_path(&base).unwrap();
+}
+
+#[test]
 fn macos_classifies_bundles_installers_and_mach_o_files() {
     let base = unique_temp_root("mach-o-policy");
     fs::create_dir_all(&base).expect("test root");

@@ -19,5 +19,9 @@ storage = { path = "../storage" }
 watchdog = { path = "../watchdog", features = ["tokio"] }
 weathr = { path = "../weathr" }
 
+[target.'cfg(target_os = "linux")'.dependencies]
+arboard = { version = "3.6", default-features = false, features = ["wayland-data-control"] }
+zbus = { version = "5.18", features = ["blocking-api"] }
+
 [build-dependencies]
 ascii-assets = { path = "../ascii-assets" }

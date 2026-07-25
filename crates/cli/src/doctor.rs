@@ -1,5 +1,8 @@
 use std::io::Write;
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
+use std::{env, fs};
 
 use platform::{
     AppPaths, CapabilityStatus, CheckStatus, EnvironmentCheck, PathCheck, Platform, PlatformKind,
@@ -25,7 +28,12 @@ pub(crate) fn run_doctor<Stdout: Write, Stderr: Write>(
             let _ = writeln!(stdout);
             let _ = writeln!(stdout, "Resolved paths:");
             write_resolved_paths(stdout, &report.app_paths);
-            write_doctor_checks(stdout, &report.environment_checks, &report.path_checks);
+            let mut environment_checks = report.environment_checks.clone();
+            environment_checks.extend(linux_environment_checks(
+                platform.kind(),
+                &SystemDoctorProbe,
+            ));
+            write_doctor_checks(stdout, &environment_checks, &report.path_checks);
 
             let storage_check = run_storage_check(&report.app_paths);
             write_storage_check(stdout, &storage_check);
@@ -33,7 +41,10 @@ pub(crate) fn run_doctor<Stdout: Write, Stderr: Write>(
             let asset_check = run_asset_check(asset_root, &asset_theme_id);
             write_asset_check(stdout, &asset_check);
 
-            if report.has_failures() || storage_check.status == CheckStatus::Fail {
+            if report.has_failures()
+                || environment_checks_have_failures(&environment_checks)
+                || storage_check.status == CheckStatus::Fail
+            {
                 let _ = writeln!(stderr, "Doctor result: FAIL");
                 1
             } else {
@@ -47,6 +58,472 @@ pub(crate) fn run_doctor<Stdout: Write, Stderr: Write>(
             write_asset_check(stdout, &asset_check);
             let _ = writeln!(stderr, "Doctor result: FAIL");
             1
+        }
+    }
+}
+
+fn environment_checks_have_failures(checks: &[EnvironmentCheck]) -> bool {
+    checks.iter().any(|check| check.status == CheckStatus::Fail)
+}
+
+/// Read-only view of the parts of a Linux desktop session that matter to the
+/// desktop integrations.  Keeping this behind a small interface makes the
+/// doctor output deterministic in tests and, more importantly, avoids
+/// starting a D-Bus service or opening a graphical session merely to diagnose
+/// it.
+trait LinuxDoctorProbe {
+    fn env_var(&self, name: &str) -> Option<String>;
+    fn command_exists(&self, command: &str) -> bool;
+    fn path_exists(&self, path: &str) -> bool;
+    fn logind_poweroff_state(&self) -> Option<Result<String, String>> {
+        None
+    }
+    fn session_bus_reachable(&self) -> Option<bool> {
+        None
+    }
+    fn session_service_available(&self, _name: &str) -> Option<bool> {
+        None
+    }
+    fn clipboard_backend_available(&self) -> Option<bool> {
+        None
+    }
+}
+
+struct SystemDoctorProbe;
+
+impl LinuxDoctorProbe for SystemDoctorProbe {
+    fn env_var(&self, name: &str) -> Option<String> {
+        env::var(name).ok().filter(|value| !value.trim().is_empty())
+    }
+
+    fn command_exists(&self, command: &str) -> bool {
+        let Some(path) = self.env_var("PATH") else {
+            return false;
+        };
+
+        env::split_paths(&path).any(|directory| {
+            let candidate = directory.join(command);
+            fs::metadata(candidate)
+                .map(|metadata| {
+                    metadata.is_file() && {
+                        #[cfg(unix)]
+                        {
+                            metadata.permissions().mode() & 0o111 != 0
+                        }
+                        #[cfg(not(unix))]
+                        {
+                            true
+                        }
+                    }
+                })
+                .unwrap_or(false)
+        })
+    }
+
+    fn path_exists(&self, path: &str) -> bool {
+        Path::new(path).exists()
+    }
+
+    fn logind_poweroff_state(&self) -> Option<Result<String, String>> {
+        #[cfg(target_os = "linux")]
+        {
+            Some(query_logind_poweroff_state())
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            None
+        }
+    }
+
+    fn session_bus_reachable(&self) -> Option<bool> {
+        #[cfg(target_os = "linux")]
+        {
+            Some(zbus::blocking::Connection::session().is_ok())
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            None
+        }
+    }
+
+    fn session_service_available(&self, name: &str) -> Option<bool> {
+        #[cfg(target_os = "linux")]
+        {
+            Some(session_dbus_name_available(name).unwrap_or(false))
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            let _ = name;
+            None
+        }
+    }
+
+    fn clipboard_backend_available(&self) -> Option<bool> {
+        #[cfg(target_os = "linux")]
+        {
+            Some(arboard::Clipboard::new().is_ok())
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            None
+        }
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn query_logind_poweroff_state() -> Result<String, String> {
+    let connection = zbus::blocking::Connection::system().map_err(|error| error.to_string())?;
+    let proxy = zbus::blocking::Proxy::new(
+        &connection,
+        "org.freedesktop.login1",
+        "/org/freedesktop/login1",
+        "org.freedesktop.login1.Manager",
+    )
+    .map_err(|error| error.to_string())?;
+    proxy
+        .call("CanPowerOff", &())
+        .map_err(|error| error.to_string())
+}
+
+#[cfg(target_os = "linux")]
+fn session_dbus_name_available(name: &str) -> Result<bool, String> {
+    let connection = zbus::blocking::Connection::session().map_err(|error| error.to_string())?;
+    let proxy = zbus::blocking::Proxy::new(
+        &connection,
+        "org.freedesktop.DBus",
+        "/org/freedesktop/DBus",
+        "org.freedesktop.DBus",
+    )
+    .map_err(|error| error.to_string())?;
+    let has_owner: bool = proxy
+        .call("NameHasOwner", &(name,))
+        .map_err(|error| error.to_string())?;
+    if has_owner {
+        return Ok(true);
+    }
+    let activatable: Vec<String> = proxy
+        .call("ListActivatableNames", &())
+        .map_err(|error| error.to_string())?;
+    Ok(activatable.iter().any(|candidate| candidate == name))
+}
+
+fn linux_environment_checks(
+    kind: PlatformKind,
+    probe: &dyn LinuxDoctorProbe,
+) -> Vec<EnvironmentCheck> {
+    if kind != PlatformKind::Linux {
+        return Vec::new();
+    }
+
+    vec![
+        linux_architecture_check(),
+        command_check(
+            probe,
+            "xdg-open",
+            "xdg-open",
+            CheckStatus::Fail,
+            "install xdg-utils (for example: sudo apt install xdg-utils)",
+        ),
+        command_check(
+            probe,
+            "gio",
+            "gio",
+            CheckStatus::Fail,
+            "install GLib command-line tools (for example: sudo apt install libglib2.0-bin)",
+        ),
+        logind_check(probe),
+        session_dbus_check(probe),
+        portal_check(probe),
+        clipboard_check(probe),
+        notification_check(probe),
+        polkit_check(probe),
+        image_protocol_check(probe),
+    ]
+}
+
+fn portal_check(probe: &dyn LinuxDoctorProbe) -> EnvironmentCheck {
+    if let Some(available) = probe.session_service_available("org.freedesktop.portal.Desktop") {
+        return if available {
+            EnvironmentCheck {
+                label: "Desktop portal".to_string(),
+                status: CheckStatus::Pass,
+                message: "the xdg-desktop-portal service is running or D-Bus activatable"
+                    .to_string(),
+            }
+        } else {
+            EnvironmentCheck {
+                label: "Desktop portal".to_string(),
+                status: CheckStatus::Warning,
+                message: "org.freedesktop.portal.Desktop is neither running nor D-Bus activatable; install the portal and the GNOME/KDE backend".to_string(),
+            }
+        };
+    }
+    let installed = probe.command_exists("xdg-desktop-portal")
+        || probe.path_exists("/usr/libexec/xdg-desktop-portal")
+        || probe.path_exists("/usr/lib/xdg-desktop-portal")
+        || probe.path_exists("/usr/share/xdg-desktop-portal/portals");
+    let session_bus = probe.env_var("DBUS_SESSION_BUS_ADDRESS").is_some();
+    if installed && session_bus {
+        EnvironmentCheck {
+            label: "Desktop portal".to_string(),
+            status: CheckStatus::Pass,
+            message:
+                "xdg-desktop-portal is installed and can be activated through the session D-Bus"
+                    .to_string(),
+        }
+    } else {
+        let reason = match (installed, session_bus) {
+            (false, _) => "xdg-desktop-portal was not detected",
+            (true, false) => "xdg-desktop-portal is installed but session D-Bus is unavailable",
+            (true, true) => unreachable!(),
+        };
+        EnvironmentCheck {
+            label: "Desktop portal".to_string(),
+            status: CheckStatus::Warning,
+            message: format!(
+                "{reason}; install/enable xdg-desktop-portal in the GNOME/KDE user session"
+            ),
+        }
+    }
+}
+
+fn linux_architecture_check() -> EnvironmentCheck {
+    if env::consts::ARCH == "x86_64" {
+        EnvironmentCheck {
+            label: "Linux architecture".to_string(),
+            status: CheckStatus::Pass,
+            message: "x86_64 is supported".to_string(),
+        }
+    } else {
+        EnvironmentCheck {
+            label: "Linux architecture".to_string(),
+            status: CheckStatus::Fail,
+            message: format!(
+                "{} is not an M0 release architecture; use an x86_64 build",
+                env::consts::ARCH
+            ),
+        }
+    }
+}
+
+fn command_check(
+    probe: &dyn LinuxDoctorProbe,
+    label: &str,
+    command: &str,
+    missing_status: CheckStatus,
+    remediation: &str,
+) -> EnvironmentCheck {
+    if probe.command_exists(command) {
+        EnvironmentCheck {
+            label: format!("Linux command: {label}"),
+            status: CheckStatus::Pass,
+            message: format!("{command} is available"),
+        }
+    } else {
+        EnvironmentCheck {
+            label: format!("Linux command: {label}"),
+            status: missing_status,
+            message: format!("{command} was not found in PATH; {remediation}"),
+        }
+    }
+}
+
+fn logind_check(probe: &dyn LinuxDoctorProbe) -> EnvironmentCheck {
+    if let Some(result) = probe.logind_poweroff_state() {
+        return match result {
+            Ok(state) if matches!(state.as_str(), "yes" | "challenge") => EnvironmentCheck {
+                label: "systemd-logind".to_string(),
+                status: CheckStatus::Pass,
+                message: format!(
+                    "live CanPowerOff returned {state}; interactive Power off is available through logind"
+                ),
+            },
+            Ok(state) => EnvironmentCheck {
+                label: "systemd-logind".to_string(),
+                status: CheckStatus::Warning,
+                message: format!(
+                    "live CanPowerOff returned {state}; check the active logind session and polkit policy"
+                ),
+            },
+            Err(error) => EnvironmentCheck {
+                label: "systemd-logind".to_string(),
+                status: CheckStatus::Warning,
+                message: format!("could not query logind CanPowerOff on the system D-Bus: {error}"),
+            },
+        };
+    }
+    let systemd_running = probe.path_exists("/run/systemd/system");
+    let system_bus = probe.path_exists("/run/dbus/system_bus_socket");
+    if systemd_running && system_bus {
+        EnvironmentCheck {
+            label: "systemd-logind".to_string(),
+            status: CheckStatus::Warning,
+            message: "systemd and the system D-Bus socket exist, but this build could not issue a live CanPowerOff probe".to_string(),
+        }
+    } else {
+        EnvironmentCheck {
+            label: "systemd-logind".to_string(),
+            status: CheckStatus::Warning,
+            message: "systemd-logind or its system D-Bus socket was not detected; run inside a systemd user session to enable Power off".to_string(),
+        }
+    }
+}
+
+fn session_dbus_check(probe: &dyn LinuxDoctorProbe) -> EnvironmentCheck {
+    let reachable = probe
+        .session_bus_reachable()
+        .unwrap_or_else(|| probe.env_var("DBUS_SESSION_BUS_ADDRESS").is_some());
+    if reachable {
+        EnvironmentCheck {
+            label: "Session D-Bus".to_string(),
+            status: CheckStatus::Pass,
+            message: "a live session D-Bus connection is available for desktop services"
+                .to_string(),
+        }
+    } else {
+        EnvironmentCheck {
+            label: "Session D-Bus".to_string(),
+            status: CheckStatus::Warning,
+            message: "DBUS_SESSION_BUS_ADDRESS is unset; start TundraUX3 from your GNOME/KDE login session (or configure a session D-Bus) for notifications and portal integration".to_string(),
+        }
+    }
+}
+
+fn clipboard_check(probe: &dyn LinuxDoctorProbe) -> EnvironmentCheck {
+    let x11_available = probe.env_var("DISPLAY").is_some();
+    let wayland_available = probe.env_var("WAYLAND_DISPLAY").is_some()
+        || probe
+            .env_var("XDG_SESSION_TYPE")
+            .is_some_and(|value| value.eq_ignore_ascii_case("wayland"));
+
+    if let Some(available) = probe.clipboard_backend_available() {
+        return if available {
+            EnvironmentCheck {
+                label: "Linux clipboard".to_string(),
+                status: CheckStatus::Pass,
+                message: match (wayland_available, x11_available) {
+                    (true, true) => {
+                        "connected to a clipboard backend; Wayland and X11/XWayland endpoints are present"
+                    }
+                    (true, false) => {
+                        "connected to the compositor clipboard through the Wayland data-control backend"
+                    }
+                    (false, true) => "connected to the X11 clipboard backend",
+                    (false, false) => "connected to a Linux clipboard backend",
+                }
+                .to_string(),
+            }
+        } else {
+            EnvironmentCheck {
+                label: "Linux clipboard".to_string(),
+                status: CheckStatus::Warning,
+                message: "the clipboard backend could not establish a live Wayland or X11 connection; enable compositor data-control or XWayland (Bracketed Paste remains available)".to_string(),
+            }
+        };
+    }
+
+    match (wayland_available, x11_available) {
+        (_, true) => EnvironmentCheck {
+            label: "Linux clipboard".to_string(),
+            status: CheckStatus::Pass,
+            message: "X11/XWayland clipboard fallback is available".to_string(),
+        },
+        (true, false) => EnvironmentCheck {
+            label: "Linux clipboard".to_string(),
+            status: CheckStatus::Warning,
+            message: "native Wayland session detected without XWayland; clipboard requires compositor data-control support (enable XWayland or use a compositor with ext-data-control/wlr-data-control)".to_string(),
+        },
+        (false, false) => EnvironmentCheck {
+            label: "Linux clipboard".to_string(),
+            status: CheckStatus::Warning,
+            message: "no Wayland or X11 display was detected; start from a graphical session to enable clipboard integration (Bracketed Paste remains available in the editor)".to_string(),
+        },
+    }
+}
+
+fn notification_check(probe: &dyn LinuxDoctorProbe) -> EnvironmentCheck {
+    let available = probe
+        .session_service_available("org.freedesktop.Notifications")
+        .unwrap_or_else(|| probe.env_var("DBUS_SESSION_BUS_ADDRESS").is_some());
+    if available {
+        EnvironmentCheck {
+            label: "Desktop notifications".to_string(),
+            status: CheckStatus::Pass,
+            message: "org.freedesktop.Notifications is running or D-Bus activatable; stderr and watchdog reports remain durable fallbacks".to_string(),
+        }
+    } else {
+        EnvironmentCheck {
+            label: "Desktop notifications".to_string(),
+            status: CheckStatus::Warning,
+            message: "no session D-Bus was detected; install/enable xdg-desktop-portal or a notification daemon in the graphical session; stderr and watchdog reports will be used".to_string(),
+        }
+    }
+}
+
+fn polkit_check(probe: &dyn LinuxDoctorProbe) -> EnvironmentCheck {
+    if !probe.command_exists("pkcheck") {
+        return EnvironmentCheck {
+            label: "polkit".to_string(),
+            status: CheckStatus::Warning,
+            message: "pkcheck was not found; install and enable polkit to authorize interactive Power off requests".to_string(),
+        };
+    }
+    match probe.logind_poweroff_state() {
+        Some(Ok(state)) if matches!(state.as_str(), "yes" | "challenge") => EnvironmentCheck {
+            label: "polkit".to_string(),
+            status: CheckStatus::Pass,
+            message: format!(
+                "pkcheck is executable and logind CanPowerOff returned {state}; no sudo path is used"
+            ),
+        },
+        Some(Ok(state)) => EnvironmentCheck {
+            label: "polkit".to_string(),
+            status: CheckStatus::Warning,
+            message: format!(
+                "pkcheck is executable, but logind CanPowerOff returned {state}; check the desktop polkit agent and policy"
+            ),
+        },
+        Some(Err(error)) => EnvironmentCheck {
+            label: "polkit".to_string(),
+            status: CheckStatus::Warning,
+            message: format!(
+                "pkcheck is executable, but logind authorization could not be queried: {error}"
+            ),
+        },
+        None => EnvironmentCheck {
+            label: "polkit".to_string(),
+            status: CheckStatus::Warning,
+            message: "pkcheck is executable, but this build could not verify the live desktop authorization agent".to_string(),
+        },
+    }
+}
+
+fn image_protocol_check(probe: &dyn LinuxDoctorProbe) -> EnvironmentCheck {
+    let term = probe
+        .env_var("TERM")
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    let term_program = probe
+        .env_var("TERM_PROGRAM")
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    let supported = term.contains("kitty")
+        || term_program.contains("kitty")
+        || term_program.contains("wezterm")
+        || probe.env_var("KITTY_WINDOW_ID").is_some()
+        || probe.env_var("WEZTERM_EXECUTABLE").is_some();
+
+    if supported {
+        EnvironmentCheck {
+            label: "Terminal image protocol".to_string(),
+            status: CheckStatus::Pass,
+            message: "a supported terminal image protocol was detected".to_string(),
+        }
+    } else {
+        EnvironmentCheck {
+            label: "Terminal image protocol".to_string(),
+            status: CheckStatus::Warning,
+            message: "no supported terminal image protocol was detected; TundraUX3 will use its explicit text/ASCII fallback".to_string(),
         }
     }
 }
@@ -348,5 +825,152 @@ fn storage_warning_message(report: &storage::StorageLoadReport) -> String {
         "storage initialized with warnings".to_string()
     } else {
         format!("storage initialized with warnings: {}", warnings.join("; "))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::{HashMap, HashSet};
+
+    use super::*;
+
+    #[derive(Default)]
+    struct TestProbe {
+        environment: HashMap<&'static str, &'static str>,
+        commands: HashSet<&'static str>,
+        paths: HashSet<&'static str>,
+        logind_state: Option<&'static str>,
+        session_bus_reachable: Option<bool>,
+        session_services: HashSet<&'static str>,
+        clipboard_backend_available: Option<bool>,
+    }
+
+    impl LinuxDoctorProbe for TestProbe {
+        fn env_var(&self, name: &str) -> Option<String> {
+            self.environment.get(name).map(|value| (*value).to_string())
+        }
+
+        fn command_exists(&self, command: &str) -> bool {
+            self.commands.contains(command)
+        }
+
+        fn path_exists(&self, path: &str) -> bool {
+            self.paths.contains(path)
+        }
+
+        fn logind_poweroff_state(&self) -> Option<Result<String, String>> {
+            self.logind_state.map(|state| Ok(state.to_string()))
+        }
+
+        fn session_bus_reachable(&self) -> Option<bool> {
+            self.session_bus_reachable
+        }
+
+        fn session_service_available(&self, name: &str) -> Option<bool> {
+            self.session_bus_reachable
+                .map(|_| self.session_services.contains(name))
+        }
+
+        fn clipboard_backend_available(&self) -> Option<bool> {
+            self.clipboard_backend_available
+        }
+    }
+
+    fn check<'a>(checks: &'a [EnvironmentCheck], label: &str) -> &'a EnvironmentCheck {
+        checks
+            .iter()
+            .find(|check| check.label == label)
+            .unwrap_or_else(|| panic!("missing check {label}"))
+    }
+
+    #[test]
+    fn linux_doctor_reports_ready_desktop_dependencies_from_injected_probe() {
+        let probe = TestProbe {
+            environment: HashMap::from([
+                ("PATH", "/test/bin"),
+                ("DBUS_SESSION_BUS_ADDRESS", "unix:path=/run/user/1000/bus"),
+                ("DISPLAY", ":0"),
+                ("TERM", "xterm-kitty"),
+            ]),
+            commands: HashSet::from(["xdg-open", "gio", "pkcheck"]),
+            paths: HashSet::from([
+                "/run/systemd/system",
+                "/run/dbus/system_bus_socket",
+                "/usr/libexec/xdg-desktop-portal",
+            ]),
+            logind_state: Some("challenge"),
+            session_bus_reachable: Some(true),
+            session_services: HashSet::from([
+                "org.freedesktop.portal.Desktop",
+                "org.freedesktop.Notifications",
+            ]),
+            clipboard_backend_available: Some(true),
+        };
+
+        let checks = linux_environment_checks(PlatformKind::Linux, &probe);
+
+        assert_eq!(
+            check(&checks, "Linux command: xdg-open").status,
+            CheckStatus::Pass
+        );
+        assert_eq!(check(&checks, "systemd-logind").status, CheckStatus::Pass);
+        assert_eq!(check(&checks, "Desktop portal").status, CheckStatus::Pass);
+        assert_eq!(check(&checks, "Linux clipboard").status, CheckStatus::Pass);
+        assert_eq!(
+            check(&checks, "Terminal image protocol").status,
+            CheckStatus::Pass
+        );
+    }
+
+    #[test]
+    fn linux_doctor_explains_wayland_clipboard_and_missing_runtime_services() {
+        let probe = TestProbe {
+            environment: HashMap::from([("WAYLAND_DISPLAY", "wayland-0")]),
+            ..TestProbe::default()
+        };
+
+        let checks = linux_environment_checks(PlatformKind::Linux, &probe);
+
+        let clipboard = check(&checks, "Linux clipboard");
+        assert_eq!(clipboard.status, CheckStatus::Warning);
+        assert!(clipboard.message.contains("data-control"));
+        assert!(
+            check(&checks, "Linux command: xdg-open")
+                .message
+                .contains("xdg-utils")
+        );
+        assert!(
+            check(&checks, "Session D-Bus")
+                .message
+                .contains("DBUS_SESSION_BUS_ADDRESS")
+        );
+        assert!(
+            check(&checks, "Desktop portal")
+                .message
+                .contains("xdg-desktop-portal")
+        );
+        assert!(
+            check(&checks, "Terminal image protocol")
+                .message
+                .contains("text/ASCII fallback")
+        );
+    }
+
+    #[test]
+    fn linux_doctor_checks_do_not_change_other_platform_output() {
+        let probe = TestProbe::default();
+        assert!(linux_environment_checks(PlatformKind::Windows, &probe).is_empty());
+        assert!(linux_environment_checks(PlatformKind::Macos, &probe).is_empty());
+    }
+
+    #[test]
+    fn linux_fail_checks_are_release_blocking() {
+        let probe = TestProbe::default();
+        let checks = linux_environment_checks(PlatformKind::Linux, &probe);
+
+        assert!(
+            environment_checks_have_failures(&checks),
+            "missing required Linux commands must make doctor fail"
+        );
     }
 }

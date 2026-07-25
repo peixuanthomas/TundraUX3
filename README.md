@@ -4,7 +4,7 @@ TundraUX3 是一个使用 Rust 编写的终端桌面环境实验项目。它在�
 
 项目以 **crossterm** 负责终端输入输出适配，以 **Ratatui** 负责布局和绘制，并将应用状态、UI 基础设施、操作系统能力、持久化和进程监督拆分为独立 crate。workspace 内部 crate 使用功能名称；面向用户的二进制名称仍然是 **tundra-shell** 和 **tundra-cli**。
 
-> 当前支持 Windows 11、macOS 和 Linux 基础版。运行环境需要兼容 crossterm 的真实终端；默认资源集要求至少 108 × 20 个终端单元格，程序会根据实际加载的 ASCII 资源自动提高这个下限。
+> 当前支持 Windows 11、macOS 和 Linux。Linux 首发目标为 x86_64 的 systemd/Freedesktop 普通桌面会话（Ubuntu LTS、Fedora、GNOME/KDE、Wayland/X11）；运行环境需要兼容 crossterm 的真实终端。默认资源集要求至少 108 × 20 个终端单元格，程序会根据实际加载的 ASCII 资源自动提高这个下限。
 
 ## 目录
 
@@ -39,8 +39,8 @@ TundraUX3 是一个使用 Rust 编写的终端桌面环境实验项目。它在�
 ### 环境要求
 
 1. 安装支持 Rust 2024 edition 的稳定版 Rust 和 Cargo。
-2. 使用 Windows 11、macOS 或 Linux 基础版。
-3. 在 Windows Terminal、WezTerm、iTerm2 或其他兼容 crossterm 的终端中运行；Linux 的外部打开功能需要 `xdg-open` 可用。
+2. 使用 Windows 11、macOS 或 Linux x86_64。Linux 需要 systemd-logind 和标准 Freedesktop 用户会话；不要求 root。
+3. 在 Windows Terminal、WezTerm、iTerm2 或其他兼容 crossterm 的终端中运行；Linux 安装 `xdg-utils` 和 `libglib2.0-bin`，并建议提供 session D-Bus、xdg-desktop-portal、polkit 与 XWayland（在 Wayland data-control 不可用时作为剪贴板兼容层）。
 4. 将终端窗口调整到至少 108 × 20；更大的自定义 ASCII 资源可能需要更多空间。
 
 ### 构建
@@ -91,7 +91,7 @@ tundra-shell 的一次正常启动大致经过以下阶段：
 5. **决定身份入口**：如果用户列表为空，进入首次设置与管理员创建；否则进入 Weathr 锁屏，然后进入登录界面。
 6. **创建会话**：ShellSession 同时持有 UI 无关的 AppState 和终端会话专用的 UiSessionState，并根据首次运行、登录恢复结果和内部构建模式创建初始屏幕、焦点与命中表。
 7. **进入事件循环**：Shell 获取终端事件、更新时间与后台任务、分发命令、构造 ViewModel，再由 ui 计算布局并绘制一帧。
-8. **退出或锁屏**：退出会先恢复 raw mode、备用屏幕、鼠标捕获和光标；注销则销毁当前 Shell UI 会话并重新进入 Weathr 锁屏。Windows 的关机操作只在终端恢复后由 Shell runtime 调用平台接口。
+8. **退出或锁屏**：退出会先恢复 raw mode、备用屏幕、鼠标捕获和光标；注销则销毁当前 Shell UI 会话并重新进入 Weathr 锁屏。支持电源关闭的平台会在终端恢复后由 Shell runtime 调用平台接口。
 
 ### 一帧是怎样产生的
 
@@ -173,7 +173,7 @@ flowchart TD
 | **cli** | tundra-cli 参数解析、诊断、路径查看、配置读写、存储重置、动画预览和 Weathr 启动命令。CLI 不依赖 ui。 |
 | **identity** | 用户、会话、授权、密码验证和登录锁定；身份记录由 storage 持久化。 |
 | **storage** | 平台路径上的 TOML/版本化 JSON 文档、原子写入、schema 校验、迁移与损坏文件恢复。 |
-| **platform** | Windows/macOS/Linux 的路径、终端能力、文件系统、程序启动和系统诊断等 OS 边界；Linux 基础版不提供回收站、系统剪贴板、卷枚举、关键错误对话框或关机。 |
+| **platform** | Windows/macOS/Linux 的路径、终端能力、文件系统、程序启动和系统诊断等 OS 边界；Linux 遵循 XDG、Freedesktop Trash 和 systemd-logind，并将桌面服务可用性报告给 doctor。 |
 | **time** | NetworkClock、ClockDisplay、ClockSnapshot、时间同步和 TIME_SYNC_INTERVAL；供 APP 与 Weathr 共用。 |
 | **weathr** | 天气提供方、缓存、地理位置、动画、ASCII 场景和锁屏运行时。它作为库被 CLI 与 Shell 托管。 |
 | **ascii-assets** | 主题清单、banner、图标、天气世界和时钟字体的加载、校验与尺寸统计。 |
@@ -262,7 +262,7 @@ Weathr 使用 Open-Meteo 获取天气，并通过地址搜索、配置位置或�
 
 Explorer 的领域层描述目录条目、选择、排序、冲突策略和操作结果；平台层执行实际的枚举、复制、移动、重命名、打开和回收站操作。长时间文件操作通过受管理后台任务执行，Shell 显示阶段进度，并在名称冲突、删除或清空回收站前建立确认流程。
 
-Windows 和 macOS 的回收站实现位于 platform，因此 APP 不拼接系统 Trash 路径，也不直接调用平台命令。
+Windows、macOS 和 Linux 的回收站实现都位于 platform，因此 APP 不拼接系统 Trash 路径，也不直接调用平台命令。
 
 ### Launcher
 
@@ -292,13 +292,32 @@ Settings 的全局选项写入 StorageConfig 并同步更新 AppState；外观�
 | 状态 | %LOCALAPPDATA%\TundraUX3\state | ~/Library/Application Support/TundraUX3/state | $XDG_DATA_HOME/TundraUX3/state（默认 ~/.local/share/TundraUX3/state） |
 | 缓存 | %LOCALAPPDATA%\TundraUX3\cache | ~/Library/Caches/TundraUX3 | $XDG_CACHE_HOME/TundraUX3（默认 ~/.cache/TundraUX3） |
 | 日志 | %LOCALAPPDATA%\TundraUX3\logs | ~/Library/Logs/TundraUX3 | $XDG_STATE_HOME/TundraUX3/logs（默认 ~/.local/state/TundraUX3/logs） |
-| 临时文件 | %TEMP%\TundraUX3 | 系统临时目录下的 TundraUX3 | 系统临时目录下的 TundraUX3 |
+| 临时文件 | %TEMP%\TundraUX3 | 系统临时目录下的 TundraUX3 | $XDG_RUNTIME_DIR/TundraUX3；没有时使用带 UID 的私有 /tmp 目录 |
 
 可使用 tundra-cli paths 查看模板路径和当前机器解析后的绝对路径。
 
-### Linux 基础版限制
+### Linux 桌面集成与功能矩阵
 
-Linux 基础版支持标准路径、文件系统、进程启动与等待和系统时间。`open_path` 与 `open_uri` 通过 `xdg-open` 尽力调用；缺少该命令或调用失败会返回可诊断错误，但不会阻止程序启动。系统剪贴板、Trash、卷枚举、关键错误对话框和关机目前不支持。
+Linux 是与 Windows 同级的平台，而不是“基础版”。普通用户会话使用 XDG Base Directory 和 `user-dirs.dirs`，并以私有权限保存应用自己的配置、状态、恢复、日志和临时文件。Explorer 通过 Freedesktop Trash 管理删除与恢复，卷入口只显示本地固定盘和可移动盘；网络与伪文件系统会被过滤。
+
+| 功能 | Windows | Linux x86_64 |
+| --- | --- | --- |
+| 默认应用、文件与 URI 打开 | 平台默认程序 | `xdg-open`（后台回收，不阻塞 UI） |
+| Launcher | 原生应用/快捷方式 | ELF、AppImage、shebang 脚本和经过验证的 `.desktop` 入口 |
+| 系统剪贴板 | 原生后端 | Wayland data-control 或 X11/XWayland；连接失败会重建，编辑器仍有 bracketed-paste 回退 |
+| 本地卷与 Trash | 原生后端 | mountinfo/statvfs/sysfs 与 Freedesktop Trash（不退化为永久删除） |
+| 关键错误 | 平台提示与日志 | 桌面通知；watchdog 文本报告和 stderr 继续保留 |
+| Power off | 平台授权 | systemd-logind + polkit；仅关机，不提供重启 |
+
+`tundra-cli doctor` 会列出缺失的 `xdg-open`、`gio`、session D-Bus、portal、polkit、logind 或剪贴板后端，并给出可操作的安装/会话建议。缺少桌面帮助程序只降级相应集成；它不会让应用改用 shell 字符串执行、`sudo` 或永久删除来“兜底”。
+
+首发不包含 aarch64、重启、系统镜像、会话切换或 SteamOS 式产品化。这些工作属于后续 M1+，不应与 Linux 桌面对齐混在一起。
+
+### 从 Windows 手动复制数据到 Linux
+
+配置格式保持兼容，但本版本**不**自动导入或重写 Windows 路径。关闭两端的 TundraUX3 后，先在 Windows 运行 `tundra-cli paths`，备份 `%APPDATA%\TundraUX3\config.toml` 与 `%LOCALAPPDATA%\TundraUX3\state`；在 Linux 运行 `tundra-cli paths`，把它们分别复制到 Linux 显示的 config 与 state 位置。保留原备份，不要合并两个 state 目录。
+
+账户、主题、设置和时钟数据可直接沿用。Windows Launcher 和最近文件里的绝对路径会在 Linux 上安全显示为 Missing，不会被猜测性转换；请在 Linux 中重新选择或固定对应文件/应用。
 
 ### 文档与 schema
 
@@ -314,7 +333,7 @@ storage 会管理下列主要文件：
 | **clock.v1.json** | 版本化 JSON，schema 1 | 时钟、闹钟和计时项目。 |
 | **trash/trash.v1.json** | 版本化 JSON，schema 1 | 应用回收站清单。 |
 
-写入使用临时文件和替换步骤，尽量避免部分写入。启动时先检查 schema：比当前程序更新的 schema 会被拒绝，防止旧程序覆盖新格式；无法解析的当前/旧格式文档会被移到恢复文件并用默认文档重建，同时在 Shell 中显示恢复提示。旧的 users.v1.json 会迁移到 users.v2.json。
+写入使用临时文件、文件同步、替换和父目录同步步骤，尽量避免部分写入。Linux 应用自有目录使用 0700，配置、用户、会话、恢复、日志和临时文件使用 0600；不会修改 Editor 打开的普通文档权限。启动时先检查 schema：比当前程序更新的 schema 会被拒绝，防止旧程序覆盖新格式；无法解析的当前/旧格式文档会被移到恢复文件并用默认文档重建，同时在 Shell 中显示恢复提示。旧的 users.v1.json 会迁移到 users.v2.json。
 
 密码不会以明文写入存储，而是通过带随机 salt 的 Argon2 哈希保存。CLI 明确禁止直接读取或修改用户名、密码等身份字段；这些操作必须通过经过授权的用户管理工作流。
 
@@ -395,6 +414,8 @@ cargo fmt --check
 cargo check --workspace
 cargo test --workspace
 cargo build -p shell -p cli -p weathr
+bash scripts/package-linux.sh            # Ubuntu/Debian: tar.gz + .deb
+bash scripts/package-linux.sh --tar-only # Fedora/其他 Linux: tar.gz
 ~~~
 
 weathr 是库 crate，因此最后一条命令验证它能被构建，但用户通过 tundra-cli weathr 或 Shell 锁屏运行它。
@@ -410,9 +431,18 @@ cargo test -p identity
 cargo test -p platform
 ~~~
 
+Linux 的常规自动测试不会修改用户真实 Trash。发布候选可在目标 GNOME/KDE 普通用户会话中单独运行原生往返 smoke；它只创建临时测试项，成功后会恢复并清理：
+
+~~~console
+cargo test -p platform --test native_trash_smoke -- --ignored --nocapture
+python3 scripts/linux-shell-smoke.py target/debug/tundra-shell
+~~~
+
+PTY smoke 会在隔离的 XDG 目录中进入真实 Shell，注入 12,000 个 SGR 全移动鼠标事件，并要求队尾的键盘哨兵在 5 秒内打开退出确认；随后验证信号退出、raw mode、鼠标捕获、备用屏幕和光标均正确恢复。
+
 测试重点包括：
 
-- 输入阶段、修饰键、paste、focus、双击、拖拽和滚动；
+- 输入阶段、修饰键、paste、focus、双击、拖拽和滚动，包括高频鼠标移动的有界合并与事件保序；
 - 模态命中优先级与焦点恢复；
 - 通知 follow-up、超时和去重；
 - Editor grapheme 位置、Markdown 往返、异步保存和退出保护；
@@ -451,7 +481,7 @@ tundra-cli doctor
 tundra-cli paths
 ~~~
 
-macOS 上 Explorer 的 Trash 操作可能需要 Full Disk Access；程序会在启动/诊断中给出系统设置提示。Windows 平台检查要求 Windows 11 build 22000 或更高。Linux 基础版不支持 Explorer Trash、系统剪贴板、卷枚举、关键错误对话框和关机；外部打开操作依赖 `xdg-open`。
+macOS 上 Explorer 的 Trash 操作可能需要 Full Disk Access；程序会在启动/诊断中给出系统设置提示。Windows 平台检查要求 Windows 11 build 22000 或更高。Linux 先运行 `tundra-cli doctor`：安装 `xdg-utils` 和 `libglib2.0-bin`；在图形会话中确认 session D-Bus、portal 和 polkit 可用；Wayland 剪贴板异常时确认 compositor 提供 data-control，或安装/启用 XWayland。Power off 显示授权取消或拒绝时，请在当前登录会话配置 polkit，而不是用 `sudo` 启动 TundraUX3。
 
 ### 配置损坏
 

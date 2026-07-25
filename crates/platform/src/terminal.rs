@@ -1,5 +1,7 @@
 use std::env;
 use std::io::{self, Write};
+use std::sync::Arc;
+use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use crate::PlatformKind;
@@ -8,7 +10,16 @@ use crate::diagnostics::{CheckStatus, EnvironmentCheck};
 pub const ENTER_FULLSCREEN_SEQUENCE: &str = "\x1B[?1049h\x1B[?25l\x1B[2J\x1B[H";
 pub const EXIT_FULLSCREEN_SEQUENCE: &str = "\x1B[?25h\x1B[?1049l";
 
-static TERMINAL_RUNNING: AtomicBool = AtomicBool::new(true);
+static TERMINAL_SHUTDOWN_REQUESTED: OnceLock<Arc<AtomicBool>> = OnceLock::new();
+
+fn shared_shutdown_flag() -> &'static Arc<AtomicBool> {
+    TERMINAL_SHUTDOWN_REQUESTED.get_or_init(|| Arc::new(AtomicBool::new(false)))
+}
+
+#[cfg(target_os = "linux")]
+pub(crate) fn request_process_shutdown() {
+    shared_shutdown_flag().store(true, Ordering::SeqCst);
+}
 
 pub fn with_terminal_fullscreen<W, T>(
     output: &mut W,
@@ -105,11 +116,13 @@ pub fn is_windows_terminal_session(wt_session: Option<&str>) -> bool {
 pub struct TerminalControlHandler {
     #[cfg(windows)]
     installed: bool,
+    #[cfg(unix)]
+    signal_ids: Vec<signal_hook::SigId>,
 }
 
 impl TerminalControlHandler {
     pub fn install() -> Self {
-        TERMINAL_RUNNING.store(true, Ordering::SeqCst);
+        shared_shutdown_flag().store(false, Ordering::SeqCst);
 
         #[cfg(windows)]
         {
@@ -119,23 +132,50 @@ impl TerminalControlHandler {
             Self { installed }
         }
 
-        #[cfg(not(windows))]
+        #[cfg(unix)]
+        {
+            use signal_hook::consts::signal::{SIGHUP, SIGINT, SIGTERM};
+            let signal_ids = [SIGINT, SIGTERM, SIGHUP]
+                .into_iter()
+                .filter_map(|signal| {
+                    signal_hook::flag::register(signal, Arc::clone(shared_shutdown_flag())).ok()
+                })
+                .collect();
+            Self { signal_ids }
+        }
+
+        #[cfg(not(any(windows, unix)))]
         {
             Self {}
         }
     }
 
     pub fn shutdown_requested(&self) -> bool {
-        !TERMINAL_RUNNING.load(Ordering::SeqCst)
+        shared_shutdown_flag().load(Ordering::SeqCst)
+    }
+
+    /// Returns the process-wide termination source shared by the lock screen
+    /// and the main Shell session.
+    pub fn shutdown_flag(&self) -> Arc<AtomicBool> {
+        Arc::clone(shared_shutdown_flag())
     }
 }
 
-#[cfg(windows)]
 impl Drop for TerminalControlHandler {
     fn drop(&mut self) {
-        if self.installed {
-            unsafe {
-                SetConsoleCtrlHandler(Some(handle_console_control), false.into());
+        #[cfg(windows)]
+        {
+            if self.installed {
+                unsafe {
+                    SetConsoleCtrlHandler(Some(handle_console_control), false.into());
+                }
+            }
+        }
+
+        #[cfg(unix)]
+        {
+            for signal_id in self.signal_ids.drain(..) {
+                signal_hook::low_level::unregister(signal_id);
             }
         }
     }
@@ -146,7 +186,9 @@ unsafe extern "system" fn handle_console_control(control_type: u32) -> i32 {
     match control_type {
         CTRL_C_EVENT | CTRL_BREAK_EVENT | CTRL_CLOSE_EVENT | CTRL_LOGOFF_EVENT
         | CTRL_SHUTDOWN_EVENT => {
-            TERMINAL_RUNNING.store(false, Ordering::SeqCst);
+            if let Some(shutdown) = TERMINAL_SHUTDOWN_REQUESTED.get() {
+                shutdown.store(true, Ordering::SeqCst);
+            }
             true.into()
         }
         _ => false.into(),

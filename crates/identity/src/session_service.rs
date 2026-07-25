@@ -56,9 +56,7 @@ impl SessionService {
             }
         }
 
-        if let Err(error) = result {
-            return Err(error);
-        }
+        result?;
 
         let password_ok = verify_password(password, &document.users[index].password_hash);
         if !password_ok {

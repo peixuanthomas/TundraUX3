@@ -16,22 +16,17 @@ impl AssetResolver {
         }
 
         let exe = env::current_exe().map_err(|source| AssetError::CurrentExe { source })?;
-        let Some(parent) = exe.parent() else {
-            return Err(AssetError::MissingCurrentExeParent { path: exe });
-        };
-        let primary = parent.join("assets");
-        if primary.exists() {
-            return Self::new(primary);
-        }
-        if parent.file_name().is_some_and(|name| name == "deps")
-            && let Some(profile_dir) = parent.parent()
-        {
-            let profile_assets = profile_dir.join("assets");
-            if profile_assets.exists() {
-                return Self::new(profile_assets);
+        let candidates = asset_root_candidates(&exe)?;
+        for candidate in &candidates {
+            if candidate.is_dir() {
+                return Self::new(candidate.clone());
             }
         }
-        Self::new(primary)
+
+        // Keep the error anchored at the normal adjacent location.  This makes a
+        // missing development/runtime asset directory actionable without leaking
+        // platform-specific fallback details into callers.
+        Self::new(candidates[0].clone())
     }
 
     pub fn canonical() -> Result<Self, AssetError> {
@@ -66,6 +61,60 @@ impl AssetResolver {
     }
 }
 
+fn asset_root_candidates(exe: &Path) -> Result<Vec<PathBuf>, AssetError> {
+    let Some(parent) = exe.parent() else {
+        return Err(AssetError::MissingCurrentExeParent {
+            path: exe.to_path_buf(),
+        });
+    };
+
+    let primary = parent.join("assets");
+    let mut candidates = vec![primary];
+    if parent.file_name().is_some_and(|name| name == "deps")
+        && let Some(profile_dir) = parent.parent()
+    {
+        candidates.push(profile_dir.join("assets"));
+    }
+
+    // The Debian package installs shared immutable assets here.  Keeping this
+    // fallback Linux-only avoids surprising non-Linux development runs while
+    // still allowing /usr/bin/tundra-* to work without an environment variable.
+    #[cfg(target_os = "linux")]
+    candidates.push(PathBuf::from("/usr/share/tundraux3/assets"));
+
+    Ok(candidates)
+}
+
 pub fn asset_root_from_env_or_current_exe() -> Result<PathBuf, AssetError> {
     AssetResolver::from_env_or_current_exe().map(|resolver| resolver.root)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn candidates_cover_adjacent_and_test_profile_assets() {
+        let candidates =
+            asset_root_candidates(Path::new("/repo/target/debug/deps/tundra-shell-abc"))
+                .expect("candidate paths");
+
+        assert_eq!(
+            candidates[0],
+            PathBuf::from("/repo/target/debug/deps/assets")
+        );
+        assert!(candidates.contains(&PathBuf::from("/repo/target/debug/assets")));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn linux_candidates_include_system_install_location() {
+        let candidates =
+            asset_root_candidates(Path::new("/usr/bin/tundra-shell")).expect("candidate paths");
+
+        assert_eq!(
+            candidates.last(),
+            Some(&PathBuf::from("/usr/share/tundraux3/assets"))
+        );
+    }
 }

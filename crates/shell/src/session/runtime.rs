@@ -6,6 +6,8 @@ use watchdog::{
     RecoveryOutcome, ReplaySafety, RestartPolicy, RuntimeSnapshot, TaskId, TaskKind, TaskSpec,
 };
 
+const MAX_READY_TERMINAL_EVENTS_PER_FRAME: usize = 4_096;
+
 pub fn run_without_animation(output: &mut impl Write) -> io::Result<()> {
     run_not_fullscreen_without_animation(output)
 }
@@ -120,6 +122,7 @@ pub fn run_fullscreen_blocking_managed(
     let terminal_size_requirement = ShellTerminalSizeRequirement::from_assets(&ascii_assets);
     checked_current_terminal_size(terminal_size_requirement)?;
     let platform: std::sync::Arc<dyn Platform> = std::sync::Arc::from(platform::native_platform());
+    let terminal_control = TerminalControlHandler::install();
     let shell_watchdog = process
         .register_app(shell_watchdog_descriptor())
         .map_err(io::Error::other)?;
@@ -134,7 +137,7 @@ pub fn run_fullscreen_blocking_managed(
     let time_sync_watchdog = shell_watchdog.child_component(ComponentId::from_static("time-sync"));
     // Both background jobs must be live before the blocking frost animation so
     // normal login can consume time calibration and prefetched weather data.
-    let _time_sync_worker = spawn_time_sync_worker(
+    let time_sync_worker = spawn_time_sync_worker(
         time_sync_sender,
         &time_sync_watchdog,
         initial_startup.storage_manager.clone(),
@@ -159,6 +162,10 @@ pub fn run_fullscreen_blocking_managed(
     let mut session_recoveries = VecDeque::new();
     let mut explorer_task_runtime: Option<ShellExplorerTaskRuntime> = None;
     let mut diagnostics_task_runtime: Option<ShellDiagnosticsTaskRuntime> = None;
+    // Linux installs its logind subscriptions lazily through this poll. Do it
+    // before the first Weathr lockscreen so PrepareForShutdown can drive the
+    // same process-wide shutdown flag used by the main Shell and lockscreen.
+    let _ = platform.poll_lifecycle_event();
 
     loop {
         let mut startup = match initial_startup.take() {
@@ -193,7 +200,11 @@ pub fn run_fullscreen_blocking_managed(
                 BoundarySpec::new("shell-lockscreen-ui-session", BoundaryKind::UiSession)
                     .terminal_owner(),
                 AssertUnwindSafe(|| {
-                    weathr::run_shell_lockscreen_managed(lockscreen_options, lockscreen_watchdog)
+                    weathr::run_shell_lockscreen_managed_with_shutdown(
+                        lockscreen_options,
+                        lockscreen_watchdog,
+                        terminal_control.shutdown_flag(),
+                    )
                 }),
             );
             match lockscreen_result {
@@ -225,6 +236,8 @@ pub fn run_fullscreen_blocking_managed(
                     std::sync::Arc::clone(&platform),
                     &time_sync_receiver,
                     &mut cached_time_sync,
+                    &time_sync_worker,
+                    &terminal_control,
                     &shell_watchdog,
                     &process,
                     explorer_task_runtime.clone(),
@@ -442,8 +455,14 @@ pub(super) struct TimedTimeSyncResult {
 }
 
 pub(super) struct TimeSyncWorker {
-    pub(super) stop_sender: mpsc::Sender<()>,
+    pub(super) control_sender: mpsc::Sender<TimeSyncControl>,
     pub(super) handle: Option<ManagedThreadHandle<()>>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum TimeSyncControl {
+    Refresh,
+    Stop,
 }
 
 pub(super) const THEME_RELOAD_INTERVAL: Duration = Duration::from_millis(250);
@@ -559,8 +578,12 @@ pub(super) fn users_file_signature(storage: &StorageManager) -> Result<ThemeFile
 }
 
 impl TimeSyncWorker {
+    fn request_refresh(&self) {
+        let _ = self.control_sender.send(TimeSyncControl::Refresh);
+    }
+
     fn stop_and_join(&mut self) {
-        let _ = self.stop_sender.send(());
+        let _ = self.control_sender.send(TimeSyncControl::Stop);
         if let Some(handle) = self.handle.take() {
             handle.cancel();
             let _ = handle.join();
@@ -596,6 +619,8 @@ pub(super) fn run_fullscreen_shell_session(
     platform: std::sync::Arc<dyn Platform>,
     time_sync_receiver: &mpsc::Receiver<TimedTimeSyncResult>,
     cached_time_sync: &mut Option<CachedTimeSyncResult>,
+    time_sync_worker: &TimeSyncWorker,
+    terminal_control: &TerminalControlHandler,
     shell_watchdog: &AppWatchdog,
     process_watchdog: &ProcessWatchdog,
     explorer_task_runtime: Option<ShellExplorerTaskRuntime>,
@@ -603,7 +628,6 @@ pub(super) fn run_fullscreen_shell_session(
 ) -> io::Result<FullscreenShellSessionOutcome> {
     let terminal_size_requirement = ShellTerminalSizeRequirement::from_assets(&ascii_assets);
     let initial_size = checked_current_terminal_size(terminal_size_requirement)?;
-    let terminal_control = TerminalControlHandler::install();
     let mut guard = TerminalGuard::enter(output)?;
     let launcher_icon_result =
         LauncherIconRuntime::detect_and_spawn(std::sync::Arc::clone(&platform), shell_watchdog);
@@ -644,10 +668,58 @@ pub(super) fn run_fullscreen_shell_session(
     }
     let mut theme_reloader = UserThemeReloader::new(theme_storage, Instant::now());
     let tick_rate = Duration::from_millis(250);
+    let mut last_tick_at = Instant::now();
     let mut terminal_size_error = None;
-    let mut restore_terminal_on_exit = true;
+    let mut terminal_suspended = false;
 
     loop {
+        // logind signals are delivered by a backend worker and drained here so
+        // neither D-Bus nor policy authorization can block terminal input.
+        for _ in 0..16 {
+            let lifecycle_event = match platform.poll_lifecycle_event() {
+                Ok(event) => event,
+                Err(error) => {
+                    state.notify_alert_with_tone(
+                        format!("Desktop lifecycle monitoring failed: {error}"),
+                        ui::NotificationTone::Error,
+                    );
+                    break;
+                }
+            };
+            let Some(lifecycle_event) = lifecycle_event else {
+                break;
+            };
+            match lifecycle_event {
+                PlatformLifecycleEvent::PrepareForShutdown => {
+                    state.apply_input_with_platform(InputEvent::Shutdown, platform.as_ref());
+                }
+                PlatformLifecycleEvent::PrepareForSleep if !terminal_suspended => {
+                    let _ = state.persist_editor_recovery_now(Instant::now());
+                    guard.restore()?;
+                    terminal_suspended = true;
+                }
+                PlatformLifecycleEvent::Resumed => {
+                    if terminal_suspended {
+                        guard.resume()?;
+                        terminal_suspended = false;
+                    }
+                    refresh_session_after_resume(&mut state, platform.as_ref(), time_sync_worker);
+                }
+                PlatformLifecycleEvent::PrepareForSleep => {}
+            }
+        }
+
+        if terminal_suspended {
+            if terminal_control.shutdown_requested() {
+                state.apply_input_with_platform(InputEvent::Shutdown, platform.as_ref());
+            }
+            if state.shutdown_requested() {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(50));
+            continue;
+        }
+
         if let Err(error) = terminal_size_requirement.validate(crossterm::terminal::size()?) {
             terminal_size_error = Some(io::Error::other(error));
             break;
@@ -664,31 +736,44 @@ pub(super) fn run_fullscreen_shell_session(
         theme_reloader.poll_at(frame_now, &mut theme, &mut state);
         let clock_snapshot = state.app.snapshot().clock;
         state.advance_clock_background_at(&clock_snapshot, frame_now);
-        let terminal_cell_aspect_ratio = crossterm::terminal::window_size()
-            .map(|window| {
-                ui::TerminalCellAspectRatio::from_window_size(
-                    window.columns,
-                    window.rows,
-                    window.width,
-                    window.height,
-                )
-            })
-            .unwrap_or_default();
         let active_screen = state.active_screen();
         let content_screen = state.content_screen();
         let chrome = state.to_shell_chrome_view_model();
-        let home = state.to_home_view_model();
-        let clock = state
-            .to_clock_view_model_at(&clock_snapshot, frame_now)
-            .with_terminal_cell_aspect_ratio(terminal_cell_aspect_ratio);
+        // Construct only the model that can be rendered this frame. Explorer,
+        // Launcher, Editor, and Diagnostics models may clone sizable lists or
+        // formatted content; rebuilding all of them for every Editor key made
+        // input latency depend on unrelated background state.
+        let home = matches!(content_screen, ShellScreen::Home | ShellScreen::ExitConfirm)
+            .then(|| state.to_home_view_model());
+        let clock = (content_screen == ShellScreen::Clock).then(|| {
+            let terminal_cell_aspect_ratio = crossterm::terminal::window_size()
+                .map(|window| {
+                    ui::TerminalCellAspectRatio::from_window_size(
+                        window.columns,
+                        window.rows,
+                        window.width,
+                        window.height,
+                    )
+                })
+                .unwrap_or_default();
+            state
+                .to_clock_view_model_at(&clock_snapshot, frame_now)
+                .with_terminal_cell_aspect_ratio(terminal_cell_aspect_ratio)
+        });
         let time_sync_dialog = state.to_time_sync_dialog_view_model();
-        let setup = state.to_setup_view_model();
-        let login = state.to_login_view_model_at(frame_now);
-        let bootstrap_admin = state.to_bootstrap_admin_view_model();
-        let user_management = state.to_user_management_view_model();
-        let explorer = state.to_explorer_view_model();
-        let launcher = state.to_launcher_view_model();
-        if content_screen == ShellScreen::Launcher
+        let setup =
+            (content_screen == ShellScreen::FirstRunSetup).then(|| state.to_setup_view_model());
+        let login =
+            (content_screen == ShellScreen::Login).then(|| state.to_login_view_model_at(frame_now));
+        let bootstrap_admin = (content_screen == ShellScreen::BootstrapAdmin)
+            .then(|| state.to_bootstrap_admin_view_model());
+        let user_management = (content_screen == ShellScreen::UserManagement)
+            .then(|| state.to_user_management_view_model());
+        let explorer =
+            (content_screen == ShellScreen::Explorer).then(|| state.to_explorer_view_model());
+        let launcher =
+            (content_screen == ShellScreen::Launcher).then(|| state.to_launcher_view_model());
+        if let Some(launcher) = launcher.as_ref()
             && let Some(icon_runtime) = launcher_icons.as_mut()
             && let ui::ShellLayout::Full { main, .. } = ui::compute_shell_layout(Rect::new(
                 0,
@@ -703,7 +788,8 @@ pub(super) fn run_fullscreen_shell_session(
         let settings = (content_screen == ShellScreen::Settings)
             .then(|| state.to_settings_view_model())
             .flatten();
-        let diagnostics = state.to_diagnostics_view_model();
+        let diagnostics =
+            (content_screen == ShellScreen::Diagnostics).then(|| state.to_diagnostics_view_model());
         let notification = state.to_notification_view_model();
         let exit_confirmation = ui::ExitConfirmViewModel::new();
 
@@ -711,26 +797,60 @@ pub(super) fn run_fullscreen_shell_session(
             let area = frame.area();
             match content_screen {
                 ShellScreen::FirstRunSetup => {
-                    ui::render_setup(frame, area, &chrome, &setup, &theme);
+                    ui::render_setup(
+                        frame,
+                        area,
+                        &chrome,
+                        setup.as_ref().expect("Setup requires its view model"),
+                        &theme,
+                    );
                 }
                 ShellScreen::Login => {
-                    ui::render_login(frame, area, &chrome, &login, &theme);
+                    ui::render_login(
+                        frame,
+                        area,
+                        &chrome,
+                        login.as_ref().expect("Login requires its view model"),
+                        &theme,
+                    );
                 }
                 ShellScreen::BootstrapAdmin => {
-                    ui::render_bootstrap_admin(frame, area, &chrome, &bootstrap_admin, &theme);
+                    ui::render_bootstrap_admin(
+                        frame,
+                        area,
+                        &chrome,
+                        bootstrap_admin
+                            .as_ref()
+                            .expect("Bootstrap admin requires its view model"),
+                        &theme,
+                    );
                 }
                 ShellScreen::UserManagement => {
-                    ui::render_user_management(frame, area, &chrome, &user_management, &theme);
+                    ui::render_user_management(
+                        frame,
+                        area,
+                        &chrome,
+                        user_management
+                            .as_ref()
+                            .expect("User management requires its view model"),
+                        &theme,
+                    );
                 }
                 ShellScreen::Explorer => {
-                    ui::render_explorer(frame, area, &chrome, &explorer, &theme);
+                    ui::render_explorer(
+                        frame,
+                        area,
+                        &chrome,
+                        explorer.as_ref().expect("Explorer requires its view model"),
+                        &theme,
+                    );
                 }
                 ShellScreen::Launcher => {
                     ui::render_launcher_with_icons(
                         frame,
                         area,
                         &chrome,
-                        &launcher,
+                        launcher.as_ref().expect("Launcher requires its view model"),
                         &theme,
                         launcher_icons
                             .as_ref()
@@ -760,13 +880,33 @@ pub(super) fn run_fullscreen_shell_session(
                     );
                 }
                 ShellScreen::Diagnostics => {
-                    ui::render_diagnostics(frame, area, &chrome, &diagnostics, &theme);
+                    ui::render_diagnostics(
+                        frame,
+                        area,
+                        &chrome,
+                        diagnostics
+                            .as_ref()
+                            .expect("Diagnostics requires its view model"),
+                        &theme,
+                    );
                 }
                 ShellScreen::Clock => {
-                    ui::render_clock(frame, area, &chrome, &clock, &theme);
+                    ui::render_clock(
+                        frame,
+                        area,
+                        &chrome,
+                        clock.as_ref().expect("Clock requires its view model"),
+                        &theme,
+                    );
                 }
                 ShellScreen::Home | ShellScreen::ExitConfirm => {
-                    ui::render_home(frame, area, &chrome, &home, &theme);
+                    ui::render_home(
+                        frame,
+                        area,
+                        &chrome,
+                        home.as_ref().expect("Home requires its view model"),
+                        &theme,
+                    );
                 }
             }
 
@@ -791,40 +931,79 @@ pub(super) fn run_fullscreen_shell_session(
         }
 
         let poll_now = Instant::now();
+        let tick_timeout =
+            tick_rate.saturating_sub(poll_now.saturating_duration_since(last_tick_at));
         let poll_timeout = state.auth_poll_timeout(
             poll_now,
-            state.notification_poll_timeout(poll_now, tick_rate),
+            state.notification_poll_timeout(poll_now, tick_timeout),
         );
-        let action = if event::poll(poll_timeout)? {
-            let terminal_event = event::read()?;
-            if let event::Event::Resize(width, height) = terminal_event
-                && let Err(error) = terminal_size_requirement.validate((width, height))
-            {
-                terminal_size_error = Some(io::Error::other(error));
-                break;
+        let mut action = ShellAction::Redraw;
+        if event::poll(poll_timeout)? {
+            let terminal_events = read_ready_terminal_event_batch(event::read()?)?;
+            for terminal_event in terminal_events {
+                if let event::Event::Resize(width, height) = terminal_event
+                    && let Err(error) = terminal_size_requirement.validate((width, height))
+                {
+                    terminal_size_error = Some(io::Error::other(error));
+                    break;
+                }
+                action = state.apply_input_with_platform(
+                    crossterm_event_to_input(terminal_event),
+                    platform.as_ref(),
+                );
+                if action != ShellAction::Redraw {
+                    break;
+                }
             }
-            state.apply_input_with_platform(
-                crossterm_event_to_input(terminal_event),
-                platform.as_ref(),
-            )
         } else {
-            state.apply_input_with_platform(InputEvent::Tick, platform.as_ref())
-        };
+            action = state.apply_input_with_platform(InputEvent::Tick, platform.as_ref());
+            last_tick_at = Instant::now();
+        }
+
+        if terminal_size_error.is_some() {
+            break;
+        }
+
+        // A continuously-ready mouse stream must not starve authentication,
+        // notifications, clock updates, or other time-driven state.
+        let after_input = Instant::now();
+        if action == ShellAction::Redraw
+            && after_input.saturating_duration_since(last_tick_at) >= tick_rate
+        {
+            action = state.apply_input_with_platform(InputEvent::Tick, platform.as_ref());
+            last_tick_at = after_input;
+        }
 
         if action == ShellAction::Exit {
             break;
         }
         if action == ShellAction::PowerOff {
-            restore_terminal_on_exit = false;
-            break;
+            // Interactive authorization may temporarily take over the
+            // terminal. Recovery has already been persisted by the command
+            // handler, so restore the user's terminal before asking logind or
+            // the native platform service to power off.
+            guard.restore()?;
+            match platform.poweroff() {
+                Ok(()) => break,
+                Err(error) => {
+                    guard.resume()?;
+                    if let Ok((width, height)) = crossterm::terminal::size() {
+                        let _ = state.apply_input_with_platform(
+                            InputEvent::Resize { width, height },
+                            platform.as_ref(),
+                        );
+                    }
+                    state.show_exit_confirmation_modal(platform.as_ref());
+                    state.notify_alert_with_tone(
+                        format!("Power off failed: {error}"),
+                        ui::NotificationTone::Error,
+                    );
+                }
+            }
         }
     }
 
-    if restore_terminal_on_exit {
-        guard.restore()?;
-    } else {
-        guard.skip_restore();
-    }
+    guard.restore()?;
     drop(guard);
 
     if let Some(error) = terminal_size_error {
@@ -837,6 +1016,97 @@ pub(super) fn run_fullscreen_shell_session(
         FullscreenShellSessionOutcome::Exit
     };
     Ok(outcome)
+}
+
+fn read_ready_terminal_event_batch(first: event::Event) -> io::Result<Vec<event::Event>> {
+    collect_ready_terminal_event_batch(first, || event::poll(Duration::ZERO), event::read)
+}
+
+fn collect_ready_terminal_event_batch(
+    first: event::Event,
+    mut poll_ready: impl FnMut() -> io::Result<bool>,
+    mut read_ready: impl FnMut() -> io::Result<event::Event>,
+) -> io::Result<Vec<event::Event>> {
+    // Crossterm's all-motion mode can enqueue many coordinates while one
+    // Ratatui frame is being built, especially through a WSL ConPTY bridge.
+    // Drain that ready backlog before drawing again and retain only the newest
+    // point in each uninterrupted motion/resize run. Semantic boundaries such
+    // as clicks, releases, wheel steps, and focus stay ordered. A key or paste
+    // ends the batch immediately so a continuously-ready WSL mouse stream
+    // cannot delay keyboard input after Crossterm has already decoded it.
+    let mut events = Vec::new();
+    let first_requires_dispatch = terminal_event_requires_immediate_dispatch(&first);
+    push_coalesced_terminal_event(&mut events, first);
+    if first_requires_dispatch {
+        return Ok(events);
+    }
+
+    let mut raw_event_count = 1;
+    while raw_event_count < MAX_READY_TERMINAL_EVENTS_PER_FRAME && poll_ready()? {
+        let next = read_ready()?;
+        let requires_dispatch = terminal_event_requires_immediate_dispatch(&next);
+        push_coalesced_terminal_event(&mut events, next);
+        raw_event_count += 1;
+        if requires_dispatch {
+            break;
+        }
+    }
+    Ok(events)
+}
+
+fn terminal_event_requires_immediate_dispatch(event: &event::Event) -> bool {
+    matches!(event, event::Event::Key(_) | event::Event::Paste(_))
+}
+
+fn push_coalesced_terminal_event(events: &mut Vec<event::Event>, next: event::Event) {
+    if events
+        .last()
+        .is_some_and(|previous| terminal_event_can_replace(previous, &next))
+    {
+        *events
+            .last_mut()
+            .expect("the previous event was checked above") = next;
+    } else {
+        events.push(next);
+    }
+}
+
+fn terminal_event_can_replace(previous: &event::Event, next: &event::Event) -> bool {
+    match (previous, next) {
+        (event::Event::Mouse(previous), event::Event::Mouse(next))
+            if previous.modifiers == next.modifiers =>
+        {
+            match (&previous.kind, &next.kind) {
+                (event::MouseEventKind::Moved, event::MouseEventKind::Moved) => true,
+                (
+                    event::MouseEventKind::Drag(previous_button),
+                    event::MouseEventKind::Drag(next_button),
+                ) => previous_button == next_button,
+                _ => false,
+            }
+        }
+        (event::Event::Resize(_, _), event::Event::Resize(_, _)) => true,
+        _ => false,
+    }
+}
+
+fn refresh_session_after_resume(
+    state: &mut ShellSession,
+    platform: &dyn Platform,
+    time_sync_worker: &TimeSyncWorker,
+) {
+    if let Err(error) = platform.refresh_session() {
+        state.notify_alert_with_tone(
+            format!("Desktop session refresh failed: {error}"),
+            ui::NotificationTone::Error,
+        );
+    }
+    time_sync_worker.request_refresh();
+    if let Ok((width, height)) = crossterm::terminal::size() {
+        let _ = state.apply_input_with_platform(InputEvent::Resize { width, height }, platform);
+    }
+    let _ = state.apply_input_with_platform(InputEvent::FocusGained, platform);
+    let _ = state.apply_input_with_platform(InputEvent::Tick, platform);
 }
 
 pub(super) const SESSION_RECOVERY_WINDOW: Duration = Duration::from_secs(60);
@@ -898,6 +1168,209 @@ pub(super) fn load_validated_runtime_ascii_assets() -> io::Result<ui::RuntimeAsc
 #[cfg(test)]
 mod runtime_preflight_tests {
     use super::*;
+    use crossterm::event::{
+        Event, KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
+    };
+    use std::cell::{Cell, RefCell};
+    use std::rc::Rc;
+
+    fn mouse_event(kind: MouseEventKind, column: u16, row: u16, modifiers: KeyModifiers) -> Event {
+        Event::Mouse(MouseEvent {
+            kind,
+            column,
+            row,
+            modifiers,
+        })
+    }
+
+    fn collect_one_test_batch(source: &Rc<RefCell<VecDeque<Event>>>) -> Vec<Event> {
+        let first = source
+            .borrow_mut()
+            .pop_front()
+            .expect("test event source must not be empty");
+        let poll_source = Rc::clone(source);
+        let read_source = Rc::clone(source);
+        collect_ready_terminal_event_batch(
+            first,
+            move || Ok(!poll_source.borrow().is_empty()),
+            move || {
+                read_source
+                    .borrow_mut()
+                    .pop_front()
+                    .ok_or_else(|| io::Error::other("test event source was exhausted"))
+            },
+        )
+        .expect("collect terminal event batch")
+    }
+
+    #[test]
+    fn mouse_motion_flood_is_consumed_in_a_few_render_batches() {
+        let source = Rc::new(RefCell::new(
+            (0..10_000)
+                .map(|index| {
+                    mouse_event(
+                        MouseEventKind::Moved,
+                        (index % 200) as u16,
+                        (index % 80) as u16,
+                        KeyModifiers::NONE,
+                    )
+                })
+                .collect::<VecDeque<_>>(),
+        ));
+        let mut rendered_events = Vec::new();
+        let mut batch_count = 0;
+
+        while !source.borrow().is_empty() {
+            rendered_events.extend(collect_one_test_batch(&source));
+            batch_count += 1;
+        }
+
+        assert_eq!(batch_count, 3);
+        assert_eq!(rendered_events.len(), batch_count);
+        assert_eq!(
+            rendered_events.last(),
+            Some(&mouse_event(
+                MouseEventKind::Moved,
+                (9_999 % 200) as u16,
+                (9_999 % 80) as u16,
+                KeyModifiers::NONE,
+            ))
+        );
+    }
+
+    #[test]
+    fn mouse_coalescing_preserves_semantic_event_boundaries() {
+        let source = Rc::new(RefCell::new(VecDeque::from([
+            mouse_event(MouseEventKind::Moved, 1, 1, KeyModifiers::NONE),
+            mouse_event(MouseEventKind::Moved, 2, 2, KeyModifiers::NONE),
+            mouse_event(MouseEventKind::Moved, 3, 3, KeyModifiers::SHIFT),
+            Event::Key(KeyEvent::new(KeyCode::Char('x'), KeyModifiers::CONTROL)),
+            mouse_event(MouseEventKind::Moved, 4, 4, KeyModifiers::NONE),
+            mouse_event(MouseEventKind::Moved, 5, 5, KeyModifiers::NONE),
+            mouse_event(
+                MouseEventKind::Down(MouseButton::Left),
+                5,
+                5,
+                KeyModifiers::NONE,
+            ),
+            mouse_event(
+                MouseEventKind::Drag(MouseButton::Left),
+                6,
+                6,
+                KeyModifiers::NONE,
+            ),
+            mouse_event(
+                MouseEventKind::Drag(MouseButton::Left),
+                7,
+                7,
+                KeyModifiers::NONE,
+            ),
+            mouse_event(MouseEventKind::ScrollDown, 7, 7, KeyModifiers::NONE),
+            mouse_event(MouseEventKind::ScrollDown, 7, 7, KeyModifiers::NONE),
+            mouse_event(
+                MouseEventKind::Up(MouseButton::Left),
+                7,
+                7,
+                KeyModifiers::NONE,
+            ),
+            Event::Paste("preserve me".to_string()),
+            Event::FocusGained,
+            Event::Resize(100, 40),
+            Event::Resize(120, 50),
+        ])));
+
+        let first_batch = collect_one_test_batch(&source);
+        assert_eq!(
+            first_batch,
+            vec![
+                mouse_event(MouseEventKind::Moved, 2, 2, KeyModifiers::NONE),
+                mouse_event(MouseEventKind::Moved, 3, 3, KeyModifiers::SHIFT),
+                Event::Key(KeyEvent::new(KeyCode::Char('x'), KeyModifiers::CONTROL,)),
+            ]
+        );
+
+        let second_batch = collect_one_test_batch(&source);
+        assert_eq!(
+            second_batch,
+            vec![
+                mouse_event(MouseEventKind::Moved, 5, 5, KeyModifiers::NONE),
+                mouse_event(
+                    MouseEventKind::Down(MouseButton::Left),
+                    5,
+                    5,
+                    KeyModifiers::NONE,
+                ),
+                mouse_event(
+                    MouseEventKind::Drag(MouseButton::Left),
+                    7,
+                    7,
+                    KeyModifiers::NONE,
+                ),
+                mouse_event(MouseEventKind::ScrollDown, 7, 7, KeyModifiers::NONE,),
+                mouse_event(MouseEventKind::ScrollDown, 7, 7, KeyModifiers::NONE,),
+                mouse_event(
+                    MouseEventKind::Up(MouseButton::Left),
+                    7,
+                    7,
+                    KeyModifiers::NONE,
+                ),
+                Event::Paste("preserve me".to_string()),
+            ]
+        );
+
+        let third_batch = collect_one_test_batch(&source);
+        assert!(source.borrow().is_empty());
+        assert_eq!(
+            third_batch,
+            vec![Event::FocusGained, Event::Resize(120, 50),]
+        );
+    }
+
+    #[test]
+    fn a_ready_key_is_dispatched_without_polling_for_more_events() {
+        let polls = Cell::new(0_usize);
+        let batch = collect_ready_terminal_event_batch(
+            Event::Key(KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE)),
+            || {
+                polls.set(polls.get() + 1);
+                Ok(true)
+            },
+            || panic!("a key batch must not read a later event"),
+        )
+        .expect("key batch");
+
+        assert_eq!(polls.get(), 0);
+        assert_eq!(
+            batch,
+            vec![Event::Key(KeyEvent::new(
+                KeyCode::Char('x'),
+                KeyModifiers::NONE,
+            ))]
+        );
+    }
+
+    #[test]
+    fn ready_event_drain_is_bounded_when_the_source_never_goes_idle() {
+        let reads = Cell::new(0_usize);
+        let batch = collect_ready_terminal_event_batch(
+            mouse_event(MouseEventKind::Moved, 0, 0, KeyModifiers::NONE),
+            || Ok(true),
+            || {
+                let next = reads.get() + 1;
+                reads.set(next);
+                Ok(mouse_event(
+                    MouseEventKind::Moved,
+                    (next % 200) as u16,
+                    (next % 80) as u16,
+                    KeyModifiers::NONE,
+                ))
+            },
+        )
+        .expect("bounded batch");
+
+        assert_eq!(reads.get() + 1, MAX_READY_TERMINAL_EVENTS_PER_FRAME);
+        assert_eq!(batch.len(), 1);
+    }
 
     #[test]
     fn configured_operating_system_time_uses_platform_boundary() {
@@ -1151,7 +1624,7 @@ pub(super) fn spawn_time_sync_worker(
     storage: Option<StorageManager>,
     platform: std::sync::Arc<dyn Platform>,
 ) -> Result<TimeSyncWorker, watchdog::WatchdogError> {
-    let (stop_sender, stop_receiver) = mpsc::channel();
+    let (control_sender, control_receiver) = mpsc::channel();
     let group = watchdog.task_group("network-clock");
     let handle = group.spawn_thread(
         TaskSpec {
@@ -1180,8 +1653,9 @@ pub(super) fn spawn_time_sync_worker(
 
             runtime.block_on(async {
                 loop {
-                    match stop_receiver.try_recv() {
-                        Ok(()) | Err(mpsc::TryRecvError::Disconnected) => break,
+                    match control_receiver.try_recv() {
+                        Ok(TimeSyncControl::Stop) | Err(mpsc::TryRecvError::Disconnected) => break,
+                        Ok(TimeSyncControl::Refresh) => {}
                         Err(mpsc::TryRecvError::Empty) => {}
                     }
                     let time_sync = match storage.as_ref() {
@@ -1208,16 +1682,18 @@ pub(super) fn spawn_time_sync_worker(
                     {
                         break;
                     }
-                    match stop_receiver.recv_timeout(TIME_SYNC_INTERVAL) {
-                        Err(mpsc::RecvTimeoutError::Timeout) => {}
-                        Ok(()) | Err(mpsc::RecvTimeoutError::Disconnected) => break,
+                    match control_receiver.recv_timeout(TIME_SYNC_INTERVAL) {
+                        Err(mpsc::RecvTimeoutError::Timeout) | Ok(TimeSyncControl::Refresh) => {}
+                        Ok(TimeSyncControl::Stop) | Err(mpsc::RecvTimeoutError::Disconnected) => {
+                            break;
+                        }
                     }
                 }
             });
         },
     )?;
     Ok(TimeSyncWorker {
-        stop_sender,
+        control_sender,
         handle: Some(handle),
     })
 }

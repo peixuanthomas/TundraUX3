@@ -440,27 +440,15 @@ fn windows_platform_reports_the_current_process_as_alive() {
 
 #[cfg(target_os = "linux")]
 #[test]
-fn linux_native_backend_has_minimal_supported_capabilities() {
+fn linux_native_backend_reports_desktop_capabilities() {
     let platform = platform::linux::LinuxPlatform;
     let capabilities = platform.capabilities();
 
     assert_eq!(platform.kind(), PlatformKind::Linux);
     assert!(platform.is_native_backend());
-    assert_eq!(capabilities.open_path, CapabilityStatus::BestEffort);
-    assert_eq!(capabilities.open_with, CapabilityStatus::BestEffort);
-    assert_eq!(capabilities.open_uri, CapabilityStatus::BestEffort);
-    assert_eq!(capabilities.spawn_detached, CapabilityStatus::Supported);
-    assert_eq!(capabilities.spawn_wait, CapabilityStatus::Supported);
-    assert_eq!(capabilities.user_dirs, CapabilityStatus::Supported);
-    assert_eq!(capabilities.app_paths, CapabilityStatus::Supported);
-    assert_eq!(capabilities.temp, CapabilityStatus::Supported);
-    assert_eq!(capabilities.file_attributes, CapabilityStatus::Supported);
-    assert_eq!(capabilities.directory_listing, CapabilityStatus::Supported);
-    assert_eq!(capabilities.clipboard_text, CapabilityStatus::Unsupported);
-    assert_eq!(capabilities.local_volumes, CapabilityStatus::Unsupported);
-    assert_eq!(capabilities.trash, CapabilityStatus::Unsupported);
-    assert_eq!(capabilities.critical_dialog, CapabilityStatus::Unsupported);
-    assert_eq!(capabilities.power, CapabilityStatus::Unsupported);
+    for (_, status) in capabilities.checks() {
+        assert_eq!(status, CapabilityStatus::Supported);
+    }
 
     let checks = capabilities.checks();
     assert_eq!(
@@ -468,21 +456,21 @@ fn linux_native_backend_has_minimal_supported_capabilities() {
             .iter()
             .filter(|(_, status)| *status == CapabilityStatus::Supported)
             .count(),
-        7
+        15
     );
     assert_eq!(
         checks
             .iter()
             .filter(|(_, status)| *status == CapabilityStatus::BestEffort)
             .count(),
-        3
+        0
     );
     assert_eq!(
         checks
             .iter()
             .filter(|(_, status)| *status == CapabilityStatus::Unsupported)
             .count(),
-        5
+        0
     );
 }
 
@@ -526,26 +514,22 @@ fn linux_platform_reports_system_time_liveness_and_waited_process_results() {
 
 #[cfg(target_os = "linux")]
 #[test]
-fn linux_platform_explicitly_rejects_desktop_only_capabilities() {
+fn linux_platform_exposes_desktop_only_capabilities() {
     let platform = platform::linux::LinuxPlatform;
-    let unsupported = [
-        platform.read_clipboard_text().map(|_| ()),
-        platform.write_clipboard_text("copied"),
-        platform.local_volumes().map(|_| ()),
-        platform.list_trash().map(|_| ()),
-        platform.trash_stats().map(|_| ()),
-        platform.move_to_trash(&[]),
-        platform.empty_trash(),
-        platform.show_critical_error("title", "body"),
-        platform.poweroff(),
-    ];
-
-    for result in unsupported {
-        assert!(
-            matches!(result, Err(PlatformError::Unsupported { .. })),
-            "Linux desktop-only capability should be explicitly unsupported: {result:?}"
-        );
-    }
+    assert_eq!(
+        platform.capabilities().clipboard_text,
+        CapabilityStatus::Supported
+    );
+    assert_eq!(
+        platform.capabilities().local_volumes,
+        CapabilityStatus::Supported
+    );
+    assert_eq!(platform.capabilities().trash, CapabilityStatus::Supported);
+    assert_eq!(
+        platform.capabilities().critical_dialog,
+        CapabilityStatus::Supported
+    );
+    assert_eq!(platform.capabilities().power, CapabilityStatus::Supported);
 }
 
 #[test]
@@ -689,6 +673,42 @@ fn temp_file_and_dir_helpers_create_unique_paths_and_cleanup() {
     cleanup_temp_path(&temp_dir).expect("temp directory should be removable");
     cleanup_temp_path(&base).expect("temp fixture root should be removable");
     assert!(!base.exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn unix_temp_helpers_use_private_modes_and_cleanup_does_not_follow_links() {
+    use std::os::unix::fs::{PermissionsExt, symlink};
+
+    let base = unique_temp_root("temp-private");
+    let temp_root = base.join("TundraUX3");
+    let file = create_temp_file(&temp_root, "secret").expect("private file");
+    let directory = create_temp_dir(&temp_root, "private").expect("private directory");
+    assert_eq!(
+        fs::metadata(&temp_root).unwrap().permissions().mode() & 0o777,
+        0o700
+    );
+    assert_eq!(
+        fs::metadata(&file).unwrap().permissions().mode() & 0o777,
+        0o600
+    );
+    assert_eq!(
+        fs::metadata(&directory).unwrap().permissions().mode() & 0o777,
+        0o700
+    );
+
+    let outside = base.join("outside");
+    fs::create_dir(&outside).unwrap();
+    fs::write(outside.join("keep.txt"), "keep").unwrap();
+    let linked = temp_root.join("linked");
+    symlink(&outside, &linked).unwrap();
+    cleanup_temp_path(&linked).expect("cleanup should unlink only the symlink");
+    assert_eq!(
+        fs::read_to_string(outside.join("keep.txt")).unwrap(),
+        "keep"
+    );
+
+    cleanup_temp_path(&base).unwrap();
 }
 
 #[test]

@@ -15,5 +15,8 @@ app = { path = "../app" }
 ascii-assets = { path = "../ascii-assets" }
 zip = { version = "6", default-features = false, features = ["deflate"] }
 
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
 [build-dependencies]
 ascii-assets = { path = "../ascii-assets" }

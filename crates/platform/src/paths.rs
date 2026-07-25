@@ -5,6 +5,9 @@ use std::path::{Path, PathBuf};
 use std::process;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+#[cfg(unix)]
+use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt, PermissionsExt};
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UserDirs {
     desktop: PathBuf,
@@ -267,15 +270,15 @@ pub fn create_temp_file(
     temp_root: &Path,
     prefix: impl AsRef<str>,
 ) -> Result<PathBuf, std::io::Error> {
-    fs::create_dir_all(temp_root)?;
+    ensure_private_temp_root(temp_root)?;
 
     for _ in 0..64 {
         let path = temp_root.join(unique_temp_name(prefix.as_ref(), "tmp"));
-        match fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&path)
-        {
+        let mut options = fs::OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        options.mode(0o600);
+        match options.open(&path) {
             Ok(_) => return Ok(path),
             Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
             Err(error) => return Err(error),
@@ -292,11 +295,19 @@ pub fn create_temp_dir(
     temp_root: &Path,
     prefix: impl AsRef<str>,
 ) -> Result<PathBuf, std::io::Error> {
-    fs::create_dir_all(temp_root)?;
+    ensure_private_temp_root(temp_root)?;
 
     for _ in 0..64 {
         let path = temp_root.join(unique_temp_name(prefix.as_ref(), "dir"));
-        match fs::create_dir(&path) {
+        #[cfg(unix)]
+        let builder = {
+            let mut builder = fs::DirBuilder::new();
+            builder.mode(0o700);
+            builder
+        };
+        #[cfg(not(unix))]
+        let builder = fs::DirBuilder::new();
+        match builder.create(&path) {
             Ok(()) => return Ok(path),
             Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
             Err(error) => return Err(error),
@@ -310,15 +321,32 @@ pub fn create_temp_dir(
 }
 
 pub fn cleanup_temp_path(path: &Path) -> Result<(), std::io::Error> {
-    if !path.exists() {
-        return Ok(());
-    }
-
-    if path.is_dir() {
+    let metadata = match fs::symlink_metadata(path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(error),
+    };
+    if metadata.is_dir() && !metadata.file_type().is_symlink() {
         fs::remove_dir_all(path)
     } else {
         fs::remove_file(path)
     }
+}
+
+fn ensure_private_temp_root(temp_root: &Path) -> Result<(), std::io::Error> {
+    fs::create_dir_all(temp_root)?;
+    let metadata = fs::symlink_metadata(temp_root)?;
+    if !metadata.is_dir() || metadata.file_type().is_symlink() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "temporary root must be a real directory",
+        ));
+    }
+    #[cfg(unix)]
+    if metadata.permissions().mode() & 0o777 != 0o700 {
+        fs::set_permissions(temp_root, fs::Permissions::from_mode(0o700))?;
+    }
+    Ok(())
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

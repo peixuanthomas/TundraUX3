@@ -15,6 +15,7 @@ use std::fmt;
 use std::io;
 use std::panic::AssertUnwindSafe;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 use watchdog::{
     AppCriticality, AppDescriptor, AppId, AppWatchdog, BoundaryKind, BoundarySpec, CaughtPanic,
@@ -235,6 +236,7 @@ pub fn run_blocking_managed(
                 options.clone(),
                 LaunchRunMode::Cli,
                 watchdog.clone(),
+                None,
             ))
             .map(|_| ())
     })
@@ -289,6 +291,24 @@ pub fn run_shell_lockscreen_managed(
     options: LaunchOptions,
     watchdog: AppWatchdog,
 ) -> Result<ShellLockscreenResult, WeathrRunError> {
+    run_shell_lockscreen_managed_inner(options, watchdog, None)
+}
+
+/// Runs the Shell lock screen with the same process-level shutdown source as
+/// the main terminal session.
+pub fn run_shell_lockscreen_managed_with_shutdown(
+    options: LaunchOptions,
+    watchdog: AppWatchdog,
+    shutdown: Arc<AtomicBool>,
+) -> Result<ShellLockscreenResult, WeathrRunError> {
+    run_shell_lockscreen_managed_inner(options, watchdog, Some(shutdown))
+}
+
+fn run_shell_lockscreen_managed_inner(
+    options: LaunchOptions,
+    watchdog: AppWatchdog,
+    shutdown: Option<Arc<AtomicBool>>,
+) -> Result<ShellLockscreenResult, WeathrRunError> {
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
@@ -298,6 +318,7 @@ pub fn run_shell_lockscreen_managed(
         options,
         LaunchRunMode::ShellLockscreen,
         watchdog,
+        shutdown,
     ))
 }
 
@@ -305,6 +326,7 @@ async fn run_with_options(
     options: LaunchOptions,
     mode: LaunchRunMode,
     watchdog: AppWatchdog,
+    shared_shutdown: Option<Arc<AtomicBool>>,
 ) -> Result<ShellLockscreenResult, WeathrRunError> {
     let mut config = load_config_for_launch(&options);
 
@@ -350,6 +372,9 @@ async fn run_with_options(
                 .map(|_| ShellLockscreenResult::Cancelled)
                 .map_err(WeathrRunError::Signal)
         },
+        () = wait_for_shared_shutdown(shared_shutdown) => {
+            Ok(ShellLockscreenResult::Cancelled)
+        },
     };
     let cleanup_result = renderer.cleanup().map_err(WeathrRunError::Cleanup);
 
@@ -357,6 +382,16 @@ async fn run_with_options(
         (Ok(result), Ok(())) => Ok(result),
         (Err(error), _) => Err(error),
         (Ok(_), Err(error)) => Err(error),
+    }
+}
+
+async fn wait_for_shared_shutdown(shutdown: Option<Arc<AtomicBool>>) {
+    let Some(shutdown) = shutdown else {
+        std::future::pending::<()>().await;
+        return;
+    };
+    while !shutdown.load(Ordering::SeqCst) {
+        tokio::time::sleep(Duration::from_millis(50)).await;
     }
 }
 

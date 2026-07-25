@@ -1,0 +1,10 @@
+Package: tundraux3
+Version: @VERSION@
+Section: utils
+Priority: optional
+Architecture: amd64
+Maintainer: TundraUX3 contributors <maintainers@tundraux3.invalid>
+Depends: xdg-utils, libglib2.0-bin
+Recommends: dbus-user-session, xdg-desktop-portal, policykit-1, xwayland
+Description: Terminal desktop environment experiment
+ TundraUX3 provides a full-screen terminal shell and its management CLI.
