@@ -1,6 +1,19 @@
 use super::*;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 
+fn set_test_auth_role(state: &mut ShellSession, role: UserRole) {
+    state.app.dispatch_at(
+        app::AppCommand::SetAuthSession(Some(AuthSession {
+            session_id: format!("{}-session", role.as_str()),
+            user_id: format!("{}-id", role.as_str()),
+            username: role.as_str().to_ascii_lowercase(),
+            role,
+            started_at_epoch_ms: 1,
+        })),
+        Instant::now(),
+    );
+}
+
 #[test]
 fn shell_and_lockscreen_share_the_same_session_recovery_budget() {
     let now = Instant::now();
@@ -85,6 +98,47 @@ fn exit_confirmation_keeps_login_as_the_content_screen() {
     assert_eq!(state.active_screen(), ShellScreen::Login);
     assert_eq!(state.content_screen(), ShellScreen::Login);
     assert_eq!(state.focused_component(), ShellComponent::LoginUserList);
+}
+
+#[test]
+fn command_line_is_a_fixed_admin_only_launcher_item() {
+    let mut admin = ShellSession::new(ShellLaunchConfig::default(), (120, 40));
+    set_test_auth_role(&mut admin, UserRole::Admin);
+
+    let launcher = admin.to_launcher_view_model();
+    assert_eq!(launcher.items.len(), 1);
+    let item = &launcher.items[0];
+    assert_eq!(item.id, app::COMMAND_LINE_APPLICATION.id);
+    assert!(item.is_builtin());
+    assert!(!item.capabilities.removable);
+    assert!(!item.capabilities.reapprovable);
+    assert!(!item.capabilities.reorderable);
+
+    let mut user = ShellSession::new(ShellLaunchConfig::default(), (120, 40));
+    set_test_auth_role(&mut user, UserRole::User);
+    assert!(user.to_launcher_view_model().items.is_empty());
+}
+
+#[test]
+fn command_line_open_requires_size_and_routes_ctrl_c_to_the_child() {
+    let mut state = ShellSession::new(ShellLaunchConfig::default(), (120, 40));
+    set_test_auth_role(&mut state, UserRole::Admin);
+    state.screen_stack = vec![ShellScreen::Home, ShellScreen::Launcher];
+    state.open_command_line();
+
+    assert_eq!(state.active_screen(), ShellScreen::CommandLine);
+    assert_eq!(state.focused_component(), ShellComponent::CommandLine);
+    let ctrl_c = ui::KeyEvent::with_modifiers(ui::Key::Char('c'), ui::KeyModifiers::CTRL);
+    let (_, command) = state.route_key_input(&ctrl_c);
+    assert_eq!(command, ShellCommand::CommandLineKey(ctrl_c));
+    assert!(!state.shutdown_requested());
+
+    state.close_command_line();
+    assert_eq!(state.active_screen(), ShellScreen::Launcher);
+
+    state.terminal_size = (107, 22);
+    state.open_command_line();
+    assert_eq!(state.active_screen(), ShellScreen::Launcher);
 }
 
 #[test]

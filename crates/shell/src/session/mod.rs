@@ -56,6 +56,7 @@ const USER_MANAGEMENT_DELETE_NOTIFICATION_KEY: &str = "user-management.delete-co
 const CLOCK_STORAGE_ALERT_KEY: &str = "clock.storage";
 const CLOCK_MANAGE_NOTIFICATION_KEY_PREFIX: &str = "clock.manage";
 const CLOCK_DUE_NOTIFICATION_KEY_PREFIX: &str = "clock.due";
+mod command_line_runtime;
 mod construction;
 mod controller;
 mod presentation;
@@ -65,6 +66,7 @@ mod runtime;
 mod tests;
 mod ui_state;
 
+use command_line_runtime::*;
 use controller::*;
 use presentation::*;
 use runtime::*;

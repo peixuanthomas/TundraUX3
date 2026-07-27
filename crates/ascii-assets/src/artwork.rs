@@ -137,6 +137,7 @@ impl HomeIconCatalog {
         let key = match label {
             "Explorer" => "explorer",
             "Launcher" => "launcher",
+            "Command Line" => "command_line",
             "Editor" => "editor",
             "Settings" => "settings",
             "Diagnostics" => "diagnostics",
@@ -207,6 +208,7 @@ pub(crate) fn load_home_icon_catalog(
     for required in [
         "explorer",
         "launcher",
+        "command_line",
         "editor",
         "settings",
         "diagnostics",

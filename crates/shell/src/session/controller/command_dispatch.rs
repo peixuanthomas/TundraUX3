@@ -29,7 +29,13 @@ impl ShellSession {
         self.expire_login_password_visibility_at(received_at);
         let requests_shutdown = match &input {
             InputEvent::Shutdown => true,
-            InputEvent::Key(key) => key.is_ctrl_c() && self.active_screen() != ShellScreen::Editor,
+            InputEvent::Key(key) => {
+                key.is_ctrl_c()
+                    && !matches!(
+                        self.active_screen(),
+                        ShellScreen::Editor | ShellScreen::CommandLine
+                    )
+            }
             _ => false,
         };
         if self.login_idle_tracking_active()
@@ -70,6 +76,10 @@ impl ShellSession {
             InputEvent::Paste(value) if self.active_screen() == ShellScreen::Editor => (
                 RoutedTarget::Component(ShellComponent::Editor),
                 ShellCommand::EditorPaste(value.clone()),
+            ),
+            InputEvent::Paste(value) if self.active_screen() == ShellScreen::CommandLine => (
+                RoutedTarget::Component(ShellComponent::CommandLine),
+                ShellCommand::CommandLinePaste(value.clone()),
             ),
             InputEvent::FocusGained | InputEvent::FocusLost | InputEvent::Paste(_) => {
                 (RoutedTarget::Global, ShellCommand::RecordInput)
@@ -549,6 +559,13 @@ impl ShellSession {
             }
             ShellCommand::CloseLauncher => {
                 self.close_launcher();
+                ShellAction::Redraw
+            }
+            ShellCommand::CloseCommandLine => {
+                self.close_command_line();
+                ShellAction::Redraw
+            }
+            ShellCommand::CommandLineKey(_) | ShellCommand::CommandLinePaste(_) => {
                 ShellAction::Redraw
             }
             ShellCommand::LauncherNext => {

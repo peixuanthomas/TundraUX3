@@ -64,6 +64,23 @@ where
     Stdout: Write,
     Stderr: Write,
 {
+    let args = args
+        .into_iter()
+        .map(|argument| argument.as_ref().to_string())
+        .collect::<Vec<_>>();
+    if let Ok(CliCommand::Repl { embedded }) = parse_args(&args) {
+        return crate::repl::run_repl(embedded, |command| {
+            run_with_platform_and_managed_weathr_launcher(
+                command,
+                platform,
+                stdout,
+                stderr,
+                process_watchdog,
+                weathr_watchdog.clone(),
+                weathr::run_blocking_managed,
+            )
+        });
+    }
     run_with_platform_and_managed_weathr_launcher(
         args,
         platform,
@@ -87,6 +104,21 @@ where
     Stdout: Write,
     Stderr: Write,
 {
+    let args = args
+        .into_iter()
+        .map(|argument| argument.as_ref().to_string())
+        .collect::<Vec<_>>();
+    if let Ok(CliCommand::Repl { embedded }) = parse_args(&args) {
+        return crate::repl::run_repl(embedded, |command| {
+            run_with_platform_and_weathr_launcher(
+                command,
+                platform,
+                stdout,
+                stderr,
+                weathr::run_blocking_with_options,
+            )
+        });
+    }
     run_with_platform_and_weathr_launcher(
         args,
         platform,
@@ -151,6 +183,10 @@ where
             0
         }
         Ok(CliCommand::New) => run_new(platform, stdout, stderr),
+        Ok(CliCommand::Repl { .. }) => {
+            let _ = writeln!(stderr, "ERROR: repl cannot be started from inside repl");
+            2
+        }
         Ok(CliCommand::Paths) => run_paths(platform, stdout, stderr),
         Ok(CliCommand::Doctor) => run_doctor(platform, stdout, stderr, None),
         Ok(CliCommand::TestFrost) => {
@@ -243,6 +279,10 @@ where
             0
         }
         Ok(CliCommand::New) => run_new(platform, stdout, stderr),
+        Ok(CliCommand::Repl { .. }) => {
+            let _ = writeln!(stderr, "ERROR: repl cannot be started from inside repl");
+            2
+        }
         Ok(CliCommand::Paths) => run_paths(platform, stdout, stderr),
         Ok(CliCommand::Doctor) => run_doctor(platform, stdout, stderr, asset_root),
         Ok(CliCommand::TestFrost) => {

@@ -16,6 +16,41 @@ const EMPTY_MESSAGE: &str = "No Launcher items. Go to Explorer, select a file, t
 
 pub use app::launcher::{LauncherItemStatus, LauncherViewMode};
 
+/// Describes where the Launcher entry originates. Built-in entries are supplied by
+/// Tundra itself and are deliberately not written to the user Launcher store.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum LauncherItemSource {
+    #[default]
+    External,
+    BuiltIn,
+}
+
+/// Operations that the current Launcher entry permits.
+///
+/// Keeping these on the view model makes the UI independent of the persistence
+/// rules for an entry. In particular, built-in applications can be shown beside
+/// external ones without accidentally exposing destructive management actions.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LauncherItemCapabilities {
+    pub removable: bool,
+    pub reapprovable: bool,
+    pub reorderable: bool,
+}
+
+impl LauncherItemCapabilities {
+    pub const EXTERNAL: Self = Self {
+        removable: true,
+        reapprovable: true,
+        reorderable: true,
+    };
+
+    pub const BUILT_IN: Self = Self {
+        removable: false,
+        reapprovable: false,
+        reorderable: false,
+    };
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LauncherItemViewModel {
     pub id: String,
@@ -23,6 +58,10 @@ pub struct LauncherItemViewModel {
     pub path: String,
     pub type_label: String,
     pub status: LauncherItemStatus,
+    pub source: LauncherItemSource,
+    pub capabilities: LauncherItemCapabilities,
+    /// Key in the themed home-icon catalog. External applications use `default`.
+    pub icon_key: String,
     pub selected: bool,
 }
 
@@ -40,8 +79,31 @@ impl LauncherItemViewModel {
             path: path.into(),
             type_label: type_label.into(),
             status,
+            source: LauncherItemSource::External,
+            capabilities: LauncherItemCapabilities::EXTERNAL,
+            icon_key: "default".to_string(),
             selected: false,
         }
+    }
+
+    /// The non-persisted, fixed Launcher entry for the embedded CLI application.
+    pub fn command_line() -> Self {
+        let descriptor = app::COMMAND_LINE_APPLICATION;
+        Self {
+            id: descriptor.id.to_string(),
+            name: descriptor.name.to_string(),
+            path: descriptor.description.to_string(),
+            type_label: descriptor.type_label.to_string(),
+            status: LauncherItemStatus::Ready,
+            source: LauncherItemSource::BuiltIn,
+            capabilities: LauncherItemCapabilities::BUILT_IN,
+            icon_key: descriptor.icon_key.to_string(),
+            selected: false,
+        }
+    }
+
+    pub fn is_builtin(&self) -> bool {
+        self.source == LauncherItemSource::BuiltIn
     }
 }
 
@@ -161,16 +223,19 @@ impl LauncherViewModel {
         let selected_index = selected_index
             .filter(|index| *index < items.len())
             .or_else(|| (!items.is_empty()).then_some(0));
-        let has_selection = selected_index.is_some();
-        let can_reapprove = selected_index
-            .and_then(|index| items.get(index))
-            .is_some_and(|item| launcher_status_requires_approval(item.status));
+        let selected_item = selected_index.and_then(|index| items.get(index));
+        let can_remove = selected_item.is_some_and(|item| item.capabilities.removable);
+        let can_reapprove = selected_item.is_some_and(|item| {
+            item.capabilities.reapprovable && launcher_status_requires_approval(item.status)
+        });
         let mut toolbar = Vec::new();
-        if can_manage && has_selection {
+        if can_manage && can_remove {
             toolbar.push(LauncherToolbarButtonViewModel::new(
                 LauncherToolbarAction::Remove,
-                has_selection,
+                true,
             ));
+        }
+        if can_manage && selected_item.is_some_and(|item| item.capabilities.reapprovable) {
             toolbar.push(LauncherToolbarButtonViewModel::new(
                 LauncherToolbarAction::Reapprove,
                 can_reapprove,
@@ -207,6 +272,13 @@ impl LauncherViewModel {
         self.ascii_assets
             .home_icon_catalog()
             .icon_for_key("default")
+    }
+
+    pub fn item_icon(&self, item: &LauncherItemViewModel) -> Option<&crate::HomeIcon> {
+        self.ascii_assets
+            .home_icon_catalog()
+            .icon_for_key(&item.icon_key)
+            .or_else(|| self.default_app_icon())
     }
 }
 
@@ -725,7 +797,7 @@ fn render_launcher_grid(
         let rendered_native =
             icons.is_some_and(|icons| icons.render_icon(&item.id, frame, item_layout.icon_area));
         if !rendered_native {
-            render_default_ascii_icon(frame, item_layout.icon_area, model, style);
+            render_default_ascii_icon(frame, item_layout.icon_area, model, item, style);
         }
         let inner = inset(item_layout.area, 1);
         let name_y = item_layout
@@ -756,9 +828,10 @@ fn render_default_ascii_icon(
     frame: &mut Frame<'_>,
     area: Rect,
     model: &LauncherViewModel,
+    item: &LauncherItemViewModel,
     style: Style,
 ) {
-    let Some(icon) = model.default_app_icon() else {
+    let Some(icon) = model.item_icon(item) else {
         return;
     };
     for (row, line) in icon

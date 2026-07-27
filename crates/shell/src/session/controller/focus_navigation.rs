@@ -107,6 +107,9 @@ impl ShellSession {
         if self.active_screen() == ShellScreen::Launcher {
             return vec![ShellComponent::Launcher];
         }
+        if self.active_screen() == ShellScreen::CommandLine {
+            return vec![ShellComponent::CommandLine];
+        }
         if self.active_screen() == ShellScreen::Editor {
             return vec![ShellComponent::Editor];
         }

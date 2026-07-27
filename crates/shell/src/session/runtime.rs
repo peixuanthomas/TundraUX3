@@ -60,7 +60,23 @@ pub fn run_shell_blocking_managed(
     output: &mut impl Write,
     process: ProcessWatchdog,
 ) -> io::Result<()> {
-    run_fullscreen_blocking_managed(output, process)
+    match run_shell_blocking_managed_with_outcome(output, process)? {
+        ShellRunOutcome::Exit => Ok(()),
+        ShellRunOutcome::ResetRequested => Err(reset_requires_binary_entrypoint()),
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ShellRunOutcome {
+    Exit,
+    ResetRequested,
+}
+
+pub fn run_shell_blocking_managed_with_outcome(
+    output: &mut impl Write,
+    process: ProcessWatchdog,
+) -> io::Result<ShellRunOutcome> {
+    run_fullscreen_blocking_managed_with_outcome(output, process)
 }
 
 pub fn run_fullscreen_once_without_animation(output: &mut impl Write) -> io::Result<()> {
@@ -117,6 +133,23 @@ pub fn run_fullscreen_blocking_managed(
     output: &mut impl Write,
     process: ProcessWatchdog,
 ) -> io::Result<()> {
+    match run_fullscreen_blocking_managed_with_outcome(output, process)? {
+        ShellRunOutcome::Exit => Ok(()),
+        ShellRunOutcome::ResetRequested => Err(reset_requires_binary_entrypoint()),
+    }
+}
+
+fn reset_requires_binary_entrypoint() -> io::Error {
+    io::Error::new(
+        io::ErrorKind::Interrupted,
+        "Command Line requested a storage reset; the binary entry point must restart Shell",
+    )
+}
+
+pub fn run_fullscreen_blocking_managed_with_outcome(
+    output: &mut impl Write,
+    process: ProcessWatchdog,
+) -> io::Result<ShellRunOutcome> {
     let config = ShellLaunchConfig::default();
     let ascii_assets = load_validated_runtime_ascii_assets()?;
     let terminal_size_requirement = ShellTerminalSizeRequirement::from_assets(&ascii_assets);
@@ -209,7 +242,9 @@ pub fn run_fullscreen_blocking_managed(
             );
             match lockscreen_result {
                 Ok(Ok(weathr::ShellLockscreenResult::Started)) => {}
-                Ok(Ok(weathr::ShellLockscreenResult::Cancelled)) => return Ok(()),
+                Ok(Ok(weathr::ShellLockscreenResult::Cancelled)) => {
+                    return Ok(ShellRunOutcome::Exit);
+                }
                 Ok(Err(error)) => return Err(io::Error::other(error)),
                 Err(caught) => {
                     recover_session_panic(
@@ -246,9 +281,12 @@ pub fn run_fullscreen_blocking_managed(
             }),
         );
         match session_result {
-            Ok(Ok(FullscreenShellSessionOutcome::Exit)) => return Ok(()),
+            Ok(Ok(FullscreenShellSessionOutcome::Exit)) => return Ok(ShellRunOutcome::Exit),
             Ok(Ok(FullscreenShellSessionOutcome::ReturnToLockscreen)) => {
                 force_lockscreen = true;
+            }
+            Ok(Ok(FullscreenShellSessionOutcome::ResetRequested)) => {
+                return Ok(ShellRunOutcome::ResetRequested);
             }
             Ok(Err(error)) => return Err(error),
             Err(caught) => {
@@ -265,7 +303,7 @@ pub fn run_fullscreen_blocking_managed(
             .as_ref()
             .is_some_and(ShellDiagnosticsTaskRuntime::restart_required)
         {
-            return Ok(());
+            return Ok(ShellRunOutcome::Exit);
         }
     }
 }
@@ -274,6 +312,7 @@ pub fn run_fullscreen_blocking_managed(
 pub(super) enum FullscreenShellSessionOutcome {
     Exit,
     ReturnToLockscreen,
+    ResetRequested,
 }
 
 #[derive(Debug, Clone)]
@@ -400,6 +439,9 @@ impl LauncherIconRuntime {
             let Some(item) = model.items.get(item_layout.index) else {
                 continue;
             };
+            if item.is_builtin() {
+                continue;
+            }
             let needs_prepare = self
                 .prepared
                 .get(&item.id)
@@ -663,6 +705,8 @@ pub(super) fn run_fullscreen_shell_session(
         std::sync::Arc::clone(&platform),
         shell_watchdog.clone(),
     ));
+    let mut command_line_host = CommandLineHost::new(shell_watchdog.clone());
+    let mut reset_requested = false;
     if let Some(cached) = cached_time_sync.as_ref() {
         cached.apply_to_state_at(&mut state, Instant::now());
     }
@@ -725,6 +769,26 @@ pub(super) fn run_fullscreen_shell_session(
             break;
         }
 
+        if state.content_screen() == ShellScreen::CommandLine {
+            command_line_host.ensure_started(platform.as_ref());
+            match command_line_host.poll() {
+                CommandLineHostEvent::None => {
+                    let (width, height) = state.terminal_size();
+                    if let Some(terminal_area) =
+                        ui::command_line_terminal_area(Rect::new(0, 0, width, height))
+                    {
+                        command_line_host
+                            .resize_terminal(terminal_area.width, terminal_area.height);
+                    }
+                }
+                CommandLineHostEvent::ExitToLauncher => state.close_command_line(),
+                CommandLineHostEvent::ResetRequested => {
+                    reset_requested = true;
+                    break;
+                }
+            }
+        }
+
         drain_time_sync_results(&mut state, time_sync_receiver, cached_time_sync);
         drain_watchdog_incidents(&mut state, process_watchdog);
         shell_watchdog.heartbeat(RuntimeSnapshot {
@@ -760,7 +824,9 @@ pub(super) fn run_fullscreen_shell_session(
                 .to_clock_view_model_at(&clock_snapshot, frame_now)
                 .with_terminal_cell_aspect_ratio(terminal_cell_aspect_ratio)
         });
-        let time_sync_dialog = state.to_time_sync_dialog_view_model();
+        let time_sync_dialog = (content_screen != ShellScreen::CommandLine)
+            .then(|| state.to_time_sync_dialog_view_model())
+            .flatten();
         let setup =
             (content_screen == ShellScreen::FirstRunSetup).then(|| state.to_setup_view_model());
         let login =
@@ -773,6 +839,8 @@ pub(super) fn run_fullscreen_shell_session(
             (content_screen == ShellScreen::Explorer).then(|| state.to_explorer_view_model());
         let launcher =
             (content_screen == ShellScreen::Launcher).then(|| state.to_launcher_view_model());
+        let command_line =
+            (content_screen == ShellScreen::CommandLine).then(|| command_line_host.view_model());
         if let Some(launcher) = launcher.as_ref()
             && let Some(icon_runtime) = launcher_icons.as_mut()
             && let ui::ShellLayout::Full { main, .. } = ui::compute_shell_layout(Rect::new(
@@ -790,7 +858,9 @@ pub(super) fn run_fullscreen_shell_session(
             .flatten();
         let diagnostics =
             (content_screen == ShellScreen::Diagnostics).then(|| state.to_diagnostics_view_model());
-        let notification = state.to_notification_view_model();
+        let notification = (content_screen != ShellScreen::CommandLine)
+            .then(|| state.to_notification_view_model())
+            .flatten();
         let exit_confirmation = ui::ExitConfirmViewModel::new();
 
         guard.terminal_mut().draw(|frame| {
@@ -855,6 +925,17 @@ pub(super) fn run_fullscreen_shell_session(
                         launcher_icons
                             .as_ref()
                             .map(|runtime| runtime as &dyn ui::LauncherIconRenderer),
+                    );
+                }
+                ShellScreen::CommandLine => {
+                    ui::render_command_line(
+                        frame,
+                        area,
+                        &chrome,
+                        command_line
+                            .as_ref()
+                            .expect("Command Line requires its view model"),
+                        &theme,
                     );
                 }
                 ShellScreen::Editor => {
@@ -947,10 +1028,28 @@ pub(super) fn run_fullscreen_shell_session(
                     terminal_size_error = Some(io::Error::other(error));
                     break;
                 }
-                action = state.apply_input_with_platform(
-                    crossterm_event_to_input(terminal_event),
-                    platform.as_ref(),
-                );
+                let input = crossterm_event_to_input(terminal_event);
+                let command_line_captures = state.active_screen() == ShellScreen::CommandLine
+                    && matches!(input, InputEvent::Key(_) | InputEvent::Paste(_));
+                if command_line_captures {
+                    let (width, height) = state.terminal_size();
+                    let size_accepted =
+                        ui::command_line_terminal_area(Rect::new(0, 0, width, height)).is_some();
+                    match command_line_host.handle_input(&input, size_accepted) {
+                        CommandLineHostEvent::None => {}
+                        CommandLineHostEvent::ExitToLauncher => {
+                            command_line_host.terminate();
+                            state.close_command_line();
+                        }
+                        CommandLineHostEvent::ResetRequested => {
+                            reset_requested = true;
+                            break;
+                        }
+                    }
+                    action = ShellAction::Redraw;
+                } else {
+                    action = state.apply_input_with_platform(input, platform.as_ref());
+                }
                 if action != ShellAction::Redraw {
                     break;
                 }
@@ -961,6 +1060,9 @@ pub(super) fn run_fullscreen_shell_session(
         }
 
         if terminal_size_error.is_some() {
+            break;
+        }
+        if reset_requested {
             break;
         }
 
@@ -1003,6 +1105,7 @@ pub(super) fn run_fullscreen_shell_session(
         }
     }
 
+    command_line_host.terminate();
     guard.restore()?;
     drop(guard);
 
@@ -1010,7 +1113,9 @@ pub(super) fn run_fullscreen_shell_session(
         return Err(error);
     }
 
-    let outcome = if state.return_to_lockscreen_requested() {
+    let outcome = if reset_requested {
+        FullscreenShellSessionOutcome::ResetRequested
+    } else if state.return_to_lockscreen_requested() {
         FullscreenShellSessionOutcome::ReturnToLockscreen
     } else {
         FullscreenShellSessionOutcome::Exit

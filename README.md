@@ -28,7 +28,7 @@ TundraUX3 是一个使用 Rust 编写的终端桌面环境实验项目。它在�
 - 主页与 Shell：全屏终端会话、顶部栏、状态栏、弹窗、通知和焦点导航。
 - 时钟：操作系统或网络时间同步、IANA 时区与 DST 投影、闹钟和计时项目持久化。
 - Explorer：目录浏览、排序、选择、重命名、复制/移动、系统回收站和冲突确认。
-- Launcher：发现和启动平台应用，管理固定项目及图标/列表视图。
+- Launcher：发现和启动平台应用，管理固定项目及图标/列表视图；管理员固定拥有不可移除的 Command Line 内建项。
 - Markdown 编辑器：源码与富文本模型、grapheme 级光标语义、异步打开/保存、外部修改检测和恢复数据。
 - Settings：外观、区域与时间（时区、天气位置和时间同步）、Explorer 和 Editor 选项。
 - Diagnostics：平台能力、存储健康、日志、watchdog 事故和可确认的修复操作。
@@ -41,7 +41,7 @@ TundraUX3 是一个使用 Rust 编写的终端桌面环境实验项目。它在�
 1. 安装支持 Rust 2024 edition 的稳定版 Rust 和 Cargo。
 2. 使用 Windows 11、macOS 或 Linux x86_64。Linux 需要 systemd-logind 和标准 Freedesktop 用户会话；不要求 root。
 3. 在 Windows Terminal、WezTerm、iTerm2 或其他兼容 crossterm 的终端中运行；Linux 安装 `xdg-utils` 和 `libglib2.0-bin`，并建议提供 session D-Bus、xdg-desktop-portal、polkit 与 XWayland（在 Wayland data-control 不可用时作为剪贴板兼容层）。
-4. 将终端窗口调整到至少 108 × 20；更大的自定义 ASCII 资源可能需要更多空间。
+4. 将终端窗口调整到至少 108 × 20；内建 Command Line 需要 108 × 22，以便在 108 × 20 子终端外保留 Tundra 顶栏和状态栏。更大的自定义 ASCII 资源可能需要更多空间。
 
 ### 构建
 
@@ -74,6 +74,7 @@ cargo run -p shell --bin tundra-shell
 cargo run -p cli --bin tundra-cli -- --help
 cargo run -p cli --bin tundra-cli -- doctor
 cargo run -p cli --bin tundra-cli -- paths
+cargo run -p cli --bin tundra-cli -- repl
 ~~~
 
 第一个双横线用于结束 Cargo 自己的参数，后面的内容才会传给 tundra-cli。
@@ -268,6 +269,8 @@ Windows、macOS 和 Linux 的回收站实现都位于 platform，因此 APP 不�
 
 Launcher 保存平台可执行项目和固定顺序，支持图标/列表等视图状态。扫描与启动由平台适配器完成，Shell 将异步结果更新回 APP。目录固定项仍能被旧配置读取，但 Launcher 只把可执行条目当作可启动项目。
 
+管理员的 Launcher 第一项固定为 **Command Line**。它不写入 Launcher 配置，不能删除、重审批或拖动排序，普通用户不会看到该项。打开后，Shell 在隔离 PTY 中从自身二进制目录启动 `tundra-cli repl --embedded`，并把解析后的终端单元格绘制在 Tundra chrome 内；子进程输出不会直接写入宿主终端，OSC 控制串（包括 OSC 52 剪贴板请求）会被丢弃。`Ctrl+C` 转发给子 CLI，`Ctrl+Shift+X` 紧急终止并清理整个子进程树（Windows Job Object、Unix 进程组），输入 `exit` 正常返回 Launcher。
+
 ### Markdown 编辑器
 
 编辑器领域层维护 Markdown、富文档节点、选择范围、编辑命令和副作用。光标位置按 grapheme 处理，而不是按 UTF-8 字节处理，因此 CJK、emoji 和组合字符不会让光标落在字符内部。
@@ -360,7 +363,7 @@ tundra-shell
 ### tundra-cli
 
 ~~~console
-tundra-cli <config|doctor|explain|new|paths|test-frost|test-matrix|weathr>
+tundra-cli <config|doctor|explain|new|paths|repl|test-frost|test-matrix|weathr>
 ~~~
 
 | 命令 | 作用 |
@@ -371,12 +374,15 @@ tundra-cli <config|doctor|explain|new|paths|test-frost|test-matrix|weathr>
 | **doctor** | 检查系统、终端、权限、应用路径、存储和资源是否就绪。 |
 | **explain** | 输出简短的启动和边界说明。 |
 | **paths** | 输出配置模板路径和当前解析路径。 |
+| **repl** | 进入交互命令循环；`exit` 或 EOF 退出，普通输入复用全部 CLI 命令，`/<command>` 交给固定系统命令解释器并显示退出码。 |
 | **test-frost** | 仅播放启动 frost banner。 |
 | **test-matrix** | 仅播放首次运行 Matrix banner。 |
 | **weathr** | 以独立 CLI 模式运行天气场景。 |
 | **new** | 清除已保存的 TundraUX3 数据并重新创建初始存储。 |
 
 **new 会删除用户配置和状态。** 应先确认 tundra-cli paths 输出并备份需要保留的文件。
+
+在 Command Line 内输入 `new` 时，必须精确键入 `RESET`。嵌入模式的 CLI 不自行删除正在使用的数据；它以保留状态码通知 Shell。Shell 恢复终端、释放子进程和后台任务、关闭 watchdog 后统一重置存储，再启动全新 Shell 进入首次设置。
 
 配置示例：
 
@@ -396,7 +402,8 @@ Shell 支持键盘和鼠标；具体按键会随当前屏幕、焦点和弹窗�
 | 输入 | 行为 |
 | --- | --- |
 | Tab / Shift+Tab | 在当前焦点顺序中向前/向后移动。 |
-| Ctrl+C | 请求关闭当前终端会话；Editor 内会优先保留编辑器自己的命令语义。 |
+| Ctrl+C | 请求关闭当前终端会话；Editor 保留编辑器语义，Command Line 则转发给子 CLI。 |
+| Ctrl+Shift+X（Command Line） | 紧急终止内嵌 CLI 并返回 Launcher。 |
 | q 或 Esc（主页） | 打开退出确认。 |
 | L（主页） | 注销并返回 Weathr 锁屏。 |
 | F2（登录） | 临时切换密码可见性。 |

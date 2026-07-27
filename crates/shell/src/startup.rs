@@ -51,6 +51,7 @@ pub enum ShellScreen {
     Diagnostics,
     Explorer,
     Launcher,
+    CommandLine,
     Editor,
     Settings,
     UserManagement,

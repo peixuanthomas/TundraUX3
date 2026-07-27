@@ -7,6 +7,11 @@ pub enum CliCommand {
     Explain,
     New,
     Paths,
+    /// Starts the interactive command line. `embedded` is reserved for the
+    /// Launcher-hosted terminal and is intentionally not advertised in help.
+    Repl {
+        embedded: bool,
+    },
     TestFrost,
     TestMatrix,
     Weathr,
@@ -49,6 +54,7 @@ pub enum CliError {
     UnknownConfigCommand(String),
     UnsupportedConfigField(String),
     UnexpectedArgument(String),
+    InvalidReplArgument(String),
 }
 
 impl fmt::Display for CliError {
@@ -74,6 +80,9 @@ impl fmt::Display for CliError {
             }
             Self::UnexpectedArgument(argument) => {
                 write!(formatter, "unexpected argument: {argument}")
+            }
+            Self::InvalidReplArgument(argument) => {
+                write!(formatter, "unsupported repl argument: {argument}")
             }
         }
     }
@@ -101,11 +110,20 @@ where
         "explain" => parse_no_extra_args(&args, CliCommand::Explain),
         "new" => parse_no_extra_args(&args, CliCommand::New),
         "paths" => parse_no_extra_args(&args, CliCommand::Paths),
+        "repl" => parse_repl_args(&args),
         "test-frost" => parse_no_extra_args(&args, CliCommand::TestFrost),
         "test-matrix" => parse_no_extra_args(&args, CliCommand::TestMatrix),
         "weathr" => parse_no_extra_args(&args, CliCommand::Weathr),
         "-h" | "--help" | "help" => Ok(CliCommand::Help),
         other => Err(CliError::UnknownCommand(other.to_string())),
+    }
+}
+
+fn parse_repl_args(args: &[String]) -> Result<CliCommand, CliError> {
+    match args {
+        [] => Ok(CliCommand::Repl { embedded: false }),
+        [flag] if flag == "--embedded" => Ok(CliCommand::Repl { embedded: true }),
+        [argument, ..] => Err(CliError::InvalidReplArgument(argument.clone())),
     }
 }
 

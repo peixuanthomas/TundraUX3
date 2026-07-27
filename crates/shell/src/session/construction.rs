@@ -107,6 +107,7 @@ impl ShellSession {
             ShellScreen::BootstrapAdmin => ShellComponent::BootstrapUsername,
             ShellScreen::Login => ShellComponent::LoginUserList,
             ShellScreen::Launcher => ShellComponent::Launcher,
+            ShellScreen::CommandLine => ShellComponent::CommandLine,
             ShellScreen::Editor => ShellComponent::Editor,
             _ => ShellComponent::Home,
         };

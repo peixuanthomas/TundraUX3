@@ -38,6 +38,22 @@ fn paths_arg_dispatches_paths() {
 }
 
 #[test]
+fn repl_arg_dispatches_with_an_internal_embedded_mode() {
+    assert_eq!(
+        parse_args(["repl"]),
+        Ok(CliCommand::Repl { embedded: false })
+    );
+    assert_eq!(
+        parse_args(["repl", "--embedded"]),
+        Ok(CliCommand::Repl { embedded: true })
+    );
+    assert_eq!(
+        parse_args(["repl", "--not-a-mode"]),
+        Err(CliError::InvalidReplArgument("--not-a-mode".to_string()))
+    );
+}
+
+#[test]
 fn explain_arg_dispatches_explain() {
     assert_eq!(parse_args(["explain"]), Ok(CliCommand::Explain));
 }
@@ -169,7 +185,7 @@ fn explain_command_prints_startup_and_boundary_notes() {
     assert!(stdout.contains("UI boundary"));
     assert!(stdout.contains("platform"));
     assert!(stdout.contains("tundra-shell"));
-    assert!(stdout.contains("doctor, paths, explain, new, test-frost, test-matrix, weathr"));
+    assert!(stdout.contains("doctor, paths, explain, new, repl, test-frost, test-matrix, weathr"));
     assert!(!stdout.contains("Windows 11"));
     assert!(!stdout.contains("Windows Terminal"));
 }

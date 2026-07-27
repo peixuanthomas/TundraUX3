@@ -4,7 +4,7 @@ pub(crate) fn write_help(output: &mut impl Write) -> std::io::Result<()> {
     writeln!(output, "TundraUX3 CLI")?;
     writeln!(
         output,
-        "Usage: tundra-cli <config|doctor|explain|new|paths|test-frost|test-matrix|weathr>"
+        "Usage: tundra-cli <config|doctor|explain|new|paths|repl|test-frost|test-matrix|weathr>"
     )?;
     writeln!(
         output,
@@ -23,6 +23,10 @@ pub(crate) fn write_help(output: &mut impl Write) -> std::io::Result<()> {
         "  new     Clear saved TundraUX3 data and recreate initial storage"
     )?;
     writeln!(output, "  paths   Print configured and resolved app paths")?;
+    writeln!(
+        output,
+        "  repl    Enter the interactive command loop; type exit to leave, or /<command> to run an operating-system command"
+    )?;
     writeln!(
         output,
         "  test-frost  Play only the startup frost banner animation"
@@ -44,7 +48,7 @@ pub(crate) fn write_explain(output: &mut impl Write) -> std::io::Result<()> {
     )?;
     writeln!(
         output,
-        "  2. tundra-cli handles diagnostics, operator commands, config, and launchers: doctor, paths, explain, new, test-frost, test-matrix, weathr."
+        "  2. tundra-cli handles diagnostics, operator commands, config, and launchers: doctor, paths, explain, new, repl, test-frost, test-matrix, weathr."
     )?;
     writeln!(
         output,

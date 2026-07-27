@@ -234,6 +234,30 @@ fn toolbar_management_actions_are_admin_only() {
 }
 
 #[test]
+fn built_in_command_line_is_fixed_and_has_no_management_toolbar_actions() {
+    let command_line = LauncherItemViewModel::command_line();
+    let model = LauncherViewModel::new(
+        vec![command_line.clone()],
+        Some(0),
+        LauncherViewMode::LargeIcons,
+        true,
+    );
+
+    assert!(command_line.is_builtin());
+    assert_eq!(command_line.id, app::COMMAND_LINE_APPLICATION.id);
+    assert_eq!(command_line.icon_key, "command_line");
+    assert!(!command_line.capabilities.removable);
+    assert!(!command_line.capabilities.reapprovable);
+    assert!(model.toolbar.iter().all(|button| !matches!(
+        button.action,
+        LauncherToolbarAction::Remove | LauncherToolbarAction::Reapprove
+    )));
+
+    let output = render(&model, 100, 30);
+    assert!(output.contains("|_>_   |"));
+}
+
+#[test]
 fn layouts_keep_selection_visible_and_hit_test_toolbar_items_and_scrollbar() {
     let model = LauncherViewModel::new(
         (0..20)

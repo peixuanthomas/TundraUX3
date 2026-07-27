@@ -1,6 +1,7 @@
 mod account;
 mod clock;
 mod command_dispatch;
+mod command_line;
 mod diagnostics;
 mod editor;
 mod editor_tasks;

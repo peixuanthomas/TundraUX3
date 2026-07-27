@@ -42,6 +42,7 @@ pub enum PermissionAction {
     DeleteFile,
     MoveFile,
     OpenExternal,
+    ExecuteCommandLine,
     ManageLauncher,
     ManageOwnUser,
     ManageUsers,
@@ -59,6 +60,7 @@ impl PermissionAction {
             Self::DeleteFile => "DeleteFile",
             Self::MoveFile => "MoveFile",
             Self::OpenExternal => "OpenExternal",
+            Self::ExecuteCommandLine => "ExecuteCommandLine",
             Self::ManageLauncher => "ManageLauncher",
             Self::ManageOwnUser => "ManageOwnUser",
             Self::ManageUsers => "ManageUsers",
@@ -154,6 +156,7 @@ impl PermissionService {
                 UserRole::Guest => Authorization::deny("not_authenticated"),
             },
             PermissionAction::ManageUsers
+            | PermissionAction::ExecuteCommandLine
             | PermissionAction::ManageLauncher
             | PermissionAction::ViewDiagnosticsDetails
             | PermissionAction::RepairDiagnostics

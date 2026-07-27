@@ -159,6 +159,7 @@ mod tests {
 
         assert_eq!(store.banner_lines("tundraux3").unwrap().len(), 10);
         assert!(store.home_icon_catalog().icon("explorer").is_some());
+        assert!(store.home_icon_catalog().icon("command_line").is_some());
         assert_eq!(store.clock_font().height, 7);
         assert!(store.text_art("weathr/world/house").unwrap().height() >= 10);
         assert_eq!(

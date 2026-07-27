@@ -19,6 +19,15 @@ lines = [
   ' /___\ ',
 ]
 
+[items.command_line]
+label = "Command Line"
+lines = [
+  ' ______ ',
+  '|_>_   |',
+  '|  _   |',
+  '|______|',
+]
+
 [items.editor]
 label = "Editor"
 lines = [

@@ -15,6 +15,8 @@ chrono = { version = "0.4", features = ["serde"] }
 chrono-tz = "0.10"
 crossterm = "0.28"
 ratatui = "0.29"
+portable-pty = "0.9"
+vt100 = "0.15.2"
 tokio = { version = "1", features = ["rt-multi-thread", "time"] }
 platform = { path = "../platform" }
 app = { path = "../app" }
@@ -24,6 +26,15 @@ ui = { path = "../ui" }
 watchdog = { path = "../watchdog", features = ["tokio"] }
 weathr = { path = "../weathr" }
 time = { version = "0.1.0", path = "../time" }
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_System_JobObjects", "Win32_System_Threading"] }
+
+[dev-dependencies]
+watchdog = { path = "../watchdog", features = ["test-support", "tokio"] }
 
 [build-dependencies]
 ascii-assets = { path = "../ascii-assets" }

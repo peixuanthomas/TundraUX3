@@ -18,18 +18,51 @@ fn main() {
         process_watchdog.register_emergency_cleanup(Arc::new(shell::restore_terminal_best_effort));
 
     let mut stdout = std::io::stdout();
-    let exit_code = match shell::run_shell_blocking_managed(&mut stdout, process_watchdog) {
-        Ok(()) => 0,
-        Err(error) => {
+    let run_result = shell::run_shell_blocking_managed_with_outcome(&mut stdout, process_watchdog);
+    drop(stdout);
+    let watchdog_shutdown = watchdog_runtime.shutdown();
+
+    let exit_code = match (run_result, watchdog_shutdown) {
+        (Ok(shell::ShellRunOutcome::Exit), Ok(())) => 0,
+        (Ok(shell::ShellRunOutcome::ResetRequested), Ok(())) => match reset_storage_and_restart() {
+            Ok(()) => 0,
+            Err(error) => {
+                eprintln!("tundra-shell reset failed: {error}");
+                4
+            }
+        },
+        (_, Err(error)) => {
+            eprintln!("tundra-shell watchdog shutdown failed: {error}");
+            3
+        }
+        (Err(error), Ok(())) => {
             eprintln!("tundra-shell failed: {error}");
             1
         }
     };
 
-    let _ = watchdog_runtime.shutdown();
     if exit_code != 0 {
         std::process::exit(exit_code);
     }
+}
+
+fn reset_storage_and_restart() -> Result<(), std::io::Error> {
+    let platform = platform::native_platform();
+    let paths = platform
+        .app_paths()
+        .map_err(|error| std::io::Error::other(error.to_string()))?;
+    storage::reset_saved_content(&paths)?;
+
+    let executable = std::env::current_exe()?;
+    std::process::Command::new(&executable)
+        .spawn()
+        .map_err(|error| {
+            std::io::Error::new(
+                error.kind(),
+                format!("could not restart {}: {error}", executable.display()),
+            )
+        })?;
+    Ok(())
 }
 
 fn start_watchdog() -> Result<(WatchdogRuntime, ProcessWatchdog), watchdog::WatchdogError> {

@@ -12,6 +12,31 @@ pub struct SetupTimezoneOption {
     pub longitude: f64,
     pub latitude: f64,
 }
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BuiltInApplicationDescriptor {
+    pub id: &'static str,
+    pub name: &'static str,
+    pub description: &'static str,
+    pub type_label: &'static str,
+    pub icon_key: &'static str,
+    pub admin_only: bool,
+    pub fixed_in_launcher: bool,
+}
+
+pub const COMMAND_LINE_APPLICATION: BuiltInApplicationDescriptor = BuiltInApplicationDescriptor {
+    id: "builtin.command-line",
+    name: "Command Line",
+    description: "TundraUX3 CLI and operating-system commands",
+    type_label: "Built-in application",
+    icon_key: "command_line",
+    admin_only: true,
+    fixed_in_launcher: true,
+};
+
+pub const BUILT_IN_LAUNCHER_APPLICATIONS: &[BuiltInApplicationDescriptor] =
+    &[COMMAND_LINE_APPLICATION];
+
 pub fn setup_language_options() -> Vec<SetupLanguageOption> {
     vec![SetupLanguageOption {
         code: "en-US".to_string(),
@@ -136,5 +161,21 @@ fn timezone(
         description: description.to_string(),
         longitude,
         latitude,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn command_line_is_a_fixed_admin_launcher_application() {
+        assert_eq!(BUILT_IN_LAUNCHER_APPLICATIONS, &[COMMAND_LINE_APPLICATION]);
+        let descriptor = BUILT_IN_LAUNCHER_APPLICATIONS
+            .first()
+            .expect("Command Line built-in descriptor");
+        assert_eq!(descriptor.id, "builtin.command-line");
+        assert!(descriptor.admin_only);
+        assert!(descriptor.fixed_in_launcher);
     }
 }

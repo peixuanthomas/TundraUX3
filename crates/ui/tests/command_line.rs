@@ -1,0 +1,152 @@
+use ratatui::Terminal;
+use ratatui::backend::TestBackend;
+use ui::{
+    CommandLineCell, CommandLineCellStyle, CommandLineColor, CommandLineProcessState,
+    CommandLineTerminalSnapshot, CommandLineViewModel, HomeDisplayMode, NotificationTone,
+    ShellChromeViewModel, StatusViewModel, TundraTheme, render_command_line,
+};
+
+fn chrome(size: (u16, u16)) -> ShellChromeViewModel {
+    ShellChromeViewModel {
+        app_name: "TundraUX 3".into(),
+        build_mode: "test".into(),
+        display_mode: HomeDisplayMode::User,
+        terminal_size: size,
+        screen_stack: vec!["Home".into(), "Launcher".into(), "Command Line".into()],
+        status: StatusViewModel {
+            status: "Ready".into(),
+            toast: None,
+            error: None,
+            alert_tone: NotificationTone::Info,
+            time_button_label: Some("2026-07-27 10:15".into()),
+            time_button_selected: false,
+        },
+    }
+}
+
+#[test]
+fn command_line_renders_snapshot_inside_the_standard_shell_chrome() {
+    let mut terminal = CommandLineTerminalSnapshot::blank(106, 14);
+    terminal.set_cell(
+        0,
+        0,
+        CommandLineCell {
+            symbol: "C".into(),
+            style: CommandLineCellStyle {
+                foreground: CommandLineColor::Rgb(12, 34, 56),
+                bold: true,
+                ..CommandLineCellStyle::default()
+            },
+            cursor: true,
+        },
+    );
+    terminal.set_cell(
+        2,
+        0,
+        CommandLineCell {
+            symbol: "界".into(),
+            ..CommandLineCell::default()
+        },
+    );
+    let model = CommandLineViewModel::new(terminal);
+    let mut screen = Terminal::new(TestBackend::new(108, 22)).unwrap();
+    screen
+        .draw(|frame| {
+            render_command_line(
+                frame,
+                frame.area(),
+                &chrome((108, 22)),
+                &model,
+                &TundraTheme::default_dark(),
+            );
+        })
+        .unwrap();
+    let buffer = screen.backend().buffer();
+
+    // 108x22 uses the normal 3-row top bar, then a bordered main panel.
+    assert_eq!(buffer.cell((1, 4)).unwrap().symbol(), "C");
+    assert_eq!(buffer.cell((3, 4)).unwrap().symbol(), "界");
+    assert_eq!(
+        buffer.cell((1, 4)).unwrap().fg,
+        ratatui::style::Color::Rgb(12, 34, 56)
+    );
+    let output = buffer
+        .content()
+        .iter()
+        .map(|cell| cell.symbol())
+        .collect::<String>();
+    assert!(output.contains("TundraUX 3"));
+    assert!(output.contains("Command Line"));
+    assert!(output.contains("Status"));
+    assert!(output.contains("2026-07-27 10:15"));
+}
+
+#[test]
+fn undersized_command_line_is_blocked() {
+    let model = CommandLineViewModel::new(CommandLineTerminalSnapshot::blank(108, 20));
+    let mut screen = Terminal::new(TestBackend::new(80, 20)).unwrap();
+    screen
+        .draw(|frame| {
+            render_command_line(
+                frame,
+                frame.area(),
+                &chrome((80, 20)),
+                &model,
+                &TundraTheme::default_dark(),
+            );
+        })
+        .unwrap();
+    let output = screen
+        .backend()
+        .buffer()
+        .content()
+        .iter()
+        .map(|cell| cell.symbol())
+        .collect::<String>();
+    assert!(output.contains("TundraUX 3"));
+    assert!(output.contains("Command Line"));
+    assert!(output.contains("Status"));
+    assert!(output.contains("Resize to continue"));
+}
+
+#[test]
+fn stopped_and_failed_cli_states_replace_the_running_shortcut_hint() {
+    for (state, expected) in [
+        (
+            CommandLineProcessState::Exited { code: 75 },
+            "CLI exited (75); Enter restart · Esc Launcher",
+        ),
+        (
+            CommandLineProcessState::Failed {
+                message: "Unable to start CLI".into(),
+            },
+            "Unable to start CLI",
+        ),
+    ] {
+        let mut model = CommandLineViewModel::new(CommandLineTerminalSnapshot::blank(106, 14));
+        model.process_state = state;
+        let mut screen = Terminal::new(TestBackend::new(108, 22)).unwrap();
+        screen
+            .draw(|frame| {
+                render_command_line(
+                    frame,
+                    frame.area(),
+                    &chrome((108, 22)),
+                    &model,
+                    &TundraTheme::default_dark(),
+                );
+            })
+            .unwrap();
+        let output = screen
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+
+        assert!(output.contains(expected));
+        assert!(output.contains("Status"));
+        assert!(output.contains("2026-07-27 10:15"));
+    }
+}

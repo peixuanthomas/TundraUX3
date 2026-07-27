@@ -11,6 +11,7 @@ pub use editor::rich_edit;
 pub use explorer::tasks as explorer_tasks;
 
 pub use application::catalog::{
+    BUILT_IN_LAUNCHER_APPLICATIONS, BuiltInApplicationDescriptor, COMMAND_LINE_APPLICATION,
     SetupLanguageOption, SetupTimezoneOption, setup_language_options, setup_timezone_options,
 };
 pub use application::notification::{

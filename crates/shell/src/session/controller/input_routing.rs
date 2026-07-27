@@ -4,6 +4,17 @@ impl ShellSession {
         &self,
         key: &KeyInput,
     ) -> (RoutedTarget, ShellCommand) {
+        if self.active_screen() == ShellScreen::CommandLine {
+            return (
+                RoutedTarget::Component(ShellComponent::CommandLine),
+                if key.phase.is_press_like() {
+                    ShellCommand::CommandLineKey(key.clone())
+                } else {
+                    ShellCommand::Noop
+                },
+            );
+        }
+
         if !key.phase.is_press_like() {
             if self.active_screen() == ShellScreen::Editor
                 && matches!(
@@ -1176,6 +1187,13 @@ impl ShellSession {
 
         if self.active_screen() == ShellScreen::Launcher {
             return self.route_launcher_mouse(mouse, received_at);
+        }
+
+        if self.active_screen() == ShellScreen::CommandLine {
+            return (
+                RoutedTarget::Component(ShellComponent::CommandLine),
+                ShellCommand::CaptureOverlayInput,
+            );
         }
 
         if self.active_screen() == ShellScreen::Editor {

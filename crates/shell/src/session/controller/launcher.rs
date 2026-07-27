@@ -11,6 +11,43 @@ impl ShellSession {
         )
     }
 
+    pub(in crate::session) fn can_execute_command_line(&self) -> bool {
+        PermissionService::new(self.debug_policy)
+            .authorize(
+                self.app.auth_session(),
+                PermissionAction::ExecuteCommandLine,
+                Some(app::COMMAND_LINE_APPLICATION.id),
+            )
+            .allowed
+    }
+
+    pub(in crate::session) fn built_in_launcher_count(&self) -> usize {
+        usize::from(self.can_execute_command_line())
+    }
+
+    pub(in crate::session) fn launcher_item_count(&self) -> usize {
+        self.built_in_launcher_count()
+            + self
+                .app
+                .launcher_state()
+                .map(|state| state.items.len())
+                .unwrap_or(0)
+    }
+
+    pub(in crate::session) fn selected_external_launcher_index(&self) -> Option<usize> {
+        self.launcher_selected_index
+            .checked_sub(self.built_in_launcher_count())
+            .filter(|index| {
+                self.app
+                    .launcher_state()
+                    .is_some_and(|state| *index < state.items.len())
+            })
+    }
+
+    pub(in crate::session) fn command_line_is_selected(&self) -> bool {
+        self.can_execute_command_line() && self.launcher_selected_index == 0
+    }
+
     pub(in crate::session) fn open_launcher(&mut self, platform: &dyn Platform) {
         if self.is_strict_guest() || self.app.auth_session().is_none() {
             self.error_message = Some("Login required to use Launcher".to_string());
@@ -34,12 +71,9 @@ impl ShellSession {
         }
         self.load_launcher_view_preference();
         self.refresh_launcher(platform);
-        self.launcher_selected_index = self.launcher_selected_index.min(
-            self.app
-                .launcher_state()
-                .map(|state| state.items.len().saturating_sub(1))
-                .unwrap_or(0),
-        );
+        self.launcher_selected_index = self
+            .launcher_selected_index
+            .min(self.launcher_item_count().saturating_sub(1));
         if self.active_screen() != ShellScreen::Launcher {
             self.screen_stack.push(ShellScreen::Launcher);
         }
@@ -121,10 +155,11 @@ impl ShellSession {
     }
 
     pub(in crate::session) fn selected_launcher_id(&self) -> Option<String> {
+        let external_index = self.selected_external_launcher_index()?;
         self.app
             .launcher_state()?
             .items
-            .get(self.launcher_selected_index)
+            .get(external_index)
             .map(|item| item.record.id.clone())
     }
 
@@ -143,20 +178,12 @@ impl ShellSession {
     }
 
     pub(in crate::session) fn select_launcher_index(&mut self, index: usize) {
-        let len = self
-            .app
-            .launcher_state()
-            .map(|state| state.items.len())
-            .unwrap_or(0);
+        let len = self.launcher_item_count();
         self.launcher_selected_index = index.min(len.saturating_sub(1));
     }
 
     pub(in crate::session) fn select_launcher_delta(&mut self, delta: isize) {
-        let len = self
-            .app
-            .launcher_state()
-            .map(|state| state.items.len())
-            .unwrap_or(0);
+        let len = self.launcher_item_count();
         if len == 0 {
             return;
         }
@@ -167,11 +194,7 @@ impl ShellSession {
     }
 
     pub(in crate::session) fn select_launcher_last(&mut self) {
-        let last = self
-            .app
-            .launcher_state()
-            .map(|state| state.items.len().saturating_sub(1))
-            .unwrap_or(0);
+        let last = self.launcher_item_count().saturating_sub(1);
         self.select_launcher_index(last);
     }
 
@@ -241,7 +264,8 @@ impl ShellSession {
                         .launcher_state()
                         .and_then(|state| state.items.iter().position(|item| &item.record.id == id))
                 {
-                    self.launcher_selected_index = index;
+                    self.launcher_selected_index =
+                        index.saturating_add(self.built_in_launcher_count());
                 }
                 self.update_launcher_state(|state| {
                     let rejected = results.len().saturating_sub(added_ids.len());
@@ -303,6 +327,10 @@ impl ShellSession {
     }
 
     pub(in crate::session) fn request_launcher_launch(&mut self, platform: &dyn Platform) {
+        if self.command_line_is_selected() {
+            self.open_command_line();
+            return;
+        }
         if let Some(id) = self.selected_launcher_id() {
             self.apply_launcher_command(LauncherCommand::RequestLaunch(id), platform);
         }
@@ -315,10 +343,13 @@ impl ShellSession {
             });
             return;
         }
+        let Some(external_index) = self.selected_external_launcher_index() else {
+            return;
+        };
         let Some(item) = self
             .app
             .launcher_state()
-            .and_then(|state| state.items.get(self.launcher_selected_index))
+            .and_then(|state| state.items.get(external_index))
         else {
             return;
         };
@@ -382,7 +413,7 @@ impl ShellSession {
                 }
             })
         }) {
-            self.launcher_selected_index = index;
+            self.launcher_selected_index = index.saturating_add(self.built_in_launcher_count());
         } else {
             self.update_launcher_state(|state| {
                 state.error = Some("This file has not been approved in Launcher".to_string())
@@ -470,10 +501,13 @@ impl ShellSession {
         else {
             return;
         };
+        let insertion_index = target
+            .insertion_index()
+            .saturating_sub(self.built_in_launcher_count());
         self.apply_launcher_command(
             LauncherCommand::Reorder {
                 id: drag.item_id.clone(),
-                insertion_index: target.insertion_index(),
+                insertion_index,
             },
             platform,
         );
@@ -483,20 +517,25 @@ impl ShellSession {
                 .iter()
                 .position(|item| item.record.id == drag.item_id)
         }) {
-            self.launcher_selected_index = index;
+            self.launcher_selected_index = index.saturating_add(self.built_in_launcher_count());
         }
     }
 
     pub fn to_launcher_view_model(&self) -> ui::LauncherViewModel {
-        let items = self
-            .app
-            .launcher_state()
-            .map(|state| {
+        let built_in_count = self.built_in_launcher_count();
+        let mut items = Vec::new();
+        if built_in_count > 0 {
+            let mut command_line = ui::LauncherItemViewModel::command_line();
+            command_line.selected = self.launcher_selected_index == 0;
+            items.push(command_line);
+        }
+        if let Some(state) = self.app.launcher_state() {
+            items.extend(
                 state
                     .items
                     .iter()
                     .enumerate()
-                    .map(|(index, item)| {
+                    .map(|(external_index, item)| {
                         let path = std::path::Path::new(&item.record.path);
                         let name = path
                             .file_name()
@@ -517,12 +556,13 @@ impl ShellSession {
                             type_label,
                             item.status,
                         );
-                        model.selected = index == self.launcher_selected_index;
+                        model.selected = external_index.saturating_add(built_in_count)
+                            == self.launcher_selected_index;
                         model
                     })
-                    .collect::<Vec<_>>()
-            })
-            .unwrap_or_default();
+                    .collect::<Vec<_>>(),
+            );
+        }
         let selected = items
             .len()
             .checked_sub(1)

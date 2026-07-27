@@ -10,6 +10,7 @@ mod layout;
 mod manager;
 mod migration;
 mod recovery;
+mod reset;
 mod schema;
 mod state_documents;
 mod trash_document;
@@ -33,6 +34,7 @@ pub use document_health::{
 pub use error::StorageError;
 pub use layout::StorageLayout;
 pub use manager::{RecoveredFile, StorageLoadReport, StorageManager, StorageOpen};
+pub use reset::{StorageResetReport, reset_saved_content};
 pub use schema::{SCHEMA_VERSION, StorageFormat, USERS_SCHEMA_VERSION, VersionedDocument};
 pub use state_documents::{RecentFilesDocument, SessionsDocument, StateDocument};
 pub use trash_document::{TrashDocument, TrashRecord};
