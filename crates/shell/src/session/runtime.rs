@@ -770,7 +770,8 @@ pub(super) fn run_fullscreen_shell_session(
         }
 
         if state.content_screen() == ShellScreen::CommandLine {
-            command_line_host.ensure_started(platform.as_ref());
+            let username = state.current_home_username().unwrap_or("tundra");
+            command_line_host.ensure_started(platform.as_ref(), username);
             match command_line_host.poll() {
                 CommandLineHostEvent::None => {
                     let (width, height) = state.terminal_size();
@@ -839,8 +840,13 @@ pub(super) fn run_fullscreen_shell_session(
             (content_screen == ShellScreen::Explorer).then(|| state.to_explorer_view_model());
         let launcher =
             (content_screen == ShellScreen::Launcher).then(|| state.to_launcher_view_model());
-        let command_line =
-            (content_screen == ShellScreen::CommandLine).then(|| command_line_host.view_model());
+        let command_line = (content_screen == ShellScreen::CommandLine).then(|| {
+            let mut model = command_line_host.view_model();
+            if let Some(username) = state.current_home_username() {
+                model = model.with_prompt_username(username);
+            }
+            model
+        });
         if let Some(launcher) = launcher.as_ref()
             && let Some(icon_runtime) = launcher_icons.as_mut()
             && let ui::ShellLayout::Full { main, .. } = ui::compute_shell_layout(Rect::new(

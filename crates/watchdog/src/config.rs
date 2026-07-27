@@ -27,6 +27,10 @@ pub struct WatchdogConfig {
     pub data_dir: PathBuf,
     pub process_name: String,
     pub process_version: String,
+    /// Whether this process owns its lifecycle and therefore needs a durable
+    /// marker for unclean-exit recovery. Parent-managed child processes still
+    /// record incidents, but their host is responsible for observing exits.
+    pub track_unclean_exit: bool,
     pub breadcrumb_capacity: usize,
     pub heartbeat_flush_interval: Duration,
     pub task_shutdown_timeout: Duration,
@@ -47,11 +51,17 @@ impl WatchdogConfig {
             data_dir: data_dir.into(),
             process_name: process_name.into(),
             process_version: process_version.into(),
+            track_unclean_exit: true,
             breadcrumb_capacity: 128,
             heartbeat_flush_interval: Duration::from_secs(5),
             task_shutdown_timeout: Duration::from_secs(2),
             retention: RetentionPolicy::default(),
         }
+    }
+
+    pub fn with_unclean_exit_tracking(mut self, enabled: bool) -> Self {
+        self.track_unclean_exit = enabled;
+        self
     }
 }
 

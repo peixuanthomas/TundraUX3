@@ -60,12 +60,18 @@ pub(crate) fn writer_loop(
     let marker_path = run_marker_path(&config, &run_id);
     let started_at = Utc::now().to_rfc3339();
     let mut snapshot = RuntimeSnapshot::default();
-    match write_marker(&config, &marker_path, &run_id, &started_at, &snapshot) {
+    let startup_result = if config.track_unclean_exit {
+        write_marker(&config, &marker_path, &run_id, &started_at, &snapshot)
+            .map_err(|error| error.to_string())
+    } else {
+        Ok(())
+    };
+    match startup_result {
         Ok(()) => {
             let _ = ready.send(Ok(()));
         }
         Err(error) => {
-            let _ = ready.send(Err(error.to_string()));
+            let _ = ready.send(Err(error));
             return;
         }
     }
@@ -123,14 +129,19 @@ pub(crate) fn writer_loop(
             }
             WriterCommand::Heartbeat(next) => {
                 snapshot = sanitize::snapshot(next);
-                if let Err(error) =
-                    write_marker(&config, &marker_path, &run_id, &started_at, &snapshot)
+                if config.track_unclean_exit
+                    && let Err(error) =
+                        write_marker(&config, &marker_path, &run_id, &started_at, &snapshot)
                 {
                     append_emergency(&config, &format!("run marker heartbeat failed: {error}"));
                 }
             }
             WriterCommand::Shutdown(response) => {
-                let result = durable::remove_file(&marker_path).map_err(|error| error.to_string());
+                let result = if config.track_unclean_exit {
+                    durable::remove_file(&marker_path).map_err(|error| error.to_string())
+                } else {
+                    Ok(())
+                };
                 let _ = response.send(result);
                 return;
             }

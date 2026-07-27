@@ -124,6 +124,42 @@ mod tests {
     }
 
     #[test]
+    fn parent_managed_runtime_does_not_create_or_report_run_markers() {
+        let root = std::env::temp_dir().join(format!(
+            "watchdog-test-parent-managed-{}-{}",
+            std::process::id(),
+            NEXT_TEST_DIRECTORY.fetch_add(1, Ordering::Relaxed)
+        ));
+        let config = WatchdogConfig::new(
+            root.join("reports"),
+            root.join("fallback"),
+            root.join("data"),
+            "parent-managed-test",
+            env!("CARGO_PKG_VERSION"),
+        )
+        .with_unclean_exit_tracking(false);
+        let (runtime, process) = WatchdogRuntime::start_isolated(config).unwrap();
+        let marker_directory = root.join("data").join("watchdog").join("runs");
+
+        assert!(
+            !marker_directory.exists(),
+            "a parent-managed process must not leave an unclean-exit marker"
+        );
+
+        fs::create_dir_all(&marker_directory).unwrap();
+        let unrelated_marker = marker_directory.join("unrelated.active.json");
+        fs::write(&unrelated_marker, b"{}").unwrap();
+        assert_eq!(process.report_stale_runs(|_| false).unwrap(), 0);
+        assert!(
+            unrelated_marker.exists(),
+            "parent-managed runtimes must not consume another process's markers"
+        );
+        assert!(runtime.try_recv_incident().is_none());
+
+        cleanup(runtime, &root);
+    }
+
+    #[test]
     fn restart_requires_replay_safe_task() {
         let spec = TaskSpec {
             id: TaskId::from_static("unsafe-restart"),

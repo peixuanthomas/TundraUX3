@@ -10,6 +10,9 @@ use crate::{CliCommand, parse_args};
 /// to perform the destructive storage reset and restart itself.
 pub const EMBEDDED_RESET_EXIT_CODE: i32 = 75;
 
+/// Private environment contract with the Shell's embedded Command Line host.
+const COMMAND_LINE_USERNAME_ENV: &str = "TUNDRA_COMMAND_LINE_USERNAME";
+
 /// Runs an interactive Tundra command loop. The callback is deliberately the
 /// normal CLI dispatcher, so REPL input cannot drift from the regular CLI
 /// command surface.
@@ -31,9 +34,10 @@ where
             return 1;
         }
     };
+    let prompt = repl_prompt(embedded);
 
     loop {
-        let line = match editor.readline("tundra> ") {
+        let line = match editor.readline(&prompt) {
             Ok(line) => line,
             Err(ReadlineError::Interrupted) => continue,
             Err(ReadlineError::Eof) => return 0,
@@ -91,6 +95,37 @@ where
     }
 }
 
+fn repl_prompt(embedded: bool) -> String {
+    let username = if embedded {
+        std::env::var(COMMAND_LINE_USERNAME_ENV).ok()
+    } else {
+        standalone_username()
+    };
+    prompt_for_username(username.as_deref())
+}
+
+fn standalone_username() -> Option<String> {
+    ["USERNAME", "USER"]
+        .into_iter()
+        .find_map(|name| std::env::var(name).ok())
+}
+
+fn prompt_for_username(username: Option<&str>) -> String {
+    let username = username
+        .map(str::trim)
+        .filter(|username| is_safe_prompt_username(username))
+        .unwrap_or("tundra");
+    format!("{username} >> ")
+}
+
+fn is_safe_prompt_username(username: &str) -> bool {
+    !username.is_empty()
+        && username.len() <= 64
+        && username.chars().all(|character| {
+            character.is_ascii_alphanumeric() || matches!(character, '-' | '_' | '.')
+        })
+}
+
 fn confirm_reset(editor: &mut Editor<(), MemHistory>) -> bool {
     match editor.readline("Type RESET to erase TundraUX3 data, or press Enter to cancel: ") {
         Ok(answer) => is_reset_confirmation(&answer),
@@ -145,6 +180,27 @@ mod tests {
     #[test]
     fn embedded_repl_exit_code_is_reserved_for_the_parent_shell() {
         assert_eq!(EMBEDDED_RESET_EXIT_CODE, 75);
+    }
+
+    #[test]
+    fn prompt_uses_the_username_and_new_chevrons() {
+        assert_eq!(
+            prompt_for_username(Some("AdminUser")),
+            "AdminUser >> ".to_string()
+        );
+        assert_eq!(prompt_for_username(None), "tundra >> ".to_string());
+    }
+
+    #[test]
+    fn prompt_rejects_untrusted_environment_values() {
+        assert_eq!(
+            prompt_for_username(Some("user\u{1b}[31m")),
+            "tundra >> ".to_string()
+        );
+        assert_eq!(
+            prompt_for_username(Some(" user.name ")),
+            "user.name >> ".to_string()
+        );
     }
 
     #[test]

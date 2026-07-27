@@ -118,6 +118,10 @@ pub struct CommandLineViewModel {
     pub process_state: CommandLineProcessState,
     /// A host-side message such as a spawn error or a restart hint.
     pub message: Option<String>,
+    /// Plain-text prefix emitted by the embedded REPL. The renderer uses this
+    /// semantic hint to apply the live application accent without injecting
+    /// ANSI sequences that can break line-editor cursor calculations.
+    pub prompt_label: Option<String>,
 }
 
 impl CommandLineViewModel {
@@ -126,7 +130,13 @@ impl CommandLineViewModel {
             terminal,
             process_state: CommandLineProcessState::Running,
             message: None,
+            prompt_label: None,
         }
+    }
+
+    pub fn with_prompt_username(mut self, username: &str) -> Self {
+        self.prompt_label = Some(format!("{username} >>"));
+        self
     }
 }
 
@@ -183,7 +193,13 @@ fn render_command_line_main(
         return;
     };
 
-    render_terminal_snapshot(frame, terminal_area, &model.terminal);
+    render_terminal_snapshot(
+        frame,
+        terminal_area,
+        &model.terminal,
+        model.prompt_label.as_deref(),
+        theme.accent_color,
+    );
     if let Some((message, style)) = command_line_process_message(model, theme) {
         render_process_message(frame, terminal_area, &message, style);
     }
@@ -246,9 +262,14 @@ fn render_terminal_snapshot(
     frame: &mut Frame<'_>,
     area: Rect,
     snapshot: &CommandLineTerminalSnapshot,
+    prompt_label: Option<&str>,
+    accent_color: Color,
 ) {
     let buffer = frame.buffer_mut();
     for row in 0..area.height {
+        let prompt_width = prompt_label
+            .filter(|prompt| row_starts_with(snapshot, row, prompt))
+            .map_or(0, str::len);
         for column in 0..area.width {
             let default_cell = CommandLineCell::default();
             let cell = snapshot.cell(column, row).unwrap_or(&default_cell);
@@ -258,9 +279,26 @@ fn render_terminal_snapshot(
                 target
                     .set_symbol(visible_symbol(&cell.symbol))
                     .set_style(cell_style(cell));
+                if usize::from(column) < prompt_width {
+                    target.set_fg(accent_color);
+                }
             }
         }
     }
+}
+
+fn row_starts_with(snapshot: &CommandLineTerminalSnapshot, row: u16, prefix: &str) -> bool {
+    if prefix.is_empty() || prefix.len() > usize::from(snapshot.columns) {
+        return false;
+    }
+    prefix.bytes().enumerate().all(|(column, expected)| {
+        let Ok(column) = u16::try_from(column) else {
+            return false;
+        };
+        snapshot
+            .cell(column, row)
+            .is_some_and(|cell| cell.symbol.as_bytes() == [expected])
+    })
 }
 
 fn cell_style(cell: &CommandLineCell) -> Style {

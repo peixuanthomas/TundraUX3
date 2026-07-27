@@ -82,6 +82,51 @@ fn command_line_renders_snapshot_inside_the_standard_shell_chrome() {
 }
 
 #[test]
+fn command_line_prompt_uses_the_application_accent_color() {
+    let prompt = "AdminUser >> ";
+    let mut terminal = CommandLineTerminalSnapshot::blank(106, 14);
+    for (column, symbol) in prompt.chars().enumerate() {
+        terminal.set_cell(
+            u16::try_from(column).unwrap(),
+            0,
+            CommandLineCell {
+                symbol: symbol.to_string(),
+                ..CommandLineCell::default()
+            },
+        );
+    }
+    terminal.set_cell(
+        u16::try_from(prompt.len()).unwrap(),
+        0,
+        CommandLineCell {
+            symbol: "h".to_string(),
+            ..CommandLineCell::default()
+        },
+    );
+    let model = CommandLineViewModel::new(terminal).with_prompt_username("AdminUser");
+    let theme = TundraTheme::default_dark().with_accent_color(ratatui::style::Color::LightMagenta);
+    let mut screen = Terminal::new(TestBackend::new(108, 22)).unwrap();
+    screen
+        .draw(|frame| {
+            render_command_line(frame, frame.area(), &chrome((108, 22)), &model, &theme);
+        })
+        .unwrap();
+    let buffer = screen.backend().buffer();
+
+    for column in 0..u16::try_from("AdminUser >>".len()).unwrap() {
+        assert_eq!(buffer.cell((1 + column, 4)).unwrap().fg, theme.accent_color);
+    }
+    assert_ne!(
+        buffer
+            .cell((1 + u16::try_from(prompt.len()).unwrap(), 4))
+            .unwrap()
+            .fg,
+        theme.accent_color,
+        "typed command text must keep the child terminal style"
+    );
+}
+
+#[test]
 fn undersized_command_line_is_blocked() {
     let model = CommandLineViewModel::new(CommandLineTerminalSnapshot::blank(108, 20));
     let mut screen = Terminal::new(TestBackend::new(80, 20)).unwrap();

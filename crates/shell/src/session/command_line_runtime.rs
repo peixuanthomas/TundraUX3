@@ -25,12 +25,16 @@ pub const EMBEDDED_RESET_EXIT_CODE: u32 = 75;
 pub const DEFAULT_COLUMNS: u16 = 108;
 pub const DEFAULT_ROWS: u16 = 20;
 
+/// Private environment contract with the embedded `tundra-cli` REPL.
+const COMMAND_LINE_USERNAME_ENV: &str = "TUNDRA_COMMAND_LINE_USERNAME";
+
 static NEXT_PTY_READER_TASK_ID: AtomicU64 = AtomicU64::new(1);
 
 #[derive(Debug, Clone)]
 pub struct CommandLinePtyConfig {
     pub program: OsString,
     pub args: Vec<OsString>,
+    pub env: Vec<(OsString, OsString)>,
     pub cwd: Option<PathBuf>,
     pub columns: u16,
     pub rows: u16,
@@ -43,11 +47,20 @@ impl CommandLinePtyConfig {
         Self {
             program: program.into(),
             args: vec![OsString::from("repl"), OsString::from("--embedded")],
+            env: Vec::new(),
             cwd: None,
             columns: DEFAULT_COLUMNS,
             rows: DEFAULT_ROWS,
             scrollback_lines: 2_000,
         }
+    }
+
+    pub fn with_username(mut self, username: &str) -> Self {
+        self.env.push((
+            OsString::from(COMMAND_LINE_USERNAME_ENV),
+            OsString::from(username),
+        ));
+        self
     }
 
     fn size(&self) -> PtySize {
@@ -255,6 +268,9 @@ impl CommandLinePty {
         let pair = pty_system.openpty(config.size()).map_err(portable_error)?;
         let mut command = CommandBuilder::new(config.program);
         command.args(config.args);
+        for (name, value) in config.env {
+            command.env(name, value);
+        }
         if let Some(cwd) = config.cwd {
             command.cwd(cwd);
         }
@@ -732,13 +748,13 @@ impl CommandLineHost {
         }
     }
 
-    pub fn ensure_started(&mut self, platform: &dyn Platform) {
+    pub fn ensure_started(&mut self, platform: &dyn Platform, username: &str) {
         if !matches!(self.state, CommandLineHostState::Inactive) {
             return;
         }
 
         let result = resolve_tundra_cli_program().and_then(|program| {
-            let mut config = CommandLinePtyConfig::tundra_cli(program);
+            let mut config = CommandLinePtyConfig::tundra_cli(program).with_username(username);
             if let Ok(directories) = platform.user_dirs() {
                 let documents = directories.documents();
                 if documents.is_dir() {
@@ -897,6 +913,7 @@ impl CommandLineHost {
             terminal: to_ui_snapshot(&self.snapshot),
             process_state,
             message: None,
+            prompt_label: None,
         }
     }
 
@@ -1135,6 +1152,7 @@ mod tests {
             CommandLinePtyConfig {
                 program,
                 args,
+                env: Vec::new(),
                 cwd: None,
                 columns: 40,
                 rows: 4,
@@ -1215,6 +1233,7 @@ mod tests {
                     OsString::from("/K"),
                     OsString::from("echo TUNDRA_PTY_INITIAL_OUTPUT_OK"),
                 ],
+                env: Vec::new(),
                 cwd: None,
                 columns: 80,
                 rows: 12,
@@ -1366,6 +1385,18 @@ mod tests {
         );
         assert_eq!(config.columns, DEFAULT_COLUMNS);
         assert_eq!(config.rows, DEFAULT_ROWS);
+    }
+
+    #[test]
+    fn cli_config_passes_the_current_tundra_username() {
+        let config = CommandLinePtyConfig::tundra_cli("tundra-cli").with_username("AdminUser");
+        assert_eq!(
+            config.env,
+            [(
+                OsString::from(COMMAND_LINE_USERNAME_ENV),
+                OsString::from("AdminUser")
+            )]
+        );
     }
 
     #[test]

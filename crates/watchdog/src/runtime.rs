@@ -388,6 +388,9 @@ impl ProcessWatchdog {
         &self,
         is_process_alive: impl Fn(u32) -> bool,
     ) -> Result<usize, WatchdogError> {
+        if !self.shared.config.track_unclean_exit {
+            return Ok(0);
+        }
         let directory = self.shared.config.data_dir.join("watchdog").join("runs");
         let entries = match fs::read_dir(&directory) {
             Ok(entries) => entries,

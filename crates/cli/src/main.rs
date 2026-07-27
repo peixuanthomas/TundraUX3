@@ -6,7 +6,9 @@ use watchdog::{
 };
 
 fn main() {
-    let (watchdog_runtime, process_watchdog) = match start_watchdog() {
+    let args = std::env::args().skip(1).collect::<Vec<_>>();
+    let parent_managed = is_parent_managed_command_line(&args);
+    let (watchdog_runtime, process_watchdog) = match start_watchdog(parent_managed) {
         Ok(value) => value,
         Err(error) => {
             eprintln!("tundra-cli watchdog failed to start: {error}");
@@ -44,7 +46,7 @@ fn main() {
         BoundarySpec::new("cli.command", BoundaryKind::Process).terminal_owner(),
         AssertUnwindSafe(|| {
             cli::run_managed(
-                std::env::args().skip(1),
+                args,
                 &process_watchdog,
                 weathr_watchdog,
                 &mut stdout,
@@ -75,7 +77,16 @@ fn main() {
     std::process::exit(exit_code);
 }
 
-fn start_watchdog() -> Result<(WatchdogRuntime, ProcessWatchdog), watchdog::WatchdogError> {
+fn is_parent_managed_command_line(args: &[String]) -> bool {
+    matches!(
+        cli::parse_args(args),
+        Ok(cli::CliCommand::Repl { embedded: true })
+    )
+}
+
+fn start_watchdog(
+    parent_managed: bool,
+) -> Result<(WatchdogRuntime, ProcessWatchdog), watchdog::WatchdogError> {
     let fallback = std::env::temp_dir().join("TundraUX3").join("watchdog");
     let platform = platform::native_platform();
     let config = match platform.app_paths() {
@@ -93,9 +104,30 @@ fn start_watchdog() -> Result<(WatchdogRuntime, ProcessWatchdog), watchdog::Watc
             "tundra-cli",
             env!("CARGO_PKG_VERSION"),
         ),
-    };
+    }
+    .with_unclean_exit_tracking(!parent_managed);
     let (runtime, process) = WatchdogRuntime::start(config)?;
     let process = process.install_global()?;
     let _ = process.report_stale_runs(|pid| platform.is_process_alive(pid).unwrap_or(true));
     Ok((runtime, process))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn args(values: &[&str]) -> Vec<String> {
+        values.iter().map(|value| (*value).to_string()).collect()
+    }
+
+    #[test]
+    fn only_the_embedded_repl_uses_parent_managed_lifecycle() {
+        assert!(is_parent_managed_command_line(&args(&[
+            "repl",
+            "--embedded"
+        ])));
+        assert!(!is_parent_managed_command_line(&args(&["repl"])));
+        assert!(!is_parent_managed_command_line(&args(&["help"])));
+        assert!(!is_parent_managed_command_line(&args(&["--embedded"])));
+    }
 }
