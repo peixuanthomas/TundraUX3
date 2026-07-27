@@ -2,8 +2,8 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use crate::artwork::{
-    ArtItem, ArtSet, ExplorerIcon, HomeIconCatalog, TextArt, load_art_set, load_explorer_icons,
-    load_home_icon_catalog, load_text_art,
+    ArtItem, ArtSet, ExplorerIcon, HomeIconCatalog, LauncherIcon, TextArt, load_art_set,
+    load_explorer_icons, load_home_icon_catalog, load_launcher_icons, load_text_art,
 };
 use crate::asset_error::AssetError;
 use crate::asset_manifest::{DEFAULT_THEME_ID, REQUIRED_TEXT_ARTS};
@@ -30,6 +30,7 @@ pub struct AsciiAssetStore {
     banners: ArtSet,
     explorer_icons: ArtSet,
     home_icons: HomeIconCatalog,
+    launcher_icons: ArtSet,
     clock_font: ClockFontAsset,
     text_arts: BTreeMap<String, TextArt>,
 }
@@ -51,6 +52,7 @@ impl AsciiAssetStore {
         let banners = load_art_set(&resolver, theme_id, "banner", "banner.toml")?;
         let explorer_icons = load_explorer_icons(&resolver, theme_id)?;
         let home_icons = load_home_icon_catalog(&resolver, theme_id)?;
+        let launcher_icons = load_launcher_icons(&resolver, theme_id)?;
         let clock_font = load_clock_font(&resolver, theme_id)?;
         let mut text_arts = BTreeMap::new();
         for (key, relative_path) in REQUIRED_TEXT_ARTS {
@@ -64,6 +66,7 @@ impl AsciiAssetStore {
             banners,
             explorer_icons,
             home_icons,
+            launcher_icons,
             clock_font,
             text_arts,
         })
@@ -95,6 +98,12 @@ impl AsciiAssetStore {
         &self.home_icons
     }
 
+    pub fn home_icon_image_path(&self, key: &str) -> Option<PathBuf> {
+        let relative_path = self.home_icons.icon_for_key(key)?.image_path()?;
+        let path = self.resolver.asset_path(&self.theme_id, relative_path);
+        path.is_file().then_some(path)
+    }
+
     pub fn explorer_icon(&self, key: &str) -> Result<&ExplorerIcon, AssetError> {
         self.explorer_icons
             .get(key)
@@ -105,6 +114,16 @@ impl AsciiAssetStore {
 
     pub fn explorer_icons(&self) -> impl Iterator<Item = &ExplorerIcon> {
         self.explorer_icons.items()
+    }
+
+    pub fn launcher_icon(&self, key: &str) -> Option<&LauncherIcon> {
+        self.launcher_icons.get(key)
+    }
+
+    pub fn launcher_icon_image_path(&self, key: &str) -> Option<PathBuf> {
+        let relative_path = self.launcher_icon(key)?.image_path()?;
+        let path = self.resolver.asset_path(&self.theme_id, relative_path);
+        path.is_file().then_some(path)
     }
 
     pub fn clock_font(&self) -> &ClockFontAsset {
@@ -126,6 +145,7 @@ impl AsciiAssetStore {
             .banners
             .items()
             .chain(self.home_icons.icons())
+            .chain(self.launcher_icons.items())
             .chain(self.explorer_icons.items())
         {
             dimensions.include(item.width(), item.height());
@@ -158,8 +178,29 @@ mod tests {
             .expect("canonical assets should load");
 
         assert_eq!(store.banner_lines("tundraux3").unwrap().len(), 10);
-        assert!(store.home_icon_catalog().icon("explorer").is_some());
-        assert!(store.home_icon_catalog().icon("command_line").is_some());
+        let explorer = store
+            .home_icon_catalog()
+            .icon("explorer")
+            .expect("Explorer Home icon");
+        assert_eq!(explorer.image_path(), Some("home_icons/explorer.png"));
+        assert!(
+            store
+                .home_icon_image_path("explorer")
+                .is_some_and(|path| path.is_file())
+        );
+        let command_line = store
+            .launcher_icon("builtin.command-line")
+            .expect("Command Line Launcher icon");
+        assert_eq!(command_line.label(), Some("Command Line"));
+        assert_eq!(
+            command_line.image_path(),
+            Some("launcher_icons/command_line.png")
+        );
+        assert!(
+            store
+                .launcher_icon_image_path("builtin.command-line")
+                .is_some_and(|path| path.is_file())
+        );
         assert_eq!(store.clock_font().height, 7);
         assert!(store.text_art("weathr/world/house").unwrap().height() >= 10);
         assert_eq!(
@@ -196,6 +237,42 @@ mod tests {
             store.explorer_icon("not-defined"),
             Err(AssetError::UnknownAsset { .. })
         ));
+    }
+
+    #[test]
+    fn launcher_icon_loading_keeps_ascii_fallback_when_declared_image_is_missing() {
+        let root = TemporaryAssetRoot::copy_of(Path::new(CANONICAL_ASSETS_DIR));
+        fs::remove_file(
+            root.path
+                .join("themes/default/launcher_icons/command_line.png"),
+        )
+        .expect("remove generated Launcher icon");
+
+        let store = AsciiAssetStore::load_with_root(&root.path, DEFAULT_THEME_ID)
+            .expect("missing optional image must preserve ASCII asset loading");
+        let icon = store
+            .launcher_icon("builtin.command-line")
+            .expect("Command Line ASCII icon");
+        assert!(!icon.lines().is_empty());
+        assert_eq!(icon.image_path(), Some("launcher_icons/command_line.png"));
+        assert_eq!(store.launcher_icon_image_path("builtin.command-line"), None);
+    }
+
+    #[test]
+    fn home_icon_loading_keeps_ascii_fallback_when_declared_image_is_missing() {
+        let root = TemporaryAssetRoot::copy_of(Path::new(CANONICAL_ASSETS_DIR));
+        fs::remove_file(root.path.join("themes/default/home_icons/explorer.png"))
+            .expect("remove generated Home icon");
+
+        let store = AsciiAssetStore::load_with_root(&root.path, DEFAULT_THEME_ID)
+            .expect("missing optional image must preserve ASCII asset loading");
+        let icon = store
+            .home_icon_catalog()
+            .icon_for_key("explorer")
+            .expect("Explorer ASCII icon");
+        assert!(!icon.lines().is_empty());
+        assert_eq!(icon.image_path(), Some("home_icons/explorer.png"));
+        assert_eq!(store.home_icon_image_path("explorer"), None);
     }
 
     #[test]

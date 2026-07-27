@@ -239,6 +239,7 @@ impl ShellSession {
             diagnostics_restart_required,
             terminal_size,
             terminal_flags: ShellTerminalFlags::enabled(),
+            terminal_image_support: false,
             focused_component: initial_focus,
             hovered_component: None,
             active_popup: None,

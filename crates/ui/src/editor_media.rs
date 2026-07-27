@@ -138,8 +138,9 @@ impl PreparedEditorImage {
     /// Render a fixed-size image centered inside a larger allocation.
     ///
     /// `ratatui-image` preserves the image aspect ratio but anchors the resulting
-    /// protocol area at the allocation's left edge. Launcher tiles allocate the
-    /// whole tile width to an icon, so center the actual protocol footprint here.
+    /// protocol area at the allocation's left edge. Launcher and Home tiles
+    /// allocate the whole tile width to an icon, so center the actual protocol
+    /// footprint here.
     pub fn render_centered(&self, frame: &mut Frame<'_>, area: Rect) {
         let centered = centered_protocol_area(area, self.protocol.area());
         frame.render_widget(Image::new(&self.protocol), centered);

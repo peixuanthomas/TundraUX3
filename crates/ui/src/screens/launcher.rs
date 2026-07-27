@@ -60,8 +60,6 @@ pub struct LauncherItemViewModel {
     pub status: LauncherItemStatus,
     pub source: LauncherItemSource,
     pub capabilities: LauncherItemCapabilities,
-    /// Key in the themed home-icon catalog. External applications use `default`.
-    pub icon_key: String,
     pub selected: bool,
 }
 
@@ -81,7 +79,6 @@ impl LauncherItemViewModel {
             status,
             source: LauncherItemSource::External,
             capabilities: LauncherItemCapabilities::EXTERNAL,
-            icon_key: "default".to_string(),
             selected: false,
         }
     }
@@ -97,7 +94,6 @@ impl LauncherItemViewModel {
             status: LauncherItemStatus::Ready,
             source: LauncherItemSource::BuiltIn,
             capabilities: LauncherItemCapabilities::BUILT_IN,
-            icon_key: descriptor.icon_key.to_string(),
             selected: false,
         }
     }
@@ -275,10 +271,21 @@ impl LauncherViewModel {
     }
 
     pub fn item_icon(&self, item: &LauncherItemViewModel) -> Option<&crate::HomeIcon> {
-        self.ascii_assets
-            .home_icon_catalog()
-            .icon_for_key(&item.icon_key)
-            .or_else(|| self.default_app_icon())
+        if item.is_builtin() {
+            self.ascii_assets
+                .launcher_icon(&item.id)
+                .or_else(|| self.default_app_icon())
+        } else {
+            self.default_app_icon()
+        }
+    }
+
+    pub fn item_graphic_path(&self, item: &LauncherItemViewModel) -> Option<std::path::PathBuf> {
+        if item.is_builtin() {
+            self.ascii_assets.launcher_icon_image_path(&item.id)
+        } else {
+            None
+        }
     }
 }
 

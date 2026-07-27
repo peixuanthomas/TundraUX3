@@ -53,6 +53,7 @@ const REQUIRED_TOML_ASSETS: &[(&str, &str, AssetKind)] = &[
     ("banner", "banner.toml", AssetKind::ArtSet),
     ("explorer_icons", "explorer_icons.toml", AssetKind::ArtSet),
     ("home_icons", "home_icons.toml", AssetKind::ArtSet),
+    ("launcher_icons", "launcher_icons.toml", AssetKind::ArtSet),
     (
         "weathr/render/clock_font",
         "weathr/render/clock_font.toml",

@@ -1,5 +1,6 @@
 use std::collections::BTreeMap;
 use std::fs;
+use std::path::{Component, Path};
 
 use serde::Deserialize;
 
@@ -40,6 +41,7 @@ impl TextArt {
 pub struct ArtItem {
     pub key: String,
     pub label: Option<String>,
+    image_path: Option<String>,
     pub lines: Vec<String>,
     pub width: usize,
     pub height: usize,
@@ -58,6 +60,10 @@ impl ArtItem {
         &self.lines
     }
 
+    pub fn image_path(&self) -> Option<&str> {
+        self.image_path.as_deref()
+    }
+
     pub fn width(&self) -> usize {
         self.width
     }
@@ -69,6 +75,7 @@ impl ArtItem {
 
 pub type HomeIcon = ArtItem;
 pub type ExplorerIcon = ArtItem;
+pub type LauncherIcon = ArtItem;
 
 pub(crate) const EXPLORER_ENTRY_AND_LOCATION_ICON_KEYS: &[&str] = &[
     "folder",
@@ -134,21 +141,11 @@ pub struct HomeIconCatalog {
 
 impl HomeIconCatalog {
     pub fn icon_for_label(&self, label: &str) -> Option<&ArtItem> {
-        let key = match label {
-            "Explorer" => "explorer",
-            "Launcher" => "launcher",
-            "Command Line" => "command_line",
-            "Editor" => "editor",
-            "Settings" => "settings",
-            "Diagnostics" => "diagnostics",
-            "User Management" => "user_management",
-            "User Profile" => "user_profile",
-            _ => self
-                .labels
-                .get(label)
-                .map(String::as_str)
-                .unwrap_or("default"),
-        };
+        let key = self
+            .labels
+            .get(label)
+            .map(String::as_str)
+            .unwrap_or("default");
 
         self.icons.get(key).or_else(|| self.icons.get("default"))
     }
@@ -208,7 +205,6 @@ pub(crate) fn load_home_icon_catalog(
     for required in [
         "explorer",
         "launcher",
-        "command_line",
         "editor",
         "settings",
         "diagnostics",
@@ -225,6 +221,13 @@ pub(crate) fn load_home_icon_catalog(
     }
 
     Ok(HomeIconCatalog { icons, labels })
+}
+
+pub(crate) fn load_launcher_icons(
+    resolver: &AssetResolver,
+    theme_id: &str,
+) -> Result<ArtSet, AssetError> {
+    load_art_set(resolver, theme_id, "launcher_icons", "launcher_icons.toml")
 }
 
 pub(crate) fn load_explorer_icons(
@@ -282,7 +285,13 @@ pub(crate) fn load_art_set(
 
     let mut items = BTreeMap::new();
     for (item_key, item_file) in file.items {
-        let lines = match (item_file.lines, item_file.body) {
+        let ArtItemFile {
+            label,
+            image,
+            lines,
+            body,
+        } = item_file;
+        let lines = match (lines, body) {
             (Some(lines), None) => lines,
             (None, Some(body)) => split_preserved_lines(&body),
             (Some(_), Some(_)) => {
@@ -306,11 +315,15 @@ pub(crate) fn load_art_set(
                 message: format!("art item {item_key} must contain at least one line"),
             });
         }
+        let image_path = image
+            .map(|image| validate_image_path(key, &item_key, image))
+            .transpose()?;
         items.insert(
             item_key.clone(),
             ArtItem {
                 key: item_key,
-                label: item_file.label,
+                label,
+                image_path,
                 lines,
                 width,
                 height,
@@ -319,6 +332,41 @@ pub(crate) fn load_art_set(
     }
 
     Ok(ArtSet { items })
+}
+
+fn validate_image_path(
+    asset_key: &str,
+    item_key: &str,
+    image: String,
+) -> Result<String, AssetError> {
+    let relative = Path::new(&image);
+    if image.trim().is_empty()
+        || relative.is_absolute()
+        || !relative
+            .components()
+            .all(|component| matches!(component, Component::Normal(_)))
+    {
+        return Err(AssetError::InvalidAsset {
+            asset: asset_key.to_string(),
+            message: format!("art item {item_key} has an unsafe image path {image:?}"),
+        });
+    }
+    let supported = relative
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| {
+            matches!(
+                extension.to_ascii_lowercase().as_str(),
+                "gif" | "jpeg" | "jpg" | "png" | "webp"
+            )
+        });
+    if !supported {
+        return Err(AssetError::InvalidAsset {
+            asset: asset_key.to_string(),
+            message: format!("art item {item_key} image must be GIF, JPEG, PNG, or WebP"),
+        });
+    }
+    Ok(image)
 }
 
 pub(crate) fn read_asset_to_string(
@@ -414,6 +462,7 @@ struct ArtSetFile {
 #[derive(Debug, Deserialize)]
 struct ArtItemFile {
     label: Option<String>,
+    image: Option<String>,
     lines: Option<Vec<String>>,
     body: Option<String>,
 }

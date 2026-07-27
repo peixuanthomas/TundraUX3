@@ -16,6 +16,11 @@ const HOME_TILE_MAX_HEIGHT: u16 = 8;
 const HOME_TILE_MIN_HEIGHT: u16 = 3;
 const HOME_TILE_GAP: u16 = 1;
 
+pub trait HomeIconRenderer {
+    /// Returns true when a terminal image was rendered for `entry_label`.
+    fn render_icon(&self, entry_label: &str, frame: &mut Frame<'_>, area: Rect) -> bool;
+}
+
 pub fn render_home(
     frame: &mut Frame<'_>,
     area: Rect,
@@ -23,25 +28,48 @@ pub fn render_home(
     home: &HomeViewModel,
     theme: &TundraTheme,
 ) {
+    render_home_with_icons(frame, area, chrome, home, theme, None);
+}
+
+pub fn render_home_with_icons(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    chrome: &ShellChromeViewModel,
+    home: &HomeViewModel,
+    theme: &TundraTheme,
+    icons: Option<&dyn HomeIconRenderer>,
+) {
     match compute_shell_layout(area) {
         ShellLayout::Compact(compact) => render_compact_home(frame, compact, chrome, theme),
         ShellLayout::Full { top, main, status } => {
             render_top(frame, top, chrome, theme);
-            render_main(frame, main, home, theme);
+            render_main(frame, main, home, theme, icons);
             render_status(frame, status, chrome, theme);
         }
     }
 }
 
-fn render_main(frame: &mut Frame<'_>, area: Rect, home: &HomeViewModel, theme: &TundraTheme) {
+fn render_main(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    home: &HomeViewModel,
+    theme: &TundraTheme,
+    icons: Option<&dyn HomeIconRenderer>,
+) {
     match home.display_mode() {
         HomeDisplayMode::Debug | HomeDisplayMode::User | HomeDisplayMode::Auth => {
-            render_user_main(frame, area, home, theme)
+            render_user_main(frame, area, home, theme, icons)
         }
     }
 }
 
-fn render_user_main(frame: &mut Frame<'_>, area: Rect, home: &HomeViewModel, theme: &TundraTheme) {
+fn render_user_main(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    home: &HomeViewModel,
+    theme: &TundraTheme,
+    icons: Option<&dyn HomeIconRenderer>,
+) {
     let outer = theme
         .block()
         .title("Home")
@@ -71,36 +99,67 @@ fn render_user_main(frame: &mut Frame<'_>, area: Rect, home: &HomeViewModel, the
             theme.body_style()
         };
         let content_width = usize::from(tile.width.saturating_sub(2));
-        let mut lines: Vec<Line<'static>> = Vec::new();
-        if let Some(icon) = home.home_icon_for_label(&entry.label) {
-            lines.extend(
-                icon.lines
-                    .iter()
-                    .map(|line| centered_home_tile_line(line, icon.width(), content_width)),
+        frame.render_widget(
+            theme
+                .block()
+                .borders(Borders::ALL)
+                .style(style)
+                .border_style(theme.selectable_border_style(selected))
+                .title(if selected { "Selected" } else { "" })
+                .title_style(style),
+            tile,
+        );
+        let icon_area = home_entry_icon_area(tile);
+        let rendered_graphic = icon_area.width > 0
+            && icon_area.height > 0
+            && icons.is_some_and(|icons| icons.render_icon(&entry.label, frame, icon_area));
+        if !rendered_graphic && let Some(icon) = home.home_icon_for_label(&entry.label) {
+            for (row, line) in icon
+                .lines()
+                .iter()
+                .take(usize::from(icon_area.height))
+                .enumerate()
+            {
+                frame.render_widget(
+                    Paragraph::new(centered_home_tile_line(line, icon.width(), content_width))
+                        .style(style),
+                    Rect::new(
+                        icon_area.x,
+                        icon_area
+                            .y
+                            .saturating_add(u16::try_from(row).unwrap_or(u16::MAX)),
+                        icon_area.width,
+                        1,
+                    ),
+                );
+            }
+        }
+
+        let inner = Rect::new(
+            tile.x.saturating_add(1),
+            tile.y.saturating_add(1),
+            tile.width.saturating_sub(2),
+            tile.height.saturating_sub(2),
+        );
+        let label_y = icon_area.bottom();
+        if label_y < inner.bottom() {
+            frame.render_widget(
+                Paragraph::new(Line::styled(
+                    centered_home_tile_text(&entry.label, content_width),
+                    style,
+                ))
+                .style(style),
+                Rect::new(inner.x, label_y, inner.width, 1),
             );
         }
-        lines.push(Line::styled(
-            centered_home_tile_text(&entry.label, content_width),
-            style,
-        ));
-        lines.push(Line::from(centered_home_tile_text(
-            &entry.description,
-            content_width,
-        )));
-
-        let tile_widget = Paragraph::new(lines)
-            .block(
-                theme
-                    .block()
-                    .borders(Borders::ALL)
-                    .style(style)
-                    .border_style(theme.selectable_border_style(selected))
-                    .title(if selected { "Selected" } else { "" })
-                    .title_style(style),
-            )
-            .style(style);
-
-        frame.render_widget(tile_widget, tile);
+        let description_y = label_y.saturating_add(1);
+        if description_y < inner.bottom() {
+            frame.render_widget(
+                Paragraph::new(centered_home_tile_text(&entry.description, content_width))
+                    .style(style),
+                Rect::new(inner.x, description_y, inner.width, 1),
+            );
+        }
     }
 
     let controls_text = if home.logout_visible() && home.entries().is_empty() {
@@ -224,6 +283,20 @@ pub fn home_entry_tile_areas(main: Rect, entry_count: usize) -> Vec<Rect> {
     }
 
     areas
+}
+
+/// Returns the image allocation shared by Home's ASCII and graphical icons.
+///
+/// The first four inner rows historically hold the ASCII icon. Terminal
+/// images use the same allocation and [`crate::PreparedEditorImage::render_centered`],
+/// matching Launcher icon centering without moving Home labels.
+pub fn home_entry_icon_area(tile: Rect) -> Rect {
+    Rect::new(
+        tile.x.saturating_add(1),
+        tile.y.saturating_add(1),
+        tile.width.saturating_sub(2),
+        tile.height.saturating_sub(2).min(4),
+    )
 }
 
 pub fn home_entry_index_at(

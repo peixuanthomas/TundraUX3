@@ -66,8 +66,8 @@ mod tests {
     }
 
     #[test]
-    fn runtime_asset_copy_includes_valid_explorer_icons() {
-        let root = TempDir::new("runtime-explorer-assets");
+    fn runtime_asset_copy_includes_valid_icon_assets() {
+        let root = TempDir::new("runtime-icon-assets");
         let out_dir = root
             .path
             .join("target/debug/build/tundra-shell-fixture/out");
@@ -80,6 +80,33 @@ mod tests {
                 .join("themes/default/explorer_icons.toml")
                 .is_file()
         );
+        assert!(
+            copied_root
+                .join("themes/default/launcher_icons.toml")
+                .is_file()
+        );
+        assert!(
+            copied_root
+                .join("themes/default/launcher_icons/command_line.png")
+                .is_file()
+        );
+        for icon in [
+            "explorer",
+            "launcher",
+            "editor",
+            "settings",
+            "diagnostics",
+            "user_management",
+            "user_profile",
+            "default",
+        ] {
+            assert!(
+                copied_root
+                    .join(format!("themes/default/home_icons/{icon}.png"))
+                    .is_file(),
+                "copied runtime assets should include Home icon {icon}"
+            );
+        }
         let store = AsciiAssetStore::load_with_root(&copied_root, DEFAULT_THEME_ID)
             .expect("copied runtime assets should be self-contained");
         let report = check_required_assets(&copied_root, DEFAULT_THEME_ID);

@@ -7,7 +7,8 @@ use identity::{
 };
 use platform::{AppPaths, cleanup_temp_path};
 use storage::{
-    AppearanceConfig, BorderColor, BorderShape, ClockProfile, StorageManager, UserRecord,
+    AppearanceConfig, BorderColor, BorderShape, ClockProfile, IconDisplayMode, StorageManager,
+    UserRecord,
 };
 
 #[test]
@@ -210,6 +211,7 @@ fn bootstrap_admin_persists_the_selected_user_appearance() {
         border_shape: BorderShape::Square,
         border_color: BorderColor::Rgb(0x38, 0xBD, 0xF8),
         accent_color: BorderColor::LightMagenta,
+        icon_display_mode: IconDisplayMode::Image,
     };
 
     let account = UserService::new(manager.clone())
@@ -255,6 +257,7 @@ fn appearance_updates_are_self_managed_for_users_and_admins() {
         border_shape: BorderShape::Square,
         border_color: BorderColor::LightGreen,
         accent_color: BorderColor::LightMagenta,
+        icon_display_mode: IconDisplayMode::Ascii,
     };
 
     let updated = users

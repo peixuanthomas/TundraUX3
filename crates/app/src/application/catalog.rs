@@ -19,7 +19,6 @@ pub struct BuiltInApplicationDescriptor {
     pub name: &'static str,
     pub description: &'static str,
     pub type_label: &'static str,
-    pub icon_key: &'static str,
     pub admin_only: bool,
     pub fixed_in_launcher: bool,
 }
@@ -29,7 +28,6 @@ pub const COMMAND_LINE_APPLICATION: BuiltInApplicationDescriptor = BuiltInApplic
     name: "Command Line",
     description: "TundraUX3 CLI and operating-system commands",
     type_label: "Built-in application",
-    icon_key: "command_line",
     admin_only: true,
     fixed_in_launcher: true,
 };

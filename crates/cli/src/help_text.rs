@@ -114,6 +114,10 @@ pub(crate) fn write_asset_help(output: &mut impl Write) -> std::io::Result<()> {
     writeln!(output, "  tundra-cli asset explorer_icons -a")?;
     writeln!(output, "  tundra-cli asset explorer_icons --folder")?;
     writeln!(output, "  tundra-cli asset home_icons --launcher")?;
+    writeln!(
+        output,
+        "  tundra-cli asset launcher_icons --builtin.command-line"
+    )?;
     writeln!(output)?;
     writeln!(output, "Available assets:")?;
     for asset in ascii_assets::required_assets() {

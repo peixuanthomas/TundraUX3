@@ -10,10 +10,11 @@ use platform::{
 use storage::{
     AppearanceConfig, BorderColor, BorderShape, ClockDocument, ClockEntryRecord, ClockProfile,
     EditorConfig, ExplorerConfig, ExplorerDateZone, ExplorerSizeFormat, ExplorerSortDirection,
-    ExplorerSortField, LauncherConfig, LauncherEntryRecord, LauncherExecutableKind,
-    LauncherFingerprint, RecentFilesDocument, SCHEMA_VERSION, SecurityConfig, SessionsDocument,
-    StateDocument, StorageConfig, StorageError, StorageLayout, StorageManager, TimeSyncConfig,
-    TimeSyncSource, TrashDocument, TrashRecord, USERS_SCHEMA_VERSION, UserRecord, UsersDocument,
+    ExplorerSortField, IconDisplayMode, LauncherConfig, LauncherEntryRecord,
+    LauncherExecutableKind, LauncherFingerprint, RecentFilesDocument, SCHEMA_VERSION,
+    SecurityConfig, SessionsDocument, StateDocument, StorageConfig, StorageError, StorageLayout,
+    StorageManager, TimeSyncConfig, TimeSyncSource, TrashDocument, TrashRecord,
+    USERS_SCHEMA_VERSION, UserRecord, UsersDocument,
 };
 
 #[test]
@@ -128,6 +129,7 @@ fn toml_and_json_documents_round_trip() {
             border_shape: BorderShape::Square,
             border_color: BorderColor::Rgb(0x38, 0xBD, 0xF8),
             accent_color: BorderColor::LightMagenta,
+            icon_display_mode: IconDisplayMode::Ascii,
         },
         explorer: ExplorerConfig {
             show_hidden: true,
@@ -190,6 +192,7 @@ fn toml_and_json_documents_round_trip() {
     assert!(config_contents.contains("border_shape = \"square\""));
     assert!(config_contents.contains("border_color = \"#38BDF8\""));
     assert!(config_contents.contains("accent_color = \"light-magenta\""));
+    assert!(config_contents.contains("icon_display_mode = \"ascii\""));
     assert!(!config_contents.contains("theme ="));
     assert!(config_contents.contains("size_format = \"bytes\""));
     assert!(config_contents.contains("date_zone = \"utc\""));

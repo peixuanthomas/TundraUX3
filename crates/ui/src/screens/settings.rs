@@ -38,7 +38,7 @@ impl SettingsCategory {
 
     pub const fn description(self) -> &'static str {
         match self {
-            Self::Appearance => "Your colors and borders",
+            Self::Appearance => "Theme, icons, colors and borders",
             Self::RegionTime => "Language, city and timezone",
             Self::FileExplorer => "Display, sorting and safety",
             Self::Editor => "Cursor and file associations",
@@ -48,6 +48,7 @@ impl SettingsCategory {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum SettingsField {
+    Theme,
     BorderShape,
     BorderColor,
     AccentColor,
@@ -155,6 +156,8 @@ pub struct SettingsAppearancePreview {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SettingsPickerKind {
+    Theme,
+    DefaultThemeIcons,
     Language,
     Timezone,
     BorderColor,
@@ -165,6 +168,7 @@ pub enum SettingsPickerKind {
 pub struct SettingsPickerOptionViewModel {
     pub label: String,
     pub detail: String,
+    pub enabled: bool,
     pub timezone_id: Option<String>,
     pub longitude: Option<f64>,
     pub latitude: Option<f64>,
@@ -175,10 +179,16 @@ impl SettingsPickerOptionViewModel {
         Self {
             label: label.into(),
             detail: detail.into(),
+            enabled: true,
             timezone_id: None,
             longitude: None,
             latitude: None,
         }
+    }
+
+    pub fn enabled(mut self, enabled: bool) -> Self {
+        self.enabled = enabled;
+        self
     }
 
     pub fn timezone(
@@ -707,6 +717,8 @@ fn render_picker(
     );
     let query = if picker.searchable {
         format!("Search: {}_", picker.query)
+    } else if picker.kind == SettingsPickerKind::DefaultThemeIcons {
+        "Arrows: choose    Enter: apply    Esc: back".to_string()
     } else {
         "Arrows: choose    Enter: apply    Esc: cancel".to_string()
     };
@@ -740,7 +752,9 @@ fn render_picker(
                     &format!("{marker}{}{detail}", option.label),
                     usize::from(list.width),
                 ),
-                if selected {
+                if !option.enabled {
+                    theme.muted_style().add_modifier(Modifier::DIM)
+                } else if selected {
                     theme.title_style()
                 } else {
                     theme.body_style()

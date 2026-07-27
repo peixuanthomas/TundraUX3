@@ -295,6 +295,22 @@ fn asset_command_renders_art_sets_and_individual_items() {
     let mut stdout = Vec::new();
     let mut stderr = Vec::new();
     let exit_code = run_with_platform_and_asset_root(
+        ["asset", "launcher_icons", "--builtin.command-line"],
+        &platform,
+        &mut stdout,
+        &mut stderr,
+        &asset_root,
+    );
+    assert_eq!(exit_code, 0);
+    assert!(stderr.is_empty());
+    assert_eq!(
+        String::from_utf8(stdout).expect("Command Line Launcher icon output should be utf8"),
+        " ______ \n|cmd>  |\n|      |\n|______|\n"
+    );
+
+    let mut stdout = Vec::new();
+    let mut stderr = Vec::new();
+    let exit_code = run_with_platform_and_asset_root(
         ["asset", "clock_font", "--0"],
         &platform,
         &mut stdout,

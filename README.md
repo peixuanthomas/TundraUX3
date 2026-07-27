@@ -75,6 +75,7 @@ cargo run -p cli --bin tundra-cli -- --help
 cargo run -p cli --bin tundra-cli -- asset
 cargo run -p cli --bin tundra-cli -- asset banner
 cargo run -p cli --bin tundra-cli -- asset home_icons --launcher
+cargo run -p cli --bin tundra-cli -- asset launcher_icons --builtin.command-line
 cargo run -p cli --bin tundra-cli -- cls
 cargo run -p cli --bin tundra-cli -- doctor
 cargo run -p cli --bin tundra-cli -- paths
@@ -255,6 +256,8 @@ UI 不直接读取整个 ShellSession。Shell presentation 根据 AppSnapshot �
 
 这种方式让领域逻辑不依赖终端尺寸，也让布局/渲染测试可以使用固定 ViewModel 和固定 Rect。
 
+Home 图标由 `home_icons.toml` 同时声明 ASCII 图案和 PNG。检测到 Kitty、Sixel 或 iTerm2 图形协议时，可在 **Settings → Appearance → Theme → Default theme** 中切换 Home 与 Launcher 的 ASCII 或图片图标；选择会随当前用户的 Appearance 配置持久化。普通文本终端只使用 ASCII，图片选项会置灰；图片缺失、损坏或无法准备时也会自动回退到原有 ASCII 图标。图片仍在原有四行图标区域内使用与 Launcher 相同的等比例居中方式显示。
+
 ## 内置应用的实现
 
 ### Weathr 锁屏
@@ -273,7 +276,7 @@ Windows、macOS 和 Linux 的回收站实现都位于 platform，因此 APP 不�
 
 Launcher 保存平台可执行项目和固定顺序，支持图标/列表等视图状态。扫描与启动由平台适配器完成，Shell 将异步结果更新回 APP。目录固定项仍能被旧配置读取，但 Launcher 只把可执行条目当作可启动项目。
 
-管理员的 Launcher 第一项固定为 **Command Line**。它不写入 Launcher 配置，不能删除、重审批或拖动排序，普通用户不会看到该项。打开后，Shell 在隔离 PTY 中从自身二进制目录启动 `tundra-cli repl --embedded`，并把解析后的终端单元格绘制在 Tundra chrome 内；子进程输出不会直接写入宿主终端，OSC 控制串（包括 OSC 52 剪贴板请求）会被丢弃。`Ctrl+C` 转发给子 CLI，`Ctrl+Shift+X` 紧急终止并清理整个子进程树（Windows Job Object、Unix 进程组），输入 `exit` 正常返回 Launcher。
+管理员的 Launcher 第一项固定为 **Command Line**。它不写入 Launcher 配置，不能删除、重审批或拖动排序，普通用户不会看到该项。图标由 `launcher_icons.toml` 按 built-in application ID 声明：文本终端使用其中的 ASCII 图案，检测到 Kitty、Sixel 或 iTerm2 图形协议时加载同一项声明的 PNG。打开后，Shell 在隔离 PTY 中从自身二进制目录启动 `tundra-cli repl --embedded`，并把解析后的终端单元格绘制在 Tundra chrome 内；子进程输出不会直接写入宿主终端，OSC 控制串（包括 OSC 52 剪贴板请求）会被丢弃。`Ctrl+C` 转发给子 CLI，`Ctrl+Shift+X` 紧急终止并清理整个子进程树（Windows Job Object、Unix 进程组），输入 `exit` 正常返回 Launcher。
 
 ### Markdown 编辑器
 
@@ -401,6 +404,7 @@ tundra-cli asset explorer_icons
 tundra-cli asset explorer_icons -a
 tundra-cli asset explorer_icons --folder
 tundra-cli asset home_icons --launcher
+tundra-cli asset launcher_icons --builtin.command-line
 tundra-cli asset house
 ~~~
 

@@ -136,6 +136,31 @@ fn command_line_prompt_uses_the_application_accent_color() {
 }
 
 #[test]
+fn command_line_history_renders_the_shared_ascii_scrollbar_style() {
+    let mut terminal = CommandLineTerminalSnapshot::blank(105, 14);
+    terminal.scrollback_rows = 14;
+    let model = CommandLineViewModel::new(terminal);
+    let mut screen = Terminal::new(TestBackend::new(108, 22)).unwrap();
+    screen
+        .draw(|frame| {
+            render_command_line(
+                frame,
+                frame.area(),
+                &chrome((108, 22)),
+                &model,
+                &TundraTheme::default_dark(),
+            );
+        })
+        .unwrap();
+    let buffer = screen.backend().buffer();
+
+    // The inner panel spans x=1..106 and y=4..17. At the live bottom, the
+    // upper track remains visible while the # thumb occupies its lower half.
+    assert_eq!(buffer.cell((106, 4)).unwrap().symbol(), "|");
+    assert_eq!(buffer.cell((106, 17)).unwrap().symbol(), "#");
+}
+
+#[test]
 fn undersized_command_line_is_blocked() {
     let model = CommandLineViewModel::new(CommandLineTerminalSnapshot::blank(108, 20));
     let mut screen = Terminal::new(TestBackend::new(80, 20)).unwrap();

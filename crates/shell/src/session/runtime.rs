@@ -350,6 +350,8 @@ pub(super) struct LauncherIconRuntime {
     pub(super) unavailable: HashSet<String>,
     pub(super) source_icons: HashMap<String, PlatformIcon>,
     pub(super) prepared: HashMap<String, CachedLauncherIcon>,
+    pub(super) home_unavailable: HashSet<String>,
+    pub(super) home_prepared: HashMap<String, CachedLauncherIcon>,
     pub(super) _worker: ManagedThreadHandle<()>,
 }
 
@@ -402,6 +404,8 @@ impl LauncherIconRuntime {
             unavailable: HashSet::new(),
             source_icons: HashMap::new(),
             prepared: HashMap::new(),
+            home_unavailable: HashSet::new(),
+            home_prepared: HashMap::new(),
             _worker: worker,
         }))
     }
@@ -440,13 +444,38 @@ impl LauncherIconRuntime {
             let Some(item) = model.items.get(item_layout.index) else {
                 continue;
             };
-            if item.is_builtin() {
-                continue;
-            }
             let needs_prepare = self
                 .prepared
                 .get(&item.id)
                 .is_none_or(|cached| cached.area != item_layout.icon_area);
+            if item.is_builtin() {
+                if needs_prepare && !self.unavailable.contains(&item.id) {
+                    self.prepared.remove(&item.id);
+                    let prepared = model
+                        .item_graphic_path(item)
+                        .ok_or_else(|| "Launcher icon asset has no image path".to_string())
+                        .and_then(|path| {
+                            self.picker
+                                .prepare_path(&path, item_layout.icon_area)
+                                .map_err(|error| error.to_string())
+                        });
+                    match prepared {
+                        Ok(image) => {
+                            self.prepared.insert(
+                                item.id.clone(),
+                                CachedLauncherIcon {
+                                    area: item_layout.icon_area,
+                                    image,
+                                },
+                            );
+                        }
+                        Err(_) => {
+                            self.unavailable.insert(item.id.clone());
+                        }
+                    }
+                }
+                continue;
+            }
             if needs_prepare
                 && let Some(icon) = self.source_icons.get(&item.id)
                 && let Ok(image) = self.picker.prepare_rgba(
@@ -479,11 +508,75 @@ impl LauncherIconRuntime {
             }
         }
     }
+
+    fn sync_home(&mut self, model: &ui::HomeViewModel, main: Rect) {
+        let labels = model
+            .entries()
+            .iter()
+            .map(|entry| entry.label.as_str())
+            .collect::<HashSet<_>>();
+        self.home_unavailable
+            .retain(|label| labels.contains(label.as_str()));
+        self.home_prepared
+            .retain(|label, _| labels.contains(label.as_str()));
+
+        for (entry, tile) in model
+            .entries()
+            .iter()
+            .zip(ui::home_entry_tile_areas(main, model.entries().len()))
+        {
+            let icon_area = ui::home_entry_icon_area(tile);
+            if icon_area.width == 0 || icon_area.height == 0 {
+                continue;
+            }
+            let needs_prepare = self
+                .home_prepared
+                .get(&entry.label)
+                .is_none_or(|cached| cached.area != icon_area);
+            if !needs_prepare || self.home_unavailable.contains(&entry.label) {
+                continue;
+            }
+
+            self.home_prepared.remove(&entry.label);
+            let prepared = model
+                .home_icon_image_path_for_label(&entry.label)
+                .ok_or_else(|| "Home icon asset has no image path".to_string())
+                .and_then(|path| {
+                    self.picker
+                        .prepare_path(&path, icon_area)
+                        .map_err(|error| error.to_string())
+                });
+            match prepared {
+                Ok(image) => {
+                    self.home_prepared.insert(
+                        entry.label.clone(),
+                        CachedLauncherIcon {
+                            area: icon_area,
+                            image,
+                        },
+                    );
+                }
+                Err(_) => {
+                    self.home_unavailable.insert(entry.label.clone());
+                }
+            }
+        }
+    }
 }
 
 impl ui::LauncherIconRenderer for LauncherIconRuntime {
     fn render_icon(&self, item_id: &str, frame: &mut ratatui::Frame<'_>, area: Rect) -> bool {
         let Some(icon) = self.prepared.get(item_id) else {
+            return false;
+        };
+        icon.image.render_centered(frame, area);
+        true
+    }
+}
+
+impl ui::HomeIconRenderer for LauncherIconRuntime {
+    fn render_icon(&self, entry_label: &str, frame: &mut ratatui::Frame<'_>, area: Rect) -> bool {
+        let Some(icon) = self.home_prepared.get(entry_label) else {
             return false;
         };
         icon.image.render_centered(frame, area);
@@ -702,6 +795,7 @@ pub(super) fn run_fullscreen_shell_session(
         ShellEditorTaskRuntime::new_managed(shell_watchdog.clone()),
         ShellSettingsTaskRuntime::new_managed(shell_watchdog.clone()),
     );
+    state.set_terminal_image_support(launcher_icons.is_some());
     state.launcher_task_runtime = Some(ShellLauncherTaskRuntime::new_managed(
         std::sync::Arc::clone(&platform),
         shell_watchdog.clone(),
@@ -779,8 +873,7 @@ pub(super) fn run_fullscreen_shell_session(
                     if let Some(terminal_area) =
                         ui::command_line_terminal_area(Rect::new(0, 0, width, height))
                     {
-                        command_line_host
-                            .resize_terminal(terminal_area.width, terminal_area.height);
+                        command_line_host.resize_to_area(terminal_area);
                     }
                 }
                 CommandLineHostEvent::ExitToLauncher => state.close_command_line(),
@@ -848,7 +941,8 @@ pub(super) fn run_fullscreen_shell_session(
             }
             model
         });
-        if let Some(launcher) = launcher.as_ref()
+        let graphical_icons_enabled = state.graphical_icons_enabled();
+        if graphical_icons_enabled
             && let Some(icon_runtime) = launcher_icons.as_mut()
             && let ui::ShellLayout::Full { main, .. } = ui::compute_shell_layout(Rect::new(
                 0,
@@ -857,7 +951,12 @@ pub(super) fn run_fullscreen_shell_session(
                 state.terminal_size().1,
             ))
         {
-            icon_runtime.sync(&launcher, main);
+            if let Some(launcher) = launcher.as_ref() {
+                icon_runtime.sync(launcher, main);
+            }
+            if let Some(home) = home.as_ref() {
+                icon_runtime.sync_home(home, main);
+            }
         }
         let editor = (content_screen == ShellScreen::Editor).then(|| state.to_editor_view_model());
         let settings = (content_screen == ShellScreen::Settings)
@@ -931,6 +1030,7 @@ pub(super) fn run_fullscreen_shell_session(
                         &theme,
                         launcher_icons
                             .as_ref()
+                            .filter(|_| graphical_icons_enabled)
                             .map(|runtime| runtime as &dyn ui::LauncherIconRenderer),
                     );
                 }
@@ -988,12 +1088,16 @@ pub(super) fn run_fullscreen_shell_session(
                     );
                 }
                 ShellScreen::Home | ShellScreen::ExitConfirm => {
-                    ui::render_home(
+                    ui::render_home_with_icons(
                         frame,
                         area,
                         &chrome,
                         home.as_ref().expect("Home requires its view model"),
                         &theme,
+                        launcher_icons
+                            .as_ref()
+                            .filter(|_| graphical_icons_enabled)
+                            .map(|runtime| runtime as &dyn ui::HomeIconRenderer),
                     );
                 }
             }
@@ -1040,13 +1144,12 @@ pub(super) fn run_fullscreen_shell_session(
                     break;
                 }
                 let input = crossterm_event_to_input(terminal_event);
-                let command_line_captures = state.active_screen() == ShellScreen::CommandLine
-                    && matches!(input, InputEvent::Key(_) | InputEvent::Paste(_));
+                let command_line_captures = command_line_captures_input(&state, &input);
                 if command_line_captures {
                     let (width, height) = state.terminal_size();
-                    let size_accepted =
-                        ui::command_line_terminal_area(Rect::new(0, 0, width, height)).is_some();
-                    match command_line_host.handle_input(&input, size_accepted) {
+                    let terminal_area =
+                        ui::command_line_terminal_area(Rect::new(0, 0, width, height));
+                    match command_line_host.handle_input(&input, terminal_area) {
                         CommandLineHostEvent::None => {}
                         CommandLineHostEvent::ExitToLauncher => {
                             command_line_host.terminate();
@@ -1146,6 +1249,26 @@ fn command_line_poll_timeout(
         (COMMAND_LINE_REFRESH_INTERVAL, false)
     } else {
         (state_poll_timeout, true)
+    }
+}
+
+fn command_line_captures_input(state: &ShellSession, input: &InputEvent) -> bool {
+    if state.active_screen() != ShellScreen::CommandLine {
+        return false;
+    }
+
+    match input {
+        InputEvent::Key(_) | InputEvent::Paste(_) => true,
+        InputEvent::Mouse(mouse) => {
+            let continues_terminal_drag = matches!(
+                mouse.kind,
+                ui::MouseEventKind::Drag(ui::MouseButton::Left)
+                    | ui::MouseEventKind::Up(ui::MouseButton::Left)
+            );
+            continues_terminal_drag
+                || state.hit_map().layer_at(mouse.coordinates()) != Some(ShellHitLayer::ShellChrome)
+        }
+        _ => false,
     }
 }
 
@@ -1344,6 +1467,40 @@ mod runtime_preflight_tests {
             command_line_poll_timeout(false, Duration::from_millis(250)),
             (Duration::from_millis(250), true)
         );
+    }
+
+    #[test]
+    fn command_line_runtime_leaves_shell_chrome_mouse_input_for_the_shell() {
+        let mut state = ShellSession::new(ShellLaunchConfig::default(), (120, 40));
+        state.screen_stack = vec![ShellScreen::Home, ShellScreen::CommandLine];
+        state.refresh_hit_map();
+
+        let clock_area = state
+            .hit_map()
+            .regions()
+            .iter()
+            .find(|region| region.component == ShellComponent::ClockButton)
+            .expect("Command Line must expose the Shell clock button")
+            .area;
+        let clock_input =
+            InputEvent::mouse_down(ui::MouseButton::Left, (clock_area.x, clock_area.y));
+        assert!(!command_line_captures_input(&state, &clock_input));
+        assert!(command_line_captures_input(
+            &state,
+            &InputEvent::mouse_up(ui::MouseButton::Left, (clock_area.x, clock_area.y))
+        ));
+
+        let terminal_area = ui::command_line_terminal_area(Rect::new(0, 0, 120, 40)).unwrap();
+        let terminal_input = InputEvent::mouse_moved((terminal_area.x, terminal_area.y));
+        assert!(command_line_captures_input(&state, &terminal_input));
+        assert!(command_line_captures_input(
+            &state,
+            &InputEvent::key(ui::Key::Char('a'))
+        ));
+        assert!(command_line_captures_input(
+            &state,
+            &InputEvent::paste("command")
+        ));
     }
 
     #[test]
@@ -1614,6 +1771,7 @@ mod runtime_preflight_tests {
             border_shape: storage::BorderShape::Square,
             border_color: storage::BorderColor::Rgb(0x38, 0xBD, 0xF8),
             accent_color: storage::BorderColor::LightMagenta,
+            icon_display_mode: storage::IconDisplayMode::Image,
         };
         UserService::new(storage.clone())
             .bootstrap_admin_with_hint_and_appearance(
@@ -1716,6 +1874,7 @@ mod runtime_preflight_tests {
             border_shape: storage::BorderShape::Square,
             border_color: storage::BorderColor::LightGreen,
             accent_color: storage::BorderColor::LightMagenta,
+            icon_display_mode: storage::IconDisplayMode::Image,
         };
         let users = UserService::new(storage.clone());
         users

@@ -6,6 +6,7 @@ pub(in crate::session) const WEATHER_LOCATION_MAX_LEN: usize = 120;
 pub(in crate::session) const EDITOR_EXTENSIONS_INPUT_MAX_LEN: usize = 1_024;
 
 pub(in crate::session) const APPEARANCE_SETTINGS_FIELDS: &[ui::SettingsField] = &[
+    ui::SettingsField::Theme,
     ui::SettingsField::BorderShape,
     ui::SettingsField::BorderColor,
     ui::SettingsField::AccentColor,
@@ -89,7 +90,7 @@ impl ShellSession {
         );
         self.settings_state = Some(SettingsState {
             category: ui::SettingsCategory::Appearance,
-            selected_field: ui::SettingsField::BorderShape,
+            selected_field: ui::SettingsField::Theme,
             focus: SettingsFocus::Categories,
             status: "Ready".to_string(),
             scroll_offset: 0,
@@ -134,6 +135,18 @@ impl ShellSession {
                 Some("change_settings"),
             )
             .allowed
+    }
+
+    pub fn set_terminal_image_support(&mut self, supported: bool) {
+        self.terminal_image_support = supported;
+    }
+
+    pub fn graphical_icons_enabled(&self) -> bool {
+        self.terminal_image_support
+            && self.ascii_assets.theme_id() == ui::DEFAULT_THEME_ID
+            && self.app.active_appearance().is_none_or(|appearance| {
+                appearance.icon_display_mode == storage::IconDisplayMode::Image
+            })
     }
 
     pub(in crate::session) fn handle_settings_key(
@@ -383,6 +396,15 @@ impl ShellSession {
             return;
         };
         match field {
+            ui::SettingsField::Theme => {
+                if self.ascii_assets.theme_id() == ui::DEFAULT_THEME_ID {
+                    self.open_settings_picker(ui::SettingsPickerKind::Theme)
+                } else {
+                    self.set_settings_error(
+                        "Icon mode can only be changed for the Default asset theme",
+                    )
+                }
+            }
             ui::SettingsField::BorderColor => {
                 self.open_settings_picker(ui::SettingsPickerKind::BorderColor)
             }
@@ -417,7 +439,8 @@ impl ShellSession {
         };
         if matches!(
             field,
-            ui::SettingsField::BorderColor
+            ui::SettingsField::Theme
+                | ui::SettingsField::BorderColor
                 | ui::SettingsField::AccentColor
                 | ui::SettingsField::Language
                 | ui::SettingsField::Timezone
@@ -604,19 +627,24 @@ impl ShellSession {
     pub(in crate::session) fn open_settings_picker(&mut self, kind: ui::SettingsPickerKind) {
         if !matches!(
             kind,
-            ui::SettingsPickerKind::BorderColor | ui::SettingsPickerKind::AccentColor
+            ui::SettingsPickerKind::Theme
+                | ui::SettingsPickerKind::DefaultThemeIcons
+                | ui::SettingsPickerKind::BorderColor
+                | ui::SettingsPickerKind::AccentColor
         ) && !self.can_change_global_settings()
         {
             self.set_settings_error("Administrator permission is required");
             return;
         }
         let selected_index = self.settings_picker_initial_index(kind);
+        let image_icons_supported = self.terminal_image_support;
         if let Some(state) = self.settings_state.as_mut() {
             state.picker = Some(SettingsPickerState {
                 kind,
                 query: String::new(),
                 selected_index,
                 window_start: selected_index.saturating_sub(4),
+                image_icons_supported,
             });
             state.color_editor = None;
             state.weather_location_editor = None;
@@ -636,6 +664,20 @@ impl ShellSession {
         }
         let config = self.app.storage_config();
         match kind {
+            ui::SettingsPickerKind::Theme => 0,
+            ui::SettingsPickerKind::DefaultThemeIcons => {
+                if !self.terminal_image_support {
+                    0
+                } else {
+                    self.app
+                        .active_appearance()
+                        .map(|appearance| match appearance.icon_display_mode {
+                            storage::IconDisplayMode::Ascii => 0,
+                            storage::IconDisplayMode::Image => 1,
+                        })
+                        .unwrap_or(0)
+                }
+            }
             ui::SettingsPickerKind::Language => app::setup_language_options()
                 .iter()
                 .position(|option| option.code == config.language)
@@ -663,7 +705,14 @@ impl ShellSession {
         }
         match &key.key {
             InputKey::Escape => {
-                if let Some(state) = self.settings_state.as_mut() {
+                let return_to_theme = self
+                    .settings_state
+                    .as_ref()
+                    .and_then(|state| state.picker.as_ref())
+                    .is_some_and(|picker| picker.kind == ui::SettingsPickerKind::DefaultThemeIcons);
+                if return_to_theme {
+                    self.open_settings_picker(ui::SettingsPickerKind::Theme);
+                } else if let Some(state) = self.settings_state.as_mut() {
                     state.picker = None;
                     state.status = "Ready".to_string();
                 }
@@ -783,7 +832,39 @@ impl ShellSession {
             self.set_settings_error("No matching options");
             return;
         };
+        if !option.enabled {
+            if let Some(state) = self.settings_state.as_mut() {
+                state.status =
+                    "Image icons are unavailable in this terminal; ASCII icons remain active"
+                        .to_string();
+            }
+            return;
+        }
         match picker.kind {
+            ui::SettingsPickerKind::Theme => {
+                if self.ascii_assets.theme_id() != ui::DEFAULT_THEME_ID {
+                    self.set_settings_error(
+                        "Icon mode can only be changed for the Default asset theme",
+                    );
+                    return;
+                }
+                self.open_settings_picker(ui::SettingsPickerKind::DefaultThemeIcons);
+            }
+            ui::SettingsPickerKind::DefaultThemeIcons => {
+                let Some(mut appearance) = self.app.active_appearance().cloned() else {
+                    return;
+                };
+                appearance.icon_display_mode = if picker.selected_index == 0 {
+                    storage::IconDisplayMode::Ascii
+                } else {
+                    storage::IconDisplayMode::Image
+                };
+                if self.save_settings_appearance(appearance, "Default theme icon mode")
+                    && let Some(state) = self.settings_state.as_mut()
+                {
+                    state.picker = None;
+                }
+            }
             ui::SettingsPickerKind::Language => {
                 self.save_region_picker_value(Some(option.detail), None)
             }
@@ -1523,7 +1604,14 @@ impl ShellSession {
         let config = self.app.storage_config();
         let appearance = self.app.active_appearance()?;
         let global_enabled = self.can_change_global_settings();
-        let cards = settings_cards(state, config, appearance, global_enabled);
+        let cards = settings_cards(
+            state,
+            config,
+            appearance,
+            global_enabled,
+            self.ascii_assets.theme_id(),
+            self.terminal_image_support,
+        );
         let appearance_preview = (state.category == ui::SettingsCategory::Appearance).then_some(
             ui::SettingsAppearancePreview {
                 border_shape: match appearance.border_shape {
@@ -1611,6 +1699,8 @@ pub(in crate::session) fn settings_cards(
     config: &storage::StorageConfig,
     appearance: &storage::AppearanceConfig,
     global_enabled: bool,
+    asset_theme_id: &str,
+    image_icons_supported: bool,
 ) -> Vec<ui::SettingsCardViewModel> {
     use ui::{
         SettingsCardViewModel as Card, SettingsControlKind as Kind, SettingsField as Field,
@@ -1638,6 +1728,32 @@ pub(in crate::session) fn settings_cards(
     };
     match state.category {
         ui::SettingsCategory::Appearance => vec![
+            Card::new(
+                "Theme",
+                vec![
+                    Item::new(
+                        Field::Theme,
+                        "Theme",
+                        if asset_theme_id == ui::DEFAULT_THEME_ID {
+                            match (appearance.icon_display_mode, image_icons_supported) {
+                                (storage::IconDisplayMode::Image, true) => {
+                                    "Default theme / Image icons"
+                                }
+                                _ => "Default theme / ASCII icons",
+                            }
+                        } else {
+                            asset_theme_id
+                        },
+                        if asset_theme_id == ui::DEFAULT_THEME_ID {
+                            "Open Default theme options to choose ASCII or image icons."
+                        } else {
+                            "Icon mode switching is available only for the Default asset theme."
+                        },
+                        Kind::Picker,
+                    )
+                    .enabled(asset_theme_id == ui::DEFAULT_THEME_ID),
+                ],
+            ),
             Card::new(
                 "Visual style",
                 vec![
@@ -1906,6 +2022,21 @@ pub(in crate::session) fn settings_picker_options(
 ) -> Vec<ui::SettingsPickerOptionViewModel> {
     let query = picker.query.trim().to_ascii_lowercase();
     match picker.kind {
+        ui::SettingsPickerKind::Theme => vec![ui::SettingsPickerOptionViewModel::new(
+            "Default theme",
+            "Built-in asset theme",
+        )],
+        ui::SettingsPickerKind::DefaultThemeIcons => vec![
+            ui::SettingsPickerOptionViewModel::new(
+                "ASCII icons",
+                "Always use text-based asset icons",
+            ),
+            ui::SettingsPickerOptionViewModel::new(
+                "Image icons",
+                "Requires Kitty, Sixel, or iTerm2 image support",
+            )
+            .enabled(picker.image_icons_supported),
+        ],
         ui::SettingsPickerKind::Language => app::setup_language_options()
             .into_iter()
             .filter(|option| {
@@ -1957,6 +2088,8 @@ pub(in crate::session) fn settings_picker_visible_rows(terminal_height: u16) -> 
 
 pub(in crate::session) fn picker_title(kind: ui::SettingsPickerKind) -> &'static str {
     match kind {
+        ui::SettingsPickerKind::Theme => "Choose theme",
+        ui::SettingsPickerKind::DefaultThemeIcons => "Default theme",
         ui::SettingsPickerKind::Language => "Choose language",
         ui::SettingsPickerKind::Timezone => "Choose city and timezone",
         ui::SettingsPickerKind::BorderColor => "Choose border color",
@@ -1966,6 +2099,8 @@ pub(in crate::session) fn picker_title(kind: ui::SettingsPickerKind) -> &'static
 
 pub(in crate::session) fn picker_label(kind: ui::SettingsPickerKind) -> &'static str {
     match kind {
+        ui::SettingsPickerKind::Theme => "Theme",
+        ui::SettingsPickerKind::DefaultThemeIcons => "Default theme icon mode",
         ui::SettingsPickerKind::BorderColor => "Border color",
         ui::SettingsPickerKind::AccentColor => "Accent color",
         ui::SettingsPickerKind::Language => "Language",
@@ -2012,6 +2147,7 @@ pub(in crate::session) fn cycle_explorer_sort_field(
 
 pub(in crate::session) fn settings_field_label(field: ui::SettingsField) -> &'static str {
     match field {
+        ui::SettingsField::Theme => "Theme",
         ui::SettingsField::ShowHidden => "Show hidden files",
         ui::SettingsField::ShowSystem => "Show system files",
         ui::SettingsField::ShowExtensions => "Show file extensions",

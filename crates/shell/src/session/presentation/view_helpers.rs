@@ -24,6 +24,7 @@ pub(in crate::session) fn clock_button_active_for_screen(screen: ShellScreen) ->
         ShellScreen::Home
             | ShellScreen::Explorer
             | ShellScreen::Launcher
+            | ShellScreen::CommandLine
             | ShellScreen::Editor
             | ShellScreen::Settings
             | ShellScreen::UserManagement

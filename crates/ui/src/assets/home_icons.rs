@@ -2,9 +2,10 @@ use std::fmt;
 use std::sync::Arc;
 
 pub use ascii_assets::{
-    AsciiAssetStore, AssetDimensions, AssetError, ClockFontAsset, ExplorerIcon, HomeIcon,
-    HomeIconCatalog,
+    AsciiAssetStore, AssetDimensions, AssetError, ClockFontAsset, DEFAULT_THEME_ID, ExplorerIcon,
+    HomeIcon, HomeIconCatalog, LauncherIcon,
 };
+use std::path::PathBuf;
 
 #[derive(Clone)]
 pub struct RuntimeAsciiAssets {
@@ -34,6 +35,10 @@ impl RuntimeAsciiAssets {
         &self.store
     }
 
+    pub fn theme_id(&self) -> &str {
+        self.store.theme_id()
+    }
+
     pub fn banner_lines(&self, key: &str) -> Result<&[String], AssetError> {
         self.store.banner_lines(key)
     }
@@ -42,8 +47,20 @@ impl RuntimeAsciiAssets {
         self.store.home_icon_catalog()
     }
 
+    pub fn home_icon_image_path(&self, key: &str) -> Option<PathBuf> {
+        self.store.home_icon_image_path(key)
+    }
+
     pub fn explorer_icon(&self, key: &str) -> Result<&ExplorerIcon, AssetError> {
         self.store.explorer_icon(key)
+    }
+
+    pub fn launcher_icon(&self, key: &str) -> Option<&LauncherIcon> {
+        self.store.launcher_icon(key)
+    }
+
+    pub fn launcher_icon_image_path(&self, key: &str) -> Option<PathBuf> {
+        self.store.launcher_icon_image_path(key)
     }
 
     pub fn clock_font(&self) -> &ClockFontAsset {

@@ -124,6 +124,7 @@ pub struct AppearanceConfig {
     pub border_color: BorderColor,
     #[serde(deserialize_with = "deserialize_accent_color")]
     pub accent_color: AccentColor,
+    pub icon_display_mode: IconDisplayMode,
 }
 
 impl Default for AppearanceConfig {
@@ -132,8 +133,17 @@ impl Default for AppearanceConfig {
             border_shape: BorderShape::default(),
             border_color: BorderColor::default(),
             accent_color: default_accent_color(),
+            icon_display_mode: IconDisplayMode::default(),
         }
     }
+}
+
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum IconDisplayMode {
+    Ascii,
+    #[default]
+    Image,
 }
 
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]

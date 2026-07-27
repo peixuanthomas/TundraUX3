@@ -68,6 +68,11 @@ impl Default for CommandLineCell {
 pub struct CommandLineTerminalSnapshot {
     pub columns: u16,
     pub rows: u16,
+    /// Number of retained rows above the live terminal screen.
+    pub scrollback_rows: usize,
+    /// Current distance from the live screen. Zero means the newest output is
+    /// visible; larger values move toward the oldest retained row.
+    pub scrollback_offset: usize,
     /// Row-major cells. Missing cells intentionally render as blanks, making a
     /// partially read parser snapshot safe to display.
     pub cells: Vec<CommandLineCell>,
@@ -78,6 +83,8 @@ impl CommandLineTerminalSnapshot {
         Self {
             columns,
             rows,
+            scrollback_rows: 0,
+            scrollback_offset: 0,
             cells: vec![CommandLineCell::default(); usize::from(columns) * usize::from(rows)],
         }
     }
@@ -99,6 +106,12 @@ impl CommandLineTerminalSnapshot {
             *slot = cell;
         }
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CommandLineScrollbarLayout {
+    pub track: Rect,
+    pub thumb: Rect,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -144,11 +157,12 @@ impl CommandLineViewModel {
     }
 }
 
-/// Returns the exact region represented by the child PTY.
+/// Returns the region available to the child PTY and its optional scrollbar.
 ///
-/// Command Line uses the normal Shell title and status bars.  The PTY is the
-/// inner rectangle of the central Command Line panel, so it can never draw
-/// over global navigation, status, or the clock control.
+/// Command Line uses the normal Shell title and status bars. The terminal
+/// region is the inner rectangle of the central Command Line panel, so neither
+/// the PTY nor its scrollbar can draw over global navigation, status, or the
+/// clock control. Use [`command_line_content_area`] for the exact PTY viewport.
 pub fn command_line_terminal_area(area: Rect) -> Option<Rect> {
     (area.width >= MIN_COMMAND_LINE_TERMINAL_WIDTH
         && area.height >= MIN_COMMAND_LINE_TERMINAL_HEIGHT)
@@ -157,6 +171,66 @@ pub fn command_line_terminal_area(area: Rect) -> Option<Rect> {
             ShellLayout::Compact(_) => None,
         })
         .flatten()
+}
+
+/// Returns the PTY viewport within the Command Line panel. A single right-hand
+/// cell is reserved once retained history exists so the ASCII scrollbar never
+/// covers terminal output.
+pub fn command_line_content_area(
+    terminal_area: Rect,
+    snapshot: &CommandLineTerminalSnapshot,
+) -> Rect {
+    let scrollbar_width =
+        u16::from(command_line_scrollbar_layout(terminal_area, snapshot).is_some());
+    Rect::new(
+        terminal_area.x,
+        terminal_area.y,
+        terminal_area.width.saturating_sub(scrollbar_width),
+        terminal_area.height,
+    )
+}
+
+pub fn command_line_scrollbar_layout(
+    terminal_area: Rect,
+    snapshot: &CommandLineTerminalSnapshot,
+) -> Option<CommandLineScrollbarLayout> {
+    if snapshot.scrollback_rows == 0 || terminal_area.width < 2 || terminal_area.height == 0 {
+        return None;
+    }
+
+    let track = Rect::new(
+        terminal_area.right().saturating_sub(1),
+        terminal_area.y,
+        1,
+        terminal_area.height,
+    );
+    let track_height = usize::from(track.height);
+    let visible_rows = usize::from(snapshot.rows.min(terminal_area.height)).max(1);
+    let total_rows = snapshot.scrollback_rows.saturating_add(visible_rows);
+    let thumb_height = track_height
+        .saturating_mul(visible_rows)
+        .saturating_add(total_rows / 2)
+        .checked_div(total_rows)
+        .unwrap_or_default()
+        .clamp(1, track_height);
+    let thumb_travel = track_height.saturating_sub(thumb_height);
+    let visible_start = snapshot
+        .scrollback_rows
+        .saturating_sub(snapshot.scrollback_offset.min(snapshot.scrollback_rows));
+    let thumb_start = thumb_travel
+        .saturating_mul(visible_start)
+        .saturating_add(snapshot.scrollback_rows / 2)
+        / snapshot.scrollback_rows;
+
+    Some(CommandLineScrollbarLayout {
+        track,
+        thumb: Rect::new(
+            track.x,
+            track.y.saturating_add(usize_to_u16(thumb_start)),
+            1,
+            usize_to_u16(thumb_height),
+        ),
+    })
 }
 
 pub fn render_command_line(
@@ -197,13 +271,15 @@ fn render_command_line_main(
         return;
     };
 
+    let content_area = command_line_content_area(terminal_area, model.terminal.as_ref());
     render_terminal_snapshot(
         frame,
-        terminal_area,
+        content_area,
         model.terminal.as_ref(),
         model.prompt_label.as_deref(),
         theme.accent_color,
     );
+    render_command_line_scrollbar(frame, terminal_area, model.terminal.as_ref(), theme);
     if let Some((message, style)) = command_line_process_message(model, theme) {
         render_process_message(frame, terminal_area, &message, style);
     }
@@ -251,6 +327,29 @@ fn render_process_message(frame: &mut Frame<'_>, area: Rect, message: &str, styl
             .wrap(Wrap { trim: true }),
         area,
     );
+}
+
+fn render_command_line_scrollbar(
+    frame: &mut Frame<'_>,
+    terminal_area: Rect,
+    snapshot: &CommandLineTerminalSnapshot,
+    theme: &TundraTheme,
+) {
+    let Some(scrollbar) = command_line_scrollbar_layout(terminal_area, snapshot) else {
+        return;
+    };
+    for y in scrollbar.track.y..scrollbar.track.bottom() {
+        frame.render_widget(
+            Paragraph::new("|").style(theme.muted_style()),
+            Rect::new(scrollbar.track.x, y, 1, 1),
+        );
+    }
+    for y in scrollbar.thumb.y..scrollbar.thumb.bottom() {
+        frame.render_widget(
+            Paragraph::new("#").style(theme.title_style()),
+            Rect::new(scrollbar.thumb.x, y, 1, 1),
+        );
+    }
 }
 
 fn panel_inner_area(area: Rect) -> Rect {
@@ -338,6 +437,10 @@ fn visible_symbol(symbol: &str) -> &str {
     }
 }
 
+fn usize_to_u16(value: usize) -> u16 {
+    u16::try_from(value).unwrap_or(u16::MAX)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -357,6 +460,8 @@ mod tests {
         let snapshot = CommandLineTerminalSnapshot {
             columns: 2,
             rows: 1,
+            scrollback_rows: 0,
+            scrollback_offset: 0,
             cells: vec![CommandLineCell {
                 symbol: "A".to_string(),
                 ..CommandLineCell::default()
@@ -371,5 +476,32 @@ mod tests {
         assert_eq!(visible_symbol("界"), "界");
         assert_eq!(visible_symbol("e\u{301}"), "e\u{301}");
         assert_eq!(visible_symbol("\u{1b}"), " ");
+    }
+
+    #[test]
+    fn scrollbar_reserves_the_right_column_and_tracks_history_position() {
+        let area = Rect::new(3, 5, 10, 4);
+        let mut snapshot = CommandLineTerminalSnapshot::blank(9, 4);
+        snapshot.scrollback_rows = 4;
+
+        let bottom = command_line_scrollbar_layout(area, &snapshot).expect("scrollbar");
+        assert_eq!(bottom.track, Rect::new(12, 5, 1, 4));
+        assert_eq!(bottom.thumb, Rect::new(12, 7, 1, 2));
+        assert_eq!(
+            command_line_content_area(area, &snapshot),
+            Rect::new(3, 5, 9, 4)
+        );
+
+        snapshot.scrollback_offset = snapshot.scrollback_rows;
+        let top = command_line_scrollbar_layout(area, &snapshot).expect("scrollbar");
+        assert_eq!(top.thumb, Rect::new(12, 5, 1, 2));
+    }
+
+    #[test]
+    fn live_terminal_without_history_uses_the_full_width() {
+        let area = Rect::new(3, 5, 10, 4);
+        let snapshot = CommandLineTerminalSnapshot::blank(10, 4);
+        assert!(command_line_scrollbar_layout(area, &snapshot).is_none());
+        assert_eq!(command_line_content_area(area, &snapshot), area);
     }
 }

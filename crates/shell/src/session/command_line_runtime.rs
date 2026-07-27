@@ -6,6 +6,7 @@
 //! OSC 52 clipboard requests) are discarded before they reach the parser.
 
 use portable_pty::{Child, CommandBuilder, MasterPty, PtySize, native_pty_system};
+use ratatui::layout::Rect;
 use std::ffi::OsString;
 use std::io::{self, Read, Write};
 use std::path::PathBuf;
@@ -24,6 +25,7 @@ use platform::Platform;
 pub const EMBEDDED_RESET_EXIT_CODE: u32 = 75;
 pub const DEFAULT_COLUMNS: u16 = 108;
 pub const DEFAULT_ROWS: u16 = 20;
+const SCROLL_LINES_PER_NOTCH: usize = 3;
 
 /// Private environment contract with the embedded `tundra-cli` REPL.
 const COMMAND_LINE_USERNAME_ENV: &str = "TUNDRA_COMMAND_LINE_USERNAME";
@@ -123,6 +125,8 @@ pub struct TerminalSnapshot {
     pub rows: u16,
     pub columns: u16,
     pub cells: Vec<Vec<TerminalCell>>,
+    pub scrollback_rows: usize,
+    pub scrollback_offset: usize,
     pub cursor_row: u16,
     pub cursor_column: u16,
     pub cursor_visible: bool,
@@ -132,7 +136,11 @@ pub struct TerminalSnapshot {
 }
 
 impl TerminalSnapshot {
-    fn from_parser(parser: &vt100::Parser) -> Self {
+    fn from_parser(parser: &mut vt100::Parser) -> Self {
+        let scrollback_offset = parser.screen().scrollback();
+        parser.set_scrollback(usize::MAX);
+        let scrollback_rows = parser.screen().scrollback();
+        parser.set_scrollback(scrollback_offset);
         let screen = parser.screen();
         let (rows, columns) = screen.size();
         let mut cells = Vec::with_capacity(usize::from(rows));
@@ -172,9 +180,11 @@ impl TerminalSnapshot {
             rows,
             columns,
             cells,
+            scrollback_rows,
+            scrollback_offset,
             cursor_row,
             cursor_column,
-            cursor_visible: !screen.hide_cursor(),
+            cursor_visible: scrollback_offset == 0 && !screen.hide_cursor(),
             application_cursor: screen.application_cursor(),
             bracketed_paste: screen.bracketed_paste(),
             // OSC is filtered, so this will remain empty unless a future
@@ -365,6 +375,17 @@ impl CommandLinePty {
         Ok(())
     }
 
+    pub fn set_scrollback(&self, rows: usize) -> io::Result<bool> {
+        let mut parser = lock_io(&self.parser)?;
+        let previous = parser.screen().scrollback();
+        parser.set_scrollback(rows);
+        let changed = parser.screen().scrollback() != previous;
+        if changed {
+            self.output_revision.fetch_add(1, Ordering::Release);
+        }
+        Ok(changed)
+    }
+
     pub fn snapshot(&self) -> TerminalSnapshot {
         self.snapshot_with_revision().0
     }
@@ -381,12 +402,12 @@ impl CommandLinePty {
         // runtime usable and show the last valid state instead of panicking in
         // the shell UI.
         match self.parser.lock() {
-            Ok(parser) => (
-                TerminalSnapshot::from_parser(&parser),
+            Ok(mut parser) => (
+                TerminalSnapshot::from_parser(&mut parser),
                 self.output_revision.load(Ordering::Acquire),
             ),
             Err(poisoned) => (
-                TerminalSnapshot::from_parser(&poisoned.into_inner()),
+                TerminalSnapshot::from_parser(&mut poisoned.into_inner()),
                 self.output_revision.load(Ordering::Acquire),
             ),
         }
@@ -763,6 +784,7 @@ pub struct CommandLineHost {
     snapshot: TerminalSnapshot,
     snapshot_revision: u64,
     ui_snapshot: Arc<ui::CommandLineTerminalSnapshot>,
+    scrollbar_drag_offset: Option<u16>,
     reader_tasks: ManagedTaskGroup,
 }
 
@@ -775,6 +797,7 @@ impl CommandLineHost {
             snapshot,
             snapshot_revision: 0,
             ui_snapshot,
+            scrollbar_drag_offset: None,
             reader_tasks: watchdog
                 .child_component(ComponentId::from_static("command-line"))
                 .task_group("pty-reader"),
@@ -822,6 +845,7 @@ impl CommandLineHost {
         if !needs_resize {
             return;
         }
+        self.scrollbar_drag_offset = None;
         let result = match &self.state {
             CommandLineHostState::Running(pty) => pty.resize(columns, rows),
             _ => return,
@@ -834,6 +858,11 @@ impl CommandLineHost {
                 self.fail_running(format!("Could not resize CLI terminal: {error}"));
             }
         }
+    }
+
+    pub fn resize_to_area(&mut self, terminal_area: Rect) {
+        let content_area = ui::command_line_content_area(terminal_area, self.ui_snapshot.as_ref());
+        self.resize_terminal(content_area.width, content_area.height);
     }
 
     pub fn poll(&mut self) -> CommandLineHostEvent {
@@ -876,7 +905,7 @@ impl CommandLineHost {
     pub fn handle_input(
         &mut self,
         input: &InputEvent,
-        terminal_size_accepted: bool,
+        terminal_area: Option<Rect>,
     ) -> CommandLineHostEvent {
         if let InputEvent::Key(key) = input
             && key.phase.is_press_like()
@@ -905,8 +934,22 @@ impl CommandLineHost {
             CommandLineHostState::Inactive | CommandLineHostState::Running(_) => {}
         }
 
-        if !terminal_size_accepted {
+        let Some(terminal_area) = terminal_area else {
             return CommandLineHostEvent::None;
+        };
+
+        if let InputEvent::Mouse(mouse) = input {
+            self.handle_mouse(*mouse, terminal_area);
+            return CommandLineHostEvent::None;
+        }
+
+        let returns_to_live_output = match input {
+            InputEvent::Key(key) => key.phase.is_press_like(),
+            InputEvent::Paste(_) => true,
+            _ => false,
+        };
+        if returns_to_live_output && self.snapshot.scrollback_offset > 0 {
+            self.set_scrollback(0);
         }
 
         let write_result = match (&self.state, input) {
@@ -957,6 +1000,71 @@ impl CommandLineHost {
         self.install_blank_snapshot();
     }
 
+    fn handle_mouse(&mut self, mouse: ui::MouseEvent, terminal_area: Rect) {
+        if matches!(mouse.kind, ui::MouseEventKind::Up(ui::MouseButton::Left)) {
+            self.scrollbar_drag_offset = None;
+            return;
+        }
+
+        let scrollbar = ui::command_line_scrollbar_layout(terminal_area, self.ui_snapshot.as_ref());
+        if let (
+            Some(grab_offset),
+            ui::MouseEventKind::Drag(ui::MouseButton::Left),
+            Some(scrollbar),
+        ) = (self.scrollbar_drag_offset, mouse.kind, scrollbar)
+        {
+            let offset = command_line_scrollback_offset_for_thumb(
+                self.snapshot.scrollback_rows,
+                scrollbar,
+                mouse.row(),
+                grab_offset,
+            );
+            self.set_scrollback(offset);
+            return;
+        }
+
+        if !rect_contains(terminal_area, mouse.column(), mouse.row()) {
+            return;
+        }
+
+        match (mouse.kind, scrollbar) {
+            (ui::MouseEventKind::Scroll(ui::ScrollDirection::Up), Some(_)) => {
+                self.set_scrollback(
+                    self.snapshot
+                        .scrollback_offset
+                        .saturating_add(SCROLL_LINES_PER_NOTCH),
+                );
+            }
+            (ui::MouseEventKind::Scroll(ui::ScrollDirection::Down), Some(_)) => {
+                self.set_scrollback(
+                    self.snapshot
+                        .scrollback_offset
+                        .saturating_sub(SCROLL_LINES_PER_NOTCH),
+                );
+            }
+            (ui::MouseEventKind::Down(ui::MouseButton::Left), Some(scrollbar))
+                if rect_contains(scrollbar.thumb, mouse.column(), mouse.row()) =>
+            {
+                self.scrollbar_drag_offset = Some(mouse.row().saturating_sub(scrollbar.thumb.y));
+            }
+            _ => {}
+        }
+    }
+
+    fn set_scrollback(&mut self, offset: usize) {
+        let result = match &self.state {
+            CommandLineHostState::Running(pty) => pty.set_scrollback(offset),
+            _ => return,
+        };
+        match result {
+            Ok(true) => self.refresh_snapshot(),
+            Ok(false) => {}
+            Err(error) => {
+                self.fail_running(format!("Could not scroll CLI terminal: {error}"));
+            }
+        }
+    }
+
     fn fail_running(&mut self, message: String) {
         let previous = std::mem::replace(&mut self.state, CommandLineHostState::Failed { message });
         if let CommandLineHostState::Running(pty) = previous {
@@ -975,6 +1083,9 @@ impl CommandLineHost {
     }
 
     fn install_snapshot(&mut self, snapshot: TerminalSnapshot, revision: u64) {
+        if snapshot.scrollback_rows == 0 {
+            self.scrollbar_drag_offset = None;
+        }
         self.ui_snapshot = Arc::new(to_ui_snapshot(&snapshot));
         self.snapshot = snapshot;
         self.snapshot_revision = revision;
@@ -1099,11 +1210,13 @@ fn paste_bytes(text: &str, bracketed_paste: bool) -> Vec<u8> {
 }
 
 fn blank_terminal_snapshot() -> TerminalSnapshot {
-    TerminalSnapshot::from_parser(&vt100::Parser::new(DEFAULT_ROWS, DEFAULT_COLUMNS, 0))
+    TerminalSnapshot::from_parser(&mut vt100::Parser::new(DEFAULT_ROWS, DEFAULT_COLUMNS, 0))
 }
 
 fn to_ui_snapshot(snapshot: &TerminalSnapshot) -> ui::CommandLineTerminalSnapshot {
     let mut result = ui::CommandLineTerminalSnapshot::blank(snapshot.columns, snapshot.rows);
+    result.scrollback_rows = snapshot.scrollback_rows;
+    result.scrollback_offset = snapshot.scrollback_offset;
     for (row, cells) in snapshot.cells.iter().enumerate() {
         let Ok(row) = u16::try_from(row) else {
             break;
@@ -1135,6 +1248,36 @@ fn to_ui_snapshot(snapshot: &TerminalSnapshot) -> ui::CommandLineTerminalSnapsho
         }
     }
     result
+}
+
+fn rect_contains(area: Rect, column: u16, row: u16) -> bool {
+    column >= area.x && column < area.right() && row >= area.y && row < area.bottom()
+}
+
+fn command_line_scrollback_offset_for_thumb(
+    scrollback_rows: usize,
+    scrollbar: ui::CommandLineScrollbarLayout,
+    pointer_row: u16,
+    grab_offset: u16,
+) -> usize {
+    let travel = usize::from(
+        scrollbar
+            .track
+            .height
+            .saturating_sub(scrollbar.thumb.height),
+    );
+    if travel == 0 || scrollback_rows == 0 {
+        return 0;
+    }
+    let pointer_offset = usize::from(pointer_row.saturating_sub(scrollbar.track.y));
+    let thumb_start = pointer_offset
+        .saturating_sub(usize::from(grab_offset))
+        .min(travel);
+    let visible_start = scrollback_rows
+        .saturating_mul(thumb_start)
+        .saturating_add(travel / 2)
+        / travel;
+    scrollback_rows.saturating_sub(visible_start)
 }
 
 fn to_ui_color(color: &TerminalColor) -> ui::CommandLineColor {
@@ -1327,6 +1470,7 @@ mod tests {
             snapshot,
             snapshot_revision,
             ui_snapshot,
+            scrollbar_drag_offset: None,
             reader_tasks,
         };
 
@@ -1442,13 +1586,52 @@ mod tests {
     fn snapshot_keeps_terminal_attributes() {
         let mut parser = vt100::Parser::new(2, 8, 0);
         parser.process(b"\x1b[31;1;4;7mX");
-        let snapshot = TerminalSnapshot::from_parser(&parser);
+        let snapshot = TerminalSnapshot::from_parser(&mut parser);
         let cell = &snapshot.cells[0][0];
         assert_eq!(cell.text, "X");
         assert_eq!(cell.foreground, TerminalColor::Indexed(1));
         assert!(cell.bold);
         assert!(cell.underline);
         assert!(cell.inverse);
+    }
+
+    #[test]
+    fn snapshot_reports_retained_history_and_hides_the_scrolled_cursor() {
+        let mut parser = vt100::Parser::new(2, 8, 10);
+        parser.process(b"one\r\ntwo\r\nthree");
+
+        let live = TerminalSnapshot::from_parser(&mut parser);
+        assert_eq!(live.scrollback_rows, 1);
+        assert_eq!(live.scrollback_offset, 0);
+        assert!(live.cursor_visible);
+
+        parser.set_scrollback(usize::MAX);
+        let history = TerminalSnapshot::from_parser(&mut parser);
+        assert_eq!(history.scrollback_rows, 1);
+        assert_eq!(history.scrollback_offset, 1);
+        assert!(!history.cursor_visible);
+        assert!(
+            history.cells[0]
+                .iter()
+                .map(|cell| &cell.text)
+                .any(|text| text == "o")
+        );
+    }
+
+    #[test]
+    fn scrollbar_drag_maps_both_track_ends_to_history_ends() {
+        let scrollbar = ui::CommandLineScrollbarLayout {
+            track: Rect::new(12, 5, 1, 10),
+            thumb: Rect::new(12, 9, 1, 2),
+        };
+        assert_eq!(
+            command_line_scrollback_offset_for_thumb(100, scrollbar, 5, 0),
+            100
+        );
+        assert_eq!(
+            command_line_scrollback_offset_for_thumb(100, scrollbar, 14, 1),
+            0
+        );
     }
 
     #[test]

@@ -142,6 +142,37 @@ fn command_line_open_requires_size_and_routes_ctrl_c_to_the_child() {
 }
 
 #[test]
+fn command_line_keeps_the_shell_clock_button_visible_and_clickable() {
+    let mut state = ShellSession::new(ShellLaunchConfig::default(), (120, 40));
+    set_test_auth_role(&mut state, UserRole::Admin);
+    state.screen_stack = vec![ShellScreen::Home, ShellScreen::Launcher];
+    state.open_command_line();
+
+    assert!(
+        state
+            .to_shell_chrome_view_model()
+            .status
+            .time_button_label
+            .is_some()
+    );
+    let clock = hit_region_center(&state, ShellComponent::ClockButton);
+    assert_eq!(
+        state.hit_map.layer_at(clock),
+        Some(ShellHitLayer::ShellChrome)
+    );
+
+    let routed = state.route_input_at(
+        InputEvent::mouse_down(PointerButton::Left, clock),
+        Instant::now(),
+    );
+    assert_eq!(
+        routed.target,
+        RoutedTarget::Component(ShellComponent::ClockButton)
+    );
+    assert_eq!(routed.command, ShellCommand::OpenClock);
+}
+
+#[test]
 fn key_event_to_label_maps_requested_keys() {
     let cases = [
         (
