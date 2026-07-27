@@ -246,6 +246,7 @@ pub struct CommandLinePty {
     child: Arc<Mutex<Box<dyn Child + Send + Sync>>>,
     process_tree: ProcessTreeGuard,
     parser: Arc<Mutex<vt100::Parser>>,
+    output_revision: Arc<AtomicU64>,
     reader_task: Option<ManagedThreadHandle<()>>,
     reader_done: mpsc::Receiver<()>,
 }
@@ -295,21 +296,24 @@ impl CommandLinePty {
             config.columns.max(1),
             config.scrollback_lines,
         )));
+        let output_revision = Arc::new(AtomicU64::new(0));
         let mut parser_for_reader = Some(Arc::clone(&parser));
+        let mut output_revision_for_reader = Some(Arc::clone(&output_revision));
         let mut writer_for_reader = Some(Arc::clone(&writer));
         let mut reader = Some(reader);
         let (reader_done_sender, reader_done) = mpsc::channel();
         let mut reader_done_sender = Some(reader_done_sender);
         let reader_task = reader_tasks
             .spawn_thread(next_reader_task_spec()?, move || {
-                let (Some(reader), Some(parser), Some(writer)) = (
+                let (Some(reader), Some(parser), Some(output_revision), Some(writer)) = (
                     reader.take(),
                     parser_for_reader.take(),
+                    output_revision_for_reader.take(),
                     writer_for_reader.take(),
                 ) else {
                     return;
                 };
-                read_pty_output(reader, parser, writer);
+                read_pty_output(reader, parser, output_revision, writer);
                 if let Some(sender) = reader_done_sender.take() {
                     let _ = sender.send(());
                 }
@@ -324,6 +328,7 @@ impl CommandLinePty {
             child: Arc::new(Mutex::new(child)),
             process_tree,
             parser,
+            output_revision,
             reader_task: Some(reader_task),
             reader_done,
         })
@@ -354,17 +359,36 @@ impl CommandLinePty {
             io::Error::new(io::ErrorKind::BrokenPipe, "command line PTY is closed")
         })?;
         lock_io(master)?.resize(size).map_err(portable_error)?;
-        lock_io(&self.parser)?.set_size(size.rows, size.cols);
+        let mut parser = lock_io(&self.parser)?;
+        parser.set_size(size.rows, size.cols);
+        self.output_revision.fetch_add(1, Ordering::Release);
         Ok(())
     }
 
     pub fn snapshot(&self) -> TerminalSnapshot {
+        self.snapshot_with_revision().0
+    }
+
+    fn snapshot_if_changed(&self, previous_revision: u64) -> Option<(TerminalSnapshot, u64)> {
+        if self.output_revision.load(Ordering::Acquire) == previous_revision {
+            return None;
+        }
+        Some(self.snapshot_with_revision())
+    }
+
+    fn snapshot_with_revision(&self) -> (TerminalSnapshot, u64) {
         // A poisoned parser only indicates that the reader panicked. Keep the
         // runtime usable and show the last valid state instead of panicking in
         // the shell UI.
         match self.parser.lock() {
-            Ok(parser) => TerminalSnapshot::from_parser(&parser),
-            Err(poisoned) => TerminalSnapshot::from_parser(&poisoned.into_inner()),
+            Ok(parser) => (
+                TerminalSnapshot::from_parser(&parser),
+                self.output_revision.load(Ordering::Acquire),
+            ),
+            Err(poisoned) => (
+                TerminalSnapshot::from_parser(&poisoned.into_inner()),
+                self.output_revision.load(Ordering::Acquire),
+            ),
         }
     }
 
@@ -581,6 +605,7 @@ impl Drop for ProcessTreeGuard {
 fn read_pty_output(
     mut reader: Box<dyn Read + Send>,
     parser: Arc<Mutex<vt100::Parser>>,
+    output_revision: Arc<AtomicU64>,
     writer: Arc<Mutex<Box<dyn Write + Send>>>,
 ) {
     let mut buffer = [0_u8; 8_192];
@@ -597,11 +622,13 @@ fn read_pty_output(
                 let cursor_position = match parser.lock() {
                     Ok(mut parser) => {
                         parser.process(&safe);
+                        output_revision.fetch_add(1, Ordering::Release);
                         parser.screen().cursor_position()
                     }
                     Err(poisoned) => {
                         let mut parser = poisoned.into_inner();
                         parser.process(&safe);
+                        output_revision.fetch_add(1, Ordering::Release);
                         parser.screen().cursor_position()
                     }
                 };
@@ -734,14 +761,20 @@ enum CommandLineHostState {
 pub struct CommandLineHost {
     state: CommandLineHostState,
     snapshot: TerminalSnapshot,
+    snapshot_revision: u64,
+    ui_snapshot: Arc<ui::CommandLineTerminalSnapshot>,
     reader_tasks: ManagedTaskGroup,
 }
 
 impl CommandLineHost {
     pub fn new(watchdog: AppWatchdog) -> Self {
+        let snapshot = blank_terminal_snapshot();
+        let ui_snapshot = Arc::new(to_ui_snapshot(&snapshot));
         Self {
             state: CommandLineHostState::Inactive,
-            snapshot: blank_terminal_snapshot(),
+            snapshot,
+            snapshot_revision: 0,
+            ui_snapshot,
             reader_tasks: watchdog
                 .child_component(ComponentId::from_static("command-line"))
                 .task_group("pty-reader"),
@@ -765,7 +798,8 @@ impl CommandLineHost {
         });
         match result {
             Ok(pty) => {
-                self.snapshot = pty.snapshot();
+                let (snapshot, revision) = pty.snapshot_with_revision();
+                self.install_snapshot(snapshot, revision);
                 self.state = CommandLineHostState::Running(pty);
             }
             Err(error) => {
@@ -794,9 +828,7 @@ impl CommandLineHost {
         };
         match result {
             Ok(()) => {
-                if let CommandLineHostState::Running(pty) = &self.state {
-                    self.snapshot = pty.snapshot();
-                }
+                self.refresh_snapshot();
             }
             Err(error) => {
                 self.fail_running(format!("Could not resize CLI terminal: {error}"));
@@ -817,22 +849,21 @@ impl CommandLineHost {
         };
 
         let Some(status) = status else {
-            if let CommandLineHostState::Running(pty) = &self.state {
-                self.snapshot = pty.snapshot();
-            }
+            self.refresh_snapshot();
             return CommandLineHostEvent::None;
         };
 
         let previous = std::mem::replace(&mut self.state, CommandLineHostState::Inactive);
         if let CommandLineHostState::Running(pty) = previous {
-            self.snapshot = pty.snapshot_after_exit();
+            let snapshot = pty.snapshot_after_exit();
+            self.install_snapshot(snapshot, self.snapshot_revision);
         }
 
         if status.code == EMBEDDED_RESET_EXIT_CODE {
             return CommandLineHostEvent::ResetRequested;
         }
         if status.success {
-            self.snapshot = blank_terminal_snapshot();
+            self.install_blank_snapshot();
             return CommandLineHostEvent::ExitToLauncher;
         }
 
@@ -862,7 +893,7 @@ impl CommandLineHost {
                 {
                     match key.key {
                         InputKey::Enter => {
-                            self.snapshot = blank_terminal_snapshot();
+                            self.install_blank_snapshot();
                             self.state = CommandLineHostState::Inactive;
                         }
                         InputKey::Escape => return CommandLineHostEvent::ExitToLauncher,
@@ -886,7 +917,7 @@ impl CommandLineHost {
                     .map_or(Ok(()), |bytes| pty.write(&bytes))
             }
             (CommandLineHostState::Running(pty), InputEvent::Paste(text)) => {
-                pty.write(&paste_bytes(text, pty.snapshot().bracketed_paste))
+                pty.write(&paste_bytes(text, self.snapshot.bracketed_paste))
             }
             _ => Ok(()),
         };
@@ -910,7 +941,7 @@ impl CommandLineHost {
             },
         };
         ui::CommandLineViewModel {
-            terminal: to_ui_snapshot(&self.snapshot),
+            terminal: Arc::clone(&self.ui_snapshot),
             process_state,
             message: None,
             prompt_label: None,
@@ -923,7 +954,7 @@ impl CommandLineHost {
             let _ = pty.force_terminate();
             drop(pty);
         }
-        self.snapshot = blank_terminal_snapshot();
+        self.install_blank_snapshot();
     }
 
     fn fail_running(&mut self, message: String) {
@@ -931,6 +962,26 @@ impl CommandLineHost {
         if let CommandLineHostState::Running(pty) = previous {
             let _ = pty.force_terminate();
         }
+    }
+
+    fn refresh_snapshot(&mut self) {
+        let update = match &self.state {
+            CommandLineHostState::Running(pty) => pty.snapshot_if_changed(self.snapshot_revision),
+            _ => None,
+        };
+        if let Some((snapshot, revision)) = update {
+            self.install_snapshot(snapshot, revision);
+        }
+    }
+
+    fn install_snapshot(&mut self, snapshot: TerminalSnapshot, revision: u64) {
+        self.ui_snapshot = Arc::new(to_ui_snapshot(&snapshot));
+        self.snapshot = snapshot;
+        self.snapshot_revision = revision;
+    }
+
+    fn install_blank_snapshot(&mut self) {
+        self.install_snapshot(blank_terminal_snapshot(), 0);
     }
 }
 
@@ -1112,6 +1163,33 @@ mod tests {
         }
     }
 
+    #[test]
+    fn parsed_pty_output_marks_the_terminal_frame_dirty() {
+        let parser = Arc::new(Mutex::new(vt100::Parser::new(2, 8, 0)));
+        let output_revision = Arc::new(AtomicU64::new(0));
+        let captured = Arc::new(Mutex::new(Vec::new()));
+        let writer: Arc<Mutex<Box<dyn Write + Send>>> = Arc::new(Mutex::new(Box::new(
+            CollectingWriter(Arc::clone(&captured)),
+        )));
+
+        read_pty_output(
+            Box::new(io::Cursor::new(b"hello".to_vec())),
+            Arc::clone(&parser),
+            Arc::clone(&output_revision),
+            writer,
+        );
+
+        assert_eq!(output_revision.load(Ordering::Acquire), 1);
+        assert_eq!(
+            lock_io(&parser)
+                .expect("terminal parser")
+                .screen()
+                .contents(),
+            "hello"
+        );
+        assert!(lock_io(&captured).expect("terminal response").is_empty());
+    }
+
     #[cfg(any(windows, unix))]
     #[test]
     fn pty_process_runs_inside_platform_containment() {
@@ -1242,10 +1320,13 @@ mod tests {
             &reader_tasks,
         )
         .expect("interactive ConPTY child");
-        let snapshot = pty.snapshot();
+        let (snapshot, snapshot_revision) = pty.snapshot_with_revision();
+        let ui_snapshot = Arc::new(to_ui_snapshot(&snapshot));
         let mut host = CommandLineHost {
             state: CommandLineHostState::Running(pty),
             snapshot,
+            snapshot_revision,
+            ui_snapshot,
             reader_tasks,
         };
 

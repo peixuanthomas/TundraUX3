@@ -2,6 +2,7 @@ use std::fmt;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CliCommand {
+    Cls,
     Config(ConfigAction),
     Doctor,
     Explain,
@@ -105,6 +106,7 @@ where
     let command = args.remove(0);
 
     match command.as_str() {
+        "cls" => parse_no_extra_args(&args, CliCommand::Cls),
         "config" => parse_config_args(&args).map(CliCommand::Config),
         "doctor" => parse_no_extra_args(&args, CliCommand::Doctor),
         "explain" => parse_no_extra_args(&args, CliCommand::Explain),

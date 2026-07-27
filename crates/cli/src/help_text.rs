@@ -4,7 +4,11 @@ pub(crate) fn write_help(output: &mut impl Write) -> std::io::Result<()> {
     writeln!(output, "TundraUX3 CLI")?;
     writeln!(
         output,
-        "Usage: tundra-cli <config|doctor|explain|new|paths|repl|test-frost|test-matrix|weathr>"
+        "Usage: tundra-cli <cls|config|doctor|explain|new|paths|repl|test-frost|test-matrix|weathr>"
+    )?;
+    writeln!(
+        output,
+        "  cls     Clear the terminal screen and move the cursor home"
     )?;
     writeln!(
         output,
@@ -48,7 +52,7 @@ pub(crate) fn write_explain(output: &mut impl Write) -> std::io::Result<()> {
     )?;
     writeln!(
         output,
-        "  2. tundra-cli handles diagnostics, operator commands, config, and launchers: doctor, paths, explain, new, repl, test-frost, test-matrix, weathr."
+        "  2. tundra-cli handles diagnostics, operator commands, config, and launchers: doctor, paths, explain, new, repl, test-frost, test-matrix, weathr, cls."
     )?;
     writeln!(
         output,

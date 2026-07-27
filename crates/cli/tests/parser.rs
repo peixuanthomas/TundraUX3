@@ -25,6 +25,15 @@ fn doctor_arg_dispatches_doctor() {
 }
 
 #[test]
+fn cls_arg_dispatches_without_extra_arguments() {
+    assert_eq!(parse_args(["cls"]), Ok(CliCommand::Cls));
+    assert_eq!(
+        parse_args(["cls", "extra"]),
+        Err(CliError::UnexpectedArgument("extra".to_string()))
+    );
+}
+
+#[test]
 fn editor_command_is_not_a_shell_launch_bypass() {
     assert_eq!(
         parse_args(["editor"]),
@@ -158,6 +167,8 @@ fn help_command_writes_usage_to_stdout() {
     assert_eq!(exit_code, 0);
     assert!(stderr.is_empty());
     let stdout = String::from_utf8(stdout).expect("help output should be utf8");
+    assert!(stdout.contains("<cls|config|doctor"));
+    assert!(stdout.contains("cls     Clear the terminal screen"));
     assert!(stdout.contains("test-frost|test-matrix|weathr>"));
     assert!(stdout.contains("config  View or update user config"));
     assert!(stdout.contains("new     Clear saved TundraUX3 data"));
@@ -167,6 +178,18 @@ fn help_command_writes_usage_to_stdout() {
     assert!(stdout.contains("weathr  Launch the terminal weather scene"));
     assert!(!stdout.contains("Windows 11"));
     assert!(!stdout.contains("Windows Terminal"));
+}
+
+#[test]
+fn cls_command_clears_the_visible_screen_and_moves_the_cursor_home() {
+    let mut stdout = Vec::new();
+    let mut stderr = Vec::new();
+
+    let exit_code = run(["cls"], &mut stdout, &mut stderr);
+
+    assert_eq!(exit_code, 0);
+    assert_eq!(stdout, b"\x1b[2J\x1b[H");
+    assert!(stderr.is_empty());
 }
 
 #[test]

@@ -1,5 +1,6 @@
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
+use std::sync::Arc;
 use ui::{
     CommandLineCell, CommandLineCellStyle, CommandLineColor, CommandLineProcessState,
     CommandLineTerminalSnapshot, CommandLineViewModel, HomeDisplayMode, NotificationTone,
@@ -22,6 +23,14 @@ fn chrome(size: (u16, u16)) -> ShellChromeViewModel {
             time_button_selected: false,
         },
     }
+}
+
+#[test]
+fn cloned_command_line_models_share_the_terminal_frame() {
+    let model = CommandLineViewModel::new(CommandLineTerminalSnapshot::blank(106, 14));
+    let cloned = model.clone();
+
+    assert!(Arc::ptr_eq(&model.terminal, &cloned.terminal));
 }
 
 #[test]

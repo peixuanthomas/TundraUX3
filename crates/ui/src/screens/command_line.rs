@@ -8,6 +8,7 @@ use ratatui::Frame;
 use ratatui::layout::{Alignment, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::widgets::{Borders, Clear, Paragraph, Wrap};
+use std::sync::Arc;
 
 use crate::screens::shell::{
     ShellLayout, compute_shell_layout, render_compact_home, render_status, render_top,
@@ -114,7 +115,10 @@ pub enum CommandLineProcessState {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CommandLineViewModel {
-    pub terminal: CommandLineTerminalSnapshot,
+    /// Immutable frame data shared with the Shell host. Terminal frames can
+    /// contain thousands of owned graphemes, so cloning a view model must not
+    /// duplicate every cell.
+    pub terminal: Arc<CommandLineTerminalSnapshot>,
     pub process_state: CommandLineProcessState,
     /// A host-side message such as a spawn error or a restart hint.
     pub message: Option<String>,
@@ -127,7 +131,7 @@ pub struct CommandLineViewModel {
 impl CommandLineViewModel {
     pub fn new(terminal: CommandLineTerminalSnapshot) -> Self {
         Self {
-            terminal,
+            terminal: Arc::new(terminal),
             process_state: CommandLineProcessState::Running,
             message: None,
             prompt_label: None,
@@ -196,7 +200,7 @@ fn render_command_line_main(
     render_terminal_snapshot(
         frame,
         terminal_area,
-        &model.terminal,
+        model.terminal.as_ref(),
         model.prompt_label.as_deref(),
         theme.accent_color,
     );

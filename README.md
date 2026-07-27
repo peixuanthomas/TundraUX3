@@ -72,6 +72,7 @@ cargo run -p shell --bin tundra-shell
 
 ~~~console
 cargo run -p cli --bin tundra-cli -- --help
+cargo run -p cli --bin tundra-cli -- cls
 cargo run -p cli --bin tundra-cli -- doctor
 cargo run -p cli --bin tundra-cli -- paths
 cargo run -p cli --bin tundra-cli -- repl

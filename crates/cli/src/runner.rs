@@ -15,6 +15,8 @@ use crate::path_report::run_paths;
 use crate::storage_reset::run_new;
 use crate::weathr_command::{drain_watchdog_incidents, run_weathr, run_weathr_managed};
 
+const CLEAR_SCREEN_SEQUENCE: &[u8] = b"\x1b[2J\x1b[H";
+
 pub fn run<I, S, Stdout, Stderr>(args: I, stdout: &mut Stdout, stderr: &mut Stderr) -> i32
 where
     I: IntoIterator<Item = S>,
@@ -173,6 +175,7 @@ where
 {
     let mut routed_by_weathr = false;
     let exit_code = match parse_args(args) {
+        Ok(CliCommand::Cls) => run_cls(stdout, stderr),
         Ok(CliCommand::Config(action)) => run_config(platform, stdout, stderr, action),
         Ok(CliCommand::Help) => {
             let _ = write_help(stdout);
@@ -269,6 +272,7 @@ where
     LaunchError: fmt::Display,
 {
     match parse_args(args) {
+        Ok(CliCommand::Cls) => run_cls(stdout, stderr),
         Ok(CliCommand::Config(action)) => run_config(platform, stdout, stderr, action),
         Ok(CliCommand::Help) => {
             let _ = write_help(stdout);
@@ -300,6 +304,19 @@ where
             let _ = writeln!(stderr, "ERROR: {error}");
             let _ = write_help(stderr);
             2
+        }
+    }
+}
+
+fn run_cls<Stdout: Write, Stderr: Write>(stdout: &mut Stdout, stderr: &mut Stderr) -> i32 {
+    match stdout
+        .write_all(CLEAR_SCREEN_SEQUENCE)
+        .and_then(|()| stdout.flush())
+    {
+        Ok(()) => 0,
+        Err(error) => {
+            let _ = writeln!(stderr, "ERROR: could not clear terminal screen: {error}");
+            1
         }
     }
 }

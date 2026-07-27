@@ -7,6 +7,7 @@ use watchdog::{
 };
 
 const MAX_READY_TERMINAL_EVENTS_PER_FRAME: usize = 4_096;
+const COMMAND_LINE_REFRESH_INTERVAL: Duration = Duration::from_millis(16);
 
 pub fn run_without_animation(output: &mut impl Write) -> io::Result<()> {
     run_not_fullscreen_without_animation(output)
@@ -1020,9 +1021,13 @@ pub(super) fn run_fullscreen_shell_session(
         let poll_now = Instant::now();
         let tick_timeout =
             tick_rate.saturating_sub(poll_now.saturating_duration_since(last_tick_at));
-        let poll_timeout = state.auth_poll_timeout(
+        let state_poll_timeout = state.auth_poll_timeout(
             poll_now,
             state.notification_poll_timeout(poll_now, tick_timeout),
+        );
+        let (poll_timeout, state_timeout_wakeup) = command_line_poll_timeout(
+            state.content_screen() == ShellScreen::CommandLine,
+            state_poll_timeout,
         );
         let mut action = ShellAction::Redraw;
         if event::poll(poll_timeout)? {
@@ -1060,7 +1065,7 @@ pub(super) fn run_fullscreen_shell_session(
                     break;
                 }
             }
-        } else {
+        } else if state_timeout_wakeup {
             action = state.apply_input_with_platform(InputEvent::Tick, platform.as_ref());
             last_tick_at = Instant::now();
         }
@@ -1131,6 +1136,17 @@ pub(super) fn run_fullscreen_shell_session(
 
 fn read_ready_terminal_event_batch(first: event::Event) -> io::Result<Vec<event::Event>> {
     collect_ready_terminal_event_batch(first, || event::poll(Duration::ZERO), event::read)
+}
+
+fn command_line_poll_timeout(
+    command_line_active: bool,
+    state_poll_timeout: Duration,
+) -> (Duration, bool) {
+    if command_line_active && state_poll_timeout > COMMAND_LINE_REFRESH_INTERVAL {
+        (COMMAND_LINE_REFRESH_INTERVAL, false)
+    } else {
+        (state_poll_timeout, true)
+    }
 }
 
 fn collect_ready_terminal_event_batch(
@@ -1312,6 +1328,22 @@ mod runtime_preflight_tests {
             },
         )
         .expect("collect terminal event batch")
+    }
+
+    #[test]
+    fn command_line_uses_a_low_latency_refresh_without_advancing_state_ticks() {
+        assert_eq!(
+            command_line_poll_timeout(true, Duration::from_millis(250)),
+            (COMMAND_LINE_REFRESH_INTERVAL, false)
+        );
+        assert_eq!(
+            command_line_poll_timeout(true, Duration::from_millis(5)),
+            (Duration::from_millis(5), true)
+        );
+        assert_eq!(
+            command_line_poll_timeout(false, Duration::from_millis(250)),
+            (Duration::from_millis(250), true)
+        );
     }
 
     #[test]
