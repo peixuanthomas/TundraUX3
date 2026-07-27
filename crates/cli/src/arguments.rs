@@ -2,6 +2,7 @@ use std::fmt;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CliCommand {
+    Asset(AssetAction),
     Cls,
     Config(ConfigAction),
     Doctor,
@@ -17,6 +18,19 @@ pub enum CliCommand {
     TestMatrix,
     Weathr,
     Help,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AssetAction {
+    Help,
+    Show { name: String, output: AssetOutput },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AssetOutput {
+    RenderAll,
+    Source,
+    Item(String),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -106,6 +120,7 @@ where
     let command = args.remove(0);
 
     match command.as_str() {
+        "asset" => parse_asset_args(&args).map(CliCommand::Asset),
         "cls" => parse_no_extra_args(&args, CliCommand::Cls),
         "config" => parse_config_args(&args).map(CliCommand::Config),
         "doctor" => parse_no_extra_args(&args, CliCommand::Doctor),
@@ -118,6 +133,32 @@ where
         "weathr" => parse_no_extra_args(&args, CliCommand::Weathr),
         "-h" | "--help" | "help" => Ok(CliCommand::Help),
         other => Err(CliError::UnknownCommand(other.to_string())),
+    }
+}
+
+fn parse_asset_args(args: &[String]) -> Result<AssetAction, CliError> {
+    match args {
+        [] => Ok(AssetAction::Help),
+        [help] if matches!(help.as_str(), "-h" | "--help" | "help") => Ok(AssetAction::Help),
+        [option, ..] if option.starts_with('-') => Err(CliError::MissingArgument("asset name")),
+        [name] => Ok(AssetAction::Show {
+            name: name.clone(),
+            output: AssetOutput::RenderAll,
+        }),
+        [name, option] if option == "-a" => Ok(AssetAction::Show {
+            name: name.clone(),
+            output: AssetOutput::Source,
+        }),
+        [name, option] if option.starts_with("--") && option.len() > 2 => Ok(AssetAction::Show {
+            name: name.clone(),
+            output: AssetOutput::Item(option[2..].to_string()),
+        }),
+        [_, option, unexpected, ..]
+            if option == "-a" || (option.starts_with("--") && option.len() > 2) =>
+        {
+            Err(CliError::UnexpectedArgument(unexpected.clone()))
+        }
+        [_, unexpected, ..] => Err(CliError::UnexpectedArgument(unexpected.clone())),
     }
 }
 

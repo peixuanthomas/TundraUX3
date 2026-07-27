@@ -20,6 +20,7 @@ watchdog = { path = "../watchdog", features = ["tokio"] }
 weathr = { path = "../weathr" }
 rustyline = "17.0"
 shlex = "2.0"
+toml = "0.9"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 arboard = { version = "3.6", default-features = false, features = ["wayland-data-control"] }

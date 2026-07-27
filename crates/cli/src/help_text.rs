@@ -4,7 +4,11 @@ pub(crate) fn write_help(output: &mut impl Write) -> std::io::Result<()> {
     writeln!(output, "TundraUX3 CLI")?;
     writeln!(
         output,
-        "Usage: tundra-cli <cls|config|doctor|explain|new|paths|repl|test-frost|test-matrix|weathr>"
+        "Usage: tundra-cli <asset|cls|config|doctor|explain|new|paths|repl|test-frost|test-matrix|weathr>"
+    )?;
+    writeln!(
+        output,
+        "  asset   Print test assets or their original source files"
     )?;
     writeln!(
         output,
@@ -52,7 +56,7 @@ pub(crate) fn write_explain(output: &mut impl Write) -> std::io::Result<()> {
     )?;
     writeln!(
         output,
-        "  2. tundra-cli handles diagnostics, operator commands, config, and launchers: doctor, paths, explain, new, repl, test-frost, test-matrix, weathr, cls."
+        "  2. tundra-cli handles diagnostics, operator commands, config, assets, and launchers: doctor, paths, explain, new, repl, asset, test-frost, test-matrix, weathr, cls."
     )?;
     writeln!(
         output,
@@ -86,4 +90,34 @@ pub(crate) fn write_explain(output: &mut impl Write) -> std::io::Result<()> {
         output,
         "  - UI code consumes view state and commands; it should not create platform-specific paths or call platform APIs directly."
     )
+}
+
+pub(crate) fn write_asset_help(output: &mut impl Write) -> std::io::Result<()> {
+    writeln!(output, "TundraUX3 asset test command")?;
+    writeln!(output, "Usage:")?;
+    writeln!(output, "  tundra-cli asset <name>")?;
+    writeln!(output, "  tundra-cli asset <name> -a")?;
+    writeln!(output, "  tundra-cli asset <name> --<item>")?;
+    writeln!(output)?;
+    writeln!(output, "Options:")?;
+    writeln!(
+        output,
+        "  -a          Print the complete original asset file"
+    )?;
+    writeln!(
+        output,
+        "  --<item>    Print one item from a TOML art set, such as --launcher"
+    )?;
+    writeln!(output)?;
+    writeln!(output, "Examples:")?;
+    writeln!(output, "  tundra-cli asset banner")?;
+    writeln!(output, "  tundra-cli asset explorer_icons -a")?;
+    writeln!(output, "  tundra-cli asset explorer_icons --folder")?;
+    writeln!(output, "  tundra-cli asset home_icons --launcher")?;
+    writeln!(output)?;
+    writeln!(output, "Available assets:")?;
+    for asset in ascii_assets::required_assets() {
+        writeln!(output, "  {}", asset.key)?;
+    }
+    Ok(())
 }

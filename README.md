@@ -72,6 +72,9 @@ cargo run -p shell --bin tundra-shell
 
 ~~~console
 cargo run -p cli --bin tundra-cli -- --help
+cargo run -p cli --bin tundra-cli -- asset
+cargo run -p cli --bin tundra-cli -- asset banner
+cargo run -p cli --bin tundra-cli -- asset home_icons --launcher
 cargo run -p cli --bin tundra-cli -- cls
 cargo run -p cli --bin tundra-cli -- doctor
 cargo run -p cli --bin tundra-cli -- paths
@@ -364,15 +367,20 @@ tundra-shell
 ### tundra-cli
 
 ~~~console
-tundra-cli <config|doctor|explain|new|paths|repl|test-frost|test-matrix|weathr>
+tundra-cli <asset|cls|config|doctor|explain|new|paths|repl|test-frost|test-matrix|weathr>
 ~~~
 
 | 命令 | 作用 |
 | --- | --- |
+| **asset** | 显示资源测试命令帮助和可用资源名。 |
+| **asset <name>** | 渲染指定资源；TOML art set 会输出其中全部图案。 |
+| **asset <name> -a** | 原样输出完整资源文件，包括 TOML 元数据。 |
+| **asset <name> --<item>** | 只输出 TOML 资源中的指定图案，例如 `home_icons --launcher`。 |
+| **cls** | 清空终端可见内容并把光标移回左上角。 |
 | **config** | 查看全部可公开配置。 |
 | **config get [field]** | 查看 theme、border-shape、border-color、accent-color、language、timezone 或 address。 |
 | **config set <field> <value>** | 修改边框形状/颜色、强调色、语言、时区或天气地址。theme 是只读摘要。 |
-| **doctor** | 检查系统、终端、权限、应用路径、存储和资源是否就绪。 |
+| **doctor** | 检查系统、终端、权限、应用路径、存储和资源是否就绪；终端图形能力会实际探测 Kitty、Sixel 或 iTerm2 协议，不依赖终端名称猜测。 |
 | **explain** | 输出简短的启动和边界说明。 |
 | **paths** | 输出配置模板路径和当前解析路径。 |
 | **repl** | 进入交互命令循环；`exit` 或 EOF 退出，普通输入复用全部 CLI 命令，`/<command>` 交给固定系统命令解释器并显示退出码。 |
@@ -384,6 +392,19 @@ tundra-cli <config|doctor|explain|new|paths|repl|test-frost|test-matrix|weathr>
 **new 会删除用户配置和状态。** 应先确认 tundra-cli paths 输出并备份需要保留的文件。
 
 在 Command Line 内输入 `new` 时，必须精确键入 `RESET`。嵌入模式的 CLI 不自行删除正在使用的数据；它以保留状态码通知 Shell。Shell 恢复终端、释放子进程和后台任务、关闭 watchdog 后统一重置存储，再启动全新 Shell 进入首次设置。
+
+资源测试示例：
+
+~~~console
+tundra-cli asset banner
+tundra-cli asset explorer_icons
+tundra-cli asset explorer_icons -a
+tundra-cli asset explorer_icons --folder
+tundra-cli asset home_icons --launcher
+tundra-cli asset house
+~~~
+
+资源名可以使用 `asset` 帮助中列出的完整清单键，也可以使用唯一文件名（例如 `house` 或 `clock_font`）。不存在的资源、文件或 TOML 条目会写入 stderr 并返回非零退出码。
 
 配置示例：
 

@@ -3,8 +3,8 @@ use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use cli::{
-    CliCommand, CliError, ConfigAction, ConfigField, ConfigUpdate, parse_args, run,
-    run_with_platform, run_with_platform_and_asset_root,
+    AssetAction, AssetOutput, CliCommand, CliError, ConfigAction, ConfigField, ConfigUpdate,
+    parse_args, run, run_with_platform, run_with_platform_and_asset_root,
     run_with_platform_and_managed_weathr_launcher, run_with_platform_and_weathr_launcher,
 };
 use platform::mock::{MockCall, MockPlatform, UnsupportedPlatform};
@@ -22,6 +22,47 @@ fn no_args_dispatches_help() {
 #[test]
 fn doctor_arg_dispatches_doctor() {
     assert_eq!(parse_args(["doctor"]), Ok(CliCommand::Doctor));
+}
+
+#[test]
+fn asset_args_select_help_rendered_source_and_named_item_output() {
+    assert_eq!(
+        parse_args(["asset"]),
+        Ok(CliCommand::Asset(AssetAction::Help))
+    );
+    assert_eq!(
+        parse_args(["asset", "--help"]),
+        Ok(CliCommand::Asset(AssetAction::Help))
+    );
+    assert_eq!(
+        parse_args(["asset", "explorer_icons"]),
+        Ok(CliCommand::Asset(AssetAction::Show {
+            name: "explorer_icons".to_string(),
+            output: AssetOutput::RenderAll,
+        }))
+    );
+    assert_eq!(
+        parse_args(["asset", "explorer_icons", "-a"]),
+        Ok(CliCommand::Asset(AssetAction::Show {
+            name: "explorer_icons".to_string(),
+            output: AssetOutput::Source,
+        }))
+    );
+    assert_eq!(
+        parse_args(["asset", "home_icons", "--launcher"]),
+        Ok(CliCommand::Asset(AssetAction::Show {
+            name: "home_icons".to_string(),
+            output: AssetOutput::Item("launcher".to_string()),
+        }))
+    );
+    assert_eq!(
+        parse_args(["asset", "-a"]),
+        Err(CliError::MissingArgument("asset name"))
+    );
+    assert_eq!(
+        parse_args(["asset", "banner", "unexpected"]),
+        Err(CliError::UnexpectedArgument("unexpected".to_string()))
+    );
 }
 
 #[test]
@@ -164,10 +205,11 @@ fn help_command_writes_usage_to_stdout() {
 
     let exit_code = run(["help"], &mut stdout, &mut stderr);
 
-    assert_eq!(exit_code, 0);
+    assert_eq!(exit_code, 0, "{}", String::from_utf8_lossy(&stderr));
     assert!(stderr.is_empty());
     let stdout = String::from_utf8(stdout).expect("help output should be utf8");
-    assert!(stdout.contains("<cls|config|doctor"));
+    assert!(stdout.contains("<asset|cls|config|doctor"));
+    assert!(stdout.contains("asset   Print test assets"));
     assert!(stdout.contains("cls     Clear the terminal screen"));
     assert!(stdout.contains("test-frost|test-matrix|weathr>"));
     assert!(stdout.contains("config  View or update user config"));
@@ -178,6 +220,186 @@ fn help_command_writes_usage_to_stdout() {
     assert!(stdout.contains("weathr  Launch the terminal weather scene"));
     assert!(!stdout.contains("Windows 11"));
     assert!(!stdout.contains("Windows Terminal"));
+}
+
+#[test]
+fn asset_without_a_name_prints_asset_specific_help() {
+    let mut stdout = Vec::new();
+    let mut stderr = Vec::new();
+
+    let exit_code = run(["asset"], &mut stdout, &mut stderr);
+
+    assert_eq!(exit_code, 0);
+    assert!(stderr.is_empty());
+    let stdout = String::from_utf8(stdout).expect("asset help output should be utf8");
+    assert!(stdout.contains("TundraUX3 asset test command"));
+    assert!(stdout.contains("asset <name> -a"));
+    assert!(stdout.contains("asset <name> --<item>"));
+    assert!(stdout.contains("explorer_icons"));
+    assert!(stdout.contains("weathr/world/house"));
+}
+
+#[test]
+fn asset_command_renders_art_sets_and_individual_items() {
+    let tree = TempTree::new("asset-render");
+    let asset_root = copy_complete_assets(&tree);
+    let platform = UnsupportedPlatform;
+
+    let mut stdout = Vec::new();
+    let mut stderr = Vec::new();
+    let exit_code = run_with_platform_and_asset_root(
+        ["asset", "banner"],
+        &platform,
+        &mut stdout,
+        &mut stderr,
+        &asset_root,
+    );
+    assert_eq!(exit_code, 0, "{}", String::from_utf8_lossy(&stderr));
+    assert!(stderr.is_empty());
+    let banner = String::from_utf8(stdout).expect("banner output should be utf8");
+    assert!(banner.contains("ooooooooooooo"));
+    assert!(!banner.contains("schema_version"));
+    assert!(!banner.contains("[items.tundraux3]"));
+
+    let mut stdout = Vec::new();
+    let mut stderr = Vec::new();
+    let exit_code = run_with_platform_and_asset_root(
+        ["asset", "explorer_icons"],
+        &platform,
+        &mut stdout,
+        &mut stderr,
+        &asset_root,
+    );
+    assert_eq!(exit_code, 0);
+    assert!(stderr.is_empty());
+    let icons = String::from_utf8(stdout).expect("icon output should be utf8");
+    assert!(icons.contains("--folder\n[+]\n"));
+    assert!(icons.contains("--cancel\nx\n"));
+
+    let mut stdout = Vec::new();
+    let mut stderr = Vec::new();
+    let exit_code = run_with_platform_and_asset_root(
+        ["asset", "home_icons", "--launcher"],
+        &platform,
+        &mut stdout,
+        &mut stderr,
+        &asset_root,
+    );
+    assert_eq!(exit_code, 0);
+    assert!(stderr.is_empty());
+    assert_eq!(
+        String::from_utf8(stdout).expect("launcher icon output should be utf8"),
+        "  / \\  \n /===\\ \n | o | \n /___\\ \n"
+    );
+
+    let mut stdout = Vec::new();
+    let mut stderr = Vec::new();
+    let exit_code = run_with_platform_and_asset_root(
+        ["asset", "clock_font", "--0"],
+        &platform,
+        &mut stdout,
+        &mut stderr,
+        &asset_root,
+    );
+    assert_eq!(exit_code, 0);
+    assert!(stderr.is_empty());
+    assert_eq!(
+        String::from_utf8(stdout).expect("clock glyph output should be utf8"),
+        "  .oooo.\n d8P'`Y8b\n888    888\n888    888\n888    888\n`88b  d88'\n `Y8bd8P'\n"
+    );
+}
+
+#[test]
+fn asset_source_mode_prints_the_complete_original_file() {
+    let tree = TempTree::new("asset-source");
+    let asset_root = copy_complete_assets(&tree);
+    let expected =
+        fs::read(asset_root.join("themes/default/explorer_icons.toml")).expect("asset source");
+    let mut stdout = Vec::new();
+    let mut stderr = Vec::new();
+
+    let exit_code = run_with_platform_and_asset_root(
+        ["asset", "explorer_icons", "-a"],
+        &UnsupportedPlatform,
+        &mut stdout,
+        &mut stderr,
+        &asset_root,
+    );
+
+    assert_eq!(exit_code, 0);
+    assert!(stderr.is_empty());
+    assert_eq!(stdout, expected);
+}
+
+#[test]
+fn asset_command_supports_unique_file_names_and_reports_missing_values() {
+    let tree = TempTree::new("asset-errors");
+    let asset_root = copy_complete_assets(&tree);
+    let expected =
+        fs::read(asset_root.join("themes/default/weathr/world/house.txt")).expect("house asset");
+
+    let mut stdout = Vec::new();
+    let mut stderr = Vec::new();
+    let exit_code = run_with_platform_and_asset_root(
+        ["asset", "house"],
+        &UnsupportedPlatform,
+        &mut stdout,
+        &mut stderr,
+        &asset_root,
+    );
+    assert_eq!(exit_code, 0);
+    assert!(stderr.is_empty());
+    assert_eq!(stdout, expected);
+
+    let mut stdout = Vec::new();
+    let mut stderr = Vec::new();
+    let exit_code = run_with_platform_and_asset_root(
+        ["asset", "not_present"],
+        &UnsupportedPlatform,
+        &mut stdout,
+        &mut stderr,
+        &asset_root,
+    );
+    assert_eq!(exit_code, 1, "{}", String::from_utf8_lossy(&stderr));
+    assert!(stdout.is_empty());
+    let error = String::from_utf8(stderr).expect("unknown asset error should be utf8");
+    assert!(error.contains("ERROR: unknown asset \"not_present\""));
+
+    let mut stdout = Vec::new();
+    let mut stderr = Vec::new();
+    let exit_code = run_with_platform_and_asset_root(
+        ["asset", "home_icons", "--not_present"],
+        &UnsupportedPlatform,
+        &mut stdout,
+        &mut stderr,
+        &asset_root,
+    );
+    assert_eq!(exit_code, 1);
+    assert!(stdout.is_empty());
+    let error = String::from_utf8(stderr).expect("unknown item error should be utf8");
+    assert!(
+        error.contains("asset \"home_icons\" has no item \"not_present\""),
+        "unexpected error: {error}"
+    );
+
+    fs::remove_file(asset_root.join("themes/default/banner.toml"))
+        .expect("banner fixture can be removed");
+    let mut stdout = Vec::new();
+    let mut stderr = Vec::new();
+    let exit_code = run_with_platform_and_asset_root(
+        ["asset", "banner"],
+        &UnsupportedPlatform,
+        &mut stdout,
+        &mut stderr,
+        &asset_root,
+    );
+    assert_eq!(exit_code, 1);
+    assert!(stdout.is_empty());
+    let error = String::from_utf8(stderr).expect("missing file error should be utf8");
+    assert!(
+        error.contains("ERROR: could not read asset \"banner\""),
+        "unexpected error: {error}"
+    );
 }
 
 #[test]
@@ -208,7 +430,10 @@ fn explain_command_prints_startup_and_boundary_notes() {
     assert!(stdout.contains("UI boundary"));
     assert!(stdout.contains("platform"));
     assert!(stdout.contains("tundra-shell"));
-    assert!(stdout.contains("doctor, paths, explain, new, repl, test-frost, test-matrix, weathr"));
+    assert!(
+        stdout
+            .contains("doctor, paths, explain, new, repl, asset, test-frost, test-matrix, weathr")
+    );
     assert!(!stdout.contains("Windows 11"));
     assert!(!stdout.contains("Windows Terminal"));
 }
@@ -1015,6 +1240,8 @@ fn doctor_command_passes_and_bootstraps_storage_with_injected_macos_platform() {
     assert!(stdout.contains("Checks:"));
     assert!(stdout.contains("Platform checks:"));
     assert!(stdout.contains("Terminal check:"));
+    assert_eq!(stdout.matches("] Terminal:").count(), 1);
+    assert!(!stdout.contains("Terminal image protocol"));
     assert!(stdout.contains("Capability checks:"));
     assert!(stdout.contains("Path checks:"));
     assert!(stdout.contains("Storage checks:"));

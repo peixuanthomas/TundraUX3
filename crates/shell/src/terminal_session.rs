@@ -6,10 +6,11 @@ use crossterm::event::{
 use crossterm::execute;
 use crossterm::terminal::{
     EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
+    is_raw_mode_enabled,
 };
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
-use std::io::{self, Write};
+use std::io::{self, IsTerminal, Write};
 
 pub struct TerminalGuard<W: Write> {
     terminal: Terminal<CrosstermBackend<W>>,
@@ -106,6 +107,65 @@ impl<W: Write> TerminalGuard<W> {
 }
 
 impl<W: Write> Drop for TerminalGuard<W> {
+    fn drop(&mut self) {
+        let _ = self.restore();
+    }
+}
+
+/// Uses the same live terminal query as the Shell image renderer and returns
+/// the detected inline graphics protocol label. Non-interactive stdio cannot
+/// be queried safely and is treated as text-only.
+pub fn detect_terminal_graphics_protocol() -> Result<Option<&'static str>, String> {
+    if !io::stdin().is_terminal() || !io::stdout().is_terminal() {
+        return Ok(None);
+    }
+
+    let mut raw_mode = TemporaryRawMode::enter()?;
+    let detected = ui::EditorImagePicker::detect_stdio()
+        .map(|picker| picker.map(|picker| picker.protocol().label()))
+        .map_err(|error| error.to_string());
+    let restored = raw_mode.restore().map_err(|error| {
+        format!("could not restore terminal mode after graphics capability probe: {error}")
+    });
+
+    match (detected, restored) {
+        (Ok(protocol), Ok(())) => Ok(protocol),
+        (Err(error), Ok(())) => Err(error),
+        (Ok(_), Err(error)) => Err(error),
+        (Err(detection_error), Err(restore_error)) => {
+            Err(format!("{detection_error}; {restore_error}"))
+        }
+    }
+}
+
+struct TemporaryRawMode {
+    enabled_here: bool,
+}
+
+impl TemporaryRawMode {
+    fn enter() -> Result<Self, String> {
+        let was_enabled = is_raw_mode_enabled()
+            .map_err(|error| format!("could not inspect terminal raw mode: {error}"))?;
+        if !was_enabled {
+            enable_raw_mode()
+                .map_err(|error| format!("could not enable terminal raw mode: {error}"))?;
+        }
+        Ok(Self {
+            enabled_here: !was_enabled,
+        })
+    }
+
+    fn restore(&mut self) -> io::Result<()> {
+        if !self.enabled_here {
+            return Ok(());
+        }
+        disable_raw_mode()?;
+        self.enabled_here = false;
+        Ok(())
+    }
+}
+
+impl Drop for TemporaryRawMode {
     fn drop(&mut self) {
         let _ = self.restore();
     }

@@ -8,6 +8,7 @@ use watchdog::{AppWatchdog, ProcessWatchdog};
 use weathr::LaunchOptions;
 
 use crate::arguments::{CliCommand, parse_args};
+use crate::asset_command::run_asset;
 use crate::config_command::run_config;
 use crate::doctor::run_doctor;
 use crate::help_text::{write_explain, write_help};
@@ -175,6 +176,7 @@ where
 {
     let mut routed_by_weathr = false;
     let exit_code = match parse_args(args) {
+        Ok(CliCommand::Asset(action)) => run_asset(stdout, stderr, action, None),
         Ok(CliCommand::Cls) => run_cls(stdout, stderr),
         Ok(CliCommand::Config(action)) => run_config(platform, stdout, stderr, action),
         Ok(CliCommand::Help) => {
@@ -272,6 +274,7 @@ where
     LaunchError: fmt::Display,
 {
     match parse_args(args) {
+        Ok(CliCommand::Asset(action)) => run_asset(stdout, stderr, action, asset_root),
         Ok(CliCommand::Cls) => run_cls(stdout, stderr),
         Ok(CliCommand::Config(action)) => run_config(platform, stdout, stderr, action),
         Ok(CliCommand::Help) => {

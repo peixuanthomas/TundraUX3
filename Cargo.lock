@@ -523,6 +523,7 @@ dependencies = [
  "shell",
  "shlex",
  "storage",
+ "toml",
  "watchdog",
  "weathr",
  "zbus",

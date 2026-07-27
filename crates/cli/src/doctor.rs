@@ -17,6 +17,23 @@ pub(crate) fn run_doctor<Stdout: Write, Stderr: Write>(
     stderr: &mut Stderr,
     asset_root: Option<&Path>,
 ) -> i32 {
+    run_doctor_with_terminal_graphics_probe(
+        platform,
+        stdout,
+        stderr,
+        asset_root,
+        &SystemTerminalGraphicsProbe,
+    )
+}
+
+fn run_doctor_with_terminal_graphics_probe<Stdout: Write, Stderr: Write>(
+    platform: &dyn Platform,
+    stdout: &mut Stdout,
+    stderr: &mut Stderr,
+    asset_root: Option<&Path>,
+    graphics_probe: &dyn TerminalGraphicsProbe,
+) -> i32 {
+    let terminal_check = terminal_environment_check_from_probe(platform.kind(), graphics_probe);
     let _ = writeln!(stdout, "TundraUX3 doctor");
     let _ = writeln!(stdout, "Platform kind: {}", platform.kind().as_str());
     let _ = writeln!(stdout);
@@ -29,6 +46,7 @@ pub(crate) fn run_doctor<Stdout: Write, Stderr: Write>(
             let _ = writeln!(stdout, "Resolved paths:");
             write_resolved_paths(stdout, &report.app_paths);
             let mut environment_checks = report.environment_checks.clone();
+            replace_terminal_environment_check(&mut environment_checks, terminal_check.clone());
             environment_checks.extend(linux_environment_checks(
                 platform.kind(),
                 &SystemDoctorProbe,
@@ -53,12 +71,61 @@ pub(crate) fn run_doctor<Stdout: Write, Stderr: Write>(
             }
         }
         Err(error) => {
-            write_fallback_doctor_checks(stdout, platform, &error);
+            write_fallback_doctor_checks(stdout, platform, &terminal_check, &error);
             let asset_check = run_asset_check(asset_root, ascii_assets::DEFAULT_THEME_ID);
             write_asset_check(stdout, &asset_check);
             let _ = writeln!(stderr, "Doctor result: FAIL");
             1
         }
+    }
+}
+
+trait TerminalGraphicsProbe {
+    fn detect(&self) -> Result<Option<String>, String>;
+}
+
+struct SystemTerminalGraphicsProbe;
+
+impl TerminalGraphicsProbe for SystemTerminalGraphicsProbe {
+    fn detect(&self) -> Result<Option<String>, String> {
+        shell::detect_terminal_graphics_protocol().map(|protocol| protocol.map(ToOwned::to_owned))
+    }
+}
+
+fn terminal_environment_check_from_probe(
+    kind: PlatformKind,
+    probe: &dyn TerminalGraphicsProbe,
+) -> EnvironmentCheck {
+    let wt_session = env::var("WT_SESSION").ok();
+    match probe.detect() {
+        Ok(protocol) => platform::terminal_environment_check_with_graphics_protocol(
+            kind,
+            wt_session.as_deref(),
+            protocol.as_deref(),
+        ),
+        Err(error) => {
+            let mut check = platform::terminal_environment_check_with_graphics_protocol(
+                kind,
+                wt_session.as_deref(),
+                None,
+            );
+            check.message = format!(
+                "Terminal graphics capability probe failed: {error}; {}",
+                check.message
+            );
+            check
+        }
+    }
+}
+
+fn replace_terminal_environment_check(
+    checks: &mut Vec<EnvironmentCheck>,
+    terminal_check: EnvironmentCheck,
+) {
+    if let Some(check) = checks.iter_mut().find(|check| is_terminal_check(check)) {
+        *check = terminal_check;
+    } else {
+        checks.push(terminal_check);
     }
 }
 
@@ -237,7 +304,6 @@ fn linux_environment_checks(
         clipboard_check(probe),
         notification_check(probe),
         polkit_check(probe),
-        image_protocol_check(probe),
     ]
 }
 
@@ -498,36 +564,6 @@ fn polkit_check(probe: &dyn LinuxDoctorProbe) -> EnvironmentCheck {
     }
 }
 
-fn image_protocol_check(probe: &dyn LinuxDoctorProbe) -> EnvironmentCheck {
-    let term = probe
-        .env_var("TERM")
-        .unwrap_or_default()
-        .to_ascii_lowercase();
-    let term_program = probe
-        .env_var("TERM_PROGRAM")
-        .unwrap_or_default()
-        .to_ascii_lowercase();
-    let supported = term.contains("kitty")
-        || term_program.contains("kitty")
-        || term_program.contains("wezterm")
-        || probe.env_var("KITTY_WINDOW_ID").is_some()
-        || probe.env_var("WEZTERM_EXECUTABLE").is_some();
-
-    if supported {
-        EnvironmentCheck {
-            label: "Terminal image protocol".to_string(),
-            status: CheckStatus::Pass,
-            message: "a supported terminal image protocol was detected".to_string(),
-        }
-    } else {
-        EnvironmentCheck {
-            label: "Terminal image protocol".to_string(),
-            status: CheckStatus::Warning,
-            message: "no supported terminal image protocol was detected; TundraUX3 will use its explicit text/ASCII fallback".to_string(),
-        }
-    }
-}
-
 fn write_doctor_checks(
     output: &mut impl Write,
     environment_checks: &[EnvironmentCheck],
@@ -621,9 +657,9 @@ fn write_path_check(output: &mut impl Write, check: &PathCheck) {
 fn write_fallback_doctor_checks(
     output: &mut impl Write,
     platform: &dyn Platform,
+    terminal_check: &EnvironmentCheck,
     error: &platform::PlatformError,
 ) {
-    let terminal_check = fallback_terminal_check(platform.kind());
     let capability_checks = fallback_capability_checks(platform);
 
     let _ = writeln!(output);
@@ -631,7 +667,7 @@ fn write_fallback_doctor_checks(
 
     let _ = writeln!(output);
     let _ = writeln!(output, "Terminal check:");
-    write_environment_check(output, &terminal_check);
+    write_environment_check(output, terminal_check);
 
     let _ = writeln!(output);
     let _ = writeln!(output, "Capability checks:");
@@ -642,10 +678,6 @@ fn write_fallback_doctor_checks(
     let _ = writeln!(output);
     let _ = writeln!(output, "Path checks:");
     let _ = writeln!(output, "[FAIL] App paths: {error}");
-}
-
-fn fallback_terminal_check(kind: PlatformKind) -> EnvironmentCheck {
-    platform::terminal_environment_check(kind)
 }
 
 fn fallback_capability_checks(platform: &dyn Platform) -> Vec<EnvironmentCheck> {
@@ -876,6 +908,16 @@ mod tests {
         }
     }
 
+    struct FixedTerminalGraphicsProbe {
+        result: Result<Option<String>, String>,
+    }
+
+    impl TerminalGraphicsProbe for FixedTerminalGraphicsProbe {
+        fn detect(&self) -> Result<Option<String>, String> {
+            self.result.clone()
+        }
+    }
+
     fn check<'a>(checks: &'a [EnvironmentCheck], label: &str) -> &'a EnvironmentCheck {
         checks
             .iter()
@@ -916,9 +958,11 @@ mod tests {
         assert_eq!(check(&checks, "systemd-logind").status, CheckStatus::Pass);
         assert_eq!(check(&checks, "Desktop portal").status, CheckStatus::Pass);
         assert_eq!(check(&checks, "Linux clipboard").status, CheckStatus::Pass);
-        assert_eq!(
-            check(&checks, "Terminal image protocol").status,
-            CheckStatus::Pass
+        assert!(
+            checks
+                .iter()
+                .all(|check| check.label != "Terminal image protocol"),
+            "terminal graphics support must come from the live protocol probe"
         );
     }
 
@@ -950,9 +994,92 @@ mod tests {
                 .contains("xdg-desktop-portal")
         );
         assert!(
-            check(&checks, "Terminal image protocol")
-                .message
-                .contains("text/ASCII fallback")
+            checks
+                .iter()
+                .all(|check| check.label != "Terminal image protocol")
+        );
+    }
+
+    #[test]
+    fn doctor_terminal_check_uses_the_live_graphics_protocol_probe() {
+        let probe = FixedTerminalGraphicsProbe {
+            result: Ok(Some("Sixel".to_string())),
+        };
+
+        let terminal = terminal_environment_check_from_probe(PlatformKind::Macos, &probe);
+
+        assert_eq!(terminal.status, CheckStatus::Pass);
+        assert!(terminal.message.contains("Sixel graphics protocol"));
+
+        let mut checks = vec![
+            platform::terminal_environment_check_with_graphics_protocol(
+                PlatformKind::Macos,
+                None,
+                None,
+            ),
+            EnvironmentCheck {
+                label: "Platform".to_string(),
+                status: CheckStatus::Pass,
+                message: "macOS".to_string(),
+            },
+        ];
+        replace_terminal_environment_check(&mut checks, terminal);
+
+        assert_eq!(
+            checks
+                .iter()
+                .filter(|check| check.label == "Terminal")
+                .count(),
+            1
+        );
+        assert_eq!(check(&checks, "Terminal").status, CheckStatus::Pass);
+    }
+
+    #[test]
+    fn doctor_terminal_check_warns_without_a_protocol_or_when_the_probe_fails() {
+        let text_only = terminal_environment_check_from_probe(
+            PlatformKind::Macos,
+            &FixedTerminalGraphicsProbe { result: Ok(None) },
+        );
+        assert_eq!(text_only.status, CheckStatus::Warning);
+        assert!(text_only.message.contains("text-only"));
+
+        let failed = terminal_environment_check_from_probe(
+            PlatformKind::Macos,
+            &FixedTerminalGraphicsProbe {
+                result: Err("query timeout".to_string()),
+            },
+        );
+        assert_eq!(failed.status, CheckStatus::Warning);
+        assert!(failed.message.contains("probe failed"));
+        assert!(failed.message.contains("query timeout"));
+    }
+
+    #[test]
+    fn doctor_execution_prints_the_probed_terminal_result() {
+        let mut stdout = Vec::new();
+        let mut stderr = Vec::new();
+        let probe = FixedTerminalGraphicsProbe {
+            result: Ok(Some("Kitty".to_string())),
+        };
+
+        let exit_code = run_doctor_with_terminal_graphics_probe(
+            &platform::mock::UnsupportedPlatform,
+            &mut stdout,
+            &mut stderr,
+            Some(Path::new(ascii_assets::CANONICAL_ASSETS_DIR)),
+            &probe,
+        );
+
+        assert_eq!(exit_code, 1, "unsupported app paths still fail doctor");
+        let stdout = String::from_utf8(stdout).expect("doctor output should be UTF-8");
+        assert!(stdout.contains("[PASS] Terminal: Kitty graphics protocol detected"));
+        assert_eq!(stdout.matches("] Terminal:").count(), 1);
+        assert!(!stdout.contains("Terminal image protocol"));
+        assert!(
+            String::from_utf8(stderr)
+                .expect("doctor error should be UTF-8")
+                .contains("Doctor result: FAIL")
         );
     }
 
