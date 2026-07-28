@@ -417,6 +417,7 @@ impl ShellSession {
             let target = RoutedTarget::Modal(ShellComponent::DiagnosticsRepairDialog);
             return match &key.key {
                 InputKey::Escape => (target, ShellCommand::DiagnosticsCancelRepair),
+                InputKey::Char('r' | 'R') => (RoutedTarget::Global, ShellCommand::Restart),
                 InputKey::Up => (target, ShellCommand::DiagnosticsRepairPrevious),
                 InputKey::Down => (target, ShellCommand::DiagnosticsRepairNext),
                 InputKey::Tab | InputKey::BackTab | InputKey::Left | InputKey::Right => {
@@ -437,7 +438,10 @@ impl ShellSession {
         let target = RoutedTarget::Component(ShellComponent::Diagnostics);
         if self.diagnostics_restart_is_required() {
             return match &key.key {
-                InputKey::Enter => (RoutedTarget::Global, ShellCommand::RequestExit),
+                InputKey::Enter | InputKey::Char('r' | 'R') => {
+                    (RoutedTarget::Global, ShellCommand::Restart)
+                }
+                InputKey::Char('e' | 'E') => (RoutedTarget::Global, ShellCommand::RequestExit),
                 InputKey::Escape => (RoutedTarget::Global, ShellCommand::CloseDiagnostics),
                 _ => (target, ShellCommand::CaptureOverlayInput),
             };
@@ -461,6 +465,9 @@ impl ShellSession {
             InputKey::Home => (target, ShellCommand::DiagnosticsFirst),
             InputKey::End => (target, ShellCommand::DiagnosticsLast),
             InputKey::Char('r' | 'R') => (target, ShellCommand::DiagnosticsRescan),
+            InputKey::Char('x' | 'X') if !self.diagnostics_scanning => {
+                (RoutedTarget::Global, ShellCommand::Restart)
+            }
             InputKey::Char('f' | 'F') if self.diagnostics_tab == ui::DiagnosticsTab::Health => {
                 (target, ShellCommand::DiagnosticsPreviewSelectedRepair)
             }
@@ -976,6 +983,10 @@ impl ShellSession {
 
         if key.is_character('y') || key.is_character('Y') || matches!(&key.key, InputKey::Enter) {
             return (target, ShellCommand::ConfirmExit);
+        }
+
+        if key.is_character('r') || key.is_character('R') {
+            return (target, ShellCommand::Restart);
         }
 
         if key.is_character('n') || key.is_character('N') || matches!(&key.key, InputKey::Escape) {
@@ -1550,6 +1561,9 @@ impl ShellSession {
                 }
                 Some(ui::DiagnosticsHitTarget::RepairConfirm) => {
                     (routed, ShellCommand::DiagnosticsConfirmRepair)
+                }
+                Some(ui::DiagnosticsHitTarget::RepairRestart) => {
+                    (RoutedTarget::Global, ShellCommand::Restart)
                 }
                 Some(ui::DiagnosticsHitTarget::RepairCancel) => {
                     (routed, ShellCommand::DiagnosticsCancelRepair)

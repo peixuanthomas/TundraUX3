@@ -64,6 +64,7 @@ impl From<CheckStatus> for DiagnosticStatus {
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum DiagnosticsRepairAction {
     CreateDirectory { label: String, path: PathBuf },
+    RestoreDefaultThemeFile { root: PathBuf, file_key: String },
     RepairStorageDocument(StorageDocumentKind),
 }
 
@@ -71,6 +72,9 @@ impl DiagnosticsRepairAction {
     pub fn label(&self) -> String {
         match self {
             Self::CreateDirectory { label, .. } => format!("Create {label}"),
+            Self::RestoreDefaultThemeFile { file_key, .. } => {
+                format!("Restore default theme file {file_key}")
+            }
             Self::RepairStorageDocument(kind) => {
                 format!("Repair {} storage document", storage_document_label(*kind))
             }
@@ -80,7 +84,10 @@ impl DiagnosticsRepairAction {
     fn order_key(&self) -> (u8, String) {
         match self {
             Self::CreateDirectory { path, .. } => (0, path.display().to_string()),
-            Self::RepairStorageDocument(kind) => (1, storage_document_label(*kind).to_string()),
+            Self::RestoreDefaultThemeFile { root, file_key } => {
+                (1, format!("{}/{}", root.display(), file_key))
+            }
+            Self::RepairStorageDocument(kind) => (2, storage_document_label(*kind).to_string()),
         }
     }
 
@@ -472,8 +479,14 @@ pub fn scan_diagnostics(
         Ok(root) => {
             checks.extend(diagnostic_asset_checks(&root));
         }
+        Err(
+            ascii_assets::AssetError::MissingRoot { path }
+            | ascii_assets::AssetError::RootNotDirectory { path },
+        ) => {
+            checks.extend(diagnostic_asset_checks(&path));
+        }
         Err(error) => {
-            warnings.push(format!("Could not resolve ASCII asset root: {error}"));
+            warnings.push(format!("Could not resolve asset root: {error}"));
             checks.push(DiagnosticCheck {
                 id: "assets.root".to_string(),
                 category: DiagnosticCategory::Assets,
@@ -670,7 +683,7 @@ fn display_log_relative_path(logs_root: &Path, path: &Path) -> String {
 fn diagnostic_asset_checks(root: &Path) -> Vec<DiagnosticCheck> {
     // StorageConfig::theme names the UI color palette (for example, "dark").
     // Runtime ASCII art is loaded from its independently named default theme.
-    let report = ascii_assets::check_required_assets(root, ascii_assets::DEFAULT_THEME_ID);
+    let report = ascii_assets::check_default_theme(root);
     report
         .checks
         .into_iter()
@@ -679,6 +692,12 @@ fn diagnostic_asset_checks(root: &Path) -> Vec<DiagnosticCheck> {
                 ascii_assets::AssetCheckStatus::Pass => DiagnosticStatus::Pass,
                 ascii_assets::AssetCheckStatus::Warning => DiagnosticStatus::Warning,
             };
+            let repair = (status == DiagnosticStatus::Warning).then(|| {
+                DiagnosticsRepairAction::RestoreDefaultThemeFile {
+                    root: root.to_path_buf(),
+                    file_key: check.key.clone(),
+                }
+            });
             DiagnosticCheck {
                 id: stable_id("asset", &check.key),
                 category: DiagnosticCategory::Assets,
@@ -687,8 +706,8 @@ fn diagnostic_asset_checks(root: &Path) -> Vec<DiagnosticCheck> {
                 summary: check.message.clone(),
                 detail: format!("{} — {}", check.path.display(), check.message),
                 remediation: (status != DiagnosticStatus::Pass)
-                    .then(|| "Reinstall the matching TundraUX asset package".to_string()),
-                repair: None,
+                    .then(|| "Restore this file from the built-in default theme".to_string()),
+                repair,
             }
         })
         .collect()
@@ -778,6 +797,31 @@ fn execute_repair(
                     success: false,
                     changed: false,
                     message,
+                    backup_path: None,
+                },
+            }
+        }
+        DiagnosticsRepairAction::RestoreDefaultThemeFile { root, file_key } => {
+            match ascii_assets::restore_default_theme_file(root, file_key) {
+                Ok(report) => DiagnosticsRepairResult {
+                    action,
+                    success: true,
+                    changed: report.changed,
+                    message: if report.changed {
+                        format!(
+                            "Restored the default theme file at {}",
+                            report.path.display()
+                        )
+                    } else {
+                        "Theme file already matches the built-in default".to_string()
+                    },
+                    backup_path: None,
+                },
+                Err(error) => DiagnosticsRepairResult {
+                    action,
+                    success: false,
+                    changed: false,
+                    message: error.to_string(),
                     backup_path: None,
                 },
             }
@@ -954,7 +998,7 @@ mod tests {
             .display()
             .to_string();
 
-        assert_eq!(checks.len(), ascii_assets::required_assets().len());
+        assert_eq!(checks.len(), ascii_assets::default_theme_files().len());
         assert!(
             checks
                 .iter()
@@ -965,6 +1009,95 @@ mod tests {
                 .iter()
                 .all(|check| check.detail.contains(&runtime_theme_path))
         );
+        assert!(checks.iter().all(|check| check.repair.is_none()));
+    }
+
+    #[test]
+    fn asset_diagnostics_offer_embedded_repairs_when_the_asset_root_is_missing() {
+        let root = diagnostic_test_path("tundra-missing-default-assets");
+        let checks = diagnostic_asset_checks(&root);
+
+        assert_eq!(checks.len(), ascii_assets::default_theme_files().len());
+        assert!(
+            checks
+                .iter()
+                .all(|check| check.status == DiagnosticStatus::Warning)
+        );
+        assert!(checks.iter().all(|check| {
+            matches!(
+                &check.repair,
+                Some(DiagnosticsRepairAction::RestoreDefaultThemeFile {
+                    root: repair_root,
+                    file_key,
+                }) if repair_root == &root && file_key == &check.label
+            )
+        }));
+
+        let action = checks
+            .iter()
+            .find(|check| check.label == "banner")
+            .and_then(|check| check.repair.clone())
+            .expect("missing banner should be repairable");
+        let image_action = checks
+            .iter()
+            .find(|check| check.label == "home_icons/explorer.png")
+            .and_then(|check| check.repair.clone())
+            .expect("missing default theme image should be repairable");
+        let app_paths = AppPaths::from_parts(
+            root.join("app/config/config.toml"),
+            root.join("app/data"),
+            root.join("app/cache"),
+            root.join("app/logs"),
+            root.join("app/temp"),
+        )
+        .expect("test app paths");
+        let storage = StorageManager::open(app_paths.clone())
+            .expect("test storage")
+            .manager;
+        let user_dirs = UserDirs::new(
+            root.join("Desktop"),
+            root.join("Documents"),
+            root.join("Downloads"),
+            root.join("Pictures"),
+            root.join("Movies"),
+            root.join("Music"),
+            root.join("AppData"),
+        )
+        .expect("test user directories");
+        let platform =
+            platform::mock::MockPlatform::new(user_dirs, app_paths).with_kind(PlatformKind::Macos);
+
+        let result = execute_repair(&platform, &storage, action);
+        let image_result = execute_repair(&platform, &storage, image_action);
+
+        assert!(result.success);
+        assert!(result.changed);
+        assert!(image_result.success);
+        assert!(image_result.changed);
+        assert!(matches!(
+            result.action,
+            DiagnosticsRepairAction::RestoreDefaultThemeFile { ref file_key, .. }
+                if file_key == "banner"
+        ));
+        assert!(
+            diagnostic_asset_checks(&root)
+                .iter()
+                .find(|check| check.label == "banner")
+                .is_some_and(|check| check.status == DiagnosticStatus::Pass)
+        );
+        assert!(matches!(
+            image_result.action,
+            DiagnosticsRepairAction::RestoreDefaultThemeFile { ref file_key, .. }
+                if file_key == "home_icons/explorer.png"
+        ));
+        assert!(
+            diagnostic_asset_checks(&root)
+                .iter()
+                .find(|check| check.label == "home_icons/explorer.png")
+                .is_some_and(|check| check.status == DiagnosticStatus::Pass)
+        );
+
+        std::fs::remove_dir_all(root).expect("fixture cleanup");
     }
 
     #[test]

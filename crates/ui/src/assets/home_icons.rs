@@ -1,11 +1,13 @@
 use std::fmt;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 pub use ascii_assets::{
-    AsciiAssetStore, AssetDimensions, AssetError, ClockFontAsset, DEFAULT_THEME_ID, ExplorerIcon,
-    HomeIcon, HomeIconCatalog, LauncherIcon,
+    AsciiAssetStore, AssetDimensions, AssetError, ClockFontAsset, DEFAULT_THEME_ID,
+    DefaultThemeCheckReport, DefaultThemeFile, ExplorerIcon, HomeIcon, HomeIconCatalog,
+    LauncherIcon, asset_root_for_recovery_from_env_or_current_exe, check_default_theme,
+    default_theme_files, restore_default_theme,
 };
-use std::path::PathBuf;
 
 #[derive(Clone)]
 pub struct RuntimeAsciiAssets {
@@ -21,6 +23,12 @@ impl RuntimeAsciiAssets {
         Ok(Self::from_store(AsciiAssetStore::load_theme(theme_id)?))
     }
 
+    pub fn load_with_root(root: &Path, theme_id: &str) -> Result<Self, AssetError> {
+        Ok(Self::from_store(AsciiAssetStore::load_with_root(
+            root, theme_id,
+        )?))
+    }
+
     pub fn from_store(store: AsciiAssetStore) -> Self {
         Self {
             store: Arc::new(store),
@@ -33,6 +41,10 @@ impl RuntimeAsciiAssets {
 
     pub fn store(&self) -> &AsciiAssetStore {
         &self.store
+    }
+
+    pub fn shared_store(&self) -> Arc<AsciiAssetStore> {
+        Arc::clone(&self.store)
     }
 
     pub fn theme_id(&self) -> &str {
@@ -51,6 +63,10 @@ impl RuntimeAsciiAssets {
         self.store.home_icon_image_path(key)
     }
 
+    pub fn home_icon_image_bytes(&self, key: &str) -> Option<&[u8]> {
+        self.store.home_icon_image_bytes(key)
+    }
+
     pub fn explorer_icon(&self, key: &str) -> Result<&ExplorerIcon, AssetError> {
         self.store.explorer_icon(key)
     }
@@ -61,6 +77,10 @@ impl RuntimeAsciiAssets {
 
     pub fn launcher_icon_image_path(&self, key: &str) -> Option<PathBuf> {
         self.store.launcher_icon_image_path(key)
+    }
+
+    pub fn launcher_icon_image_bytes(&self, key: &str) -> Option<&[u8]> {
+        self.store.launcher_icon_image_bytes(key)
     }
 
     pub fn clock_font(&self) -> &ClockFontAsset {

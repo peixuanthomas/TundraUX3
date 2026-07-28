@@ -449,7 +449,7 @@ fn render_diagnostics_footer(
     theme: &TundraTheme,
 ) {
     let help = if model.restart_required {
-        "Restart required · Enter Safe exit · Esc Home".to_string()
+        "Restart required · Enter/R Restart · E Safe exit · Esc Home".to_string()
     } else if model.scanning {
         "Scanning... · Esc Home".to_string()
     } else {
@@ -471,6 +471,7 @@ fn render_diagnostics_footer(
         if model.can_view_details {
             actions.insert(actions.len().saturating_sub(1), "E Log folder");
         }
+        actions.insert(actions.len().saturating_sub(1), "X Restart");
         actions.join(" · ")
     };
     let text = model
@@ -560,7 +561,7 @@ fn render_diagnostics_repair_dialog(
     render_clock_line(
         frame,
         layout.help,
-        "Repairs run in order; completed independent repairs are kept.".to_string(),
+        "R Restart · Repairs run in order; completed independent repairs are kept.".to_string(),
         theme.muted_style(),
         Alignment::Left,
     );
@@ -573,6 +574,13 @@ fn render_diagnostics_repair_dialog(
         } else {
             theme.body_style()
         },
+        Alignment::Center,
+    );
+    render_clock_line(
+        frame,
+        layout.restart,
+        "[ Restart ]".to_string(),
+        diagnostics_warning_style(theme),
         Alignment::Center,
     );
     render_clock_line(

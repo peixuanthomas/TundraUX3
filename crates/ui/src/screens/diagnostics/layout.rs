@@ -33,6 +33,7 @@ pub struct DiagnosticsRepairDialogLayout {
     pub rows: Vec<DiagnosticsRowLayout>,
     pub help: Rect,
     pub confirm: Rect,
+    pub restart: Rect,
     pub cancel: Rect,
     pub visible_start: usize,
     pub visible_capacity: usize,
@@ -47,6 +48,7 @@ pub enum DiagnosticsHitTarget {
     Scrollbar,
     RepairItem(usize),
     RepairConfirm,
+    RepairRestart,
     RepairCancel,
     RepairDialogSurface,
 }
@@ -77,6 +79,9 @@ impl DiagnosticsLayout {
             }
             if rect_contains(dialog.confirm, x, y) {
                 return Some(DiagnosticsHitTarget::RepairConfirm);
+            }
+            if rect_contains(dialog.restart, x, y) {
+                return Some(DiagnosticsHitTarget::RepairRestart);
             }
             if rect_contains(dialog.cancel, x, y) {
                 return Some(DiagnosticsHitTarget::RepairCancel);
@@ -335,16 +340,28 @@ fn diagnostics_repair_dialog_layout(
             ),
         })
         .collect();
-    let button_gap = u16::from(inner.width >= 3).saturating_mul(2);
-    let buttons_width = inner.width.saturating_sub(button_gap);
-    let confirm_width = buttons_width / 2;
-    let cancel_width = buttons_width.saturating_sub(confirm_width);
+    let button_gap = u16::from(inner.width >= 5).saturating_mul(2);
+    let buttons_width = inner.width.saturating_sub(button_gap.saturating_mul(2));
+    let confirm_width = buttons_width / 3;
+    let restart_width = buttons_width.saturating_sub(confirm_width) / 2;
+    let cancel_width = buttons_width
+        .saturating_sub(confirm_width)
+        .saturating_sub(restart_width);
     let button_height = u16::from(inner.height > 0);
     let confirm = Rect::new(inner.x, button_y, confirm_width, button_height);
-    let cancel = Rect::new(
+    let restart = Rect::new(
         inner
             .x
             .saturating_add(confirm_width)
+            .saturating_add(button_gap),
+        button_y,
+        restart_width,
+        button_height,
+    );
+    let cancel = Rect::new(
+        restart
+            .x
+            .saturating_add(restart_width)
             .saturating_add(button_gap),
         button_y,
         cancel_width,
@@ -358,6 +375,7 @@ fn diagnostics_repair_dialog_layout(
         rows,
         help,
         confirm,
+        restart,
         cancel,
         visible_start,
         visible_capacity,

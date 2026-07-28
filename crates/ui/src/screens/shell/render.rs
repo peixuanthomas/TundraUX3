@@ -41,11 +41,15 @@ pub fn render_exit_confirmation(
     model: &ExitConfirmViewModel,
     theme: &TundraTheme,
 ) {
-    let dialog = centered_rect(area, area.width.min(46), area.height.min(7));
+    let dialog = centered_rect(area, area.width.min(54), area.height.min(8));
     let lines = vec![
         Line::from(model.message.clone()),
         Line::from(""),
-        Line::from(format!("{}    {}", model.confirm_label, model.cancel_label)),
+        Line::from(format!(
+            "{}    {}",
+            model.confirm_label, model.restart_label
+        )),
+        Line::from(model.cancel_label.clone()),
     ];
     let dialog_widget = Paragraph::new(lines)
         .block(

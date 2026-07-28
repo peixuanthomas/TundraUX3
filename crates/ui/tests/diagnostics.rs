@@ -273,6 +273,10 @@ fn repair_preview_renders_items_and_modal_hit_geometry() {
         Some(DiagnosticsHitTarget::RepairConfirm)
     );
     assert_eq!(
+        diagnostics_hit_test(&layout, (dialog.restart.x, dialog.restart.y)),
+        Some(DiagnosticsHitTarget::RepairRestart)
+    );
+    assert_eq!(
         diagnostics_hit_test(&layout, (dialog.cancel.x, dialog.cancel.y)),
         Some(DiagnosticsHitTarget::RepairCancel)
     );
@@ -281,6 +285,7 @@ fn repair_preview_renders_items_and_modal_hit_geometry() {
     assert!(output.contains("Create missing applications directory"));
     assert!(output.contains("Back up and rebuild config document"));
     assert!(output.contains("Confirm repair"));
+    assert!(output.contains("Restart"));
     assert!(output.contains("Cancel"));
 }
 

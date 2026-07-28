@@ -255,6 +255,7 @@ impl ShellSession {
             latest_watchdog_report: None,
             latest_watchdog_summary: None,
             shutdown_requested: false,
+            restart_requested: false,
             return_to_lockscreen_requested: false,
             last_command: None,
             last_routed_target: None,

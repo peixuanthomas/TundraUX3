@@ -153,7 +153,10 @@ impl ShellSession {
         if self.editor_save_state.is_some()
             && matches!(
                 &routed.command,
-                ShellCommand::Shutdown | ShellCommand::ConfirmExit | ShellCommand::PowerOff
+                ShellCommand::Shutdown
+                    | ShellCommand::ConfirmExit
+                    | ShellCommand::Restart
+                    | ShellCommand::PowerOff
             )
         {
             let status = "Wait for the Editor save to finish before exiting";
@@ -244,6 +247,17 @@ impl ShellSession {
                     self.shutdown_requested = false;
                     return ShellAction::Redraw;
                 }
+                self.shutdown_requested = true;
+                self.app
+                    .dispatch_at(app::AppCommand::ConfirmExit, received_at)
+            }
+            ShellCommand::Restart => {
+                if !self.persist_editor_recovery_now(received_at) {
+                    self.shutdown_requested = false;
+                    self.restart_requested = false;
+                    return ShellAction::Redraw;
+                }
+                self.restart_requested = true;
                 self.shutdown_requested = true;
                 self.app
                     .dispatch_at(app::AppCommand::ConfirmExit, received_at)
@@ -1555,6 +1569,9 @@ impl ShellSession {
             ShellNotificationAction::new("restore-terminal", "Restore terminal")
                 .with_shortcut(InputKey::Char('y'))
                 .with_follow_up(ShellCommand::ConfirmExit),
+            ShellNotificationAction::new("restart", "Restart")
+                .with_shortcut(InputKey::Char('r'))
+                .with_follow_up(ShellCommand::Restart),
         ];
         if poweroff_available {
             actions.push(
@@ -1571,9 +1588,9 @@ impl ShellSession {
         );
 
         let message = if poweroff_available {
-            "Restore the terminal and exit, power off this computer, or cancel?"
+            "Exit, restart TundraUX, power off this computer, or cancel?"
         } else {
-            "Leave the shell and restore the terminal?"
+            "Exit, restart TundraUX, or cancel?"
         };
         self.notify_modal_with_options(
             ShellNotification::modal(

@@ -1,5 +1,6 @@
 use super::*;
 use std::panic::AssertUnwindSafe;
+use std::path::Path;
 use watchdog::{
     AppCriticality, AppDescriptor, AppId, AppWatchdog, BoundaryKind, BoundarySpec, CaughtPanic,
     ComponentId, IncidentKind, IncidentReceipt, ManagedThreadHandle, PanicAction, ProcessWatchdog,
@@ -63,6 +64,7 @@ pub fn run_shell_blocking_managed(
 ) -> io::Result<()> {
     match run_shell_blocking_managed_with_outcome(output, process)? {
         ShellRunOutcome::Exit => Ok(()),
+        ShellRunOutcome::RestartRequested => Err(restart_requires_binary_entrypoint()),
         ShellRunOutcome::ResetRequested => Err(reset_requires_binary_entrypoint()),
     }
 }
@@ -70,6 +72,7 @@ pub fn run_shell_blocking_managed(
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ShellRunOutcome {
     Exit,
+    RestartRequested,
     ResetRequested,
 }
 
@@ -136,8 +139,16 @@ pub fn run_fullscreen_blocking_managed(
 ) -> io::Result<()> {
     match run_fullscreen_blocking_managed_with_outcome(output, process)? {
         ShellRunOutcome::Exit => Ok(()),
+        ShellRunOutcome::RestartRequested => Err(restart_requires_binary_entrypoint()),
         ShellRunOutcome::ResetRequested => Err(reset_requires_binary_entrypoint()),
     }
+}
+
+fn restart_requires_binary_entrypoint() -> io::Error {
+    io::Error::new(
+        io::ErrorKind::Interrupted,
+        "the binary entry point must restart Shell",
+    )
 }
 
 fn reset_requires_binary_entrypoint() -> io::Error {
@@ -152,10 +163,14 @@ pub fn run_fullscreen_blocking_managed_with_outcome(
     process: ProcessWatchdog,
 ) -> io::Result<ShellRunOutcome> {
     let config = ShellLaunchConfig::default();
-    let ascii_assets = load_validated_runtime_ascii_assets()?;
+    let platform: std::sync::Arc<dyn Platform> = std::sync::Arc::from(platform::native_platform());
+    let mut ascii_assets = match load_startup_runtime_ascii_assets(output, platform.as_ref())? {
+        StartupAssetLoadOutcome::Loaded(assets) => assets,
+        StartupAssetLoadOutcome::Restart => return Ok(ShellRunOutcome::RestartRequested),
+        StartupAssetLoadOutcome::Exit => return Ok(ShellRunOutcome::Exit),
+    };
     let terminal_size_requirement = ShellTerminalSizeRequirement::from_assets(&ascii_assets);
     checked_current_terminal_size(terminal_size_requirement)?;
-    let platform: std::sync::Arc<dyn Platform> = std::sync::Arc::from(platform::native_platform());
     let terminal_control = TerminalControlHandler::install();
     let shell_watchdog = process
         .register_app(shell_watchdog_descriptor())
@@ -234,10 +249,11 @@ pub fn run_fullscreen_blocking_managed_with_outcome(
                 BoundarySpec::new("shell-lockscreen-ui-session", BoundaryKind::UiSession)
                     .terminal_owner(),
                 AssertUnwindSafe(|| {
-                    weathr::run_shell_lockscreen_managed_with_shutdown(
+                    weathr::run_shell_lockscreen_managed_with_shutdown_and_assets(
                         lockscreen_options,
                         lockscreen_watchdog,
                         terminal_control.shutdown_flag(),
+                        ascii_assets.shared_store(),
                     )
                 }),
             );
@@ -282,12 +298,20 @@ pub fn run_fullscreen_blocking_managed_with_outcome(
             }),
         );
         match session_result {
-            Ok(Ok(FullscreenShellSessionOutcome::Exit)) => return Ok(ShellRunOutcome::Exit),
-            Ok(Ok(FullscreenShellSessionOutcome::ReturnToLockscreen)) => {
-                force_lockscreen = true;
-            }
-            Ok(Ok(FullscreenShellSessionOutcome::ResetRequested)) => {
-                return Ok(ShellRunOutcome::ResetRequested);
+            Ok(Ok((outcome, refreshed_ascii_assets))) => {
+                ascii_assets = refreshed_ascii_assets;
+                match outcome {
+                    FullscreenShellSessionOutcome::Exit => return Ok(ShellRunOutcome::Exit),
+                    FullscreenShellSessionOutcome::RestartRequested => {
+                        return Ok(ShellRunOutcome::RestartRequested);
+                    }
+                    FullscreenShellSessionOutcome::ReturnToLockscreen => {
+                        force_lockscreen = true;
+                    }
+                    FullscreenShellSessionOutcome::ResetRequested => {
+                        return Ok(ShellRunOutcome::ResetRequested);
+                    }
+                }
             }
             Ok(Err(error)) => return Err(error),
             Err(caught) => {
@@ -312,6 +336,7 @@ pub fn run_fullscreen_blocking_managed_with_outcome(
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum FullscreenShellSessionOutcome {
     Exit,
+    RestartRequested,
     ReturnToLockscreen,
     ResetRequested,
 }
@@ -452,11 +477,11 @@ impl LauncherIconRuntime {
                 if needs_prepare && !self.unavailable.contains(&item.id) {
                     self.prepared.remove(&item.id);
                     let prepared = model
-                        .item_graphic_path(item)
-                        .ok_or_else(|| "Launcher icon asset has no image path".to_string())
-                        .and_then(|path| {
+                        .item_graphic_bytes(item)
+                        .ok_or_else(|| "Launcher icon asset is not cached".to_string())
+                        .and_then(|bytes| {
                             self.picker
-                                .prepare_path(&path, item_layout.icon_area)
+                                .prepare_bytes(bytes, item_layout.icon_area)
                                 .map_err(|error| error.to_string())
                         });
                     match prepared {
@@ -539,11 +564,11 @@ impl LauncherIconRuntime {
 
             self.home_prepared.remove(&entry.label);
             let prepared = model
-                .home_icon_image_path_for_label(&entry.label)
-                .ok_or_else(|| "Home icon asset has no image path".to_string())
-                .and_then(|path| {
+                .home_icon_image_bytes_for_label(&entry.label)
+                .ok_or_else(|| "Home icon asset is not cached".to_string())
+                .and_then(|bytes| {
                     self.picker
-                        .prepare_path(&path, icon_area)
+                        .prepare_bytes(bytes, icon_area)
                         .map_err(|error| error.to_string())
                 });
             match prepared {
@@ -761,7 +786,7 @@ pub(super) fn run_fullscreen_shell_session(
     process_watchdog: &ProcessWatchdog,
     explorer_task_runtime: Option<ShellExplorerTaskRuntime>,
     diagnostics_task_runtime: Option<ShellDiagnosticsTaskRuntime>,
-) -> io::Result<FullscreenShellSessionOutcome> {
+) -> io::Result<(FullscreenShellSessionOutcome, ui::RuntimeAsciiAssets)> {
     let terminal_size_requirement = ShellTerminalSizeRequirement::from_assets(&ascii_assets);
     let initial_size = checked_current_terminal_size(terminal_size_requirement)?;
     let mut guard = TerminalGuard::enter(output)?;
@@ -1229,12 +1254,14 @@ pub(super) fn run_fullscreen_shell_session(
 
     let outcome = if reset_requested {
         FullscreenShellSessionOutcome::ResetRequested
+    } else if state.restart_requested {
+        FullscreenShellSessionOutcome::RestartRequested
     } else if state.return_to_lockscreen_requested() {
         FullscreenShellSessionOutcome::ReturnToLockscreen
     } else {
         FullscreenShellSessionOutcome::Exit
     };
-    Ok(outcome)
+    Ok((outcome, state.ascii_assets.clone()))
 }
 
 fn read_ready_terminal_event_batch(first: event::Event) -> io::Result<Vec<event::Event>> {
@@ -1415,6 +1442,128 @@ pub(super) fn load_validated_runtime_ascii_assets() -> io::Result<ui::RuntimeAsc
     Ok(ascii_assets)
 }
 
+const DEFAULT_THEME_DOWNLOAD_URL: &str =
+    "https://github.com/peixuanthomas/TundraUX3/releases/latest";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum StartupAssetRecoveryChoice {
+    AutoRestore,
+    Download,
+    Restart,
+    Exit,
+}
+
+#[derive(Debug)]
+enum StartupAssetLoadOutcome {
+    Loaded(ui::RuntimeAsciiAssets),
+    Restart,
+    Exit,
+}
+
+fn load_startup_runtime_ascii_assets(
+    output: &mut impl Write,
+    platform: &dyn Platform,
+) -> io::Result<StartupAssetLoadOutcome> {
+    let root = ui::asset_root_for_recovery_from_env_or_current_exe().map_err(asset_io_error)?;
+    resolve_startup_runtime_ascii_assets_at(
+        &root,
+        |report, last_error| prompt_startup_asset_recovery(output, report, last_error),
+        || {
+            platform
+                .open_uri(DEFAULT_THEME_DOWNLOAD_URL)
+                .map_err(|error| error.to_string())
+        },
+    )
+}
+
+fn resolve_startup_runtime_ascii_assets_at(
+    root: &Path,
+    mut choose: impl FnMut(
+        &ui::DefaultThemeCheckReport,
+        Option<&str>,
+    ) -> io::Result<StartupAssetRecoveryChoice>,
+    mut open_download: impl FnMut() -> Result<(), String>,
+) -> io::Result<StartupAssetLoadOutcome> {
+    let mut last_error = None;
+    loop {
+        let report = ui::check_default_theme(root);
+        if report.is_ok() {
+            let store = ui::AsciiAssetStore::load_with_root(root, ui::DEFAULT_THEME_ID)
+                .map_err(asset_io_error)?;
+            return Ok(StartupAssetLoadOutcome::Loaded(
+                ui::RuntimeAsciiAssets::from_store(store),
+            ));
+        }
+
+        match choose(&report, last_error.as_deref())? {
+            StartupAssetRecoveryChoice::AutoRestore => {
+                last_error = match ui::restore_default_theme(root) {
+                    Ok(_) => None,
+                    Err(error) => Some(error.to_string()),
+                };
+            }
+            StartupAssetRecoveryChoice::Download => match open_download() {
+                Ok(()) => return Ok(StartupAssetLoadOutcome::Exit),
+                Err(error) => last_error = Some(format!("Could not open download page: {error}")),
+            },
+            StartupAssetRecoveryChoice::Restart => {
+                return Ok(StartupAssetLoadOutcome::Restart);
+            }
+            StartupAssetRecoveryChoice::Exit => return Ok(StartupAssetLoadOutcome::Exit),
+        }
+    }
+}
+
+fn prompt_startup_asset_recovery(
+    output: &mut impl Write,
+    report: &ui::DefaultThemeCheckReport,
+    last_error: Option<&str>,
+) -> io::Result<StartupAssetRecoveryChoice> {
+    let warnings = report.warning_checks();
+    writeln!(output)?;
+    writeln!(output, "TundraUX3 asset recovery mode")?;
+    writeln!(
+        output,
+        "The default theme is incomplete or invalid ({} file{} affected).",
+        warnings.len(),
+        if warnings.len() == 1 { "" } else { "s" }
+    )?;
+    writeln!(output, "Asset root: {}", report.root.display())?;
+    for check in warnings.iter().take(8) {
+        writeln!(output, "  - {}: {}", check.key, check.message)?;
+    }
+    if warnings.len() > 8 {
+        writeln!(output, "  - ... and {} more", warnings.len() - 8)?;
+    }
+    if let Some(error) = last_error {
+        writeln!(output, "Previous recovery action failed: {error}")?;
+    }
+    writeln!(output)?;
+    writeln!(
+        output,
+        "  [1] Automatically restore the built-in default theme"
+    )?;
+    writeln!(output, "  [2] Open the latest release download page")?;
+    writeln!(output, "  [3] Restart TundraUX3")?;
+    writeln!(output, "  [4] Close TundraUX3")?;
+
+    loop {
+        write!(output, "Choose 1, 2, 3, or 4: ")?;
+        output.flush()?;
+        let mut input = String::new();
+        if std::io::stdin().read_line(&mut input)? == 0 {
+            return Ok(StartupAssetRecoveryChoice::Exit);
+        }
+        match input.trim().to_ascii_lowercase().as_str() {
+            "1" | "a" | "auto" => return Ok(StartupAssetRecoveryChoice::AutoRestore),
+            "2" | "d" | "download" => return Ok(StartupAssetRecoveryChoice::Download),
+            "3" | "r" | "restart" => return Ok(StartupAssetRecoveryChoice::Restart),
+            "4" | "q" | "quit" | "exit" => return Ok(StartupAssetRecoveryChoice::Exit),
+            _ => writeln!(output, "Invalid choice.")?,
+        }
+    }
+}
+
 #[cfg(test)]
 mod runtime_preflight_tests {
     use super::*;
@@ -1423,6 +1572,111 @@ mod runtime_preflight_tests {
     };
     use std::cell::{Cell, RefCell};
     use std::rc::Rc;
+
+    fn recovery_asset_root(case: &str) -> PathBuf {
+        std::env::temp_dir().join(format!(
+            "tundra-startup-asset-recovery-{}-{}-{case}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos()
+        ))
+    }
+
+    #[test]
+    fn startup_auto_restore_recreates_the_complete_default_theme() {
+        let root = recovery_asset_root("auto");
+        let _ = std::fs::remove_dir_all(&root);
+        let choices = Cell::new(0_usize);
+
+        let outcome = resolve_startup_runtime_ascii_assets_at(
+            &root,
+            |report, last_error| {
+                choices.set(choices.get() + 1);
+                assert!(last_error.is_none());
+                assert_eq!(report.checks.len(), ui::default_theme_files().len());
+                assert!(
+                    report
+                        .warning_checks()
+                        .iter()
+                        .any(|check| check.key == "home_icons/explorer.png")
+                );
+                Ok(StartupAssetRecoveryChoice::AutoRestore)
+            },
+            || panic!("automatic recovery must not open the download page"),
+        )
+        .expect("startup recovery should succeed");
+        let StartupAssetLoadOutcome::Loaded(assets) = outcome else {
+            panic!("automatic recovery should continue startup");
+        };
+
+        assert_eq!(choices.get(), 1);
+        assert!(ui::check_default_theme(&root).is_ok());
+        assert!(
+            assets
+                .home_icon_image_bytes("explorer")
+                .is_some_and(|bytes| bytes.starts_with(b"\x89PNG\r\n\x1a\n"))
+        );
+
+        std::fs::remove_dir_all(root).expect("clean startup recovery fixture");
+    }
+
+    #[test]
+    fn startup_download_choice_opens_the_release_page_and_closes_cleanly() {
+        let root = recovery_asset_root("download");
+        let _ = std::fs::remove_dir_all(&root);
+        let opened = Cell::new(false);
+
+        let outcome = resolve_startup_runtime_ascii_assets_at(
+            &root,
+            |report, _| {
+                assert!(report.has_warnings());
+                Ok(StartupAssetRecoveryChoice::Download)
+            },
+            || {
+                opened.set(true);
+                Ok(())
+            },
+        )
+        .expect("download choice should close without an asset error");
+
+        assert!(matches!(outcome, StartupAssetLoadOutcome::Exit));
+        assert!(opened.get());
+        assert!(!root.exists());
+    }
+
+    #[test]
+    fn startup_restart_choice_requests_a_real_process_restart() {
+        let root = recovery_asset_root("restart");
+        let _ = std::fs::remove_dir_all(&root);
+
+        let outcome = resolve_startup_runtime_ascii_assets_at(
+            &root,
+            |_, _| Ok(StartupAssetRecoveryChoice::Restart),
+            || panic!("restart choice must not open the download page"),
+        )
+        .expect("restart choice should return a restart outcome");
+
+        assert!(matches!(outcome, StartupAssetLoadOutcome::Restart));
+        assert!(!root.exists());
+    }
+
+    #[test]
+    fn startup_close_choice_exits_without_touching_the_asset_root() {
+        let root = recovery_asset_root("close");
+        let _ = std::fs::remove_dir_all(&root);
+
+        let outcome = resolve_startup_runtime_ascii_assets_at(
+            &root,
+            |_, _| Ok(StartupAssetRecoveryChoice::Exit),
+            || panic!("close choice must not open the download page"),
+        )
+        .expect("close choice should be a clean exit");
+
+        assert!(matches!(outcome, StartupAssetLoadOutcome::Exit));
+        assert!(!root.exists());
+    }
 
     fn mouse_event(kind: MouseEventKind, column: u16, row: u16, modifiers: KeyModifiers) -> Event {
         Event::Mouse(MouseEvent {

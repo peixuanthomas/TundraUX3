@@ -1,9 +1,11 @@
+use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::artwork::{load_art_set, load_explorer_icons, load_text_art};
 use crate::asset_manifest::{AssetKind, required_assets};
 use crate::asset_resolver::AssetResolver;
 use crate::clock_font::load_clock_font;
+use crate::embedded_defaults::EMBEDDED_DEFAULT_THEME_FILES;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AssetCheck {
@@ -80,6 +82,94 @@ impl AssetCheck {
 
     pub fn is_invalid(&self) -> bool {
         self.status == AssetCheckStatus::Warning && !self.is_missing() && !self.is_unreadable()
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DefaultThemeCheck {
+    pub key: String,
+    pub path: PathBuf,
+    pub status: AssetCheckStatus,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DefaultThemeCheckReport {
+    pub root: PathBuf,
+    pub checks: Vec<DefaultThemeCheck>,
+}
+
+impl DefaultThemeCheckReport {
+    pub fn is_ok(&self) -> bool {
+        !self.has_warnings()
+    }
+
+    pub fn has_warnings(&self) -> bool {
+        self.checks
+            .iter()
+            .any(|check| check.status == AssetCheckStatus::Warning)
+    }
+
+    pub fn warning_checks(&self) -> Vec<&DefaultThemeCheck> {
+        self.checks
+            .iter()
+            .filter(|check| check.status == AssetCheckStatus::Warning)
+            .collect()
+    }
+}
+
+pub fn check_default_theme(root: &Path) -> DefaultThemeCheckReport {
+    let resolver = AssetResolver::from_unchecked_root(root.to_path_buf());
+    let mut checks = check_required_assets(root, crate::DEFAULT_THEME_ID)
+        .checks
+        .into_iter()
+        .map(|check| DefaultThemeCheck {
+            key: check.key,
+            path: check.path,
+            status: check.status,
+            message: check.message,
+        })
+        .collect::<Vec<_>>();
+
+    for file in EMBEDDED_DEFAULT_THEME_FILES.iter().filter(|file| {
+        Path::new(file.relative_path)
+            .extension()
+            .is_some_and(|extension| extension.eq_ignore_ascii_case("png"))
+    }) {
+        let path = resolver.asset_path(crate::DEFAULT_THEME_ID, file.relative_path);
+        let result = match fs::read(&path) {
+            Ok(contents) if contents == file.contents => Ok(()),
+            Ok(_) => Err(format!(
+                "default theme image {} does not match the built-in default",
+                file.key
+            )),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                Err(format!("missing default theme image {}", file.key))
+            }
+            Err(error) => Err(format!(
+                "failed to read default theme image {}: {error}",
+                file.key
+            )),
+        };
+        checks.push(match result {
+            Ok(()) => DefaultThemeCheck {
+                key: file.key.to_string(),
+                path,
+                status: AssetCheckStatus::Pass,
+                message: "theme file present and valid".to_string(),
+            },
+            Err(message) => DefaultThemeCheck {
+                key: file.key.to_string(),
+                path,
+                status: AssetCheckStatus::Warning,
+                message,
+            },
+        });
+    }
+
+    DefaultThemeCheckReport {
+        root: root.to_path_buf(),
+        checks,
     }
 }
 

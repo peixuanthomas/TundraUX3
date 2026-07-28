@@ -567,11 +567,12 @@ impl ShellSession {
             .len()
             .checked_sub(1)
             .map(|last_index| self.launcher_selected_index.min(last_index));
-        let mut model = ui::LauncherViewModel::new(
+        let mut model = ui::LauncherViewModel::with_ascii_assets(
             items,
             selected,
             self.launcher_view_mode,
             self.can_manage_launcher(),
+            self.ascii_assets.clone(),
         );
         model.viewport_offset = self.launcher_viewport_offset;
         model.drop_target = self.launcher_drag.as_ref().and_then(|drag| drag.target);

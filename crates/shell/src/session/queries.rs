@@ -52,6 +52,10 @@ impl ShellSession {
         self.shutdown_requested
     }
 
+    pub fn restart_requested(&self) -> bool {
+        self.restart_requested
+    }
+
     pub fn terminal_flags(&self) -> ShellTerminalFlags {
         self.terminal_flags
     }

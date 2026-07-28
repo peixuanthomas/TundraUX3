@@ -467,6 +467,7 @@ pub struct UiSessionState {
     pub(super) latest_watchdog_report: Option<std::path::PathBuf>,
     pub(super) latest_watchdog_summary: Option<String>,
     pub(super) shutdown_requested: bool,
+    pub(super) restart_requested: bool,
     pub(super) return_to_lockscreen_requested: bool,
     pub(super) last_command: Option<ShellCommand>,
     pub(super) last_routed_target: Option<RoutedTarget>,

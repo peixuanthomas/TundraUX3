@@ -203,6 +203,12 @@ impl HomeViewModel {
         assets.home_icon_image_path(icon.key())
     }
 
+    pub fn home_icon_image_bytes_for_label(&self, label: &str) -> Option<&[u8]> {
+        let assets = self.home_icon_assets.as_ref()?;
+        let icon = assets.home_icon_for_label(label)?;
+        assets.home_icon_image_bytes(icon.key())
+    }
+
     pub fn selected_entry_index(&self) -> usize {
         self.selected_entry_index
     }

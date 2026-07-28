@@ -187,6 +187,20 @@ fn y_and_uppercase_y_confirm_exit_confirmation() {
 }
 
 #[test]
+fn r_and_uppercase_r_restart_from_exit_confirmation() {
+    for key in ["r", "R"] {
+        let mut state = ShellSession::new(debug_config(), (120, 40));
+        state.apply_input(InputEvent::from_key_label("q"));
+
+        let action = state.apply_input(InputEvent::from_key_label(key));
+
+        assert_eq!(action, ShellAction::Exit);
+        assert!(state.shutdown_requested());
+        assert!(state.restart_requested());
+    }
+}
+
+#[test]
 fn n_and_uppercase_n_cancel_exit_confirmation() {
     for key in ["n", "N"] {
         let mut state = ShellSession::new(debug_config(), (120, 40));

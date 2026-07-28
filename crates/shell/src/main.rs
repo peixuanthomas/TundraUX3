@@ -24,6 +24,15 @@ fn main() {
 
     let exit_code = match (run_result, watchdog_shutdown) {
         (Ok(shell::ShellRunOutcome::Exit), Ok(())) => 0,
+        (Ok(shell::ShellRunOutcome::RestartRequested), Ok(())) => {
+            match restart_current_executable() {
+                Ok(()) => 0,
+                Err(error) => {
+                    eprintln!("tundra-shell restart failed: {error}");
+                    4
+                }
+            }
+        }
         (Ok(shell::ShellRunOutcome::ResetRequested), Ok(())) => match reset_storage_and_restart() {
             Ok(()) => 0,
             Err(error) => {
@@ -53,6 +62,10 @@ fn reset_storage_and_restart() -> Result<(), std::io::Error> {
         .map_err(|error| std::io::Error::other(error.to_string()))?;
     storage::reset_saved_content(&paths)?;
 
+    restart_current_executable()
+}
+
+fn restart_current_executable() -> Result<(), std::io::Error> {
     let executable = std::env::current_exe()?;
     std::process::Command::new(&executable)
         .spawn()

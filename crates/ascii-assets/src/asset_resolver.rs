@@ -89,6 +89,14 @@ pub fn asset_root_from_env_or_current_exe() -> Result<PathBuf, AssetError> {
     AssetResolver::from_env_or_current_exe().map(|resolver| resolver.root)
 }
 
+pub fn asset_root_for_recovery_from_env_or_current_exe() -> Result<PathBuf, AssetError> {
+    match AssetResolver::from_env_or_current_exe() {
+        Ok(resolver) => Ok(resolver.root),
+        Err(AssetError::MissingRoot { path } | AssetError::RootNotDirectory { path }) => Ok(path),
+        Err(error) => Err(error),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

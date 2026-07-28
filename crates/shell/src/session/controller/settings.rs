@@ -624,6 +624,15 @@ impl ShellSession {
         }
     }
 
+    pub(in crate::session) fn refresh_asset_cache_for_theme(
+        &mut self,
+        theme_id: &str,
+    ) -> Result<(), ui::AssetError> {
+        let root = self.ascii_assets.store().root().to_path_buf();
+        self.ascii_assets = ui::RuntimeAsciiAssets::load_with_root(&root, theme_id)?;
+        Ok(())
+    }
+
     pub(in crate::session) fn open_settings_picker(&mut self, kind: ui::SettingsPickerKind) {
         if !matches!(
             kind,
@@ -854,11 +863,21 @@ impl ShellSession {
                 let Some(mut appearance) = self.app.active_appearance().cloned() else {
                     return;
                 };
-                appearance.icon_display_mode = if picker.selected_index == 0 {
+                let icon_display_mode = if picker.selected_index == 0 {
                     storage::IconDisplayMode::Ascii
                 } else {
                     storage::IconDisplayMode::Image
                 };
+                if appearance.icon_display_mode != icon_display_mode {
+                    let theme_id = self.ascii_assets.theme_id().to_string();
+                    if let Err(error) = self.refresh_asset_cache_for_theme(&theme_id) {
+                        self.set_settings_error(format!(
+                            "Could not refresh the {theme_id} asset cache: {error}"
+                        ));
+                        return;
+                    }
+                }
+                appearance.icon_display_mode = icon_display_mode;
                 if self.save_settings_appearance(appearance, "Default theme icon mode")
                     && let Some(state) = self.settings_state.as_mut()
                 {

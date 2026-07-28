@@ -56,6 +56,16 @@ pub fn default_shell_shortcuts() -> Vec<ShellShortcut> {
         },
         ShellShortcut {
             scope: ShortcutScope::Screen(ShellScreen::ExitConfirm),
+            binding: KeyBinding::from(&KeyInput::from_label("r")),
+            command: ShellCommand::Restart,
+        },
+        ShellShortcut {
+            scope: ShortcutScope::Screen(ShellScreen::ExitConfirm),
+            binding: KeyBinding::from(&KeyInput::from_label("R")),
+            command: ShellCommand::Restart,
+        },
+        ShellShortcut {
+            scope: ShortcutScope::Screen(ShellScreen::ExitConfirm),
             binding: KeyBinding::from(&KeyInput::from_label("n")),
             command: ShellCommand::CancelExit,
         },

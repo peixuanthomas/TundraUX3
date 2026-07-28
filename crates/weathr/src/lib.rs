@@ -17,5 +17,6 @@ pub use launch::{
     LaunchLocation, LaunchOptions, ShellLockscreenResult, WeathrRunError, prefetch_weather,
     restore_terminal_best_effort, run_blocking_managed, run_blocking_with_options,
     run_default_blocking, run_shell_lockscreen_blocking_with_options, run_shell_lockscreen_managed,
-    run_shell_lockscreen_managed_with_shutdown, weathr_watchdog_descriptor,
+    run_shell_lockscreen_managed_with_shutdown,
+    run_shell_lockscreen_managed_with_shutdown_and_assets, weathr_watchdog_descriptor,
 };

@@ -367,10 +367,14 @@ impl ShellSession {
                         self.diagnostics_restart_required = true;
                         self.notify_modal(
                             "Restart required",
-                            "Storage was repaired and the current in-memory session is stale. Exit TundraUX before continuing.",
+                            "Storage was repaired and the current in-memory session is stale. Restart TundraUX before continuing.",
                             ui::NotificationTone::Warning,
                             vec![
+                                ShellNotificationAction::new("restart", "Restart now")
+                                    .with_shortcut(InputKey::Char('r'))
+                                    .with_follow_up(ShellCommand::Restart),
                                 ShellNotificationAction::new("exit", "Exit now")
+                                    .with_shortcut(InputKey::Char('e'))
                                     .with_follow_up(ShellCommand::ConfirmExit),
                                 ShellNotificationAction::new("review", "Review results").cancel(),
                             ],
@@ -1520,6 +1524,34 @@ mod diagnostics_shell_tests {
         assert_eq!(state.diagnostics_tab, ui::DiagnosticsTab::Incidents);
         state.close_diagnostics();
         assert_eq!(state.active_screen(), ShellScreen::Home);
+    }
+
+    #[test]
+    fn diagnostics_repair_preview_and_restart_required_view_offer_restart() {
+        let mut state = state(UserRole::Admin);
+        state.open_diagnostics();
+        state.preview_selected_diagnostics_repair();
+
+        let (_, preview_command) = state.route_key_input(&KeyInput::from_label("r"));
+        assert_eq!(preview_command, ShellCommand::Restart);
+
+        let area = Rect::new(0, 0, state.terminal_size.0, state.terminal_size.1);
+        let ui::ShellLayout::Full { main, .. } = ui::compute_shell_layout(area) else {
+            panic!("Diagnostics restart test requires a full layout");
+        };
+        let model = state.to_diagnostics_view_model();
+        let layout = ui::diagnostics_layout(main, &model);
+        let restart = layout.repair_dialog.expect("repair preview").restart;
+        let (_, mouse_command) = state.route_diagnostics_mouse(
+            MouseInput::down(restart.x, restart.y, PointerButton::Left),
+            Some(ShellComponent::DiagnosticsRepairDialog),
+        );
+        assert_eq!(mouse_command, ShellCommand::Restart);
+
+        state.cancel_diagnostics_repair_preview();
+        state.diagnostics_restart_required = true;
+        let (_, required_command) = state.route_key_input(&KeyInput::from_label("Enter"));
+        assert_eq!(required_command, ShellCommand::Restart);
     }
 
     #[test]

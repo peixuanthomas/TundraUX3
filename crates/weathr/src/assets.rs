@@ -31,7 +31,7 @@ impl WeatherAsciiAssets {
         Self::from_store(&store)
     }
 
-    fn from_store(store: &AsciiAssetStore) -> Result<Self, WeatherAssetError> {
+    pub(crate) fn from_store(store: &AsciiAssetStore) -> Result<Self, WeatherAssetError> {
         Ok(Self {
             animation: WeatherAnimationAssets {
                 clouds: load_many(

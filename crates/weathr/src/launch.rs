@@ -237,6 +237,7 @@ pub fn run_blocking_managed(
                 LaunchRunMode::Cli,
                 watchdog.clone(),
                 None,
+                None,
             ))
             .map(|_| ())
     })
@@ -291,7 +292,7 @@ pub fn run_shell_lockscreen_managed(
     options: LaunchOptions,
     watchdog: AppWatchdog,
 ) -> Result<ShellLockscreenResult, WeathrRunError> {
-    run_shell_lockscreen_managed_inner(options, watchdog, None)
+    run_shell_lockscreen_managed_inner(options, watchdog, None, None)
 }
 
 /// Runs the Shell lock screen with the same process-level shutdown source as
@@ -301,13 +302,23 @@ pub fn run_shell_lockscreen_managed_with_shutdown(
     watchdog: AppWatchdog,
     shutdown: Arc<AtomicBool>,
 ) -> Result<ShellLockscreenResult, WeathrRunError> {
-    run_shell_lockscreen_managed_inner(options, watchdog, Some(shutdown))
+    run_shell_lockscreen_managed_inner(options, watchdog, Some(shutdown), None)
+}
+
+pub fn run_shell_lockscreen_managed_with_shutdown_and_assets(
+    options: LaunchOptions,
+    watchdog: AppWatchdog,
+    shutdown: Arc<AtomicBool>,
+    ascii_assets: Arc<ascii_assets::AsciiAssetStore>,
+) -> Result<ShellLockscreenResult, WeathrRunError> {
+    run_shell_lockscreen_managed_inner(options, watchdog, Some(shutdown), Some(ascii_assets))
 }
 
 fn run_shell_lockscreen_managed_inner(
     options: LaunchOptions,
     watchdog: AppWatchdog,
     shutdown: Option<Arc<AtomicBool>>,
+    ascii_assets: Option<Arc<ascii_assets::AsciiAssetStore>>,
 ) -> Result<ShellLockscreenResult, WeathrRunError> {
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
@@ -319,6 +330,7 @@ fn run_shell_lockscreen_managed_inner(
         LaunchRunMode::ShellLockscreen,
         watchdog,
         shutdown,
+        ascii_assets,
     ))
 }
 
@@ -327,6 +339,7 @@ async fn run_with_options(
     mode: LaunchRunMode,
     watchdog: AppWatchdog,
     shared_shutdown: Option<Arc<AtomicBool>>,
+    cached_ascii_assets: Option<Arc<ascii_assets::AsciiAssetStore>>,
 ) -> Result<ShellLockscreenResult, WeathrRunError> {
     let mut config = load_config_for_launch(&options);
 
@@ -343,15 +356,30 @@ async fn run_with_options(
     }
 
     let active_theme_id = theme_registry.active().id;
-    let asset_dimensions = ascii_assets::AsciiAssetStore::load_theme(active_theme_id)
-        .map_err(WeatherAssetError::from)?
-        .max_asset_dimensions();
+    let asset_dimensions = match cached_ascii_assets.as_deref() {
+        Some(store) if store.theme_id() == active_theme_id => store.max_asset_dimensions(),
+        Some(store) => {
+            return Err(
+                WeatherAssetError::from(ascii_assets::AssetError::InvalidAsset {
+                    asset: format!("theme/{active_theme_id}"),
+                    message: format!(
+                        "cached theme is {}; refresh the asset cache before launching Weathr",
+                        store.theme_id()
+                    ),
+                })
+                .into(),
+            );
+        }
+        None => ascii_assets::AsciiAssetStore::load_theme(active_theme_id)
+            .map_err(WeatherAssetError::from)?
+            .max_asset_dimensions(),
+    };
     let minimum_terminal_size =
         minimum_terminal_size_for_assets(asset_dimensions, options.minimum_terminal_size);
 
     let mut renderer = TerminalRenderer::new_with_minimum(minimum_terminal_size)?;
     let (term_width, term_height) = renderer.get_size();
-    let mut app = app::App::new_with_bottom_hud_prompt(
+    let mut app = app::App::new_with_bottom_hud_prompt_and_assets(
         &config,
         term_width,
         term_height,
@@ -359,6 +387,7 @@ async fn run_with_options(
         timezone_id,
         mode.bottom_hud_prompt(),
         watchdog,
+        cached_ascii_assets.as_deref(),
     )?;
 
     renderer.init()?;

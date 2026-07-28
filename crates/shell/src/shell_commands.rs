@@ -10,6 +10,7 @@ pub enum ShellCommand {
     Shutdown,
     RequestExit,
     ConfirmExit,
+    Restart,
     PowerOff,
     CancelExit,
     OpenLatestCrashReport,

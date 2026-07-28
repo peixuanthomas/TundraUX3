@@ -41,6 +41,7 @@ pub struct ExitConfirmViewModel {
     pub title: String,
     pub message: String,
     pub confirm_label: String,
+    pub restart_label: String,
     pub cancel_label: String,
 }
 
@@ -50,6 +51,7 @@ impl ExitConfirmViewModel {
             title: "Exit TundraUX 3".to_string(),
             message: "Leave the shell and restore the terminal?".to_string(),
             confirm_label: "Y / Enter: exit".to_string(),
+            restart_label: "R: restart".to_string(),
             cancel_label: "N / Esc: cancel".to_string(),
         }
     }

@@ -42,6 +42,14 @@ pub enum AssetError {
     #[error("unknown ASCII asset {asset}")]
     UnknownAsset { asset: String },
 
+    #[error("failed to restore default theme file {asset} at {path}: {source}")]
+    RestoreAsset {
+        asset: String,
+        path: PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
+
     #[error("failed to copy ASCII assets from {from} to {destination}: {error}")]
     CopyAssets {
         from: PathBuf,

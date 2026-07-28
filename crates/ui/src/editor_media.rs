@@ -72,6 +72,16 @@ impl EditorImagePicker {
         self.prepare(image, area)
     }
 
+    pub fn prepare_bytes(
+        &self,
+        bytes: &[u8],
+        area: Rect,
+    ) -> Result<PreparedEditorImage, EditorMediaError> {
+        let image = image::load_from_memory(bytes)
+            .map_err(|error| EditorMediaError::Decode(error.to_string()))?;
+        self.prepare(image, area)
+    }
+
     pub fn prepare(
         &self,
         image: DynamicImage,

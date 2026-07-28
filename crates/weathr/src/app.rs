@@ -182,6 +182,28 @@ impl App {
         bottom_hud_prompt: BottomHudPrompt,
         watchdog: AppWatchdog,
     ) -> Result<Self, WeatherAssetError> {
+        Self::new_with_bottom_hud_prompt_and_assets(
+            config,
+            term_width,
+            term_height,
+            themes,
+            timezone_id,
+            bottom_hud_prompt,
+            watchdog,
+            None,
+        )
+    }
+
+    pub(crate) fn new_with_bottom_hud_prompt_and_assets(
+        config: &Config,
+        term_width: u16,
+        term_height: u16,
+        themes: ThemeRegistry,
+        timezone_id: Option<String>,
+        bottom_hud_prompt: BottomHudPrompt,
+        watchdog: AppWatchdog,
+        cached_store: Option<&ascii_assets::AsciiAssetStore>,
+    ) -> Result<Self, WeatherAssetError> {
         let location = WeatherLocation {
             latitude: config.location.latitude,
             longitude: config.location.longitude,
@@ -198,14 +220,14 @@ impl App {
         );
 
         let requested_theme_id = themes.active().id;
-        let mut ascii_assets = WeatherAsciiAssets::load(requested_theme_id)?;
+        let mut ascii_assets = weather_assets_for_theme(requested_theme_id, cached_store)?;
         let (mut animations, mut scenes) =
             build_visual_registries(term_width, term_height, &ascii_assets);
         let overlays = OverlayRegistry::new();
         let bindings = resolve_theme_bindings(&themes, &scenes, &overlays);
 
         if bindings.theme_id != requested_theme_id {
-            ascii_assets = WeatherAsciiAssets::load(bindings.theme_id)?;
+            ascii_assets = weather_assets_for_theme(bindings.theme_id, cached_store)?;
             (animations, scenes) = build_visual_registries(term_width, term_height, &ascii_assets);
         }
 
@@ -496,6 +518,26 @@ impl App {
             }
         }
     }
+}
+
+fn weather_assets_for_theme(
+    theme_id: &str,
+    cached_store: Option<&ascii_assets::AsciiAssetStore>,
+) -> Result<WeatherAsciiAssets, WeatherAssetError> {
+    let Some(store) = cached_store else {
+        return WeatherAsciiAssets::load(theme_id);
+    };
+    if store.theme_id() != theme_id {
+        return Err(ascii_assets::AssetError::InvalidAsset {
+            asset: format!("theme/{theme_id}"),
+            message: format!(
+                "cached theme is {}; refresh the asset cache before switching themes",
+                store.theme_id()
+            ),
+        }
+        .into());
+    }
+    WeatherAsciiAssets::from_store(store)
 }
 
 impl Drop for App {

@@ -216,6 +216,23 @@ impl LauncherViewModel {
         view_mode: LauncherViewMode,
         can_manage: bool,
     ) -> Result<Self, AssetError> {
+        let ascii_assets = RuntimeAsciiAssets::load_default()?;
+        Ok(Self::with_ascii_assets(
+            items,
+            selected_index,
+            view_mode,
+            can_manage,
+            ascii_assets,
+        ))
+    }
+
+    pub fn with_ascii_assets(
+        items: Vec<LauncherItemViewModel>,
+        selected_index: Option<usize>,
+        view_mode: LauncherViewMode,
+        can_manage: bool,
+        ascii_assets: RuntimeAsciiAssets,
+    ) -> Self {
         let selected_index = selected_index
             .filter(|index| *index < items.len())
             .or_else(|| (!items.is_empty()).then_some(0));
@@ -246,7 +263,7 @@ impl LauncherViewModel {
             true,
         ));
 
-        Ok(Self {
+        Self {
             items,
             selected_index,
             view_mode,
@@ -256,8 +273,8 @@ impl LauncherViewModel {
             error: None,
             confirmation: None,
             drop_target: None,
-            ascii_assets: RuntimeAsciiAssets::load_default()?,
-        })
+            ascii_assets,
+        }
     }
 
     pub fn selected_item(&self) -> Option<&LauncherItemViewModel> {
@@ -283,6 +300,14 @@ impl LauncherViewModel {
     pub fn item_graphic_path(&self, item: &LauncherItemViewModel) -> Option<std::path::PathBuf> {
         if item.is_builtin() {
             self.ascii_assets.launcher_icon_image_path(&item.id)
+        } else {
+            None
+        }
+    }
+
+    pub fn item_graphic_bytes(&self, item: &LauncherItemViewModel) -> Option<&[u8]> {
+        if item.is_builtin() {
+            self.ascii_assets.launcher_icon_image_bytes(&item.id)
         } else {
             None
         }
