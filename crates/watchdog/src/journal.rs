@@ -272,11 +272,20 @@ pub(crate) fn recover_pending(
         if path.extension().and_then(|extension| extension.to_str()) != Some("json") {
             continue;
         }
-        let bytes = fs::read(&path).map_err(|source| WatchdogError::Io {
-            operation: "read operation journal",
-            path: path.clone(),
-            source,
-        })?;
+        let bytes = match fs::read(&path) {
+            Ok(bytes) => bytes,
+            // A live operation can commit and remove its journal after this
+            // recovery sweep enumerates the directory. That is a successful
+            // concurrent completion, not a recovery failure.
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(source) => {
+                return Err(WatchdogError::Io {
+                    operation: "read operation journal",
+                    path: path.clone(),
+                    source,
+                });
+            }
+        };
         let record = serde_json::from_slice::<OperationRecord>(&bytes)?;
         if record.app_id != app.descriptor.id {
             return Err(WatchdogError::InvalidTaskPolicy(format!(
