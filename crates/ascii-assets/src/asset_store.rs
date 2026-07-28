@@ -322,9 +322,11 @@ mod tests {
     fn explorer_icon_loading_rejects_missing_icons_without_hardcoded_fallbacks() {
         let root = TemporaryAssetRoot::copy_of(Path::new(CANONICAL_ASSETS_DIR));
         let icon_path = root.path.join("themes/default/explorer_icons.toml");
-        let mut source = fs::read_to_string(&icon_path).expect("read Explorer icons");
+        let source = fs::read_to_string(&icon_path).expect("read Explorer icons");
+        // Exercise the Windows checkout form even when this test runs on Unix.
+        let mut source = source.lines().collect::<Vec<_>>().join("\r\n");
         let cancel_section = source
-            .find("\n[items.cancel]")
+            .find("[items.cancel]")
             .expect("canonical cancel icon section");
         source.truncate(cancel_section);
         fs::write(&icon_path, source).expect("remove required icon from fixture");
