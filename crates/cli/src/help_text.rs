@@ -12,7 +12,7 @@ pub(crate) fn write_help(output: &mut impl Write) -> std::io::Result<()> {
     )?;
     writeln!(
         output,
-        "  cls     Clear the terminal screen and move the cursor home"
+        "  cls     Clear terminal history and screen, then move the cursor home"
     )?;
     writeln!(
         output,

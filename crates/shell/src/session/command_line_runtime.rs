@@ -1619,6 +1619,44 @@ mod tests {
     }
 
     #[test]
+    fn snapshot_supports_scrollback_deeper_than_the_viewport() {
+        let mut parser = vt100::Parser::new(2, 8, 10);
+        parser.process(b"one\r\ntwo\r\nthree\r\nfour\r\nfive");
+        parser.set_scrollback(usize::MAX);
+
+        let history = TerminalSnapshot::from_parser(&mut parser);
+
+        assert_eq!(history.scrollback_rows, 3);
+        assert_eq!(history.scrollback_offset, 3);
+        assert!(!history.cursor_visible);
+        assert_eq!(history.cells[0][0].text, "o");
+        assert_eq!(history.cells[1][0].text, "t");
+    }
+
+    #[test]
+    fn erase_saved_lines_restores_an_empty_terminal() {
+        let mut parser = vt100::Parser::new(2, 8, 10);
+        parser.process(b"one\r\ntwo\r\nthree\r\nfour");
+
+        let populated = TerminalSnapshot::from_parser(&mut parser);
+        assert_eq!(populated.scrollback_rows, 2);
+
+        parser.process(b"\x1b[3J\x1b[2J\x1b[H");
+
+        let cleared = TerminalSnapshot::from_parser(&mut parser);
+        assert_eq!(cleared.scrollback_rows, 0);
+        assert_eq!(cleared.scrollback_offset, 0);
+        assert_eq!((cleared.cursor_row, cleared.cursor_column), (0, 0));
+        assert!(
+            cleared
+                .cells
+                .iter()
+                .flatten()
+                .all(|cell| cell.text.is_empty())
+        );
+    }
+
+    #[test]
     fn scrollbar_drag_maps_both_track_ends_to_history_ends() {
         let scrollbar = ui::CommandLineScrollbarLayout {
             track: Rect::new(12, 5, 1, 10),

@@ -210,7 +210,7 @@ fn help_command_writes_usage_to_stdout() {
     let stdout = String::from_utf8(stdout).expect("help output should be utf8");
     assert!(stdout.contains("<asset|cls|config|doctor"));
     assert!(stdout.contains("asset   Print test assets"));
-    assert!(stdout.contains("cls     Clear the terminal screen"));
+    assert!(stdout.contains("cls     Clear terminal history and screen"));
     assert!(stdout.contains("test-frost|test-matrix|weathr>"));
     assert!(stdout.contains("config  View or update user config"));
     assert!(stdout.contains("new     Clear saved TundraUX3 data"));
@@ -419,14 +419,14 @@ fn asset_command_supports_unique_file_names_and_reports_missing_values() {
 }
 
 #[test]
-fn cls_command_clears_the_visible_screen_and_moves_the_cursor_home() {
+fn cls_command_clears_history_and_screen_then_moves_the_cursor_home() {
     let mut stdout = Vec::new();
     let mut stderr = Vec::new();
 
     let exit_code = run(["cls"], &mut stdout, &mut stderr);
 
     assert_eq!(exit_code, 0);
-    assert_eq!(stdout, b"\x1b[2J\x1b[H");
+    assert_eq!(stdout, b"\x1b[3J\x1b[2J\x1b[H");
     assert!(stderr.is_empty());
 }
 

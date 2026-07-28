@@ -19,3 +19,6 @@ edition = "2024"
 
 [profile.release]
 panic = "unwind"
+
+[patch.crates-io]
+vt100 = { path = "third_party/vt100" }

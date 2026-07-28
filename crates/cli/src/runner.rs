@@ -16,7 +16,7 @@ use crate::path_report::run_paths;
 use crate::storage_reset::run_new;
 use crate::weathr_command::{drain_watchdog_incidents, run_weathr, run_weathr_managed};
 
-const CLEAR_SCREEN_SEQUENCE: &[u8] = b"\x1b[2J\x1b[H";
+const CLEAR_TERMINAL_SEQUENCE: &[u8] = b"\x1b[3J\x1b[2J\x1b[H";
 
 pub fn run<I, S, Stdout, Stderr>(args: I, stdout: &mut Stdout, stderr: &mut Stderr) -> i32
 where
@@ -313,7 +313,7 @@ where
 
 fn run_cls<Stdout: Write, Stderr: Write>(stdout: &mut Stdout, stderr: &mut Stderr) -> i32 {
     match stdout
-        .write_all(CLEAR_SCREEN_SEQUENCE)
+        .write_all(CLEAR_TERMINAL_SEQUENCE)
         .and_then(|()| stdout.flush())
     {
         Ok(()) => 0,

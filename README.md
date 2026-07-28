@@ -379,7 +379,7 @@ tundra-cli <asset|cls|config|doctor|explain|new|paths|repl|test-frost|test-matri
 | **asset <name>** | 渲染指定资源；TOML art set 会输出其中全部图案。 |
 | **asset <name> -a** | 原样输出完整资源文件，包括 TOML 元数据。 |
 | **asset <name> --<item>** | 只输出 TOML 资源中的指定图案，例如 `home_icons --launcher`。 |
-| **cls** | 清空终端可见内容并把光标移回左上角。 |
+| **cls** | 清空终端历史和可见内容，并把光标移回左上角。 |
 | **config** | 查看全部可公开配置。 |
 | **config get [field]** | 查看 theme、border-shape、border-color、accent-color、language、timezone 或 address。 |
 | **config set <field> <value>** | 修改边框形状/颜色、强调色、语言、时区或天气地址。theme 是只读摘要。 |
