@@ -123,6 +123,12 @@ pub(crate) fn begin_operation(
         updated_at: now,
     };
     let path = operation_path(app, &record.operation_id);
+    let _gate = app
+        .process
+        .shared
+        .recovery_gate
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     create_record(&path, &record)?;
     let active_key = (record.app_id.clone(), record.operation_id.clone());
     app.process
@@ -171,6 +177,11 @@ impl OperationGuard {
             sanitize::json(&checkpoint.payload),
         );
         self.record.updated_at = Utc::now();
+        let shared = Arc::clone(&self.shared);
+        let _gate = shared
+            .recovery_gate
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         write_record(&self.path, &self.record)
     }
 
@@ -182,6 +193,11 @@ impl OperationGuard {
             serde_json::json!({ "detail": sanitize::text(detail.into()) }),
         );
         self.record.updated_at = Utc::now();
+        let shared = Arc::clone(&self.shared);
+        let _gate = shared
+            .recovery_gate
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         write_record(&self.path, &self.record)?;
         self.committed = true;
         self.unregister(false);
@@ -226,6 +242,11 @@ impl Drop for OperationGuard {
         }
         self.record.status = OperationStatus::Interrupted;
         self.record.updated_at = Utc::now();
+        let shared = Arc::clone(&self.shared);
+        let _gate = shared
+            .recovery_gate
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let _ = write_record(&self.path, &self.record);
         self.unregister(std::thread::panicking());
     }

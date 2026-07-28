@@ -33,8 +33,8 @@ mod tests {
     use serde_json::json;
     use std::fs;
     use std::process::Command;
-    use std::sync::Arc;
     use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+    use std::sync::{Arc, Barrier};
     use std::thread;
     use std::time::Duration;
 
@@ -387,6 +387,53 @@ mod tests {
             Err(WatchdogError::OperationAlreadyExists(id)) if id == "fixed-operation"
         ));
         drop(guard);
+        cleanup(runtime, &root);
+    }
+
+    #[test]
+    fn recovery_scans_are_serialized_with_live_journal_mutations() {
+        let (runtime, process, root) = test_runtime("journal-recovery-race");
+        let app = test_app(&process);
+        let kind = OperationKind::new("filesystem.v1").unwrap();
+        let recovered = Arc::new(AtomicUsize::new(0));
+        let barrier = Arc::new(Barrier::new(2));
+        let scanner_app = app.clone();
+        let scanner_kind = kind.clone();
+        let scanner_recovered = Arc::clone(&recovered);
+        let scanner_barrier = Arc::clone(&barrier);
+        let scanner = thread::spawn(move || {
+            scanner_barrier.wait();
+            for _ in 0..200 {
+                scanner_app
+                    .register_recovery_handler(
+                        scanner_kind.clone(),
+                        Arc::new(CountingRecovery(Arc::clone(&scanner_recovered))),
+                    )
+                    .unwrap();
+                thread::yield_now();
+            }
+        });
+
+        barrier.wait();
+        for index in 0..200 {
+            let mut guard = app
+                .begin_operation(OperationDescriptor::new(
+                    kind.clone(),
+                    format!("copy file {index}"),
+                    json!({ "index": index }),
+                ))
+                .unwrap();
+            guard
+                .checkpoint(OperationCheckpoint::new(
+                    "copying",
+                    json!({ "index": index }),
+                ))
+                .unwrap();
+            guard.commit("complete").unwrap();
+            thread::yield_now();
+        }
+        scanner.join().unwrap();
+        assert_eq!(recovered.load(Ordering::SeqCst), 0);
         cleanup(runtime, &root);
     }
 
