@@ -25,7 +25,7 @@ storage = { path = "../storage" }
 ui = { path = "../ui" }
 watchdog = { path = "../watchdog", features = ["tokio"] }
 weathr = { path = "../weathr" }
-time = { version = "0.1.0", path = "../time" }
+time = { version = "0.1.1", path = "../time" }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

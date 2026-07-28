@@ -20,4 +20,4 @@ storage = { path = "../storage" }
 watchdog = { path = "../watchdog" }
 unicode-segmentation = "1.12"
 unicode-width = "0.2"
-time = { version = "0.1.0", path = "../time" }
+time = { version = "0.1.1", path = "../time" }
