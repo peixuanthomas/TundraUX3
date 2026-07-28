@@ -7,10 +7,11 @@ on:
 
 permissions:
   contents: write
+  checks: read
 
 env:
   CARGO_TERM_COLOR: always
-  RELEASE_REF: fd5929cfb3be18c22dd037aeba31c673a47f056e
+  RELEASE_REF: 41262cec4912218a21180c327b2787df4b8baf4a
   RELEASE_TAG: V1.1
 
 jobs:
@@ -212,6 +213,7 @@ jobs:
           - 新增 Default Theme 图片图标模式、资源自恢复与缓存。
           - Linux 桌面能力补齐，并新增 x86_64 的 tar.gz 与 deb 分发包。
           - CLI 新增资源检查与清屏命令，完善终端图形协议探测。
+          - 修复 Windows 下操作日志恢复扫描与文件写入并发时的共享冲突。
 
           ## 下载
 
@@ -225,6 +227,56 @@ jobs:
           EOF
           sed -i "s/@RELEASE_REF@/$RELEASE_REF/" release-notes.md
 
+      - name: Require source regression checks
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          required_checks=(
+            "Windows full regression"
+            "macOS workspace compile"
+            "Ubuntu 24.04 (x86_64)"
+            "Fedora 42 (x86_64)"
+          )
+          for attempt in $(seq 1 180); do
+            checks="$(
+              gh api \
+                "repos/$GITHUB_REPOSITORY/commits/$RELEASE_REF/check-runs?per_page=100"
+            )"
+            pending=false
+            for name in "${required_checks[@]}"; do
+              latest="$(
+                jq -r --arg name "$name" '
+                  [.check_runs[] | select(.name == $name)]
+                  | sort_by(.started_at)
+                  | last
+                  | [(.status // "missing"), (.conclusion // "")]
+                  | @tsv
+                ' <<<"$checks"
+              )"
+              status="${latest%%$'\t'*}"
+              conclusion="${latest#*$'\t'}"
+              echo "$name: status=$status conclusion=${conclusion:-pending}"
+              if [[ "$status" == "completed" && "$conclusion" != "success" ]]; then
+                echo "::error::$name concluded $conclusion for $RELEASE_REF"
+                exit 1
+              fi
+              if [[ "$status" != "completed" ]]; then
+                pending=true
+              fi
+            done
+            if [[ "$pending" == false ]]; then
+              echo "All required source regression checks passed for $RELEASE_REF"
+              exit 0
+            fi
+            if [[ "$attempt" -eq 180 ]]; then
+              echo "::error::Timed out waiting for source regression checks on $RELEASE_REF"
+              exit 1
+            fi
+            sleep 10
+          done
+
       - name: Publish V1.1 from GitHub Actions
         shell: bash
         env:
@@ -232,6 +284,10 @@ jobs:
         run: |
           set -euo pipefail
           if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh api --method PATCH \
+              "repos/$GITHUB_REPOSITORY/git/refs/tags/$RELEASE_TAG" \
+              -f sha="$RELEASE_REF" \
+              -F force=true
             gh release upload "$RELEASE_TAG" dist/* \
               --repo "$GITHUB_REPOSITORY" \
               --clobber
