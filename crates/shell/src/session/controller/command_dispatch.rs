@@ -1575,7 +1575,7 @@ impl ShellSession {
         ];
         if poweroff_available {
             actions.push(
-                ShellNotificationAction::new("poweroff", "Power off")
+                ShellNotificationAction::new("poweroff", "Poweroff")
                     .with_shortcut(InputKey::Char('p'))
                     .with_follow_up(ShellCommand::PowerOff),
             );

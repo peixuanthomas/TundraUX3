@@ -67,15 +67,34 @@ fn reset_storage_and_restart() -> Result<(), std::io::Error> {
 
 fn restart_current_executable() -> Result<(), std::io::Error> {
     let executable = std::env::current_exe()?;
-    std::process::Command::new(&executable)
-        .spawn()
-        .map_err(|error| {
-            std::io::Error::new(
-                error.kind(),
-                format!("could not restart {}: {error}", executable.display()),
-            )
-        })?;
-    Ok(())
+    let mut command = std::process::Command::new(&executable);
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+
+        // Replacing the process keeps the foreground process group that the
+        // invoking shell is waiting on. Spawning and then returning lets the
+        // invoking shell reclaim the terminal before the replacement enables
+        // raw mode, which makes the restarted TUI fail with EIO/SIGTTOU.
+        let error = command.exec();
+        Err(restart_error(&executable, error))
+    }
+
+    #[cfg(not(unix))]
+    {
+        command
+            .spawn()
+            .map_err(|error| restart_error(&executable, error))?;
+        Ok(())
+    }
+}
+
+fn restart_error(executable: &std::path::Path, error: std::io::Error) -> std::io::Error {
+    std::io::Error::new(
+        error.kind(),
+        format!("could not restart {}: {error}", executable.display()),
+    )
 }
 
 fn start_watchdog() -> Result<(WatchdogRuntime, ProcessWatchdog), watchdog::WatchdogError> {

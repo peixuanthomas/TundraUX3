@@ -101,6 +101,44 @@ fn exit_confirmation_keeps_login_as_the_content_screen() {
 }
 
 #[test]
+fn exit_confirmation_names_the_physical_power_action_poweroff() {
+    let root = std::env::temp_dir().join(format!(
+        "tundra-shell-poweroff-label-{}",
+        std::process::id()
+    ));
+    let user_dirs = platform::UserDirs::new(
+        root.join("Desktop"),
+        root.join("Documents"),
+        root.join("Downloads"),
+        root.join("Pictures"),
+        root.join("Videos"),
+        root.join("Music"),
+        root.join("AppData"),
+    )
+    .expect("absolute mock user directories");
+    let app_paths = platform::build_windows_app_paths(
+        root.join("Roaming"),
+        root.join("Local"),
+        root.join("Temp"),
+    )
+    .expect("absolute mock app paths");
+    let platform = platform::mock::MockPlatform::new(user_dirs, app_paths);
+    let mut state = ShellSession::new(ShellLaunchConfig::default(), (120, 40));
+
+    state.apply_input_with_platform(InputEvent::from_key_label("q"), &platform);
+
+    let modal = state
+        .to_notification_view_model()
+        .expect("exit confirmation modal");
+    let poweroff = modal
+        .actions
+        .iter()
+        .find(|action| action.id == "poweroff")
+        .expect("poweroff action");
+    assert_eq!(poweroff.label, "Poweroff");
+}
+
+#[test]
 fn command_line_is_a_fixed_admin_only_launcher_item() {
     let mut admin = ShellSession::new(ShellLaunchConfig::default(), (120, 40));
     set_test_auth_role(&mut admin, UserRole::Admin);
