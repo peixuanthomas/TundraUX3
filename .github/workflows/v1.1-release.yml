@@ -10,7 +10,7 @@ permissions:
 
 env:
   CARGO_TERM_COLOR: always
-  RELEASE_REF: 25a1f64320af051a72c214b59e3e14b87bc7c84b
+  RELEASE_REF: fd5929cfb3be18c22dd037aeba31c673a47f056e
   RELEASE_TAG: V1.1
 
 jobs:
