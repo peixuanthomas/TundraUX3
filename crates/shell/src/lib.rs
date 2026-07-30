@@ -41,7 +41,8 @@ pub use startup::*;
 pub use startup_banner::*;
 pub use terminal_events::crossterm_event_to_input;
 pub use terminal_session::{
-    TerminalGuard, detect_terminal_graphics_protocol, restore_terminal_best_effort,
+    TerminalGuard, detect_terminal_graphics_protocol, probe_terminal_graphics_protocol,
+    restore_terminal_best_effort,
 };
 pub use terminal_size::{ShellTerminalSizeError, ShellTerminalSizeRequirement};
 

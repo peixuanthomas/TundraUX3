@@ -89,6 +89,11 @@ fn render_diagnostics_header(
         .iter()
         .filter(|check| check.status == DiagnosticsStatus::Warning)
         .count();
+    let unsupported_count = model
+        .checks
+        .iter()
+        .filter(|check| check.status == DiagnosticsStatus::Unsupported)
+        .count();
     let failure_count = model
         .checks
         .iter()
@@ -117,6 +122,18 @@ fn render_diagnostics_header(
                 if warning_count == 1 { "" } else { "s" },
             ),
             diagnostics_warning_style(theme),
+        )
+    } else if unsupported_count > 0 {
+        (
+            format!(
+                "System healthy — {unsupported_count} unsupported {}",
+                if unsupported_count == 1 {
+                    "capability"
+                } else {
+                    "capabilities"
+                },
+            ),
+            theme.muted_style(),
         )
     } else if model.checks.is_empty() {
         (
@@ -603,6 +620,7 @@ fn diagnostics_status_style(
 ) -> Style {
     let style = match status {
         DiagnosticsStatus::Pass => theme.title_style(),
+        DiagnosticsStatus::Unsupported => theme.muted_style(),
         DiagnosticsStatus::Warning => diagnostics_warning_style(theme),
         DiagnosticsStatus::Fail => theme.error_style(),
     };

@@ -37,6 +37,7 @@ impl DiagnosticCategory {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum DiagnosticStatus {
     Pass,
+    Unsupported,
     Warning,
     Fail,
 }
@@ -45,6 +46,7 @@ impl DiagnosticStatus {
     pub const fn label(self) -> &'static str {
         match self {
             Self::Pass => "PASS",
+            Self::Unsupported => "UNSUPPORTED",
             Self::Warning => "WARN",
             Self::Fail => "FAIL",
         }
@@ -144,17 +146,24 @@ impl DiagnosticsSnapshot {
             || !self.warnings.is_empty()
         {
             DiagnosticStatus::Warning
+        } else if self
+            .checks
+            .iter()
+            .any(|check| check.status == DiagnosticStatus::Unsupported)
+        {
+            DiagnosticStatus::Unsupported
         } else {
             DiagnosticStatus::Pass
         }
     }
 
-    pub fn status_counts(&self) -> (usize, usize, usize) {
-        self.checks.iter().fold((0, 0, 0), |mut counts, check| {
+    pub fn status_counts(&self) -> (usize, usize, usize, usize) {
+        self.checks.iter().fold((0, 0, 0, 0), |mut counts, check| {
             match check.status {
                 DiagnosticStatus::Pass => counts.0 += 1,
-                DiagnosticStatus::Warning => counts.1 += 1,
-                DiagnosticStatus::Fail => counts.2 += 1,
+                DiagnosticStatus::Unsupported => counts.1 += 1,
+                DiagnosticStatus::Warning => counts.2 += 1,
+                DiagnosticStatus::Fail => counts.3 += 1,
             }
             counts
         })
@@ -429,6 +438,7 @@ pub fn scan_diagnostics(
             detail: format!("{} — {}", check.path.display(), check.message),
             remediation: match status {
                 DiagnosticStatus::Pass => None,
+                DiagnosticStatus::Unsupported => None,
                 DiagnosticStatus::Warning if repair.is_some() => {
                     Some("Create the missing application directory".to_string())
                 }
@@ -988,6 +998,29 @@ mod tests {
             plan.last(),
             Some(DiagnosticsRepairAction::RepairStorageDocument(_))
         ));
+    }
+
+    #[test]
+    fn unsupported_capability_is_counted_without_becoming_a_warning() {
+        let snapshot = DiagnosticsSnapshot {
+            scanned_at: Utc::now(),
+            checks: vec![DiagnosticCheck {
+                id: "environment.terminal".to_string(),
+                category: DiagnosticCategory::Environment,
+                label: "Terminal".to_string(),
+                status: DiagnosticStatus::Unsupported,
+                summary: "unsupported".to_string(),
+                detail: "unsupported".to_string(),
+                remediation: None,
+                repair: None,
+            }],
+            incidents: Vec::new(),
+            logs: Vec::new(),
+            warnings: Vec::new(),
+        };
+
+        assert_eq!(snapshot.overall_status(), DiagnosticStatus::Unsupported);
+        assert_eq!(snapshot.status_counts(), (0, 1, 0, 0));
     }
 
     #[test]

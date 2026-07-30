@@ -12,7 +12,7 @@ pub mod components;
 pub use assets::*;
 pub use editor_media::{
     EDITOR_IMAGE_MAX_PIXELS, EditorGraphicsProtocol, EditorImagePicker, EditorMediaError,
-    PreparedEditorImage,
+    PreparedEditorImage, TerminalGraphicsProbe, TerminalGraphicsProbeStatus,
 };
 pub use foundation::*;
 pub use screens::timezone_map::{

@@ -240,6 +240,7 @@ impl ShellSession {
             terminal_size,
             terminal_flags: ShellTerminalFlags::enabled(),
             terminal_image_support: false,
+            pending_default_ascii_icon_fallback: false,
             focused_component: initial_focus,
             hovered_component: None,
             active_popup: None,

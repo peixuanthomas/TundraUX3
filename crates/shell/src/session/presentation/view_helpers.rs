@@ -38,6 +38,7 @@ pub(in crate::session) fn diagnostics_status_to_ui(
 ) -> ui::DiagnosticsStatus {
     match status {
         app::diagnostics::DiagnosticStatus::Pass => ui::DiagnosticsStatus::Pass,
+        app::diagnostics::DiagnosticStatus::Unsupported => ui::DiagnosticsStatus::Unsupported,
         app::diagnostics::DiagnosticStatus::Warning => ui::DiagnosticsStatus::Warning,
         app::diagnostics::DiagnosticStatus::Fail => ui::DiagnosticsStatus::Fail,
     }
@@ -77,6 +78,9 @@ pub(in crate::session) fn diagnostics_public_check_summary(
         (DiagnosticCategory::Environment, DiagnosticStatus::Pass) => {
             "Environment check passed".to_string()
         }
+        (DiagnosticCategory::Environment, DiagnosticStatus::Unsupported) => {
+            "Environment capability is unsupported".to_string()
+        }
         (DiagnosticCategory::Environment, DiagnosticStatus::Warning) => {
             "Environment check needs review".to_string()
         }
@@ -85,6 +89,9 @@ pub(in crate::session) fn diagnostics_public_check_summary(
         }
         (DiagnosticCategory::Paths, DiagnosticStatus::Pass) => {
             "Application path is accessible".to_string()
+        }
+        (DiagnosticCategory::Paths, DiagnosticStatus::Unsupported) => {
+            "Application path capability is unsupported".to_string()
         }
         (DiagnosticCategory::Paths, DiagnosticStatus::Warning) => {
             "Application path needs attention".to_string()
@@ -95,6 +102,9 @@ pub(in crate::session) fn diagnostics_public_check_summary(
         (DiagnosticCategory::Storage, DiagnosticStatus::Pass) => {
             "Storage document is healthy".to_string()
         }
+        (DiagnosticCategory::Storage, DiagnosticStatus::Unsupported) => {
+            "Storage capability is unsupported".to_string()
+        }
         (DiagnosticCategory::Storage, DiagnosticStatus::Warning) => {
             "Storage document needs attention".to_string()
         }
@@ -103,6 +113,9 @@ pub(in crate::session) fn diagnostics_public_check_summary(
         }
         (DiagnosticCategory::Assets, DiagnosticStatus::Pass) => {
             "Required asset is available".to_string()
+        }
+        (DiagnosticCategory::Assets, DiagnosticStatus::Unsupported) => {
+            "Required asset capability is unsupported".to_string()
         }
         (DiagnosticCategory::Assets, DiagnosticStatus::Warning) => {
             "Required asset needs attention".to_string()

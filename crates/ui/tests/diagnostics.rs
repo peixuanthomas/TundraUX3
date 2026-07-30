@@ -330,6 +330,18 @@ fn log(index: usize) -> DiagnosticsLogViewModel {
     }
 }
 
+#[test]
+fn unsupported_check_is_informational_instead_of_a_warning() {
+    let mut model = health_model();
+    model.checks = vec![check(0, DiagnosticsStatus::Unsupported)];
+
+    let output = terminal_output(&render(120, 24, &model));
+
+    assert!(output.contains("unsupported capability"));
+    assert!(output.contains("[-]"));
+    assert!(!output.contains("System needs attention"));
+}
+
 fn check(index: usize, status: DiagnosticsStatus) -> DiagnosticsCheckViewModel {
     DiagnosticsCheckViewModel {
         id: format!("check-{index}"),
