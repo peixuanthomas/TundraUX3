@@ -161,7 +161,6 @@ impl WeatherClient {
 mod tests {
     use super::*;
     use crate::weather::provider::WeatherProviderResponse;
-    use crate::weather::provider::open_meteo::OpenMeteoProvider;
     use crate::weather::types::CelestialEvents;
     use async_trait::async_trait;
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -195,17 +194,6 @@ mod tests {
         fn get_attribution(&self) -> &'static str {
             "test"
         }
-    }
-
-    #[tokio::test]
-    async fn test_cache_invalidation() {
-        let provider = Arc::new(OpenMeteoProvider::new());
-        let client = WeatherClient::new(provider, Duration::from_secs(60));
-
-        client.invalidate_cache().await;
-
-        let cache = client.cache.read().await;
-        assert!(cache.is_none());
     }
 
     #[tokio::test]

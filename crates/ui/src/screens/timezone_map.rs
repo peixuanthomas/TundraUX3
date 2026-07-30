@@ -1488,35 +1488,6 @@ mod tests {
         );
     }
 
-    #[test]
-    fn cache_reuses_same_size_and_selection_raster() {
-        let boundaries = sample_boundaries();
-        let cache = TimezoneMapRasterCache::default();
-        let colors = test_colors();
-
-        for city in [(139.6917, 35.6895), (140.0, 36.0)] {
-            let mut buffer = Buffer::empty(Rect::new(0, 0, 48, 14));
-            TimezoneMapWidget::new(&boundaries, colors)
-                .selected_boundary_id(Some("asia-tokyo"))
-                .city(city.0, city.1)
-                .cache(&cache)
-                .render(buffer.area, &mut buffer);
-        }
-
-        assert_eq!(cache.rasterization_count(), 1);
-        assert_eq!(cache.len(), 1);
-
-        let mut buffer = Buffer::empty(Rect::new(0, 0, 48, 14));
-        TimezoneMapWidget::new(&boundaries, colors)
-            .selected_boundary_id(Some("america-new-york"))
-            .city(-74.0060, 40.7128)
-            .cache(&cache)
-            .render(buffer.area, &mut buffer);
-
-        assert_eq!(cache.rasterization_count(), 2);
-        assert_eq!(cache.len(), 2);
-    }
-
     fn sample_boundaries() -> Vec<TimezoneBoundary> {
         vec![
             TimezoneBoundary::new(

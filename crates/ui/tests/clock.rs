@@ -6,7 +6,7 @@ use ui::{
     ClockCreateDialogFocus, ClockCreateDialogViewModel, ClockEntryKind, ClockEntryViewModel,
     ClockPageMode, ClockViewModel, HomeDisplayMode, NotificationTone, RuntimeAsciiAssets,
     ShellChromeViewModel, ShellLayout, StatusViewModel, TundraTheme, clock_page_layout,
-    compute_shell_layout, render_clock, render_clock_placeholder,
+    compute_shell_layout, render_clock,
 };
 
 #[test]
@@ -70,7 +70,7 @@ fn entry_window_slices_alarms_then_countdowns_and_preserves_ids() {
 #[test]
 fn wide_renderer_draws_ascii_hands_digital_time_and_grouped_entries() {
     let model = clock_model();
-    let (terminal, main) = render(100, 30, &model, false);
+    let (terminal, main) = render(100, 30, &model);
     let output = terminal_output(&terminal);
     let layout = clock_page_layout(main, &model);
 
@@ -107,7 +107,7 @@ fn wide_renderer_draws_ascii_hands_digital_time_and_grouped_entries() {
 fn analog_clock_falls_back_to_small_numerals_below_either_large_face_threshold() {
     let model = clock_model();
     for (width, height) in [(99, 30), (100, 29), (80, 24)] {
-        let (terminal, main) = render(width, height, &model, false);
+        let (terminal, main) = render(width, height, &model);
         let layout = clock_page_layout(main, &model);
         let face = region_text(
             &terminal,
@@ -133,7 +133,7 @@ fn upward_pointing_hands_do_not_overwrite_the_large_twelve() {
         })
         .collect::<Vec<_>>();
     let model = ClockViewModel::at("2026-07-10", "00:00:00", 0, 0, 0).with_ascii_assets(assets);
-    let (terminal, main) = render(100, 32, &model, false);
+    let (terminal, main) = render(100, 32, &model);
     let layout = clock_page_layout(main, &model);
     let face = region_text(
         &terminal,
@@ -158,7 +158,7 @@ fn create_dialog_renders_placeholder_error_and_both_focusable_actions() {
         focus: ClockCreateDialogFocus::CreateCountdown,
     });
 
-    let (terminal, main) = render(100, 30, &model, false);
+    let (terminal, main) = render(100, 30, &model);
     let output = terminal_output(&terminal);
     let dialog = clock_page_layout(main, &model)
         .create_dialog
@@ -180,7 +180,7 @@ fn create_dialog_renders_placeholder_error_and_both_focusable_actions() {
 #[test]
 fn narrow_layout_keeps_digital_time_and_operable_panel_without_panicking() {
     let model = clock_model();
-    let (terminal, main) = render(60, 24, &model, false);
+    let (terminal, main) = render(60, 24, &model);
     let layout = clock_page_layout(main, &model);
     let output = terminal_output(&terminal);
 
@@ -202,7 +202,7 @@ fn minimum_full_shell_keeps_an_operable_entry_and_compacts_dialog_controls() {
         focus: ClockCreateDialogFocus::Input,
     });
 
-    let (_terminal, main) = render(50, 12, &model, false);
+    let (_terminal, main) = render(50, 12, &model);
     let layout = clock_page_layout(main, &model);
     let dialog = layout.create_dialog.expect("dialog layout");
 
@@ -221,7 +221,7 @@ fn read_only_clock_hides_new_control_and_ignores_create_dialog_model() {
     let mut model = clock_model().with_read_only(true);
     model.create_dialog = Some(ClockCreateDialogViewModel::default());
 
-    let (terminal, main) = render(80, 24, &model, false);
+    let (terminal, main) = render(80, 24, &model);
     let layout = clock_page_layout(main, &model);
     let output = terminal_output(&terminal);
 
@@ -236,18 +236,6 @@ fn read_only_clock_hides_new_control_and_ignores_create_dialog_model() {
     assert!(layout.entry_capacity > 0);
 }
 
-#[test]
-fn legacy_clock_renderer_forwards_to_the_new_renderer() {
-    let model = clock_model();
-    let (new_terminal, _) = render(80, 24, &model, false);
-    let (legacy_terminal, _) = render(80, 24, &model, true);
-
-    assert_eq!(
-        terminal_output(&new_terminal),
-        terminal_output(&legacy_terminal)
-    );
-}
-
 fn clock_model() -> ClockViewModel {
     let mut model = ClockViewModel::at("2026-07-10", "14:32:08", 14, 32, 8)
         .with_ascii_assets(RuntimeAsciiAssets::load_default().expect("default ASCII assets"));
@@ -260,33 +248,18 @@ fn clock_model() -> ClockViewModel {
     model
 }
 
-fn render(
-    width: u16,
-    height: u16,
-    model: &ClockViewModel,
-    legacy: bool,
-) -> (Terminal<TestBackend>, Rect) {
+fn render(width: u16, height: u16, model: &ClockViewModel) -> (Terminal<TestBackend>, Rect) {
     let chrome = chrome(width, height);
     let mut terminal = Terminal::new(TestBackend::new(width, height)).expect("test terminal");
     terminal
         .draw(|frame| {
-            if legacy {
-                render_clock_placeholder(
-                    frame,
-                    frame.area(),
-                    &chrome,
-                    model,
-                    &TundraTheme::default_dark(),
-                );
-            } else {
-                render_clock(
-                    frame,
-                    frame.area(),
-                    &chrome,
-                    model,
-                    &TundraTheme::default_dark(),
-                );
-            }
+            render_clock(
+                frame,
+                frame.area(),
+                &chrome,
+                model,
+                &TundraTheme::default_dark(),
+            );
         })
         .expect("render clock");
     let main = match compute_shell_layout(Rect::new(0, 0, width, height)) {

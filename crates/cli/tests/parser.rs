@@ -15,13 +15,23 @@ use watchdog::{
 };
 
 #[test]
-fn no_args_dispatches_help() {
-    assert_eq!(parse_args(std::iter::empty::<&str>()), Ok(CliCommand::Help));
-}
+fn simple_commands_dispatch_from_a_table() {
+    let cases: &[(&[&str], CliCommand)] = &[
+        (&[], CliCommand::Help),
+        (&["doctor"], CliCommand::Doctor),
+        (&["paths"], CliCommand::Paths),
+        (&["explain"], CliCommand::Explain),
+        (&["new"], CliCommand::New),
+        (&["weathr"], CliCommand::Weathr),
+    ];
 
-#[test]
-fn doctor_arg_dispatches_doctor() {
-    assert_eq!(parse_args(["doctor"]), Ok(CliCommand::Doctor));
+    for (args, expected) in cases {
+        assert_eq!(
+            parse_args(args.iter().copied()),
+            Ok(expected.clone()),
+            "unexpected dispatch for {args:?}"
+        );
+    }
 }
 
 #[test]
@@ -83,11 +93,6 @@ fn editor_command_is_not_a_shell_launch_bypass() {
 }
 
 #[test]
-fn paths_arg_dispatches_paths() {
-    assert_eq!(parse_args(["paths"]), Ok(CliCommand::Paths));
-}
-
-#[test]
 fn repl_arg_dispatches_with_an_internal_embedded_mode() {
     assert_eq!(
         parse_args(["repl"]),
@@ -100,31 +105,6 @@ fn repl_arg_dispatches_with_an_internal_embedded_mode() {
     assert_eq!(
         parse_args(["repl", "--not-a-mode"]),
         Err(CliError::InvalidReplArgument("--not-a-mode".to_string()))
-    );
-}
-
-#[test]
-fn explain_arg_dispatches_explain() {
-    assert_eq!(parse_args(["explain"]), Ok(CliCommand::Explain));
-}
-
-#[test]
-fn new_arg_dispatches_new() {
-    assert_eq!(parse_args(["new"]), Ok(CliCommand::New));
-}
-
-#[test]
-fn weathr_arg_dispatches_weathr() {
-    assert_eq!(parse_args(["weathr"]), Ok(CliCommand::Weathr));
-}
-
-#[test]
-fn animation_test_args_dispatch_independent_previews() {
-    assert_eq!(parse_args(["test-frost"]), Ok(CliCommand::TestFrost));
-    assert_eq!(parse_args(["test-matrix"]), Ok(CliCommand::TestMatrix));
-    assert_eq!(
-        parse_args(["test-matrix", "extra"]),
-        Err(CliError::UnexpectedArgument("extra".to_string()))
     );
 }
 
@@ -183,15 +163,11 @@ fn config_args_reject_username_and_password_updates() {
 }
 
 #[test]
-fn unknown_arg_is_an_error() {
+fn unknown_and_extra_arguments_are_errors() {
     assert_eq!(
         parse_args(["repair"]),
         Err(CliError::UnknownCommand("repair".to_string()))
     );
-}
-
-#[test]
-fn extra_arg_is_an_error() {
     assert_eq!(
         parse_args(["doctor", "--json"]),
         Err(CliError::UnexpectedArgument("--json".to_string()))

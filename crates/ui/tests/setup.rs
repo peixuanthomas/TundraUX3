@@ -15,7 +15,6 @@ use ui::{
 const WIDE_SETUP_WIDTH: u16 = 120;
 const WIDE_SETUP_HEIGHT: u16 = 34;
 const SETUP_CONTROLS_WIDTH: u16 = 48;
-const LEGACY_LONGITUDE_BAND_MIN_CELLS: usize = 6;
 
 #[test]
 fn setup_catalog_exposes_only_english_and_required_timezones() {
@@ -377,23 +376,6 @@ fn setup_renderer_updates_selected_timezone_cells_between_shanghai_and_tokyo() {
 }
 
 #[test]
-fn setup_renderer_does_not_draw_legacy_cyan_longitude_band() {
-    let model = sample_model_with_timezone(SetupStep::Timezone, "Asia/Tokyo", None);
-    let terminal = render_terminal(
-        &model,
-        WIDE_SETUP_WIDTH,
-        WIDE_SETUP_HEIGHT,
-        TundraTheme::default_dark(),
-    );
-    let cyan_cells = map_cells_with_fg(&terminal, Color::Cyan);
-
-    assert!(
-        !has_vertical_band(&cyan_cells, LEGACY_LONGITUDE_BAND_MIN_CELLS),
-        "legacy cyan longitude band should be absent"
-    );
-}
-
-#[test]
 fn setup_renderer_handles_utc_and_utc_alias_timezone_map_without_panic() {
     let utc = sample_model_with_timezone(SetupStep::Timezone, "UTC", None);
     let utc_terminal = render_terminal(
@@ -678,12 +660,4 @@ fn is_braille_symbol(symbol: &str) -> bool {
     symbol
         .chars()
         .any(|character| ('\u{2801}'..='\u{28ff}').contains(&character))
-}
-
-fn has_vertical_band(cells: &[(u16, u16)], min_cells_in_column: usize) -> bool {
-    let map_x = SETUP_CONTROLS_WIDTH + 1;
-    let map_right = WIDE_SETUP_WIDTH - 1;
-
-    (map_x..map_right)
-        .any(|x| cells.iter().filter(|(cell_x, _)| *cell_x == x).count() >= min_cells_in_column)
 }

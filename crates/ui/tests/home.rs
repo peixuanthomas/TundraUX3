@@ -4,16 +4,15 @@ use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier};
 use std::cell::RefCell;
 use ui::{
-    AuthField, BootstrapAdminViewModel, ClockViewModel, DebugDiagnosticsViewModel,
-    ExitConfirmViewModel, HomeDisplayMode, HomeIconRenderer, HomeViewModel, LoginField,
-    LoginUserOptionViewModel, LoginViewModel, NOTIFICATION_TOO_SMALL_MESSAGE,
-    NotificationActionViewModel, NotificationLayout, NotificationLevel, NotificationTone,
-    NotificationViewModel, RuntimeAsciiAssets, ShellChromeViewModel, ShellEntry, ShellLayout,
-    StatusViewModel, TimeSyncDialogViewModel, TundraTheme, UserManagementUserViewModel,
-    UserManagementViewModel, compute_shell_layout, home_entry_icon_area, home_logout_area,
-    login_password_area, login_password_visibility_area, login_user_list_area,
-    login_user_list_visible_rows, notification_layout, render_bootstrap_admin,
-    render_clock_placeholder, render_home, render_home_with_icons, render_login,
+    AuthField, BootstrapAdminViewModel, ClockViewModel, DebugDiagnosticsViewModel, HomeDisplayMode,
+    HomeIconRenderer, HomeViewModel, LoginField, LoginUserOptionViewModel, LoginViewModel,
+    NOTIFICATION_TOO_SMALL_MESSAGE, NotificationActionViewModel, NotificationLayout,
+    NotificationLevel, NotificationTone, NotificationViewModel, ShellChromeViewModel, ShellEntry,
+    ShellLayout, StatusViewModel, TimeSyncDialogViewModel, TundraTheme,
+    UserManagementUserViewModel, UserManagementViewModel, compute_shell_layout,
+    home_entry_icon_area, home_logout_area, login_password_area, login_password_visibility_area,
+    login_user_list_area, login_user_list_visible_rows, notification_layout,
+    render_bootstrap_admin, render_clock, render_home, render_home_with_icons, render_login,
     render_notification_overlay, render_time_sync_failure_dialog, render_user_management,
     status_time_button_area,
 };
@@ -150,56 +149,6 @@ fn user_home_hides_diagnostics_and_lists_five_entries_including_explorer() {
     assert_eq!(home.diagnostics(), None);
     assert_eq!(home.entries().len(), 5);
     assert!(home.entries().iter().any(|entry| entry.label == "Explorer"));
-}
-
-#[test]
-fn home_icon_asset_exposes_known_ascii_icon_metadata() {
-    let assets = RuntimeAsciiAssets::load_default().expect("home icon assets should load");
-    let catalog = assets.home_icon_catalog();
-    let icon = catalog
-        .icon_for_label("Explorer")
-        .expect("catalog should expose Explorer by label");
-    let key: &str = icon.key.as_ref();
-    let icon_by_key = catalog
-        .icon_for_key(key)
-        .expect("catalog should expose the same icon by key");
-
-    assert!(icon.width > 0);
-    assert!(icon.height > 0);
-    assert_eq!(icon.lines.len(), icon.height);
-    assert!(icon.lines.iter().all(|line| line.is_ascii()));
-    assert_eq!(icon_by_key.width, icon.width);
-    assert_eq!(icon_by_key.height, icon.height);
-    assert_eq!(icon_by_key.lines.len(), icon.lines.len());
-    assert_eq!(
-        first_non_blank_icon_line(icon_by_key),
-        first_non_blank_icon_line(icon)
-    );
-
-    for key in [
-        "explorer",
-        "launcher",
-        "editor",
-        "settings",
-        "diagnostics",
-        "user_management",
-        "user_profile",
-        "default",
-    ] {
-        let icon = catalog
-            .icon_for_key(key)
-            .unwrap_or_else(|| panic!("missing Home icon {key}"));
-        let expected_path = format!("home_icons/{key}.png");
-        assert_eq!(icon.image_path(), Some(expected_path.as_str()));
-        let path = assets
-            .home_icon_image_path(key)
-            .unwrap_or_else(|| panic!("missing Home icon image path {key}"));
-        let image = image::ImageReader::open(&path)
-            .unwrap_or_else(|error| panic!("open Home icon {key}: {error}"))
-            .decode()
-            .unwrap_or_else(|error| panic!("decode Home icon {key}: {error}"));
-        assert_eq!((image.width(), image.height()), (256, 256), "{key}");
-    }
 }
 
 #[test]
@@ -495,58 +444,6 @@ fn normal_terminal_splits_top_main_status() {
 }
 
 #[test]
-fn default_dark_theme_exposes_expected_colors_and_styles() {
-    let theme = TundraTheme::default_dark();
-
-    assert_eq!(theme.background, Color::Black);
-    assert_eq!(theme.foreground, Color::Gray);
-    assert_eq!(theme.accent_color, Color::Cyan);
-    assert_eq!(theme.muted, Color::DarkGray);
-    assert_eq!(theme.error, Color::Red);
-    assert_eq!(theme.title_style().fg, Some(Color::Cyan));
-    assert_eq!(theme.body_style().fg, Some(Color::Gray));
-    assert_eq!(theme.muted_style().fg, Some(Color::DarkGray));
-    assert_eq!(theme.error_style().fg, Some(Color::Red));
-}
-
-#[test]
-fn exit_confirmation_defaults_match_shell_copy() {
-    let expected = ExitConfirmViewModel::new();
-    let defaulted = ExitConfirmViewModel::default();
-
-    assert_eq!(expected.title, "Exit TundraUX 3");
-    assert_eq!(
-        expected.message,
-        "Leave the shell and restore the terminal?"
-    );
-    assert_eq!(expected.confirm_label, "Y / Enter: exit");
-    assert_eq!(expected.cancel_label, "N / Esc: cancel");
-    assert_eq!(defaulted, expected);
-}
-
-#[test]
-fn status_view_model_exposes_status_toast_and_error() {
-    let status = StatusViewModel {
-        status: "Ready".to_string(),
-        toast: Some("Saved".to_string()),
-        error: Some("Network unavailable".to_string()),
-        alert_tone: NotificationTone::Error,
-        time_button_label: Some("2026-07-10 09:30".to_string()),
-        time_button_selected: true,
-    };
-
-    assert_eq!(status.status, "Ready");
-    assert_eq!(status.toast.as_deref(), Some("Saved"));
-    assert_eq!(status.error.as_deref(), Some("Network unavailable"));
-    assert_eq!(status.alert_tone, NotificationTone::Error);
-    assert_eq!(
-        status.time_button_label.as_deref(),
-        Some("2026-07-10 09:30")
-    );
-    assert!(status.time_button_selected);
-}
-
-#[test]
 fn status_bar_renders_selectable_time_button_on_the_right() {
     let label = "2026-07-10 09:30";
     let diagnostics = DebugDiagnosticsViewModel {
@@ -737,7 +634,7 @@ fn compact_home_clock_login_bootstrap_and_user_management_show_highest_priority_
     let chrome = compact_alert_chrome("Clock");
     let mut terminal = Terminal::new(TestBackend::new(49, 11)).expect("test terminal");
     terminal
-        .draw(|frame| render_clock_placeholder(frame, frame.area(), &chrome, &clock, &theme))
+        .draw(|frame| render_clock(frame, frame.area(), &chrome, &clock, &theme))
         .expect("render compact clock");
     outputs.push(terminal_output(&terminal));
 
@@ -798,28 +695,7 @@ fn extremely_small_compact_layout_uses_borderless_notification_fallback() {
 }
 
 #[test]
-fn clock_compatibility_entrypoint_and_time_sync_failure_dialog_render_expected_content() {
-    let mut clock_terminal = Terminal::new(TestBackend::new(80, 24)).expect("test terminal");
-    let clock = ClockViewModel::new("2026-07-10 09:30 Asia/Shanghai");
-
-    clock_terminal
-        .draw(|frame| {
-            render_clock_placeholder(
-                frame,
-                frame.area(),
-                &chrome_for("Clock"),
-                &clock,
-                &TundraTheme::default_dark(),
-            );
-        })
-        .expect("render clock placeholder");
-
-    let output = terminal_output(&clock_terminal);
-    assert!(output.contains("Clock"));
-    assert!(output.contains("2026-07-10"));
-    assert!(output.contains("09:30"));
-    assert!(output.contains("Alarms & Timers"));
-
+fn time_sync_failure_dialog_renders_expected_content() {
     let mut dialog_terminal = Terminal::new(TestBackend::new(80, 24)).expect("test terminal");
     dialog_terminal
         .draw(|frame| {

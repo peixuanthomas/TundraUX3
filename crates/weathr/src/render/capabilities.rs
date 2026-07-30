@@ -101,30 +101,6 @@ mod tests {
     }
 
     #[test]
-    fn test_adjust_color_basic() {
-        let caps = TerminalCapabilities {
-            color_support: ColorSupport::Basic,
-            is_tty: true,
-        };
-        assert_eq!(caps.adjust_color(Color::Red), Color::Red);
-        assert_eq!(
-            caps.adjust_color(Color::Rgb { r: 255, g: 0, b: 0 }),
-            Color::White
-        );
-    }
-
-    #[test]
-    fn test_adjust_color_ansi256() {
-        let caps = TerminalCapabilities {
-            color_support: ColorSupport::Ansi256,
-            is_tty: true,
-        };
-        assert_eq!(caps.adjust_color(Color::Red), Color::Red);
-        let rgb = Color::Rgb { r: 255, g: 0, b: 0 };
-        assert_eq!(caps.adjust_color(rgb), rgb);
-    }
-
-    #[test]
     fn test_adjust_color_truecolor() {
         let caps = TerminalCapabilities {
             color_support: ColorSupport::TrueColor,

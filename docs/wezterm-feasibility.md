@@ -43,21 +43,9 @@
 - GitHub Actions Windows：`windows-2025`、`x86_64-pc-windows-msvc`；普通/kiosk 检查、策略测试和 release 构建通过（52m37s）
 - Windows 交互验证仍必须另用 Windows 11 桌面，CI 不能代替 GUI、输入法和多显示器实测
 
-## 构建与自动测试
+## 归档与自动测试记录
 
-从 Tundra 仓库根目录执行：
-
-```sh
-git submodule update --init --recursive
-scripts/wezterm-feasibility/macos-smoke.sh
-```
-
-Windows PowerShell：
-
-```powershell
-git submodule update --init --recursive
-scripts\wezterm-feasibility\windows-smoke.ps1
-```
+该 POC 已归档。`third_party/wezterm` submodule 与本报告继续保留，作为实现和历史验证证据；开发期间使用的一次性 macOS/Windows smoke 包装脚本不再保留。以下结果是归档前的验证记录，不表示当前仓库仍提供可直接执行的 smoke 脚本入口。
 
 本机已通过：
 

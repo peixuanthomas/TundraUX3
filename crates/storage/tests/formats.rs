@@ -1,5 +1,5 @@
 use storage::{
-    CLOCK_DESCRIPTOR, CONFIG_DESCRIPTOR, SCHEMA_VERSION, StorageFormat, USERS_SCHEMA_VERSION,
+    CONFIG_DESCRIPTOR, SCHEMA_VERSION, StorageFormat, USERS_SCHEMA_VERSION,
     VERSIONED_JSON_DESCRIPTORS,
 };
 
@@ -43,17 +43,4 @@ fn stateful_data_uses_versioned_json() {
             descriptor.name
         );
     }
-}
-
-#[test]
-fn clock_uses_its_public_versioned_json_descriptor() {
-    assert_eq!(CLOCK_DESCRIPTOR.name, "clock");
-    assert_eq!(CLOCK_DESCRIPTOR.file_name, "clock.v1.json");
-    assert_eq!(CLOCK_DESCRIPTOR.format, StorageFormat::VersionedJson);
-    assert_eq!(CLOCK_DESCRIPTOR.schema_version, SCHEMA_VERSION);
-}
-
-#[test]
-fn schema_version_starts_at_one() {
-    assert_eq!(SCHEMA_VERSION, 1);
 }

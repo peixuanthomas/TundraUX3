@@ -219,35 +219,3 @@ impl SunData {
             .map_err(|e| WeatherError::Data(DataError::ChronoParseError(e)))
     }
 }
-
-#[cfg(test)]
-mod test {
-    use super::*;
-    use crate::weather::WeatherLocation;
-
-    #[test]
-    fn tz_test() {
-        let now = chrono::Local::now();
-        let date = now.format("%Y-%m-%d").to_string();
-        let offset_seconds = now.offset().local_minus_utc();
-        let offset_hours = offset_seconds / 3600;
-        println!("{date} {offset_hours}");
-
-        let location = WeatherLocation {
-            latitude: 52.52,
-            longitude: 13.41,
-            elevation: None,
-        };
-
-        println!(
-            "{BASE_URL}rstt/oneday?date={date}&coords={},{}&tz={}&dst=true",
-            location.latitude, location.longitude, offset_hours
-        );
-    }
-
-    #[test]
-    fn moon_phase_validation() {
-        let step = (0.15f64 * 8.0).round() as usize % 8;
-        println!("{}", step);
-    }
-}

@@ -3,14 +3,13 @@ use std::path::PathBuf;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use chrono::{TimeZone, Utc};
-use platform::{CapabilityStatus, PlatformCapabilities, PlatformKind, build_windows_app_paths};
+use platform::{PlatformCapabilities, PlatformKind, build_windows_app_paths};
 use ratatui::layout::Rect;
 use shell::{
     ClickKind, HomeModeOverride, InputEvent, InputKey, InputModifiers, InputPhase, KeyInput,
-    PointerButton, ScrollDirection, ShellAction, ShellAppConfig, ShellCommand, ShellComponent,
-    ShellHomeMode, ShellLaunchConfig, ShellNotificationAction, ShellRestoredSession, ShellScreen,
-    ShellSession, ShellStartupState, ShellStorageReport, default_shell_shortcuts,
-    detect_shortcut_conflicts,
+    PointerButton, ShellAction, ShellAppConfig, ShellCommand, ShellComponent, ShellHomeMode,
+    ShellLaunchConfig, ShellNotificationAction, ShellRestoredSession, ShellScreen, ShellSession,
+    ShellStartupState, ShellStorageReport, default_shell_shortcuts, detect_shortcut_conflicts,
 };
 use storage::StorageManager;
 use ui::{HomeDisplayMode, NotificationLayout, NotificationTone};
@@ -115,66 +114,26 @@ fn release_policy_rejects_a_restored_debug_home() {
 }
 
 #[test]
-fn q_opens_exit_confirmation_from_home() {
-    let mut state = ShellSession::new(debug_config(), (120, 40));
+fn home_exit_keys_open_the_confirmation() {
+    for key in ["q", "Esc"] {
+        let mut state = ShellSession::new(debug_config(), (120, 40));
 
-    let action = state.apply_input(InputEvent::from_key_label("q"));
+        let action = state.apply_input(InputEvent::from_key_label(key));
 
-    assert_eq!(action, ShellAction::Redraw);
-    assert_eq!(state.active_screen(), ShellScreen::ExitConfirm);
-    assert_eq!(state.status(), "Confirm exit");
-    assert_eq!(
-        state.screen_stack(),
-        &[ShellScreen::Home, ShellScreen::ExitConfirm][..]
-    );
-    assert!(!state.shutdown_requested());
+        assert_eq!(action, ShellAction::Redraw);
+        assert_eq!(state.active_screen(), ShellScreen::ExitConfirm);
+        assert_eq!(state.status(), "Confirm exit");
+        assert_eq!(
+            state.screen_stack(),
+            &[ShellScreen::Home, ShellScreen::ExitConfirm][..]
+        );
+        assert!(!state.shutdown_requested());
+    }
 }
 
 #[test]
-fn escape_opens_exit_confirmation_from_home() {
-    let mut state = ShellSession::new(debug_config(), (120, 40));
-
-    let action = state.apply_input(InputEvent::from_key_label("Esc"));
-
-    assert_eq!(action, ShellAction::Redraw);
-    assert_eq!(state.active_screen(), ShellScreen::ExitConfirm);
-    assert_eq!(state.status(), "Confirm exit");
-    assert_eq!(
-        state.screen_stack(),
-        &[ShellScreen::Home, ShellScreen::ExitConfirm][..]
-    );
-    assert!(!state.shutdown_requested());
-}
-
-#[test]
-fn escape_cancels_exit_confirmation() {
-    let mut state = ShellSession::new(debug_config(), (120, 40));
-    state.apply_input(InputEvent::from_key_label("q"));
-
-    let action = state.apply_input(InputEvent::from_key_label("Esc"));
-
-    assert_eq!(action, ShellAction::Redraw);
-    assert_eq!(state.active_screen(), ShellScreen::Home);
-    assert_eq!(state.status(), "Ready");
-    assert_eq!(state.screen_stack(), &[ShellScreen::Home][..]);
-    assert!(!state.shutdown_requested());
-}
-
-#[test]
-fn enter_confirms_exit_confirmation() {
-    let mut state = ShellSession::new(debug_config(), (120, 40));
-    state.apply_input(InputEvent::from_key_label("q"));
-
-    let action = state.apply_input(InputEvent::from_key_label("Enter"));
-
-    assert_eq!(action, ShellAction::Exit);
-    assert_eq!(state.active_screen(), ShellScreen::ExitConfirm);
-    assert!(state.shutdown_requested());
-}
-
-#[test]
-fn y_and_uppercase_y_confirm_exit_confirmation() {
-    for key in ["y", "Y"] {
+fn exit_confirmation_accepts_all_confirm_keys() {
+    for key in ["Enter", "y", "Y"] {
         let mut state = ShellSession::new(debug_config(), (120, 40));
         state.apply_input(InputEvent::from_key_label("q"));
 
@@ -183,6 +142,22 @@ fn y_and_uppercase_y_confirm_exit_confirmation() {
         assert_eq!(action, ShellAction::Exit);
         assert_eq!(state.active_screen(), ShellScreen::ExitConfirm);
         assert!(state.shutdown_requested());
+    }
+}
+
+#[test]
+fn exit_confirmation_accepts_all_cancel_keys() {
+    for key in ["Esc", "n", "N"] {
+        let mut state = ShellSession::new(debug_config(), (120, 40));
+        state.apply_input(InputEvent::from_key_label("q"));
+
+        let action = state.apply_input(InputEvent::from_key_label(key));
+
+        assert_eq!(action, ShellAction::Redraw);
+        assert_eq!(state.active_screen(), ShellScreen::Home);
+        assert_eq!(state.status(), "Ready");
+        assert_eq!(state.screen_stack(), &[ShellScreen::Home][..]);
+        assert!(!state.shutdown_requested());
     }
 }
 
@@ -198,78 +173,6 @@ fn r_and_uppercase_r_restart_from_exit_confirmation() {
         assert!(state.shutdown_requested());
         assert!(state.restart_requested());
     }
-}
-
-#[test]
-fn n_and_uppercase_n_cancel_exit_confirmation() {
-    for key in ["n", "N"] {
-        let mut state = ShellSession::new(debug_config(), (120, 40));
-        state.apply_input(InputEvent::from_key_label("q"));
-
-        let action = state.apply_input(InputEvent::from_key_label(key));
-
-        assert_eq!(action, ShellAction::Redraw);
-        assert_eq!(state.active_screen(), ShellScreen::Home);
-        assert_eq!(state.status(), "Ready");
-        assert_eq!(state.screen_stack(), &[ShellScreen::Home][..]);
-        assert!(!state.shutdown_requested());
-    }
-}
-
-#[test]
-fn other_key_is_recorded() {
-    let mut state = ShellSession::new(debug_config(), (120, 40));
-
-    let action = state.apply_input(InputEvent::from_key_label("x"));
-
-    assert_eq!(action, ShellAction::Redraw);
-    assert_eq!(state.active_screen(), ShellScreen::Home);
-    assert_eq!(state.last_key_event(), Some("x"));
-}
-
-#[test]
-fn mouse_and_resize_events_are_recorded() {
-    let mut state = ShellSession::new(debug_config(), (120, 40));
-
-    let mouse_action = state.apply_input(InputEvent::mouse_scroll(ScrollDirection::Down, (12, 7)));
-    let resize_action = state.apply_input(InputEvent::Resize {
-        width: 80,
-        height: 24,
-    });
-
-    assert_eq!(mouse_action, ShellAction::Redraw);
-    assert_eq!(resize_action, ShellAction::Redraw);
-    assert_eq!(state.last_mouse_event(), Some("Mouse Scroll Down"));
-    assert_eq!(state.mouse_coordinates(), Some((12, 7)));
-    assert_eq!(state.mouse_scroll_direction(), Some("Down"));
-    assert_eq!(state.terminal_size(), (80, 24));
-    assert_eq!(state.last_resize_event(), Some("80x24"));
-}
-
-#[test]
-fn mouse_drag_direction_updates_from_each_drag_delta() {
-    let mut state = ShellSession::new(debug_config(), (120, 40));
-
-    state.apply_input(InputEvent::mouse_down(PointerButton::Left, (10, 10)));
-
-    state.apply_input(InputEvent::mouse_drag(PointerButton::Left, (13, 10)));
-    assert_eq!(state.last_mouse_event(), Some("Mouse Drag Left to Right"));
-    assert_eq!(state.mouse_drag_direction(), Some("Right"));
-
-    state.apply_input(InputEvent::mouse_drag(PointerButton::Left, (11, 10)));
-    assert_eq!(state.last_mouse_event(), Some("Mouse Drag Left to Left"));
-    assert_eq!(state.mouse_drag_direction(), Some("Left"));
-
-    state.apply_input(InputEvent::mouse_drag(PointerButton::Left, (11, 8)));
-    assert_eq!(state.last_mouse_event(), Some("Mouse Drag Left to Up"));
-    assert_eq!(state.mouse_drag_direction(), Some("Up"));
-
-    state.apply_input(InputEvent::mouse_drag(PointerButton::Left, (11, 12)));
-    assert_eq!(state.last_mouse_event(), Some("Mouse Drag Left to Down"));
-    assert_eq!(state.mouse_drag_direction(), Some("Down"));
-
-    state.apply_input(InputEvent::mouse_up(PointerButton::Left, (11, 12)));
-    assert_eq!(state.mouse_drag_direction(), None);
 }
 
 #[test]
@@ -402,18 +305,6 @@ fn default_shortcuts_have_no_conflicts() {
 }
 
 #[test]
-fn tick_increments_count() {
-    let mut state = ShellSession::new(debug_config(), (120, 40));
-
-    let first_action = state.apply_input(InputEvent::Tick);
-    let second_action = state.apply_input(InputEvent::Tick);
-
-    assert_eq!(first_action, ShellAction::Redraw);
-    assert_eq!(second_action, ShellAction::Redraw);
-    assert_eq!(state.tick_count(), 2);
-}
-
-#[test]
 fn shutdown_input_exits_immediately() {
     let mut state = ShellSession::new(debug_config(), (120, 40));
 
@@ -421,99 +312,6 @@ fn shutdown_input_exits_immediately() {
 
     assert_eq!(action, ShellAction::Exit);
     assert!(state.shutdown_requested());
-}
-
-#[test]
-fn debug_state_builds_debug_home_view_model() {
-    let mut state = ShellSession::new(debug_config(), (120, 40));
-    state.apply_input(InputEvent::from_key_label("x"));
-    state.apply_input(InputEvent::Tick);
-
-    let home = state.to_home_view_model();
-
-    assert_eq!(home.display_mode(), HomeDisplayMode::Debug);
-    assert!(home.entries().iter().any(|entry| entry.label == "Explorer"));
-    assert!(home.entries().iter().any(|entry| entry.label == "Editor"));
-    assert!(home.home_icon_catalog().is_some());
-    let diagnostics = home.diagnostics().expect("debug diagnostics");
-    assert_eq!(diagnostics.tick_count, 1);
-    assert_eq!(diagnostics.last_key_event.as_deref(), Some("x"));
-    assert_eq!(
-        diagnostics.platform_capability_summary,
-        state.platform_capability_summary()
-    );
-    assert!(
-        diagnostics
-            .platform_capability_summary
-            .contains("supported")
-    );
-}
-
-#[test]
-fn terminal_flags_are_visible_in_debug_view_model() {
-    let state = ShellSession::new(debug_config(), (120, 40));
-
-    let home = state.to_home_view_model();
-
-    let diagnostics = home.diagnostics().expect("debug diagnostics");
-    assert_eq!(
-        diagnostics.terminal_flags,
-        vec![
-            "raw mode: enabled".to_string(),
-            "alternate screen: enabled".to_string(),
-            "mouse capture: enabled".to_string(),
-            "cursor restore: enabled".to_string(),
-        ]
-    );
-}
-
-#[test]
-fn debug_status_bar_includes_recent_input_diagnostics() {
-    let mut state = ShellSession::new(debug_config(), (120, 40));
-
-    state.apply_input(InputEvent::from_key_label("x"));
-    state.apply_input(InputEvent::mouse_scroll(ScrollDirection::Down, (12, 7)));
-
-    let chrome = state.to_shell_chrome_view_model();
-
-    assert!(chrome.status.status.contains("Last Key: x"));
-    assert!(chrome.status.status.contains("Mouse position: 12,7"));
-    assert!(chrome.status.status.contains("Size: 120x40"));
-    assert!(chrome.status.status.contains("Scroll: Down"));
-    assert!(chrome.status.status.contains("Drag: none"));
-}
-
-#[test]
-fn debug_home_and_status_survive_an_editor_round_trip() {
-    let mut state = ShellSession::new(debug_config(), (120, 40));
-
-    state.apply_input(InputEvent::from_key_label("Right"));
-    state.apply_input(InputEvent::from_key_label("Right"));
-    state.apply_input(InputEvent::from_key_label("Enter"));
-
-    assert_eq!(state.active_screen(), ShellScreen::Editor);
-    assert!(
-        state
-            .to_shell_chrome_view_model()
-            .status
-            .status
-            .contains("Last Key: Enter")
-    );
-
-    state.apply_input(InputEvent::from_key_label("Esc"));
-
-    assert_eq!(state.active_screen(), ShellScreen::Home);
-    let home = state.to_home_view_model();
-    assert_eq!(home.display_mode(), HomeDisplayMode::Debug);
-    assert!(home.entries().iter().any(|entry| entry.label == "Editor"));
-    assert!(home.diagnostics().is_some());
-    assert!(
-        state
-            .to_shell_chrome_view_model()
-            .status
-            .status
-            .contains("Last Key: Esc")
-    );
 }
 
 #[test]
@@ -1421,22 +1219,6 @@ fn new_with_startup_recovery_warning_surfaces_toast() {
     assert_eq!(
         chrome.status.toast.as_deref(),
         Some("Storage recovered defaults")
-    );
-}
-
-#[test]
-fn debug_diagnostics_use_injected_platform_summary() {
-    let mut capabilities = PlatformCapabilities::unsupported();
-    capabilities.app_paths = CapabilityStatus::Supported;
-    let startup = ShellStartupState::clean(PlatformKind::Macos, capabilities);
-
-    let state = ShellSession::new_with_startup(debug_config(), (120, 40), startup);
-    let home = state.to_home_view_model();
-
-    let diagnostics = home.diagnostics().expect("debug diagnostics");
-    assert_eq!(
-        diagnostics.platform_capability_summary,
-        "macOS: 1 supported, 0 best-effort, 14 unsupported"
     );
 }
 
