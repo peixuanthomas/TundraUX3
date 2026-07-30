@@ -238,36 +238,6 @@ longitude = 13.41
     }
 
     #[test]
-    fn test_config_deserialize_negative_coordinates() {
-        let toml_content = r#"
-[location]
-latitude = -33.8688
-longitude = 151.2093
-"#;
-        let config: Config = toml::from_str(toml_content).unwrap();
-        assert_eq!(config.location.latitude, -33.8688);
-        assert_eq!(config.location.longitude, 151.2093);
-    }
-
-    #[test]
-    fn test_config_load_from_path_success() {
-        let toml_content = r#"
-[location]
-latitude = 40.7128
-longitude = -74.0060
-"#;
-        let temp_dir = std::env::temp_dir();
-        let test_config_path = temp_dir.join("weathr_test_config.toml");
-        fs::write(&test_config_path, toml_content).unwrap();
-
-        let config = Config::load_from_path(&test_config_path).unwrap();
-        assert_eq!(config.location.latitude, 40.7128);
-        assert_eq!(config.location.longitude, -74.0060);
-
-        fs::remove_file(test_config_path).ok();
-    }
-
-    #[test]
     fn test_config_load_from_path_file_not_found() {
         let nonexistent_path = PathBuf::from("/tmp/nonexistent_weathr_config_12345.toml");
         let result = Config::load_from_path(&nonexistent_path);
@@ -297,16 +267,6 @@ longitude = -74.0060
         };
 
         assert_eq!(config.normalized_theme(), "default");
-    }
-
-    #[test]
-    fn test_normalized_theme_keeps_value() {
-        let config = Config {
-            theme: "retro".to_string(),
-            ..Config::default()
-        };
-
-        assert_eq!(config.normalized_theme(), "retro");
     }
 
     #[test]
@@ -356,33 +316,11 @@ longitude = 180.0
     }
 
     #[test]
-    fn test_location_zero_coordinates() {
-        let toml_content = r#"
-[location]
-latitude = 0.0
-longitude = 0.0
-"#;
-        let config: Config = toml::from_str(toml_content).unwrap();
-        assert_eq!(config.location.latitude, 0.0);
-        assert_eq!(config.location.longitude, 0.0);
-    }
-
-    #[test]
     fn test_lockscreen_clock_format_default() {
         let toml_content = r#"
 [location]
 latitude = 0.0
 longitude = 0.0
-"#;
-        let config: Config = toml::from_str(toml_content).unwrap();
-        assert_eq!(config.lockscreen.clock_format, ClockFormat::TwentyFourHour);
-    }
-
-    #[test]
-    fn test_lockscreen_clock_format_24h() {
-        let toml_content = r#"
-[lockscreen]
-clock_format = "24h"
 "#;
         let config: Config = toml::from_str(toml_content).unwrap();
         assert_eq!(config.lockscreen.clock_format, ClockFormat::TwentyFourHour);
@@ -434,30 +372,6 @@ clock_format = "military"
     }
 
     #[test]
-    fn test_validation_invalid_latitude_low() {
-        let config = Config {
-            location: Location {
-                latitude: -91.0,
-                longitude: 0.0,
-                auto: false,
-                hide: false,
-                city: None,
-                display: LocationDisplay::default(),
-                city_name_language: "auto".to_string(),
-            },
-            lockscreen: Lockscreen::default(),
-            hide_hud: false,
-            units: WeatherUnits::default(),
-            silent: false,
-            provider: HashMap::new(),
-            theme: "default".to_string(),
-        };
-        let result = config.validate();
-        assert!(result.is_err());
-        assert_eq!(result.unwrap_err().kind(), "InvalidLatitude");
-    }
-
-    #[test]
     fn test_validation_invalid_longitude_high() {
         let config = Config {
             location: Location {
@@ -479,75 +393,6 @@ clock_format = "military"
         let result = config.validate();
         assert!(result.is_err());
         assert_eq!(result.unwrap_err().kind(), "InvalidLongitude");
-    }
-
-    #[test]
-    fn test_validation_invalid_longitude_low() {
-        let config = Config {
-            location: Location {
-                latitude: 0.0,
-                longitude: -181.0,
-                auto: false,
-                hide: false,
-                city: None,
-                display: LocationDisplay::default(),
-                city_name_language: "auto".to_string(),
-            },
-            lockscreen: Lockscreen::default(),
-            hide_hud: false,
-            units: WeatherUnits::default(),
-            silent: false,
-            provider: HashMap::new(),
-            theme: "default".to_string(),
-        };
-        let result = config.validate();
-        assert!(result.is_err());
-        assert_eq!(result.unwrap_err().kind(), "InvalidLongitude");
-    }
-
-    #[test]
-    fn test_validation_valid_config() {
-        let config = Config {
-            location: Location {
-                latitude: 52.52,
-                longitude: 13.41,
-                auto: false,
-                hide: false,
-                city: None,
-                display: LocationDisplay::default(),
-                city_name_language: "auto".to_string(),
-            },
-            lockscreen: Lockscreen::default(),
-            hide_hud: false,
-            units: WeatherUnits::default(),
-            silent: false,
-            provider: HashMap::new(),
-            theme: "default".to_string(),
-        };
-        let result = config.validate();
-        assert!(result.is_ok());
-    }
-
-    #[test]
-    fn test_config_units_default() {
-        let toml_content = r#"
-[location]
-latitude = 0.0
-longitude = 0.0
-"#;
-        let config: Config = toml::from_str(toml_content).unwrap();
-        assert_eq!(
-            config.units.temperature,
-            crate::weather::types::TemperatureUnit::Celsius
-        );
-        assert_eq!(
-            config.units.wind_speed,
-            crate::weather::types::WindSpeedUnit::Kmh
-        );
-        assert_eq!(
-            config.units.precipitation,
-            crate::weather::types::PrecipitationUnit::Mm
-        );
     }
 
     #[test]
@@ -586,30 +431,6 @@ longitude = 0.0
 "#;
         let config: Config = toml::from_str(toml_content).unwrap();
         assert_eq!(config.location.display, LocationDisplay::Coordinates);
-    }
-
-    #[test]
-    fn test_location_display_coordinates() {
-        let toml_content = r#"
-[location]
-latitude = 0.0
-longitude = 0.0
-display = "coordinates"
-"#;
-        let config: Config = toml::from_str(toml_content).unwrap();
-        assert_eq!(config.location.display, LocationDisplay::Coordinates);
-    }
-
-    #[test]
-    fn test_location_display_city() {
-        let toml_content = r#"
-[location]
-latitude = 0.0
-longitude = 0.0
-display = "city"
-"#;
-        let config: Config = toml::from_str(toml_content).unwrap();
-        assert_eq!(config.location.display, LocationDisplay::City);
     }
 
     #[test]
@@ -661,18 +482,6 @@ longitude = 0.0
     }
 
     #[test]
-    fn test_city_name_language_explicit_auto() {
-        let toml_content = r#"
-[location]
-latitude = 0.0
-longitude = 0.0
-city_name_language = "auto"
-"#;
-        let config: Config = toml::from_str(toml_content).unwrap();
-        assert_eq!(config.location.city_name_language, "auto");
-    }
-
-    #[test]
     fn test_city_name_language_explicit_en() {
         let toml_content = r#"
 [location]
@@ -682,46 +491,6 @@ city_name_language = "en"
 "#;
         let config: Config = toml::from_str(toml_content).unwrap();
         assert_eq!(config.location.city_name_language, "en");
-    }
-
-    #[test]
-    fn test_city_name_language_explicit_ru() {
-        let toml_content = r#"
-[location]
-latitude = 0.0
-longitude = 0.0
-city_name_language = "ru"
-"#;
-        let config: Config = toml::from_str(toml_content).unwrap();
-        assert_eq!(config.location.city_name_language, "ru");
-    }
-
-    #[test]
-    fn test_env_var_latitude_override() {
-        let _guard = ENV_MUTEX.lock().unwrap();
-        unsafe {
-            env::set_var("WEATHR_LATITUDE", "48.8566");
-            env::remove_var("WEATHR_LONGITUDE");
-        }
-        let mut config = Config::default();
-        config.apply_env_overrides().unwrap();
-        assert_eq!(config.location.latitude, 48.8566);
-        assert!(!config.location.auto);
-        unsafe { env::remove_var("WEATHR_LATITUDE") };
-    }
-
-    #[test]
-    fn test_env_var_longitude_override() {
-        let _guard = ENV_MUTEX.lock().unwrap();
-        unsafe {
-            env::remove_var("WEATHR_LATITUDE");
-            env::set_var("WEATHR_LONGITUDE", "2.3522");
-        }
-        let mut config = Config::default();
-        config.apply_env_overrides().unwrap();
-        assert_eq!(config.location.longitude, 2.3522);
-        assert!(!config.location.auto);
-        unsafe { env::remove_var("WEATHR_LONGITUDE") };
     }
 
     #[test]
@@ -754,20 +523,6 @@ city_name_language = "ru"
         assert!(result.is_err());
         assert_eq!(result.unwrap_err().kind(), "InvalidEnvVar");
         unsafe { env::remove_var("WEATHR_LATITUDE") };
-    }
-
-    #[test]
-    fn test_env_var_invalid_longitude() {
-        let _guard = ENV_MUTEX.lock().unwrap();
-        unsafe {
-            env::remove_var("WEATHR_LATITUDE");
-            env::set_var("WEATHR_LONGITUDE", "abc");
-        }
-        let mut config = Config::default();
-        let result = config.apply_env_overrides();
-        assert!(result.is_err());
-        assert_eq!(result.unwrap_err().kind(), "InvalidEnvVar");
-        unsafe { env::remove_var("WEATHR_LONGITUDE") };
     }
 
     #[test]

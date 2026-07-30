@@ -109,16 +109,6 @@ fn explorer_renderer_supports_volume_and_trash_quick_location_icons() {
 }
 
 #[test]
-fn explorer_view_model_returns_selected_entry() {
-    let model = sample_model();
-
-    assert_eq!(
-        model.selected_entry().map(|entry| entry.name.as_str()),
-        Some("README.md")
-    );
-}
-
-#[test]
 fn explorer_first_entry_line_accounts_for_wrapped_header_text() {
     let model = sample_model();
 

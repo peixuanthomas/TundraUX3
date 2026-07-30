@@ -334,139 +334,91 @@ mod tests {
     }
 
     #[test]
-    fn test_new_york_coordinates() {
-        // New York: 40.7128°N, 74.0060°W (positive lat, negative lon)
-        let mut app = create_app_state(40.7128, -74.0060);
-        app.update_cached_info();
+    fn coordinate_display_contract_covers_hemispheres_and_zero() {
+        let cases = [
+            ("New York", 40.7128, -74.0060, "40.71°N", "74.01°W"),
+            ("Sydney", -33.8688, 151.2093, "33.87°S", "151.21°E"),
+            ("London", 51.5074, -0.1278, "51.51°N", "0.13°W"),
+            ("São Paulo", -23.5505, -46.6333, "23.55°S", "46.63°W"),
+            ("Tokyo", 35.6762, 139.6503, "35.68°N", "139.65°E"),
+            ("Null Island", 0.0, 0.0, "0.00°N", "0.00°E"),
+        ];
 
-        println!("NYC: {}", app.cached_weather_info);
-        assert!(app.cached_weather_info.contains("40.71°N"));
-        assert!(app.cached_weather_info.contains("74.01°W"));
+        for (name, latitude, longitude, expected_latitude, expected_longitude) in cases {
+            let mut app = create_app_state(latitude, longitude);
+            app.update_cached_info();
+
+            assert!(
+                app.cached_weather_info.contains(expected_latitude),
+                "{name}: expected {expected_latitude:?} in {:?}",
+                app.cached_weather_info
+            );
+            assert!(
+                app.cached_weather_info.contains(expected_longitude),
+                "{name}: expected {expected_longitude:?} in {:?}",
+                app.cached_weather_info
+            );
+        }
     }
 
     #[test]
-    fn test_sydney_coordinates() {
-        // Sydney: 33.8688°S, 151.2093°E (negative lat, positive lon)
-        let mut app = create_app_state(-33.8688, 151.2093);
-        app.update_cached_info();
+    fn location_display_mode_contract() {
+        let cases = [
+            (
+                "coordinates with city",
+                Some("Alpharetta"),
+                LocationDisplay::Coordinates,
+                "Location: 34.08°N, 84.29°W",
+                Some("Alpharetta"),
+            ),
+            (
+                "city with city",
+                Some("Alpharetta"),
+                LocationDisplay::City,
+                "Location: Alpharetta",
+                Some("34.08°N"),
+            ),
+            (
+                "city without city",
+                None,
+                LocationDisplay::City,
+                "Location: 34.08°N, 84.29°W",
+                None,
+            ),
+            (
+                "mixed with city",
+                Some("Alpharetta"),
+                LocationDisplay::Mixed,
+                "Location: Alpharetta (34.08°N, 84.29°W)",
+                None,
+            ),
+            (
+                "mixed without city",
+                None,
+                LocationDisplay::Mixed,
+                "Location: 34.08°N, 84.29°W",
+                Some("("),
+            ),
+        ];
 
-        println!("Sydney: {}", app.cached_weather_info);
-        assert!(app.cached_weather_info.contains("33.87°S"));
-        assert!(app.cached_weather_info.contains("151.21°E"));
-    }
+        for (name, city, display, expected, unexpected) in cases {
+            let mut app =
+                create_app_state_full(34.0754, -84.2941, city.map(str::to_owned), display);
+            app.update_cached_info();
 
-    #[test]
-    fn test_london_coordinates() {
-        // London: 51.5074°N, 0.1278°W (positive lat, negative lon near 0)
-        let mut app = create_app_state(51.5074, -0.1278);
-        app.update_cached_info();
-
-        println!("London: {}", app.cached_weather_info);
-        assert!(app.cached_weather_info.contains("51.51°N"));
-        assert!(app.cached_weather_info.contains("0.13°W"));
-    }
-
-    #[test]
-    fn test_sao_paulo_coordinates() {
-        // São Paulo: 23.5505°S, 46.6333°W (negative lat, negative lon)
-        let mut app = create_app_state(-23.5505, -46.6333);
-        app.update_cached_info();
-
-        println!("São Paulo: {}", app.cached_weather_info);
-        assert!(app.cached_weather_info.contains("23.55°S"));
-        assert!(app.cached_weather_info.contains("46.63°W"));
-    }
-
-    #[test]
-    fn test_tokyo_coordinates() {
-        // Tokyo: 35.6762°N, 139.6503°E (positive lat, positive lon)
-        let mut app = create_app_state(35.6762, 139.6503);
-        app.update_cached_info();
-
-        println!("Tokyo: {}", app.cached_weather_info);
-        assert!(app.cached_weather_info.contains("35.68°N"));
-        assert!(app.cached_weather_info.contains("139.65°E"));
-    }
-
-    #[test]
-    fn test_equator_prime_meridian() {
-        // Null Island: 0°, 0° (exactly at equator and prime meridian)
-        let mut app = create_app_state(0.0, 0.0);
-        app.update_cached_info();
-
-        println!("Null Island: {}", app.cached_weather_info);
-        assert!(app.cached_weather_info.contains("0.00°N"));
-        assert!(app.cached_weather_info.contains("0.00°E"));
-    }
-
-    #[test]
-    fn test_display_coordinates_mode() {
-        let mut app = create_app_state_full(
-            34.0754,
-            -84.2941,
-            Some("Alpharetta".to_string()),
-            LocationDisplay::Coordinates,
-        );
-        app.update_cached_info();
-
-        assert!(
-            app.cached_weather_info
-                .contains("Location: 34.08°N, 84.29°W")
-        );
-        assert!(!app.cached_weather_info.contains("Alpharetta"));
-    }
-
-    #[test]
-    fn test_display_city_mode_with_city() {
-        let mut app = create_app_state_full(
-            34.0754,
-            -84.2941,
-            Some("Alpharetta".to_string()),
-            LocationDisplay::City,
-        );
-        app.update_cached_info();
-
-        assert!(app.cached_weather_info.contains("Location: Alpharetta"));
-        assert!(!app.cached_weather_info.contains("34.08°N"));
-    }
-
-    #[test]
-    fn test_display_city_mode_without_city_falls_back() {
-        let mut app = create_app_state_full(34.0754, -84.2941, None, LocationDisplay::City);
-        app.update_cached_info();
-
-        assert!(
-            app.cached_weather_info
-                .contains("Location: 34.08°N, 84.29°W")
-        );
-    }
-
-    #[test]
-    fn test_display_mixed_mode_with_city() {
-        let mut app = create_app_state_full(
-            34.0754,
-            -84.2941,
-            Some("Alpharetta".to_string()),
-            LocationDisplay::Mixed,
-        );
-        app.update_cached_info();
-
-        assert!(
-            app.cached_weather_info
-                .contains("Location: Alpharetta (34.08°N, 84.29°W)")
-        );
-    }
-
-    #[test]
-    fn test_display_mixed_mode_without_city_falls_back() {
-        let mut app = create_app_state_full(34.0754, -84.2941, None, LocationDisplay::Mixed);
-        app.update_cached_info();
-
-        assert!(
-            app.cached_weather_info
-                .contains("Location: 34.08°N, 84.29°W")
-        );
-        assert!(!app.cached_weather_info.contains("("));
+            assert!(
+                app.cached_weather_info.contains(expected),
+                "{name}: expected {expected:?} in {:?}",
+                app.cached_weather_info
+            );
+            if let Some(unexpected) = unexpected {
+                assert!(
+                    !app.cached_weather_info.contains(unexpected),
+                    "{name}: did not expect {unexpected:?} in {:?}",
+                    app.cached_weather_info
+                );
+            }
+        }
     }
 
     #[test]

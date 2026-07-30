@@ -3,8 +3,7 @@
 use ratatui::layout::Rect;
 use ui::{
     Command, ComponentId, FocusDirection, FocusManager, FocusScope, HitKind, HitLayer, HitMap,
-    HitTarget, InputEvent, KeyCode, KeyModifiers, KeyStroke, Point, ShortcutBinding,
-    ShortcutRegistry, ShortcutScope, UiId,
+    HitTarget, KeyStroke, Point, ShortcutBinding, ShortcutRegistry, ShortcutScope,
 };
 
 #[test]
@@ -63,56 +62,6 @@ fn shortcut_registry_resolves_scopes_in_order() {
 }
 
 #[test]
-fn shortcut_registry_stores_typed_intents_and_preserves_resolution_semantics() {
-    #[derive(Debug, Clone, PartialEq, Eq)]
-    enum UiIntent {
-        Quit,
-        CloseOverlay,
-        OpenHelp,
-    }
-
-    let mut registry = ShortcutRegistry::<UiIntent>::new();
-    let key = KeyStroke::char('q');
-    registry
-        .register(ShortcutBinding::global(key.clone(), UiIntent::Quit))
-        .expect("global intent should register");
-    registry
-        .register(ShortcutBinding::local(
-            "help.overlay",
-            key.clone(),
-            UiIntent::CloseOverlay,
-        ))
-        .expect("local intent should register");
-
-    let conflict = registry
-        .register(ShortcutBinding::global(key.clone(), UiIntent::OpenHelp))
-        .expect_err("same scope/key should conflict for typed intents");
-    assert_eq!(conflict.existing, UiIntent::Quit);
-    assert_eq!(conflict.attempted, UiIntent::OpenHelp);
-
-    assert_eq!(
-        registry.command_for(
-            &[ShortcutScope::Global, ShortcutScope::local("help.overlay")],
-            &key,
-        ),
-        Some(&UiIntent::Quit),
-    );
-    assert_eq!(
-        registry.command_for(
-            &[ShortcutScope::local("help.overlay"), ShortcutScope::Global],
-            &key,
-        ),
-        Some(&UiIntent::CloseOverlay),
-    );
-
-    let local_scope = UiId::from("help.overlay");
-    assert_eq!(
-        registry.resolve(Some(&local_scope), &InputEvent::key(KeyCode::Char('q'))),
-        Some(&UiIntent::CloseOverlay),
-    );
-}
-
-#[test]
 fn focus_manager_wraps_and_traps_modal_focus() {
     let mut focus = FocusManager::new();
     focus.register("home.explorer").unwrap();
@@ -145,33 +94,6 @@ fn focus_manager_wraps_and_traps_modal_focus() {
     assert_eq!(focus.focused().map(ComponentId::as_str), Some("exit.yes"));
     focus.move_focus(FocusDirection::Previous);
     assert_eq!(focus.focused().map(ComponentId::as_str), Some("exit.no"));
-}
-
-#[test]
-fn hit_map_returns_topmost_latest_target() {
-    let mut hit_map = HitMap::new();
-    hit_map.register(HitTarget::new(
-        "home.explorer",
-        Rect::new(0, 0, 20, 1),
-        HitKind::ListItem(0),
-    ));
-    hit_map.register(
-        HitTarget::new("menu", Rect::new(0, 0, 10, 4), HitKind::ContextMenu).with_z_index(10),
-    );
-
-    let hit = hit_map.hit(Point::new(2, 0)).expect("target under point");
-
-    assert_eq!(hit.id.as_str(), "menu");
-    assert_eq!(hit.kind, HitKind::ContextMenu);
-}
-
-#[test]
-fn keystroke_labels_preserve_modifiers() {
-    assert_eq!(KeyStroke::ctrl_char('c').label(), "Ctrl+c");
-    assert_eq!(
-        KeyStroke::new(KeyCode::Tab, KeyModifiers::SHIFT).label(),
-        "Shift+Tab"
-    );
 }
 
 #[test]

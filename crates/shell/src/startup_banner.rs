@@ -320,33 +320,6 @@ mod tests {
     }
 
     #[test]
-    fn frost_animation_has_clean_deterministic_endpoints() {
-        let assets = assets();
-        let lines = assets
-            .banner_lines(BANNER_ASSET_KEY)
-            .expect("default banner");
-        let lines = visible_banner_lines(lines);
-        let width = lines.iter().map(|line| line.chars().count()).max().unwrap();
-        let exact = padded_banner(lines, width);
-
-        assert_eq!(
-            frost_frame(lines, FrostPhase::Enter, 0.0),
-            blank_frame(lines.len(), width)
-        );
-        assert_eq!(frost_frame(lines, FrostPhase::Enter, 1.0), exact);
-        assert_eq!(frost_frame(lines, FrostPhase::Exit, 0.0), exact);
-        assert_eq!(
-            frost_frame(lines, FrostPhase::Exit, 1.0),
-            blank_frame(lines.len(), width)
-        );
-        let midpoint = frost_frame(lines, FrostPhase::Enter, 0.5);
-        assert_eq!(midpoint, frost_frame(lines, FrostPhase::Enter, 0.5));
-        assert_ne!(midpoint, exact);
-        assert!(midpoint.iter().any(|line| !line.trim().is_empty()));
-        assert!(midpoint.iter().all(|line| line.is_ascii()));
-    }
-
-    #[test]
     fn zero_timing_sequence_still_renders_logo_and_clears_screen() {
         let assets = assets();
         let first_visible_line = assets
@@ -369,25 +342,6 @@ mod tests {
         let output = String::from_utf8(output).unwrap();
         assert!(output.contains(first_visible_line.trim_end()));
         assert!(output.ends_with(CLEAR_SCREEN));
-    }
-
-    #[test]
-    fn production_sequence_holds_the_complete_banner_for_two_seconds() {
-        assert_eq!(StartupBannerTiming::PRODUCTION.hold, Duration::from_secs(2));
-    }
-
-    #[test]
-    fn frame_is_centered_using_the_visible_banner_bounds() {
-        let frame = vec!["ABCDE".to_string(), "  X  ".to_string()];
-        let mut output = Vec::new();
-
-        render_frame(&mut output, &frame, (15, 8), Color::White).expect("centered frame renders");
-
-        let output = String::from_utf8(output).unwrap();
-        assert_eq!(
-            output,
-            format!("{CLEAR_SCREEN}\n\n\n\x1B[97m     ABCDE\n       X\n\x1B[0m")
-        );
     }
 
     #[test]
@@ -416,21 +370,5 @@ mod tests {
         assert!(error.to_string().contains("too small"));
         assert!(output.contains("ooooooooooooo"));
         assert!(!output.ends_with(CLEAR_SCREEN));
-    }
-
-    #[test]
-    fn frost_frame_uses_requested_rgb_color_and_resets() {
-        let mut output = Vec::new();
-        render_frame(
-            &mut output,
-            &["TUNDRA".to_string()],
-            (12, 3),
-            Color::Rgb(18, 52, 86),
-        )
-        .expect("colored frost frame renders");
-
-        let output = String::from_utf8(output).expect("UTF-8 terminal output");
-        assert!(output.contains("\x1B[38;2;18;52;86m"));
-        assert!(output.ends_with("\x1B[0m"));
     }
 }

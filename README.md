@@ -485,6 +485,10 @@ PTY smoke 会在隔离的 XDG 目录中进入真实 Shell，注入 12,000 个 SG
 - storage schema、迁移、原子写入和损坏恢复；
 - watchdog panic 边界、任务回收和事故报告。
 
+长期回归测试应围绕上述产品行为和架构边界。预览动画、可行性 POC、无断言的在线探针、
+平凡 getter/cache 实现以及与上层工作流重复的逐字符或逐像素断言，不纳入 workspace 的
+固定测试集合；只有在它们对应明确的用户可见回归时才应加入。
+
 ### 修改代码时应保持的边界
 
 - 不要从 app 引入 ui、ratatui 或 crossterm。

@@ -191,26 +191,6 @@ fn render_matrix_phase(
     Ok(())
 }
 
-#[cfg(test)]
-fn matrix_frame(
-    banner_lines: &[String],
-    (terminal_width, terminal_height): (u16, u16),
-    rain_progress: f32,
-    banner_progress: f32,
-    color: Color,
-) -> MatrixFrame {
-    let mut frame = MatrixFrame::new();
-    update_matrix_frame(
-        &mut frame,
-        banner_lines,
-        (terminal_width, terminal_height),
-        rain_progress,
-        banner_progress,
-        color,
-    );
-    frame
-}
-
 fn update_matrix_frame(
     frame: &mut MatrixFrame,
     banner_lines: &[String],
@@ -478,78 +458,6 @@ mod tests {
     }
 
     #[test]
-    fn matrix_final_frame_is_only_the_centered_white_banner() {
-        let assets = assets();
-        let banner = visible_banner_lines(
-            assets
-                .banner_lines(BANNER_ASSET_KEY)
-                .expect("default banner"),
-        );
-        let frame = matrix_frame(banner, (120, 40), 1.45, 1.0, Color::White);
-        let banner_width = banner
-            .iter()
-            .map(|line| line.chars().count())
-            .max()
-            .unwrap();
-        let origin_row = (40 - banner.len()) / 2;
-        let origin_column = (120 - banner_width) / 2;
-
-        for (row, cells) in frame.iter().enumerate() {
-            for (column, cell) in cells.iter().enumerate() {
-                let expected = row
-                    .checked_sub(origin_row)
-                    .and_then(|banner_row| banner.get(banner_row))
-                    .and_then(|line| {
-                        column
-                            .checked_sub(origin_column)
-                            .map(|column| (line, column))
-                    })
-                    .and_then(|(line, column)| line.chars().nth(column))
-                    .filter(|glyph| *glyph != ' ');
-                match (cell, expected) {
-                    (Some(cell), Some(glyph)) => {
-                        assert_eq!(cell.glyph, glyph);
-                        assert_eq!(cell.tone, MatrixTone::Banner(Color::White));
-                    }
-                    (None, None) => {}
-                    _ => panic!("matrix final frame differs at ({column}, {row})"),
-                }
-            }
-        }
-    }
-
-    #[test]
-    fn matrix_midpoint_has_full_screen_green_rain_and_falling_white_glyphs() {
-        let assets = assets();
-        let banner = visible_banner_lines(
-            assets
-                .banner_lines(BANNER_ASSET_KEY)
-                .expect("default banner"),
-        );
-        let frame = matrix_frame(banner, (120, 40), 1.225, 0.5, Color::White);
-        let green_count = frame
-            .iter()
-            .flatten()
-            .flatten()
-            .filter(|cell| !matches!(cell.tone, MatrixTone::Banner(_)))
-            .count();
-        let white_count = frame
-            .iter()
-            .flatten()
-            .flatten()
-            .filter(|cell| cell.tone == MatrixTone::Banner(Color::White))
-            .count();
-        let occupied_rows = frame
-            .iter()
-            .filter(|row| row.iter().any(Option::is_some))
-            .count();
-
-        assert!(green_count > white_count);
-        assert!(white_count > 0);
-        assert!(occupied_rows > frame.len() / 2);
-    }
-
-    #[test]
     fn matrix_frame_is_submitted_to_the_terminal_in_one_write() {
         let frame = vec![
             vec![
@@ -575,26 +483,6 @@ mod tests {
         assert_eq!(output.writes, 1);
         assert_eq!(output.flushes, 1);
         assert_eq!(output.bytes, terminal_buffer.as_bytes());
-    }
-
-    #[test]
-    fn production_timing_runs_rain_before_assembly_and_holds_for_one_second() {
-        assert_eq!(MatrixTiming::PRODUCTION.rain, Duration::from_secs(1));
-        assert_eq!(
-            MatrixTiming::PRODUCTION.assemble,
-            Duration::from_millis(1_200)
-        );
-        assert_eq!(MatrixTiming::PRODUCTION.hold, Duration::from_secs(1));
-
-        let mut frame = vec![vec![None; 120]; 40];
-        let assets = assets();
-        let banner = visible_banner_lines(
-            assets
-                .banner_lines(BANNER_ASSET_KEY)
-                .expect("default banner"),
-        );
-        render_falling_banner_glyphs(&mut frame, banner, 0.0, Color::White);
-        assert!(frame.iter().flatten().all(Option::is_none));
     }
 
     #[test]
@@ -647,39 +535,5 @@ mod tests {
 
         assert!(error.to_string().contains("too small"));
         assert!(!String::from_utf8(output).unwrap().ends_with(CLEAR_SCREEN));
-    }
-
-    #[test]
-    fn matrix_banner_uses_requested_rgb_tone_while_rain_stays_green() {
-        let assets = assets();
-        let banner = visible_banner_lines(
-            assets
-                .banner_lines(BANNER_ASSET_KEY)
-                .expect("default banner"),
-        );
-        let color = Color::Rgb(18, 52, 86);
-        let frame = matrix_frame(banner, (120, 40), 1.225, 0.5, color);
-        assert!(
-            frame
-                .iter()
-                .flatten()
-                .flatten()
-                .any(|cell| cell.tone == MatrixTone::Banner(color))
-        );
-        assert!(frame.iter().flatten().flatten().any(|cell| {
-            matches!(
-                cell.tone,
-                MatrixTone::DimGreen | MatrixTone::Green | MatrixTone::BrightGreen
-            )
-        }));
-
-        let mut output = CountingWriter::default();
-        let mut terminal_buffer = String::new();
-        render_matrix_frame(&mut output, &frame, &mut terminal_buffer)
-            .expect("colored Matrix frame renders");
-        let output = String::from_utf8(output.bytes).expect("UTF-8 terminal output");
-        assert!(output.contains("\x1B[38;2;18;52;86m"));
-        assert!(output.contains(MatrixTone::Green.ansi().as_str()));
-        assert!(output.ends_with(BLACK_BACKGROUND));
     }
 }

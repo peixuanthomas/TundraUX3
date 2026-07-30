@@ -1,39 +1,13 @@
-use std::io::Write;
+use std::io::{self, Write};
 use std::process::Command;
 
 use shell::{
     ENTER_FULLSCREEN_SEQUENCE, EXIT_FULLSCREEN_SEQUENCE, ShellArgError, banner_lines,
-    parse_shell_args, render_static_banner, startup_lines,
+    parse_shell_args, render_static_banner,
 };
 
 #[test]
-fn startup_lines_state_phase_zero_boundaries() {
-    let lines = startup_lines();
-    let output = lines.join("\n");
-
-    assert!(lines.iter().any(|line| line.contains("TundraUX3 shell")));
-    assert!(lines.iter().any(|line| line.contains("Phase 0")));
-    assert!(lines.iter().any(|line| line.contains("Supported")));
-    assert!(
-        lines
-            .iter()
-            .any(|line| line.to_ascii_lowercase().contains("terminal"))
-    );
-    assert!(!output.contains("Windows 11"));
-    assert!(!output.contains("Windows Terminal"));
-}
-
-#[test]
-fn banner_contains_requested_tundraux3_logo() {
-    let lines = banner_lines().expect("banner asset should load");
-
-    assert!(!lines.is_empty());
-    assert!(lines.iter().all(|line| line.is_ascii()));
-    assert!(lines.iter().any(|line| !line.trim().is_empty()));
-}
-
-#[test]
-fn static_banner_renders_all_logo_lines() {
+fn static_banner_renders_the_complete_logo_and_resets_color() {
     let mut output = Vec::new();
     let expected_lines = banner_lines().expect("banner asset should load");
 
@@ -54,29 +28,9 @@ fn static_banner_renders_all_logo_lines() {
 }
 
 #[test]
-fn shell_can_enter_smoke_loop_without_animation() {
-    let mut output = Vec::new();
-    let first_banner_line = first_non_blank_banner_line();
-
-    render_static_banner(&mut output).expect("static banner should render");
-    for line in startup_lines() {
-        writeln!(output, "{line}").expect("startup line should render");
-    }
-    writeln!(output, "Entering smoke loop").expect("smoke marker should render");
-
-    let output = String::from_utf8(output).expect("shell output should be utf8");
-    assert!(output.contains(&first_banner_line));
-    assert!(output.contains("TundraUX3 shell - Phase 0 smoke"));
-    assert!(output.contains("Entering smoke loop"));
-}
-
-#[test]
-fn shell_accepts_only_an_empty_argument_list() {
+fn shell_rejects_all_arguments_before_starting_the_ui() {
     assert_eq!(parse_shell_args(std::iter::empty::<&str>()), Ok(()));
-}
 
-#[test]
-fn former_flags_help_and_positional_arguments_are_all_rejected() {
     for argument in [
         "-notfullscreen",
         "-debug",
@@ -94,18 +48,12 @@ fn former_flags_help_and_positional_arguments_are_all_rejected() {
             format!("tundra-shell does not accept arguments: {argument}")
         );
     }
-}
 
-#[test]
-fn multiple_arguments_are_rejected_at_the_process_boundary() {
     assert_eq!(
         parse_shell_args(["-debug", "-editor"]),
         Err(ShellArgError::ArgumentNotAllowed("-debug".to_string()))
     );
-}
 
-#[test]
-fn shell_binary_rejects_arguments_before_starting_the_ui() {
     let output = Command::new(env!("CARGO_BIN_EXE_tundra-shell"))
         .arg("--help")
         .output()
@@ -118,38 +66,29 @@ fn shell_binary_rejects_arguments_before_starting_the_ui() {
 }
 
 #[test]
-fn fullscreen_mode_enters_and_exits_alternate_screen() {
+fn fullscreen_mode_enters_and_restores_the_terminal() {
     let mut output = Vec::new();
 
-    platform::with_terminal_fullscreen(&mut output, |output| {
-        render_static_banner(output)?;
-        writeln!(output, "Entering smoke loop")
-    })
-    .expect("fullscreen render should complete");
+    platform::with_terminal_fullscreen(&mut output, |output| writeln!(output, "content"))
+        .expect("fullscreen render should complete");
 
     let output = String::from_utf8(output).expect("fullscreen output should be utf8");
-    assert!(output.starts_with(ENTER_FULLSCREEN_SEQUENCE));
-    assert!(output.contains("Entering smoke loop"));
-    assert!(output.ends_with(EXIT_FULLSCREEN_SEQUENCE));
-}
+    assert_eq!(
+        output,
+        format!("{ENTER_FULLSCREEN_SEQUENCE}content\n{EXIT_FULLSCREEN_SEQUENCE}")
+    );
 
-#[test]
-fn static_banner_does_not_write_alternate_screen_sequences() {
-    let mut output = Vec::new();
+    let mut failed_output = Vec::new();
+    let error = platform::with_terminal_fullscreen(&mut failed_output, |output| {
+        writeln!(output, "partial content")?;
+        Err::<(), _>(io::Error::other("body failed"))
+    })
+    .expect_err("body failure should be returned");
 
-    render_static_banner(&mut output).expect("static banner should render");
-    writeln!(output, "Entering smoke loop").expect("smoke marker should render");
-
-    let output = String::from_utf8(output).expect("static banner output should be utf8");
-    assert!(!output.contains(ENTER_FULLSCREEN_SEQUENCE));
-    assert!(!output.contains(EXIT_FULLSCREEN_SEQUENCE));
-    assert!(output.contains("Entering smoke loop"));
-}
-
-fn first_non_blank_banner_line() -> String {
-    banner_lines()
-        .expect("banner asset should load")
-        .into_iter()
-        .find(|line| !line.trim().is_empty())
-        .expect("banner asset should contain visible content")
+    assert_eq!(error.kind(), io::ErrorKind::Other);
+    let failed_output = String::from_utf8(failed_output).expect("fullscreen output should be utf8");
+    assert_eq!(
+        failed_output,
+        format!("{ENTER_FULLSCREEN_SEQUENCE}partial content\n{EXIT_FULLSCREEN_SEQUENCE}")
+    );
 }
