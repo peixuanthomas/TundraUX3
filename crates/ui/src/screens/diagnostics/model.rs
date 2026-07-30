@@ -35,6 +35,7 @@ impl DiagnosticsTab {
 pub enum DiagnosticsStatus {
     #[default]
     Pass,
+    Unsupported,
     Warning,
     Fail,
 }
@@ -43,6 +44,7 @@ impl DiagnosticsStatus {
     pub const fn label(self) -> &'static str {
         match self {
             Self::Pass => "Pass",
+            Self::Unsupported => "Unsupported",
             Self::Warning => "Warning",
             Self::Fail => "Failure",
         }
@@ -51,6 +53,7 @@ impl DiagnosticsStatus {
     pub const fn marker(self) -> &'static str {
         match self {
             Self::Pass => "[OK]",
+            Self::Unsupported => "[-]",
             Self::Warning => "[!]",
             Self::Fail => "[X]",
         }

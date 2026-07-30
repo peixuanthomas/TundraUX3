@@ -193,6 +193,10 @@ pub fn run_fullscreen_blocking_managed_with_outcome(
         std::sync::Arc::clone(&platform),
     )
     .map_err(io::Error::other)?;
+    let (terminal_graphics_sender, terminal_graphics_receiver) = mpsc::sync_channel(1);
+    let _terminal_graphics_worker =
+        spawn_terminal_graphics_probe_worker(terminal_graphics_sender, &shell_watchdog)
+            .map_err(io::Error::other)?;
     let weather_prefetch_options =
         startup_lockscreen_launch_options(&initial_startup, terminal_size_requirement);
     let _weather_prefetch_worker =
@@ -205,9 +209,15 @@ pub fn run_fullscreen_blocking_managed_with_outcome(
             initial_startup.app_config.border_color,
         )
     })?;
+    let terminal_graphics_probe = terminal_graphics_receiver.recv().unwrap_or_else(|_| {
+        ui::TerminalGraphicsProbe::no_response(
+            "terminal graphics detection worker stopped without returning a result",
+        )
+    });
     let mut initial_startup = Some(initial_startup);
     let mut cached_time_sync = None;
     let mut force_lockscreen = false;
+    let mut show_terminal_graphics_notice = true;
     let mut session_recoveries = VecDeque::new();
     let mut explorer_task_runtime: Option<ShellExplorerTaskRuntime> = None;
     let mut diagnostics_task_runtime: Option<ShellDiagnosticsTaskRuntime> = None;
@@ -294,6 +304,8 @@ pub fn run_fullscreen_blocking_managed_with_outcome(
                     &process,
                     explorer_task_runtime.clone(),
                     diagnostics_task_runtime.clone(),
+                    &terminal_graphics_probe,
+                    std::mem::take(&mut show_terminal_graphics_notice),
                 )
             }),
         );
@@ -381,14 +393,11 @@ pub(super) struct LauncherIconRuntime {
 }
 
 impl LauncherIconRuntime {
-    fn detect_and_spawn(
+    fn spawn(
         platform: std::sync::Arc<dyn Platform>,
+        picker: ui::EditorImagePicker,
         watchdog: &AppWatchdog,
-    ) -> Result<Option<Self>, String> {
-        let picker = ui::EditorImagePicker::detect_stdio().map_err(|error| error.to_string())?;
-        let Some(picker) = picker else {
-            return Ok(None);
-        };
+    ) -> Result<Self, String> {
         let (request_sender, request_receiver) = mpsc::channel::<LauncherIconRequest>();
         let (result_sender, result_receiver) = mpsc::channel::<LauncherIconResult>();
         let group = watchdog
@@ -421,7 +430,7 @@ impl LauncherIconRuntime {
                 },
             )
             .map_err(|error| error.to_string())?;
-        Ok(Some(Self {
+        Ok(Self {
             picker,
             requests: request_sender,
             results: result_receiver,
@@ -432,11 +441,7 @@ impl LauncherIconRuntime {
             home_unavailable: HashSet::new(),
             home_prepared: HashMap::new(),
             _worker: worker,
-        }))
-    }
-
-    fn protocol(&self) -> ui::EditorGraphicsProtocol {
-        self.picker.protocol()
+        })
     }
 
     fn sync(&mut self, model: &ui::LauncherViewModel, main: Rect) {
@@ -786,21 +791,22 @@ pub(super) fn run_fullscreen_shell_session(
     process_watchdog: &ProcessWatchdog,
     explorer_task_runtime: Option<ShellExplorerTaskRuntime>,
     diagnostics_task_runtime: Option<ShellDiagnosticsTaskRuntime>,
+    terminal_graphics_probe: &ui::TerminalGraphicsProbe,
+    show_terminal_graphics_notice: bool,
 ) -> io::Result<(FullscreenShellSessionOutcome, ui::RuntimeAsciiAssets)> {
     let terminal_size_requirement = ShellTerminalSizeRequirement::from_assets(&ascii_assets);
     let initial_size = checked_current_terminal_size(terminal_size_requirement)?;
     let mut guard = TerminalGuard::enter(output)?;
-    let launcher_icon_result =
-        LauncherIconRuntime::detect_and_spawn(std::sync::Arc::clone(&platform), shell_watchdog);
-    let terminal_graphics_protocol = launcher_icon_result
-        .as_ref()
-        .ok()
-        .and_then(|runtime| runtime.as_ref())
-        .map(LauncherIconRuntime::protocol);
     if let Some(diagnostics) = diagnostics_task_runtime.as_ref() {
-        diagnostics.set_terminal_graphics_protocol(platform.kind(), terminal_graphics_protocol);
+        diagnostics.set_terminal_graphics_probe(terminal_graphics_probe.status().clone());
     }
-    let mut launcher_icons = launcher_icon_result.unwrap_or(None);
+    let mut launcher_icons = terminal_graphics_probe
+        .picker()
+        .cloned()
+        .and_then(|picker| {
+            LauncherIconRuntime::spawn(std::sync::Arc::clone(&platform), picker, shell_watchdog)
+                .ok()
+        });
     let theme_storage = startup.storage_manager.clone();
     if startup.auth_bootstrap_required {
         display_first_run_banner_with_assets_colored(
@@ -821,6 +827,9 @@ pub(super) fn run_fullscreen_shell_session(
         ShellSettingsTaskRuntime::new_managed(shell_watchdog.clone()),
     );
     state.set_terminal_image_support(launcher_icons.is_some());
+    if show_terminal_graphics_notice {
+        state.apply_terminal_graphics_startup_policy(terminal_graphics_probe.status());
+    }
     state.launcher_task_runtime = Some(ShellLauncherTaskRuntime::new_managed(
         std::sync::Arc::clone(&platform),
         shell_watchdog.clone(),
@@ -2291,6 +2300,21 @@ pub(super) fn spawn_weather_prefetch_worker(
                 return;
             };
             let _ = runtime.block_on(weathr::prefetch_weather(options.clone()));
+        },
+    )
+}
+
+pub(super) fn spawn_terminal_graphics_probe_worker(
+    sender: mpsc::SyncSender<ui::TerminalGraphicsProbe>,
+    watchdog: &AppWatchdog,
+) -> Result<ManagedThreadHandle<()>, watchdog::WatchdogError> {
+    let group = watchdog
+        .child_component(ComponentId::from_static("startup-probe"))
+        .task_group("terminal-graphics");
+    group.spawn_thread(
+        TaskSpec::one_shot(TaskId::from_static("capabilities")),
+        move || {
+            let _ = sender.send(probe_terminal_graphics_protocol());
         },
     )
 }

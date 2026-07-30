@@ -113,27 +113,43 @@ impl<W: Write> Drop for TerminalGuard<W> {
 }
 
 /// Uses the same live terminal query as the Shell image renderer and returns
-/// the detected inline graphics protocol label. Non-interactive stdio cannot
-/// be queried safely and is treated as text-only.
+/// the detected inline graphics protocol label. Non-interactive stdio and
+/// unanswered handshakes are reported as probe errors rather than as explicit
+/// text-only support.
 pub fn detect_terminal_graphics_protocol() -> Result<Option<&'static str>, String> {
+    match probe_terminal_graphics_protocol().status() {
+        ui::TerminalGraphicsProbeStatus::Verified(protocol) => Ok(Some(protocol.label())),
+        ui::TerminalGraphicsProbeStatus::Unsupported => Ok(None),
+        ui::TerminalGraphicsProbeStatus::NoResponse { reason } => Err(reason.clone()),
+    }
+}
+
+/// Performs the process-level terminal graphics handshake. Callers must ensure
+/// that no other thread is reading terminal events until this function
+/// returns.
+pub fn probe_terminal_graphics_protocol() -> ui::TerminalGraphicsProbe {
     if !io::stdin().is_terminal() || !io::stdout().is_terminal() {
-        return Ok(None);
+        return ui::TerminalGraphicsProbe::no_response(
+            "terminal graphics detection requires interactive stdin and stdout",
+        );
     }
 
-    let mut raw_mode = TemporaryRawMode::enter()?;
-    let detected = ui::EditorImagePicker::detect_stdio()
-        .map(|picker| picker.map(|picker| picker.protocol().label()))
-        .map_err(|error| error.to_string());
-    let restored = raw_mode.restore().map_err(|error| {
-        format!("could not restore terminal mode after graphics capability probe: {error}")
-    });
-
-    match (detected, restored) {
-        (Ok(protocol), Ok(())) => Ok(protocol),
-        (Err(error), Ok(())) => Err(error),
-        (Ok(_), Err(error)) => Err(error),
-        (Err(detection_error), Err(restore_error)) => {
-            Err(format!("{detection_error}; {restore_error}"))
+    let mut raw_mode = match TemporaryRawMode::enter() {
+        Ok(raw_mode) => raw_mode,
+        Err(error) => return ui::TerminalGraphicsProbe::no_response(error),
+    };
+    let detected = ui::EditorImagePicker::probe_stdio();
+    match raw_mode.restore() {
+        Ok(()) => detected,
+        Err(error) => {
+            let restore_error =
+                format!("could not restore terminal mode after graphics capability probe: {error}");
+            match detected.status() {
+                ui::TerminalGraphicsProbeStatus::NoResponse { reason } => {
+                    ui::TerminalGraphicsProbe::no_response(format!("{reason}; {restore_error}"))
+                }
+                _ => ui::TerminalGraphicsProbe::no_response(restore_error),
+            }
         }
     }
 }
