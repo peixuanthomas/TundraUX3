@@ -5,6 +5,7 @@ use ratatui::widgets::{Block, Borders, List, ListItem, ListState, Paragraph, Wra
 
 use super::{LoginField, LoginViewModel};
 use crate::TundraTheme;
+use crate::components::{Button, TextInput};
 use crate::screens::shell::{
     ShellChromeViewModel, ShellLayout, compute_shell_layout, render_compact_home, render_status,
     render_top,
@@ -209,35 +210,34 @@ fn render_login_password_field(
     } else {
         theme.body_style()
     };
-    let password = if let Some(visible) = model.visible_password() {
-        visible.to_string()
-    } else if model.password_len == 0 {
-        "Enter password".to_string()
+    let focused = model.focused_field == LoginField::Password;
+    let block = theme
+        .block()
+        .title("Password")
+        .title_style(block_style)
+        .borders(Borders::ALL)
+        .style(block_style)
+        .border_style(theme.selectable_border_style(focused));
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+
+    if inner.width == 0 || inner.height == 0 {
+        return;
+    }
+
+    let (password, placeholder) = if let Some(visible) = model.visible_password() {
+        (visible.to_string(), "")
     } else {
-        "*".repeat(model.password_len)
+        ("*".repeat(model.password_len), "Enter password")
     };
-    let password_style = if model.password_len == 0 && !model.password_is_visible() {
-        theme.muted_style()
-    } else {
-        theme.body_style()
-    };
-    frame.render_widget(
-        Paragraph::new(password)
-            .style(password_style)
-            .block(
-                theme
-                    .block()
-                    .title("Password")
-                    .title_style(block_style)
-                    .borders(Borders::ALL)
-                    .style(block_style)
-                    .border_style(
-                        theme.selectable_border_style(model.focused_field == LoginField::Password),
-                    ),
-            )
-            .wrap(Wrap { trim: true }),
-        area,
-    );
+    let mut input = TextInput::new("login.password")
+        .with_placeholder(placeholder)
+        .with_cursor_symbol("");
+    input.set_value(password);
+    // The controller owns the password and the outer block owns focus. Keeping
+    // the borderless content renderer unfocused preserves the prior placeholder
+    // styling and deliberately avoids introducing a visible component cursor.
+    input.render_borderless_frame(frame, Rect::new(inner.x, inner.y, inner.width, 1), theme);
 }
 
 fn render_login_button(
@@ -256,17 +256,12 @@ fn render_login_button(
         area.width,
         1,
     );
-    let style = if selected {
-        theme.title_style()
-    } else {
-        theme.body_style()
-    };
-    frame.render_widget(
-        Paragraph::new(Line::styled(label, style))
-            .style(style)
-            .alignment(Alignment::Center),
-        line,
-    );
+    let mut button = Button::new("login.password-visibility", label);
+    button.set_focused(selected);
+    // Inline focused actions historically use the title style. Combining the
+    // component's focused and hover affordances preserves that visual contract.
+    button.state.hovered = selected;
+    button.render_borderless_frame(frame, line, theme);
 }
 
 pub fn login_layout(main: Rect) -> LoginLayout {

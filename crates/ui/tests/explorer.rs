@@ -10,8 +10,8 @@ use ui::{
     ExplorerProgressStage, ExplorerPropertiesViewModel, ExplorerPropertyViewModel,
     ExplorerQuickLocationViewModel, ExplorerSearchViewModel, ExplorerSortColumn,
     ExplorerToolbarAction, ExplorerViewModel, HomeDisplayMode, NotificationTone,
-    ShellChromeViewModel, StatusViewModel, TundraTheme, explorer_first_entry_content_line,
-    explorer_layout, render_explorer,
+    ShellChromeViewModel, ShellLayout, StatusViewModel, TundraTheme, compute_shell_layout,
+    explorer_first_entry_content_line, explorer_layout, render_explorer,
 };
 
 #[test]
@@ -46,7 +46,7 @@ fn explorer_renderer_shows_path_entries_details_search_and_message() {
 
     assert!(output.contains("/Users/strix/projects"));
     assert!(output.contains("Hidden files: shown"));
-    assert!(output.contains("Search: read (1 match, active)"));
+    assert!(output.contains("Search: read_ (1 match, active)"));
     assert!(output.contains("[+] src"));
     assert!(output.contains("Directory"));
     assert!(output.contains("[T] README.md"));
@@ -92,6 +92,17 @@ fn explorer_renderer_shows_error() {
     let output = render_output(&model);
 
     assert!(output.contains("Error: Permission denied: README.md"));
+}
+
+#[test]
+fn explorer_address_editor_renders_the_controlled_value_and_cursor() {
+    let mut model = sample_model();
+    model.address_editing = true;
+    model.address_value = "/Users/strix/projects/src".to_string();
+
+    let output = render_output(&model);
+
+    assert!(output.contains("> /Users/strix/projects/src_"));
 }
 
 #[test]
@@ -247,6 +258,25 @@ fn explorer_layout_exposes_shared_mouse_hit_geometry() {
 }
 
 #[test]
+fn explorer_breadcrumb_geometry_uses_terminal_columns_for_wide_labels() {
+    let mut model = sample_model();
+    model.breadcrumbs = vec![ExplorerBreadcrumbViewModel::new(
+        "documents",
+        "目录",
+        "/Users/strix/目录",
+    )];
+
+    let layout = explorer_layout(Rect::new(0, 0, 110, 28), &model);
+    let breadcrumb = layout.breadcrumbs.first().expect("wide breadcrumb");
+
+    assert_eq!(breadcrumb.area.width, 7);
+    assert_eq!(
+        layout.hit_test(breadcrumb.area.right().saturating_sub(1), breadcrumb.area.y,),
+        Some(ExplorerHitTarget::Breadcrumb(0)),
+    );
+}
+
+#[test]
 fn explorer_layout_keeps_focused_entry_visible_and_adds_scrollbar() {
     let entries = (0..20)
         .map(|index| ExplorerEntryViewModel {
@@ -283,6 +313,42 @@ fn explorer_toolbar_keeps_every_action_at_supported_widths() {
                 .collect::<Vec<_>>(),
             ExplorerToolbarAction::REGULAR,
             "toolbar actions at width {width}"
+        );
+    }
+}
+
+#[test]
+fn explorer_toolbar_buttons_have_one_outer_bracket_pair() {
+    let model = sample_model();
+    let terminal = render_terminal(&model);
+    let ShellLayout::Full { main, .. } = compute_shell_layout(Rect::new(0, 0, 110, 32)) else {
+        panic!("test terminal must use the full shell layout");
+    };
+    let layout = explorer_layout(main, &model);
+    let buffer = terminal.backend().buffer();
+
+    for button in layout.toolbar_buttons {
+        assert_eq!(
+            buffer
+                .cell((button.area.x, button.area.y))
+                .expect("toolbar opening bracket")
+                .symbol(),
+            "["
+        );
+        assert_ne!(
+            buffer
+                .cell((button.area.x.saturating_add(1), button.area.y))
+                .expect("toolbar icon")
+                .symbol(),
+            "[",
+            "toolbar button must not render a duplicate opening bracket"
+        );
+        assert_eq!(
+            buffer
+                .cell((button.area.right().saturating_sub(1), button.area.y))
+                .expect("toolbar closing bracket")
+                .symbol(),
+            "]"
         );
     }
 }
@@ -380,7 +446,7 @@ fn explorer_name_dialog_renders_clickable_input_and_actions() {
     let output = render_output(&model);
     assert!(output.contains("Rename"));
     assert!(output.contains("Enter a new name"));
-    assert!(output.contains("README-new.md"));
+    assert!(output.contains("> README-new.md_"));
     assert!(output.contains("Save"));
 }
 
@@ -417,10 +483,39 @@ fn explorer_advanced_options_conflict_and_properties_overlays_render() {
             close_label: "Done".to_string(),
         },
     ));
-    let options = render_output(&model);
+    let option_area = overlay_control_area(&model, &ExplorerOverlayControl::Option(0));
+    let options_terminal = render_terminal(&model);
+    let options = terminal_output(&options_terminal);
     assert!(options.contains("Advanced options"));
     assert!(options.contains("Show hidden: Off"));
     assert!(options.contains("Done"));
+    assert_eq!(
+        options_terminal
+            .backend()
+            .buffer()
+            .cell((option_area.x, option_area.y))
+            .expect("option origin cell")
+            .symbol(),
+        "[",
+        "the component-rendered option button must start with a square bracket",
+    );
+    assert_eq!(
+        options_terminal
+            .backend()
+            .buffer()
+            .cell((option_area.x.saturating_add(1), option_area.y))
+            .expect("option label cell")
+            .symbol(),
+        "S",
+        "the bracketed option label must remain left aligned",
+    );
+    let option_cell = &options_terminal.backend().buffer()[(option_area.x, option_area.y)];
+    assert_eq!(option_cell.fg, TundraTheme::default_dark().accent_color);
+    assert_eq!(
+        option_cell.bg,
+        TundraTheme::default_dark().background,
+        "selected Button text must not use an accent background",
+    );
 
     model.overlay = Some(ExplorerOverlayViewModel::Conflict(
         ExplorerConflictViewModel {
@@ -438,11 +533,40 @@ fn explorer_advanced_options_conflict_and_properties_overlays_render() {
             apply_to_remaining: true,
         },
     ));
-    let conflict = render_output(&model);
+    let apply_area = overlay_control_area(&model, &ExplorerOverlayControl::ApplyToRemaining);
+    let conflict_terminal = render_terminal(&model);
+    let conflict = terminal_output(&conflict_terminal);
     assert!(conflict.contains("Name conflict"));
     assert!(conflict.contains("README.md"));
     assert!(conflict.contains("Keep both"));
-    assert!(conflict.contains("Apply to remaining"));
+    assert!(conflict.contains("Apply to remaining items: On"));
+    assert_eq!(
+        conflict_terminal
+            .backend()
+            .buffer()
+            .cell((apply_area.x, apply_area.y))
+            .expect("apply-to-remaining origin cell")
+            .symbol(),
+        "[",
+        "the component-rendered toggle button must start with a square bracket",
+    );
+    assert_eq!(
+        conflict_terminal
+            .backend()
+            .buffer()
+            .cell((apply_area.x.saturating_add(1), apply_area.y))
+            .expect("apply-to-remaining label cell")
+            .symbol(),
+        "A",
+        "the bracketed toggle label must remain left aligned",
+    );
+    let apply_cell = &conflict_terminal.backend().buffer()[(apply_area.x, apply_area.y)];
+    assert_eq!(apply_cell.fg, TundraTheme::default_dark().accent_color);
+    assert_eq!(
+        apply_cell.bg,
+        TundraTheme::default_dark().background,
+        "selected Button text must not use an accent background",
+    );
 
     model.overlay = Some(ExplorerOverlayViewModel::Properties(
         ExplorerPropertiesViewModel {
@@ -504,6 +628,10 @@ fn chrome_for(screen: &str) -> ShellChromeViewModel {
 }
 
 fn render_output(model: &ExplorerViewModel) -> String {
+    terminal_output(&render_terminal(model))
+}
+
+fn render_terminal(model: &ExplorerViewModel) -> Terminal<TestBackend> {
     let chrome = chrome_for("Explorer");
     let mut terminal = Terminal::new(TestBackend::new(110, 32)).expect("test terminal");
     terminal
@@ -517,7 +645,21 @@ fn render_output(model: &ExplorerViewModel) -> String {
             );
         })
         .expect("render explorer");
-    terminal_output(&terminal)
+    terminal
+}
+
+fn overlay_control_area(model: &ExplorerViewModel, target: &ExplorerOverlayControl) -> Rect {
+    let ShellLayout::Full { main, .. } = compute_shell_layout(Rect::new(0, 0, 110, 32)) else {
+        panic!("test terminal must use the full shell layout");
+    };
+    explorer_layout(main, model)
+        .overlay
+        .expect("overlay layout")
+        .controls
+        .iter()
+        .find(|control| &control.control == target)
+        .expect("overlay control")
+        .area
 }
 
 fn terminal_output(terminal: &Terminal<TestBackend>) -> String {

@@ -10,6 +10,7 @@ use super::{
     compute_shell_layout,
 };
 use crate::TundraTheme;
+use crate::components::Button;
 use crate::screens::notifications::{notification_tone_prefix, notification_tone_style};
 use crate::theme::solid_border_style;
 
@@ -42,28 +43,84 @@ pub fn render_exit_confirmation(
     theme: &TundraTheme,
 ) {
     let dialog = centered_rect(area, area.width.min(54), area.height.min(8));
-    let lines = vec![
-        Line::from(model.message.clone()),
-        Line::from(""),
-        Line::from(format!(
-            "{}    {}",
-            model.confirm_label, model.restart_label
-        )),
-        Line::from(model.cancel_label.clone()),
-    ];
-    let dialog_widget = Paragraph::new(lines)
-        .block(
-            theme
-                .block()
-                .title(model.title.as_str())
-                .borders(Borders::ALL)
-                .style(theme.body_style()),
-        )
-        .alignment(Alignment::Center)
-        .wrap(Wrap { trim: true });
+    let dialog_block = theme
+        .block()
+        .title(model.title.as_str())
+        .borders(Borders::ALL)
+        .style(theme.body_style());
+    let inner = dialog_block.inner(dialog);
 
     frame.render_widget(Clear, dialog);
-    frame.render_widget(dialog_widget, dialog);
+    frame.render_widget(dialog_block, dialog);
+
+    if inner.width == 0 || inner.height == 0 {
+        return;
+    }
+
+    frame.render_widget(
+        Paragraph::new(model.message.as_str())
+            .alignment(Alignment::Center)
+            .wrap(Wrap { trim: true }),
+        Rect::new(inner.x, inner.y, inner.width, 1),
+    );
+
+    if inner.height > 2 {
+        let action_row = Rect::new(inner.x, inner.y.saturating_add(2), inner.width, 1);
+        let confirm = Button::new("shell.exit.confirm", model.confirm_label.clone());
+        let restart = Button::new("shell.exit.restart", model.restart_label.clone());
+        let confirm_width = u16::try_from(confirm.rendered_label_width())
+            .unwrap_or(u16::MAX)
+            .min(action_row.width);
+        let restart_width = u16::try_from(restart.rendered_label_width())
+            .unwrap_or(u16::MAX)
+            .min(action_row.width);
+        let actions_width = confirm_width
+            .saturating_add(4)
+            .saturating_add(restart_width)
+            .min(action_row.width);
+        let actions_x = action_row
+            .x
+            .saturating_add(action_row.width.saturating_sub(actions_width) / 2);
+
+        confirm.render_borderless_frame(
+            frame,
+            Rect::new(actions_x, action_row.y, confirm_width, 1),
+            theme,
+        );
+        restart.render_borderless_frame(
+            frame,
+            Rect::new(
+                actions_x.saturating_add(confirm_width).saturating_add(4),
+                action_row.y,
+                restart_width.min(
+                    action_row
+                        .right()
+                        .saturating_sub(actions_x.saturating_add(confirm_width).saturating_add(4)),
+                ),
+                1,
+            ),
+            theme,
+        );
+    }
+
+    if inner.height > 3 {
+        let cancel = Button::new("shell.exit.cancel", model.cancel_label.clone());
+        let cancel_width = u16::try_from(cancel.rendered_label_width())
+            .unwrap_or(u16::MAX)
+            .min(inner.width);
+        cancel.render_borderless_frame(
+            frame,
+            Rect::new(
+                inner
+                    .x
+                    .saturating_add(inner.width.saturating_sub(cancel_width) / 2),
+                inner.y.saturating_add(3),
+                cancel_width,
+                1,
+            ),
+            theme,
+        );
+    }
 }
 
 pub fn render_time_sync_failure_dialog(
@@ -280,15 +337,34 @@ fn truncate_status_text(text: &str, width: u16) -> String {
         })
         .collect::<String>();
     let width = usize::from(width);
-    let length = text.chars().count();
-    if length <= width {
+    if Line::from(text.as_str()).width() <= width {
         return text;
     }
     if width <= 3 {
-        return text.chars().take(width).collect();
+        let mut visible = String::new();
+        let mut used = 0usize;
+        for character in text.chars() {
+            let character_width = Line::from(character.to_string()).width();
+            if used.saturating_add(character_width) > width {
+                break;
+            }
+            visible.push(character);
+            used = used.saturating_add(character_width);
+        }
+        return visible;
     }
 
-    let visible = text.chars().take(width - 3).collect::<String>();
+    let content_width = width.saturating_sub(3);
+    let mut visible = String::new();
+    let mut used = 0usize;
+    for character in text.chars() {
+        let character_width = Line::from(character.to_string()).width();
+        if used.saturating_add(character_width) > content_width {
+            break;
+        }
+        visible.push(character);
+        used = used.saturating_add(character_width);
+    }
     format!("{visible}...")
 }
 
@@ -299,38 +375,59 @@ fn render_status_time_button(
     selected: bool,
     theme: &TundraTheme,
 ) {
-    let style = if selected {
-        theme.title_style()
-    } else {
-        theme.body_style()
-    };
-    let button = Paragraph::new(label.to_string())
-        .style(style)
-        .block(
-            theme
-                .block()
-                .borders(Borders::ALL)
-                .style(style)
-                .border_style(theme.selectable_border_style(selected)),
-        )
-        .alignment(Alignment::Center)
-        .wrap(Wrap { trim: true });
+    let mut button = Button::new("shell.status.time", label.to_string());
+    button.state.selected = selected;
 
     frame.render_widget(Clear, area);
-    frame.render_widget(button, area);
+    button.render_frame(frame, area, theme);
+}
+
+#[cfg(test)]
+fn text_width(text: &str) -> u16 {
+    u16::try_from(Line::from(text).width()).unwrap_or(u16::MAX)
 }
 
 pub(crate) fn fit_cell(text: &str, width: usize) -> String {
     if width == 0 {
         return String::new();
     }
-    let mut characters = text.chars();
-    let mut fitted = characters.by_ref().take(width).collect::<String>();
-    if characters.next().is_some() && width > 1 {
-        fitted.pop();
-        fitted.push('…');
+
+    let text_width = Line::from(text).width();
+    if text_width <= width {
+        let mut fitted = text.to_string();
+        fitted.extend(std::iter::repeat_n(' ', width.saturating_sub(text_width)));
+        return fitted;
     }
-    let used = fitted.chars().count();
+
+    let content_width = width.saturating_sub(1);
+    let mut fitted = String::new();
+    let mut used = 0usize;
+    for character in text.chars() {
+        let character_width = Line::from(character.to_string()).width();
+        if used.saturating_add(character_width) > content_width {
+            break;
+        }
+        fitted.push(character);
+        used = used.saturating_add(character_width);
+    }
+    fitted.push('…');
+    used = used.saturating_add(1);
     fitted.extend(std::iter::repeat_n(' ', width.saturating_sub(used)));
     fitted
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{fit_cell, text_width, truncate_status_text};
+    use ratatui::text::Line;
+
+    #[test]
+    fn cell_fitting_and_status_truncation_use_terminal_display_width() {
+        assert_eq!(text_width("界面"), 4);
+        assert_eq!(fit_cell("界面", 5), "界面 ");
+        assert_eq!(fit_cell("界面", 3), "界…");
+        assert_eq!(Line::from(fit_cell("界面", 3)).width(), 3);
+        assert_eq!(truncate_status_text("界面状态", 5), "界...");
+        assert_eq!(Line::from(truncate_status_text("界面状态", 5)).width(), 5);
+    }
 }

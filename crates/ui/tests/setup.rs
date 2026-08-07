@@ -9,7 +9,7 @@ use ui::{
     SetupTimezoneOption, SetupViewModel, ShellChromeViewModel, ShellLayout, StatusViewModel,
     TundraTheme, compute_shell_layout, render_setup, setup_admin_field_area,
     setup_appearance_palette_option_areas, setup_language_options, setup_standard_color_options,
-    setup_timezone_options,
+    setup_timezone_list_area, setup_timezone_options,
 };
 
 const WIDE_SETUP_WIDTH: u16 = 120;
@@ -85,7 +85,7 @@ fn setup_admin_page_is_step_specific_and_masks_password() {
     assert!(output.contains("AdminUser"));
     assert!(output.contains("Admin password"));
     assert!(output.contains("Re-enter password"));
-    assert!(output.contains("*************"));
+    assert!(output.contains("*************_"));
     assert!(!output.contains("ActualPlaintext"));
     assert!(output.contains("Password hint"));
     assert!(output.contains("Stored in 1Password"));
@@ -219,7 +219,8 @@ fn setup_appearance_disables_the_accent_option_matching_the_theme_color() {
     .find_map(|(index, area)| (index == cyan_index).then_some(area))
     .expect("cyan accent option is visible");
 
-    assert!(output.contains("[xCyan]"));
+    assert!(output.contains("Cyan"));
+    assert!(!output.contains("[xCyan]"));
     assert!(region_has_fg(&terminal, cyan_area, theme.muted));
     assert!(!region_has_fg(&terminal, cyan_area, Color::Cyan));
 }
@@ -237,7 +238,7 @@ fn setup_custom_color_dialog_shows_input_and_validation_feedback() {
 
     assert!(output.contains("Custom theme color"));
     assert!(output.contains("Color code"));
-    assert!(output.contains("#12GG00"));
+    assert!(output.contains("#12GG00_"));
     assert!(output.contains("Invalid color"));
     assert!(output.contains("Enter: apply"));
     assert!(output.contains("Esc: cancel"));
@@ -411,13 +412,14 @@ fn setup_renderer_handles_utc_and_utc_alias_timezone_map_without_panic() {
 }
 
 #[test]
-fn setup_renderer_shows_timezone_scroll_indicators_when_window_is_partial() {
+fn setup_renderer_uses_official_timezone_scrollbar_when_window_is_partial() {
     let model = sample_model(SetupStep::Timezone, None);
     let terminal = render_terminal(&model, 70, 19, TundraTheme::default_dark());
     let output = terminal_output(&terminal);
+    let list_area = setup_timezone_list_area(setup_main_rect(70, 19));
 
-    assert!(output.contains("^ more timezones"));
-    assert!(output.contains("v more timezones"));
+    assert!(!output.contains("more timezones"));
+    assert!(region_has_symbol(&terminal, list_area, "█"));
 }
 
 #[test]
@@ -599,6 +601,17 @@ fn region_has_fg(terminal: &Terminal<TestBackend>, area: Rect, fg: Color) -> boo
             buffer
                 .cell((x, y))
                 .is_some_and(|cell| cell.fg == fg && cell.symbol() != " ")
+        })
+    })
+}
+
+fn region_has_symbol(terminal: &Terminal<TestBackend>, area: Rect, symbol: &str) -> bool {
+    let buffer = terminal.backend().buffer();
+    (area.y..area.y.saturating_add(area.height)).any(|y| {
+        (area.x..area.x.saturating_add(area.width)).any(|x| {
+            buffer
+                .cell((x, y))
+                .is_some_and(|cell| cell.symbol() == symbol)
         })
     })
 }

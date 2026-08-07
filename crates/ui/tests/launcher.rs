@@ -105,6 +105,13 @@ fn text_has_fg(
     })
 }
 
+fn text_at(terminal: &Terminal<TestBackend>, x: u16, y: u16, width: u16) -> String {
+    (x..x.saturating_add(width))
+        .filter_map(|column| terminal.backend().buffer().cell((column, y)))
+        .map(|cell| cell.symbol())
+        .collect()
+}
+
 #[test]
 fn large_icons_render_the_default_application_ascii_icon_when_native_icons_are_unavailable() {
     let model = LauncherViewModel::new(
@@ -215,6 +222,59 @@ fn selected_ready_status_uses_the_accent_color_in_large_icons() {
 }
 
 #[test]
+fn large_icon_tiles_use_themed_selected_and_disabled_button_surfaces() {
+    let width = 100;
+    let height = 30;
+    let theme = TundraTheme::default_dark();
+    let model = LauncherViewModel::new(
+        vec![
+            item(0, LauncherItemStatus::Ready),
+            item(1, LauncherItemStatus::Missing),
+        ],
+        Some(0),
+        LauncherViewMode::LargeIcons,
+        false,
+    );
+    let ShellLayout::Full { main, .. } = compute_shell_layout(Rect::new(0, 0, width, height))
+    else {
+        panic!("Launcher surface test requires the full shell layout");
+    };
+    let layout = launcher_layout(main, &model);
+    let terminal = render_terminal(&model, width, height);
+    let buffer = terminal.backend().buffer();
+    let selected = layout.items[0].area;
+    let disabled = layout.items[1].area;
+
+    assert_eq!(
+        buffer
+            .cell((selected.x, selected.y))
+            .expect("selected tile border")
+            .fg,
+        theme.accent_color
+    );
+    assert_eq!(
+        buffer
+            .cell((
+                selected.x.saturating_add(1),
+                selected.bottom().saturating_sub(2)
+            ))
+            .expect("selected tile surface")
+            .fg,
+        theme.foreground
+    );
+    assert_eq!(
+        buffer
+            .cell((
+                disabled.x.saturating_add(1),
+                disabled.bottom().saturating_sub(2)
+            ))
+            .expect("disabled tile surface")
+            .fg,
+        theme.muted
+    );
+}
+
+#[test]
 fn details_render_columns_and_all_item_integrity_labels() {
     let model = LauncherViewModel::new(
         vec![
@@ -240,6 +300,72 @@ fn details_render_columns_and_all_item_integrity_labels() {
         assert!(output.contains(label), "missing {label} in {output}");
     }
     assert!(output.contains("[A] Application 1"));
+}
+
+#[test]
+fn details_table_renders_cells_at_the_declared_column_boundaries() {
+    let width = 100;
+    let height = 30;
+    let theme = TundraTheme::default_dark();
+    let model = LauncherViewModel::new(
+        vec![
+            item(0, LauncherItemStatus::Ready),
+            item(1, LauncherItemStatus::Changed),
+        ],
+        Some(1),
+        LauncherViewMode::Details,
+        false,
+    );
+    let ShellLayout::Full { main, .. } = compute_shell_layout(Rect::new(0, 0, width, height))
+    else {
+        panic!("Launcher table test requires the full shell layout");
+    };
+    let layout = launcher_layout(main, &model);
+    let table_width = layout
+        .content
+        .width
+        .saturating_sub(u16::from(layout.scrollbar.is_some()));
+    let name_width = (table_width.saturating_mul(28) / 100).max(8);
+    let type_width = (table_width.saturating_mul(16) / 100).max(6);
+    let integrity_width = (table_width.saturating_mul(18) / 100).max(8);
+    let name_x = layout.content.x;
+    let type_x = name_x.saturating_add(name_width);
+    let integrity_x = type_x.saturating_add(type_width);
+    let path_x = integrity_x.saturating_add(integrity_width);
+    let terminal = render_terminal(&model, width, height);
+
+    assert_eq!(text_at(&terminal, name_x, layout.content.y, 4), "Name");
+    assert_eq!(text_at(&terminal, type_x, layout.content.y, 4), "Type");
+    assert_eq!(
+        text_at(&terminal, integrity_x, layout.content.y, 9),
+        "Integrity"
+    );
+    assert_eq!(text_at(&terminal, path_x, layout.content.y, 4), "Path");
+
+    let selected_row = layout
+        .items
+        .iter()
+        .find(|item| item.index == 1)
+        .expect("selected details row");
+    assert_eq!(text_at(&terminal, name_x, selected_row.area.y, 3), "[A]");
+    assert_eq!(text_at(&terminal, type_x, selected_row.area.y, 6), "Native");
+    assert_eq!(
+        text_at(&terminal, integrity_x, selected_row.area.y, 7),
+        "Changed"
+    );
+    assert_eq!(
+        text_at(&terminal, path_x, selected_row.area.y, 7),
+        "C:/apps"
+    );
+    assert_eq!(
+        terminal
+            .backend()
+            .buffer()
+            .cell((integrity_x, selected_row.area.y))
+            .expect("selected details cell")
+            .fg,
+        theme.accent_color
+    );
 }
 
 #[test]

@@ -1,12 +1,14 @@
+use ratatui::Frame;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::widgets::{Borders, Clear, Paragraph, Widget};
 
 use crate::TundraTheme;
 
+use super::foundation::terminal_width;
 use super::{
-    ComponentEvent, ComponentId, ComponentState, InputEvent, Key, MouseButton, MouseKind,
-    clamp_index, contains_point, inner_area, item_style,
+    Button, ComponentEvent, ComponentId, ComponentState, InputEvent, Key, MouseButton, MouseKind,
+    clamp_index, contains_point, inner_area,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -33,7 +35,7 @@ pub struct Dialog {
     pub state: ComponentState,
     pub open: bool,
     selected_action: Option<usize>,
-    hovered_action: Option<usize>,
+    buttons: Vec<Button>,
 }
 
 impl Dialog {
@@ -44,7 +46,7 @@ impl Dialog {
         actions: Vec<DialogAction>,
     ) -> Self {
         let selected_action = clamp_index(0, actions.len());
-        Self {
+        let mut dialog = Self {
             id: id.into(),
             title: title.into(),
             body: vec![body.into()],
@@ -52,24 +54,42 @@ impl Dialog {
             state: ComponentState::default(),
             open: false,
             selected_action,
-            hovered_action: None,
-        }
+            buttons: Vec::new(),
+        };
+        dialog.sync_buttons();
+        dialog
     }
 
     pub fn open(&mut self) {
-        self.open = true;
-        self.state.focused = true;
+        self.set_open(true);
     }
 
     pub fn close(&mut self) {
-        self.open = false;
-        self.state.focused = false;
-        self.state.active = false;
-        self.hovered_action = None;
+        self.set_open(false);
+    }
+
+    pub fn set_open(&mut self, open: bool) {
+        self.open = open;
+        self.state.focused = open;
+        if !open {
+            self.state.active = false;
+        }
+        self.sync_button_states();
     }
 
     pub fn selected_action_index(&self) -> Option<usize> {
         self.selected_action
+    }
+
+    pub fn set_selected_action(&mut self, index: Option<usize>) {
+        self.selected_action = index
+            .filter(|index| *index < self.actions.len())
+            .or_else(|| clamp_index(0, self.actions.len()));
+        self.sync_button_states();
+    }
+
+    pub fn set_selected(&mut self, index: Option<usize>) {
+        self.set_selected_action(index);
     }
 
     pub fn handle_event(&mut self, event: InputEvent, area: Rect) -> ComponentEvent {
@@ -77,14 +97,17 @@ impl Dialog {
             return ComponentEvent::None;
         }
 
+        self.sync_buttons();
         match event {
             InputEvent::Key(key) if !key.is_press_like() => ComponentEvent::None,
             InputEvent::FocusGained => {
                 self.state.focused = true;
+                self.sync_button_states();
                 ComponentEvent::Consumed
             }
             InputEvent::FocusLost => {
                 self.state.focused = false;
+                self.sync_button_states();
                 ComponentEvent::Consumed
             }
             InputEvent::Key(key) => match key.key {
@@ -103,24 +126,39 @@ impl Dialog {
                 }
 
                 let action = self.action_index_at(area, mouse.column(), mouse.row());
-                match mouse.kind {
-                    MouseKind::Move => {
-                        if self.hovered_action != action {
-                            self.hovered_action = action;
-                            ComponentEvent::Changed(self.id.clone())
-                        } else {
-                            ComponentEvent::Consumed
+                if matches!(
+                    mouse.kind,
+                    MouseKind::Down(MouseButton::Left)
+                        | MouseKind::Click(MouseButton::Left)
+                        | MouseKind::DoubleClick(MouseButton::Left)
+                ) && let Some(index) = action
+                {
+                    self.selected_action = Some(index);
+                    self.sync_button_states();
+                }
+
+                let layout = self.action_layout(area);
+                let mut changed = false;
+                let mut activated = None;
+                for (index, button_area) in layout {
+                    let Some(button) = self.buttons.get_mut(index) else {
+                        continue;
+                    };
+                    match button.handle_event(InputEvent::Mouse(mouse), button_area) {
+                        ComponentEvent::Activated(id) => activated = Some(id),
+                        ComponentEvent::Changed(_) | ComponentEvent::FocusRequested(_) => {
+                            changed = true;
                         }
+                        _ => {}
                     }
-                    MouseKind::Down(MouseButton::Left) | MouseKind::Click(MouseButton::Left) => {
-                        if let Some(index) = action {
-                            self.selected_action = Some(index);
-                            self.activate_selected_action()
-                        } else {
-                            ComponentEvent::Consumed
-                        }
-                    }
-                    _ => ComponentEvent::Consumed,
+                }
+
+                if let Some(id) = activated {
+                    ComponentEvent::Activated(id)
+                } else if changed {
+                    ComponentEvent::Changed(self.id.clone())
+                } else {
+                    ComponentEvent::Consumed
                 }
             }
             _ => ComponentEvent::Consumed,
@@ -133,46 +171,37 @@ impl Dialog {
         }
 
         Clear.render(area, buffer);
-        let block = theme
-            .block()
-            .title(self.title.as_str())
-            .borders(Borders::ALL)
-            .style(theme.body_style());
-        let inner = block.inner(area);
-        block.render(area, buffer);
+        self.block(theme).render(area, buffer);
+        self.render_body(area, buffer, theme);
 
-        for (row, line) in self.body.iter().enumerate().take(inner.height as usize) {
-            Paragraph::new(line.as_str())
-                .style(theme.body_style())
-                .render(
-                    Rect::new(inner.x, inner.y.saturating_add(row as u16), inner.width, 1),
-                    buffer,
-                );
+        let buttons = self.buttons_for_render();
+        for (index, action_area) in self.action_layout(area) {
+            if let Some(button) = buttons.get(index) {
+                button.render_borderless(action_area, buffer, theme);
+            }
         }
+    }
 
-        if inner.height == 0 {
+    /// Renders the dialog through a Ratatui [`Frame`].
+    pub fn render_frame(&self, frame: &mut Frame<'_>, area: Rect, theme: &TundraTheme) {
+        if !self.open {
             return;
         }
 
-        let action_y = inner.y.saturating_add(inner.height.saturating_sub(1));
-        let mut action_x = inner.x;
-        for (index, action) in self.actions.iter().enumerate() {
-            let label = format!(" {} ", action.label);
-            let width = label.chars().count() as u16;
-            if action_x.saturating_add(width) > inner.x.saturating_add(inner.width) {
-                break;
+        frame.render_widget(Clear, area);
+        frame.render_widget(self.block(theme), area);
+        let inner = inner_area(area);
+        let body_height = inner.height.saturating_sub(1);
+        frame.render_widget(
+            Paragraph::new(self.body.join("\n")).style(theme.body_style()),
+            Rect::new(inner.x, inner.y, inner.width, body_height),
+        );
+
+        let buttons = self.buttons_for_render();
+        for (index, action_area) in self.action_layout(area) {
+            if let Some(button) = buttons.get(index) {
+                button.render_borderless_frame(frame, action_area, theme);
             }
-            let style = item_style(
-                self.state.focused,
-                self.hovered_action == Some(index),
-                self.selected_action == Some(index),
-                false,
-                theme,
-            );
-            Paragraph::new(label)
-                .style(style)
-                .render(Rect::new(action_x, action_y, width, 1), buffer);
-            action_x = action_x.saturating_add(width.saturating_add(1));
         }
     }
 
@@ -186,6 +215,7 @@ impl Dialog {
             .map(|index| (index + 1) % self.actions.len())
             .unwrap_or(0);
         self.selected_action = Some(index);
+        self.sync_button_states();
         ComponentEvent::Selected(self.id.clone(), index)
     }
 
@@ -205,6 +235,7 @@ impl Dialog {
             })
             .unwrap_or(0);
         self.selected_action = Some(index);
+        self.sync_button_states();
         ComponentEvent::Selected(self.id.clone(), index)
     }
 
@@ -216,19 +247,105 @@ impl Dialog {
     }
 
     fn action_index_at(&self, area: Rect, column: u16, row: u16) -> Option<usize> {
+        self.action_layout(area)
+            .into_iter()
+            .find_map(|(index, action_area)| {
+                contains_point(action_area, column, row).then_some(index)
+            })
+    }
+
+    fn action_layout(&self, area: Rect) -> Vec<(usize, Rect)> {
         let inner = inner_area(area);
-        if inner.height == 0 || row != inner.y.saturating_add(inner.height.saturating_sub(1)) {
-            return None;
+        if inner.height == 0 {
+            return Vec::new();
         }
 
+        let action_y = inner.y.saturating_add(inner.height.saturating_sub(1));
         let mut action_x = inner.x;
-        for (index, action) in self.actions.iter().enumerate() {
-            let width = action.label.chars().count() as u16 + 2;
-            if column >= action_x && column < action_x.saturating_add(width) {
-                return Some(index);
-            }
-            action_x = action_x.saturating_add(width.saturating_add(1));
+        self.actions
+            .iter()
+            .enumerate()
+            .map_while(|(index, action)| {
+                let width = u16::try_from(terminal_width(&action.label))
+                    .unwrap_or(u16::MAX)
+                    .saturating_add(2);
+                if action_x.saturating_add(width) > inner.x.saturating_add(inner.width) {
+                    return None;
+                }
+                let area = Rect::new(action_x, action_y, width, 1);
+                action_x = action_x.saturating_add(width.saturating_add(1));
+                Some((index, area))
+            })
+            .collect()
+    }
+
+    fn sync_buttons(&mut self) {
+        if self.buttons.len() != self.actions.len()
+            || self
+                .buttons
+                .iter()
+                .zip(&self.actions)
+                .any(|(button, action)| {
+                    button.id != action.id || button.label.trim() != action.label
+                })
+        {
+            self.buttons = self
+                .actions
+                .iter()
+                .map(|action| Button::new(action.id.clone(), action.label.clone()))
+                .collect();
         }
-        None
+        self.selected_action = self
+            .selected_action
+            .filter(|index| *index < self.actions.len())
+            .or_else(|| clamp_index(0, self.actions.len()));
+        self.sync_button_states();
+    }
+
+    fn sync_button_states(&mut self) {
+        for (index, button) in self.buttons.iter_mut().enumerate() {
+            button.state.focused = self.state.focused && self.selected_action == Some(index);
+            button.state.selected = self.selected_action == Some(index);
+            if !self.open {
+                button.state.active = false;
+                button.state.hovered = false;
+            }
+        }
+    }
+
+    fn buttons_for_render(&self) -> Vec<Button> {
+        self.actions
+            .iter()
+            .enumerate()
+            .map(|(index, action)| {
+                let mut button = self
+                    .buttons
+                    .get(index)
+                    .cloned()
+                    .unwrap_or_else(|| Button::new(action.id.clone(), action.label.clone()));
+                button.state.focused = self.state.focused && self.selected_action == Some(index);
+                button.state.selected = self.selected_action == Some(index);
+                button
+            })
+            .collect()
+    }
+
+    fn render_body(&self, area: Rect, buffer: &mut Buffer, theme: &TundraTheme) {
+        let inner = inner_area(area);
+        let body_height = inner.height.saturating_sub(1);
+        Paragraph::new(self.body.join("\n"))
+            .style(theme.body_style())
+            .render(
+                Rect::new(inner.x, inner.y, inner.width, body_height),
+                buffer,
+            );
+    }
+
+    fn block(&self, theme: &TundraTheme) -> ratatui::widgets::Block<'static> {
+        theme
+            .block()
+            .title(self.title.clone())
+            .borders(Borders::ALL)
+            .style(theme.body_style())
     }
 }

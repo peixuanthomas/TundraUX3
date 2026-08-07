@@ -24,6 +24,51 @@ fn default_config() -> ShellLaunchConfig {
 }
 
 #[test]
+fn tab_cycles_sections_while_arrows_select_right_hand_settings() {
+    let fixture = FixtureRoot::new("tab-section-cycle");
+    let platform = mock_platform(fixture.path());
+    initialize_users(&platform, false, false);
+    let mut state = logged_in_state(&platform, "AdminUser", "StrongPass123");
+
+    open_settings_from_home(&mut state, &platform);
+    let appearance = state.to_settings_view_model().unwrap();
+    assert_eq!(appearance.selected_category, SettingsCategory::Appearance);
+    assert_eq!(appearance.selected_field, SettingsField::Theme);
+
+    press(&mut state, &platform, "Down");
+    let appearance = state.to_settings_view_model().unwrap();
+    assert_eq!(appearance.selected_category, SettingsCategory::Appearance);
+    assert_eq!(appearance.selected_field, SettingsField::BorderShape);
+
+    for expected in [
+        SettingsCategory::RegionTime,
+        SettingsCategory::FileExplorer,
+        SettingsCategory::Editor,
+        SettingsCategory::Appearance,
+    ] {
+        press(&mut state, &platform, "Tab");
+        assert_eq!(
+            state.to_settings_view_model().unwrap().selected_category,
+            expected
+        );
+    }
+    assert_eq!(
+        state.to_settings_view_model().unwrap().selected_field,
+        SettingsField::Theme
+    );
+
+    press(&mut state, &platform, "Shift+Tab");
+    let editor = state.to_settings_view_model().unwrap();
+    assert_eq!(editor.selected_category, SettingsCategory::Editor);
+    assert_eq!(editor.selected_field, SettingsField::ExplorerOpenExtensions);
+
+    press(&mut state, &platform, "Down");
+    let editor = state.to_settings_view_model().unwrap();
+    assert_eq!(editor.selected_category, SettingsCategory::Editor);
+    assert_eq!(editor.selected_field, SettingsField::CursorAcceleration);
+}
+
+#[test]
 fn admin_settings_immediately_persist_global_changes_and_confirm_picker_selection() {
     let fixture = FixtureRoot::new("admin-persistence");
     let platform = mock_platform(fixture.path());
@@ -34,8 +79,7 @@ fn admin_settings_immediately_persist_global_changes_and_confirm_picker_selectio
     assert_eq!(state.active_screen(), ShellScreen::Settings);
 
     // Appearance -> Region & Time. Moving the timezone highlight must not save.
-    press(&mut state, &platform, "Right");
-    press(&mut state, &platform, "Enter");
+    press(&mut state, &platform, "Tab");
     press(&mut state, &platform, "Down");
     assert_eq!(
         state.to_settings_view_model().unwrap().selected_field,
@@ -61,10 +105,8 @@ fn admin_settings_immediately_persist_global_changes_and_confirm_picker_selectio
         highlighted_timezone
     );
 
-    // Return to category navigation, choose File Explorer, and toggle immediately.
+    // Tab advances to File Explorer and selects its first setting immediately.
     press(&mut state, &platform, "Tab");
-    press(&mut state, &platform, "Right");
-    press(&mut state, &platform, "Enter");
     assert_eq!(
         state.to_settings_view_model().unwrap().selected_category,
         SettingsCategory::FileExplorer
@@ -89,8 +131,7 @@ fn weather_location_rejects_non_english_input_and_saves_only_after_warning() {
     let mut state = logged_in_state(&platform, "AdminUser", "StrongPass123");
 
     open_settings_from_home(&mut state, &platform);
-    press(&mut state, &platform, "Right");
-    press(&mut state, &platform, "Enter");
+    press(&mut state, &platform, "Tab");
     for _ in 0..2 {
         press(&mut state, &platform, "Down");
     }
@@ -145,8 +186,7 @@ fn operating_system_time_source_uses_platform_boundary_and_persists() {
     let mut state = logged_in_state(&platform, "AdminUser", "StrongPass123");
 
     open_settings_from_home(&mut state, &platform);
-    press(&mut state, &platform, "Right");
-    press(&mut state, &platform, "Enter");
+    press(&mut state, &platform, "Tab");
     press(&mut state, &platform, "Down");
     press(&mut state, &platform, "Down");
     press(&mut state, &platform, "Down");
@@ -271,9 +311,8 @@ fn editor_settings_save_normalized_explorer_open_suffixes() {
 
     open_settings_from_home(&mut state, &platform);
     for _ in 0..3 {
-        press(&mut state, &platform, "Right");
+        press(&mut state, &platform, "Tab");
     }
-    press(&mut state, &platform, "Enter");
     assert_eq!(
         state.to_settings_view_model().unwrap().selected_field,
         SettingsField::ExplorerOpenExtensions
@@ -331,7 +370,6 @@ fn normal_user_can_change_only_their_appearance() {
             .all(|item| item.enabled)
     );
 
-    press(&mut state, &platform, "Enter");
     press(&mut state, &platform, "Down");
     press(&mut state, &platform, "Enter");
     let users = manager.load_users().unwrap();
@@ -357,7 +395,6 @@ fn normal_user_can_change_only_their_appearance() {
     );
 
     press(&mut state, &platform, "Tab");
-    press(&mut state, &platform, "Right");
     let region = state.to_settings_view_model().unwrap();
     assert_eq!(region.selected_category, SettingsCategory::RegionTime);
     assert!(
@@ -403,7 +440,6 @@ fn default_theme_icon_picker_persists_ascii_and_image_modes_when_supported() {
         SettingsField::Theme
     );
 
-    press(&mut state, &platform, "Enter");
     press(&mut state, &platform, "Enter");
     assert_eq!(
         state
@@ -467,7 +503,6 @@ fn unsupported_terminal_locks_default_theme_to_ascii_and_disables_image_option()
     assert_eq!(theme.value, "Default theme / ASCII icons");
     assert!(!state.graphical_icons_enabled());
 
-    press(&mut state, &platform, "Enter");
     press(&mut state, &platform, "Enter");
     press(&mut state, &platform, "Enter");
     let picker = state.to_settings_view_model().unwrap().picker.unwrap();
@@ -579,8 +614,7 @@ fn open_settings_from_home(state: &mut ShellSession, platform: &MockPlatform) {
 
 fn open_time_server_editor(state: &mut ShellSession, platform: &MockPlatform) {
     open_settings_from_home(state, platform);
-    press(state, platform, "Right");
-    press(state, platform, "Enter");
+    press(state, platform, "Tab");
     for _ in 0..4 {
         press(state, platform, "Down");
     }

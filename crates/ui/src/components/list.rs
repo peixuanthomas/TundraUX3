@@ -1,6 +1,10 @@
+use ratatui::Frame;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
-use ratatui::widgets::{Borders, Paragraph, Widget};
+use ratatui::widgets::{
+    Borders, List as RatatuiList, ListItem as RatatuiListItem, ListState as RatatuiListState,
+    StatefulWidget,
+};
 
 use crate::TundraTheme;
 
@@ -88,7 +92,20 @@ impl List {
             .or_else(|| self.items.iter().position(|item| !item.disabled));
     }
 
+    pub(crate) fn set_hovered(&mut self, index: Option<usize>) {
+        self.hovered = index.filter(|index| self.items.get(*index).is_some());
+    }
+
     pub fn handle_event(&mut self, event: InputEvent, area: Rect) -> ComponentEvent {
+        self.handle_event_in(event, area, true)
+    }
+
+    /// Handles input for a list rendered without a surrounding block.
+    pub fn handle_event_borderless(&mut self, event: InputEvent, area: Rect) -> ComponentEvent {
+        self.handle_event_in(event, area, false)
+    }
+
+    fn handle_event_in(&mut self, event: InputEvent, area: Rect, bordered: bool) -> ComponentEvent {
         match event {
             InputEvent::Key(key) if !key.is_press_like() => ComponentEvent::None,
             InputEvent::FocusGained => {
@@ -112,7 +129,7 @@ impl List {
                 _ => ComponentEvent::None,
             },
             InputEvent::Mouse(mouse) => {
-                let index = self.item_index_at(area, mouse.column(), mouse.row());
+                let index = self.item_index_at(area, mouse.column(), mouse.row(), bordered);
                 match mouse.kind {
                     MouseKind::Move => {
                         if self.hovered != index {
@@ -145,33 +162,26 @@ impl List {
     }
 
     pub fn render(&self, area: Rect, buffer: &mut Buffer, theme: &TundraTheme) {
-        let block = match self.title.as_deref() {
-            Some(title) => theme
-                .block()
-                .title(title)
-                .borders(Borders::ALL)
-                .style(theme.body_style()),
-            None => theme
-                .block()
-                .borders(Borders::ALL)
-                .style(theme.body_style()),
-        };
-        let inner = block.inner(area);
-        block.render(area, buffer);
+        let mut state = self.ratatui_state(area, true);
+        StatefulWidget::render(self.ratatui_widget(theme, true), area, buffer, &mut state);
+    }
 
-        let visible_rows = inner.height as usize;
-        for (row, item) in self.items.iter().take(visible_rows).enumerate() {
-            let index = row;
-            let selected = self.selected == Some(index);
-            let hovered = self.hovered == Some(index);
-            let style = item_style(self.state.focused, hovered, selected, item.disabled, theme);
-            let label = match &item.description {
-                Some(description) => format!("{} - {}", item.label, description),
-                None => item.label.clone(),
-            };
-            let row_area = Rect::new(inner.x, inner.y.saturating_add(row as u16), inner.width, 1);
-            Paragraph::new(label).style(style).render(row_area, buffer);
-        }
+    /// Renders the bordered list through a Ratatui [`Frame`].
+    pub fn render_frame(&self, frame: &mut Frame<'_>, area: Rect, theme: &TundraTheme) {
+        let mut state = self.ratatui_state(area, true);
+        frame.render_stateful_widget(self.ratatui_widget(theme, true), area, &mut state);
+    }
+
+    /// Renders the list with Ratatui's official `List` widget and no surrounding block.
+    pub fn render_borderless(&self, area: Rect, buffer: &mut Buffer, theme: &TundraTheme) {
+        let mut state = self.ratatui_state(area, false);
+        StatefulWidget::render(self.ratatui_widget(theme, false), area, buffer, &mut state);
+    }
+
+    /// Renders a borderless list through a Ratatui [`Frame`].
+    pub fn render_borderless_frame(&self, frame: &mut Frame<'_>, area: Rect, theme: &TundraTheme) {
+        let mut state = self.ratatui_state(area, false);
+        frame.render_stateful_widget(self.ratatui_widget(theme, false), area, &mut state);
     }
 
     fn select_from_pointer(&mut self, index: Option<usize>) -> ComponentEvent {
@@ -228,13 +238,72 @@ impl List {
         }
     }
 
-    fn item_index_at(&self, area: Rect, column: u16, row: u16) -> Option<usize> {
-        let inner = inner_area(area);
+    fn item_index_at(&self, area: Rect, column: u16, row: u16, bordered: bool) -> Option<usize> {
+        let inner = if bordered { inner_area(area) } else { area };
         if !contains_point(inner, column, row) {
             return None;
         }
 
-        let index = row.saturating_sub(inner.y) as usize;
+        let index = self
+            .viewport_offset(area, bordered)
+            .saturating_add(row.saturating_sub(inner.y) as usize);
         self.items.get(index).map(|_| index)
+    }
+
+    fn ratatui_widget<'a>(&'a self, theme: &TundraTheme, bordered: bool) -> RatatuiList<'a> {
+        let items = self.items.iter().enumerate().map(|(index, item)| {
+            let label = match &item.description {
+                Some(description) => format!("{} - {}", item.label, description),
+                None => item.label.clone(),
+            };
+            RatatuiListItem::new(label).style(item_style(
+                self.state.focused,
+                self.hovered == Some(index),
+                false,
+                item.disabled,
+                theme,
+            ))
+        });
+        let widget = RatatuiList::new(items)
+            .style(theme.body_style())
+            .highlight_style(item_style(self.state.focused, false, true, false, theme));
+
+        if !bordered {
+            return widget;
+        }
+
+        let block = match self.title.as_deref() {
+            Some(title) => theme
+                .block()
+                .title(title)
+                .borders(Borders::ALL)
+                .style(theme.body_style()),
+            None => theme
+                .block()
+                .borders(Borders::ALL)
+                .style(theme.body_style()),
+        };
+        widget.block(block)
+    }
+
+    fn ratatui_state(&self, area: Rect, bordered: bool) -> RatatuiListState {
+        RatatuiListState::default()
+            .with_selected(self.selected)
+            .with_offset(self.viewport_offset(area, bordered))
+    }
+
+    fn viewport_offset(&self, area: Rect, bordered: bool) -> usize {
+        let height = if bordered {
+            inner_area(area).height as usize
+        } else {
+            area.height as usize
+        };
+        if height == 0 {
+            return 0;
+        }
+
+        self.selected
+            .map(|selected| selected.saturating_add(1).saturating_sub(height))
+            .unwrap_or(0)
     }
 }

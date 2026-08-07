@@ -7,7 +7,10 @@
 use ratatui::Frame;
 use ratatui::layout::{Alignment, Rect};
 use ratatui::style::{Color, Modifier, Style};
-use ratatui::widgets::{Borders, Clear, Paragraph, Wrap};
+use ratatui::text::{Line, Span};
+use ratatui::widgets::{
+    Borders, Clear, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, Wrap,
+};
 use std::sync::Arc;
 
 use crate::screens::shell::{
@@ -338,18 +341,22 @@ fn render_command_line_scrollbar(
     let Some(scrollbar) = command_line_scrollbar_layout(terminal_area, snapshot) else {
         return;
     };
-    for y in scrollbar.track.y..scrollbar.track.bottom() {
-        frame.render_widget(
-            Paragraph::new("|").style(theme.muted_style()),
-            Rect::new(scrollbar.track.x, y, 1, 1),
-        );
-    }
-    for y in scrollbar.thumb.y..scrollbar.thumb.bottom() {
-        frame.render_widget(
-            Paragraph::new("#").style(theme.title_style()),
-            Rect::new(scrollbar.thumb.x, y, 1, 1),
-        );
-    }
+    let track_length = usize::from(scrollbar.track.height);
+    let thumb_length = usize::from(scrollbar.thumb.height);
+    let thumb_offset = usize::from(scrollbar.thumb.y.saturating_sub(scrollbar.track.y));
+    let mut state =
+        ScrollbarState::new(track_length.saturating_sub(thumb_length).saturating_add(1))
+            .position(thumb_offset)
+            .viewport_content_length(thumb_length);
+    frame.render_stateful_widget(
+        Scrollbar::new(ScrollbarOrientation::VerticalRight)
+            .begin_symbol(None)
+            .end_symbol(None)
+            .track_style(theme.muted_style())
+            .thumb_style(theme.title_style()),
+        scrollbar.track,
+        &mut state,
+    );
 }
 
 fn panel_inner_area(area: Rect) -> Rect {
@@ -368,26 +375,72 @@ fn render_terminal_snapshot(
     prompt_label: Option<&str>,
     accent_color: Color,
 ) {
-    let buffer = frame.buffer_mut();
-    for row in 0..area.height {
-        let prompt_width = prompt_label
-            .filter(|prompt| row_starts_with(snapshot, row, prompt))
-            .map_or(0, str::len);
-        for column in 0..area.width {
-            let default_cell = CommandLineCell::default();
-            let cell = snapshot.cell(column, row).unwrap_or(&default_cell);
-            let position = (area.x.saturating_add(column), area.y.saturating_add(row));
-            if let Some(target) = buffer.cell_mut(position) {
-                target.reset();
-                target
-                    .set_symbol(visible_symbol(&cell.symbol))
-                    .set_style(cell_style(cell));
-                if usize::from(column) < prompt_width {
-                    target.set_fg(accent_color);
-                }
-            }
-        }
+    let lines = (0..snapshot.rows)
+        .map(|row| terminal_snapshot_line(snapshot, row, prompt_label, accent_color))
+        .collect::<Vec<_>>();
+    frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), area);
+}
+
+fn terminal_snapshot_line(
+    snapshot: &CommandLineTerminalSnapshot,
+    row: u16,
+    prompt_label: Option<&str>,
+    accent_color: Color,
+) -> Line<'static> {
+    let row_end = terminal_row_end(snapshot, row);
+    if row_end == 0 {
+        return Line::default();
     }
+
+    let prompt_width = prompt_label
+        .filter(|prompt| row_starts_with(snapshot, row, prompt))
+        .map_or(0, str::len);
+    let mut spans = Vec::new();
+    let mut text = String::new();
+    let mut text_style = None;
+    let mut column = 0_u16;
+    while column < row_end {
+        let default_cell = CommandLineCell::default();
+        let cell = snapshot.cell(column, row).unwrap_or(&default_cell);
+        let symbol = visible_symbol(&cell.symbol);
+        let mut style = cell_style(cell);
+        if usize::from(column) < prompt_width {
+            style = style.fg(accent_color);
+        }
+        if text_style.is_some_and(|current| current != style) {
+            spans.push(Span::styled(
+                std::mem::take(&mut text),
+                text_style.take().unwrap(),
+            ));
+        }
+        text_style = Some(style);
+        text.push_str(symbol);
+
+        // The terminal snapshot stores a wide grapheme in its leading cell
+        // and leaves its continuation cells blank. Ratatui advances by the
+        // grapheme's full display width, so those placeholders must be skipped.
+        let symbol_width = u16::try_from(Line::from(symbol).width())
+            .unwrap_or(u16::MAX)
+            .max(1);
+        column = column.saturating_add(symbol_width);
+    }
+    if let Some(style) = text_style {
+        spans.push(Span::styled(text, style));
+    }
+    Line::from(spans)
+}
+
+fn terminal_row_end(snapshot: &CommandLineTerminalSnapshot, row: u16) -> u16 {
+    (0..snapshot.columns)
+        .rev()
+        .find(|column| {
+            snapshot.cell(*column, row).is_some_and(|cell| {
+                cell.cursor
+                    || cell.style != CommandLineCellStyle::default()
+                    || visible_symbol(&cell.symbol) != " "
+            })
+        })
+        .map_or(0, |column| column.saturating_add(1))
 }
 
 fn row_starts_with(snapshot: &CommandLineTerminalSnapshot, row: u16, prefix: &str) -> bool {

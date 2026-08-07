@@ -1,11 +1,13 @@
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
-use ratatui::style::{Modifier, Style};
 use ratatui::text::Line;
-use ratatui::widgets::{Block, Borders, Clear, Paragraph, Wrap};
+use ratatui::widgets::{
+    Block, Borders, Clear, HighlightSpacing, List, ListItem, ListState, Paragraph, Scrollbar,
+    ScrollbarOrientation, ScrollbarState, Wrap,
+};
 
-use super::common::focus_marker;
 use super::{SetupCustomColorTarget, SetupField, SetupStep, SetupViewModel};
+use crate::components::{Button, TextInput};
 use crate::screens::shell::{
     ShellChromeViewModel, ShellLayout, centered_rect, compute_shell_layout, render_compact_home,
     render_status, render_top,
@@ -17,8 +19,8 @@ const SETUP_WIDE_MAP_MIN_WIDTH: u16 = 90;
 const SETUP_WIDE_MAP_MIN_HEIGHT: u16 = 14;
 const SETUP_CONTROLS_WIDTH: u16 = 48;
 const SETUP_TIMEZONE_HEADER_HEIGHT: u16 = 5;
-const SETUP_TIMEZONE_TOP_INDICATOR_HEIGHT: u16 = 1;
-const SETUP_TIMEZONE_BOTTOM_INDICATOR_HEIGHT: u16 = 1;
+const SETUP_TIMEZONE_TOP_GAP_HEIGHT: u16 = 1;
+const SETUP_TIMEZONE_BOTTOM_GAP_HEIGHT: u16 = 1;
 const SETUP_TIMEZONE_FOOTER_HEIGHT: u16 = 3;
 const SETUP_LANGUAGE_LIST_LINE: u16 = 4;
 const SETUP_ADMIN_HEADER_HEIGHT: u16 = 3;
@@ -138,11 +140,54 @@ fn render_setup_language_page(
     model: &SetupViewModel,
     theme: &TundraTheme,
 ) {
-    let controls = Paragraph::new(setup_language_lines(model, theme))
-        .block(setup_block(theme))
-        .wrap(Wrap { trim: true });
+    frame.render_widget(setup_block(theme), area);
 
-    frame.render_widget(controls, area);
+    let content = setup_inner_area(area);
+    frame.render_widget(
+        Paragraph::new(setup_language_header_lines(model, theme)).wrap(Wrap { trim: true }),
+        Rect::new(
+            content.x,
+            content.y,
+            content.width,
+            SETUP_LANGUAGE_LIST_LINE.min(content.height),
+        ),
+    );
+
+    let list_area = setup_language_list_area(area, model.languages.len());
+    let items = if model.languages.is_empty() {
+        vec![ListItem::new("No languages available").style(theme.muted_style())]
+    } else {
+        model
+            .languages
+            .iter()
+            .map(|language| ListItem::new(format!("{} ({})", language.label, language.code)))
+            .collect()
+    };
+    let selected = (!model.languages.is_empty())
+        .then_some(model.selected_language_index)
+        .filter(|index| *index < model.languages.len());
+    let mut state = ListState::default().with_selected(selected);
+    frame.render_stateful_widget(
+        List::new(items)
+            .style(theme.body_style())
+            .highlight_symbol("> ")
+            .highlight_spacing(HighlightSpacing::Always)
+            .highlight_style(theme.title_style()),
+        list_area,
+        &mut state,
+    );
+
+    let footer_y = list_area.bottom().saturating_add(1);
+    let footer = Rect::new(
+        content.x,
+        footer_y,
+        content.width,
+        content.bottom().saturating_sub(footer_y),
+    );
+    frame.render_widget(
+        Paragraph::new(setup_language_footer_lines(model, theme)).wrap(Wrap { trim: true }),
+        footer,
+    );
 }
 
 fn render_setup_timezone_page(
@@ -165,20 +210,6 @@ fn render_setup_timezone_page(
         content.width,
         SETUP_TIMEZONE_HEADER_HEIGHT.min(content.height),
     );
-    let top_indicator = Rect::new(
-        content.x,
-        list_area
-            .y
-            .saturating_sub(SETUP_TIMEZONE_TOP_INDICATOR_HEIGHT),
-        content.width,
-        SETUP_TIMEZONE_TOP_INDICATOR_HEIGHT.min(content.height),
-    );
-    let bottom_indicator = Rect::new(
-        content.x,
-        list_area.y.saturating_add(list_area.height),
-        content.width,
-        SETUP_TIMEZONE_BOTTOM_INDICATOR_HEIGHT.min(content.height),
-    );
     let footer = Rect::new(
         content.x,
         content
@@ -192,26 +223,46 @@ fn render_setup_timezone_page(
         Paragraph::new(setup_timezone_header_lines(model, theme)),
         header,
     );
-    frame.render_widget(
-        Paragraph::new(setup_timezone_indicator_line(
-            start > 0,
-            "^ more timezones",
-            theme,
-        )),
-        top_indicator,
-    );
-    frame.render_widget(
-        Paragraph::new(setup_timezone_window_lines(model, start, end, theme)),
+    let items = if start >= end {
+        if model.timezones.is_empty() {
+            vec![ListItem::new("No timezones available").style(theme.muted_style())]
+        } else {
+            Vec::new()
+        }
+    } else {
+        model.timezones[start..end]
+            .iter()
+            .map(|timezone| ListItem::new(format!("{} ({})", timezone.label, timezone.id)))
+            .collect()
+    };
+    let selected = model
+        .selected_timezone_index
+        .checked_sub(start)
+        .filter(|index| *index < items.len());
+    let mut list_state = ListState::default().with_selected(selected);
+    frame.render_stateful_widget(
+        List::new(items)
+            .style(theme.body_style())
+            .highlight_symbol("> ")
+            .highlight_spacing(HighlightSpacing::Always)
+            .highlight_style(theme.title_style()),
         list_area,
+        &mut list_state,
     );
-    frame.render_widget(
-        Paragraph::new(setup_timezone_indicator_line(
-            end < model.timezones.len(),
-            "v more timezones",
-            theme,
-        )),
-        bottom_indicator,
-    );
+    if model.timezones.len() > visible_rows && list_area.width > 0 && list_area.height > 0 {
+        let mut scrollbar_state = ScrollbarState::new(model.timezones.len())
+            .position(start)
+            .viewport_content_length(visible_rows);
+        frame.render_stateful_widget(
+            Scrollbar::new(ScrollbarOrientation::VerticalRight)
+                .begin_symbol(None)
+                .end_symbol(None)
+                .track_style(theme.muted_style())
+                .thumb_style(theme.title_style()),
+            list_area,
+            &mut scrollbar_state,
+        );
+    }
     frame.render_widget(
         Paragraph::new(setup_timezone_footer_lines(model, theme)).wrap(Wrap { trim: true }),
         footer,
@@ -281,9 +332,18 @@ fn render_setup_admin_page(
 
     render_setup_password_checklist(frame, area, model, theme);
 
-    frame.render_widget(
-        Paragraph::new(setup_submit_line(model, theme)),
+    render_setup_inline_button(
+        frame,
         setup_admin_field_area(area, SetupField::Submit),
+        "setup.admin.submit",
+        if model.can_submit {
+            "Submit: ready".to_string()
+        } else {
+            "Submit: incomplete".to_string()
+        },
+        model.focused_field == SetupField::Submit,
+        !model.can_submit,
+        theme,
     );
 
     if let Some(error) = &model.error {
@@ -385,17 +445,14 @@ fn render_setup_appearance_page(
     }
 
     let submit_focused = model.focused_field == SetupField::AppearanceSubmit;
-    let submit = Line::styled(
-        format!("{}Finish setup", focus_marker(submit_focused)),
-        if submit_focused {
-            theme.title_style()
-        } else {
-            theme.body_style()
-        },
-    );
-    frame.render_widget(
-        Paragraph::new(submit),
+    render_setup_inline_button(
+        frame,
         setup_appearance_field_area(area, SetupField::AppearanceSubmit),
+        "setup.appearance.finish",
+        "Finish setup".to_string(),
+        submit_focused,
+        false,
+        theme,
     );
 
     if let Some(error) = &model.error {
@@ -445,14 +502,17 @@ fn render_setup_shape_buttons(
             crate::BorderShape::Rounded => "Rounded",
             crate::BorderShape::Square => "Square",
         };
-        let style = if selected {
-            theme.title_style()
-        } else {
-            theme.body_style()
-        };
-        frame.render_widget(
-            Paragraph::new(format!("[{} {label}]", if selected { "x" } else { " " })).style(style),
+        render_setup_inline_button(
+            frame,
             button_area,
+            match shape {
+                crate::BorderShape::Rounded => "setup.appearance.shape.rounded",
+                crate::BorderShape::Square => "setup.appearance.shape.square",
+            },
+            label.to_string(),
+            selected,
+            false,
+            theme,
         );
     }
 }
@@ -492,33 +552,29 @@ fn render_setup_color_palette(
         let selected = option.value.eq_ignore_ascii_case(selected_value);
         let disabled =
             field == SetupField::AppearanceAccentColor && option.color == model.theme_color;
-        let style = if disabled {
-            theme.muted_style()
-        } else {
-            Style::default()
-                .fg(option.color)
-                .bg(theme.background)
-                .add_modifier(if selected {
-                    Modifier::BOLD
-                } else {
-                    Modifier::empty()
-                })
+        let field_id = match field {
+            SetupField::AppearanceThemeColor => "theme",
+            SetupField::AppearanceAccentColor => "accent",
+            _ => "color",
         };
-        frame.render_widget(
-            Paragraph::new(format!(
-                "[{}{}]",
-                if disabled {
-                    "x"
-                } else if selected {
-                    ">"
-                } else {
-                    " "
-                },
-                option.label
-            ))
-            .style(style),
-            button_area,
+        let mut button = Button::new(
+            format!("setup.appearance.{field_id}.{}", option.value),
+            option.label,
         );
+        button.state.selected = selected;
+        button.set_disabled(disabled);
+
+        // Button derives its colors from a theme. Adapt a local copy so each
+        // palette option retains its catalog color while selected and disabled
+        // states continue to be represented by the shared component.
+        let mut option_theme = *theme;
+        if selected && !disabled {
+            option_theme.background = option.color;
+            option_theme.accent_color = theme.background;
+        } else {
+            option_theme.foreground = option.color;
+        }
+        button.render_borderless_frame(frame, button_area, &option_theme);
     }
 }
 
@@ -531,13 +587,18 @@ fn render_setup_custom_color_button(
     theme: &TundraTheme,
 ) {
     let focused = model.focused_field == field;
-    frame.render_widget(
-        Paragraph::new(format!("{}[ {label} ]", focus_marker(focused))).style(if focused {
-            theme.title_style()
-        } else {
-            theme.body_style()
-        }),
+    render_setup_inline_button(
+        frame,
         setup_appearance_field_area(area, field),
+        match field {
+            SetupField::AppearanceThemeCustom => "setup.appearance.theme-custom",
+            SetupField::AppearanceAccentCustom => "setup.appearance.accent-custom",
+            _ => "setup.appearance.custom-color",
+        },
+        label.to_string(),
+        focused,
+        false,
+        theme,
     );
 }
 
@@ -586,18 +647,17 @@ fn render_setup_custom_color_dialog(
             .border_style(theme.selectable_border_style(true));
         let input_inner = input_block.inner(input_area);
         frame.render_widget(input_block, input_area);
-        frame.render_widget(
-            Paragraph::new(if model.custom_color_input.is_empty() {
-                "#38BDF8".to_string()
-            } else {
-                model.custom_color_input.clone()
-            })
-            .style(if model.custom_color_input.is_empty() {
-                theme.muted_style()
-            } else {
-                theme.body_style()
-            }),
-            input_inner,
+
+        let mut input = TextInput::new("setup.appearance.custom-color-input")
+            .with_placeholder("#38BDF8")
+            .with_placeholder_when_focused(true)
+            .with_cursor_symbol("_");
+        input.set_value(&model.custom_color_input);
+        input.set_focused(true);
+        input.render_borderless_frame(
+            frame,
+            Rect::new(input_inner.x, input_inner.y, input_inner.width, 1),
+            theme,
         );
     }
 
@@ -642,8 +702,8 @@ fn setup_block(theme: &TundraTheme) -> Block<'static> {
         .style(theme.body_style())
 }
 
-fn setup_language_lines(model: &SetupViewModel, theme: &TundraTheme) -> Vec<Line<'static>> {
-    let mut lines = vec![
+fn setup_language_header_lines(model: &SetupViewModel, theme: &TundraTheme) -> Vec<Line<'static>> {
+    vec![
         Line::styled(
             format!("Step: {}", setup_step_label(model.step)),
             theme.title_style(),
@@ -654,36 +714,15 @@ fn setup_language_lines(model: &SetupViewModel, theme: &TundraTheme) -> Vec<Line
             theme.muted_style(),
         ),
         Line::from(""),
-    ];
+    ]
+}
 
-    if model.languages.is_empty() {
-        lines.push(Line::styled(
-            "  No languages available",
-            theme.muted_style(),
-        ));
-    } else {
-        for (index, language) in model.languages.iter().enumerate() {
-            let text = format!(
-                "{}{} ({})",
-                selection_marker(index == model.selected_language_index),
-                language.label,
-                language.code
-            );
-            if index == model.selected_language_index {
-                lines.push(Line::styled(text, theme.title_style()));
-            } else {
-                lines.push(Line::from(text));
-            }
-        }
-    }
-
-    lines.push(Line::from(""));
-    lines.push(Line::styled(
+fn setup_language_footer_lines(model: &SetupViewModel, theme: &TundraTheme) -> Vec<Line<'static>> {
+    let mut lines = vec![Line::styled(
         selected_language_summary(model),
         theme.muted_style(),
-    ));
+    )];
     append_setup_error(&mut lines, model, theme);
-
     lines
 }
 
@@ -764,21 +803,56 @@ fn render_setup_admin_field(
         return;
     }
 
-    let is_placeholder = value.is_empty();
-    let display = if is_placeholder {
-        placeholder.to_string()
+    let mut input = TextInput::new(setup_admin_input_id(field))
+        .with_placeholder(placeholder)
+        .with_placeholder_when_focused(true)
+        .with_cursor_symbol("_");
+    input.set_value(value);
+    input.set_focused(focused);
+    input.render_borderless_frame(frame, Rect::new(inner.x, inner.y, inner.width, 1), theme);
+}
+
+fn setup_admin_input_id(field: SetupField) -> &'static str {
+    match field {
+        SetupField::AdminUsername => "setup.admin.username",
+        SetupField::AdminPassword => "setup.admin.password",
+        SetupField::AdminPasswordConfirm => "setup.admin.password-confirm",
+        SetupField::PasswordHint => "setup.admin.password-hint",
+        _ => "setup.admin.input",
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn render_setup_inline_button(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    id: &'static str,
+    label: String,
+    focused: bool,
+    disabled: bool,
+    theme: &TundraTheme,
+) {
+    if area.width == 0 || area.height == 0 {
+        return;
+    }
+
+    // Button's inline renderer centers its label. Padding to the existing row
+    // width preserves the setup page's established left-aligned text without
+    // changing the controller-owned hit rectangle.
+    let label_width = label.chars().count();
+    let padded_label = if label_width < usize::from(area.width) {
+        format!(
+            "{label}{}",
+            " ".repeat(usize::from(area.width) - label_width)
+        )
     } else {
-        value
+        label
     };
-    let text_style = if is_placeholder {
-        theme.muted_style()
-    } else {
-        theme.body_style()
-    };
-    frame.render_widget(
-        Paragraph::new(display).style(text_style),
-        Rect::new(inner.x, inner.y, inner.width, 1),
-    );
+    let mut button = Button::new(id, padded_label);
+    button.set_focused(focused);
+    button.state.hovered = focused;
+    button.set_disabled(disabled);
+    button.render_borderless_frame(frame, area, theme);
 }
 
 fn render_setup_password_checklist(
@@ -822,15 +896,15 @@ pub fn setup_timezone_list_area(main: Rect) -> Rect {
     let controls = setup_timezone_controls_area(main);
     let content = setup_inner_area(controls);
     let reserved_height = SETUP_TIMEZONE_HEADER_HEIGHT
-        .saturating_add(SETUP_TIMEZONE_TOP_INDICATOR_HEIGHT)
-        .saturating_add(SETUP_TIMEZONE_BOTTOM_INDICATOR_HEIGHT)
+        .saturating_add(SETUP_TIMEZONE_TOP_GAP_HEIGHT)
+        .saturating_add(SETUP_TIMEZONE_BOTTOM_GAP_HEIGHT)
         .saturating_add(SETUP_TIMEZONE_FOOTER_HEIGHT);
     Rect::new(
         content.x,
         content
             .y
             .saturating_add(SETUP_TIMEZONE_HEADER_HEIGHT)
-            .saturating_add(SETUP_TIMEZONE_TOP_INDICATOR_HEIGHT),
+            .saturating_add(SETUP_TIMEZONE_TOP_GAP_HEIGHT),
         content.width,
         content.height.saturating_sub(reserved_height),
     )
@@ -1111,76 +1185,6 @@ fn setup_timezone_window_bounds(model: &SetupViewModel, visible_rows: usize) -> 
     (start, end)
 }
 
-fn setup_timezone_indicator_line(
-    visible: bool,
-    text: &'static str,
-    theme: &TundraTheme,
-) -> Line<'static> {
-    if visible {
-        Line::styled(text, theme.muted_style())
-    } else {
-        Line::from("")
-    }
-}
-
-fn setup_timezone_window_lines(
-    model: &SetupViewModel,
-    start: usize,
-    end: usize,
-    theme: &TundraTheme,
-) -> Vec<Line<'static>> {
-    if model.timezones.is_empty() {
-        return vec![Line::styled(
-            "  No timezones available",
-            theme.muted_style(),
-        )];
-    }
-
-    if start >= end {
-        return Vec::new();
-    }
-
-    model.timezones[start..end]
-        .iter()
-        .enumerate()
-        .map(|(offset, timezone)| {
-            let index = start + offset;
-            let text = format!(
-                "{}{} ({})",
-                selection_marker(index == model.selected_timezone_index),
-                timezone.label,
-                timezone.id
-            );
-            if index == model.selected_timezone_index {
-                Line::styled(text, theme.title_style())
-            } else {
-                Line::from(text)
-            }
-        })
-        .collect()
-}
-
-fn setup_submit_line(model: &SetupViewModel, theme: &TundraTheme) -> Line<'static> {
-    let label = if model.can_submit {
-        "Submit: ready"
-    } else {
-        "Submit: incomplete"
-    };
-    let text = format!(
-        "{}{}",
-        focus_marker(model.focused_field == SetupField::Submit),
-        label
-    );
-
-    if model.focused_field == SetupField::Submit {
-        Line::styled(text, theme.title_style())
-    } else if model.can_submit {
-        Line::from(text)
-    } else {
-        Line::styled(text, theme.muted_style())
-    }
-}
-
 fn setup_password_checklist_lines(
     model: &SetupViewModel,
     theme: &TundraTheme,
@@ -1235,8 +1239,4 @@ fn setup_step_label(step: SetupStep) -> &'static str {
         SetupStep::Admin => "Admin",
         SetupStep::Appearance => "Appearance",
     }
-}
-
-fn selection_marker(selected: bool) -> &'static str {
-    if selected { "> " } else { "  " }
 }

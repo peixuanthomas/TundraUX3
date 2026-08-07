@@ -91,7 +91,6 @@ impl ShellSession {
         self.settings_state = Some(SettingsState {
             category: ui::SettingsCategory::Appearance,
             selected_field: ui::SettingsField::Theme,
-            focus: SettingsFocus::Categories,
             status: "Ready".to_string(),
             scroll_offset: 0,
             picker: None,
@@ -201,32 +200,14 @@ impl ShellSession {
             return;
         }
 
-        let focus = self.settings_state.as_ref().map(|state| state.focus);
-        match (&key.key, focus) {
-            (InputKey::Escape, _) => self.close_settings(),
-            (InputKey::Tab, _) | (InputKey::BackTab, _) => {
-                if let Some(state) = self.settings_state.as_mut() {
-                    state.focus = match state.focus {
-                        SettingsFocus::Categories => SettingsFocus::Fields,
-                        SettingsFocus::Fields => SettingsFocus::Categories,
-                    };
-                }
-            }
-            (InputKey::Left | InputKey::Up, Some(SettingsFocus::Categories)) => {
-                self.select_settings_category_delta(-1)
-            }
-            (InputKey::Right | InputKey::Down, Some(SettingsFocus::Categories)) => {
-                self.select_settings_category_delta(1)
-            }
-            (InputKey::Enter | InputKey::Char(' '), Some(SettingsFocus::Categories)) => {
-                if let Some(state) = self.settings_state.as_mut() {
-                    state.focus = SettingsFocus::Fields;
-                }
-            }
-            (InputKey::Up, Some(SettingsFocus::Fields)) => self.select_settings_field_delta(-1),
-            (InputKey::Down, Some(SettingsFocus::Fields)) => self.select_settings_field_delta(1),
-            (InputKey::Home, Some(SettingsFocus::Fields)) => self.select_settings_field_at(0),
-            (InputKey::End, Some(SettingsFocus::Fields)) => {
+        match &key.key {
+            InputKey::Escape => self.close_settings(),
+            InputKey::Tab => self.select_settings_category_delta(1),
+            InputKey::BackTab => self.select_settings_category_delta(-1),
+            InputKey::Up => self.select_settings_field_delta(-1),
+            InputKey::Down => self.select_settings_field_delta(1),
+            InputKey::Home => self.select_settings_field_at(0),
+            InputKey::End => {
                 let last = self
                     .settings_state
                     .as_ref()
@@ -234,17 +215,11 @@ impl ShellSession {
                     .unwrap_or(0);
                 self.select_settings_field_at(last);
             }
-            (InputKey::PageUp, Some(SettingsFocus::Fields)) => self.scroll_settings(-6),
-            (InputKey::PageDown, Some(SettingsFocus::Fields)) => self.scroll_settings(6),
-            (InputKey::Left, Some(SettingsFocus::Fields)) => {
-                self.adjust_selected_setting(-1, platform)
-            }
-            (InputKey::Right, Some(SettingsFocus::Fields)) => {
-                self.adjust_selected_setting(1, platform)
-            }
-            (InputKey::Enter | InputKey::Char(' '), Some(SettingsFocus::Fields)) => {
-                self.activate_selected_setting(platform)
-            }
+            InputKey::PageUp => self.scroll_settings(-6),
+            InputKey::PageDown => self.scroll_settings(6),
+            InputKey::Left => self.adjust_selected_setting(-1, platform),
+            InputKey::Right => self.adjust_selected_setting(1, platform),
+            InputKey::Enter | InputKey::Char(' ') => self.activate_selected_setting(platform),
             _ => {}
         }
         self.refresh_hit_map();
@@ -303,7 +278,6 @@ impl ShellSession {
             }
             Some(ui::SettingsHitTarget::Field(field)) => {
                 if let Some(state) = self.settings_state.as_mut() {
-                    state.focus = SettingsFocus::Fields;
                     state.selected_field = field;
                 }
                 self.activate_selected_setting(platform);
@@ -333,8 +307,8 @@ impl ShellSession {
             .iter()
             .position(|category| *category == current)
             .unwrap_or(0) as isize;
-        let maximum = ui::SettingsCategory::ALL.len().saturating_sub(1) as isize;
-        let next = (index + delta).clamp(0, maximum) as usize;
+        let count = ui::SettingsCategory::ALL.len() as isize;
+        let next = (index + delta).rem_euclid(count) as usize;
         self.select_settings_category(ui::SettingsCategory::ALL[next]);
     }
 
@@ -342,7 +316,6 @@ impl ShellSession {
         if let Some(state) = self.settings_state.as_mut() {
             state.category = category;
             state.selected_field = settings_fields(category)[0];
-            state.focus = SettingsFocus::Categories;
             state.scroll_offset = 0;
             state.picker = None;
             state.color_editor = None;

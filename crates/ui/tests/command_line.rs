@@ -127,7 +127,49 @@ fn command_line_prompt_uses_the_application_accent_color() {
 }
 
 #[test]
-fn command_line_history_renders_the_shared_ascii_scrollbar_style() {
+fn command_line_force_wraps_a_snapshot_row_wider_than_the_viewport() {
+    let mut terminal = CommandLineTerminalSnapshot::blank(160, 14);
+    for column in 0..120 {
+        terminal.set_cell(
+            column,
+            0,
+            CommandLineCell {
+                symbol: "x".to_string(),
+                ..CommandLineCell::default()
+            },
+        );
+    }
+    terminal.set_cell(
+        0,
+        1,
+        CommandLineCell {
+            symbol: "N".to_string(),
+            ..CommandLineCell::default()
+        },
+    );
+    let model = CommandLineViewModel::new(terminal);
+    let mut screen = Terminal::new(TestBackend::new(108, 22)).unwrap();
+
+    screen
+        .draw(|frame| {
+            render_command_line(
+                frame,
+                frame.area(),
+                &chrome((108, 22)),
+                &model,
+                &TundraTheme::default_dark(),
+            );
+        })
+        .unwrap();
+    let buffer = screen.backend().buffer();
+
+    assert!((1..107).all(|x| buffer.cell((x, 4)).unwrap().symbol() == "x"));
+    assert!((1..15).all(|x| buffer.cell((x, 5)).unwrap().symbol() == "x"));
+    assert_eq!(buffer.cell((1, 6)).unwrap().symbol(), "N");
+}
+
+#[test]
+fn command_line_history_renders_the_ratatui_scrollbar_style() {
     let mut terminal = CommandLineTerminalSnapshot::blank(105, 14);
     terminal.scrollback_rows = 14;
     let model = CommandLineViewModel::new(terminal);
@@ -146,9 +188,9 @@ fn command_line_history_renders_the_shared_ascii_scrollbar_style() {
     let buffer = screen.backend().buffer();
 
     // The inner panel spans x=1..106 and y=4..17. At the live bottom, the
-    // upper track remains visible while the # thumb occupies its lower half.
-    assert_eq!(buffer.cell((106, 4)).unwrap().symbol(), "|");
-    assert_eq!(buffer.cell((106, 17)).unwrap().symbol(), "#");
+    // upper track remains visible while the thumb occupies its lower half.
+    assert_eq!(buffer.cell((106, 4)).unwrap().symbol(), "║");
+    assert_eq!(buffer.cell((106, 17)).unwrap().symbol(), "█");
 }
 
 #[test]

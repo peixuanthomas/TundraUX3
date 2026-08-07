@@ -2,10 +2,11 @@ use ratatui::Frame;
 use ratatui::layout::{Alignment, Rect};
 use ratatui::style::Style;
 use ratatui::text::Line;
-use ratatui::widgets::{Borders, Clear, Paragraph};
+use ratatui::widgets::{Borders, Clear, HighlightSpacing, List, ListItem, ListState, Paragraph};
 
 use super::layout::{ClockEntryKind, ClockPageLayout, clock_page_layout};
 use super::model::{ClockCreateDialogFocus, ClockEntryViewModel, ClockViewModel};
+use crate::components::{Button, TextInput};
 use crate::screens::shell::{render_compact_home, render_status, render_top};
 use crate::{ClockFontAsset, ShellChromeViewModel, ShellLayout, TundraTheme, compute_shell_layout};
 
@@ -123,16 +124,13 @@ fn render_clock_panel(
         layout.panel,
     );
 
-    render_clock_line(
+    render_clock_button(
         frame,
         layout.new_button,
-        "[ + New ]".to_string(),
-        if model.selected_entry_id.is_none() && model.create_dialog.is_none() {
-            theme.title_style()
-        } else {
-            theme.body_style()
-        },
-        Alignment::Center,
+        "clock.new",
+        "[ + New ]",
+        model.selected_entry_id.is_none() && model.create_dialog.is_none(),
+        theme,
     );
     render_clock_line(
         frame,
@@ -157,29 +155,53 @@ fn render_clock_panel(
         Alignment::Left,
     );
 
-    for row in &layout.entry_rows {
-        let Some(entry) = clock_entry(model, row.kind, row.id) else {
-            continue;
-        };
-        let selected = model.selected_entry_id == Some(entry.id);
-        let marker = if selected { "> " } else { "  " };
-        let kind = match row.kind {
-            ClockEntryKind::Alarm => "[A]",
-            ClockEntryKind::Countdown => "[T]",
-        };
-        let strong = if entry.strong { " !" } else { "" };
-        render_clock_line(
-            frame,
-            row.area,
-            format!("{marker}{kind} {}{strong}", entry.label),
-            if selected {
-                theme.title_style()
-            } else {
-                theme.body_style()
-            },
-            Alignment::Left,
-        );
-    }
+    render_clock_entry_list(frame, layout, model, ClockEntryKind::Alarm, theme);
+    render_clock_entry_list(frame, layout, model, ClockEntryKind::Countdown, theme);
+}
+
+fn render_clock_entry_list(
+    frame: &mut Frame<'_>,
+    layout: &ClockPageLayout,
+    model: &ClockViewModel,
+    kind: ClockEntryKind,
+    theme: &TundraTheme,
+) {
+    let rows = layout
+        .entry_rows
+        .iter()
+        .filter(|row| row.kind == kind)
+        .collect::<Vec<_>>();
+    let (Some(first), Some(last)) = (rows.first(), rows.last()) else {
+        return;
+    };
+    let area = Rect::new(
+        first.area.x,
+        first.area.y,
+        first.area.width,
+        last.area.bottom().saturating_sub(first.area.y),
+    );
+    let items = rows
+        .iter()
+        .filter_map(|row| {
+            let entry = clock_entry(model, row.kind, row.id)?;
+            let marker = match row.kind {
+                ClockEntryKind::Alarm => "[A]",
+                ClockEntryKind::Countdown => "[T]",
+            };
+            let strong = if entry.strong { " !" } else { "" };
+            Some(ListItem::new(format!("{marker} {}{strong}", entry.label)))
+        })
+        .collect::<Vec<_>>();
+    let selected = rows
+        .iter()
+        .position(|row| model.selected_entry_id == Some(row.id));
+    let list = List::new(items)
+        .style(theme.body_style())
+        .highlight_symbol("> ")
+        .highlight_spacing(HighlightSpacing::Always)
+        .highlight_style(theme.title_style());
+    let mut state = ListState::default().with_selected(selected);
+    frame.render_stateful_widget(list, area, &mut state);
 }
 
 fn render_clock_create_dialog(
@@ -215,27 +237,7 @@ fn render_clock_create_dialog(
         Alignment::Left,
     );
 
-    let input_is_empty = model.input.is_empty();
-    render_clock_line(
-        frame,
-        layout.input,
-        format!(
-            "[ {} ]",
-            if input_is_empty {
-                "hh mm ss"
-            } else {
-                model.input.as_str()
-            }
-        ),
-        if model.focus == ClockCreateDialogFocus::Input {
-            theme.title_style()
-        } else if input_is_empty {
-            theme.muted_style()
-        } else {
-            theme.body_style()
-        },
-        Alignment::Left,
-    );
+    render_clock_create_input(frame, layout.input, model, theme);
     if let Some(error) = &model.error {
         render_clock_line(
             frame,
@@ -245,28 +247,107 @@ fn render_clock_create_dialog(
             Alignment::Left,
         );
     }
-    render_clock_line(
+    render_clock_button(
         frame,
         layout.create_alarm,
-        "[ Create Alarm ]".to_string(),
-        if model.focus == ClockCreateDialogFocus::CreateAlarm {
-            theme.title_style()
-        } else {
-            theme.body_style()
-        },
-        Alignment::Center,
+        "clock.create-alarm",
+        "[ Create Alarm ]",
+        model.focus == ClockCreateDialogFocus::CreateAlarm,
+        theme,
     );
-    render_clock_line(
+    render_clock_button(
         frame,
         layout.create_countdown,
-        "[ Create Countdown ]".to_string(),
-        if model.focus == ClockCreateDialogFocus::CreateCountdown {
+        "clock.create-countdown",
+        "[ Create Countdown ]",
+        model.focus == ClockCreateDialogFocus::CreateCountdown,
+        theme,
+    );
+}
+
+fn render_clock_create_input(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    model: &crate::ClockCreateDialogViewModel,
+    theme: &TundraTheme,
+) {
+    if area.width == 0 || area.height == 0 {
+        return;
+    }
+
+    let input_is_empty = model.input.is_empty();
+    let prefix = "[ ";
+    let focused = model.focus == ClockCreateDialogFocus::Input;
+    let mut input = TextInput::new("clock.create-input")
+        .with_placeholder("hh mm ss")
+        .with_placeholder_when_focused(true)
+        .with_cursor_symbol("_");
+    input.set_value(&model.input);
+    input.set_focused(focused);
+    input.state.hovered = focused;
+
+    let mut input_theme = *theme;
+    if input_is_empty && !focused {
+        input_theme.foreground = theme.muted;
+    }
+    if area.width <= 2 {
+        input.render_borderless_frame_with_prefix(frame, area, &input_theme, prefix);
+        return;
+    }
+    let input_area = Rect::new(area.x, area.y, area.width.saturating_sub(2), area.height);
+    input.render_borderless_frame_with_prefix(frame, input_area, &input_theme, prefix);
+
+    let visible_value_width = if input_is_empty {
+        "hh mm ss".chars().count()
+    } else {
+        model
+            .input
+            .chars()
+            .count()
+            .saturating_add(usize::from(focused))
+    };
+    let input_capacity = usize::from(input_area.width).saturating_sub(prefix.chars().count());
+    let suffix_x = area
+        .x
+        .saturating_add(prefix.chars().count() as u16)
+        .saturating_add(visible_value_width.min(input_capacity) as u16)
+        .min(area.right().saturating_sub(2));
+    render_clock_line(
+        frame,
+        Rect::new(
+            suffix_x,
+            area.y,
+            area.right().saturating_sub(suffix_x),
+            area.height,
+        ),
+        " ]".to_string(),
+        if focused {
             theme.title_style()
+        } else if input_is_empty {
+            theme.muted_style()
         } else {
             theme.body_style()
         },
-        Alignment::Center,
+        Alignment::Left,
     );
+}
+
+fn render_clock_button(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    id: &'static str,
+    label: &'static str,
+    focused: bool,
+    theme: &TundraTheme,
+) {
+    if area.width == 0 || area.height == 0 {
+        return;
+    }
+
+    let mut button = Button::new(id, label);
+    button.set_focused(focused);
+    button.state.hovered = focused;
+    button.render_borderless_frame(frame, area, theme);
 }
 
 pub(crate) fn render_clock_line(

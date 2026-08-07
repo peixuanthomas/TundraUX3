@@ -75,9 +75,9 @@ fn overflowing_checks_show_a_proportional_scrollbar_at_the_current_window() {
     let buffer = terminal.backend().buffer();
     for y in scrollbar.track.y..scrollbar.track.bottom() {
         let expected = if y >= scrollbar.thumb.y && y < scrollbar.thumb.bottom() {
-            "#"
+            "█"
         } else {
-            "|"
+            "║"
         };
         assert_eq!(
             buffer
@@ -118,8 +118,9 @@ fn health_renderer_draws_two_columns_statuses_and_admin_details() {
     let layout = diagnostics_layout(full_main(140, 30), &model);
 
     assert!(output.contains("Diagnostics"));
-    assert!(output.contains("Health"));
-    assert!(output.contains("Incidents"));
+    assert!(output.contains("[Health]"));
+    assert!(output.contains("[Logs]"));
+    assert!(output.contains("[Incidents]"));
     assert!(output.contains("Checks"));
     assert!(output.contains("Details"));
     assert!(output.contains("System needs attention"));
@@ -135,7 +136,11 @@ fn health_renderer_draws_two_columns_statuses_and_admin_details() {
         layout.rows[0].area,
         TundraTheme::default_dark().accent_color
     ));
-    assert!(region_has_fg(&terminal, layout.rows[1].area, Color::Yellow));
+    assert!(region_has_fg(
+        &terminal,
+        layout.rows[1].area,
+        TundraTheme::default_dark().accent_color,
+    ));
     assert!(region_has_fg(
         &terminal,
         layout.rows[2].area,

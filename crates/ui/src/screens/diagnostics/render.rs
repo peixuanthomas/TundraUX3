@@ -1,14 +1,18 @@
 use ratatui::Frame;
 use ratatui::layout::{Alignment, Rect};
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::{Modifier, Style};
 use ratatui::text::Line;
-use ratatui::widgets::{Borders, Clear, Paragraph, Wrap};
+use ratatui::widgets::{
+    Borders, Clear, HighlightSpacing, List, ListItem, ListState, Paragraph, Scrollbar,
+    ScrollbarOrientation, ScrollbarState, Wrap,
+};
 
 use super::layout::{DiagnosticsLayout, DiagnosticsRepairDialogLayout, diagnostics_layout};
 use super::model::{
     DiagnosticsCheckViewModel, DiagnosticsIncidentViewModel, DiagnosticsRepairDialogViewModel,
     DiagnosticsStatus, DiagnosticsTab, DiagnosticsViewModel,
 };
+use crate::components::{Button, TabItem, Tabs};
 use crate::screens::clock::render_clock_line;
 use crate::screens::shell::{fit_cell, render_compact_home, render_status, render_top};
 use crate::{ShellChromeViewModel, ShellLayout, TundraTheme, compute_shell_layout};
@@ -162,25 +166,21 @@ fn render_diagnostics_tabs(
     model: &DiagnosticsViewModel,
     theme: &TundraTheme,
 ) {
-    for tab in &layout.tabs {
-        let active = model.tab == tab.tab;
-        render_clock_line(
-            frame,
-            tab.area,
-            format!(
-                "{} {} {}",
-                if active { "[" } else { " " },
-                tab.tab.label(),
-                if active { "]" } else { " " },
-            ),
-            if active {
-                theme.title_style()
-            } else {
-                theme.muted_style()
-            },
-            Alignment::Center,
-        );
-    }
+    let items = DiagnosticsTab::ALL
+        .into_iter()
+        .map(|tab| {
+            TabItem::new(
+                format!("diagnostics.tab.{}", tab.label().to_ascii_lowercase()),
+                format!("[{}]", tab.label()),
+            )
+        })
+        .collect();
+    let mut tabs = Tabs::new("diagnostics.tabs", items);
+    tabs.set_selected(DiagnosticsTab::ALL.iter().position(|tab| *tab == model.tab));
+
+    let mut tabs_theme = *theme;
+    tabs_theme.foreground = theme.muted;
+    tabs.render_borderless_frame(frame, layout.tabs_area, &tabs_theme);
 }
 
 fn render_diagnostics_rows(
@@ -220,78 +220,80 @@ fn render_diagnostics_rows(
         return;
     }
 
-    for row in &layout.rows {
-        let (text, status, selected) = match model.tab {
-            DiagnosticsTab::Health => {
-                let Some(check) = model.checks.get(row.index) else {
-                    continue;
-                };
-                (
-                    format!(
-                        "{} {} [{}] {}",
-                        if row.index == model.selected_check {
-                            ">"
-                        } else {
-                            " "
-                        },
-                        check.status.marker(),
-                        check.category,
-                        check.label,
-                    ),
-                    check.status,
-                    row.index == model.selected_check,
-                )
-            }
-            DiagnosticsTab::Incidents => {
-                let Some(incident) = model.incidents.get(row.index) else {
-                    continue;
-                };
-                (
-                    format!(
-                        "{} {} {} — {}",
-                        if row.index == model.selected_incident {
-                            ">"
-                        } else {
-                            " "
-                        },
-                        incident.severity.marker(),
-                        incident.occurred_at,
-                        incident.app,
-                    ),
-                    incident.severity,
-                    row.index == model.selected_incident,
-                )
-            }
-            DiagnosticsTab::Logs => {
-                let Some(log) = model.logs.get(row.index) else {
-                    continue;
-                };
-                (
-                    format!(
-                        "{} {}  {}  {} bytes",
-                        if row.index == model.selected_log {
-                            ">"
-                        } else {
-                            " "
-                        },
-                        log.relative_path,
-                        log.modified_at,
-                        log.size_bytes,
-                    ),
-                    DiagnosticsStatus::Pass,
-                    row.index == model.selected_log,
-                )
-            }
-        };
-        let style = diagnostics_status_style(status, theme, selected);
-        render_clock_line(
-            frame,
-            row.area,
-            fit_cell(&text, usize::from(row.area.width)),
-            style,
-            Alignment::Left,
-        );
-    }
+    let items = layout
+        .rows
+        .iter()
+        .filter_map(|row| {
+            let (text, status) = match model.tab {
+                DiagnosticsTab::Health => {
+                    let check = model.checks.get(row.index)?;
+                    (
+                        format!(
+                            " {} [{}] {}",
+                            check.status.marker(),
+                            check.category,
+                            check.label,
+                        ),
+                        check.status,
+                    )
+                }
+                DiagnosticsTab::Incidents => {
+                    let incident = model.incidents.get(row.index)?;
+                    (
+                        format!(
+                            " {} {} — {}",
+                            incident.severity.marker(),
+                            incident.occurred_at,
+                            incident.app,
+                        ),
+                        incident.severity,
+                    )
+                }
+                DiagnosticsTab::Logs => {
+                    let log = model.logs.get(row.index)?;
+                    (
+                        format!(
+                            " {}  {}  {} bytes",
+                            log.relative_path, log.modified_at, log.size_bytes,
+                        ),
+                        DiagnosticsStatus::Pass,
+                    )
+                }
+            };
+            Some(
+                ListItem::new(fit_cell(
+                    &text,
+                    usize::from(row.area.width.saturating_sub(1)),
+                ))
+                .style(diagnostics_status_style(status, theme, false)),
+            )
+        })
+        .collect::<Vec<_>>();
+    let selected = layout
+        .rows
+        .iter()
+        .position(|row| row.index == model.selected_index());
+    let selected_style = selected.map_or_else(
+        || theme.title_style(),
+        |_| match model.tab {
+            DiagnosticsTab::Health => model
+                .selected_check()
+                .map(|check| diagnostics_status_style(check.status, theme, true))
+                .unwrap_or_else(|| theme.title_style()),
+            DiagnosticsTab::Incidents => model
+                .selected_incident()
+                .map(|incident| diagnostics_status_style(incident.severity, theme, true))
+                .unwrap_or_else(|| theme.title_style()),
+            DiagnosticsTab::Logs => diagnostics_status_style(DiagnosticsStatus::Pass, theme, true),
+        },
+    );
+    let list = List::new(items)
+        .style(theme.body_style())
+        .highlight_symbol(">")
+        .highlight_spacing(HighlightSpacing::Always)
+        .highlight_style(selected_style);
+    let mut state = ListState::default().with_selected(selected);
+    frame.render_stateful_widget(list, layout.list_rows_area, &mut state);
 
     render_diagnostics_scrollbar(frame, layout, theme);
 }
@@ -305,24 +307,22 @@ fn render_diagnostics_scrollbar(
         return;
     };
 
-    for y in scrollbar.track.y..scrollbar.track.bottom() {
-        render_clock_line(
-            frame,
-            Rect::new(scrollbar.track.x, y, 1, 1),
-            "|".to_string(),
-            theme.muted_style(),
-            Alignment::Left,
-        );
-    }
-    for y in scrollbar.thumb.y..scrollbar.thumb.bottom() {
-        render_clock_line(
-            frame,
-            Rect::new(scrollbar.thumb.x, y, 1, 1),
-            "#".to_string(),
-            theme.title_style(),
-            Alignment::Left,
-        );
-    }
+    let track_length = usize::from(scrollbar.track.height);
+    let thumb_length = usize::from(scrollbar.thumb.height);
+    let thumb_offset = usize::from(scrollbar.thumb.y.saturating_sub(scrollbar.track.y));
+    let mut state =
+        ScrollbarState::new(track_length.saturating_sub(thumb_length).saturating_add(1))
+            .position(thumb_offset)
+            .viewport_content_length(thumb_length);
+    frame.render_stateful_widget(
+        Scrollbar::new(ScrollbarOrientation::VerticalRight)
+            .begin_symbol(None)
+            .end_symbol(None)
+            .track_style(theme.muted_style())
+            .thumb_style(theme.title_style()),
+        scrollbar.track,
+        &mut state,
+    );
 }
 
 fn render_diagnostics_detail(
@@ -549,31 +549,28 @@ fn render_diagnostics_repair_dialog(
             Alignment::Left,
         );
     } else {
-        for row in &layout.rows {
-            let Some(item) = model.items.get(row.index) else {
-                continue;
-            };
-            let selected = row.index == model.selected;
-            render_clock_line(
-                frame,
-                row.area,
-                fit_cell(
-                    &format!(
-                        "{} {}. {}",
-                        if selected { ">" } else { " " },
-                        row.index.saturating_add(1),
-                        item.label,
-                    ),
-                    usize::from(row.area.width),
-                ),
-                if selected {
-                    theme.title_style()
-                } else {
-                    theme.body_style()
-                },
-                Alignment::Left,
-            );
-        }
+        let items = layout
+            .rows
+            .iter()
+            .filter_map(|row| {
+                let item = model.items.get(row.index)?;
+                Some(ListItem::new(fit_cell(
+                    &format!(" {}. {}", row.index.saturating_add(1), item.label),
+                    usize::from(row.area.width.saturating_sub(1)),
+                )))
+            })
+            .collect::<Vec<_>>();
+        let selected = layout
+            .rows
+            .iter()
+            .position(|row| row.index == model.selected);
+        let list = List::new(items)
+            .style(theme.body_style())
+            .highlight_symbol(">")
+            .highlight_spacing(HighlightSpacing::Always)
+            .highlight_style(theme.title_style());
+        let mut state = ListState::default().with_selected(selected);
+        frame.render_stateful_widget(list, layout.items_area, &mut state);
     }
     render_clock_line(
         frame,
@@ -582,35 +579,49 @@ fn render_diagnostics_repair_dialog(
         theme.muted_style(),
         Alignment::Left,
     );
-    render_clock_line(
+    render_diagnostics_button(
         frame,
         layout.confirm,
-        "[ Confirm repair ]".to_string(),
-        if model.confirm_selected {
-            theme.title_style()
-        } else {
-            theme.body_style()
-        },
-        Alignment::Center,
+        "diagnostics.repair-confirm",
+        "[ Confirm repair ]",
+        model.confirm_selected,
+        theme,
     );
-    render_clock_line(
-        frame,
-        layout.restart,
-        "[ Restart ]".to_string(),
-        diagnostics_warning_style(theme),
-        Alignment::Center,
-    );
-    render_clock_line(
+
+    let mut restart_theme = *theme;
+    restart_theme.foreground = diagnostics_warning_style(theme)
+        .fg
+        .unwrap_or(theme.foreground);
+    let mut restart = Button::new("diagnostics.repair-restart", "[ Restart ]");
+    restart.set_focused(true);
+    restart.render_borderless_frame(frame, layout.restart, &restart_theme);
+
+    render_diagnostics_button(
         frame,
         layout.cancel,
-        "[ Cancel ]".to_string(),
-        if model.confirm_selected {
-            theme.body_style()
-        } else {
-            theme.title_style()
-        },
-        Alignment::Center,
+        "diagnostics.repair-cancel",
+        "[ Cancel ]",
+        !model.confirm_selected,
+        theme,
     );
+}
+
+fn render_diagnostics_button(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    id: &'static str,
+    label: &'static str,
+    focused: bool,
+    theme: &TundraTheme,
+) {
+    if area.width == 0 || area.height == 0 {
+        return;
+    }
+
+    let mut button = Button::new(id, label);
+    button.set_focused(focused);
+    button.state.hovered = focused;
+    button.render_borderless_frame(frame, area, theme);
 }
 
 fn diagnostics_status_style(
@@ -633,7 +644,7 @@ fn diagnostics_status_style(
 
 fn diagnostics_warning_style(theme: &TundraTheme) -> Style {
     Style::default()
-        .fg(Color::Yellow)
+        .fg(theme.accent_color)
         .bg(theme.background)
         .add_modifier(Modifier::BOLD)
 }

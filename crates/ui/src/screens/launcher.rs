@@ -2,8 +2,11 @@ use ratatui::Frame;
 use ratatui::layout::{Alignment, Rect};
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Borders, Clear, Paragraph, Wrap};
+use ratatui::widgets::{
+    Borders, Clear, Paragraph, Row, Scrollbar, ScrollbarOrientation, ScrollbarState, Table, Wrap,
+};
 
+use crate::components::Button;
 use crate::screens::shell::{render_compact_home, render_status, render_top};
 use crate::{
     AssetError, RuntimeAsciiAssets, ShellChromeViewModel, ShellLayout, TundraTheme,
@@ -782,15 +785,12 @@ fn render_launcher_toolbar(
         else {
             continue;
         };
-        let style = if button.enabled {
-            theme.title_style()
-        } else {
-            theme.muted_style()
-        };
-        frame.render_widget(
-            Paragraph::new(format!("[{} {}]", button.action.shortcut(), button.label)).style(style),
-            button_layout.area,
+        let mut component = Button::new(
+            format!("launcher.toolbar.{}", button.action.label().to_lowercase()),
+            format!("[{} {}]", button.action.shortcut(), button.label),
         );
+        component.set_disabled(!button.enabled);
+        component.render_borderless_frame(frame, button_layout.area, theme);
     }
 }
 
@@ -818,14 +818,11 @@ fn render_launcher_grid(
         let focused = model.selected_index == Some(item_layout.index);
         let selected = focused || item.selected;
         let style = item_style(item.status, selected, theme);
-        frame.render_widget(
-            theme
-                .block()
-                .borders(Borders::ALL)
-                .style(style)
-                .border_style(theme.selectable_border_style(selected)),
-            item_layout.area,
-        );
+        let mut surface = Button::new(format!("launcher.item.{}", item.id), "");
+        surface.set_focused(focused);
+        surface.state.selected = selected;
+        surface.set_disabled(item.status != LauncherItemStatus::Ready);
+        surface.render_surface_frame(frame, item_layout.area, theme);
         let rendered_native =
             icons.is_some_and(|icons| icons.render_icon(&item.id, frame, item_layout.icon_area));
         if !rendered_native {
@@ -911,35 +908,38 @@ fn render_launcher_details(
         return;
     }
     let widths = detail_widths(width);
+    let header = Row::new([
+        fit_text("Name", widths[0]),
+        fit_text("Type", widths[1]),
+        fit_text("Integrity", widths[2]),
+        fit_text("Path", widths[3]),
+    ])
+    .style(theme.title_style());
+    let rows = layout.items.iter().filter_map(|item_layout| {
+        let item = model.items.get(item_layout.index)?;
+        let selected = model.selected_index == Some(item_layout.index) || item.selected;
+        Some(
+            Row::new([
+                fit_text(&format!("[A] {}", item.name), widths[0]),
+                fit_text(&item.type_label, widths[1]),
+                fit_text(launcher_status_label(item.status), widths[2]),
+                fit_text(&item.path, widths[3]),
+            ])
+            .style(item_style(item.status, selected, theme)),
+        )
+    });
     frame.render_widget(
-        Paragraph::new(detail_line("Name", "Type", "Integrity", "Path", widths))
-            .style(theme.title_style()),
+        Table::new(rows, widths)
+            .header(header)
+            .column_spacing(0)
+            .style(theme.body_style()),
         Rect::new(
             layout.content.x,
             layout.content.y,
             width,
-            u16::from(layout.content.height > 0),
+            layout.content.height,
         ),
     );
-    for item_layout in &layout.items {
-        let Some(item) = model.items.get(item_layout.index) else {
-            continue;
-        };
-        let selected = model.selected_index == Some(item_layout.index) || item.selected;
-        let style = item_style(item.status, selected, theme);
-        let name = format!("[A] {}", item.name);
-        frame.render_widget(
-            Paragraph::new(detail_line(
-                &name,
-                &item.type_label,
-                launcher_status_label(item.status),
-                &item.path,
-                widths,
-            ))
-            .style(style),
-            item_layout.area,
-        );
-    }
 }
 
 fn detail_widths(width: u16) -> [u16; 4] {
@@ -948,21 +948,6 @@ fn detail_widths(width: u16) -> [u16; 4] {
     let integrity = (width.saturating_mul(18) / 100).max(8);
     let used = name.saturating_add(kind).saturating_add(integrity);
     [name, kind, integrity, width.saturating_sub(used)]
-}
-
-fn detail_line(
-    name: &str,
-    kind: &str,
-    integrity: &str,
-    path: &str,
-    widths: [u16; 4],
-) -> Line<'static> {
-    Line::from(vec![
-        Span::raw(pad_cell(name, widths[0])),
-        Span::raw(pad_cell(kind, widths[1])),
-        Span::raw(pad_cell(integrity, widths[2])),
-        Span::raw(pad_cell(path, widths[3])),
-    ])
 }
 
 fn render_launcher_footer(
@@ -1013,23 +998,18 @@ fn render_launcher_scrollbar(
         .saturating_sub(layout.visible_capacity)
         .max(1);
     let thumb_start = travel.saturating_mul(layout.visible_start) / max_start;
-    for row in 0..usize::from(area.height) {
-        let symbol = if (thumb_start..thumb_start.saturating_add(thumb_height)).contains(&row) {
-            "█"
-        } else {
-            "│"
-        };
-        frame.render_widget(
-            Paragraph::new(symbol).style(theme.muted_style()),
-            Rect::new(
-                area.x,
-                area.y
-                    .saturating_add(u16::try_from(row).unwrap_or(u16::MAX)),
-                1,
-                1,
-            ),
-        );
-    }
+    let mut state = ScrollbarState::new(travel.saturating_add(1))
+        .position(thumb_start)
+        .viewport_content_length(thumb_height);
+    frame.render_stateful_widget(
+        Scrollbar::new(ScrollbarOrientation::VerticalRight)
+            .begin_symbol(None)
+            .end_symbol(None)
+            .track_style(theme.muted_style())
+            .thumb_style(theme.muted_style()),
+        area,
+        &mut state,
+    );
 }
 
 fn render_launcher_confirmation(
@@ -1054,26 +1034,19 @@ fn render_launcher_confirmation(
             .wrap(Wrap { trim: true }),
         layout.message,
     );
-    frame.render_widget(
-        Paragraph::new(format!("[{}]", dialog.confirm_label))
-            .style(if dialog.confirm_selected {
-                theme.title_style()
-            } else {
-                theme.body_style()
-            })
-            .alignment(Alignment::Center),
-        layout.confirm,
+    let mut confirm = Button::new(
+        "launcher.confirmation.confirm",
+        format!("[{}]", dialog.confirm_label),
     );
-    frame.render_widget(
-        Paragraph::new(format!("[{}]", dialog.cancel_label))
-            .style(if dialog.confirm_selected {
-                theme.body_style()
-            } else {
-                theme.title_style()
-            })
-            .alignment(Alignment::Center),
-        layout.cancel,
+    confirm.state.selected = dialog.confirm_selected;
+    confirm.render_borderless_frame(frame, layout.confirm, theme);
+
+    let mut cancel = Button::new(
+        "launcher.confirmation.cancel",
+        format!("[{}]", dialog.cancel_label),
     );
+    cancel.state.selected = !dialog.confirm_selected;
+    cancel.render_borderless_frame(frame, layout.cancel, theme);
 }
 
 fn item_style(status: LauncherItemStatus, selected: bool, theme: &TundraTheme) -> Style {
@@ -1119,27 +1092,29 @@ fn launcher_status_requires_approval(status: LauncherItemStatus) -> bool {
     )
 }
 
-fn pad_cell(value: &str, width: u16) -> String {
-    let mut value = fit_text(value, width);
-    let len = value.chars().count();
-    value.extend(std::iter::repeat_n(
-        ' ',
-        usize::from(width).saturating_sub(len),
-    ));
-    value
-}
-
 fn fit_text(value: &str, width: u16) -> String {
     let width = usize::from(width);
     if width == 0 {
         return String::new();
     }
-    if value.chars().count() <= width {
+    if Line::from(value).width() <= width {
         return value.to_string();
     }
-    let mut result: String = value.chars().take(width.saturating_sub(1)).collect();
-    result.push('…');
-    result
+
+    let content_width = width.saturating_sub(1);
+    let span = Span::raw(value);
+    let mut used = 0usize;
+    let mut fitted = String::new();
+    for grapheme in span.styled_graphemes(Style::default()) {
+        let grapheme_width = Line::from(grapheme.symbol).width();
+        if used.saturating_add(grapheme_width) > content_width {
+            break;
+        }
+        fitted.push_str(grapheme.symbol);
+        used = used.saturating_add(grapheme_width);
+    }
+    fitted.push('…');
+    fitted
 }
 
 fn inset(area: Rect, amount: u16) -> Rect {

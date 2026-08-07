@@ -5,6 +5,7 @@ use ratatui::widgets::{Borders, Paragraph, Wrap};
 
 use super::{HomeDisplayMode, HomeViewModel};
 use crate::TundraTheme;
+use crate::components::Button;
 use crate::screens::shell::{
     ShellChromeViewModel, ShellLayout, compute_shell_layout, render_compact_home, render_status,
     render_top,
@@ -99,16 +100,10 @@ fn render_user_main(
             theme.body_style()
         };
         let content_width = usize::from(tile.width.saturating_sub(2));
-        frame.render_widget(
-            theme
-                .block()
-                .borders(Borders::ALL)
-                .style(style)
-                .border_style(theme.selectable_border_style(selected))
-                .title(if selected { "Selected" } else { "" })
-                .title_style(style),
-            tile,
-        );
+        let mut surface = Button::new(format!("home.entry.{index}"), "");
+        surface.state.selected = selected;
+        surface.set_focused(selected);
+        surface.render_surface_frame(frame, tile, theme);
         let icon_area = home_entry_icon_area(tile);
         let rendered_graphic = icon_area.width > 0
             && icon_area.height > 0
@@ -201,15 +196,9 @@ fn render_home_account_summary(
         Rect::new(summary.x, summary.y, user_width, summary.height),
     );
     if logout.width > 0 {
-        let style = if home.logout_selected() {
-            theme.title_style()
-        } else {
-            theme.body_style()
-        };
-        frame.render_widget(
-            Paragraph::new(Line::styled("[Logout]", style)).style(style),
-            logout,
-        );
+        let mut button = Button::new("home.logout", "[Logout]");
+        button.state.selected = home.logout_selected();
+        button.render_borderless_frame(frame, logout, theme);
     }
 }
 
@@ -226,7 +215,7 @@ fn centered_home_tile_line(
 }
 
 fn centered_home_tile_text(text: &str, content_width: usize) -> String {
-    centered_home_tile_value(text, text.chars().count(), content_width)
+    centered_home_tile_value(text, Line::from(text).width(), content_width)
 }
 
 fn centered_home_tile_value(text: &str, measured_width: usize, content_width: usize) -> String {

@@ -1,5 +1,10 @@
 use super::document::*;
 use super::*;
+use crate::components::Button;
+use ratatui::widgets::{
+    List as RatatuiList, ListItem as RatatuiListItem, Scrollbar, ScrollbarOrientation,
+    ScrollbarState, Tabs as RatatuiTabs,
+};
 
 /// Render only the editor's main area. Shell chrome remains the caller's responsibility.
 pub fn render_editor(
@@ -33,40 +38,44 @@ fn render_menu_bar(
         return;
     }
     frame.render_widget(
-        Block::default().style(Style::default().fg(theme.foreground).bg(Color::DarkGray)),
+        Block::default().style(Style::default().fg(theme.foreground).bg(theme.muted)),
         layout.menu_bar,
     );
     for item in &layout.menus {
         let active = model.open_menu == Some(item.menu)
             || (item.menu == EditorMenu::Settings && model.settings.is_some());
-        let style = if active {
-            Style::default()
-                .fg(theme.background)
-                .bg(theme.accent_color)
-                .add_modifier(Modifier::BOLD)
-        } else if model.focus == EditorFocus::MenuBar {
-            Style::default().fg(theme.accent_color).bg(Color::DarkGray)
-        } else {
-            Style::default().fg(theme.foreground).bg(Color::DarkGray)
-        };
-        frame.render_widget(
-            Paragraph::new(format!(" {} ", menu_label(item.menu))).style(style),
+        let mut item_theme = *theme;
+        if !active {
+            item_theme.background = theme.muted;
+            if model.focus == EditorFocus::MenuBar {
+                item_theme.foreground = theme.accent_color;
+            }
+        }
+        render_editor_button(
+            frame,
             item.area,
+            format!("editor.menu.{:?}", item.menu),
+            format!(" {} ", menu_label(item.menu)),
+            active,
+            false,
+            &item_theme,
         );
     }
     for item in &layout.modes {
         let active = item.mode == model.mode;
-        let style = if active {
-            Style::default()
-                .fg(theme.background)
-                .bg(theme.accent_color)
-                .add_modifier(Modifier::BOLD)
-        } else {
-            Style::default().fg(theme.muted).bg(Color::DarkGray)
-        };
-        frame.render_widget(
-            Paragraph::new(format!(" {} ", mode_label(item.mode))).style(style),
+        let mut item_theme = *theme;
+        if !active {
+            item_theme.background = theme.muted;
+            item_theme.foreground = theme.muted;
+        }
+        render_editor_button(
+            frame,
             item.area,
+            format!("editor.mode.{:?}", item.mode),
+            format!(" {} ", mode_label(item.mode)),
+            active,
+            false,
+            &item_theme,
         );
     }
 }
@@ -88,7 +97,16 @@ fn render_menu_popup(
             .style(Style::default().fg(theme.foreground).bg(theme.background)),
         area,
     );
-    for item in &layout.menu_items {
+    let Some(first) = layout.menu_items.first() else {
+        return;
+    };
+    let list_area = Rect::new(
+        first.area.x,
+        first.area.y,
+        first.area.width,
+        u16::try_from(layout.menu_items.len()).unwrap_or(u16::MAX),
+    );
+    let items = layout.menu_items.iter().map(|item| {
         let active_mode = matches!(item.action, EditorMenuAction::Mode(mode) if mode == model.mode);
         let style = if !item.enabled {
             theme.muted_style()
@@ -100,10 +118,32 @@ fn render_menu_popup(
         } else {
             theme.body_style()
         };
-        frame.render_widget(
-            Paragraph::new(format!(" {}", menu_action_label(item.action))).style(style),
-            item.area,
-        );
+        RatatuiListItem::new(format!(" {}", menu_action_label(item.action))).style(style)
+    });
+    frame.render_widget(RatatuiList::new(items).style(theme.body_style()), list_area);
+}
+
+fn quick_menu_item_style(item: &EditorQuickMenuItemLayout, theme: &TundraTheme) -> Style {
+    if !item.enabled {
+        return theme.muted_style();
+    }
+
+    match item.action {
+        EditorQuickAction::Bold => theme.body_style().add_modifier(Modifier::BOLD),
+        EditorQuickAction::Italic => theme.body_style().add_modifier(Modifier::ITALIC),
+        EditorQuickAction::Paragraph => theme.body_style(),
+        EditorQuickAction::Heading(level) => {
+            let mut style = Style::default()
+                .fg(theme.accent_color)
+                .bg(theme.background)
+                .add_modifier(Modifier::BOLD);
+            if level == 1 {
+                style = style.add_modifier(Modifier::UNDERLINED);
+            } else if level >= 3 {
+                style = style.add_modifier(Modifier::ITALIC);
+            }
+            style
+        }
     }
 }
 
@@ -119,32 +159,38 @@ fn render_quick_menu(frame: &mut Frame<'_>, layout: &EditorLayout, theme: &Tundr
             .style(Style::default().fg(theme.foreground).bg(theme.background)),
         area,
     );
-    for item in &layout.quick_menu_items {
-        let style = if !item.enabled {
-            theme.muted_style()
-        } else {
-            match item.action {
-                EditorQuickAction::Bold => theme.body_style().add_modifier(Modifier::BOLD),
-                EditorQuickAction::Italic => theme.body_style().add_modifier(Modifier::ITALIC),
-                EditorQuickAction::Paragraph => theme.body_style(),
-                EditorQuickAction::Heading(level) => {
-                    let mut style = Style::default()
-                        .fg(theme.accent_color)
-                        .bg(theme.background)
-                        .add_modifier(Modifier::BOLD);
-                    if level == 1 {
-                        style = style.add_modifier(Modifier::UNDERLINED);
-                    } else if level >= 3 {
-                        style = style.add_modifier(Modifier::ITALIC);
-                    }
-                    style
-                }
-            }
+
+    let mut start = 0usize;
+    while let Some(first) = layout.quick_menu_items.get(start) {
+        let end = layout.quick_menu_items[start..]
+            .iter()
+            .position(|item| item.area.y != first.area.y)
+            .map(|offset| start.saturating_add(offset))
+            .unwrap_or(layout.quick_menu_items.len());
+        let row = &layout.quick_menu_items[start..end];
+        let Some(last) = row.last() else {
+            break;
         };
+        let titles = row.iter().map(|item| {
+            Line::styled(
+                quick_action_label(item.action),
+                quick_menu_item_style(item, theme),
+            )
+        });
         frame.render_widget(
-            Paragraph::new(format!(" {} ", quick_action_label(item.action))).style(style),
-            item.area,
+            RatatuiTabs::new(titles)
+                .select(None)
+                .divider("")
+                .padding(" ", " ")
+                .style(theme.body_style()),
+            Rect::new(
+                first.area.x,
+                first.area.y,
+                last.area.right().saturating_sub(first.area.x),
+                1,
+            ),
         );
+        start = end;
     }
 }
 
@@ -186,17 +232,6 @@ fn render_settings(
     for field in &settings_layout.fields {
         let selected = field.field == settings.selected;
         let locked = !settings.editable && field.field != EditorSettingsField::Cancel;
-        let style = if locked {
-            theme.muted_style()
-        } else if selected {
-            Style::default()
-                .fg(theme.background)
-                .bg(theme.accent_color)
-                .add_modifier(Modifier::BOLD)
-        } else {
-            theme.body_style()
-        };
-        frame.render_widget(Block::default().style(style), field.area);
         let label = match field.field {
             EditorSettingsField::Enabled => " Cursor acceleration",
             EditorSettingsField::ActivationDelay => " Start delay",
@@ -207,9 +242,16 @@ fn render_settings(
             | EditorSettingsField::Save
             | EditorSettingsField::Cancel => "",
         };
-        if !label.is_empty() {
-            frame.render_widget(Paragraph::new(label).style(style), field.area);
-        }
+        let label = format!("{label:<width$}", width = usize::from(field.area.width));
+        render_editor_button(
+            frame,
+            field.area,
+            format!("editor.settings.field.{:?}", field.field),
+            label,
+            selected,
+            locked,
+            theme,
+        );
     }
 
     for control in &settings_layout.controls {
@@ -217,16 +259,6 @@ fn render_settings(
         let selected = field.is_some_and(|field| field == settings.selected);
         let locked =
             !settings.editable && !matches!(control.control, EditorSettingsControl::Cancel);
-        let style = if locked {
-            theme.muted_style()
-        } else if selected {
-            Style::default()
-                .fg(theme.background)
-                .bg(theme.accent_color)
-                .add_modifier(Modifier::BOLD)
-        } else {
-            theme.body_style()
-        };
         let label = match control.control {
             EditorSettingsControl::ToggleEnabled => {
                 if settings.enabled {
@@ -241,7 +273,15 @@ fn render_settings(
             EditorSettingsControl::Save => "[ Save ]",
             EditorSettingsControl::Cancel => "[ Cancel ]",
         };
-        frame.render_widget(Paragraph::new(label).style(style), control.area);
+        render_editor_button(
+            frame,
+            control.area,
+            format!("editor.settings.control.{:?}", control.control),
+            label,
+            selected,
+            locked,
+            theme,
+        );
     }
 
     for (field, value) in [
@@ -341,21 +381,31 @@ fn render_toolbar(
         let active = model.toolbar.is_active(item.action);
         let selected = model.selected_toolbar_action == Some(item.action)
             && model.focus == EditorFocus::Toolbar;
-        let style = if !item.enabled {
-            theme.muted_style()
-        } else if active || selected {
-            Style::default()
-                .fg(theme.background)
-                .bg(theme.accent_color)
-                .add_modifier(Modifier::BOLD)
-        } else {
-            theme.body_style()
-        };
-        frame.render_widget(
-            Paragraph::new(toolbar_label(item.action)).style(style),
+        render_editor_button(
+            frame,
             item.area,
+            format!("editor.toolbar.{:?}", item.action),
+            toolbar_label(item.action),
+            active || selected,
+            !item.enabled,
+            theme,
         );
     }
+}
+
+fn render_editor_button(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    id: impl Into<crate::components::ComponentId>,
+    label: impl Into<String>,
+    selected: bool,
+    disabled: bool,
+    theme: &TundraTheme,
+) {
+    let mut button = Button::new(id, label);
+    button.state.selected = selected;
+    button.set_disabled(disabled);
+    button.render_borderless_frame(frame, area, theme);
 }
 
 fn render_canvas(
@@ -423,33 +473,41 @@ fn render_canvas(
     }
 
     if let Some(scrollbar) = layout.vertical_scrollbar {
-        for y in scrollbar.track.y..scrollbar.track.bottom() {
-            frame.render_widget(
-                Paragraph::new("|").style(theme.muted_style()),
-                Rect::new(scrollbar.track.x, y, 1, 1),
-            );
-        }
-        for y in scrollbar.thumb.y..scrollbar.thumb.bottom() {
-            frame.render_widget(
-                Paragraph::new("#").style(theme.title_style()),
-                Rect::new(scrollbar.thumb.x, y, 1, 1),
-            );
-        }
+        let track_length = usize::from(scrollbar.track.height);
+        let thumb_length = usize::from(scrollbar.thumb.height);
+        let thumb_offset = usize::from(scrollbar.thumb.y.saturating_sub(scrollbar.track.y));
+        let mut state =
+            ScrollbarState::new(track_length.saturating_sub(thumb_length).saturating_add(1))
+                .position(thumb_offset)
+                .viewport_content_length(thumb_length);
+        frame.render_stateful_widget(
+            Scrollbar::new(ScrollbarOrientation::VerticalRight)
+                .begin_symbol(None)
+                .end_symbol(None)
+                .track_style(theme.muted_style())
+                .thumb_style(theme.title_style()),
+            scrollbar.track,
+            &mut state,
+        );
     }
 
     if let Some(scrollbar) = layout.horizontal_scrollbar {
-        for x in scrollbar.track.x..scrollbar.track.right() {
-            frame.render_widget(
-                Paragraph::new("-").style(theme.muted_style()),
-                Rect::new(x, scrollbar.track.y, 1, 1),
-            );
-        }
-        for x in scrollbar.thumb.x..scrollbar.thumb.right() {
-            frame.render_widget(
-                Paragraph::new("#").style(theme.title_style()),
-                Rect::new(x, scrollbar.thumb.y, 1, 1),
-            );
-        }
+        let track_length = usize::from(scrollbar.track.width);
+        let thumb_length = usize::from(scrollbar.thumb.width);
+        let thumb_offset = usize::from(scrollbar.thumb.x.saturating_sub(scrollbar.track.x));
+        let mut state =
+            ScrollbarState::new(track_length.saturating_sub(thumb_length).saturating_add(1))
+                .position(thumb_offset)
+                .viewport_content_length(thumb_length);
+        frame.render_stateful_widget(
+            Scrollbar::new(ScrollbarOrientation::HorizontalBottom)
+                .begin_symbol(None)
+                .end_symbol(None)
+                .track_style(theme.muted_style())
+                .thumb_style(theme.title_style()),
+            scrollbar.track,
+            &mut state,
+        );
     }
 
     if model.focus == EditorFocus::Canvas
@@ -531,13 +589,15 @@ fn render_status_bar(
         read_window.map_or_else(String::new, |window| format!("  {window}")),
     );
     let available = usize::from(layout.status_bar.width);
+    let left_width = Line::from(left.as_str()).width();
+    let right_width = Line::from(right.as_str()).width();
     let text = if available == 0 {
         String::new()
-    } else if left.chars().count() + right.chars().count() + 2 <= available {
+    } else if left_width.saturating_add(right_width).saturating_add(2) <= available {
         format!(
             "{}{}{}",
             left,
-            " ".repeat(available - left.chars().count() - right.chars().count()),
+            " ".repeat(available - left_width - right_width),
             right
         )
     } else {
@@ -547,7 +607,7 @@ fn render_status_bar(
     let style = if model.focus == EditorFocus::StatusBar {
         Style::default().fg(theme.background).bg(theme.accent_color)
     } else {
-        Style::default().fg(theme.foreground).bg(Color::DarkGray)
+        Style::default().fg(theme.foreground).bg(theme.muted)
     };
     frame.render_widget(Paragraph::new(text).style(style), layout.status_bar);
 }
@@ -707,7 +767,7 @@ fn span_style(span: &EditorRenderSpan, theme: &TundraTheme) -> Style {
         EditorSpanColor::Normal => theme.foreground,
         EditorSpanColor::Accent => theme.accent_color,
         EditorSpanColor::Muted => theme.muted,
-        EditorSpanColor::Warning => Color::Yellow,
+        EditorSpanColor::Warning => theme.accent_color,
         EditorSpanColor::Error => theme.error,
     };
     let mut style = Style::default().fg(foreground).bg(theme.background);
@@ -724,7 +784,7 @@ fn span_style(span: &EditorRenderSpan, theme: &TundraTheme) -> Style {
         style = style.add_modifier(Modifier::UNDERLINED);
     }
     if span.inline_code {
-        style = style.fg(Color::White).bg(Color::DarkGray);
+        style = style.fg(theme.border_color).bg(theme.muted);
     }
     style
 }

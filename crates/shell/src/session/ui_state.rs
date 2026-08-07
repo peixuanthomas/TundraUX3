@@ -90,12 +90,6 @@ pub(super) struct EditorSettingsDialogState {
     pub(super) selected: ui::EditorSettingsField,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum SettingsFocus {
-    Categories,
-    Fields,
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct SettingsPickerState {
     pub(super) kind: ui::SettingsPickerKind,
@@ -135,7 +129,6 @@ pub(super) struct SettingsTimeSyncServerEditorState {
 pub(super) struct SettingsState {
     pub(super) category: ui::SettingsCategory,
     pub(super) selected_field: ui::SettingsField,
-    pub(super) focus: SettingsFocus,
     pub(super) status: String,
     pub(super) scroll_offset: u16,
     pub(super) picker: Option<SettingsPickerState>,

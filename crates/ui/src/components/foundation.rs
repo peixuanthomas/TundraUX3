@@ -1,45 +1,15 @@
-use std::fmt;
-
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
+use ratatui::text::Span;
 
 use crate::TundraTheme;
+
+pub use crate::UiId as ComponentId;
 
 pub use crate::input::{
     InputEvent, Key, KeyEvent as KeyInput, KeyModifiers, MouseButton, MouseEvent as MouseInput,
     MouseEventKind as MouseKind,
 };
-
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct ComponentId(String);
-
-impl ComponentId {
-    pub fn new(value: impl Into<String>) -> Self {
-        Self(value.into())
-    }
-
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
-}
-
-impl fmt::Display for ComponentId {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.0.fmt(formatter)
-    }
-}
-
-impl From<&str> for ComponentId {
-    fn from(value: &str) -> Self {
-        Self::new(value)
-    }
-}
-
-impl From<String> for ComponentId {
-    fn from(value: String) -> Self {
-        Self::new(value)
-    }
-}
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct ComponentState {
@@ -170,6 +140,52 @@ pub(crate) fn clamp_index(index: usize, len: usize) -> Option<usize> {
 
 pub(crate) fn char_count(value: &str) -> usize {
     value.chars().count()
+}
+
+/// Returns the number of terminal columns Ratatui uses to render `value`.
+pub(crate) fn terminal_width(value: &str) -> usize {
+    Span::raw(value).width()
+}
+
+/// Truncates text at a Ratatui grapheme boundary without splitting a wide cell.
+pub(crate) fn truncate_to_terminal_width(value: &str, max_width: usize) -> String {
+    if terminal_width(value) <= max_width {
+        return value.to_string();
+    }
+
+    let span = Span::raw(value);
+    let mut width = 0_usize;
+    let mut truncated = String::new();
+    for grapheme in span.styled_graphemes(Style::default()) {
+        let grapheme_width = terminal_width(grapheme.symbol);
+        if width.saturating_add(grapheme_width) > max_width {
+            break;
+        }
+        truncated.push_str(grapheme.symbol);
+        width = width.saturating_add(grapheme_width);
+    }
+    truncated
+}
+
+/// Maps a terminal column offset to an editable character boundary.
+///
+/// A cursor cannot occupy the trailing cell of a wide glyph, so clicks inside
+/// that glyph stay on the boundary before it. Clicking its first following
+/// column moves the cursor after it.
+pub(crate) fn char_index_for_terminal_column(value: &str, column: usize) -> usize {
+    if column == 0 {
+        return 0;
+    }
+
+    let mut char_index = 0_usize;
+    for (byte_index, character) in value.char_indices() {
+        let end = byte_index.saturating_add(character.len_utf8());
+        if terminal_width(&value[..end]) > column {
+            break;
+        }
+        char_index = char_index.saturating_add(1);
+    }
+    char_index
 }
 
 pub(crate) fn byte_index_for_char(value: &str, char_index: usize) -> usize {

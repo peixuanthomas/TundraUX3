@@ -202,6 +202,48 @@ fn disabled_action_is_muted_and_exposes_its_reason() {
 }
 
 #[test]
+fn action_buttons_preserve_dangerous_and_focused_theme_semantics() {
+    let mut dangerous = UserManagementViewModel::new(
+        "root",
+        vec![
+            user("root", "Administrator", "Admin", true, false, true),
+            user("alice", "Alice", "User", true, false, false),
+        ],
+        1,
+        None,
+        true,
+        None,
+    );
+    dangerous.focus = UserManagementFocus::UserList;
+    let (terminal, main) = render(120, 24, &dangerous);
+    let layout = user_management_layout(main, &dangerous);
+    let delete = layout
+        .actions
+        .iter()
+        .find(|action| action.action == UserManagementAction::Delete)
+        .expect("delete layout");
+    assert!(region_has_fg(
+        &terminal,
+        delete.area,
+        TundraTheme::default_dark().error
+    ));
+
+    dangerous.focus = UserManagementFocus::Action(UserManagementAction::Delete);
+    let (terminal, main) = render(120, 24, &dangerous);
+    let layout = user_management_layout(main, &dangerous);
+    let delete = layout
+        .actions
+        .iter()
+        .find(|action| action.action == UserManagementAction::Delete)
+        .expect("focused delete layout");
+    assert!(region_has_fg(
+        &terminal,
+        delete.area,
+        TundraTheme::default_dark().accent_color
+    ));
+}
+
+#[test]
 fn create_form_is_a_modal_with_role_password_and_action_focus() {
     let mut model = model_with_users(2);
     model.form = Some(create_form(UserManagementField::Submit));
@@ -222,6 +264,42 @@ fn create_form_is_a_modal_with_role_password_and_action_focus() {
         form.submit,
         TundraTheme::default_dark().accent_color
     ));
+}
+
+#[test]
+fn role_cycle_is_rendered_by_the_focused_button_component() {
+    let mut model = model_with_users(2);
+    model.form = Some(create_form(UserManagementField::Role));
+    let (terminal, main) = render(100, 24, &model);
+    let layout = user_management_layout(main, &model);
+    let role = layout
+        .form
+        .expect("form geometry")
+        .fields
+        .into_iter()
+        .find(|field| field.field == UserManagementField::Role)
+        .expect("role field");
+
+    assert!(terminal_output(&terminal).contains("Role: User  ◀/▶"));
+    assert!(region_has_fg(
+        &terminal,
+        role.area,
+        TundraTheme::default_dark().accent_color,
+    ));
+}
+
+#[test]
+fn form_text_inputs_are_controlled_and_keep_mask_cursor_and_inline_frame() {
+    let mut model = model_with_users(1);
+    model.form = Some(create_form(UserManagementField::Username));
+    let (terminal, _) = render(100, 24, &model);
+    assert!(terminal_output(&terminal).contains("[ Username: alice_ ]"));
+
+    model.form = Some(create_form(UserManagementField::Password));
+    let (terminal, _) = render(100, 24, &model);
+    let output = terminal_output(&terminal);
+    assert!(output.contains("[ Password: ************_ ]"));
+    assert!(!output.contains("alice_"));
 }
 
 #[test]

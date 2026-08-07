@@ -178,6 +178,38 @@ fn create_dialog_renders_placeholder_error_and_both_focusable_actions() {
 }
 
 #[test]
+fn focused_create_input_uses_underscore_cursor_before_the_non_editable_suffix() {
+    let mut model = clock_model();
+    model.create_dialog = Some(ClockCreateDialogViewModel {
+        input: "01 02 03".to_string(),
+        error: None,
+        focus: ClockCreateDialogFocus::Input,
+    });
+
+    let (terminal, _) = render(100, 30, &model);
+    let output = terminal_output(&terminal);
+
+    assert!(output.contains("[ 01 02 03_ ]"));
+    assert!(!output.contains("01 02 03|"));
+}
+
+#[test]
+fn focused_empty_create_input_keeps_the_placeholder_and_suffix() {
+    let mut model = clock_model();
+    model.create_dialog = Some(ClockCreateDialogViewModel {
+        input: String::new(),
+        error: None,
+        focus: ClockCreateDialogFocus::Input,
+    });
+
+    let (terminal, _) = render(100, 30, &model);
+    let output = terminal_output(&terminal);
+
+    assert!(output.contains("[ hh mm ss ]"));
+    assert!(!output.contains("[ _ ]"));
+}
+
+#[test]
 fn narrow_layout_keeps_digital_time_and_operable_panel_without_panicking() {
     let model = clock_model();
     let (terminal, main) = render(60, 24, &model);

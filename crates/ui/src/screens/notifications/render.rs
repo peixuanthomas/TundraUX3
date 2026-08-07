@@ -9,6 +9,7 @@ use super::layout::{
 };
 use super::model::{NotificationLevel, NotificationTone, NotificationViewModel};
 use crate::TundraTheme;
+use crate::components::Button;
 use crate::theme::solid_border_style;
 pub fn render_notification_overlay(
     frame: &mut Frame<'_>,
@@ -61,21 +62,13 @@ pub fn render_notification_overlay(
             continue;
         };
         let action_text = notification_action_text(action);
-        let action_lines = wrap_notification_text(&action_text, action_layout.area.width)
-            .into_iter()
-            .map(Line::from)
-            .collect::<Vec<_>>();
-        let style = if action.selected {
-            theme.title_style()
-        } else {
-            theme.body_style()
-        };
-        frame.render_widget(
-            Paragraph::new(action_lines)
-                .style(style)
-                .alignment(Alignment::Center),
-            action_layout.area,
+        let label = wrap_notification_text(&action_text, action_layout.area.width).join("\n");
+        let mut button = Button::new(
+            format!("notification.{}.action.{}", model.id, action.id),
+            label,
         );
+        button.state.selected = action.selected;
+        button.render_borderless_frame(frame, action_layout.area, theme);
     }
 }
 

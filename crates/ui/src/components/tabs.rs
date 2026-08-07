@@ -1,7 +1,8 @@
+use ratatui::Frame;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
-use ratatui::text::{Line, Span};
-use ratatui::widgets::{Borders, Paragraph, Widget};
+use ratatui::text::Line;
+use ratatui::widgets::{Borders, Tabs as RatatuiTabs, Widget};
 
 use crate::TundraTheme;
 
@@ -61,11 +62,26 @@ impl Tabs {
         self.selected.and_then(|index| self.tabs.get(index))
     }
 
+    pub fn set_selected(&mut self, index: Option<usize>) {
+        self.selected = index
+            .filter(|index| self.tabs.get(*index).is_some_and(|tab| !tab.disabled))
+            .or_else(|| self.tabs.iter().position(|tab| !tab.disabled));
+    }
+
     pub fn set_focused(&mut self, focused: bool) {
         self.state.focused = focused;
     }
 
     pub fn handle_event(&mut self, event: InputEvent, area: Rect) -> ComponentEvent {
+        self.handle_event_in(event, area, true)
+    }
+
+    /// Handles input for tabs rendered without a surrounding block.
+    pub fn handle_event_borderless(&mut self, event: InputEvent, area: Rect) -> ComponentEvent {
+        self.handle_event_in(event, area, false)
+    }
+
+    fn handle_event_in(&mut self, event: InputEvent, area: Rect, bordered: bool) -> ComponentEvent {
         match event {
             InputEvent::Key(key) if !key.is_press_like() => ComponentEvent::None,
             InputEvent::FocusGained => {
@@ -89,7 +105,7 @@ impl Tabs {
                 _ => ComponentEvent::None,
             },
             InputEvent::Mouse(mouse) => {
-                let index = self.tab_index_at(area, mouse.column(), mouse.row());
+                let index = self.tab_index_at(area, mouse.column(), mouse.row(), bordered);
                 match mouse.kind {
                     MouseKind::Move => {
                         if self.hovered != index {
@@ -110,27 +126,22 @@ impl Tabs {
     }
 
     pub fn render(&self, area: Rect, buffer: &mut Buffer, theme: &TundraTheme) {
-        let block = theme
-            .block()
-            .borders(Borders::ALL)
-            .style(theme.body_style());
-        let inner = block.inner(area);
-        block.render(area, buffer);
+        self.ratatui_widget(theme, true).render(area, buffer);
+    }
 
-        let mut spans = Vec::new();
-        for (index, tab) in self.tabs.iter().enumerate() {
-            let style = item_style(
-                self.state.focused,
-                self.hovered == Some(index),
-                self.selected == Some(index),
-                tab.disabled,
-                theme,
-            );
-            spans.push(Span::styled(format!(" {} ", tab.label), style));
-        }
+    /// Renders bordered tabs through a Ratatui [`Frame`].
+    pub fn render_frame(&self, frame: &mut Frame<'_>, area: Rect, theme: &TundraTheme) {
+        frame.render_widget(self.ratatui_widget(theme, true), area);
+    }
 
-        Paragraph::new(Line::from(spans))
-            .render(Rect::new(inner.x, inner.y, inner.width, 1), buffer);
+    /// Renders tabs using Ratatui's official `Tabs` widget without a surrounding block.
+    pub fn render_borderless(&self, area: Rect, buffer: &mut Buffer, theme: &TundraTheme) {
+        self.ratatui_widget(theme, false).render(area, buffer);
+    }
+
+    /// Renders borderless tabs through a Ratatui [`Frame`].
+    pub fn render_borderless_frame(&self, frame: &mut Frame<'_>, area: Rect, theme: &TundraTheme) {
+        frame.render_widget(self.ratatui_widget(theme, false), area);
     }
 
     fn select_from_pointer(&mut self, index: Option<usize>) -> ComponentEvent {
@@ -184,20 +195,54 @@ impl Tabs {
         }
     }
 
-    fn tab_index_at(&self, area: Rect, column: u16, row: u16) -> Option<usize> {
-        let inner = inner_area(area);
+    fn tab_index_at(&self, area: Rect, column: u16, row: u16, bordered: bool) -> Option<usize> {
+        let inner = if bordered { inner_area(area) } else { area };
         if !contains_point(inner, column, row) || row != inner.y {
             return None;
         }
 
         let mut tab_x = inner.x;
         for (index, tab) in self.tabs.iter().enumerate() {
-            let width = tab.label.chars().count() as u16 + 2;
+            let width = u16::try_from(Line::from(tab.label.as_str()).width())
+                .unwrap_or(u16::MAX)
+                .saturating_add(2);
             if column >= tab_x && column < tab_x.saturating_add(width) {
                 return Some(index);
             }
             tab_x = tab_x.saturating_add(width);
         }
         None
+    }
+
+    fn ratatui_widget<'a>(&'a self, theme: &TundraTheme, bordered: bool) -> RatatuiTabs<'a> {
+        let titles = self.tabs.iter().enumerate().map(|(index, tab)| {
+            Line::styled(
+                tab.label.as_str(),
+                item_style(
+                    self.state.focused,
+                    self.hovered == Some(index),
+                    self.selected == Some(index),
+                    tab.disabled,
+                    theme,
+                ),
+            )
+        });
+        let widget = RatatuiTabs::new(titles)
+            .select(self.selected)
+            .style(theme.body_style())
+            .highlight_style(item_style(self.state.focused, false, true, false, theme))
+            .divider("")
+            .padding(" ", " ");
+
+        if bordered {
+            widget.block(
+                theme
+                    .block()
+                    .borders(Borders::ALL)
+                    .style(theme.body_style()),
+            )
+        } else {
+            widget
+        }
     }
 }

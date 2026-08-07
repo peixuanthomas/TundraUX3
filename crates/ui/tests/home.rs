@@ -4,17 +4,17 @@ use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier};
 use std::cell::RefCell;
 use ui::{
-    AuthField, BootstrapAdminViewModel, ClockViewModel, DebugDiagnosticsViewModel, HomeDisplayMode,
-    HomeIconRenderer, HomeViewModel, LoginField, LoginUserOptionViewModel, LoginViewModel,
-    NOTIFICATION_TOO_SMALL_MESSAGE, NotificationActionViewModel, NotificationLayout,
-    NotificationLevel, NotificationTone, NotificationViewModel, ShellChromeViewModel, ShellEntry,
-    ShellLayout, StatusViewModel, TimeSyncDialogViewModel, TundraTheme,
-    UserManagementUserViewModel, UserManagementViewModel, compute_shell_layout,
-    home_entry_icon_area, home_logout_area, login_password_area, login_password_visibility_area,
-    login_user_list_area, login_user_list_visible_rows, notification_layout,
-    render_bootstrap_admin, render_clock, render_home, render_home_with_icons, render_login,
-    render_notification_overlay, render_time_sync_failure_dialog, render_user_management,
-    status_time_button_area,
+    AuthField, BootstrapAdminViewModel, ClockViewModel, DebugDiagnosticsViewModel,
+    ExitConfirmViewModel, HomeDisplayMode, HomeIconRenderer, HomeViewModel, LoginField,
+    LoginUserOptionViewModel, LoginViewModel, NOTIFICATION_TOO_SMALL_MESSAGE,
+    NotificationActionViewModel, NotificationLayout, NotificationLevel, NotificationTone,
+    NotificationViewModel, ShellChromeViewModel, ShellEntry, ShellLayout, StatusViewModel,
+    TimeSyncDialogViewModel, TundraTheme, UserManagementUserViewModel, UserManagementViewModel,
+    compute_shell_layout, home_entry_icon_area, home_logout_area, login_password_area,
+    login_password_visibility_area, login_user_list_area, login_user_list_visible_rows,
+    notification_layout, render_bootstrap_admin, render_clock, render_exit_confirmation,
+    render_home, render_home_with_icons, render_login, render_notification_overlay,
+    render_time_sync_failure_dialog, render_user_management, status_time_button_area,
 };
 
 #[derive(Default)]
@@ -236,6 +236,7 @@ fn authenticated_user_and_debug_homes_render_single_line_account_logout() {
     assert!(!user_output.contains("Arrows: select"));
     assert!(logout.width > 0 && logout.height == 1);
     assert!(region_has_fg(&user_terminal, logout, theme.accent_color));
+    assert!(region_has_bg(&user_terminal, logout, theme.background));
 
     let debug_home = HomeViewModel::user(
         "ignored",
@@ -714,6 +715,29 @@ fn time_sync_failure_dialog_renders_expected_content() {
 }
 
 #[test]
+fn exit_confirmation_keeps_all_componentized_actions_visible() {
+    let model = ExitConfirmViewModel::new();
+    let mut terminal = Terminal::new(TestBackend::new(80, 24)).expect("test terminal");
+
+    terminal
+        .draw(|frame| {
+            render_exit_confirmation(frame, frame.area(), &model, &TundraTheme::default_dark());
+        })
+        .expect("render exit confirmation");
+
+    let output = terminal_output(&terminal);
+    for text in [
+        &model.title,
+        &model.message,
+        &model.confirm_label,
+        &model.restart_label,
+        &model.cancel_label,
+    ] {
+        assert!(output.contains(text));
+    }
+}
+
+#[test]
 fn notification_overlay_renders_modal_actions_and_replaces_too_small_terminal_content() {
     let model = NotificationViewModel::new(
         "42",
@@ -895,6 +919,26 @@ fn notification_layout_uses_nominal_size_and_adapts_to_full_shell_widths() {
 }
 
 #[test]
+fn notification_wrapping_uses_terminal_columns_for_wide_text() {
+    let model = NotificationViewModel::new(
+        "wide",
+        NotificationLevel::Modal,
+        NotificationTone::Info,
+        "Wide text",
+        "界".repeat(20),
+        Vec::new(),
+    );
+
+    let NotificationLayout::Dialog(layout) = notification_layout(Rect::new(0, 0, 40, 12), &model)
+    else {
+        panic!("wide notification should fit");
+    };
+
+    assert_eq!(layout.message.width, 38);
+    assert_eq!(layout.message.height, 2);
+}
+
+#[test]
 fn notification_layout_and_renderer_share_wrapped_message_and_stacked_action_rects() {
     let model = NotificationViewModel::new(
         "long",
@@ -931,6 +975,11 @@ fn notification_layout_and_renderer_share_wrapped_message_and_stacked_action_rec
             render_notification_overlay(frame, area, &model, &TundraTheme::default_dark())
         })
         .expect("render long notification");
+    assert!(region_has_bg(
+        &terminal,
+        layout.actions[0].area,
+        TundraTheme::default_dark().background,
+    ));
     assert!(region_has_fg(
         &terminal,
         layout.actions[0].area,
@@ -1106,7 +1155,12 @@ fn bootstrap_and_user_management_render_expected_content() {
     let output = terminal_output(&terminal);
     assert!(output.contains("Tab / Down: password"));
     assert!(output.contains("Enter on password: create admin"));
-    assert!(output.contains("Admin username: AdminUser"));
+    assert!(output.contains("Admin username: AdminUser_"));
+    assert_eq!(
+        output.matches("Admin username:").count(),
+        1,
+        "the controlled TextInput must be the only username representation",
+    );
 
     let management = UserManagementViewModel::new(
         "AdminUser",
@@ -1270,6 +1324,17 @@ fn region_has_fg(terminal: &Terminal<TestBackend>, area: Rect, fg: Color) -> boo
             buffer
                 .cell((x, y))
                 .is_some_and(|cell| cell.fg == fg && cell.symbol() != " ")
+        })
+    })
+}
+
+fn region_has_bg(terminal: &Terminal<TestBackend>, area: Rect, bg: Color) -> bool {
+    let buffer = terminal.backend().buffer();
+    (area.y..area.y.saturating_add(area.height)).any(|y| {
+        (area.x..area.x.saturating_add(area.width)).any(|x| {
+            buffer
+                .cell((x, y))
+                .is_some_and(|cell| cell.bg == bg && cell.symbol() != " ")
         })
     })
 }

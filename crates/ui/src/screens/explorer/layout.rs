@@ -1,4 +1,5 @@
 use ratatui::layout::Rect;
+use ratatui::text::Line;
 
 use super::model::*;
 use crate::screens::shell::{centered_rect, inset_rect, line_in_rect, rect_contains, usize_to_u16};
@@ -499,7 +500,7 @@ fn explorer_breadcrumb_layouts(
             if remaining == 0 || area.height == 0 {
                 return None;
             }
-            let desired = usize_to_u16(crumb.label.chars().count()).saturating_add(3);
+            let desired = usize_to_u16(Line::from(crumb.label.as_str()).width()).saturating_add(3);
             let width = desired.min(remaining);
             let result = ExplorerBreadcrumbLayout {
                 index,

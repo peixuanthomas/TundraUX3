@@ -1,12 +1,13 @@
+use ratatui::Frame;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
-use ratatui::widgets::{Borders, Clear, Paragraph, Widget};
+use ratatui::widgets::{Borders, Clear, Widget};
 
 use crate::TundraTheme;
 
 use super::{
-    ComponentEvent, ComponentId, ComponentState, InputEvent, Key, MouseButton, MouseKind,
-    byte_index_for_char, char_count, contains_point, inner_area, item_style,
+    ComponentEvent, ComponentId, ComponentState, InputEvent, Key, List, ListItem, MouseButton,
+    MouseKind, TextInput, contains_point, inner_area,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -55,51 +56,65 @@ pub struct CommandPalette {
     pub commands: Vec<CommandPaletteCommand>,
     pub state: ComponentState,
     pub open: bool,
-    query: String,
-    cursor: usize,
-    selected_visible: Option<usize>,
-    hovered_visible: Option<usize>,
+    query_input: TextInput,
+    results: List,
 }
 
 impl CommandPalette {
     pub fn new(id: impl Into<ComponentId>, commands: Vec<CommandPaletteCommand>) -> Self {
-        let selected_visible = commands.iter().position(|command| !command.disabled);
+        let id = id.into();
+        let mut query_input =
+            TextInput::new(format!("{}.query", id.as_str())).with_placeholder("Type a command");
+        query_input.set_focused(false);
+        let mut results = Self::make_results(&id, &commands, "");
+        results.set_focused(false);
         Self {
-            id: id.into(),
+            id,
             commands,
             state: ComponentState::default(),
             open: false,
-            query: String::new(),
-            cursor: 0,
-            selected_visible,
-            hovered_visible: None,
+            query_input,
+            results,
         }
     }
 
     pub fn open(&mut self) {
-        self.open = true;
-        self.state.focused = true;
-        self.ensure_selection();
+        self.set_open(true);
     }
 
     pub fn close(&mut self) {
-        self.open = false;
-        self.state.focused = false;
-        self.hovered_visible = None;
+        self.set_open(false);
+    }
+
+    pub fn set_open(&mut self, open: bool) {
+        self.open = open;
+        self.state.focused = open;
+        self.query_input.set_focused(open);
+        self.results.set_focused(open);
+        if !open {
+            self.results.set_hovered(None);
+        } else {
+            self.sync_results(false);
+        }
     }
 
     pub fn query(&self) -> &str {
-        &self.query
+        self.query_input.value()
     }
 
     pub fn set_query(&mut self, query: impl Into<String>) {
-        self.query = query.into();
-        self.cursor = char_count(&self.query);
-        self.selected_visible = self.first_enabled_visible();
+        self.query_input.set_value(query);
+        self.sync_results(true);
+    }
+
+    pub fn set_selected(&mut self, index: Option<usize>) {
+        self.sync_results(false);
+        self.results.set_selected(index);
     }
 
     pub fn selected_command(&self) -> Option<&CommandPaletteCommand> {
-        self.selected_visible
+        self.results
+            .selected_index()
             .and_then(|visible| self.visible_indices().get(visible).copied())
             .and_then(|index| self.commands.get(index))
     }
@@ -116,69 +131,49 @@ impl CommandPalette {
             return ComponentEvent::None;
         }
 
+        self.sync_results(false);
         match event {
             InputEvent::Key(key) if !key.is_press_like() => ComponentEvent::None,
             InputEvent::FocusGained => {
                 self.state.focused = true;
+                self.query_input.set_focused(true);
+                self.results.set_focused(true);
                 ComponentEvent::Consumed
             }
             InputEvent::FocusLost => {
                 self.close();
                 ComponentEvent::Dismissed(self.id.clone())
             }
-            InputEvent::Key(key) => match key.key {
-                Key::Escape => {
-                    self.close();
-                    ComponentEvent::Dismissed(self.id.clone())
-                }
-                Key::Char(character) => {
-                    self.insert_char(character);
-                    self.selected_visible = self.first_enabled_visible();
+            InputEvent::Key(key) if key.key == Key::Escape => {
+                self.close();
+                ComponentEvent::Dismissed(self.id.clone())
+            }
+            InputEvent::Key(key) if key.key == Key::Enter => self.activate_selected(),
+            InputEvent::Key(key)
+                if matches!(key.key, Key::Up | Key::Down | Key::Tab | Key::BackTab) =>
+            {
+                let list_key = match key.key {
+                    Key::Tab => Key::Down,
+                    Key::BackTab => Key::Up,
+                    other => other,
+                };
+                let event = self.results.handle_event_borderless(
+                    InputEvent::key_with_modifiers(list_key, key.modifiers),
+                    Self::results_area(area),
+                );
+                self.translate_results_event(event)
+            }
+            InputEvent::Key(key) => {
+                let event = self
+                    .query_input
+                    .handle_event_borderless(InputEvent::Key(key), Self::query_edit_area(area));
+                if matches!(event, ComponentEvent::Changed(_)) {
+                    self.sync_results(true);
                     ComponentEvent::Changed(self.id.clone())
-                }
-                Key::Space => {
-                    self.insert_char(' ');
-                    self.selected_visible = self.first_enabled_visible();
-                    ComponentEvent::Changed(self.id.clone())
-                }
-                Key::Backspace => {
-                    if self.delete_before_cursor() {
-                        self.selected_visible = self.first_enabled_visible();
-                        ComponentEvent::Changed(self.id.clone())
-                    } else {
-                        ComponentEvent::Consumed
-                    }
-                }
-                Key::Delete => {
-                    if self.delete_at_cursor() {
-                        self.selected_visible = self.first_enabled_visible();
-                        ComponentEvent::Changed(self.id.clone())
-                    } else {
-                        ComponentEvent::Consumed
-                    }
-                }
-                Key::Left => {
-                    self.cursor = self.cursor.saturating_sub(1);
+                } else {
                     ComponentEvent::Consumed
                 }
-                Key::Right => {
-                    self.cursor = self.cursor.saturating_add(1).min(char_count(&self.query));
-                    ComponentEvent::Consumed
-                }
-                Key::Home => {
-                    self.cursor = 0;
-                    ComponentEvent::Consumed
-                }
-                Key::End => {
-                    self.cursor = char_count(&self.query);
-                    ComponentEvent::Consumed
-                }
-                Key::Up => self.select_previous(),
-                Key::Down | Key::Tab => self.select_next(),
-                Key::BackTab => self.select_previous(),
-                Key::Enter => self.activate_selected(),
-                _ => ComponentEvent::Consumed,
-            },
+            }
             InputEvent::Mouse(mouse) => {
                 let inside = contains_point(area, mouse.column(), mouse.row());
                 if !inside
@@ -191,20 +186,37 @@ impl CommandPalette {
                     return ComponentEvent::Dismissed(self.id.clone());
                 }
 
-                let index = self.command_index_at(area, mouse.column(), mouse.row());
-                match mouse.kind {
-                    MouseKind::Move => {
-                        if self.hovered_visible != index {
-                            self.hovered_visible = index;
-                            ComponentEvent::Changed(self.id.clone())
-                        } else {
-                            ComponentEvent::Consumed
-                        }
-                    }
+                let input_event = self
+                    .query_input
+                    .handle_event_borderless(InputEvent::Mouse(mouse), Self::query_edit_area(area));
+                let results_event = self
+                    .results
+                    .handle_event_borderless(InputEvent::Mouse(mouse), Self::results_area(area));
+                let activates = matches!(
+                    mouse.kind,
                     MouseKind::Down(MouseButton::Left)
-                    | MouseKind::Click(MouseButton::Left)
-                    | MouseKind::DoubleClick(MouseButton::Left) => self.activate_pointer(index),
-                    _ => ComponentEvent::Consumed,
+                        | MouseKind::Click(MouseButton::Left)
+                        | MouseKind::DoubleClick(MouseButton::Left)
+                );
+                if activates && matches!(results_event, ComponentEvent::Selected(_, _)) {
+                    return self.activate_selected();
+                }
+                if let ComponentEvent::Activated(id) = results_event {
+                    self.close();
+                    return ComponentEvent::Activated(id);
+                }
+                if matches!(input_event, ComponentEvent::Changed(_)) {
+                    self.sync_results(true);
+                    return ComponentEvent::Changed(self.id.clone());
+                }
+                if matches!(
+                    input_event,
+                    ComponentEvent::Changed(_) | ComponentEvent::FocusRequested(_)
+                ) || matches!(results_event, ComponentEvent::Changed(_))
+                {
+                    ComponentEvent::Changed(self.id.clone())
+                } else {
+                    self.translate_results_event(results_event)
                 }
             }
             _ => ComponentEvent::Consumed,
@@ -217,63 +229,44 @@ impl CommandPalette {
         }
 
         Clear.render(area, buffer);
-        let block = theme
-            .block()
-            .title("Command Palette")
-            .borders(Borders::ALL)
-            .style(theme.body_style());
-        let inner = block.inner(area);
-        block.render(area, buffer);
+        self.block(theme).render(area, buffer);
 
-        if inner.height == 0 {
+        let mut input = self.query_input.clone();
+        input.set_focused(self.state.focused);
+        input.render_borderless_with_prefix(Self::query_area(area), buffer, theme, "> ");
+
+        self.results_for_render()
+            .render_borderless(Self::results_area(area), buffer, theme);
+    }
+
+    /// Renders the command palette through a Ratatui [`Frame`].
+    pub fn render_frame(&self, frame: &mut Frame<'_>, area: Rect, theme: &TundraTheme) {
+        if !self.open {
             return;
         }
 
-        Paragraph::new(format!("> {}", self.query_with_cursor()))
-            .style(theme.title_style())
-            .render(Rect::new(inner.x, inner.y, inner.width, 1), buffer);
+        frame.render_widget(Clear, area);
+        frame.render_widget(self.block(theme), area);
 
-        let list_y = inner.y.saturating_add(2);
-        let visible = self.visible_indices();
-        for (visible_index, command_index) in visible
-            .iter()
-            .copied()
-            .take(inner.height.saturating_sub(2) as usize)
-            .enumerate()
-        {
-            let Some(command) = self.commands.get(command_index) else {
-                continue;
-            };
-            let style = item_style(
-                self.state.focused,
-                self.hovered_visible == Some(visible_index),
-                self.selected_visible == Some(visible_index),
-                command.disabled,
-                theme,
-            );
-            let label = match &command.hint {
-                Some(hint) => format!("{} - {}", command.title, hint),
-                None => command.title.clone(),
-            };
-            Paragraph::new(label).style(style).render(
-                Rect::new(
-                    inner.x,
-                    list_y.saturating_add(visible_index as u16),
-                    inner.width,
-                    1,
-                ),
-                buffer,
-            );
-        }
+        let mut input = self.query_input.clone();
+        input.set_focused(self.state.focused);
+        input.render_borderless_frame_with_prefix(frame, Self::query_area(area), theme, "> ");
+
+        self.results_for_render()
+            .render_borderless_frame(frame, Self::results_area(area), theme);
     }
 
     fn visible_indices(&self) -> Vec<usize> {
-        if self.query.is_empty() {
-            return (0..self.commands.len()).collect();
+        Self::visible_indices_for(self.query_input.value(), &self.commands)
+    }
+
+    fn visible_indices_for(query: &str, commands: &[CommandPaletteCommand]) -> Vec<usize> {
+        if query.is_empty() {
+            return (0..commands.len()).collect();
         }
 
-        let query = self.query.to_lowercase();
-        self.commands
+        let query = query.to_lowercase();
+        commands
             .iter()
             .enumerate()
             .filter_map(|(index, command)| {
@@ -291,41 +284,7 @@ impl CommandPalette {
             .collect()
     }
 
-    fn first_enabled_visible(&self) -> Option<usize> {
-        self.visible_indices()
-            .iter()
-            .enumerate()
-            .find_map(|(visible_index, command_index)| {
-                self.commands
-                    .get(*command_index)
-                    .is_some_and(|command| !command.disabled)
-                    .then_some(visible_index)
-            })
-    }
-
-    fn ensure_selection(&mut self) {
-        let visible = self.visible_indices();
-        if self
-            .selected_visible
-            .and_then(|index| visible.get(index))
-            .and_then(|index| self.commands.get(*index))
-            .is_some_and(|command| !command.disabled)
-        {
-            return;
-        }
-        self.selected_visible = self.first_enabled_visible();
-    }
-
-    fn activate_pointer(&mut self, index: Option<usize>) -> ComponentEvent {
-        let Some(index) = index else {
-            return ComponentEvent::Consumed;
-        };
-        self.selected_visible = Some(index);
-        self.activate_selected()
-    }
-
     fn activate_selected(&mut self) -> ComponentEvent {
-        self.ensure_selection();
         let Some(command) = self.selected_command() else {
             return ComponentEvent::Consumed;
         };
@@ -338,94 +297,100 @@ impl CommandPalette {
         ComponentEvent::Activated(id)
     }
 
-    fn select_previous(&mut self) -> ComponentEvent {
-        let visible = self.visible_indices();
-        let selected = self.selected_visible.unwrap_or(visible.len());
-        let next = visible[..selected].iter().enumerate().rev().find_map(
-            |(visible_index, command_index)| {
-                self.commands
-                    .get(*command_index)
-                    .is_some_and(|command| !command.disabled)
-                    .then_some(visible_index)
-            },
-        );
-        self.select_visible(next)
+    fn translate_results_event(&mut self, event: ComponentEvent) -> ComponentEvent {
+        match event {
+            ComponentEvent::Selected(_, index) => ComponentEvent::Selected(self.id.clone(), index),
+            ComponentEvent::Changed(_) => ComponentEvent::Changed(self.id.clone()),
+            ComponentEvent::Activated(id) => {
+                self.close();
+                ComponentEvent::Activated(id)
+            }
+            ComponentEvent::None | ComponentEvent::FocusRequested(_) => ComponentEvent::Consumed,
+            other => other,
+        }
     }
 
-    fn select_next(&mut self) -> ComponentEvent {
-        let visible = self.visible_indices();
-        let start = self
-            .selected_visible
-            .map(|index| index.saturating_add(1))
-            .unwrap_or(0);
-        let next = visible[start..]
-            .iter()
-            .enumerate()
-            .find_map(|(offset, command_index)| {
-                self.commands
-                    .get(*command_index)
-                    .is_some_and(|command| !command.disabled)
-                    .then_some(start + offset)
-            });
-        self.select_visible(next)
+    fn sync_results(&mut self, reset_selection: bool) {
+        let selected_id = (!reset_selection)
+            .then(|| self.results.selected_item().map(|item| item.id.clone()))
+            .flatten();
+        let hovered = self.results.hovered_index();
+        let mut results = Self::make_results(&self.id, &self.commands, self.query_input.value());
+        if let Some(selected_id) = selected_id {
+            let selected = results
+                .items
+                .iter()
+                .position(|item| item.id == selected_id && !item.disabled);
+            results.set_selected(selected);
+        }
+        if !reset_selection {
+            results.set_hovered(hovered);
+        }
+        results.state = self.state;
+        results.set_focused(self.open && self.state.focused);
+        self.results = results;
     }
 
-    fn select_visible(&mut self, index: Option<usize>) -> ComponentEvent {
-        let Some(index) = index else {
-            return ComponentEvent::Consumed;
-        };
-        self.selected_visible = Some(index);
-        ComponentEvent::Selected(self.id.clone(), index)
+    fn results_for_render(&self) -> List {
+        let mut results = Self::make_results(&self.id, &self.commands, self.query_input.value());
+        if let Some(selected) = self.results.selected_item() {
+            let selected_index = results
+                .items
+                .iter()
+                .position(|item| item.id == selected.id && !item.disabled);
+            results.set_selected(selected_index);
+        }
+        results.set_hovered(self.results.hovered_index());
+        results.state = self.state;
+        results
     }
 
-    fn command_index_at(&self, area: Rect, column: u16, row: u16) -> Option<usize> {
+    fn make_results(id: &ComponentId, commands: &[CommandPaletteCommand], query: &str) -> List {
+        let items = Self::visible_indices_for(query, commands)
+            .into_iter()
+            .filter_map(|index| commands.get(index))
+            .map(|command| {
+                let item = ListItem::new(command.id.clone(), command.title.clone())
+                    .disabled(command.disabled);
+                match &command.hint {
+                    Some(hint) => item.with_description(hint.clone()),
+                    None => item,
+                }
+            })
+            .collect();
+        List::new(format!("{}.results", id.as_str()), items)
+    }
+
+    fn query_area(area: Rect) -> Rect {
         let inner = inner_area(area);
-        let list_y = inner.y.saturating_add(2);
-        if column < inner.x
-            || column >= inner.x.saturating_add(inner.width)
-            || row < list_y
-            || row >= inner.y.saturating_add(inner.height)
-        {
-            return None;
-        }
-
-        let visible_index = row.saturating_sub(list_y) as usize;
-        self.visible_indices()
-            .get(visible_index)
-            .map(|_| visible_index)
+        Rect::new(inner.x, inner.y, inner.width, inner.height.min(1))
     }
 
-    fn query_with_cursor(&self) -> String {
-        let mut query = self.query.clone();
-        let index = byte_index_for_char(&query, self.cursor);
-        query.insert(index, '|');
-        query
+    fn query_edit_area(area: Rect) -> Rect {
+        let query = Self::query_area(area);
+        Rect::new(
+            query.x.saturating_add(2),
+            query.y,
+            query.width.saturating_sub(2),
+            query.height,
+        )
     }
 
-    fn insert_char(&mut self, character: char) {
-        let byte_index = byte_index_for_char(&self.query, self.cursor);
-        self.query.insert(byte_index, character);
-        self.cursor = self.cursor.saturating_add(1);
+    fn results_area(area: Rect) -> Rect {
+        let inner = inner_area(area);
+        Rect::new(
+            inner.x,
+            inner.y.saturating_add(2),
+            inner.width,
+            inner.height.saturating_sub(2),
+        )
     }
 
-    fn delete_before_cursor(&mut self) -> bool {
-        if self.cursor == 0 {
-            return false;
-        }
-
-        let remove_at = byte_index_for_char(&self.query, self.cursor.saturating_sub(1));
-        self.query.remove(remove_at);
-        self.cursor = self.cursor.saturating_sub(1);
-        true
-    }
-
-    fn delete_at_cursor(&mut self) -> bool {
-        if self.cursor >= char_count(&self.query) {
-            return false;
-        }
-
-        let remove_at = byte_index_for_char(&self.query, self.cursor);
-        self.query.remove(remove_at);
-        true
+    fn block(&self, theme: &TundraTheme) -> ratatui::widgets::Block<'static> {
+        theme
+            .block()
+            .title("Command Palette")
+            .borders(Borders::ALL)
+            .style(theme.body_style())
     }
 }

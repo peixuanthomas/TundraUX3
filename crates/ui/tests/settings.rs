@@ -22,15 +22,17 @@ fn wide_layout_uses_a_left_category_column_and_right_detail_cards() {
         layout.category_cards[0].category,
         SettingsCategory::Appearance
     );
-    assert_eq!(layout.category_cards[0].area.x, 1);
-    assert_eq!(layout.category_cards[0].area.width, 28);
+    assert_eq!(layout.category_cards[0].area, Rect::new(2, 2, 16, 1));
     assert!(
         layout
             .category_cards
             .iter()
-            .all(|category| category.area.x < 29)
+            .enumerate()
+            .all(|(index, category)| category.area.x == 2
+                && category.area.y == 2 + index as u16
+                && category.area.height == 1)
     );
-    assert!(layout.fields.iter().all(|field| field.area.x >= 30));
+    assert!(layout.fields.iter().all(|field| field.area.x == 21));
     assert!(
         layout
             .fields
@@ -46,7 +48,7 @@ fn wide_layout_uses_a_left_category_column_and_right_detail_cards() {
 }
 
 #[test]
-fn eighty_by_twenty_four_layout_uses_a_top_category_navigation_row() {
+fn eighty_by_twenty_four_layout_keeps_the_left_category_column() {
     let model = sample_model();
     let layout = settings_layout(Rect::new(0, 0, 80, 24), &model);
 
@@ -55,17 +57,54 @@ fn eighty_by_twenty_four_layout_uses_a_top_category_navigation_row() {
         layout
             .category_cards
             .iter()
-            .all(|category| category.area.y == 1)
+            .enumerate()
+            .all(|(index, category)| category.area.y == 2 + index as u16)
     );
     assert!(
         layout
             .category_cards
             .iter()
-            .all(|category| category.area.height == 5)
+            .all(|category| category.area.height == 1)
     );
-    assert_eq!(layout.category_cards[0].area.width, 19);
-    assert_eq!(layout.category_cards[3].area.right(), 79);
-    assert!(layout.fields.iter().all(|field| field.area.y >= 7));
+    assert_eq!(layout.category_cards[0].area.width, 16);
+    assert!(layout.fields.iter().all(|field| field.area.x == 21));
+}
+
+#[test]
+fn selected_category_accent_is_limited_to_its_single_sidebar_row() {
+    let model = sample_model();
+    let theme = TundraTheme::default_dark().with_accent_color(Color::LightMagenta);
+    let mut terminal = Terminal::new(TestBackend::new(120, 32)).expect("test terminal");
+    let mut selected = None;
+
+    terminal
+        .draw(|frame| {
+            let layout = render_settings(frame, frame.area(), &chrome(), &model, &theme);
+            selected = layout.category_cards.first().map(|category| category.area);
+        })
+        .expect("render category list");
+
+    let selected = selected.expect("selected category tab");
+    let accent_cells = (0..120)
+        .filter(|x| {
+            terminal
+                .backend()
+                .buffer()
+                .cell((*x, selected.y))
+                .is_some_and(|cell| cell.bg == theme.accent_color)
+        })
+        .count();
+    assert!(accent_cells > 0);
+    assert!(accent_cells <= usize::from(selected.width));
+    assert_ne!(
+        terminal
+            .backend()
+            .buffer()
+            .cell((selected.right(), selected.y))
+            .unwrap()
+            .bg,
+        theme.accent_color
+    );
 }
 
 #[test]
@@ -142,6 +181,22 @@ fn color_editor_captures_clicks_above_settings_content() {
         settings_hit_test(&layout, (dialog.x, dialog.y)),
         Some(SettingsHitTarget::ColorEditor)
     );
+
+    let mut terminal = Terminal::new(TestBackend::new(120, 32)).expect("test terminal");
+    terminal
+        .draw(|frame| {
+            render_settings(
+                frame,
+                frame.area(),
+                &chrome(),
+                &model,
+                &TundraTheme::default_dark(),
+            );
+        })
+        .expect("render color editor");
+    let output = terminal_output(&terminal);
+    assert!(output.contains("> #00FFFF_"));
+    assert!(output.contains("Accent must differ from border color."));
 }
 
 #[test]
@@ -176,7 +231,7 @@ fn file_extensions_editor_captures_clicks_and_shows_examples() {
         .expect("render file extensions editor");
     let output = terminal_output(&terminal);
     assert!(output.contains("Explorer files opened in Editor"));
-    assert!(output.contains(".d.ts"));
+    assert!(output.contains("> .md, .rs, .d.ts_"));
 }
 
 #[test]
@@ -211,6 +266,7 @@ fn time_sync_server_editor_shows_validation_state_and_captures_clicks() {
         .expect("render time sync server editor");
     let output = terminal_output(&terminal);
     assert!(output.contains("Time synchronization server"));
+    assert!(output.contains("> https://time.example.test/_"));
     assert!(output.contains("Synchronizing with this server"));
 }
 
@@ -230,6 +286,22 @@ fn weather_location_editor_captures_clicks_and_explains_timezone_fallback() {
         settings_hit_test(&layout, (dialog.x, dialog.y)),
         Some(SettingsHitTarget::WeatherLocationEditor)
     );
+
+    let mut terminal = Terminal::new(TestBackend::new(120, 32)).expect("test terminal");
+    terminal
+        .draw(|frame| {
+            render_settings(
+                frame,
+                frame.area(),
+                &chrome(),
+                &model,
+                &TundraTheme::default_dark(),
+            );
+        })
+        .expect("render weather location editor");
+    let output = terminal_output(&terminal);
+    assert!(output.contains("> Cambridge, Massachusetts, USA_"));
+    assert!(output.contains("Leave empty to use the timezone location."));
 }
 
 #[test]
@@ -256,6 +328,13 @@ fn renderer_draws_cards_preview_picker_and_status_into_the_buffer() {
     assert!(output.contains("Live preview"));
     assert!(output.contains("Colors and borders"));
     assert!(output.contains("Saved"));
+    assert!(output.contains("Rounded"));
+    assert!(output.contains("White"));
+    assert!(output.contains("On"));
+    assert!(!output.contains("< Rounded >"));
+    assert!(output.contains("[Rounded]"));
+    assert!(output.contains("[White]"));
+    assert!(output.contains("[On]"));
 
     model.picker = Some(SettingsPickerViewModel {
         kind: SettingsPickerKind::Timezone,
@@ -286,7 +365,7 @@ fn renderer_draws_cards_preview_picker_and_status_into_the_buffer() {
     let picker_output = terminal_output(&terminal);
     assert!(picker_output.contains("Choose timezone"));
     assert!(picker_output.contains("Search: tok_"));
-    assert!(picker_output.contains("Tokyo  Asia/Tokyo"));
+    assert!(picker_output.contains("> Tokyo  Asia/Tokyo"));
 }
 
 #[test]
@@ -338,6 +417,77 @@ fn unavailable_default_theme_image_option_is_rendered_dimmed() {
         }
     }
     assert!(found, "disabled Image icons option should be visible");
+}
+
+#[test]
+fn picker_truncates_wide_labels_by_terminal_columns() {
+    let mut model = sample_model();
+    model.picker = Some(SettingsPickerViewModel {
+        kind: SettingsPickerKind::Language,
+        title: "Choose language".to_string(),
+        query: String::new(),
+        options: vec![SettingsPickerOptionViewModel::new("界".repeat(50), "")],
+        selected_index: 0,
+        window_start: 0,
+        searchable: false,
+    });
+    let mut terminal = Terminal::new(TestBackend::new(80, 24)).expect("test terminal");
+
+    terminal
+        .draw(|frame| {
+            render_settings(
+                frame,
+                frame.area(),
+                &chrome(),
+                &model,
+                &TundraTheme::default_dark(),
+            );
+        })
+        .expect("render wide picker label");
+
+    let buffer = terminal.backend().buffer();
+    let wide_cells = buffer
+        .content()
+        .iter()
+        .filter(|cell| cell.symbol() == "界")
+        .count();
+    let ellipsis_cells = buffer
+        .content()
+        .iter()
+        .filter(|cell| cell.symbol() == "…")
+        .count();
+    assert_eq!(wide_cells, 35);
+    assert_eq!(ellipsis_cells, 1);
+
+    let row = (0..buffer.area.height)
+        .find(|y| {
+            (0..buffer.area.width).any(|x| {
+                buffer
+                    .cell((x, *y))
+                    .is_some_and(|cell| cell.symbol() == "界")
+            })
+        })
+        .expect("picker row containing the wide label");
+    let columns = (0..buffer.area.width)
+        .filter(|x| {
+            buffer
+                .cell((*x, row))
+                .is_some_and(|cell| cell.symbol() == "界")
+        })
+        .collect::<Vec<_>>();
+    assert!(
+        columns
+            .windows(2)
+            .all(|columns| columns[1] - columns[0] == 2)
+    );
+    let ellipsis_column = (0..buffer.area.width)
+        .find(|x| {
+            buffer
+                .cell((*x, row))
+                .is_some_and(|cell| cell.symbol() == "…")
+        })
+        .expect("terminal-width truncation ellipsis");
+    assert_eq!(ellipsis_column, columns.last().copied().unwrap() + 2);
 }
 
 fn sample_model() -> SettingsViewModel {

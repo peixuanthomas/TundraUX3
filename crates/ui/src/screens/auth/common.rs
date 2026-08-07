@@ -35,7 +35,3 @@ pub(super) fn render_auth_screen(
         }
     }
 }
-
-pub(super) fn focus_marker(focused: bool) -> &'static str {
-    if focused { "> " } else { "  " }
-}

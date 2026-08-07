@@ -1,9 +1,13 @@
 use ratatui::Frame;
-use ratatui::layout::Rect;
-use ratatui::style::{Color, Modifier};
+use ratatui::layout::{Alignment, Constraint, Layout, Rect};
+use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Borders, Clear, Paragraph, Wrap};
+use ratatui::widgets::{
+    Borders, Clear, HighlightSpacing, List, ListItem, ListState, Paragraph, Row, Scrollbar,
+    ScrollbarOrientation, ScrollbarState, Table, TableState, Wrap,
+};
 
+use crate::components::{Button, List as ComponentList, ListItem as ComponentListItem, TextInput};
 use crate::screens::shell::{render_status, render_top};
 use crate::{
     BorderShape, ShellChromeViewModel, ShellLayout, TimezoneMapWidget, TundraTheme,
@@ -319,74 +323,24 @@ pub fn render_settings(
 }
 
 pub fn settings_layout(area: Rect, model: &SettingsViewModel) -> SettingsLayout {
-    let inner = inset(area, 1, 1);
-    let wide = inner.width >= 96;
-    let (category_area, detail_area) = if wide {
-        let category_width = 28.min(inner.width.saturating_sub(40));
-        (
-            Rect::new(inner.x, inner.y, category_width, inner.height),
-            Rect::new(
-                inner.x.saturating_add(category_width).saturating_add(1),
-                inner.y,
-                inner.width.saturating_sub(category_width).saturating_sub(1),
-                inner.height,
-            ),
-        )
-    } else {
-        let category_height = 5.min(inner.height);
-        (
-            Rect::new(inner.x, inner.y, inner.width, category_height),
-            Rect::new(
-                inner.x,
-                inner.y.saturating_add(category_height).saturating_add(1),
-                inner.width,
-                inner
-                    .height
-                    .saturating_sub(category_height)
-                    .saturating_sub(1),
-            ),
-        )
-    };
-
-    let category_cards = if wide {
-        SettingsCategory::ALL
-            .into_iter()
-            .enumerate()
-            .map(|(index, category)| SettingsCategoryLayout {
-                category,
-                area: Rect::new(
-                    category_area.x,
-                    category_area
-                        .y
-                        .saturating_add((index as u16).saturating_mul(5)),
-                    category_area.width,
-                    4.min(category_area.height),
-                ),
-            })
-            .filter(|layout| rect_intersection(layout.area, category_area).is_some())
-            .collect()
-    } else {
-        let count = SettingsCategory::ALL.len() as u16;
-        let width = category_area.width.checked_div(count).unwrap_or(0);
-        SettingsCategory::ALL
-            .into_iter()
-            .enumerate()
-            .map(|(index, category)| {
-                let x = category_area
-                    .x
-                    .saturating_add((index as u16).saturating_mul(width));
-                let final_width = if index + 1 == SettingsCategory::ALL.len() {
-                    category_area.right().saturating_sub(x)
-                } else {
-                    width
-                };
-                SettingsCategoryLayout {
-                    category,
-                    area: Rect::new(x, category_area.y, final_width, category_area.height),
-                }
-            })
-            .collect()
-    };
+    let (category_area, detail_area) = settings_content_areas(area);
+    let category_cards = SettingsCategory::ALL
+        .into_iter()
+        .enumerate()
+        .filter_map(|(index, category)| {
+            let row = Rect::new(
+                category_area.x.saturating_add(1),
+                category_area
+                    .y
+                    .saturating_add(1)
+                    .saturating_add(index as u16),
+                category_area.width.saturating_sub(2),
+                1,
+            );
+            rect_intersection(row, category_area)
+                .map(|area| SettingsCategoryLayout { category, area })
+        })
+        .collect();
 
     let mut fields = Vec::new();
     let mut y = detail_area.y.saturating_sub(
@@ -516,31 +470,26 @@ fn render_settings_content(
         layout.main,
     );
 
-    for category in &layout.category_cards {
-        let selected = category.category == model.selected_category;
-        let lines = vec![
-            Line::styled(
-                category.category.label(),
-                if selected {
-                    theme.title_style()
-                } else {
-                    theme.body_style()
-                },
-            ),
-            Line::styled(category.category.description(), theme.muted_style()),
-        ];
-        frame.render_widget(
-            Paragraph::new(lines)
-                .block(
-                    theme
-                        .block()
-                        .borders(Borders::ALL)
-                        .border_style(theme.selectable_border_style(selected)),
+    let mut categories = ComponentList::new(
+        "settings.categories",
+        SettingsCategory::ALL
+            .into_iter()
+            .map(|category| {
+                ComponentListItem::new(
+                    format!("settings.category.{category:?}").to_ascii_lowercase(),
+                    category.label(),
                 )
-                .wrap(Wrap { trim: true }),
-            category.area,
-        );
-    }
+            })
+            .collect(),
+    )
+    .titled(" Sections ");
+    categories.set_selected(
+        SettingsCategory::ALL
+            .iter()
+            .position(|category| *category == model.selected_category),
+    );
+    categories.set_focused(true);
+    categories.render_frame(frame, settings_category_area(layout), theme);
 
     let detail_area = settings_detail_area(layout);
     if let Some(preview) = model.appearance_preview {
@@ -627,40 +576,86 @@ fn render_cards(
                 visible,
             );
         }
+        let rows_area = Rect::new(
+            card_area.x.saturating_add(1),
+            card_area.y.saturating_add(1),
+            card_area.width.saturating_sub(2),
+            u16::try_from(card.items.len()).unwrap_or(u16::MAX),
+        );
+        let Some(visible_rows) = rect_intersection(rows_area, detail_area) else {
+            y = y.saturating_add(height).saturating_add(1);
+            continue;
+        };
+        let value_width = card
+            .items
+            .iter()
+            .map(settings_control_width)
+            .max()
+            .unwrap_or(0)
+            .min(rows_area.width / 2);
+        let rows = card
+            .items
+            .iter()
+            .map(|item| {
+                let style = if item.enabled {
+                    theme.body_style()
+                } else {
+                    theme.muted_style().add_modifier(Modifier::DIM)
+                };
+                Row::new([item.label.clone(), String::new()]).style(style)
+            })
+            .collect::<Vec<_>>();
+        let first_visible = usize::from(visible_rows.y.saturating_sub(rows_area.y));
+        let visible_end = first_visible.saturating_add(usize::from(visible_rows.height));
+        let selected = card
+            .items
+            .iter()
+            .position(|item| item.field == model.selected_field)
+            .filter(|index| *index >= first_visible && *index < visible_end);
+        let selected_style = selected
+            .and_then(|index| card.items.get(index))
+            .map_or_else(
+                || theme.title_style(),
+                |item| {
+                    if item.enabled {
+                        theme.title_style()
+                    } else {
+                        theme.muted_style().add_modifier(Modifier::DIM)
+                    }
+                },
+            );
+        let mut state = TableState::default()
+            .with_offset(first_visible)
+            .with_selected(selected);
+        frame.render_stateful_widget(
+            Table::new(rows, [Constraint::Min(0), Constraint::Length(value_width)])
+                .column_spacing(1)
+                .row_highlight_style(selected_style),
+            visible_rows,
+            &mut state,
+        );
+
         for (index, item) in card.items.iter().enumerate() {
             let row = Rect::new(
-                card_area.x.saturating_add(1),
-                card_area.y.saturating_add(1).saturating_add(index as u16),
-                card_area.width.saturating_sub(2),
+                rows_area.x,
+                rows_area.y.saturating_add(index as u16),
+                rows_area.width,
                 1,
             );
             let Some(row) = rect_intersection(row, detail_area) else {
                 continue;
             };
-            let selected = item.field == model.selected_field;
-            let base = if !item.enabled {
-                theme.muted_style().add_modifier(Modifier::DIM)
-            } else if selected {
-                theme.title_style()
-            } else {
-                theme.body_style()
-            };
-            let value = control_value(item);
-            let value_width = value.chars().count().min(usize::from(row.width / 2));
-            let label_width = usize::from(row.width)
-                .saturating_sub(value_width)
-                .saturating_sub(1);
-            let label = truncate(&item.label, label_width);
-            let padding = usize::from(row.width)
-                .saturating_sub(label.chars().count())
-                .saturating_sub(value.chars().count());
-            frame.render_widget(
-                Paragraph::new(Line::from(vec![
-                    Span::styled(label, base),
-                    Span::raw(" ".repeat(padding)),
-                    Span::styled(value, base),
-                ])),
-                row,
+            render_settings_control(
+                frame,
+                Rect::new(
+                    row.right().saturating_sub(value_width),
+                    row.y,
+                    value_width,
+                    row.height,
+                ),
+                item,
+                item.field == model.selected_field,
+                theme,
             );
         }
         y = y.saturating_add(height).saturating_add(1);
@@ -715,54 +710,96 @@ fn render_picker(
             .style(theme.body_style()),
         dialog,
     );
-    let query = if picker.searchable {
-        format!("Search: {}_", picker.query)
-    } else if picker.kind == SettingsPickerKind::DefaultThemeIcons {
-        "Arrows: choose    Enter: apply    Esc: back".to_string()
-    } else {
-        "Arrows: choose    Enter: apply    Esc: cancel".to_string()
-    };
-    frame.render_widget(
-        Paragraph::new(Line::styled(query, theme.muted_style())),
-        Rect::new(
-            dialog.x.saturating_add(2),
-            dialog.y.saturating_add(1),
-            dialog.width.saturating_sub(4),
-            1,
-        ),
+    let query_area = Rect::new(
+        dialog.x.saturating_add(2),
+        dialog.y.saturating_add(1),
+        dialog.width.saturating_sub(4),
+        1,
     );
+    if picker.searchable {
+        render_controlled_text_input(
+            frame,
+            query_area,
+            "settings.picker-search",
+            &picker.query,
+            "Search: ",
+            theme,
+            theme.muted,
+        );
+    } else {
+        let help = if picker.kind == SettingsPickerKind::DefaultThemeIcons {
+            "Arrows: choose    Enter: apply    Esc: back"
+        } else {
+            "Arrows: choose    Enter: apply    Esc: cancel"
+        };
+        frame.render_widget(
+            Paragraph::new(Line::styled(help, theme.muted_style())),
+            query_area,
+        );
+    }
     let list = picker_list_area(dialog, picker.kind == SettingsPickerKind::Timezone);
     let visible = usize::from(list.height);
     let start = picker.window_start.min(picker.options.len());
     let end = start.saturating_add(visible).min(picker.options.len());
-    let lines = picker.options[start..end]
+    let items = picker.options[start..end]
         .iter()
-        .enumerate()
-        .map(|(offset, option)| {
-            let index = start + offset;
-            let selected = index == picker.selected_index;
-            let marker = if selected { "> " } else { "  " };
+        .map(|option| {
             let detail = if option.detail.is_empty() {
                 String::new()
             } else {
                 format!("  {}", option.detail)
             };
-            Line::styled(
+            ListItem::new(Line::styled(
                 truncate(
-                    &format!("{marker}{}{detail}", option.label),
-                    usize::from(list.width),
+                    &format!("{}{detail}", option.label),
+                    usize::from(list.width.saturating_sub(2)),
                 ),
                 if !option.enabled {
                     theme.muted_style().add_modifier(Modifier::DIM)
-                } else if selected {
-                    theme.title_style()
                 } else {
                     theme.body_style()
                 },
-            )
+            ))
         })
         .collect::<Vec<_>>();
-    frame.render_widget(Paragraph::new(lines), list);
+    let selected = picker
+        .selected_index
+        .checked_sub(start)
+        .filter(|index| *index < items.len());
+    let selected_style = picker.options.get(picker.selected_index).map_or_else(
+        || theme.title_style(),
+        |option| {
+            if option.enabled {
+                theme.title_style()
+            } else {
+                theme.muted_style().add_modifier(Modifier::DIM)
+            }
+        },
+    );
+    let mut list_state = ListState::default().with_selected(selected);
+    frame.render_stateful_widget(
+        List::new(items)
+            .style(theme.body_style())
+            .highlight_symbol("> ")
+            .highlight_spacing(HighlightSpacing::Always)
+            .highlight_style(selected_style),
+        list,
+        &mut list_state,
+    );
+    if picker.options.len() > visible && list.width > 0 && list.height > 0 {
+        let mut scrollbar_state = ScrollbarState::new(picker.options.len())
+            .position(start)
+            .viewport_content_length(visible);
+        frame.render_stateful_widget(
+            Scrollbar::new(ScrollbarOrientation::VerticalRight)
+                .begin_symbol(None)
+                .end_symbol(None)
+                .track_style(theme.muted_style())
+                .thumb_style(theme.title_style()),
+            list,
+            &mut scrollbar_state,
+        );
+    }
 
     if picker.kind == SettingsPickerKind::Timezone && dialog.width >= 70 {
         let map = picker_map_area(dialog);
@@ -787,7 +824,7 @@ fn render_color_editor(
     frame.render_widget(Clear, dialog);
     let lines = vec![
         Line::from("Enter a color as #RRGGBB."),
-        Line::styled(format!("> {}_", editor.value), theme.title_style()),
+        Line::from(""),
         Line::styled(
             editor.error.clone().unwrap_or_default(),
             theme.error_style(),
@@ -805,6 +842,7 @@ fn render_color_editor(
             .wrap(Wrap { trim: true }),
         dialog,
     );
+    render_editor_text_input(frame, dialog, "settings.color-editor", &editor.value, theme);
 }
 
 fn render_weather_location_editor(
@@ -817,7 +855,7 @@ fn render_weather_location_editor(
     frame.render_widget(Clear, dialog);
     let lines = vec![
         Line::from("Enter a detailed city or address using English characters."),
-        Line::styled(format!("> {}_", editor.value), theme.title_style()),
+        Line::from(""),
         Line::styled(
             editor.error.clone().unwrap_or_default(),
             theme.error_style(),
@@ -839,6 +877,13 @@ fn render_weather_location_editor(
             .wrap(Wrap { trim: true }),
         dialog,
     );
+    render_editor_text_input(
+        frame,
+        dialog,
+        "settings.weather-location-editor",
+        &editor.value,
+        theme,
+    );
 }
 
 fn render_file_extensions_editor(
@@ -851,7 +896,7 @@ fn render_file_extensions_editor(
     frame.render_widget(Clear, dialog);
     let lines = vec![
         Line::from("Enter comma-separated filename suffixes Explorer should open here."),
-        Line::styled(format!("> {}_", editor.value), theme.title_style()),
+        Line::from(""),
         Line::styled(
             editor.error.clone().unwrap_or_default(),
             theme.error_style(),
@@ -876,6 +921,13 @@ fn render_file_extensions_editor(
             .wrap(Wrap { trim: true }),
         dialog,
     );
+    render_editor_text_input(
+        frame,
+        dialog,
+        "settings.file-extensions-editor",
+        &editor.value,
+        theme,
+    );
 }
 
 fn render_time_sync_server_editor(
@@ -898,7 +950,7 @@ fn render_time_sync_server_editor(
     };
     let lines = vec![
         Line::from("Enter an HTTP(S) endpoint that returns a valid Date response header."),
-        Line::styled(format!("> {}_", editor.value), theme.title_style()),
+        Line::from(""),
         Line::styled(status, status_style),
         Line::styled(
             "The address is saved only after a successful synchronization test.",
@@ -917,47 +969,142 @@ fn render_time_sync_server_editor(
             .wrap(Wrap { trim: true }),
         dialog,
     );
+    render_editor_text_input(
+        frame,
+        dialog,
+        "settings.time-sync-server-editor",
+        &editor.value,
+        theme,
+    );
+}
+
+fn render_editor_text_input(
+    frame: &mut Frame<'_>,
+    dialog: Rect,
+    id: &'static str,
+    value: &str,
+    theme: &TundraTheme,
+) {
+    render_controlled_text_input(
+        frame,
+        Rect::new(
+            dialog.x.saturating_add(1),
+            dialog.y.saturating_add(2),
+            dialog.width.saturating_sub(2),
+            1,
+        ),
+        id,
+        value,
+        "> ",
+        theme,
+        theme.accent_color,
+    );
+}
+
+#[allow(clippy::too_many_arguments)]
+fn render_controlled_text_input(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    id: &'static str,
+    value: &str,
+    prefix: &str,
+    theme: &TundraTheme,
+    foreground: Color,
+) {
+    if area.width == 0 || area.height == 0 {
+        return;
+    }
+
+    let mut input = TextInput::new(id).with_cursor_symbol("_");
+    input.set_value(value);
+    input.set_focused(true);
+
+    let mut input_theme = *theme;
+    input_theme.foreground = foreground;
+    input.render_borderless_frame_with_prefix(frame, area, &input_theme, prefix);
 }
 
 fn settings_detail_area(layout: &SettingsLayout) -> Rect {
-    let inner = inset(layout.main, 1, 1);
-    if inner.width >= 96 {
-        let category_width = 28.min(inner.width.saturating_sub(40));
-        Rect::new(
-            inner.x.saturating_add(category_width).saturating_add(1),
-            inner.y,
-            inner.width.saturating_sub(category_width).saturating_sub(1),
-            inner.height,
-        )
-    } else {
-        let category_height = 5.min(inner.height);
-        Rect::new(
-            inner.x,
-            inner.y.saturating_add(category_height).saturating_add(1),
-            inner.width,
-            inner
-                .height
-                .saturating_sub(category_height)
-                .saturating_sub(1),
-        )
-    }
+    settings_content_areas(layout.main).1
 }
 
-fn control_value(item: &SettingsItemViewModel) -> String {
+fn settings_category_area(layout: &SettingsLayout) -> Rect {
+    settings_content_areas(layout.main).0
+}
+
+fn settings_content_areas(area: Rect) -> (Rect, Rect) {
+    let inner = inset(area, 1, 1);
+    let sidebar_width = 18.min(inner.width.saturating_sub(1));
+    let gap = u16::from(inner.width > sidebar_width);
+    let [category, _, detail] = Layout::horizontal([
+        Constraint::Length(sidebar_width),
+        Constraint::Length(gap),
+        Constraint::Min(0),
+    ])
+    .areas(inner);
+    (category, detail)
+}
+
+fn render_settings_control(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    item: &SettingsItemViewModel,
+    selected: bool,
+    theme: &TundraTheme,
+) {
+    if area.width == 0 || area.height == 0 {
+        return;
+    }
+
+    if !item.enabled || item.kind == SettingsControlKind::ReadOnly {
+        let label = if item.enabled {
+            item.value.clone()
+        } else {
+            format!("{} locked", item.value)
+        };
+        let style = if item.enabled {
+            if selected {
+                theme.title_style()
+            } else {
+                theme.body_style()
+            }
+        } else {
+            theme.muted_style().add_modifier(Modifier::DIM)
+        };
+        frame.render_widget(
+            Paragraph::new(label)
+                .alignment(Alignment::Right)
+                .style(style),
+            area,
+        );
+        return;
+    }
+
+    let mut button = Button::new(
+        format!("settings.field.{:?}", item.field).to_ascii_lowercase(),
+        item.value.clone(),
+    );
+    button.state.selected = selected;
+    button.set_focused(selected);
+    button.render_inline_frame(frame, area, theme);
+}
+
+fn settings_control_width(item: &SettingsItemViewModel) -> u16 {
+    let label_width = u16::try_from(Line::from(item.value.as_str()).width()).unwrap_or(u16::MAX);
     if !item.enabled {
-        return format!("{} [locked]", item.value);
+        return label_width.saturating_add(" locked".len() as u16);
     }
-    match item.kind {
-        SettingsControlKind::Toggle => format!("[{}]", item.value),
-        SettingsControlKind::Cycle | SettingsControlKind::Stepper => {
-            format!("< {} >", item.value)
-        }
-        SettingsControlKind::Picker | SettingsControlKind::Palette => {
-            format!("[ {} ]", item.value)
-        }
-        SettingsControlKind::Action => format!("[ {} ]", item.value),
-        SettingsControlKind::ReadOnly => item.value.clone(),
-    }
+
+    let component_padding = match item.kind {
+        SettingsControlKind::Toggle => 2,
+        SettingsControlKind::Cycle
+        | SettingsControlKind::Picker
+        | SettingsControlKind::Palette
+        | SettingsControlKind::Stepper
+        | SettingsControlKind::Action => 4,
+        SettingsControlKind::ReadOnly => 0,
+    };
+    label_width.saturating_add(component_padding)
 }
 
 fn picker_list_area(dialog: Rect, timezone: bool) -> Rect {
@@ -1014,7 +1161,7 @@ fn rect_intersection(first: Rect, second: Rect) -> Option<Rect> {
     let y = first.y.max(second.y);
     let right = first.right().min(second.right());
     let bottom = first.bottom().min(second.bottom());
-    (right > x && bottom > y).then_some(Rect::new(x, y, right - x, bottom - y))
+    (right > x && bottom > y).then(|| Rect::new(x, y, right - x, bottom - y))
 }
 
 fn contains(area: Rect, point: (u16, u16)) -> bool {
@@ -1022,13 +1169,25 @@ fn contains(area: Rect, point: (u16, u16)) -> bool {
 }
 
 fn truncate(value: &str, width: usize) -> String {
-    if value.chars().count() <= width {
+    if Line::from(value).width() <= width {
         return value.to_string();
     }
-    if width <= 1 {
-        return value.chars().take(width).collect();
+    if width == 0 {
+        return String::new();
     }
-    let mut truncated = value.chars().take(width - 1).collect::<String>();
+
+    let content_width = width.saturating_sub(1);
+    let span = Span::raw(value);
+    let mut used = 0_usize;
+    let mut truncated = String::new();
+    for grapheme in span.styled_graphemes(Style::default()) {
+        let grapheme_width = Line::from(grapheme.symbol).width();
+        if used.saturating_add(grapheme_width) > content_width {
+            break;
+        }
+        truncated.push_str(grapheme.symbol);
+        used = used.saturating_add(grapheme_width);
+    }
     truncated.push('…');
     truncated
 }
