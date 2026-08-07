@@ -114,6 +114,137 @@ pub(super) struct DisplayLine {
     /// Absolute display column of the first run. Non-zero only for a
     /// horizontally clipped Source viewport.
     pub(super) column_start: usize,
+    pub(super) role: DisplayLineRole,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(super) enum DisplayLineRole {
+    #[default]
+    Normal,
+    HeadingTop(u8),
+    HeadingBottom(u8),
+}
+
+impl DisplayLineRole {
+    pub(super) const fn heading_level(self) -> Option<u8> {
+        match self {
+            Self::HeadingTop(level) | Self::HeadingBottom(level) => Some(level),
+            Self::Normal => None,
+        }
+    }
+}
+
+fn heading_uses_big_text(model: &EditorViewModel, block: &EditorRenderBlock) -> bool {
+    if !model.text_sizing_protocol {
+        return false;
+    }
+    let EditorRenderBlock::Heading { spans, .. } = block else {
+        return false;
+    };
+    let Some(cursor) = model.rich_cursor else {
+        return true;
+    };
+
+    // Multi-cell characters cannot expose exact per-grapheme selection and
+    // caret styling. The heading currently being edited therefore stays in the
+    // ordinary one-row editor representation; all inactive headings use the
+    // terminal-native large-text representation.
+    !spans.iter().any(|span| {
+        span.rich_range.is_some_and(|range| {
+            range.start.container_id == cursor.container_id
+                && range.end.container_id == cursor.container_id
+                && range.start.grapheme_offset <= cursor.grapheme_offset
+                && cursor.grapheme_offset <= range.end.grapheme_offset
+        })
+    })
+}
+
+fn heading_wrap_width(width: usize, level: u8) -> usize {
+    let (numerator, denominator) = crate::components::heading_size_ratio(level);
+    width
+        .max(1)
+        .saturating_div(2)
+        .saturating_mul(usize::from(denominator))
+        .saturating_div(usize::from(numerator))
+        .max(1)
+}
+
+struct DisplayColumnMeasure {
+    column: usize,
+    heading: Option<HeadingColumnMeasure>,
+}
+
+impl DisplayColumnMeasure {
+    fn new(line: &DisplayLine) -> Self {
+        Self {
+            column: line.column_start,
+            heading: line.role.heading_level().map(HeadingColumnMeasure::new),
+        }
+    }
+
+    const fn column(&self) -> usize {
+        self.column
+    }
+
+    fn push(&mut self, width: usize) -> usize {
+        self.column = match self.heading.as_mut() {
+            Some(heading) => heading.push(width),
+            None => self.column.saturating_add(width),
+        };
+        self.column
+    }
+}
+
+struct HeadingColumnMeasure {
+    numerator: usize,
+    denominator: usize,
+    completed_width: usize,
+    current_chunk_width: usize,
+}
+
+impl HeadingColumnMeasure {
+    fn new(level: u8) -> Self {
+        let (numerator, denominator) = crate::components::heading_size_ratio(level);
+        Self {
+            numerator: usize::from(numerator),
+            denominator: usize::from(denominator),
+            completed_width: 0,
+            current_chunk_width: 0,
+        }
+    }
+
+    fn push(&mut self, width: usize) -> usize {
+        if width > 1 {
+            self.flush();
+            self.completed_width = self
+                .completed_width
+                .saturating_add(self.rendered_chunk_width(width));
+            return self.completed_width;
+        }
+        if self.current_chunk_width.saturating_add(width) > self.denominator {
+            self.flush();
+        }
+        self.current_chunk_width = self.current_chunk_width.saturating_add(width);
+        self.completed_width
+            .saturating_add(self.rendered_chunk_width(self.current_chunk_width))
+    }
+
+    fn flush(&mut self) {
+        self.completed_width = self
+            .completed_width
+            .saturating_add(self.rendered_chunk_width(self.current_chunk_width));
+        self.current_chunk_width = 0;
+    }
+
+    fn rendered_chunk_width(&self, width: usize) -> usize {
+        if width == 0 {
+            return 0;
+        }
+        width
+            .saturating_mul(self.numerator)
+            .div_ceil(self.denominator)
+            .saturating_mul(2)
+    }
 }
 
 /// Returns whether the Rich document fits without a vertical scrollbar.
@@ -136,7 +267,10 @@ pub(super) fn rich_document_fits_height(
     let mut line_count = 0usize;
     for block in blocks {
         let remaining = height.saturating_sub(line_count);
-        let Some(block_line_count) = rich_block_line_count_up_to(block, width, remaining) else {
+        let big_heading = heading_uses_big_text(model, block);
+        let Some(block_line_count) =
+            rich_block_line_count_up_to_with_heading(block, width, remaining, big_heading)
+        else {
             return false;
         };
         line_count = line_count.saturating_add(block_line_count);
@@ -144,13 +278,31 @@ pub(super) fn rich_document_fits_height(
     line_count <= height
 }
 
+#[cfg(test)]
 pub(super) fn rich_block_line_count_up_to(
     block: &EditorRenderBlock,
     width: usize,
     limit: usize,
 ) -> Option<usize> {
+    rich_block_line_count_up_to_with_heading(block, width, limit, false)
+}
+
+fn rich_block_line_count_up_to_with_heading(
+    block: &EditorRenderBlock,
+    width: usize,
+    limit: usize,
+    big_heading: bool,
+) -> Option<usize> {
     match block {
-        EditorRenderBlock::Paragraph(spans) | EditorRenderBlock::Heading { spans, .. } => {
+        EditorRenderBlock::Paragraph(spans) => wrapped_line_count_up_to("", spans, width, limit),
+        EditorRenderBlock::Heading { level, spans } if big_heading => {
+            let scaled_width = heading_wrap_width(width, *level);
+            let line_limit = limit / 2;
+            wrapped_line_count_up_to("", spans, scaled_width, line_limit)
+                .and_then(|lines| lines.checked_mul(2))
+                .filter(|lines| *lines <= limit)
+        }
+        EditorRenderBlock::Heading { spans, .. } => {
             wrapped_line_count_up_to("", spans, width, limit)
         }
         EditorRenderBlock::BulletListItem {
@@ -197,8 +349,8 @@ pub(super) fn rich_block_line_count_up_to(
             };
             fixed_line_count_up_to(line_count, limit)
         }
+        EditorRenderBlock::RawHtml(html) => fixed_line_count_up_to(source_line_count(html), limit),
         EditorRenderBlock::HorizontalRule
-        | EditorRenderBlock::RawHtml(_)
         | EditorRenderBlock::Image { .. }
         | EditorRenderBlock::Blank => fixed_line_count_up_to(1, limit),
     }
@@ -335,13 +487,14 @@ pub(super) fn flatten_rich_document(model: &EditorViewModel, width: usize) -> Ve
     let mut output = Vec::new();
     for (block_index, block) in model.render_blocks().iter().enumerate() {
         let table_widths = model.table_widths_for_block(block_index, block.table_id());
-        let lines = block_lines(
+        let lines = block_lines_with_heading(
             block,
             block_index,
             width,
             model.block_sources.get(block_index).copied(),
             table_widths,
             model.source.as_deref(),
+            heading_uses_big_text(model, block),
         );
         output.extend(lines);
     }
@@ -351,6 +504,7 @@ pub(super) fn flatten_rich_document(model: &EditorViewModel, width: usize) -> Ve
     output
 }
 
+#[cfg(test)]
 pub(super) fn block_lines(
     block: &EditorRenderBlock,
     block_index: usize,
@@ -358,6 +512,26 @@ pub(super) fn block_lines(
     block_source: Option<EditorBlockSourceMap>,
     table_widths: Option<&[usize]>,
     source: Option<&str>,
+) -> Vec<DisplayLine> {
+    block_lines_with_heading(
+        block,
+        block_index,
+        width,
+        block_source,
+        table_widths,
+        source,
+        false,
+    )
+}
+
+fn block_lines_with_heading(
+    block: &EditorRenderBlock,
+    block_index: usize,
+    width: usize,
+    block_source: Option<EditorBlockSourceMap>,
+    table_widths: Option<&[usize]>,
+    source: Option<&str>,
+    big_heading: bool,
 ) -> Vec<DisplayLine> {
     let anchor = block_source.map(EditorBlockSourceMap::anchor);
     match block {
@@ -371,13 +545,29 @@ pub(super) fn block_lines(
                 .cloned()
                 .map(|mut span| {
                     span.bold = true;
-                    span.color = EditorSpanColor::Accent;
-                    span.underlined |= level == 1;
-                    span.italic |= level >= 3;
+                    span.color = EditorSpanColor::Normal;
                     span
                 })
                 .collect();
-            wrap_runs(Vec::new(), &styled, width, block_index, false, source)
+            let wrap_width = if big_heading {
+                heading_wrap_width(width, level)
+            } else {
+                width
+            };
+            let lines = wrap_runs(Vec::new(), &styled, wrap_width, block_index, false, source);
+            if big_heading {
+                lines
+                    .into_iter()
+                    .flat_map(|mut line| {
+                        line.role = DisplayLineRole::HeadingTop(level);
+                        let mut bottom = line.clone();
+                        bottom.role = DisplayLineRole::HeadingBottom(level);
+                        [line, bottom]
+                    })
+                    .collect()
+            } else {
+                lines
+            }
         }
         EditorRenderBlock::BulletListItem {
             depth,
@@ -444,6 +634,7 @@ pub(super) fn block_lines(
                 block_index: Some(block_index),
                 no_wrap: true,
                 column_start: 0,
+                role: DisplayLineRole::Normal,
             }];
             let line_ranges = code_line_source_ranges(lines, block_source, source);
             output.extend(lines.iter().enumerate().map(|(index, line)| {
@@ -461,6 +652,7 @@ pub(super) fn block_lines(
                     block_index: Some(block_index),
                     no_wrap: true,
                     column_start: 0,
+                    role: DisplayLineRole::Normal,
                 }
             }));
             let end_anchor = block_source
@@ -472,6 +664,7 @@ pub(super) fn block_lines(
                 block_index: Some(block_index),
                 no_wrap: true,
                 column_start: 0,
+                role: DisplayLineRole::Normal,
             });
             output
         }
@@ -503,21 +696,50 @@ pub(super) fn block_lines(
             block_index: Some(block_index),
             no_wrap: true,
             column_start: 0,
+            role: DisplayLineRole::Normal,
         }],
         EditorRenderBlock::RawHtml(html) => {
-            let mut runs = vec![DisplayRun::virtual_text("HTML ", warning_span(), anchor)];
-            runs.extend(mapped_text_runs(
-                html,
-                warning_span(),
-                block_source.map(|mapping| mapping.source_range),
-                source,
-            ));
-            vec![DisplayLine {
-                runs,
-                block_index: Some(block_index),
-                no_wrap: true,
-                column_start: 0,
-            }]
+            let block_range = block_source.map(|mapping| mapping.source_range);
+            let exact_source_start = block_range
+                .filter(|range| {
+                    source.and_then(|source| source.get(range.start..range.end)) == Some(html)
+                })
+                .map(|range| range.start);
+            source_display_line_ranges(html)
+                .into_iter()
+                .enumerate()
+                .map(|(line_index, local_range)| {
+                    let mapped_range = exact_source_start.map(|start| {
+                        EditorSourceRange::new(
+                            start.saturating_add(local_range.start),
+                            start.saturating_add(local_range.end),
+                        )
+                    });
+                    let line_anchor = mapped_range.map(|range| range.start).or(anchor);
+                    let mut runs = Vec::new();
+                    if line_index == 0 {
+                        runs.push(DisplayRun::virtual_text(
+                            "HTML ",
+                            warning_span(),
+                            line_anchor,
+                        ));
+                    }
+                    runs.extend(mapped_text_runs(
+                        html.get(local_range.start..local_range.end)
+                            .unwrap_or_default(),
+                        warning_span(),
+                        mapped_range,
+                        source,
+                    ));
+                    DisplayLine {
+                        runs,
+                        block_index: Some(block_index),
+                        no_wrap: true,
+                        column_start: 0,
+                        role: DisplayLineRole::Normal,
+                    }
+                })
+                .collect()
         }
         EditorRenderBlock::Image { markdown } => vec![DisplayLine {
             runs: mapped_text_runs(
@@ -529,6 +751,7 @@ pub(super) fn block_lines(
             block_index: Some(block_index),
             no_wrap: true,
             column_start: 0,
+            role: DisplayLineRole::Normal,
         }],
         EditorRenderBlock::Footnote { label, spans } => wrap_runs(
             vec![DisplayRun::virtual_text(
@@ -710,6 +933,7 @@ pub(super) fn table_row_line(
         block_index: Some(block_index),
         no_wrap: true,
         column_start: 0,
+        role: DisplayLineRole::Normal,
     }
 }
 
@@ -760,6 +984,7 @@ pub(super) fn table_border_line(
         block_index: Some(block_index),
         no_wrap: true,
         column_start: 0,
+        role: DisplayLineRole::Normal,
     }
 }
 
@@ -1059,6 +1284,7 @@ pub(super) fn wrap_runs(
                     block_index: Some(block_index),
                     no_wrap,
                     column_start: 0,
+                    role: DisplayLineRole::Normal,
                 });
                 current = continuation_prefix.clone();
                 let after = display_run_end(&run);
@@ -1079,6 +1305,7 @@ pub(super) fn wrap_runs(
                     block_index: Some(block_index),
                     no_wrap,
                     column_start: 0,
+                    role: DisplayLineRole::Normal,
                 });
                 current = continuation_prefix.clone();
                 current_width = prefix_width;
@@ -1093,6 +1320,7 @@ pub(super) fn wrap_runs(
             block_index: Some(block_index),
             no_wrap,
             column_start: 0,
+            role: DisplayLineRole::Normal,
         });
     }
     lines
@@ -1124,6 +1352,21 @@ pub(super) fn runs_width(runs: &[DisplayRun]) -> usize {
 
 pub(super) fn display_run_width(run: &DisplayRun) -> usize {
     Span::raw(terminal_safe_text(run.text.resolve(None))).width()
+}
+
+pub(super) fn rich_horizontal_content_width(lines: &[DisplayLine], source: Option<&str>) -> usize {
+    lines
+        .iter()
+        .filter(|line| line.no_wrap)
+        .map(|line| {
+            line.runs
+                .iter()
+                .map(|run| Span::raw(terminal_safe_text(run.text.resolve(source))).width())
+                .sum()
+        })
+        .max()
+        .unwrap_or(1)
+        .max(1)
 }
 
 pub(super) fn display_run_anchor(run: &DisplayRun) -> Option<usize> {
@@ -1386,11 +1629,12 @@ pub(super) fn display_line_source_boundaries(
 ) -> Vec<EditorSourceBoundary> {
     let mut boundaries = Vec::new();
     let mut fallback_boundary = None;
-    let mut column = line.column_start;
+    let mut measure = DisplayColumnMeasure::new(line);
     let horizontal_end = horizontal_start.saturating_add(width);
     for run in &line.runs {
         let text = run.text.resolve(source);
         if text.is_empty() {
+            let column = measure.column();
             if let Some(offset) = display_run_start(run) {
                 push_source_boundary(
                     &mut boundaries,
@@ -1417,7 +1661,8 @@ pub(super) fn display_line_source_boundaries(
             let mapping =
                 display_source_for_segment(run.source, text.len(), relative_start, relative_byte);
             let safe = terminal_safe_text(grapheme.symbol);
-            let next_column = column.saturating_add(Span::raw(safe).width().max(1));
+            let column = measure.column();
+            let next_column = measure.push(Span::raw(safe).width().max(1));
             let intersects = next_column >= horizontal_start && column <= horizontal_end;
             if let Some(offset) = display_source_end(mapping) {
                 fallback_boundary = Some(EditorSourceBoundary {
@@ -1434,20 +1679,19 @@ pub(super) fn display_line_source_boundaries(
                     matches!(mapping, DisplaySource::Range(_)),
                 );
             }
-            column = next_column;
             if intersects && let Some(offset) = display_source_end(mapping) {
                 push_source_boundary(
                     &mut boundaries,
-                    column,
+                    next_column,
                     offset,
                     matches!(mapping, DisplaySource::Range(_)),
                 );
             }
-            if column > horizontal_end {
+            if next_column > horizontal_end {
                 break;
             }
         }
-        if column > horizontal_end {
+        if measure.column() > horizontal_end {
             break;
         }
     }
@@ -1467,11 +1711,12 @@ pub(super) fn display_line_rich_boundaries(
 ) -> Vec<EditorRichBoundary> {
     let mut boundaries = Vec::new();
     let mut fallback_boundary = None;
-    let mut column = line.column_start;
+    let mut measure = DisplayColumnMeasure::new(line);
     let horizontal_end = horizontal_start.saturating_add(width);
     for run in &line.runs {
         let text = run.text.resolve(source);
         if text.is_empty() {
+            let column = measure.column();
             if let Some(position) = display_run_rich_start(run) {
                 push_rich_boundary(
                     &mut boundaries,
@@ -1500,7 +1745,8 @@ pub(super) fn display_line_rich_boundaries(
             );
             relative_grapheme = relative_grapheme.saturating_add(1);
             let safe = terminal_safe_text(grapheme.symbol);
-            let next_column = column.saturating_add(Span::raw(safe).width().max(1));
+            let column = measure.column();
+            let next_column = measure.push(Span::raw(safe).width().max(1));
             let intersects = next_column >= horizontal_start && column <= horizontal_end;
             if let Some(position) = display_rich_end(mapping) {
                 fallback_boundary = Some(EditorRichBoundary {
@@ -1517,20 +1763,19 @@ pub(super) fn display_line_rich_boundaries(
                     matches!(mapping, DisplayRich::Range(_)),
                 );
             }
-            column = next_column;
             if intersects && let Some(position) = display_rich_end(mapping) {
                 push_rich_boundary(
                     &mut boundaries,
-                    column,
+                    next_column,
                     position,
                     matches!(mapping, DisplayRich::Range(_)),
                 );
             }
-            if column > horizontal_end {
+            if next_column > horizontal_end {
                 break;
             }
         }
-        if column > horizontal_end {
+        if measure.column() > horizontal_end {
             break;
         }
     }
@@ -1794,5 +2039,6 @@ pub(super) fn empty_display_line_at(
         block_index,
         no_wrap: false,
         column_start: 0,
+        role: DisplayLineRole::Normal,
     }
 }

@@ -258,6 +258,7 @@ pub struct EditorLayout {
     pub visible_capacity: usize,
     pub document_line_count: usize,
     pub horizontal_scroll: usize,
+    pub horizontal_content_width: usize,
     pub toolbar_overflow: bool,
     pub canvas_framed: bool,
     pub source_line_maps: Vec<EditorSourceLineMap>,
@@ -513,8 +514,8 @@ pub fn editor_layout(area: Rect, model: &EditorViewModel) -> EditorLayout {
         canvas_panel
     };
     let mut canvas = base_canvas;
-    let horizontal_scroll = model.horizontal_scroll;
-    let (document_line_count, rich_lines) = match model.mode {
+    let requested_horizontal_scroll = model.horizontal_scroll;
+    let (document_line_count, rich_lines, horizontal_content_width) = match model.mode {
         EditorMode::Source => {
             let line_count = source_document_line_count(model);
             // Horizontal and vertical scrollbars affect one another: adding a
@@ -545,22 +546,44 @@ pub fn editor_layout(area: Rect, model: &EditorViewModel) -> EditorLayout {
             }
             canvas.width = canvas.width.saturating_sub(u16::from(reserve_vertical));
             canvas.height = canvas.height.saturating_sub(u16::from(reserve_horizontal));
-            (line_count, None)
+            (line_count, None, model.horizontal_content_width)
         }
         EditorMode::Rich => {
             let base_width = usize::from(base_canvas.width.max(1));
-            if base_canvas.width > 1
-                && !rich_document_fits_height(model, base_width, usize::from(base_canvas.height))
-            {
-                canvas.width = canvas.width.saturating_sub(1);
-            }
+            let reserve_vertical = base_canvas.width > 1
+                && !rich_document_fits_height(model, base_width, usize::from(base_canvas.height));
+            canvas.width = canvas.width.saturating_sub(u16::from(reserve_vertical));
             // Measure first so the expensive, allocation-heavy projection is
             // built only once, at the final width. Previously a scrolling
             // document was flattened at the full width and then flattened in
             // its entirety again after reserving the scrollbar column.
-            let lines = flatten_rich_document(model, usize::from(canvas.width.max(1)));
-            (lines.len().max(1), Some(lines))
+            let mut lines = flatten_rich_document(model, usize::from(canvas.width.max(1)));
+            let mut content_width = rich_horizontal_content_width(&lines, model.source.as_deref());
+            let reserve_horizontal = base_canvas.height > 1
+                && canvas.width > 0
+                && content_width > usize::from(canvas.width);
+
+            // Reserving the bottom row can make an exactly fitting Rich
+            // document require a vertical bar. That bar narrows wrapping, so
+            // rebuild once at the final width if the two axes interact.
+            if reserve_horizontal
+                && !reserve_vertical
+                && base_canvas.width > 1
+                && lines.len().max(1) > usize::from(base_canvas.height.saturating_sub(1))
+            {
+                canvas.width = base_canvas.width.saturating_sub(1);
+                lines = flatten_rich_document(model, usize::from(canvas.width.max(1)));
+                content_width = rich_horizontal_content_width(&lines, model.source.as_deref());
+            }
+            canvas.height = canvas.height.saturating_sub(u16::from(reserve_horizontal));
+            (lines.len().max(1), Some(lines), content_width)
         }
+    };
+    let horizontal_scroll = if model.mode == EditorMode::Rich {
+        requested_horizontal_scroll
+            .min(horizontal_content_width.saturating_sub(usize::from(canvas.width)))
+    } else {
+        requested_horizontal_scroll
     };
     let visible_capacity = usize::from(canvas.height);
     let max_start = document_line_count.saturating_sub(visible_capacity);
@@ -650,14 +673,13 @@ pub fn editor_layout(area: Rect, model: &EditorViewModel) -> EditorLayout {
                     visible_capacity,
                 )
             });
-    let horizontal_scrollbar = (model.mode == EditorMode::Source
-        && model.horizontal_content_width > usize::from(canvas.width)
+    let horizontal_scrollbar = (horizontal_content_width > usize::from(canvas.width)
         && base_canvas.height > 1
         && canvas.width > 0)
         .then(|| {
             horizontal_scrollbar_layout(
                 Rect::new(canvas.x, canvas.bottom(), canvas.width, 1),
-                model.horizontal_content_width,
+                horizontal_content_width,
                 horizontal_scroll,
                 usize::from(canvas.width),
             )
@@ -747,6 +769,7 @@ pub fn editor_layout(area: Rect, model: &EditorViewModel) -> EditorLayout {
         visible_capacity,
         document_line_count,
         horizontal_scroll,
+        horizontal_content_width,
         toolbar_overflow,
         canvas_framed,
         source_line_maps,

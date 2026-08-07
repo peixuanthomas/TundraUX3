@@ -3784,6 +3784,7 @@ dependencies = [
  "libc",
  "ratatui",
  "ratatui-image",
+ "unicode-width 0.2.0",
  "zip",
 ]
 

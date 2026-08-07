@@ -140,6 +140,10 @@ impl ShellSession {
         self.terminal_image_support = supported;
     }
 
+    pub fn set_terminal_text_sizing_support(&mut self, supported: bool) {
+        self.terminal_text_sizing_support = supported;
+    }
+
     pub fn graphical_icons_enabled(&self) -> bool {
         self.terminal_image_support
             && self.ascii_assets.theme_id() == ui::DEFAULT_THEME_ID

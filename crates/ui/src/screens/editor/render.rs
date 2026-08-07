@@ -1,6 +1,6 @@
 use super::document::*;
 use super::*;
-use crate::components::Button;
+use crate::components::{BigText, Button};
 use ratatui::widgets::{
     List as RatatuiList, ListItem as RatatuiListItem, Scrollbar, ScrollbarOrientation,
     ScrollbarState, Tabs as RatatuiTabs,
@@ -451,13 +451,42 @@ fn render_canvas(
     }
 
     for line_layout in &layout.line_areas {
-        let Some(display_line) = layout.prepared_lines.get(
-            line_layout
-                .document_line
-                .saturating_sub(layout.prepared_start),
-        ) else {
+        let relative_line = line_layout
+            .document_line
+            .saturating_sub(layout.prepared_start);
+        let Some(display_line) = layout.prepared_lines.get(relative_line) else {
             continue;
         };
+        match display_line.role {
+            DisplayLineRole::HeadingTop(level) => {
+                let has_visible_bottom = layout
+                    .prepared_lines
+                    .get(relative_line.saturating_add(1))
+                    .is_some_and(|line| {
+                        matches!(line.role, DisplayLineRole::HeadingBottom(bottom_level) if bottom_level == level)
+                    });
+                if !has_visible_bottom || line_layout.area.bottom() >= layout.canvas.bottom() {
+                    continue;
+                }
+                let text = display_line
+                    .runs
+                    .iter()
+                    .map(|run| terminal_safe_text(run.text.resolve(model.source.as_deref())))
+                    .collect::<String>();
+                frame.render_widget(
+                    BigText::new(&text, level, theme.foreground),
+                    Rect::new(
+                        line_layout.area.x,
+                        line_layout.area.y,
+                        line_layout.area.width,
+                        2,
+                    ),
+                );
+                continue;
+            }
+            DisplayLineRole::HeadingBottom(_) => continue,
+            DisplayLineRole::Normal => {}
+        }
         let line = styled_line(
             display_line,
             line_layout.document_line,

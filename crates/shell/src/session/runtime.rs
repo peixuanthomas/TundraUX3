@@ -827,6 +827,7 @@ pub(super) fn run_fullscreen_shell_session(
         ShellSettingsTaskRuntime::new_managed(shell_watchdog.clone()),
     );
     state.set_terminal_image_support(launcher_icons.is_some());
+    state.set_terminal_text_sizing_support(terminal_graphics_probe.text_sizing_protocol());
     if show_terminal_graphics_notice {
         state.apply_terminal_graphics_startup_policy(terminal_graphics_probe.status());
     }

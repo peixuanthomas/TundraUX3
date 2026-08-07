@@ -153,9 +153,18 @@ impl MarkdownCodec {
         builder.document.utf8_bom = utf8_bom;
         builder.document.preferred_line_ending = preferred_line_ending;
 
+        // Comrak keeps footnote definitions as top-level nodes but moves them
+        // behind ordinary blocks in AST iteration order. Rich import needs
+        // source order so leading trivia and byte-for-byte preservation stay
+        // attached to the correct block.
+        let mut nodes = root
+            .children()
+            .map(|node| (node_source_range(node, source), node))
+            .collect::<Vec<_>>();
+        nodes.sort_by_key(|(range, _)| (range.start, range.end));
+
         let mut previous_end = 0usize;
-        for node in root.children() {
-            let range = node_source_range(node, source);
+        for (range, node) in nodes {
             if range.start < previous_end || range.end > source.len() {
                 return Err(MarkdownCodecError::invalid(
                     "Markdown parser returned an invalid top-level source range",
@@ -1783,6 +1792,28 @@ mod tests {
                 .iter()
                 .all(|entry| entry.rich.container_id != imported.document.blocks[0].id)
         );
+        assert_eq!(
+            MarkdownCodec::export(&imported.document).unwrap().markdown,
+            source
+        );
+    }
+
+    #[test]
+    fn footnote_definition_before_later_blocks_imports_in_source_order() {
+        let source = concat!(
+            "# Before\n\n",
+            "[^editor]: A definition stored before its reference.\n\n",
+            "Paragraph after the definition uses [^editor].\n\n",
+            "# After\n",
+        );
+
+        let imported = MarkdownCodec::import(source).unwrap();
+
+        assert!(imported.document.blocks.len() >= 4);
+        assert!(matches!(
+            imported.document.blocks[1].kind,
+            RichBlockKind::OpaqueMarkdown { .. }
+        ));
         assert_eq!(
             MarkdownCodec::export(&imported.document).unwrap().markdown,
             source

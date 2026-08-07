@@ -445,6 +445,7 @@ pub struct UiSessionState {
     pub(super) terminal_size: (u16, u16),
     pub(super) terminal_flags: ShellTerminalFlags,
     pub(super) terminal_image_support: bool,
+    pub(super) terminal_text_sizing_support: bool,
     pub(super) pending_default_ascii_icon_fallback: bool,
     pub(super) focused_component: ShellComponent,
     pub(super) hovered_component: Option<ShellComponent>,

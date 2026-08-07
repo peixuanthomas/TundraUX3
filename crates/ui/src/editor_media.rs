@@ -8,6 +8,8 @@ use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui_image::Image;
 use ratatui_image::Resize;
+#[cfg(not(unix))]
+use ratatui_image::picker::Capability;
 #[cfg(unix)]
 use ratatui_image::picker::cap_parser::{
     Parser as CapabilityParser, QueryStdioOptions, Response as CapabilityResponse,
@@ -56,6 +58,7 @@ impl TerminalGraphicsProbeStatus {
 pub struct TerminalGraphicsProbe {
     status: TerminalGraphicsProbeStatus,
     picker: Option<EditorImagePicker>,
+    text_sizing_protocol: bool,
 }
 
 impl TerminalGraphicsProbe {
@@ -63,6 +66,7 @@ impl TerminalGraphicsProbe {
         Self {
             status: TerminalGraphicsProbeStatus::Verified(picker.protocol()),
             picker: Some(picker),
+            text_sizing_protocol: false,
         }
     }
 
@@ -70,6 +74,7 @@ impl TerminalGraphicsProbe {
         Self {
             status: TerminalGraphicsProbeStatus::Unsupported,
             picker: None,
+            text_sizing_protocol: false,
         }
     }
 
@@ -79,6 +84,7 @@ impl TerminalGraphicsProbe {
                 reason: reason.into(),
             },
             picker: None,
+            text_sizing_protocol: false,
         }
     }
 
@@ -92,6 +98,15 @@ impl TerminalGraphicsProbe {
 
     pub const fn protocol(&self) -> Option<EditorGraphicsProtocol> {
         self.status.protocol()
+    }
+
+    pub const fn text_sizing_protocol(&self) -> bool {
+        self.text_sizing_protocol
+    }
+
+    fn with_text_sizing_protocol(mut self, supported: bool) -> Self {
+        self.text_sizing_protocol = supported;
+        self
     }
 }
 
@@ -125,6 +140,7 @@ impl EditorImagePicker {
             TerminalGraphicsProbe {
                 status: TerminalGraphicsProbeStatus::Verified(_),
                 picker: None,
+                ..
             } => unreachable!("verified terminal graphics probes always carry a picker"),
         }
     }
@@ -142,12 +158,23 @@ impl EditorImagePicker {
         }
         #[cfg(not(unix))]
         {
-            match Picker::from_query_stdio() {
-                Ok(picker) => match Self::from_picker(picker) {
-                    Ok(Some(picker)) => TerminalGraphicsProbe::verified(picker),
-                    Ok(None) => TerminalGraphicsProbe::unsupported(),
-                    Err(error) => TerminalGraphicsProbe::no_response(error.to_string()),
+            match Picker::from_query_stdio_with_options(
+                ratatui_image::picker::cap_parser::QueryStdioOptions {
+                    text_sizing_protocol: true,
                 },
+            ) {
+                Ok(picker) => {
+                    let text_sizing_protocol = picker
+                        .capabilities()
+                        .contains(&Capability::TextSizingProtocol);
+                    match Self::from_picker(picker) {
+                        Ok(Some(picker)) => TerminalGraphicsProbe::verified(picker)
+                            .with_text_sizing_protocol(text_sizing_protocol),
+                        Ok(None) => TerminalGraphicsProbe::unsupported()
+                            .with_text_sizing_protocol(text_sizing_protocol),
+                        Err(error) => TerminalGraphicsProbe::no_response(error.to_string()),
+                    }
+                }
                 Err(error) => TerminalGraphicsProbe::no_response(error.to_string()),
             }
         }
@@ -308,6 +335,7 @@ struct UnixTerminalCapabilityQuery {
     picker: Picker,
     complete: bool,
     had_unverified_graphics_hint: bool,
+    text_sizing_protocol: bool,
 }
 
 #[cfg(unix)]
@@ -334,7 +362,7 @@ fn query_unix_terminal_capabilities(
     let query = CapabilityParser::query(
         is_tmux,
         QueryStdioOptions {
-            text_sizing_protocol: false,
+            text_sizing_protocol: true,
         },
     );
     let iterm2_query = iterm2_capability_query(is_tmux);
@@ -444,13 +472,15 @@ fn query_unix_terminal_capabilities(
         picker,
         complete,
         had_unverified_graphics_hint,
+        text_sizing_protocol: responses_support_text_sizing_protocol(&responses),
     })
 }
 
 #[cfg(unix)]
 fn terminal_probe_from_unix_query(query: UnixTerminalCapabilityQuery) -> TerminalGraphicsProbe {
     let has_live_protocol_response = query.picker.protocol_type() != ProtocolType::Halfblocks;
-    match EditorImagePicker::from_picker(query.picker) {
+    let text_sizing_protocol = query.text_sizing_protocol;
+    let probe = match EditorImagePicker::from_picker(query.picker) {
         Ok(Some(picker)) if query.complete || has_live_protocol_response => {
             TerminalGraphicsProbe::verified(picker)
         }
@@ -464,7 +494,20 @@ fn terminal_probe_from_unix_query(query: UnixTerminalCapabilityQuery) -> Termina
             "terminal did not return the graphics capability query terminator",
         ),
         Err(error) => TerminalGraphicsProbe::no_response(error.to_string()),
-    }
+    };
+    probe.with_text_sizing_protocol(text_sizing_protocol)
+}
+
+#[cfg(unix)]
+fn responses_support_text_sizing_protocol(responses: &[CapabilityResponse]) -> bool {
+    let positions = responses
+        .iter()
+        .filter_map(|response| match response {
+            CapabilityResponse::CursorPositionReport(x, y) => Some((*x, *y)),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    matches!(positions.as_slice(), [(x1, _), (x2, _), (x3, _)] if *x2 == x1.saturating_add(2) && *x3 == x2.saturating_add(2))
 }
 
 #[cfg(unix)]
@@ -678,6 +721,7 @@ mod tests {
             picker: text_only_picker.clone(),
             complete: true,
             had_unverified_graphics_hint: false,
+            text_sizing_protocol: false,
         });
         assert_eq!(
             unsupported.status(),
@@ -688,6 +732,7 @@ mod tests {
             picker: text_only_picker,
             complete: false,
             had_unverified_graphics_hint: false,
+            text_sizing_protocol: false,
         });
         assert!(matches!(
             no_response.status(),
@@ -703,6 +748,7 @@ mod tests {
             picker: picker_from_terminal_responses(&responses),
             complete: false,
             had_unverified_graphics_hint: false,
+            text_sizing_protocol: false,
         });
         assert_eq!(
             verified.status(),
@@ -765,11 +811,27 @@ mod tests {
             picker: hinted_picker,
             complete: true,
             had_unverified_graphics_hint: true,
+            text_sizing_protocol: false,
         });
         assert!(matches!(
             probe.status(),
             TerminalGraphicsProbeStatus::NoResponse { .. }
         ));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn text_sizing_probe_requires_both_width_advances() {
+        assert!(responses_support_text_sizing_protocol(&[
+            CapabilityResponse::CursorPositionReport(1, 1),
+            CapabilityResponse::CursorPositionReport(3, 1),
+            CapabilityResponse::CursorPositionReport(5, 2),
+        ]));
+        assert!(!responses_support_text_sizing_protocol(&[
+            CapabilityResponse::CursorPositionReport(1, 1),
+            CapabilityResponse::CursorPositionReport(3, 1),
+            CapabilityResponse::CursorPositionReport(4, 1),
+        ]));
     }
 
     #[test]

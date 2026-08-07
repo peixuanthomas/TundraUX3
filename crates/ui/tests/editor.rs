@@ -8,8 +8,8 @@ use ui::{
     EditorRenderBlock, EditorRenderSpan, EditorSelection, EditorSettingsControl,
     EditorSettingsField, EditorSettingsViewModel, EditorSourceRange, EditorSourceSelection,
     EditorSourceWindowLine, EditorTableAlignment, EditorTableCell, EditorTableEdge,
-    EditorTextPosition, EditorToolbarAction, EditorViewModel, RichPosition, RichRange, TundraTheme,
-    editor_layout, render_editor,
+    EditorTextPosition, EditorToolbarAction, EditorViewModel, NodeId, RichPosition, RichRange,
+    TundraTheme, editor_layout, render_editor,
 };
 
 #[test]
@@ -90,9 +90,9 @@ fn rich_renderer_covers_markdown_blocks_and_terminal_fallbacks() {
     let theme = TundraTheme::default_dark();
     let (heading_x, heading_y) = find_text(&terminal, "Terminal Editor");
     let heading = &terminal.backend().buffer()[(heading_x, heading_y)];
-    assert_eq!(heading.fg, theme.accent_color);
+    assert_eq!(heading.fg, theme.foreground);
     assert!(heading.modifier.contains(Modifier::BOLD));
-    assert!(heading.modifier.contains(Modifier::UNDERLINED));
+    assert!(!heading.modifier.contains(Modifier::UNDERLINED));
 
     let (strong_x, strong_y) = find_text(&terminal, "strong");
     assert!(
@@ -482,7 +482,7 @@ fn quick_menu_clamps_flips_wraps_and_hides_when_the_border_cannot_fit() {
 }
 
 #[test]
-fn rich_heading_levels_use_terminal_safe_accent_styles() {
+fn rich_heading_fallback_uses_body_color_without_level_modifiers() {
     let model = EditorViewModel::new(
         "headings.md",
         vec![
@@ -498,26 +498,71 @@ fn rich_heading_levels_use_terminal_safe_accent_styles() {
     for text in ["Heading One", "Heading Two", "Heading Three", "Heading Six"] {
         let (x, y) = find_text(&terminal, text);
         let cell = &terminal.backend().buffer()[(x, y)];
-        assert_eq!(cell.fg, theme.accent_color, "{text}");
+        assert_eq!(cell.fg, theme.foreground, "{text}");
         assert!(cell.modifier.contains(Modifier::BOLD), "{text}");
-    }
-
-    let (h1_x, h1_y) = find_text(&terminal, "Heading One");
-    let h1 = &terminal.backend().buffer()[(h1_x, h1_y)];
-    assert!(h1.modifier.contains(Modifier::UNDERLINED));
-    assert!(!h1.modifier.contains(Modifier::ITALIC));
-
-    let (h2_x, h2_y) = find_text(&terminal, "Heading Two");
-    let h2 = &terminal.backend().buffer()[(h2_x, h2_y)];
-    assert!(!h2.modifier.contains(Modifier::UNDERLINED));
-    assert!(!h2.modifier.contains(Modifier::ITALIC));
-
-    for text in ["Heading Three", "Heading Six"] {
-        let (x, y) = find_text(&terminal, text);
-        let cell = &terminal.backend().buffer()[(x, y)];
-        assert!(cell.modifier.contains(Modifier::ITALIC), "{text}");
         assert!(!cell.modifier.contains(Modifier::UNDERLINED), "{text}");
+        assert!(!cell.modifier.contains(Modifier::ITALIC), "{text}");
     }
+}
+
+#[test]
+fn inactive_rich_headings_use_terminal_native_big_text() {
+    let mut model = EditorViewModel::new(
+        "headings.md",
+        vec![
+            EditorRenderBlock::heading(1, "Heading One"),
+            EditorRenderBlock::heading(2, "Heading Two"),
+            EditorRenderBlock::heading(3, "Heading Three"),
+        ],
+    );
+    model.text_sizing_protocol = true;
+    model.cursor = None;
+
+    let layout = editor_layout(Rect::new(0, 0, 60, 16), &model);
+    let terminal = render(&model, 60, 16);
+
+    assert_eq!(layout.document_line_count, 6);
+    for (document_line, ratio) in [(0, "n=7:d=7"), (2, "n=5:d=6"), (4, "n=3:d=4")] {
+        let area = line_area(&layout, document_line).area;
+        let symbol = terminal.backend().buffer()[(area.x, area.y)].symbol();
+        assert!(symbol.contains("]66;s=2:"), "{symbol:?}");
+        assert!(symbol.contains(ratio), "{symbol:?}");
+    }
+}
+
+#[test]
+fn big_heading_rows_share_scaled_rich_hit_mapping() {
+    let heading_id = NodeId::new(42);
+    let mut model = EditorViewModel::new(
+        "heading.md",
+        vec![EditorRenderBlock::Heading {
+            level: 1,
+            spans: vec![
+                EditorRenderSpan::plain("AB").with_rich_range(RichRange::between(
+                    RichPosition::in_node(heading_id, 0),
+                    RichPosition::in_node(heading_id, 2),
+                )),
+            ],
+        }],
+    );
+    model.text_sizing_protocol = true;
+    model.cursor = None;
+    let layout = editor_layout(Rect::new(0, 0, 50, 10), &model);
+
+    let middle = RichPosition::in_node(heading_id, 1);
+    assert_eq!(
+        layout.visual_position_for_rich(middle),
+        Some(EditorTextPosition::new(0, 2))
+    );
+    let top = line_area(&layout, 0).area;
+    let bottom_hit = layout
+        .hit_test_document(top.x + 2, top.y + 1)
+        .expect("bottom row maps to the heading");
+    assert_eq!(bottom_hit.position, EditorDocumentPosition::Rich(middle));
+
+    model.rich_cursor = Some(middle);
+    let editing_layout = editor_layout(Rect::new(0, 0, 50, 10), &model);
+    assert_eq!(editing_layout.document_line_count, 1);
 }
 
 #[test]
@@ -572,6 +617,64 @@ fn wide_source_line_exposes_and_renders_a_proportional_horizontal_scrollbar() {
         terminal.backend().buffer()[(scrollbar.thumb.x, scrollbar.thumb.y)].symbol(),
         "█"
     );
+}
+
+#[test]
+fn wide_rich_no_wrap_line_exposes_and_renders_a_horizontal_scrollbar() {
+    let raw = (0..100)
+        .map(|column| char::from(b'0' + (column % 10) as u8))
+        .collect::<String>();
+    let mut model = EditorViewModel::new("wide.md", vec![EditorRenderBlock::RawHtml(raw.clone())]);
+    model.horizontal_scroll = 20;
+
+    let layout = editor_layout(Rect::new(0, 0, 50, 8), &model);
+    let scrollbar = layout
+        .horizontal_scrollbar
+        .expect("wide Rich no-wrap line has a horizontal scrollbar");
+    let terminal = render(&model, 50, 8);
+
+    assert_eq!(layout.horizontal_content_width, "HTML ".len() + raw.len());
+    assert_eq!(layout.horizontal_scroll, 20);
+    assert_eq!(scrollbar.track.y, layout.canvas.bottom());
+    assert_eq!(scrollbar.track.width, layout.canvas.width);
+    assert!(scrollbar.thumb.width > 0);
+    assert!(scrollbar.thumb.width < scrollbar.track.width);
+    assert_eq!(
+        terminal.backend().buffer()[(layout.canvas.x, layout.canvas.y)].symbol(),
+        "5"
+    );
+    assert_eq!(
+        terminal.backend().buffer()[(scrollbar.track.x, scrollbar.track.y)].symbol(),
+        "═"
+    );
+    assert_eq!(
+        terminal.backend().buffer()[(scrollbar.thumb.x, scrollbar.thumb.y)].symbol(),
+        "█"
+    );
+}
+
+#[test]
+fn rich_scrollbars_reach_a_fixed_point_without_overlapping() {
+    // Three raw lines exactly fill the unreserved canvas. The wide first line
+    // adds a horizontal bar, whose row then makes a vertical bar necessary.
+    let model = EditorViewModel::new(
+        "both.md",
+        vec![EditorRenderBlock::RawHtml(format!(
+            "{}\nsecond\nthird",
+            "x".repeat(50)
+        ))],
+    );
+
+    let layout = editor_layout(Rect::new(0, 0, 50, 8), &model);
+    let vertical = layout.vertical_scrollbar.expect("vertical scrollbar");
+    let horizontal = layout.horizontal_scrollbar.expect("horizontal scrollbar");
+
+    assert_eq!(layout.canvas.width, 47);
+    assert_eq!(layout.canvas.height, 2);
+    assert_eq!(vertical.track.height, layout.canvas.height);
+    assert_eq!(horizontal.track.width, layout.canvas.width);
+    assert_eq!(vertical.track.bottom(), horizontal.track.y);
+    assert_eq!(horizontal.track.right(), vertical.track.x);
 }
 
 #[test]

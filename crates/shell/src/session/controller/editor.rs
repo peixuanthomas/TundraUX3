@@ -148,12 +148,14 @@ impl ShellSession {
             model.read_only = true;
             model.cursor = None;
             model.settings = self.editor_settings_view_model();
+            model.text_sizing_protocol = self.terminal_text_sizing_support;
             model.status_message = Some(editor_load_status(load));
             return model;
         }
         let Some(state) = self.app.editor_state() else {
             let mut model = ui::EditorViewModel::new("Untitled.md", Vec::new());
             model.settings = self.editor_settings_view_model();
+            model.text_sizing_protocol = self.terminal_text_sizing_support;
             return model;
         };
         let mut model = match state.mode {
@@ -308,6 +310,7 @@ impl ShellSession {
         };
         model.line_ending = editor_line_ending_label(state.document.metadata);
         model.image_protocol = ui::EditorImageProtocolStatus::Unsupported;
+        model.text_sizing_protocol = self.terminal_text_sizing_support;
         model.status_message = self
             .editor_load_state
             .as_ref()
@@ -2022,9 +2025,9 @@ impl ShellSession {
             ),
             ScrollbarAxis::Horizontal => {
                 let visible_capacity = usize::from(layout.canvas.width);
-                let content_width = model
+                let content_width = layout
                     .horizontal_content_width
-                    .max(model.horizontal_scroll.saturating_add(visible_capacity));
+                    .max(layout.horizontal_scroll.saturating_add(visible_capacity));
                 scrollbar_window_start(
                     coordinates.0,
                     grab_offset,

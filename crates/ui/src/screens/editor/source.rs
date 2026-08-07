@@ -1,4 +1,4 @@
-use super::document::{DisplayLine, DisplayRun, empty_display_line};
+use super::document::{DisplayLine, DisplayLineRole, DisplayRun, empty_display_line};
 use super::*;
 
 /// Replaces bytes that a terminal could interpret as control traffic with
@@ -80,6 +80,7 @@ pub(super) fn source_display_lines_for_viewport(
                             block_index: None,
                             no_wrap: true,
                             column_start: line.start_column,
+                            role: DisplayLineRole::Normal,
                         },
                     )
             })
@@ -103,6 +104,7 @@ pub(super) fn source_display_lines_for_viewport(
                 block_index: None,
                 no_wrap: true,
                 column_start: 0,
+                role: DisplayLineRole::Normal,
             })
             .collect();
     }
@@ -120,6 +122,7 @@ pub(super) fn source_display_lines_for_viewport(
             block_index: None,
             no_wrap: true,
             column_start: 0,
+            role: DisplayLineRole::Normal,
         })
         .collect()
 }

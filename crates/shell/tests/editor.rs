@@ -46,6 +46,18 @@ fn home_editor_entry_opens_a_rich_markdown_document() {
 }
 
 #[test]
+fn terminal_text_sizing_capability_reaches_the_editor_view_model() {
+    let fixture = FixtureRoot::new("text-sizing");
+    let platform = mock_platform(fixture.path());
+    let mut state = new_user_home_state();
+    state.set_terminal_text_sizing_support(true);
+
+    open_editor_from_home(&mut state, &platform);
+
+    assert!(state.to_editor_view_model().text_sizing_protocol);
+}
+
+#[test]
 fn editor_accepts_unicode_and_inserts_spaces_for_tab() {
     let fixture = FixtureRoot::new("unicode-tab");
     let platform = mock_platform(fixture.path());

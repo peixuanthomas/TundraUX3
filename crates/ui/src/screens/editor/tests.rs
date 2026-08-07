@@ -86,6 +86,29 @@ mod rich_layout_measurement_tests {
     }
 
     #[test]
+    fn multiline_raw_markdown_uses_structural_display_lines() {
+        let block = EditorRenderBlock::RawHtml("first\r\nsecond\rthird\n".to_string());
+
+        let lines = block_lines(&block, 0, 80, None, None, None);
+        let rendered = lines
+            .iter()
+            .map(|line| {
+                line.runs
+                    .iter()
+                    .map(|run| run.text.resolve(None))
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(rendered, ["HTML first", "second", "third", ""]);
+        assert!(lines.iter().all(|line| {
+            line.runs
+                .iter()
+                .all(|run| !run.text.resolve(None).contains(['\r', '\n']))
+        }));
+    }
+
+    #[test]
     fn rich_scrollbar_layout_flattens_the_document_only_once() {
         let blocks: Arc<[EditorRenderBlock]> = (0..10_000)
             .map(|index| EditorRenderBlock::paragraph(format!("line {index}")))
@@ -361,7 +384,10 @@ mod source_virtualization_tests {
         assert_eq!(layout.prepared_lines[0].runs.len(), 1);
         assert!(
             layout.source_line_maps[0].boundaries.len()
-                <= usize::from(layout.canvas.width).saturating_add(2)
+                <= usize::from(layout.canvas.width).saturating_add(2),
+            "{} boundaries for canvas width {}",
+            layout.source_line_maps[0].boundaries.len(),
+            layout.canvas.width
         );
     }
 

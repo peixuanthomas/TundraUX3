@@ -6,6 +6,7 @@
 //! - Component ids are stable across frames and are used by the router for focus and actions.
 //! - Hit testing always receives the current render area, so resize handling stays external.
 
+mod big_text;
 mod button;
 mod command_palette;
 mod context_menu;
@@ -27,6 +28,7 @@ pub use list::{List, ListItem};
 pub use tabs::{TabItem, Tabs};
 pub use text_input::TextInput;
 
+pub(crate) use big_text::{BigText, heading_size_ratio};
 pub(crate) use foundation::{
     byte_index_for_char, char_count, clamp_index, inner_area, interactive_style, item_style,
 };

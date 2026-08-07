@@ -578,6 +578,8 @@ pub struct EditorViewModel {
     pub encoding: String,
     pub line_ending: String,
     pub image_protocol: EditorImageProtocolStatus,
+    /// Whether the terminal confirmed support for OSC 66 multi-cell text.
+    pub text_sizing_protocol: bool,
     pub status_message: Option<String>,
 }
 
@@ -619,6 +621,7 @@ impl EditorViewModel {
             encoding: "UTF-8".to_string(),
             line_ending: "LF".to_string(),
             image_protocol: EditorImageProtocolStatus::Unsupported,
+            text_sizing_protocol: false,
             status_message: None,
         }
     }
