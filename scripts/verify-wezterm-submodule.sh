@@ -27,7 +27,9 @@ tree_commit="$(git -C "$repo_root" ls-tree HEAD -- third_party/wezterm | awk '{p
   fail "third_party/wezterm is not initialized; run git submodule update --init --recursive"
 
 submodule_top="$(git -C "$submodule_path" rev-parse --show-toplevel 2>/dev/null || true)"
-[[ "${submodule_top//\\//}" == "${submodule_path//\\//}" ]] || \
+canonical_submodule_path="$(cd "$submodule_path" && pwd -P)"
+canonical_submodule_top="$(cd "$submodule_top" 2>/dev/null && pwd -P || true)"
+[[ "$canonical_submodule_top" == "$canonical_submodule_path" ]] || \
   fail "third_party/wezterm does not contain its own Git worktree"
 
 actual_commit="$(git -C "$submodule_path" rev-parse HEAD 2>/dev/null || true)"
@@ -38,6 +40,20 @@ git -C "$submodule_path" diff --quiet || fail "third_party/wezterm has tracked c
 git -C "$submodule_path" diff --cached --quiet || fail "third_party/wezterm has staged changes"
 [[ -z "$(git -C "$submodule_path" status --porcelain --untracked-files=normal)" ]] || \
   fail "third_party/wezterm has untracked or modified files"
+
+# WezTerm pins native libraries as nested gitlinks.  A clean top-level
+# checkout is not sufficient: Git normally considers an uninitialized nested
+# submodule clean, while the GUI build will later fail or try to fetch it.
+recursive_status="$(git -C "$submodule_path" submodule status --recursive)"
+[[ -n "$recursive_status" ]] || fail "WezTerm recursive submodules are unavailable"
+if grep -Eq '^[+U-]' <<<"$recursive_status"; then
+  fail "WezTerm recursive submodules are uninitialized or do not match their gitlinks"
+fi
+git -C "$submodule_path" submodule foreach --quiet --recursive '
+  git diff --quiet &&
+  git diff --cached --quiet &&
+  test -z "$(git status --porcelain --untracked-files=normal)"
+' >/dev/null || fail "a WezTerm recursive submodule is dirty"
 
 status="$(git -C "$repo_root" submodule status --cached -- third_party/wezterm)"
 [[ "$status" == " $tundra_wezterm_commit "* ]] || \

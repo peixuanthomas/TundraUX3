@@ -9,7 +9,10 @@ pub const HOST_PROTOCOL_ENV: &str = "TUNDRA_HOST_PROTOCOL";
 pub const SESSION_ID_ENV: &str = "TUNDRA_SESSION_ID";
 pub const SESSION_OUTCOME_PATH_ENV: &str = "TUNDRA_SESSION_OUTCOME_PATH";
 pub const SESSION_SHUTDOWN_PATH_ENV: &str = "TUNDRA_SESSION_SHUTDOWN_PATH";
-pub const HOST_PROTOCOL_VERSION: &str = "1";
+/// Host protocol 2 pairs the managed Shell outcome contract with the bundled
+/// WezTerm native recovery capability.  Older protocol-1 launchers bundled a
+/// PTY recovery helper and must not be mixed with the protocol-2 runtime.
+pub const HOST_PROTOCOL_VERSION: &str = "2";
 pub const MANAGED_RESTART_EXIT_CODE: i32 = 74;
 pub const MANAGED_RESET_EXIT_CODE: i32 = 75;
 pub const MANAGED_PROTOCOL_ERROR_EXIT_CODE: i32 = 78;
@@ -204,14 +207,14 @@ mod tests {
         let path = std::env::temp_dir().join("tundra-outcome.json");
         let unsupported = ManagedSession::from_values(
             Some(OsString::from("1")),
-            Some(OsString::from("2")),
+            Some(OsString::from("3")),
             Some(OsString::from("session")),
             Some(path.as_os_str().to_os_string()),
             None,
         );
         assert!(matches!(
             unsupported,
-            Err(ManagedSessionError::UnsupportedProtocol(version)) if version == "2"
+            Err(ManagedSessionError::UnsupportedProtocol(version)) if version == "3"
         ));
 
         let unsafe_id = ManagedSession::from_values(
@@ -233,6 +236,24 @@ mod tests {
         assert_eq!(
             unsafe_shutdown,
             Err(ManagedSessionError::Invalid(SESSION_SHUTDOWN_PATH_ENV))
+        );
+    }
+
+    #[test]
+    fn protocol_one_bundle_is_rejected() {
+        let path = std::env::temp_dir().join("tundra-protocol-one-outcome.json");
+        let error = ManagedSession::from_values(
+            Some(OsString::from("1")),
+            Some(OsString::from("1")),
+            Some(OsString::from("session-1")),
+            Some(path.into_os_string()),
+            None,
+        )
+        .unwrap_err();
+
+        assert_eq!(
+            error,
+            ManagedSessionError::UnsupportedProtocol("1".to_owned())
         );
     }
 

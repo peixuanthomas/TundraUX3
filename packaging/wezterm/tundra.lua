@@ -8,5 +8,10 @@ local wezterm = require 'wezterm'
 return {
   automatically_reload_config = false,
   enable_tab_bar = false,
+  -- The Shell validates its minimum size before the first fullscreen resize
+  -- event reaches the PTY.  Seed the managed PTY at a valid size so startup
+  -- cannot race WezTerm's kiosk fullscreen transition.
+  initial_cols = 120,
+  initial_rows = 40,
   window_decorations = 'NONE',
 }

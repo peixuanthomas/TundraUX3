@@ -32,8 +32,24 @@ $weztermRuntime = Resolve-Path $env:TUNDRA_WEZTERM_RUNTIME_DIR -ErrorAction Sile
 if ($null -eq $weztermRuntime -or -not (Test-Path (Join-Path $weztermRuntime "wezterm-gui.exe") -PathType Leaf)) {
     Fail "explicit bundled WezTerm directory must contain wezterm-gui.exe"
 }
+$weztermProtocol = Join-Path $weztermRuntime "tundra-host-protocol"
+if (-not (Test-Path -LiteralPath $weztermProtocol -PathType Leaf) -or
+    ((Get-Content -LiteralPath $weztermProtocol -Raw) -ne "2`n")) {
+    Fail "bundled WezTerm directory is missing native recovery protocol 2 capability"
+}
+$patchPath = Join-Path $repoRoot "patches\wezterm-managed-v1.patch"
+$manifestPath = Join-Path $weztermRuntime "tundra-wezterm-manifest-v1"
+if (-not (Test-Path -LiteralPath $manifestPath -PathType Leaf)) {
+    Fail "bundled WezTerm directory is missing its supply-chain manifest"
+}
+$patchHash = (Get-FileHash -LiteralPath $patchPath -Algorithm SHA256).Hash.ToLowerInvariant()
+$binaryHash = (Get-FileHash -LiteralPath (Join-Path $weztermRuntime "wezterm-gui.exe") -Algorithm SHA256).Hash.ToLowerInvariant()
+$expectedManifest = "TUNDRA_WEZTERM_MANIFEST_V1`nprotocol=2`ngit_sha=$pin`npatch_sha256=$patchHash`nbinary_sha256=$binaryHash`n"
+if ((Get-Content -LiteralPath $manifestPath -Raw) -cne $expectedManifest) {
+    Fail "bundled WezTerm manifest does not exactly bind protocol, pin, patch and binary hash"
+}
 
-cargo build --release --locked --target $Target -p launcher -p shell -p cli -p recovery
+cargo build --release --locked --target $Target -p launcher -p shell -p cli
 if ($LASTEXITCODE -ne 0) { Fail "Cargo build failed" }
 
 $version = (Select-String -Path Cargo.toml -Pattern '^version = "([^"]+)"' | Select-Object -First 1).Matches.Groups[1].Value
@@ -50,11 +66,10 @@ New-Item -ItemType Directory -Force -Path (Join-Path $runtime "wezterm") | Out-N
 Copy-Item (Join-Path $releaseDir "tundra.exe") (Join-Path $stage "tundra.exe")
 Copy-Item (Join-Path $releaseDir "tundra-shell.exe") (Join-Path $runtime "tundra-shell.exe")
 Copy-Item (Join-Path $releaseDir "tundra-cli.exe") (Join-Path $runtime "tundra-cli.exe")
-Copy-Item (Join-Path $releaseDir "tundra-recovery.exe") (Join-Path $runtime "tundra-recovery.exe")
 Copy-Item crates/ascii-assets/assets (Join-Path $runtime "assets") -Recurse
 Copy-Item (Join-Path $weztermRuntime "*") (Join-Path $runtime "wezterm") -Recurse -Force
 Copy-Item packaging/wezterm/tundra.lua (Join-Path $runtime "wezterm/tundra.lua") -Force
-Set-Content -Path (Join-Path $runtime "launcher-protocol-version") -Value "1" -NoNewline -Encoding ascii
+Set-Content -Path (Join-Path $runtime "launcher-protocol-version") -Value "2" -NoNewline -Encoding ascii
 Copy-Item LICENSE (Join-Path $stage "LICENSE")
 Copy-Item crates/weathr/LICENSE.weathr (Join-Path $stage "LICENSE.weathr")
 Copy-Item third_party/wezterm/LICENSE.md (Join-Path $stage "LICENSE.wezterm")

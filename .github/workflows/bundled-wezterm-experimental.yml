@@ -9,6 +9,7 @@ on:
       - 'third_party/wezterm'
       - 'scripts/build-bundled-wezterm.sh'
       - 'scripts/package-bundled-*'
+      - 'scripts/verify-bundled-wezterm-runtime.sh'
       - 'scripts/verify-wezterm-submodule.sh'
       - 'packaging/**'
       - 'crates/launcher/**'
@@ -63,7 +64,8 @@ jobs:
 
   windows-x64:
     name: Windows bundled runtime (experimental)
-    runs-on: windows-latest
+    # Match the pinned fork's own supported Windows build image.
+    runs-on: windows-2025
     steps:
       - uses: actions/checkout@v6
         with:

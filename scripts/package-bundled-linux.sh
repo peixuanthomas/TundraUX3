@@ -20,8 +20,6 @@ case "${1:-}" in
 esac
 [[ $# -le 1 ]] || { echo "Usage: $0 [--tar-only]" >&2; exit 2; }
 
-bash "$repo_root/scripts/verify-wezterm-submodule.sh"
-
 wezterm_runtime="${TUNDRA_WEZTERM_RUNTIME_DIR:-}"
 [[ -n "$wezterm_runtime" ]] || {
   echo "TUNDRA_WEZTERM_RUNTIME_DIR must name an explicit bundled WezTerm build directory" >&2
@@ -32,10 +30,7 @@ wezterm_runtime="${TUNDRA_WEZTERM_RUNTIME_DIR:-}"
   exit 1
 }
 wezterm_runtime="$(cd "$wezterm_runtime" && pwd -P)"
-[[ -x "$wezterm_runtime/wezterm-gui" ]] || {
-  echo "Bundled WezTerm binary missing or not executable: $wezterm_runtime/wezterm-gui" >&2
-  exit 1
-}
+bash "$repo_root/scripts/verify-bundled-wezterm-runtime.sh" "$wezterm_runtime"
 
 version="${TUNDRAUX3_VERSION:-$(sed -n 's/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -n 1)}"
 [[ -n "$version" ]] || { echo "Could not determine TundraUX3 version" >&2; exit 1; }
@@ -55,18 +50,17 @@ stage_root="$out_dir/.stage-bundled"
 rm -rf "$stage_root"
 mkdir -p "$stage_root/$portable_name/runtime/wezterm"
 
-cargo build --release --locked -p launcher -p shell -p cli -p recovery
+cargo build --release --locked -p launcher -p shell -p cli
 
 portable_root="$stage_root/$portable_name"
 runtime_root="$portable_root/runtime"
 install -Dm755 "$release_dir/tundra" "$portable_root/tundra"
 install -Dm755 "$release_dir/tundra-shell" "$runtime_root/tundra-shell"
 install -Dm755 "$release_dir/tundra-cli" "$runtime_root/tundra-cli"
-install -Dm755 "$release_dir/tundra-recovery" "$runtime_root/tundra-recovery"
 cp -a crates/ascii-assets/assets "$runtime_root/assets"
 cp -a "$wezterm_runtime/." "$runtime_root/wezterm/"
 install -Dm644 packaging/wezterm/tundra.lua "$runtime_root/wezterm/tundra.lua"
-printf '1\n' > "$runtime_root/launcher-protocol-version"
+printf '2\n' > "$runtime_root/launcher-protocol-version"
 install -Dm644 LICENSE "$portable_root/LICENSE"
 install -Dm644 crates/weathr/LICENSE.weathr "$portable_root/LICENSE.weathr"
 install -Dm644 third_party/wezterm/LICENSE.md "$portable_root/LICENSE.wezterm"
@@ -81,12 +75,11 @@ if [[ "$build_deb" == true ]]; then
   install -Dm755 "$release_dir/tundra" "$deb_root/usr/bin/tundra"
   install -Dm755 "$release_dir/tundra-shell" "$deb_runtime/tundra-shell"
   install -Dm755 "$release_dir/tundra-cli" "$deb_runtime/tundra-cli"
-  install -Dm755 "$release_dir/tundra-recovery" "$deb_runtime/tundra-recovery"
   cp -a crates/ascii-assets/assets "$deb_runtime/assets"
   mkdir -p "$deb_runtime/wezterm"
   cp -a "$wezterm_runtime/." "$deb_runtime/wezterm/"
   install -Dm644 packaging/wezterm/tundra.lua "$deb_runtime/wezterm/tundra.lua"
-  printf '1\n' > "$deb_runtime/launcher-protocol-version"
+  printf '2\n' > "$deb_runtime/launcher-protocol-version"
   install -Dm644 packaging/debian/tundraux3-bundled.desktop "$deb_root/usr/share/applications/tundraux3-bundled-experimental.desktop"
   install -Dm644 LICENSE "$deb_root/usr/share/doc/tundraux3-bundled-experimental/copyright"
   install -Dm644 crates/weathr/LICENSE.weathr "$deb_root/usr/share/doc/tundraux3-bundled-experimental/LICENSE.weathr"

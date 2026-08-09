@@ -3,13 +3,10 @@ name = "recovery"
 version = "0.1.1"
 edition = "2024"
 publish = false
+autobins = false
 
 [lib]
 path = "src/lib.rs"
-
-[[bin]]
-name = "tundra-recovery"
-path = "src/main.rs"
 
 [dependencies]
 base64 = "0.22"

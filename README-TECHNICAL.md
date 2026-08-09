@@ -86,7 +86,7 @@ cargo run -p cli --bin tundra-cli -- repl
 
 ### 启动生命周期
 
-实验性 bundle 的正常启动首先由 `tundra` launcher 完成。它从自身安装目录预检私有 runtime，使用绝对路径执行受控 WezTerm 的 `start -- <absolute tundra-shell>`，并通过 session ID 与原子结果文件观察整个 WezTerm/Shell 会话。launcher 是生命周期 watchdog：`0` 为关闭、`74` 为显式重启、`75` 为已确认 reset；其余退出、信号、启动失败和结果文件缺失在 60 秒窗口内按 0.5、2、5 秒最多自动恢复三次。预算耗尽时，当前实验实现启动一棵新的 bundled WezTerm，并以私有 `tundra-recovery` PTY 子程序显示脱敏 incident handoff 和像素二维码；只有 Enter 写出的事故绑定凭证能让 launcher 冷启动。WezTerm 原生 no-PTY recovery renderer 仍是尚未完成构建验证的目标，不得把当前 helper 描述成该原生模式。
+实验性 bundle 的正常启动首先由 `tundra` launcher 完成。它从自身安装目录预检私有 runtime，使用绝对路径执行受控 WezTerm 的 `start -- <absolute tundra-shell>`，并通过 session ID 与原子结果文件观察整个 WezTerm/Shell 会话。launcher 是生命周期 watchdog：`0` 为关闭、`74` 为显式重启、`75` 为已确认 reset；其余退出、信号、启动失败和结果文件缺失在 60 秒窗口内按 0.5、2、5 秒最多自动恢复三次。预算耗尽时，launcher 以私有 `tundra-recovery` 子命令启动一棵新的 bundled WezTerm；该命令由 WezTerm 原生渲染脱敏 handoff 和像素二维码，不创建 PTY 或 `tundra-recovery` helper。只有该场景在 Enter 后写出的 incident 绑定一次性凭证，才能让 launcher 冷启动。
 
 Shell 在受管模式中关闭重复的 unclean-run tracking 和自我重启，只写回结果；直接从源码运行 `tundra-shell` 时仍保留原有自主 watchdog 行为。Shell 本身的正常启动分为以下阶段：
 
@@ -196,7 +196,7 @@ flowchart TD
 | `identity` | 用户、角色、会话、授权、密码验证与登录锁定；记录由 storage 持久化。 |
 | `launcher` | 公开 `tundra` GUI 入口、私有 runtime 预检、会话结果协议、WezTerm/Shell 进程树监督、恢复预算与原生 critical-dialog 降级。 |
 | `platform` | Windows/macOS/Linux 的系统路径、终端能力、文件系统、启动外部程序、Trash、关机与系统诊断边界。 |
-| `recovery` | 只读取脱敏的 `RecoveryHandoffV1`，作为 WezTerm recovery 会话的唯一前台程序，渲染强警告页与离线二维码。 |
+| `recovery` | 已退役 helper 的协议、布局、隐私与二维码测试参考库；生产 bundle 不再生成该二进制，恢复页由 WezTerm 原生 no-PTY 模式实现。 |
 | `shell` | `ShellSession`、控制器、presentation、终端事件转换、全屏会话、锁屏与应用组合，以及 `tundra-shell` 入口。 |
 | `storage` | TOML/版本化 JSON、原子写入、schema 校验、迁移、恢复与存储健康。 |
 | `time` | `NetworkClock`、`ClockDisplay`、`ClockSnapshot`、时间同步与 `TIME_SYNC_INTERVAL`；由 APP 和 Weathr 共用。 |

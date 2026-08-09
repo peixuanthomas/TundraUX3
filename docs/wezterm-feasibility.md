@@ -4,15 +4,15 @@
 
 **EXPERIMENTAL INTEGRATION**（2026-08-09；原始 POC 结论为 CONDITIONAL GO）。
 
-定制 WezTerm 的编译期 kiosk 模式、macOS 双架构构建、单会话硬守卫、配置隔离、受限单实例激活、正常退出和异常诊断已经通过自动测试与本机 smoke。TundraUX3 现以**实验性** launcher/runtime 接入该 fork；它不是稳定发行承诺。Windows 11 交互桌面验证，以及 macOS/Windows 的 IME、鼠标、系统快捷键和多显示器人工复测仍未完成。
+下文的编译与 smoke 结论属于已归档的 kiosk POC。TundraUX3 仍只以**实验性** launcher/runtime 接入该 fork；它不是稳定发行承诺。Windows 真实 bundle、panic 生命周期和 DPI/二维码自动回读已完成；Windows 的 IME、鼠标、系统快捷键、多显示器及注销/关机人工复测，以及 macOS/Linux 真实构建和桌面验证仍未完成。
 
-这里的构建与 smoke 结论属于下文归档的 kiosk POC。当前主仓库新增的
-managed-lifecycle 补丁、外层 watchdog 和 bundle 装配尚未完成同等级的
-WezTerm 源码构建验证；本次 checkout 获取固定 submodule 时持续收到上游
-HTTP 502。当前恢复页是 bundled WezTerm 内的私有 `tundra-recovery` PTY
-子程序，不应描述成已经完成的 WezTerm 原生 no-PTY renderer。
+2026-08-09 最终实现状态：用户提供的 `wezterm-e378176fd3aa8204ace298157599b5a3b8496ca4.zip` 已校验并离线恢复为精确顶层 pin `e378176fd3aa8204ace298157599b5a3b8496ca4`；freetype2（含 `dlg`）、libpng、zlib、harfbuzz 五个递归子模块也已精确恢复且全部 clean。主仓库已切换至 host protocol v2；fork 的 native `tundra-recovery` no-PTY mode、原生像素二维码、single-instance 和 incident/credential recovery outcome 均已固化为可复现补丁。最终补丁 SHA-256 为 `98d5b893911b4c0b5d7d434d3d67cfc23089e13f14514cc725b25a30d5cb5907`，由 launcher 构建期和 runtime manifest 双重绑定；旧 PTY helper 已退出生产构建与打包链。
 
-解除条件：完成下文“待人工复测”全部项目且没有发现能够创建第二会话、退出 kiosk 全屏或破坏输入法的路径。若发现问题，应在 WezTerm fork 内修复并重新运行本报告的全部测试。
+Windows 官方工具链已安装并验证：VS 2022 Build Tools 17.14、`cl` 19.44、Windows SDK 26100、Strawberry Perl 5.42.2、NASM 3.02、Rust MSVC 1.97.1。官方 MSVC focused native recovery tests 已 17/17 通过，kiosk config tests 已 2/2 通过。最终 release `wezterm-gui.exe` 为 70,185,984 bytes，SHA-256 `561569e605eab91ad6e4d0c590da6cec2fafb178378ec8f9a423371cf5638bd9`。最终 Windows experimental ZIP 是 `dist/TundraUX3-0.1.1-experimental-windows-x64.zip`，SHA-256 `0d3cb56960f7a70d32f5cdac0bf2053f6f548527f6e1a5841ea944e01eb22774`。MinGW + HarfBuzz C++ ABI 的链接失败仅是历史旁证，并不推翻最终 MSVC 结果。
+
+最终 Windows ZIP 的正常 E2E 证明仅启动一个可见私有 WezTerm 和一个私有 Shell；第二次启动 188 ms 以 0 退出并保留既有 PID；污染 PATH/`WEZTERM_CONFIG_FILE` 不影响私有运行时；无孤儿进程。panic E2E 证明三次重试后进入原生 no-PTY recovery；第二次启动 195 ms 以 0 退出并保留 recovery；Enter 可冷启动，probation 内再次失败直接返回 panic；无 helper 或孤儿进程。2560×1600@144 DPI 截图确认完整红框、二维码和 Enter 提示，`rqrr` 对截图的回读与 capsule 精确一致。
+
+解除条件：完成下文剩余的手机扫描、Windows 多显示器/IME/键鼠/注销关机、macOS/Linux 真实构建/桌面，以及签名、notarization、SBOM 与 stable 切换门禁，且没有发现能够创建第二会话、退出 kiosk 全屏或破坏输入法的路径。若发现问题，应在 WezTerm fork 内修复并重新运行本报告的相关测试。稳定入口没有被替换。
 
 ## 版本与仓库
 
@@ -83,14 +83,14 @@ GitHub Actions 已通过：
 | 第二 window/tab/pane/split | PASS | mux/GUI 双层守卫；策略与 GUI 测试通过 |
 | 用户配置和 CLI 无法解除约束 | PASS | 两种配置覆盖及 Connect 命令均以 1 退出；配置重载强制重施策略 |
 | 通用 mux 控制 socket 不可用 | PASS | kiosk 路径不启动 `spawn_mux_server`，只创建固定 Activate socket |
-| 第二次启动只激活现有实例 | PASS | 第二次启动约 0.09 秒返回；前后均为 1 个窗口、1 个 GUI 进程 |
+| 第二次启动只激活现有实例 | PASS | 最终 Windows ZIP：正常启动 188 ms、panic recovery 195 ms 均以 0 返回，保持既有 PID 且不创建第二套会话 |
 | 返回 0 自动关闭 | PASS | `/bin/sleep 3` 返回后无残留窗口或 GUI 进程 |
 | 非零退出保留退出码诊断 | PASS | `/bin/sh -c 'exit 7'` 显示 `Exited with code 7` 并保持窗口 |
-| Enter/Escape 关闭诊断 | CODE PASS / MANUAL PENDING | 已实现状态检查与关闭路径；终端应用不允许 Computer Use 注入键盘事件 |
+| Panic 页 Enter/Escape 行为 | PASS（自动验证） | Enter 冷启动与 probation 通过 Windows E2E；Escape inert 和普通关闭不伪造 restart 由状态机测试覆盖 |
 | Cmd-Q、Cmd-N、Cmd-T、Alt-F4 等 | CODE PASS / MANUAL PENDING | 动作分发和普通关闭请求均被拦截，仍需双平台键盘实测 |
 | 中文 IME、剪贴板、鼠标报告 | MANUAL PENDING | 安全剪贴板动作已保留；需双平台交互实测 |
 | 多显示器、Mission Control、任务栏覆盖 | MANUAL PENDING | 当前只完成单显示器 macOS 截图检查 |
-| Windows 11 交互桌面行为 | MANUAL PENDING | CI 只能证明构建与单元测试，不能代替桌面验证 |
+| Windows 11 bundle 启动、panic 与 DPI | PASS | 最终 ZIP 直接启动与生命周期验证完成；2560×1600@144 DPI 截图和 `rqrr` QR 回读通过；Explorer 鼠标双击首帧、IME、键鼠、多显示器、注销/关机仍待人工测试 |
 
 ### 截图证据
 

@@ -2,6 +2,7 @@
 !/docs/bundled-runtime.md
 !/docs/20260809.md
 /target/
+/dist/
 /.worktrees/
 /worktrees/
 /TundraUX3/target/

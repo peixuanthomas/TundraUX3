@@ -1840,8 +1840,10 @@ version = "0.1.1"
 dependencies = [
  "chrono",
  "platform",
+ "rand 0.8.7",
  "serde",
  "serde_json",
+ "sha2",
  "storage",
  "watchdog",
 ]
