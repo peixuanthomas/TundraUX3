@@ -247,6 +247,7 @@ mod tests {
             occurred_at,
             process_name: "catalog-test".to_string(),
             process_version: "1.0.0".to_string(),
+            session_id: None,
             process_id: 42,
             run_id: "catalog-run".to_string(),
             app: Some(AppDescriptor::new(

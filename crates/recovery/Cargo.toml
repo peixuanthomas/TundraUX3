@@ -1,0 +1,23 @@
+[package]
+name = "recovery"
+version = "0.1.1"
+edition = "2024"
+publish = false
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "tundra-recovery"
+path = "src/main.rs"
+
+[dependencies]
+base64 = "0.22"
+crossterm = "0.28"
+image = { version = "0.25", default-features = false, features = ["png"] }
+qrcodegen = "1.8"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[dev-dependencies]
+rqrr = "0.8"

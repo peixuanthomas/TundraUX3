@@ -186,6 +186,7 @@ fn persist_incident(config: &WatchdogConfig, incident: &IncidentRecord) -> Persi
 }
 
 fn sanitize_incident(mut incident: IncidentRecord) -> IncidentRecord {
+    incident.session_id = incident.session_id.map(sanitize::text);
     incident.boundary = sanitize::text(incident.boundary);
     incident.task_group = incident.task_group.map(sanitize::text);
     incident.operation_id = incident.operation_id.map(sanitize::text);
@@ -241,6 +242,9 @@ fn render_text(incident: &IncidentRecord) -> String {
         incident.process_name, incident.process_version, incident.process_id
     );
     let _ = writeln!(text, "Run: {}", incident.run_id);
+    if let Some(session_id) = &incident.session_id {
+        let _ = writeln!(text, "Session: {session_id}");
+    }
     if let Some(app) = &incident.app {
         let _ = writeln!(text, "App: {} ({})", app.display_name, app.id);
     }

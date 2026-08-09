@@ -1,0 +1,114 @@
+diff --git a/config/src/lib.rs b/config/src/lib.rs
+--- a/config/src/lib.rs
++++ b/config/src/lib.rs
+@@ -118,6 +118,14 @@ fn apply_tundra_kiosk_policy(config: &mut Config) {
+     }
+ }
+
++fn tundra_kiosk_exit_behavior(managed_session: bool) -> ExitBehavior {
++    if managed_session {
++        ExitBehavior::Close
++    } else {
++        ExitBehavior::CloseOnCleanExit
++    }
++}
++
+ fn force_tundra_kiosk_policy(config: &mut Config) {
+     config.window_decorations = wezterm_input_types::WindowDecorations::NONE;
+     config.integrated_title_buttons.clear();
+@@ -202,7 +210,11 @@ fn force_tundra_kiosk_policy(config: &mut Config) {
+     config.show_update_window = false;
+     config.window_close_confirmation = WindowCloseConfirmation::NeverPrompt;
+     config.native_macos_fullscreen_mode = false;
+-    config.exit_behavior = ExitBehavior::CloseOnCleanExit;
++    // In a managed Tundra session the outer launcher owns diagnostics and
++    // restart policy. Close for every foreground-program status so a Shell
++    // abort cannot be trapped in WezTerm's ordinary exit overlay.
++    let managed_session = std::env::var("TUNDRA_MANAGED_SESSION").as_deref() == Ok("1");
++    config.exit_behavior = tundra_kiosk_exit_behavior(managed_session);
+     config.exit_behavior_messaging = ExitBehaviorMessaging::Brief;
+     config.prefer_to_spawn_tabs = false;
+     config.enable_kitty_keyboard = true;
+@@ -230,4 +242,13 @@ mod tundra_kiosk_tests {
+         assert!(!config.check_for_updates);
+     }
+
++    #[test]
++    fn managed_session_always_returns_control_to_the_outer_watchdog() {
++        assert_eq!(
++            tundra_kiosk_exit_behavior(false),
++            ExitBehavior::CloseOnCleanExit
++        );
++        assert_eq!(tundra_kiosk_exit_behavior(true), ExitBehavior::Close);
++    }
++
+ }
+diff --git a/wezterm-gui/src/main.rs b/wezterm-gui/src/main.rs
+--- a/wezterm-gui/src/main.rs
++++ b/wezterm-gui/src/main.rs
+@@ -123,6 +123,43 @@ fn validate_kiosk_cli(opts: &Opt) -> anyhow::Result<()> {
+     Ok(())
+ }
+
++#[cfg(all(feature = "tundra-kiosk", target_os = "macos"))]
++fn start_tundra_parent_guard() -> anyhow::Result<()> {
++    use anyhow::Context;
++
++    if std::env::var("TUNDRA_MANAGED_SESSION").as_deref() != Ok("1") {
++        return Ok(());
++    }
++
++    let expected_parent: i32 = std::env::var("TUNDRA_LAUNCHER_PID")
++        .context("managed kiosk is missing TUNDRA_LAUNCHER_PID")?
++        .parse()
++        .context("managed kiosk has an invalid TUNDRA_LAUNCHER_PID")?;
++    if expected_parent <= 1 || unsafe { libc::getppid() } != expected_parent {
++        anyhow::bail!("managed kiosk launcher parent is unavailable");
++    }
++    std::thread::Builder::new()
++        .name("tundra-launcher-parent-guard".to_string())
++        .spawn(move || loop {
++            std::thread::sleep(std::time::Duration::from_millis(250));
++            if unsafe { libc::getppid() } != expected_parent {
++                // The launcher created WezTerm as its process-group leader.
++                // Terminating group zero takes the PTY child with the GUI.
++                unsafe {
++                    libc::kill(0, libc::SIGTERM);
++                }
++                std::process::exit(125);
++            }
++        })
++        .context("starting managed kiosk parent guard")?;
++    Ok(())
++}
++
++#[cfg(all(feature = "tundra-kiosk", not(target_os = "macos")))]
++fn start_tundra_parent_guard() -> anyhow::Result<()> {
++    Ok(())
++}
++
+ async fn async_run_ssh(opts: SshCommand) -> anyhow::Result<()> {
+     let mut ssh_option = HashMap::new();
+     if opts.verbose {
+@@ -780,8 +817,13 @@ fn run_terminal_gui(opts: StartCommand, default_domain_name: Option<String>) -> a
+     let activation_listener = if crate::kiosk::is_enabled() {
+         match crate::kiosk::claim_instance()? {
+             crate::kiosk::InstanceClaim::Primary(listener) => Some(listener),
+-            crate::kiosk::InstanceClaim::Secondary => return Ok(()),
++            crate::kiosk::InstanceClaim::Secondary => {
++                // This process only focused the existing kiosk window. The
++                // outer launcher must distinguish that from a primary GUI
++                // which lost its managed Shell outcome.
++                std::process::exit(76);
++            }
+         }
+     } else {
+         None
+     };
+@@ -1012,5 +1054,6 @@ fn run() -> anyhow::Result<()> {
+     #[cfg(feature = "tundra-kiosk")]
+     {
+         validate_kiosk_cli(&opts)?;
++        start_tundra_parent_guard()?;
+         config::enable_tundra_kiosk_mode();
+     }

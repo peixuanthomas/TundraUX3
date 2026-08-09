@@ -669,6 +669,7 @@ impl ProcessWatchdog {
             occurred_at,
             process_name: self.shared.config.process_name.clone(),
             process_version: self.shared.config.process_version.clone(),
+            session_id: self.shared.config.session_id.clone(),
             process_id: std::process::id(),
             run_id: self.shared.run_id.clone(),
             app: context.app.clone(),

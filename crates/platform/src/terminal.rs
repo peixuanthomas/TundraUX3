@@ -4,6 +4,9 @@ use std::sync::Arc;
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, Ordering};
 
+#[cfg(windows)]
+use std::ffi::c_void;
+
 use crate::PlatformKind;
 use crate::diagnostics::{CheckStatus, EnvironmentCheck};
 
@@ -112,10 +115,30 @@ pub fn is_windows_terminal_session(wt_session: Option<&str>) -> bool {
         .unwrap_or(false)
 }
 
+/// Dispatches pending desktop messages for the thread that installed a
+/// [`TerminalControlHandler`].
+///
+/// Windows only delivers session-end broadcasts to a window on the thread's
+/// message queue. GUI launchers must call this regularly from their existing
+/// supervisory loop; this function never blocks and never creates a thread.
+/// On non-Windows platforms it is intentionally a no-op.
+pub fn pump_desktop_shutdown_events() {
+    #[cfg(windows)]
+    unsafe {
+        let mut message = Msg::default();
+        while PeekMessageW(&mut message, std::ptr::null_mut(), 0, 0, PM_REMOVE) != 0 {
+            TranslateMessage(&message);
+            DispatchMessageW(&message);
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct TerminalControlHandler {
     #[cfg(windows)]
     installed: bool,
+    #[cfg(windows)]
+    shutdown_window: Option<ShutdownWindow>,
     #[cfg(unix)]
     signal_ids: Vec<signal_hook::SigId>,
 }
@@ -129,7 +152,14 @@ impl TerminalControlHandler {
             let installed =
                 unsafe { SetConsoleCtrlHandler(Some(handle_console_control), true.into()) != 0 };
 
-            Self { installed }
+            // A GUI subsystem executable has no useful console-control event
+            // source during logoff/shutdown. Keep the console handler as a
+            // fallback, then add a hidden *top-level* window: message-only
+            // windows do not receive WM_QUERYENDSESSION broadcasts.
+            Self {
+                installed,
+                shutdown_window: ShutdownWindow::create(),
+            }
         }
 
         #[cfg(unix)]
@@ -151,6 +181,7 @@ impl TerminalControlHandler {
     }
 
     pub fn shutdown_requested(&self) -> bool {
+        pump_desktop_shutdown_events();
         shared_shutdown_flag().load(Ordering::SeqCst)
     }
 
@@ -165,6 +196,11 @@ impl Drop for TerminalControlHandler {
     fn drop(&mut self) {
         #[cfg(windows)]
         {
+            if let Some(window) = self.shutdown_window.take() {
+                unsafe {
+                    DestroyWindow(window.handle);
+                }
+            }
             if self.installed {
                 unsafe {
                     SetConsoleCtrlHandler(Some(handle_console_control), false.into());
@@ -196,6 +232,185 @@ unsafe extern "system" fn handle_console_control(control_type: u32) -> i32 {
 }
 
 #[cfg(windows)]
+#[derive(Debug)]
+struct ShutdownWindow {
+    handle: Hwnd,
+}
+
+#[cfg(windows)]
+impl ShutdownWindow {
+    fn create() -> Option<Self> {
+        unsafe {
+            let instance = GetModuleHandleW(std::ptr::null());
+            if instance.is_null() || !register_shutdown_window_class(instance) {
+                return None;
+            }
+
+            let handle = CreateWindowExW(
+                WS_EX_TOOLWINDOW,
+                SHUTDOWN_WINDOW_CLASS.as_ptr(),
+                SHUTDOWN_WINDOW_TITLE.as_ptr(),
+                WS_POPUP,
+                0,
+                0,
+                0,
+                0,
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                instance,
+                std::ptr::null_mut(),
+            );
+            (!handle.is_null()).then_some(Self { handle })
+        }
+    }
+}
+
+#[cfg(windows)]
+unsafe fn register_shutdown_window_class(instance: Hinstance) -> bool {
+    let class = WndClassW {
+        style: 0,
+        lpfn_wnd_proc: Some(shutdown_window_proc),
+        cb_cls_extra: 0,
+        cb_wnd_extra: 0,
+        h_instance: instance,
+        h_icon: std::ptr::null_mut(),
+        h_cursor: std::ptr::null_mut(),
+        hbr_background: std::ptr::null_mut(),
+        lpsz_menu_name: std::ptr::null(),
+        lpsz_class_name: SHUTDOWN_WINDOW_CLASS.as_ptr(),
+    };
+    let atom = unsafe { RegisterClassW(&class) };
+    atom != 0 || unsafe { GetLastError() } == ERROR_CLASS_ALREADY_EXISTS
+}
+
+#[cfg(windows)]
+unsafe extern "system" fn shutdown_window_proc(
+    window: Hwnd,
+    message: u32,
+    w_param: Wparam,
+    l_param: Lparam,
+) -> Lresult {
+    match message {
+        WM_QUERYENDSESSION => {
+            if let Some(shutdown) = TERMINAL_SHUTDOWN_REQUESTED.get() {
+                shutdown.store(true, Ordering::SeqCst);
+            }
+            true.into()
+        }
+        WM_ENDSESSION => {
+            if let Some(shutdown) = TERMINAL_SHUTDOWN_REQUESTED.get() {
+                shutdown.store(true, Ordering::SeqCst);
+            }
+            0
+        }
+        _ => unsafe { DefWindowProcW(window, message, w_param, l_param) },
+    }
+}
+
+#[cfg(windows)]
+const WM_QUERYENDSESSION: u32 = 0x0011;
+#[cfg(windows)]
+const WM_ENDSESSION: u32 = 0x0016;
+#[cfg(windows)]
+const PM_REMOVE: u32 = 0x0001;
+#[cfg(windows)]
+const WS_POPUP: u32 = 0x8000_0000;
+#[cfg(windows)]
+const WS_EX_TOOLWINDOW: u32 = 0x0000_0080;
+#[cfg(windows)]
+const ERROR_CLASS_ALREADY_EXISTS: u32 = 1410;
+
+#[cfg(windows)]
+const SHUTDOWN_WINDOW_CLASS: &[u16] = &[
+    b'T' as u16,
+    b'u' as u16,
+    b'n' as u16,
+    b'd' as u16,
+    b'r' as u16,
+    b'a' as u16,
+    b'U' as u16,
+    b'X' as u16,
+    b'3' as u16,
+    b'.' as u16,
+    b'S' as u16,
+    b'h' as u16,
+    b'u' as u16,
+    b't' as u16,
+    b'd' as u16,
+    b'o' as u16,
+    b'w' as u16,
+    b'n' as u16,
+    b'W' as u16,
+    b'a' as u16,
+    b't' as u16,
+    b'c' as u16,
+    b'h' as u16,
+    b'e' as u16,
+    b'r' as u16,
+    b'.' as u16,
+    b'v' as u16,
+    b'1' as u16,
+    0,
+];
+#[cfg(windows)]
+const SHUTDOWN_WINDOW_TITLE: &[u16] = &[
+    b'T' as u16,
+    b'u' as u16,
+    b'n' as u16,
+    b'd' as u16,
+    b'r' as u16,
+    b'a' as u16,
+    0,
+];
+
+#[cfg(windows)]
+type Hwnd = *mut c_void;
+#[cfg(windows)]
+type Hinstance = *mut c_void;
+#[cfg(windows)]
+type Wparam = usize;
+#[cfg(windows)]
+type Lparam = isize;
+#[cfg(windows)]
+type Lresult = isize;
+
+#[cfg(windows)]
+#[repr(C)]
+struct WndClassW {
+    style: u32,
+    lpfn_wnd_proc: Option<unsafe extern "system" fn(Hwnd, u32, Wparam, Lparam) -> Lresult>,
+    cb_cls_extra: i32,
+    cb_wnd_extra: i32,
+    h_instance: Hinstance,
+    h_icon: *mut c_void,
+    h_cursor: *mut c_void,
+    hbr_background: *mut c_void,
+    lpsz_menu_name: *const u16,
+    lpsz_class_name: *const u16,
+}
+
+#[cfg(windows)]
+#[repr(C)]
+#[derive(Default)]
+struct Point {
+    x: i32,
+    y: i32,
+}
+
+#[cfg(windows)]
+#[repr(C)]
+#[derive(Default)]
+struct Msg {
+    hwnd: Hwnd,
+    message: u32,
+    w_param: Wparam,
+    l_param: Lparam,
+    time: u32,
+    point: Point,
+    l_private: u32,
+}
+
+#[cfg(windows)]
 const CTRL_C_EVENT: u32 = 0;
 #[cfg(windows)]
 const CTRL_BREAK_EVENT: u32 = 1;
@@ -213,4 +428,68 @@ unsafe extern "system" {
         handler_routine: Option<unsafe extern "system" fn(u32) -> i32>,
         add: i32,
     ) -> i32;
+    fn GetModuleHandleW(module_name: *const u16) -> Hinstance;
+    fn GetLastError() -> u32;
+}
+
+#[cfg(windows)]
+#[link(name = "user32")]
+unsafe extern "system" {
+    fn RegisterClassW(window_class: *const WndClassW) -> u16;
+    fn CreateWindowExW(
+        extended_style: u32,
+        class_name: *const u16,
+        window_name: *const u16,
+        style: u32,
+        x: i32,
+        y: i32,
+        width: i32,
+        height: i32,
+        parent: Hwnd,
+        menu: *mut c_void,
+        instance: Hinstance,
+        parameter: *mut c_void,
+    ) -> Hwnd;
+    fn DestroyWindow(window: Hwnd) -> i32;
+    fn DefWindowProcW(window: Hwnd, message: u32, w_param: Wparam, l_param: Lparam) -> Lresult;
+    fn PeekMessageW(
+        message: *mut Msg,
+        window: Hwnd,
+        min_filter: u32,
+        max_filter: u32,
+        remove: u32,
+    ) -> i32;
+    fn TranslateMessage(message: *const Msg) -> i32;
+    fn DispatchMessageW(message: *const Msg) -> Lresult;
+}
+
+#[cfg(all(test, windows))]
+mod windows_tests {
+    use super::*;
+
+    #[test]
+    fn session_end_broadcasts_set_the_shared_shutdown_flag() {
+        let handler = TerminalControlHandler::install();
+        assert!(!handler.shutdown_requested());
+
+        unsafe {
+            shutdown_window_proc(std::ptr::null_mut(), WM_QUERYENDSESSION, 0, 0);
+        }
+        assert!(handler.shutdown_requested());
+
+        shared_shutdown_flag().store(false, Ordering::SeqCst);
+        unsafe {
+            shutdown_window_proc(std::ptr::null_mut(), WM_ENDSESSION, 1, 0);
+        }
+        assert!(handler.shutdown_requested());
+        shared_shutdown_flag().store(false, Ordering::SeqCst);
+    }
+
+    #[test]
+    fn shutdown_window_class_can_be_registered_repeatedly() {
+        let first = ShutdownWindow::create();
+        let second = ShutdownWindow::create();
+        assert!(first.is_some());
+        assert!(second.is_some());
+    }
 }

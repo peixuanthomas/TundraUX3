@@ -1,4 +1,5 @@
-/docs
+/docs/*
+!/docs/bundled-runtime.md
 /target/
 /.worktrees/
 /worktrees/

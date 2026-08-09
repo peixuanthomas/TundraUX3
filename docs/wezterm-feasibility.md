@@ -2,9 +2,15 @@
 
 ## 结论
 
-**CONDITIONAL GO**（2026-07-18）。
+**EXPERIMENTAL INTEGRATION**（2026-08-09；原始 POC 结论为 CONDITIONAL GO）。
 
-定制 WezTerm 的编译期 kiosk 模式、macOS 双架构构建、单会话硬守卫、配置隔离、受限单实例激活、正常退出和异常诊断已经通过自动测试与本机 smoke。当前不满足 `GO` 的原因是 Windows 11 交互桌面验证，以及 macOS/Windows 的 IME、鼠标、系统快捷键和多显示器人工复测尚未完成。因此本分支不设计、不实现 TundraUX3 启动接入。
+定制 WezTerm 的编译期 kiosk 模式、macOS 双架构构建、单会话硬守卫、配置隔离、受限单实例激活、正常退出和异常诊断已经通过自动测试与本机 smoke。TundraUX3 现以**实验性** launcher/runtime 接入该 fork；它不是稳定发行承诺。Windows 11 交互桌面验证，以及 macOS/Windows 的 IME、鼠标、系统快捷键和多显示器人工复测仍未完成。
+
+这里的构建与 smoke 结论属于下文归档的 kiosk POC。当前主仓库新增的
+managed-lifecycle 补丁、外层 watchdog 和 bundle 装配尚未完成同等级的
+WezTerm 源码构建验证；本次 checkout 获取固定 submodule 时持续收到上游
+HTTP 502。当前恢复页是 bundled WezTerm 内的私有 `tundra-recovery` PTY
+子程序，不应描述成已经完成的 WezTerm 原生 no-PTY renderer。
 
 解除条件：完成下文“待人工复测”全部项目且没有发现能够创建第二会话、退出 kiosk 全屏或破坏输入法的路径。若发现问题，应在 WezTerm fork 内修复并重新运行本报告的全部测试。
 
@@ -29,7 +35,7 @@
 - GUI 动作分发和 mux 的 pane/tab/split/spawn 入口均拒绝第二会话；不启动通用 GUI mux server。
 - 使用只接受字面量 `ACTIVATE\n` 的本地用户 socket。第二次启动发送激活消息后退出，不接受 spawn 参数。
 - 首个窗口显示前进入 simple fullscreen；收到非全屏 resize 状态时恢复全屏；运行期间忽略普通关闭、退出、切换全屏、launcher、命令面板和调试 overlay 动作。
-- 子进程返回 0 时关闭；非零退出使用 WezTerm 内建终端诊断并保留窗口，Enter/Escape 关闭诊断页。
+- 历史 POC 中，子进程返回 0 时关闭；非零退出使用 WezTerm 内建终端诊断并保留窗口，Enter/Escape 关闭诊断页。实验 managed 补丁改为把所有退出交回外层，由独立恢复程序只接受 Enter 的事故绑定凭证。
 
 保留了上游的 tab/mux 类型，没有进行结构级删除。
 
@@ -117,4 +123,4 @@ GitHub Actions 已通过：
 2. Windows 11 x64：MSVC 产物启动、任务栏覆盖、Alt-F4/Win 快捷键、微软拼音、复制粘贴、鼠标报告、第二次启动聚焦、多显示器、注销/关机。
 3. 两个平台：同时启动多个进程、主进程崩溃后的陈旧 socket 恢复、子进程被信号/强制结束后的诊断。
 
-在这些条件通过之前，最终状态保持 **CONDITIONAL GO**，不得开始 TundraUX3 launcher、watchdog、安装器或 bundle 接入。
+在这些条件通过之前，最终状态保持 **EXPERIMENTAL**；不得将 bundled runtime 提升为稳定渠道或替换既有稳定 Shell/CLI 发布物。

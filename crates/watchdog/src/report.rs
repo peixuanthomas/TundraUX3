@@ -82,6 +82,8 @@ pub(crate) struct IncidentRecord {
     pub occurred_at: DateTime<Utc>,
     pub process_name: String,
     pub process_version: String,
+    #[serde(default)]
+    pub session_id: Option<String>,
     pub process_id: u32,
     pub run_id: String,
     pub app: Option<AppDescriptor>,

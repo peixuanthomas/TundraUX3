@@ -1,6 +1,6 @@
 # TundraUX3 技术文档
 
-TundraUX3 是一个以 Rust 编写的终端桌面环境实验项目。它在一个全屏 TUI 会话中串联首次配置、账户登录、Weathr 锁屏、主页、时钟、文件管理、应用启动器、Markdown 编辑器、设置、用户管理、诊断与通知中心。本文面向开发、构建、打包和排障；用户入口二进制仍为 `tundra-shell` 与 `tundra-cli`。
+TundraUX3 是一个以 Rust 编写的终端桌面环境实验项目。它在一个全屏 TUI 会话中串联首次配置、账户登录、Weathr 锁屏、主页、时钟、文件管理、应用启动器、Markdown 编辑器、设置、用户管理、诊断与通知中心。本文面向开发、构建、打包和排障；实验性发行物的用户入口为 `tundra` launcher，`tundra-shell` 与 `tundra-cli` 保留为私有运行时组件。
 
 ## 目录
 
@@ -35,7 +35,7 @@ TundraUX3 是一个以 Rust 编写的终端桌面环境实验项目。它在一�
 
 支持 Windows 11、macOS 与 Linux。Linux 首发目标为 x86_64 上的 systemd/Freedesktop 普通桌面会话，包括 Ubuntu LTS、Fedora、GNOME/KDE 与 Wayland/X11；无需 root。Windows 平台要求 Windows 11 build 22000 或更高。
 
-运行时应使用兼容 crossterm 的真实终端，例如 Windows Terminal、WezTerm 或 iTerm2。默认资源集至少需要 **108 × 20** 个终端单元格；内建 Command Line 在 Tundra 顶栏和状态栏之外需要 108 × 22。程序会综合实际加载的 ASCII 资源、Shell 布局与 Weathr 资源计算下限，因此自定义较大资源会相应提高要求。
+源码开发时应使用兼容 crossterm 的真实终端，例如 Windows Terminal、WezTerm 或 iTerm2。实验性发行物改用包内、受控的 WezTerm，且不会读取用户配置或回退到系统终端。默认资源集至少需要 **108 × 20** 个终端单元格；内建 Command Line 在 Tundra 顶栏和状态栏之外需要 108 × 22。程序会综合实际加载的 ASCII 资源、Shell 布局与 Weathr 资源计算下限，因此自定义较大资源会相应提高要求。
 
 Linux 还需要 `xdg-utils` 与 `libglib2.0-bin`；推荐有 session D-Bus、xdg-desktop-portal、polkit 和 XWayland。Wayland data-control 不可用时，XWayland 可作为剪贴板兼容层。
 
@@ -86,7 +86,9 @@ cargo run -p cli --bin tundra-cli -- repl
 
 ### 启动生命周期
 
-`tundra-shell` 的正常启动分为以下阶段：
+实验性 bundle 的正常启动首先由 `tundra` launcher 完成。它从自身安装目录预检私有 runtime，使用绝对路径执行受控 WezTerm 的 `start -- <absolute tundra-shell>`，并通过 session ID 与原子结果文件观察整个 WezTerm/Shell 会话。launcher 是生命周期 watchdog：`0` 为关闭、`74` 为显式重启、`75` 为已确认 reset；其余退出、信号、启动失败和结果文件缺失在 60 秒窗口内按 0.5、2、5 秒最多自动恢复三次。预算耗尽时，当前实验实现启动一棵新的 bundled WezTerm，并以私有 `tundra-recovery` PTY 子程序显示脱敏 incident handoff 和像素二维码；只有 Enter 写出的事故绑定凭证能让 launcher 冷启动。WezTerm 原生 no-PTY recovery renderer 仍是尚未完成构建验证的目标，不得把当前 helper 描述成该原生模式。
+
+Shell 在受管模式中关闭重复的 unclean-run tracking 和自我重启，只写回结果；直接从源码运行 `tundra-shell` 时仍保留原有自主 watchdog 行为。Shell 本身的正常启动分为以下阶段：
 
 1. `main` 创建进程级 `WatchdogRuntime`，安装 `ProcessWatchdog`、终端紧急恢复函数，并检查上次未正常关闭的运行标记。
 2. 加载 `ascii-assets` 默认主题，计算共同最小终端尺寸；尺寸不够时在进入全屏前给出可操作错误。
@@ -95,22 +97,24 @@ cargo run -p cli --bin tundra-cli -- repl
 5. 用户列表为空时进入首次设置和管理员创建；否则进入 Weathr 锁屏，再转入登录。
 6. 构造同时持有 `AppState` 与 `UiSessionState` 的 `ShellSession`，并建立首屏、焦点和命中表。
 7. 进入事件循环：采集终端、时间与后台任务事件，分发命令，构造 ViewModel，再布局并绘制一帧。
-8. 主运行结果明确区分退出、重启和重置：退出恢复终端后结束；Unix 重启通过 `exec` 保持前台终端组；重置由 Shell 收尾后重新创建初始存储。注销则销毁本次 Shell UI 会话并返回锁屏。支持关机的平台会在终端恢复后调用平台接口。
+8. 主运行结果明确区分退出、重启和重置：受管模式把 `0`、`74` 或 `75` 写入原子结果后交给外层；直接模式仍在恢复终端后自行完成重启/重置。注销则销毁本次 Shell UI 会话并返回锁屏。支持关机的平台会在终端恢复后调用平台接口。
 
 ```mermaid
 flowchart TD
-    A["tundra-shell"] --> B["Watchdog 边界与上次运行标记"]
-    B --> C["加载 ASCII 资源并校验终端尺寸"]
-    C --> D["Platform 能力、路径与 Storage schema"]
-    D --> E["启动 Banner / 预取天气"]
-    E --> F{"是否已有用户？"}
-    F -- "否" --> G["首次设置 / 创建管理员"]
-    F -- "是" --> H["Weathr 锁屏 / 登录"]
-    G --> I["ShellSession: AppState + UiSessionState"]
-    H --> I
-    I --> J["事件循环、状态转换、ViewModel、Ratatui 帧"]
-    J --> K{"退出、重启、重置、注销或关机"}
-    K --> L["恢复终端；退出或回到锁屏"]
+    A["tundra launcher / lifecycle watchdog"] --> B["bundled wezterm-gui"]
+    B --> C["tundra-shell (PTY child)"]
+    C --> D["Shell watchdog boundary / direct-mode run marker"]
+    D --> E["加载 ASCII 资源并校验终端尺寸"]
+    E --> F["Platform 能力、路径与 Storage schema"]
+    F --> G["启动 Banner / 预取天气"]
+    G --> H{"是否已有用户？"}
+    H -- "否" --> I["首次设置 / 创建管理员"]
+    H -- "是" --> J["Weathr 锁屏 / 登录"]
+    I --> K["ShellSession: AppState + UiSessionState"]
+    J --> K
+    K --> L["事件循环、状态转换、ViewModel、Ratatui 帧"]
+    L --> M{"退出、重启、重置、注销或关机"}
+    M --> N["恢复终端；向 launcher 返回结果或回到锁屏"]
 ```
 
 ### 输入、路由与绘制
@@ -182,7 +186,7 @@ flowchart TD
 
 关键边界是：`app` 不依赖 `ui`、Ratatui 或 crossterm。UI 可以读取应用领域类型，但应用命令不携带坐标、`Rect`、`UiId` 或终端按键。`shell` 是组合根，负责连接终端世界、领域状态、平台副作用与生命周期。
 
-### 11 个 workspace crate
+### 13 个 workspace crate
 
 | Crate | 主要职责 |
 | --- | --- |
@@ -190,7 +194,9 @@ flowchart TD
 | `ascii-assets` | 主题清单、banner、图标、天气世界、时钟字体的加载、校验和尺寸统计。 |
 | `cli` | `tundra-cli` 参数解析、诊断、路径查看、公开配置读写、存储重置、资源/动画预览与 Weathr 启动；不依赖 UI。 |
 | `identity` | 用户、角色、会话、授权、密码验证与登录锁定；记录由 storage 持久化。 |
+| `launcher` | 公开 `tundra` GUI 入口、私有 runtime 预检、会话结果协议、WezTerm/Shell 进程树监督、恢复预算与原生 critical-dialog 降级。 |
 | `platform` | Windows/macOS/Linux 的系统路径、终端能力、文件系统、启动外部程序、Trash、关机与系统诊断边界。 |
+| `recovery` | 只读取脱敏的 `RecoveryHandoffV1`，作为 WezTerm recovery 会话的唯一前台程序，渲染强警告页与离线二维码。 |
 | `shell` | `ShellSession`、控制器、presentation、终端事件转换、全屏会话、锁屏与应用组合，以及 `tundra-shell` 入口。 |
 | `storage` | TOML/版本化 JSON、原子写入、schema 校验、迁移、恢复与存储健康。 |
 | `time` | `NetworkClock`、`ClockDisplay`、`ClockSnapshot`、时间同步与 `TIME_SYNC_INTERVAL`；由 APP 和 Weathr 共用。 |
@@ -211,6 +217,8 @@ crates/
 ├── time/
 ├── weathr/
 ├── ascii-assets/
+├── launcher/
+├── recovery/
 ├── watchdog/
 └── cli/
 ```
@@ -367,7 +375,7 @@ Linux 应用目录为 `0700`；配置、用户、会话、恢复、日志和临�
 
 ## Watchdog 与故障恢复
 
-每个进程只创建一个 `WatchdogRuntime`。它提供进程级 panic 边界、受管理任务/线程、恢复策略、运行 journal 和事故报告；`ManagedTaskGroup` 统一管理线程与 Tokio 任务。所有可能 panic 的生产后台工作都应进入 managed task group，并声明是否可安全重放。
+每个进程只创建一个 `WatchdogRuntime`。它提供进程级 panic 边界、受管理任务/线程、恢复策略、运行 journal 和事故报告；`ManagedTaskGroup` 统一管理线程与 Tokio 任务。所有可能 panic 的生产后台工作都应进入 managed task group，并声明是否可安全重放。实验性 bundle 另有 launcher 级 watchdog 监督 GUI 与 Shell 进程树；Shell 仅保留任务级 watchdog 与 terminal recovery，避免两个进程争夺 unclean-run 标记或重启决策。
 
 重启策略受重放安全性约束：只有 `Idempotent`，或具备恢复处理器的 `Checkpointed` 任务允许重启；`Never + RestartTask` 组合会被拒绝。
 
@@ -379,7 +387,7 @@ Linux 应用目录为 `0700`；配置、用户、会话、恢复、日志和临�
 
 操作 commit 时删除 journal，未提交的 `Drop` 标记为 `interrupted`。若无法安全恢复，会保留 journal 并阻止同类变更，不能悄然继续执行。
 
-活动运行标记位于 `<data>/watchdog/runs/`，让下次启动能记录本进程未及观察的异常退出。每起事故生成 JSON 和文本报告：主报告目录失败时依次尝试 fallback，再写入 stderr。报告会集中脱敏并限制大小：文本最多 4,096 bytes，数组最多 256 项；默认保留最近 30 起、30 天、总量不超过 50 MiB。调用方也不得将密码、token、剪贴板内容或原始用户输入写入事故上下文。
+活动运行标记位于 `<data>/watchdog/runs/`，让下次启动能记录本进程未及观察的异常退出。每起事故生成 JSON 和文本报告：主报告目录失败时依次尝试 fallback，再写入 stderr。报告会集中脱敏并限制大小：文本最多 4,096 bytes，数组最多 256 项；默认保留最近 30 起、30 天、总量不超过 50 MiB。调用方也不得将密码、token、剪贴板内容或原始用户输入写入事故上下文。给 recovery 页的 `RecoveryHandoffV1` 是只读、版本化且再次脱敏的投影；二维码最多 1,200 UTF-8 bytes，只含该投影允许的摘要和最多 8 个规范化 stack frame。
 
 正常退出和大多数 panic 都应恢复 raw mode、鼠标捕获、备用屏幕、颜色与光标。若进程被强制终止，先重置当前终端，再检查 crashes 报告；下一次启动会利用未关闭的运行标记生成“原因未知”的事故记录。
 
@@ -520,6 +528,10 @@ cargo build --locked -p shell -p cli -p weathr
 
 `scripts/package-linux.sh` 只允许在 Linux x86_64 主机运行，默认将产物写入 `dist/`；版本可由 `TUNDRAUX3_VERSION` 覆盖，否则读取 workspace 版本。脚本执行 `cargo build --release --locked -p shell -p cli`，并拒绝将 `/` 或仓库根目录作为输出目录。
 
+`scripts/package-bundled-linux.sh` 是新的实验性 bundle 入口。它生成唯一公开 `tundra` launcher、私有 `runtime/` 和 Debian 的 `/usr/lib/tundra/runtime`，桌面入口为 `Exec=tundra`、`Terminal=false`。所有平台的 runtime 契约、WezTerm pin 与装配说明见 [docs/bundled-runtime.md](docs/bundled-runtime.md)。
+
+以下三个条目描述既有稳定 `scripts/package-linux.sh` 产物，而不是实验 bundle：
+
 - 便携包 `tundraux3-<version>-linux-x86_64.tar.gz` 包含两个二进制、`assets/`、根许可证、Weathr 许可证和 Linux 说明。
 - Debian 包 `tundraux3_<version>_amd64.deb` 将二进制安装到 `/usr/bin`、资源安装到 `/usr/share/tundraux3/assets`，并附带 desktop entry 与许可证；`--tar-only` 跳过这一产物。
 - 所有产物在 `SHA256SUMS` 中记录校验和。`.deb` 依赖 `xdg-utils` 与 `libglib2.0-bin`，并推荐 D-Bus 用户会话、portal、polkit 与 XWayland。
@@ -528,7 +540,7 @@ cargo build --locked -p shell -p cli -p weathr
 
 workspace 通过 `[patch.crates-io]` 将 `vt100 0.15.2` 指向本地 `third_party/vt100`，使项目使用经过本地维护的解析器实现，而不是从 crates.io 解析该依赖。该补丁回移了 `Grid::visible_rows` 的 scrollback 修复，并额外支持 `CSI 3 J`；变更、上游信息和许可应与该目录内的 `README.md`、`TUNDRA_PATCH.md` 和 `LICENSE` 一并审阅。
 
-`third_party/wezterm` 仅保存归档的 POC/参考材料，不是 TundraUX3 的生产运行时依赖，也不构成已启用的终端实现。对该目录中的代码、字体和其他资源进行分发或再利用前，必须逐项检查随附许可。
+`third_party/wezterm` 是实验性 bundle 的固定构建输入。CI 与装配脚本要求它已初始化、无 tracked/staged 改动，且精确指向 pin；缺少、污染或版本不匹配时失败，绝不转而查找系统 WezTerm。它仍处于实验发布阶段，稳定渠道不得据此替换既有 Shell/CLI 发布物。对该目录中的代码、字体和其他资源进行分发或再利用前，必须逐项检查随附许可。
 
 ## 故障排查
 

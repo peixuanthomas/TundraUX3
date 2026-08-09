@@ -1,0 +1,12 @@
+Package: tundraux3-bundled-experimental
+Version: @VERSION@
+Section: utils
+Priority: optional
+Architecture: amd64
+Maintainer: TundraUX3 contributors <maintainers@tundraux3.invalid>
+Depends: xdg-utils, libglib2.0-bin
+Recommends: dbus-user-session, xdg-desktop-portal, policykit-1, xwayland
+Description: TundraUX3 with a private WezTerm runtime (experimental)
+ This experimental channel provides one public launcher, a pinned private
+ WezTerm runtime, the full-screen Tundra Shell and its management CLI. It does
+ not open a system terminal or use a user-installed WezTerm.
