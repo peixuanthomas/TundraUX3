@@ -6,7 +6,6 @@ pub mod macos;
 pub mod mock;
 mod paths;
 mod platform;
-#[allow(unsafe_code)]
 mod process;
 mod terminal;
 
@@ -38,15 +37,11 @@ pub use platform::{
     default_external_open_policy, default_file_attributes, default_file_open_policy,
     default_read_directory, default_rename_path, native_platform,
 };
-pub use process::{
-    ProcessExit, ProcessSpec, ProcessStatus, ProcessStream, SupervisedChild, spawn_supervised,
-    validate_process_spec,
-};
+pub use process::{ProcessExit, ProcessSpec, ProcessStream, validate_process_spec};
 pub use terminal::{
     ENTER_FULLSCREEN_SEQUENCE, EXIT_FULLSCREEN_SEQUENCE, TerminalControlHandler,
-    is_windows_terminal_session, pump_desktop_shutdown_events, terminal_environment_check,
-    terminal_environment_check_with, terminal_environment_check_with_graphics_protocol,
-    with_terminal_fullscreen,
+    is_windows_terminal_session, terminal_environment_check, terminal_environment_check_with,
+    terminal_environment_check_with_graphics_protocol, with_terminal_fullscreen,
 };
 
 #[cfg(windows)]

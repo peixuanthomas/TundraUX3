@@ -1,3 +1,0 @@
-# Unified diffs encode an empty context line as one literal space.  Treat
-# stored patch payloads as patch syntax rather than source whitespace.
-patches/*.patch text eol=lf -whitespace

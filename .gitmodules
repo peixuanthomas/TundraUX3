@@ -1,3 +1,0 @@
-[submodule "third_party/wezterm"]
-	path = third_party/wezterm
-	url = https://github.com/peixuanthomas/wezterm.git

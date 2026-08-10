@@ -1,7 +1,6 @@
 use super::*;
 use std::panic::AssertUnwindSafe;
 use std::path::Path;
-use std::sync::atomic::{AtomicBool, Ordering};
 use watchdog::{
     AppCriticality, AppDescriptor, AppId, AppWatchdog, BoundaryKind, BoundarySpec, CaughtPanic,
     ComponentId, IncidentKind, IncidentReceipt, ManagedThreadHandle, PanicAction, ProcessWatchdog,
@@ -10,17 +9,6 @@ use watchdog::{
 
 const MAX_READY_TERMINAL_EVENTS_PER_FRAME: usize = 4_096;
 const COMMAND_LINE_REFRESH_INTERVAL: Duration = Duration::from_millis(16);
-
-struct ManagedShutdownWatcher {
-    stop: mpsc::Sender<()>,
-    _worker: ManagedThreadHandle<()>,
-}
-
-impl Drop for ManagedShutdownWatcher {
-    fn drop(&mut self) {
-        let _ = self.stop.send(());
-    }
-}
 
 pub fn run_without_animation(output: &mut impl Write) -> io::Result<()> {
     run_not_fullscreen_without_animation(output)
@@ -187,9 +175,6 @@ pub fn run_fullscreen_blocking_managed_with_outcome(
     let shell_watchdog = process
         .register_app(shell_watchdog_descriptor())
         .map_err(io::Error::other)?;
-    let _managed_shutdown_watcher =
-        spawn_managed_shutdown_watcher(terminal_control.shutdown_flag(), &shell_watchdog)
-            .map_err(io::Error::other)?;
     let weathr_watchdog = process
         .register_app(weathr::weathr_watchdog_descriptor())
         .map_err(io::Error::other)?;
@@ -1610,21 +1595,6 @@ mod runtime_preflight_tests {
     }
 
     #[test]
-    fn managed_shutdown_file_sets_the_shared_terminal_flag() {
-        let root = recovery_asset_root("managed-shutdown");
-        std::fs::create_dir_all(&root).unwrap();
-        let request = root.join("session.shutdown");
-        std::fs::write(&request, b"shutdown\n").unwrap();
-        let shutdown = AtomicBool::new(false);
-        let (_stop, stop_receiver) = mpsc::channel();
-
-        watch_managed_shutdown_file(&request, &shutdown, &stop_receiver);
-
-        assert!(shutdown.load(Ordering::SeqCst));
-        std::fs::remove_dir_all(root).unwrap();
-    }
-
-    #[test]
     fn startup_auto_restore_recreates_the_complete_default_theme() {
         let root = recovery_asset_root("auto");
         let _ = std::fs::remove_dir_all(&root);
@@ -2357,54 +2327,6 @@ pub(super) fn shell_watchdog_descriptor() -> AppDescriptor {
         env!("CARGO_PKG_VERSION"),
         AppCriticality::ProcessCritical,
     )
-}
-
-fn spawn_managed_shutdown_watcher(
-    shutdown: Arc<AtomicBool>,
-    watchdog: &AppWatchdog,
-) -> Result<Option<ManagedShutdownWatcher>, watchdog::WatchdogError> {
-    let Some(shutdown_path) = crate::ManagedSession::from_environment()
-        .ok()
-        .flatten()
-        .and_then(|session| session.shutdown_path().map(Path::to_path_buf))
-    else {
-        return Ok(None);
-    };
-    let (stop, stop_receiver) = mpsc::channel();
-    let group = watchdog
-        .child_component(ComponentId::from_static("managed-shutdown"))
-        .task_group("request-file");
-    let worker = group.spawn_thread(
-        TaskSpec {
-            id: TaskId::from_static("watcher"),
-            kind: TaskKind::LongRunning,
-            panic_action: PanicAction::ReportOnly,
-            replay_safety: ReplaySafety::Never,
-            restart_policy: RestartPolicy::never(),
-        },
-        move || watch_managed_shutdown_file(&shutdown_path, &shutdown, &stop_receiver),
-    )?;
-    Ok(Some(ManagedShutdownWatcher {
-        stop,
-        _worker: worker,
-    }))
-}
-
-fn watch_managed_shutdown_file(
-    shutdown_path: &Path,
-    shutdown: &AtomicBool,
-    stop_receiver: &mpsc::Receiver<()>,
-) {
-    loop {
-        if shutdown_path.is_file() {
-            shutdown.store(true, Ordering::SeqCst);
-            break;
-        }
-        match stop_receiver.recv_timeout(Duration::from_millis(25)) {
-            Ok(()) | Err(mpsc::RecvTimeoutError::Disconnected) => break,
-            Err(mpsc::RecvTimeoutError::Timeout) => {}
-        }
-    }
 }
 
 pub(super) fn drain_watchdog_incidents(state: &mut ShellSession, watchdog: &ProcessWatchdog) {

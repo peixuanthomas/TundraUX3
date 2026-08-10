@@ -6,7 +6,6 @@ mod durable;
 mod error;
 mod journal;
 mod model;
-mod recovery;
 mod report;
 mod report_catalog;
 mod runtime;
@@ -18,11 +17,6 @@ pub use config::{RetentionPolicy, WatchdogConfig};
 pub use error::WatchdogError;
 pub use journal::OperationGuard;
 pub use model::*;
-pub use recovery::{
-    PANIC_CAPSULE_MAX_BYTES, PANIC_CAPSULE_V1_HEADER, RECOVERY_HANDOFF_V1_SCHEMA_VERSION,
-    RecoveryComponentVersionsV1, RecoveryHandoffInputV1, RecoveryHandoffV1,
-    RecoveryProcessFailureV1,
-};
 pub use report_catalog::{IncidentReportCatalog, IncidentReportSummary};
 pub use runtime::{AppWatchdog, CaughtPanic, EmergencyCleanup, ProcessWatchdog, WatchdogRuntime};
 pub use task::{ManagedTaskGroup, ManagedThreadHandle};
@@ -58,8 +52,7 @@ mod tests {
             root.join("data"),
             "watchdog-test",
             env!("CARGO_PKG_VERSION"),
-        )
-        .with_session_id("test-session");
+        );
         config.heartbeat_flush_interval = Duration::ZERO;
         let (runtime, process) = WatchdogRuntime::start_isolated(config).unwrap();
         (runtime, process, root)
@@ -221,14 +214,8 @@ mod tests {
         assert_eq!(report["panic"]["payload"], "render exploded");
         assert_eq!(report["app"]["id"], "test.app");
         assert_eq!(report["component"], "test.app/render");
-        assert_eq!(report["session_id"], "test-session");
         assert_eq!(report["breadcrumbs"][0]["message"], "safe test breadcrumb");
         assert!(report["panic"]["backtrace"].as_str().is_some());
-        assert!(
-            fs::read_to_string(receipt.text_report_path.as_ref().unwrap())
-                .unwrap()
-                .contains("Session: test-session")
-        );
 
         let routed = receive_incident(&runtime);
         assert_eq!(routed.incident_id, receipt.incident_id);

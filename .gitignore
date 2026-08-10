@@ -1,8 +1,5 @@
-/docs/*
-!/docs/bundled-runtime.md
-!/docs/20260809.md
+/docs
 /target/
-/dist/
 /.worktrees/
 /worktrees/
 /TundraUX3/target/

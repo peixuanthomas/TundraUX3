@@ -1,8 +1,0 @@
-[Desktop Entry]
-Type=Application
-Name=TundraUX3 (Experimental Bundle)
-Comment=Launch TundraUX3 in its bundled terminal
-Exec=tundra
-Terminal=false
-Categories=System;Utility;
-StartupNotify=true

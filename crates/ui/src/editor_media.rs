@@ -346,12 +346,6 @@ struct Iterm2GraphicsCapabilities {
 }
 
 #[cfg(unix)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum TerminalIdentity {
-    WezTerm,
-}
-
-#[cfg(unix)]
 fn query_unix_terminal_capabilities(
     timeout: Duration,
 ) -> Result<UnixTerminalCapabilityQuery, EditorMediaError> {
@@ -366,11 +360,9 @@ fn query_unix_terminal_capabilities(
         },
     );
     let iterm2_query = iterm2_capability_query(is_tmux);
-    let terminal_identity_query = terminal_identity_query(is_tmux);
     let mut stdout = io::stdout().lock();
     stdout
         .write_all(iterm2_query.as_bytes())
-        .and_then(|()| stdout.write_all(terminal_identity_query.as_bytes()))
         .and_then(|()| stdout.write_all(query.as_bytes()))
         .and_then(|()| stdout.flush())
         .map_err(EditorMediaError::TerminalQuery)?;
@@ -442,7 +434,6 @@ fn query_unix_terminal_capabilities(
     }
 
     let iterm2_graphics = parse_iterm2_graphics_capabilities(&raw_responses);
-    let terminal_identity = parse_terminal_identity(&raw_responses);
     let mut picker = picker_from_terminal_responses(&responses);
     let has_live_standard_protocol = responses.iter().any(|response| {
         matches!(
@@ -453,9 +444,7 @@ fn query_unix_terminal_capabilities(
     let had_unverified_graphics_hint = !has_live_standard_protocol
         && iterm2_graphics.is_none()
         && picker.protocol_type() != ProtocolType::Halfblocks;
-    let has_terminal_protocol_override =
-        apply_terminal_protocol_compatibility(&mut picker, terminal_identity);
-    if !has_terminal_protocol_override && !has_live_standard_protocol {
+    if !has_live_standard_protocol {
         picker.set_protocol_type(
             iterm2_graphics
                 .and_then(|capabilities| {
@@ -514,52 +503,6 @@ fn responses_support_text_sizing_protocol(responses: &[CapabilityResponse]) -> b
 fn iterm2_capability_query(is_tmux: bool) -> String {
     let (start, escape, end) = CapabilityParser::escape_tmux(is_tmux);
     format!("{start}{escape}]1337;Capabilities{escape}\\{end}")
-}
-
-#[cfg(unix)]
-fn terminal_identity_query(is_tmux: bool) -> String {
-    let (start, escape, end) = CapabilityParser::escape_tmux(is_tmux);
-    format!("{start}{escape}[>q{end}")
-}
-
-#[cfg(unix)]
-fn apply_terminal_protocol_compatibility(
-    picker: &mut Picker,
-    terminal_identity: Option<TerminalIdentity>,
-) -> bool {
-    if terminal_identity != Some(TerminalIdentity::WezTerm) {
-        return false;
-    }
-
-    // ratatui-image 8's Kitty renderer places images with U+10EEEE Unicode
-    // placeholders. WezTerm answers the basic Kitty transmission query but
-    // does not implement those placeholders, so selecting Kitty renders a
-    // grid of replacement glyphs instead of the image. WezTerm's XTVERSION
-    // response identifies it directly, and its iTerm2 inline image
-    // implementation is compatible with ratatui-image.
-    picker.set_protocol_type(ProtocolType::Iterm2);
-    true
-}
-
-#[cfg(unix)]
-fn parse_terminal_identity(response: &[u8]) -> Option<TerminalIdentity> {
-    const PREFIX: &[u8] = b"\x1bP>|";
-    let start = response
-        .windows(PREFIX.len())
-        .position(|window| window == PREFIX)?
-        + PREFIX.len();
-    let tail = &response[start..];
-    let end = tail
-        .windows(2)
-        .position(|window| window == b"\x1b\\")
-        .or_else(|| tail.iter().position(|byte| *byte == 0x9c))?;
-    let name_end = tail[..end]
-        .iter()
-        .position(u8::is_ascii_whitespace)
-        .unwrap_or(end);
-    tail[..name_end]
-        .eq_ignore_ascii_case(b"WezTerm")
-        .then_some(TerminalIdentity::WezTerm)
 }
 
 #[cfg(unix)]
@@ -781,25 +724,6 @@ mod tests {
             })
         );
         assert_eq!(parse_iterm2_graphics_capabilities(b"\x1b[?1;0c"), None);
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn wezterm_identity_selects_iterm2_instead_of_kitty_placeholders() {
-        let raw_responses = b"\x1bP>|WezTerm 20260718-123456\x1b\\";
-        let terminal_identity =
-            parse_terminal_identity(raw_responses).expect("WezTerm XTVERSION response");
-        let responses = vec![CapabilityResponse::Kitty];
-        let mut picker = picker_from_terminal_responses(&responses);
-        assert_eq!(picker.protocol_type(), ProtocolType::Kitty);
-
-        assert!(apply_terminal_protocol_compatibility(
-            &mut picker,
-            Some(terminal_identity)
-        ));
-
-        assert_eq!(picker.protocol_type(), ProtocolType::Iterm2);
-        assert_eq!(parse_terminal_identity(b"\x1bP>|xterm 390\x1b\\"), None);
     }
 
     #[cfg(unix)]
