@@ -5,7 +5,39 @@ use std::io::Write;
 use platform::Platform;
 use storage::{StorageLayout, StorageManager};
 use watchdog::{AppWatchdog, IncidentReceipt, IncidentSeverity, ProcessWatchdog};
-use weathr::{LaunchLocation, LaunchOptions, WeathrRunError};
+use weathr::WeathrRunError;
+
+/// Launch intent is owned by the host that reads Settings. Weathr itself sees
+/// only immutable service snapshots and display preferences.
+#[derive(Debug, Clone, PartialEq)]
+pub struct WeathrLaunchLocation {
+    pub latitude: f64,
+    pub longitude: f64,
+    pub city: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct WeathrLaunchOptions {
+    pub load_config_file: bool,
+    pub prefer_config_location: bool,
+    pub location_query: Option<String>,
+    pub location_override: Option<WeathrLaunchLocation>,
+    pub timezone_id: Option<String>,
+    pub minimum_terminal_size: Option<(u16, u16)>,
+}
+
+impl Default for WeathrLaunchOptions {
+    fn default() -> Self {
+        Self {
+            load_config_file: false,
+            prefer_config_location: false,
+            location_query: None,
+            location_override: None,
+            timezone_id: None,
+            minimum_terminal_size: None,
+        }
+    }
+}
 
 pub(crate) fn run_weathr<Stderr, Launcher, LaunchError>(
     platform: &dyn Platform,
@@ -14,7 +46,7 @@ pub(crate) fn run_weathr<Stderr, Launcher, LaunchError>(
 ) -> i32
 where
     Stderr: Write,
-    Launcher: FnOnce(LaunchOptions) -> Result<(), LaunchError>,
+    Launcher: FnOnce(WeathrLaunchOptions) -> Result<(), LaunchError>,
     LaunchError: fmt::Display,
 {
     match weathr_launcher(weathr_launch_options(platform)) {
@@ -35,7 +67,7 @@ pub(crate) fn run_weathr_managed<Stderr, Launcher>(
 ) -> i32
 where
     Stderr: Write,
-    Launcher: FnOnce(LaunchOptions, AppWatchdog) -> Result<(), WeathrRunError>,
+    Launcher: FnOnce(WeathrLaunchOptions, AppWatchdog) -> Result<(), WeathrRunError>,
 {
     let launch_result = weathr_launcher(weathr_launch_options(platform), weathr_watchdog);
     if launch_result.is_err() {
@@ -145,13 +177,8 @@ fn incident_report(incidents: &[IncidentReceipt], incident_id: &str) -> Option<S
         .map(|path| path.display().to_string())
 }
 
-fn weathr_launch_options(platform: &dyn Platform) -> LaunchOptions {
-    let mut options = LaunchOptions {
-        load_config_file: false,
-        prefer_config_location: false,
-        ..LaunchOptions::default()
-    };
-
+fn weathr_launch_options(platform: &dyn Platform) -> WeathrLaunchOptions {
+    let mut options = WeathrLaunchOptions::default();
     let Some(config) = platform
         .app_paths()
         .ok()
@@ -164,18 +191,14 @@ fn weathr_launch_options(platform: &dyn Platform) -> LaunchOptions {
 
     options.timezone_id = Some(config.timezone.clone());
     options.location_query = config.weather_location.clone();
-
-    if let Some(timezone) = app::setup_timezone_options()
+    options.location_override = app::setup_timezone_options()
         .into_iter()
         .find(|timezone| timezone.id == config.timezone)
-    {
-        options.location_override = Some(LaunchLocation {
+        .map(|timezone| WeathrLaunchLocation {
             latitude: timezone.latitude,
             longitude: timezone.longitude,
             city: Some(timezone.label),
         });
-    }
-
     options
 }
 

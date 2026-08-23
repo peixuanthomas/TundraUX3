@@ -13,8 +13,8 @@ path = "src/main.rs"
 [dependencies]
 chrono = { version = "0.4", features = ["serde"] }
 chrono-tz = "0.10"
-crossterm = "0.28"
-ratatui = "0.29"
+crossterm.workspace = true
+ratatui.workspace = true
 portable-pty = "0.9"
 vt100 = "0.15.2"
 tokio = { version = "1", features = ["rt-multi-thread", "time"] }
@@ -25,6 +25,7 @@ storage = { path = "../storage" }
 ui = { path = "../ui" }
 watchdog = { path = "../watchdog", features = ["tokio"] }
 weathr = { path = "../weathr" }
+system-services = { path = "../system-services" }
 time = { version = "0.1.1", path = "../time" }
 
 [target.'cfg(unix)'.dependencies]

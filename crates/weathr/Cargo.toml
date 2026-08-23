@@ -10,15 +10,9 @@ description = "TundraUX-integrated terminal ASCII weather scene renderer"
 path = "src/lib.rs"
 
 [dependencies]
-async-trait = "0.1"
 chrono = { version = "0.4", features = ["serde"] }
-chrono-tz = "0.10"
-crossterm = "0.28"
-dirs = "6.0"
+crossterm.workspace = true
 rand = "0.10"
-reqwest = { version = "0.13", features = ["json"] }
-serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
 thiserror = "2.0"
 tokio = { version = "1", features = [
     "rt-multi-thread",
@@ -26,11 +20,9 @@ tokio = { version = "1", features = [
     "time",
     "macros",
     "signal",
-    "fs",
 ] }
-toml = "0.9"
 ascii-assets = { path = "../ascii-assets" }
-time = { version = "0.1.1", path = "../time" }
+system-services = { path = "../system-services" }
 watchdog = { path = "../watchdog", features = ["tokio"] }
 
 [dev-dependencies]

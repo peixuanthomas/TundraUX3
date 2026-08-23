@@ -1,11 +1,12 @@
 use std::fmt;
 use std::io::Write;
 use std::path::Path;
+use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 
 use platform::Platform;
 use storage::{BorderColor, StorageConfig, StorageLayout, StorageManager};
 use watchdog::{AppWatchdog, ProcessWatchdog};
-use weathr::LaunchOptions;
 
 use crate::arguments::{CliCommand, parse_args};
 use crate::asset_command::run_asset;
@@ -14,7 +15,9 @@ use crate::doctor::run_doctor;
 use crate::help_text::{write_explain, write_help};
 use crate::path_report::run_paths;
 use crate::storage_reset::run_new;
-use crate::weathr_command::{drain_watchdog_incidents, run_weathr, run_weathr_managed};
+use crate::weathr_command::{
+    WeathrLaunchOptions, drain_watchdog_incidents, run_weathr, run_weathr_managed,
+};
 
 const CLEAR_TERMINAL_SEQUENCE: &[u8] = b"\x1b[3J\x1b[2J\x1b[H";
 
@@ -80,7 +83,7 @@ where
                 stderr,
                 process_watchdog,
                 weathr_watchdog.clone(),
-                weathr::run_blocking_managed,
+                launch_weathr_managed,
             )
         });
     }
@@ -91,7 +94,7 @@ where
         stderr,
         process_watchdog,
         weathr_watchdog,
-        weathr::run_blocking_managed,
+        launch_weathr_managed,
     )
 }
 
@@ -113,22 +116,10 @@ where
         .collect::<Vec<_>>();
     if let Ok(CliCommand::Repl { embedded }) = parse_args(&args) {
         return crate::repl::run_repl(embedded, |command| {
-            run_with_platform_and_weathr_launcher(
-                command,
-                platform,
-                stdout,
-                stderr,
-                weathr::run_blocking_with_options,
-            )
+            run_with_platform_and_weathr_launcher(command, platform, stdout, stderr, launch_weathr)
         });
     }
-    run_with_platform_and_weathr_launcher(
-        args,
-        platform,
-        stdout,
-        stderr,
-        weathr::run_blocking_with_options,
-    )
+    run_with_platform_and_weathr_launcher(args, platform, stdout, stderr, launch_weathr)
 }
 
 #[doc(hidden)]
@@ -144,7 +135,7 @@ where
     S: AsRef<str>,
     Stdout: Write,
     Stderr: Write,
-    Launcher: FnOnce(LaunchOptions) -> Result<(), LaunchError>,
+    Launcher: FnOnce(WeathrLaunchOptions) -> Result<(), LaunchError>,
     LaunchError: fmt::Display,
 {
     run_with_platform_and_weathr_launcher_and_asset_root(
@@ -172,7 +163,7 @@ where
     S: AsRef<str>,
     Stdout: Write,
     Stderr: Write,
-    Launcher: FnOnce(LaunchOptions, AppWatchdog) -> Result<(), weathr::WeathrRunError>,
+    Launcher: FnOnce(WeathrLaunchOptions, AppWatchdog) -> Result<(), weathr::WeathrRunError>,
 {
     let mut routed_by_weathr = false;
     let exit_code = match parse_args(args) {
@@ -245,7 +236,7 @@ where
         platform,
         stdout,
         stderr,
-        weathr::run_blocking_with_options,
+        launch_weathr,
         Some(asset_root),
     )
 }
@@ -270,7 +261,7 @@ where
     S: AsRef<str>,
     Stdout: Write,
     Stderr: Write,
-    Launcher: FnOnce(LaunchOptions) -> Result<(), LaunchError>,
+    Launcher: FnOnce(WeathrLaunchOptions) -> Result<(), LaunchError>,
     LaunchError: fmt::Display,
 {
     match parse_args(args) {
@@ -309,6 +300,47 @@ where
             2
         }
     }
+}
+
+fn launch_weathr(options: WeathrLaunchOptions) -> Result<(), weathr::WeathrRunError> {
+    let watchdog = ProcessWatchdog::global()
+        .ok_or(weathr::WeathrRunError::WatchdogUnavailable)?
+        .register_app(weathr::weathr_watchdog_descriptor())
+        .map_err(weathr::WeathrRunError::Watchdog)?;
+    launch_weathr_managed(options, watchdog)
+}
+
+fn launch_weathr_managed(
+    options: WeathrLaunchOptions,
+    watchdog: AppWatchdog,
+) -> Result<(), weathr::WeathrRunError> {
+    let mut services_config = system_services::SystemServicesConfig::default();
+    services_config.weather_location = options.location_query;
+    if let Some(timezone_id) = options.timezone_id {
+        services_config.timezone_id = timezone_id;
+    }
+    services_config.timezone_location =
+        options
+            .location_override
+            .map(|location| system_services::GeoLocation {
+                latitude: location.latitude,
+                longitude: location.longitude,
+                city: location.city,
+            });
+
+    let (services, snapshots) =
+        system_services::SystemServicesRuntime::start(services_config, watchdog.clone());
+    let input = weathr::WeathrDisplayInput {
+        snapshots,
+        clock_format: weathr::ClockFormat::TwentyFourHour,
+        hide_hud: false,
+        palette: weathr::theme::catalogue::DEFAULT_PALETTE,
+        shutdown: Arc::new(AtomicBool::new(false)),
+        minimum_terminal_size: options.minimum_terminal_size,
+    };
+    let result = weathr::run_display_blocking(input, watchdog).map(|_| ());
+    let _ = services.shutdown();
+    result
 }
 
 fn run_cls<Stdout: Write, Stderr: Write>(stdout: &mut Stdout, stderr: &mut Stderr) -> i32 {

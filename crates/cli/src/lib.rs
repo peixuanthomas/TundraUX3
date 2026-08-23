@@ -19,3 +19,4 @@ pub use runner::{
     run_with_platform_and_managed_weathr_launcher, run_with_platform_and_watchdog,
     run_with_platform_and_weathr_launcher,
 };
+pub use weathr_command::{WeathrLaunchLocation, WeathrLaunchOptions};

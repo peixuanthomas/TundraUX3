@@ -16,6 +16,7 @@ ascii-assets = { path = "../ascii-assets" }
 platform = { path = "../platform" }
 shell = { path = "../shell" }
 storage = { path = "../storage" }
+system-services = { path = "../system-services" }
 watchdog = { path = "../watchdog", features = ["tokio"] }
 weathr = { path = "../weathr" }
 rustyline = "17.0"

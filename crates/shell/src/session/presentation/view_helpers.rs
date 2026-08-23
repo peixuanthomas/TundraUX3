@@ -637,41 +637,6 @@ pub(in crate::session) fn should_show_startup_lockscreen(startup: &ShellStartupS
         && !startup.login_users.is_empty()
 }
 
-pub(in crate::session) fn startup_lockscreen_launch_options(
-    startup: &ShellStartupState,
-    terminal_size_requirement: ShellTerminalSizeRequirement,
-) -> weathr::LaunchOptions {
-    let mut options = weathr::LaunchOptions {
-        load_config_file: false,
-        prefer_config_location: false,
-        minimum_terminal_size: Some(terminal_size_requirement.as_terminal_size()),
-        ..weathr::LaunchOptions::default()
-    };
-    let Some(config) = startup
-        .storage_manager
-        .as_ref()
-        .and_then(|storage| storage.load_config().ok())
-    else {
-        return options;
-    };
-
-    options.timezone_id = Some(config.timezone.clone());
-    options.location_query = config.weather_location.clone();
-
-    if let Some(timezone) = app::setup_timezone_options()
-        .into_iter()
-        .find(|timezone| timezone.id == config.timezone)
-    {
-        options.location_override = Some(weathr::LaunchLocation {
-            latitude: timezone.latitude,
-            longitude: timezone.longitude,
-            city: Some(timezone.label),
-        });
-    }
-
-    options
-}
-
 pub(in crate::session) fn platform_capability_summary(
     kind: PlatformKind,
     capabilities: &PlatformCapabilities,

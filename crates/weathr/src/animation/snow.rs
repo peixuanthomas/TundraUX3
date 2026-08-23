@@ -2,8 +2,8 @@ use crate::animation::{
     AnimationSystem, FrameCommands, FrameContext, RenderLayer, TerminalSize, Wind,
 };
 use crate::render::TerminalRenderer;
-use crate::weather::types::SnowIntensity;
 use crossterm::style::Color;
+use system_services::SnowIntensity;
 
 use rand::{Rng, RngExt};
 use std::io;

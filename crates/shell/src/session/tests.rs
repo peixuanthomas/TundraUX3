@@ -818,7 +818,7 @@ fn auth_poll_timeout_wakes_at_password_reveal_deadline() {
 }
 
 #[test]
-fn startup_lockscreen_launch_options_use_storage_timezone_and_location() {
+fn system_services_startup_config_uses_storage_timezone_and_location() {
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .expect("system time")
@@ -845,21 +845,14 @@ fn startup_lockscreen_launch_options_use_storage_timezone_and_location() {
     );
     startup.storage_manager = Some(opened.manager.clone());
 
-    let terminal_size_requirement = ShellTerminalSizeRequirement {
-        width: 108,
-        height: 20,
-    };
-    let options = startup_lockscreen_launch_options(&startup, terminal_size_requirement);
+    let services = system_services_config_for_startup(&startup);
 
-    assert!(!options.load_config_file);
-    assert!(!options.prefer_config_location);
-    assert_eq!(options.timezone_id.as_deref(), Some("Asia/Shanghai"));
+    assert_eq!(services.timezone_id, "Asia/Shanghai");
     assert_eq!(
-        options.location_query.as_deref(),
+        services.weather_location.as_deref(),
         Some("Pudong, Shanghai, China")
     );
-    assert_eq!(options.minimum_terminal_size, Some((108, 20)));
-    let location = options.location_override.expect("mapped location");
+    let location = services.timezone_location.expect("mapped location");
     assert_eq!(location.city.as_deref(), Some("Shanghai"));
     assert!((location.latitude - 31.2304).abs() < 0.001);
     assert!((location.longitude - 121.4737).abs() < 0.001);

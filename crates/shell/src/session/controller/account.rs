@@ -917,6 +917,7 @@ impl ShellSession {
             border_color: self.setup_theme_color,
             accent_color: self.setup_accent_color,
             icon_display_mode: storage::IconDisplayMode::Image,
+            ..storage::AppearanceConfig::default()
         };
         let users = UserService::with_debug_policy(storage.clone(), self.debug_policy);
         if let Err(error) = users.bootstrap_admin_with_hint_and_appearance(

@@ -13,6 +13,7 @@ pub(in crate::session) struct ShellSettingsTaskShared {
     pub(in crate::session) event_rx: Mutex<mpsc::Receiver<SettingsTimeSyncValidationEvent>>,
     pub(in crate::session) workers: Mutex<BTreeMap<u64, ManagedThreadHandle<()>>>,
     pub(in crate::session) next_request_id: std::sync::atomic::AtomicU64,
+    pub(in crate::session) system_services: Option<system_services::SystemServicesHandle>,
 }
 
 pub(in crate::session) static NEXT_SETTINGS_RUNTIME_ID: std::sync::atomic::AtomicU64 =
@@ -43,11 +44,19 @@ impl ShellSettingsTaskRuntime {
                 event_rx: Mutex::new(event_rx),
                 workers: Mutex::new(BTreeMap::new()),
                 next_request_id: std::sync::atomic::AtomicU64::new(1),
+                system_services: None,
             }),
         }
     }
 
     pub(in crate::session) fn new_managed(watchdog: AppWatchdog) -> Self {
+        Self::new_managed_with_system_services(watchdog, None)
+    }
+
+    pub(in crate::session) fn new_managed_with_system_services(
+        watchdog: AppWatchdog,
+        system_services: Option<system_services::SystemServicesHandle>,
+    ) -> Self {
         use std::sync::atomic::Ordering;
 
         let (event_tx, event_rx) = mpsc::channel();
@@ -63,6 +72,7 @@ impl ShellSettingsTaskRuntime {
                 event_rx: Mutex::new(event_rx),
                 workers: Mutex::new(BTreeMap::new()),
                 next_request_id: std::sync::atomic::AtomicU64::new(1),
+                system_services,
             }),
         }
     }
@@ -95,6 +105,7 @@ impl ShellSettingsTaskRuntime {
             .map_err(|error| format!("invalid time sync validation task: {error}"))?;
         let events = self.shared.event_tx.clone();
         let event_config = config.clone();
+        let system_services = self.shared.system_services.clone();
         let worker = task_group
             .spawn_thread(TaskSpec::one_shot(task_id), move || {
                 let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -106,12 +117,18 @@ impl ShellSettingsTaskRuntime {
                                 "could not start validation runtime: {error}"
                             )])
                         })?;
-                    runtime.block_on(async {
-                        match config.server_url.as_deref() {
-                            Some(server_url) => time::fetch_time_from_server(server_url).await,
-                            None => time::fetch_standard_time().await,
-                        }
-                    })
+                    if let Some(system_services) = system_services.as_ref() {
+                        system_services
+                            .validate_time_source(system_services_config_for_time_sync(&config))
+                            .map_err(|error| time::TimeSyncError::new(vec![error.to_string()]))
+                    } else {
+                        runtime.block_on(async {
+                            match config.server_url.as_deref() {
+                                Some(server_url) => time::fetch_time_from_server(server_url).await,
+                                None => time::fetch_standard_time().await,
+                            }
+                        })
+                    }
                 }));
                 let result = match result {
                     Ok(result) => result,
@@ -152,6 +169,41 @@ impl ShellSettingsTaskRuntime {
         }
         events
     }
+
+    pub(in crate::session) fn reconfigure_system_services(&self, config: &storage::StorageConfig) {
+        if let Some(system_services) = self.shared.system_services.as_ref() {
+            let _ = system_services.reconfigure(system_services_config_for_storage_config(config));
+        }
+    }
+}
+
+fn system_services_config_for_time_sync(
+    time_sync: &storage::TimeSyncConfig,
+) -> system_services::SystemServicesConfig {
+    let mut config = system_services::SystemServicesConfig::default();
+    config.time_sync_mode = match time_sync.source {
+        storage::TimeSyncSource::NetworkServer => system_services::TimeSyncMode::Network,
+        storage::TimeSyncSource::OperatingSystem => system_services::TimeSyncMode::OperatingSystem,
+    };
+    config.time_server_url = time_sync.server_url.clone();
+    config
+}
+
+fn system_services_config_for_storage_config(
+    storage_config: &storage::StorageConfig,
+) -> system_services::SystemServicesConfig {
+    let mut config = system_services_config_for_time_sync(&storage_config.time_sync);
+    config.weather_location = storage_config.weather_location.clone();
+    config.timezone_id = storage_config.timezone.clone();
+    config.timezone_location = app::setup_timezone_options()
+        .into_iter()
+        .find(|timezone| timezone.id == storage_config.timezone)
+        .map(|timezone| system_services::GeoLocation {
+            latitude: timezone.latitude,
+            longitude: timezone.longitude,
+            city: Some(timezone.label),
+        });
+    config
 }
 
 impl std::fmt::Debug for ShellSettingsTaskRuntime {

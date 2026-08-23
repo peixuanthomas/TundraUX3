@@ -1,44 +1,23 @@
+use crate::ClockFormat;
 use crate::animation_manager::AnimationManager;
 use crate::app_state::{AppState, BottomHudPrompt};
 use crate::assets::WeatherAsciiAssets;
-use crate::config::{ClockFormat, Config, Provider};
-use crate::error::{WeatherAssetError, WeatherError};
+use crate::error::WeatherAssetError;
 use crate::render::{TerminalRenderer, clock};
 use crate::scene::lockscreen::LockscreenScene;
 use crate::scene::overlay::OverlayRegistry;
 use crate::scene::world::WorldScene;
 use crate::scene::{SceneContext, SceneRegistry};
 use crate::theme::ThemeRegistry;
-use time as network_clock;
-use time::{NetworkClock, TimeSyncResult};
-
-use crate::weather::provider::WeatherProvider;
-use crate::weather::{OpenMeteoProvider, WeatherClient, WeatherData, WeatherLocation};
+use chrono::Datelike;
 use crossterm::event::{self, Event, KeyCode, KeyModifiers};
 use std::io;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
-use tokio::sync::mpsc;
-use watchdog::{AppWatchdog, ComponentId, ManagedTaskGroup, RestartPolicy, TaskId, TaskSpec};
+use system_services::{SystemSnapshot, TimeState, WeatherLocation, WeatherState};
 
-const REFRESH_INTERVAL: Duration = Duration::from_secs(300);
 const INPUT_POLL_FPS: u64 = 30;
 const FRAME_DURATION: Duration = Duration::from_millis(1000 / INPUT_POLL_FPS);
 const DEFAULT_THEME_ID: &str = "default";
-static NEXT_APP_INSTANCE_ID: AtomicU64 = AtomicU64::new(1);
-
-fn service_restart_policy() -> RestartPolicy {
-    RestartPolicy::limited(
-        3,
-        Duration::from_secs(5 * 60),
-        vec![
-            Duration::from_secs(1),
-            Duration::from_secs(5),
-            Duration::from_secs(30),
-        ],
-    )
-}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum AppRunOutcome {
@@ -134,11 +113,9 @@ pub struct App {
     ascii_assets: WeatherAsciiAssets,
     active_scene_id: &'static str,
     active_overlay_id: Option<&'static str>,
-    weather_receiver: mpsc::Receiver<Result<WeatherData, WeatherError>>,
-    time_receiver: mpsc::Receiver<TimeSyncResult>,
-    clock: NetworkClock,
+    snapshots: tokio::sync::watch::Receiver<SystemSnapshot>,
     clock_format: ClockFormat,
-    background_tasks: Vec<ManagedTaskGroup>,
+    hide_hud: bool,
 }
 
 fn render_centered_line(
@@ -154,68 +131,26 @@ fn render_centered_line(
 }
 
 impl App {
-    pub fn new(
-        config: &Config,
-        term_width: u16,
-        term_height: u16,
-        themes: ThemeRegistry,
-        timezone_id: Option<String>,
-        watchdog: AppWatchdog,
-    ) -> Result<Self, WeatherAssetError> {
-        Self::new_with_bottom_hud_prompt(
-            config,
-            term_width,
-            term_height,
-            themes,
-            timezone_id,
-            BottomHudPrompt::Quit,
-            watchdog,
-        )
-    }
-
-    pub(crate) fn new_with_bottom_hud_prompt(
-        config: &Config,
-        term_width: u16,
-        term_height: u16,
-        themes: ThemeRegistry,
-        timezone_id: Option<String>,
-        bottom_hud_prompt: BottomHudPrompt,
-        watchdog: AppWatchdog,
-    ) -> Result<Self, WeatherAssetError> {
-        Self::new_with_bottom_hud_prompt_and_assets(
-            config,
-            term_width,
-            term_height,
-            themes,
-            timezone_id,
-            bottom_hud_prompt,
-            watchdog,
-            None,
-        )
-    }
-
     pub(crate) fn new_with_bottom_hud_prompt_and_assets(
-        config: &Config,
         term_width: u16,
         term_height: u16,
         themes: ThemeRegistry,
-        timezone_id: Option<String>,
         bottom_hud_prompt: BottomHudPrompt,
-        watchdog: AppWatchdog,
+        snapshots: tokio::sync::watch::Receiver<SystemSnapshot>,
+        clock_format: ClockFormat,
+        hide_hud: bool,
         cached_store: Option<&ascii_assets::AsciiAssetStore>,
     ) -> Result<Self, WeatherAssetError> {
-        let location = WeatherLocation {
-            latitude: config.location.latitude,
-            longitude: config.location.longitude,
-            elevation: None,
-        };
-
         let state = AppState::new_with_bottom_hud_prompt(
-            location,
-            config.location.city.clone(),
-            config.location.display,
-            config.location.hide,
-            config.units,
+            WeatherLocation {
+                latitude: 0.0,
+                longitude: 0.0,
+                elevation: None,
+            },
+            None,
+            crate::app_state::LocationDisplay::Coordinates,
+            hide_hud,
+            system_services::WeatherUnits::default(),
             bottom_hud_prompt,
         );
 
@@ -231,68 +166,6 @@ impl App {
             (animations, scenes) = build_visual_registries(term_width, term_height, &ascii_assets);
         }
 
-        let (tx, rx) = mpsc::channel(1);
-
-        let wanted_provider = Provider::OpenMeteo;
-        let provider: Arc<dyn WeatherProvider> = Arc::new(OpenMeteoProvider::new());
-        let weather_client =
-            WeatherClient::new_managed(provider, REFRESH_INTERVAL, watchdog.clone());
-        let units = config.units;
-        let instance_id = NEXT_APP_INSTANCE_ID.fetch_add(1, Ordering::Relaxed);
-        let service_group_name = format!("service-{instance_id}");
-
-        let weather_tasks = watchdog
-            .child_component(ComponentId::from_static("weather-refresh"))
-            .task_group(&service_group_name);
-        drop(weather_tasks.spawn_async(
-            TaskSpec::idempotent_service(TaskId::from_static("poll"), service_restart_policy()),
-            move || {
-                let weather_client = weather_client.clone();
-                let tx = tx.clone();
-                async move {
-                    loop {
-                        let result = weather_client
-                            .get_current_weather(&location, &units, wanted_provider)
-                            .await;
-                        if tx.send(result).await.is_err() {
-                            break;
-                        }
-                        tokio::time::sleep(REFRESH_INTERVAL).await;
-                    }
-                }
-            },
-        )?);
-
-        let (time_tx, time_rx) = mpsc::channel(1);
-        let time_tasks = watchdog
-            .child_component(ComponentId::from_static("time-sync"))
-            .task_group(&service_group_name);
-        let time_task = time_tasks.spawn_async(
-            TaskSpec::idempotent_service(
-                TaskId::from_static("synchronize"),
-                service_restart_policy(),
-            ),
-            move || {
-                let time_tx = time_tx.clone();
-                async move {
-                    loop {
-                        let result = network_clock::fetch_standard_time().await;
-                        if time_tx.send(result).await.is_err() {
-                            break;
-                        }
-                        tokio::time::sleep(network_clock::TIME_SYNC_INTERVAL).await;
-                    }
-                }
-            },
-        );
-        match time_task {
-            Ok(handle) => drop(handle),
-            Err(error) => {
-                weather_tasks.cancel_all();
-                return Err(error.into());
-            }
-        }
-
         Ok(Self {
             state,
             animations,
@@ -302,11 +175,9 @@ impl App {
             ascii_assets,
             active_scene_id: bindings.scene_id,
             active_overlay_id: bindings.overlay_id,
-            weather_receiver: rx,
-            time_receiver: time_rx,
-            clock: NetworkClock::new(timezone_id),
-            clock_format: config.lockscreen.clock_format,
-            background_tasks: vec![weather_tasks, time_tasks],
+            snapshots,
+            clock_format,
+            hide_hud,
         })
     }
 
@@ -318,13 +189,28 @@ impl App {
         &mut self,
         renderer: &mut TerminalRenderer,
     ) -> io::Result<AppRunOutcome> {
+        self.run_with_outcome_and_shutdown(renderer, &std::sync::atomic::AtomicBool::new(false))
+            .await
+    }
+
+    pub(crate) async fn run_with_outcome_and_shutdown(
+        &mut self,
+        renderer: &mut TerminalRenderer,
+        shutdown: &std::sync::atomic::AtomicBool,
+    ) -> io::Result<AppRunOutcome> {
         let mut rng = rand::rng();
-        let mut attribution = "Awaiting weather data".to_string();
 
         loop {
-            match self.weather_receiver.try_recv() {
-                Ok(result) => match result {
-                    Ok(weather) => {
+            if shutdown.load(std::sync::atomic::Ordering::SeqCst) {
+                return Ok(AppRunOutcome::Cancelled);
+            }
+            let snapshot = self.snapshots.borrow_and_update().clone();
+            let attribution: String;
+            match snapshot.weather {
+                WeatherState::Ready(weather_snapshot) => {
+                    let weather_data = weather_snapshot.weather;
+                    {
+                        let weather = &weather_data;
                         let rain_intensity = weather.condition.rain_intensity();
                         let snow_intensity = weather.condition.snow_intensity();
                         let fog_intensity = weather.condition.fog_intensity();
@@ -336,37 +222,60 @@ impl App {
                             self.animations.update_moon_phase(moon_phase);
                         }
 
-                        self.state.update_weather(weather);
+                        self.state.update_snapshot(
+                            weather_data,
+                            weather_snapshot.location,
+                            weather_snapshot.city,
+                            weather_snapshot.units,
+                        );
                         self.animations.update_rain_intensity(rain_intensity);
                         self.animations.update_snow_intensity(snow_intensity);
                         self.animations.update_fog_intensity(fog_intensity);
                         self.animations
                             .update_wind(wind_speed as f32, wind_direction as f32);
                     }
-                    Err(error) => {
-                        let error_msg = match &error {
-                            WeatherError::Network(net_err) => net_err.user_friendly_message(),
-                            _ => format!("Failed to fetch weather: {}", error),
-                        };
-
-                        self.state.clear_weather_for_offline();
-                        attribution = format!("Provider failed with {error_msg}");
-                    }
-                },
-                Err(e) => {
-                    if e == mpsc::error::TryRecvError::Disconnected {
-                        attribution = "".to_string();
-                    }
+                }
+                WeatherState::Stale { last_good, error } => {
+                    let weather_data = last_good.weather;
+                    let weather = &weather_data;
+                    let rain_intensity = weather.condition.rain_intensity();
+                    let snow_intensity = weather.condition.snow_intensity();
+                    let fog_intensity = weather.condition.fog_intensity();
+                    let wind_speed = weather.wind_speed;
+                    let wind_direction = weather.wind_direction;
+                    self.state.update_snapshot(
+                        weather_data,
+                        last_good.location,
+                        last_good.city,
+                        last_good.units,
+                    );
+                    self.animations.update_rain_intensity(rain_intensity);
+                    self.animations.update_snow_intensity(snow_intensity);
+                    self.animations.update_fog_intensity(fog_intensity);
+                    self.animations
+                        .update_wind(wind_speed as f32, wind_direction as f32);
+                    attribution = format!("Weather data is stale: {error}");
+                }
+                WeatherState::Loading => {
+                    self.state.clear_weather_for_offline();
+                    attribution = "Awaiting weather data".to_string();
+                }
+                WeatherState::Unavailable { reason } => {
+                    self.state.clear_weather_for_offline();
+                    attribution = format!("Weather unavailable: {reason}");
                 }
             }
-
-            loop {
-                match self.time_receiver.try_recv() {
-                    Ok(result) => self.clock.apply_sync(result),
-                    Err(mpsc::error::TryRecvError::Empty) => break,
-                    Err(mpsc::error::TryRecvError::Disconnected) => break,
+            let (date, time, warning) = match snapshot.time {
+                TimeState::Local { local_time } => {
+                    (local_time.date_naive(), local_time.time(), None)
                 }
-            }
+                TimeState::Synced { local_time, .. } => {
+                    (local_time.date_naive(), local_time.time(), None)
+                }
+                TimeState::Degraded {
+                    local_time, error, ..
+                } => (local_time.date_naive(), local_time.time(), Some(error)),
+            };
 
             renderer.clear()?;
 
@@ -419,8 +328,7 @@ impl App {
                 &mut rng,
             )?;
 
-            let current = self.clock.current();
-            let time_text = clock::format_time(current.time, self.clock_format);
+            let time_text = clock::format_time(time, self.clock_format);
             let clock_font = self.ascii_assets.clock_font();
             let clock_lines = clock::ascii_lines(&time_text, clock_font);
             let clock_layout = clock::separator_anchored_layout(
@@ -431,7 +339,7 @@ impl App {
                 term_height,
             );
 
-            let date_text = current.date.format("%Y-%m-%d").to_string();
+            let date_text = format!("{:04}-{:02}-{:02}", date.year(), date.month(), date.day());
             render_centered_line(
                 renderer,
                 term_width,
@@ -468,12 +376,14 @@ impl App {
             self.state.update_loading_animation();
             self.state.update_cached_info();
 
-            renderer.render_line_colored(
-                2,
-                term_height.saturating_sub(1),
-                &self.state.cached_weather_info,
-                crossterm::style::Color::Cyan,
-            )?;
+            if !self.hide_hud {
+                renderer.render_line_colored(
+                    2,
+                    term_height.saturating_sub(1),
+                    &self.state.cached_weather_info,
+                    crossterm::style::Color::Cyan,
+                )?;
+            }
 
             let mut next_status_row = 0;
             if !attribution.is_empty() {
@@ -486,7 +396,7 @@ impl App {
                 next_status_row = 1;
             }
 
-            if let Some(warning) = current.warning {
+            if let Some(warning) = warning {
                 renderer.render_line_colored(
                     2,
                     next_status_row,
@@ -540,33 +450,9 @@ fn weather_assets_for_theme(
     WeatherAsciiAssets::from_store(store)
 }
 
-impl Drop for App {
-    fn drop(&mut self) {
-        for group in &self.background_tasks {
-            group.cancel_all();
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn service_restart_policy_matches_watchdog_budget() {
-        let policy = service_restart_policy();
-
-        assert_eq!(policy.max_restarts, 3);
-        assert_eq!(policy.window, Duration::from_secs(5 * 60));
-        assert_eq!(
-            policy.backoff,
-            vec![
-                Duration::from_secs(1),
-                Duration::from_secs(5),
-                Duration::from_secs(30),
-            ]
-        );
-    }
     use crate::render::TerminalRenderer;
     use crate::scene::overlay::SceneOverlay;
     use crate::scene::{Scene, SceneContext, SceneLayout};

@@ -1,7 +1,7 @@
 use crate::animation::{AnimationSystem, FrameCommands, FrameContext, RenderLayer, TerminalSize};
 use crate::render::TerminalRenderer;
-use crate::weather::types::FogIntensity;
 use crossterm::style::Color;
+use system_services::FogIntensity;
 
 use rand::{Rng, RngExt};
 use std::collections::VecDeque;

@@ -131,6 +131,8 @@ impl ShellSession {
     }
 
     pub(in crate::session) fn replace_storage_config(&mut self, config: storage::StorageConfig) {
+        self.settings_task_runtime
+            .reconfigure_system_services(&config);
         self.app.dispatch_at(
             app::AppCommand::SetStorageConfig {
                 config,

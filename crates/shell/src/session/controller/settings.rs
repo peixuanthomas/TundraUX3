@@ -10,6 +10,7 @@ pub(in crate::session) const APPEARANCE_SETTINGS_FIELDS: &[ui::SettingsField] = 
     ui::SettingsField::BorderShape,
     ui::SettingsField::BorderColor,
     ui::SettingsField::AccentColor,
+    ui::SettingsField::MotionPreference,
     ui::SettingsField::RestoreDefaults,
 ];
 pub(in crate::session) const REGION_SETTINGS_FIELDS: &[ui::SettingsField] = &[
@@ -441,6 +442,17 @@ impl ShellSession {
                 storage::BorderShape::Square => storage::BorderShape::Rounded,
             };
             self.save_settings_appearance(appearance, "Border shape");
+            return;
+        }
+        if field == ui::SettingsField::MotionPreference {
+            let Some(mut appearance) = self.app.active_appearance().cloned() else {
+                return;
+            };
+            appearance.motion_preference = match appearance.motion_preference {
+                storage::MotionPreference::Full => storage::MotionPreference::Reduced,
+                storage::MotionPreference::Reduced => storage::MotionPreference::Full,
+            };
+            self.save_settings_appearance(appearance, "Motion");
             return;
         }
         if field == ui::SettingsField::TimeSyncSource {
@@ -1777,6 +1789,16 @@ pub(in crate::session) fn settings_cards(
                         "Used for selection and focus; must differ from the border.",
                         Kind::Palette,
                     ),
+                    Item::new(
+                        Field::MotionPreference,
+                        "Motion",
+                        match appearance.motion_preference {
+                            storage::MotionPreference::Full => "Full",
+                            storage::MotionPreference::Reduced => "Reduced",
+                        },
+                        "Use Reduced to disable interface transitions while preserving essential refreshes.",
+                        Kind::Cycle,
+                    ),
                 ],
             ),
             Card::new("Reset", vec![reset(true)]),
@@ -2165,6 +2187,7 @@ pub(in crate::session) fn settings_field_label(field: ui::SettingsField) -> &'st
         ui::SettingsField::BorderShape => "Border shape",
         ui::SettingsField::BorderColor => "Border color",
         ui::SettingsField::AccentColor => "Accent color",
+        ui::SettingsField::MotionPreference => "Motion",
         ui::SettingsField::Language => "Language",
         ui::SettingsField::Timezone => "Timezone",
         ui::SettingsField::TimeSyncSource => "Time source",

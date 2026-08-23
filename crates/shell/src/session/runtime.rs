@@ -182,6 +182,12 @@ pub fn run_fullscreen_blocking_managed_with_outcome(
         .register_app(app::diagnostics::diagnostics_watchdog_descriptor())
         .map_err(io::Error::other)?;
     let initial_startup = prepare_shell_startup(platform.as_ref()).map_err(io::Error::other)?;
+    // Storage is initialized at this point, but login has not opened yet.
+    // Keep this single service runtime alive across lockscreen/session cycles.
+    let (system_services, _system_snapshots) = system_services::SystemServicesRuntime::start(
+        system_services_config_for_startup(&initial_startup),
+        shell_watchdog.clone(),
+    );
     let (time_sync_sender, time_sync_receiver) = mpsc::channel();
     let time_sync_watchdog = shell_watchdog.child_component(ComponentId::from_static("time-sync"));
     // Both background jobs must be live before the blocking frost animation so
@@ -189,18 +195,12 @@ pub fn run_fullscreen_blocking_managed_with_outcome(
     let time_sync_worker = spawn_time_sync_worker(
         time_sync_sender,
         &time_sync_watchdog,
-        initial_startup.storage_manager.clone(),
-        std::sync::Arc::clone(&platform),
+        system_services.clone(),
     )
     .map_err(io::Error::other)?;
     let (terminal_graphics_sender, terminal_graphics_receiver) = mpsc::sync_channel(1);
     let _terminal_graphics_worker =
         spawn_terminal_graphics_probe_worker(terminal_graphics_sender, &shell_watchdog)
-            .map_err(io::Error::other)?;
-    let weather_prefetch_options =
-        startup_lockscreen_launch_options(&initial_startup, terminal_size_requirement);
-    let _weather_prefetch_worker =
-        spawn_weather_prefetch_worker(weather_prefetch_options, &weathr_watchdog)
             .map_err(io::Error::other)?;
     with_fullscreen(output, |output| {
         display_startup_banner_with_assets_colored(
@@ -231,6 +231,7 @@ pub fn run_fullscreen_blocking_managed_with_outcome(
             Some(startup) => startup,
             None => prepare_shell_startup(platform.as_ref()).map_err(io::Error::other)?,
         };
+        let _ = system_services.reconfigure(system_services_config_for_startup(&startup));
         if explorer_task_runtime.is_none()
             && let Some(storage) = startup.storage_manager.as_ref()
         {
@@ -252,17 +253,22 @@ pub fn run_fullscreen_blocking_managed_with_outcome(
             ));
         }
         if force_lockscreen || should_show_startup_lockscreen(&startup) {
-            let lockscreen_options =
-                startup_lockscreen_launch_options(&startup, terminal_size_requirement);
+            let lockscreen_input = weathr::WeathrDisplayInput {
+                snapshots: system_services.subscribe(),
+                clock_format: weathr::ClockFormat::TwentyFourHour,
+                hide_hud: false,
+                palette: weathr::theme::catalogue::DEFAULT_PALETTE,
+                shutdown: terminal_control.shutdown_flag(),
+                minimum_terminal_size: Some(terminal_size_requirement.as_terminal_size()),
+            };
             let lockscreen_watchdog = weathr_watchdog.clone();
             let lockscreen_result = weathr_watchdog.run_boundary(
                 BoundarySpec::new("shell-lockscreen-ui-session", BoundaryKind::UiSession)
                     .terminal_owner(),
                 AssertUnwindSafe(|| {
                     weathr::run_shell_lockscreen_managed_with_shutdown_and_assets(
-                        lockscreen_options,
+                        lockscreen_input,
                         lockscreen_watchdog,
-                        terminal_control.shutdown_flag(),
                         ascii_assets.shared_store(),
                     )
                 }),
@@ -299,6 +305,7 @@ pub fn run_fullscreen_blocking_managed_with_outcome(
                     &time_sync_receiver,
                     &mut cached_time_sync,
                     &time_sync_worker,
+                    &system_services,
                     &terminal_control,
                     &shell_watchdog,
                     &process,
@@ -786,6 +793,7 @@ pub(super) fn run_fullscreen_shell_session(
     time_sync_receiver: &mpsc::Receiver<TimedTimeSyncResult>,
     cached_time_sync: &mut Option<CachedTimeSyncResult>,
     time_sync_worker: &TimeSyncWorker,
+    system_services: &system_services::SystemServicesHandle,
     terminal_control: &TerminalControlHandler,
     shell_watchdog: &AppWatchdog,
     process_watchdog: &ProcessWatchdog,
@@ -824,7 +832,10 @@ pub(super) fn run_fullscreen_shell_session(
         explorer_task_runtime,
         diagnostics_task_runtime,
         ShellEditorTaskRuntime::new_managed(shell_watchdog.clone()),
-        ShellSettingsTaskRuntime::new_managed(shell_watchdog.clone()),
+        ShellSettingsTaskRuntime::new_managed_with_system_services(
+            shell_watchdog.clone(),
+            Some(system_services.clone()),
+        ),
     );
     state.set_terminal_image_support(launcher_icons.is_some());
     state.set_terminal_text_sizing_support(terminal_graphics_probe.text_sizing_protocol());
@@ -2036,6 +2047,7 @@ mod runtime_preflight_tests {
             border_color: storage::BorderColor::Rgb(0x38, 0xBD, 0xF8),
             accent_color: storage::BorderColor::LightMagenta,
             icon_display_mode: storage::IconDisplayMode::Image,
+            ..storage::AppearanceConfig::default()
         };
         UserService::new(storage.clone())
             .bootstrap_admin_with_hint_and_appearance(
@@ -2139,6 +2151,7 @@ mod runtime_preflight_tests {
             border_color: storage::BorderColor::LightGreen,
             accent_color: storage::BorderColor::LightMagenta,
             icon_display_mode: storage::IconDisplayMode::Image,
+            ..storage::AppearanceConfig::default()
         };
         let users = UserService::new(storage.clone());
         users
@@ -2187,8 +2200,7 @@ mod runtime_preflight_tests {
 pub(super) fn spawn_time_sync_worker(
     sender: mpsc::Sender<TimedTimeSyncResult>,
     watchdog: &AppWatchdog,
-    storage: Option<StorageManager>,
-    platform: std::sync::Arc<dyn Platform>,
+    system_services: system_services::SystemServicesHandle,
 ) -> Result<TimeSyncWorker, watchdog::WatchdogError> {
     let (control_sender, control_receiver) = mpsc::channel();
     let group = watchdog.task_group("network-clock");
@@ -2210,52 +2222,49 @@ pub(super) fn spawn_time_sync_worker(
         },
         move || {
             let sender = sender.clone();
-            let Ok(runtime) = tokio::runtime::Builder::new_multi_thread()
-                .enable_all()
-                .build()
-            else {
-                return;
-            };
-
-            runtime.block_on(async {
-                loop {
-                    match control_receiver.try_recv() {
-                        Ok(TimeSyncControl::Stop) | Err(mpsc::TryRecvError::Disconnected) => break,
-                        Ok(TimeSyncControl::Refresh) => {}
-                        Err(mpsc::TryRecvError::Empty) => {}
+            let mut snapshots = system_services.subscribe();
+            let mut last_utc = None;
+            let mut last_error = None;
+            loop {
+                match control_receiver.recv_timeout(Duration::from_millis(250)) {
+                    Ok(TimeSyncControl::Stop) | Err(mpsc::RecvTimeoutError::Disconnected) => break,
+                    Ok(TimeSyncControl::Refresh) => {
+                        let _ = system_services.sync_time_now();
                     }
-                    let time_sync = match storage.as_ref() {
-                        Some(storage) => match storage.load_config() {
-                            Ok(config) => Ok(config.time_sync),
-                            Err(error) => Err(time::TimeSyncError::new(vec![format!(
-                                "could not load time sync settings: {error}"
-                            )])),
-                        },
-                        None => Ok(storage::TimeSyncConfig::default()),
-                    };
-                    let result = match time_sync {
-                        Ok(time_sync) => {
-                            synchronize_configured_time(&time_sync, platform.as_ref()).await
-                        }
-                        Err(error) => Err(error),
-                    };
-                    if sender
-                        .send(TimedTimeSyncResult {
-                            result,
-                            received_at: Instant::now(),
-                        })
-                        .is_err()
-                    {
-                        break;
-                    }
-                    match control_receiver.recv_timeout(TIME_SYNC_INTERVAL) {
-                        Err(mpsc::RecvTimeoutError::Timeout) | Ok(TimeSyncControl::Refresh) => {}
-                        Ok(TimeSyncControl::Stop) | Err(mpsc::RecvTimeoutError::Disconnected) => {
+                    Err(mpsc::RecvTimeoutError::Timeout) => {}
+                }
+                let snapshot = snapshots.borrow_and_update().clone();
+                match snapshot.time {
+                    system_services::TimeState::Synced { utc, .. } if last_utc != Some(utc) => {
+                        last_utc = Some(utc);
+                        last_error = None;
+                        if sender
+                            .send(TimedTimeSyncResult {
+                                result: Ok(utc),
+                                received_at: Instant::now(),
+                            })
+                            .is_err()
+                        {
                             break;
                         }
                     }
+                    system_services::TimeState::Degraded { error, .. }
+                        if last_error.as_deref() != Some(error.as_str()) =>
+                    {
+                        last_error = Some(error.clone());
+                        if sender
+                            .send(TimedTimeSyncResult {
+                                result: Err(time::TimeSyncError::new(vec![error])),
+                                received_at: Instant::now(),
+                            })
+                            .is_err()
+                        {
+                            break;
+                        }
+                    }
+                    _ => {}
                 }
-            });
+            }
         },
     )?;
     Ok(TimeSyncWorker {
@@ -2264,6 +2273,7 @@ pub(super) fn spawn_time_sync_worker(
     })
 }
 
+#[cfg(test)]
 pub(super) async fn synchronize_configured_time(
     config: &storage::TimeSyncConfig,
     platform: &dyn Platform,
@@ -2284,25 +2294,37 @@ pub(super) async fn synchronize_configured_time(
     }
 }
 
-pub(super) fn spawn_weather_prefetch_worker(
-    options: weathr::LaunchOptions,
-    watchdog: &AppWatchdog,
-) -> Result<ManagedThreadHandle<()>, watchdog::WatchdogError> {
-    let group = watchdog
-        .child_component(ComponentId::from_static("startup-prefetch"))
-        .task_group("weather");
-    group.spawn_thread(
-        TaskSpec::one_shot(TaskId::from_static("refresh")),
-        move || {
-            let Ok(runtime) = tokio::runtime::Builder::new_multi_thread()
-                .enable_all()
-                .build()
-            else {
-                return;
-            };
-            let _ = runtime.block_on(weathr::prefetch_weather(options.clone()));
-        },
-    )
+pub(super) fn system_services_config_for_startup(
+    startup: &ShellStartupState,
+) -> system_services::SystemServicesConfig {
+    let mut services = system_services::SystemServicesConfig::default();
+    let Some(config) = startup
+        .storage_manager
+        .as_ref()
+        .and_then(|storage| storage.load_config().ok())
+    else {
+        return services;
+    };
+    services.weather_location = config.weather_location;
+    services.timezone_id = config.timezone.clone();
+    services.time_sync_mode = match config.time_sync.source {
+        storage::TimeSyncSource::NetworkServer => system_services::TimeSyncMode::Network,
+        storage::TimeSyncSource::OperatingSystem => system_services::TimeSyncMode::OperatingSystem,
+    };
+    services.time_server_url = config.time_sync.server_url;
+    services.timezone_location = app::setup_timezone_options()
+        .into_iter()
+        .find(|timezone| timezone.id == config.timezone)
+        .map(|timezone| system_services::GeoLocation {
+            latitude: timezone.latitude,
+            longitude: timezone.longitude,
+            city: Some(timezone.label),
+        });
+    services.cache_dir = startup
+        .storage_manager
+        .as_ref()
+        .map(|storage| storage.layout().cache_path.join("system-services"));
+    services
 }
 
 pub(super) fn spawn_terminal_graphics_probe_worker(

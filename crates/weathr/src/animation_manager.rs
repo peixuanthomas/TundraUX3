@@ -9,9 +9,9 @@ use crate::app_state::AppState;
 use crate::assets::WeatherAnimationAssets;
 use crate::render::TerminalRenderer;
 use crate::scene::SceneLayout;
-use crate::weather::{FogIntensity, RainIntensity, SnowIntensity, WeatherConditions};
 use rand::Rng;
 use std::io;
+use system_services::{FogIntensity, RainIntensity, SnowIntensity, WeatherConditions};
 
 pub struct AnimationManager {
     systems: Vec<Box<dyn AnimationSystem>>,

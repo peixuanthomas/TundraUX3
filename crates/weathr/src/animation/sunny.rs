@@ -3,10 +3,10 @@ use crate::animation::{
     AnimationController, AnimationSystem, FrameCommands, FrameContext, RenderLayer,
 };
 use crate::render::TerminalRenderer;
-use crate::weather::types::CelestialEvents;
 use chrono::{DateTime, NaiveDateTime, NaiveTime};
 use crossterm::style::Color;
 use rand::Rng;
+use system_services::CelestialEvents;
 
 use std::io;
 use std::time::{Duration, Instant};
@@ -190,12 +190,12 @@ mod tests {
     use super::*;
     use crate::animation::TerminalSize;
     use crate::app_state::AppState;
-    use crate::config::LocationDisplay;
-    use crate::weather::types::CelestialEvents;
-    use crate::weather::{
+    use crate::app_state::LocationDisplay;
+    use chrono::NaiveTime;
+    use system_services::CelestialEvents;
+    use system_services::{
         WeatherCondition, WeatherConditions, WeatherData, WeatherLocation, WeatherUnits,
     };
-    use chrono::NaiveTime;
 
     fn sample_celestial_events() -> CelestialEvents {
         CelestialEvents {

@@ -86,6 +86,12 @@ impl ThemeRegistry {
             .expect("active theme id must always reference a registered theme")
     }
 
+    pub fn set_active_palette(&mut self, palette: Palette) {
+        if let Some(theme) = self.themes.get_mut(self.active) {
+            theme.palette = palette;
+        }
+    }
+
     pub fn get(&self, id: &str) -> Option<&Theme> {
         self.themes.get(id)
     }

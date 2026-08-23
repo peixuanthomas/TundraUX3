@@ -2,8 +2,8 @@ use crate::animation::{
     AnimationSystem, FrameCommands, FrameContext, RenderLayer, TerminalSize, Wind,
 };
 use crate::render::TerminalRenderer;
-use crate::weather::types::RainIntensity;
 use crossterm::style::Color;
+use system_services::RainIntensity;
 
 use rand::{Rng, RngExt};
 use std::collections::VecDeque;

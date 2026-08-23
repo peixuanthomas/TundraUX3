@@ -4,9 +4,9 @@ pub mod world;
 
 use crate::render::TerminalRenderer;
 use crate::theme::Palette;
-use crate::weather::WeatherConditions;
 use std::collections::HashMap;
 use std::io;
+use system_services::WeatherConditions;
 
 pub(crate) const WEATHER_GROUND_HEIGHT: u16 = 7;
 

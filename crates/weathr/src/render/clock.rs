@@ -1,4 +1,4 @@
-use crate::config::ClockFormat;
+use crate::ClockFormat;
 use crate::render::TerminalRenderer;
 use ascii_assets::ClockFontAsset;
 use chrono::{DateTime, NaiveDateTime, NaiveTime, Timelike};

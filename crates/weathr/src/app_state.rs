@@ -1,12 +1,20 @@
-use crate::config::LocationDisplay;
-use crate::weather::{
+use std::time::Instant;
+use system_services::{
     WeatherCondition, WeatherConditions, WeatherData, WeatherLocation, WeatherUnits,
     format_temperature,
 };
-use std::time::Instant;
 
 pub const BOTTOM_HUD_QUIT_PROMPT: &str = "Press Space to quit";
 pub const BOTTOM_HUD_START_PROMPT: &str = "Press Space to start";
+
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code)]
+pub enum LocationDisplay {
+    #[default]
+    Coordinates,
+    City,
+    Mixed,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum BottomHudPrompt {
@@ -92,6 +100,19 @@ impl AppState {
         self.current_weather = Some(weather);
         self.is_offline = false;
         self.weather_info_needs_update = true;
+    }
+
+    pub fn update_snapshot(
+        &mut self,
+        weather: WeatherData,
+        location: WeatherLocation,
+        city: Option<String>,
+        units: WeatherUnits,
+    ) {
+        self.location = location;
+        self.city_name = city;
+        self.units = units;
+        self.update_weather(weather);
     }
 
     pub fn clear_weather_for_offline(&mut self) {
@@ -278,11 +299,9 @@ impl Default for LoadingState {
 
 #[cfg(test)]
 mod tests {
+    use super::LocationDisplay;
     use super::*;
-    use crate::config::LocationDisplay;
-    use crate::weather::types::{
-        CelestialEvents, PrecipitationUnit, TemperatureUnit, WindSpeedUnit,
-    };
+    use system_services::{CelestialEvents, PrecipitationUnit, TemperatureUnit, WindSpeedUnit};
 
     fn create_app_state(lat: f64, lon: f64) -> AppState {
         create_app_state_full(lat, lon, None, LocationDisplay::Coordinates)
