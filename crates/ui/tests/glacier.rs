@@ -8,9 +8,35 @@ use ui::components::{
     NavRail, NavRailItem, Panel, Picker, Scrollbar, Skeleton, Surface, Toast, ToastTone,
 };
 use ui::{
-    ColorCapability, FrostMotion, MotionFrame, MotionIdentity, MotionTimings, MouseEvent,
-    RenderCapabilities, RenderContext, ThemeTokens, TundraTheme, schedule_motion,
+    BorderShape, ColorCapability, FrostMotion, MotionFrame, MotionIdentity, MotionTimings,
+    MouseEvent, RenderCapabilities, RenderContext, ThemeTokens, TundraTheme, schedule_motion,
 };
+
+#[test]
+fn render_context_and_surface_preserve_or_explicitly_override_border_shape() {
+    let theme = TundraTheme::default().with_border_shape(BorderShape::Square);
+    let context =
+        RenderContext::from_theme(&theme, MotionFrame::default(), RenderCapabilities::ansi());
+    assert_eq!(context.theme.border_shape, BorderShape::Square);
+    assert_eq!(
+        context.compatibility_theme().border_shape,
+        BorderShape::Square
+    );
+
+    let area = Rect::new(0, 0, 8, 3);
+    let mut inherited = Buffer::empty(area);
+    Surface::new()
+        .bordered(true)
+        .render(area, &mut inherited, &context);
+    assert_eq!(inherited[(0, 0)].symbol(), "┌");
+
+    let mut overridden = Buffer::empty(area);
+    Surface::new()
+        .bordered(true)
+        .border_shape(BorderShape::Rounded)
+        .render(area, &mut overridden, &context);
+    assert_eq!(overridden[(0, 0)].symbol(), "╭");
+}
 
 #[test]
 fn glacier_night_palette_and_ansi_fallback_are_stable() {

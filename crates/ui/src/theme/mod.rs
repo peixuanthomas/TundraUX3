@@ -38,6 +38,7 @@ impl RenderCapabilities {
 /// state intent without inventing another local palette.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ThemeTokens {
+    pub border_shape: BorderShape,
     pub canvas: Color,
     pub surface: Color,
     pub raised: Color,
@@ -58,6 +59,7 @@ impl ThemeTokens {
     /// The fixed Glacier Night base palette.
     pub const fn glacier_night() -> Self {
         Self {
+            border_shape: BorderShape::Rounded,
             canvas: Color::Rgb(0x07, 0x11, 0x16),
             surface: Color::Rgb(0x0D, 0x1B, 0x22),
             raised: Color::Rgb(0x13, 0x26, 0x2F),
@@ -97,6 +99,7 @@ impl ThemeTokens {
 
         let accent = ansi_accent(self.accent);
         Self {
+            border_shape: self.border_shape,
             canvas: Color::Black,
             surface: Color::Black,
             raised: Color::DarkGray,
@@ -356,7 +359,7 @@ impl RenderContext {
             muted: self.theme.muted,
             error: self.theme.danger,
             border_color: self.theme.border,
-            border_shape: BorderShape::Rounded,
+            border_shape: self.theme.border_shape,
         }
     }
 }
@@ -432,6 +435,7 @@ impl TundraTheme {
 
     pub fn tokens(&self) -> ThemeTokens {
         let mut tokens = ThemeTokens::glacier_night().with_accent(self.accent_color);
+        tokens.border_shape = self.border_shape;
         tokens.canvas = self.background;
         tokens.text = self.foreground;
         tokens.muted = self.muted;

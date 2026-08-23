@@ -13,7 +13,7 @@ pub struct Surface {
     pub title: Option<String>,
     pub bordered: bool,
     pub raised: bool,
-    pub border_shape: crate::BorderShape,
+    pub border_shape: Option<crate::BorderShape>,
 }
 
 impl Default for Surface {
@@ -28,11 +28,11 @@ impl Surface {
             title: None,
             bordered: false,
             raised: false,
-            border_shape: crate::BorderShape::Rounded,
+            border_shape: None,
         }
     }
     pub const fn border_shape(mut self, border_shape: crate::BorderShape) -> Self {
-        self.border_shape = border_shape;
+        self.border_shape = Some(border_shape);
         self
     }
 
@@ -91,7 +91,11 @@ impl Surface {
         if self.bordered {
             block = block
                 .borders(Borders::ALL)
-                .border_type(self.border_shape.border_type())
+                .border_type(
+                    self.border_shape
+                        .unwrap_or(context.theme.border_shape)
+                        .border_type(),
+                )
                 .border_style(
                     Style::default()
                         .fg(tokens.border)
