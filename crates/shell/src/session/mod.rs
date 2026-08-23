@@ -61,6 +61,7 @@ mod construction;
 mod controller;
 mod presentation;
 mod queries;
+mod redraw;
 mod runtime;
 #[cfg(test)]
 mod tests;
@@ -69,6 +70,7 @@ mod ui_state;
 use command_line_runtime::*;
 use controller::*;
 use presentation::*;
+use redraw::*;
 use runtime::*;
 pub use runtime::*;
 use ui_state::*;
