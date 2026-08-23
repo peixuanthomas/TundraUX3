@@ -2,7 +2,7 @@ use ratatui::Frame;
 use ratatui::layout::{Constraint, HorizontalAlignment, Layout, Rect};
 use ratatui::style::{Color, Modifier};
 use ratatui::text::Line;
-use ratatui::widgets::{Borders, Clear, Paragraph, Wrap};
+use ratatui::widgets::{Clear, Paragraph, Wrap};
 
 use crate::components::{
     Button, ComponentTone, DataTable, List as ComponentList, ListItem as ComponentListItem,
@@ -520,6 +520,14 @@ fn render_settings_content(
                 accent_color: preview.accent_color,
                 ..*theme
             };
+            let preview_context =
+                RenderContext::from_theme(&preview_theme, context.motion, context.capabilities);
+            let surface = Surface::new()
+                .titled(" Preview ")
+                .bordered(true)
+                .border_shape(preview.border_shape);
+            let inner = surface.inner(visible);
+            surface.render_frame(frame, visible, &preview_context);
             frame.render_widget(
                 Paragraph::new(vec![
                     Line::styled("Live preview", preview_theme.title_style()),
@@ -528,14 +536,8 @@ fn render_settings_content(
                         preview_theme.body_style(),
                     ),
                 ])
-                .alignment(HorizontalAlignment::Left)
-                .block(
-                    preview_theme
-                        .block()
-                        .title(" Preview ")
-                        .borders(Borders::ALL),
-                ),
-                visible,
+                .alignment(HorizontalAlignment::Left),
+                inner,
             );
         }
     }
@@ -547,16 +549,16 @@ fn render_settings_content(
         render_picker(frame, layout.main, picker, context);
     }
     if let Some(editor) = &model.color_editor {
-        render_color_editor(frame, layout.main, editor, theme);
+        render_color_editor(frame, layout.main, editor, context);
     }
     if let Some(editor) = &model.weather_location_editor {
-        render_weather_location_editor(frame, layout.main, editor, theme);
+        render_weather_location_editor(frame, layout.main, editor, context);
     }
     if let Some(editor) = &model.file_extensions_editor {
-        render_file_extensions_editor(frame, layout.main, editor, theme);
+        render_file_extensions_editor(frame, layout.main, editor, context);
     }
     if let Some(editor) = &model.time_sync_server_editor {
-        render_time_sync_server_editor(frame, layout.main, editor, theme);
+        render_time_sync_server_editor(frame, layout.main, editor, context);
     }
 }
 
@@ -802,8 +804,9 @@ fn render_color_editor(
     frame: &mut Frame<'_>,
     area: Rect,
     editor: &SettingsColorEditorViewModel,
-    theme: &TundraTheme,
+    context: &RenderContext,
 ) {
+    let theme = &context.compatibility_theme();
     let dialog = centered(area, area.width.min(56), area.height.min(9));
     frame.render_widget(Clear, dialog);
     let lines = vec![
@@ -815,17 +818,17 @@ fn render_color_editor(
         ),
         Line::styled("Enter: apply    Esc: cancel", theme.muted_style()),
     ];
+    let surface = Surface::new()
+        .titled(format!(" {} ", editor.title))
+        .bordered(true)
+        .raised(true);
+    let inner = surface.inner(dialog);
+    surface.render_frame(frame, dialog, context);
     frame.render_widget(
         Paragraph::new(lines)
             .alignment(HorizontalAlignment::Left)
-            .block(
-                theme
-                    .block()
-                    .title(format!(" {} ", editor.title))
-                    .borders(Borders::ALL),
-            )
             .wrap(Wrap { trim: true }),
-        dialog,
+        inner,
     );
     render_editor_text_input(frame, dialog, "settings.color-editor", &editor.value, theme);
 }
@@ -834,8 +837,9 @@ fn render_weather_location_editor(
     frame: &mut Frame<'_>,
     area: Rect,
     editor: &SettingsWeatherLocationEditorViewModel,
-    theme: &TundraTheme,
+    context: &RenderContext,
 ) {
+    let theme = &context.compatibility_theme();
     let dialog = centered(area, area.width.min(68), area.height.min(11));
     frame.render_widget(Clear, dialog);
     let lines = vec![
@@ -851,17 +855,17 @@ fn render_weather_location_editor(
         ),
         Line::styled("Enter: continue    Esc: cancel", theme.muted_style()),
     ];
+    let surface = Surface::new()
+        .titled(" Weather location ")
+        .bordered(true)
+        .raised(true);
+    let inner = surface.inner(dialog);
+    surface.render_frame(frame, dialog, context);
     frame.render_widget(
         Paragraph::new(lines)
             .alignment(HorizontalAlignment::Left)
-            .block(
-                theme
-                    .block()
-                    .title(" Weather location ")
-                    .borders(Borders::ALL),
-            )
             .wrap(Wrap { trim: true }),
-        dialog,
+        inner,
     );
     render_editor_text_input(
         frame,
@@ -876,8 +880,9 @@ fn render_file_extensions_editor(
     frame: &mut Frame<'_>,
     area: Rect,
     editor: &SettingsFileExtensionsEditorViewModel,
-    theme: &TundraTheme,
+    context: &RenderContext,
 ) {
+    let theme = &context.compatibility_theme();
     let dialog = centered(area, area.width.min(72), area.height.min(11));
     frame.render_widget(Clear, dialog);
     let lines = vec![
@@ -896,17 +901,17 @@ fn render_file_extensions_editor(
             theme.muted_style(),
         ),
     ];
+    let surface = Surface::new()
+        .titled(" Explorer files opened in Editor ")
+        .bordered(true)
+        .raised(true);
+    let inner = surface.inner(dialog);
+    surface.render_frame(frame, dialog, context);
     frame.render_widget(
         Paragraph::new(lines)
             .alignment(HorizontalAlignment::Left)
-            .block(
-                theme
-                    .block()
-                    .title(" Explorer files opened in Editor ")
-                    .borders(Borders::ALL),
-            )
             .wrap(Wrap { trim: true }),
-        dialog,
+        inner,
     );
     render_editor_text_input(
         frame,
@@ -921,8 +926,9 @@ fn render_time_sync_server_editor(
     frame: &mut Frame<'_>,
     area: Rect,
     editor: &SettingsTimeSyncServerEditorViewModel,
-    theme: &TundraTheme,
+    context: &RenderContext,
 ) {
+    let theme = &context.compatibility_theme();
     let dialog = centered(area, area.width.min(76), area.height.min(11));
     frame.render_widget(Clear, dialog);
     let status = if editor.validating {
@@ -945,17 +951,17 @@ fn render_time_sync_server_editor(
         ),
         Line::styled("Enter: test and save    Esc: cancel", theme.muted_style()),
     ];
+    let surface = Surface::new()
+        .titled(" Time synchronization server ")
+        .bordered(true)
+        .raised(true);
+    let inner = surface.inner(dialog);
+    surface.render_frame(frame, dialog, context);
     frame.render_widget(
         Paragraph::new(lines)
             .alignment(HorizontalAlignment::Left)
-            .block(
-                theme
-                    .block()
-                    .title(" Time synchronization server ")
-                    .borders(Borders::ALL),
-            )
             .wrap(Wrap { trim: true }),
-        dialog,
+        inner,
     );
     render_editor_text_input(
         frame,

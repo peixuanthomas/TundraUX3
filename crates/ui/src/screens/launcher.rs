@@ -668,8 +668,8 @@ fn visible_start(
 }
 
 fn launcher_confirmation_layout(area: Rect) -> LauncherConfirmationLayout {
-    let width = area.width.saturating_sub(4).min(72).max(1);
-    let height = area.height.saturating_sub(2).min(9).max(1);
+    let width = area.width.saturating_sub(4).clamp(1, 72);
+    let height = area.height.saturating_sub(2).clamp(1, 9);
     let dialog = Rect::new(
         area.x.saturating_add(area.width.saturating_sub(width) / 2),
         area.y

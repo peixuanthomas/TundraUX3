@@ -304,7 +304,7 @@ fn render_setup_admin_page(
         "Admin username",
         model.admin_username.clone(),
         "Enter admin username",
-        theme,
+        context,
     );
     render_setup_admin_field(
         frame,
@@ -314,7 +314,7 @@ fn render_setup_admin_page(
         "Admin password",
         "*".repeat(model.admin_password_len),
         "Enter admin password",
-        theme,
+        context,
     );
     render_setup_admin_field(
         frame,
@@ -324,7 +324,7 @@ fn render_setup_admin_page(
         "Re-enter password",
         "*".repeat(model.admin_password_confirm_len),
         "Re-enter admin password",
-        theme,
+        context,
     );
     render_setup_admin_field(
         frame,
@@ -334,10 +334,10 @@ fn render_setup_admin_page(
         "Password hint",
         model.password_hint.clone(),
         "Optional recovery hint, not the password",
-        theme,
+        context,
     );
 
-    render_setup_password_checklist(frame, area, model, theme);
+    render_setup_password_checklist(frame, area, model, context);
 
     render_setup_inline_button(
         frame,
@@ -396,7 +396,7 @@ fn render_setup_appearance_page(
         header,
     );
 
-    render_setup_shape_buttons(frame, area, model, theme);
+    render_setup_shape_buttons(frame, area, model, context);
     render_setup_color_palette(
         frame,
         area,
@@ -404,7 +404,7 @@ fn render_setup_appearance_page(
         SetupField::AppearanceThemeColor,
         "Theme color",
         &model.theme_color_value,
-        theme,
+        context,
     );
     render_setup_custom_color_button(
         frame,
@@ -412,7 +412,7 @@ fn render_setup_appearance_page(
         model,
         SetupField::AppearanceThemeCustom,
         "Use a custom theme color...",
-        theme,
+        context,
     );
     render_setup_color_palette(
         frame,
@@ -421,7 +421,7 @@ fn render_setup_appearance_page(
         SetupField::AppearanceAccentColor,
         "Accent color",
         &model.accent_color_value,
-        theme,
+        context,
     );
     render_setup_custom_color_button(
         frame,
@@ -429,11 +429,17 @@ fn render_setup_appearance_page(
         model,
         SetupField::AppearanceAccentCustom,
         "Use a custom accent color...",
-        theme,
+        context,
     );
 
     let preview = setup_appearance_preview_area(area);
     if preview.width > 0 && preview.height > 0 {
+        let surface = Surface::new()
+            .titled("Preview")
+            .bordered(true)
+            .border_shape(model.border_shape);
+        let inner = surface.inner(preview);
+        surface.render_frame(frame, preview, context);
         frame.render_widget(
             Paragraph::new(vec![
                 Line::styled("Live preview", theme.title_style()),
@@ -442,16 +448,8 @@ fn render_setup_appearance_page(
                     model.theme_color_value, model.accent_color_value
                 )),
             ])
-            .alignment(HorizontalAlignment::Left)
-            .block(
-                theme
-                    .block()
-                    .title("Preview")
-                    .title_style(theme.title_style())
-                    .borders(ratatui::widgets::Borders::ALL)
-                    .style(theme.body_style()),
-            ),
-            preview,
+            .alignment(HorizontalAlignment::Left),
+            inner,
         );
     }
 
@@ -476,7 +474,7 @@ fn render_setup_appearance_page(
     }
 
     if model.custom_color_target.is_some() {
-        render_setup_custom_color_dialog(frame, area, model, theme);
+        render_setup_custom_color_dialog(frame, area, model, context);
     }
 }
 
@@ -484,8 +482,9 @@ fn render_setup_shape_buttons(
     frame: &mut Frame<'_>,
     area: Rect,
     model: &SetupViewModel,
-    theme: &TundraTheme,
+    context: &RenderContext,
 ) {
+    let theme = &context.compatibility_theme();
     let field = SetupField::AppearanceShape;
     let outer = setup_appearance_field_area(area, field);
     if outer.width == 0 || outer.height == 0 {
@@ -493,19 +492,13 @@ fn render_setup_shape_buttons(
     }
 
     let focused = model.focused_field == field;
-    frame.render_widget(
-        theme
-            .block()
-            .title("Frame shape")
-            .title_style(if focused {
-                theme.title_style()
-            } else {
-                theme.body_style()
-            })
-            .borders(ratatui::widgets::Borders::ALL)
-            .style(theme.body_style())
-            .border_style(theme.selectable_border_style(focused)),
+    render_focused_surface(
+        frame,
         outer,
+        "Frame shape",
+        focused,
+        model.border_shape,
+        context,
     );
 
     for (shape, button_area) in setup_appearance_shape_option_areas(area) {
@@ -536,28 +529,16 @@ fn render_setup_color_palette(
     field: SetupField,
     title: &'static str,
     selected_value: &str,
-    theme: &TundraTheme,
+    context: &RenderContext,
 ) {
+    let theme = &context.compatibility_theme();
     let outer = setup_appearance_field_area(area, field);
     if outer.width == 0 || outer.height == 0 {
         return;
     }
 
     let focused = model.focused_field == field;
-    frame.render_widget(
-        theme
-            .block()
-            .title(title)
-            .title_style(if focused {
-                theme.title_style()
-            } else {
-                theme.body_style()
-            })
-            .borders(ratatui::widgets::Borders::ALL)
-            .style(theme.body_style())
-            .border_style(theme.selectable_border_style(focused)),
-        outer,
-    );
+    render_focused_surface(frame, outer, title, focused, model.border_shape, context);
 
     for (index, button_area) in setup_appearance_palette_option_areas(area, field) {
         let option = setup_standard_color_options()[index];
@@ -596,8 +577,9 @@ fn render_setup_custom_color_button(
     model: &SetupViewModel,
     field: SetupField,
     label: &'static str,
-    theme: &TundraTheme,
+    context: &RenderContext,
 ) {
+    let theme = &context.compatibility_theme();
     let focused = model.focused_field == field;
     render_setup_inline_button(
         frame,
@@ -618,8 +600,9 @@ fn render_setup_custom_color_dialog(
     frame: &mut Frame<'_>,
     area: Rect,
     model: &SetupViewModel,
-    theme: &TundraTheme,
+    context: &RenderContext,
 ) {
+    let theme = &context.compatibility_theme();
     let dialog = setup_custom_color_dialog_area(area);
     if dialog.width == 0 || dialog.height == 0 {
         return;
@@ -631,15 +614,12 @@ fn render_setup_custom_color_dialog(
     };
 
     frame.render_widget(Clear, dialog);
-    frame.render_widget(
-        theme
-            .block()
-            .title(format!("Custom {target_label} color"))
-            .title_style(theme.title_style())
-            .borders(ratatui::widgets::Borders::ALL)
-            .style(theme.body_style()),
-        dialog,
-    );
+    let dialog_surface = Surface::new()
+        .titled(format!("Custom {target_label} color"))
+        .bordered(true)
+        .raised(true)
+        .border_shape(model.border_shape);
+    dialog_surface.render_frame(frame, dialog, context);
 
     let inner = setup_inner_area(dialog);
     let instruction = Rect::new(inner.x, inner.y, inner.width, 1.min(inner.height));
@@ -652,15 +632,13 @@ fn render_setup_custom_color_dialog(
 
     let input_area = setup_custom_color_input_area(area);
     if input_area.width > 0 && input_area.height > 0 {
-        let input_block = theme
-            .block()
-            .title("Color code")
-            .title_style(theme.title_style())
-            .borders(ratatui::widgets::Borders::ALL)
-            .style(theme.body_style())
-            .border_style(theme.selectable_border_style(true));
-        let input_inner = input_block.inner(input_area);
-        frame.render_widget(input_block, input_area);
+        let input_context = focused_context(context, true);
+        let input_surface = Surface::new()
+            .titled("Color code")
+            .bordered(true)
+            .border_shape(model.border_shape);
+        let input_inner = input_surface.inner(input_area);
+        input_surface.render_frame(frame, input_area, &input_context);
 
         let mut input = TextInput::new("setup.appearance.custom-color-input")
             .with_placeholder("#38BDF8")
@@ -724,6 +702,35 @@ fn render_setup_surface(
         .raised(true)
         .border_shape(border_shape)
         .render_frame(frame, area, context);
+}
+
+fn focused_context(context: &RenderContext, focused: bool) -> RenderContext {
+    RenderContext {
+        theme: if focused {
+            crate::ThemeTokens {
+                border: context.theme.focus,
+                ..context.theme
+            }
+        } else {
+            context.theme
+        },
+        ..*context
+    }
+}
+
+fn render_focused_surface(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    title: &str,
+    focused: bool,
+    border_shape: crate::BorderShape,
+    context: &RenderContext,
+) {
+    Surface::new()
+        .titled(title)
+        .bordered(true)
+        .border_shape(border_shape)
+        .render_frame(frame, area, &focused_context(context, focused));
 }
 
 fn setup_language_header_lines(model: &SetupViewModel, theme: &TundraTheme) -> Vec<Line<'static>> {
@@ -800,28 +807,22 @@ fn render_setup_admin_field(
     title: &'static str,
     value: String,
     placeholder: &'static str,
-    theme: &TundraTheme,
+    context: &RenderContext,
 ) {
+    let theme = &context.compatibility_theme();
     let field_area = setup_admin_field_area(area, field);
     if field_area.width == 0 || field_area.height == 0 {
         return;
     }
 
     let focused = model.focused_field == field;
-    let box_style = if focused {
-        theme.title_style()
-    } else {
-        theme.body_style()
-    };
-    let block = theme
-        .block()
-        .title(title)
-        .title_style(box_style)
-        .borders(ratatui::widgets::Borders::ALL)
-        .style(box_style)
-        .border_style(theme.selectable_border_style(focused));
-    let inner = block.inner(field_area);
-    frame.render_widget(block, field_area);
+    let field_context = focused_context(context, focused);
+    let surface = Surface::new()
+        .titled(title)
+        .bordered(true)
+        .border_shape(model.border_shape);
+    let inner = surface.inner(field_area);
+    surface.render_frame(frame, field_area, &field_context);
 
     if inner.width == 0 || inner.height == 0 {
         return;
@@ -883,21 +884,20 @@ fn render_setup_password_checklist(
     frame: &mut Frame<'_>,
     area: Rect,
     model: &SetupViewModel,
-    theme: &TundraTheme,
+    context: &RenderContext,
 ) {
+    let theme = &context.compatibility_theme();
     let checklist_area = setup_admin_checklist_area(area);
     if checklist_area.width == 0 || checklist_area.height == 0 {
         return;
     }
 
-    let block = theme
-        .block()
-        .title("Password checklist")
-        .title_style(theme.title_style())
-        .borders(ratatui::widgets::Borders::ALL)
-        .style(theme.body_style());
-    let inner = block.inner(checklist_area);
-    frame.render_widget(block, checklist_area);
+    let surface = Surface::new()
+        .titled("Password checklist")
+        .bordered(true)
+        .border_shape(model.border_shape);
+    let inner = surface.inner(checklist_area);
+    surface.render_frame(frame, checklist_area, context);
 
     if inner.width == 0 || inner.height == 0 {
         return;
