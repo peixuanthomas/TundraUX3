@@ -476,9 +476,29 @@ impl WrappedLineMeasure {
 }
 
 #[cfg(test)]
-std::thread_local! {
-    pub(super) static RICH_FLATTEN_CALL_COUNT: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+pub(super) struct ThreadLocalCounter;
+
+#[cfg(test)]
+static RICH_FLATTEN_COUNTS: std::sync::LazyLock<
+    std::sync::Mutex<std::collections::HashMap<std::thread::ThreadId, usize>>,
+> = std::sync::LazyLock::new(|| std::sync::Mutex::new(std::collections::HashMap::new()));
+
+#[cfg(test)]
+impl ThreadLocalCounter {
+    pub(super) fn with<R>(&self, operation: impl FnOnce(&std::cell::Cell<usize>) -> R) -> R {
+        let thread_id = std::thread::current().id();
+        let mut counts = RICH_FLATTEN_COUNTS
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let count = std::cell::Cell::new(counts.get(&thread_id).copied().unwrap_or_default());
+        let result = operation(&count);
+        counts.insert(thread_id, count.get());
+        result
+    }
 }
+
+#[cfg(test)]
+pub(super) static RICH_FLATTEN_CALL_COUNT: ThreadLocalCounter = ThreadLocalCounter;
 
 pub(super) fn flatten_rich_document(model: &EditorViewModel, width: usize) -> Vec<DisplayLine> {
     #[cfg(test)]
@@ -796,85 +816,59 @@ pub(super) fn table_lines(
     } else {
         header
     };
-    let mut output = vec![table_border_line(
-        '┌',
-        '┬',
-        '┐',
-        &widths,
-        first_row,
+    let context = TableLineContext {
+        widths: &widths,
         block_index,
-        false,
         anchor,
         rich_anchor,
+    };
+    let mut output = vec![table_border_line(
+        ('┌', '┬', '┐'),
+        first_row,
+        false,
+        &context,
     )];
     if !header.is_empty() {
-        output.push(table_row_line(
-            header,
-            &widths,
-            alignments,
-            block_index,
-            true,
-            anchor,
-            rich_anchor,
-            source,
-        ));
-        output.push(table_border_line(
-            '├',
-            '┼',
-            '┤',
-            &widths,
-            header,
-            block_index,
-            false,
-            anchor,
-            rich_anchor,
-        ));
+        output.push(table_row_line(header, alignments, true, source, &context));
+        output.push(table_border_line(('├', '┼', '┤'), header, false, &context));
     }
-    output.extend(rows.iter().map(|row| {
-        table_row_line(
-            row,
-            &widths,
-            alignments,
-            block_index,
-            false,
-            anchor,
-            rich_anchor,
-            source,
-        )
-    }));
+    output.extend(
+        rows.iter()
+            .map(|row| table_row_line(row, alignments, false, source, &context)),
+    );
     let last_row = rows.last().map(Vec::as_slice).unwrap_or(first_row);
     output.push(table_border_line(
-        '└',
-        '┴',
-        '┘',
-        &widths,
+        ('└', '┴', '┘'),
         last_row,
-        block_index,
         false,
-        anchor,
-        rich_anchor,
+        &context,
     ));
     output
 }
 
-pub(super) fn table_row_line(
-    row: &[EditorTableCell],
-    widths: &[usize],
-    alignments: &[EditorTableAlignment],
+pub(super) struct TableLineContext<'a> {
+    widths: &'a [usize],
     block_index: usize,
-    header: bool,
     anchor: Option<usize>,
     rich_anchor: Option<RichPosition>,
+}
+
+pub(super) fn table_row_line(
+    row: &[EditorTableCell],
+    alignments: &[EditorTableAlignment],
+    header: bool,
     source: Option<&str>,
+    context: &TableLineContext<'_>,
 ) -> DisplayLine {
     let row_anchor = row
         .iter()
         .find_map(|cell| table_cell_rich_range(cell).map(|range| range.start))
-        .or(rich_anchor);
+        .or(context.rich_anchor);
     let mut runs = vec![
-        DisplayRun::virtual_text("│", table_span(header), anchor).with_virtual_rich(row_anchor),
+        DisplayRun::virtual_text("│", table_span(header), context.anchor)
+            .with_virtual_rich(row_anchor),
     ];
-    for (column, width) in widths.iter().enumerate() {
+    for (column, width) in context.widths.iter().enumerate() {
         let cell = row.get(column);
         let cell_range = cell.and_then(table_cell_source_range);
         let start = cell_range.map(|range| range.start);
@@ -896,7 +890,7 @@ pub(super) fn table_row_line(
         let (fitted, used) = fit_table_content(
             std::mem::take(&mut content),
             *width,
-            end.or(start).or(anchor),
+            end.or(start).or(context.anchor),
             rich_end,
             header,
         );
@@ -912,7 +906,7 @@ pub(super) fn table_row_line(
         runs.push(table_padding(
             " ".repeat(aligned_left.saturating_add(1)),
             start,
-            anchor,
+            context.anchor,
             rich_start,
             header,
         ));
@@ -920,18 +914,18 @@ pub(super) fn table_row_line(
         runs.push(table_padding(
             " ".repeat(aligned_right.saturating_add(1)),
             end.or(start),
-            anchor,
+            context.anchor,
             rich_end,
             header,
         ));
         runs.push(
-            DisplayRun::virtual_text("│", table_span(header), end.or(start).or(anchor))
+            DisplayRun::virtual_text("│", table_span(header), end.or(start).or(context.anchor))
                 .with_virtual_rich(rich_end),
         );
     }
     DisplayLine {
         runs,
-        block_index: Some(block_index),
+        block_index: Some(context.block_index),
         no_wrap: true,
         column_start: 0,
         role: DisplayLineRole::Normal,
@@ -939,50 +933,46 @@ pub(super) fn table_row_line(
 }
 
 pub(super) fn table_border_line(
-    left: char,
-    middle: char,
-    right: char,
-    widths: &[usize],
+    glyphs: (char, char, char),
     cells: &[EditorTableCell],
-    block_index: usize,
     header: bool,
-    anchor: Option<usize>,
-    rich_anchor: Option<RichPosition>,
+    context: &TableLineContext<'_>,
 ) -> DisplayLine {
+    let (left, middle, right) = glyphs;
     let first_anchor = cells
         .first()
         .and_then(table_cell_rich_range)
         .map(|range| range.start)
-        .or(rich_anchor);
+        .or(context.rich_anchor);
     let mut runs = vec![
-        DisplayRun::virtual_text(left.to_string(), table_span(header), anchor)
+        DisplayRun::virtual_text(left.to_string(), table_span(header), context.anchor)
             .with_virtual_rich(first_anchor),
     ];
-    for (column, width) in widths.iter().copied().enumerate() {
+    for (column, width) in context.widths.iter().copied().enumerate() {
         let cell_range = cells.get(column).and_then(table_cell_rich_range);
-        let start = cell_range.map(|range| range.start).or(rich_anchor);
+        let start = cell_range.map(|range| range.start).or(context.rich_anchor);
         let end = cell_range.map(|range| range.end).or(start);
         runs.push(
             DisplayRun::virtual_text(
                 "─".repeat(width.saturating_add(2)),
                 table_span(header),
-                anchor,
+                context.anchor,
             )
             .with_virtual_rich(start),
         );
-        let delimiter = if column + 1 == widths.len() {
+        let delimiter = if column + 1 == context.widths.len() {
             right
         } else {
             middle
         };
         runs.push(
-            DisplayRun::virtual_text(delimiter.to_string(), table_span(header), anchor)
+            DisplayRun::virtual_text(delimiter.to_string(), table_span(header), context.anchor)
                 .with_virtual_rich(end),
         );
     }
     DisplayLine {
         runs,
-        block_index: Some(block_index),
+        block_index: Some(context.block_index),
         no_wrap: true,
         column_start: 0,
         role: DisplayLineRole::Normal,
@@ -1418,6 +1408,11 @@ pub(super) fn mapped_text_runs(
     let mut runs = Vec::new();
     let mut segment_start = 0usize;
     let mut grapheme_offset = 0usize;
+    let context = MappedTextContext {
+        style: &style,
+        exact,
+        source_range,
+    };
     let bytes = text.as_bytes();
     let mut index = 0usize;
     while index < bytes.len() {
@@ -1433,21 +1428,15 @@ pub(super) fn mapped_text_runs(
             &mut runs,
             &text[segment_start..index],
             segment_start,
-            &style,
-            exact,
-            source_range,
+            &context,
             &mut grapheme_offset,
         );
         push_mapped_text_run(
             &mut runs,
             &text[index..index + newline_len],
-            index,
-            index + newline_len,
-            &style,
-            exact,
-            source_range,
-            grapheme_offset,
-            grapheme_offset.saturating_add(1),
+            index..index + newline_len,
+            &context,
+            grapheme_offset..grapheme_offset.saturating_add(1),
         );
         grapheme_offset = grapheme_offset.saturating_add(1);
         index += newline_len;
@@ -1457,9 +1446,7 @@ pub(super) fn mapped_text_runs(
         &mut runs,
         &text[segment_start..],
         segment_start,
-        &style,
-        exact,
-        source_range,
+        &context,
         &mut grapheme_offset,
     );
     if runs.is_empty() {
@@ -1477,13 +1464,17 @@ pub(super) fn mapped_text_runs(
     runs
 }
 
+pub(super) struct MappedTextContext<'a> {
+    style: &'a EditorRenderSpan,
+    exact: Option<EditorSourceRange>,
+    source_range: Option<EditorSourceRange>,
+}
+
 pub(super) fn append_mapped_grapheme_runs(
     runs: &mut Vec<DisplayRun>,
     text: &str,
     base: usize,
-    style: &EditorRenderSpan,
-    exact: Option<EditorSourceRange>,
-    source_range: Option<EditorSourceRange>,
+    context: &MappedTextContext<'_>,
     grapheme_offset: &mut usize,
 ) {
     let span = Span::raw(text.to_owned());
@@ -1494,13 +1485,9 @@ pub(super) fn append_mapped_grapheme_runs(
         push_mapped_text_run(
             runs,
             grapheme.symbol,
-            start,
-            base.saturating_add(relative),
-            style,
-            exact,
-            source_range,
-            *grapheme_offset,
-            grapheme_offset.saturating_add(1),
+            start..base.saturating_add(relative),
+            context,
+            *grapheme_offset..grapheme_offset.saturating_add(1),
         );
         *grapheme_offset = grapheme_offset.saturating_add(1);
     }
@@ -1509,18 +1496,20 @@ pub(super) fn append_mapped_grapheme_runs(
 pub(super) fn push_mapped_text_run(
     runs: &mut Vec<DisplayRun>,
     text: &str,
-    start: usize,
-    end: usize,
-    style: &EditorRenderSpan,
-    exact: Option<EditorSourceRange>,
-    source_range: Option<EditorSourceRange>,
-    grapheme_start: usize,
-    grapheme_end: usize,
+    source_offsets: std::ops::Range<usize>,
+    context: &MappedTextContext<'_>,
+    grapheme_offsets: std::ops::Range<usize>,
 ) {
-    let source = match (exact, source_range) {
+    let source = match (context.exact, context.source_range) {
         (Some(range), _) => DisplaySource::Range(EditorSourceRange::new(
-            range.start.saturating_add(start).min(range.end),
-            range.start.saturating_add(end).min(range.end),
+            range
+                .start
+                .saturating_add(source_offsets.start)
+                .min(range.end),
+            range
+                .start
+                .saturating_add(source_offsets.end)
+                .min(range.end),
         )),
         // Decoded entities, generated labels and other non-exact text must
         // never pretend that every visible grapheme covers the whole source.
@@ -1529,9 +1518,13 @@ pub(super) fn push_mapped_text_run(
     };
     runs.push(DisplayRun {
         text: DisplayText::Owned(text.to_owned()),
-        style: style.clone(),
+        style: context.style.clone(),
         source,
-        rich: rich_mapping(style.rich_range, grapheme_start, grapheme_end),
+        rich: rich_mapping(
+            context.style.rich_range,
+            grapheme_offsets.start,
+            grapheme_offsets.end,
+        ),
     });
 }
 

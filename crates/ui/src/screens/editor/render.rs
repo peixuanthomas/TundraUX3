@@ -696,7 +696,7 @@ fn effective_cursor(layout: &EditorLayout, model: &EditorViewModel) -> Option<Ed
                 layout
                     .rich_line_maps
                     .is_empty()
-                    .then(|| model.cursor_offset)
+                    .then_some(model.cursor_offset)
                     .flatten()
                     .and_then(|offset| layout.visual_position_for_source(offset))
             })

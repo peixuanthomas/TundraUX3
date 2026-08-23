@@ -464,7 +464,7 @@ fn quick_menu_clamps_flips_wraps_and_hides_when_the_border_cannot_fit() {
         layout
             .quick_menu_items
             .iter()
-            .all(|item| item.area.x >= popup.x + 1 && item.area.right() <= popup.right() - 1)
+            .all(|item| item.area.x > popup.x && item.area.right() < popup.right())
     );
 
     model.quick_menu = Some(EditorQuickMenuViewModel {
