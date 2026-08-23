@@ -8,7 +8,6 @@ mod error;
 mod initialization;
 mod layout;
 mod manager;
-mod migration;
 mod recovery;
 mod reset;
 mod schema;
@@ -23,8 +22,8 @@ pub use config_document::{
     ExplorerDateZone, ExplorerSizeFormat, ExplorerSortDirection, ExplorerSortField,
     IconDisplayMode, LauncherConfig, LauncherEntryRecord, LauncherExecutableKind,
     LauncherFingerprint, MAX_EDITOR_EXPLORER_OPEN_EXTENSION_LEN,
-    MAX_EDITOR_EXPLORER_OPEN_EXTENSIONS, SecurityConfig, StorageConfig, TimeSyncConfig,
-    TimeSyncSource, normalize_editor_explorer_open_extension,
+    MAX_EDITOR_EXPLORER_OPEN_EXTENSIONS, MotionPreference, SecurityConfig, StorageConfig,
+    TimeSyncConfig, TimeSyncSource, normalize_editor_explorer_open_extension,
 };
 pub use descriptors::{
     CLOCK_DESCRIPTOR, CONFIG_DESCRIPTOR, StorageDescriptor, VERSIONED_JSON_DESCRIPTORS,

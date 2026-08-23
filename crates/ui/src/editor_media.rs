@@ -5,7 +5,9 @@ use std::time::{Duration, Instant};
 
 use image::{DynamicImage, ImageReader, RgbaImage};
 use ratatui::Frame;
-use ratatui::layout::Rect;
+use ratatui::layout::{Rect, Size};
+#[cfg(any(unix, test))]
+use ratatui_image::FontSize;
 use ratatui_image::Image;
 use ratatui_image::Resize;
 #[cfg(not(unix))]
@@ -161,6 +163,7 @@ impl EditorImagePicker {
             match Picker::from_query_stdio_with_options(
                 ratatui_image::picker::cap_parser::QueryStdioOptions {
                     text_sizing_protocol: true,
+                    ..Default::default()
                 },
             ) {
                 Ok(picker) => {
@@ -222,7 +225,7 @@ impl EditorImagePicker {
         }
         let protocol = self
             .picker
-            .new_protocol(image, area, Resize::Fit(None))
+            .new_protocol(image, area.as_size(), Resize::Fit(None))
             .map_err(EditorMediaError::Protocol)?;
         Ok(PreparedEditorImage {
             protocol,
@@ -278,7 +281,7 @@ impl PreparedEditorImage {
     /// allocate the whole tile width to an icon, so center the actual protocol
     /// footprint here.
     pub fn render_centered(&self, frame: &mut Frame<'_>, area: Rect) {
-        let centered = centered_protocol_area(area, self.protocol.area());
+        let centered = centered_protocol_area(area, self.protocol.size());
         frame.render_widget(Image::new(&self.protocol), centered);
     }
 }
@@ -357,6 +360,7 @@ fn query_unix_terminal_capabilities(
         is_tmux,
         QueryStdioOptions {
             text_sizing_protocol: true,
+            ..Default::default()
         },
     );
     let iterm2_query = iterm2_capability_query(is_tmux);
@@ -552,7 +556,7 @@ fn picker_from_terminal_responses(responses: &[CapabilityResponse]) -> Picker {
         })
         .or_else(terminal_font_size)
         .unwrap_or((10, 20));
-    let mut picker = Picker::from_fontsize(font_size);
+    let mut picker = picker_from_font_size(font_size);
 
     // A live protocol response takes precedence over inherited environment
     // hints. This avoids selecting iTerm2 merely because a child terminal kept
@@ -563,6 +567,16 @@ fn picker_from_terminal_responses(responses: &[CapabilityResponse]) -> Picker {
         picker.set_protocol_type(ProtocolType::Sixel);
     }
     picker
+}
+
+/// The capability parser has already provided an exact cell size, while
+/// `ratatui-image` only exposes a direct picker constructor for that case as a
+/// deprecated compatibility API. Keep the compatibility boundary here instead
+/// of discarding the measured font size for the generic halfblock picker.
+#[cfg(any(unix, test))]
+#[allow(deprecated)]
+fn picker_from_font_size((width, height): (u16, u16)) -> Picker {
+    Picker::from_fontsize(FontSize::new(width, height))
 }
 
 #[cfg(unix)]
@@ -588,9 +602,9 @@ fn terminal_font_size() -> Option<(u16, u16)> {
     ))
 }
 
-fn centered_protocol_area(allocation: Rect, protocol_area: Rect) -> Rect {
-    let width = protocol_area.width.min(allocation.width);
-    let height = protocol_area.height.min(allocation.height);
+fn centered_protocol_area(allocation: Rect, protocol_size: Size) -> Rect {
+    let width = protocol_size.width.min(allocation.width);
+    let height = protocol_size.height.min(allocation.height);
     Rect::new(
         allocation
             .x
@@ -630,7 +644,7 @@ mod tests {
 
     #[test]
     fn halfblocks_are_reported_as_unsupported() {
-        let picker = Picker::from_fontsize((8, 16));
+        let picker = picker_from_font_size((8, 16));
         if picker.protocol_type() == ProtocolType::Halfblocks {
             assert!(EditorImagePicker::from_picker(picker).unwrap().is_none());
         }
@@ -644,13 +658,16 @@ mod tests {
             CapabilityResponse::Kitty,
             CapabilityResponse::CellSize(Some((9, 18))),
         ]);
-        if Picker::from_fontsize((9, 18)).protocol_type() == ProtocolType::Halfblocks {
+        if picker_from_font_size((9, 18)).protocol_type() == ProtocolType::Halfblocks {
             assert_eq!(picker.protocol_type(), ProtocolType::Kitty);
-            assert_eq!(picker.font_size(), (9, 18));
+            assert_eq!(
+                (picker.font_size().width, picker.font_size().height),
+                (9, 18)
+            );
         }
 
         let picker = picker_from_terminal_responses(&[CapabilityResponse::Sixel]);
-        if Picker::from_fontsize((10, 20)).protocol_type() == ProtocolType::Halfblocks {
+        if picker_from_font_size((10, 20)).protocol_type() == ProtocolType::Halfblocks {
             assert_eq!(picker.protocol_type(), ProtocolType::Sixel);
         }
     }
@@ -658,7 +675,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn terminal_probe_distinguishes_unsupported_from_no_response() {
-        let mut text_only_picker = Picker::from_fontsize((10, 20));
+        let mut text_only_picker = picker_from_font_size((10, 20));
         text_only_picker.set_protocol_type(ProtocolType::Halfblocks);
         let unsupported = terminal_probe_from_unix_query(UnixTerminalCapabilityQuery {
             picker: text_only_picker.clone(),
@@ -729,7 +746,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn unconfirmed_environment_graphics_hint_is_no_response() {
-        let mut hinted_picker = Picker::from_fontsize((10, 20));
+        let mut hinted_picker = picker_from_font_size((10, 20));
         hinted_picker.set_protocol_type(ProtocolType::Halfblocks);
         let probe = terminal_probe_from_unix_query(UnixTerminalCapabilityQuery {
             picker: hinted_picker,
@@ -782,11 +799,23 @@ mod tests {
     #[test]
     fn protocol_footprint_is_centered_and_clamped_inside_its_allocation() {
         assert_eq!(
-            centered_protocol_area(Rect::new(10, 5, 20, 6), Rect::new(0, 0, 8, 4)),
+            centered_protocol_area(
+                Rect::new(10, 5, 20, 6),
+                Size {
+                    width: 8,
+                    height: 4,
+                },
+            ),
             Rect::new(16, 6, 8, 4)
         );
         assert_eq!(
-            centered_protocol_area(Rect::new(10, 5, 4, 2), Rect::new(0, 0, 8, 4)),
+            centered_protocol_area(
+                Rect::new(10, 5, 4, 2),
+                Size {
+                    width: 8,
+                    height: 4,
+                },
+            ),
             Rect::new(10, 5, 4, 2)
         );
     }

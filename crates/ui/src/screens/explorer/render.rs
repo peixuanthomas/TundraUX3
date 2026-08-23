@@ -1,5 +1,5 @@
 use ratatui::Frame;
-use ratatui::layout::{Alignment, Constraint, Rect};
+use ratatui::layout::{Constraint, HorizontalAlignment, Rect};
 use ratatui::text::Line;
 use ratatui::widgets::{
     Borders, Cell, Clear, HighlightSpacing, List as RatatuiList, ListItem as RatatuiListItem,
@@ -11,7 +11,7 @@ use super::{
     ExplorerOverlayLayout, ExplorerOverlayViewModel, ExplorerSearchViewModel, ExplorerSortColumn,
     ExplorerToolbarAction, ExplorerViewModel, explorer_layout,
 };
-use crate::components::{Button, TextInput};
+use crate::components::{Button, TextInput, terminal_width};
 use crate::screens::shell::{
     ShellChromeViewModel, ShellLayout, compute_shell_layout, fit_cell, render_compact_home,
     render_status, render_top,
@@ -58,7 +58,7 @@ fn render_explorer_main(
         frame.render_widget(
             Paragraph::new("Explorer ASCII assets are unavailable")
                 .style(theme.error_style())
-                .alignment(Alignment::Center),
+                .alignment(HorizontalAlignment::Center),
             layout.table,
         );
         return;
@@ -172,7 +172,9 @@ fn render_explorer_sidebar(
 ) {
     if let Some(header) = layout.sidebar_header {
         frame.render_widget(
-            Paragraph::new("Quick access").style(theme.title_style()),
+            Paragraph::new("Quick access")
+                .alignment(HorizontalAlignment::Left)
+                .style(theme.title_style()),
             header,
         );
     }
@@ -338,7 +340,7 @@ fn render_explorer_table(
                 "(empty directory)"
             })
             .style(theme.muted_style())
-            .alignment(Alignment::Center),
+            .alignment(HorizontalAlignment::Center),
             layout.table_body,
         );
     }
@@ -424,7 +426,10 @@ fn render_explorer_footer(
         theme.muted_style(),
     ));
     lines.truncate(usize::from(layout.footer.height));
-    frame.render_widget(Paragraph::new(lines), layout.footer);
+    frame.render_widget(
+        Paragraph::new(lines).alignment(HorizontalAlignment::Left),
+        layout.footer,
+    );
 
     if let (Some(cancel), Some(operation)) = (layout.cancel_operation, model.operation.as_ref()) {
         let icon = explorer_icon_line(assets, "cancel");
@@ -584,7 +589,8 @@ fn render_explorer_overlay(
                     1,
                 );
                 frame.render_widget(
-                    Paragraph::new(format!("{}: {}", property.label, property.value)),
+                    Paragraph::new(format!("{}: {}", property.label, property.value))
+                        .alignment(HorizontalAlignment::Left),
                     area,
                 );
             }
@@ -615,7 +621,7 @@ fn render_explorer_name_dialog(
     theme: &TundraTheme,
 ) {
     frame.render_widget(
-        Paragraph::new(dialog.prompt.clone()),
+        Paragraph::new(dialog.prompt.clone()).alignment(HorizontalAlignment::Left),
         Rect::new(layout.content.x, layout.content.y, layout.content.width, 1),
     );
     for control in &layout.controls {
@@ -666,7 +672,9 @@ fn render_explorer_name_dialog(
             u16::from(layout.content.height > 4),
         );
         frame.render_widget(
-            Paragraph::new(error.clone()).style(theme.error_style()),
+            Paragraph::new(error.clone())
+                .alignment(HorizontalAlignment::Left)
+                .style(theme.error_style()),
             error_area,
         );
     }
@@ -686,7 +694,10 @@ fn render_explorer_conflict_dialog(
             theme.muted_style(),
         ),
     ];
-    frame.render_widget(Paragraph::new(lines), layout.content);
+    frame.render_widget(
+        Paragraph::new(lines).alignment(HorizontalAlignment::Left),
+        layout.content,
+    );
     for control in &layout.controls {
         match control.control {
             ExplorerOverlayControl::ConflictChoice(choice) => {
@@ -731,7 +742,7 @@ fn render_legacy_explorer_dialog(
 ) {
     frame.render_widget(
         Paragraph::new(dialog.message.clone())
-            .alignment(Alignment::Center)
+            .alignment(HorizontalAlignment::Center)
             .wrap(Wrap { trim: true }),
         layout.content,
     );
@@ -788,6 +799,7 @@ fn render_explorer_search(
     let Some(search) = search else {
         frame.render_widget(
             Paragraph::new(fit_cell("Search: /", usize::from(area.width)))
+                .alignment(HorizontalAlignment::Left)
                 .style(theme.muted_style()),
             area,
         );
@@ -809,16 +821,11 @@ fn render_explorer_search(
     const PREFIX: &str = "Search: ";
     input.render_borderless_frame_with_prefix(frame, area, &input_theme, PREFIX);
 
-    let visible_input_width =
-        Line::from(PREFIX)
-            .width()
-            .saturating_add(if search.query.is_empty() {
-                Line::from("<empty>").width()
-            } else {
-                Line::from(search.query.as_str())
-                    .width()
-                    .saturating_add(usize::from(search.active))
-            });
+    let visible_input_width = terminal_width(PREFIX).saturating_add(if search.query.is_empty() {
+        terminal_width("<empty>")
+    } else {
+        terminal_width(&search.query).saturating_add(usize::from(search.active))
+    });
     let visible_input_width = visible_input_width.min(usize::from(area.width));
     let suffix_x = area
         .x
@@ -830,11 +837,13 @@ fn render_explorer_search(
         area.height,
     );
     frame.render_widget(
-        Paragraph::new(explorer_search_suffix(search)).style(if search.active {
-            theme.title_style()
-        } else {
-            theme.muted_style()
-        }),
+        Paragraph::new(explorer_search_suffix(search))
+            .alignment(HorizontalAlignment::Left)
+            .style(if search.active {
+                theme.title_style()
+            } else {
+                theme.muted_style()
+            }),
         suffix_area,
     );
 }
@@ -922,7 +931,7 @@ pub fn explorer_first_entry_content_line(model: &ExplorerViewModel, content_widt
 }
 
 fn wrapped_line_count(text: &str, width: usize) -> usize {
-    text.chars().count().max(1).div_ceil(width.max(1))
+    terminal_width(text).max(1).div_ceil(width.max(1))
 }
 
 fn explorer_search_line(search: &ExplorerSearchViewModel) -> String {

@@ -2,7 +2,7 @@ use std::borrow::Cow;
 
 use ratatui::Frame;
 use ratatui::buffer::Buffer;
-use ratatui::layout::{Alignment, Rect};
+use ratatui::layout::{HorizontalAlignment, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::widgets::{Borders, Paragraph, Widget};
 
@@ -153,7 +153,7 @@ impl Button {
     fn bordered_widget<'a>(&'a self, theme: &TundraTheme) -> Paragraph<'a> {
         let style = self.button_style(theme);
         Paragraph::new(self.display_label())
-            .alignment(Alignment::Center)
+            .alignment(HorizontalAlignment::Center)
             .style(style)
             .block(
                 theme
@@ -168,7 +168,7 @@ impl Button {
 
     fn borderless_widget<'a>(&'a self, theme: &TundraTheme) -> Paragraph<'a> {
         Paragraph::new(self.display_label())
-            .alignment(Alignment::Center)
+            .alignment(HorizontalAlignment::Center)
             .style(self.button_style(theme))
     }
 
@@ -204,15 +204,18 @@ impl Button {
         let mut surface_state = self.state;
         surface_state.selected = false;
         let style = Self::style_for_state(surface_state, theme);
-        Paragraph::new("").style(style).block(
-            theme
-                .block()
-                .borders(Borders::ALL)
-                .style(style)
-                .border_style(
-                    theme.selectable_border_style(self.state.selected || self.state.active),
-                ),
-        )
+        Paragraph::new("")
+            .alignment(HorizontalAlignment::Left)
+            .style(style)
+            .block(
+                theme
+                    .block()
+                    .borders(Borders::ALL)
+                    .style(style)
+                    .border_style(
+                        theme.selectable_border_style(self.state.selected || self.state.active),
+                    ),
+            )
     }
 
     fn button_style(&self, theme: &TundraTheme) -> Style {

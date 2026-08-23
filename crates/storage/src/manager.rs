@@ -60,11 +60,15 @@ impl StorageManager {
     }
 
     pub fn load_users(&self) -> Result<UsersDocument, StorageError> {
-        load_json_document(&self.layout.users_path, "users")
+        let mut users: UsersDocument = load_json_document(&self.layout.users_path, "users")?;
+        users.normalize();
+        Ok(users)
     }
 
     pub fn save_users(&self, users: &UsersDocument) -> Result<(), StorageError> {
-        save_json_document(&self.layout.users_path, "users", users)
+        let mut users = users.clone();
+        users.normalize();
+        save_json_document(&self.layout.users_path, "users", &users)
     }
 
     pub fn load_state(&self) -> Result<StateDocument, StorageError> {

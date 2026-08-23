@@ -13,9 +13,8 @@ use crate::document_io::{
 };
 use crate::error::StorageError;
 use crate::manager::{StorageLoadReport, StorageManager};
-use crate::migration::migrate_v1_noop;
 use crate::recovery::recover_document;
-use crate::schema::{StorageFormat, VersionedDocument};
+use crate::schema::{StorageFormat, VersionedDocument, json_schema_version};
 use crate::state_documents::{RecentFilesDocument, SessionsDocument, StateDocument};
 use crate::trash_document::TrashDocument;
 use crate::user_document::{UsersDocument, UsersV1Document};
@@ -142,9 +141,23 @@ impl StorageManager {
 
     fn ensure_users_document(&self, report: &mut StorageLoadReport) -> Result<(), StorageError> {
         if self.layout.users_path.exists() {
-            return match validate_json_document::<UsersDocument>(&self.layout.users_path, "users") {
-                Ok(schema_version) => {
-                    migrate_v1_noop(report, &self.layout.users_path, "users", schema_version)
+            return match self.users_schema_version() {
+                Ok(1) => {
+                    let legacy =
+                        load_json_document::<UsersV1Document>(&self.layout.users_path, "users")?;
+                    let users = UsersDocument::from_legacy_v1(legacy);
+                    save_json_document(&self.layout.users_path, "users", &users)?;
+                    report.migrated_files.push(self.layout.users_path.clone());
+                    Ok(())
+                }
+                Ok(_) => {
+                    let mut users =
+                        load_json_document::<UsersDocument>(&self.layout.users_path, "users")?;
+                    if users.normalize() {
+                        save_json_document(&self.layout.users_path, "users", &users)?;
+                        report.migrated_files.push(self.layout.users_path.clone());
+                    }
+                    Ok(())
                 }
                 Err(error @ StorageError::UnsupportedSchema { .. }) => Err(error),
                 Err(error) => {
@@ -172,6 +185,16 @@ impl StorageManager {
         save_json_document(&self.layout.users_path, "users", &UsersDocument::default())?;
         report.created_files.push(self.layout.users_path.clone());
         Ok(())
+    }
+
+    fn users_schema_version(&self) -> Result<u32, StorageError> {
+        let contents =
+            std::fs::read_to_string(&self.layout.users_path).map_err(|error| StorageError::Io {
+                operation: "read JSON document",
+                path: self.layout.users_path.clone(),
+                message: error.to_string(),
+            })?;
+        json_schema_version(&contents, &self.layout.users_path, "users")
     }
 
     fn create_directories(&self) -> Result<(), StorageError> {
@@ -231,7 +254,12 @@ impl StorageManager {
 
         match validate_toml_document::<T>(path, document) {
             Ok(schema_version) => {
-                migrate_v1_noop(report, path, document, schema_version)?;
+                if schema_version < crate::schema::supported_schema_version(document) {
+                    let mut document_value = load_toml_document::<T>(path, document)?;
+                    document_value.upgrade_schema();
+                    save_toml_document(path, document, &document_value)?;
+                    report.migrated_files.push(path.to_path_buf());
+                }
                 Ok(())
             }
             Err(error @ StorageError::UnsupportedSchema { .. }) => Err(error),
@@ -262,7 +290,12 @@ impl StorageManager {
 
         match validate_json_document::<T>(path, document) {
             Ok(schema_version) => {
-                migrate_v1_noop(report, path, document, schema_version)?;
+                if schema_version < crate::schema::supported_schema_version(document) {
+                    let mut document_value = load_json_document::<T>(path, document)?;
+                    document_value.upgrade_schema();
+                    save_json_document(path, document, &document_value)?;
+                    report.migrated_files.push(path.to_path_buf());
+                }
                 Ok(())
             }
             Err(error @ StorageError::UnsupportedSchema { .. }) => Err(error),

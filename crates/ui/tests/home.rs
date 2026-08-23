@@ -1056,7 +1056,7 @@ fn login_renderer_masks_password_length() {
 }
 
 #[test]
-fn login_focused_boxes_use_accent_colored_solid_regular_weight_vertical_borders() {
+fn login_focused_boxes_use_focus_colored_solid_regular_weight_vertical_borders() {
     let chrome = chrome_for("Login");
     let theme = TundraTheme::default_dark();
     let main = main_rect(80, 24);
@@ -1080,7 +1080,7 @@ fn login_focused_boxes_use_accent_colored_solid_regular_weight_vertical_borders(
             .draw(|frame| render_login(frame, frame.area(), &chrome, &model, &theme))
             .expect("render focused login field");
 
-        assert_regular_weight_vertical_border(&terminal, focused_area, theme.accent_color);
+        assert_regular_weight_vertical_border(&terminal, focused_area, theme.tokens().focus);
         let title_cell = terminal
             .backend()
             .buffer()

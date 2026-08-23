@@ -1,6 +1,7 @@
 use std::fmt::Write as _;
+use std::num::NonZeroU16;
 
-use ratatui::buffer::Buffer;
+use ratatui::buffer::{Buffer, CellDiffOption};
 use ratatui::layout::Rect;
 use ratatui::style::Color;
 use ratatui::widgets::Widget;
@@ -22,9 +23,10 @@ impl<'a> BigText<'a> {
         Self { text, tier, color }
     }
 
-    fn text_sizing_sequence(&self, area_width: u16) -> String {
+    fn text_sizing_sequence(&self, area_width: u16) -> (String, NonZeroU16) {
         let (numerator, denominator) = heading_size_ratio(self.tier);
         let mut output = String::new();
+        let mut rendered_width = 0_u16;
 
         // Clear the complete two-row allocation before emitting a multi-cell
         // character and disable automatic wrapping for the protocol payload.
@@ -39,6 +41,7 @@ impl<'a> BigText<'a> {
             } else {
                 chunk_width.saturating_mul(numerator).div_ceil(denominator)
             };
+            rendered_width = rendered_width.saturating_add(u16::from(width));
             write!(
                 output,
                 "\x1b]66;s=2:n={numerator}:d={denominator}:w={width};"
@@ -49,7 +52,11 @@ impl<'a> BigText<'a> {
         }
 
         output.push_str("\x1b[0m");
-        output
+        (
+            output,
+            NonZeroU16::new(rendered_width.min(area_width).max(1))
+                .expect("BigText always occupies at least one terminal cell"),
+        )
     }
 }
 
@@ -70,7 +77,7 @@ impl Widget for BigText<'_> {
             return;
         }
 
-        let sequence = self.text_sizing_sequence(area.width);
+        let (sequence, rendered_width) = self.text_sizing_sequence(area.width);
         let mut first = true;
         for y in area.top()..area.bottom() {
             for x in area.left()..area.right() {
@@ -79,11 +86,12 @@ impl Widget for BigText<'_> {
                 };
                 if first {
                     first = false;
-                    cell.set_skip(false).set_symbol(&sequence);
+                    cell.set_symbol(&sequence)
+                        .set_diff_option(CellDiffOption::ForcedWidth(rendered_width));
                 } else {
                     // Ratatui must not overwrite the cells occupied by the
                     // terminal's multi-cell character during buffer diffing.
-                    cell.set_skip(true);
+                    cell.set_diff_option(CellDiffOption::Skip);
                 }
             }
         }
@@ -152,7 +160,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn widget_emits_protocol_once_and_skips_the_remaining_cells() {
+    fn widget_marks_the_escape_sequence_width_and_skips_its_covered_cells() {
         let area = Rect::new(0, 0, 12, 2);
         let mut buffer = Buffer::empty(area);
 
@@ -163,8 +171,32 @@ mod tests {
                 .symbol()
                 .contains("]66;s=2:n=7:d=7:w=5;Title")
         );
-        assert!(!buffer[(0, 0)].skip);
-        assert!(buffer[(1, 0)].skip);
-        assert!(buffer[(0, 1)].skip);
+        assert_eq!(
+            buffer[(0, 0)].diff_option,
+            CellDiffOption::ForcedWidth(NonZeroU16::new(5).unwrap())
+        );
+        assert_eq!(buffer[(1, 0)].diff_option, CellDiffOption::Skip);
+        assert_eq!(buffer[(0, 1)].diff_option, CellDiffOption::Skip);
+    }
+
+    #[test]
+    fn wide_glyphs_reserve_their_full_terminal_width() {
+        let area = Rect::new(0, 0, 4, 2);
+        let mut buffer = Buffer::empty(area);
+
+        BigText::new("好", 1, Color::Gray).render(area, &mut buffer);
+
+        assert!(buffer[(0, 0)].symbol().contains("w=2;好"));
+        assert_eq!(
+            buffer[(0, 0)].diff_option,
+            CellDiffOption::ForcedWidth(NonZeroU16::new(2).unwrap())
+        );
+        for y in area.top()..area.bottom() {
+            for x in area.left()..area.right() {
+                if (x, y) != (area.left(), area.top()) {
+                    assert_eq!(buffer[(x, y)].diff_option, CellDiffOption::Skip);
+                }
+            }
+        }
     }
 }

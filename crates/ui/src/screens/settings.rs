@@ -1,13 +1,16 @@
 use ratatui::Frame;
-use ratatui::layout::{Alignment, Constraint, Layout, Rect};
-use ratatui::style::{Color, Modifier, Style};
-use ratatui::text::{Line, Span};
+use ratatui::layout::{Constraint, HorizontalAlignment, Layout, Rect};
+use ratatui::style::{Color, Modifier};
+use ratatui::text::Line;
 use ratatui::widgets::{
     Borders, Clear, HighlightSpacing, List, ListItem, ListState, Paragraph, Row, Scrollbar,
     ScrollbarOrientation, ScrollbarState, Table, TableState, Wrap,
 };
 
-use crate::components::{Button, List as ComponentList, ListItem as ComponentListItem, TextInput};
+use crate::components::{
+    Button, List as ComponentList, ListItem as ComponentListItem, TextInput, terminal_width,
+    truncate_to_terminal_width,
+};
 use crate::screens::shell::{render_status, render_top};
 use crate::{
     BorderShape, ShellChromeViewModel, ShellLayout, TimezoneMapWidget, TundraTheme,
@@ -42,7 +45,7 @@ impl SettingsCategory {
 
     pub const fn description(self) -> &'static str {
         match self {
-            Self::Appearance => "Theme, icons, colors and borders",
+            Self::Appearance => "Theme, motion, icons, colors and borders",
             Self::RegionTime => "Language, city and timezone",
             Self::FileExplorer => "Display, sorting and safety",
             Self::Editor => "Cursor and file associations",
@@ -56,6 +59,7 @@ pub enum SettingsField {
     BorderShape,
     BorderColor,
     AccentColor,
+    MotionPreference,
     Language,
     Timezone,
     TimeSyncSource,
@@ -518,6 +522,7 @@ fn render_settings_content(
                         preview_theme.body_style(),
                     ),
                 ])
+                .alignment(HorizontalAlignment::Left)
                 .block(
                     preview_theme
                         .block()
@@ -689,7 +694,8 @@ fn render_settings_footer(
         Paragraph::new(Line::styled(
             truncate(&text, usize::from(area.width)),
             theme.muted_style(),
-        )),
+        ))
+        .alignment(HorizontalAlignment::Left),
         area,
     );
 }
@@ -733,7 +739,8 @@ fn render_picker(
             "Arrows: choose    Enter: apply    Esc: cancel"
         };
         frame.render_widget(
-            Paragraph::new(Line::styled(help, theme.muted_style())),
+            Paragraph::new(Line::styled(help, theme.muted_style()))
+                .alignment(HorizontalAlignment::Left),
             query_area,
         );
     }
@@ -833,6 +840,7 @@ fn render_color_editor(
     ];
     frame.render_widget(
         Paragraph::new(lines)
+            .alignment(HorizontalAlignment::Left)
             .block(
                 theme
                     .block()
@@ -868,6 +876,7 @@ fn render_weather_location_editor(
     ];
     frame.render_widget(
         Paragraph::new(lines)
+            .alignment(HorizontalAlignment::Left)
             .block(
                 theme
                     .block()
@@ -912,6 +921,7 @@ fn render_file_extensions_editor(
     ];
     frame.render_widget(
         Paragraph::new(lines)
+            .alignment(HorizontalAlignment::Left)
             .block(
                 theme
                     .block()
@@ -960,6 +970,7 @@ fn render_time_sync_server_editor(
     ];
     frame.render_widget(
         Paragraph::new(lines)
+            .alignment(HorizontalAlignment::Left)
             .block(
                 theme
                     .block()
@@ -1073,7 +1084,7 @@ fn render_settings_control(
         };
         frame.render_widget(
             Paragraph::new(label)
-                .alignment(Alignment::Right)
+                .alignment(HorizontalAlignment::Right)
                 .style(style),
             area,
         );
@@ -1090,7 +1101,7 @@ fn render_settings_control(
 }
 
 fn settings_control_width(item: &SettingsItemViewModel) -> u16 {
-    let label_width = u16::try_from(Line::from(item.value.as_str()).width()).unwrap_or(u16::MAX);
+    let label_width = u16::try_from(terminal_width(&item.value)).unwrap_or(u16::MAX);
     if !item.enabled {
         return label_width.saturating_add(" locked".len() as u16);
     }
@@ -1169,7 +1180,7 @@ fn contains(area: Rect, point: (u16, u16)) -> bool {
 }
 
 fn truncate(value: &str, width: usize) -> String {
-    if Line::from(value).width() <= width {
+    if terminal_width(value) <= width {
         return value.to_string();
     }
     if width == 0 {
@@ -1177,17 +1188,7 @@ fn truncate(value: &str, width: usize) -> String {
     }
 
     let content_width = width.saturating_sub(1);
-    let span = Span::raw(value);
-    let mut used = 0_usize;
-    let mut truncated = String::new();
-    for grapheme in span.styled_graphemes(Style::default()) {
-        let grapheme_width = Line::from(grapheme.symbol).width();
-        if used.saturating_add(grapheme_width) > content_width {
-            break;
-        }
-        truncated.push_str(grapheme.symbol);
-        used = used.saturating_add(grapheme_width);
-    }
+    let mut truncated = truncate_to_terminal_width(value, content_width);
     truncated.push('…');
     truncated
 }

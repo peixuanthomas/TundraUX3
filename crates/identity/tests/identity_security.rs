@@ -212,6 +212,7 @@ fn bootstrap_admin_persists_the_selected_user_appearance() {
         border_color: BorderColor::Rgb(0x38, 0xBD, 0xF8),
         accent_color: BorderColor::LightMagenta,
         icon_display_mode: IconDisplayMode::Image,
+        ..AppearanceConfig::default()
     };
 
     let account = UserService::new(manager.clone())
@@ -258,6 +259,7 @@ fn appearance_updates_are_self_managed_for_users_and_admins() {
         border_color: BorderColor::LightGreen,
         accent_color: BorderColor::LightMagenta,
         icon_display_mode: IconDisplayMode::Ascii,
+        ..AppearanceConfig::default()
     };
 
     let updated = users

@@ -1,5 +1,5 @@
 use ratatui::Frame;
-use ratatui::layout::{Constraint, Layout, Rect};
+use ratatui::layout::{Constraint, HorizontalAlignment, Layout, Rect};
 use ratatui::text::Line;
 use ratatui::widgets::{
     Block, Borders, Clear, HighlightSpacing, List, ListItem, ListState, Paragraph, Scrollbar,
@@ -144,7 +144,9 @@ fn render_setup_language_page(
 
     let content = setup_inner_area(area);
     frame.render_widget(
-        Paragraph::new(setup_language_header_lines(model, theme)).wrap(Wrap { trim: true }),
+        Paragraph::new(setup_language_header_lines(model, theme))
+            .alignment(HorizontalAlignment::Left)
+            .wrap(Wrap { trim: true }),
         Rect::new(
             content.x,
             content.y,
@@ -185,7 +187,9 @@ fn render_setup_language_page(
         content.bottom().saturating_sub(footer_y),
     );
     frame.render_widget(
-        Paragraph::new(setup_language_footer_lines(model, theme)).wrap(Wrap { trim: true }),
+        Paragraph::new(setup_language_footer_lines(model, theme))
+            .alignment(HorizontalAlignment::Left)
+            .wrap(Wrap { trim: true }),
         footer,
     );
 }
@@ -220,7 +224,8 @@ fn render_setup_timezone_page(
     );
 
     frame.render_widget(
-        Paragraph::new(setup_timezone_header_lines(model, theme)),
+        Paragraph::new(setup_timezone_header_lines(model, theme))
+            .alignment(HorizontalAlignment::Left),
         header,
     );
     let items = if start >= end {
@@ -264,7 +269,9 @@ fn render_setup_timezone_page(
         );
     }
     frame.render_widget(
-        Paragraph::new(setup_timezone_footer_lines(model, theme)).wrap(Wrap { trim: true }),
+        Paragraph::new(setup_timezone_footer_lines(model, theme))
+            .alignment(HorizontalAlignment::Left)
+            .wrap(Wrap { trim: true }),
         footer,
     );
 }
@@ -285,7 +292,9 @@ fn render_setup_admin_page(
         SETUP_ADMIN_HEADER_HEIGHT.min(content.height),
     );
     frame.render_widget(
-        Paragraph::new(setup_admin_header_lines(model, theme)).wrap(Wrap { trim: true }),
+        Paragraph::new(setup_admin_header_lines(model, theme))
+            .alignment(HorizontalAlignment::Left)
+            .wrap(Wrap { trim: true }),
         header,
     );
 
@@ -349,6 +358,7 @@ fn render_setup_admin_page(
     if let Some(error) = &model.error {
         frame.render_widget(
             Paragraph::new(Line::styled(format!("Error: {error}"), theme.error_style()))
+                .alignment(HorizontalAlignment::Left)
                 .wrap(Wrap { trim: true }),
             setup_admin_error_area(area),
         );
@@ -382,6 +392,7 @@ fn render_setup_appearance_page(
                 theme.muted_style(),
             ),
         ])
+        .alignment(HorizontalAlignment::Left)
         .wrap(Wrap { trim: true }),
         header,
     );
@@ -432,6 +443,7 @@ fn render_setup_appearance_page(
                     model.theme_color_value, model.accent_color_value
                 )),
             ])
+            .alignment(HorizontalAlignment::Left)
             .block(
                 theme
                     .block()
@@ -458,6 +470,7 @@ fn render_setup_appearance_page(
     if let Some(error) = &model.error {
         frame.render_widget(
             Paragraph::new(Line::styled(format!("Error: {error}"), theme.error_style()))
+                .alignment(HorizontalAlignment::Left)
                 .wrap(Wrap { trim: true }),
             setup_appearance_error_area(area),
         );
@@ -632,7 +645,9 @@ fn render_setup_custom_color_dialog(
     let inner = setup_inner_area(dialog);
     let instruction = Rect::new(inner.x, inner.y, inner.width, 1.min(inner.height));
     frame.render_widget(
-        Paragraph::new("Enter #RRGGBB or a supported color name.").style(theme.muted_style()),
+        Paragraph::new("Enter #RRGGBB or a supported color name.")
+            .alignment(HorizontalAlignment::Left)
+            .style(theme.muted_style()),
         instruction,
     );
 
@@ -679,7 +694,10 @@ fn render_setup_custom_color_dialog(
         inner.width,
         1.min(inner.height.saturating_sub(5)),
     );
-    frame.render_widget(Paragraph::new(feedback), feedback_area);
+    frame.render_widget(
+        Paragraph::new(feedback).alignment(HorizontalAlignment::Left),
+        feedback_area,
+    );
 
     let actions_area = Rect::new(
         inner.x,
@@ -688,7 +706,9 @@ fn render_setup_custom_color_dialog(
         1.min(inner.height.saturating_sub(6)),
     );
     frame.render_widget(
-        Paragraph::new("Enter: apply    Esc: cancel").style(theme.muted_style()),
+        Paragraph::new("Enter: apply    Esc: cancel")
+            .alignment(HorizontalAlignment::Left)
+            .style(theme.muted_style()),
         actions_area,
     );
 }
@@ -880,7 +900,9 @@ fn render_setup_password_checklist(
     }
 
     frame.render_widget(
-        Paragraph::new(setup_password_checklist_lines(model, theme)).wrap(Wrap { trim: true }),
+        Paragraph::new(setup_password_checklist_lines(model, theme))
+            .alignment(HorizontalAlignment::Left)
+            .wrap(Wrap { trim: true }),
         inner,
     );
 }

@@ -1,6 +1,7 @@
 use super::document::*;
 use super::source::*;
 use super::*;
+use crate::components::terminal_width;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct EditorMenuLayout {
@@ -836,7 +837,7 @@ pub(super) fn menu_popup_layout(
     let actions = menu_actions(menu);
     let desired_width = actions
         .iter()
-        .map(|action| menu_action_label(*action).chars().count())
+        .map(|action| terminal_width(menu_action_label(*action)))
         .max()
         .unwrap_or_default()
         .saturating_add(4);
@@ -1003,7 +1004,7 @@ pub(super) fn quick_menu_layout(
         EditorQuickAction::Heading(3),
     ];
     let item_widths =
-        actions.map(|action| to_u16(quick_action_label(action).chars().count().saturating_add(2)));
+        actions.map(|action| to_u16(terminal_width(quick_action_label(action)).saturating_add(2)));
     let available_inner_width = area.width.saturating_sub(2);
     let minimum_inner_width = item_widths.iter().copied().max().unwrap_or_default();
     if available_inner_width < minimum_inner_width {
@@ -1186,7 +1187,7 @@ pub(super) fn toolbar_spec(
     action: EditorToolbarAction,
 ) -> (EditorToolbarAction, &'static str, u16) {
     let label = toolbar_label(action);
-    (action, label, to_u16(label.chars().count()))
+    (action, label, to_u16(terminal_width(label)))
 }
 
 pub(super) fn toolbar_label(action: EditorToolbarAction) -> &'static str {

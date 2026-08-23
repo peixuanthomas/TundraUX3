@@ -1,7 +1,7 @@
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use ratatui::layout::{Position, Rect};
-use ratatui::style::{Color, Modifier};
+use ratatui::style::Modifier;
 use ui::{
     EditorBlockArea, EditorBlockSourceMap, EditorDocumentPosition, EditorFocus, EditorHitTarget,
     EditorMenu, EditorMenuAction, EditorMode, EditorQuickAction, EditorQuickMenuViewModel,
@@ -109,7 +109,7 @@ fn rich_renderer_covers_markdown_blocks_and_terminal_fallbacks() {
     let (code_x, code_y) = find_text(&terminal, "inline_code");
     assert_eq!(
         terminal.backend().buffer()[(code_x, code_y)].bg,
-        Color::DarkGray
+        theme.muted
     );
     let (link_x, link_y) = find_text(&terminal, "linked text");
     let link = &terminal.backend().buffer()[(link_x, link_y)];
@@ -300,7 +300,7 @@ fn editor_button_groups_preserve_selected_disabled_and_menu_surface_styles() {
         .expect("source mode");
     let source_cell = &buffer[(source_mode.area.x, source_mode.area.y)];
     assert_eq!(source_cell.fg, theme.muted);
-    assert_eq!(source_cell.bg, Color::DarkGray);
+    assert_eq!(source_cell.bg, theme.muted);
 
     for action in [EditorToolbarAction::Open, EditorToolbarAction::Bold] {
         let item = toolbar_item(&layout, action);

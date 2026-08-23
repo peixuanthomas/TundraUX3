@@ -11,9 +11,9 @@ use storage::{
     AppearanceConfig, BorderColor, BorderShape, ClockDocument, ClockEntryRecord, ClockProfile,
     EditorConfig, ExplorerConfig, ExplorerDateZone, ExplorerSizeFormat, ExplorerSortDirection,
     ExplorerSortField, IconDisplayMode, LauncherConfig, LauncherEntryRecord,
-    LauncherExecutableKind, LauncherFingerprint, RecentFilesDocument, SCHEMA_VERSION,
-    SecurityConfig, SessionsDocument, StateDocument, StorageConfig, StorageError, StorageLayout,
-    StorageManager, TimeSyncConfig, TimeSyncSource, TrashDocument, TrashRecord,
+    LauncherExecutableKind, LauncherFingerprint, MotionPreference, RecentFilesDocument,
+    SCHEMA_VERSION, SecurityConfig, SessionsDocument, StateDocument, StorageConfig, StorageError,
+    StorageLayout, StorageManager, TimeSyncConfig, TimeSyncSource, TrashDocument, TrashRecord,
     USERS_SCHEMA_VERSION, UserRecord, UsersDocument,
 };
 
@@ -130,6 +130,7 @@ fn toml_and_json_documents_round_trip() {
             border_color: BorderColor::Rgb(0x38, 0xBD, 0xF8),
             accent_color: BorderColor::LightMagenta,
             icon_display_mode: IconDisplayMode::Ascii,
+            motion_preference: MotionPreference::Reduced,
         },
         explorer: ExplorerConfig {
             show_hidden: true,
@@ -177,7 +178,6 @@ fn toml_and_json_documents_round_trip() {
         .save_config(&config)
         .expect("config should save atomically");
     let mut expected_config = config.clone();
-    expected_config.theme = "dark".to_string();
     expected_config.language = "en-US".to_string();
     assert_eq!(
         manager.load_config().expect("config should reload"),
@@ -193,7 +193,8 @@ fn toml_and_json_documents_round_trip() {
     assert!(config_contents.contains("border_color = \"#38BDF8\""));
     assert!(config_contents.contains("accent_color = \"light-magenta\""));
     assert!(config_contents.contains("icon_display_mode = \"ascii\""));
-    assert!(!config_contents.contains("theme ="));
+    assert!(config_contents.contains("motion_preference = \"reduced\""));
+    assert!(config_contents.contains("theme = \"light\""));
     assert!(config_contents.contains("size_format = \"bytes\""));
     assert!(config_contents.contains("date_zone = \"utc\""));
     assert!(config_contents.contains("sort_field = \"modified\""));
@@ -327,6 +328,8 @@ fn old_config_without_language_or_timezone_loads_with_defaults() {
     assert_eq!(config.appearance.border_shape, BorderShape::Rounded);
     assert_eq!(config.appearance.border_color, BorderColor::White);
     assert_eq!(config.appearance.accent_color, BorderColor::Cyan);
+    assert_eq!(config.appearance.motion_preference, MotionPreference::Full);
+    assert_eq!(config.schema_version, SCHEMA_VERSION);
     assert_eq!(config.editor, EditorConfig::default());
     assert_eq!(
         config.explorer,
@@ -337,6 +340,41 @@ fn old_config_without_language_or_timezone_loads_with_defaults() {
     );
     assert!(opened.report.recovered_files.is_empty());
     assert!(opened.report.warnings.is_empty());
+
+    cleanup(&base);
+}
+
+#[test]
+fn v1_appearance_migration_keeps_every_custom_visual_choice() {
+    let base = unique_temp_root("appearance-custom-migration");
+    let paths = app_paths(&base);
+    let layout = StorageLayout::from_app_paths(&paths);
+    fs::create_dir_all(layout.config_path.parent().expect("config parent"))
+        .expect("config parent should be writable");
+    fs::write(
+        &layout.config_path,
+        "schema_version = 1\ntheme = \"dark\"\n\n[appearance]\nborder_shape = \"square\"\nborder_color = \"#38BDF8\"\naccent_color = \"light-magenta\"\nicon_display_mode = \"ascii\"\n",
+    )
+    .expect("legacy appearance fixture");
+
+    let opened = StorageManager::open(paths).expect("appearance migration should succeed");
+    let appearance = opened
+        .manager
+        .load_config()
+        .expect("migrated config")
+        .appearance;
+
+    assert_eq!(appearance.border_shape, BorderShape::Square);
+    assert_eq!(appearance.border_color, BorderColor::Rgb(0x38, 0xBD, 0xF8));
+    assert_eq!(appearance.accent_color, BorderColor::LightMagenta);
+    assert_eq!(appearance.icon_display_mode, IconDisplayMode::Ascii);
+    assert_eq!(appearance.motion_preference, MotionPreference::Full);
+    let contents = fs::read_to_string(&layout.config_path).expect("migrated config contents");
+    assert!(contents.contains("schema_version = 2"));
+    assert!(contents.contains("border_color = \"#38BDF8\""));
+    assert!(contents.contains("accent_color = \"light-magenta\""));
+    assert!(contents.contains("icon_display_mode = \"ascii\""));
+    assert!(opened.report.migrated_files.contains(&layout.config_path));
 
     cleanup(&base);
 }
@@ -454,8 +492,39 @@ fn old_users_without_password_hint_load_with_none() {
     assert_eq!(users.users.len(), 1);
     assert_eq!(users.users[0].password_hint, None);
     assert_eq!(users.users[0].appearance, AppearanceConfig::default());
+    assert_eq!(users.schema_version, USERS_SCHEMA_VERSION);
     assert!(opened.report.recovered_files.is_empty());
     assert!(opened.report.warnings.is_empty());
+
+    cleanup(&base);
+}
+
+#[test]
+fn v2_user_appearance_migration_preserves_custom_accent_and_border() {
+    let base = unique_temp_root("user-appearance-custom-migration");
+    let paths = app_paths(&base);
+    let layout = StorageLayout::from_app_paths(&paths);
+    fs::create_dir_all(&layout.data_path).expect("data path should be writable");
+    fs::write(
+        &layout.users_path,
+        "{\n  \"schema_version\": 2,\n  \"users\": [{\n    \"id\": \"user-1\",\n    \"username\": \"AdminUser\",\n    \"display_name\": \"Admin User\",\n    \"role\": \"Admin\",\n    \"password_hash\": \"$argon2id$placeholder\",\n    \"appearance\": {\n      \"border_shape\": \"square\",\n      \"border_color\": \"#38BDF8\",\n      \"accent_color\": \"light-magenta\",\n      \"icon_display_mode\": \"ascii\"\n    },\n    \"enabled\": true,\n    \"failed_login_attempts\": 0,\n    \"locked_until_epoch_ms\": null,\n    \"created_at_epoch_ms\": 1,\n    \"updated_at_epoch_ms\": 1,\n    \"last_login_at_epoch_ms\": null\n  }]\n}\n",
+    )
+    .expect("legacy user fixture");
+
+    let opened = StorageManager::open(paths).expect("user migration should succeed");
+    let user = &opened.manager.load_users().expect("migrated users").users[0];
+    assert_eq!(user.appearance.border_shape, BorderShape::Square);
+    assert_eq!(
+        user.appearance.border_color,
+        BorderColor::Rgb(0x38, 0xBD, 0xF8)
+    );
+    assert_eq!(user.appearance.accent_color, BorderColor::LightMagenta);
+    assert_eq!(user.appearance.icon_display_mode, IconDisplayMode::Ascii);
+    assert_eq!(user.appearance.motion_preference, MotionPreference::Full);
+    let contents = fs::read_to_string(&layout.users_path).expect("migrated user contents");
+    assert!(contents.contains("\"schema_version\": 3"));
+    assert!(contents.contains("\"motion_preference\": \"full\""));
+    assert!(opened.report.migrated_files.contains(&layout.users_path));
 
     cleanup(&base);
 }
@@ -567,7 +636,7 @@ fn future_trash_schema_errors_without_modifying_file() {
     let paths = app_paths(&base);
     let layout = StorageLayout::from_app_paths(&paths);
     fs::create_dir_all(&layout.trash_path).expect("trash path should be writable");
-    let original = "{\n  \"schema_version\": 2,\n  \"records\": []\n}\n";
+    let original = "{\n  \"schema_version\": 3,\n  \"records\": []\n}\n";
     fs::write(&layout.trash_manifest_path, original).expect("future trash fixture");
 
     let error = StorageManager::open(paths).expect_err("future trash should fail");
@@ -576,7 +645,7 @@ fn future_trash_schema_errors_without_modifying_file() {
         error,
         StorageError::UnsupportedSchema {
             document: "trash",
-            found: 2,
+            found: 3,
             supported: SCHEMA_VERSION,
             ..
         }
@@ -597,7 +666,7 @@ fn future_clock_schema_errors_without_modifying_file() {
     let paths = app_paths(&base);
     let layout = StorageLayout::from_app_paths(&paths);
     fs::create_dir_all(&layout.data_path).expect("data path should be writable");
-    let original = "{\n  \"schema_version\": 2,\n  \"profiles\": {}\n}\n";
+    let original = "{\n  \"schema_version\": 3,\n  \"profiles\": {}\n}\n";
     fs::write(&layout.clock_path, original).expect("future clock fixture");
 
     let error = StorageManager::open(paths).expect_err("future clock should fail");
@@ -606,7 +675,7 @@ fn future_clock_schema_errors_without_modifying_file() {
         error,
         StorageError::UnsupportedSchema {
             document: "clock",
-            found: 2,
+            found: 3,
             supported: SCHEMA_VERSION,
             ..
         }
@@ -627,7 +696,7 @@ fn future_toml_schema_errors_without_modifying_file() {
     let layout = StorageLayout::from_app_paths(&paths);
     fs::create_dir_all(layout.config_path.parent().expect("config parent"))
         .expect("config parent should be writable");
-    let original = "schema_version = 2\ntheme = \"future\"\n";
+    let original = "schema_version = 3\ntheme = \"future\"\n";
     fs::write(&layout.config_path, original).expect("future TOML fixture");
 
     let error = StorageManager::open(paths).expect_err("future config should fail");
@@ -636,7 +705,7 @@ fn future_toml_schema_errors_without_modifying_file() {
         error,
         StorageError::UnsupportedSchema {
             document: "config",
-            found: 2,
+            found: 3,
             supported: SCHEMA_VERSION,
             ..
         }
@@ -663,7 +732,7 @@ fn future_json_schema_errors_without_modifying_file() {
         "schema_version = 1\ntheme = \"dark\"\n\n[shortcuts]\n\n[explorer]\nshow_hidden = false\n\n[launcher]\npinned_apps = []\npinned_dirs = []\n",
     )
     .expect("current TOML fixture");
-    let original = "{\n  \"schema_version\": 3,\n  \"users\": []\n}\n";
+    let original = "{\n  \"schema_version\": 4,\n  \"users\": []\n}\n";
     fs::write(&layout.users_path, original).expect("future JSON fixture");
 
     let error = StorageManager::open(paths).expect_err("future JSON should fail");
@@ -672,7 +741,7 @@ fn future_json_schema_errors_without_modifying_file() {
         error,
         StorageError::UnsupportedSchema {
             document: "users",
-            found: 3,
+            found: 4,
             supported: USERS_SCHEMA_VERSION,
             ..
         }

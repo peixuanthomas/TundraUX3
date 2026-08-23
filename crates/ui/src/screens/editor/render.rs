@@ -1,6 +1,7 @@
 use super::document::*;
 use super::*;
-use crate::components::{BigText, Button};
+use crate::components::{BigText, Button, terminal_width};
+use ratatui::layout::HorizontalAlignment;
 use ratatui::widgets::{
     List as RatatuiList, ListItem as RatatuiListItem, Scrollbar, ScrollbarOrientation,
     ScrollbarState, Tabs as RatatuiTabs,
@@ -225,7 +226,9 @@ fn render_settings(
         "Read-only: administrator permission is required to change these settings."
     };
     frame.render_widget(
-        Paragraph::new(description_text).style(theme.muted_style()),
+        Paragraph::new(description_text)
+            .alignment(HorizontalAlignment::Left)
+            .style(theme.muted_style()),
         description,
     );
 
@@ -334,7 +337,9 @@ fn render_settings(
             theme.body_style()
         };
         frame.render_widget(
-            Paragraph::new(format!("{value:^width$}")).style(style),
+            Paragraph::new(format!("{value:^width$}"))
+                .alignment(HorizontalAlignment::Left)
+                .style(style),
             value_area,
         );
     }
@@ -347,6 +352,7 @@ fn render_settings(
     );
     frame.render_widget(
         Paragraph::new("Tab select · Left/Right adjust · Enter activate · Esc cancel")
+            .alignment(HorizontalAlignment::Left)
             .style(theme.muted_style()),
         help,
     );
@@ -496,7 +502,9 @@ fn render_canvas(
             usize::from(layout.canvas.width),
         );
         frame.render_widget(
-            Paragraph::new(line).style(theme.body_style()),
+            Paragraph::new(line)
+                .alignment(HorizontalAlignment::Left)
+                .style(theme.body_style()),
             line_layout.area,
         );
     }
@@ -618,8 +626,8 @@ fn render_status_bar(
         read_window.map_or_else(String::new, |window| format!("  {window}")),
     );
     let available = usize::from(layout.status_bar.width);
-    let left_width = Line::from(left.as_str()).width();
-    let right_width = Line::from(right.as_str()).width();
+    let left_width = terminal_width(&left);
+    let right_width = terminal_width(&right);
     let text = if available == 0 {
         String::new()
     } else if left_width.saturating_add(right_width).saturating_add(2) <= available {
@@ -638,7 +646,12 @@ fn render_status_bar(
     } else {
         Style::default().fg(theme.foreground).bg(theme.muted)
     };
-    frame.render_widget(Paragraph::new(text).style(style), layout.status_bar);
+    frame.render_widget(
+        Paragraph::new(text)
+            .alignment(HorizontalAlignment::Left)
+            .style(style),
+        layout.status_bar,
+    );
 }
 
 fn styled_line(
@@ -676,7 +689,7 @@ fn styled_line(
                 display_rich_for_grapheme(run.rich, relative_grapheme, relative_grapheme + 1);
             relative_grapheme = relative_grapheme.saturating_add(1);
             let safe = terminal_safe_text(grapheme.symbol).into_owned();
-            let cell_width = Span::raw(safe.as_str()).width().max(1);
+            let cell_width = terminal_width(&safe).max(1);
             let start = column;
             column = column.saturating_add(cell_width);
             if column <= scroll {

@@ -2,8 +2,16 @@ use std::path::Path;
 
 use crate::error::StorageError;
 
-pub const SCHEMA_VERSION: u32 = 1;
-pub const USERS_SCHEMA_VERSION: u32 = 2;
+/// Version of the global TOML configuration document.
+///
+/// Version 2 introduces the Glacier Night appearance contract and its motion
+/// preference.  Documents from version 1 remain readable and are rewritten
+/// during initialization.
+pub const SCHEMA_VERSION: u32 = 2;
+/// Version of the per-user document.
+///
+/// Version 3 adds the same appearance contract to each user record.
+pub const USERS_SCHEMA_VERSION: u32 = 3;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StorageFormat {
@@ -13,6 +21,11 @@ pub enum StorageFormat {
 
 pub trait VersionedDocument {
     fn schema_version(&self) -> u32;
+
+    /// Updates an already-deserialized compatible document to the currently
+    /// supported schema.  The default keeps third-party document types source
+    /// compatible; storage-owned documents override it to update their header.
+    fn upgrade_schema(&mut self) {}
 }
 
 pub(crate) fn ensure_document_schema(

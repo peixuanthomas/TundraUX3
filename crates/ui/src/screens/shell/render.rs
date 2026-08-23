@@ -1,5 +1,5 @@
 use ratatui::Frame;
-use ratatui::layout::{Alignment, Rect};
+use ratatui::layout::{HorizontalAlignment, Rect};
 use ratatui::style::Style;
 use ratatui::text::Line;
 use ratatui::widgets::{Borders, Clear, Paragraph, Wrap};
@@ -10,7 +10,7 @@ use super::{
     compute_shell_layout,
 };
 use crate::TundraTheme;
-use crate::components::Button;
+use crate::components::{Button, terminal_width, truncate_to_terminal_width};
 use crate::screens::notifications::{notification_tone_prefix, notification_tone_style};
 use crate::theme::solid_border_style;
 
@@ -59,7 +59,7 @@ pub fn render_exit_confirmation(
 
     frame.render_widget(
         Paragraph::new(model.message.as_str())
-            .alignment(Alignment::Center)
+            .alignment(HorizontalAlignment::Center)
             .wrap(Wrap { trim: true }),
         Rect::new(inner.x, inner.y, inner.width, 1),
     );
@@ -139,7 +139,7 @@ pub fn render_time_sync_failure_dialog(
                 .border_style(solid_border_style(theme.error_style()))
                 .style(theme.error_style()),
         )
-        .alignment(Alignment::Center)
+        .alignment(HorizontalAlignment::Center)
         .wrap(Wrap { trim: true });
 
     frame.render_widget(Clear, dialog);
@@ -160,7 +160,10 @@ pub(crate) fn render_compact_home(
     if area.width <= 2 || area.height <= 2 {
         let notification = truncate_status_text(&notification, area.width);
         frame.render_widget(Clear, area);
-        frame.render_widget(Paragraph::new(Line::styled(notification, style)), area);
+        frame.render_widget(
+            Paragraph::new(Line::styled(notification, style)).alignment(HorizontalAlignment::Left),
+            area,
+        );
         return;
     }
 
@@ -177,7 +180,7 @@ pub(crate) fn render_compact_home(
 
     let notification = truncate_status_text(&notification, inner.width);
     frame.render_widget(
-        Paragraph::new(Line::styled(notification, style)).alignment(Alignment::Center),
+        Paragraph::new(Line::styled(notification, style)).alignment(HorizontalAlignment::Center),
         Rect::new(inner.x, inner.y, inner.width, 1),
     );
 
@@ -186,7 +189,7 @@ pub(crate) fn render_compact_home(
         frame.render_widget(
             Paragraph::new(size_message)
                 .style(theme.muted_style())
-                .alignment(Alignment::Center),
+                .alignment(HorizontalAlignment::Center),
             Rect::new(inner.x, inner.y.saturating_add(1), inner.width, 1),
         );
     }
@@ -217,12 +220,14 @@ pub(crate) fn render_top(
             theme.muted_style(),
         ),
     ];
-    let top = Paragraph::new(lines).block(
-        theme
-            .block()
-            .borders(Borders::ALL)
-            .style(theme.body_style()),
-    );
+    let top = Paragraph::new(lines)
+        .alignment(HorizontalAlignment::Left)
+        .block(
+            theme
+                .block()
+                .borders(Borders::ALL)
+                .style(theme.body_style()),
+        );
 
     frame.render_widget(top, area);
 }
@@ -264,7 +269,9 @@ pub(crate) fn render_status(
         let (notification, style) = status_presentation(&chrome.status, theme);
         let notification = truncate_status_text(&notification, left_area.width);
         frame.render_widget(
-            Paragraph::new(Line::styled(notification, style)).style(theme.body_style()),
+            Paragraph::new(Line::styled(notification, style))
+                .alignment(HorizontalAlignment::Left)
+                .style(theme.body_style()),
             left_area,
         );
     }
@@ -290,7 +297,7 @@ pub fn status_time_button_area(status: Rect, label: &str) -> Rect {
         );
     }
 
-    let label_width = u16::try_from(label.chars().count()).unwrap_or(u16::MAX);
+    let label_width = u16::try_from(terminal_width(label)).unwrap_or(u16::MAX);
     let desired_width = label_width.saturating_add(STATUS_TIME_BUTTON_HORIZONTAL_CHROME);
     let max_width = if status.width
         > STATUS_TIME_BUTTON_RESERVED_LEFT_WIDTH.saturating_add(STATUS_TIME_BUTTON_MIN_WIDTH)
@@ -337,34 +344,15 @@ fn truncate_status_text(text: &str, width: u16) -> String {
         })
         .collect::<String>();
     let width = usize::from(width);
-    if Line::from(text.as_str()).width() <= width {
+    if terminal_width(&text) <= width {
         return text;
     }
     if width <= 3 {
-        let mut visible = String::new();
-        let mut used = 0usize;
-        for character in text.chars() {
-            let character_width = Line::from(character.to_string()).width();
-            if used.saturating_add(character_width) > width {
-                break;
-            }
-            visible.push(character);
-            used = used.saturating_add(character_width);
-        }
-        return visible;
+        return truncate_to_terminal_width(&text, width);
     }
 
     let content_width = width.saturating_sub(3);
-    let mut visible = String::new();
-    let mut used = 0usize;
-    for character in text.chars() {
-        let character_width = Line::from(character.to_string()).width();
-        if used.saturating_add(character_width) > content_width {
-            break;
-        }
-        visible.push(character);
-        used = used.saturating_add(character_width);
-    }
+    let visible = truncate_to_terminal_width(&text, content_width);
     format!("{visible}...")
 }
 
@@ -384,7 +372,7 @@ fn render_status_time_button(
 
 #[cfg(test)]
 fn text_width(text: &str) -> u16 {
-    u16::try_from(Line::from(text).width()).unwrap_or(u16::MAX)
+    u16::try_from(terminal_width(text)).unwrap_or(u16::MAX)
 }
 
 pub(crate) fn fit_cell(text: &str, width: usize) -> String {
@@ -392,7 +380,7 @@ pub(crate) fn fit_cell(text: &str, width: usize) -> String {
         return String::new();
     }
 
-    let text_width = Line::from(text).width();
+    let text_width = terminal_width(text);
     if text_width <= width {
         let mut fitted = text.to_string();
         fitted.extend(std::iter::repeat_n(' ', width.saturating_sub(text_width)));
@@ -400,18 +388,9 @@ pub(crate) fn fit_cell(text: &str, width: usize) -> String {
     }
 
     let content_width = width.saturating_sub(1);
-    let mut fitted = String::new();
-    let mut used = 0usize;
-    for character in text.chars() {
-        let character_width = Line::from(character.to_string()).width();
-        if used.saturating_add(character_width) > content_width {
-            break;
-        }
-        fitted.push(character);
-        used = used.saturating_add(character_width);
-    }
+    let mut fitted = truncate_to_terminal_width(text, content_width);
     fitted.push('…');
-    used = used.saturating_add(1);
+    let used = terminal_width(&fitted);
     fitted.extend(std::iter::repeat_n(' ', width.saturating_sub(used)));
     fitted
 }

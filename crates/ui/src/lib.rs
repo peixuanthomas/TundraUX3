@@ -22,4 +22,7 @@ pub use screens::timezone_map::{
     timezone_boundary_index,
 };
 pub use screens::*;
-pub use theme::{BorderShape, TundraTheme};
+pub use theme::{
+    BorderShape, ColorCapability, ComponentVisualState, FrostMotion, MotionFrame, MotionTimings,
+    RenderCapabilities, RenderContext, ThemeTokens, TundraTheme, ease_in_cubic, ease_out_cubic,
+};

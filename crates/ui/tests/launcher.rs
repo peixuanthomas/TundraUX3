@@ -250,7 +250,7 @@ fn large_icon_tiles_use_themed_selected_and_disabled_button_surfaces() {
             .cell((selected.x, selected.y))
             .expect("selected tile border")
             .fg,
-        theme.accent_color
+        theme.tokens().focus
     );
     assert_eq!(
         buffer

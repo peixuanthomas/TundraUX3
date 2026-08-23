@@ -131,8 +131,8 @@ fn setup_admin_page_highlights_focused_text_box() {
     let password_area = setup_admin_field_area(main, SetupField::AdminPassword);
 
     assert!(
-        region_has_fg(&terminal, password_area, theme.accent_color),
-        "focused admin password box should use the accent style"
+        region_has_fg(&terminal, password_area, theme.tokens().focus),
+        "focused admin password box should use the focus style"
     );
     assert_eq!(
         terminal
@@ -141,8 +141,8 @@ fn setup_admin_page_highlights_focused_text_box() {
             .cell((password_area.x, password_area.y))
             .expect("focused password field has a border")
             .fg,
-        theme.accent_color,
-        "focused admin password border should use the accent color"
+        theme.tokens().focus,
+        "focused admin password border should use the focus color"
     );
 }
 
@@ -274,7 +274,7 @@ fn setup_renderer_shows_errors_with_error_style() {
             .buffer()
             .content()
             .iter()
-            .any(|cell| cell.fg == Color::Red && cell.symbol() != " ")
+            .any(|cell| cell.fg == TundraTheme::default_dark().error && cell.symbol() != " ")
     );
 }
 

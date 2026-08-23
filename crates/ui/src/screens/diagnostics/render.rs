@@ -1,5 +1,5 @@
 use ratatui::Frame;
-use ratatui::layout::{Alignment, Rect};
+use ratatui::layout::{HorizontalAlignment, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::Line;
 use ratatui::widgets::{
@@ -156,7 +156,7 @@ fn render_diagnostics_header(
             usize::from(layout.header.width),
         ),
         style,
-        Alignment::Left,
+        HorizontalAlignment::Left,
     );
 }
 
@@ -215,7 +215,7 @@ fn render_diagnostics_rows(
             ),
             text.to_string(),
             theme.muted_style(),
-            Alignment::Left,
+            HorizontalAlignment::Left,
         );
         return;
     }
@@ -359,6 +359,7 @@ fn render_diagnostics_detail(
     };
     frame.render_widget(
         Paragraph::new(lines)
+            .alignment(HorizontalAlignment::Left)
             .style(theme.body_style())
             .wrap(Wrap { trim: true }),
         inner,
@@ -506,7 +507,7 @@ fn render_diagnostics_footer(
         } else {
             theme.muted_style()
         },
-        Alignment::Left,
+        HorizontalAlignment::Left,
     );
 }
 
@@ -530,6 +531,7 @@ fn render_diagnostics_repair_dialog(
             Line::styled("Review the changes before repair.", theme.title_style()),
             Line::from("Storage document repairs require a safe restart."),
         ])
+        .alignment(HorizontalAlignment::Left)
         .style(theme.body_style())
         .wrap(Wrap { trim: true }),
         layout.prompt,
@@ -546,7 +548,7 @@ fn render_diagnostics_repair_dialog(
             ),
             "No repair actions selected".to_string(),
             theme.muted_style(),
-            Alignment::Left,
+            HorizontalAlignment::Left,
         );
     } else {
         let items = layout
@@ -577,7 +579,7 @@ fn render_diagnostics_repair_dialog(
         layout.help,
         "R Restart · Repairs run in order; completed independent repairs are kept.".to_string(),
         theme.muted_style(),
-        Alignment::Left,
+        HorizontalAlignment::Left,
     );
     render_diagnostics_button(
         frame,

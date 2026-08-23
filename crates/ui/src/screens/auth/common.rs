@@ -1,5 +1,5 @@
 use ratatui::Frame;
-use ratatui::layout::Rect;
+use ratatui::layout::{HorizontalAlignment, Rect};
 use ratatui::text::Line;
 use ratatui::widgets::{Borders, Paragraph, Wrap};
 
@@ -22,6 +22,7 @@ pub(super) fn render_auth_screen(
         ShellLayout::Full { top, main, status } => {
             render_top(frame, top, chrome, theme);
             let widget = Paragraph::new(lines)
+                .alignment(HorizontalAlignment::Left)
                 .block(
                     theme
                         .block()

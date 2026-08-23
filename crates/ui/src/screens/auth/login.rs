@@ -1,5 +1,5 @@
 use ratatui::Frame;
-use ratatui::layout::{Alignment, Constraint, Layout, Rect};
+use ratatui::layout::{Constraint, HorizontalAlignment, Layout, Rect};
 use ratatui::text::Line;
 use ratatui::widgets::{Block, Borders, List, ListItem, ListState, Paragraph, Wrap};
 
@@ -85,6 +85,7 @@ fn render_login_main(
         }
         frame.render_widget(
             Paragraph::new(lines)
+                .alignment(HorizontalAlignment::Left)
                 .style(theme.muted_style())
                 .wrap(Wrap { trim: true }),
             layout.help,
@@ -182,6 +183,7 @@ fn render_login_username_field(
     ];
     frame.render_widget(
         Paragraph::new(lines)
+            .alignment(HorizontalAlignment::Center)
             .block(
                 theme
                     .block()
@@ -189,7 +191,6 @@ fn render_login_username_field(
                     .borders(Borders::ALL)
                     .style(theme.body_style()),
             )
-            .alignment(Alignment::Center)
             .wrap(Wrap { trim: true }),
         area,
     );

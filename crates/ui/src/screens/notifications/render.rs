@@ -1,5 +1,5 @@
 use ratatui::Frame;
-use ratatui::layout::{Alignment, Rect};
+use ratatui::layout::{HorizontalAlignment, Rect};
 use ratatui::text::Line;
 use ratatui::widgets::{Borders, Clear, Paragraph};
 
@@ -53,7 +53,7 @@ pub fn render_notification_overlay(
     frame.render_widget(
         Paragraph::new(message_lines)
             .style(theme.body_style())
-            .alignment(Alignment::Center),
+            .alignment(HorizontalAlignment::Center),
         layout.message,
     );
 
@@ -89,7 +89,7 @@ fn render_notification_too_small(frame: &mut Frame<'_>, area: Rect, theme: &Tund
     frame.render_widget(
         Paragraph::new(lines)
             .style(theme.error_style())
-            .alignment(Alignment::Center),
+            .alignment(HorizontalAlignment::Center),
         prompt,
     );
 }

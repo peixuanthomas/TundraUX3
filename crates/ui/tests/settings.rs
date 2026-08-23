@@ -71,7 +71,7 @@ fn eighty_by_twenty_four_layout_keeps_the_left_category_column() {
 }
 
 #[test]
-fn selected_category_accent_is_limited_to_its_single_sidebar_row() {
+fn selected_category_soft_accent_is_limited_to_its_single_sidebar_row() {
     let model = sample_model();
     let theme = TundraTheme::default_dark().with_accent_color(Color::LightMagenta);
     let mut terminal = Terminal::new(TestBackend::new(120, 32)).expect("test terminal");
@@ -85,13 +85,14 @@ fn selected_category_accent_is_limited_to_its_single_sidebar_row() {
         .expect("render category list");
 
     let selected = selected.expect("selected category tab");
+    let accent_soft = theme.tokens().accent_soft;
     let accent_cells = (0..120)
         .filter(|x| {
             terminal
                 .backend()
                 .buffer()
                 .cell((*x, selected.y))
-                .is_some_and(|cell| cell.bg == theme.accent_color)
+                .is_some_and(|cell| cell.bg == accent_soft)
         })
         .count();
     assert!(accent_cells > 0);
@@ -103,7 +104,7 @@ fn selected_category_accent_is_limited_to_its_single_sidebar_row() {
             .cell((selected.right(), selected.y))
             .unwrap()
             .bg,
-        theme.accent_color
+        accent_soft
     );
 }
 

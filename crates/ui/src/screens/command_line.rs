@@ -5,7 +5,7 @@
 //! which keeps this crate small and makes the renderer straightforward to test.
 
 use ratatui::Frame;
-use ratatui::layout::{Alignment, Rect};
+use ratatui::layout::{HorizontalAlignment, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{
@@ -295,7 +295,7 @@ fn render_size_blocker(frame: &mut Frame<'_>, area: Rect, theme: &TundraTheme) {
     frame.render_widget(
         Paragraph::new(message)
             .style(theme.error_style())
-            .alignment(Alignment::Center)
+            .alignment(HorizontalAlignment::Center)
             .wrap(Wrap { trim: true }),
         area,
     );
@@ -326,7 +326,7 @@ fn render_process_message(frame: &mut Frame<'_>, area: Rect, message: &str, styl
     frame.render_widget(
         Paragraph::new(message.to_string())
             .style(style)
-            .alignment(Alignment::Center)
+            .alignment(HorizontalAlignment::Center)
             .wrap(Wrap { trim: true }),
         area,
     );
@@ -378,7 +378,12 @@ fn render_terminal_snapshot(
     let lines = (0..snapshot.rows)
         .map(|row| terminal_snapshot_line(snapshot, row, prompt_label, accent_color))
         .collect::<Vec<_>>();
-    frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), area);
+    frame.render_widget(
+        Paragraph::new(lines)
+            .alignment(HorizontalAlignment::Left)
+            .wrap(Wrap { trim: false }),
+        area,
+    );
 }
 
 fn terminal_snapshot_line(

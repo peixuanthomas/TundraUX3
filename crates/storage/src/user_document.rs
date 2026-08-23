@@ -25,9 +25,22 @@ impl VersionedDocument for UsersDocument {
     fn schema_version(&self) -> u32 {
         self.schema_version
     }
+
+    fn upgrade_schema(&mut self) {
+        self.normalize();
+    }
 }
 
 impl UsersDocument {
+    pub(crate) fn normalize(&mut self) -> bool {
+        if self.schema_version == USERS_SCHEMA_VERSION {
+            return false;
+        }
+
+        self.schema_version = USERS_SCHEMA_VERSION;
+        true
+    }
+
     pub(crate) fn from_legacy_v1(legacy: UsersV1Document) -> Self {
         let now = unix_millis();
         let users = legacy

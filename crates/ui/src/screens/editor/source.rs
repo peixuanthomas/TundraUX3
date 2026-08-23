@@ -1,5 +1,6 @@
 use super::document::{DisplayLine, DisplayLineRole, DisplayRun, empty_display_line};
 use super::*;
+use crate::components::terminal_width;
 
 /// Replaces bytes that a terminal could interpret as control traffic with
 /// visible, inert Unicode glyphs. This must be applied at the final rendering
@@ -184,7 +185,7 @@ pub(super) fn source_horizontal_content_width(source: &str, ranges: &[EditorSour
     ranges
         .iter()
         .filter_map(|range| source.get(range.start..range.end))
-        .map(|line| Span::raw(terminal_safe_text(line)).width())
+        .map(|line| terminal_width(terminal_safe_text(line).as_ref()))
         .max()
         .unwrap_or(0)
         .saturating_add(1)

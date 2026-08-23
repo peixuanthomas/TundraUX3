@@ -1,6 +1,6 @@
 use ratatui::Frame;
 use ratatui::buffer::Buffer;
-use ratatui::layout::Rect;
+use ratatui::layout::{HorizontalAlignment, Rect};
 use ratatui::widgets::{Borders, Paragraph, Widget};
 
 use crate::TundraTheme;
@@ -240,7 +240,10 @@ impl TextInput {
         } else {
             theme.body_style()
         };
-        Paragraph::new(line).style(text_style).block(block)
+        Paragraph::new(line)
+            .alignment(HorizontalAlignment::Left)
+            .style(text_style)
+            .block(block)
     }
 
     fn borderless_widget(
@@ -259,7 +262,9 @@ impl TextInput {
         } else {
             interactive_style(self.state, theme)
         };
-        Paragraph::new(line).style(style)
+        Paragraph::new(line)
+            .alignment(HorizontalAlignment::Left)
+            .style(style)
     }
 
     fn insert_char(&mut self, character: char) {

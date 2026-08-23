@@ -1,5 +1,6 @@
 use super::layout::to_u16;
 use super::*;
+use crate::components::{terminal_width, truncate_to_terminal_width};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct DisplayRun {
@@ -368,7 +369,7 @@ pub(super) fn wrapped_line_count_up_to(
     width: usize,
     limit: usize,
 ) -> Option<usize> {
-    let prefix_width = Span::raw(terminal_safe_text(prefix)).width();
+    let prefix_width = terminal_width(terminal_safe_text(prefix).as_ref());
     let mut measure = WrappedLineMeasure {
         width,
         limit,
@@ -434,7 +435,7 @@ impl WrappedLineMeasure {
         }
         let span = Span::raw(segment);
         for grapheme in span.styled_graphemes(Style::default()) {
-            let run_width = Span::raw(terminal_safe_text(grapheme.symbol)).width();
+            let run_width = terminal_width(terminal_safe_text(grapheme.symbol).as_ref());
             if self.current_width > self.prefix_width
                 && self.current_width.saturating_add(run_width) > self.width
                 && !self.push_line()
@@ -1092,11 +1093,8 @@ pub(super) fn table_column_widths(
     let mut widths = vec![1usize; columns];
     for row in std::iter::once(header).chain(rows.iter().map(Vec::as_slice)) {
         for (index, cell) in row.iter().enumerate() {
-            widths[index] = widths[index].max(
-                Span::raw(terminal_safe_text(&cell_text(cell)))
-                    .width()
-                    .min(24),
-            );
+            widths[index] = widths[index]
+                .max(terminal_width(terminal_safe_text(&cell_text(cell)).as_ref()).min(24));
         }
     }
     if let Some(requested) = requested {
@@ -1337,12 +1335,14 @@ pub(super) fn fit_text(text: &str, width: usize) -> String {
     if width == 0 {
         return String::new();
     }
-    let mut chars = text.chars();
-    let mut fitted = chars.by_ref().take(width).collect::<String>();
-    if chars.next().is_some() && width > 1 {
-        fitted.pop();
-        fitted.push('…');
+    if terminal_width(text) <= width {
+        return text.to_string();
     }
+    if width == 1 {
+        return truncate_to_terminal_width(text, width);
+    }
+    let mut fitted = truncate_to_terminal_width(text, width.saturating_sub(1));
+    fitted.push('…');
     fitted
 }
 
@@ -1351,7 +1351,7 @@ pub(super) fn runs_width(runs: &[DisplayRun]) -> usize {
 }
 
 pub(super) fn display_run_width(run: &DisplayRun) -> usize {
-    Span::raw(terminal_safe_text(run.text.resolve(None))).width()
+    terminal_width(terminal_safe_text(run.text.resolve(None)).as_ref())
 }
 
 pub(super) fn rich_horizontal_content_width(lines: &[DisplayLine], source: Option<&str>) -> usize {
@@ -1361,7 +1361,7 @@ pub(super) fn rich_horizontal_content_width(lines: &[DisplayLine], source: Optio
         .map(|line| {
             line.runs
                 .iter()
-                .map(|run| Span::raw(terminal_safe_text(run.text.resolve(source))).width())
+                .map(|run| terminal_width(terminal_safe_text(run.text.resolve(source)).as_ref()))
                 .sum()
         })
         .max()
@@ -1662,7 +1662,7 @@ pub(super) fn display_line_source_boundaries(
                 display_source_for_segment(run.source, text.len(), relative_start, relative_byte);
             let safe = terminal_safe_text(grapheme.symbol);
             let column = measure.column();
-            let next_column = measure.push(Span::raw(safe).width().max(1));
+            let next_column = measure.push(terminal_width(safe.as_ref()).max(1));
             let intersects = next_column >= horizontal_start && column <= horizontal_end;
             if let Some(offset) = display_source_end(mapping) {
                 fallback_boundary = Some(EditorSourceBoundary {
@@ -1746,7 +1746,7 @@ pub(super) fn display_line_rich_boundaries(
             relative_grapheme = relative_grapheme.saturating_add(1);
             let safe = terminal_safe_text(grapheme.symbol);
             let column = measure.column();
-            let next_column = measure.push(Span::raw(safe).width().max(1));
+            let next_column = measure.push(terminal_width(safe.as_ref()).max(1));
             let intersects = next_column >= horizontal_start && column <= horizontal_end;
             if let Some(position) = display_rich_end(mapping) {
                 fallback_boundary = Some(EditorRichBoundary {

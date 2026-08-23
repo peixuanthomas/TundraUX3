@@ -1,6 +1,6 @@
 use ratatui::Frame;
 use ratatui::buffer::Buffer;
-use ratatui::layout::Rect;
+use ratatui::layout::{HorizontalAlignment, Rect};
 use ratatui::widgets::{Borders, Clear, Paragraph, Widget};
 
 use crate::TundraTheme;
@@ -193,7 +193,9 @@ impl Dialog {
         let inner = inner_area(area);
         let body_height = inner.height.saturating_sub(1);
         frame.render_widget(
-            Paragraph::new(self.body.join("\n")).style(theme.body_style()),
+            Paragraph::new(self.body.join("\n"))
+                .alignment(HorizontalAlignment::Left)
+                .style(theme.body_style()),
             Rect::new(inner.x, inner.y, inner.width, body_height),
         );
 
@@ -334,6 +336,7 @@ impl Dialog {
         let inner = inner_area(area);
         let body_height = inner.height.saturating_sub(1);
         Paragraph::new(self.body.join("\n"))
+            .alignment(HorizontalAlignment::Left)
             .style(theme.body_style())
             .render(
                 Rect::new(inner.x, inner.y, inner.width, body_height),

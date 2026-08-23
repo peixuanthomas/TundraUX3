@@ -11,7 +11,7 @@ pub const SUPPORTED_LANGUAGE: &str = "en-US";
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct StorageConfig {
     pub schema_version: u32,
-    #[serde(default = "default_theme", skip_serializing)]
+    #[serde(default = "default_theme")]
     pub theme: String,
     #[serde(default = "default_language")]
     pub language: String,
@@ -39,7 +39,9 @@ pub struct StorageConfig {
 
 impl StorageConfig {
     pub(crate) fn normalize(&mut self) -> bool {
-        let mut changed = self.launcher.migrate_legacy_pinned_apps();
+        let mut changed = self.schema_version != SCHEMA_VERSION;
+        self.schema_version = SCHEMA_VERSION;
+        changed |= self.launcher.migrate_legacy_pinned_apps();
         changed |= self.editor.normalize();
         changed |= self.time_sync.normalize();
         if self.language != SUPPORTED_LANGUAGE {
@@ -72,6 +74,10 @@ impl Default for StorageConfig {
 impl VersionedDocument for StorageConfig {
     fn schema_version(&self) -> u32 {
         self.schema_version
+    }
+
+    fn upgrade_schema(&mut self) {
+        self.normalize();
     }
 }
 
@@ -125,6 +131,10 @@ pub struct AppearanceConfig {
     #[serde(deserialize_with = "deserialize_accent_color")]
     pub accent_color: AccentColor,
     pub icon_display_mode: IconDisplayMode,
+    /// Controls terminal UI transitions.  It is deliberately per-user so an
+    /// accessibility preference never changes another user's session.
+    #[serde(default)]
+    pub motion_preference: MotionPreference,
 }
 
 impl Default for AppearanceConfig {
@@ -134,7 +144,35 @@ impl Default for AppearanceConfig {
             border_color: BorderColor::default(),
             accent_color: default_accent_color(),
             icon_display_mode: IconDisplayMode::default(),
+            motion_preference: MotionPreference::default(),
         }
+    }
+}
+
+impl AppearanceConfig {
+    /// The complete appearance written by pre-Glacier versions.  Migration
+    /// intentionally treats only this exact tuple as the old default; any
+    /// custom border, accent, or icon choice stays untouched.
+    pub const fn is_legacy_default(&self) -> bool {
+        matches!(self.border_shape, BorderShape::Rounded)
+            && matches!(self.border_color, BorderColor::White)
+            && matches!(self.accent_color, BorderColor::Cyan)
+            && matches!(self.icon_display_mode, IconDisplayMode::Image)
+    }
+}
+
+/// Accessibility preference for Frost Motion.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum MotionPreference {
+    #[default]
+    Full,
+    Reduced,
+}
+
+impl MotionPreference {
+    pub const fn reduced(self) -> bool {
+        matches!(self, Self::Reduced)
     }
 }
 

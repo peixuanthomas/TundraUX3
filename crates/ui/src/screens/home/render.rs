@@ -1,5 +1,5 @@
 use ratatui::Frame;
-use ratatui::layout::Rect;
+use ratatui::layout::{HorizontalAlignment, Rect};
 use ratatui::text::Line;
 use ratatui::widgets::{Borders, Paragraph, Wrap};
 
@@ -117,6 +117,7 @@ fn render_user_main(
             {
                 frame.render_widget(
                     Paragraph::new(centered_home_tile_line(line, icon.width(), content_width))
+                        .alignment(HorizontalAlignment::Left)
                         .style(style),
                     Rect::new(
                         icon_area.x,
@@ -143,6 +144,7 @@ fn render_user_main(
                     centered_home_tile_text(&entry.label, content_width),
                     style,
                 ))
+                .alignment(HorizontalAlignment::Left)
                 .style(style),
                 Rect::new(inner.x, label_y, inner.width, 1),
             );
@@ -151,6 +153,7 @@ fn render_user_main(
         if description_y < inner.bottom() {
             frame.render_widget(
                 Paragraph::new(centered_home_tile_text(&entry.description, content_width))
+                    .alignment(HorizontalAlignment::Left)
                     .style(style),
                 Rect::new(inner.x, description_y, inner.width, 1),
             );
@@ -166,6 +169,7 @@ fn render_user_main(
     };
     frame.render_widget(
         Paragraph::new(Line::from(controls_text))
+            .alignment(HorizontalAlignment::Left)
             .style(theme.muted_style())
             .wrap(Wrap { trim: true }),
         controls,
@@ -191,6 +195,7 @@ fn render_home_account_summary(
     let user = home.current_user.as_deref().unwrap_or("Unknown user");
     frame.render_widget(
         Paragraph::new(Line::from(format!("User: {user}")))
+            .alignment(HorizontalAlignment::Left)
             .style(theme.body_style())
             .wrap(Wrap { trim: true }),
         Rect::new(summary.x, summary.y, user_width, summary.height),

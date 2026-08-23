@@ -1,5 +1,5 @@
 use ratatui::Frame;
-use ratatui::layout::{Alignment, Constraint, Rect};
+use ratatui::layout::{Constraint, HorizontalAlignment, Rect};
 use ratatui::text::Line;
 use ratatui::widgets::{Borders, Clear, HighlightSpacing, Row, Table, TableState};
 
@@ -62,7 +62,7 @@ fn render_user_management_main(
             }
         ),
         theme.body_style(),
-        Alignment::Left,
+        HorizontalAlignment::Left,
     );
     render_user_management_table(frame, &layout, model, theme);
     render_user_management_feedback(frame, &layout, model, theme);
@@ -72,7 +72,7 @@ fn render_user_management_main(
         layout.help,
         "↑↓ Select · Tab Actions · Enter Activate · Esc Back".to_string(),
         theme.muted_style(),
-        Alignment::Left,
+        HorizontalAlignment::Left,
     );
 
     if let (Some(form_layout), Some(form)) = (layout.form.as_ref(), model.form.as_ref()) {
@@ -136,7 +136,7 @@ fn render_user_management_table(
             empty,
             "  No users available".to_string(),
             theme.muted_style(),
-            Alignment::Left,
+            HorizontalAlignment::Left,
         );
     }
 }
@@ -167,7 +167,13 @@ fn render_user_management_feedback(
     } else {
         return;
     };
-    render_clock_line(frame, layout.feedback, text, style, Alignment::Left);
+    render_clock_line(
+        frame,
+        layout.feedback,
+        text,
+        style,
+        HorizontalAlignment::Left,
+    );
 }
 
 fn render_user_management_actions(
@@ -236,7 +242,7 @@ fn render_user_management_form(
         layout.prompt,
         prompt,
         theme.body_style(),
-        Alignment::Left,
+        HorizontalAlignment::Left,
     );
 
     for field in &layout.fields {
@@ -289,7 +295,7 @@ fn render_user_management_form(
             layout.error,
             error.clone(),
             theme.error_style(),
-            Alignment::Left,
+            HorizontalAlignment::Left,
         );
     }
     render_user_management_button(
@@ -363,7 +369,7 @@ fn render_user_management_input(
         } else {
             theme.body_style()
         },
-        Alignment::Left,
+        HorizontalAlignment::Left,
     );
 }
 

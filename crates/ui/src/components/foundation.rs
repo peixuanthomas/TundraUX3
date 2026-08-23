@@ -1,8 +1,9 @@
+use ratatui::buffer::CellWidth;
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
 use ratatui::text::Span;
 
-use crate::TundraTheme;
+use crate::{ComponentVisualState, TundraTheme};
 
 pub use crate::UiId as ComponentId;
 
@@ -47,6 +48,29 @@ impl ComponentState {
     }
 }
 
+impl From<ComponentState> for ComponentVisualState {
+    fn from(state: ComponentState) -> Self {
+        Self {
+            focused: state.focused,
+            selected: state.selected,
+            pressed: state.active,
+            disabled: state.disabled,
+        }
+    }
+}
+
+impl From<ComponentVisualState> for ComponentState {
+    fn from(state: ComponentVisualState) -> Self {
+        Self {
+            focused: state.focused,
+            hovered: false,
+            active: state.pressed,
+            selected: state.selected,
+            disabled: state.disabled,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ComponentEvent {
     None,
@@ -85,23 +109,24 @@ pub(crate) fn inner_area(area: Rect) -> Rect {
 }
 
 pub(crate) fn interactive_style(state: ComponentState, theme: &TundraTheme) -> Style {
+    let tokens = theme.tokens();
     if state.disabled {
-        return theme.muted_style();
+        return Style::default().fg(tokens.muted).bg(tokens.surface);
     }
 
-    let mut style = theme.body_style();
+    let mut style = Style::default().fg(tokens.text).bg(tokens.surface);
 
     if state.selected {
         style = style
-            .fg(theme.background)
-            .bg(theme.accent_color)
+            .fg(tokens.accent)
+            .bg(tokens.accent_soft)
             .add_modifier(Modifier::BOLD);
     } else if state.hovered {
-        style = style.fg(theme.accent_color);
+        style = style.fg(tokens.accent_strong);
     }
 
-    if state.focused {
-        style = style.add_modifier(Modifier::BOLD);
+    if state.focused && !state.selected {
+        style = style.fg(tokens.focus).add_modifier(Modifier::BOLD);
     }
 
     if state.active {
@@ -144,7 +169,7 @@ pub(crate) fn char_count(value: &str) -> usize {
 
 /// Returns the number of terminal columns Ratatui uses to render `value`.
 pub(crate) fn terminal_width(value: &str) -> usize {
-    Span::raw(value).width()
+    usize::from(value.cell_width())
 }
 
 /// Truncates text at a Ratatui grapheme boundary without splitting a wide cell.
@@ -194,4 +219,22 @@ pub(crate) fn byte_index_for_char(value: &str, char_index: usize) -> usize {
         .nth(char_index)
         .map(|(byte_index, _)| byte_index)
         .unwrap_or(value.len())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{terminal_width, truncate_to_terminal_width};
+
+    #[test]
+    fn terminal_width_uses_ratatui_cell_width_for_cjk_and_emoji() {
+        assert_eq!(terminal_width("中文"), 4);
+        assert_eq!(terminal_width("日本"), 4);
+        assert_eq!(terminal_width("🙂"), 2);
+    }
+
+    #[test]
+    fn truncation_keeps_wide_graphemes_intact() {
+        assert_eq!(truncate_to_terminal_width("A中文B", 3), "A中");
+        assert_eq!(truncate_to_terminal_width("A🙂B", 3), "A🙂");
+    }
 }

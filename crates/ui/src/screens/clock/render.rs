@@ -1,5 +1,5 @@
 use ratatui::Frame;
-use ratatui::layout::{Alignment, Rect};
+use ratatui::layout::{HorizontalAlignment, Rect};
 use ratatui::style::Style;
 use ratatui::text::Line;
 use ratatui::widgets::{Borders, Clear, HighlightSpacing, List, ListItem, ListState, Paragraph};
@@ -78,7 +78,7 @@ fn render_clock_face(
     {
         frame.render_widget(
             Paragraph::new(ascii_clock_lines(analog, model))
-                .alignment(Alignment::Left)
+                .alignment(HorizontalAlignment::Left)
                 .style(theme.body_style()),
             analog,
         );
@@ -100,7 +100,7 @@ fn render_clock_face(
     };
     frame.render_widget(
         Paragraph::new(lines)
-            .alignment(Alignment::Center)
+            .alignment(HorizontalAlignment::Center)
             .style(theme.body_style()),
         layout.digital,
     );
@@ -141,7 +141,7 @@ fn render_clock_panel(
             "ALARMS".to_string()
         },
         theme.title_style(),
-        Alignment::Left,
+        HorizontalAlignment::Left,
     );
     render_clock_line(
         frame,
@@ -152,7 +152,7 @@ fn render_clock_panel(
             "COUNTDOWNS".to_string()
         },
         theme.title_style(),
-        Alignment::Left,
+        HorizontalAlignment::Left,
     );
 
     render_clock_entry_list(frame, layout, model, ClockEntryKind::Alarm, theme);
@@ -234,7 +234,7 @@ fn render_clock_create_dialog(
         prompt,
         "Enter time (hh mm ss)".to_string(),
         theme.body_style(),
-        Alignment::Left,
+        HorizontalAlignment::Left,
     );
 
     render_clock_create_input(frame, layout.input, model, theme);
@@ -244,7 +244,7 @@ fn render_clock_create_dialog(
             layout.error,
             error.clone(),
             theme.error_style(),
-            Alignment::Left,
+            HorizontalAlignment::Left,
         );
     }
     render_clock_button(
@@ -328,7 +328,7 @@ fn render_clock_create_input(
         } else {
             theme.body_style()
         },
-        Alignment::Left,
+        HorizontalAlignment::Left,
     );
 }
 
@@ -355,7 +355,7 @@ pub(crate) fn render_clock_line(
     area: Rect,
     text: String,
     style: Style,
-    alignment: Alignment,
+    alignment: HorizontalAlignment,
 ) {
     if area.width == 0 || area.height == 0 {
         return;

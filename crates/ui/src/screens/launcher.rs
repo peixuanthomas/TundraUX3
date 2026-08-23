@@ -1,12 +1,11 @@
 use ratatui::Frame;
-use ratatui::layout::{Alignment, Rect};
+use ratatui::layout::{HorizontalAlignment, Rect};
 use ratatui::style::Style;
-use ratatui::text::{Line, Span};
 use ratatui::widgets::{
     Borders, Clear, Paragraph, Row, Scrollbar, ScrollbarOrientation, ScrollbarState, Table, Wrap,
 };
 
-use crate::components::Button;
+use crate::components::{Button, terminal_width, truncate_to_terminal_width};
 use crate::screens::shell::{render_compact_home, render_status, render_top};
 use crate::{
     AssetError, RuntimeAsciiAssets, ShellChromeViewModel, ShellLayout, TundraTheme,
@@ -509,7 +508,7 @@ fn launcher_toolbar_layout(
     let mut result = Vec::new();
     for button in &model.toolbar {
         let text = format!("[{} {}]", button.action.shortcut(), button.label);
-        let width = u16::try_from(text.chars().count()).unwrap_or(u16::MAX);
+        let width = u16::try_from(terminal_width(&text)).unwrap_or(u16::MAX);
         if x.saturating_add(width) > end {
             break;
         }
@@ -765,7 +764,9 @@ fn render_launcher_main(
 fn render_launcher_drop_indicator(frame: &mut Frame<'_>, area: Rect, theme: &TundraTheme) {
     for row in 0..area.height {
         frame.render_widget(
-            Paragraph::new("┃").style(theme.title_style()),
+            Paragraph::new("┃")
+                .alignment(HorizontalAlignment::Left)
+                .style(theme.title_style()),
             Rect::new(area.x, area.y.saturating_add(row), area.width, 1),
         );
     }
@@ -805,7 +806,7 @@ fn render_launcher_grid(
         frame.render_widget(
             Paragraph::new(EMPTY_MESSAGE)
                 .style(theme.muted_style())
-                .alignment(Alignment::Center)
+                .alignment(HorizontalAlignment::Center)
                 .wrap(Wrap { trim: true }),
             layout.content,
         );
@@ -836,13 +837,13 @@ fn render_launcher_grid(
         frame.render_widget(
             Paragraph::new(fit_text(&item.name, inner.width))
                 .style(if focused { theme.title_style() } else { style })
-                .alignment(Alignment::Center),
+                .alignment(HorizontalAlignment::Center),
             Rect::new(inner.x, name_y, inner.width, u16::from(inner.height > 0)),
         );
         frame.render_widget(
             Paragraph::new(launcher_status_label(item.status))
                 .style(style)
-                .alignment(Alignment::Center),
+                .alignment(HorizontalAlignment::Center),
             Rect::new(
                 inner.x,
                 name_y.saturating_add(1),
@@ -872,7 +873,7 @@ fn render_default_ascii_icon(
         frame.render_widget(
             Paragraph::new(fit_text(line, area.width))
                 .style(style)
-                .alignment(Alignment::Center),
+                .alignment(HorizontalAlignment::Center),
             Rect::new(
                 area.x,
                 area.y
@@ -896,7 +897,7 @@ fn render_launcher_details(
         frame.render_widget(
             Paragraph::new(EMPTY_MESSAGE)
                 .style(theme.muted_style())
-                .alignment(Alignment::Center)
+                .alignment(HorizontalAlignment::Center)
                 .wrap(Wrap { trim: true }),
             Rect::new(
                 layout.content.x,
@@ -974,7 +975,9 @@ fn render_launcher_footer(
         )
     };
     frame.render_widget(
-        Paragraph::new(fit_text(&text, area.width)).style(style),
+        Paragraph::new(fit_text(&text, area.width))
+            .alignment(HorizontalAlignment::Left)
+            .style(style),
         area,
     );
 }
@@ -1030,7 +1033,7 @@ fn render_launcher_confirmation(
     frame.render_widget(
         Paragraph::new(dialog.message.clone())
             .style(theme.body_style())
-            .alignment(Alignment::Center)
+            .alignment(HorizontalAlignment::Center)
             .wrap(Wrap { trim: true }),
         layout.message,
     );
@@ -1097,22 +1100,12 @@ fn fit_text(value: &str, width: u16) -> String {
     if width == 0 {
         return String::new();
     }
-    if Line::from(value).width() <= width {
+    if terminal_width(value) <= width {
         return value.to_string();
     }
 
     let content_width = width.saturating_sub(1);
-    let span = Span::raw(value);
-    let mut used = 0usize;
-    let mut fitted = String::new();
-    for grapheme in span.styled_graphemes(Style::default()) {
-        let grapheme_width = Line::from(grapheme.symbol).width();
-        if used.saturating_add(grapheme_width) > content_width {
-            break;
-        }
-        fitted.push_str(grapheme.symbol);
-        used = used.saturating_add(grapheme_width);
-    }
+    let mut fitted = truncate_to_terminal_width(value, content_width);
     fitted.push('…');
     fitted
 }
