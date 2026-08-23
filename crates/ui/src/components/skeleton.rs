@@ -23,7 +23,7 @@ impl Skeleton {
             let width = area.width as usize;
             let glyphs = (0..width)
                 .map(|column| {
-                    if (column as u16 + row + phase) % 5 == 0 {
+                    if (column as u16 + row + phase).is_multiple_of(5) {
                         '▒'
                     } else {
                         '░'

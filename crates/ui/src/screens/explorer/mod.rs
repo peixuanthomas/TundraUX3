@@ -9,4 +9,6 @@ pub use layout::{
     ExplorerToolbarButtonLayout, explorer_hit_test, explorer_layout,
 };
 pub use model::*;
-pub use render::{explorer_first_entry_content_line, render_explorer};
+pub use render::{
+    explorer_first_entry_content_line, render_explorer, render_explorer_with_context,
+};

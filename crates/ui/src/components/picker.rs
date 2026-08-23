@@ -126,8 +126,8 @@ impl Picker {
     }
 
     pub fn render_frame(&self, frame: &mut Frame<'_>, area: Rect, context: &RenderContext) {
-        let mut buffer = frame.buffer_mut();
-        self.render(area, &mut buffer, context);
+        let buffer = frame.buffer_mut();
+        self.render(area, buffer, context);
     }
 
     pub fn render_with_theme(&self, area: Rect, buffer: &mut Buffer, theme: &TundraTheme) {

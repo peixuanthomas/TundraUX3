@@ -15,7 +15,7 @@ pub enum FocusIntent {
 /// [`Self::App`]; all other variants are handled by the UI session or Shell.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum UiIntent {
-    App(app::AppCommand),
+    App(Box<app::AppCommand>),
     Focus(FocusIntent),
     OpenOverlay(UiId),
     CloseOverlay,
@@ -27,7 +27,7 @@ pub enum UiIntent {
 
 impl From<app::AppCommand> for UiIntent {
     fn from(command: app::AppCommand) -> Self {
-        Self::App(command)
+        Self::App(Box::new(command))
     }
 }
 
@@ -48,7 +48,7 @@ mod tests {
         registry
             .register(ShortcutBinding::global(
                 KeyStroke::plain(Key::Escape),
-                UiIntent::App(app::AppCommand::RequestExit),
+                UiIntent::App(Box::new(app::AppCommand::RequestExit)),
             ))
             .expect("app shortcut");
 
@@ -61,7 +61,7 @@ mod tests {
                 &[crate::ShortcutScope::Global],
                 &KeyStroke::plain(Key::Escape)
             ),
-            Some(&UiIntent::App(app::AppCommand::RequestExit))
+            Some(&UiIntent::App(Box::new(app::AppCommand::RequestExit)))
         );
     }
 }

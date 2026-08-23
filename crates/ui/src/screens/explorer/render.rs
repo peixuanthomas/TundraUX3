@@ -1,17 +1,17 @@
 use ratatui::Frame;
-use ratatui::layout::{Constraint, HorizontalAlignment, Rect};
+use ratatui::layout::{HorizontalAlignment, Rect};
 use ratatui::text::Line;
-use ratatui::widgets::{
-    Borders, Cell, Clear, HighlightSpacing, List as RatatuiList, ListItem as RatatuiListItem,
-    ListState, Paragraph, Row, Scrollbar, ScrollbarOrientation, ScrollbarState, Table, Wrap,
-};
+use ratatui::widgets::{Clear, Paragraph, Wrap};
 
 use super::{
     ExplorerDialogViewModel, ExplorerEntryViewModel, ExplorerLayout, ExplorerOverlayControl,
     ExplorerOverlayLayout, ExplorerOverlayViewModel, ExplorerSearchViewModel, ExplorerSortColumn,
     ExplorerToolbarAction, ExplorerViewModel, explorer_layout,
 };
-use crate::components::{Button, TextInput, terminal_width};
+use crate::components::{
+    Button, ComponentTone, DataTable, List, ListItem, Panel, Scrollbar, Surface, TextInput,
+    terminal_width,
+};
 use crate::screens::shell::{
     ShellChromeViewModel, ShellLayout, compute_shell_layout, fit_cell, render_compact_home,
     render_status, render_top,
@@ -27,13 +27,25 @@ pub fn render_explorer(
     model: &ExplorerViewModel,
     theme: &TundraTheme,
 ) {
+    let context = crate::RenderContext::from_theme(theme, Default::default(), Default::default());
+    render_explorer_with_context(frame, area, chrome, model, &context);
+}
+
+pub fn render_explorer_with_context(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    chrome: &ShellChromeViewModel,
+    model: &ExplorerViewModel,
+    context: &crate::RenderContext,
+) {
+    let theme = context.compatibility_theme();
     match compute_shell_layout(area) {
-        ShellLayout::Compact(compact) => render_compact_home(frame, compact, chrome, theme),
+        ShellLayout::Compact(compact) => render_compact_home(frame, compact, chrome, &theme),
         ShellLayout::Full { top, main, status } => {
-            render_top(frame, top, chrome, theme);
-            render_explorer_main(frame, main, model, theme);
-            render_status(frame, status, chrome, theme);
-            render_explorer_overlay(frame, main, model, theme);
+            render_top(frame, top, chrome, &theme);
+            render_explorer_main(frame, main, model, context, &theme);
+            render_status(frame, status, chrome, &theme);
+            render_explorer_overlay(frame, main, model, context, &theme);
         }
     }
 }
@@ -42,16 +54,10 @@ fn render_explorer_main(
     frame: &mut Frame<'_>,
     area: Rect,
     model: &ExplorerViewModel,
+    context: &crate::RenderContext,
     theme: &TundraTheme,
 ) {
-    frame.render_widget(
-        theme
-            .block()
-            .title("Explorer")
-            .borders(Borders::ALL)
-            .style(theme.body_style()),
-        area,
-    );
+    Panel::new("Explorer").render_frame(frame, area, context);
 
     let layout = explorer_layout(area, model);
     let Some(assets) = model.ascii_assets.as_ref() else {
@@ -66,8 +72,8 @@ fn render_explorer_main(
 
     render_explorer_toolbar(frame, &layout, model, assets, theme);
     render_explorer_path_bar(frame, &layout, model, theme);
-    render_explorer_sidebar(frame, &layout, model, assets, theme);
-    render_explorer_table(frame, &layout, model, assets, theme);
+    render_explorer_sidebar(frame, &layout, model, assets, context, theme);
+    render_explorer_table(frame, &layout, model, assets, context);
     render_explorer_footer(frame, &layout, model, assets, theme);
 }
 
@@ -168,6 +174,7 @@ fn render_explorer_sidebar(
     layout: &ExplorerLayout,
     model: &ExplorerViewModel,
     assets: &RuntimeAsciiAssets,
+    context: &crate::RenderContext,
     theme: &TundraTheme,
 ) {
     if let Some(header) = layout.sidebar_header {
@@ -184,32 +191,46 @@ fn render_explorer_sidebar(
     ) else {
         return;
     };
-    let items = layout.quick_locations.iter().map(|location_layout| {
-        let Some(location) = model.quick_locations.get(location_layout.index) else {
-            return RatatuiListItem::new(String::new()).style(theme.muted_style());
-        };
-        let icon = explorer_icon_line(assets, &location.icon_key);
-        let text = fit_cell(
-            &format!("{icon} {}", location.label),
-            usize::from(location_layout.area.width),
-        );
-        let style = if location.current || location.drop_target {
-            theme.title_style()
-        } else if location.enabled {
-            theme.body_style()
-        } else {
-            theme.muted_style()
-        };
-        RatatuiListItem::new(text).style(style)
-    });
-    frame.render_widget(
-        RatatuiList::new(items).style(theme.body_style()),
+    let items = layout
+        .quick_locations
+        .iter()
+        .map(|location_layout| {
+            let Some(location) = model.quick_locations.get(location_layout.index) else {
+                return ListItem::new("explorer.quick.missing", "").tone(ComponentTone::Muted);
+            };
+            let icon = explorer_icon_line(assets, &location.icon_key);
+            let text = fit_cell(
+                &format!("{icon} {}", location.label),
+                usize::from(location_layout.area.width),
+            );
+            let tone = if location.current || location.drop_target {
+                ComponentTone::Accent
+            } else if location.enabled {
+                ComponentTone::Default
+            } else {
+                ComponentTone::Muted
+            };
+            ListItem::new(format!("explorer.quick.{}", location_layout.index), text)
+                .disabled(!location.enabled)
+                .tone(tone)
+        })
+        .collect();
+    let mut list = List::new("explorer.quick", items).with_highlight_symbol(None::<String>);
+    list.set_selected(
+        model
+            .quick_locations
+            .iter()
+            .position(|location| location.current),
+    );
+    list.render_borderless_with_context(
         Rect::new(
             first.area.x,
             first.area.y,
             first.area.width,
             last.area.bottom().saturating_sub(first.area.y),
         ),
+        frame.buffer_mut(),
+        context,
     );
 }
 
@@ -217,8 +238,7 @@ fn explorer_table_header(
     layout: &ExplorerLayout,
     model: &ExplorerViewModel,
     assets: &RuntimeAsciiAssets,
-    theme: &TundraTheme,
-) -> Row<'static> {
+) -> Vec<String> {
     let last_column = layout.columns.last().map(|column| column.column);
     let cells = layout.columns.iter().map(|column| {
         let mut label = column.column.label().to_string();
@@ -229,13 +249,13 @@ fn explorer_table_header(
                 super::explorer_sort_direction_icon_key(model.sort_direction),
             ));
         }
-        Cell::from(explorer_table_cell(
+        explorer_table_cell(
             &label,
             column.area.width,
             Some(column.column) != last_column,
-        ))
+        )
     });
-    Row::new(cells).height(1).style(theme.title_style())
+    cells.collect()
 }
 
 fn explorer_table_row(
@@ -243,8 +263,7 @@ fn explorer_table_row(
     layout: &ExplorerLayout,
     model: &ExplorerViewModel,
     assets: &RuntimeAsciiAssets,
-    theme: &TundraTheme,
-) -> Option<Row<'static>> {
+) -> Option<(Vec<String>, ComponentTone)> {
     let entry = model.entries.get(row.index)?;
     let presentation = model.entry_presentation(row.index);
     let icon_key = presentation
@@ -273,12 +292,12 @@ fn explorer_table_row(
             entry.modified.clone().unwrap_or_else(|| "--".to_string()),
         ),
     ];
-    let style = if cut {
-        theme.muted_style()
+    let tone = if cut {
+        ComponentTone::Muted
     } else if focused || drop_target {
-        theme.title_style()
+        ComponentTone::Accent
     } else {
-        theme.body_style()
+        ComponentTone::Default
     };
     let cells = layout
         .columns
@@ -290,13 +309,13 @@ fn explorer_table_row(
                 .find_map(|(candidate, value)| (*candidate == column.column).then_some(value))
                 .map(String::as_str)
                 .unwrap_or("");
-            Cell::from(explorer_table_cell(
+            explorer_table_cell(
                 value,
                 column.area.width,
                 column_index + 1 < layout.columns.len(),
-            ))
+            )
         });
-    Some(Row::new(cells).height(1).style(style))
+    Some((cells.collect(), tone))
 }
 
 fn render_explorer_table(
@@ -304,22 +323,37 @@ fn render_explorer_table(
     layout: &ExplorerLayout,
     model: &ExplorerViewModel,
     assets: &RuntimeAsciiAssets,
-    theme: &TundraTheme,
+    context: &crate::RenderContext,
 ) {
     if let (Some(first), Some(last)) = (layout.columns.first(), layout.columns.last()) {
         let widths = layout
             .columns
             .iter()
-            .map(|column| Constraint::Length(column.area.width));
-        let rows = layout
+            .map(|column| column.area.width)
+            .collect();
+        let row_data = layout
             .rows
             .iter()
-            .filter_map(|row| explorer_table_row(row, layout, model, assets, theme));
-        frame.render_widget(
-            Table::new(rows, widths)
-                .header(explorer_table_header(layout, model, assets, theme))
-                .column_spacing(0)
-                .style(theme.body_style()),
+            .filter_map(|row| explorer_table_row(row, layout, model, assets))
+            .collect::<Vec<_>>();
+        let rows = row_data
+            .iter()
+            .map(|(row, _)| row.clone())
+            .collect::<Vec<_>>();
+        let tones = row_data.iter().map(|(_, tone)| *tone).collect();
+        let mut table = DataTable::new(
+            "explorer.table",
+            explorer_table_header(layout, model, assets),
+            rows,
+        )
+        .bordered(false)
+        .with_column_widths(widths)
+        .with_row_tones(tones);
+        table.selected = model
+            .selected_index
+            .and_then(|selected| selected.checked_sub(layout.visible_start));
+        table.render_frame(
+            frame,
             Rect::new(
                 first.area.x,
                 layout.table_header.y,
@@ -329,6 +363,7 @@ fn render_explorer_table(
                     .height
                     .saturating_add(layout.table_body.height),
             ),
+            context,
         );
     }
 
@@ -339,29 +374,19 @@ fn render_explorer_table(
             } else {
                 "(empty directory)"
             })
-            .style(theme.muted_style())
+            .style(context.compatibility_theme().muted_style())
             .alignment(HorizontalAlignment::Center),
             layout.table_body,
         );
     }
 
     if let Some(scrollbar) = layout.scrollbar {
-        let track_length = usize::from(scrollbar.track.height);
-        let thumb_length = usize::from(scrollbar.thumb.height);
-        let thumb_offset = usize::from(scrollbar.thumb.y.saturating_sub(scrollbar.track.y));
-        let mut state =
-            ScrollbarState::new(track_length.saturating_sub(thumb_length).saturating_add(1))
-                .position(thumb_offset)
-                .viewport_content_length(thumb_length);
-        frame.render_stateful_widget(
-            Scrollbar::new(ScrollbarOrientation::VerticalRight)
-                .begin_symbol(None)
-                .end_symbol(None)
-                .track_style(theme.muted_style())
-                .thumb_style(theme.title_style()),
-            scrollbar.track,
-            &mut state,
-        );
+        Scrollbar::new(
+            model.entries.len(),
+            layout.visible_capacity,
+            layout.visible_start,
+        )
+        .render_frame(frame, scrollbar.track, context);
     }
 }
 
@@ -452,6 +477,7 @@ fn render_explorer_overlay(
     frame: &mut Frame<'_>,
     area: Rect,
     model: &ExplorerViewModel,
+    context: &crate::RenderContext,
     theme: &TundraTheme,
 ) {
     let layout = explorer_layout(area, model);
@@ -471,14 +497,7 @@ fn render_explorer_overlay(
             .unwrap_or("Explorer"),
     };
     frame.render_widget(Clear, overlay_layout.area);
-    frame.render_widget(
-        theme
-            .block()
-            .title(title)
-            .borders(Borders::ALL)
-            .style(theme.body_style()),
-        overlay_layout.area,
-    );
+    Panel::new(title).render_frame(frame, overlay_layout.area, context);
 
     match model.overlay.as_ref() {
         Some(ExplorerOverlayViewModel::ContextMenu(menu)) => {
@@ -493,49 +512,50 @@ fn render_explorer_overlay(
                 })
                 .collect::<Vec<_>>();
             if let (Some((first, _, _)), Some((last, _, _))) = (rows.first(), rows.last()) {
-                let items = rows.iter().map(|(control, index, item)| {
-                    let shortcut = item
-                        .shortcut
-                        .as_ref()
-                        .map(|shortcut| format!("  {shortcut}"))
-                        .unwrap_or_default();
-                    let text = fit_cell(
-                        &format!("{}{shortcut}", item.label),
-                        usize::from(control.area.width.saturating_sub(2)),
-                    );
-                    let style = if !item.enabled {
-                        theme.muted_style()
-                    } else if item.dangerous {
-                        theme.error_style()
-                    } else if menu.selected_index == Some(*index) {
-                        theme.title_style()
-                    } else {
-                        theme.body_style()
-                    };
-                    RatatuiListItem::new(text).style(style)
-                });
-                let list = RatatuiList::new(items)
-                    .style(theme.body_style())
-                    .highlight_symbol("> ")
-                    .highlight_spacing(HighlightSpacing::Always);
+                let items = rows
+                    .iter()
+                    .map(|(control, index, item)| {
+                        let shortcut = item
+                            .shortcut
+                            .as_ref()
+                            .map(|shortcut| format!("  {shortcut}"))
+                            .unwrap_or_default();
+                        let text = fit_cell(
+                            &format!("{}{shortcut}", item.label),
+                            usize::from(control.area.width.saturating_sub(2)),
+                        );
+                        let tone = if !item.enabled {
+                            ComponentTone::Muted
+                        } else if item.dangerous {
+                            ComponentTone::Danger
+                        } else {
+                            ComponentTone::Default
+                        };
+                        ListItem::new(format!("explorer.context.{index}"), text)
+                            .disabled(!item.enabled)
+                            .tone(tone)
+                    })
+                    .collect();
+                let mut list = List::new("explorer.context", items);
                 let selected = rows
                     .iter()
                     .position(|(_, index, _)| menu.selected_index == Some(*index));
-                let mut state = ListState::default().with_selected(selected);
-                frame.render_stateful_widget(
-                    list,
+                list.set_selected(selected);
+                list.set_focused(true);
+                list.render_borderless_with_context(
                     Rect::new(
                         first.area.x,
                         first.area.y,
                         first.area.width,
                         last.area.bottom().saturating_sub(first.area.y),
                     ),
-                    &mut state,
+                    frame.buffer_mut(),
+                    context,
                 );
             }
         }
         Some(ExplorerOverlayViewModel::Name(dialog)) => {
-            render_explorer_name_dialog(frame, overlay_layout, dialog, theme);
+            render_explorer_name_dialog(frame, overlay_layout, dialog, context, theme);
         }
         Some(ExplorerOverlayViewModel::Options(options)) => {
             for control in &overlay_layout.controls {
@@ -618,6 +638,7 @@ fn render_explorer_name_dialog(
     frame: &mut Frame<'_>,
     layout: &ExplorerOverlayLayout,
     dialog: &crate::ExplorerNameDialogViewModel,
+    context: &crate::RenderContext,
     theme: &TundraTheme,
 ) {
     frame.render_widget(
@@ -633,9 +654,15 @@ fn render_explorer_name_dialog(
                     control.area.width,
                     3.min(layout.content.height),
                 );
-                let block = theme.block().borders(Borders::ALL);
-                let input_content = block.inner(input_area);
-                frame.render_widget(block, input_area);
+                Surface::new()
+                    .bordered(true)
+                    .render_frame(frame, input_area, context);
+                let input_content = Rect::new(
+                    input_area.x.saturating_add(1),
+                    input_area.y.saturating_add(1),
+                    input_area.width.saturating_sub(2),
+                    input_area.height.saturating_sub(2),
+                );
 
                 let mut input = TextInput::new("explorer.name.input").with_cursor_symbol("_");
                 input.set_value(&dialog.value);

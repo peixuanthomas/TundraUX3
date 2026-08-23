@@ -1,5 +1,6 @@
 use ratatui::Frame;
 use ratatui::buffer::Buffer;
+use ratatui::buffer::CellWidth;
 use ratatui::layout::{HorizontalAlignment, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::widgets::{Block, Borders, Paragraph, Widget};
@@ -7,8 +8,8 @@ use ratatui::widgets::{Block, Borders, Paragraph, Widget};
 use crate::RenderContext;
 
 use super::{
-    ComponentEvent, ComponentId, ComponentState, InputEvent, Key, MouseButton, MouseKind,
-    contains_point,
+    ComponentEvent, ComponentId, ComponentState, ComponentTone, InputEvent, Key, MouseButton,
+    MouseKind, contains_point, tone_color,
 };
 
 /// A lightweight, component-owned table suitable for selectable data rows.
@@ -22,6 +23,11 @@ pub struct DataTable {
     pub selected: Option<usize>,
     pub state: ComponentState,
     pub title: Option<String>,
+    pub column_widths: Option<Vec<u16>>,
+    pub viewport_start: usize,
+    pub show_header: bool,
+    pub row_tones: Vec<ComponentTone>,
+    pub bordered: bool,
 }
 
 impl DataTable {
@@ -41,7 +47,33 @@ impl DataTable {
             rows,
             state: ComponentState::default(),
             title: None,
+            column_widths: None,
+            viewport_start: 0,
+            show_header: true,
+            row_tones: Vec::new(),
+            bordered: true,
         }
+    }
+
+    pub fn with_column_widths(mut self, widths: Vec<u16>) -> Self {
+        self.column_widths = Some(widths);
+        self
+    }
+    pub const fn with_viewport_start(mut self, start: usize) -> Self {
+        self.viewport_start = start;
+        self
+    }
+    pub const fn show_header(mut self, show: bool) -> Self {
+        self.show_header = show;
+        self
+    }
+    pub fn with_row_tones(mut self, tones: Vec<ComponentTone>) -> Self {
+        self.row_tones = tones;
+        self
+    }
+    pub const fn bordered(mut self, bordered: bool) -> Self {
+        self.bordered = bordered;
+        self
     }
 
     pub fn titled(mut self, title: impl Into<String>) -> Self {
@@ -98,8 +130,10 @@ impl DataTable {
         let tokens = context.theme;
         let mut block = Block::default()
             .style(Style::default().fg(tokens.text).bg(tokens.surface))
-            .borders(Borders::ALL)
             .border_style(Style::default().fg(tokens.border).bg(tokens.surface));
+        if self.bordered {
+            block = block.borders(Borders::ALL);
+        }
         if let Some(title) = &self.title {
             block = block.title(title.as_str());
         }
@@ -109,7 +143,13 @@ impl DataTable {
             return;
         }
 
-        Paragraph::new(join_row(&self.headers, inner.width))
+        let header_height = u16::from(self.show_header);
+        if self.show_header {
+            Paragraph::new(join_row(
+                &self.headers,
+                inner.width,
+                self.column_widths.as_deref(),
+            ))
             .alignment(HorizontalAlignment::Left)
             .style(
                 Style::default()
@@ -118,11 +158,13 @@ impl DataTable {
                     .add_modifier(Modifier::BOLD),
             )
             .render(Rect::new(inner.x, inner.y, inner.width, 1), buffer);
+        }
         for (index, row) in self
             .rows
             .iter()
             .enumerate()
-            .take(inner.height.saturating_sub(1) as usize)
+            .skip(self.viewport_start)
+            .take(inner.height.saturating_sub(header_height) as usize)
         {
             let selected = self.selected == Some(index);
             let style = if selected {
@@ -130,19 +172,30 @@ impl DataTable {
                     .fg(if self.state.focused {
                         tokens.focus
                     } else {
-                        tokens.text
+                        tone_color(
+                            self.row_tones.get(index).copied().unwrap_or_default(),
+                            &context.compatibility_theme(),
+                        )
                     })
                     .bg(tokens.accent_soft)
             } else {
-                Style::default().fg(tokens.text).bg(tokens.surface)
+                Style::default()
+                    .fg(tone_color(
+                        self.row_tones.get(index).copied().unwrap_or_default(),
+                        &context.compatibility_theme(),
+                    ))
+                    .bg(tokens.surface)
             };
-            Paragraph::new(join_row(row, inner.width))
+            Paragraph::new(join_row(row, inner.width, self.column_widths.as_deref()))
                 .alignment(HorizontalAlignment::Left)
                 .style(style)
                 .render(
                     Rect::new(
                         inner.x,
-                        inner.y.saturating_add(index as u16 + 1),
+                        inner
+                            .y
+                            .saturating_add(header_height)
+                            .saturating_add((index - self.viewport_start) as u16),
                         inner.width,
                         1,
                     ),
@@ -175,21 +228,38 @@ impl DataTable {
         if !contains_point(area, column, row) {
             return None;
         }
-        let title = u16::from(self.title.is_some());
-        row.checked_sub(area.y.saturating_add(1 + title))
-            .map(usize::from)
-            .filter(|index| *index < self.rows.len())
+        row.checked_sub(
+            area.y
+                .saturating_add(u16::from(self.bordered) + u16::from(self.show_header)),
+        )
+        .map(|offset| self.viewport_start.saturating_add(usize::from(offset)))
+        .filter(|index| *index < self.rows.len())
     }
 }
 
-fn join_row(cells: &[String], width: u16) -> String {
+fn join_row(cells: &[String], width: u16, explicit_widths: Option<&[u16]>) -> String {
     if cells.is_empty() {
         return String::new();
     }
-    let cell_width = usize::from(width) / cells.len();
+    let separator = if explicit_widths.is_some() { "" } else { " " };
+    let separators = if explicit_widths.is_some() {
+        0
+    } else {
+        cells.len().saturating_sub(1)
+    };
+    let fallback = usize::from(width).saturating_sub(separators) / cells.len();
     cells
         .iter()
-        .map(|cell| format!("{cell:<cell_width$}"))
+        .enumerate()
+        .map(|(index, cell)| {
+            let cell_width = explicit_widths
+                .and_then(|widths| widths.get(index))
+                .copied()
+                .map(usize::from)
+                .unwrap_or(fallback);
+            let padding = cell_width.saturating_sub(usize::from(cell.cell_width()));
+            format!("{cell}{}", " ".repeat(padding))
+        })
         .collect::<Vec<_>>()
-        .join(" ")
+        .join(separator)
 }

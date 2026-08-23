@@ -39,6 +39,15 @@ pub struct Dialog {
 }
 
 impl Dialog {
+    pub fn render_with_context(
+        &self,
+        area: Rect,
+        buffer: &mut Buffer,
+        context: &crate::RenderContext,
+    ) {
+        self.render(area, buffer, &context.compatibility_theme());
+    }
+
     pub fn new(
         id: impl Into<ComponentId>,
         title: impl Into<String>,

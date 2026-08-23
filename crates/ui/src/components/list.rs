@@ -1,16 +1,17 @@
 use ratatui::Frame;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
+use ratatui::style::Modifier;
 use ratatui::widgets::{
-    Borders, List as RatatuiList, ListItem as RatatuiListItem, ListState as RatatuiListState,
-    StatefulWidget,
+    Borders, HighlightSpacing, List as RatatuiList, ListItem as RatatuiListItem,
+    ListState as RatatuiListState, StatefulWidget,
 };
 
 use crate::TundraTheme;
 
 use super::{
-    ComponentEvent, ComponentId, ComponentState, InputEvent, Key, MouseButton, MouseKind,
-    contains_point, inner_area, item_style,
+    ComponentEvent, ComponentId, ComponentState, ComponentTone, InputEvent, Key, MouseButton,
+    MouseKind, contains_point, inner_area, item_style, tone_color,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -19,6 +20,7 @@ pub struct ListItem {
     pub label: String,
     pub description: Option<String>,
     pub disabled: bool,
+    pub tone: ComponentTone,
 }
 
 impl ListItem {
@@ -28,7 +30,12 @@ impl ListItem {
             label: label.into(),
             description: None,
             disabled: false,
+            tone: ComponentTone::Default,
         }
+    }
+    pub const fn tone(mut self, tone: ComponentTone) -> Self {
+        self.tone = tone;
+        self
     }
 
     pub fn with_description(mut self, description: impl Into<String>) -> Self {
@@ -50,9 +57,29 @@ pub struct List {
     pub state: ComponentState,
     selected: Option<usize>,
     hovered: Option<usize>,
+    viewport_start: Option<usize>,
+    highlight_symbol: Option<String>,
 }
 
 impl List {
+    pub fn render_with_context(
+        &self,
+        area: Rect,
+        buffer: &mut Buffer,
+        context: &crate::RenderContext,
+    ) {
+        self.render(area, buffer, &context.compatibility_theme());
+    }
+
+    pub fn render_borderless_with_context(
+        &self,
+        area: Rect,
+        buffer: &mut Buffer,
+        context: &crate::RenderContext,
+    ) {
+        self.render_borderless(area, buffer, &context.compatibility_theme());
+    }
+
     pub fn new(id: impl Into<ComponentId>, items: Vec<ListItem>) -> Self {
         let selected = items.iter().position(|item| !item.disabled);
         Self {
@@ -62,7 +89,17 @@ impl List {
             state: ComponentState::default(),
             selected,
             hovered: None,
+            viewport_start: None,
+            highlight_symbol: Some("> ".to_string()),
         }
+    }
+    pub const fn with_viewport_start(mut self, start: usize) -> Self {
+        self.viewport_start = Some(start);
+        self
+    }
+    pub fn with_highlight_symbol(mut self, symbol: Option<impl Into<String>>) -> Self {
+        self.highlight_symbol = symbol.map(Into::into);
+        self
     }
 
     pub fn titled(mut self, title: impl Into<String>) -> Self {
@@ -88,7 +125,7 @@ impl List {
 
     pub fn set_selected(&mut self, index: Option<usize>) {
         self.selected = index
-            .filter(|index| self.items.get(*index).is_some_and(|item| !item.disabled))
+            .filter(|index| self.items.get(*index).is_some())
             .or_else(|| self.items.iter().position(|item| !item.disabled));
     }
 
@@ -251,22 +288,51 @@ impl List {
     }
 
     fn ratatui_widget<'a>(&'a self, theme: &TundraTheme, bordered: bool) -> RatatuiList<'a> {
-        let items = self.items.iter().enumerate().map(|(index, item)| {
-            let label = match &item.description {
-                Some(description) => format!("{} - {}", item.label, description),
-                None => item.label.clone(),
-            };
-            RatatuiListItem::new(label).style(item_style(
-                self.state.focused,
-                self.hovered == Some(index),
-                false,
-                item.disabled,
-                theme,
-            ))
-        });
+        let start = self.viewport_start.unwrap_or(0);
+        let items = self
+            .items
+            .iter()
+            .enumerate()
+            .skip(start)
+            .map(|(index, item)| {
+                let label = match &item.description {
+                    Some(description) => format!("{} - {}", item.label, description),
+                    None => item.label.clone(),
+                };
+                let mut style = item_style(
+                    self.state.focused,
+                    self.hovered == Some(index),
+                    false,
+                    item.disabled,
+                    theme,
+                );
+                if item.disabled {
+                    style = style.add_modifier(Modifier::DIM);
+                }
+                if self.selected != Some(index) {
+                    style = style.fg(tone_color(item.tone, theme));
+                }
+                RatatuiListItem::new(label).style(style)
+            });
+        let selected_disabled = self
+            .selected
+            .and_then(|index| self.items.get(index))
+            .is_some_and(|item| item.disabled);
         let widget = RatatuiList::new(items)
             .style(theme.body_style())
-            .highlight_style(item_style(self.state.focused, false, true, false, theme));
+            .highlight_symbol(self.highlight_symbol.as_deref().unwrap_or(""))
+            .highlight_spacing(if self.highlight_symbol.is_some() {
+                HighlightSpacing::Always
+            } else {
+                HighlightSpacing::Never
+            })
+            .highlight_style(item_style(
+                self.state.focused,
+                false,
+                true,
+                selected_disabled,
+                theme,
+            ));
 
         if !bordered {
             return widget;
@@ -276,17 +342,32 @@ impl List {
             Some(title) => theme
                 .block()
                 .title(title)
+                .title_style(if self.state.focused {
+                    theme.title_style()
+                } else {
+                    theme.body_style()
+                })
                 .borders(Borders::ALL)
+                .border_style(theme.selectable_border_style(self.state.focused))
                 .style(theme.body_style()),
             None => theme
                 .block()
                 .borders(Borders::ALL)
+                .border_style(theme.selectable_border_style(self.state.focused))
                 .style(theme.body_style()),
         };
         widget.block(block)
     }
 
     fn ratatui_state(&self, area: Rect, bordered: bool) -> RatatuiListState {
+        if let Some(start) = self.viewport_start {
+            return RatatuiListState::default()
+                .with_selected(
+                    self.selected
+                        .and_then(|selected| selected.checked_sub(start)),
+                )
+                .with_offset(0);
+        }
         RatatuiListState::default()
             .with_selected(self.selected)
             .with_offset(self.viewport_offset(area, bordered))
@@ -302,8 +383,10 @@ impl List {
             return 0;
         }
 
-        self.selected
-            .map(|selected| selected.saturating_add(1).saturating_sub(height))
-            .unwrap_or(0)
+        self.viewport_start.unwrap_or_else(|| {
+            self.selected
+                .map(|selected| selected.saturating_add(1).saturating_sub(height))
+                .unwrap_or(0)
+        })
     }
 }

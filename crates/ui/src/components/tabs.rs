@@ -43,6 +43,15 @@ pub struct Tabs {
 }
 
 impl Tabs {
+    pub fn render_with_context(
+        &self,
+        area: Rect,
+        buffer: &mut Buffer,
+        context: &crate::RenderContext,
+    ) {
+        self.render(area, buffer, &context.compatibility_theme());
+    }
+
     pub fn new(id: impl Into<ComponentId>, tabs: Vec<TabItem>) -> Self {
         let selected = tabs.iter().position(|tab| !tab.disabled);
         Self {

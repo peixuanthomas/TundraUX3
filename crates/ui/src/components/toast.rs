@@ -43,7 +43,7 @@ impl Toast {
 
     pub fn is_visible(&self, frame: MotionFrame) -> bool {
         self.dismiss_at.is_none_or(|dismissed| {
-            frame.reduced_motion || frame.now.saturating_sub(dismissed) < MotionTimings::TOAST_EXIT
+            !frame.reduced_motion && frame.now.saturating_sub(dismissed) < MotionTimings::TOAST_EXIT
         })
     }
 

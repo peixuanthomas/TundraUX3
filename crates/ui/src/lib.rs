@@ -23,6 +23,7 @@ pub use screens::timezone_map::{
 };
 pub use screens::*;
 pub use theme::{
-    BorderShape, ColorCapability, ComponentVisualState, FrostMotion, MotionFrame, MotionTimings,
-    RenderCapabilities, RenderContext, ThemeTokens, TundraTheme, ease_in_cubic, ease_out_cubic,
+    BorderShape, ColorCapability, ComponentVisualState, FrostMotion, MotionFrame, MotionIdentity,
+    MotionSchedule, MotionTimings, RenderCapabilities, RenderContext, ThemeTokens, TundraTheme,
+    ease_in_cubic, ease_out_cubic, schedule_motion,
 };

@@ -326,8 +326,14 @@ fn old_config_without_language_or_timezone_loads_with_defaults() {
     assert_eq!(config.time_sync, TimeSyncConfig::default());
     assert_eq!(config.weather_location, None);
     assert_eq!(config.appearance.border_shape, BorderShape::Rounded);
-    assert_eq!(config.appearance.border_color, BorderColor::White);
-    assert_eq!(config.appearance.accent_color, BorderColor::Cyan);
+    assert_eq!(
+        config.appearance.border_color,
+        BorderColor::Rgb(0x29, 0x43, 0x4E)
+    );
+    assert_eq!(
+        config.appearance.accent_color,
+        BorderColor::Rgb(0x63, 0xD3, 0xE5)
+    );
     assert_eq!(config.appearance.motion_preference, MotionPreference::Full);
     assert_eq!(config.schema_version, SCHEMA_VERSION);
     assert_eq!(config.editor, EditorConfig::default());
@@ -397,14 +403,14 @@ fn border_color_parses_named_hex_and_default_values_canonically() {
 }
 
 #[test]
-fn accent_color_default_and_legacy_default_value_are_cyan() {
+fn new_accent_default_is_glacier_and_legacy_default_value_is_cyan() {
     let config: StorageConfig =
         toml::from_str("schema_version = 1\n\n[appearance]\naccent_color = \"default\"\n")
             .expect("accent default should parse");
 
     assert_eq!(
         StorageConfig::default().appearance.accent_color,
-        BorderColor::Cyan
+        BorderColor::Rgb(0x63, 0xD3, 0xE5)
     );
     assert_eq!(config.appearance.accent_color, BorderColor::Cyan);
 }

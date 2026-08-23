@@ -31,8 +31,8 @@ pub use data_table::DataTable;
 pub use dialog::{Dialog, DialogAction};
 pub use empty_state::EmptyState;
 pub use foundation::{
-    ComponentEvent, ComponentId, ComponentState, InputEvent, Key, KeyInput, KeyModifiers,
-    MouseButton, MouseInput, MouseKind, contains_point,
+    ComponentEvent, ComponentId, ComponentState, ComponentTone, InputEvent, Key, KeyInput,
+    KeyModifiers, MouseButton, MouseInput, MouseKind, contains_point,
 };
 pub use list::{List, ListItem};
 pub use nav_rail::{NavRail, NavRailItem};
@@ -49,5 +49,5 @@ pub use toast::{Toast, ToastTone};
 pub(crate) use big_text::{BigText, heading_size_ratio};
 pub(crate) use foundation::{
     byte_index_for_char, char_count, clamp_index, inner_area, interactive_style, item_style,
-    terminal_width, truncate_to_terminal_width,
+    terminal_width, tone_color, truncate_to_terminal_width,
 };

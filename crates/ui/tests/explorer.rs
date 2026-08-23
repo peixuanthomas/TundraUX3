@@ -9,10 +9,32 @@ use ui::{
     ExplorerOptionsViewModel, ExplorerOverlayControl, ExplorerOverlayViewModel,
     ExplorerProgressStage, ExplorerPropertiesViewModel, ExplorerPropertyViewModel,
     ExplorerQuickLocationViewModel, ExplorerSearchViewModel, ExplorerSortColumn,
-    ExplorerToolbarAction, ExplorerViewModel, HomeDisplayMode, NotificationTone,
-    ShellChromeViewModel, ShellLayout, StatusViewModel, TundraTheme, compute_shell_layout,
-    explorer_first_entry_content_line, explorer_layout, render_explorer,
+    ExplorerToolbarAction, ExplorerViewModel, HomeDisplayMode, MotionFrame, NotificationTone,
+    RenderCapabilities, RenderContext, ShellChromeViewModel, ShellLayout, StatusViewModel,
+    TundraTheme, compute_shell_layout, explorer_first_entry_content_line, explorer_layout,
+    render_explorer, render_explorer_with_context,
 };
+
+#[test]
+fn explorer_context_path_renders_real_sizes_with_ansi_and_reduced_motion() {
+    let model = sample_model();
+    let chrome = chrome_for("Explorer");
+    for (width, height) in [(50, 12), (80, 24), (120, 32)] {
+        let backend = TestBackend::new(width, height);
+        let mut terminal = Terminal::new(backend).expect("terminal");
+        let context = RenderContext::from_theme(
+            &TundraTheme::default(),
+            MotionFrame::reduced(Default::default()),
+            RenderCapabilities::ansi(),
+        );
+        terminal
+            .draw(|frame| {
+                render_explorer_with_context(frame, frame.area(), &chrome, &model, &context)
+            })
+            .expect("context render");
+        assert_eq!(terminal.backend().buffer().area.width, width);
+    }
+}
 
 #[test]
 fn explorer_renderer_shows_path_entries_details_search_and_message() {
@@ -408,6 +430,36 @@ fn explorer_context_menu_is_modal_and_hit_testable() {
     assert!(output.contains("File"));
     assert!(output.contains("Open"));
     assert!(output.contains("Enter"));
+}
+
+#[test]
+fn explorer_wide_context_labels_and_shortcuts_use_cell_width_hit_geometry() {
+    let mut model = sample_model();
+    model.overlay = Some(ExplorerOverlayViewModel::ContextMenu(
+        ExplorerContextMenuViewModel {
+            x: 1,
+            y: 1,
+            title: "Wide".to_string(),
+            items: vec![ExplorerContextMenuItemViewModel {
+                id: "wide".to_string(),
+                label: "打开🙂".to_string(),
+                shortcut: Some("确认界面".to_string()),
+                enabled: true,
+                dangerous: false,
+            }],
+            selected_index: Some(0),
+        },
+    ));
+    let layout = explorer_layout(Rect::new(0, 0, 80, 24), &model);
+    let overlay = layout.overlay.as_ref().expect("wide context overlay");
+    assert!(overlay.area.width >= 20);
+    let row = overlay.controls[0].area;
+    assert_eq!(
+        layout.hit_test(row.x.saturating_add(row.width - 1), row.y),
+        Some(ExplorerHitTarget::Overlay(
+            ExplorerOverlayControl::ContextItem(0)
+        ))
+    );
 }
 
 #[test]

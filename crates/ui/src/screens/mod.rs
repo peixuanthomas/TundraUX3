@@ -1,6 +1,7 @@
 pub(crate) mod auth;
 pub(crate) mod clock;
 pub(crate) mod command_line;
+mod context;
 pub(crate) mod diagnostics;
 pub(crate) mod editor;
 pub(crate) mod explorer;
@@ -15,6 +16,7 @@ pub(crate) mod user_management;
 pub use auth::*;
 pub use clock::*;
 pub use command_line::*;
+pub use context::*;
 pub use diagnostics::*;
 pub use editor::*;
 pub use explorer::*;

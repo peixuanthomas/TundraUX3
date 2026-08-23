@@ -1,7 +1,7 @@
 use ratatui::Frame;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
-use ratatui::style::Style;
+use ratatui::style::{Modifier, Style};
 use ratatui::widgets::{Block, Borders, Widget};
 
 use crate::{RenderContext, TundraTheme};
@@ -13,6 +13,7 @@ pub struct Surface {
     pub title: Option<String>,
     pub bordered: bool,
     pub raised: bool,
+    pub border_shape: crate::BorderShape,
 }
 
 impl Default for Surface {
@@ -27,7 +28,12 @@ impl Surface {
             title: None,
             bordered: false,
             raised: false,
+            border_shape: crate::BorderShape::Rounded,
         }
+    }
+    pub const fn border_shape(mut self, border_shape: crate::BorderShape) -> Self {
+        self.border_shape = border_shape;
+        self
     }
 
     pub fn titled(mut self, title: impl Into<String>) -> Self {
@@ -85,7 +91,7 @@ impl Surface {
         if self.bordered {
             block = block
                 .borders(Borders::ALL)
-                .border_type(crate::BorderShape::Rounded.border_type())
+                .border_type(self.border_shape.border_type())
                 .border_style(
                     Style::default()
                         .fg(tokens.border)
@@ -93,7 +99,12 @@ impl Surface {
                 );
         }
         if let Some(title) = &self.title {
-            block = block.title(title.as_str());
+            block = block.title(title.as_str()).title_style(
+                Style::default()
+                    .fg(tokens.accent)
+                    .bg(style.bg.unwrap_or(tokens.surface))
+                    .add_modifier(Modifier::BOLD),
+            );
         }
         block
     }

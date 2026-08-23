@@ -1,3 +1,4 @@
+use ratatui::buffer::CellWidth;
 use ratatui::layout::Rect;
 use ratatui::text::Line;
 
@@ -395,7 +396,9 @@ pub fn explorer_layout(area: Rect, model: &ExplorerViewModel) -> ExplorerLayout 
         if !operation.cancellable || footer.width == 0 || footer.height == 0 {
             return None;
         }
-        let desired = usize_to_u16(operation.cancel_label.chars().count())
+        let desired = operation
+            .cancel_label
+            .cell_width()
             .saturating_add(4)
             .min(footer.width);
         Some(Rect::new(
@@ -453,7 +456,7 @@ fn explorer_toolbar_button_layouts(
         .toolbar
         .buttons
         .iter()
-        .map(|button| usize_to_u16(button.label.chars().count()).saturating_add(4))
+        .map(|button| button.label.cell_width().saturating_add(4))
         .fold(0u16, u16::saturating_add)
         .saturating_add(model.toolbar.buttons.len().saturating_sub(1) as u16);
     // Either label every action or collapse every action to its asset icon.  A greedy mix made
@@ -469,7 +472,7 @@ fn explorer_toolbar_button_layouts(
             if remaining < 3 || area.height == 0 {
                 return None;
             }
-            let labelled_width = usize_to_u16(button.label.chars().count()).saturating_add(4);
+            let labelled_width = button.label.cell_width().saturating_add(4);
             let show_label = show_labels;
             let width = if show_label { labelled_width } else { 3 }.min(remaining);
             let layout = ExplorerToolbarButtonLayout {
@@ -582,15 +585,15 @@ fn explorer_overlay_layout(area: Rect, model: &ExplorerViewModel) -> Option<Expl
                 .items
                 .iter()
                 .map(|item| {
-                    item.label.chars().count().saturating_add(
+                    item.label.cell_width().saturating_add(
                         item.shortcut
                             .as_ref()
-                            .map_or(0, |value| value.chars().count().saturating_add(2)),
+                            .map_or(0, |value| value.cell_width().saturating_add(2)),
                     )
                 })
                 .max()
                 .unwrap_or(12);
-            let width = usize_to_u16(content_width)
+            let width = content_width
                 .saturating_add(4)
                 .clamp(16, area.width.max(16));
             let height = usize_to_u16(menu.items.len())

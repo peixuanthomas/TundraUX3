@@ -39,7 +39,12 @@ pub struct StorageConfig {
 
 impl StorageConfig {
     pub(crate) fn normalize(&mut self) -> bool {
+        let legacy_schema = self.schema_version < 2;
         let mut changed = self.schema_version != SCHEMA_VERSION;
+        if legacy_schema && self.appearance == legacy_appearance_default() {
+            self.appearance = AppearanceConfig::default();
+            changed = true;
+        }
         self.schema_version = SCHEMA_VERSION;
         changed |= self.launcher.migrate_legacy_pinned_apps();
         changed |= self.editor.normalize();
@@ -140,11 +145,11 @@ pub struct AppearanceConfig {
 impl Default for AppearanceConfig {
     fn default() -> Self {
         Self {
-            border_shape: BorderShape::default(),
-            border_color: BorderColor::default(),
-            accent_color: default_accent_color(),
-            icon_display_mode: IconDisplayMode::default(),
-            motion_preference: MotionPreference::default(),
+            border_shape: BorderShape::Rounded,
+            border_color: BorderColor::Rgb(0x29, 0x43, 0x4e),
+            accent_color: BorderColor::Rgb(0x63, 0xd3, 0xe5),
+            icon_display_mode: IconDisplayMode::Image,
+            motion_preference: MotionPreference::Full,
         }
     }
 }
@@ -153,11 +158,22 @@ impl AppearanceConfig {
     /// The complete appearance written by pre-Glacier versions.  Migration
     /// intentionally treats only this exact tuple as the old default; any
     /// custom border, accent, or icon choice stays untouched.
-    pub const fn is_legacy_default(&self) -> bool {
+    pub(crate) const fn is_legacy_default(&self) -> bool {
         matches!(self.border_shape, BorderShape::Rounded)
             && matches!(self.border_color, BorderColor::White)
             && matches!(self.accent_color, BorderColor::Cyan)
             && matches!(self.icon_display_mode, IconDisplayMode::Image)
+            && matches!(self.motion_preference, MotionPreference::Full)
+    }
+}
+
+const fn legacy_appearance_default() -> AppearanceConfig {
+    AppearanceConfig {
+        border_shape: BorderShape::Rounded,
+        border_color: BorderColor::White,
+        accent_color: BorderColor::Cyan,
+        icon_display_mode: IconDisplayMode::Image,
+        motion_preference: MotionPreference::Full,
     }
 }
 
@@ -380,11 +396,9 @@ pub enum BorderColor {
 pub type AccentColor = BorderColor;
 
 /// The legacy UI visual accent: cyan.
+/// Legacy serialized `"default"` accent sentinel. New defaults are explicit
+/// Glacier RGB values; old files keep parsing this token as cyan.
 pub const DEFAULT_ACCENT_COLOR: AccentColor = AccentColor::Cyan;
-
-fn default_accent_color() -> AccentColor {
-    DEFAULT_ACCENT_COLOR
-}
 
 fn deserialize_accent_color<'de, DeserializerType>(
     deserializer: DeserializerType,
@@ -629,4 +643,75 @@ fn default_language() -> String {
 
 fn default_timezone() -> String {
     "UTC".to_string()
+}
+
+#[cfg(test)]
+mod glacier_migration_tests {
+    use super::*;
+
+    fn legacy() -> AppearanceConfig {
+        legacy_appearance_default()
+    }
+
+    #[test]
+    fn glacier_is_the_new_and_reset_appearance_default() {
+        assert_eq!(
+            AppearanceConfig::default(),
+            AppearanceConfig {
+                border_shape: BorderShape::Rounded,
+                border_color: BorderColor::Rgb(0x29, 0x43, 0x4e),
+                accent_color: BorderColor::Rgb(0x63, 0xd3, 0xe5),
+                icon_display_mode: IconDisplayMode::Image,
+                motion_preference: MotionPreference::Full,
+            }
+        );
+        let appearance = AppearanceConfig::default();
+        assert_eq!(appearance, StorageConfig::default().appearance);
+    }
+
+    #[test]
+    fn exact_legacy_config_default_migrates_to_glacier() {
+        let mut config = StorageConfig {
+            schema_version: 1,
+            appearance: legacy(),
+            ..StorageConfig::default()
+        };
+        assert!(config.normalize());
+        assert_eq!(config.appearance, AppearanceConfig::default());
+    }
+
+    #[test]
+    fn every_single_legacy_appearance_override_is_preserved() {
+        let variants = [
+            AppearanceConfig {
+                border_shape: BorderShape::Square,
+                ..legacy()
+            },
+            AppearanceConfig {
+                border_color: BorderColor::LightBlue,
+                ..legacy()
+            },
+            AppearanceConfig {
+                accent_color: BorderColor::LightMagenta,
+                ..legacy()
+            },
+            AppearanceConfig {
+                icon_display_mode: IconDisplayMode::Ascii,
+                ..legacy()
+            },
+            AppearanceConfig {
+                motion_preference: MotionPreference::Reduced,
+                ..legacy()
+            },
+        ];
+        for expected in variants {
+            let mut config = StorageConfig {
+                schema_version: 1,
+                appearance: expected.clone(),
+                ..StorageConfig::default()
+            };
+            config.normalize();
+            assert_eq!(config.appearance, expected);
+        }
+    }
 }

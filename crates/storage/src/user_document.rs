@@ -37,6 +37,13 @@ impl UsersDocument {
             return false;
         }
 
+        if self.schema_version < 3 {
+            for user in &mut self.users {
+                if user.appearance.is_legacy_default() {
+                    user.appearance = AppearanceConfig::default();
+                }
+            }
+        }
         self.schema_version = USERS_SCHEMA_VERSION;
         true
     }
@@ -113,4 +120,51 @@ fn unix_millis() -> u64 {
         .ok()
         .and_then(|millis| u64::try_from(millis).ok())
         .unwrap_or(0)
+}
+
+#[cfg(test)]
+mod glacier_user_migration_tests {
+    use super::*;
+    use crate::{BorderColor, BorderShape, IconDisplayMode, MotionPreference};
+
+    fn user(appearance: AppearanceConfig) -> UserRecord {
+        UserRecord {
+            id: "id".into(),
+            username: "user".into(),
+            display_name: "User".into(),
+            role: "User".into(),
+            password_hash: String::new(),
+            password_hint: None,
+            appearance,
+            enabled: true,
+            failed_login_attempts: 0,
+            locked_until_epoch_ms: None,
+            created_at_epoch_ms: 0,
+            updated_at_epoch_ms: 0,
+            last_login_at_epoch_ms: None,
+        }
+    }
+
+    #[test]
+    fn users_schema_two_exact_default_migrates_but_custom_value_does_not() {
+        let legacy = AppearanceConfig {
+            border_shape: BorderShape::Rounded,
+            border_color: BorderColor::White,
+            accent_color: BorderColor::Cyan,
+            icon_display_mode: IconDisplayMode::Image,
+            motion_preference: MotionPreference::Full,
+        };
+        let custom = AppearanceConfig {
+            accent_color: BorderColor::Blue,
+            ..legacy.clone()
+        };
+        let mut document = UsersDocument {
+            schema_version: 2,
+            users: vec![user(legacy), user(custom.clone())],
+        };
+        assert!(document.normalize());
+        assert_eq!(document.users[0].appearance, AppearanceConfig::default());
+        assert_eq!(document.users[1].appearance, custom);
+        assert_eq!(document.schema_version, USERS_SCHEMA_VERSION);
+    }
 }

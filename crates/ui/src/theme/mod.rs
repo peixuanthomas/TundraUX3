@@ -171,6 +171,74 @@ pub struct FrostMotion {
     duration: Duration,
 }
 
+/// Stable identities observed by the shell around a state change.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct MotionIdentity<'a> {
+    pub screen: Option<&'a str>,
+    pub focus: Option<&'a str>,
+    pub overlay: Option<&'a str>,
+}
+
+/// Pure redraw decision for one transition interval. The caller owns the
+/// change timestamp, so interruption and reversal restart deterministically
+/// without a hidden clock.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct MotionSchedule {
+    pub screen_transition: bool,
+    pub focus_transition: bool,
+    pub overlay_transition: bool,
+    pub active: bool,
+    pub next_redraw_in: Duration,
+}
+
+pub fn schedule_motion(
+    prior: MotionIdentity<'_>,
+    current: MotionIdentity<'_>,
+    changed_at: Duration,
+    frame: MotionFrame,
+) -> MotionSchedule {
+    if frame.reduced_motion {
+        return MotionSchedule::default();
+    }
+    let elapsed = frame.now.saturating_sub(changed_at);
+    let screen_transition = prior.screen != current.screen && elapsed < MotionTimings::PAGE;
+    let focus_transition = prior.focus != current.focus && elapsed < MotionTimings::FOCUS;
+    let overlay_transition = prior.overlay != current.overlay
+        && elapsed
+            < if current.overlay.is_some() {
+                MotionTimings::DIALOG
+            } else {
+                MotionTimings::POPOVER
+            };
+    let mut remaining = Duration::MAX;
+    if screen_transition {
+        remaining = remaining.min(MotionTimings::PAGE.saturating_sub(elapsed));
+    }
+    if focus_transition {
+        remaining = remaining.min(MotionTimings::FOCUS.saturating_sub(elapsed));
+    }
+    if overlay_transition {
+        let duration = if current.overlay.is_some() {
+            MotionTimings::DIALOG
+        } else {
+            MotionTimings::POPOVER
+        };
+        remaining = remaining.min(duration.saturating_sub(elapsed));
+    }
+    let active = screen_transition || focus_transition || overlay_transition;
+    MotionSchedule {
+        screen_transition,
+        focus_transition,
+        overlay_transition,
+        active,
+        next_redraw_in: if active {
+            remaining.min(Duration::from_nanos(16_666_667))
+        } else {
+            Duration::ZERO
+        },
+    }
+}
+
 impl FrostMotion {
     pub fn begin(&mut self, frame: MotionFrame, duration: Duration) {
         let duration = MotionTimings::resolve(frame, duration);
@@ -275,6 +343,21 @@ impl RenderContext {
             },
             capabilities,
         )
+    }
+
+    /// Compatibility theme derived exclusively from this frame's resolved
+    /// tokens. This lets legacy renderers participate in context-aware paths
+    /// without losing ANSI capability resolution or user colours.
+    pub const fn compatibility_theme(self) -> TundraTheme {
+        TundraTheme {
+            background: self.theme.canvas,
+            foreground: self.theme.text,
+            accent_color: self.theme.accent,
+            muted: self.theme.muted,
+            error: self.theme.danger,
+            border_color: self.theme.border,
+            border_shape: BorderShape::Rounded,
+        }
     }
 }
 

@@ -21,6 +21,15 @@ pub struct Button {
 }
 
 impl Button {
+    pub fn render_with_context(
+        &self,
+        area: Rect,
+        buffer: &mut Buffer,
+        context: &crate::RenderContext,
+    ) {
+        self.render(area, buffer, &context.compatibility_theme());
+    }
+
     pub fn new(id: impl Into<ComponentId>, label: impl Into<String>) -> Self {
         Self {
             id: id.into(),

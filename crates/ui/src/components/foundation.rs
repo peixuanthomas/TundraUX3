@@ -48,6 +48,29 @@ impl ComponentState {
     }
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum ComponentTone {
+    #[default]
+    Default,
+    Muted,
+    Accent,
+    Success,
+    Warning,
+    Danger,
+}
+
+pub(crate) fn tone_color(tone: ComponentTone, theme: &TundraTheme) -> ratatui::style::Color {
+    let tokens = theme.tokens();
+    match tone {
+        ComponentTone::Default => tokens.text,
+        ComponentTone::Muted => tokens.muted,
+        ComponentTone::Accent => tokens.accent,
+        ComponentTone::Success => tokens.success,
+        ComponentTone::Warning => tokens.warning,
+        ComponentTone::Danger => tokens.danger,
+    }
+}
+
 impl From<ComponentState> for ComponentVisualState {
     fn from(state: ComponentState) -> Self {
         Self {
