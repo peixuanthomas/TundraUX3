@@ -1627,12 +1627,12 @@ mod diagnostics_shell_tests {
 
         assert_eq!(
             state.route_diagnostics_key(&KeyInput::from_label("Tab")),
-            (target.clone(), ShellCommand::DiagnosticsLogsTab)
+            (target, ShellCommand::DiagnosticsLogsTab)
         );
         state.set_diagnostics_tab(ui::DiagnosticsTab::Logs);
         assert_eq!(
             state.route_diagnostics_key(&KeyInput::from_label("Tab")),
-            (target.clone(), ShellCommand::DiagnosticsIncidentsTab)
+            (target, ShellCommand::DiagnosticsIncidentsTab)
         );
         assert_eq!(
             state.route_diagnostics_key(&KeyInput::from_label("f")).1,
@@ -1704,7 +1704,6 @@ mod diagnostics_shell_tests {
                 .app
                 .notification_center()
                 .alert()
-                .as_deref()
                 .is_some_and(|message| message.contains("Only administrators"))
         );
     }

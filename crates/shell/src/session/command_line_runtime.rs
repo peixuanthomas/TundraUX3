@@ -1485,7 +1485,7 @@ mod tests {
         };
 
         assert_snapshot_contains(
-            &pty,
+            pty,
             "TUNDRA_PTY_INITIAL_OUTPUT_OK",
             Duration::from_secs(5),
             "initial child output",
@@ -1493,7 +1493,7 @@ mod tests {
         pty.write(b"echo TUNDRA_PTY_TYPED_INPUT_OK\r")
             .expect("write command to ConPTY");
         assert_snapshot_contains(
-            &pty,
+            pty,
             "TUNDRA_PTY_TYPED_INPUT_OK",
             Duration::from_secs(5),
             "output from typed command",

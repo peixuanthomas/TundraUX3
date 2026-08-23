@@ -188,12 +188,12 @@ impl ShellSettingsTaskRuntime {
     }
 
     pub(in crate::session) fn reconfigure_system_services(&self, config: &storage::StorageConfig) {
-        if let Some(system_services) = self.shared.system_services.as_ref() {
-            if let Ok(mut base) = self.shared.system_services_config.lock() {
-                let next = system_services_config_for_storage_config(&base, config);
-                let _ = system_services.reconfigure(next.clone());
-                *base = next;
-            }
+        if let Some(system_services) = self.shared.system_services.as_ref()
+            && let Ok(mut base) = self.shared.system_services_config.lock()
+        {
+            let next = system_services_config_for_storage_config(&base, config);
+            let _ = system_services.reconfigure(next.clone());
+            *base = next;
         }
     }
 }

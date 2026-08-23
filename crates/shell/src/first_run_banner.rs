@@ -123,40 +123,34 @@ fn display_first_run_banner_with_timing_and_size_check(
     output.flush()?;
     let mut frame_buffer = MatrixFrame::new();
     let mut terminal_buffer = String::new();
-    render_matrix_phase(
+    let mut render_context = MatrixRenderContext {
         output,
         banner_lines,
-        MatrixPhase::Rain,
-        timing.rain,
         color,
-        &mut check_size,
-        &mut frame_buffer,
-        &mut terminal_buffer,
-    )?;
-    render_matrix_phase(
-        output,
-        banner_lines,
-        MatrixPhase::Assemble,
-        timing.assemble,
-        color,
-        &mut check_size,
-        &mut frame_buffer,
-        &mut terminal_buffer,
-    )?;
+        check_size: &mut check_size,
+        frame: &mut frame_buffer,
+        terminal_buffer: &mut terminal_buffer,
+    };
+    render_matrix_phase(&mut render_context, MatrixPhase::Rain, timing.rain)?;
+    render_matrix_phase(&mut render_context, MatrixPhase::Assemble, timing.assemble)?;
     wait_with_size_checks(timing.hold, &mut check_size)?;
     write!(output, "{RESET_STYLE}{CLEAR_SCREEN}")?;
     output.flush()
 }
 
-fn render_matrix_phase(
-    output: &mut impl Write,
-    banner_lines: &[String],
+struct MatrixRenderContext<'a, W, F> {
+    output: &'a mut W,
+    banner_lines: &'a [String],
+    color: Color,
+    check_size: &'a mut F,
+    frame: &'a mut MatrixFrame,
+    terminal_buffer: &'a mut String,
+}
+
+fn render_matrix_phase<W: Write, F: FnMut() -> io::Result<(u16, u16)>>(
+    context: &mut MatrixRenderContext<'_, W, F>,
     phase: MatrixPhase,
     duration: Duration,
-    color: Color,
-    check_size: &mut impl FnMut() -> io::Result<(u16, u16)>,
-    frame: &mut MatrixFrame,
-    terminal_buffer: &mut String,
 ) -> io::Result<()> {
     let interval_ms = MATRIX_FRAME_INTERVAL.as_millis().max(1);
     let frame_count =
@@ -167,9 +161,9 @@ fn render_matrix_phase(
         if frame_index > 0 {
             let deadline_progress = frame_index as f64 / (frame_count - 1) as f64;
             let deadline = started_at + duration.mul_f64(deadline_progress);
-            wait_until_with_size_checks(deadline, check_size)?;
+            wait_until_with_size_checks(deadline, &mut context.check_size)?;
         }
-        let terminal_size = check_size()?;
+        let terminal_size = (context.check_size)()?;
         // Start with visible motion instead of spending the first interval on
         // an empty frame. The final frame still lands exactly at 1.0.
         let progress = (frame_index + 1) as f32 / frame_count as f32;
@@ -178,14 +172,14 @@ fn render_matrix_phase(
             MatrixPhase::Assemble => (1.0 + progress * 0.45, progress),
         };
         update_matrix_frame(
-            frame,
-            banner_lines,
+            context.frame,
+            context.banner_lines,
             terminal_size,
             rain_progress,
             banner_progress,
-            color,
+            context.color,
         );
-        render_matrix_frame(output, frame, terminal_buffer)?;
+        render_matrix_frame(context.output, context.frame, context.terminal_buffer)?;
     }
 
     Ok(())
@@ -221,10 +215,10 @@ fn render_ambient_rain(frame: &mut MatrixFrame, rain_progress: f32, opacity: f32
     }
 
     let height = frame.len();
-    let width = frame[0].len();
     let tick = (rain_progress * 150.0) as u32;
     let fade = (rain_progress / 0.08).clamp(0.0, 1.0) * opacity.clamp(0.0, 1.0);
 
+    let width = frame[0].len();
     for column in 0..width {
         if hash(0, column, 17).is_multiple_of(5) {
             continue;
@@ -256,10 +250,15 @@ fn render_ambient_rain(frame: &mut MatrixFrame, rain_progress: f32, opacity: f32
             } else {
                 MatrixTone::DimGreen
             };
-            frame[row as usize][column] = Some(MatrixCell {
-                glyph: matrix_glyph(row as usize, column, tick),
-                tone,
-            });
+            if let Some(cell) = frame
+                .get_mut(row as usize)
+                .and_then(|row| row.get_mut(column))
+            {
+                *cell = Some(MatrixCell {
+                    glyph: matrix_glyph(row as usize, column, tick),
+                    tone,
+                });
+            }
         }
     }
 }

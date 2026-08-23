@@ -215,16 +215,30 @@ pub(in crate::session) fn explorer_breadcrumb_view_models(
         .collect()
 }
 
+pub(in crate::session) struct ExplorerContextMenuInput {
+    pub(in crate::session) anchor: CellPosition,
+    pub(in crate::session) selected_count: usize,
+    pub(in crate::session) clipboard_available: bool,
+    pub(in crate::session) is_trash: bool,
+    pub(in crate::session) trash_has_items: bool,
+    pub(in crate::session) focused_index: usize,
+    pub(in crate::session) can_manage_launcher: bool,
+    pub(in crate::session) launcher_eligible_count: usize,
+}
+
 pub(in crate::session) fn explorer_context_menu_view_model(
-    anchor: CellPosition,
-    selected_count: usize,
-    clipboard_available: bool,
-    is_trash: bool,
-    trash_has_items: bool,
-    focused_index: usize,
-    can_manage_launcher: bool,
-    launcher_eligible_count: usize,
+    input: ExplorerContextMenuInput,
 ) -> ui::ExplorerOverlayViewModel {
+    let ExplorerContextMenuInput {
+        anchor,
+        selected_count,
+        clipboard_available,
+        is_trash,
+        trash_has_items,
+        focused_index,
+        can_manage_launcher,
+        launcher_eligible_count,
+    } = input;
     let item = |id: &str, label: &str, enabled: bool, dangerous: bool| {
         ui::ExplorerContextMenuItemViewModel {
             id: id.to_string(),

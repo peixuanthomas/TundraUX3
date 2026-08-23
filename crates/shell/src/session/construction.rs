@@ -71,10 +71,12 @@ impl ShellSession {
             terminal_size,
             startup,
             ascii_assets,
-            explorer_task_runtime,
-            diagnostics_task_runtime,
-            editor_task_runtime,
-            settings_task_runtime,
+            ShellRuntimeServices {
+                explorer: explorer_task_runtime,
+                diagnostics: diagnostics_task_runtime,
+                editor: editor_task_runtime,
+                settings: settings_task_runtime,
+            },
         )
     }
 
@@ -83,12 +85,10 @@ impl ShellSession {
         terminal_size: (u16, u16),
         startup: ShellStartupState,
         ascii_assets: ui::RuntimeAsciiAssets,
-        explorer_task_runtime: Option<ShellExplorerTaskRuntime>,
-        diagnostics_task_runtime: Option<ShellDiagnosticsTaskRuntime>,
-        editor_task_runtime: ShellEditorTaskRuntime,
-        settings_task_runtime: ShellSettingsTaskRuntime,
+        runtime_services: ShellRuntimeServices,
     ) -> Self {
-        let diagnostics_restart_required = diagnostics_task_runtime
+        let diagnostics_restart_required = runtime_services
+            .diagnostics
             .as_ref()
             .is_some_and(ShellDiagnosticsTaskRuntime::restart_required);
         let home_mode = resolved_home_mode(launch_config, &startup);
@@ -184,7 +184,7 @@ impl ShellSession {
             user_management_mode: UserManagementMode::Browse,
             selected_home_entry_index: 0,
             settings_state: None,
-            settings_task_runtime,
+            settings_task_runtime: runtime_services.settings,
             launcher_selected_index: 0,
             launcher_view_mode: app::launcher::LauncherViewMode::LargeIcons,
             launcher_viewport_offset: 0,
@@ -199,8 +199,8 @@ impl ShellSession {
             explorer_overlay_selection: 0,
             explorer_conflict_apply_to_remaining: false,
             explorer_purpose: ExplorerPurpose::Browse,
-            explorer_task_runtime,
-            editor_task_runtime,
+            explorer_task_runtime: runtime_services.explorer,
+            editor_task_runtime: runtime_services.editor,
             editor_load_state: None,
             editor_save_state: None,
             editor_document_generation: 0,
@@ -222,7 +222,7 @@ impl ShellSession {
             editor_recovery_dirty_since: None,
             editor_last_recovery_write: None,
             editor_read_session: None,
-            diagnostics_task_runtime,
+            diagnostics_task_runtime: runtime_services.diagnostics,
             diagnostics_tab: ui::DiagnosticsTab::Health,
             diagnostics_selected_check: 0,
             diagnostics_selected_log: 0,
@@ -277,10 +277,8 @@ impl ShellSession {
         };
         let mut state = Self { app, ui };
         state.refresh_hit_map();
-        if !auth_gate_enabled {
-            if let Some(restored_session) = startup.restored_session.as_ref() {
-                state.apply_restored_session(restored_session);
-            }
+        if !auth_gate_enabled && let Some(restored_session) = startup.restored_session.as_ref() {
+            state.apply_restored_session(restored_session);
         }
         state
     }

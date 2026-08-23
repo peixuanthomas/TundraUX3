@@ -510,15 +510,10 @@ impl ShellSession {
             return;
         }
 
-        let Some(ready) = self
+        let ready = self
             .update_explorer_state(|state| {
-                let Some(pending) = state.pending_transfer.as_mut() else {
-                    return None;
-                };
-                let Some((_, target)) = pending.conflicts.get(pending.current_conflict).cloned()
-                else {
-                    return None;
-                };
+                let pending = state.pending_transfer.as_mut()?;
+                let (_, target) = pending.conflicts.get(pending.current_conflict).cloned()?;
                 pending.resolutions.insert(target, action);
                 if apply_to_all {
                     for (_, target) in pending.conflicts.iter().skip(pending.current_conflict + 1) {
@@ -530,8 +525,8 @@ impl ShellSession {
                 }
                 Some(pending.current_conflict >= pending.conflicts.len())
             })
-            .flatten()
-        else {
+            .flatten();
+        let Some(ready) = ready else {
             if self
                 .app
                 .explorer_state()

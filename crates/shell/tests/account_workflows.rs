@@ -120,9 +120,7 @@ fn appearance_setup_validates_custom_colors_and_persists_all_choices() {
         state.focused_component(),
         ShellComponent::SetupCustomColorDialog
     );
-    for _ in 0..5 {
-        state.apply_input(InputEvent::from_key_label("Backspace"));
-    }
+    clear_setup_custom_color(&mut state);
     type_text(&mut state, "#38BDF8");
     assert!(state.to_setup_view_model().custom_color_valid);
     state.apply_input(InputEvent::from_key_label("Enter"));
@@ -131,9 +129,7 @@ fn appearance_setup_validates_custom_colors_and_persists_all_choices() {
     state.apply_input(InputEvent::from_key_label("Tab"));
     state.apply_input(InputEvent::from_key_label("Tab"));
     state.apply_input(InputEvent::from_key_label("Enter"));
-    for _ in 0..4 {
-        state.apply_input(InputEvent::from_key_label("Backspace"));
-    }
+    clear_setup_custom_color(&mut state);
     type_text(&mut state, "#12GG00");
     assert!(!state.to_setup_view_model().custom_color_valid);
     state.apply_input(InputEvent::from_key_label("Enter"));
@@ -145,9 +141,7 @@ fn appearance_setup_validates_custom_colors_and_persists_all_choices() {
         state.to_setup_view_model().custom_color_error.as_deref(),
         Some("Invalid color. Use #RRGGBB or a supported color name.")
     );
-    for _ in 0..7 {
-        state.apply_input(InputEvent::from_key_label("Backspace"));
-    }
+    clear_setup_custom_color(&mut state);
     type_text(&mut state, "#AABBCC");
     state.apply_input(InputEvent::from_key_label("Enter"));
     state.apply_input(InputEvent::from_key_label("Tab"));
@@ -186,30 +180,30 @@ fn appearance_setup_prevents_matching_theme_and_accent_colors() {
         state.focused_component(),
         ShellComponent::SetupAppearanceThemeColor
     );
-    state.apply_input(InputEvent::from_key_label("Right"));
-    let model = state.to_setup_view_model();
-    assert_eq!(model.theme_color_value, "cyan");
-    assert_eq!(model.accent_color_value, "white");
-
-    state.apply_input(InputEvent::from_key_label("Tab"));
     state.apply_input(InputEvent::from_key_label("Tab"));
     assert_eq!(
         state.focused_component(),
-        ShellComponent::SetupAppearanceAccentColor
+        ShellComponent::SetupAppearanceThemeCustom
     );
-    state.apply_input(InputEvent::from_key_label("Right"));
-    assert_eq!(state.to_setup_view_model().accent_color_value, "blue");
-
-    state.apply_input(InputEvent::from_key_label("Tab"));
     state.apply_input(InputEvent::from_key_label("Enter"));
     assert_eq!(
         state.focused_component(),
         ShellComponent::SetupCustomColorDialog
     );
-    for _ in 0..4 {
-        state.apply_input(InputEvent::from_key_label("Backspace"));
-    }
-    type_text(&mut state, "cyan");
+    clear_setup_custom_color(&mut state);
+    type_text(&mut state, "#38BDF8");
+    state.apply_input(InputEvent::from_key_label("Enter"));
+    assert_eq!(state.to_setup_view_model().theme_color_value, "#38BDF8");
+
+    state.apply_input(InputEvent::from_key_label("Tab"));
+    state.apply_input(InputEvent::from_key_label("Tab"));
+    assert_eq!(
+        state.focused_component(),
+        ShellComponent::SetupAppearanceAccentCustom
+    );
+    state.apply_input(InputEvent::from_key_label("Enter"));
+    clear_setup_custom_color(&mut state);
+    type_text(&mut state, "#38BDF8");
     let model = state.to_setup_view_model();
     assert!(model.custom_color_conflicts_with_theme);
     assert!(!model.custom_color_valid);
@@ -1783,6 +1777,17 @@ fn select_login_user(state: &mut ShellSession, username: &str) {
 fn type_text(state: &mut ShellSession, text: &str) {
     for character in text.chars() {
         state.apply_input(InputEvent::from_key_label(character.to_string()));
+    }
+}
+
+fn clear_setup_custom_color(state: &mut ShellSession) {
+    let length = state
+        .to_setup_view_model()
+        .custom_color_input
+        .chars()
+        .count();
+    for _ in 0..length {
+        state.apply_input(InputEvent::from_key_label("Backspace"));
     }
 }
 

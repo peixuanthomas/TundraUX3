@@ -75,3 +75,10 @@ use runtime::*;
 pub use runtime::*;
 use ui_state::*;
 pub use ui_state::{ShellSession, UiSessionState};
+
+pub(in crate::session) struct ShellRuntimeServices {
+    explorer: Option<ShellExplorerTaskRuntime>,
+    diagnostics: Option<ShellDiagnosticsTaskRuntime>,
+    editor: ShellEditorTaskRuntime,
+    settings: ShellSettingsTaskRuntime,
+}

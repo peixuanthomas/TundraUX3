@@ -715,24 +715,26 @@ impl ShellSession {
             ))
         } else if let Some(overlay_mode) = self.explorer_overlay_mode {
             Some(match overlay_mode {
-                ExplorerOverlayMode::ContextMenu { anchor } => explorer_context_menu_view_model(
-                    anchor,
-                    model.selected_count,
-                    state.clipboard.is_some(),
-                    is_trash,
-                    !state.entries.is_empty(),
-                    self.explorer_overlay_selection,
-                    self.can_manage_launcher(),
-                    state
-                        .effective_selected_paths()
-                        .iter()
-                        .filter(|path| {
-                            state.entries.iter().any(|entry| {
-                                entry.path == **path && entry.open_policy.requires_launcher()
+                ExplorerOverlayMode::ContextMenu { anchor } => {
+                    explorer_context_menu_view_model(ExplorerContextMenuInput {
+                        anchor,
+                        selected_count: model.selected_count,
+                        clipboard_available: state.clipboard.is_some(),
+                        is_trash,
+                        trash_has_items: !state.entries.is_empty(),
+                        focused_index: self.explorer_overlay_selection,
+                        can_manage_launcher: self.can_manage_launcher(),
+                        launcher_eligible_count: state
+                            .effective_selected_paths()
+                            .iter()
+                            .filter(|path| {
+                                state.entries.iter().any(|entry| {
+                                    entry.path == **path && entry.open_policy.requires_launcher()
+                                })
                             })
-                        })
-                        .count(),
-                ),
+                            .count(),
+                    })
+                }
                 ExplorerOverlayMode::Sort { anchor } => explorer_sort_menu_view_model(
                     anchor,
                     model.sort_column,

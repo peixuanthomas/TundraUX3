@@ -17,9 +17,10 @@ fn main() {
     let _ =
         process_watchdog.register_emergency_cleanup(Arc::new(shell::restore_terminal_best_effort));
 
-    let mut stdout = std::io::stdout();
-    let run_result = shell::run_shell_blocking_managed_with_outcome(&mut stdout, process_watchdog);
-    drop(stdout);
+    let run_result = {
+        let mut stdout = std::io::stdout();
+        shell::run_shell_blocking_managed_with_outcome(&mut stdout, process_watchdog)
+    };
     let watchdog_shutdown = watchdog_runtime.shutdown();
 
     let exit_code = match (run_result, watchdog_shutdown) {

@@ -299,24 +299,26 @@ pub fn run_fullscreen_blocking_managed_with_outcome(
         let session_result = shell_watchdog.run_boundary(
             BoundarySpec::new("shell.fullscreen-session", BoundaryKind::UiSession).terminal_owner(),
             AssertUnwindSafe(|| {
-                run_fullscreen_shell_session(
+                run_fullscreen_shell_session(FullscreenShellSessionInput {
                     output,
                     config,
                     startup,
-                    ascii_assets.clone(),
-                    std::sync::Arc::clone(&platform),
-                    &time_sync_receiver,
-                    &mut cached_time_sync,
-                    &time_sync_worker,
-                    &system_services,
-                    &terminal_control,
-                    &shell_watchdog,
-                    &process,
-                    explorer_task_runtime.clone(),
-                    diagnostics_task_runtime.clone(),
-                    &terminal_graphics_probe,
-                    std::mem::take(&mut show_terminal_graphics_notice),
-                )
+                    ascii_assets: ascii_assets.clone(),
+                    platform: std::sync::Arc::clone(&platform),
+                    time_sync_receiver: &time_sync_receiver,
+                    cached_time_sync: &mut cached_time_sync,
+                    time_sync_worker: &time_sync_worker,
+                    system_services: &system_services,
+                    terminal_control: &terminal_control,
+                    shell_watchdog: &shell_watchdog,
+                    process_watchdog: &process,
+                    explorer_task_runtime: explorer_task_runtime.clone(),
+                    diagnostics_task_runtime: diagnostics_task_runtime.clone(),
+                    terminal_graphics_probe: &terminal_graphics_probe,
+                    show_terminal_graphics_notice: std::mem::take(
+                        &mut show_terminal_graphics_notice,
+                    ),
+                })
             }),
         );
         match session_result {
@@ -794,24 +796,46 @@ impl CachedTimeSyncResult {
     }
 }
 
-pub(super) fn run_fullscreen_shell_session(
-    output: &mut impl Write,
+pub(super) struct FullscreenShellSessionInput<'a, W> {
+    output: &'a mut W,
     config: ShellLaunchConfig,
     startup: ShellStartupState,
     ascii_assets: ui::RuntimeAsciiAssets,
     platform: std::sync::Arc<dyn Platform>,
-    time_sync_receiver: &mpsc::Receiver<TimedTimeSyncResult>,
-    cached_time_sync: &mut Option<CachedTimeSyncResult>,
-    time_sync_worker: &TimeSyncWorker,
-    system_services: &system_services::SystemServicesHandle,
-    terminal_control: &TerminalControlHandler,
-    shell_watchdog: &AppWatchdog,
-    process_watchdog: &ProcessWatchdog,
+    time_sync_receiver: &'a mpsc::Receiver<TimedTimeSyncResult>,
+    cached_time_sync: &'a mut Option<CachedTimeSyncResult>,
+    time_sync_worker: &'a TimeSyncWorker,
+    system_services: &'a system_services::SystemServicesHandle,
+    terminal_control: &'a TerminalControlHandler,
+    shell_watchdog: &'a AppWatchdog,
+    process_watchdog: &'a ProcessWatchdog,
     explorer_task_runtime: Option<ShellExplorerTaskRuntime>,
     diagnostics_task_runtime: Option<ShellDiagnosticsTaskRuntime>,
-    terminal_graphics_probe: &ui::TerminalGraphicsProbe,
+    terminal_graphics_probe: &'a ui::TerminalGraphicsProbe,
     show_terminal_graphics_notice: bool,
+}
+
+pub(super) fn run_fullscreen_shell_session<W: Write>(
+    input: FullscreenShellSessionInput<'_, W>,
 ) -> io::Result<(FullscreenShellSessionOutcome, ui::RuntimeAsciiAssets)> {
+    let FullscreenShellSessionInput {
+        output,
+        config,
+        startup,
+        ascii_assets,
+        platform,
+        time_sync_receiver,
+        cached_time_sync,
+        time_sync_worker,
+        system_services,
+        terminal_control,
+        shell_watchdog,
+        process_watchdog,
+        explorer_task_runtime,
+        diagnostics_task_runtime,
+        terminal_graphics_probe,
+        show_terminal_graphics_notice,
+    } = input;
     let terminal_size_requirement = ShellTerminalSizeRequirement::from_assets(&ascii_assets);
     let initial_size = checked_current_terminal_size(terminal_size_requirement)?;
     let mut guard = TerminalGuard::enter(output)?;
@@ -840,14 +864,16 @@ pub(super) fn run_fullscreen_shell_session(
         initial_size,
         startup,
         ascii_assets,
-        explorer_task_runtime,
-        diagnostics_task_runtime,
-        ShellEditorTaskRuntime::new_managed(shell_watchdog.clone()),
-        ShellSettingsTaskRuntime::new_managed_with_system_services(
-            shell_watchdog.clone(),
-            Some(system_services.clone()),
-            settings_services_config,
-        ),
+        ShellRuntimeServices {
+            explorer: explorer_task_runtime,
+            diagnostics: diagnostics_task_runtime,
+            editor: ShellEditorTaskRuntime::new_managed(shell_watchdog.clone()),
+            settings: ShellSettingsTaskRuntime::new_managed_with_system_services(
+                shell_watchdog.clone(),
+                Some(system_services.clone()),
+                settings_services_config,
+            ),
+        },
     );
     state.set_terminal_image_support(launcher_icons.is_some());
     state.set_terminal_text_sizing_support(terminal_graphics_probe.text_sizing_protocol());
@@ -1757,6 +1783,287 @@ fn prompt_startup_asset_recovery(
     }
 }
 
+pub(super) fn spawn_time_sync_worker(
+    sender: mpsc::Sender<TimedTimeSyncResult>,
+    watchdog: &AppWatchdog,
+    system_services: system_services::SystemServicesHandle,
+) -> Result<TimeSyncWorker, watchdog::WatchdogError> {
+    let (control_sender, control_receiver) = mpsc::channel();
+    let group = watchdog.task_group("network-clock");
+    let handle = group.spawn_thread(
+        TaskSpec {
+            id: TaskId::from_static("refresh-loop"),
+            kind: TaskKind::LongRunning,
+            panic_action: PanicAction::RestartTask,
+            replay_safety: ReplaySafety::Idempotent,
+            restart_policy: RestartPolicy::limited(
+                3,
+                Duration::from_secs(5 * 60),
+                vec![
+                    Duration::from_secs(1),
+                    Duration::from_secs(5),
+                    Duration::from_secs(30),
+                ],
+            ),
+        },
+        move || {
+            let sender = sender.clone();
+            let mut snapshots = system_services.subscribe();
+            let mut last_utc = None;
+            let mut last_error = None;
+            loop {
+                match control_receiver.recv_timeout(Duration::from_millis(250)) {
+                    Ok(TimeSyncControl::Stop) | Err(mpsc::RecvTimeoutError::Disconnected) => break,
+                    Ok(TimeSyncControl::Refresh) => {
+                        let _ = system_services.sync_time_now();
+                    }
+                    Err(mpsc::RecvTimeoutError::Timeout) => {}
+                }
+                let snapshot = snapshots.borrow_and_update().clone();
+                match snapshot.time {
+                    system_services::TimeState::Synced { utc, .. } if last_utc != Some(utc) => {
+                        last_utc = Some(utc);
+                        last_error = None;
+                        if sender
+                            .send(TimedTimeSyncResult {
+                                result: Ok(utc),
+                                received_at: Instant::now(),
+                            })
+                            .is_err()
+                        {
+                            break;
+                        }
+                    }
+                    system_services::TimeState::Degraded { error, .. }
+                        if last_error.as_deref() != Some(error.as_str()) =>
+                    {
+                        last_error = Some(error.clone());
+                        if sender
+                            .send(TimedTimeSyncResult {
+                                result: Err(time::TimeSyncError::new(vec![error])),
+                                received_at: Instant::now(),
+                            })
+                            .is_err()
+                        {
+                            break;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        },
+    )?;
+    Ok(TimeSyncWorker {
+        control_sender,
+        handle: Some(handle),
+    })
+}
+
+#[cfg(test)]
+pub(super) async fn synchronize_configured_time(
+    config: &storage::TimeSyncConfig,
+    platform: &dyn Platform,
+) -> TimeSyncResult {
+    match config.source {
+        storage::TimeSyncSource::NetworkServer => match config.server_url.as_deref() {
+            Some(server_url) => time::fetch_time_from_server(server_url).await,
+            None => time::fetch_standard_time().await,
+        },
+        storage::TimeSyncSource::OperatingSystem => platform
+            .system_time()
+            .map(DateTime::<Utc>::from)
+            .map_err(|error| {
+                time::TimeSyncError::new(vec![format!(
+                    "could not read the operating system time: {error}"
+                )])
+            }),
+    }
+}
+
+pub(super) fn system_services_config_for_startup(
+    startup: &ShellStartupState,
+) -> system_services::SystemServicesConfig {
+    let mut services = system_services::SystemServicesConfig::default();
+    let Some(config) = startup
+        .storage_manager
+        .as_ref()
+        .and_then(|storage| storage.load_config().ok())
+    else {
+        return services;
+    };
+    services.weather_location = config.weather_location;
+    services.timezone_id = config.timezone.clone();
+    services.time_sync_mode = match config.time_sync.source {
+        storage::TimeSyncSource::NetworkServer => system_services::TimeSyncMode::Network,
+        storage::TimeSyncSource::OperatingSystem => system_services::TimeSyncMode::OperatingSystem,
+    };
+    services.time_server_url = config.time_sync.server_url;
+    services.timezone_location = app::setup_timezone_options()
+        .into_iter()
+        .find(|timezone| timezone.id == config.timezone)
+        .map(|timezone| system_services::GeoLocation {
+            latitude: timezone.latitude,
+            longitude: timezone.longitude,
+            city: Some(timezone.label),
+        });
+    services.cache_dir = startup
+        .storage_manager
+        .as_ref()
+        .map(|storage| storage.layout().cache_path.join("system-services"));
+    services
+}
+
+pub(super) fn spawn_terminal_graphics_probe_worker(
+    sender: mpsc::SyncSender<ui::TerminalGraphicsProbe>,
+    watchdog: &AppWatchdog,
+) -> Result<ManagedThreadHandle<()>, watchdog::WatchdogError> {
+    let group = watchdog
+        .child_component(ComponentId::from_static("startup-probe"))
+        .task_group("terminal-graphics");
+    group.spawn_thread(
+        TaskSpec::one_shot(TaskId::from_static("capabilities")),
+        move || {
+            let _ = sender.send(probe_terminal_graphics_protocol());
+        },
+    )
+}
+
+pub(super) fn shell_watchdog_descriptor() -> AppDescriptor {
+    AppDescriptor::new(
+        AppId::from_static("shell"),
+        "Tundra Shell",
+        env!("CARGO_PKG_VERSION"),
+        AppCriticality::ProcessCritical,
+    )
+}
+
+pub(super) fn drain_watchdog_incidents(state: &mut ShellSession, watchdog: &ProcessWatchdog) {
+    for incident in watchdog.drain_incidents() {
+        show_watchdog_incident(state, incident);
+    }
+}
+
+pub(super) fn show_watchdog_incident(state: &mut ShellSession, incident: IncidentReceipt) {
+    let report_path = incident
+        .text_report_path
+        .as_ref()
+        .or(incident.json_report_path.as_ref())
+        .cloned();
+    let report = report_path
+        .as_ref()
+        .map(|path| path.display().to_string())
+        .unwrap_or_else(|| "report path unavailable".to_string());
+    let full_summary = format!(
+        "{}\n\nRecovery: {:?}\nIncident: {}\nReport: {}",
+        incident.summary, incident.recovery, incident.incident_id, report
+    );
+    state.latest_watchdog_report = report_path;
+    state.latest_watchdog_summary = Some(full_summary.clone());
+    if state.app.diagnostics_snapshot().is_some() && !state.diagnostics_restart_is_required() {
+        if state
+            .diagnostics_task_runtime
+            .as_ref()
+            .is_some_and(ShellDiagnosticsTaskRuntime::is_busy)
+        {
+            state.diagnostics_rescan_pending = true;
+        } else {
+            state.request_diagnostics_scan();
+        }
+    }
+
+    // Unclean-exit receipts describe a previous process, not a failure in the
+    // current UI session. The watchdog has already persisted them for the
+    // Diagnostics screen, so they must not interrupt the first shell frame
+    // after the Weathr lockscreen.
+    if incident.kind == IncidentKind::UncleanExit {
+        return;
+    }
+
+    let can_view_details = state.diagnostics_can_view_details();
+    let public_summary = format!(
+        "A TundraUX component reported a critical error.\n\nRecovery: {}\nDetailed incident data is restricted to administrators.",
+        diagnostics_recovery_label(&incident.recovery)
+    );
+    let mut actions = vec![ShellNotificationAction::new("continue", "Continue").cancel()];
+    if can_view_details {
+        actions.extend([
+            ShellNotificationAction::new("open-report", "Open report")
+                .with_follow_up(ShellCommand::OpenLatestCrashReport),
+            ShellNotificationAction::new("copy-summary", "Copy summary")
+                .with_follow_up(ShellCommand::CopyLatestCrashSummary),
+        ]);
+    }
+    actions.push(
+        ShellNotificationAction::new("exit", "Exit").with_follow_up(ShellCommand::RequestExit),
+    );
+    state.notify_critical_modal(
+        if incident.recovery.is_recovered() {
+            "Program recovered from a critical error"
+        } else {
+            "Program encountered a critical error"
+        },
+        if can_view_details {
+            full_summary
+        } else {
+            public_summary
+        },
+        actions,
+    );
+}
+
+pub(super) fn drain_time_sync_results(
+    state: &mut ShellSession,
+    receiver: &mpsc::Receiver<TimedTimeSyncResult>,
+    cached: &mut Option<CachedTimeSyncResult>,
+) {
+    loop {
+        match receiver.try_recv() {
+            Ok(result) => apply_timed_time_sync_result_at(state, cached, result, Instant::now()),
+            Err(mpsc::TryRecvError::Empty) => break,
+            Err(mpsc::TryRecvError::Disconnected) => break,
+        }
+    }
+}
+
+pub(super) fn apply_timed_time_sync_result_at(
+    state: &mut ShellSession,
+    cached: &mut Option<CachedTimeSyncResult>,
+    timed: TimedTimeSyncResult,
+    now: Instant,
+) {
+    match timed.result {
+        Ok(utc) => {
+            *cached = Some(CachedTimeSyncResult::Success {
+                utc,
+                received_at: timed.received_at,
+            });
+            let elapsed = now.saturating_duration_since(timed.received_at);
+            state.apply_time_sync_result(Ok(utc + elapsed));
+        }
+        Err(error) => {
+            *cached = Some(CachedTimeSyncResult::Failure);
+            state.apply_time_sync_result(Err(error));
+        }
+    }
+}
+
+pub(super) fn with_fullscreen<W, T>(
+    output: &mut W,
+    body: impl FnOnce(&mut W) -> io::Result<T>,
+) -> io::Result<T>
+where
+    W: Write,
+{
+    platform::with_terminal_fullscreen(output, body)
+}
+
+pub(super) fn write_smoke_loop_message(output: &mut impl Write) -> io::Result<()> {
+    for line in startup_lines() {
+        writeln!(output, "{line}")?;
+    }
+    writeln!(output, "Entering smoke loop")
+}
+
 #[cfg(test)]
 mod runtime_preflight_tests {
     use super::*;
@@ -2434,285 +2741,4 @@ mod runtime_preflight_tests {
 
         platform::cleanup_temp_path(&root).expect("clean test root");
     }
-}
-
-pub(super) fn spawn_time_sync_worker(
-    sender: mpsc::Sender<TimedTimeSyncResult>,
-    watchdog: &AppWatchdog,
-    system_services: system_services::SystemServicesHandle,
-) -> Result<TimeSyncWorker, watchdog::WatchdogError> {
-    let (control_sender, control_receiver) = mpsc::channel();
-    let group = watchdog.task_group("network-clock");
-    let handle = group.spawn_thread(
-        TaskSpec {
-            id: TaskId::from_static("refresh-loop"),
-            kind: TaskKind::LongRunning,
-            panic_action: PanicAction::RestartTask,
-            replay_safety: ReplaySafety::Idempotent,
-            restart_policy: RestartPolicy::limited(
-                3,
-                Duration::from_secs(5 * 60),
-                vec![
-                    Duration::from_secs(1),
-                    Duration::from_secs(5),
-                    Duration::from_secs(30),
-                ],
-            ),
-        },
-        move || {
-            let sender = sender.clone();
-            let mut snapshots = system_services.subscribe();
-            let mut last_utc = None;
-            let mut last_error = None;
-            loop {
-                match control_receiver.recv_timeout(Duration::from_millis(250)) {
-                    Ok(TimeSyncControl::Stop) | Err(mpsc::RecvTimeoutError::Disconnected) => break,
-                    Ok(TimeSyncControl::Refresh) => {
-                        let _ = system_services.sync_time_now();
-                    }
-                    Err(mpsc::RecvTimeoutError::Timeout) => {}
-                }
-                let snapshot = snapshots.borrow_and_update().clone();
-                match snapshot.time {
-                    system_services::TimeState::Synced { utc, .. } if last_utc != Some(utc) => {
-                        last_utc = Some(utc);
-                        last_error = None;
-                        if sender
-                            .send(TimedTimeSyncResult {
-                                result: Ok(utc),
-                                received_at: Instant::now(),
-                            })
-                            .is_err()
-                        {
-                            break;
-                        }
-                    }
-                    system_services::TimeState::Degraded { error, .. }
-                        if last_error.as_deref() != Some(error.as_str()) =>
-                    {
-                        last_error = Some(error.clone());
-                        if sender
-                            .send(TimedTimeSyncResult {
-                                result: Err(time::TimeSyncError::new(vec![error])),
-                                received_at: Instant::now(),
-                            })
-                            .is_err()
-                        {
-                            break;
-                        }
-                    }
-                    _ => {}
-                }
-            }
-        },
-    )?;
-    Ok(TimeSyncWorker {
-        control_sender,
-        handle: Some(handle),
-    })
-}
-
-#[cfg(test)]
-pub(super) async fn synchronize_configured_time(
-    config: &storage::TimeSyncConfig,
-    platform: &dyn Platform,
-) -> TimeSyncResult {
-    match config.source {
-        storage::TimeSyncSource::NetworkServer => match config.server_url.as_deref() {
-            Some(server_url) => time::fetch_time_from_server(server_url).await,
-            None => time::fetch_standard_time().await,
-        },
-        storage::TimeSyncSource::OperatingSystem => platform
-            .system_time()
-            .map(DateTime::<Utc>::from)
-            .map_err(|error| {
-                time::TimeSyncError::new(vec![format!(
-                    "could not read the operating system time: {error}"
-                )])
-            }),
-    }
-}
-
-pub(super) fn system_services_config_for_startup(
-    startup: &ShellStartupState,
-) -> system_services::SystemServicesConfig {
-    let mut services = system_services::SystemServicesConfig::default();
-    let Some(config) = startup
-        .storage_manager
-        .as_ref()
-        .and_then(|storage| storage.load_config().ok())
-    else {
-        return services;
-    };
-    services.weather_location = config.weather_location;
-    services.timezone_id = config.timezone.clone();
-    services.time_sync_mode = match config.time_sync.source {
-        storage::TimeSyncSource::NetworkServer => system_services::TimeSyncMode::Network,
-        storage::TimeSyncSource::OperatingSystem => system_services::TimeSyncMode::OperatingSystem,
-    };
-    services.time_server_url = config.time_sync.server_url;
-    services.timezone_location = app::setup_timezone_options()
-        .into_iter()
-        .find(|timezone| timezone.id == config.timezone)
-        .map(|timezone| system_services::GeoLocation {
-            latitude: timezone.latitude,
-            longitude: timezone.longitude,
-            city: Some(timezone.label),
-        });
-    services.cache_dir = startup
-        .storage_manager
-        .as_ref()
-        .map(|storage| storage.layout().cache_path.join("system-services"));
-    services
-}
-
-pub(super) fn spawn_terminal_graphics_probe_worker(
-    sender: mpsc::SyncSender<ui::TerminalGraphicsProbe>,
-    watchdog: &AppWatchdog,
-) -> Result<ManagedThreadHandle<()>, watchdog::WatchdogError> {
-    let group = watchdog
-        .child_component(ComponentId::from_static("startup-probe"))
-        .task_group("terminal-graphics");
-    group.spawn_thread(
-        TaskSpec::one_shot(TaskId::from_static("capabilities")),
-        move || {
-            let _ = sender.send(probe_terminal_graphics_protocol());
-        },
-    )
-}
-
-pub(super) fn shell_watchdog_descriptor() -> AppDescriptor {
-    AppDescriptor::new(
-        AppId::from_static("shell"),
-        "Tundra Shell",
-        env!("CARGO_PKG_VERSION"),
-        AppCriticality::ProcessCritical,
-    )
-}
-
-pub(super) fn drain_watchdog_incidents(state: &mut ShellSession, watchdog: &ProcessWatchdog) {
-    for incident in watchdog.drain_incidents() {
-        show_watchdog_incident(state, incident);
-    }
-}
-
-pub(super) fn show_watchdog_incident(state: &mut ShellSession, incident: IncidentReceipt) {
-    let report_path = incident
-        .text_report_path
-        .as_ref()
-        .or(incident.json_report_path.as_ref())
-        .cloned();
-    let report = report_path
-        .as_ref()
-        .map(|path| path.display().to_string())
-        .unwrap_or_else(|| "report path unavailable".to_string());
-    let full_summary = format!(
-        "{}\n\nRecovery: {:?}\nIncident: {}\nReport: {}",
-        incident.summary, incident.recovery, incident.incident_id, report
-    );
-    state.latest_watchdog_report = report_path;
-    state.latest_watchdog_summary = Some(full_summary.clone());
-    if state.app.diagnostics_snapshot().is_some() && !state.diagnostics_restart_is_required() {
-        if state
-            .diagnostics_task_runtime
-            .as_ref()
-            .is_some_and(ShellDiagnosticsTaskRuntime::is_busy)
-        {
-            state.diagnostics_rescan_pending = true;
-        } else {
-            state.request_diagnostics_scan();
-        }
-    }
-
-    // Unclean-exit receipts describe a previous process, not a failure in the
-    // current UI session. The watchdog has already persisted them for the
-    // Diagnostics screen, so they must not interrupt the first shell frame
-    // after the Weathr lockscreen.
-    if incident.kind == IncidentKind::UncleanExit {
-        return;
-    }
-
-    let can_view_details = state.diagnostics_can_view_details();
-    let public_summary = format!(
-        "A TundraUX component reported a critical error.\n\nRecovery: {}\nDetailed incident data is restricted to administrators.",
-        diagnostics_recovery_label(&incident.recovery)
-    );
-    let mut actions = vec![ShellNotificationAction::new("continue", "Continue").cancel()];
-    if can_view_details {
-        actions.extend([
-            ShellNotificationAction::new("open-report", "Open report")
-                .with_follow_up(ShellCommand::OpenLatestCrashReport),
-            ShellNotificationAction::new("copy-summary", "Copy summary")
-                .with_follow_up(ShellCommand::CopyLatestCrashSummary),
-        ]);
-    }
-    actions.push(
-        ShellNotificationAction::new("exit", "Exit").with_follow_up(ShellCommand::RequestExit),
-    );
-    state.notify_critical_modal(
-        if incident.recovery.is_recovered() {
-            "Program recovered from a critical error"
-        } else {
-            "Program encountered a critical error"
-        },
-        if can_view_details {
-            full_summary
-        } else {
-            public_summary
-        },
-        actions,
-    );
-}
-
-pub(super) fn drain_time_sync_results(
-    state: &mut ShellSession,
-    receiver: &mpsc::Receiver<TimedTimeSyncResult>,
-    cached: &mut Option<CachedTimeSyncResult>,
-) {
-    loop {
-        match receiver.try_recv() {
-            Ok(result) => apply_timed_time_sync_result_at(state, cached, result, Instant::now()),
-            Err(mpsc::TryRecvError::Empty) => break,
-            Err(mpsc::TryRecvError::Disconnected) => break,
-        }
-    }
-}
-
-pub(super) fn apply_timed_time_sync_result_at(
-    state: &mut ShellSession,
-    cached: &mut Option<CachedTimeSyncResult>,
-    timed: TimedTimeSyncResult,
-    now: Instant,
-) {
-    match timed.result {
-        Ok(utc) => {
-            *cached = Some(CachedTimeSyncResult::Success {
-                utc,
-                received_at: timed.received_at,
-            });
-            let elapsed = now.saturating_duration_since(timed.received_at);
-            state.apply_time_sync_result(Ok(utc + elapsed));
-        }
-        Err(error) => {
-            *cached = Some(CachedTimeSyncResult::Failure);
-            state.apply_time_sync_result(Err(error));
-        }
-    }
-}
-
-pub(super) fn with_fullscreen<W, T>(
-    output: &mut W,
-    body: impl FnOnce(&mut W) -> io::Result<T>,
-) -> io::Result<T>
-where
-    W: Write,
-{
-    platform::with_terminal_fullscreen(output, body)
-}
-
-pub(super) fn write_smoke_loop_message(output: &mut impl Write) -> io::Result<()> {
-    for line in startup_lines() {
-        writeln!(output, "{line}")?;
-    }
-    writeln!(output, "Entering smoke loop")
 }
