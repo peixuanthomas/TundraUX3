@@ -1,7 +1,7 @@
 use ratatui::Frame;
-use ratatui::layout::{Constraint, HorizontalAlignment, Rect};
+use ratatui::layout::{HorizontalAlignment, Rect};
 use ratatui::text::Line;
-use ratatui::widgets::{Borders, Clear, HighlightSpacing, Row, Table, TableState};
+use ratatui::widgets::Clear;
 
 use super::layout::{
     UserManagementColumnMode, UserManagementFormLayout, UserManagementLayout,
@@ -11,10 +11,10 @@ use super::model::{
     UserManagementFeedbackTone, UserManagementField, UserManagementFocus, UserManagementFormKind,
     UserManagementFormViewModel, UserManagementUserViewModel, UserManagementViewModel,
 };
-use crate::components::{Button, TextInput};
+use crate::components::{Button, ComponentTone, DataTable, Surface, TextInput};
 use crate::screens::clock::render_clock_line;
 use crate::screens::shell::{fit_cell, render_compact_home, render_status, render_top};
-use crate::{ShellChromeViewModel, ShellLayout, TundraTheme, compute_shell_layout};
+use crate::{RenderContext, ShellChromeViewModel, ShellLayout, TundraTheme, compute_shell_layout};
 pub fn render_user_management(
     frame: &mut Frame<'_>,
     area: Rect,
@@ -22,11 +22,23 @@ pub fn render_user_management(
     model: &UserManagementViewModel,
     theme: &TundraTheme,
 ) {
+    let context = RenderContext::from_theme(theme, Default::default(), Default::default());
+    render_user_management_contextual(frame, area, chrome, model, &context);
+}
+
+pub fn render_user_management_contextual(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    chrome: &ShellChromeViewModel,
+    model: &UserManagementViewModel,
+    context: &RenderContext,
+) {
+    let theme = &context.compatibility_theme();
     match compute_shell_layout(area) {
         ShellLayout::Compact(compact) => render_compact_home(frame, compact, chrome, theme),
         ShellLayout::Full { top, main, status } => {
             render_top(frame, top, chrome, theme);
-            render_user_management_main(frame, main, model, theme);
+            render_user_management_main(frame, main, model, theme, context);
             render_status(frame, status, chrome, theme);
         }
     }
@@ -37,16 +49,13 @@ fn render_user_management_main(
     main: Rect,
     model: &UserManagementViewModel,
     theme: &TundraTheme,
+    context: &RenderContext,
 ) {
     let layout = user_management_layout(main, model);
-    frame.render_widget(
-        theme
-            .block()
-            .title("User Management")
-            .borders(Borders::ALL)
-            .style(theme.body_style()),
-        layout.panel,
-    );
+    Surface::new()
+        .titled("User Management")
+        .bordered(true)
+        .render_frame(frame, layout.panel, context);
 
     render_clock_line(
         frame,
@@ -64,7 +73,7 @@ fn render_user_management_main(
         theme.body_style(),
         HorizontalAlignment::Left,
     );
-    render_user_management_table(frame, &layout, model, theme);
+    render_user_management_table(frame, &layout, model, context);
     render_user_management_feedback(frame, &layout, model, theme);
     render_user_management_actions(frame, &layout, model, theme);
     render_clock_line(
@@ -76,7 +85,7 @@ fn render_user_management_main(
     );
 
     if let (Some(form_layout), Some(form)) = (layout.form.as_ref(), model.form.as_ref()) {
-        render_user_management_form(frame, form_layout, form, theme);
+        render_user_management_form(frame, form_layout, form, theme, context);
     }
 }
 
@@ -84,45 +93,41 @@ fn render_user_management_table(
     frame: &mut Frame<'_>,
     layout: &UserManagementLayout,
     model: &UserManagementViewModel,
-    theme: &TundraTheme,
+    context: &RenderContext,
 ) {
+    let theme = &context.compatibility_theme();
     let widths = user_management_column_widths(layout.header.width, layout.column_mode);
-    let header = Row::new(user_management_header_cells(layout.column_mode, &widths))
-        .style(theme.title_style());
-    let rows = layout
-        .rows
+    let headers = user_management_header_cells(layout.column_mode, &widths);
+    let rows = model
+        .users
         .iter()
-        .filter_map(|row| {
-            let user = model.users.get(row.index)?;
-            Some(
-                Row::new(user_management_user_cells(
-                    user,
-                    layout.column_mode,
-                    &widths,
-                ))
-                .style(theme.body_style()),
-            )
-        })
+        .map(|user| user_management_user_cells(user, layout.column_mode, &widths))
         .collect::<Vec<_>>();
-    let selected = layout
-        .rows
+    let tones = model
+        .users
         .iter()
-        .position(|row| row.index == model.selected_index);
-    let table = Table::new(rows, widths.iter().copied().map(Constraint::Length))
-        .header(header)
-        .style(theme.body_style())
-        .column_spacing(1)
-        .highlight_symbol("> ")
-        .highlight_spacing(HighlightSpacing::Always)
-        .row_highlight_style(theme.title_style());
+        .map(|user| {
+            if !user.enabled || user.locked {
+                ComponentTone::Warning
+            } else {
+                ComponentTone::Default
+            }
+        })
+        .collect();
+    let mut table = DataTable::new("user-management.users", headers, rows)
+        .with_column_widths(widths)
+        .with_viewport_start(layout.visible_start)
+        .with_row_tones(tones)
+        .bordered(false);
+    table.selected = Some(model.selected_index);
+    table.state.focused = model.focus == UserManagementFocus::UserList;
     let table_area = Rect::new(
         layout.header.x,
         layout.header.y,
         layout.header.width,
         layout.header.height.saturating_add(layout.rows_area.height),
     );
-    let mut state = TableState::default().with_selected(selected);
-    frame.render_stateful_widget(table, table_area, &mut state);
+    table.render_frame(frame, table_area, context);
 
     if layout.rows.is_empty() && model.users.is_empty() {
         let empty = Rect::new(
@@ -215,17 +220,15 @@ fn render_user_management_form(
     layout: &UserManagementFormLayout,
     form: &UserManagementFormViewModel,
     theme: &TundraTheme,
+    context: &RenderContext,
 ) {
     frame.render_widget(Clear, layout.dialog);
     if !layout.compact {
-        frame.render_widget(
-            theme
-                .block()
-                .title(form.title.clone())
-                .borders(Borders::ALL)
-                .style(theme.body_style()),
-            layout.dialog,
-        );
+        Surface::new()
+            .titled(form.title.clone())
+            .bordered(true)
+            .raised(true)
+            .render_frame(frame, layout.dialog, context);
     }
 
     let prompt = match (layout.compact, form.kind) {

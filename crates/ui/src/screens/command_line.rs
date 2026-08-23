@@ -8,15 +8,14 @@ use ratatui::Frame;
 use ratatui::layout::{HorizontalAlignment, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{
-    Borders, Clear, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, Wrap,
-};
+use ratatui::widgets::{Clear, Paragraph, Wrap};
 use std::sync::Arc;
 
+use crate::components::{Scrollbar, Surface};
 use crate::screens::shell::{
     ShellLayout, compute_shell_layout, render_compact_home, render_status, render_top,
 };
-use crate::{ShellChromeViewModel, TundraTheme};
+use crate::{RenderContext, ShellChromeViewModel, TundraTheme};
 
 /// Smallest outer terminal accepted by the embedded Command Line application.
 pub const MIN_COMMAND_LINE_TERMINAL_WIDTH: u16 = 108;
@@ -243,11 +242,23 @@ pub fn render_command_line(
     model: &CommandLineViewModel,
     theme: &TundraTheme,
 ) {
+    let context = RenderContext::from_theme(theme, Default::default(), Default::default());
+    render_command_line_contextual(frame, area, chrome, model, &context);
+}
+
+pub fn render_command_line_contextual(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    chrome: &ShellChromeViewModel,
+    model: &CommandLineViewModel,
+    context: &RenderContext,
+) {
+    let theme = &context.compatibility_theme();
     match compute_shell_layout(area) {
         ShellLayout::Compact(compact) => render_compact_home(frame, compact, chrome, theme),
         ShellLayout::Full { top, main, status } => {
             render_top(frame, top, chrome, theme);
-            render_command_line_main(frame, main, area, model, theme);
+            render_command_line_main(frame, main, area, model, theme, context);
             render_status(frame, status, chrome, theme);
         }
     }
@@ -259,15 +270,12 @@ fn render_command_line_main(
     outer_area: Rect,
     model: &CommandLineViewModel,
     theme: &TundraTheme,
+    context: &RenderContext,
 ) {
-    frame.render_widget(
-        theme
-            .block()
-            .title("Command Line")
-            .borders(Borders::ALL)
-            .style(theme.body_style()),
-        main,
-    );
+    Surface::new()
+        .titled("Command Line")
+        .bordered(true)
+        .render_frame(frame, main, context);
 
     let Some(terminal_area) = command_line_terminal_area(outer_area) else {
         render_size_blocker(frame, panel_inner_area(main), theme);
@@ -282,7 +290,7 @@ fn render_command_line_main(
         model.prompt_label.as_deref(),
         theme.accent_color,
     );
-    render_command_line_scrollbar(frame, terminal_area, model.terminal.as_ref(), theme);
+    render_command_line_scrollbar(frame, terminal_area, model.terminal.as_ref(), context);
     if let Some((message, style)) = command_line_process_message(model, theme) {
         render_process_message(frame, terminal_area, &message, style);
     }
@@ -336,27 +344,17 @@ fn render_command_line_scrollbar(
     frame: &mut Frame<'_>,
     terminal_area: Rect,
     snapshot: &CommandLineTerminalSnapshot,
-    theme: &TundraTheme,
+    context: &RenderContext,
 ) {
     let Some(scrollbar) = command_line_scrollbar_layout(terminal_area, snapshot) else {
         return;
     };
-    let track_length = usize::from(scrollbar.track.height);
-    let thumb_length = usize::from(scrollbar.thumb.height);
-    let thumb_offset = usize::from(scrollbar.thumb.y.saturating_sub(scrollbar.track.y));
-    let mut state =
-        ScrollbarState::new(track_length.saturating_sub(thumb_length).saturating_add(1))
-            .position(thumb_offset)
-            .viewport_content_length(thumb_length);
-    frame.render_stateful_widget(
-        Scrollbar::new(ScrollbarOrientation::VerticalRight)
-            .begin_symbol(None)
-            .end_symbol(None)
-            .track_style(theme.muted_style())
-            .thumb_style(theme.title_style()),
-        scrollbar.track,
-        &mut state,
-    );
+    let viewport = usize::from(snapshot.rows.min(terminal_area.height)).max(1);
+    let content = snapshot.scrollback_rows.saturating_add(viewport);
+    let offset = snapshot
+        .scrollback_rows
+        .saturating_sub(snapshot.scrollback_offset.min(snapshot.scrollback_rows));
+    Scrollbar::new(content, viewport, offset).render_frame(frame, scrollbar.track, context);
 }
 
 fn panel_inner_area(area: Rect) -> Rect {

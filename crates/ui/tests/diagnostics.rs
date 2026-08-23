@@ -2,6 +2,7 @@ use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use ratatui::layout::Rect;
 use ratatui::style::Color;
+use ui::components::Scrollbar as GlacierScrollbar;
 use ui::{
     DiagnosticsCheckViewModel, DiagnosticsHitTarget, DiagnosticsIncidentViewModel,
     DiagnosticsLogViewModel, DiagnosticsRepairDialogViewModel, DiagnosticsRepairItemViewModel,
@@ -73,11 +74,15 @@ fn overflowing_checks_show_a_proportional_scrollbar_at_the_current_window() {
 
     let terminal = render(108, 20, &model);
     let buffer = terminal.backend().buffer();
+    let glacier =
+        GlacierScrollbar::new(model.item_count(), layout.rows.len(), layout.visible_start);
+    let (thumb_start, thumb_len) = glacier.thumb_range(scrollbar.track);
+    let thumb_y = scrollbar.track.y.saturating_add(thumb_start);
     for y in scrollbar.track.y..scrollbar.track.bottom() {
-        let expected = if y >= scrollbar.thumb.y && y < scrollbar.thumb.bottom() {
-            "█"
+        let expected = if y >= thumb_y && y < thumb_y.saturating_add(thumb_len) {
+            "┃"
         } else {
-            "║"
+            "│"
         };
         assert_eq!(
             buffer
@@ -134,12 +139,12 @@ fn health_renderer_draws_two_columns_statuses_and_admin_details() {
     assert!(region_has_fg(
         &terminal,
         layout.rows[0].area,
-        TundraTheme::default_dark().accent_color
+        TundraTheme::default_dark().tokens().success
     ));
     assert!(region_has_fg(
         &terminal,
         layout.rows[1].area,
-        TundraTheme::default_dark().accent_color,
+        TundraTheme::default_dark().tokens().accent,
     ));
     assert!(region_has_fg(
         &terminal,

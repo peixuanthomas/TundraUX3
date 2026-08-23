@@ -2,20 +2,17 @@ use ratatui::Frame;
 use ratatui::layout::{HorizontalAlignment, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::Line;
-use ratatui::widgets::{
-    Borders, Clear, HighlightSpacing, List, ListItem, ListState, Paragraph, Scrollbar,
-    ScrollbarOrientation, ScrollbarState, Wrap,
-};
+use ratatui::widgets::{Clear, Paragraph, Wrap};
 
 use super::layout::{DiagnosticsLayout, DiagnosticsRepairDialogLayout, diagnostics_layout};
 use super::model::{
     DiagnosticsCheckViewModel, DiagnosticsIncidentViewModel, DiagnosticsRepairDialogViewModel,
     DiagnosticsStatus, DiagnosticsTab, DiagnosticsViewModel,
 };
-use crate::components::{Button, TabItem, Tabs};
+use crate::components::{Button, ComponentTone, List, ListItem, Scrollbar, Surface, TabItem, Tabs};
 use crate::screens::clock::render_clock_line;
 use crate::screens::shell::{fit_cell, render_compact_home, render_status, render_top};
-use crate::{ShellChromeViewModel, ShellLayout, TundraTheme, compute_shell_layout};
+use crate::{RenderContext, ShellChromeViewModel, ShellLayout, TundraTheme, compute_shell_layout};
 pub fn render_diagnostics(
     frame: &mut Frame<'_>,
     area: Rect,
@@ -23,11 +20,23 @@ pub fn render_diagnostics(
     model: &DiagnosticsViewModel,
     theme: &TundraTheme,
 ) {
+    let context = RenderContext::from_theme(theme, Default::default(), Default::default());
+    render_diagnostics_contextual(frame, area, chrome, model, &context);
+}
+
+pub fn render_diagnostics_contextual(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    chrome: &ShellChromeViewModel,
+    model: &DiagnosticsViewModel,
+    context: &RenderContext,
+) {
+    let theme = &context.compatibility_theme();
     match compute_shell_layout(area) {
         ShellLayout::Compact(compact) => render_compact_home(frame, compact, chrome, theme),
         ShellLayout::Full { top, main, status } => {
             render_top(frame, top, chrome, theme);
-            render_diagnostics_main(frame, main, model, theme);
+            render_diagnostics_main(frame, main, model, theme, context);
             render_status(frame, status, chrome, theme);
         }
     }
@@ -38,47 +47,36 @@ fn render_diagnostics_main(
     main: Rect,
     model: &DiagnosticsViewModel,
     theme: &TundraTheme,
+    context: &RenderContext,
 ) {
     let layout = diagnostics_layout(main, model);
-    frame.render_widget(
-        theme
-            .block()
-            .title("Diagnostics")
-            .borders(Borders::ALL)
-            .style(theme.body_style()),
-        layout.panel,
-    );
+    Surface::new()
+        .titled("Diagnostics")
+        .bordered(true)
+        .render_frame(frame, layout.panel, context);
 
     render_diagnostics_header(frame, &layout, model, theme);
-    render_diagnostics_tabs(frame, &layout, model, theme);
-    frame.render_widget(
-        theme
-            .block()
-            .title(match model.tab {
-                DiagnosticsTab::Health => "Checks",
-                DiagnosticsTab::Logs => "Logs",
-                DiagnosticsTab::Incidents => "Incidents",
-            })
-            .borders(Borders::ALL)
-            .style(theme.body_style()),
-        layout.list_panel,
-    );
-    frame.render_widget(
-        theme
-            .block()
-            .title("Details")
-            .borders(Borders::ALL)
-            .style(theme.body_style()),
-        layout.detail_panel,
-    );
-    render_diagnostics_rows(frame, &layout, model, theme);
+    render_diagnostics_tabs(frame, &layout, model, context);
+    Surface::new()
+        .titled(match model.tab {
+            DiagnosticsTab::Health => "Checks",
+            DiagnosticsTab::Logs => "Logs",
+            DiagnosticsTab::Incidents => "Incidents",
+        })
+        .bordered(true)
+        .render_frame(frame, layout.list_panel, context);
+    Surface::new()
+        .titled("Details")
+        .bordered(true)
+        .render_frame(frame, layout.detail_panel, context);
+    render_diagnostics_rows(frame, &layout, model, theme, context);
     render_diagnostics_detail(frame, &layout, model, theme);
     render_diagnostics_footer(frame, &layout, model, theme);
 
     if let (Some(dialog_layout), Some(dialog)) =
         (layout.repair_dialog.as_ref(), model.repair_dialog.as_ref())
     {
-        render_diagnostics_repair_dialog(frame, dialog_layout, dialog, theme);
+        render_diagnostics_repair_dialog(frame, dialog_layout, dialog, theme, context);
     }
 }
 
@@ -164,7 +162,7 @@ fn render_diagnostics_tabs(
     frame: &mut Frame<'_>,
     layout: &DiagnosticsLayout,
     model: &DiagnosticsViewModel,
-    theme: &TundraTheme,
+    context: &RenderContext,
 ) {
     let items = DiagnosticsTab::ALL
         .into_iter()
@@ -178,9 +176,7 @@ fn render_diagnostics_tabs(
     let mut tabs = Tabs::new("diagnostics.tabs", items);
     tabs.set_selected(DiagnosticsTab::ALL.iter().position(|tab| *tab == model.tab));
 
-    let mut tabs_theme = *theme;
-    tabs_theme.foreground = theme.muted;
-    tabs.render_borderless_frame(frame, layout.tabs_area, &tabs_theme);
+    tabs.render_borderless_frame(frame, layout.tabs_area, &context.compatibility_theme());
 }
 
 fn render_diagnostics_rows(
@@ -188,6 +184,7 @@ fn render_diagnostics_rows(
     layout: &DiagnosticsLayout,
     model: &DiagnosticsViewModel,
     theme: &TundraTheme,
+    context: &RenderContext,
 ) {
     if model.item_count() == 0 {
         let text = if model.scanning && model.tab == DiagnosticsTab::Health {
@@ -220,13 +217,11 @@ fn render_diagnostics_rows(
         return;
     }
 
-    let items = layout
-        .rows
-        .iter()
-        .filter_map(|row| {
+    let items = (0..model.item_count())
+        .filter_map(|index| {
             let (text, status) = match model.tab {
                 DiagnosticsTab::Health => {
-                    let check = model.checks.get(row.index)?;
+                    let check = model.checks.get(index)?;
                     (
                         format!(
                             " {} [{}] {}",
@@ -238,7 +233,7 @@ fn render_diagnostics_rows(
                     )
                 }
                 DiagnosticsTab::Incidents => {
-                    let incident = model.incidents.get(row.index)?;
+                    let incident = model.incidents.get(index)?;
                     (
                         format!(
                             " {} {} — {}",
@@ -250,7 +245,7 @@ fn render_diagnostics_rows(
                     )
                 }
                 DiagnosticsTab::Logs => {
-                    let log = model.logs.get(row.index)?;
+                    let log = model.logs.get(index)?;
                     (
                         format!(
                             " {}  {}  {} bytes",
@@ -261,67 +256,39 @@ fn render_diagnostics_rows(
                 }
             };
             Some(
-                ListItem::new(fit_cell(
-                    &text,
-                    usize::from(row.area.width.saturating_sub(1)),
-                ))
-                .style(diagnostics_status_style(status, theme, false)),
+                ListItem::new(
+                    format!("diagnostics.row.{index}"),
+                    fit_cell(
+                        &text,
+                        usize::from(layout.list_rows_area.width.saturating_sub(1)),
+                    ),
+                )
+                .tone(diagnostics_status_tone(status)),
             )
         })
         .collect::<Vec<_>>();
-    let selected = layout
-        .rows
-        .iter()
-        .position(|row| row.index == model.selected_index());
-    let selected_style = selected.map_or_else(
-        || theme.title_style(),
-        |_| match model.tab {
-            DiagnosticsTab::Health => model
-                .selected_check()
-                .map(|check| diagnostics_status_style(check.status, theme, true))
-                .unwrap_or_else(|| theme.title_style()),
-            DiagnosticsTab::Incidents => model
-                .selected_incident()
-                .map(|incident| diagnostics_status_style(incident.severity, theme, true))
-                .unwrap_or_else(|| theme.title_style()),
-            DiagnosticsTab::Logs => diagnostics_status_style(DiagnosticsStatus::Pass, theme, true),
-        },
-    );
-    let list = List::new(items)
-        .style(theme.body_style())
-        .highlight_symbol(">")
-        .highlight_spacing(HighlightSpacing::Always)
-        .highlight_style(selected_style);
-    let mut state = ListState::default().with_selected(selected);
-    frame.render_stateful_widget(list, layout.list_rows_area, &mut state);
+    let mut list = List::new("diagnostics.rows", items).with_viewport_start(layout.visible_start);
+    list.set_selected(Some(model.selected_index()));
+    list.set_focused(true);
+    list.render_borderless_frame(frame, layout.list_rows_area, theme);
 
-    render_diagnostics_scrollbar(frame, layout, theme);
+    render_diagnostics_scrollbar(frame, layout, model, context);
 }
 
 fn render_diagnostics_scrollbar(
     frame: &mut Frame<'_>,
     layout: &DiagnosticsLayout,
-    theme: &TundraTheme,
+    model: &DiagnosticsViewModel,
+    context: &RenderContext,
 ) {
     let Some(scrollbar) = layout.list_scrollbar else {
         return;
     };
 
-    let track_length = usize::from(scrollbar.track.height);
-    let thumb_length = usize::from(scrollbar.thumb.height);
-    let thumb_offset = usize::from(scrollbar.thumb.y.saturating_sub(scrollbar.track.y));
-    let mut state =
-        ScrollbarState::new(track_length.saturating_sub(thumb_length).saturating_add(1))
-            .position(thumb_offset)
-            .viewport_content_length(thumb_length);
-    frame.render_stateful_widget(
-        Scrollbar::new(ScrollbarOrientation::VerticalRight)
-            .begin_symbol(None)
-            .end_symbol(None)
-            .track_style(theme.muted_style())
-            .thumb_style(theme.title_style()),
+    Scrollbar::new(model.item_count(), layout.rows.len(), layout.visible_start).render_frame(
+        frame,
         scrollbar.track,
-        &mut state,
+        context,
     );
 }
 
@@ -331,10 +298,7 @@ fn render_diagnostics_detail(
     model: &DiagnosticsViewModel,
     theme: &TundraTheme,
 ) {
-    let inner = theme
-        .block()
-        .borders(Borders::ALL)
-        .inner(layout.detail_panel);
+    let inner = Surface::new().bordered(true).inner(layout.detail_panel);
     if inner.width == 0 || inner.height == 0 {
         return;
     }
@@ -516,16 +480,14 @@ fn render_diagnostics_repair_dialog(
     layout: &DiagnosticsRepairDialogLayout,
     model: &DiagnosticsRepairDialogViewModel,
     theme: &TundraTheme,
+    context: &RenderContext,
 ) {
     frame.render_widget(Clear, layout.dialog);
-    frame.render_widget(
-        theme
-            .block()
-            .title("Repair preview")
-            .borders(Borders::ALL)
-            .style(theme.body_style()),
-        layout.dialog,
-    );
+    Surface::new()
+        .titled("Repair preview")
+        .bordered(true)
+        .raised(true)
+        .render_frame(frame, layout.dialog, context);
     frame.render_widget(
         Paragraph::new(vec![
             Line::styled("Review the changes before repair.", theme.title_style()),
@@ -551,28 +513,25 @@ fn render_diagnostics_repair_dialog(
             HorizontalAlignment::Left,
         );
     } else {
-        let items = layout
-            .rows
+        let items = model
+            .items
             .iter()
-            .filter_map(|row| {
-                let item = model.items.get(row.index)?;
-                Some(ListItem::new(fit_cell(
-                    &format!(" {}. {}", row.index.saturating_add(1), item.label),
-                    usize::from(row.area.width.saturating_sub(1)),
-                )))
+            .enumerate()
+            .map(|(index, item)| {
+                ListItem::new(
+                    format!("diagnostics.repair.{index}"),
+                    fit_cell(
+                        &format!(" {}. {}", index.saturating_add(1), item.label),
+                        usize::from(layout.items_area.width.saturating_sub(1)),
+                    ),
+                )
             })
             .collect::<Vec<_>>();
-        let selected = layout
-            .rows
-            .iter()
-            .position(|row| row.index == model.selected);
-        let list = List::new(items)
-            .style(theme.body_style())
-            .highlight_symbol(">")
-            .highlight_spacing(HighlightSpacing::Always)
-            .highlight_style(theme.title_style());
-        let mut state = ListState::default().with_selected(selected);
-        frame.render_stateful_widget(list, layout.items_area, &mut state);
+        let mut list =
+            List::new("diagnostics.repair.items", items).with_viewport_start(layout.visible_start);
+        list.set_selected(Some(model.selected));
+        list.set_focused(true);
+        list.render_borderless_frame(frame, layout.items_area, theme);
     }
     render_clock_line(
         frame,
@@ -641,6 +600,15 @@ fn diagnostics_status_style(
         style.add_modifier(Modifier::BOLD)
     } else {
         style
+    }
+}
+
+fn diagnostics_status_tone(status: DiagnosticsStatus) -> ComponentTone {
+    match status {
+        DiagnosticsStatus::Pass => ComponentTone::Success,
+        DiagnosticsStatus::Unsupported => ComponentTone::Muted,
+        DiagnosticsStatus::Warning => ComponentTone::Warning,
+        DiagnosticsStatus::Fail => ComponentTone::Danger,
     }
 }
 

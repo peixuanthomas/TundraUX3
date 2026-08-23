@@ -2,17 +2,16 @@ use ratatui::Frame;
 use ratatui::layout::{HorizontalAlignment, Rect};
 use ratatui::style::Style;
 use ratatui::text::Line;
-use ratatui::widgets::{Borders, Clear, Paragraph, Wrap};
+use ratatui::widgets::{Clear, Paragraph, Wrap};
 
 use super::centered_rect;
 use super::{
     ExitConfirmViewModel, ShellChromeViewModel, ShellLayout, TimeSyncDialogViewModel,
     compute_shell_layout,
 };
-use crate::TundraTheme;
-use crate::components::{Button, terminal_width, truncate_to_terminal_width};
+use crate::components::{Button, Surface, terminal_width, truncate_to_terminal_width};
 use crate::screens::notifications::{notification_tone_prefix, notification_tone_style};
-use crate::theme::solid_border_style;
+use crate::{RenderContext, TundraTheme};
 
 const STATUS_TIME_BUTTON_HORIZONTAL_CHROME: u16 = 4;
 const STATUS_TIME_BUTTON_MIN_WIDTH: u16 = 3;
@@ -26,12 +25,26 @@ pub fn render_editor_app(
     editor: &crate::EditorViewModel,
     theme: &TundraTheme,
 ) -> crate::EditorLayout {
+    let context = RenderContext::from_theme(theme, Default::default(), Default::default());
+    render_editor_app_contextual(frame, area, chrome, editor, &context)
+}
+
+pub fn render_editor_app_contextual(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    chrome: &ShellChromeViewModel,
+    editor: &crate::EditorViewModel,
+    context: &RenderContext,
+) -> crate::EditorLayout {
+    let theme = &context.compatibility_theme();
     match compute_shell_layout(area) {
-        ShellLayout::Compact(compact) => crate::render_editor(frame, compact, editor, theme),
+        ShellLayout::Compact(compact) => {
+            crate::render_editor_contextual(frame, compact, editor, context)
+        }
         ShellLayout::Full { top, main, status } => {
             render_top(frame, top, chrome, theme);
             render_status(frame, status, chrome, theme);
-            crate::render_editor(frame, main, editor, theme)
+            crate::render_editor_contextual(frame, main, editor, context)
         }
     }
 }
@@ -42,16 +55,26 @@ pub fn render_exit_confirmation(
     model: &ExitConfirmViewModel,
     theme: &TundraTheme,
 ) {
+    let context = RenderContext::from_theme(theme, Default::default(), Default::default());
+    render_exit_confirmation_contextual(frame, area, model, &context);
+}
+
+pub fn render_exit_confirmation_contextual(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    model: &ExitConfirmViewModel,
+    context: &RenderContext,
+) {
+    let theme = &context.compatibility_theme();
     let dialog = centered_rect(area, area.width.min(54), area.height.min(8));
-    let dialog_block = theme
-        .block()
-        .title(model.title.as_str())
-        .borders(Borders::ALL)
-        .style(theme.body_style());
-    let inner = dialog_block.inner(dialog);
+    let surface = Surface::new()
+        .titled(model.title.clone())
+        .bordered(true)
+        .raised(true);
+    let inner = surface.inner(dialog);
 
     frame.render_widget(Clear, dialog);
-    frame.render_widget(dialog_block, dialog);
+    surface.render_frame(frame, dialog, context);
 
     if inner.width == 0 || inner.height == 0 {
         return;
@@ -129,21 +152,33 @@ pub fn render_time_sync_failure_dialog(
     model: &TimeSyncDialogViewModel,
     theme: &TundraTheme,
 ) {
+    let context = RenderContext::from_theme(theme, Default::default(), Default::default());
+    render_time_sync_failure_dialog_contextual(frame, area, model, &context);
+}
+
+pub fn render_time_sync_failure_dialog_contextual(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    model: &TimeSyncDialogViewModel,
+    context: &RenderContext,
+) {
+    let theme = &context.compatibility_theme();
     let dialog = centered_rect(area, area.width.min(34), area.height.min(5));
+    let surface = Surface::new()
+        .titled("Time Sync")
+        .bordered(true)
+        .raised(true);
+    let inner = surface.inner(dialog);
     let dialog_widget = Paragraph::new(Line::from(model.message()))
-        .block(
-            theme
-                .block()
-                .title("Time Sync")
-                .borders(Borders::ALL)
-                .border_style(solid_border_style(theme.error_style()))
-                .style(theme.error_style()),
-        )
+        .style(theme.error_style())
         .alignment(HorizontalAlignment::Center)
         .wrap(Wrap { trim: true });
 
     frame.render_widget(Clear, dialog);
-    frame.render_widget(dialog_widget, dialog);
+    let mut danger_context = *context;
+    danger_context.theme.border = context.theme.danger;
+    surface.render_frame(frame, dialog, &danger_context);
+    frame.render_widget(dialog_widget, inner);
 }
 
 pub(crate) fn render_compact_home(
@@ -167,13 +202,10 @@ pub(crate) fn render_compact_home(
         return;
     }
 
-    let block = theme
-        .block()
-        .title("TundraUX 3")
-        .borders(Borders::ALL)
-        .style(theme.body_style());
-    let inner = block.inner(area);
-    frame.render_widget(block, area);
+    let context = RenderContext::from_theme(theme, Default::default(), Default::default());
+    let surface = Surface::new().titled("TundraUX 3").bordered(true);
+    let inner = surface.inner(area);
+    surface.render_frame(frame, area, &context);
     if inner.width == 0 || inner.height == 0 {
         return;
     }
@@ -220,16 +252,14 @@ pub(crate) fn render_top(
             theme.muted_style(),
         ),
     ];
-    let top = Paragraph::new(lines)
-        .alignment(HorizontalAlignment::Left)
-        .block(
-            theme
-                .block()
-                .borders(Borders::ALL)
-                .style(theme.body_style()),
-        );
-
-    frame.render_widget(top, area);
+    let context = RenderContext::from_theme(theme, Default::default(), Default::default());
+    let surface = Surface::new().bordered(true);
+    let inner = surface.inner(area);
+    surface.render_frame(frame, area, &context);
+    frame.render_widget(
+        Paragraph::new(lines).alignment(HorizontalAlignment::Left),
+        inner,
+    );
 }
 
 pub(crate) fn render_status(
@@ -249,16 +279,10 @@ pub(crate) fn render_status(
         .map(|label| status_time_button_area(area, label))
         .filter(|area| area.width > 0 && area.height > 0);
 
-    frame.render_widget(
-        theme
-            .block()
-            .title("Status")
-            .borders(Borders::ALL)
-            .style(theme.body_style()),
-        area,
-    );
-
-    let inner = theme.block().borders(Borders::ALL).inner(area);
+    let context = RenderContext::from_theme(theme, Default::default(), Default::default());
+    let surface = Surface::new().titled("Status").bordered(true);
+    let inner = surface.inner(area);
+    surface.render_frame(frame, area, &context);
     let left_width = match time_button {
         Some(button) if button.x > inner.x => button.x.saturating_sub(inner.x).saturating_sub(1),
         Some(_) => 0,

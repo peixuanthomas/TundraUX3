@@ -410,7 +410,6 @@ fn quick_menu_orders_actions_renders_last_and_has_highest_hit_priority() {
     assert_eq!(heading_cell.symbol(), "H");
     assert_eq!(heading_cell.fg, TundraTheme::default_dark().accent_color);
     assert!(heading_cell.modifier.contains(Modifier::BOLD));
-    assert!(heading_cell.modifier.contains(Modifier::UNDERLINED));
 
     model.quick_menu = Some(EditorQuickMenuViewModel {
         anchor: (10, 5),
@@ -611,11 +610,11 @@ fn wide_source_line_exposes_and_renders_a_proportional_horizontal_scrollbar() {
     );
     assert_eq!(
         terminal.backend().buffer()[(scrollbar.track.x, scrollbar.track.y)].symbol(),
-        "═"
+        "─"
     );
     assert_eq!(
         terminal.backend().buffer()[(scrollbar.thumb.x, scrollbar.thumb.y)].symbol(),
-        "█"
+        "━"
     );
 }
 
@@ -645,11 +644,11 @@ fn wide_rich_no_wrap_line_exposes_and_renders_a_horizontal_scrollbar() {
     );
     assert_eq!(
         terminal.backend().buffer()[(scrollbar.track.x, scrollbar.track.y)].symbol(),
-        "═"
+        "─"
     );
     assert_eq!(
         terminal.backend().buffer()[(scrollbar.thumb.x, scrollbar.thumb.y)].symbol(),
-        "█"
+        "━"
     );
 }
 
@@ -1428,11 +1427,11 @@ fn overflowing_document_exposes_proportional_scrollbar_and_scrolled_hits() {
     let terminal = render(&model, 72, 14);
     assert_eq!(
         terminal.backend().buffer()[(scrollbar.track.x, scrollbar.track.y)].symbol(),
-        "║"
+        "│"
     );
     assert_eq!(
         terminal.backend().buffer()[(scrollbar.thumb.x, scrollbar.thumb.y)].symbol(),
-        "█"
+        "┃"
     );
 }
 

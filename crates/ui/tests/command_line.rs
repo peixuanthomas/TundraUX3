@@ -169,7 +169,7 @@ fn command_line_force_wraps_a_snapshot_row_wider_than_the_viewport() {
 }
 
 #[test]
-fn command_line_history_renders_the_ratatui_scrollbar_style() {
+fn command_line_history_renders_the_glacier_scrollbar_style() {
     let mut terminal = CommandLineTerminalSnapshot::blank(105, 14);
     terminal.scrollback_rows = 14;
     let model = CommandLineViewModel::new(terminal);
@@ -189,8 +189,8 @@ fn command_line_history_renders_the_ratatui_scrollbar_style() {
 
     // The inner panel spans x=1..106 and y=4..17. At the live bottom, the
     // upper track remains visible while the thumb occupies its lower half.
-    assert_eq!(buffer.cell((106, 4)).unwrap().symbol(), "║");
-    assert_eq!(buffer.cell((106, 17)).unwrap().symbol(), "█");
+    assert_eq!(buffer.cell((106, 4)).unwrap().symbol(), "│");
+    assert_eq!(buffer.cell((106, 17)).unwrap().symbol(), "┃");
 }
 
 #[test]

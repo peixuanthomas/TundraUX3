@@ -13,4 +13,4 @@ pub use model::{
     UserManagementField, UserManagementFocus, UserManagementFormKind, UserManagementFormViewModel,
     UserManagementUserViewModel, UserManagementViewModel,
 };
-pub use render::render_user_management;
+pub use render::{render_user_management, render_user_management_contextual};

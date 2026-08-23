@@ -145,7 +145,7 @@ fn renderer_draws_detailed_table_status_precedence_and_current_marker() {
     assert!(region_has_fg(
         &terminal,
         layout.rows[0].area,
-        TundraTheme::default_dark().accent_color
+        TundraTheme::default_dark().tokens().focus
     ));
 }
 

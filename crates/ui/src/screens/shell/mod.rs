@@ -11,6 +11,7 @@ pub use model::{
 };
 pub(crate) use render::{fit_cell, render_compact_home, render_status, render_top};
 pub use render::{
-    render_editor_app, render_exit_confirmation, render_time_sync_failure_dialog,
-    status_time_button_area,
+    render_editor_app, render_editor_app_contextual, render_exit_confirmation,
+    render_exit_confirmation_contextual, render_time_sync_failure_dialog,
+    render_time_sync_failure_dialog_contextual, status_time_button_area,
 };

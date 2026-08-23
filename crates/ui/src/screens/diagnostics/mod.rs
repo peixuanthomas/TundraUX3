@@ -11,4 +11,4 @@ pub use model::{
     DiagnosticsLogViewModel, DiagnosticsRepairDialogViewModel, DiagnosticsRepairItemViewModel,
     DiagnosticsStatus, DiagnosticsTab, DiagnosticsViewModel,
 };
-pub use render::render_diagnostics;
+pub use render::{render_diagnostics, render_diagnostics_contextual};

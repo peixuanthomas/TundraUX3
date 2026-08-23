@@ -1,11 +1,10 @@
 use super::document::*;
 use super::*;
-use crate::components::{BigText, Button, terminal_width};
-use ratatui::layout::HorizontalAlignment;
-use ratatui::widgets::{
-    List as RatatuiList, ListItem as RatatuiListItem, Scrollbar, ScrollbarOrientation,
-    ScrollbarState, Tabs as RatatuiTabs,
+use crate::RenderContext;
+use crate::components::{
+    BigText, Button, List, ListItem, Scrollbar, ScrollbarOrientation, Surface, terminal_width,
 };
+use ratatui::layout::HorizontalAlignment;
 
 /// Render only the editor's main area. Shell chrome remains the caller's responsibility.
 pub fn render_editor(
@@ -14,18 +13,29 @@ pub fn render_editor(
     model: &EditorViewModel,
     theme: &TundraTheme,
 ) -> EditorLayout {
+    let context = RenderContext::from_theme(theme, Default::default(), Default::default());
+    render_editor_contextual(frame, area, model, &context)
+}
+
+pub fn render_editor_contextual(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    model: &EditorViewModel,
+    context: &RenderContext,
+) -> EditorLayout {
+    let theme = &context.compatibility_theme();
     let layout = editor_layout(area, model);
     frame.render_widget(Clear, area);
-    frame.render_widget(Block::default().style(theme.body_style()), area);
-    render_menu_bar(frame, &layout, model, theme);
-    render_toolbar(frame, &layout, model, theme);
-    render_canvas(frame, &layout, model, theme);
+    Surface::new().render_frame(frame, area, context);
+    render_menu_bar(frame, &layout, model, theme, context);
+    render_toolbar(frame, &layout, model, theme, context);
+    render_canvas(frame, &layout, model, theme, context);
     render_status_bar(frame, &layout, model, theme);
     // Popups overlap the editor chrome and canvas. Settings is modal, so it
     // is painted last and receives the highest hit-test priority.
-    render_menu_popup(frame, &layout, model, theme);
-    render_quick_menu(frame, &layout, theme);
-    render_settings(frame, &layout, model, theme);
+    render_menu_popup(frame, &layout, model, theme, context);
+    render_quick_menu(frame, &layout, theme, context);
+    render_settings(frame, &layout, model, theme, context);
     layout
 }
 
@@ -34,14 +44,14 @@ fn render_menu_bar(
     layout: &EditorLayout,
     model: &EditorViewModel,
     theme: &TundraTheme,
+    context: &RenderContext,
 ) {
     if layout.menu_bar.is_empty() {
         return;
     }
-    frame.render_widget(
-        Block::default().style(Style::default().fg(theme.foreground).bg(theme.muted)),
-        layout.menu_bar,
-    );
+    Surface::new()
+        .raised(true)
+        .render_frame(frame, layout.menu_bar, context);
     for item in &layout.menus {
         let active = model.open_menu == Some(item.menu)
             || (item.menu == EditorMenu::Settings && model.settings.is_some());
@@ -86,18 +96,16 @@ fn render_menu_popup(
     layout: &EditorLayout,
     model: &EditorViewModel,
     theme: &TundraTheme,
+    context: &RenderContext,
 ) {
     let Some(area) = layout.menu_popup else {
         return;
     };
     frame.render_widget(Clear, area);
-    frame.render_widget(
-        theme
-            .block()
-            .borders(Borders::ALL)
-            .style(Style::default().fg(theme.foreground).bg(theme.background)),
-        area,
-    );
+    Surface::new()
+        .bordered(true)
+        .raised(true)
+        .render_frame(frame, area, context);
     let Some(first) = layout.menu_items.first() else {
         return;
     };
@@ -107,91 +115,50 @@ fn render_menu_popup(
         first.area.width,
         u16::try_from(layout.menu_items.len()).unwrap_or(u16::MAX),
     );
-    let items = layout.menu_items.iter().map(|item| {
-        let active_mode = matches!(item.action, EditorMenuAction::Mode(mode) if mode == model.mode);
-        let style = if !item.enabled {
-            theme.muted_style()
-        } else if active_mode {
-            Style::default()
-                .fg(theme.background)
-                .bg(theme.accent_color)
-                .add_modifier(Modifier::BOLD)
-        } else {
-            theme.body_style()
-        };
-        RatatuiListItem::new(format!(" {}", menu_action_label(item.action))).style(style)
-    });
-    frame.render_widget(RatatuiList::new(items).style(theme.body_style()), list_area);
+    let items = layout
+        .menu_items
+        .iter()
+        .map(|item| {
+            ListItem::new(
+                format!("editor.menu.action.{:?}", item.action),
+                menu_action_label(item.action),
+            )
+            .disabled(!item.enabled)
+        })
+        .collect();
+    let mut list = List::new("editor.menu.actions", items);
+    list.set_selected(None);
+    list.set_focused(model.focus == EditorFocus::MenuBar);
+    list.render_borderless_frame(frame, list_area, theme);
 }
 
-fn quick_menu_item_style(item: &EditorQuickMenuItemLayout, theme: &TundraTheme) -> Style {
-    if !item.enabled {
-        return theme.muted_style();
-    }
-
-    match item.action {
-        EditorQuickAction::Bold => theme.body_style().add_modifier(Modifier::BOLD),
-        EditorQuickAction::Italic => theme.body_style().add_modifier(Modifier::ITALIC),
-        EditorQuickAction::Paragraph => theme.body_style(),
-        EditorQuickAction::Heading(level) => {
-            let mut style = Style::default()
-                .fg(theme.accent_color)
-                .bg(theme.background)
-                .add_modifier(Modifier::BOLD);
-            if level == 1 {
-                style = style.add_modifier(Modifier::UNDERLINED);
-            } else if level >= 3 {
-                style = style.add_modifier(Modifier::ITALIC);
-            }
-            style
-        }
-    }
-}
-
-fn render_quick_menu(frame: &mut Frame<'_>, layout: &EditorLayout, theme: &TundraTheme) {
+fn render_quick_menu(
+    frame: &mut Frame<'_>,
+    layout: &EditorLayout,
+    _theme: &TundraTheme,
+    context: &RenderContext,
+) {
     let Some(area) = layout.quick_menu_popup else {
         return;
     };
     frame.render_widget(Clear, area);
-    frame.render_widget(
-        theme
-            .block()
-            .borders(Borders::ALL)
-            .style(Style::default().fg(theme.foreground).bg(theme.background)),
-        area,
-    );
+    Surface::new()
+        .bordered(true)
+        .raised(true)
+        .render_frame(frame, area, context);
 
-    let mut start = 0usize;
-    while let Some(first) = layout.quick_menu_items.get(start) {
-        let end = layout.quick_menu_items[start..]
-            .iter()
-            .position(|item| item.area.y != first.area.y)
-            .map(|offset| start.saturating_add(offset))
-            .unwrap_or(layout.quick_menu_items.len());
-        let row = &layout.quick_menu_items[start..end];
-        let Some(last) = row.last() else {
-            break;
-        };
-        let titles = row.iter().map(|item| {
-            Line::styled(
-                quick_action_label(item.action),
-                quick_menu_item_style(item, theme),
-            )
-        });
-        frame.render_widget(
-            RatatuiTabs::new(titles)
-                .select(None)
-                .divider("")
-                .padding(" ", " ")
-                .style(theme.body_style()),
-            Rect::new(
-                first.area.x,
-                first.area.y,
-                last.area.right().saturating_sub(first.area.x),
-                1,
-            ),
+    for item in &layout.quick_menu_items {
+        let mut item_theme = context.compatibility_theme();
+        if matches!(item.action, EditorQuickAction::Heading(_)) {
+            item_theme.foreground = item_theme.accent_color;
+        }
+        let mut button = Button::new(
+            format!("editor.quick.{:?}", item.action),
+            quick_action_label(item.action),
         );
-        start = end;
+        button.state.selected = matches!(item.action, EditorQuickAction::Heading(_));
+        button.set_disabled(!item.enabled);
+        button.render_borderless_frame(frame, item.area, &item_theme);
     }
 }
 
@@ -200,20 +167,18 @@ fn render_settings(
     layout: &EditorLayout,
     model: &EditorViewModel,
     theme: &TundraTheme,
+    context: &RenderContext,
 ) {
     let (Some(settings_layout), Some(settings)) = (&layout.settings, model.settings.as_ref())
     else {
         return;
     };
     frame.render_widget(Clear, settings_layout.dialog);
-    frame.render_widget(
-        theme
-            .block()
-            .borders(Borders::ALL)
-            .title(" Editor Settings ")
-            .style(Style::default().fg(theme.foreground).bg(theme.background)),
-        settings_layout.dialog,
-    );
+    Surface::new()
+        .titled(" Editor Settings ")
+        .bordered(true)
+        .raised(true)
+        .render_frame(frame, settings_layout.dialog, context);
     let description = Rect::new(
         settings_layout.dialog.x.saturating_add(2),
         settings_layout.dialog.y.saturating_add(1),
@@ -375,14 +340,12 @@ fn render_toolbar(
     layout: &EditorLayout,
     model: &EditorViewModel,
     theme: &TundraTheme,
+    context: &RenderContext,
 ) {
     if layout.toolbar.is_empty() {
         return;
     }
-    frame.render_widget(
-        Block::default().style(Style::default().fg(theme.foreground).bg(theme.background)),
-        layout.toolbar,
-    );
+    Surface::new().render_frame(frame, layout.toolbar, context);
     for item in &layout.toolbar_items {
         let active = model.toolbar.is_active(item.action);
         let selected = model.selected_toolbar_action == Some(item.action)
@@ -419,6 +382,7 @@ fn render_canvas(
     layout: &EditorLayout,
     model: &EditorViewModel,
     theme: &TundraTheme,
+    context: &RenderContext,
 ) {
     if layout.canvas_panel.is_empty() {
         return;
@@ -438,17 +402,14 @@ fn render_canvas(
             title.push_str(" [tail]");
         }
         let title = terminal_safe_text(&title).into_owned();
-        frame.render_widget(
-            theme
-                .block()
-                .borders(Borders::ALL)
-                .title(title)
-                .style(theme.body_style()),
+        Surface::new().titled(title).bordered(true).render_frame(
+            frame,
             layout.canvas_panel,
+            context,
         );
     } else {
         frame.render_widget(
-            Block::default().style(theme.body_style()),
+            Paragraph::new("").style(theme.body_style()),
             layout.canvas_panel,
         );
     }
@@ -510,41 +471,22 @@ fn render_canvas(
     }
 
     if let Some(scrollbar) = layout.vertical_scrollbar {
-        let track_length = usize::from(scrollbar.track.height);
-        let thumb_length = usize::from(scrollbar.thumb.height);
-        let thumb_offset = usize::from(scrollbar.thumb.y.saturating_sub(scrollbar.track.y));
-        let mut state =
-            ScrollbarState::new(track_length.saturating_sub(thumb_length).saturating_add(1))
-                .position(thumb_offset)
-                .viewport_content_length(thumb_length);
-        frame.render_stateful_widget(
-            Scrollbar::new(ScrollbarOrientation::VerticalRight)
-                .begin_symbol(None)
-                .end_symbol(None)
-                .track_style(theme.muted_style())
-                .thumb_style(theme.title_style()),
-            scrollbar.track,
-            &mut state,
-        );
+        Scrollbar::new(
+            layout.document_line_count,
+            layout.visible_capacity,
+            layout.visible_start,
+        )
+        .render_frame(frame, scrollbar.track, context);
     }
 
     if let Some(scrollbar) = layout.horizontal_scrollbar {
-        let track_length = usize::from(scrollbar.track.width);
-        let thumb_length = usize::from(scrollbar.thumb.width);
-        let thumb_offset = usize::from(scrollbar.thumb.x.saturating_sub(scrollbar.track.x));
-        let mut state =
-            ScrollbarState::new(track_length.saturating_sub(thumb_length).saturating_add(1))
-                .position(thumb_offset)
-                .viewport_content_length(thumb_length);
-        frame.render_stateful_widget(
-            Scrollbar::new(ScrollbarOrientation::HorizontalBottom)
-                .begin_symbol(None)
-                .end_symbol(None)
-                .track_style(theme.muted_style())
-                .thumb_style(theme.title_style()),
-            scrollbar.track,
-            &mut state,
-        );
+        Scrollbar::new(
+            layout.horizontal_content_width,
+            usize::from(layout.canvas.width),
+            layout.horizontal_scroll,
+        )
+        .orientation(ScrollbarOrientation::HorizontalBottom)
+        .render_frame(frame, scrollbar.track, context);
     }
 
     if model.focus == EditorFocus::Canvas
