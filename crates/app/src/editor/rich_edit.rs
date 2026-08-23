@@ -256,7 +256,7 @@ impl RichEditor {
             return false;
         };
         let inserted_len = normalized.graphemes(true).count();
-        let inserted = inserted_atoms(&normalized);
+        let inserted = inserted_atoms(normalized);
         if let Some(content) = find_inline_mut(&mut self.document.blocks, position.container_id) {
             let mut atoms = inline_atoms(content);
             let offset = position.grapheme_offset.min(atoms.len());
@@ -267,7 +267,7 @@ impl RichEditor {
                 code,
                 position.grapheme_offset,
                 position.grapheme_offset,
-                &normalized,
+                normalized,
             );
         } else {
             return false;
@@ -1001,12 +1001,12 @@ impl RichEditor {
                     .position(|block| block.contains_node(cursor.container_id))
             })
             .map_or(self.document.blocks.len(), |index| index + 1);
-        let leading_trivia = (!self.document.blocks.is_empty())
-            .then(|| {
-                let newline = self.document.preferred_line_ending.as_str();
-                format!("{newline}{newline}")
-            })
-            .unwrap_or_default();
+        let leading_trivia = if self.document.blocks.is_empty() {
+            String::new()
+        } else {
+            let newline = self.document.preferred_line_ending.as_str();
+            format!("{newline}{newline}")
+        };
         self.document.blocks.insert(
             insert_index,
             RichBlock {

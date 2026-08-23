@@ -463,7 +463,7 @@ mod tests {
             ),
             AppAction::Redraw
         );
-        assert_eq!(state.managed_users(), &[first.clone()]);
+        assert_eq!(state.managed_users(), std::slice::from_ref(&first));
         assert_eq!(state.snapshot().managed_users, &[first]);
 
         assert_eq!(
@@ -910,9 +910,11 @@ mod tests {
 
     #[test]
     fn storage_config_and_active_appearance_are_canonical_app_state() {
-        let mut config = storage::StorageConfig::default();
-        config.timezone = "Asia/Shanghai".to_string();
-        config.language = "en-US".to_string();
+        let config = storage::StorageConfig {
+            timezone: "Asia/Shanghai".to_string(),
+            language: "en-US".to_string(),
+            ..storage::StorageConfig::default()
+        };
         let mut state = AppState::with_storage_config(config.clone());
         let appearance = storage::AppearanceConfig {
             border_shape: storage::BorderShape::Square,
@@ -937,8 +939,10 @@ mod tests {
 
     #[test]
     fn replacing_non_timezone_config_preserves_clock_anchor() {
-        let mut config = storage::StorageConfig::default();
-        config.timezone = "UTC".to_string();
+        let mut config = storage::StorageConfig {
+            timezone: "UTC".to_string(),
+            ..storage::StorageConfig::default()
+        };
         let mut state = AppState::with_storage_config(config.clone());
         let synchronized_utc = Utc
             .with_ymd_and_hms(2026, 7, 22, 12, 0, 0)

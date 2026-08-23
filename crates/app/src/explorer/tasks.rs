@@ -454,6 +454,17 @@ pub struct ExplorerTaskEngine {
     worker: Option<ManagedThreadHandle<()>>,
 }
 
+struct WorkerContext {
+    platform: Arc<dyn Platform>,
+    trash: Arc<dyn ExplorerTrash>,
+    command_rx: mpsc::Receiver<WorkerCommand>,
+    event_tx: mpsc::Sender<ExplorerTaskEvent>,
+    busy: Arc<AtomicBool>,
+    active: Arc<Mutex<Option<ActiveTask>>>,
+    mutations_blocked: Arc<AtomicBool>,
+    watchdog: AppWatchdog,
+}
+
 impl ExplorerTaskEngine {
     pub fn new(platform: Arc<dyn Platform>, trash: Arc<dyn ExplorerTrash>) -> Self {
         let process = ProcessWatchdog::global()
@@ -487,16 +498,16 @@ impl ExplorerTaskEngine {
             "worker-{}",
             ENGINE_SEQUENCE.fetch_add(1, Ordering::Relaxed)
         ));
-        let mut worker_inputs = Some((
+        let mut worker_context = Some(WorkerContext {
             platform,
             trash,
             command_rx,
             event_tx,
-            worker_busy,
-            worker_active,
-            worker_mutations_blocked,
-            worker_watchdog,
-        ));
+            busy: worker_busy,
+            active: worker_active,
+            mutations_blocked: worker_mutations_blocked,
+            watchdog: worker_watchdog,
+        });
         let worker = task_group.spawn_thread(
             TaskSpec {
                 id: TaskId::from_static("event-loop"),
@@ -506,28 +517,10 @@ impl ExplorerTaskEngine {
                 restart_policy: RestartPolicy::never(),
             },
             move || {
-                let (
-                    platform,
-                    trash,
-                    command_rx,
-                    event_tx,
-                    worker_busy,
-                    worker_active,
-                    worker_mutations_blocked,
-                    worker_watchdog,
-                ) = worker_inputs
+                let context = worker_context
                     .take()
                     .expect("the non-restartable Explorer worker factory runs once");
-                worker_loop(
-                    platform,
-                    trash,
-                    command_rx,
-                    event_tx,
-                    worker_busy,
-                    worker_active,
-                    worker_mutations_blocked,
-                    worker_watchdog,
-                )
+                worker_loop(context)
             },
         )?;
         Ok(Self {
@@ -642,16 +635,17 @@ impl Drop for ExplorerTaskEngine {
     }
 }
 
-fn worker_loop(
-    platform: Arc<dyn Platform>,
-    trash: Arc<dyn ExplorerTrash>,
-    command_rx: mpsc::Receiver<WorkerCommand>,
-    event_tx: mpsc::Sender<ExplorerTaskEvent>,
-    busy: Arc<AtomicBool>,
-    active: Arc<Mutex<Option<ActiveTask>>>,
-    mutations_blocked: Arc<AtomicBool>,
-    watchdog: AppWatchdog,
-) {
+fn worker_loop(context: WorkerContext) {
+    let WorkerContext {
+        platform,
+        trash,
+        command_rx,
+        event_tx,
+        busy,
+        active,
+        mutations_blocked,
+        watchdog,
+    } = context;
     while let Ok(command) = command_rx.recv() {
         match command {
             WorkerCommand::Run {
@@ -1145,7 +1139,7 @@ fn execute_task(
                     context.summary.failed_sources.push(path);
                     continue;
                 }
-                match platform.move_to_trash(&[path.clone()]) {
+                match platform.move_to_trash(std::slice::from_ref(&path)) {
                     Ok(()) => {
                         let _ = context.checkpoint(
                             "delete_committed",
@@ -1812,10 +1806,10 @@ impl<'a> ExecutionContext<'a> {
                 };
                 if !*merge || *replace {
                     if path_exists_no_follow(&node.target) {
-                        if self.trash.has_rollback_path() {
-                            if let Some(trashed) = trashed {
-                                let _ = self.platform.rename_path(&trashed, &node.target);
-                            }
+                        if self.trash.has_rollback_path()
+                            && let Some(trashed) = trashed
+                        {
+                            let _ = self.platform.rename_path(&trashed, &node.target);
                         }
                         return Err(ExplorerTaskError::DestinationChanged {
                             path: node.target.clone(),
@@ -2097,10 +2091,10 @@ impl<'a> ExecutionContext<'a> {
         }
         if let Err(error) = self.platform.rename_path(&staging, target) {
             self.cleanup_staging(&staging);
-            if self.trash.has_rollback_path() {
-                if let Some(trashed) = trashed {
-                    let _ = self.platform.rename_path(&trashed, target);
-                }
+            if self.trash.has_rollback_path()
+                && let Some(trashed) = trashed
+            {
+                let _ = self.platform.rename_path(&trashed, target);
             }
             return Err(error.into());
         }

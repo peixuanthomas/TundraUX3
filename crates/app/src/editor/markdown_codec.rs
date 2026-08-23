@@ -11,11 +11,39 @@ use comrak::{Arena, Options, parse_document};
 use unicode_segmentation::UnicodeSegmentation;
 
 #[cfg(test)]
-thread_local! {
-    /// Test-only instrumentation proving that Rich editing and projection do
-    /// not cross the Markdown parsing boundary. A thread-local counter keeps
-    /// parallel unit tests independent.
-    static MARKDOWN_PARSE_COUNT: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+// Test-only instrumentation proving that Rich editing and projection do not cross the Markdown
+// parsing boundary. A thread-local counter keeps parallel unit tests independent.
+mod parse_counter {
+    use std::collections::HashMap;
+    use std::sync::{Mutex, OnceLock};
+    use std::thread::{self, ThreadId};
+
+    fn counts() -> &'static Mutex<HashMap<ThreadId, usize>> {
+        static COUNTS: OnceLock<Mutex<HashMap<ThreadId, usize>>> = OnceLock::new();
+        COUNTS.get_or_init(|| Mutex::new(HashMap::new()))
+    }
+
+    pub(super) fn increment() {
+        let mut counts = counts().lock().expect("Markdown parse count lock poisoned");
+        let count = counts.entry(thread::current().id()).or_default();
+        *count = count.saturating_add(1);
+    }
+
+    pub(super) fn reset() {
+        counts()
+            .lock()
+            .expect("Markdown parse count lock poisoned")
+            .insert(thread::current().id(), 0);
+    }
+
+    pub(super) fn get() -> usize {
+        counts()
+            .lock()
+            .expect("Markdown parse count lock poisoned")
+            .get(&thread::current().id())
+            .copied()
+            .unwrap_or(0)
+    }
 }
 
 use crate::editor::rich_document::{
@@ -142,7 +170,7 @@ impl MarkdownCodec {
         preferred_line_ending: RichLineEnding,
     ) -> Result<MarkdownImport, MarkdownCodecError> {
         #[cfg(test)]
-        MARKDOWN_PARSE_COUNT.with(|count| count.set(count.get().saturating_add(1)));
+        parse_counter::increment();
         let arena = Arena::new();
         let options = markdown_options();
         let root = parse_document(&arena, source, &options);
@@ -255,12 +283,12 @@ impl MarkdownCodec {
 
 #[cfg(test)]
 pub(crate) fn reset_parse_count_for_tests() {
-    MARKDOWN_PARSE_COUNT.with(|count| count.set(0));
+    parse_counter::reset();
 }
 
 #[cfg(test)]
 pub(crate) fn parse_count_for_tests() -> usize {
-    MARKDOWN_PARSE_COUNT.with(std::cell::Cell::get)
+    parse_counter::get()
 }
 
 struct ImportBuilder {
@@ -1000,18 +1028,17 @@ fn record_code_lexically(
     let mut logical = 0usize;
     let mut content_start = (*search_from).min(source.len());
     let remaining = &source[content_start..];
-    let trimmed =
-        remaining.trim_start_matches(|character| matches!(character, ' ' | '\t' | '>' | '-'));
-    if trimmed.starts_with("```") || trimmed.starts_with("~~~") {
-        if let Some(line_end) = remaining.find(['\n', '\r']) {
-            content_start += line_end;
-            if source.as_bytes().get(content_start) == Some(&b'\r')
-                && source.as_bytes().get(content_start + 1) == Some(&b'\n')
-            {
-                content_start += 2;
-            } else {
-                content_start += 1;
-            }
+    let trimmed = remaining.trim_start_matches([' ', '\t', '>', '-']);
+    if (trimmed.starts_with("```") || trimmed.starts_with("~~~"))
+        && let Some(line_end) = remaining.find(['\n', '\r'])
+    {
+        content_start += line_end;
+        if source.as_bytes().get(content_start) == Some(&b'\r')
+            && source.as_bytes().get(content_start + 1) == Some(&b'\n')
+        {
+            content_start += 2;
+        } else {
+            content_start += 1;
         }
     }
     *search_from = content_start;
@@ -1261,7 +1288,7 @@ fn escape_table_cell(text: &str) -> String {
                 // `serialize_text` already escapes literal pipes. Images and
                 // other atoms may not, so only add an escape when the pipe is
                 // not already preceded by an odd run of backslashes.
-                if preceding_backslashes % 2 == 0 {
+                if preceding_backslashes.is_multiple_of(2) {
                     output.push('\\');
                 }
                 output.push('|');

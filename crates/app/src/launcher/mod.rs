@@ -479,8 +479,8 @@ fn validate(path: &Path, platform: &dyn Platform) -> Result<Target, LauncherErro
         }
         FileOpenPolicy::Blocked { reason } => return Err(invalid(path, reason)),
     };
-    if !attributes.is_file
-        && !(attributes.is_dir && kind == LauncherExecutableKind::ApplicationBundle)
+    if !(attributes.is_file
+        || attributes.is_dir && kind == LauncherExecutableKind::ApplicationBundle)
     {
         return Err(invalid(
             path,
@@ -638,9 +638,8 @@ fn needs_confirmation(kind: LauncherExecutableKind) -> bool {
 fn same_path(left: &Path, right: &Path) -> bool {
     #[cfg(windows)]
     {
-        return left
-            .to_string_lossy()
-            .eq_ignore_ascii_case(&right.to_string_lossy());
+        left.to_string_lossy()
+            .eq_ignore_ascii_case(&right.to_string_lossy())
     }
     #[cfg(not(windows))]
     {

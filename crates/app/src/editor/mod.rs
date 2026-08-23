@@ -1029,10 +1029,6 @@ impl SourceBuffer {
         Cow::from(&self.text)
     }
 
-    pub fn to_string(&self) -> String {
-        String::from(&self.text)
-    }
-
     pub fn byte_slice(&self, range: SourceRange) -> Option<String> {
         self.validated_range(range.start..range.end)
             .map(|range| self.text.byte_slice(range).to_string())
@@ -1473,6 +1469,15 @@ impl SourceBuffer {
             return 0;
         }
         rope_slice_display_width(self.text.byte_slice(line.start..end))
+    }
+}
+
+impl fmt::Display for SourceBuffer {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        for chunk in self.text.chunks() {
+            formatter.write_str(chunk)?;
+        }
+        Ok(())
     }
 }
 
@@ -2310,11 +2315,11 @@ impl EditorState {
                 self.selection = selection;
             }
             EditorBuffer::Rich(buffer) => {
-                if let Some(cursor) = buffer.editor.cursor {
-                    if !buffer.editor.move_to(cursor, false) {
-                        buffer.editor.cursor = buffer.editor.document.first_editable_position();
-                        buffer.editor.selection = None;
-                    }
+                if let Some(cursor) = buffer.editor.cursor
+                    && !buffer.editor.move_to(cursor, false)
+                {
+                    buffer.editor.cursor = buffer.editor.document.first_editable_position();
+                    buffer.editor.selection = None;
                 }
             }
         }
