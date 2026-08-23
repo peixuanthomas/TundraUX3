@@ -3,7 +3,7 @@ use crate::animation::{
 };
 use crate::render::TerminalRenderer;
 use crossterm::style::Color;
-use system_services::SnowIntensity;
+use system_services_model::SnowIntensity;
 
 use rand::{Rng, RngExt};
 use std::io;

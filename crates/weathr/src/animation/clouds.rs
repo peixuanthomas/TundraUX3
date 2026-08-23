@@ -210,11 +210,10 @@ impl AnimationSystem for CloudSystem {
     }
 
     fn is_active(&self, ctx: &FrameContext<'_>) -> bool {
-        let is_clear = ctx
-            .state
-            .current_weather
-            .as_ref()
-            .is_some_and(|w| matches!(w.condition, system_services::WeatherCondition::Clear));
+        let is_clear =
+            ctx.state.current_weather.as_ref().is_some_and(|w| {
+                matches!(w.condition, system_services_model::WeatherCondition::Clear)
+            });
 
         ctx.conditions.is_cloudy || is_clear
     }
@@ -231,8 +230,8 @@ impl AnimationSystem for CloudSystem {
     fn update(&mut self, ctx: &FrameContext<'_>, rng: &mut dyn Rng, _commands: &mut FrameCommands) {
         let (is_clear, cloud_color) = if let Some(weather) = &ctx.state.current_weather {
             match weather.condition {
-                system_services::WeatherCondition::Clear => (true, Color::White),
-                system_services::WeatherCondition::PartlyCloudy => (false, Color::Grey),
+                system_services_model::WeatherCondition::Clear => (true, Color::White),
+                system_services_model::WeatherCondition::PartlyCloudy => (false, Color::Grey),
                 _ => (false, Color::DarkGrey),
             }
         } else {

@@ -2,7 +2,7 @@ use crate::app_state::AppState;
 use crate::render::TerminalRenderer;
 use rand::Rng;
 use std::io;
-use system_services::{FogIntensity, RainIntensity, SnowIntensity, WeatherConditions};
+use system_services_model::{FogIntensity, RainIntensity, SnowIntensity, WeatherConditions};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RenderLayer {

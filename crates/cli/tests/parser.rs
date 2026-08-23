@@ -923,7 +923,7 @@ fn config_get_theme_and_full_config_include_border_summary() {
     assert!(stderr.is_empty());
     assert_eq!(
         String::from_utf8(stdout).expect("config output should be utf8"),
-        "border-shape = rounded\nborder-color = white\naccent-color = cyan\n"
+        "border-shape = rounded\nborder-color = #29434E\naccent-color = #63D3E5\n"
     );
 
     let mut stdout = Vec::new();
@@ -935,7 +935,9 @@ fn config_get_theme_and_full_config_include_border_summary() {
     assert!(stderr.is_empty());
     let stdout = String::from_utf8(stdout).expect("config output should be utf8");
     assert!(
-        stdout.starts_with("border-shape = rounded\nborder-color = white\naccent-color = cyan\n")
+        stdout.starts_with(
+            "border-shape = rounded\nborder-color = #29434E\naccent-color = #63D3E5\n"
+        )
     );
 }
 

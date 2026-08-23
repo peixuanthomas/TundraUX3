@@ -22,7 +22,7 @@ tokio = { version = "1", features = [
     "signal",
 ] }
 ascii-assets = { path = "../ascii-assets" }
-system-services = { path = "../system-services" }
+system-services-model = { path = "../system-services-model" }
 watchdog = { path = "../watchdog", features = ["tokio"] }
 
 [dev-dependencies]

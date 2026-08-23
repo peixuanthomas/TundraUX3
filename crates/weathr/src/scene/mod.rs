@@ -6,7 +6,7 @@ use crate::render::TerminalRenderer;
 use crate::theme::Palette;
 use std::collections::HashMap;
 use std::io;
-use system_services::WeatherConditions;
+use system_services_model::WeatherConditions;
 
 pub(crate) const WEATHER_GROUND_HEIGHT: u16 = 7;
 

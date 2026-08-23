@@ -11,7 +11,7 @@ use crate::render::TerminalRenderer;
 use crate::scene::SceneLayout;
 use rand::Rng;
 use std::io;
-use system_services::{FogIntensity, RainIntensity, SnowIntensity, WeatherConditions};
+use system_services_model::{FogIntensity, RainIntensity, SnowIntensity, WeatherConditions};
 
 pub struct AnimationManager {
     systems: Vec<Box<dyn AnimationSystem>>,

@@ -1,5 +1,5 @@
 use std::time::Instant;
-use system_services::{
+use system_services_model::{
     WeatherCondition, WeatherConditions, WeatherData, WeatherLocation, WeatherUnits,
     format_temperature,
 };
@@ -301,7 +301,9 @@ impl Default for LoadingState {
 mod tests {
     use super::LocationDisplay;
     use super::*;
-    use system_services::{CelestialEvents, PrecipitationUnit, TemperatureUnit, WindSpeedUnit};
+    use system_services_model::{
+        CelestialEvents, PrecipitationUnit, TemperatureUnit, WindSpeedUnit,
+    };
 
     fn create_app_state(lat: f64, lon: f64) -> AppState {
         create_app_state_full(lat, lon, None, LocationDisplay::Coordinates)

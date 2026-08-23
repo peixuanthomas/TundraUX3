@@ -13,7 +13,7 @@ use chrono::Datelike;
 use crossterm::event::{self, Event, KeyCode, KeyModifiers};
 use std::io;
 use std::time::Duration;
-use system_services::{SystemSnapshot, TimeState, WeatherLocation, WeatherState};
+use system_services_model::{SystemSnapshot, TimeState, WeatherLocation, WeatherState};
 
 const INPUT_POLL_FPS: u64 = 30;
 const FRAME_DURATION: Duration = Duration::from_millis(1000 / INPUT_POLL_FPS);
@@ -118,6 +118,17 @@ pub struct App {
     hide_hud: bool,
 }
 
+pub(crate) struct AppInput<'a> {
+    pub term_width: u16,
+    pub term_height: u16,
+    pub themes: ThemeRegistry,
+    pub bottom_hud_prompt: BottomHudPrompt,
+    pub snapshots: tokio::sync::watch::Receiver<SystemSnapshot>,
+    pub clock_format: ClockFormat,
+    pub hide_hud: bool,
+    pub cached_store: Option<&'a ascii_assets::AsciiAssetStore>,
+}
+
 fn render_centered_line(
     renderer: &mut TerminalRenderer,
     width: u16,
@@ -132,15 +143,18 @@ fn render_centered_line(
 
 impl App {
     pub(crate) fn new_with_bottom_hud_prompt_and_assets(
-        term_width: u16,
-        term_height: u16,
-        themes: ThemeRegistry,
-        bottom_hud_prompt: BottomHudPrompt,
-        snapshots: tokio::sync::watch::Receiver<SystemSnapshot>,
-        clock_format: ClockFormat,
-        hide_hud: bool,
-        cached_store: Option<&ascii_assets::AsciiAssetStore>,
+        input: AppInput<'_>,
     ) -> Result<Self, WeatherAssetError> {
+        let AppInput {
+            term_width,
+            term_height,
+            themes,
+            bottom_hud_prompt,
+            snapshots,
+            clock_format,
+            hide_hud,
+            cached_store,
+        } = input;
         let state = AppState::new_with_bottom_hud_prompt(
             WeatherLocation {
                 latitude: 0.0,
@@ -150,7 +164,7 @@ impl App {
             None,
             crate::app_state::LocationDisplay::Coordinates,
             hide_hud,
-            system_services::WeatherUnits::default(),
+            system_services_model::WeatherUnits::default(),
             bottom_hud_prompt,
         );
 

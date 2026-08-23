@@ -4033,11 +4033,20 @@ dependencies = [
  "reqwest",
  "serde",
  "serde_json",
+ "system-services-model",
  "tempfile",
  "thiserror 2.0.18",
  "time 0.1.1",
  "tokio",
  "watchdog",
+]
+
+[[package]]
+name = "system-services-model"
+version = "0.1.1"
+dependencies = [
+ "chrono",
+ "serde",
 ]
 
 [[package]]
@@ -4907,7 +4916,7 @@ dependencies = [
  "chrono",
  "crossterm",
  "rand 0.10.2",
- "system-services",
+ "system-services-model",
  "thiserror 2.0.18",
  "tokio",
  "watchdog",

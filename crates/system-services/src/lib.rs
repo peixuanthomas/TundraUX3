@@ -5,7 +5,7 @@
 //! start a second weather or time worker.
 
 use async_trait::async_trait;
-use chrono::{DateTime, FixedOffset, NaiveTime, Utc};
+use chrono::{DateTime, Utc};
 use chrono_tz::Tz;
 use serde::{Deserialize, Serialize};
 use std::fs;
@@ -27,324 +27,7 @@ const DEFAULT_BACKOFF: [Duration; 3] = [
     Duration::from_secs(2 * 60),
     Duration::from_secs(5 * 60),
 ];
-/// Data format selected by the caller. Weather values in snapshots are
-/// canonical (Celsius, m/s and mm); renderers can format them as desired.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub struct WeatherUnits {
-    pub temperature: TemperatureUnit,
-    pub wind_speed: WindSpeedUnit,
-    pub precipitation: PrecipitationUnit,
-}
-
-impl Default for WeatherUnits {
-    fn default() -> Self {
-        Self {
-            temperature: TemperatureUnit::Celsius,
-            wind_speed: WindSpeedUnit::Kmh,
-            precipitation: PrecipitationUnit::Mm,
-        }
-    }
-}
-
-impl WeatherUnits {
-    pub const fn metric() -> Self {
-        Self {
-            temperature: TemperatureUnit::Celsius,
-            wind_speed: WindSpeedUnit::Kmh,
-            precipitation: PrecipitationUnit::Mm,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum TemperatureUnit {
-    Celsius,
-    Fahrenheit,
-}
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum WindSpeedUnit {
-    Kmh,
-    Ms,
-    Mph,
-    Kn,
-}
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum PrecipitationUnit {
-    Mm,
-    Inch,
-}
-
-pub fn format_temperature(celsius: f64, unit: TemperatureUnit) -> (f64, &'static str) {
-    match unit {
-        TemperatureUnit::Celsius => (celsius, "°C"),
-        TemperatureUnit::Fahrenheit => (celsius * 9.0 / 5.0 + 32.0, "°F"),
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum WeatherCondition {
-    Clear,
-    PartlyCloudy,
-    Cloudy,
-    Overcast,
-    Fog,
-    Drizzle,
-    Rain,
-    FreezingRain,
-    Snow,
-    SnowGrains,
-    RainShowers,
-    SnowShowers,
-    Thunderstorm,
-    ThunderstormHail,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum RainIntensity {
-    Drizzle,
-    Light,
-    Heavy,
-    Storm,
-}
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum SnowIntensity {
-    Light,
-    Medium,
-    Heavy,
-}
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum FogIntensity {
-    Light,
-    Medium,
-    Heavy,
-}
-
-impl WeatherCondition {
-    pub fn rain_intensity(&self) -> RainIntensity {
-        match self {
-            Self::Drizzle => RainIntensity::Drizzle,
-            Self::FreezingRain | Self::Thunderstorm => RainIntensity::Heavy,
-            Self::ThunderstormHail => RainIntensity::Storm,
-            _ => RainIntensity::Light,
-        }
-    }
-    pub fn snow_intensity(&self) -> SnowIntensity {
-        match self {
-            Self::SnowGrains => SnowIntensity::Light,
-            Self::SnowShowers => SnowIntensity::Medium,
-            Self::Snow => SnowIntensity::Heavy,
-            _ => SnowIntensity::Light,
-        }
-    }
-    pub fn fog_intensity(&self) -> FogIntensity {
-        if matches!(self, Self::Fog) {
-            FogIntensity::Medium
-        } else {
-            FogIntensity::Light
-        }
-    }
-    pub fn is_raining(&self) -> bool {
-        matches!(
-            self,
-            Self::Drizzle
-                | Self::Rain
-                | Self::RainShowers
-                | Self::FreezingRain
-                | Self::Thunderstorm
-                | Self::ThunderstormHail
-        )
-    }
-    pub fn is_snowing(&self) -> bool {
-        matches!(self, Self::Snow | Self::SnowGrains | Self::SnowShowers)
-    }
-    pub fn is_thunderstorm(&self) -> bool {
-        matches!(self, Self::Thunderstorm | Self::ThunderstormHail)
-    }
-    pub fn is_cloudy(&self) -> bool {
-        matches!(self, Self::PartlyCloudy | Self::Cloudy | Self::Overcast)
-    }
-    pub fn is_foggy(&self) -> bool {
-        matches!(self, Self::Fog)
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub struct CelestialEvents {
-    pub is_day: bool,
-    pub begin_twilight: Option<NaiveTime>,
-    pub rise: Option<NaiveTime>,
-    pub upper_transit: Option<NaiveTime>,
-    pub set: Option<NaiveTime>,
-    pub end_twilight: Option<NaiveTime>,
-}
-impl CelestialEvents {
-    pub fn from_bool(is_day: bool) -> Self {
-        Self {
-            is_day,
-            begin_twilight: None,
-            rise: None,
-            upper_transit: None,
-            set: None,
-            end_twilight: None,
-        }
-    }
-    pub fn only_day(is_day: i32) -> Self {
-        Self::from_bool(is_day == 1)
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct WeatherData {
-    pub condition: WeatherCondition,
-    pub temperature: f64,
-    pub precipitation: f64,
-    pub wind_speed: f64,
-    pub wind_direction: f64,
-    pub sun: CelestialEvents,
-    pub moon_phase: Option<f64>,
-    pub timestamp: String,
-    pub attribution: String,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
-pub struct WeatherLocation {
-    pub latitude: f64,
-    pub longitude: f64,
-    pub elevation: Option<f64>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct WeatherConditions {
-    pub is_raining: bool,
-    pub is_snowing: bool,
-    pub is_thunderstorm: bool,
-    pub is_cloudy: bool,
-    pub is_foggy: bool,
-    pub sun: CelestialEvents,
-}
-impl Default for WeatherConditions {
-    fn default() -> Self {
-        Self {
-            is_raining: false,
-            is_snowing: false,
-            is_thunderstorm: false,
-            is_cloudy: false,
-            is_foggy: false,
-            sun: CelestialEvents::from_bool(true),
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct GeoLocation {
-    pub latitude: f64,
-    pub longitude: f64,
-    pub city: Option<String>,
-}
-
-// Const `Option<String>` is unavailable, so use an internal const adapter for
-// the stable default and turn it into an owned value on use.
-#[derive(Clone, Copy)]
-enum SomeStaticStr {
-    Shanghai,
-}
-impl SomeStaticStr {
-    fn as_str(self) -> &'static str {
-        match self {
-            Self::Shanghai => "Shanghai",
-        }
-    }
-}
-struct ShanghaiDefault {
-    latitude: f64,
-    longitude: f64,
-    city: SomeStaticStr,
-}
-const DEFAULT_LOCATION: ShanghaiDefault = ShanghaiDefault {
-    latitude: 31.2304,
-    longitude: 121.4737,
-    city: SomeStaticStr::Shanghai,
-};
-
-impl GeoLocation {
-    pub fn weather_location(&self) -> WeatherLocation {
-        WeatherLocation {
-            latitude: self.latitude,
-            longitude: self.longitude,
-            elevation: None,
-        }
-    }
-    fn fallback() -> Self {
-        Self {
-            latitude: DEFAULT_LOCATION.latitude,
-            longitude: DEFAULT_LOCATION.longitude,
-            city: Some(DEFAULT_LOCATION.city.as_str().to_string()),
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct WeatherSnapshot {
-    pub weather: WeatherData,
-    pub location: WeatherLocation,
-    pub city: Option<String>,
-    pub units: WeatherUnits,
-    pub sampled_at: DateTime<Utc>,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub enum WeatherState {
-    Loading,
-    Ready(WeatherSnapshot),
-    Stale {
-        last_good: WeatherSnapshot,
-        error: String,
-    },
-    Unavailable {
-        reason: String,
-    },
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum TimeSource {
-    OperatingSystem,
-    Network(String),
-}
-
-pub type LocalTime = DateTime<FixedOffset>;
-
-#[derive(Debug, Clone, PartialEq)]
-pub enum TimeState {
-    Local {
-        local_time: LocalTime,
-    },
-    Synced {
-        utc: DateTime<Utc>,
-        local_time: LocalTime,
-        source: TimeSource,
-        sampled_at: DateTime<Utc>,
-    },
-    Degraded {
-        local_time: LocalTime,
-        last_sync: Option<DateTime<Utc>>,
-        error: String,
-    },
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct SystemSnapshot {
-    pub revision: u64,
-    pub observed_at: DateTime<Utc>,
-    pub weather: WeatherState,
-    pub time: TimeState,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum TimeSyncMode {
-    OperatingSystem,
-    Network,
-}
+pub use system_services_model::*;
 
 #[derive(Debug, Clone)]
 pub struct SystemServicesConfig {
@@ -359,6 +42,7 @@ pub struct SystemServicesConfig {
     pub location_refresh_interval: Duration,
     pub time_sync_interval: Duration,
     pub cache_dir: Option<PathBuf>,
+    pub request_timeout: Duration,
 }
 
 impl Default for SystemServicesConfig {
@@ -375,6 +59,7 @@ impl Default for SystemServicesConfig {
             location_refresh_interval: DEFAULT_LOCATION_REFRESH,
             time_sync_interval: DEFAULT_TIME_REFRESH,
             cache_dir: None,
+            request_timeout: Duration::from_secs(10),
         }
     }
 }
@@ -465,6 +150,111 @@ impl WeatherProvider for OpenMeteoProvider {
     }
 }
 
+/// Optional Met Office Weather DataHub provider. Callers must opt in by
+/// constructing it with an API key and passing it to `start_with_provider`.
+pub struct MetOfficeProvider {
+    client: reqwest::Client,
+    data_source: String,
+}
+impl MetOfficeProvider {
+    pub fn new(api_key: &str, data_source: Option<&str>) -> Result<Self, String> {
+        use reqwest::header::{HeaderMap, HeaderValue};
+        if api_key.is_empty() {
+            return Err("Met Office API key is empty".to_string());
+        }
+        let mut value = HeaderValue::from_str(api_key).map_err(|error| error.to_string())?;
+        value.set_sensitive(true);
+        let mut headers = HeaderMap::new();
+        headers.insert("apikey", value);
+        let client = reqwest::Client::builder()
+            .default_headers(headers)
+            .build()
+            .map_err(|error| error.to_string())?;
+        Ok(Self {
+            client,
+            data_source: data_source
+                .filter(|value| !value.is_empty())
+                .unwrap_or("BD1")
+                .to_string(),
+        })
+    }
+}
+#[derive(Deserialize)]
+struct MetOfficeResponse {
+    features: Vec<MetOfficeFeature>,
+}
+#[derive(Deserialize)]
+struct MetOfficeFeature {
+    properties: MetOfficeProperties,
+}
+#[derive(Deserialize)]
+struct MetOfficeProperties {
+    #[serde(rename = "timeSeries")]
+    time_series: Vec<MetOfficeSeries>,
+}
+#[derive(Deserialize)]
+struct MetOfficeSeries {
+    #[serde(rename = "precipitationRate")]
+    precipitation: f64,
+    #[serde(rename = "screenTemperature")]
+    temperature: f64,
+    #[serde(rename = "significantWeatherCode")]
+    weather_code: i32,
+    time: String,
+    #[serde(rename = "windDirectionFrom10m")]
+    wind_direction: f64,
+    #[serde(rename = "windSpeed10m")]
+    wind_speed: f64,
+}
+#[async_trait]
+impl WeatherProvider for MetOfficeProvider {
+    async fn current_weather(
+        &self,
+        location: WeatherLocation,
+        _units: WeatherUnits,
+    ) -> Result<WeatherData, String> {
+        let url = format!(
+            "https://data.hub.api.metoffice.gov.uk/sitespecific/v0/point/hourly?latitude={}&longitude={}&includeLocationName=true&dataSource={}",
+            location.latitude, location.longitude, self.data_source
+        );
+        let response = self
+            .client
+            .get(url)
+            .send()
+            .await
+            .map_err(|error| error.to_string())?
+            .error_for_status()
+            .map_err(|error| error.to_string())?
+            .json::<MetOfficeResponse>()
+            .await
+            .map_err(|error| error.to_string())?;
+        let current = response
+            .features
+            .into_iter()
+            .next()
+            .and_then(|feature| {
+                feature.properties.time_series.into_iter().find(|series| {
+                    let time = format!("{}:00Z", series.time.trim_end_matches('Z'));
+                    time.parse::<DateTime<Utc>>().is_ok_and(|start| {
+                        Utc::now() >= start && Utc::now() <= start + chrono::Duration::hours(1)
+                    })
+                })
+            })
+            .ok_or_else(|| "Met Office returned no current weather".to_string())?;
+        Ok(WeatherData {
+            condition: normalize_open_meteo_code(current.weather_code),
+            temperature: current.temperature,
+            precipitation: current.precipitation,
+            wind_speed: current.wind_speed,
+            wind_direction: current.wind_direction,
+            sun: CelestialEvents::from_bool(true),
+            moon_phase: Some(0.5),
+            timestamp: current.time,
+            attribution: "Data supplied by the Met Office".to_string(),
+        })
+    }
+}
+
 pub fn normalize_open_meteo_code(code: i32) -> WeatherCondition {
     match code {
         0 => WeatherCondition::Clear,
@@ -473,12 +263,15 @@ pub fn normalize_open_meteo_code(code: i32) -> WeatherCondition {
         45 | 48 => WeatherCondition::Fog,
         51 | 53 | 55 => WeatherCondition::Drizzle,
         56 | 57 => WeatherCondition::FreezingRain,
-        61 | 63 | 65 | 80 | 81 | 82 => WeatherCondition::Rain,
+        61 | 63 | 65 => WeatherCondition::Rain,
         66 | 67 => WeatherCondition::FreezingRain,
-        71 | 73 | 75 | 77 | 85 | 86 => WeatherCondition::Snow,
+        71 | 73 | 75 => WeatherCondition::Snow,
+        77 => WeatherCondition::SnowGrains,
+        80..=82 => WeatherCondition::RainShowers,
+        85 | 86 => WeatherCondition::SnowShowers,
         95 => WeatherCondition::Thunderstorm,
         96 | 99 => WeatherCondition::ThunderstormHail,
-        _ => WeatherCondition::Cloudy,
+        _ => WeatherCondition::Clear,
     }
 }
 
@@ -521,10 +314,11 @@ impl SystemServicesHandle {
         &self,
         config: SystemServicesConfig,
     ) -> Result<DateTime<Utc>, SystemServicesError> {
+        let timeout = config.request_timeout + Duration::from_secs(1);
         let (sender, receiver) = std_mpsc::channel();
         self.send(Command::Validate(config, sender))?;
         receiver
-            .recv_timeout(Duration::from_secs(12))
+            .recv_timeout(timeout)
             .map_err(|_| SystemServicesError::Timeout)?
     }
     pub fn shutdown(&self) -> Result<(), SystemServicesError> {
@@ -577,7 +371,7 @@ impl SystemServicesRuntime {
             0,
             WeatherState::Loading,
             TimeState::Local {
-                local_time: local_time(&config.timezone_id),
+                local_time: local_time_at(&config.timezone_id, Utc::now()),
             },
         );
         let (snapshot_tx, snapshot_rx) = watch::channel(initial);
@@ -632,34 +426,59 @@ async fn run(
         publish(
             &snapshot_tx,
             WeatherState::Ready(cached),
-            current_time_state(&config, None, None),
+            current_time_state(&config, None, None, Instant::now()),
         );
     }
     let mut weather_failures = 0usize;
     let mut time_failures = 0usize;
-    let mut last_sync = None;
-    loop {
+    let mut anchor: Option<TimeAnchor> = None;
+    let mut time_error: Option<String> = None;
+    let mut pending_validation = None;
+    'main: loop {
         let tick = tokio::time::sleep(Duration::from_secs(1));
         tokio::pin!(tick);
         tokio::select! {
             _ = &mut tick => {},
-            command = commands.recv() => match command {
-                Some(Command::Shutdown) | None => break,
-                Some(Command::Reconfigure(next)) => { config = next; weather_due = Instant::now(); time_due = Instant::now(); location_due = Instant::now(); },
-                Some(Command::RefreshWeather) => weather_due = Instant::now(),
-                Some(Command::SyncTime) => time_due = Instant::now(),
-                Some(Command::Validate(candidate, sender)) => { let _ = sender.send(validate_time(&candidate).await); },
-            },
+            command = commands.recv() => if apply_command(command, &mut config, &mut weather_due, &mut time_due, &mut location_due, &mut pending_validation) { break },
         }
         let now = Instant::now();
+        if let Some((candidate, sender)) = pending_validation.take() {
+            let operation =
+                tokio::time::timeout(candidate.request_timeout, validate_time(&candidate));
+            tokio::pin!(operation);
+            tokio::select! {
+                result = &mut operation => {
+                    let result = result.unwrap_or(Err(SystemServicesError::Timeout));
+                    let _ = sender.send(result);
+                }
+                command = commands.recv() => {
+                    let _ = sender.send(Err(SystemServicesError::Shutdown));
+                    if apply_command(command, &mut config, &mut weather_due, &mut time_due, &mut location_due, &mut pending_validation) { break; }
+                    continue 'main;
+                }
+            }
+        }
         if now >= weather_due {
-            let location = resolve_location(&config, location_due <= now).await;
+            let should_resolve = location_due <= now;
+            let operation_config = config.clone();
+            let operation = tokio::time::timeout(operation_config.request_timeout, async {
+                let location = resolve_location(&operation_config, should_resolve).await;
+                let weather = provider
+                    .current_weather(location.weather_location(), operation_config.weather_units)
+                    .await?;
+                Ok::<_, String>((location, weather))
+            });
+            tokio::pin!(operation);
+            let result = tokio::select! {
+                result = &mut operation => result.map_err(|_| "weather request timed out".to_string()).and_then(|result| result),
+                command = commands.recv() => {
+                    if apply_command(command, &mut config, &mut weather_due, &mut time_due, &mut location_due, &mut pending_validation) { break; }
+                    continue 'main;
+                }
+            };
             location_due = now + config.location_refresh_interval;
-            match provider
-                .current_weather(location.weather_location(), config.weather_units)
-                .await
-            {
-                Ok(weather) => {
+            match result {
+                Ok((location, weather)) => {
                     let good = WeatherSnapshot {
                         weather,
                         location: location.weather_location(),
@@ -673,7 +492,12 @@ async fn run(
                     publish(
                         &snapshot_tx,
                         WeatherState::Ready(good),
-                        current_time_state(&config, last_sync.clone(), None),
+                        current_time_state(
+                            &config,
+                            anchor.as_ref(),
+                            time_error.as_deref(),
+                            Instant::now(),
+                        ),
                     );
                     weather_due = now + config.weather_refresh_interval;
                 }
@@ -689,7 +513,12 @@ async fn run(
                     publish(
                         &snapshot_tx,
                         state,
-                        current_time_state(&config, last_sync.clone(), None),
+                        current_time_state(
+                            &config,
+                            anchor.as_ref(),
+                            time_error.as_deref(),
+                            Instant::now(),
+                        ),
                     );
                     weather_due =
                         now + retry_delay(weather_failures, config.weather_refresh_interval);
@@ -697,19 +526,44 @@ async fn run(
             }
         }
         if now >= time_due {
-            match synchronize_time(&config).await {
+            let operation_config = config.clone();
+            let operation = tokio::time::timeout(
+                operation_config.request_timeout,
+                synchronize_time(&operation_config),
+            );
+            tokio::pin!(operation);
+            let result = tokio::select! {
+                result = &mut operation => result.map_err(|_| "time request timed out".to_string()).and_then(|result| result),
+                command = commands.recv() => {
+                    if apply_command(command, &mut config, &mut weather_due, &mut time_due, &mut location_due, &mut pending_validation) { break; }
+                    continue 'main;
+                }
+            };
+            match result {
                 Ok((utc, source)) => {
-                    last_sync = Some((utc, source));
+                    anchor = Some(TimeAnchor {
+                        utc,
+                        sampled_at: utc,
+                        instant: Instant::now(),
+                        source,
+                    });
+                    time_error = None;
                     time_failures = 0;
                     time_due = now + config.time_sync_interval;
                 }
                 Err(error) => {
+                    time_error = Some(error);
                     time_failures += 1;
                     time_due = now + retry_delay(time_failures, config.time_sync_interval);
                     publish(
                         &snapshot_tx,
                         snapshot_tx.borrow().weather.clone(),
-                        current_time_state(&config, last_sync.clone(), Some(error)),
+                        current_time_state(
+                            &config,
+                            anchor.as_ref(),
+                            time_error.as_deref(),
+                            Instant::now(),
+                        ),
                     );
                 }
             }
@@ -718,8 +572,50 @@ async fn run(
         publish(
             &snapshot_tx,
             previous.weather,
-            current_time_state(&config, last_sync.clone(), None),
+            current_time_state(
+                &config,
+                anchor.as_ref(),
+                time_error.as_deref(),
+                Instant::now(),
+            ),
         );
+    }
+}
+
+type ValidationRequest = (
+    SystemServicesConfig,
+    std_mpsc::Sender<Result<DateTime<Utc>, SystemServicesError>>,
+);
+
+fn apply_command(
+    command: Option<Command>,
+    config: &mut SystemServicesConfig,
+    weather_due: &mut Instant,
+    time_due: &mut Instant,
+    location_due: &mut Instant,
+    pending_validation: &mut Option<ValidationRequest>,
+) -> bool {
+    match command {
+        Some(Command::Shutdown) | None => true,
+        Some(Command::Reconfigure(next)) => {
+            *config = next;
+            *weather_due = Instant::now();
+            *time_due = Instant::now();
+            *location_due = Instant::now();
+            false
+        }
+        Some(Command::RefreshWeather) => {
+            *weather_due = Instant::now();
+            false
+        }
+        Some(Command::SyncTime) => {
+            *time_due = Instant::now();
+            false
+        }
+        Some(Command::Validate(candidate, sender)) => {
+            *pending_validation = Some((candidate, sender));
+            false
+        }
     }
 }
 
@@ -742,35 +638,47 @@ fn snapshot(revision: u64, weather: WeatherState, time: TimeState) -> SystemSnap
 fn parse_timezone(timezone: &str) -> Option<Tz> {
     timezone.parse::<Tz>().ok()
 }
-fn local_time(timezone: &str) -> LocalTime {
-    let utc = Utc::now();
+fn local_time_at(timezone: &str, utc: DateTime<Utc>) -> LocalTime {
     parse_timezone(timezone)
         .map(|tz| utc.with_timezone(&tz).fixed_offset())
         .unwrap_or_else(|| utc.fixed_offset())
 }
 fn current_time_state(
     config: &SystemServicesConfig,
-    last_sync: Option<(DateTime<Utc>, TimeSource)>,
-    error: Option<String>,
+    anchor: Option<&TimeAnchor>,
+    error: Option<&str>,
+    now: Instant,
 ) -> TimeState {
-    let local = local_time(&config.timezone_id);
+    let utc = anchor.map_or_else(Utc::now, |anchor| anchor.utc_at(now));
+    let local = local_time_at(&config.timezone_id, utc);
     if let Some(error) = error {
         return TimeState::Degraded {
             local_time: local,
-            last_sync: last_sync.map(|(utc, _)| utc),
-            error,
+            last_sync: anchor.map(|anchor| anchor.utc),
+            error: error.to_string(),
         };
     }
-    match last_sync {
-        Some((utc, source)) => TimeState::Synced {
+    match anchor {
+        Some(anchor) => TimeState::Synced {
             utc,
-            local_time: utc
-                .with_timezone(&parse_timezone(&config.timezone_id).unwrap_or(chrono_tz::UTC))
-                .fixed_offset(),
-            source,
-            sampled_at: Utc::now(),
+            local_time: local,
+            source: anchor.source.clone(),
+            sampled_at: anchor.sampled_at,
         },
         None => TimeState::Local { local_time: local },
+    }
+}
+
+#[derive(Debug, Clone)]
+struct TimeAnchor {
+    utc: DateTime<Utc>,
+    sampled_at: DateTime<Utc>,
+    instant: Instant,
+    source: TimeSource,
+}
+impl TimeAnchor {
+    fn utc_at(&self, now: Instant) -> DateTime<Utc> {
+        self.utc + now.saturating_duration_since(self.instant)
     }
 }
 
@@ -1022,11 +930,12 @@ mod tests {
             .unwrap()
     }
     fn config() -> SystemServicesConfig {
-        let mut config = SystemServicesConfig::default();
-        config.time_sync_mode = TimeSyncMode::OperatingSystem;
-        config.weather_refresh_interval = Duration::from_secs(3600);
-        config.cache_dir = Some(tempfile::tempdir().unwrap().keep());
-        config
+        SystemServicesConfig {
+            time_sync_mode: TimeSyncMode::OperatingSystem,
+            weather_refresh_interval: Duration::from_secs(3600),
+            cache_dir: Some(tempfile::tempdir().unwrap().keep()),
+            ..SystemServicesConfig::default()
+        }
     }
     fn wait_until(
         receiver: &mut watch::Receiver<SystemSnapshot>,
@@ -1093,5 +1002,105 @@ mod tests {
             handle.refresh_weather(),
             Err(SystemServicesError::Shutdown)
         ));
+    }
+
+    #[test]
+    fn wmo_codes_match_mature_normalizer() {
+        let cases = [
+            (0, WeatherCondition::Clear),
+            (1, WeatherCondition::PartlyCloudy),
+            (2, WeatherCondition::PartlyCloudy),
+            (3, WeatherCondition::Overcast),
+            (45, WeatherCondition::Fog),
+            (48, WeatherCondition::Fog),
+            (51, WeatherCondition::Drizzle),
+            (53, WeatherCondition::Drizzle),
+            (55, WeatherCondition::Drizzle),
+            (56, WeatherCondition::FreezingRain),
+            (57, WeatherCondition::FreezingRain),
+            (61, WeatherCondition::Rain),
+            (63, WeatherCondition::Rain),
+            (65, WeatherCondition::Rain),
+            (66, WeatherCondition::FreezingRain),
+            (67, WeatherCondition::FreezingRain),
+            (71, WeatherCondition::Snow),
+            (73, WeatherCondition::Snow),
+            (75, WeatherCondition::Snow),
+            (77, WeatherCondition::SnowGrains),
+            (80, WeatherCondition::RainShowers),
+            (81, WeatherCondition::RainShowers),
+            (82, WeatherCondition::RainShowers),
+            (85, WeatherCondition::SnowShowers),
+            (86, WeatherCondition::SnowShowers),
+            (95, WeatherCondition::Thunderstorm),
+            (96, WeatherCondition::ThunderstormHail),
+            (99, WeatherCondition::ThunderstormHail),
+            (-1, WeatherCondition::Clear),
+        ];
+        for (code, expected) in cases {
+            assert_eq!(normalize_open_meteo_code(code), expected, "code {code}");
+        }
+    }
+
+    #[test]
+    fn monotonic_anchor_advances_and_error_remains_degraded() {
+        let instant = Instant::now();
+        let utc = DateTime::parse_from_rfc3339("2026-01-01T00:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        let anchor = TimeAnchor {
+            utc,
+            sampled_at: utc,
+            instant,
+            source: TimeSource::Network("test".into()),
+        };
+        assert_eq!(
+            anchor.utc_at(instant + Duration::from_secs(7)),
+            utc + Duration::from_secs(7)
+        );
+        let state = current_time_state(
+            &config(),
+            Some(&anchor),
+            Some("offline"),
+            instant + Duration::from_secs(7),
+        );
+        assert!(
+            matches!(state, TimeState::Degraded { last_sync: Some(value), ref error, .. } if value == utc && error == "offline")
+        );
+        let next = current_time_state(
+            &config(),
+            Some(&anchor),
+            Some("offline"),
+            instant + Duration::from_secs(8),
+        );
+        assert!(matches!(next, TimeState::Degraded { ref error, .. } if error == "offline"));
+    }
+
+    struct PendingProvider;
+    #[async_trait]
+    impl WeatherProvider for PendingProvider {
+        async fn current_weather(
+            &self,
+            _: WeatherLocation,
+            _: WeatherUnits,
+        ) -> Result<WeatherData, String> {
+            std::future::pending().await
+        }
+    }
+
+    #[test]
+    fn shutdown_and_reconfigure_cancel_pending_provider_wait() {
+        let (handle, _) = SystemServicesRuntime::start_with_provider(
+            config(),
+            watchdog(),
+            Arc::new(PendingProvider),
+        );
+        std::thread::sleep(Duration::from_millis(50));
+        let mut changed = config();
+        changed.timezone_id = "Asia/Shanghai".into();
+        handle.reconfigure(changed).unwrap();
+        let started = Instant::now();
+        handle.shutdown().unwrap();
+        assert!(started.elapsed() < Duration::from_secs(1));
     }
 }

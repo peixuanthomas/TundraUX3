@@ -3,7 +3,7 @@ use crate::animation::{
 };
 use crate::render::TerminalRenderer;
 use crossterm::style::Color;
-use system_services::RainIntensity;
+use system_services_model::RainIntensity;
 
 use rand::{Rng, RngExt};
 use std::collections::VecDeque;

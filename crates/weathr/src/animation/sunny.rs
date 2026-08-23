@@ -6,7 +6,7 @@ use crate::render::TerminalRenderer;
 use chrono::{DateTime, NaiveDateTime, NaiveTime};
 use crossterm::style::Color;
 use rand::Rng;
-use system_services::CelestialEvents;
+use system_services_model::CelestialEvents;
 
 use std::io;
 use std::time::{Duration, Instant};
@@ -192,8 +192,8 @@ mod tests {
     use crate::app_state::AppState;
     use crate::app_state::LocationDisplay;
     use chrono::NaiveTime;
-    use system_services::CelestialEvents;
-    use system_services::{
+    use system_services_model::CelestialEvents;
+    use system_services_model::{
         WeatherCondition, WeatherConditions, WeatherData, WeatherLocation, WeatherUnits,
     };
 

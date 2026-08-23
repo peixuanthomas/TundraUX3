@@ -8,6 +8,7 @@ members = [
     "crates/shell",
     "crates/storage", "crates/time",
     "crates/system-services",
+    "crates/system-services-model",
     "crates/ui",
     "crates/watchdog",
     "crates/weathr",

@@ -1,4 +1,4 @@
-use crate::app::{App, AppRunOutcome};
+use crate::app::{App, AppInput, AppRunOutcome};
 use crate::app_state::BottomHudPrompt;
 use crate::error::{TerminalError, WeatherAssetError};
 use crate::render::TerminalRenderer;
@@ -7,7 +7,7 @@ use std::fmt;
 use std::io;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
-use system_services::SystemSnapshot;
+use system_services_model::SystemSnapshot;
 use tokio::sync::watch;
 use watchdog::{AppCriticality, AppDescriptor, AppId, AppWatchdog, WatchdogError};
 
@@ -28,6 +28,30 @@ pub struct WeathrDisplayInput {
     pub palette: Palette,
     pub shutdown: Arc<AtomicBool>,
     pub minimum_terminal_size: Option<(u16, u16)>,
+    pub exit_semantic: ExitSemantic,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExitSemantic {
+    Start,
+    Quit,
+}
+impl ExitSemantic {
+    fn prompt(self) -> BottomHudPrompt {
+        match self {
+            Self::Start => BottomHudPrompt::Start,
+            Self::Quit => BottomHudPrompt::Quit,
+        }
+    }
+    fn resolve(self, outcome: AppRunOutcome) -> ShellLockscreenResult {
+        match outcome {
+            AppRunOutcome::Cancelled => ShellLockscreenResult::Cancelled,
+            AppRunOutcome::Space => match self {
+                Self::Start => ShellLockscreenResult::Started,
+                Self::Quit => ShellLockscreenResult::Quit,
+            },
+        }
+    }
 }
 
 impl fmt::Debug for WeathrDisplayInput {
@@ -37,6 +61,7 @@ impl fmt::Debug for WeathrDisplayInput {
             .field("clock_format", &self.clock_format)
             .field("hide_hud", &self.hide_hud)
             .field("minimum_terminal_size", &self.minimum_terminal_size)
+            .field("exit_semantic", &self.exit_semantic)
             .finish_non_exhaustive()
     }
 }
@@ -44,16 +69,8 @@ impl fmt::Debug for WeathrDisplayInput {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ShellLockscreenResult {
     Started,
+    Quit,
     Cancelled,
-}
-
-impl From<AppRunOutcome> for ShellLockscreenResult {
-    fn from(value: AppRunOutcome) -> Self {
-        match value {
-            AppRunOutcome::Space => Self::Started,
-            AppRunOutcome::Cancelled => Self::Cancelled,
-        }
-    }
 }
 
 #[derive(Debug)]
@@ -181,21 +198,21 @@ async fn run_display_inner(
     let minimum = minimum_terminal_size_for_assets(dimensions, input.minimum_terminal_size);
     let mut renderer = TerminalRenderer::new_with_minimum(minimum)?;
     let (width, height) = renderer.get_size();
-    let mut app = App::new_with_bottom_hud_prompt_and_assets(
-        width,
-        height,
-        registry,
-        BottomHudPrompt::Start,
-        input.snapshots,
-        input.clock_format,
-        input.hide_hud,
-        cached_store.as_deref(),
-    )?;
+    let mut app = App::new_with_bottom_hud_prompt_and_assets(AppInput {
+        term_width: width,
+        term_height: height,
+        themes: registry,
+        bottom_hud_prompt: input.exit_semantic.prompt(),
+        snapshots: input.snapshots,
+        clock_format: input.clock_format,
+        hide_hud: input.hide_hud,
+        cached_store: cached_store.as_deref(),
+    })?;
     renderer.init()?;
     let run_result = app
         .run_with_outcome_and_shutdown(&mut renderer, &input.shutdown)
         .await
-        .map(ShellLockscreenResult::from)
+        .map(|outcome| input.exit_semantic.resolve(outcome))
         .map_err(WeathrRunError::Run);
     let cleanup = renderer.cleanup().map_err(WeathrRunError::Cleanup);
     match (run_result, cleanup) {
@@ -218,4 +235,22 @@ fn minimum_terminal_size_for_assets(
             .unwrap_or(u16::MAX)
             .max(supplied.1),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn host_prompt_and_space_outcome_agree() {
+        assert_eq!(ExitSemantic::Start.prompt(), BottomHudPrompt::Start);
+        assert_eq!(
+            ExitSemantic::Start.resolve(AppRunOutcome::Space),
+            ShellLockscreenResult::Started
+        );
+        assert_eq!(ExitSemantic::Quit.prompt(), BottomHudPrompt::Quit);
+        assert_eq!(
+            ExitSemantic::Quit.resolve(AppRunOutcome::Space),
+            ShellLockscreenResult::Quit
+        );
+    }
 }

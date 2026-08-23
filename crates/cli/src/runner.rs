@@ -337,6 +337,7 @@ fn launch_weathr_managed(
         palette: weathr::theme::catalogue::DEFAULT_PALETTE,
         shutdown: Arc::new(AtomicBool::new(false)),
         minimum_terminal_size: options.minimum_terminal_size,
+        exit_semantic: weathr::ExitSemantic::Quit,
     };
     let result = weathr::run_display_blocking(input, watchdog).map(|_| ());
     let _ = services.shutdown();

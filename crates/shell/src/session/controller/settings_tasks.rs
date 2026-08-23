@@ -14,6 +14,7 @@ pub(in crate::session) struct ShellSettingsTaskShared {
     pub(in crate::session) workers: Mutex<BTreeMap<u64, ManagedThreadHandle<()>>>,
     pub(in crate::session) next_request_id: std::sync::atomic::AtomicU64,
     pub(in crate::session) system_services: Option<system_services::SystemServicesHandle>,
+    pub(in crate::session) system_services_config: Mutex<system_services::SystemServicesConfig>,
 }
 
 pub(in crate::session) static NEXT_SETTINGS_RUNTIME_ID: std::sync::atomic::AtomicU64 =
@@ -45,17 +46,23 @@ impl ShellSettingsTaskRuntime {
                 workers: Mutex::new(BTreeMap::new()),
                 next_request_id: std::sync::atomic::AtomicU64::new(1),
                 system_services: None,
+                system_services_config: Mutex::new(system_services::SystemServicesConfig::default()),
             }),
         }
     }
 
     pub(in crate::session) fn new_managed(watchdog: AppWatchdog) -> Self {
-        Self::new_managed_with_system_services(watchdog, None)
+        Self::new_managed_with_system_services(
+            watchdog,
+            None,
+            system_services::SystemServicesConfig::default(),
+        )
     }
 
     pub(in crate::session) fn new_managed_with_system_services(
         watchdog: AppWatchdog,
         system_services: Option<system_services::SystemServicesHandle>,
+        system_services_config: system_services::SystemServicesConfig,
     ) -> Self {
         use std::sync::atomic::Ordering;
 
@@ -73,6 +80,7 @@ impl ShellSettingsTaskRuntime {
                 workers: Mutex::new(BTreeMap::new()),
                 next_request_id: std::sync::atomic::AtomicU64::new(1),
                 system_services,
+                system_services_config: Mutex::new(system_services_config),
             }),
         }
     }
@@ -106,6 +114,12 @@ impl ShellSettingsTaskRuntime {
         let events = self.shared.event_tx.clone();
         let event_config = config.clone();
         let system_services = self.shared.system_services.clone();
+        let base_config = self
+            .shared
+            .system_services_config
+            .lock()
+            .map_err(|_| "System services configuration is unavailable".to_string())?
+            .clone();
         let worker = task_group
             .spawn_thread(TaskSpec::one_shot(task_id), move || {
                 let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -119,7 +133,10 @@ impl ShellSettingsTaskRuntime {
                         })?;
                     if let Some(system_services) = system_services.as_ref() {
                         system_services
-                            .validate_time_source(system_services_config_for_time_sync(&config))
+                            .validate_time_source(system_services_config_for_time_sync(
+                                &base_config,
+                                &config,
+                            ))
                             .map_err(|error| time::TimeSyncError::new(vec![error.to_string()]))
                     } else {
                         runtime.block_on(async {
@@ -172,15 +189,20 @@ impl ShellSettingsTaskRuntime {
 
     pub(in crate::session) fn reconfigure_system_services(&self, config: &storage::StorageConfig) {
         if let Some(system_services) = self.shared.system_services.as_ref() {
-            let _ = system_services.reconfigure(system_services_config_for_storage_config(config));
+            if let Ok(mut base) = self.shared.system_services_config.lock() {
+                let next = system_services_config_for_storage_config(&base, config);
+                let _ = system_services.reconfigure(next.clone());
+                *base = next;
+            }
         }
     }
 }
 
 fn system_services_config_for_time_sync(
+    base: &system_services::SystemServicesConfig,
     time_sync: &storage::TimeSyncConfig,
 ) -> system_services::SystemServicesConfig {
-    let mut config = system_services::SystemServicesConfig::default();
+    let mut config = base.clone();
     config.time_sync_mode = match time_sync.source {
         storage::TimeSyncSource::NetworkServer => system_services::TimeSyncMode::Network,
         storage::TimeSyncSource::OperatingSystem => system_services::TimeSyncMode::OperatingSystem,
@@ -190,9 +212,10 @@ fn system_services_config_for_time_sync(
 }
 
 fn system_services_config_for_storage_config(
+    base: &system_services::SystemServicesConfig,
     storage_config: &storage::StorageConfig,
 ) -> system_services::SystemServicesConfig {
-    let mut config = system_services_config_for_time_sync(&storage_config.time_sync);
+    let mut config = system_services_config_for_time_sync(base, &storage_config.time_sync);
     config.weather_location = storage_config.weather_location.clone();
     config.timezone_id = storage_config.timezone.clone();
     config.timezone_location = app::setup_timezone_options()
@@ -221,3 +244,38 @@ impl PartialEq for ShellSettingsTaskRuntime {
 }
 
 impl Eq for ShellSettingsTaskRuntime {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn storage_mapping_preserves_runtime_only_configuration() {
+        let base = system_services::SystemServicesConfig {
+            cache_dir: Some(std::path::PathBuf::from("cache/system-services")),
+            weather_refresh_interval: Duration::from_secs(17),
+            location_refresh_interval: Duration::from_secs(18),
+            time_sync_interval: Duration::from_secs(19),
+            request_timeout: Duration::from_secs(20),
+            fallback_location: system_services::GeoLocation {
+                latitude: 1.0,
+                longitude: 2.0,
+                city: Some("fallback".into()),
+            },
+            ..system_services::SystemServicesConfig::default()
+        };
+        let mapped =
+            system_services_config_for_storage_config(&base, &storage::StorageConfig::default());
+        assert_eq!(mapped.cache_dir, base.cache_dir);
+        assert_eq!(
+            mapped.weather_refresh_interval,
+            base.weather_refresh_interval
+        );
+        assert_eq!(
+            mapped.location_refresh_interval,
+            base.location_refresh_interval
+        );
+        assert_eq!(mapped.time_sync_interval, base.time_sync_interval);
+        assert_eq!(mapped.request_timeout, base.request_timeout);
+        assert_eq!(mapped.fallback_location, base.fallback_location);
+    }
+}

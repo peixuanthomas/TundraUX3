@@ -1,0 +1,8 @@
+[package]
+name = "system-services-model"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+chrono = { version = "0.4", features = ["serde"] }
+serde = { version = "1.0", features = ["derive"] }

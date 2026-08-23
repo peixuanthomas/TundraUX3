@@ -260,6 +260,7 @@ pub fn run_fullscreen_blocking_managed_with_outcome(
                 palette: weathr::theme::catalogue::DEFAULT_PALETTE,
                 shutdown: terminal_control.shutdown_flag(),
                 minimum_terminal_size: Some(terminal_size_requirement.as_terminal_size()),
+                exit_semantic: weathr::ExitSemantic::Start,
             };
             let lockscreen_watchdog = weathr_watchdog.clone();
             let lockscreen_result = weathr_watchdog.run_boundary(
@@ -275,6 +276,7 @@ pub fn run_fullscreen_blocking_managed_with_outcome(
             );
             match lockscreen_result {
                 Ok(Ok(weathr::ShellLockscreenResult::Started)) => {}
+                Ok(Ok(weathr::ShellLockscreenResult::Quit)) => return Ok(ShellRunOutcome::Exit),
                 Ok(Ok(weathr::ShellLockscreenResult::Cancelled)) => {
                     return Ok(ShellRunOutcome::Exit);
                 }
@@ -824,6 +826,7 @@ pub(super) fn run_fullscreen_shell_session(
         )?;
     }
     let mut theme = ui::TundraTheme::default_dark();
+    let settings_services_config = system_services_config_for_startup(&startup);
     let mut state = ShellSession::new_with_runtime_services(
         config,
         initial_size,
@@ -835,6 +838,7 @@ pub(super) fn run_fullscreen_shell_session(
         ShellSettingsTaskRuntime::new_managed_with_system_services(
             shell_watchdog.clone(),
             Some(system_services.clone()),
+            settings_services_config,
         ),
     );
     state.set_terminal_image_support(launcher_icons.is_some());
