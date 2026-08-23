@@ -1,13 +1,12 @@
 use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::text::Line;
-use ratatui::widgets::{Block, Borders};
 
 use super::common::render_auth_screen;
 use super::{AuthField, BootstrapAdminViewModel};
-use crate::TundraTheme;
-use crate::components::TextInput;
+use crate::components::{Surface, TextInput};
 use crate::screens::shell::{ShellChromeViewModel, ShellLayout, compute_shell_layout};
+use crate::{RenderContext, TundraTheme};
 
 pub fn render_bootstrap_admin(
     frame: &mut Frame<'_>,
@@ -16,6 +15,18 @@ pub fn render_bootstrap_admin(
     model: &BootstrapAdminViewModel,
     theme: &TundraTheme,
 ) {
+    let context = RenderContext::from_theme(theme, Default::default(), Default::default());
+    render_bootstrap_admin_context(frame, area, chrome, model, &context);
+}
+
+pub(crate) fn render_bootstrap_admin_context(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    chrome: &ShellChromeViewModel,
+    model: &BootstrapAdminViewModel,
+    context: &RenderContext,
+) {
+    let theme = &context.compatibility_theme();
     render_auth_screen(
         frame,
         area,
@@ -28,7 +39,7 @@ pub fn render_bootstrap_admin(
     let ShellLayout::Full { main, .. } = compute_shell_layout(area) else {
         return;
     };
-    let inner = Block::default().borders(Borders::ALL).inner(main);
+    let inner = Surface::new().bordered(true).inner(main);
     render_bootstrap_input(
         frame,
         Rect::new(

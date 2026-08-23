@@ -1,15 +1,15 @@
 use ratatui::Frame;
 use ratatui::layout::{Constraint, HorizontalAlignment, Layout, Rect};
 use ratatui::text::Line;
-use ratatui::widgets::{Block, Borders, List, ListItem, ListState, Paragraph, Wrap};
+use ratatui::widgets::{Paragraph, Wrap};
 
 use super::{LoginField, LoginViewModel};
-use crate::TundraTheme;
-use crate::components::{Button, TextInput};
+use crate::components::{Button, List, ListItem, Surface, TextInput};
 use crate::screens::shell::{
     ShellChromeViewModel, ShellLayout, compute_shell_layout, render_compact_home, render_status,
     render_top,
 };
+use crate::{RenderContext, TundraTheme};
 
 const LOGIN_USER_LIST_WIDTH: u16 = 30;
 const LOGIN_USERNAME_FIELD_HEIGHT: u16 = 5;
@@ -35,11 +35,23 @@ pub fn render_login(
     model: &LoginViewModel,
     theme: &TundraTheme,
 ) {
+    let context = RenderContext::from_theme(theme, Default::default(), Default::default());
+    render_login_context(frame, area, chrome, model, &context);
+}
+
+pub(crate) fn render_login_context(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    chrome: &ShellChromeViewModel,
+    model: &LoginViewModel,
+    context: &RenderContext,
+) {
+    let theme = &context.compatibility_theme();
     match compute_shell_layout(area) {
         ShellLayout::Compact(compact) => render_compact_home(frame, compact, chrome, theme),
         ShellLayout::Full { top, main, status } => {
             render_top(frame, top, chrome, theme);
-            render_login_main(frame, main, model, theme);
+            render_login_main(frame, main, model, context);
             render_status(frame, status, chrome, theme);
         }
     }
@@ -49,20 +61,19 @@ fn render_login_main(
     frame: &mut Frame<'_>,
     main: Rect,
     model: &LoginViewModel,
-    theme: &TundraTheme,
+    context: &RenderContext,
 ) {
-    let outer = theme
-        .block()
-        .title("Login")
-        .borders(Borders::ALL)
-        .style(theme.body_style());
-    frame.render_widget(outer, main);
+    let theme = &context.compatibility_theme();
+    Surface::new()
+        .titled("Login")
+        .bordered(true)
+        .render_frame(frame, main, context);
 
     let layout = login_layout(main);
 
-    render_login_user_list(frame, layout.user_list, model, theme);
-    render_login_username_field(frame, layout.selected_username, model, theme);
-    render_login_password_field(frame, layout.password, model, theme);
+    render_login_user_list(frame, layout.user_list, model, context);
+    render_login_username_field(frame, layout.selected_username, model, context);
+    render_login_password_field(frame, layout.password, model, context);
     render_login_button(
         frame,
         layout.password_visibility,
@@ -97,20 +108,22 @@ fn render_login_user_list(
     frame: &mut Frame<'_>,
     area: Rect,
     model: &LoginViewModel,
-    theme: &TundraTheme,
+    context: &RenderContext,
 ) {
     if area.width == 0 || area.height == 0 {
         return;
     }
 
     let visible_rows = area.height.saturating_sub(2) as usize;
-    let (start, end) = login_user_window_bounds(model, visible_rows);
-    let items: Vec<ListItem<'static>> = if model.users.is_empty() {
-        vec![ListItem::new(Line::from("(no local users)"))]
+    let (start, _) = login_user_window_bounds(model, visible_rows);
+    let items: Vec<ListItem> = if model.users.is_empty() {
+        vec![ListItem::new("login.user.empty", "(no local users)")]
     } else {
-        model.users[start..end]
+        model
+            .users
             .iter()
-            .map(|user| {
+            .enumerate()
+            .map(|(index, user)| {
                 let mut suffix = String::new();
                 if !user.enabled {
                     suffix.push_str(" disabled");
@@ -123,48 +136,34 @@ fn render_login_user_list(
                 } else {
                     format!("{} ({}) |{}", user.username, user.role, suffix)
                 };
-                ListItem::new(Line::from(label))
+                ListItem::new(format!("login.user.{index}"), label).disabled(!user.enabled)
             })
             .collect()
     };
 
-    let mut state = ListState::default();
-    if model.selected_index >= start && model.selected_index < end {
-        state.select(Some(model.selected_index - start));
+    let mut list = List::new("login.users", items)
+        .titled("Users")
+        .with_viewport_start(start);
+    list.set_focused(model.focused_field == LoginField::UserList);
+    list.set_selected((!model.users.is_empty()).then_some(model.selected_index));
+    let mut list_theme = context.compatibility_theme();
+    if model.focused_field == LoginField::UserList {
+        list_theme.border_color = context.theme.focus;
     }
-
-    let block_style = if model.focused_field == LoginField::UserList {
-        theme.title_style()
-    } else {
-        theme.body_style()
-    };
-    let list = List::new(items)
-        .block(
-            theme
-                .block()
-                .title("Users")
-                .title_style(block_style)
-                .borders(Borders::ALL)
-                .style(block_style)
-                .border_style(
-                    theme.selectable_border_style(model.focused_field == LoginField::UserList),
-                ),
-        )
-        .highlight_symbol("> ")
-        .highlight_style(theme.title_style());
-    frame.render_stateful_widget(list, area, &mut state);
+    list.render_frame(frame, area, &list_theme);
 }
 
 fn render_login_username_field(
     frame: &mut Frame<'_>,
     area: Rect,
     model: &LoginViewModel,
-    theme: &TundraTheme,
+    context: &RenderContext,
 ) {
     if area.width == 0 || area.height == 0 {
         return;
     }
 
+    let theme = &context.compatibility_theme();
     let selected = model.selected_user();
     let username = selected
         .map(|user| user.username.clone())
@@ -181,18 +180,14 @@ fn render_login_username_field(
         Line::from(display),
         Line::styled(role, theme.muted_style()),
     ];
+    let surface = Surface::new().titled("Selected User").bordered(true);
+    let inner = surface.inner(area);
+    surface.render_frame(frame, area, context);
     frame.render_widget(
         Paragraph::new(lines)
             .alignment(HorizontalAlignment::Center)
-            .block(
-                theme
-                    .block()
-                    .title("Selected User")
-                    .borders(Borders::ALL)
-                    .style(theme.body_style()),
-            )
             .wrap(Wrap { trim: true }),
-        area,
+        inner,
     );
 }
 
@@ -200,27 +195,44 @@ fn render_login_password_field(
     frame: &mut Frame<'_>,
     area: Rect,
     model: &LoginViewModel,
-    theme: &TundraTheme,
+    context: &RenderContext,
 ) {
     if area.width == 0 || area.height == 0 {
         return;
     }
 
-    let block_style = if model.focused_field == LoginField::Password {
-        theme.title_style()
-    } else {
-        theme.body_style()
-    };
+    let theme = &context.compatibility_theme();
     let focused = model.focused_field == LoginField::Password;
-    let block = theme
-        .block()
-        .title("Password")
-        .title_style(block_style)
-        .borders(Borders::ALL)
-        .style(block_style)
-        .border_style(theme.selectable_border_style(focused));
-    let inner = block.inner(area);
-    frame.render_widget(block, area);
+    let surface = Surface::new().titled("Password").bordered(true);
+    let inner = surface.inner(area);
+    surface.render_frame(
+        frame,
+        area,
+        &RenderContext {
+            theme: if focused {
+                crate::ThemeTokens {
+                    border: context.theme.focus,
+                    ..context.theme
+                }
+            } else {
+                context.theme
+            },
+            ..*context
+        },
+    );
+    frame.render_widget(
+        Paragraph::new("Password").style(if focused {
+            theme.title_style()
+        } else {
+            theme.body_style()
+        }),
+        Rect::new(
+            area.x.saturating_add(1),
+            area.y,
+            area.width.saturating_sub(2),
+            u16::from(area.height > 0),
+        ),
+    );
 
     if inner.width == 0 || inner.height == 0 {
         return;
@@ -238,7 +250,15 @@ fn render_login_password_field(
     // The controller owns the password and the outer block owns focus. Keeping
     // the borderless content renderer unfocused preserves the prior placeholder
     // styling and deliberately avoids introducing a visible component cursor.
-    input.render_borderless_frame(frame, Rect::new(inner.x, inner.y, inner.width, 1), theme);
+    let mut input_theme = *theme;
+    if focused {
+        input_theme.foreground = theme.accent_color;
+    }
+    input.render_borderless_frame(
+        frame,
+        Rect::new(inner.x, inner.y, inner.width, 1),
+        &input_theme,
+    );
 }
 
 fn render_login_button(
@@ -365,7 +385,7 @@ fn login_columns(main: Rect) -> (Rect, Rect) {
 }
 
 fn login_inner_area(main: Rect) -> Rect {
-    Block::default().borders(Borders::ALL).inner(main)
+    Surface::new().bordered(true).inner(main)
 }
 
 fn login_user_window_bounds(model: &LoginViewModel, visible_rows: usize) -> (usize, usize) {

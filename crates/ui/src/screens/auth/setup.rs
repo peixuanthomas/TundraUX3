@@ -1,19 +1,16 @@
 use ratatui::Frame;
 use ratatui::layout::{Constraint, HorizontalAlignment, Layout, Rect};
 use ratatui::text::Line;
-use ratatui::widgets::{
-    Block, Borders, Clear, HighlightSpacing, List, ListItem, ListState, Paragraph, Scrollbar,
-    ScrollbarOrientation, ScrollbarState, Wrap,
-};
+use ratatui::widgets::{Clear, Paragraph, Wrap};
 
 use super::{SetupCustomColorTarget, SetupField, SetupStep, SetupViewModel};
-use crate::components::{Button, TextInput};
+use crate::components::{Button, List, ListItem, Scrollbar, Surface, TextInput};
 use crate::screens::shell::{
     ShellChromeViewModel, ShellLayout, centered_rect, compute_shell_layout, render_compact_home,
     render_status, render_top,
 };
 use crate::timezone_map::{TimezoneMapWidget, boundary_id_for_timezone};
-use crate::{TundraTheme, setup_standard_color_options};
+use crate::{RenderContext, TundraTheme, setup_standard_color_options};
 
 const SETUP_WIDE_MAP_MIN_WIDTH: u16 = 90;
 const SETUP_WIDE_MAP_MIN_HEIGHT: u16 = 14;
@@ -57,21 +54,34 @@ pub fn render_setup(
     model: &SetupViewModel,
     theme: &TundraTheme,
 ) {
+    let context = RenderContext::from_theme(theme, Default::default(), Default::default());
+    render_setup_context(frame, area, chrome, model, &context);
+}
+
+pub(crate) fn render_setup_context(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    chrome: &ShellChromeViewModel,
+    model: &SetupViewModel,
+    context: &RenderContext,
+) {
+    let theme = context.compatibility_theme();
     let appearance_theme = if model.step == SetupStep::Appearance {
         theme
             .with_border_shape(model.border_shape)
             .with_border_color(model.theme_color)
             .with_accent_color(model.accent_color)
     } else {
-        *theme
+        theme
     };
     let theme = &appearance_theme;
+    let appearance_context = RenderContext::from_theme(theme, context.motion, context.capabilities);
 
     match compute_shell_layout(area) {
         ShellLayout::Compact(compact) => render_compact_home(frame, compact, chrome, theme),
         ShellLayout::Full { top, main, status } => {
             render_top(frame, top, chrome, theme);
-            render_setup_main(frame, main, model, theme);
+            render_setup_main(frame, main, model, &appearance_context);
             render_status(frame, status, chrome, theme);
         }
     }
@@ -81,8 +91,9 @@ fn render_setup_main(
     frame: &mut Frame<'_>,
     area: Rect,
     model: &SetupViewModel,
-    theme: &TundraTheme,
+    context: &RenderContext,
 ) {
+    let theme = &context.compatibility_theme();
     if model.step == SetupStep::Timezone
         && area.width >= SETUP_WIDE_MAP_MIN_WIDTH
         && area.height >= SETUP_WIDE_MAP_MIN_HEIGHT
@@ -92,10 +103,10 @@ fn render_setup_main(
             Constraint::Min(30),
         ])
         .areas(area);
-        render_setup_controls(frame, area, controls, model, theme);
+        render_setup_controls(frame, area, controls, model, context);
         render_setup_timezone_map(frame, map, model, theme);
     } else {
-        render_setup_controls(frame, area, area, model, theme);
+        render_setup_controls(frame, area, area, model, context);
     }
 }
 
@@ -104,13 +115,13 @@ fn render_setup_controls(
     main: Rect,
     controls: Rect,
     model: &SetupViewModel,
-    theme: &TundraTheme,
+    context: &RenderContext,
 ) {
     match model.step {
-        SetupStep::Language => render_setup_language_page(frame, controls, model, theme),
-        SetupStep::Timezone => render_setup_timezone_page(frame, main, controls, model, theme),
-        SetupStep::Admin => render_setup_admin_page(frame, controls, model, theme),
-        SetupStep::Appearance => render_setup_appearance_page(frame, controls, model, theme),
+        SetupStep::Language => render_setup_language_page(frame, controls, model, context),
+        SetupStep::Timezone => render_setup_timezone_page(frame, main, controls, model, context),
+        SetupStep::Admin => render_setup_admin_page(frame, controls, model, context),
+        SetupStep::Appearance => render_setup_appearance_page(frame, controls, model, context),
     }
 }
 
@@ -138,9 +149,10 @@ fn render_setup_language_page(
     frame: &mut Frame<'_>,
     area: Rect,
     model: &SetupViewModel,
-    theme: &TundraTheme,
+    context: &RenderContext,
 ) {
-    frame.render_widget(setup_block(theme), area);
+    let theme = &context.compatibility_theme();
+    render_setup_surface(frame, area, context, model.border_shape);
 
     let content = setup_inner_area(area);
     frame.render_widget(
@@ -157,27 +169,27 @@ fn render_setup_language_page(
 
     let list_area = setup_language_list_area(area, model.languages.len());
     let items = if model.languages.is_empty() {
-        vec![ListItem::new("No languages available").style(theme.muted_style())]
+        vec![ListItem::new("setup.language.empty", "No languages available").disabled(true)]
     } else {
         model
             .languages
             .iter()
-            .map(|language| ListItem::new(format!("{} ({})", language.label, language.code)))
+            .enumerate()
+            .map(|(index, language)| {
+                ListItem::new(
+                    format!("setup.language.{index}"),
+                    format!("{} ({})", language.label, language.code),
+                )
+            })
             .collect()
     };
     let selected = (!model.languages.is_empty())
         .then_some(model.selected_language_index)
         .filter(|index| *index < model.languages.len());
-    let mut state = ListState::default().with_selected(selected);
-    frame.render_stateful_widget(
-        List::new(items)
-            .style(theme.body_style())
-            .highlight_symbol("> ")
-            .highlight_spacing(HighlightSpacing::Always)
-            .highlight_style(theme.title_style()),
-        list_area,
-        &mut state,
-    );
+    let mut list = List::new("setup.languages", items);
+    list.set_focused(true);
+    list.set_selected(selected);
+    list.render_borderless_frame(frame, list_area, theme);
 
     let footer_y = list_area.bottom().saturating_add(1);
     let footer = Rect::new(
@@ -199,14 +211,15 @@ fn render_setup_timezone_page(
     main: Rect,
     area: Rect,
     model: &SetupViewModel,
-    theme: &TundraTheme,
+    context: &RenderContext,
 ) {
-    frame.render_widget(setup_block(theme), area);
+    let theme = &context.compatibility_theme();
+    render_setup_surface(frame, area, context, model.border_shape);
 
     let content = setup_inner_area(area);
     let list_area = setup_timezone_list_area(main);
     let visible_rows = setup_timezone_visible_rows(main);
-    let (start, end) = setup_timezone_window_bounds(model, visible_rows);
+    let (start, _) = setup_timezone_window_bounds(model, visible_rows);
 
     let header = Rect::new(
         content.x,
@@ -228,45 +241,29 @@ fn render_setup_timezone_page(
             .alignment(HorizontalAlignment::Left),
         header,
     );
-    let items = if start >= end {
-        if model.timezones.is_empty() {
-            vec![ListItem::new("No timezones available").style(theme.muted_style())]
-        } else {
-            Vec::new()
-        }
+    let items = if model.timezones.is_empty() {
+        vec![ListItem::new("setup.timezone.empty", "No timezones available").disabled(true)]
     } else {
-        model.timezones[start..end]
+        model
+            .timezones
             .iter()
-            .map(|timezone| ListItem::new(format!("{} ({})", timezone.label, timezone.id)))
+            .enumerate()
+            .map(|(index, timezone)| {
+                ListItem::new(
+                    format!("setup.timezone.{index}"),
+                    format!("{} ({})", timezone.label, timezone.id),
+                )
+            })
             .collect()
     };
-    let selected = model
-        .selected_timezone_index
-        .checked_sub(start)
-        .filter(|index| *index < items.len());
-    let mut list_state = ListState::default().with_selected(selected);
-    frame.render_stateful_widget(
-        List::new(items)
-            .style(theme.body_style())
-            .highlight_symbol("> ")
-            .highlight_spacing(HighlightSpacing::Always)
-            .highlight_style(theme.title_style()),
-        list_area,
-        &mut list_state,
-    );
+    let mut list = List::new("setup.timezones", items).with_viewport_start(start);
+    list.set_focused(true);
+    list.set_selected(Some(model.selected_timezone_index));
+    list.render_borderless_frame(frame, list_area, theme);
     if model.timezones.len() > visible_rows && list_area.width > 0 && list_area.height > 0 {
-        let mut scrollbar_state = ScrollbarState::new(model.timezones.len())
-            .position(start)
-            .viewport_content_length(visible_rows);
-        frame.render_stateful_widget(
-            Scrollbar::new(ScrollbarOrientation::VerticalRight)
-                .begin_symbol(None)
-                .end_symbol(None)
-                .track_style(theme.muted_style())
-                .thumb_style(theme.title_style()),
-            list_area,
-            &mut scrollbar_state,
-        );
+        let context = RenderContext::from_theme(theme, Default::default(), Default::default());
+        Scrollbar::new(model.timezones.len(), visible_rows, start)
+            .render_frame(frame, list_area, &context);
     }
     frame.render_widget(
         Paragraph::new(setup_timezone_footer_lines(model, theme))
@@ -280,9 +277,10 @@ fn render_setup_admin_page(
     frame: &mut Frame<'_>,
     area: Rect,
     model: &SetupViewModel,
-    theme: &TundraTheme,
+    context: &RenderContext,
 ) {
-    frame.render_widget(setup_block(theme), area);
+    let theme = &context.compatibility_theme();
+    render_setup_surface(frame, area, context, model.border_shape);
 
     let content = setup_inner_area(area);
     let header = Rect::new(
@@ -369,9 +367,10 @@ fn render_setup_appearance_page(
     frame: &mut Frame<'_>,
     area: Rect,
     model: &SetupViewModel,
-    theme: &TundraTheme,
+    context: &RenderContext,
 ) {
-    frame.render_widget(setup_block(theme), area);
+    let theme = &context.compatibility_theme();
+    render_setup_surface(frame, area, context, model.border_shape);
 
     let content = setup_inner_area(area);
     let header = Rect::new(
@@ -449,7 +448,7 @@ fn render_setup_appearance_page(
                     .block()
                     .title("Preview")
                     .title_style(theme.title_style())
-                    .borders(Borders::ALL)
+                    .borders(ratatui::widgets::Borders::ALL)
                     .style(theme.body_style()),
             ),
             preview,
@@ -503,7 +502,7 @@ fn render_setup_shape_buttons(
             } else {
                 theme.body_style()
             })
-            .borders(Borders::ALL)
+            .borders(ratatui::widgets::Borders::ALL)
             .style(theme.body_style())
             .border_style(theme.selectable_border_style(focused)),
         outer,
@@ -554,7 +553,7 @@ fn render_setup_color_palette(
             } else {
                 theme.body_style()
             })
-            .borders(Borders::ALL)
+            .borders(ratatui::widgets::Borders::ALL)
             .style(theme.body_style())
             .border_style(theme.selectable_border_style(focused)),
         outer,
@@ -637,7 +636,7 @@ fn render_setup_custom_color_dialog(
             .block()
             .title(format!("Custom {target_label} color"))
             .title_style(theme.title_style())
-            .borders(Borders::ALL)
+            .borders(ratatui::widgets::Borders::ALL)
             .style(theme.body_style()),
         dialog,
     );
@@ -657,7 +656,7 @@ fn render_setup_custom_color_dialog(
             .block()
             .title("Color code")
             .title_style(theme.title_style())
-            .borders(Borders::ALL)
+            .borders(ratatui::widgets::Borders::ALL)
             .style(theme.body_style())
             .border_style(theme.selectable_border_style(true));
         let input_inner = input_block.inner(input_area);
@@ -713,13 +712,18 @@ fn render_setup_custom_color_dialog(
     );
 }
 
-fn setup_block(theme: &TundraTheme) -> Block<'static> {
-    theme
-        .block()
-        .title("First Run Setup")
-        .title_style(theme.title_style())
-        .borders(Borders::ALL)
-        .style(theme.body_style())
+fn render_setup_surface(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    context: &RenderContext,
+    border_shape: crate::BorderShape,
+) {
+    Surface::new()
+        .titled("First Run Setup")
+        .bordered(true)
+        .raised(true)
+        .border_shape(border_shape)
+        .render_frame(frame, area, context);
 }
 
 fn setup_language_header_lines(model: &SetupViewModel, theme: &TundraTheme) -> Vec<Line<'static>> {
@@ -813,7 +817,7 @@ fn render_setup_admin_field(
         .block()
         .title(title)
         .title_style(box_style)
-        .borders(Borders::ALL)
+        .borders(ratatui::widgets::Borders::ALL)
         .style(box_style)
         .border_style(theme.selectable_border_style(focused));
     let inner = block.inner(field_area);
@@ -890,7 +894,7 @@ fn render_setup_password_checklist(
         .block()
         .title("Password checklist")
         .title_style(theme.title_style())
-        .borders(Borders::ALL)
+        .borders(ratatui::widgets::Borders::ALL)
         .style(theme.body_style());
     let inner = block.inner(checklist_area);
     frame.render_widget(block, checklist_area);

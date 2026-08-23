@@ -1,14 +1,15 @@
 use ratatui::Frame;
 use ratatui::layout::{HorizontalAlignment, Rect};
 use ratatui::style::Style;
-use ratatui::widgets::{
-    Borders, Clear, Paragraph, Row, Scrollbar, ScrollbarOrientation, ScrollbarState, Table, Wrap,
-};
+use ratatui::widgets::{Clear, Paragraph, Wrap};
 
-use crate::components::{Button, terminal_width, truncate_to_terminal_width};
+use crate::components::{
+    Button, ComponentTone, DataTable, Scrollbar, Surface, terminal_width,
+    truncate_to_terminal_width,
+};
 use crate::screens::shell::{render_compact_home, render_status, render_top};
 use crate::{
-    AssetError, RuntimeAsciiAssets, ShellChromeViewModel, ShellLayout, TundraTheme,
+    AssetError, RenderContext, RuntimeAsciiAssets, ShellChromeViewModel, ShellLayout, TundraTheme,
     compute_shell_layout,
 };
 
@@ -704,7 +705,8 @@ pub fn render_launcher(
     model: &LauncherViewModel,
     theme: &TundraTheme,
 ) {
-    render_launcher_with_icons(frame, area, chrome, model, theme, None);
+    let context = RenderContext::from_theme(theme, Default::default(), Default::default());
+    render_launcher_with_icons_context(frame, area, chrome, model, &context, None);
 }
 
 pub fn render_launcher_with_icons(
@@ -715,11 +717,24 @@ pub fn render_launcher_with_icons(
     theme: &TundraTheme,
     icons: Option<&dyn LauncherIconRenderer>,
 ) {
+    let context = RenderContext::from_theme(theme, Default::default(), Default::default());
+    render_launcher_with_icons_context(frame, area, chrome, model, &context, icons);
+}
+
+pub(crate) fn render_launcher_with_icons_context(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    chrome: &ShellChromeViewModel,
+    model: &LauncherViewModel,
+    context: &RenderContext,
+    icons: Option<&dyn LauncherIconRenderer>,
+) {
+    let theme = &context.compatibility_theme();
     match compute_shell_layout(area) {
         ShellLayout::Compact(compact) => render_compact_home(frame, compact, chrome, theme),
         ShellLayout::Full { top, main, status } => {
             render_top(frame, top, chrome, theme);
-            render_launcher_main(frame, main, model, theme, icons);
+            render_launcher_main(frame, main, model, context, icons);
             render_status(frame, status, chrome, theme);
         }
     }
@@ -729,35 +744,32 @@ fn render_launcher_main(
     frame: &mut Frame<'_>,
     main: Rect,
     model: &LauncherViewModel,
-    theme: &TundraTheme,
+    context: &RenderContext,
     icons: Option<&dyn LauncherIconRenderer>,
 ) {
     let layout = launcher_layout(main, model);
-    frame.render_widget(
-        theme
-            .block()
-            .title(format!(
-                "Launcher · {}",
-                launcher_view_mode_label(model.view_mode)
-            ))
-            .borders(Borders::ALL)
-            .style(theme.body_style()),
-        layout.panel,
-    );
-    render_launcher_toolbar(frame, &layout, model, theme);
+    let theme = &context.compatibility_theme();
+    Surface::new()
+        .titled(format!(
+            "Launcher · {}",
+            launcher_view_mode_label(model.view_mode)
+        ))
+        .bordered(true)
+        .render_frame(frame, layout.panel, context);
+    render_launcher_toolbar(frame, &layout, model, context);
     match model.view_mode {
         LauncherViewMode::LargeIcons => render_launcher_grid(frame, &layout, model, theme, icons),
-        LauncherViewMode::Details => render_launcher_details(frame, &layout, model, theme),
+        LauncherViewMode::Details => render_launcher_details(frame, &layout, model, context),
     }
     if let Some(indicator) = layout.drop_indicator {
         render_launcher_drop_indicator(frame, indicator, theme);
     }
-    render_launcher_footer(frame, layout.footer, model, theme);
+    render_launcher_footer(frame, layout.footer, model, context);
     if let Some(scrollbar) = layout.scrollbar {
-        render_launcher_scrollbar(frame, scrollbar, &layout, model, theme);
+        render_launcher_scrollbar(frame, scrollbar, &layout, model, context);
     }
     if let (Some(dialog), Some(dialog_layout)) = (&model.confirmation, layout.confirmation) {
-        render_launcher_confirmation(frame, dialog_layout, dialog, theme);
+        render_launcher_confirmation(frame, dialog_layout, dialog, context);
     }
 }
 
@@ -776,8 +788,9 @@ fn render_launcher_toolbar(
     frame: &mut Frame<'_>,
     layout: &LauncherLayout,
     model: &LauncherViewModel,
-    theme: &TundraTheme,
+    context: &RenderContext,
 ) {
+    let theme = &context.compatibility_theme();
     for button_layout in &layout.toolbar_buttons {
         let Some(button) = model
             .toolbar
@@ -889,8 +902,9 @@ fn render_launcher_details(
     frame: &mut Frame<'_>,
     layout: &LauncherLayout,
     model: &LauncherViewModel,
-    theme: &TundraTheme,
+    context: &RenderContext,
 ) {
+    let theme = &context.compatibility_theme();
     let scrollbar_width = u16::from(layout.scrollbar.is_some());
     let width = layout.content.width.saturating_sub(scrollbar_width);
     if model.items.is_empty() {
@@ -909,37 +923,54 @@ fn render_launcher_details(
         return;
     }
     let widths = detail_widths(width);
-    let header = Row::new([
+    let header = [
         fit_text("Name", widths[0]),
         fit_text("Type", widths[1]),
         fit_text("Integrity", widths[2]),
         fit_text("Path", widths[3]),
-    ])
-    .style(theme.title_style());
-    let rows = layout.items.iter().filter_map(|item_layout| {
-        let item = model.items.get(item_layout.index)?;
-        let selected = model.selected_index == Some(item_layout.index) || item.selected;
-        Some(
-            Row::new([
-                fit_text(&format!("[A] {}", item.name), widths[0]),
-                fit_text(&item.type_label, widths[1]),
-                fit_text(launcher_status_label(item.status), widths[2]),
-                fit_text(&item.path, widths[3]),
-            ])
-            .style(item_style(item.status, selected, theme)),
-        )
+    ];
+    let rows = model.items.iter().map(|item| {
+        vec![
+            fit_text(&format!("[A] {}", item.name), widths[0]),
+            fit_text(&item.type_label, widths[1]),
+            fit_text(launcher_status_label(item.status), widths[2]),
+            fit_text(&item.path, widths[3]),
+        ]
     });
-    frame.render_widget(
-        Table::new(rows, widths)
-            .header(header)
-            .column_spacing(0)
-            .style(theme.body_style()),
+    let rows = rows.collect::<Vec<_>>();
+    let tones = model
+        .items
+        .iter()
+        .enumerate()
+        .map(|(index, item)| match item.status {
+            _ if model.selected_index == Some(index) || item.selected => ComponentTone::Accent,
+            LauncherItemStatus::Ready => ComponentTone::Default,
+            _ => ComponentTone::Warning,
+        })
+        .collect();
+    let mut table = DataTable::new("launcher.details", header, rows)
+        .with_column_widths(widths.to_vec())
+        .with_viewport_start(layout.visible_start)
+        .with_row_tones(tones)
+        .bordered(false);
+    table.selected = model.selected_index;
+    table.state.focused = false;
+    let table_context = RenderContext {
+        theme: crate::ThemeTokens {
+            accent_strong: context.theme.accent,
+            ..context.theme
+        },
+        ..*context
+    };
+    table.render_frame(
+        frame,
         Rect::new(
             layout.content.x,
             layout.content.y,
             width,
             layout.content.height,
         ),
+        &table_context,
     );
 }
 
@@ -955,8 +986,9 @@ fn render_launcher_footer(
     frame: &mut Frame<'_>,
     area: Rect,
     model: &LauncherViewModel,
-    theme: &TundraTheme,
+    context: &RenderContext,
 ) {
+    let theme = &context.compatibility_theme();
     if area.width == 0 || area.height == 0 {
         return;
     }
@@ -987,49 +1019,32 @@ fn render_launcher_scrollbar(
     area: Rect,
     layout: &LauncherLayout,
     model: &LauncherViewModel,
-    theme: &TundraTheme,
+    context: &RenderContext,
 ) {
     if area.height == 0 || model.items.is_empty() {
         return;
     }
-    let thumb_height = ((usize::from(area.height) * layout.visible_capacity) / model.items.len())
-        .clamp(1, usize::from(area.height));
-    let travel = usize::from(area.height).saturating_sub(thumb_height);
-    let max_start = model
-        .items
-        .len()
-        .saturating_sub(layout.visible_capacity)
-        .max(1);
-    let thumb_start = travel.saturating_mul(layout.visible_start) / max_start;
-    let mut state = ScrollbarState::new(travel.saturating_add(1))
-        .position(thumb_start)
-        .viewport_content_length(thumb_height);
-    frame.render_stateful_widget(
-        Scrollbar::new(ScrollbarOrientation::VerticalRight)
-            .begin_symbol(None)
-            .end_symbol(None)
-            .track_style(theme.muted_style())
-            .thumb_style(theme.muted_style()),
-        area,
-        &mut state,
-    );
+    Scrollbar::new(
+        model.items.len(),
+        layout.visible_capacity,
+        layout.visible_start,
+    )
+    .render_frame(frame, area, context);
 }
 
 fn render_launcher_confirmation(
     frame: &mut Frame<'_>,
     layout: LauncherConfirmationLayout,
     dialog: &LauncherConfirmationViewModel,
-    theme: &TundraTheme,
+    context: &RenderContext,
 ) {
+    let theme = &context.compatibility_theme();
     frame.render_widget(Clear, layout.area);
-    frame.render_widget(
-        theme
-            .block()
-            .title(dialog.title.clone())
-            .borders(Borders::ALL)
-            .style(theme.body_style()),
-        layout.area,
-    );
+    Surface::new()
+        .titled(dialog.title.clone())
+        .bordered(true)
+        .raised(true)
+        .render_frame(frame, layout.area, context);
     frame.render_widget(
         Paragraph::new(dialog.message.clone())
             .style(theme.body_style())

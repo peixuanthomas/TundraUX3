@@ -1,22 +1,32 @@
 use ratatui::Frame;
 use ratatui::layout::{HorizontalAlignment, Rect};
 use ratatui::text::Line;
-use ratatui::widgets::{Borders, Clear, Paragraph};
+use ratatui::widgets::{Clear, Paragraph};
 
 use super::layout::{
     NOTIFICATION_TOO_SMALL_MESSAGE, NotificationLayout, notification_action_text,
     notification_layout, wrap_notification_text,
 };
 use super::model::{NotificationLevel, NotificationTone, NotificationViewModel};
-use crate::TundraTheme;
-use crate::components::Button;
-use crate::theme::solid_border_style;
+use crate::components::{Button, Surface};
+use crate::{RenderContext, TundraTheme};
 pub fn render_notification_overlay(
     frame: &mut Frame<'_>,
     area: Rect,
     model: &NotificationViewModel,
     theme: &TundraTheme,
 ) {
+    let context = RenderContext::from_theme(theme, Default::default(), Default::default());
+    render_notification_overlay_context(frame, area, model, &context);
+}
+
+pub(crate) fn render_notification_overlay_context(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    model: &NotificationViewModel,
+    context: &RenderContext,
+) {
+    let theme = &context.compatibility_theme();
     if model.level != NotificationLevel::Modal {
         return;
     }
@@ -30,21 +40,27 @@ pub fn render_notification_overlay(
     };
 
     frame.render_widget(Clear, layout.dialog);
-    let tone_style = notification_tone_style(model.tone, theme);
-    frame.render_widget(
-        theme
-            .block()
-            .title(format!(
-                "{} {}",
-                notification_tone_prefix(model.tone),
-                model.title
-            ))
-            .title_style(tone_style)
-            .borders(Borders::ALL)
-            .border_style(solid_border_style(tone_style))
-            .style(tone_style),
-        layout.dialog,
-    );
+    let border = match model.tone {
+        NotificationTone::Info => context.theme.border,
+        NotificationTone::Success | NotificationTone::Warning => context.theme.accent,
+        NotificationTone::Error | NotificationTone::Critical => context.theme.danger,
+    };
+    let dialog_context = RenderContext {
+        theme: crate::ThemeTokens {
+            border,
+            ..context.theme
+        },
+        ..*context
+    };
+    Surface::new()
+        .titled(format!(
+            "{} {}",
+            notification_tone_prefix(model.tone),
+            model.title
+        ))
+        .bordered(true)
+        .raised(true)
+        .render_frame(frame, layout.dialog, &dialog_context);
 
     let message_lines = wrap_notification_text(&model.message, layout.message.width)
         .into_iter()

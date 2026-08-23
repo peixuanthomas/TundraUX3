@@ -1,15 +1,15 @@
 use ratatui::Frame;
 use ratatui::layout::{HorizontalAlignment, Rect};
 use ratatui::text::Line;
-use ratatui::widgets::{Borders, Paragraph, Wrap};
+use ratatui::widgets::{Paragraph, Wrap};
 
 use super::{HomeDisplayMode, HomeViewModel};
-use crate::TundraTheme;
-use crate::components::Button;
+use crate::components::{Button, Surface};
 use crate::screens::shell::{
     ShellChromeViewModel, ShellLayout, compute_shell_layout, render_compact_home, render_status,
     render_top,
 };
+use crate::{RenderContext, TundraTheme};
 
 const HOME_SUMMARY_HEIGHT: u16 = 1;
 const HOME_CONTROLS_HEIGHT: u16 = 2;
@@ -29,7 +29,8 @@ pub fn render_home(
     home: &HomeViewModel,
     theme: &TundraTheme,
 ) {
-    render_home_with_icons(frame, area, chrome, home, theme, None);
+    let context = RenderContext::from_theme(theme, Default::default(), Default::default());
+    render_home_with_icons_context(frame, area, chrome, home, &context, None);
 }
 
 pub fn render_home_with_icons(
@@ -40,11 +41,24 @@ pub fn render_home_with_icons(
     theme: &TundraTheme,
     icons: Option<&dyn HomeIconRenderer>,
 ) {
+    let context = RenderContext::from_theme(theme, Default::default(), Default::default());
+    render_home_with_icons_context(frame, area, chrome, home, &context, icons);
+}
+
+pub(crate) fn render_home_with_icons_context(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    chrome: &ShellChromeViewModel,
+    home: &HomeViewModel,
+    context: &RenderContext,
+    icons: Option<&dyn HomeIconRenderer>,
+) {
+    let theme = &context.compatibility_theme();
     match compute_shell_layout(area) {
         ShellLayout::Compact(compact) => render_compact_home(frame, compact, chrome, theme),
         ShellLayout::Full { top, main, status } => {
             render_top(frame, top, chrome, theme);
-            render_main(frame, main, home, theme, icons);
+            render_main(frame, main, home, context, icons);
             render_status(frame, status, chrome, theme);
         }
     }
@@ -54,12 +68,12 @@ fn render_main(
     frame: &mut Frame<'_>,
     area: Rect,
     home: &HomeViewModel,
-    theme: &TundraTheme,
+    context: &RenderContext,
     icons: Option<&dyn HomeIconRenderer>,
 ) {
     match home.display_mode() {
         HomeDisplayMode::Debug | HomeDisplayMode::User | HomeDisplayMode::Auth => {
-            render_user_main(frame, area, home, theme, icons)
+            render_user_main(frame, area, home, context, icons)
         }
     }
 }
@@ -68,15 +82,14 @@ fn render_user_main(
     frame: &mut Frame<'_>,
     area: Rect,
     home: &HomeViewModel,
-    theme: &TundraTheme,
+    context: &RenderContext,
     icons: Option<&dyn HomeIconRenderer>,
 ) {
-    let outer = theme
-        .block()
-        .title("Home")
-        .borders(Borders::ALL)
-        .style(theme.body_style());
-    frame.render_widget(outer, area);
+    let theme = &context.compatibility_theme();
+    Surface::new()
+        .titled("Home")
+        .bordered(true)
+        .render_frame(frame, area, context);
 
     let content = home_content_area(area);
     if content.width == 0 || content.height == 0 {

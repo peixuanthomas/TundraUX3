@@ -412,14 +412,14 @@ fn setup_renderer_handles_utc_and_utc_alias_timezone_map_without_panic() {
 }
 
 #[test]
-fn setup_renderer_uses_official_timezone_scrollbar_when_window_is_partial() {
+fn setup_renderer_uses_glacier_timezone_scrollbar_when_window_is_partial() {
     let model = sample_model(SetupStep::Timezone, None);
     let terminal = render_terminal(&model, 70, 19, TundraTheme::default_dark());
     let output = terminal_output(&terminal);
     let list_area = setup_timezone_list_area(setup_main_rect(70, 19));
 
     assert!(!output.contains("more timezones"));
-    assert!(region_has_symbol(&terminal, list_area, "█"));
+    assert!(region_has_symbol(&terminal, list_area, "┃"));
 }
 
 #[test]

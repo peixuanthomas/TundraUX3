@@ -2,18 +2,15 @@ use ratatui::Frame;
 use ratatui::layout::{Constraint, HorizontalAlignment, Layout, Rect};
 use ratatui::style::{Color, Modifier};
 use ratatui::text::Line;
-use ratatui::widgets::{
-    Borders, Clear, HighlightSpacing, List, ListItem, ListState, Paragraph, Row, Scrollbar,
-    ScrollbarOrientation, ScrollbarState, Table, TableState, Wrap,
-};
+use ratatui::widgets::{Borders, Clear, Paragraph, Wrap};
 
 use crate::components::{
-    Button, List as ComponentList, ListItem as ComponentListItem, TextInput, terminal_width,
-    truncate_to_terminal_width,
+    Button, ComponentTone, DataTable, List as ComponentList, ListItem as ComponentListItem,
+    Scrollbar, Surface, TextInput, terminal_width, truncate_to_terminal_width,
 };
 use crate::screens::shell::{render_status, render_top};
 use crate::{
-    BorderShape, ShellChromeViewModel, ShellLayout, TimezoneMapWidget, TundraTheme,
+    BorderShape, RenderContext, ShellChromeViewModel, ShellLayout, TimezoneMapWidget, TundraTheme,
     compute_shell_layout,
 };
 
@@ -313,6 +310,18 @@ pub fn render_settings(
     model: &SettingsViewModel,
     theme: &TundraTheme,
 ) -> SettingsLayout {
+    let context = RenderContext::from_theme(theme, Default::default(), Default::default());
+    render_settings_context(frame, area, chrome, model, &context)
+}
+
+pub(crate) fn render_settings_context(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    chrome: &ShellChromeViewModel,
+    model: &SettingsViewModel,
+    context: &RenderContext,
+) -> SettingsLayout {
+    let theme = &context.compatibility_theme();
     let main = match compute_shell_layout(area) {
         ShellLayout::Compact(compact) => compact,
         ShellLayout::Full { top, main, status } => {
@@ -322,7 +331,7 @@ pub fn render_settings(
         }
     };
     let layout = settings_layout(main, model);
-    render_settings_content(frame, &layout, model, theme);
+    render_settings_content(frame, &layout, model, context);
     layout
 }
 
@@ -463,16 +472,13 @@ fn render_settings_content(
     frame: &mut Frame<'_>,
     layout: &SettingsLayout,
     model: &SettingsViewModel,
-    theme: &TundraTheme,
+    context: &RenderContext,
 ) {
-    frame.render_widget(
-        theme
-            .block()
-            .title(" Settings ")
-            .borders(Borders::ALL)
-            .style(theme.body_style()),
-        layout.main,
-    );
+    let theme = &context.compatibility_theme();
+    Surface::new()
+        .titled(" Settings ")
+        .bordered(true)
+        .render_frame(frame, layout.main, context);
 
     let mut categories = ComponentList::new(
         "settings.categories",
@@ -493,7 +499,7 @@ fn render_settings_content(
             .position(|category| *category == model.selected_category),
     );
     categories.set_focused(true);
-    categories.render_frame(frame, settings_category_area(layout), theme);
+    categories.render_with_context(settings_category_area(layout), frame.buffer_mut(), context);
 
     let detail_area = settings_detail_area(layout);
     if let Some(preview) = model.appearance_preview {
@@ -534,11 +540,11 @@ fn render_settings_content(
         }
     }
 
-    render_cards(frame, detail_area, model, theme);
-    render_settings_footer(frame, detail_area, model, theme);
+    render_cards(frame, detail_area, model, context);
+    render_settings_footer(frame, detail_area, model, context);
 
     if let Some(picker) = &model.picker {
-        render_picker(frame, layout.main, picker, theme);
+        render_picker(frame, layout.main, picker, context);
     }
     if let Some(editor) = &model.color_editor {
         render_color_editor(frame, layout.main, editor, theme);
@@ -558,8 +564,9 @@ fn render_cards(
     frame: &mut Frame<'_>,
     detail_area: Rect,
     model: &SettingsViewModel,
-    theme: &TundraTheme,
+    context: &RenderContext,
 ) {
+    let theme = &context.compatibility_theme();
     let mut y = detail_area.y.saturating_sub(
         model
             .scroll_offset
@@ -572,14 +579,11 @@ fn render_cards(
         let height = (card.items.len() as u16).saturating_add(2).max(3);
         let card_area = Rect::new(detail_area.x, y, detail_area.width, height);
         if let Some(visible) = rect_intersection(card_area, detail_area) {
-            frame.render_widget(
-                theme
-                    .block()
-                    .title(format!(" {} ", card.title))
-                    .borders(Borders::ALL)
-                    .style(theme.body_style()),
-                visible,
-            );
+            Surface::new()
+                .titled(format!(" {} ", card.title))
+                .bordered(true)
+                .raised(true)
+                .render_frame(frame, visible, context);
         }
         let rows_area = Rect::new(
             card_area.x.saturating_add(1),
@@ -601,14 +605,7 @@ fn render_cards(
         let rows = card
             .items
             .iter()
-            .map(|item| {
-                let style = if item.enabled {
-                    theme.body_style()
-                } else {
-                    theme.muted_style().add_modifier(Modifier::DIM)
-                };
-                Row::new([item.label.clone(), String::new()]).style(style)
-            })
+            .map(|item| vec![item.label.clone(), String::new()])
             .collect::<Vec<_>>();
         let first_visible = usize::from(visible_rows.y.saturating_sub(rows_area.y));
         let visible_end = first_visible.saturating_add(usize::from(visible_rows.height));
@@ -617,28 +614,36 @@ fn render_cards(
             .iter()
             .position(|item| item.field == model.selected_field)
             .filter(|index| *index >= first_visible && *index < visible_end);
-        let selected_style = selected
-            .and_then(|index| card.items.get(index))
-            .map_or_else(
-                || theme.title_style(),
-                |item| {
-                    if item.enabled {
-                        theme.title_style()
-                    } else {
-                        theme.muted_style().add_modifier(Modifier::DIM)
-                    }
-                },
-            );
-        let mut state = TableState::default()
-            .with_offset(first_visible)
-            .with_selected(selected);
-        frame.render_stateful_widget(
-            Table::new(rows, [Constraint::Min(0), Constraint::Length(value_width)])
-                .column_spacing(1)
-                .row_highlight_style(selected_style),
-            visible_rows,
-            &mut state,
-        );
+        let tones = card
+            .items
+            .iter()
+            .map(|item| {
+                if item.enabled {
+                    ComponentTone::Default
+                } else {
+                    ComponentTone::Muted
+                }
+            })
+            .collect();
+        let mut table = DataTable::new(
+            format!("settings.card.{}", card.title),
+            Vec::<String>::new(),
+            rows,
+        )
+        .with_column_widths(vec![
+            visible_rows
+                .width
+                .saturating_sub(value_width)
+                .saturating_sub(1),
+            value_width,
+        ])
+        .with_viewport_start(first_visible)
+        .show_header(false)
+        .with_row_tones(tones)
+        .bordered(false);
+        table.selected = selected;
+        table.state.focused = selected.is_some();
+        table.render_frame(frame, visible_rows, context);
 
         for (index, item) in card.items.iter().enumerate() {
             let row = Rect::new(
@@ -671,8 +676,9 @@ fn render_settings_footer(
     frame: &mut Frame<'_>,
     detail: Rect,
     model: &SettingsViewModel,
-    theme: &TundraTheme,
+    context: &RenderContext,
 ) {
+    let theme = &context.compatibility_theme();
     if detail.height < 2 {
         return;
     }
@@ -704,18 +710,16 @@ fn render_picker(
     frame: &mut Frame<'_>,
     area: Rect,
     picker: &SettingsPickerViewModel,
-    theme: &TundraTheme,
+    context: &RenderContext,
 ) {
+    let theme = &context.compatibility_theme();
     let dialog = centered(area, area.width.min(78), area.height.min(24));
     frame.render_widget(Clear, dialog);
-    frame.render_widget(
-        theme
-            .block()
-            .title(format!(" {} ", picker.title))
-            .borders(Borders::ALL)
-            .style(theme.body_style()),
-        dialog,
-    );
+    Surface::new()
+        .titled(format!(" {} ", picker.title))
+        .bordered(true)
+        .raised(true)
+        .render_frame(frame, dialog, context);
     let query_area = Rect::new(
         dialog.x.saturating_add(2),
         dialog.y.saturating_add(1),
@@ -747,65 +751,38 @@ fn render_picker(
     let list = picker_list_area(dialog, picker.kind == SettingsPickerKind::Timezone);
     let visible = usize::from(list.height);
     let start = picker.window_start.min(picker.options.len());
-    let end = start.saturating_add(visible).min(picker.options.len());
-    let items = picker.options[start..end]
+    let items = picker
+        .options
         .iter()
-        .map(|option| {
+        .enumerate()
+        .map(|(index, option)| {
             let detail = if option.detail.is_empty() {
                 String::new()
             } else {
                 format!("  {}", option.detail)
             };
-            ListItem::new(Line::styled(
+            ComponentListItem::new(
+                format!("settings.picker.{index}"),
                 truncate(
                     &format!("{}{detail}", option.label),
                     usize::from(list.width.saturating_sub(2)),
                 ),
-                if !option.enabled {
-                    theme.muted_style().add_modifier(Modifier::DIM)
-                } else {
-                    theme.body_style()
-                },
-            ))
+            )
+            .disabled(!option.enabled)
+            .tone(if option.enabled {
+                ComponentTone::Default
+            } else {
+                ComponentTone::Muted
+            })
         })
         .collect::<Vec<_>>();
-    let selected = picker
-        .selected_index
-        .checked_sub(start)
-        .filter(|index| *index < items.len());
-    let selected_style = picker.options.get(picker.selected_index).map_or_else(
-        || theme.title_style(),
-        |option| {
-            if option.enabled {
-                theme.title_style()
-            } else {
-                theme.muted_style().add_modifier(Modifier::DIM)
-            }
-        },
-    );
-    let mut list_state = ListState::default().with_selected(selected);
-    frame.render_stateful_widget(
-        List::new(items)
-            .style(theme.body_style())
-            .highlight_symbol("> ")
-            .highlight_spacing(HighlightSpacing::Always)
-            .highlight_style(selected_style),
-        list,
-        &mut list_state,
-    );
+    let mut component_list =
+        ComponentList::new("settings.picker", items).with_viewport_start(start);
+    component_list.set_focused(true);
+    component_list.set_selected(Some(picker.selected_index));
+    component_list.render_borderless_frame(frame, list, theme);
     if picker.options.len() > visible && list.width > 0 && list.height > 0 {
-        let mut scrollbar_state = ScrollbarState::new(picker.options.len())
-            .position(start)
-            .viewport_content_length(visible);
-        frame.render_stateful_widget(
-            Scrollbar::new(ScrollbarOrientation::VerticalRight)
-                .begin_symbol(None)
-                .end_symbol(None)
-                .track_style(theme.muted_style())
-                .thumb_style(theme.title_style()),
-            list,
-            &mut scrollbar_state,
-        );
+        Scrollbar::new(picker.options.len(), visible, start).render_frame(frame, list, context);
     }
 
     if picker.kind == SettingsPickerKind::Timezone && dialog.width >= 70 {

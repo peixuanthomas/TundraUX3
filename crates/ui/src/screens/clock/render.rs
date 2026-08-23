@@ -2,13 +2,16 @@ use ratatui::Frame;
 use ratatui::layout::{HorizontalAlignment, Rect};
 use ratatui::style::Style;
 use ratatui::text::Line;
-use ratatui::widgets::{Borders, Clear, HighlightSpacing, List, ListItem, ListState, Paragraph};
+use ratatui::widgets::{Clear, Paragraph};
 
 use super::layout::{ClockEntryKind, ClockPageLayout, clock_page_layout};
 use super::model::{ClockCreateDialogFocus, ClockEntryViewModel, ClockViewModel};
-use crate::components::{Button, TextInput};
+use crate::components::{Button, List, ListItem, Surface, TextInput};
 use crate::screens::shell::{render_compact_home, render_status, render_top};
-use crate::{ClockFontAsset, ShellChromeViewModel, ShellLayout, TundraTheme, compute_shell_layout};
+use crate::{
+    ClockFontAsset, RenderContext, ShellChromeViewModel, ShellLayout, TundraTheme,
+    compute_shell_layout,
+};
 
 const LARGE_CLOCK_NUMERAL_MIN_WIDTH: usize = 64;
 const LARGE_CLOCK_NUMERAL_MIN_HEIGHT: usize = 21;
@@ -33,6 +36,18 @@ pub fn render_clock(
     model: &ClockViewModel,
     theme: &TundraTheme,
 ) {
+    let context = RenderContext::from_theme(theme, Default::default(), Default::default());
+    render_clock_context(frame, area, chrome, model, &context);
+}
+
+pub(crate) fn render_clock_context(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    chrome: &ShellChromeViewModel,
+    model: &ClockViewModel,
+    context: &RenderContext,
+) {
+    let theme = &context.compatibility_theme();
     let main = match compute_shell_layout(area) {
         ShellLayout::Compact(compact) => {
             render_compact_home(frame, compact, chrome, theme);
@@ -46,11 +61,11 @@ pub fn render_clock(
     };
 
     let layout = clock_page_layout(main, model);
-    render_clock_face(frame, &layout, model, theme);
-    render_clock_panel(frame, &layout, model, theme);
+    render_clock_face(frame, &layout, model, context);
+    render_clock_panel(frame, &layout, model, context);
     if let (Some(dialog_model), Some(dialog_layout)) = (&model.create_dialog, layout.create_dialog)
     {
-        render_clock_create_dialog(frame, dialog_layout, dialog_model, theme);
+        render_clock_create_dialog(frame, dialog_layout, dialog_model, context);
     }
 }
 
@@ -58,19 +73,16 @@ fn render_clock_face(
     frame: &mut Frame<'_>,
     layout: &ClockPageLayout,
     model: &ClockViewModel,
-    theme: &TundraTheme,
+    context: &RenderContext,
 ) {
     if layout.clock.width == 0 || layout.clock.height == 0 {
         return;
     }
-    frame.render_widget(
-        theme
-            .block()
-            .title("Clock")
-            .borders(Borders::ALL)
-            .style(theme.body_style()),
-        layout.clock,
-    );
+    let theme = &context.compatibility_theme();
+    Surface::new()
+        .titled("Clock")
+        .bordered(true)
+        .render_frame(frame, layout.clock, context);
 
     if let Some(analog) = layout
         .analog
@@ -110,19 +122,16 @@ fn render_clock_panel(
     frame: &mut Frame<'_>,
     layout: &ClockPageLayout,
     model: &ClockViewModel,
-    theme: &TundraTheme,
+    context: &RenderContext,
 ) {
     if layout.panel.width == 0 || layout.panel.height == 0 {
         return;
     }
-    frame.render_widget(
-        theme
-            .block()
-            .title("Alarms & Timers")
-            .borders(Borders::ALL)
-            .style(theme.body_style()),
-        layout.panel,
-    );
+    let theme = &context.compatibility_theme();
+    Surface::new()
+        .titled("Alarms & Timers")
+        .bordered(true)
+        .render_frame(frame, layout.panel, context);
 
     render_clock_button(
         frame,
@@ -155,8 +164,8 @@ fn render_clock_panel(
         HorizontalAlignment::Left,
     );
 
-    render_clock_entry_list(frame, layout, model, ClockEntryKind::Alarm, theme);
-    render_clock_entry_list(frame, layout, model, ClockEntryKind::Countdown, theme);
+    render_clock_entry_list(frame, layout, model, ClockEntryKind::Alarm, context);
+    render_clock_entry_list(frame, layout, model, ClockEntryKind::Countdown, context);
 }
 
 fn render_clock_entry_list(
@@ -164,7 +173,7 @@ fn render_clock_entry_list(
     layout: &ClockPageLayout,
     model: &ClockViewModel,
     kind: ClockEntryKind,
-    theme: &TundraTheme,
+    context: &RenderContext,
 ) {
     let rows = layout
         .entry_rows
@@ -189,39 +198,37 @@ fn render_clock_entry_list(
                 ClockEntryKind::Countdown => "[T]",
             };
             let strong = if entry.strong { " !" } else { "" };
-            Some(ListItem::new(format!("{marker} {}{strong}", entry.label)))
+            Some(ListItem::new(
+                format!("clock.entry.{}", row.id),
+                format!("{marker} {}{strong}", entry.label),
+            ))
         })
         .collect::<Vec<_>>();
     let selected = rows
         .iter()
         .position(|row| model.selected_entry_id == Some(row.id));
-    let list = List::new(items)
-        .style(theme.body_style())
-        .highlight_symbol("> ")
-        .highlight_spacing(HighlightSpacing::Always)
-        .highlight_style(theme.title_style());
-    let mut state = ListState::default().with_selected(selected);
-    frame.render_stateful_widget(list, area, &mut state);
+    let mut list = List::new(format!("clock.{kind:?}"), items);
+    list.set_focused(selected.is_some());
+    list.set_selected(selected);
+    list.render_borderless_frame(frame, area, &context.compatibility_theme());
 }
 
 fn render_clock_create_dialog(
     frame: &mut Frame<'_>,
     layout: crate::ClockCreateDialogLayout,
     model: &crate::ClockCreateDialogViewModel,
-    theme: &TundraTheme,
+    context: &RenderContext,
 ) {
     if layout.dialog.width == 0 || layout.dialog.height == 0 {
         return;
     }
     frame.render_widget(Clear, layout.dialog);
-    frame.render_widget(
-        theme
-            .block()
-            .title("New Alarm or Countdown")
-            .borders(Borders::ALL)
-            .style(theme.body_style()),
-        layout.dialog,
-    );
+    let theme = &context.compatibility_theme();
+    Surface::new()
+        .titled("New Alarm or Countdown")
+        .bordered(true)
+        .raised(true)
+        .render_frame(frame, layout.dialog, context);
 
     let prompt = Rect::new(
         layout.dialog.x.saturating_add(1),
