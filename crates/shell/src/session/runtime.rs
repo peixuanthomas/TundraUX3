@@ -633,7 +633,7 @@ pub(super) struct TimedTimeSyncResult {
 }
 
 pub(super) struct TimeSyncWorker {
-    pub(super) control_sender: mpsc::Sender<TimeSyncControl>,
+    pub(super) control_sender: tokio::sync::mpsc::UnboundedSender<TimeSyncControl>,
     pub(super) handle: Option<ManagedThreadHandle<()>>,
 }
 
@@ -641,6 +641,13 @@ pub(super) struct TimeSyncWorker {
 pub(super) enum TimeSyncControl {
     Refresh,
     Stop,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TimeSyncWakeup {
+    Control(TimeSyncControl),
+    SnapshotChanged,
+    Closed,
 }
 
 pub(super) const THEME_RELOAD_INTERVAL: Duration = Duration::from_millis(250);
@@ -1781,7 +1788,7 @@ pub(super) fn spawn_time_sync_worker(
     watchdog: &AppWatchdog,
     system_services: system_services::SystemServicesHandle,
 ) -> Result<TimeSyncWorker, watchdog::WatchdogError> {
-    let (control_sender, control_receiver) = mpsc::channel();
+    let (control_sender, mut control_receiver) = tokio::sync::mpsc::unbounded_channel();
     let group = watchdog.task_group("network-clock");
     let handle = group.spawn_thread(
         TaskSpec {
@@ -1802,54 +1809,96 @@ pub(super) fn spawn_time_sync_worker(
         move || {
             let sender = sender.clone();
             let mut snapshots = system_services.subscribe();
-            let mut last_utc = None;
-            let mut last_error = None;
-            loop {
-                match control_receiver.recv_timeout(Duration::from_millis(250)) {
-                    Ok(TimeSyncControl::Stop) | Err(mpsc::RecvTimeoutError::Disconnected) => break,
-                    Ok(TimeSyncControl::Refresh) => {
-                        let _ = system_services.sync_time_now();
-                    }
-                    Err(mpsc::RecvTimeoutError::Timeout) => {}
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("time-sync event runtime");
+            runtime.block_on(async {
+                let mut last_utc = None;
+                let mut last_error = None;
+                if !forward_time_sync_snapshot(
+                    snapshots.borrow_and_update().clone(),
+                    &sender,
+                    &mut last_utc,
+                    &mut last_error,
+                ) {
+                    return;
                 }
-                let snapshot = snapshots.borrow_and_update().clone();
-                match snapshot.time {
-                    system_services::TimeState::Synced { utc, .. } if last_utc != Some(utc) => {
-                        last_utc = Some(utc);
-                        last_error = None;
-                        if sender
-                            .send(TimedTimeSyncResult {
-                                result: Ok(utc),
-                                received_at: Instant::now(),
-                            })
-                            .is_err()
-                        {
+                loop {
+                    match next_time_sync_wakeup(&mut control_receiver, &mut snapshots).await {
+                        TimeSyncWakeup::Control(TimeSyncControl::Stop) | TimeSyncWakeup::Closed => {
                             break;
                         }
-                    }
-                    system_services::TimeState::Degraded { error, .. }
-                        if last_error.as_deref() != Some(error.as_str()) =>
-                    {
-                        last_error = Some(error.clone());
-                        if sender
-                            .send(TimedTimeSyncResult {
-                                result: Err(time::TimeSyncError::new(vec![error])),
-                                received_at: Instant::now(),
-                            })
-                            .is_err()
-                        {
-                            break;
+                        TimeSyncWakeup::Control(TimeSyncControl::Refresh) => {
+                            let _ = system_services.sync_time_now();
+                        }
+                        TimeSyncWakeup::SnapshotChanged => {
+                            if !forward_time_sync_snapshot(
+                                snapshots.borrow_and_update().clone(),
+                                &sender,
+                                &mut last_utc,
+                                &mut last_error,
+                            ) {
+                                break;
+                            }
                         }
                     }
-                    _ => {}
                 }
-            }
+            });
         },
     )?;
     Ok(TimeSyncWorker {
         control_sender,
         handle: Some(handle),
     })
+}
+
+async fn next_time_sync_wakeup(
+    control: &mut tokio::sync::mpsc::UnboundedReceiver<TimeSyncControl>,
+    snapshots: &mut tokio::sync::watch::Receiver<system_services::SystemSnapshot>,
+) -> TimeSyncWakeup {
+    tokio::select! {
+        control = control.recv() => control
+            .map(TimeSyncWakeup::Control)
+            .unwrap_or(TimeSyncWakeup::Closed),
+        changed = snapshots.changed() => if changed.is_ok() {
+            TimeSyncWakeup::SnapshotChanged
+        } else {
+            TimeSyncWakeup::Closed
+        },
+    }
+}
+
+fn forward_time_sync_snapshot(
+    snapshot: system_services::SystemSnapshot,
+    sender: &mpsc::Sender<TimedTimeSyncResult>,
+    last_utc: &mut Option<DateTime<Utc>>,
+    last_error: &mut Option<String>,
+) -> bool {
+    match snapshot.time {
+        system_services::TimeState::Synced { utc, .. } if *last_utc != Some(utc) => {
+            *last_utc = Some(utc);
+            *last_error = None;
+            sender
+                .send(TimedTimeSyncResult {
+                    result: Ok(utc),
+                    received_at: Instant::now(),
+                })
+                .is_ok()
+        }
+        system_services::TimeState::Degraded { error, .. }
+            if last_error.as_deref() != Some(error.as_str()) =>
+        {
+            *last_error = Some(error.clone());
+            sender
+                .send(TimedTimeSyncResult {
+                    result: Err(time::TimeSyncError::new(vec![error])),
+                    received_at: Instant::now(),
+                })
+                .is_ok()
+        }
+        _ => true,
+    }
 }
 
 #[cfg(test)]
@@ -2089,6 +2138,53 @@ mod runtime_preflight_tests {
             background_poll_timeout(true, Duration::from_millis(249)),
             Duration::from_millis(1)
         );
+    }
+
+    #[test]
+    fn idle_time_sync_wait_has_no_periodic_wakeup() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("test runtime");
+        let (control_sender, mut control_receiver) = tokio::sync::mpsc::unbounded_channel();
+        let snapshot = || {
+            let observed_at = Utc::now();
+            system_services::SystemSnapshot {
+                revision: 0,
+                observed_at,
+                weather: system_services::WeatherState::Loading,
+                time: system_services::TimeState::Local {
+                    local_time: observed_at.fixed_offset(),
+                },
+            }
+        };
+        let (snapshot_sender, mut snapshots) = tokio::sync::watch::channel(snapshot());
+
+        runtime.block_on(async {
+            assert!(
+                tokio::time::timeout(
+                    Duration::from_millis(25),
+                    next_time_sync_wakeup(&mut control_receiver, &mut snapshots),
+                )
+                .await
+                .is_err(),
+                "an unchanged idle worker must remain asleep"
+            );
+
+            control_sender
+                .send(TimeSyncControl::Refresh)
+                .expect("refresh control");
+            assert_eq!(
+                next_time_sync_wakeup(&mut control_receiver, &mut snapshots).await,
+                TimeSyncWakeup::Control(TimeSyncControl::Refresh)
+            );
+
+            snapshot_sender.send_replace(snapshot());
+            assert_eq!(
+                next_time_sync_wakeup(&mut control_receiver, &mut snapshots).await,
+                TimeSyncWakeup::SnapshotChanged
+            );
+        });
     }
 
     #[test]
