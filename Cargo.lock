@@ -4525,6 +4525,7 @@ dependencies = [
  "ratatui",
  "ratatui-image",
  "unicode-width 0.2.0",
+ "windows-sys 0.61.2",
  "zip",
 ]
 

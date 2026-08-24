@@ -1,23 +1,30 @@
 use std::fmt;
 use std::path::Path;
-#[cfg(unix)]
+use std::sync::atomic::{AtomicU32, Ordering};
+#[cfg(any(unix, windows))]
 use std::time::{Duration, Instant};
 
 use image::{DynamicImage, ImageReader, RgbaImage};
 use ratatui::Frame;
 use ratatui::layout::{Rect, Size};
+use ratatui_image::FontSize;
 use ratatui_image::Image;
 use ratatui_image::Resize;
-#[cfg(unix)]
+use ratatui_image::picker::ProtocolType;
+#[cfg(any(unix, windows))]
 use ratatui_image::picker::cap_parser::{
     Parser as CapabilityParser, QueryStdioOptions, Response as CapabilityResponse,
 };
-use ratatui_image::picker::{Picker, ProtocolType};
 use ratatui_image::protocol::Protocol;
+use ratatui_image::protocol::iterm2::Iterm2;
+use ratatui_image::protocol::kitty::Kitty;
+use ratatui_image::protocol::sixel::Sixel;
 
 pub const EDITOR_IMAGE_MAX_PIXELS: u64 = 20_000_000;
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 const TERMINAL_CAPABILITY_QUERY_TIMEOUT: Duration = Duration::from_secs(1);
+const DEFAULT_TERMINAL_FONT_SIZE: FontSize = FontSize::new(10, 20);
+static NEXT_KITTY_IMAGE_ID: AtomicU32 = AtomicU32::new(1);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EditorGraphicsProtocol {
@@ -110,8 +117,9 @@ impl TerminalGraphicsProbe {
 
 #[derive(Debug, Clone)]
 pub struct EditorImagePicker {
-    picker: Picker,
+    font_size: FontSize,
     protocol: EditorGraphicsProtocol,
+    is_tmux: bool,
 }
 
 impl EditorImagePicker {
@@ -147,18 +155,15 @@ impl EditorImagePicker {
     /// between an explicit text-only response and a terminal that never
     /// answered the query.
     pub fn probe_stdio() -> TerminalGraphicsProbe {
-        #[cfg(unix)]
+        #[cfg(any(unix, windows))]
         {
-            match query_unix_terminal_capabilities(TERMINAL_CAPABILITY_QUERY_TIMEOUT) {
-                Ok(query) => terminal_probe_from_unix_query(query),
+            match query_terminal_capabilities(TERMINAL_CAPABILITY_QUERY_TIMEOUT) {
+                Ok(query) => terminal_probe_from_query(query),
                 Err(error) => TerminalGraphicsProbe::no_response(error.to_string()),
             }
         }
-        #[cfg(not(unix))]
+        #[cfg(not(any(unix, windows)))]
         {
-            // The supported ratatui-image stdio helper can leave a blocking
-            // reader behind after timing out. Until this component owns an
-            // equivalent bounded platform reader, do not start that helper.
             TerminalGraphicsProbe::unsupported()
         }
     }
@@ -203,10 +208,21 @@ impl EditorImagePicker {
                 height: image.height(),
             });
         }
-        let protocol = self
-            .picker
-            .new_protocol(image, area.as_size(), Resize::Fit(None))
-            .map_err(EditorMediaError::Protocol)?;
+        let resize = Resize::Fit(None);
+        let size = resize.size_for(&image, self.font_size, area.as_size());
+        let image = resize.resize(&image, self.font_size, size, None);
+        let protocol = match self.protocol {
+            EditorGraphicsProtocol::Kitty => Protocol::Kitty(
+                Kitty::new(image, size, next_kitty_image_id(), self.is_tmux)
+                    .map_err(EditorMediaError::Protocol)?,
+            ),
+            EditorGraphicsProtocol::Sixel => Protocol::Sixel(
+                Sixel::new(image, size, self.is_tmux).map_err(EditorMediaError::Protocol)?,
+            ),
+            EditorGraphicsProtocol::Iterm2 => Protocol::ITerm2(
+                Iterm2::new(image, size, self.is_tmux).map_err(EditorMediaError::Protocol)?,
+            ),
+        };
         Ok(PreparedEditorImage {
             protocol,
             kind: self.protocol,
@@ -229,15 +245,31 @@ impl EditorImagePicker {
         self.prepare(rgba_image(width, height, rgba)?, area)
     }
 
-    fn from_picker(picker: Picker) -> Result<Option<Self>, EditorMediaError> {
-        let protocol = match picker.protocol_type() {
-            ProtocolType::Halfblocks => return Ok(None),
+    fn from_terminal_capabilities(
+        protocol_type: ProtocolType,
+        font_size: FontSize,
+        is_tmux: bool,
+    ) -> Option<Self> {
+        let protocol = match protocol_type {
+            ProtocolType::Halfblocks => return None,
             ProtocolType::Kitty => EditorGraphicsProtocol::Kitty,
             ProtocolType::Sixel => EditorGraphicsProtocol::Sixel,
             ProtocolType::Iterm2 => EditorGraphicsProtocol::Iterm2,
         };
-        Ok(Some(Self { picker, protocol }))
+        Some(Self {
+            font_size,
+            protocol,
+            is_tmux,
+        })
     }
+}
+
+fn next_kitty_image_id() -> u32 {
+    NEXT_KITTY_IMAGE_ID
+        .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |id| {
+            Some(id.saturating_add(1))
+        })
+        .expect("atomic image id update is infallible")
 }
 
 pub struct PreparedEditorImage {
@@ -313,15 +345,17 @@ impl fmt::Display for EditorMediaError {
 
 impl std::error::Error for EditorMediaError {}
 
-#[cfg(unix)]
-struct UnixTerminalCapabilityQuery {
-    picker: Picker,
+#[cfg(any(unix, windows))]
+struct TerminalCapabilityQuery {
+    protocol_type: ProtocolType,
+    font_size: FontSize,
+    is_tmux: bool,
     complete: bool,
     had_unverified_graphics_hint: bool,
     text_sizing_protocol: bool,
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct Iterm2GraphicsCapabilities {
     file: bool,
@@ -329,39 +363,31 @@ struct Iterm2GraphicsCapabilities {
 }
 
 #[cfg(unix)]
-fn query_unix_terminal_capabilities(
+fn query_terminal_capabilities(
     timeout: Duration,
-) -> Result<UnixTerminalCapabilityQuery, EditorMediaError> {
-    use std::io::{self, Write};
+) -> Result<TerminalCapabilityQuery, EditorMediaError> {
+    use std::io;
     use std::os::fd::AsRawFd;
 
     let is_tmux = std::env::var_os("TMUX").is_some_and(|value| !value.is_empty());
-    let query = terminal_capability_query(is_tmux);
-    let mut stdout = io::stdout().lock();
-    stdout
-        .write_all(query.as_bytes())
-        .and_then(|()| stdout.flush())
-        .map_err(EditorMediaError::TerminalQuery)?;
+    write_terminal_capability_query(is_tmux)?;
 
     let stdin = io::stdin();
     let fd = stdin.as_raw_fd();
     let deadline = Instant::now() + timeout;
-    let mut parser = CapabilityParser::new();
-    let mut responses = Vec::new();
-    let mut raw_responses = Vec::new();
-    let mut complete = false;
+    let mut responses = TerminalResponseCollector::new();
 
-    while !complete {
-        let Some(remaining) = deadline.checked_duration_since(Instant::now()) else {
+    while !responses.complete {
+        let Some(timeout_ms) = deadline_wait_millis(deadline, Instant::now()) else {
             break;
         };
-        let timeout_ms = remaining.as_millis().max(1).min(i32::MAX as u128) as i32;
         let mut descriptor = libc::pollfd {
             fd,
             events: libc::POLLIN,
             revents: 0,
         };
-        let poll_result = unsafe { libc::poll(&mut descriptor, 1, timeout_ms) };
+        let poll_result =
+            unsafe { libc::poll(&mut descriptor, 1, timeout_ms.min(i32::MAX as u32) as i32) };
         if poll_result == 0 {
             break;
         }
@@ -392,25 +418,173 @@ fn query_unix_terminal_capabilities(
             return Err(EditorMediaError::TerminalQuery(error));
         }
 
-        for byte in &buffer[..read_result as usize] {
-            if raw_responses.len() < 8 * 1024 {
-                raw_responses.push(*byte);
+        responses.push_bytes(&buffer[..read_result as usize]);
+    }
+
+    Ok(interpret_terminal_capability_responses(responses, is_tmux))
+}
+
+#[cfg(windows)]
+fn query_terminal_capabilities(
+    timeout: Duration,
+) -> Result<TerminalCapabilityQuery, EditorMediaError> {
+    use std::io;
+    use windows_sys::Win32::Foundation::{
+        INVALID_HANDLE_VALUE, WAIT_FAILED, WAIT_OBJECT_0, WAIT_TIMEOUT,
+    };
+    use windows_sys::Win32::System::Console::{
+        ENABLE_LINE_INPUT, GetConsoleMode, GetStdHandle, INPUT_RECORD, KEY_EVENT,
+        PeekConsoleInputW, ReadConsoleA, ReadConsoleInputW, STD_INPUT_HANDLE,
+    };
+    use windows_sys::Win32::System::Threading::WaitForSingleObject;
+
+    let is_tmux = std::env::var_os("TMUX").is_some_and(|value| !value.is_empty());
+    let input = unsafe { GetStdHandle(STD_INPUT_HANDLE) };
+    if input.is_null() || input == INVALID_HANDLE_VALUE {
+        return Err(EditorMediaError::TerminalQuery(io::Error::last_os_error()));
+    }
+    let mut input_mode = 0;
+    if unsafe { GetConsoleMode(input, &mut input_mode) } == 0 {
+        return Err(EditorMediaError::TerminalQuery(io::Error::last_os_error()));
+    }
+    if input_mode & ENABLE_LINE_INPUT != 0 {
+        return Err(EditorMediaError::TerminalQuery(io::Error::other(
+            "terminal capability probing requires raw console input mode",
+        )));
+    }
+    write_terminal_capability_query(is_tmux)?;
+
+    let deadline = Instant::now() + timeout;
+    let mut responses = TerminalResponseCollector::new();
+    while !responses.complete {
+        let Some(timeout_ms) = deadline_wait_millis(deadline, Instant::now()) else {
+            break;
+        };
+        match unsafe { WaitForSingleObject(input, timeout_ms) } {
+            WAIT_OBJECT_0 => {}
+            WAIT_TIMEOUT => break,
+            WAIT_FAILED => {
+                return Err(EditorMediaError::TerminalQuery(io::Error::last_os_error()));
             }
-            for response in parser.push(char::from(*byte)) {
-                if response == CapabilityResponse::Status {
-                    complete = true;
-                    break;
-                }
-                responses.push(response);
+            result => {
+                return Err(EditorMediaError::TerminalQuery(io::Error::other(format!(
+                    "unexpected console input wait result {result}"
+                ))));
             }
-            if complete {
+        }
+        if deadline_wait_millis(deadline, Instant::now()).is_none() {
+            break;
+        }
+
+        // Peek one already-signaled record. ReadConsoleA is used for character
+        // input because Windows exposes VT sequences through ReadFile/ReadConsole,
+        // while non-character records are drained without waiting.
+        let mut record = INPUT_RECORD::default();
+        let mut peeked = 0;
+        if unsafe { PeekConsoleInputW(input, &mut record, 1, &mut peeked) } == 0 {
+            return Err(EditorMediaError::TerminalQuery(io::Error::last_os_error()));
+        }
+        if peeked == 0 {
+            continue;
+        }
+        let is_key_down = if record.EventType == KEY_EVENT as u16 {
+            unsafe { record.Event.KeyEvent.bKeyDown != 0 }
+        } else {
+            false
+        };
+        if !is_key_down {
+            let mut drained = 0;
+            if unsafe { ReadConsoleInputW(input, &mut record, 1, &mut drained) } == 0 {
+                return Err(EditorMediaError::TerminalQuery(io::Error::last_os_error()));
+            }
+            continue;
+        }
+        if deadline_wait_millis(deadline, Instant::now()).is_none() {
+            break;
+        }
+        let mut byte = 0;
+        let mut read = 0;
+        if unsafe {
+            ReadConsoleA(
+                input,
+                (&mut byte as *mut u8).cast(),
+                1,
+                &mut read,
+                std::ptr::null(),
+            )
+        } == 0
+        {
+            return Err(EditorMediaError::TerminalQuery(io::Error::last_os_error()));
+        }
+        if read == 1 {
+            responses.push_byte(byte);
+        }
+    }
+
+    Ok(interpret_terminal_capability_responses(responses, is_tmux))
+}
+
+#[cfg(any(unix, windows))]
+fn write_terminal_capability_query(is_tmux: bool) -> Result<(), EditorMediaError> {
+    use std::io::{self, Write};
+
+    let query = terminal_capability_query(is_tmux);
+    let mut stdout = io::stdout().lock();
+    stdout
+        .write_all(query.as_bytes())
+        .and_then(|()| stdout.flush())
+        .map_err(EditorMediaError::TerminalQuery)
+}
+
+#[cfg(any(unix, windows))]
+struct TerminalResponseCollector {
+    parser: CapabilityParser,
+    responses: Vec<CapabilityResponse>,
+    raw: Vec<u8>,
+    complete: bool,
+}
+
+#[cfg(any(unix, windows))]
+impl TerminalResponseCollector {
+    fn new() -> Self {
+        Self {
+            parser: CapabilityParser::new(),
+            responses: Vec::new(),
+            raw: Vec::new(),
+            complete: false,
+        }
+    }
+
+    fn push_bytes(&mut self, bytes: &[u8]) {
+        for byte in bytes {
+            self.push_byte(*byte);
+            if self.complete {
                 break;
             }
         }
     }
 
-    let iterm2_graphics = parse_iterm2_graphics_capabilities(&raw_responses);
-    let standard_protocol = standard_protocol_from_responses(&responses);
+    fn push_byte(&mut self, byte: u8) {
+        if self.raw.len() < 8 * 1024 {
+            self.raw.push(byte);
+        }
+        for response in self.parser.push(char::from(byte)) {
+            if response == CapabilityResponse::Status {
+                self.complete = true;
+                break;
+            }
+            self.responses.push(response);
+        }
+    }
+}
+
+#[cfg(any(unix, windows))]
+fn interpret_terminal_capability_responses(
+    responses: TerminalResponseCollector,
+    is_tmux: bool,
+) -> TerminalCapabilityQuery {
+    let iterm2_graphics = parse_iterm2_graphics_capabilities(&responses.raw);
+    let standard_protocol = standard_protocol_from_responses(&responses.responses);
     let iterm2_protocol = iterm2_graphics.and_then(|capabilities| {
         capabilities
             .sixel
@@ -420,44 +594,45 @@ fn query_unix_terminal_capabilities(
     let had_unverified_graphics_hint = standard_protocol.is_none()
         && iterm2_protocol.is_none()
         && terminal_has_graphics_environment_hint(is_tmux);
-    let mut picker = Picker::halfblocks();
-    picker.set_protocol_type(
-        standard_protocol
+    TerminalCapabilityQuery {
+        protocol_type: standard_protocol
             .or(iterm2_protocol)
             .unwrap_or(ProtocolType::Halfblocks),
-    );
-
-    Ok(UnixTerminalCapabilityQuery {
-        picker,
-        complete,
+        font_size: font_size_from_responses(&responses.responses),
+        is_tmux,
+        complete: responses.complete,
         had_unverified_graphics_hint,
-        text_sizing_protocol: responses_support_text_sizing_protocol(&responses),
-    })
+        text_sizing_protocol: responses_support_text_sizing_protocol(&responses.responses),
+    }
 }
 
-#[cfg(unix)]
-fn terminal_probe_from_unix_query(query: UnixTerminalCapabilityQuery) -> TerminalGraphicsProbe {
-    let has_live_protocol_response = query.picker.protocol_type() != ProtocolType::Halfblocks;
+#[cfg(any(unix, windows))]
+fn terminal_probe_from_query(query: TerminalCapabilityQuery) -> TerminalGraphicsProbe {
+    let has_live_protocol_response = query.protocol_type != ProtocolType::Halfblocks;
     let text_sizing_protocol = query.text_sizing_protocol;
-    let probe = match EditorImagePicker::from_picker(query.picker) {
-        Ok(Some(picker)) if query.complete || has_live_protocol_response => {
+    let picker = EditorImagePicker::from_terminal_capabilities(
+        query.protocol_type,
+        query.font_size,
+        query.is_tmux,
+    );
+    let probe = match picker {
+        Some(picker) if query.complete || has_live_protocol_response => {
             TerminalGraphicsProbe::verified(picker)
         }
-        Ok(_) if query.complete && query.had_unverified_graphics_hint => {
+        _ if query.complete && query.had_unverified_graphics_hint => {
             TerminalGraphicsProbe::no_response(
                 "terminal responded, but the hinted graphics protocol did not answer its capability query",
             )
         }
-        Ok(_) if query.complete => TerminalGraphicsProbe::unsupported(),
-        Ok(_) => TerminalGraphicsProbe::no_response(
+        _ if query.complete => TerminalGraphicsProbe::unsupported(),
+        _ => TerminalGraphicsProbe::no_response(
             "terminal did not return the graphics capability query terminator",
         ),
-        Err(error) => TerminalGraphicsProbe::no_response(error.to_string()),
     };
     probe.with_text_sizing_protocol(text_sizing_protocol)
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 fn terminal_capability_query(is_tmux: bool) -> String {
     let standard_query = CapabilityParser::query(
         is_tmux,
@@ -475,7 +650,7 @@ fn terminal_capability_query(is_tmux: bool) -> String {
     format!("{standard_commands}{escape}]1337;Capabilities{escape}\\{final_status_query}")
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 fn terminal_has_graphics_environment_hint(is_tmux: bool) -> bool {
     let nonempty = |name| std::env::var_os(name).is_some_and(|value| !value.is_empty());
     if is_tmux && (nonempty("ITERM_SESSION_ID") || nonempty("WEZTERM_EXECUTABLE")) {
@@ -498,7 +673,7 @@ fn terminal_has_graphics_environment_hint(is_tmux: bool) -> bool {
     }) || std::env::var("LC_TERMINAL").is_ok_and(|terminal| terminal.contains("iTerm"))
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 fn parse_iterm2_graphics_capabilities(response: &[u8]) -> Option<Iterm2GraphicsCapabilities> {
     const PREFIX: &[u8] = b"\x1b]1337;Capabilities=";
     let start = response
@@ -521,7 +696,7 @@ fn parse_iterm2_graphics_capabilities(response: &[u8]) -> Option<Iterm2GraphicsC
     })
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 fn iterm2_feature_present(features: &[u8], expected: &[u8]) -> bool {
     let mut start = 0;
     for end in 1..=features.len() {
@@ -535,7 +710,7 @@ fn iterm2_feature_present(features: &[u8], expected: &[u8]) -> bool {
     false
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 fn standard_protocol_from_responses(responses: &[CapabilityResponse]) -> Option<ProtocolType> {
     if responses.contains(&CapabilityResponse::Kitty) {
         Some(ProtocolType::Kitty)
@@ -546,7 +721,7 @@ fn standard_protocol_from_responses(responses: &[CapabilityResponse]) -> Option<
     }
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 fn responses_support_text_sizing_protocol(responses: &[CapabilityResponse]) -> bool {
     let positions = responses
         .iter()
@@ -556,6 +731,28 @@ fn responses_support_text_sizing_protocol(responses: &[CapabilityResponse]) -> b
         })
         .collect::<Vec<_>>();
     matches!(positions.as_slice(), [(x1, _), (x2, _), (x3, _)] if *x2 == x1.saturating_add(2) && *x3 == x2.saturating_add(2))
+}
+
+#[cfg(any(unix, windows))]
+fn font_size_from_responses(responses: &[CapabilityResponse]) -> FontSize {
+    responses
+        .iter()
+        .find_map(|response| match response {
+            CapabilityResponse::CellSize(Some((width, height))) if *width > 0 && *height > 0 => {
+                Some(FontSize::new(*width, *height))
+            }
+            _ => None,
+        })
+        .unwrap_or(DEFAULT_TERMINAL_FONT_SIZE)
+}
+
+#[cfg(any(unix, windows))]
+fn deadline_wait_millis(deadline: Instant, now: Instant) -> Option<u32> {
+    let remaining = deadline.checked_duration_since(now)?;
+    if remaining.is_zero() {
+        return None;
+    }
+    Some(remaining.as_millis().max(1).min(u32::MAX as u128) as u32)
 }
 
 fn centered_protocol_area(allocation: Rect, protocol_size: Size) -> Rect {
@@ -601,13 +798,16 @@ mod tests {
     #[test]
     fn halfblocks_are_reported_as_unsupported() {
         assert!(
-            EditorImagePicker::from_picker(Picker::halfblocks())
-                .unwrap()
-                .is_none()
+            EditorImagePicker::from_terminal_capabilities(
+                ProtocolType::Halfblocks,
+                DEFAULT_TERMINAL_FONT_SIZE,
+                false,
+            )
+            .is_none()
         );
     }
 
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     #[test]
     fn capability_query_orders_iterm_confirmation_before_one_final_terminator() {
         for is_tmux in [false, true] {
@@ -629,7 +829,7 @@ mod tests {
         }
     }
 
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     #[test]
     fn standard_responses_prefer_kitty_and_report_text_sizing() {
         let raw = b"\x1b[?64;4c\x1b[1;1R\x1b_Gi=31;OK\x1b\\\x1b[1;3R\x1b[2;5R\x1b[0n";
@@ -655,12 +855,13 @@ mod tests {
         ]));
     }
 
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     #[test]
     fn terminal_probe_distinguishes_unsupported_from_no_response() {
-        let text_only_picker = Picker::halfblocks();
-        let unsupported = terminal_probe_from_unix_query(UnixTerminalCapabilityQuery {
-            picker: text_only_picker.clone(),
+        let unsupported = terminal_probe_from_query(TerminalCapabilityQuery {
+            protocol_type: ProtocolType::Halfblocks,
+            font_size: DEFAULT_TERMINAL_FONT_SIZE,
+            is_tmux: false,
             complete: true,
             had_unverified_graphics_hint: false,
             text_sizing_protocol: false,
@@ -670,8 +871,10 @@ mod tests {
             &TerminalGraphicsProbeStatus::Unsupported
         );
 
-        let no_response = terminal_probe_from_unix_query(UnixTerminalCapabilityQuery {
-            picker: text_only_picker,
+        let no_response = terminal_probe_from_query(TerminalCapabilityQuery {
+            protocol_type: ProtocolType::Halfblocks,
+            font_size: DEFAULT_TERMINAL_FONT_SIZE,
+            is_tmux: false,
             complete: false,
             had_unverified_graphics_hint: false,
             text_sizing_protocol: false,
@@ -682,13 +885,13 @@ mod tests {
         ));
     }
 
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     #[test]
     fn live_protocol_response_verifies_without_the_final_terminator() {
-        let mut picker = Picker::halfblocks();
-        picker.set_protocol_type(ProtocolType::Kitty);
-        let verified = terminal_probe_from_unix_query(UnixTerminalCapabilityQuery {
-            picker,
+        let verified = terminal_probe_from_query(TerminalCapabilityQuery {
+            protocol_type: ProtocolType::Kitty,
+            font_size: DEFAULT_TERMINAL_FONT_SIZE,
+            is_tmux: false,
             complete: false,
             had_unverified_graphics_hint: false,
             text_sizing_protocol: false,
@@ -699,7 +902,7 @@ mod tests {
         );
     }
 
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     #[test]
     fn iterm2_capability_response_reports_graphics_protocol_support() {
         assert_eq!(
@@ -726,13 +929,13 @@ mod tests {
         assert_eq!(parse_iterm2_graphics_capabilities(b"\x1b[?1;0c"), None);
     }
 
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     #[test]
     fn unconfirmed_environment_graphics_hint_is_no_response() {
-        let mut hinted_picker = Picker::halfblocks();
-        hinted_picker.set_protocol_type(ProtocolType::Halfblocks);
-        let probe = terminal_probe_from_unix_query(UnixTerminalCapabilityQuery {
-            picker: hinted_picker,
+        let probe = terminal_probe_from_query(TerminalCapabilityQuery {
+            protocol_type: ProtocolType::Halfblocks,
+            font_size: DEFAULT_TERMINAL_FONT_SIZE,
+            is_tmux: false,
             complete: true,
             had_unverified_graphics_hint: true,
             text_sizing_protocol: false,
@@ -741,6 +944,90 @@ mod tests {
             probe.status(),
             TerminalGraphicsProbeStatus::NoResponse { .. }
         ));
+    }
+
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn measured_font_size_reaches_prepared_protocol_geometry() {
+        let picker = EditorImagePicker::from_terminal_capabilities(
+            ProtocolType::Kitty,
+            FontSize::new(5, 10),
+            false,
+        )
+        .expect("verified Kitty picker");
+        let prepared = picker
+            .prepare(DynamicImage::new_rgba8(100, 100), Rect::new(0, 0, 40, 40))
+            .expect("prepare measured image");
+        assert_eq!(prepared.protocol.size(), Size::new(20, 10));
+
+        let default_picker = EditorImagePicker::from_terminal_capabilities(
+            ProtocolType::Kitty,
+            DEFAULT_TERMINAL_FONT_SIZE,
+            false,
+        )
+        .expect("verified Kitty picker");
+        let default_prepared = default_picker
+            .prepare(DynamicImage::new_rgba8(100, 100), Rect::new(0, 0, 40, 40))
+            .expect("prepare default image");
+        assert_eq!(default_prepared.protocol.size(), Size::new(10, 5));
+    }
+
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn native_protocol_factory_selects_each_verified_protocol() {
+        for (protocol_type, expected) in [
+            (ProtocolType::Kitty, EditorGraphicsProtocol::Kitty),
+            (ProtocolType::Sixel, EditorGraphicsProtocol::Sixel),
+            (ProtocolType::Iterm2, EditorGraphicsProtocol::Iterm2),
+        ] {
+            let picker = EditorImagePicker::from_terminal_capabilities(
+                protocol_type,
+                DEFAULT_TERMINAL_FONT_SIZE,
+                true,
+            )
+            .expect("verified native protocol");
+            assert_eq!(picker.protocol(), expected);
+            assert!(picker.is_tmux);
+            let prepared = picker
+                .prepare(DynamicImage::new_rgba8(1, 1), Rect::new(0, 0, 1, 1))
+                .expect("prepare selected native protocol");
+            assert!(matches!(
+                (&prepared.protocol, protocol_type),
+                (Protocol::Kitty(_), ProtocolType::Kitty)
+                    | (Protocol::Sixel(_), ProtocolType::Sixel)
+                    | (Protocol::ITerm2(_), ProtocolType::Iterm2)
+            ));
+        }
+    }
+
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn response_interpretation_preserves_measured_cell_size() {
+        let mut responses = TerminalResponseCollector::new();
+        responses.push_bytes(b"\x1b[6;9;17t\x1b_Gi=31;OK\x1b\\\x1b[0n");
+        let query = interpret_terminal_capability_responses(responses, false);
+        assert_eq!(query.protocol_type, ProtocolType::Kitty);
+        assert_eq!((query.font_size.width, query.font_size.height), (17, 9));
+        assert!(query.complete);
+    }
+
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn deadline_wait_decision_never_waits_after_deadline() {
+        let now = Instant::now();
+        assert_eq!(deadline_wait_millis(now, now), None);
+        assert_eq!(
+            deadline_wait_millis(now + Duration::from_nanos(1), now),
+            Some(1)
+        );
+        assert_eq!(
+            deadline_wait_millis(now + Duration::from_millis(25), now),
+            Some(25)
+        );
+        assert_eq!(
+            deadline_wait_millis(now, now + Duration::from_millis(1)),
+            None
+        );
     }
 
     #[test]
