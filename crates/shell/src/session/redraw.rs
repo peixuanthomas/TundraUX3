@@ -101,7 +101,17 @@ impl RedrawScheduler {
         let rendered = self.transitions_for_frame(frame);
         self.reduced_motion = reduced_motion;
         if self.current != identity {
-            if self.current.focus != identity.focus {
+            let screen_changed = self.current.screen != identity.screen;
+            if screen_changed {
+                self.focus_changed_at = None;
+                self.focus_start = 1_000;
+                self.focus_target = 1_000;
+                self.overlay_changed_at = None;
+                let overlay_progress = identity.overlay.as_ref().map_or(0, |_| 1_000);
+                self.overlay_start = overlay_progress;
+                self.overlay_target = overlay_progress;
+                self.prior = identity.clone();
+            } else if self.current.focus != identity.focus {
                 let active = rendered.focus.filter(|motion| motion.active);
                 self.focus_start = active.map_or(0, |motion| motion.progress);
                 self.focus_target = if active.is_some() && identity.focus == self.prior.focus {
@@ -112,7 +122,7 @@ impl RedrawScheduler {
                 self.prior.focus.clone_from(&self.current.focus);
                 self.focus_changed_at = Some(now);
             }
-            if self.current.overlay != identity.overlay {
+            if !screen_changed && self.current.overlay != identity.overlay {
                 let active = rendered.overlay.filter(|motion| motion.active);
                 self.overlay_start = active.map_or_else(
                     || match (&self.current.overlay, &identity.overlay) {
@@ -298,13 +308,34 @@ mod tests {
     #[test]
     fn screen_changes_redraw_immediately_without_a_transition() {
         let origin = Instant::now();
-        let mut scheduler = RedrawScheduler::new(origin, id("home", "one", None), false);
+        let mut scheduler = RedrawScheduler::new(origin, id("home", "one", Some("dialog")), false);
         scheduler.did_draw(origin);
-        scheduler.observe(origin, id("settings", "one", None), false);
+        scheduler.observe(origin, id("settings", "two", None), false);
         assert!(scheduler.is_due(origin));
-        assert!(scheduler.transitions(origin).screen.is_none());
+        assert_eq!(
+            scheduler.transitions(origin),
+            ui::MotionTransitions::default()
+        );
         scheduler.did_draw(origin);
         assert!(!scheduler.is_due(origin + FRAME_INTERVAL));
+    }
+
+    #[test]
+    fn screen_changes_cancel_an_in_flight_focus_transition() {
+        let origin = Instant::now();
+        let mut scheduler = RedrawScheduler::new(origin, id("home", "one", None), false);
+        scheduler.did_draw(origin);
+        scheduler.observe(origin, id("home", "two", None), false);
+        let changed = origin + Duration::from_millis(50);
+        assert!(scheduler.transitions(changed).focus.is_some());
+
+        scheduler.observe(changed, id("settings", "settings-list", None), false);
+
+        assert_eq!(
+            scheduler.transitions(changed),
+            ui::MotionTransitions::default()
+        );
+        assert!(scheduler.is_due(changed));
     }
 
     #[test]
