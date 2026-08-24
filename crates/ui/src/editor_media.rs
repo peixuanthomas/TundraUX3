@@ -6,17 +6,13 @@ use std::time::{Duration, Instant};
 use image::{DynamicImage, ImageReader, RgbaImage};
 use ratatui::Frame;
 use ratatui::layout::{Rect, Size};
-#[cfg(any(unix, test))]
-use ratatui_image::FontSize;
 use ratatui_image::Image;
 use ratatui_image::Resize;
-#[cfg(not(unix))]
-use ratatui_image::picker::Capability;
 #[cfg(unix)]
 use ratatui_image::picker::cap_parser::{
     Parser as CapabilityParser, QueryStdioOptions, Response as CapabilityResponse,
 };
-use ratatui_image::picker::{Picker, ProtocolType};
+use ratatui_image::picker::{Capability, Picker, ProtocolType};
 use ratatui_image::protocol::Protocol;
 
 pub const EDITOR_IMAGE_MAX_PIXELS: u64 = 20_000_000;
@@ -355,19 +351,20 @@ fn query_unix_terminal_capabilities(
     use std::io::{self, Write};
     use std::os::fd::AsRawFd;
 
+    let mut picker = Picker::from_query_stdio_with_options(QueryStdioOptions {
+        timeout,
+        text_sizing_protocol: true,
+        ..Default::default()
+    })
+    .map_err(EditorMediaError::Protocol)?;
+    let text_sizing_protocol = picker
+        .capabilities()
+        .contains(&Capability::TextSizingProtocol);
     let is_tmux = std::env::var_os("TMUX").is_some_and(|value| !value.is_empty());
-    let query = CapabilityParser::query(
-        is_tmux,
-        QueryStdioOptions {
-            text_sizing_protocol: true,
-            ..Default::default()
-        },
-    );
-    let iterm2_query = iterm2_capability_query(is_tmux);
+    let confirmation_query = graphics_capability_confirmation_query(is_tmux);
     let mut stdout = io::stdout().lock();
     stdout
-        .write_all(iterm2_query.as_bytes())
-        .and_then(|()| stdout.write_all(query.as_bytes()))
+        .write_all(confirmation_query.as_bytes())
         .and_then(|()| stdout.flush())
         .map_err(EditorMediaError::TerminalQuery)?;
 
@@ -438,34 +435,27 @@ fn query_unix_terminal_capabilities(
     }
 
     let iterm2_graphics = parse_iterm2_graphics_capabilities(&raw_responses);
-    let mut picker = picker_from_terminal_responses(&responses);
-    let has_live_standard_protocol = responses.iter().any(|response| {
-        matches!(
-            response,
-            CapabilityResponse::Kitty | CapabilityResponse::Sixel
-        )
+    let standard_protocol = standard_protocol_from_capabilities(picker.capabilities());
+    let iterm2_protocol = iterm2_graphics.and_then(|capabilities| {
+        capabilities
+            .sixel
+            .then_some(ProtocolType::Sixel)
+            .or_else(|| capabilities.file.then_some(ProtocolType::Iterm2))
     });
-    let had_unverified_graphics_hint = !has_live_standard_protocol
-        && iterm2_graphics.is_none()
+    let had_unverified_graphics_hint = standard_protocol.is_none()
+        && iterm2_protocol.is_none()
         && picker.protocol_type() != ProtocolType::Halfblocks;
-    if !has_live_standard_protocol {
-        picker.set_protocol_type(
-            iterm2_graphics
-                .and_then(|capabilities| {
-                    capabilities
-                        .sixel
-                        .then_some(ProtocolType::Sixel)
-                        .or_else(|| capabilities.file.then_some(ProtocolType::Iterm2))
-                })
-                .unwrap_or(ProtocolType::Halfblocks),
-        );
-    }
+    picker.set_protocol_type(
+        standard_protocol
+            .or(iterm2_protocol)
+            .unwrap_or(ProtocolType::Halfblocks),
+    );
 
     Ok(UnixTerminalCapabilityQuery {
         picker,
         complete,
         had_unverified_graphics_hint,
-        text_sizing_protocol: responses_support_text_sizing_protocol(&responses),
+        text_sizing_protocol,
     })
 }
 
@@ -492,21 +482,9 @@ fn terminal_probe_from_unix_query(query: UnixTerminalCapabilityQuery) -> Termina
 }
 
 #[cfg(unix)]
-fn responses_support_text_sizing_protocol(responses: &[CapabilityResponse]) -> bool {
-    let positions = responses
-        .iter()
-        .filter_map(|response| match response {
-            CapabilityResponse::CursorPositionReport(x, y) => Some((*x, *y)),
-            _ => None,
-        })
-        .collect::<Vec<_>>();
-    matches!(positions.as_slice(), [(x1, _), (x2, _), (x3, _)] if *x2 == x1.saturating_add(2) && *x3 == x2.saturating_add(2))
-}
-
-#[cfg(unix)]
-fn iterm2_capability_query(is_tmux: bool) -> String {
-    let (start, escape, end) = CapabilityParser::escape_tmux(is_tmux);
-    format!("{start}{escape}]1337;Capabilities{escape}\\{end}")
+fn graphics_capability_confirmation_query(is_tmux: bool) -> String {
+    let (start, escape, end) = CapabilityParser::tmux_start_escape_end(is_tmux);
+    format!("{start}{escape}]1337;Capabilities{escape}\\{escape}[0n{end}")
 }
 
 #[cfg(unix)]
@@ -547,59 +525,14 @@ fn iterm2_feature_present(features: &[u8], expected: &[u8]) -> bool {
 }
 
 #[cfg(unix)]
-fn picker_from_terminal_responses(responses: &[CapabilityResponse]) -> Picker {
-    let font_size = responses
-        .iter()
-        .find_map(|response| match response {
-            CapabilityResponse::CellSize(Some(font_size)) => Some(*font_size),
-            _ => None,
-        })
-        .or_else(terminal_font_size)
-        .unwrap_or((10, 20));
-    let mut picker = picker_from_font_size(font_size);
-
-    // A live protocol response takes precedence over inherited environment
-    // hints. This avoids selecting iTerm2 merely because a child terminal kept
-    // TERM_PROGRAM from its parent.
-    if responses.contains(&CapabilityResponse::Kitty) {
-        picker.set_protocol_type(ProtocolType::Kitty);
-    } else if responses.contains(&CapabilityResponse::Sixel) {
-        picker.set_protocol_type(ProtocolType::Sixel);
+fn standard_protocol_from_capabilities(capabilities: &[Capability]) -> Option<ProtocolType> {
+    if capabilities.contains(&Capability::Kitty) {
+        Some(ProtocolType::Kitty)
+    } else if capabilities.contains(&Capability::Sixel) {
+        Some(ProtocolType::Sixel)
+    } else {
+        None
     }
-    picker
-}
-
-/// The capability parser has already provided an exact cell size, while
-/// `ratatui-image` only exposes a direct picker constructor for that case as a
-/// deprecated compatibility API. Keep the compatibility boundary here instead
-/// of discarding the measured font size for the generic halfblock picker.
-#[cfg(any(unix, test))]
-#[allow(deprecated)]
-fn picker_from_font_size((width, height): (u16, u16)) -> Picker {
-    Picker::from_fontsize(FontSize::new(width, height))
-}
-
-#[cfg(unix)]
-fn terminal_font_size() -> Option<(u16, u16)> {
-    let mut window = libc::winsize {
-        ws_row: 0,
-        ws_col: 0,
-        ws_xpixel: 0,
-        ws_ypixel: 0,
-    };
-    let result = unsafe { libc::ioctl(libc::STDOUT_FILENO, libc::TIOCGWINSZ, &mut window) };
-    if result < 0
-        || window.ws_col == 0
-        || window.ws_row == 0
-        || window.ws_xpixel == 0
-        || window.ws_ypixel == 0
-    {
-        return None;
-    }
-    Some((
-        window.ws_xpixel / window.ws_col,
-        window.ws_ypixel / window.ws_row,
-    ))
 }
 
 fn centered_protocol_area(allocation: Rect, protocol_size: Size) -> Rect {
@@ -644,39 +577,30 @@ mod tests {
 
     #[test]
     fn halfblocks_are_reported_as_unsupported() {
-        let picker = picker_from_font_size((8, 16));
-        if picker.protocol_type() == ProtocolType::Halfblocks {
-            assert!(EditorImagePicker::from_picker(picker).unwrap().is_none());
-        }
+        assert!(
+            EditorImagePicker::from_picker(Picker::halfblocks())
+                .unwrap()
+                .is_none()
+        );
     }
 
     #[cfg(unix)]
     #[test]
-    fn terminal_responses_prefer_kitty_then_sixel() {
-        let picker = picker_from_terminal_responses(&[
-            CapabilityResponse::Sixel,
-            CapabilityResponse::Kitty,
-            CapabilityResponse::CellSize(Some((9, 18))),
-        ]);
-        if picker_from_font_size((9, 18)).protocol_type() == ProtocolType::Halfblocks {
-            assert_eq!(picker.protocol_type(), ProtocolType::Kitty);
-            assert_eq!(
-                (picker.font_size().width, picker.font_size().height),
-                (9, 18)
-            );
-        }
-
-        let picker = picker_from_terminal_responses(&[CapabilityResponse::Sixel]);
-        if picker_from_font_size((10, 20)).protocol_type() == ProtocolType::Halfblocks {
-            assert_eq!(picker.protocol_type(), ProtocolType::Sixel);
-        }
+    fn standard_capabilities_prefer_kitty_then_sixel() {
+        assert_eq!(
+            standard_protocol_from_capabilities(&[Capability::Sixel, Capability::Kitty]),
+            Some(ProtocolType::Kitty)
+        );
+        assert_eq!(
+            standard_protocol_from_capabilities(&[Capability::Sixel]),
+            Some(ProtocolType::Sixel)
+        );
     }
 
     #[cfg(unix)]
     #[test]
     fn terminal_probe_distinguishes_unsupported_from_no_response() {
-        let mut text_only_picker = picker_from_font_size((10, 20));
-        text_only_picker.set_protocol_type(ProtocolType::Halfblocks);
+        let text_only_picker = Picker::halfblocks();
         let unsupported = terminal_probe_from_unix_query(UnixTerminalCapabilityQuery {
             picker: text_only_picker.clone(),
             complete: true,
@@ -703,9 +627,10 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn live_protocol_response_verifies_without_the_final_terminator() {
-        let responses = vec![CapabilityResponse::Kitty];
+        let mut picker = Picker::halfblocks();
+        picker.set_protocol_type(ProtocolType::Kitty);
         let verified = terminal_probe_from_unix_query(UnixTerminalCapabilityQuery {
-            picker: picker_from_terminal_responses(&responses),
+            picker,
             complete: false,
             had_unverified_graphics_hint: false,
             text_sizing_protocol: false,
@@ -746,7 +671,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn unconfirmed_environment_graphics_hint_is_no_response() {
-        let mut hinted_picker = picker_from_font_size((10, 20));
+        let mut hinted_picker = Picker::halfblocks();
         hinted_picker.set_protocol_type(ProtocolType::Halfblocks);
         let probe = terminal_probe_from_unix_query(UnixTerminalCapabilityQuery {
             picker: hinted_picker,
@@ -758,21 +683,6 @@ mod tests {
             probe.status(),
             TerminalGraphicsProbeStatus::NoResponse { .. }
         ));
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn text_sizing_probe_requires_both_width_advances() {
-        assert!(responses_support_text_sizing_protocol(&[
-            CapabilityResponse::CursorPositionReport(1, 1),
-            CapabilityResponse::CursorPositionReport(3, 1),
-            CapabilityResponse::CursorPositionReport(5, 2),
-        ]));
-        assert!(!responses_support_text_sizing_protocol(&[
-            CapabilityResponse::CursorPositionReport(1, 1),
-            CapabilityResponse::CursorPositionReport(3, 1),
-            CapabilityResponse::CursorPositionReport(4, 1),
-        ]));
     }
 
     #[test]
