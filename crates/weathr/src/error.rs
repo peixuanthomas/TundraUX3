@@ -1,4 +1,3 @@
-use ascii_assets::AssetError;
 use std::io;
 use thiserror::Error as ThisError;
 
@@ -6,9 +5,7 @@ use crate::render::clock::ClockFontError;
 
 #[derive(ThisError, Debug)]
 pub enum WeatherAssetError {
-    #[error("{0}")]
-    Store(#[from] AssetError),
-    #[error("invalid clock font asset: {0}")]
+    #[error("invalid bundled clock font: {0}")]
     ClockFont(#[from] ClockFontError),
 }
 

@@ -177,7 +177,7 @@ pub fn run_fullscreen_blocking_managed_with_outcome(
         .register_app(shell_watchdog_descriptor())
         .map_err(io::Error::other)?;
     let weathr_watchdog = process
-        .register_app(weathr::weathr_watchdog_descriptor())
+        .register_app(weathr_watchdog_descriptor())
         .map_err(io::Error::other)?;
     let diagnostics_watchdog = process
         .register_app(app::diagnostics::diagnostics_watchdog_descriptor())
@@ -263,17 +263,10 @@ pub fn run_fullscreen_blocking_managed_with_outcome(
                 minimum_terminal_size: Some(terminal_size_requirement.as_terminal_size()),
                 exit_semantic: weathr::ExitSemantic::Start,
             };
-            let lockscreen_watchdog = weathr_watchdog.clone();
             let lockscreen_result = weathr_watchdog.run_boundary(
                 BoundarySpec::new("shell-lockscreen-ui-session", BoundaryKind::UiSession)
                     .terminal_owner(),
-                AssertUnwindSafe(|| {
-                    weathr::run_shell_lockscreen_managed_with_shutdown_and_assets(
-                        lockscreen_input,
-                        lockscreen_watchdog,
-                        ascii_assets.shared_store(),
-                    )
-                }),
+                AssertUnwindSafe(|| weathr::run_display_blocking(lockscreen_input)),
             );
             match lockscreen_result {
                 Ok(Ok(weathr::ShellLockscreenResult::Started)) => {}
@@ -1934,6 +1927,15 @@ pub(super) fn shell_watchdog_descriptor() -> AppDescriptor {
         "Tundra Shell",
         env!("CARGO_PKG_VERSION"),
         AppCriticality::ProcessCritical,
+    )
+}
+
+fn weathr_watchdog_descriptor() -> AppDescriptor {
+    AppDescriptor::new(
+        AppId::from_static("weathr"),
+        "Weathr",
+        env!("CARGO_PKG_VERSION"),
+        AppCriticality::SessionCritical,
     )
 }
 

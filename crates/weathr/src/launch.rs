@@ -1,5 +1,6 @@
 use crate::app::{App, AppInput, AppRunOutcome};
 use crate::app_state::BottomHudPrompt;
+use crate::assets::WeatherAsciiAssets;
 use crate::error::{TerminalError, WeatherAssetError};
 use crate::render::TerminalRenderer;
 use crate::theme::{Palette, ThemeRegistry};
@@ -9,7 +10,6 @@ use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 use system_services_model::SystemSnapshot;
 use tokio::sync::watch;
-use watchdog::{AppCriticality, AppDescriptor, AppId, AppWatchdog, WatchdogError};
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum ClockFormat {
@@ -77,10 +77,10 @@ pub enum ShellLockscreenResult {
 pub enum WeathrRunError {
     Terminal(TerminalError),
     Assets(WeatherAssetError),
-    WatchdogUnavailable,
-    Watchdog(WatchdogError),
-    /// Retained for host watchdogs that need to surface a typed unrecoverable
-    /// display failure. The renderer itself does not install a panic hook.
+    /// A display host could not complete setup before rendering started.
+    Host(String),
+    /// Retained for hosts that need to surface a typed unrecoverable display
+    /// failure. The renderer does not install a panic hook.
     Panic {
         incident_id: String,
         reason: String,
@@ -95,10 +95,7 @@ impl fmt::Display for WeathrRunError {
         match self {
             Self::Terminal(error) => write!(formatter, "{}", error.user_friendly_message()),
             Self::Assets(error) => write!(formatter, "failed to load weathr ASCII assets: {error}"),
-            Self::WatchdogUnavailable => formatter.write_str(
-                "weathr requires the process watchdog to be installed before it is launched",
-            ),
-            Self::Watchdog(error) => write!(formatter, "weathr watchdog setup failed: {error}"),
+            Self::Host(error) => write!(formatter, "weathr host setup failed: {error}"),
             Self::Panic {
                 incident_id,
                 reason,
@@ -123,21 +120,6 @@ impl From<WeatherAssetError> for WeathrRunError {
         Self::Assets(value)
     }
 }
-impl From<WatchdogError> for WeathrRunError {
-    fn from(value: WatchdogError) -> Self {
-        Self::Watchdog(value)
-    }
-}
-
-pub fn weathr_watchdog_descriptor() -> AppDescriptor {
-    AppDescriptor::new(
-        AppId::from_static("weathr"),
-        "Weathr",
-        env!("CARGO_PKG_VERSION"),
-        AppCriticality::SessionCritical,
-    )
-}
-
 pub fn restore_terminal_best_effort() {
     use crossterm::{
         cursor, execute,
@@ -153,48 +135,29 @@ pub fn restore_terminal_best_effort() {
 /// lifecycle; Weathr never creates a network or cache runtime itself.
 pub fn run_display_blocking(
     input: WeathrDisplayInput,
-    watchdog: AppWatchdog,
 ) -> Result<ShellLockscreenResult, WeathrRunError> {
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
         .map_err(WeathrRunError::Runtime)?;
-    runtime.block_on(run_display(input, watchdog))
+    runtime.block_on(run_display(input))
 }
 
 /// Renders one scene from snapshots. It performs no configuration lookup and
 /// starts no weather, geolocation, cache or time request.
 pub async fn run_display(
     input: WeathrDisplayInput,
-    _watchdog: AppWatchdog,
 ) -> Result<ShellLockscreenResult, WeathrRunError> {
-    run_display_inner(input, None).await
-}
-
-pub fn run_shell_lockscreen_managed_with_shutdown_and_assets(
-    input: WeathrDisplayInput,
-    _watchdog: AppWatchdog,
-    ascii_assets: Arc<ascii_assets::AsciiAssetStore>,
-) -> Result<ShellLockscreenResult, WeathrRunError> {
-    let runtime = tokio::runtime::Builder::new_multi_thread()
-        .enable_all()
-        .build()
-        .map_err(WeathrRunError::Runtime)?;
-    runtime.block_on(run_display_inner(input, Some(ascii_assets)))
+    run_display_inner(input).await
 }
 
 async fn run_display_inner(
     input: WeathrDisplayInput,
-    cached_store: Option<Arc<ascii_assets::AsciiAssetStore>>,
 ) -> Result<ShellLockscreenResult, WeathrRunError> {
     let mut registry = ThemeRegistry::new();
     registry.set_active_palette(input.palette);
-    let dimensions = match cached_store.as_deref() {
-        Some(store) => store.max_asset_dimensions(),
-        None => ascii_assets::AsciiAssetStore::load_theme(registry.active().id)
-            .map_err(WeatherAssetError::from)?
-            .max_asset_dimensions(),
-    };
+    let assets = WeatherAsciiAssets::bundled()?;
+    let dimensions = assets.max_dimensions();
     let minimum = minimum_terminal_size_for_assets(dimensions, input.minimum_terminal_size);
     let mut renderer = TerminalRenderer::new_with_minimum(minimum)?;
     let (width, height) = renderer.get_size();
@@ -206,7 +169,7 @@ async fn run_display_inner(
         snapshots: input.snapshots,
         clock_format: input.clock_format,
         hide_hud: input.hide_hud,
-        cached_store: cached_store.as_deref(),
+        assets,
     })?;
     renderer.init()?;
     let run_result = app
@@ -223,15 +186,15 @@ async fn run_display_inner(
 }
 
 fn minimum_terminal_size_for_assets(
-    dimensions: ascii_assets::AssetDimensions,
+    dimensions: (usize, usize),
     explicit: Option<(u16, u16)>,
 ) -> (u16, u16) {
     let supplied = explicit.unwrap_or((0, 0));
     (
-        u16::try_from(dimensions.width)
+        u16::try_from(dimensions.0)
             .unwrap_or(u16::MAX)
             .max(supplied.0),
-        u16::try_from(dimensions.height)
+        u16::try_from(dimensions.1)
             .unwrap_or(u16::MAX)
             .max(supplied.1),
     )

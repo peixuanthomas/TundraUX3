@@ -30,8 +30,7 @@ fn main() {
             std::process::exit(3);
         }
     };
-    let weathr_watchdog = match process_watchdog.register_app(weathr::weathr_watchdog_descriptor())
-    {
+    let weathr_watchdog = match process_watchdog.register_app(cli::weathr_watchdog_descriptor()) {
         Ok(watchdog) => watchdog,
         Err(error) => {
             eprintln!("tundra-cli Weathr watchdog registration failed: {error}");

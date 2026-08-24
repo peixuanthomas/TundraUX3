@@ -21,9 +21,4 @@ tokio = { version = "1", features = [
     "macros",
     "signal",
 ] }
-ascii-assets = { path = "../ascii-assets" }
 system-services-model = { path = "../system-services-model" }
-watchdog = { path = "../watchdog", features = ["tokio"] }
-
-[dev-dependencies]
-watchdog = { path = "../watchdog", features = ["test-support"] }

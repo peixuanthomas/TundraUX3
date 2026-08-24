@@ -8,7 +8,6 @@ pub const BOTTOM_HUD_QUIT_PROMPT: &str = "Press Space to quit";
 pub const BOTTOM_HUD_START_PROMPT: &str = "Press Space to start";
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
-#[allow(dead_code)]
 pub enum LocationDisplay {
     #[default]
     Coordinates,

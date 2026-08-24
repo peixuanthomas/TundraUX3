@@ -12,5 +12,4 @@ pub mod theme;
 pub use launch::{
     ClockFormat, ExitSemantic, ShellLockscreenResult, WeathrDisplayInput, WeathrRunError,
     restore_terminal_best_effort, run_display, run_display_blocking,
-    run_shell_lockscreen_managed_with_shutdown_and_assets, weathr_watchdog_descriptor,
 };

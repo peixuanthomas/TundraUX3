@@ -1,6 +1,5 @@
 use crate::ClockFormat;
 use crate::render::TerminalRenderer;
-use ascii_assets::ClockFontAsset;
 use chrono::{DateTime, NaiveDateTime, NaiveTime, Timelike};
 use crossterm::style::Color;
 use std::collections::HashMap;
@@ -39,39 +38,67 @@ pub enum ClockFontError {
 }
 
 impl ClockFont {
-    pub fn from_asset(asset: &ClockFontAsset) -> Result<Self, ClockFontError> {
-        if asset.height == 0 {
+    pub(crate) fn from_static(
+        height: usize,
+        spacing: usize,
+        separator_spacing: usize,
+        glyphs: &[(char, &[&str])],
+    ) -> Result<Self, ClockFontError> {
+        if height == 0 {
             return Err(ClockFontError::EmptyHeight);
         }
 
-        let mut glyphs = HashMap::new();
-        for (&glyph, lines) in &asset.glyphs {
-            if lines.len() != asset.height {
+        let mut loaded_glyphs = HashMap::new();
+        for &(glyph, lines) in glyphs {
+            if lines.len() != height {
                 return Err(ClockFontError::GlyphHeight {
                     glyph,
                     actual: lines.len(),
-                    expected: asset.height,
+                    expected: height,
                 });
             }
-            glyphs.insert(glyph, pad_glyph_lines(lines.clone()));
+            loaded_glyphs.insert(
+                glyph,
+                pad_glyph_lines(lines.iter().map(|line| (*line).to_string()).collect()),
+            );
         }
 
         for required in required_glyphs() {
-            if !glyphs.contains_key(&required) {
+            if !loaded_glyphs.contains_key(&required) {
                 return Err(ClockFontError::MissingGlyph(required));
             }
         }
 
         Ok(Self {
-            height: asset.height,
-            spacing: asset.spacing,
-            separator_spacing: asset.separator_spacing,
-            glyphs,
+            height,
+            spacing,
+            separator_spacing,
+            glyphs: loaded_glyphs,
         })
     }
 
     pub fn height(&self) -> usize {
         self.height
+    }
+
+    pub(crate) fn max_rendered_clock_width(&self) -> usize {
+        let glyph_width = |glyph: char| {
+            self.glyphs
+                .get(&glyph)
+                .and_then(|lines| lines.iter().map(|line| line.chars().count()).max())
+                .unwrap_or(0)
+        };
+        let digit_width = "0123456789".chars().map(glyph_width).max().unwrap_or(0);
+        let suffix_width = glyph_width('A').max(glyph_width('P'));
+
+        digit_width
+            .saturating_mul(4)
+            .saturating_add(glyph_width(':'))
+            .saturating_add(glyph_width(' '))
+            .saturating_add(suffix_width)
+            .saturating_add(glyph_width('M'))
+            .saturating_add(self.separator_spacing.saturating_mul(2))
+            .saturating_add(self.spacing.saturating_mul(5))
     }
 }
 
@@ -302,7 +329,6 @@ fn pad_glyph_lines(mut lines: Vec<String>) -> Vec<String> {
 mod tests {
     use super::*;
     use chrono::NaiveTime;
-    use std::collections::BTreeMap;
 
     #[test]
     fn formats_twenty_four_hour_time() {
@@ -342,28 +368,35 @@ mod tests {
         assert_eq!(parsed.time(), NaiveTime::from_hms_opt(15, 45, 0).unwrap());
     }
 
-    fn test_asset() -> ClockFontAsset {
-        let mut glyphs = BTreeMap::new();
+    fn test_glyphs() -> Vec<(char, Vec<String>)> {
+        let mut glyphs = Vec::new();
         for ch in "0123456789".chars() {
-            glyphs.insert(ch, vec![format!("{ch}{ch}"), format!("{ch}{ch}")]);
+            glyphs.push((ch, vec![format!("{ch}{ch}"), format!("{ch}{ch}")]));
         }
-        glyphs.insert('1', vec!["1".to_string(), "1".to_string()]);
-        glyphs.insert(':', vec!["##".to_string(), "##".to_string()]);
-        glyphs.insert(' ', vec![" ".to_string(), " ".to_string()]);
-        glyphs.insert('A', vec!["AA".to_string(), "AA".to_string()]);
-        glyphs.insert('P', vec!["PP".to_string(), "PP".to_string()]);
-        glyphs.insert('M', vec!["MM".to_string(), "MM".to_string()]);
+        glyphs.retain(|(glyph, _)| *glyph != '1');
+        glyphs.push(('1', vec!["1".to_string(), "1".to_string()]));
+        glyphs.push((':', vec!["##".to_string(), "##".to_string()]));
+        glyphs.push((' ', vec![" ".to_string(), " ".to_string()]));
+        glyphs.push(('A', vec!["AA".to_string(), "AA".to_string()]));
+        glyphs.push(('P', vec!["PP".to_string(), "PP".to_string()]));
+        glyphs.push(('M', vec!["MM".to_string(), "MM".to_string()]));
+        glyphs
+    }
 
-        ClockFontAsset {
-            height: 2,
-            spacing: 1,
-            separator_spacing: 5,
-            glyphs,
-        }
+    fn font_from_glyphs(glyphs: &[(char, Vec<String>)]) -> Result<ClockFont, ClockFontError> {
+        let borrowed = glyphs
+            .iter()
+            .map(|(glyph, lines)| (*glyph, lines.iter().map(String::as_str).collect::<Vec<_>>()))
+            .collect::<Vec<_>>();
+        let definition = borrowed
+            .iter()
+            .map(|(glyph, lines)| (*glyph, lines.as_slice()))
+            .collect::<Vec<_>>();
+        ClockFont::from_static(2, 1, 5, &definition)
     }
 
     fn test_font() -> ClockFont {
-        ClockFont::from_asset(&test_asset()).expect("test font asset is valid")
+        font_from_glyphs(&test_glyphs()).expect("test font definition is valid")
     }
 
     #[test]
@@ -375,13 +408,15 @@ mod tests {
     }
 
     #[test]
-    fn adapts_clock_font_asset_and_pads_glyph_rows() {
-        let mut asset = test_asset();
-        asset
-            .glyphs
-            .insert('0', vec!["0".to_string(), "00".to_string()]);
+    fn adapts_clock_font_definition_and_pads_glyph_rows() {
+        let mut glyphs = test_glyphs();
+        glyphs
+            .iter_mut()
+            .find(|(glyph, _)| *glyph == '0')
+            .expect("zero glyph exists")
+            .1 = vec!["0".to_string(), "00".to_string()];
 
-        let font = ClockFont::from_asset(&asset).expect("asset adapts");
+        let font = font_from_glyphs(&glyphs).expect("definition adapts");
         let zero = font.glyphs.get(&'0').unwrap();
         assert_eq!(zero, &vec!["0 ".to_string(), "00".to_string()]);
     }
@@ -461,20 +496,24 @@ mod tests {
     }
 
     #[test]
-    fn clock_font_asset_requires_required_glyphs() {
-        let mut asset = test_asset();
-        asset.glyphs.remove(&'A');
+    fn clock_font_definition_requires_required_glyphs() {
+        let mut glyphs = test_glyphs();
+        glyphs.retain(|(glyph, _)| *glyph != 'A');
 
-        let err = ClockFont::from_asset(&asset).unwrap_err();
+        let err = font_from_glyphs(&glyphs).unwrap_err();
         assert_eq!(err, ClockFontError::MissingGlyph('A'));
     }
 
     #[test]
-    fn clock_font_asset_rejects_wrong_glyph_height() {
-        let mut asset = test_asset();
-        asset.glyphs.insert('0', vec!["only one row".to_string()]);
+    fn clock_font_definition_rejects_wrong_glyph_height() {
+        let mut glyphs = test_glyphs();
+        glyphs
+            .iter_mut()
+            .find(|(glyph, _)| *glyph == '0')
+            .expect("zero glyph exists")
+            .1 = vec!["only one row".to_string()];
 
-        let err = ClockFont::from_asset(&asset).unwrap_err();
+        let err = font_from_glyphs(&glyphs).unwrap_err();
         assert_eq!(
             err,
             ClockFontError::GlyphHeight {

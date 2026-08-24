@@ -6,7 +6,7 @@ use std::sync::atomic::AtomicBool;
 
 use platform::Platform;
 use storage::{BorderColor, StorageConfig, StorageLayout, StorageManager};
-use watchdog::{AppWatchdog, ProcessWatchdog};
+use watchdog::{AppCriticality, AppDescriptor, AppId, AppWatchdog, ProcessWatchdog};
 
 use crate::arguments::{CliCommand, parse_args};
 use crate::asset_command::run_asset;
@@ -20,6 +20,16 @@ use crate::weathr_command::{
 };
 
 const CLEAR_TERMINAL_SEQUENCE: &[u8] = b"\x1b[3J\x1b[2J\x1b[H";
+
+/// Watchdog registration is a host concern, not part of Weathr's display API.
+pub fn weathr_watchdog_descriptor() -> AppDescriptor {
+    AppDescriptor::new(
+        AppId::from_static("weathr"),
+        "Weathr",
+        env!("CARGO_PKG_VERSION"),
+        AppCriticality::SessionCritical,
+    )
+}
 
 pub fn run<I, S, Stdout, Stderr>(args: I, stdout: &mut Stdout, stderr: &mut Stderr) -> i32
 where
@@ -304,9 +314,13 @@ where
 
 fn launch_weathr(options: WeathrLaunchOptions) -> Result<(), weathr::WeathrRunError> {
     let watchdog = ProcessWatchdog::global()
-        .ok_or(weathr::WeathrRunError::WatchdogUnavailable)?
-        .register_app(weathr::weathr_watchdog_descriptor())
-        .map_err(weathr::WeathrRunError::Watchdog)?;
+        .ok_or_else(|| {
+            weathr::WeathrRunError::Host(
+                "the process watchdog must be installed before launching Weathr".to_string(),
+            )
+        })?
+        .register_app(weathr_watchdog_descriptor())
+        .map_err(|error| weathr::WeathrRunError::Host(error.to_string()))?;
     launch_weathr_managed(options, watchdog)
 }
 
@@ -314,19 +328,18 @@ fn launch_weathr_managed(
     options: WeathrLaunchOptions,
     watchdog: AppWatchdog,
 ) -> Result<(), weathr::WeathrRunError> {
-    let mut services_config = system_services::SystemServicesConfig::default();
-    services_config.weather_location = options.location_query;
-    if let Some(timezone_id) = options.timezone_id {
-        services_config.timezone_id = timezone_id;
-    }
-    services_config.timezone_location =
-        options
+    let services_config = system_services::SystemServicesConfig {
+        weather_location: options.location_query,
+        timezone_id: options.timezone_id.unwrap_or_else(|| "UTC".to_string()),
+        timezone_location: options
             .location_override
             .map(|location| system_services::GeoLocation {
                 latitude: location.latitude,
                 longitude: location.longitude,
                 city: location.city,
-            });
+            }),
+        ..Default::default()
+    };
 
     let (services, snapshots) =
         system_services::SystemServicesRuntime::start(services_config, watchdog.clone());
@@ -339,7 +352,7 @@ fn launch_weathr_managed(
         minimum_terminal_size: options.minimum_terminal_size,
         exit_semantic: weathr::ExitSemantic::Quit,
     };
-    let result = weathr::run_display_blocking(input, watchdog).map(|_| ());
+    let result = weathr::run_display_blocking(input).map(|_| ());
     let _ = services.shutdown();
     result
 }

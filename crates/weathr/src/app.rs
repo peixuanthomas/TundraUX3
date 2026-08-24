@@ -118,7 +118,7 @@ pub struct App {
     hide_hud: bool,
 }
 
-pub(crate) struct AppInput<'a> {
+pub(crate) struct AppInput {
     pub term_width: u16,
     pub term_height: u16,
     pub themes: ThemeRegistry,
@@ -126,7 +126,7 @@ pub(crate) struct AppInput<'a> {
     pub snapshots: tokio::sync::watch::Receiver<SystemSnapshot>,
     pub clock_format: ClockFormat,
     pub hide_hud: bool,
-    pub cached_store: Option<&'a ascii_assets::AsciiAssetStore>,
+    pub assets: WeatherAsciiAssets,
 }
 
 fn render_centered_line(
@@ -143,7 +143,7 @@ fn render_centered_line(
 
 impl App {
     pub(crate) fn new_with_bottom_hud_prompt_and_assets(
-        input: AppInput<'_>,
+        input: AppInput,
     ) -> Result<Self, WeatherAssetError> {
         let AppInput {
             term_width,
@@ -153,7 +153,7 @@ impl App {
             snapshots,
             clock_format,
             hide_hud,
-            cached_store,
+            assets: ascii_assets,
         } = input;
         let state = AppState::new_with_bottom_hud_prompt(
             WeatherLocation {
@@ -169,14 +169,14 @@ impl App {
         );
 
         let requested_theme_id = themes.active().id;
-        let mut ascii_assets = weather_assets_for_theme(requested_theme_id, cached_store)?;
         let (mut animations, mut scenes) =
             build_visual_registries(term_width, term_height, &ascii_assets);
         let overlays = OverlayRegistry::new();
         let bindings = resolve_theme_bindings(&themes, &scenes, &overlays);
 
         if bindings.theme_id != requested_theme_id {
-            ascii_assets = weather_assets_for_theme(bindings.theme_id, cached_store)?;
+            // All registered Weathr themes currently share the bundled scene
+            // assets; only their display palette differs.
             (animations, scenes) = build_visual_registries(term_width, term_height, &ascii_assets);
         }
 
@@ -442,26 +442,6 @@ impl App {
             }
         }
     }
-}
-
-fn weather_assets_for_theme(
-    theme_id: &str,
-    cached_store: Option<&ascii_assets::AsciiAssetStore>,
-) -> Result<WeatherAsciiAssets, WeatherAssetError> {
-    let Some(store) = cached_store else {
-        return WeatherAsciiAssets::load(theme_id);
-    };
-    if store.theme_id() != theme_id {
-        return Err(ascii_assets::AssetError::InvalidAsset {
-            asset: format!("theme/{theme_id}"),
-            message: format!(
-                "cached theme is {}; refresh the asset cache before switching themes",
-                store.theme_id()
-            ),
-        }
-        .into());
-    }
-    WeatherAsciiAssets::from_store(store)
 }
 
 #[cfg(test)]

@@ -27,3 +27,6 @@ jobs:
       - name: Compile workspace
         shell: bash
         run: cargo build --workspace --locked
+      - name: Check Weathr dependency boundary
+        shell: bash
+        run: bash scripts/check-weathr-dependency-boundary.sh

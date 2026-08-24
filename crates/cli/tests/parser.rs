@@ -1446,7 +1446,7 @@ fn test_weathr_watchdog() -> std::sync::MutexGuard<'static, TestWeathrWatchdog> 
             );
             let (runtime, process) = WatchdogRuntime::start(config).expect("test watchdog starts");
             let weathr = process
-                .register_app(weathr::weathr_watchdog_descriptor())
+                .register_app(cli::weathr_watchdog_descriptor())
                 .expect("test Weathr app registers");
             std::sync::Mutex::new(TestWeathrWatchdog {
                 _tree: tree,
