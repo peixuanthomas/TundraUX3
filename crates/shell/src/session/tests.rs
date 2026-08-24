@@ -865,6 +865,33 @@ fn explorer_dialog_and_transient_overlay_identities_are_semantic_and_stable() {
 }
 
 #[test]
+fn explorer_address_and_search_keep_non_overlay_text_input_routing() {
+    for mode in [ExplorerInputMode::Address, ExplorerInputMode::Search] {
+        let mut state = explorer_routing_test_state();
+        state.explorer_input_mode = mode;
+
+        assert_eq!(state.resolved_explorer_overlay(), None);
+        assert_eq!(state.active_overlay_descriptor(), None);
+        assert_eq!(
+            state.route_key_input(&KeyInput::from_label("Enter")).1,
+            ShellCommand::SubmitExplorerInput
+        );
+        assert_eq!(
+            state.route_key_input(&KeyInput::from_label("Esc")).1,
+            ShellCommand::CancelExplorerInput
+        );
+        assert_eq!(
+            state.route_key_input(&KeyInput::from_label("Backspace")).1,
+            ShellCommand::ExplorerBackspace
+        );
+        assert_eq!(
+            state.route_key_input(&KeyInput::from_label("x")).1,
+            ShellCommand::AppendExplorerChar('x')
+        );
+    }
+}
+
+#[test]
 fn settings_editor_identities_distinguish_variants_without_mutable_content() {
     let mut state = ShellSession::new_for_home_mode(
         ShellLaunchConfig::default(),

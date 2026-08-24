@@ -744,6 +744,21 @@ impl ShellSession {
             None => {}
         }
 
+        if matches!(
+            self.explorer_input_mode,
+            ExplorerInputMode::Address | ExplorerInputMode::Search
+        ) {
+            return match &key.key {
+                InputKey::Escape => (target, ShellCommand::CancelExplorerInput),
+                InputKey::Enter => (target, ShellCommand::SubmitExplorerInput),
+                InputKey::Backspace | InputKey::Delete => (target, ShellCommand::ExplorerBackspace),
+                InputKey::Char(character) if !key.has_non_shift_modifier() => {
+                    (target, ShellCommand::AppendExplorerChar(*character))
+                }
+                _ => (target, ShellCommand::RecordInput),
+            };
+        }
+
         let is_trash = self
             .app
             .explorer_state()
