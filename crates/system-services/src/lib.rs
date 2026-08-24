@@ -22,6 +22,7 @@ use watchdog::{
 const DEFAULT_WEATHER_REFRESH: Duration = Duration::from_secs(5 * 60);
 const DEFAULT_LOCATION_REFRESH: Duration = Duration::from_secs(24 * 60 * 60);
 const DEFAULT_TIME_REFRESH: Duration = Duration::from_secs(5 * 60);
+const SYSTEM_LOCATION_DETECTION_TIMEOUT: Duration = Duration::from_secs(3);
 const DEFAULT_BACKOFF: [Duration; 3] = [
     Duration::from_secs(30),
     Duration::from_secs(2 * 60),
@@ -242,7 +243,7 @@ impl WeatherProvider for MetOfficeProvider {
             })
             .ok_or_else(|| "Met Office returned no current weather".to_string())?;
         Ok(WeatherData {
-            condition: normalize_open_meteo_code(current.weather_code),
+            condition: normalize_met_office_code(current.weather_code),
             temperature: current.temperature,
             precipitation: current.precipitation,
             wind_speed: current.wind_speed,
@@ -271,6 +272,29 @@ pub fn normalize_open_meteo_code(code: i32) -> WeatherCondition {
         85 | 86 => WeatherCondition::SnowShowers,
         95 => WeatherCondition::Thunderstorm,
         96 | 99 => WeatherCondition::ThunderstormHail,
+        _ => WeatherCondition::Clear,
+    }
+}
+
+/// Converts Met Office DataHub significant weather codes, which are distinct
+/// from the WMO codes used by Open-Meteo.
+fn normalize_met_office_code(code: i32) -> WeatherCondition {
+    match code {
+        0 | 1 => WeatherCondition::Clear,
+        2 | 3 => WeatherCondition::PartlyCloudy,
+        5 | 6 => WeatherCondition::Fog,
+        7 => WeatherCondition::Cloudy,
+        8 => WeatherCondition::Overcast,
+        -1 | 11 => WeatherCondition::Drizzle,
+        9 | 10 | 13 | 14 => WeatherCondition::RainShowers,
+        12 | 15 => WeatherCondition::Rain,
+        // The shared model has no sleet or hail-only variants. Preserve their
+        // frozen-precipitation semantics instead of misclassifying them as rain.
+        16 | 17 | 22 | 23 | 25 | 26 => WeatherCondition::SnowShowers,
+        18 => WeatherCondition::SnowGrains,
+        19..=21 => WeatherCondition::ThunderstormHail,
+        24 | 27 => WeatherCondition::Snow,
+        28..=31 => WeatherCondition::Thunderstorm,
         _ => WeatherCondition::Clear,
     }
 }
@@ -421,6 +445,7 @@ async fn run(
     let mut weather_due = Instant::now();
     let mut time_due = Instant::now();
     let mut location_due = Instant::now();
+    let mut system_location = None;
     let mut last_good: Option<WeatherSnapshot> = load_weather_cache(&config).ok().flatten();
     if let Some(cached) = last_good.clone() {
         publish(
@@ -459,10 +484,16 @@ async fn run(
             }
         }
         if now >= weather_due {
-            let should_resolve = location_due <= now;
+            let should_refresh_location = location_due <= now;
             let operation_config = config.clone();
             let operation = tokio::time::timeout(operation_config.request_timeout, async {
-                let location = resolve_location(&operation_config, should_resolve).await;
+                let location = resolve_location(
+                    &operation_config,
+                    should_refresh_location,
+                    &mut system_location,
+                    &IpLocationDetector,
+                )
+                .await;
                 let weather = provider
                     .current_weather(location.weather_location(), operation_config.weather_units)
                     .await?;
@@ -717,7 +748,49 @@ async fn validate_time(
         .map_err(SystemServicesError::Validation)
 }
 
-async fn resolve_location(config: &SystemServicesConfig, should_resolve_text: bool) -> GeoLocation {
+#[async_trait]
+trait SystemLocationDetector: Send + Sync {
+    async fn detect(&self) -> Option<GeoLocation>;
+}
+
+struct IpLocationDetector;
+
+#[derive(Deserialize)]
+struct IpLocationResponse {
+    latitude: f64,
+    longitude: f64,
+    city: Option<String>,
+}
+
+#[async_trait]
+impl SystemLocationDetector for IpLocationDetector {
+    async fn detect(&self) -> Option<GeoLocation> {
+        let response = reqwest::Client::new()
+            .get("https://ipapi.co/json/")
+            .header(
+                "User-Agent",
+                format!("tundra-system-services/{}", env!("CARGO_PKG_VERSION")),
+            )
+            .send()
+            .await
+            .ok()?
+            .error_for_status()
+            .ok()?;
+        let location = response.json::<IpLocationResponse>().await.ok()?;
+        Some(GeoLocation {
+            latitude: location.latitude,
+            longitude: location.longitude,
+            city: location.city,
+        })
+    }
+}
+
+async fn resolve_location(
+    config: &SystemServicesConfig,
+    should_refresh_location: bool,
+    system_location: &mut Option<GeoLocation>,
+    detector: &dyn SystemLocationDetector,
+) -> GeoLocation {
     if let Some(query) = config
         .weather_location
         .as_deref()
@@ -727,13 +800,28 @@ async fn resolve_location(config: &SystemServicesConfig, should_resolve_text: bo
         if let Some(cached) = load_location_cache(config, query) {
             return cached;
         }
-        if should_resolve_text && let Some(resolved) = geocode(query).await {
+        if should_refresh_location && let Some(resolved) = geocode(query).await {
             let _ = save_location_cache(config, query, &resolved);
             return resolved;
         }
     }
-    config
-        .timezone_location
+    if let Some(location) = config.timezone_location.clone() {
+        return location;
+    }
+    if (should_refresh_location || system_location.is_none())
+        && let Some(location) = tokio::time::timeout(
+            config
+                .request_timeout
+                .min(SYSTEM_LOCATION_DETECTION_TIMEOUT),
+            detector.detect(),
+        )
+        .await
+        .ok()
+        .flatten()
+    {
+        *system_location = Some(location);
+    }
+    system_location
         .clone()
         .unwrap_or_else(|| config.fallback_location.clone())
 }
@@ -897,6 +985,28 @@ mod tests {
             self.outcomes.lock().unwrap().remove(0)
         }
     }
+
+    struct FakeSystemLocationDetector {
+        outcomes: Mutex<Vec<Option<GeoLocation>>>,
+        calls: AtomicUsize,
+    }
+
+    #[async_trait]
+    impl SystemLocationDetector for FakeSystemLocationDetector {
+        async fn detect(&self) -> Option<GeoLocation> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            self.outcomes.lock().unwrap().remove(0)
+        }
+    }
+
+    struct PendingSystemLocationDetector;
+
+    #[async_trait]
+    impl SystemLocationDetector for PendingSystemLocationDetector {
+        async fn detect(&self) -> Option<GeoLocation> {
+            std::future::pending().await
+        }
+    }
     fn sample() -> WeatherData {
         WeatherData {
             condition: WeatherCondition::Clear,
@@ -1040,6 +1150,140 @@ mod tests {
         for (code, expected) in cases {
             assert_eq!(normalize_open_meteo_code(code), expected, "code {code}");
         }
+    }
+
+    #[test]
+    fn met_office_codes_use_the_provider_specific_normalizer() {
+        let cases = [
+            (0, WeatherCondition::Clear),
+            (1, WeatherCondition::Clear),
+            (2, WeatherCondition::PartlyCloudy),
+            (3, WeatherCondition::PartlyCloudy),
+            (5, WeatherCondition::Fog),
+            (6, WeatherCondition::Fog),
+            (7, WeatherCondition::Cloudy),
+            (8, WeatherCondition::Overcast),
+            (9, WeatherCondition::RainShowers),
+            (10, WeatherCondition::RainShowers),
+            (11, WeatherCondition::Drizzle),
+            (12, WeatherCondition::Rain),
+            (13, WeatherCondition::RainShowers),
+            (14, WeatherCondition::RainShowers),
+            (15, WeatherCondition::Rain),
+            (16, WeatherCondition::SnowShowers),
+            (17, WeatherCondition::SnowShowers),
+            (18, WeatherCondition::SnowGrains),
+            (19, WeatherCondition::ThunderstormHail),
+            (20, WeatherCondition::ThunderstormHail),
+            (21, WeatherCondition::ThunderstormHail),
+            (22, WeatherCondition::SnowShowers),
+            (23, WeatherCondition::SnowShowers),
+            (24, WeatherCondition::Snow),
+            (25, WeatherCondition::SnowShowers),
+            (26, WeatherCondition::SnowShowers),
+            (27, WeatherCondition::Snow),
+            (28, WeatherCondition::Thunderstorm),
+            (29, WeatherCondition::Thunderstorm),
+            (30, WeatherCondition::Thunderstorm),
+            (31, WeatherCondition::Thunderstorm),
+            (4, WeatherCondition::Clear),
+            (-1, WeatherCondition::Drizzle),
+        ];
+        for (code, expected) in cases {
+            assert_eq!(normalize_met_office_code(code), expected, "code {code}");
+        }
+    }
+
+    #[tokio::test]
+    async fn weather_location_prioritizes_text_then_timezone_before_system_detection() {
+        let configured = GeoLocation {
+            latitude: 1.0,
+            longitude: 2.0,
+            city: Some("configured".into()),
+        };
+        let timezone = GeoLocation {
+            latitude: 3.0,
+            longitude: 4.0,
+            city: Some("timezone".into()),
+        };
+        let detector = FakeSystemLocationDetector {
+            outcomes: Mutex::new(vec![]),
+            calls: AtomicUsize::new(0),
+        };
+        let mut text_config = config();
+        text_config.weather_location = Some("configured city".into());
+        text_config.timezone_location = Some(timezone.clone());
+        save_location_cache(&text_config, "configured city", &configured).unwrap();
+        let mut system_location = None;
+        assert_eq!(
+            resolve_location(&text_config, true, &mut system_location, &detector).await,
+            configured
+        );
+        assert_eq!(detector.calls.load(Ordering::SeqCst), 0);
+
+        let mut timezone_config = config();
+        timezone_config.timezone_location = Some(timezone.clone());
+        assert_eq!(
+            resolve_location(&timezone_config, true, &mut system_location, &detector).await,
+            timezone
+        );
+        assert_eq!(detector.calls.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn weather_location_uses_successful_system_detection() {
+        let detected = GeoLocation {
+            latitude: 51.5072,
+            longitude: -0.1276,
+            city: Some("London".into()),
+        };
+        let detector = FakeSystemLocationDetector {
+            outcomes: Mutex::new(vec![Some(detected.clone())]),
+            calls: AtomicUsize::new(0),
+        };
+        let mut system_location = None;
+        assert_eq!(
+            resolve_location(&config(), true, &mut system_location, &detector).await,
+            detected
+        );
+        assert_eq!(detector.calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn weather_location_uses_default_after_system_detection_fails() {
+        let mut config = config();
+        config.fallback_location = GeoLocation {
+            latitude: 31.2304,
+            longitude: 121.4737,
+            city: Some("Shanghai".into()),
+        };
+        let detector = FakeSystemLocationDetector {
+            outcomes: Mutex::new(vec![None]),
+            calls: AtomicUsize::new(0),
+        };
+        let mut system_location = None;
+        assert_eq!(
+            resolve_location(&config, true, &mut system_location, &detector).await,
+            config.fallback_location
+        );
+        assert_eq!(detector.calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn system_location_detection_obeys_the_request_timeout() {
+        let mut config = config();
+        config.request_timeout = Duration::from_millis(10);
+        let mut system_location = None;
+        let started = Instant::now();
+        let resolved = resolve_location(
+            &config,
+            true,
+            &mut system_location,
+            &PendingSystemLocationDetector,
+        )
+        .await;
+        assert_eq!(resolved, config.fallback_location);
+        assert!(started.elapsed() < Duration::from_secs(1));
     }
 
     #[test]
