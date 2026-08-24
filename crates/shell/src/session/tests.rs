@@ -111,6 +111,7 @@ fn motion_progress_drives_page_and_overlay_hit_regions() {
         kind,
         direction: ui::MotionDirection::Entering,
         progress,
+        phase_progress: progress,
         active: progress < 1_000,
         next_redraw_in: Duration::from_millis(16),
     };
@@ -151,6 +152,90 @@ fn motion_progress_drives_page_and_overlay_hit_regions() {
             .regions()
             .iter()
             .any(|region| region.component == ShellComponent::ExitDialog)
+    );
+}
+
+#[test]
+fn entering_overlays_gate_keyboard_focus_and_popup_activation_until_ready() {
+    let mut state = ShellSession::new_for_home_mode(
+        ShellLaunchConfig::default(),
+        (120, 40),
+        ShellHomeMode::User,
+    );
+    state.apply_input(InputEvent::from_key_label("Esc"));
+    let transition = |progress| ui::MotionTransition {
+        kind: ui::MotionTransitionKind::Dialog,
+        direction: ui::MotionDirection::Entering,
+        progress,
+        phase_progress: progress,
+        active: progress < 1_000,
+        next_redraw_in: Duration::from_millis(16),
+    };
+    state.refresh_hit_map_with_motion(ui::MotionTransitions {
+        overlay: Some(transition(499)),
+        ..ui::MotionTransitions::default()
+    });
+    assert_ne!(state.focus_order(), vec![ShellComponent::ExitDialog]);
+    assert_eq!(
+        state.route_key_input(&KeyInput::from_label("Enter")).1,
+        ShellCommand::Noop
+    );
+    assert_ne!(
+        state.route_key_input(&KeyInput::from_label("Esc")).1,
+        ShellCommand::Noop
+    );
+
+    state.refresh_hit_map_with_motion(ui::MotionTransitions {
+        overlay: Some(transition(500)),
+        ..ui::MotionTransitions::default()
+    });
+    assert_eq!(state.focus_order(), vec![ShellComponent::ExitDialog]);
+    assert_ne!(
+        state.route_key_input(&KeyInput::from_label("Enter")).1,
+        ShellCommand::Noop
+    );
+
+    let mut state = ShellSession::new_for_home_mode(
+        ShellLaunchConfig::default(),
+        (120, 40),
+        ShellHomeMode::User,
+    );
+    state.active_popup = Some(ShellPopup {
+        owner: Some(ShellComponent::Home),
+        anchor: (10, 10),
+    });
+    state.refresh_hit_map_with_motion(ui::MotionTransitions {
+        overlay: Some(ui::MotionTransition {
+            kind: ui::MotionTransitionKind::Popover,
+            ..transition(499)
+        }),
+        ..ui::MotionTransitions::default()
+    });
+    assert_ne!(state.focus_order(), vec![ShellComponent::ContextMenu]);
+    assert_eq!(
+        state.route_key_input(&KeyInput::from_label("Enter")).1,
+        ShellCommand::Noop
+    );
+    assert_eq!(
+        state
+            .route_input_at(
+                InputEvent::mouse_down(PointerButton::Left, (0, 0)),
+                Instant::now(),
+            )
+            .command,
+        ShellCommand::CaptureOverlayInput
+    );
+    state.refresh_hit_map_with_motion(ui::MotionTransitions {
+        overlay: Some(ui::MotionTransition {
+            kind: ui::MotionTransitionKind::Popover,
+            ..transition(500)
+        }),
+        ..ui::MotionTransitions::default()
+    });
+    assert_eq!(state.focus_order(), vec![ShellComponent::ContextMenu]);
+    assert_ne!(
+        state.route_key_input(&KeyInput::from_label("Enter")).1,
+        ShellCommand::Noop
     );
 }
 

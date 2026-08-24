@@ -2297,6 +2297,9 @@ mod runtime_preflight_tests {
                 .all(|region| region.component != ShellComponent::ExitDialog),
             "the next batched event must not hit a dialog before its reveal threshold"
         );
+        state.apply_input(InputEvent::from_key_label("Enter"));
+        assert!(!state.shutdown_requested());
+        assert_eq!(state.last_command(), Some(&ShellCommand::Noop));
     }
 
     #[test]

@@ -27,4 +27,5 @@ pub use theme::{
     MotionIdentity, MotionOverlayIdentity, MotionOverlayKind, MotionSchedule, MotionTimings,
     MotionTransition, MotionTransitionKind, MotionTransitions, RenderCapabilities, RenderContext,
     ThemeTokens, TundraTheme, ease_in_cubic, ease_out_cubic, schedule_motion,
+    schedule_motion_range,
 };

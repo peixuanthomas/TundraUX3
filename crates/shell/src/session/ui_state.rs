@@ -452,6 +452,7 @@ pub struct UiSessionState {
     pub(super) active_popup: Option<ShellPopup>,
     pub(super) hit_map: ShellHitMap,
     pub(super) hit_map_generation: u64,
+    pub(super) overlay_interaction_ready: bool,
     pub(super) tick_count: u64,
     pub(super) notification_bindings: NotificationBindings,
     pub(super) modal_focus_context: Option<ModalFocusContext>,

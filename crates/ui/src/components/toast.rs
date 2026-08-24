@@ -6,7 +6,9 @@ use ratatui::layout::{HorizontalAlignment, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::widgets::{Block, Borders, Paragraph, Widget};
 
-use crate::{MotionFrame, MotionTimings, RenderContext, ease_in_cubic, ease_out_cubic};
+use crate::{
+    MotionDirection, MotionFrame, MotionTransitionKind, RenderContext, schedule_motion_range,
+};
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum ToastTone {
@@ -25,6 +27,7 @@ pub struct Toast {
     pub tone: ToastTone,
     pub shown_at: Duration,
     pub dismiss_at: Option<Duration>,
+    dismiss_start_progress: u16,
 }
 
 impl Toast {
@@ -34,48 +37,71 @@ impl Toast {
             tone,
             shown_at: frame.now,
             dismiss_at: None,
+            dismiss_start_progress: 1_000,
         }
     }
 
     pub fn dismiss(&mut self, frame: MotionFrame) {
+        self.dismiss_start_progress = self.visible_progress(frame);
         self.dismiss_at = Some(frame.now);
     }
 
     pub fn is_visible(&self, frame: MotionFrame) -> bool {
-        self.dismiss_at.is_none_or(|dismissed| {
-            !frame.reduced_motion && frame.now.saturating_sub(dismissed) < MotionTimings::TOAST_EXIT
-        })
+        self.dismiss_at.is_none() || (!frame.reduced_motion && self.visible_progress(frame) > 0)
     }
 
     pub fn requests_redraw(&self, frame: MotionFrame) -> bool {
         if frame.reduced_motion {
             return false;
         }
-        match self.dismiss_at {
-            Some(dismissed) => frame.now.saturating_sub(dismissed) < MotionTimings::TOAST_EXIT,
-            None => frame.now.saturating_sub(self.shown_at) < MotionTimings::TOAST_ENTER,
-        }
+        let transition = match self.dismiss_at {
+            Some(dismissed) => schedule_motion_range(
+                MotionTransitionKind::Toast,
+                MotionDirection::Exiting,
+                self.dismiss_start_progress,
+                0,
+                dismissed,
+                frame,
+            ),
+            None => schedule_motion_range(
+                MotionTransitionKind::Toast,
+                MotionDirection::Entering,
+                0,
+                1_000,
+                self.shown_at,
+                frame,
+            ),
+        };
+        transition.active
     }
 
     pub fn visible_progress(&self, frame: MotionFrame) -> u16 {
         if frame.reduced_motion {
             return if self.dismiss_at.is_some() { 0 } else { 1_000 };
         }
-        let (started_at, duration, entering) = match self.dismiss_at {
-            Some(dismissed) => (dismissed, MotionTimings::TOAST_EXIT, false),
-            None => (self.shown_at, MotionTimings::TOAST_ENTER, true),
-        };
-        let normalized = (frame
-            .now
-            .saturating_sub(started_at)
-            .as_millis()
-            .saturating_mul(1_000)
-            / duration.as_millis().max(1))
-        .min(1_000) as u16;
-        if entering {
-            ease_out_cubic(normalized)
-        } else {
-            1_000_u16.saturating_sub(ease_in_cubic(normalized))
+        match self.dismiss_at {
+            Some(dismissed) => {
+                schedule_motion_range(
+                    MotionTransitionKind::Toast,
+                    MotionDirection::Exiting,
+                    self.dismiss_start_progress,
+                    0,
+                    dismissed,
+                    frame,
+                )
+                .progress
+            }
+            None => {
+                schedule_motion_range(
+                    MotionTransitionKind::Toast,
+                    MotionDirection::Entering,
+                    0,
+                    1_000,
+                    self.shown_at,
+                    frame,
+                )
+                .progress
+            }
         }
     }
 

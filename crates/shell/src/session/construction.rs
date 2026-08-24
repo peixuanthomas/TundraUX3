@@ -247,6 +247,7 @@ impl ShellSession {
             active_popup: None,
             hit_map: ShellHitMap::empty(terminal_size),
             hit_map_generation: 0,
+            overlay_interaction_ready: true,
             tick_count: 0,
             notification_bindings: NotificationBindings::default(),
             modal_focus_context: None,

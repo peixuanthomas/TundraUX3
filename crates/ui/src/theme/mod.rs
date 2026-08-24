@@ -221,6 +221,9 @@ pub struct MotionTransition {
     pub kind: MotionTransitionKind,
     pub direction: MotionDirection,
     pub progress: u16,
+    /// Progress through this transition's own interval, independent of the
+    /// visible value's start and target range.
+    pub phase_progress: u16,
     pub active: bool,
     pub next_redraw_in: Duration,
 }
@@ -261,17 +264,21 @@ pub fn schedule_motion(
         return MotionSchedule::default();
     }
     let screen = (prior.screen != current.screen).then(|| {
-        transition_at(
+        schedule_motion_range(
             MotionTransitionKind::Page,
             MotionDirection::Replacing,
+            0,
+            1_000,
             changed_at,
             frame,
         )
     });
     let focus = (prior.focus != current.focus).then(|| {
-        transition_at(
+        schedule_motion_range(
             MotionTransitionKind::Focus,
             MotionDirection::Replacing,
+            0,
+            1_000,
             changed_at,
             frame,
         )
@@ -283,13 +290,23 @@ pub fn schedule_motion(
             (Some(_), Some(current)) => (current, MotionDirection::Replacing),
             (None, None) => unreachable!("unchanged overlays do not schedule motion"),
         };
-        transition_at(
+        schedule_motion_range(
             match overlay.kind {
                 MotionOverlayKind::Dialog => MotionTransitionKind::Dialog,
                 MotionOverlayKind::Popover => MotionTransitionKind::Popover,
                 MotionOverlayKind::Toast => MotionTransitionKind::Toast,
             },
             direction,
+            if matches!(direction, MotionDirection::Exiting) {
+                1_000
+            } else {
+                0
+            },
+            if matches!(direction, MotionDirection::Exiting) {
+                0
+            } else {
+                1_000
+            },
             changed_at,
             frame,
         )
@@ -320,13 +337,25 @@ pub fn schedule_motion(
     }
 }
 
-fn transition_at(
+pub fn schedule_motion_range(
     kind: MotionTransitionKind,
     direction: MotionDirection,
+    start_progress: u16,
+    target_progress: u16,
     changed_at: Duration,
     frame: MotionFrame,
 ) -> MotionTransition {
-    let duration = match (kind, direction) {
+    if frame.reduced_motion {
+        return MotionTransition {
+            kind,
+            direction,
+            progress: target_progress.min(1_000),
+            phase_progress: 1_000,
+            active: false,
+            next_redraw_in: Duration::ZERO,
+        };
+    }
+    let full_duration = match (kind, direction) {
         (MotionTransitionKind::Page, _) => MotionTimings::PAGE,
         (MotionTransitionKind::Focus, _) => MotionTimings::FOCUS,
         (MotionTransitionKind::Dialog, _) => MotionTimings::DIALOG,
@@ -334,6 +363,8 @@ fn transition_at(
         (MotionTransitionKind::Toast, MotionDirection::Exiting) => MotionTimings::TOAST_EXIT,
         (MotionTransitionKind::Toast, _) => MotionTimings::TOAST_ENTER,
     };
+    let distance = start_progress.abs_diff(target_progress);
+    let duration = full_duration.mul_f64(f64::from(distance) / 1_000.0);
     let elapsed = frame.now.saturating_sub(changed_at);
     let active = elapsed < duration;
     let normalized = if duration.is_zero() {
@@ -341,14 +372,16 @@ fn transition_at(
     } else {
         (elapsed.as_millis().saturating_mul(1_000) / duration.as_millis().max(1)).min(1_000) as u16
     };
-    let progress = match direction {
+    let phase_progress = match direction {
         MotionDirection::Entering | MotionDirection::Replacing => ease_out_cubic(normalized),
-        MotionDirection::Exiting => 1_000_u16.saturating_sub(ease_in_cubic(normalized)),
+        MotionDirection::Exiting => ease_in_cubic(normalized),
     };
+    let progress = interpolate_progress(start_progress, target_progress, phase_progress);
     MotionTransition {
         kind,
         direction,
         progress,
+        phase_progress,
         active,
         next_redraw_in: if active {
             duration
@@ -358,6 +391,12 @@ fn transition_at(
             Duration::ZERO
         },
     }
+}
+
+fn interpolate_progress(start: u16, target: u16, phase: u16) -> u16 {
+    let start = i32::from(start.min(1_000));
+    let delta = i32::from(target.min(1_000)) - start;
+    (start + delta * i32::from(phase.min(1_000)) / 1_000).clamp(0, 1_000) as u16
 }
 
 impl FrostMotion {
@@ -463,11 +502,21 @@ impl RenderContext {
     /// Moves an entering page by one terminal row for the first half of its
     /// transition. The shell uses this same projection for its hit map.
     pub fn page_area(self, area: ratatui::layout::Rect) -> ratatui::layout::Rect {
-        let shifted = self.transitions.screen.is_some_and(|transition| {
+        let entering_page = self.transitions.screen.is_some_and(|transition| {
             transition.active
                 && !matches!(transition.direction, MotionDirection::Exiting)
                 && transition.progress < 500
         });
+        let exiting_overlay = self.transitions.overlay.is_some_and(|transition| {
+            transition.active
+                && matches!(transition.direction, MotionDirection::Exiting)
+                && matches!(
+                    transition.kind,
+                    MotionTransitionKind::Dialog | MotionTransitionKind::Popover
+                )
+                && (250..750).contains(&transition.phase_progress)
+        });
+        let shifted = entering_page || exiting_overlay;
         if shifted && area.height > 0 {
             ratatui::layout::Rect::new(
                 area.x,

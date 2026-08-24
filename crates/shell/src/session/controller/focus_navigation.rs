@@ -8,6 +8,11 @@ impl ShellSession {
         &mut self,
         motion: ui::MotionTransitions,
     ) {
+        self.overlay_interaction_ready = ui::RenderContext {
+            transitions: motion,
+            ..ui::RenderContext::default()
+        }
+        .overlay_interaction_ready();
         self.hit_map_generation = self.hit_map_generation.saturating_add(1);
         let active_screen = self.active_screen();
         let content_screen = self.content_screen();
@@ -56,13 +61,15 @@ impl ShellSession {
     }
 
     pub(in crate::session) fn focus_order(&self) -> Vec<ShellComponent> {
-        if let Some(component) = self.notification_active_modal_component() {
+        if self.overlay_interaction_ready
+            && let Some(component) = self.notification_active_modal_component()
+        {
             return vec![component];
         }
-        if self.time_sync_dialog_visible {
+        if self.overlay_interaction_ready && self.time_sync_dialog_visible {
             return vec![ShellComponent::TimeSyncDialog];
         }
-        if self.active_screen() == ShellScreen::ExitConfirm {
+        if self.overlay_interaction_ready && self.active_screen() == ShellScreen::ExitConfirm {
             return vec![ShellComponent::ExitDialog];
         }
         if self.active_screen() == ShellScreen::FirstRunSetup {
@@ -151,7 +158,7 @@ impl ShellSession {
             }
             return order;
         }
-        if self.active_popup.is_some() {
+        if self.overlay_interaction_ready && self.active_popup.is_some() {
             return vec![ShellComponent::ContextMenu];
         }
         if self

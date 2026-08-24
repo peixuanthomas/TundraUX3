@@ -11,6 +11,7 @@ use ui::{
     BorderShape, ColorCapability, FrostMotion, MotionDirection, MotionFrame, MotionIdentity,
     MotionOverlayIdentity, MotionOverlayKind, MotionTimings, MotionTransitionKind, MouseEvent,
     RenderCapabilities, RenderContext, ThemeTokens, TundraTheme, schedule_motion,
+    schedule_motion_range,
 };
 
 #[test]
@@ -265,6 +266,76 @@ fn render_context_exposes_observable_page_and_overlay_frames() {
 }
 
 #[test]
+fn ranged_motion_is_continuous_and_overlay_exit_projection_is_endpoint_neutral() {
+    let frame = |millis| MotionFrame {
+        now: Duration::from_millis(millis),
+        delta: Duration::ZERO,
+        reduced_motion: false,
+    };
+    for kind in [
+        MotionTransitionKind::Page,
+        MotionTransitionKind::Focus,
+        MotionTransitionKind::Dialog,
+        MotionTransitionKind::Popover,
+    ] {
+        let entering = schedule_motion_range(
+            kind,
+            MotionDirection::Entering,
+            0,
+            1_000,
+            Duration::ZERO,
+            frame(60),
+        );
+        let reversed = schedule_motion_range(
+            kind,
+            MotionDirection::Exiting,
+            entering.progress,
+            0,
+            Duration::from_millis(60),
+            frame(60),
+        );
+        assert_eq!(reversed.progress, entering.progress, "{kind:?} jumped");
+        let settled = schedule_motion_range(
+            kind,
+            MotionDirection::Exiting,
+            entering.progress,
+            0,
+            Duration::from_millis(60),
+            frame(500),
+        );
+        assert_eq!(settled.progress, 0);
+        assert!(!settled.active);
+    }
+
+    let theme = TundraTheme::default();
+    let area = Rect::new(0, 0, 80, 24);
+    for kind in [MotionTransitionKind::Dialog, MotionTransitionKind::Popover] {
+        let context = |millis| {
+            let motion = schedule_motion_range(
+                kind,
+                MotionDirection::Exiting,
+                1_000,
+                0,
+                Duration::ZERO,
+                frame(millis),
+            );
+            RenderContext::from_theme_with_transitions(
+                &theme,
+                frame(millis),
+                ui::MotionTransitions {
+                    overlay: Some(motion),
+                    ..ui::MotionTransitions::default()
+                },
+                RenderCapabilities::default(),
+            )
+        };
+        assert_eq!(context(0).page_area(area), area);
+        assert_eq!(context(120).page_area(area), Rect::new(0, 1, 80, 23));
+        assert_eq!(context(500).page_area(area), area);
+    }
+}
+
+#[test]
 fn dismissed_toast_is_immediately_invisible_in_reduced_motion() {
     let shown = MotionFrame::reduced(Duration::from_millis(10));
     let mut toast = Toast::new("Saved", ToastTone::Success, shown);
@@ -292,6 +363,12 @@ fn toast_enter_and_exit_progress_remain_self_scheduled_behind_other_overlays() {
     assert_eq!(toast.visible_progress(frame(0)), 0);
     assert!(toast.requests_redraw(frame(0)));
     assert!(toast.visible_progress(frame(100)) > 0);
+    let interrupted = toast.visible_progress(frame(75));
+    toast.dismiss(frame(75));
+    assert_eq!(toast.visible_progress(frame(75)), interrupted);
+    assert_eq!(toast.visible_progress(frame(500)), 0);
+
+    let mut toast = Toast::new("Saved", ToastTone::Success, frame(0));
     assert_eq!(toast.visible_progress(frame(200)), 1_000);
     assert!(!toast.requests_redraw(frame(200)));
 

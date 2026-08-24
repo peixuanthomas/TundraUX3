@@ -111,8 +111,14 @@ pub(super) struct RedrawScheduler {
     prior: RedrawIdentity,
     current: RedrawIdentity,
     screen_changed_at: Option<Duration>,
+    screen_start: u16,
+    screen_target: u16,
     focus_changed_at: Option<Duration>,
+    focus_start: u16,
+    focus_target: u16,
     overlay_changed_at: Option<Duration>,
+    overlay_start: u16,
+    overlay_target: u16,
     last_frame_at: Duration,
     next_motion_frame: Option<Duration>,
     next_state_clock: Duration,
@@ -122,13 +128,20 @@ pub(super) struct RedrawScheduler {
 
 impl RedrawScheduler {
     pub(super) fn new(origin: Instant, identity: RedrawIdentity, reduced_motion: bool) -> Self {
+        let overlay_progress = identity.overlay.as_ref().map_or(0, |_| 1_000);
         Self {
             origin,
             prior: identity.clone(),
             current: identity,
             screen_changed_at: None,
+            screen_start: 1_000,
+            screen_target: 1_000,
             focus_changed_at: None,
+            focus_start: 1_000,
+            focus_target: 1_000,
             overlay_changed_at: None,
+            overlay_start: overlay_progress,
+            overlay_target: overlay_progress,
             last_frame_at: Duration::ZERO,
             next_motion_frame: None,
             next_state_clock: STATE_CLOCK_INTERVAL,
@@ -159,17 +172,42 @@ impl RedrawScheduler {
 
     pub(super) fn observe(&mut self, now: Instant, identity: RedrawIdentity, reduced_motion: bool) {
         let now = self.elapsed(now);
+        let frame = ui::MotionFrame {
+            now,
+            delta: now.saturating_sub(self.last_frame_at),
+            reduced_motion: self.reduced_motion,
+        };
+        let rendered = self.transitions_for_frame(frame);
         self.reduced_motion = reduced_motion;
         if self.current != identity {
             if self.current.screen != identity.screen {
+                let active = rendered.screen.filter(|motion| motion.active);
+                self.screen_start = active.map_or(0, |motion| motion.progress);
+                self.screen_target = if active.is_some() && identity.screen == self.prior.screen {
+                    0
+                } else {
+                    1_000
+                };
                 self.prior.screen.clone_from(&self.current.screen);
                 self.screen_changed_at = Some(now);
             }
             if self.current.focus != identity.focus {
+                let active = rendered.focus.filter(|motion| motion.active);
+                self.focus_start = active.map_or(0, |motion| motion.progress);
+                self.focus_target = if active.is_some() && identity.focus == self.prior.focus {
+                    0
+                } else {
+                    1_000
+                };
                 self.prior.focus.clone_from(&self.current.focus);
                 self.focus_changed_at = Some(now);
             }
             if self.current.overlay != identity.overlay {
+                self.overlay_start = rendered.overlay.filter(|motion| motion.active).map_or_else(
+                    || self.current.overlay.as_ref().map_or(0, |_| 1_000),
+                    |motion| motion.progress,
+                );
+                self.overlay_target = if identity.overlay.is_some() { 1_000 } else { 0 };
                 self.prior.overlay.clone_from(&self.current.overlay);
                 self.overlay_changed_at = Some(now);
             }
@@ -213,65 +251,52 @@ impl RedrawScheduler {
     }
 
     fn transitions_for_frame(&self, frame: ui::MotionFrame) -> ui::MotionTransitions {
-        let screen = self.screen_changed_at.and_then(|changed_at| {
-            ui::schedule_motion(
-                ui::MotionIdentity {
-                    screen: Some(&self.prior.screen),
-                    ..ui::MotionIdentity::default()
-                },
-                ui::MotionIdentity {
-                    screen: Some(&self.current.screen),
-                    ..ui::MotionIdentity::default()
-                },
+        let screen = self.screen_changed_at.map(|changed_at| {
+            ui::schedule_motion_range(
+                ui::MotionTransitionKind::Page,
+                ui::MotionDirection::Replacing,
+                self.screen_start,
+                self.screen_target,
                 changed_at,
                 frame,
             )
-            .transitions
-            .screen
         });
-        let focus = self.focus_changed_at.and_then(|changed_at| {
-            ui::schedule_motion(
-                ui::MotionIdentity {
-                    focus: Some(&self.prior.focus),
-                    ..ui::MotionIdentity::default()
-                },
-                ui::MotionIdentity {
-                    focus: Some(&self.current.focus),
-                    ..ui::MotionIdentity::default()
-                },
+        let focus = self.focus_changed_at.map(|changed_at| {
+            ui::schedule_motion_range(
+                ui::MotionTransitionKind::Focus,
+                ui::MotionDirection::Replacing,
+                self.focus_start,
+                self.focus_target,
                 changed_at,
                 frame,
             )
-            .transitions
-            .focus
         });
-        let overlay =
-            self.overlay_changed_at.and_then(|changed_at| {
-                ui::schedule_motion(
-                    ui::MotionIdentity {
-                        overlay: self.prior.overlay.as_ref().map(|overlay| {
-                            ui::MotionOverlayIdentity {
-                                kind: overlay.kind,
-                                id: &overlay.id,
-                            }
-                        }),
-                        ..ui::MotionIdentity::default()
-                    },
-                    ui::MotionIdentity {
-                        overlay: self.current.overlay.as_ref().map(|overlay| {
-                            ui::MotionOverlayIdentity {
-                                kind: overlay.kind,
-                                id: &overlay.id,
-                            }
-                        }),
-                        ..ui::MotionIdentity::default()
-                    },
-                    changed_at,
-                    frame,
-                )
-                .transitions
+        let overlay = self.overlay_changed_at.and_then(|changed_at| {
+            let overlay = self
+                .current
                 .overlay
-            });
+                .as_ref()
+                .or(self.prior.overlay.as_ref())?;
+            let direction = if self.overlay_target < self.overlay_start {
+                ui::MotionDirection::Exiting
+            } else if self.prior.overlay.is_some() && self.current.overlay.is_some() {
+                ui::MotionDirection::Replacing
+            } else {
+                ui::MotionDirection::Entering
+            };
+            Some(ui::schedule_motion_range(
+                match overlay.kind {
+                    ui::MotionOverlayKind::Dialog => ui::MotionTransitionKind::Dialog,
+                    ui::MotionOverlayKind::Popover => ui::MotionTransitionKind::Popover,
+                    ui::MotionOverlayKind::Toast => ui::MotionTransitionKind::Toast,
+                },
+                direction,
+                self.overlay_start,
+                self.overlay_target,
+                changed_at,
+                frame,
+            ))
+        });
         ui::MotionTransitions {
             screen,
             focus,
@@ -381,18 +406,69 @@ mod tests {
         scheduler.did_draw(origin);
         scheduler.observe(origin, id("home", "two", Some("dialog")), false);
         scheduler.did_draw(origin + FRAME_INTERVAL);
+        let before = scheduler.transitions(origin + Duration::from_millis(50));
         scheduler.observe(
             origin + Duration::from_millis(50),
             id("home", "one", None),
             false,
         );
+        let after = scheduler.transitions(origin + Duration::from_millis(50));
+        assert_eq!(
+            after.focus.expect("reversed focus").progress,
+            before.focus.expect("entering focus").progress
+        );
+        assert_eq!(
+            after.overlay.expect("reversed dialog").progress,
+            before.overlay.expect("entering dialog").progress
+        );
         scheduler.did_draw(origin + Duration::from_millis(50));
         scheduler.did_draw(origin + Duration::from_millis(200));
         assert_eq!(
             scheduler.poll_timeout(origin + Duration::from_millis(200), Duration::MAX),
-            FRAME_INTERVAL
+            Duration::from_millis(800)
         );
-        assert!(scheduler.is_due(origin + Duration::from_millis(230)));
+        assert!(!scheduler.is_due(origin + Duration::from_millis(230)));
+    }
+
+    #[test]
+    fn page_and_popover_reversals_preserve_the_rendered_progress() {
+        let origin = Instant::now();
+        let mut page = RedrawScheduler::new(origin, id("home", "one", None), false);
+        page.did_draw(origin);
+        page.observe(origin, id("settings", "one", None), false);
+        let changed = origin + Duration::from_millis(80);
+        let before = page
+            .transitions(changed)
+            .screen
+            .expect("entering page")
+            .progress;
+        page.observe(changed, id("home", "one", None), false);
+        assert_eq!(
+            page.transitions(changed)
+                .screen
+                .expect("reversed page")
+                .progress,
+            before
+        );
+
+        let mut popover = RedrawScheduler::new(origin, id("home", "one", None), false);
+        popover.did_draw(origin);
+        popover.observe(origin, id("home", "one", Some("popover:menu")), false);
+        let changed = origin + Duration::from_millis(60);
+        let before = popover
+            .transitions(changed)
+            .overlay
+            .expect("entering popover")
+            .progress;
+        popover.observe(changed, id("home", "one", None), false);
+        assert_eq!(
+            popover
+                .transitions(changed)
+                .overlay
+                .expect("reversed popover")
+                .progress,
+            before
+        );
     }
 
     #[test]
