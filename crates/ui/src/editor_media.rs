@@ -402,8 +402,11 @@ fn query_terminal_capabilities(
             break;
         }
 
-        let mut buffer = [0_u8; 256];
-        let read_result = unsafe { libc::read(fd, buffer.as_mut_ptr().cast(), buffer.len()) };
+        if deadline_wait_millis(deadline, Instant::now()).is_none() {
+            break;
+        }
+        let mut byte = 0_u8;
+        let read_result = unsafe { libc::read(fd, (&mut byte as *mut u8).cast(), 1) };
         if read_result == 0 {
             break;
         }
@@ -418,7 +421,7 @@ fn query_terminal_capabilities(
             return Err(EditorMediaError::TerminalQuery(error));
         }
 
-        responses.push_bytes(&buffer[..read_result as usize]);
+        responses.push_byte(byte);
     }
 
     Ok(interpret_terminal_capability_responses(responses, is_tmux))
@@ -433,8 +436,8 @@ fn query_terminal_capabilities(
         INVALID_HANDLE_VALUE, WAIT_FAILED, WAIT_OBJECT_0, WAIT_TIMEOUT,
     };
     use windows_sys::Win32::System::Console::{
-        ENABLE_LINE_INPUT, GetConsoleMode, GetStdHandle, INPUT_RECORD, KEY_EVENT,
-        PeekConsoleInputW, ReadConsoleA, ReadConsoleInputW, STD_INPUT_HANDLE,
+        GetStdHandle, INPUT_RECORD, KEY_EVENT, PeekConsoleInputW, ReadConsoleInputW,
+        STD_INPUT_HANDLE,
     };
     use windows_sys::Win32::System::Threading::WaitForSingleObject;
 
@@ -443,15 +446,8 @@ fn query_terminal_capabilities(
     if input.is_null() || input == INVALID_HANDLE_VALUE {
         return Err(EditorMediaError::TerminalQuery(io::Error::last_os_error()));
     }
-    let mut input_mode = 0;
-    if unsafe { GetConsoleMode(input, &mut input_mode) } == 0 {
-        return Err(EditorMediaError::TerminalQuery(io::Error::last_os_error()));
-    }
-    if input_mode & ENABLE_LINE_INPUT != 0 {
-        return Err(EditorMediaError::TerminalQuery(io::Error::other(
-            "terminal capability probing requires raw console input mode",
-        )));
-    }
+    let _mode_guard = WindowsConsoleModeGuard::enable_virtual_terminal_input(input)
+        .map_err(EditorMediaError::TerminalQuery)?;
     write_terminal_capability_query(is_tmux)?;
 
     let deadline = Instant::now() + timeout;
@@ -476,9 +472,8 @@ fn query_terminal_capabilities(
             break;
         }
 
-        // Peek one already-signaled record. ReadConsoleA is used for character
-        // input because Windows exposes VT sequences through ReadFile/ReadConsole,
-        // while non-character records are drained without waiting.
+        // Peek and then remove exactly one already-signaled record. No API in
+        // this section can wait once the deadline check above has passed.
         let mut record = INPUT_RECORD::default();
         let mut peeked = 0;
         if unsafe { PeekConsoleInputW(input, &mut record, 1, &mut peeked) } == 0 {
@@ -487,41 +482,82 @@ fn query_terminal_capabilities(
         if peeked == 0 {
             continue;
         }
-        let is_key_down = if record.EventType == KEY_EVENT as u16 {
-            unsafe { record.Event.KeyEvent.bKeyDown != 0 }
-        } else {
-            false
-        };
-        if !is_key_down {
-            let mut drained = 0;
-            if unsafe { ReadConsoleInputW(input, &mut record, 1, &mut drained) } == 0 {
-                return Err(EditorMediaError::TerminalQuery(io::Error::last_os_error()));
-            }
-            continue;
-        }
         if deadline_wait_millis(deadline, Instant::now()).is_none() {
             break;
         }
-        let mut byte = 0;
         let mut read = 0;
-        if unsafe {
-            ReadConsoleA(
-                input,
-                (&mut byte as *mut u8).cast(),
-                1,
-                &mut read,
-                std::ptr::null(),
-            )
-        } == 0
-        {
+        if unsafe { ReadConsoleInputW(input, &mut record, 1, &mut read) } == 0 {
             return Err(EditorMediaError::TerminalQuery(io::Error::last_os_error()));
         }
-        if read == 1 {
+        if read != 1 {
+            continue;
+        }
+        let (is_key_down, unicode_char) = if record.EventType == KEY_EVENT as u16 {
+            let key = unsafe { record.Event.KeyEvent };
+            (key.bKeyDown != 0, unsafe { key.uChar.UnicodeChar })
+        } else {
+            (false, 0)
+        };
+        if let Some(byte) = windows_vt_byte_from_record(
+            record.EventType == KEY_EVENT as u16,
+            is_key_down,
+            unicode_char,
+        ) {
             responses.push_byte(byte);
         }
     }
 
     Ok(interpret_terminal_capability_responses(responses, is_tmux))
+}
+
+#[cfg(windows)]
+struct WindowsConsoleModeGuard {
+    input: windows_sys::Win32::Foundation::HANDLE,
+    original_mode: windows_sys::Win32::System::Console::CONSOLE_MODE,
+}
+
+#[cfg(windows)]
+impl WindowsConsoleModeGuard {
+    fn enable_virtual_terminal_input(
+        input: windows_sys::Win32::Foundation::HANDLE,
+    ) -> std::io::Result<Self> {
+        use windows_sys::Win32::System::Console::{
+            ENABLE_VIRTUAL_TERMINAL_INPUT, GetConsoleMode, SetConsoleMode,
+        };
+
+        let mut original_mode = 0;
+        if unsafe { GetConsoleMode(input, &mut original_mode) } == 0 {
+            return Err(std::io::Error::last_os_error());
+        }
+        if unsafe { SetConsoleMode(input, original_mode | ENABLE_VIRTUAL_TERMINAL_INPUT) } == 0 {
+            return Err(std::io::Error::last_os_error());
+        }
+        Ok(Self {
+            input,
+            original_mode,
+        })
+    }
+}
+
+#[cfg(windows)]
+impl Drop for WindowsConsoleModeGuard {
+    fn drop(&mut self) {
+        unsafe {
+            windows_sys::Win32::System::Console::SetConsoleMode(self.input, self.original_mode);
+        }
+    }
+}
+
+#[cfg(any(windows, test))]
+fn windows_vt_byte_from_record(
+    is_key_event: bool,
+    is_key_down: bool,
+    unicode_char: u16,
+) -> Option<u8> {
+    if !is_key_event || !is_key_down || unicode_char == 0 {
+        return None;
+    }
+    u8::try_from(unicode_char).ok()
 }
 
 #[cfg(any(unix, windows))]
@@ -555,6 +591,7 @@ impl TerminalResponseCollector {
         }
     }
 
+    #[cfg(test)]
     fn push_bytes(&mut self, bytes: &[u8]) {
         for byte in bytes {
             self.push_byte(*byte);
@@ -1028,6 +1065,34 @@ mod tests {
             deadline_wait_millis(now, now + Duration::from_millis(1)),
             None
         );
+    }
+
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn non_character_windows_record_yields_no_probe_byte_at_deadline() {
+        assert_eq!(windows_vt_byte_from_record(true, true, 0), None);
+        assert_eq!(windows_vt_byte_from_record(false, true, b'x'.into()), None);
+        assert_eq!(windows_vt_byte_from_record(true, false, b'x'.into()), None);
+        assert_eq!(
+            windows_vt_byte_from_record(true, true, b'\x1b'.into()),
+            Some(b'\x1b')
+        );
+
+        let deadline = Instant::now();
+        assert_eq!(deadline_wait_millis(deadline, deadline), None);
+    }
+
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn probe_consumes_through_status_without_consuming_input_suffix() {
+        let mut input = b"\x1b_Gi=31;OK\x1b\\\x1b[0nx".iter().copied();
+        let mut responses = TerminalResponseCollector::new();
+        while !responses.complete {
+            responses.push_byte(input.next().expect("complete capability response"));
+        }
+
+        assert!(responses.responses.contains(&CapabilityResponse::Kitty));
+        assert_eq!(input.next(), Some(b'x'));
     }
 
     #[test]
