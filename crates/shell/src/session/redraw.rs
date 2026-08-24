@@ -627,6 +627,54 @@ mod tests {
     }
 
     #[test]
+    fn explorer_semantic_popover_and_dialog_replacements_restart_gated_phase() {
+        let origin = Instant::now();
+        for replacement in [
+            "popover:explorer-sort",
+            "popover:explorer-options",
+            "popover:explorer-properties",
+            "explorer-dialog:delete-to-trash",
+            "explorer-dialog:dump-trash",
+        ] {
+            let mut scheduler = RedrawScheduler::new(
+                origin,
+                id("explorer", "owner", Some("popover:explorer-context")),
+                false,
+            );
+            scheduler.did_draw(origin);
+            scheduler.observe(origin, id("explorer", "owner", Some(replacement)), false);
+            let start = scheduler
+                .transitions(origin)
+                .overlay
+                .expect("replacement start");
+            assert_eq!(start.direction, ui::MotionDirection::Replacing);
+            assert_eq!((start.progress, start.phase_progress), (0, 0));
+            assert!(!start.interaction_ready());
+            let duration = if replacement.contains("popover") {
+                ui::MotionTimings::POPOVER
+            } else {
+                ui::MotionTimings::DIALOG
+            };
+            let final_frame = scheduler
+                .transitions(origin + duration)
+                .overlay
+                .expect("replacement final");
+            assert_eq!(
+                (final_frame.progress, final_frame.phase_progress),
+                (1_000, 1_000)
+            );
+            assert!(final_frame.interaction_ready());
+        }
+
+        let reduced = RedrawScheduler::new(
+            origin,
+            id("explorer", "owner", Some("popover:explorer-context")),
+            true,
+        );
+        assert!(reduced.frame(origin).reduced_motion);
+    }
+
+    #[test]
     fn reduced_motion_has_zero_transition_duration() {
         let origin = Instant::now();
         let mut scheduler = RedrawScheduler::new(origin, id("home", "one", None), true);

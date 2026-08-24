@@ -50,6 +50,15 @@ pub(in crate::session) fn explorer_dialog_identity(
     }
 }
 
+fn explorer_popover_identity(mode: ExplorerOverlayMode) -> &'static str {
+    match mode {
+        ExplorerOverlayMode::ContextMenu { .. } => "explorer-popover:context-menu",
+        ExplorerOverlayMode::Sort { .. } => "explorer-popover:sort",
+        ExplorerOverlayMode::Options => "explorer-popover:options",
+        ExplorerOverlayMode::Properties => "explorer-popover:properties",
+    }
+}
+
 impl ShellSession {
     pub fn active_screen(&self) -> ShellScreen {
         self.screen_stack
@@ -172,15 +181,9 @@ impl ShellSession {
                 ShellComponent::ExitDialog,
             ));
         }
-        if let Some(popup) = self.active_popup() {
-            return Some(ShellOverlayDescriptor {
-                kind: ui::MotionOverlayKind::Popover,
-                id: format!("popup:{:?}", popup.owner),
-                category: ShellOverlayCategory::ContextPopup,
-                target: Some(RoutedTarget::Popup(ShellComponent::ContextMenu)),
-            });
-        }
-        if let Some(explorer) = self.app.explorer_state() {
+        if self.content_screen() == ShellScreen::Explorer
+            && let Some(explorer) = self.app.explorer_state()
+        {
             let id = explorer_dialog_identity(
                 explorer.pending_restore.is_some(),
                 explorer.pending_conflict.is_some(),
@@ -194,6 +197,36 @@ impl ShellSession {
                     target: Some(RoutedTarget::Component(ShellComponent::Explorer)),
                 });
             }
+            if let Some(mode) = self.explorer_overlay_mode {
+                return Some(ShellOverlayDescriptor {
+                    kind: ui::MotionOverlayKind::Popover,
+                    id: explorer_popover_identity(mode).into(),
+                    category: ShellOverlayCategory::PagePopover,
+                    target: Some(RoutedTarget::Component(ShellComponent::Explorer)),
+                });
+            }
+            if let Some(dialog) = explorer.pending_dialog.as_ref() {
+                let id = match dialog.kind {
+                    app::explorer::ExplorerDialogKind::DeleteToTrash => {
+                        "explorer-dialog:delete-to-trash"
+                    }
+                    app::explorer::ExplorerDialogKind::DumpTrash => "explorer-dialog:dump-trash",
+                };
+                return Some(ShellOverlayDescriptor {
+                    kind: ui::MotionOverlayKind::Dialog,
+                    id: id.into(),
+                    category: ShellOverlayCategory::PageDialog,
+                    target: Some(RoutedTarget::Component(ShellComponent::Explorer)),
+                });
+            }
+        }
+        if let Some(popup) = self.active_popup() {
+            return Some(ShellOverlayDescriptor {
+                kind: ui::MotionOverlayKind::Popover,
+                id: format!("popup:{:?}", popup.owner),
+                category: ShellOverlayCategory::ContextPopup,
+                target: Some(RoutedTarget::Popup(ShellComponent::ContextMenu)),
+            });
         }
         if let Some(confirmation) = self.launcher_pending_confirmation.as_ref() {
             let id = match confirmation {
@@ -225,20 +258,6 @@ impl ShellSession {
                 id: "editor-quick-menu".into(),
                 category: ShellOverlayCategory::PagePopover,
                 target: Some(RoutedTarget::Component(ShellComponent::Editor)),
-            });
-        }
-        if let Some(mode) = self.explorer_overlay_mode.as_ref() {
-            let id = match mode {
-                ExplorerOverlayMode::ContextMenu { .. } => "explorer-popover:context-menu",
-                ExplorerOverlayMode::Sort { .. } => "explorer-popover:sort",
-                ExplorerOverlayMode::Options => "explorer-popover:options",
-                ExplorerOverlayMode::Properties => "explorer-popover:properties",
-            };
-            return Some(ShellOverlayDescriptor {
-                kind: ui::MotionOverlayKind::Popover,
-                id: id.into(),
-                category: ShellOverlayCategory::PagePopover,
-                target: Some(RoutedTarget::Component(ShellComponent::Explorer)),
             });
         }
         if let Some(picker) = self
