@@ -37,9 +37,6 @@ pub(super) struct RedrawScheduler {
     origin: Instant,
     prior: RedrawIdentity,
     current: RedrawIdentity,
-    screen_changed_at: Option<Duration>,
-    screen_start: u16,
-    screen_target: u16,
     focus_changed_at: Option<Duration>,
     focus_start: u16,
     focus_target: u16,
@@ -60,9 +57,6 @@ impl RedrawScheduler {
             origin,
             prior: identity.clone(),
             current: identity,
-            screen_changed_at: None,
-            screen_start: 1_000,
-            screen_target: 1_000,
             focus_changed_at: None,
             focus_start: 1_000,
             focus_target: 1_000,
@@ -107,17 +101,6 @@ impl RedrawScheduler {
         let rendered = self.transitions_for_frame(frame);
         self.reduced_motion = reduced_motion;
         if self.current != identity {
-            if self.current.screen != identity.screen {
-                let active = rendered.screen.filter(|motion| motion.active);
-                self.screen_start = active.map_or(0, |motion| motion.progress);
-                self.screen_target = if active.is_some() && identity.screen == self.prior.screen {
-                    0
-                } else {
-                    1_000
-                };
-                self.prior.screen.clone_from(&self.current.screen);
-                self.screen_changed_at = Some(now);
-            }
             if self.current.focus != identity.focus {
                 let active = rendered.focus.filter(|motion| motion.active);
                 self.focus_start = active.map_or(0, |motion| motion.progress);
@@ -144,7 +127,17 @@ impl RedrawScheduler {
                 self.overlay_changed_at = Some(now);
             }
             self.current = identity;
-            self.next_motion_frame = (!reduced_motion).then(|| {
+            let frame = ui::MotionFrame {
+                now,
+                delta: now.saturating_sub(self.last_frame_at),
+                reduced_motion,
+            };
+            let transitions = self.transitions_for_frame(frame);
+            let has_active_motion = [transitions.focus, transitions.overlay]
+                .into_iter()
+                .flatten()
+                .any(|transition| transition.active);
+            self.next_motion_frame = (!reduced_motion && has_active_motion).then(|| {
                 self.last_frame_at
                     .checked_add(FRAME_INTERVAL)
                     .unwrap_or(Duration::MAX)
@@ -183,16 +176,6 @@ impl RedrawScheduler {
     }
 
     fn transitions_for_frame(&self, frame: ui::MotionFrame) -> ui::MotionTransitions {
-        let screen = self.screen_changed_at.map(|changed_at| {
-            ui::schedule_motion_range(
-                ui::MotionTransitionKind::Page,
-                ui::MotionDirection::Replacing,
-                self.screen_start,
-                self.screen_target,
-                changed_at,
-                frame,
-            )
-        });
         let focus = self.focus_changed_at.map(|changed_at| {
             ui::schedule_motion_range(
                 ui::MotionTransitionKind::Focus,
@@ -230,7 +213,7 @@ impl RedrawScheduler {
             ))
         });
         ui::MotionTransitions {
-            screen,
+            screen: None,
             focus,
             overlay,
         }
@@ -313,22 +296,15 @@ mod tests {
     }
 
     #[test]
-    fn screen_transition_draws_start_mid_and_exact_final_frame() {
+    fn screen_changes_redraw_immediately_without_a_transition() {
         let origin = Instant::now();
         let mut scheduler = RedrawScheduler::new(origin, id("home", "one", None), false);
         scheduler.did_draw(origin);
         scheduler.observe(origin, id("settings", "one", None), false);
-        assert!(!scheduler.is_due(origin));
-        assert!(scheduler.is_due(origin + FRAME_INTERVAL));
-        scheduler.did_draw(origin + FRAME_INTERVAL);
-        scheduler.did_draw(origin + Duration::from_millis(210));
-        assert_eq!(
-            scheduler.poll_timeout(origin + Duration::from_millis(210), Duration::MAX),
-            Duration::from_millis(10)
-        );
-        assert!(scheduler.is_due(origin + ui::MotionTimings::PAGE));
-        scheduler.did_draw(origin + ui::MotionTimings::PAGE);
-        assert!(!scheduler.is_due(origin + ui::MotionTimings::PAGE));
+        assert!(scheduler.is_due(origin));
+        assert!(scheduler.transitions(origin).screen.is_none());
+        scheduler.did_draw(origin);
+        assert!(!scheduler.is_due(origin + FRAME_INTERVAL));
     }
 
     #[test]
@@ -363,26 +339,8 @@ mod tests {
     }
 
     #[test]
-    fn page_and_popover_reversals_preserve_the_rendered_progress() {
+    fn popover_reversals_preserve_the_rendered_progress() {
         let origin = Instant::now();
-        let mut page = RedrawScheduler::new(origin, id("home", "one", None), false);
-        page.did_draw(origin);
-        page.observe(origin, id("settings", "one", None), false);
-        let changed = origin + Duration::from_millis(80);
-        let before = page
-            .transitions(changed)
-            .screen
-            .expect("entering page")
-            .progress;
-        page.observe(changed, id("home", "one", None), false);
-        assert_eq!(
-            page.transitions(changed)
-                .screen
-                .expect("reversed page")
-                .progress,
-            before
-        );
-
         let mut popover = RedrawScheduler::new(origin, id("home", "one", None), false);
         popover.did_draw(origin);
         popover.observe(origin, id("home", "one", Some("popover:menu")), false);
@@ -691,7 +649,7 @@ mod tests {
         let origin = Instant::now();
         let mut scheduler = RedrawScheduler::new(origin, id("home", "one", None), false);
         scheduler.did_draw(origin);
-        scheduler.observe(origin, id("settings", "one", None), false);
+        scheduler.observe(origin, id("home", "two", None), false);
 
         for millis in [1, 5, 10] {
             let now = origin + Duration::from_millis(millis);
