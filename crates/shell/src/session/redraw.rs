@@ -25,7 +25,7 @@ impl RedrawIdentity {
                 id: overlay.id,
             });
         Self {
-            screen: format!("{:?}", state.content_screen()),
+            screen: format!("{:?}", state.active_screen()),
             focus: format!("{:?}", state.focused_component()),
             overlay,
         }
@@ -336,6 +336,25 @@ mod tests {
             ui::MotionTransitions::default()
         );
         assert!(scheduler.is_due(changed));
+    }
+
+    #[test]
+    fn exit_confirmation_is_an_instant_screen_change() {
+        let origin = Instant::now();
+        let mut state = ShellSession::new(ShellLaunchConfig::default(), (120, 40));
+        let mut scheduler =
+            RedrawScheduler::new(origin, RedrawIdentity::from_session(&state), false);
+        scheduler.did_draw(origin);
+
+        state.apply_input(InputEvent::from_key_label("q"));
+        scheduler.observe(origin, RedrawIdentity::from_session(&state), false);
+
+        assert_eq!(state.active_screen(), ShellScreen::ExitConfirm);
+        assert_eq!(
+            scheduler.transitions(origin),
+            ui::MotionTransitions::default()
+        );
+        assert!(scheduler.is_due(origin));
     }
 
     #[test]
