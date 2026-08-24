@@ -1932,7 +1932,7 @@ mod runtime_preflight_tests {
     }
 
     #[test]
-    fn batched_input_installs_transition_hit_map_before_the_next_event() {
+    fn batched_input_installs_settled_hit_map_before_the_next_event() {
         let mut state = ShellSession::new_for_home_mode(
             ShellLaunchConfig::default(),
             (120, 40),
@@ -1958,12 +1958,12 @@ mod runtime_preflight_tests {
                 .hit_map()
                 .regions()
                 .iter()
-                .all(|region| region.component != ShellComponent::ExitDialog),
-            "the next batched event must not hit a dialog before its reveal threshold"
+                .any(|region| region.component == ShellComponent::ExitDialog),
+            "the next batched event must see the immediately rendered dialog"
         );
         state.apply_input(InputEvent::from_key_label("Enter"));
-        assert!(!state.shutdown_requested());
-        assert_eq!(state.last_command(), Some(&ShellCommand::Noop));
+        assert!(state.shutdown_requested());
+        assert_eq!(state.last_command(), Some(&ShellCommand::ConfirmExit));
     }
 
     #[test]
