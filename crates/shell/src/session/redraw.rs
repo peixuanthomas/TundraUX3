@@ -7,24 +7,96 @@ const STATE_CLOCK_INTERVAL: Duration = Duration::from_secs(1);
 pub(super) struct RedrawIdentity {
     screen: String,
     focus: String,
-    overlay: Option<String>,
+    overlay: Option<RedrawOverlayIdentity>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct RedrawOverlayIdentity {
+    kind: ui::MotionOverlayKind,
+    id: String,
 }
 
 impl RedrawIdentity {
     pub(super) fn from_session(state: &ShellSession) -> Self {
         let overlay = state
             .to_notification_view_model()
-            .map(|notification| format!("notification:{}", notification.id))
+            .map(|notification| RedrawOverlayIdentity {
+                kind: ui::MotionOverlayKind::Dialog,
+                id: format!("notification:{}", notification.id),
+            })
             .or_else(|| {
                 state
                     .to_time_sync_dialog_view_model()
-                    .map(|_| "time-sync".to_string())
+                    .map(|_| RedrawOverlayIdentity {
+                        kind: ui::MotionOverlayKind::Dialog,
+                        id: "time-sync".to_string(),
+                    })
             })
             .or_else(|| {
-                (state.active_screen() == ShellScreen::ExitConfirm)
-                    .then(|| "exit-confirm".to_string())
+                (state.active_screen() == ShellScreen::ExitConfirm).then(|| RedrawOverlayIdentity {
+                    kind: ui::MotionOverlayKind::Dialog,
+                    id: "exit-confirm".to_string(),
+                })
             })
-            .or_else(|| state.active_popup().map(|popup| format!("popup:{popup:?}")));
+            .or_else(|| {
+                state.active_popup().map(|popup| RedrawOverlayIdentity {
+                    kind: ui::MotionOverlayKind::Popover,
+                    id: format!("popup:{popup:?}"),
+                })
+            })
+            .or_else(|| {
+                state
+                    .explorer_overlay_mode
+                    .as_ref()
+                    .map(|mode| RedrawOverlayIdentity {
+                        kind: ui::MotionOverlayKind::Popover,
+                        id: format!("explorer:{mode:?}"),
+                    })
+            })
+            .or_else(|| {
+                state
+                    .settings_state
+                    .as_ref()
+                    .and_then(|settings| settings.picker.as_ref())
+                    .map(|picker| RedrawOverlayIdentity {
+                        kind: ui::MotionOverlayKind::Popover,
+                        id: format!("settings-picker:{:?}", picker.kind),
+                    })
+            })
+            .or_else(|| {
+                let id = if state.setup_custom_color_target.is_some() {
+                    Some("setup-custom-color")
+                } else if state.clock_create_state.is_some() {
+                    Some("clock-create")
+                } else if state.editor_settings_dialog.is_some() {
+                    Some("editor-settings")
+                } else if !state.diagnostics_repair_preview.is_empty() {
+                    Some("diagnostics-repair")
+                } else if state.settings_state.as_ref().is_some_and(|settings| {
+                    settings.color_editor.is_some()
+                        || settings.weather_location_editor.is_some()
+                        || settings.file_extensions_editor.is_some()
+                        || settings.time_sync_server_editor.is_some()
+                }) {
+                    Some("settings-editor")
+                } else {
+                    None
+                };
+                id.map(|id| RedrawOverlayIdentity {
+                    kind: ui::MotionOverlayKind::Dialog,
+                    id: id.to_string(),
+                })
+            })
+            .or_else(|| {
+                let notifications = state.app.notification_center();
+                (notifications.alert().is_none())
+                    .then(|| notifications.toast())
+                    .flatten()
+                    .map(|toast| RedrawOverlayIdentity {
+                        kind: ui::MotionOverlayKind::Toast,
+                        id: format!("{toast}:{:?}", notifications.toast_expires_at()),
+                    })
+            });
         Self {
             screen: format!("{:?}", state.content_screen()),
             focus: format!("{:?}", state.focused_component()),
@@ -71,6 +143,18 @@ impl RedrawScheduler {
 
     pub(super) fn request_redraw(&mut self) {
         self.needs_redraw = true;
+    }
+
+    pub(super) fn request_animation_frame(&mut self, now: Instant) {
+        if self.reduced_motion {
+            return;
+        }
+        let now = self.elapsed(now);
+        let deadline = now.checked_add(FRAME_INTERVAL).unwrap_or(Duration::MAX);
+        self.next_motion_frame = Some(
+            self.next_motion_frame
+                .map_or(deadline, |current| current.min(deadline)),
+        );
     }
 
     pub(super) fn observe(&mut self, now: Instant, identity: RedrawIdentity, reduced_motion: bool) {
@@ -124,6 +208,77 @@ impl RedrawScheduler {
         }
     }
 
+    pub(super) fn transitions(&self, now: Instant) -> ui::MotionTransitions {
+        self.transitions_for_frame(self.frame(now))
+    }
+
+    fn transitions_for_frame(&self, frame: ui::MotionFrame) -> ui::MotionTransitions {
+        let screen = self.screen_changed_at.and_then(|changed_at| {
+            ui::schedule_motion(
+                ui::MotionIdentity {
+                    screen: Some(&self.prior.screen),
+                    ..ui::MotionIdentity::default()
+                },
+                ui::MotionIdentity {
+                    screen: Some(&self.current.screen),
+                    ..ui::MotionIdentity::default()
+                },
+                changed_at,
+                frame,
+            )
+            .transitions
+            .screen
+        });
+        let focus = self.focus_changed_at.and_then(|changed_at| {
+            ui::schedule_motion(
+                ui::MotionIdentity {
+                    focus: Some(&self.prior.focus),
+                    ..ui::MotionIdentity::default()
+                },
+                ui::MotionIdentity {
+                    focus: Some(&self.current.focus),
+                    ..ui::MotionIdentity::default()
+                },
+                changed_at,
+                frame,
+            )
+            .transitions
+            .focus
+        });
+        let overlay =
+            self.overlay_changed_at.and_then(|changed_at| {
+                ui::schedule_motion(
+                    ui::MotionIdentity {
+                        overlay: self.prior.overlay.as_ref().map(|overlay| {
+                            ui::MotionOverlayIdentity {
+                                kind: overlay.kind,
+                                id: &overlay.id,
+                            }
+                        }),
+                        ..ui::MotionIdentity::default()
+                    },
+                    ui::MotionIdentity {
+                        overlay: self.current.overlay.as_ref().map(|overlay| {
+                            ui::MotionOverlayIdentity {
+                                kind: overlay.kind,
+                                id: &overlay.id,
+                            }
+                        }),
+                        ..ui::MotionIdentity::default()
+                    },
+                    changed_at,
+                    frame,
+                )
+                .transitions
+                .overlay
+            });
+        ui::MotionTransitions {
+            screen,
+            focus,
+            overlay,
+        }
+    }
+
     pub(super) fn did_draw(&mut self, now: Instant) {
         let now = self.elapsed(now);
         self.needs_redraw = false;
@@ -139,55 +294,12 @@ impl RedrawScheduler {
             delta: Duration::ZERO,
             reduced_motion: self.reduced_motion,
         };
-        let schedules = [
-            self.screen_changed_at.map(|changed_at| {
-                ui::schedule_motion(
-                    ui::MotionIdentity {
-                        screen: Some(&self.prior.screen),
-                        ..ui::MotionIdentity::default()
-                    },
-                    ui::MotionIdentity {
-                        screen: Some(&self.current.screen),
-                        ..ui::MotionIdentity::default()
-                    },
-                    changed_at,
-                    frame,
-                )
-            }),
-            self.focus_changed_at.map(|changed_at| {
-                ui::schedule_motion(
-                    ui::MotionIdentity {
-                        focus: Some(&self.prior.focus),
-                        ..ui::MotionIdentity::default()
-                    },
-                    ui::MotionIdentity {
-                        focus: Some(&self.current.focus),
-                        ..ui::MotionIdentity::default()
-                    },
-                    changed_at,
-                    frame,
-                )
-            }),
-            self.overlay_changed_at.map(|changed_at| {
-                ui::schedule_motion(
-                    ui::MotionIdentity {
-                        overlay: self.prior.overlay.as_deref(),
-                        ..ui::MotionIdentity::default()
-                    },
-                    ui::MotionIdentity {
-                        overlay: self.current.overlay.as_deref(),
-                        ..ui::MotionIdentity::default()
-                    },
-                    changed_at,
-                    frame,
-                )
-            }),
-        ];
-        let next_redraw_in = schedules
+        let transitions = self.transitions_for_frame(frame);
+        let next_redraw_in = [transitions.screen, transitions.focus, transitions.overlay]
             .into_iter()
             .flatten()
-            .filter(|schedule| schedule.active)
-            .map(|schedule| schedule.next_redraw_in)
+            .filter(|transition| transition.active)
+            .map(|transition| transition.next_redraw_in)
             .min();
         self.next_motion_frame = next_redraw_in.map(|next_redraw_in| {
             now.checked_add(next_redraw_in.min(FRAME_INTERVAL))
@@ -216,7 +328,14 @@ mod tests {
         RedrawIdentity {
             screen: screen.into(),
             focus: focus.into(),
-            overlay: overlay.map(str::to_string),
+            overlay: overlay.map(|id| RedrawOverlayIdentity {
+                kind: if id.contains("popover") {
+                    ui::MotionOverlayKind::Popover
+                } else {
+                    ui::MotionOverlayKind::Dialog
+                },
+                id: id.to_string(),
+            }),
         }
     }
 
@@ -271,9 +390,41 @@ mod tests {
         scheduler.did_draw(origin + Duration::from_millis(200));
         assert_eq!(
             scheduler.poll_timeout(origin + Duration::from_millis(200), Duration::MAX),
-            Duration::from_millis(10)
+            FRAME_INTERVAL
         );
-        assert!(scheduler.is_due(origin + Duration::from_millis(210)));
+        assert!(scheduler.is_due(origin + Duration::from_millis(230)));
+    }
+
+    #[test]
+    fn dialog_and_popover_keep_their_typed_durations() {
+        let origin = Instant::now();
+        let mut dialog = RedrawScheduler::new(origin, id("home", "one", None), false);
+        dialog.did_draw(origin);
+        dialog.observe(origin, id("home", "one", Some("dialog")), false);
+        assert_eq!(
+            dialog
+                .transitions(origin)
+                .overlay
+                .expect("dialog transition")
+                .kind,
+            ui::MotionTransitionKind::Dialog
+        );
+        dialog.did_draw(origin + Duration::from_millis(160));
+        assert!(dialog.is_due(origin + ui::MotionTimings::DIALOG));
+
+        let mut popover = RedrawScheduler::new(origin, id("home", "one", None), false);
+        popover.did_draw(origin);
+        popover.observe(origin, id("home", "one", Some("popover:menu")), false);
+        assert_eq!(
+            popover
+                .transitions(origin)
+                .overlay
+                .expect("popover transition")
+                .kind,
+            ui::MotionTransitionKind::Popover
+        );
+        popover.did_draw(origin + Duration::from_millis(150));
+        assert!(popover.is_due(origin + ui::MotionTimings::POPOVER));
     }
 
     #[test]
@@ -319,5 +470,19 @@ mod tests {
             scheduler.poll_timeout(origin + Duration::from_millis(1), Duration::MAX),
             Duration::ZERO
         );
+    }
+
+    #[test]
+    fn independent_widget_animation_can_request_the_next_frame() {
+        let origin = Instant::now();
+        let mut scheduler = RedrawScheduler::new(origin, id("home", "one", None), false);
+        scheduler.did_draw(origin);
+        scheduler.request_animation_frame(origin);
+        assert_eq!(
+            scheduler.poll_timeout(origin, Duration::MAX),
+            FRAME_INTERVAL
+        );
+        assert!(!scheduler.is_due(origin + Duration::from_millis(10)));
+        assert!(scheduler.is_due(origin + FRAME_INTERVAL));
     }
 }

@@ -101,6 +101,60 @@ fn exit_confirmation_keeps_login_as_the_content_screen() {
 }
 
 #[test]
+fn motion_progress_drives_page_and_overlay_hit_regions() {
+    let mut state = ShellSession::new_for_home_mode(
+        ShellLaunchConfig::default(),
+        (120, 40),
+        ShellHomeMode::User,
+    );
+    let transition = |kind, progress| ui::MotionTransition {
+        kind,
+        direction: ui::MotionDirection::Entering,
+        progress,
+        active: progress < 1_000,
+        next_redraw_in: Duration::from_millis(16),
+    };
+
+    state.refresh_hit_map_with_motion(ui::MotionTransitions {
+        screen: Some(transition(ui::MotionTransitionKind::Page, 0)),
+        ..ui::MotionTransitions::default()
+    });
+    let shifted_top = state
+        .hit_map()
+        .regions()
+        .iter()
+        .find(|region| region.component == ShellComponent::TopBar)
+        .expect("shifted top bar");
+    assert_eq!(shifted_top.area.y, 1);
+
+    state.apply_input(InputEvent::from_key_label("Esc"));
+    state.refresh_hit_map_with_motion(ui::MotionTransitions {
+        overlay: Some(transition(ui::MotionTransitionKind::Dialog, 0)),
+        ..ui::MotionTransitions::default()
+    });
+    assert!(
+        state
+            .hit_map()
+            .regions()
+            .iter()
+            .all(|region| region.component != ShellComponent::ExitDialog),
+        "a partially revealed dialog must not expose stale mouse targets"
+    );
+
+    state.refresh_hit_map_with_motion(ui::MotionTransitions {
+        overlay: Some(transition(ui::MotionTransitionKind::Dialog, 500)),
+        ..ui::MotionTransitions::default()
+    });
+    assert!(
+        state
+            .hit_map()
+            .regions()
+            .iter()
+            .any(|region| region.component == ShellComponent::ExitDialog)
+    );
+}
+
+#[test]
 fn exit_confirmation_names_the_physical_power_action_poweroff() {
     let root = std::env::temp_dir().join(format!(
         "tundra-shell-poweroff-label-{}",

@@ -1,6 +1,13 @@
 use super::super::*;
 impl ShellSession {
     pub(in crate::session) fn refresh_hit_map(&mut self) {
+        self.refresh_hit_map_with_motion(ui::MotionTransitions::default());
+    }
+
+    pub(in crate::session) fn refresh_hit_map_with_motion(
+        &mut self,
+        motion: ui::MotionTransitions,
+    ) {
         self.hit_map_generation = self.hit_map_generation.saturating_add(1);
         let active_screen = self.active_screen();
         let content_screen = self.content_screen();
@@ -32,6 +39,7 @@ impl ShellSession {
             clock_model.as_ref(),
             explorer_model.as_ref(),
             diagnostics_model.as_ref(),
+            motion,
         );
         self.sync_home_entry_selection();
 

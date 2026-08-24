@@ -34,9 +34,15 @@ pub(in crate::session) fn build_shell_hit_map(
     clock_model: Option<&ui::ClockViewModel>,
     explorer_model: Option<&ui::ExplorerViewModel>,
     diagnostics_model: Option<&ui::DiagnosticsViewModel>,
+    motion: ui::MotionTransitions,
 ) -> ShellHitMap {
     let (width, height) = terminal_size;
-    let area = Rect::new(0, 0, width, height);
+    let terminal_area = Rect::new(0, 0, width, height);
+    let motion_context = ui::RenderContext {
+        transitions: motion,
+        ..ui::RenderContext::default()
+    };
+    let area = motion_context.page_area(terminal_area);
     let mut regions = Vec::new();
 
     match ui::compute_shell_layout(area) {
@@ -243,7 +249,13 @@ pub(in crate::session) fn build_shell_hit_map(
         }
     }
 
-    if let Some(popup) = active_popup {
+    if !motion_context.overlay_interaction_ready() {
+        regions.retain(|region| region.layer != ShellHitLayer::AppOverlay);
+    }
+
+    if motion_context.overlay_interaction_ready()
+        && let Some(popup) = active_popup
+    {
         let explorer_overlay = explorer_model.and_then(|model| {
             let ui::ShellLayout::Full { main, .. } = ui::compute_shell_layout(area) else {
                 return None;
@@ -259,24 +271,26 @@ pub(in crate::session) fn build_shell_hit_map(
         });
     }
 
-    if exit_confirmation_visible {
+    if exit_confirmation_visible && motion_context.overlay_interaction_ready() {
         regions.push(ShellHitRegion {
             component: ShellComponent::ExitDialog,
-            area: centered_rect(area, width.min(46), height.min(7)),
+            area: centered_rect(terminal_area, width.min(46), height.min(7)),
             layer: ShellHitLayer::ShellModal,
         });
     }
 
-    if time_sync_dialog_visible {
+    if time_sync_dialog_visible && motion_context.overlay_interaction_ready() {
         regions.push(ShellHitRegion {
             component: ShellComponent::TimeSyncDialog,
-            area: centered_rect(area, width.min(34), height.min(5)),
+            area: centered_rect(terminal_area, width.min(34), height.min(5)),
             layer: ShellHitLayer::ShellModal,
         });
     }
 
-    if let (Some(component), Some(model)) = (notification_modal_component, notification_model)
-        && let ui::NotificationLayout::Dialog(layout) = ui::notification_layout(area, model)
+    if motion_context.overlay_interaction_ready()
+        && let (Some(component), Some(model)) = (notification_modal_component, notification_model)
+        && let ui::NotificationLayout::Dialog(layout) =
+            ui::notification_layout(terminal_area, model)
     {
         regions.push(ShellHitRegion {
             component,

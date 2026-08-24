@@ -174,12 +174,68 @@ pub struct FrostMotion {
     duration: Duration,
 }
 
-/// Stable identities observed by the shell around a state change.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MotionOverlayKind {
+    Dialog,
+    Popover,
+    Toast,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MotionOverlayIdentity<'a> {
+    pub kind: MotionOverlayKind,
+    pub id: &'a str,
+}
+
+/// Stable identities observed by the shell around a state change. Overlay
+/// identities retain their semantic type so a popover never inherits dialog
+/// timing merely because both happen to be overlays.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct MotionIdentity<'a> {
     pub screen: Option<&'a str>,
     pub focus: Option<&'a str>,
-    pub overlay: Option<&'a str>,
+    pub overlay: Option<MotionOverlayIdentity<'a>>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MotionTransitionKind {
+    Page,
+    Focus,
+    Dialog,
+    Popover,
+    Toast,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MotionDirection {
+    Entering,
+    Exiting,
+    Replacing,
+}
+
+/// A render-ready transition. `progress` is the visible amount in thousandths:
+/// entering/replacing transitions advance from 0 to 1000 and exits recede from
+/// 1000 to 0.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MotionTransition {
+    pub kind: MotionTransitionKind,
+    pub direction: MotionDirection,
+    pub progress: u16,
+    pub active: bool,
+    pub next_redraw_in: Duration,
+}
+
+impl MotionTransition {
+    pub const fn interaction_ready(self) -> bool {
+        !self.active || matches!(self.direction, MotionDirection::Exiting) || self.progress >= 500
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct MotionTransitions {
+    pub screen: Option<MotionTransition>,
+    pub focus: Option<MotionTransition>,
+    pub overlay: Option<MotionTransition>,
 }
 
 /// Pure redraw decision for one transition interval. The caller owns the
@@ -192,6 +248,7 @@ pub struct MotionSchedule {
     pub overlay_transition: bool,
     pub active: bool,
     pub next_redraw_in: Duration,
+    pub transitions: MotionTransitions,
 }
 
 pub fn schedule_motion(
@@ -203,39 +260,100 @@ pub fn schedule_motion(
     if frame.reduced_motion {
         return MotionSchedule::default();
     }
-    let elapsed = frame.now.saturating_sub(changed_at);
-    let screen_transition = prior.screen != current.screen && elapsed < MotionTimings::PAGE;
-    let focus_transition = prior.focus != current.focus && elapsed < MotionTimings::FOCUS;
-    let overlay_transition = prior.overlay != current.overlay
-        && elapsed
-            < if current.overlay.is_some() {
-                MotionTimings::DIALOG
-            } else {
-                MotionTimings::POPOVER
-            };
-    let mut remaining = Duration::MAX;
-    if screen_transition {
-        remaining = remaining.min(MotionTimings::PAGE.saturating_sub(elapsed));
-    }
-    if focus_transition {
-        remaining = remaining.min(MotionTimings::FOCUS.saturating_sub(elapsed));
-    }
-    if overlay_transition {
-        let duration = if current.overlay.is_some() {
-            MotionTimings::DIALOG
-        } else {
-            MotionTimings::POPOVER
+    let screen = (prior.screen != current.screen).then(|| {
+        transition_at(
+            MotionTransitionKind::Page,
+            MotionDirection::Replacing,
+            changed_at,
+            frame,
+        )
+    });
+    let focus = (prior.focus != current.focus).then(|| {
+        transition_at(
+            MotionTransitionKind::Focus,
+            MotionDirection::Replacing,
+            changed_at,
+            frame,
+        )
+    });
+    let overlay = (prior.overlay != current.overlay).then(|| {
+        let (overlay, direction) = match (prior.overlay, current.overlay) {
+            (None, Some(current)) => (current, MotionDirection::Entering),
+            (Some(prior), None) => (prior, MotionDirection::Exiting),
+            (Some(_), Some(current)) => (current, MotionDirection::Replacing),
+            (None, None) => unreachable!("unchanged overlays do not schedule motion"),
         };
-        remaining = remaining.min(duration.saturating_sub(elapsed));
-    }
+        transition_at(
+            match overlay.kind {
+                MotionOverlayKind::Dialog => MotionTransitionKind::Dialog,
+                MotionOverlayKind::Popover => MotionTransitionKind::Popover,
+                MotionOverlayKind::Toast => MotionTransitionKind::Toast,
+            },
+            direction,
+            changed_at,
+            frame,
+        )
+    });
+    let transitions = MotionTransitions {
+        screen,
+        focus,
+        overlay,
+    };
+    let screen_transition = screen.is_some_and(|transition| transition.active);
+    let focus_transition = focus.is_some_and(|transition| transition.active);
+    let overlay_transition = overlay.is_some_and(|transition| transition.active);
     let active = screen_transition || focus_transition || overlay_transition;
+    let next_redraw_in = [screen, focus, overlay]
+        .into_iter()
+        .flatten()
+        .filter(|transition| transition.active)
+        .map(|transition| transition.next_redraw_in)
+        .min()
+        .unwrap_or(Duration::ZERO);
     MotionSchedule {
         screen_transition,
         focus_transition,
         overlay_transition,
         active,
+        next_redraw_in,
+        transitions,
+    }
+}
+
+fn transition_at(
+    kind: MotionTransitionKind,
+    direction: MotionDirection,
+    changed_at: Duration,
+    frame: MotionFrame,
+) -> MotionTransition {
+    let duration = match (kind, direction) {
+        (MotionTransitionKind::Page, _) => MotionTimings::PAGE,
+        (MotionTransitionKind::Focus, _) => MotionTimings::FOCUS,
+        (MotionTransitionKind::Dialog, _) => MotionTimings::DIALOG,
+        (MotionTransitionKind::Popover, _) => MotionTimings::POPOVER,
+        (MotionTransitionKind::Toast, MotionDirection::Exiting) => MotionTimings::TOAST_EXIT,
+        (MotionTransitionKind::Toast, _) => MotionTimings::TOAST_ENTER,
+    };
+    let elapsed = frame.now.saturating_sub(changed_at);
+    let active = elapsed < duration;
+    let normalized = if duration.is_zero() {
+        1_000
+    } else {
+        (elapsed.as_millis().saturating_mul(1_000) / duration.as_millis().max(1)).min(1_000) as u16
+    };
+    let progress = match direction {
+        MotionDirection::Entering | MotionDirection::Replacing => ease_out_cubic(normalized),
+        MotionDirection::Exiting => 1_000_u16.saturating_sub(ease_in_cubic(normalized)),
+    };
+    MotionTransition {
+        kind,
+        direction,
+        progress,
+        active,
         next_redraw_in: if active {
-            remaining.min(Duration::from_nanos(16_666_667))
+            duration
+                .saturating_sub(elapsed)
+                .min(Duration::from_nanos(16_666_667))
         } else {
             Duration::ZERO
         },
@@ -312,6 +430,7 @@ pub struct ComponentVisualState {
 pub struct RenderContext {
     pub theme: ThemeTokens,
     pub motion: MotionFrame,
+    pub transitions: MotionTransitions,
     pub capabilities: RenderCapabilities,
 }
 
@@ -324,7 +443,71 @@ impl RenderContext {
         Self {
             theme: theme.tokens().for_capability(capabilities.color),
             motion,
+            transitions: MotionTransitions::default(),
             capabilities,
+        }
+    }
+
+    pub fn from_theme_with_transitions(
+        theme: &TundraTheme,
+        motion: MotionFrame,
+        transitions: MotionTransitions,
+        capabilities: RenderCapabilities,
+    ) -> Self {
+        let mut context = Self::from_theme(theme, motion, capabilities);
+        context.transitions = transitions;
+        context.apply_transition_colors();
+        context
+    }
+
+    /// Moves an entering page by one terminal row for the first half of its
+    /// transition. The shell uses this same projection for its hit map.
+    pub fn page_area(self, area: ratatui::layout::Rect) -> ratatui::layout::Rect {
+        let shifted = self.transitions.screen.is_some_and(|transition| {
+            transition.active
+                && !matches!(transition.direction, MotionDirection::Exiting)
+                && transition.progress < 500
+        });
+        if shifted && area.height > 0 {
+            ratatui::layout::Rect::new(
+                area.x,
+                area.y.saturating_add(1),
+                area.width,
+                area.height.saturating_sub(1),
+            )
+        } else {
+            area
+        }
+    }
+
+    pub fn overlay_interaction_ready(self) -> bool {
+        self.transitions
+            .overlay
+            .is_none_or(MotionTransition::interaction_ready)
+    }
+
+    fn apply_transition_colors(&mut self) {
+        let Some(transition) = self
+            .transitions
+            .overlay
+            .filter(|transition| {
+                transition.active && transition.direction != MotionDirection::Exiting
+            })
+            .or_else(|| {
+                self.transitions
+                    .focus
+                    .filter(|transition| transition.active)
+            })
+        else {
+            return;
+        };
+        let progress = transition.progress;
+        self.theme.border = interpolate_color(self.theme.canvas, self.theme.border, progress);
+        self.theme.focus = interpolate_color(self.theme.border, self.theme.focus, progress);
+        if !matches!(transition.kind, MotionTransitionKind::Focus) {
+            self.theme.raised = interpolate_color(self.theme.surface, self.theme.raised, progress);
+            self.theme.accent_strong =
+                interpolate_color(self.theme.border, self.theme.accent_strong, progress);
         }
     }
 
@@ -362,6 +545,19 @@ impl RenderContext {
             border_shape: self.theme.border_shape,
         }
     }
+}
+
+fn interpolate_color(from: Color, to: Color, progress: u16) -> Color {
+    let progress = progress.min(1_000);
+    let (Color::Rgb(fr, fg, fb), Color::Rgb(tr, tg, tb)) = (from, to) else {
+        return if progress < 500 { from } else { to };
+    };
+    let channel = |from: u8, to: u8| {
+        let from = i32::from(from);
+        let delta = i32::from(to) - from;
+        (from + delta * i32::from(progress) / 1_000).clamp(0, 255) as u8
+    };
+    Color::Rgb(channel(fr, tr), channel(fg, tg), channel(fb, tb))
 }
 
 impl Default for RenderContext {

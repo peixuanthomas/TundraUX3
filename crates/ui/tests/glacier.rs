@@ -8,8 +8,9 @@ use ui::components::{
     NavRail, NavRailItem, Panel, Picker, Scrollbar, Skeleton, Surface, Toast, ToastTone,
 };
 use ui::{
-    BorderShape, ColorCapability, FrostMotion, MotionFrame, MotionIdentity, MotionTimings,
-    MouseEvent, RenderCapabilities, RenderContext, ThemeTokens, TundraTheme, schedule_motion,
+    BorderShape, ColorCapability, FrostMotion, MotionDirection, MotionFrame, MotionIdentity,
+    MotionOverlayIdentity, MotionOverlayKind, MotionTimings, MotionTransitionKind, MouseEvent,
+    RenderCapabilities, RenderContext, ThemeTokens, TundraTheme, schedule_motion,
 };
 
 #[test]
@@ -117,7 +118,10 @@ fn pure_motion_schedule_covers_start_mid_end_interruption_reversal_and_idle() {
     let settings = MotionIdentity {
         screen: Some("settings"),
         focus: Some("b"),
-        overlay: Some("dialog"),
+        overlay: Some(MotionOverlayIdentity {
+            kind: MotionOverlayKind::Dialog,
+            id: "dialog",
+        }),
     };
     let frame = |millis| MotionFrame {
         now: Duration::from_millis(millis),
@@ -132,7 +136,21 @@ fn pure_motion_schedule_covers_start_mid_end_interruption_reversal_and_idle() {
             && start.overlay_transition
     );
     assert!(start.next_redraw_in <= Duration::from_nanos(16_666_667));
-    assert!(schedule_motion(home, settings, Duration::from_millis(10), frame(100)).active);
+    let dialog_start = start.transitions.overlay.expect("dialog transition");
+    assert_eq!(dialog_start.kind, MotionTransitionKind::Dialog);
+    assert_eq!(dialog_start.direction, MotionDirection::Entering);
+    assert_eq!(dialog_start.progress, 0);
+    let dialog_mid = schedule_motion(home, settings, Duration::from_millis(10), frame(100))
+        .transitions
+        .overlay
+        .expect("mid dialog transition");
+    assert!(dialog_mid.active && dialog_mid.progress > 0 && dialog_mid.progress < 1_000);
+    let dialog_final = schedule_motion(home, settings, Duration::from_millis(10), frame(190))
+        .transitions
+        .overlay
+        .expect("final dialog transition");
+    assert!(!dialog_final.active);
+    assert_eq!(dialog_final.progress, 1_000);
     assert!(!schedule_motion(home, settings, Duration::from_millis(10), frame(231)).active);
     assert!(
         schedule_motion(settings, home, Duration::from_millis(120), frame(120)).active,
@@ -147,6 +165,102 @@ fn pure_motion_schedule_covers_start_mid_end_interruption_reversal_and_idle() {
             MotionFrame::reduced(Duration::ZERO)
         ),
         Default::default()
+    );
+
+    let popover = MotionIdentity {
+        overlay: Some(MotionOverlayIdentity {
+            kind: MotionOverlayKind::Popover,
+            id: "menu",
+        }),
+        ..home
+    };
+    let popover_start = schedule_motion(home, popover, Duration::ZERO, frame(0))
+        .transitions
+        .overlay
+        .expect("popover enter");
+    assert_eq!(popover_start.kind, MotionTransitionKind::Popover);
+    assert!(popover_start.active);
+    assert!(
+        !schedule_motion(home, popover, Duration::ZERO, frame(160))
+            .transitions
+            .overlay
+            .expect("popover final")
+            .active
+    );
+
+    let reversed = schedule_motion(popover, home, Duration::from_millis(80), frame(80))
+        .transitions
+        .overlay
+        .expect("popover reversal");
+    assert_eq!(reversed.direction, MotionDirection::Exiting);
+    assert_eq!(reversed.progress, 1_000);
+}
+
+#[test]
+fn render_context_exposes_observable_page_and_overlay_frames() {
+    let home = MotionIdentity {
+        screen: Some("home"),
+        ..MotionIdentity::default()
+    };
+    let settings = MotionIdentity {
+        screen: Some("settings"),
+        overlay: Some(MotionOverlayIdentity {
+            kind: MotionOverlayKind::Dialog,
+            id: "dialog",
+        }),
+        ..MotionIdentity::default()
+    };
+    let frame = |millis| MotionFrame {
+        now: Duration::from_millis(millis),
+        delta: Duration::ZERO,
+        reduced_motion: false,
+    };
+    let theme = TundraTheme::default();
+    let area = Rect::new(0, 0, 80, 24);
+
+    let start_frame = frame(0);
+    let start = RenderContext::from_theme_with_transitions(
+        &theme,
+        start_frame,
+        schedule_motion(home, settings, Duration::ZERO, start_frame).transitions,
+        RenderCapabilities::default(),
+    );
+    assert_eq!(start.page_area(area), Rect::new(0, 1, 80, 23));
+    assert_eq!(start.theme.border, start.theme.canvas);
+    assert!(!start.overlay_interaction_ready());
+
+    let mid_frame = frame(90);
+    let mid = RenderContext::from_theme_with_transitions(
+        &theme,
+        mid_frame,
+        schedule_motion(home, settings, Duration::ZERO, mid_frame).transitions,
+        RenderCapabilities::default(),
+    );
+    assert_eq!(mid.page_area(area), area);
+    assert_ne!(mid.theme.border, mid.theme.canvas);
+    assert!(mid.overlay_interaction_ready());
+
+    let final_frame = frame(220);
+    let final_context = RenderContext::from_theme_with_transitions(
+        &theme,
+        final_frame,
+        schedule_motion(home, settings, Duration::ZERO, final_frame).transitions,
+        RenderCapabilities::default(),
+    );
+    assert_eq!(final_context.page_area(area), area);
+    assert_eq!(final_context.theme.border, theme.tokens().border);
+
+    let exit_frame = frame(0);
+    let exit_context = RenderContext::from_theme_with_transitions(
+        &theme,
+        exit_frame,
+        schedule_motion(settings, home, Duration::ZERO, exit_frame).transitions,
+        RenderCapabilities::default(),
+    );
+    assert_eq!(
+        exit_context.theme.border,
+        theme.tokens().border,
+        "an absent exiting overlay must not fade the page and jump at completion"
     );
 }
 
@@ -165,6 +279,30 @@ fn dismissed_toast_is_immediately_invisible_in_reduced_motion() {
     };
     toast.render(area, &mut buffer, &context);
     assert!(buffer.content().iter().all(|cell| cell.symbol() == " "));
+}
+
+#[test]
+fn toast_enter_and_exit_progress_remain_self_scheduled_behind_other_overlays() {
+    let frame = |millis| MotionFrame {
+        now: Duration::from_millis(millis),
+        delta: Duration::ZERO,
+        reduced_motion: false,
+    };
+    let mut toast = Toast::new("Saved", ToastTone::Success, frame(0));
+    assert_eq!(toast.visible_progress(frame(0)), 0);
+    assert!(toast.requests_redraw(frame(0)));
+    assert!(toast.visible_progress(frame(100)) > 0);
+    assert_eq!(toast.visible_progress(frame(200)), 1_000);
+    assert!(!toast.requests_redraw(frame(200)));
+
+    toast.dismiss(frame(200));
+    assert_eq!(toast.visible_progress(frame(200)), 1_000);
+    assert!(toast.requests_redraw(frame(200)));
+    let exit_mid = toast.visible_progress(frame(275));
+    assert!(exit_mid > 0 && exit_mid < 1_000);
+    assert_eq!(toast.visible_progress(frame(350)), 0);
+    assert!(!toast.requests_redraw(frame(350)));
+    assert!(!toast.is_visible(frame(350)));
 }
 
 #[test]
