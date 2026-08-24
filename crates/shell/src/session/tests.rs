@@ -1,4 +1,4 @@
-use super::queries::ShellOverlayCategory;
+use super::queries::{ShellOverlayCategory, explorer_dialog_identity};
 use super::*;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 
@@ -605,6 +605,405 @@ fn newly_tracked_overlay_groups_share_keyboard_mouse_focus_and_readiness_gating(
             "Reduced/inactive motion settles ready"
         );
     }
+}
+
+#[test]
+fn explorer_dialog_and_transient_overlay_identities_are_semantic_and_stable() {
+    let cases = [
+        (
+            true,
+            false,
+            ExplorerInputMode::Browse,
+            "explorer-restore-conflict",
+        ),
+        (
+            false,
+            true,
+            ExplorerInputMode::Browse,
+            "explorer-operation-conflict",
+        ),
+        (
+            false,
+            false,
+            ExplorerInputMode::NewFolder,
+            "explorer-input:new-folder",
+        ),
+        (
+            false,
+            false,
+            ExplorerInputMode::NewTextFile,
+            "explorer-input:new-text-file",
+        ),
+        (
+            false,
+            false,
+            ExplorerInputMode::Rename,
+            "explorer-input:rename",
+        ),
+        (
+            false,
+            false,
+            ExplorerInputMode::RestoreDestination,
+            "explorer-input:restore-destination",
+        ),
+    ];
+    for (restore, conflict, mode, expected) in cases {
+        assert_eq!(
+            explorer_dialog_identity(restore, conflict, mode),
+            Some(expected)
+        );
+    }
+    assert_eq!(
+        explorer_dialog_identity(true, true, ExplorerInputMode::Rename),
+        Some("explorer-restore-conflict"),
+        "restore conflict has the rendered precedence"
+    );
+
+    let mut state = explorer_routing_test_state();
+    state.explorer_input_mode = ExplorerInputMode::NewFolder;
+    state.explorer_input = "first typed value".into();
+    let input = state
+        .active_overlay_descriptor()
+        .expect("new folder dialog");
+    assert_eq!(input.kind, ui::MotionOverlayKind::Dialog);
+    assert_eq!(input.category, ShellOverlayCategory::PageDialog);
+    assert_eq!(
+        input.target,
+        Some(RoutedTarget::Component(ShellComponent::Explorer))
+    );
+    state.explorer_input = "changed typed value".into();
+    assert_eq!(
+        state.active_overlay_descriptor().expect("stable input").id,
+        input.id
+    );
+
+    state.explorer_input_mode = ExplorerInputMode::Browse;
+    let mut explorer = state.app.explorer_state().expect("explorer state").clone();
+    explorer.pending_conflict = Some(app::explorer::ExplorerConflict {
+        source: "/source-a".into(),
+        target: "/target-a".into(),
+        remaining: 3,
+    });
+    state.app.dispatch_at(
+        app::AppCommand::SetExplorerState(Some(explorer.clone())),
+        Instant::now(),
+    );
+    let conflict = state
+        .active_overlay_descriptor()
+        .expect("operation conflict");
+    explorer.pending_conflict = Some(app::explorer::ExplorerConflict {
+        source: "/source-b".into(),
+        target: "/target-b".into(),
+        remaining: 1,
+    });
+    state.app.dispatch_at(
+        app::AppCommand::SetExplorerState(Some(explorer)),
+        Instant::now(),
+    );
+    assert_eq!(
+        state
+            .active_overlay_descriptor()
+            .expect("stable conflict")
+            .id,
+        conflict.id
+    );
+
+    state.active_popup = Some(ShellPopup {
+        owner: Some(ShellComponent::Explorer),
+        anchor: (1, 1),
+    });
+    let popup = state.active_overlay_descriptor().expect("popup");
+    state.active_popup = Some(ShellPopup {
+        owner: Some(ShellComponent::Explorer),
+        anchor: (80, 20),
+    });
+    assert_eq!(
+        state.active_overlay_descriptor().expect("moved popup").id,
+        popup.id
+    );
+
+    state.active_popup = None;
+    state
+        .app
+        .dispatch_at(app::AppCommand::SetExplorerState(None), Instant::now());
+    for (mode, expected) in [
+        (
+            ExplorerOverlayMode::ContextMenu { anchor: (1, 1) },
+            "explorer-popover:context-menu",
+        ),
+        (
+            ExplorerOverlayMode::Sort { anchor: (2, 2) },
+            "explorer-popover:sort",
+        ),
+        (ExplorerOverlayMode::Options, "explorer-popover:options"),
+        (
+            ExplorerOverlayMode::Properties,
+            "explorer-popover:properties",
+        ),
+    ] {
+        state.explorer_overlay_mode = Some(mode);
+        assert_eq!(
+            state
+                .active_overlay_descriptor()
+                .expect("explorer popover")
+                .id,
+            expected
+        );
+    }
+    state.explorer_overlay_mode = Some(ExplorerOverlayMode::ContextMenu { anchor: (90, 30) });
+    assert_eq!(
+        state
+            .active_overlay_descriptor()
+            .expect("moved context menu")
+            .id,
+        "explorer-popover:context-menu"
+    );
+
+    let mut toast = ShellSession::new_for_home_mode(
+        ShellLaunchConfig::default(),
+        (120, 40),
+        ShellHomeMode::User,
+    );
+    let instance = Instant::now();
+    toast.app.dispatch_at(
+        app::AppCommand::Notification(app::NotificationCommand::ShowToast("First".into())),
+        instance,
+    );
+    let first = toast.active_overlay_descriptor().expect("toast instance");
+    toast.app.dispatch_at(
+        app::AppCommand::Notification(app::NotificationCommand::ShowToast("Changed".into())),
+        instance,
+    );
+    assert_eq!(
+        toast.active_overlay_descriptor().expect("same instance").id,
+        first.id
+    );
+    toast.app.dispatch_at(
+        app::AppCommand::Notification(app::NotificationCommand::ShowToast("Changed".into())),
+        instance + Duration::from_secs(1),
+    );
+    assert_ne!(
+        toast.active_overlay_descriptor().expect("renewed toast").id,
+        first.id
+    );
+    assert!(
+        toast
+            .active_overlay_descriptor()
+            .expect("toast target")
+            .target
+            .is_none()
+    );
+}
+
+#[test]
+fn settings_editor_identities_distinguish_variants_without_mutable_content() {
+    let mut state = ShellSession::new_for_home_mode(
+        ShellLaunchConfig::default(),
+        (120, 40),
+        ShellHomeMode::User,
+    );
+    state.settings_state = Some(SettingsState {
+        category: ui::SettingsCategory::Appearance,
+        selected_field: ui::SettingsField::Theme,
+        status: String::new(),
+        scroll_offset: 0,
+        picker: None,
+        color_editor: None,
+        weather_location_editor: None,
+        file_extensions_editor: None,
+        time_sync_server_editor: None,
+        time_sync_validation_request_id: None,
+    });
+
+    let mut ids = Vec::new();
+    for kind in [
+        ui::SettingsPickerKind::BorderColor,
+        ui::SettingsPickerKind::AccentColor,
+    ] {
+        let settings = state.settings_state.as_mut().expect("settings");
+        settings.color_editor = Some(SettingsColorEditorState {
+            kind,
+            value: "#112233".into(),
+            error: Some("first error".into()),
+        });
+        let first = state.active_overlay_descriptor().expect("color editor");
+        let settings = state.settings_state.as_mut().expect("settings");
+        let editor = settings.color_editor.as_mut().expect("color editor");
+        editor.value = "#abcdef".into();
+        editor.error = Some("changed error".into());
+        assert_eq!(
+            state.active_overlay_descriptor().expect("stable color").id,
+            first.id
+        );
+        ids.push(first.id);
+        state
+            .settings_state
+            .as_mut()
+            .expect("settings")
+            .color_editor = None;
+    }
+
+    state
+        .settings_state
+        .as_mut()
+        .expect("settings")
+        .weather_location_editor = Some(SettingsWeatherLocationEditorState {
+        value: "first".into(),
+        error: None,
+    });
+    ids.push(
+        state
+            .active_overlay_descriptor()
+            .expect("weather editor")
+            .id,
+    );
+    state
+        .settings_state
+        .as_mut()
+        .expect("settings")
+        .weather_location_editor = None;
+    state
+        .settings_state
+        .as_mut()
+        .expect("settings")
+        .file_extensions_editor = Some(SettingsFileExtensionsEditorState {
+        value: "md".into(),
+        error: None,
+    });
+    ids.push(
+        state
+            .active_overlay_descriptor()
+            .expect("extensions editor")
+            .id,
+    );
+    state
+        .settings_state
+        .as_mut()
+        .expect("settings")
+        .file_extensions_editor = None;
+    state
+        .settings_state
+        .as_mut()
+        .expect("settings")
+        .time_sync_server_editor = Some(SettingsTimeSyncServerEditorState {
+        value: "time.example".into(),
+        error: Some("error".into()),
+        validating: true,
+    });
+    let time_sync = state.active_overlay_descriptor().expect("time sync editor");
+    let editor = state
+        .settings_state
+        .as_mut()
+        .expect("settings")
+        .time_sync_server_editor
+        .as_mut()
+        .expect("time sync editor");
+    editor.value = "changed.example".into();
+    editor.error = None;
+    editor.validating = false;
+    assert_eq!(
+        state
+            .active_overlay_descriptor()
+            .expect("stable time sync")
+            .id,
+        time_sync.id
+    );
+    ids.push(time_sync.id);
+    ids.sort();
+    ids.dedup();
+    assert_eq!(ids.len(), 5);
+}
+
+#[test]
+fn explorer_dialogs_share_central_keyboard_mouse_focus_and_hit_map_gating() {
+    let entering = ui::MotionTransition {
+        kind: ui::MotionTransitionKind::Dialog,
+        direction: ui::MotionDirection::Entering,
+        progress: 0,
+        phase_progress: 0,
+        active: true,
+        next_redraw_in: Duration::from_millis(16),
+    };
+    for mode in [
+        ExplorerInputMode::NewFolder,
+        ExplorerInputMode::NewTextFile,
+        ExplorerInputMode::Rename,
+        ExplorerInputMode::RestoreDestination,
+    ] {
+        let mut state = explorer_routing_test_state();
+        state.explorer_input_mode = mode;
+        state.refresh_hit_map_with_motion(ui::MotionTransitions {
+            overlay: Some(entering),
+            ..ui::MotionTransitions::default()
+        });
+        assert!(!state.overlay_interaction_ready);
+        assert_eq!(
+            state.route_key_input(&KeyInput::from_label("Enter")).1,
+            ShellCommand::Noop
+        );
+        assert_ne!(
+            state.route_key_input(&KeyInput::from_label("Esc")).1,
+            ShellCommand::Noop
+        );
+        assert_eq!(state.focus_order(), vec![ShellComponent::Explorer]);
+        assert!(
+            state
+                .hit_map()
+                .regions()
+                .iter()
+                .all(|region| region.layer != ShellHitLayer::AppOverlay)
+        );
+        assert_eq!(
+            state
+                .route_input_at(
+                    InputEvent::mouse_down(PointerButton::Left, (1, 1)),
+                    Instant::now(),
+                )
+                .command,
+            ShellCommand::CaptureOverlayInput
+        );
+        state.refresh_hit_map_with_motion(ui::MotionTransitions {
+            overlay: Some(ui::MotionTransition {
+                progress: 1_000,
+                phase_progress: 1_000,
+                active: false,
+                next_redraw_in: Duration::ZERO,
+                ..entering
+            }),
+            ..ui::MotionTransitions::default()
+        });
+        assert!(state.overlay_interaction_ready);
+        state.refresh_hit_map_with_motion(ui::MotionTransitions::default());
+        assert!(state.overlay_interaction_ready);
+    }
+
+    let mut conflict = explorer_routing_test_state();
+    let mut explorer = conflict
+        .app
+        .explorer_state()
+        .expect("explorer state")
+        .clone();
+    explorer.pending_conflict = Some(app::explorer::ExplorerConflict {
+        source: "/source".into(),
+        target: "/target".into(),
+        remaining: 1,
+    });
+    conflict.app.dispatch_at(
+        app::AppCommand::SetExplorerState(Some(explorer)),
+        Instant::now(),
+    );
+    conflict.refresh_hit_map_with_motion(ui::MotionTransitions {
+        overlay: Some(entering),
+        ..ui::MotionTransitions::default()
+    });
+    assert_eq!(
+        conflict.route_key_input(&KeyInput::from_label("Enter")).1,
+        ShellCommand::Noop
+    );
+    assert_ne!(
+        conflict.route_key_input(&KeyInput::from_label("Esc")).1,
+        ShellCommand::Noop
+    );
 }
 
 #[test]

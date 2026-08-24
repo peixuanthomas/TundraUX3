@@ -565,6 +565,68 @@ mod tests {
     }
 
     #[test]
+    fn explorer_dialog_lifecycles_cover_all_semantic_variants() {
+        let origin = Instant::now();
+        let variants = [
+            "explorer-restore-conflict",
+            "explorer-operation-conflict",
+            "explorer-input:new-folder",
+            "explorer-input:new-text-file",
+            "explorer-input:rename",
+            "explorer-input:restore-destination",
+        ];
+        for overlay in variants {
+            let mut scheduler = RedrawScheduler::new(origin, id("explorer", "owner", None), false);
+            scheduler.did_draw(origin);
+            scheduler.observe(origin, id("explorer", "owner", Some(overlay)), false);
+            let start = scheduler.transitions(origin).overlay.expect("dialog start");
+            assert_eq!((start.progress, start.phase_progress), (0, 0));
+            assert!(!start.interaction_ready());
+            let mid = scheduler
+                .transitions(origin + ui::MotionTimings::DIALOG / 2)
+                .overlay
+                .expect("dialog mid");
+            assert!(mid.active && mid.phase_progress >= 500);
+            let final_frame = scheduler
+                .transitions(origin + ui::MotionTimings::DIALOG)
+                .overlay
+                .expect("dialog final");
+            assert!(!final_frame.active);
+            assert_eq!(
+                (final_frame.progress, final_frame.phase_progress),
+                (1_000, 1_000)
+            );
+
+            scheduler.observe(
+                origin + ui::MotionTimings::DIALOG,
+                id("explorer", "owner", None),
+                false,
+            );
+            let exit = scheduler
+                .transitions(origin + ui::MotionTimings::DIALOG)
+                .overlay
+                .expect("dialog exit");
+            assert_eq!(exit.direction, ui::MotionDirection::Exiting);
+            assert!(exit.interaction_ready());
+        }
+
+        let mut replacement =
+            RedrawScheduler::new(origin, id("explorer", "owner", Some(variants[0])), false);
+        replacement.did_draw(origin);
+        replacement.observe(origin, id("explorer", "owner", Some(variants[1])), false);
+        let settled = replacement
+            .transitions(origin)
+            .overlay
+            .expect("replacement");
+        assert_eq!(settled.direction, ui::MotionDirection::Replacing);
+        assert_eq!((settled.progress, settled.phase_progress), (0, 0));
+        assert!(!settled.interaction_ready());
+
+        let reduced = RedrawScheduler::new(origin, id("explorer", "owner", None), true);
+        assert!(reduced.frame(origin).reduced_motion);
+    }
+
+    #[test]
     fn reduced_motion_has_zero_transition_duration() {
         let origin = Instant::now();
         let mut scheduler = RedrawScheduler::new(origin, id("home", "one", None), true);

@@ -30,6 +30,26 @@ impl ShellOverlayDescriptor {
     }
 }
 
+pub(in crate::session) fn explorer_dialog_identity(
+    pending_restore: bool,
+    pending_conflict: bool,
+    input_mode: ExplorerInputMode,
+) -> Option<&'static str> {
+    if pending_restore {
+        Some("explorer-restore-conflict")
+    } else if pending_conflict {
+        Some("explorer-operation-conflict")
+    } else {
+        match input_mode {
+            ExplorerInputMode::NewFolder => Some("explorer-input:new-folder"),
+            ExplorerInputMode::NewTextFile => Some("explorer-input:new-text-file"),
+            ExplorerInputMode::Rename => Some("explorer-input:rename"),
+            ExplorerInputMode::RestoreDestination => Some("explorer-input:restore-destination"),
+            _ => None,
+        }
+    }
+}
+
 impl ShellSession {
     pub fn active_screen(&self) -> ShellScreen {
         self.screen_stack
@@ -155,10 +175,25 @@ impl ShellSession {
         if let Some(popup) = self.active_popup() {
             return Some(ShellOverlayDescriptor {
                 kind: ui::MotionOverlayKind::Popover,
-                id: format!("popup:{popup:?}"),
+                id: format!("popup:{:?}", popup.owner),
                 category: ShellOverlayCategory::ContextPopup,
                 target: Some(RoutedTarget::Popup(ShellComponent::ContextMenu)),
             });
+        }
+        if let Some(explorer) = self.app.explorer_state() {
+            let id = explorer_dialog_identity(
+                explorer.pending_restore.is_some(),
+                explorer.pending_conflict.is_some(),
+                self.explorer_input_mode,
+            );
+            if let Some(id) = id {
+                return Some(ShellOverlayDescriptor {
+                    kind: ui::MotionOverlayKind::Dialog,
+                    id: id.into(),
+                    category: ShellOverlayCategory::PageDialog,
+                    target: Some(RoutedTarget::Component(ShellComponent::Explorer)),
+                });
+            }
         }
         if let Some(confirmation) = self.launcher_pending_confirmation.as_ref() {
             let id = match confirmation {
@@ -193,9 +228,15 @@ impl ShellSession {
             });
         }
         if let Some(mode) = self.explorer_overlay_mode.as_ref() {
+            let id = match mode {
+                ExplorerOverlayMode::ContextMenu { .. } => "explorer-popover:context-menu",
+                ExplorerOverlayMode::Sort { .. } => "explorer-popover:sort",
+                ExplorerOverlayMode::Options => "explorer-popover:options",
+                ExplorerOverlayMode::Properties => "explorer-popover:properties",
+            };
             return Some(ShellOverlayDescriptor {
                 kind: ui::MotionOverlayKind::Popover,
-                id: format!("explorer:{mode:?}"),
+                id: id.into(),
                 category: ShellOverlayCategory::PagePopover,
                 target: Some(RoutedTarget::Component(ShellComponent::Explorer)),
             });
@@ -223,13 +264,25 @@ impl ShellSession {
                 "diagnostics-repair",
                 ShellComponent::DiagnosticsRepairDialog,
             ))
-        } else if self.settings_state.as_ref().is_some_and(|settings| {
-            settings.color_editor.is_some()
-                || settings.weather_location_editor.is_some()
-                || settings.file_extensions_editor.is_some()
-                || settings.time_sync_server_editor.is_some()
-        }) {
-            Some(("settings-editor", ShellComponent::Settings))
+        } else if let Some(settings) = self.settings_state.as_ref() {
+            if let Some(editor) = settings.color_editor.as_ref() {
+                Some((
+                    match editor.kind {
+                        ui::SettingsPickerKind::BorderColor => "settings-editor:color:border",
+                        ui::SettingsPickerKind::AccentColor => "settings-editor:color:accent",
+                        _ => "settings-editor:color:other",
+                    },
+                    ShellComponent::Settings,
+                ))
+            } else if settings.weather_location_editor.is_some() {
+                Some(("settings-editor:weather-location", ShellComponent::Settings))
+            } else if settings.file_extensions_editor.is_some() {
+                Some(("settings-editor:file-extensions", ShellComponent::Settings))
+            } else if settings.time_sync_server_editor.is_some() {
+                Some(("settings-editor:time-sync-server", ShellComponent::Settings))
+            } else {
+                None
+            }
         } else {
             None
         };
@@ -256,11 +309,11 @@ impl ShellSession {
         }
         let notifications = self.app.notification_center();
         (notifications.alert().is_none())
-            .then(|| notifications.toast())
+            .then(|| notifications.toast_expires_at())
             .flatten()
-            .map(|toast| ShellOverlayDescriptor {
+            .map(|deadline| ShellOverlayDescriptor {
                 kind: ui::MotionOverlayKind::Toast,
-                id: toast.to_string(),
+                id: format!("toast:{deadline:?}"),
                 category: ShellOverlayCategory::Toast,
                 target: None,
             })
