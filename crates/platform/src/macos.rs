@@ -1167,7 +1167,7 @@ fn encode_path(path: &Path) -> String {
 #[cfg(target_os = "macos")]
 fn decode_path(encoded: &str) -> Result<PathBuf, PlatformError> {
     use std::os::unix::ffi::OsStringExt;
-    if encoded.len() % 2 != 0 {
+    if !encoded.len().is_multiple_of(2) {
         return Err(PlatformError::InvalidInput {
             message: "invalid Trash item identifier".to_string(),
         });

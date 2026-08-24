@@ -243,15 +243,12 @@ fn diagnostics_scrollbar_layout(
         .min(track_height);
     let max_thumb_start = track_height.saturating_sub(thumb_height);
     let max_visible_start = item_count.saturating_sub(visible_count);
-    let thumb_start = if max_visible_start == 0 {
-        0
-    } else {
-        visible_start
-            .min(max_visible_start)
-            .saturating_mul(max_thumb_start)
-            .saturating_add(max_visible_start / 2)
-            / max_visible_start
-    };
+    let thumb_start = visible_start
+        .min(max_visible_start)
+        .saturating_mul(max_thumb_start)
+        .saturating_add(max_visible_start / 2)
+        .checked_div(max_visible_start)
+        .unwrap_or_default();
     let thumb = Rect::new(
         track.x,
         track.y.saturating_add(usize_to_u16(thumb_start)),

@@ -16,7 +16,7 @@ pub struct WeathrLaunchLocation {
     pub city: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct WeathrLaunchOptions {
     pub load_config_file: bool,
     pub prefer_config_location: bool,
@@ -24,19 +24,6 @@ pub struct WeathrLaunchOptions {
     pub location_override: Option<WeathrLaunchLocation>,
     pub timezone_id: Option<String>,
     pub minimum_terminal_size: Option<(u16, u16)>,
-}
-
-impl Default for WeathrLaunchOptions {
-    fn default() -> Self {
-        Self {
-            load_config_file: false,
-            prefer_config_location: false,
-            location_query: None,
-            location_override: None,
-            timezone_id: None,
-            minimum_terminal_size: None,
-        }
-    }
 }
 
 pub(crate) fn run_weathr<Stderr, Launcher, LaunchError>(

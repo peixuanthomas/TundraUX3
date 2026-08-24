@@ -1272,11 +1272,10 @@ pub(super) fn scrollbar_layout(
     let thumb_height = max(1, track_height.saturating_mul(capacity) / total.max(1));
     let max_start = total.saturating_sub(capacity);
     let max_offset = track_height.saturating_sub(thumb_height);
-    let offset = if max_start == 0 {
-        0
-    } else {
-        max_offset.saturating_mul(start) / max_start
-    };
+    let offset = max_offset
+        .saturating_mul(start)
+        .checked_div(max_start)
+        .unwrap_or_default();
     EditorScrollbarLayout {
         track,
         thumb: Rect::new(
@@ -1302,11 +1301,10 @@ pub(super) fn horizontal_scrollbar_layout(
     let thumb_width = max(1, track_width.saturating_mul(capacity) / total.max(1));
     let max_start = total.saturating_sub(capacity);
     let max_offset = track_width.saturating_sub(thumb_width);
-    let offset = if max_start == 0 {
-        0
-    } else {
-        max_offset.saturating_mul(start) / max_start
-    };
+    let offset = max_offset
+        .saturating_mul(start)
+        .checked_div(max_start)
+        .unwrap_or_default();
     EditorScrollbarLayout {
         track,
         thumb: Rect::new(

@@ -1757,13 +1757,12 @@ fn is_heading_container(blocks: &[RichBlock], id: NodeId) -> bool {
                     return true;
                 }
             }
-            RichBlockKind::List { items, .. } => {
+            RichBlockKind::List { items, .. }
                 if items
                     .iter()
-                    .any(|item| is_heading_container(&item.blocks, id))
-                {
-                    return true;
-                }
+                    .any(|item| is_heading_container(&item.blocks, id)) =>
+            {
+                return true;
             }
             _ => {}
         }
@@ -1960,13 +1959,12 @@ fn is_block_format_container(blocks: &[RichBlock], id: NodeId) -> bool {
                     return true;
                 }
             }
-            RichBlockKind::List { items, .. } => {
+            RichBlockKind::List { items, .. }
                 if items
                     .iter()
-                    .any(|item| is_block_format_container(&item.blocks, id))
-                {
-                    return true;
-                }
+                    .any(|item| is_block_format_container(&item.blocks, id)) =>
+            {
+                return true;
             }
             _ => {}
         }
