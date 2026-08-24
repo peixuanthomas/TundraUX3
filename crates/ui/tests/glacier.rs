@@ -348,6 +348,54 @@ fn ranged_motion_is_continuous_and_overlay_exit_projection_is_endpoint_neutral()
 }
 
 #[test]
+fn replacement_interaction_uses_lifecycle_phase_not_carried_visible_progress() {
+    let frame = |millis| MotionFrame {
+        now: Duration::from_millis(millis),
+        delta: Duration::ZERO,
+        reduced_motion: false,
+    };
+    let start = schedule_motion_range(
+        MotionTransitionKind::Dialog,
+        MotionDirection::Replacing,
+        800,
+        1_000,
+        Duration::from_millis(10),
+        frame(10),
+    );
+    assert_eq!((start.progress, start.phase_progress), (800, 0));
+    assert!(!start.interaction_ready());
+
+    let before = ui::MotionTransition {
+        phase_progress: 499,
+        ..start
+    };
+    let threshold = ui::MotionTransition {
+        phase_progress: 500,
+        ..start
+    };
+    assert!(!before.interaction_ready());
+    assert!(threshold.interaction_ready());
+
+    let reduced = schedule_motion_range(
+        MotionTransitionKind::Dialog,
+        MotionDirection::Replacing,
+        800,
+        1_000,
+        Duration::from_millis(10),
+        MotionFrame::reduced(Duration::from_millis(10)),
+    );
+    assert!(!reduced.active);
+    assert!(reduced.interaction_ready());
+
+    let exiting = ui::MotionTransition {
+        direction: MotionDirection::Exiting,
+        phase_progress: 0,
+        ..start
+    };
+    assert!(exiting.interaction_ready());
+}
+
+#[test]
 fn dismissed_toast_is_immediately_invisible_in_reduced_motion() {
     let shown = MotionFrame::reduced(Duration::from_millis(10));
     let mut toast = Toast::new("Saved", ToastTone::Success, shown);

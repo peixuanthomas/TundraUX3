@@ -230,7 +230,9 @@ pub struct MotionTransition {
 
 impl MotionTransition {
     pub const fn interaction_ready(self) -> bool {
-        !self.active || matches!(self.direction, MotionDirection::Exiting) || self.progress >= 500
+        !self.active
+            || matches!(self.direction, MotionDirection::Exiting)
+            || self.phase_progress >= 500
     }
 }
 

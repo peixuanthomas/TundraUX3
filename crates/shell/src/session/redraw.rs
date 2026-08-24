@@ -473,6 +473,37 @@ mod tests {
     }
 
     #[test]
+    fn in_flight_overlay_replacement_resets_readiness_phase_without_visual_jump() {
+        let origin = Instant::now();
+        let mut scheduler = RedrawScheduler::new(origin, id("home", "one", None), false);
+        scheduler.did_draw(origin);
+        scheduler.observe(origin, id("home", "one", Some("dialog-a")), false);
+        let replaced_at = origin + Duration::from_millis(80);
+        let carried = scheduler
+            .transitions(replaced_at)
+            .overlay
+            .expect("entering dialog")
+            .progress;
+        assert!(carried > 500);
+
+        scheduler.observe(replaced_at, id("home", "one", Some("dialog-b")), false);
+        let replacement = scheduler
+            .transitions(replaced_at)
+            .overlay
+            .expect("replacement start");
+        assert_eq!(replacement.progress, carried);
+        assert_eq!(replacement.phase_progress, 0);
+        assert!(!replacement.interaction_ready());
+
+        let ready = scheduler
+            .transitions(replaced_at + Duration::from_millis(20))
+            .overlay
+            .expect("replacement threshold");
+        assert!(ready.phase_progress >= 500);
+        assert!(ready.interaction_ready());
+    }
+
+    #[test]
     fn reduced_motion_has_zero_transition_duration() {
         let origin = Instant::now();
         let mut scheduler = RedrawScheduler::new(origin, id("home", "one", None), true);
