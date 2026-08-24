@@ -1073,6 +1073,29 @@ fn explorer_semantic_replacements_gate_input_while_active_popup_is_present() {
             .active_overlay_descriptor()
             .expect("semantic replacement");
         assert_eq!(descriptor.category, ShellOverlayCategory::PagePopover);
+        state.refresh_hit_map();
+        let enter = state.route_key_input(&KeyInput::from_label("Enter"));
+        assert_eq!(enter.0, RoutedTarget::Component(ShellComponent::Explorer));
+        assert_eq!(enter.1, ShellCommand::ExplorerOverlayActivate);
+        assert_eq!(
+            state.route_key_input(&KeyInput::from_label("Esc")).1,
+            ShellCommand::ClosePopup
+        );
+        assert_eq!(state.focus_order(), vec![ShellComponent::Explorer]);
+        assert!(
+            state
+                .hit_map()
+                .regions()
+                .iter()
+                .all(|region| region.component != ShellComponent::ContextMenu)
+        );
+        assert!(
+            state
+                .hit_map()
+                .regions()
+                .iter()
+                .any(|region| region.component == ShellComponent::Explorer)
+        );
         state.refresh_hit_map_with_motion(ui::MotionTransitions {
             overlay: Some(replacing(ui::MotionTransitionKind::Popover)),
             ..ui::MotionTransitions::default()
@@ -1118,6 +1141,32 @@ fn explorer_semantic_replacements_gate_input_while_active_popup_is_present() {
         let descriptor = state.active_overlay_descriptor().expect("pending dialog");
         assert_eq!(descriptor.kind, ui::MotionOverlayKind::Dialog);
         assert_eq!(descriptor.category, ShellOverlayCategory::PageDialog);
+        state.refresh_hit_map();
+        let enter = state.route_key_input(&KeyInput::from_label("Enter"));
+        assert_eq!(enter.0, RoutedTarget::Component(ShellComponent::Explorer));
+        assert!(matches!(
+            enter.1,
+            ShellCommand::ExplorerConfirmDelete | ShellCommand::ExplorerConfirmDumpTrash
+        ));
+        assert_eq!(
+            state.route_key_input(&KeyInput::from_label("Esc")).1,
+            ShellCommand::CancelExplorerInput
+        );
+        assert_eq!(state.focus_order(), vec![ShellComponent::Explorer]);
+        assert!(
+            state
+                .hit_map()
+                .regions()
+                .iter()
+                .all(|region| region.component != ShellComponent::ContextMenu)
+        );
+        assert!(
+            state
+                .hit_map()
+                .regions()
+                .iter()
+                .any(|region| region.component == ShellComponent::Explorer)
+        );
         state.refresh_hit_map_with_motion(ui::MotionTransitions {
             overlay: Some(replacing(ui::MotionTransitionKind::Dialog)),
             ..ui::MotionTransitions::default()
@@ -1131,6 +1180,33 @@ fn explorer_semantic_replacements_gate_input_while_active_popup_is_present() {
             ShellCommand::Noop
         );
     }
+
+    let mut generic = ShellSession::new_for_home_mode(
+        ShellLaunchConfig::default(),
+        (120, 40),
+        ShellHomeMode::User,
+    );
+    generic.active_popup = Some(ShellPopup {
+        owner: Some(ShellComponent::Home),
+        anchor: (10, 10),
+    });
+    generic.refresh_hit_map();
+    assert_eq!(
+        generic.resolved_overlay_owner(),
+        Some(ShellComponent::ContextMenu)
+    );
+    assert_eq!(generic.focus_order(), vec![ShellComponent::ContextMenu]);
+    assert!(
+        generic
+            .hit_map()
+            .regions()
+            .iter()
+            .any(|region| region.component == ShellComponent::ContextMenu)
+    );
+    assert_eq!(
+        generic.route_key_input(&KeyInput::from_label("Esc")).0,
+        RoutedTarget::Popup(ShellComponent::ContextMenu)
+    );
 }
 
 #[test]

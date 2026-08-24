@@ -338,6 +338,11 @@ impl ShellSession {
             })
     }
 
+    pub(in crate::session) fn resolved_overlay_owner(&self) -> Option<ShellComponent> {
+        self.active_overlay_descriptor()
+            .and_then(|overlay| overlay.component())
+    }
+
     pub fn hit_map(&self) -> &ShellHitMap {
         &self.hit_map
     }

@@ -36,6 +36,7 @@ pub(in crate::session) fn build_shell_hit_map(
     diagnostics_model: Option<&ui::DiagnosticsViewModel>,
     motion: ui::MotionTransitions,
     overlay_blocks_interaction: bool,
+    generic_context_popup_visible: bool,
 ) -> ShellHitMap {
     let (width, height) = terminal_size;
     let terminal_area = Rect::new(0, 0, width, height);
@@ -256,7 +257,10 @@ pub(in crate::session) fn build_shell_hit_map(
         regions.retain(|region| region.layer != ShellHitLayer::AppOverlay);
     }
 
-    if overlay_interaction_ready && let Some(popup) = active_popup {
+    if overlay_interaction_ready
+        && generic_context_popup_visible
+        && let Some(popup) = active_popup
+    {
         let explorer_overlay = explorer_model.and_then(|model| {
             let ui::ShellLayout::Full { main, .. } = ui::compute_shell_layout(area) else {
                 return None;

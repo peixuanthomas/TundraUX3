@@ -62,6 +62,10 @@ impl ShellSession {
             return self.route_exit_confirm_key(key);
         }
 
+        if self.resolved_overlay_owner() == Some(ShellComponent::Explorer) {
+            return self.route_explorer_key(key);
+        }
+
         if self.active_screen() == ShellScreen::Clock {
             return self.route_clock_key(key);
         }
@@ -663,6 +667,10 @@ impl ShellSession {
             return (target, ShellCommand::CaptureOverlayInput);
         }
 
+        if self.explorer_overlay_mode.is_some() {
+            return self.route_explorer_overlay_key(key);
+        }
+
         if self
             .app
             .explorer_state()
@@ -1012,28 +1020,7 @@ impl ShellSession {
         let target = RoutedTarget::Popup(ShellComponent::ContextMenu);
 
         if self.explorer_overlay_mode.is_some() {
-            if key.phase != InputPhase::Press || key.has_non_shift_modifier() {
-                return (target, ShellCommand::CaptureOverlayInput);
-            }
-            let can_add_to_launcher = matches!(
-                self.to_explorer_view_model().overlay.as_ref(),
-                Some(ui::ExplorerOverlayViewModel::ContextMenu(menu))
-                    if menu.items.iter().any(|item| {
-                        item.id == "add-to-launcher" && item.enabled
-                    })
-            );
-            return match &key.key {
-                InputKey::Escape => (target, ShellCommand::ClosePopup),
-                InputKey::Up | InputKey::BackTab => (target, ShellCommand::ExplorerOverlayPrevious),
-                InputKey::Down | InputKey::Tab => (target, ShellCommand::ExplorerOverlayNext),
-                InputKey::Enter | InputKey::Char(' ') => {
-                    (target, ShellCommand::ExplorerOverlayActivate)
-                }
-                InputKey::Char('a' | 'A') if can_add_to_launcher => {
-                    (target, ShellCommand::ExplorerAddToLauncher)
-                }
-                _ => (target, ShellCommand::CaptureOverlayInput),
-            };
+            return self.route_explorer_overlay_key(key);
         }
 
         if matches!(&key.key, InputKey::Escape) {
@@ -1049,6 +1036,32 @@ impl ShellSession {
         }
 
         (target, ShellCommand::CaptureOverlayInput)
+    }
+
+    fn route_explorer_overlay_key(&self, key: &KeyInput) -> (RoutedTarget, ShellCommand) {
+        let target = RoutedTarget::Component(ShellComponent::Explorer);
+        if key.phase != InputPhase::Press || key.has_non_shift_modifier() {
+            return (target, ShellCommand::CaptureOverlayInput);
+        }
+        let can_add_to_launcher = matches!(
+            self.to_explorer_view_model().overlay.as_ref(),
+            Some(ui::ExplorerOverlayViewModel::ContextMenu(menu))
+                if menu.items.iter().any(|item| {
+                    item.id == "add-to-launcher" && item.enabled
+                })
+        );
+        match &key.key {
+            InputKey::Escape => (target, ShellCommand::ClosePopup),
+            InputKey::Up | InputKey::BackTab => (target, ShellCommand::ExplorerOverlayPrevious),
+            InputKey::Down | InputKey::Tab => (target, ShellCommand::ExplorerOverlayNext),
+            InputKey::Enter | InputKey::Char(' ') => {
+                (target, ShellCommand::ExplorerOverlayActivate)
+            }
+            InputKey::Char('a' | 'A') if can_add_to_launcher => {
+                (target, ShellCommand::ExplorerAddToLauncher)
+            }
+            _ => (target, ShellCommand::CaptureOverlayInput),
+        }
     }
 
     pub(in crate::session) fn route_mouse_input(
@@ -1191,6 +1204,10 @@ impl ShellSession {
 
         if self.active_screen() == ShellScreen::Login {
             return self.route_login_mouse(mouse, hit_target);
+        }
+
+        if self.resolved_overlay_owner() == Some(ShellComponent::Explorer) {
+            return self.route_explorer_mouse(mouse, hit_target, received_at);
         }
 
         if self.active_popup.is_some() {

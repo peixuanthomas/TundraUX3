@@ -14,9 +14,14 @@ impl ShellSession {
             ..ui::RenderContext::default()
         }
         .overlay_interaction_ready();
-        let overlay_blocks_interaction = self
-            .active_overlay_descriptor()
+        let overlay_descriptor = self.active_overlay_descriptor();
+        let overlay_blocks_interaction = overlay_descriptor
+            .as_ref()
             .is_some_and(|overlay| overlay.target.is_some());
+        let generic_context_popup_visible = overlay_descriptor.as_ref().is_some_and(|overlay| {
+            overlay.category == ShellOverlayCategory::ContextPopup
+                && overlay.component() == Some(ShellComponent::ContextMenu)
+        });
         self.overlay_interaction_ready = !overlay_blocks_interaction || motion_ready;
         self.hit_map_generation = self.hit_map_generation.saturating_add(1);
         let active_screen = self.active_screen();
@@ -51,6 +56,7 @@ impl ShellSession {
             diagnostics_model.as_ref(),
             motion,
             overlay_blocks_interaction,
+            generic_context_popup_visible,
         );
         self.sync_home_entry_selection();
 
@@ -68,6 +74,12 @@ impl ShellSession {
 
     pub(in crate::session) fn focus_order(&self) -> Vec<ShellComponent> {
         let overlay = self.active_overlay_descriptor();
+        if self.overlay_interaction_ready
+            && overlay.as_ref().and_then(|overlay| overlay.component())
+                == Some(ShellComponent::Explorer)
+        {
+            return vec![ShellComponent::Explorer];
+        }
         if self.overlay_interaction_ready
             && let Some(overlay) = overlay.as_ref()
             && matches!(
