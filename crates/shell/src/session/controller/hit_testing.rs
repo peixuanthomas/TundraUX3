@@ -35,6 +35,7 @@ pub(in crate::session) fn build_shell_hit_map(
     explorer_model: Option<&ui::ExplorerViewModel>,
     diagnostics_model: Option<&ui::DiagnosticsViewModel>,
     motion: ui::MotionTransitions,
+    overlay_blocks_interaction: bool,
 ) -> ShellHitMap {
     let (width, height) = terminal_size;
     let terminal_area = Rect::new(0, 0, width, height);
@@ -249,13 +250,13 @@ pub(in crate::session) fn build_shell_hit_map(
         }
     }
 
-    if !motion_context.overlay_interaction_ready() {
+    let overlay_interaction_ready =
+        !overlay_blocks_interaction || motion_context.overlay_interaction_ready();
+    if !overlay_interaction_ready {
         regions.retain(|region| region.layer != ShellHitLayer::AppOverlay);
     }
 
-    if motion_context.overlay_interaction_ready()
-        && let Some(popup) = active_popup
-    {
+    if overlay_interaction_ready && let Some(popup) = active_popup {
         let explorer_overlay = explorer_model.and_then(|model| {
             let ui::ShellLayout::Full { main, .. } = ui::compute_shell_layout(area) else {
                 return None;
@@ -271,7 +272,7 @@ pub(in crate::session) fn build_shell_hit_map(
         });
     }
 
-    if exit_confirmation_visible && motion_context.overlay_interaction_ready() {
+    if exit_confirmation_visible && overlay_interaction_ready {
         regions.push(ShellHitRegion {
             component: ShellComponent::ExitDialog,
             area: centered_rect(terminal_area, width.min(46), height.min(7)),
@@ -279,7 +280,7 @@ pub(in crate::session) fn build_shell_hit_map(
         });
     }
 
-    if time_sync_dialog_visible && motion_context.overlay_interaction_ready() {
+    if time_sync_dialog_visible && overlay_interaction_ready {
         regions.push(ShellHitRegion {
             component: ShellComponent::TimeSyncDialog,
             area: centered_rect(terminal_area, width.min(34), height.min(5)),
@@ -287,7 +288,7 @@ pub(in crate::session) fn build_shell_hit_map(
         });
     }
 
-    if motion_context.overlay_interaction_ready()
+    if overlay_interaction_ready
         && let (Some(component), Some(model)) = (notification_modal_component, notification_model)
         && let ui::NotificationLayout::Dialog(layout) =
             ui::notification_layout(terminal_area, model)

@@ -41,21 +41,13 @@ impl ShellSession {
             return (RoutedTarget::Global, ShellCommand::Shutdown);
         }
 
-        if !self.overlay_interaction_ready && !matches!(key.key, InputKey::Escape) {
-            let blocked_overlay = self
-                .notification_active_modal_component()
-                .or(self
-                    .time_sync_dialog_visible
-                    .then_some(ShellComponent::TimeSyncDialog))
-                .or((self.active_screen() == ShellScreen::ExitConfirm)
-                    .then_some(ShellComponent::ExitDialog))
-                .or(self
-                    .active_popup
-                    .is_some()
-                    .then_some(ShellComponent::ContextMenu));
-            if let Some(component) = blocked_overlay {
-                return (RoutedTarget::Component(component), ShellCommand::Noop);
-            }
+        if !self.overlay_interaction_ready
+            && !matches!(key.key, InputKey::Escape)
+            && let Some(target) = self
+                .active_overlay_descriptor()
+                .and_then(|overlay| overlay.target)
+        {
+            return (target, ShellCommand::Noop);
         }
 
         if self.notification_has_active_modal() {
@@ -1068,28 +1060,12 @@ impl ShellSession {
         let hit_target = self.hit_map.target_at(coordinates);
         let hit_layer = self.hit_map.layer_at(coordinates);
 
-        if !self.overlay_interaction_ready {
-            if let Some(component) = self.notification_active_modal_component().or(self
-                .time_sync_dialog_visible
-                .then_some(ShellComponent::TimeSyncDialog))
-            {
-                return (
-                    RoutedTarget::Modal(component),
-                    ShellCommand::CaptureOverlayInput,
-                );
-            }
-            if self.active_screen() == ShellScreen::ExitConfirm {
-                return (
-                    RoutedTarget::Modal(ShellComponent::ExitDialog),
-                    ShellCommand::CaptureOverlayInput,
-                );
-            }
-            if self.active_popup.is_some() {
-                return (
-                    RoutedTarget::Popup(ShellComponent::ContextMenu),
-                    ShellCommand::CaptureOverlayInput,
-                );
-            }
+        if !self.overlay_interaction_ready
+            && let Some(target) = self
+                .active_overlay_descriptor()
+                .and_then(|overlay| overlay.target)
+        {
+            return (target, ShellCommand::CaptureOverlayInput);
         }
 
         if hit_layer == Some(ShellHitLayer::ShellModal) {

@@ -19,83 +19,10 @@ struct RedrawOverlayIdentity {
 impl RedrawIdentity {
     pub(super) fn from_session(state: &ShellSession) -> Self {
         let overlay = state
-            .to_notification_view_model()
-            .map(|notification| RedrawOverlayIdentity {
-                kind: ui::MotionOverlayKind::Dialog,
-                id: format!("notification:{}", notification.id),
-            })
-            .or_else(|| {
-                state
-                    .to_time_sync_dialog_view_model()
-                    .map(|_| RedrawOverlayIdentity {
-                        kind: ui::MotionOverlayKind::Dialog,
-                        id: "time-sync".to_string(),
-                    })
-            })
-            .or_else(|| {
-                (state.active_screen() == ShellScreen::ExitConfirm).then(|| RedrawOverlayIdentity {
-                    kind: ui::MotionOverlayKind::Dialog,
-                    id: "exit-confirm".to_string(),
-                })
-            })
-            .or_else(|| {
-                state.active_popup().map(|popup| RedrawOverlayIdentity {
-                    kind: ui::MotionOverlayKind::Popover,
-                    id: format!("popup:{popup:?}"),
-                })
-            })
-            .or_else(|| {
-                state
-                    .explorer_overlay_mode
-                    .as_ref()
-                    .map(|mode| RedrawOverlayIdentity {
-                        kind: ui::MotionOverlayKind::Popover,
-                        id: format!("explorer:{mode:?}"),
-                    })
-            })
-            .or_else(|| {
-                state
-                    .settings_state
-                    .as_ref()
-                    .and_then(|settings| settings.picker.as_ref())
-                    .map(|picker| RedrawOverlayIdentity {
-                        kind: ui::MotionOverlayKind::Popover,
-                        id: format!("settings-picker:{:?}", picker.kind),
-                    })
-            })
-            .or_else(|| {
-                let id = if state.setup_custom_color_target.is_some() {
-                    Some("setup-custom-color")
-                } else if state.clock_create_state.is_some() {
-                    Some("clock-create")
-                } else if state.editor_settings_dialog.is_some() {
-                    Some("editor-settings")
-                } else if !state.diagnostics_repair_preview.is_empty() {
-                    Some("diagnostics-repair")
-                } else if state.settings_state.as_ref().is_some_and(|settings| {
-                    settings.color_editor.is_some()
-                        || settings.weather_location_editor.is_some()
-                        || settings.file_extensions_editor.is_some()
-                        || settings.time_sync_server_editor.is_some()
-                }) {
-                    Some("settings-editor")
-                } else {
-                    None
-                };
-                id.map(|id| RedrawOverlayIdentity {
-                    kind: ui::MotionOverlayKind::Dialog,
-                    id: id.to_string(),
-                })
-            })
-            .or_else(|| {
-                let notifications = state.app.notification_center();
-                (notifications.alert().is_none())
-                    .then(|| notifications.toast())
-                    .flatten()
-                    .map(|toast| RedrawOverlayIdentity {
-                        kind: ui::MotionOverlayKind::Toast,
-                        id: format!("{toast}:{:?}", notifications.toast_expires_at()),
-                    })
+            .active_overlay_descriptor()
+            .map(|overlay| RedrawOverlayIdentity {
+                kind: overlay.kind,
+                id: overlay.id,
             });
         Self {
             screen: format!("{:?}", state.content_screen()),
@@ -203,8 +130,13 @@ impl RedrawScheduler {
                 self.focus_changed_at = Some(now);
             }
             if self.current.overlay != identity.overlay {
-                self.overlay_start = rendered.overlay.filter(|motion| motion.active).map_or_else(
-                    || self.current.overlay.as_ref().map_or(0, |_| 1_000),
+                let active = rendered.overlay.filter(|motion| motion.active);
+                self.overlay_start = active.map_or_else(
+                    || match (&self.current.overlay, &identity.overlay) {
+                        (Some(_), Some(_)) => 0,
+                        (Some(_), None) => 1_000,
+                        (None, Some(_)) | (None, None) => 0,
+                    },
                     |motion| motion.progress,
                 );
                 self.overlay_target = if identity.overlay.is_some() { 1_000 } else { 0 };
@@ -501,6 +433,43 @@ mod tests {
         );
         popover.did_draw(origin + Duration::from_millis(150));
         assert!(popover.is_due(origin + ui::MotionTimings::POPOVER));
+    }
+
+    #[test]
+    fn settled_overlay_replacement_reveals_from_zero_before_becoming_ready() {
+        let origin = Instant::now();
+        for overlay in ["dialog-b", "popover:b"] {
+            let mut scheduler =
+                RedrawScheduler::new(origin, id("home", "one", Some("dialog-a")), false);
+            scheduler.did_draw(origin);
+            scheduler.observe(origin, id("home", "one", Some(overlay)), false);
+            let start = scheduler
+                .transitions(origin)
+                .overlay
+                .expect("replacement start");
+            assert_eq!(start.direction, ui::MotionDirection::Replacing);
+            assert_eq!(start.progress, 0);
+            assert_eq!(start.phase_progress, 0);
+            assert!(!start.interaction_ready());
+
+            let duration = if overlay.contains("popover") {
+                ui::MotionTimings::POPOVER
+            } else {
+                ui::MotionTimings::DIALOG
+            };
+            let before_end = scheduler
+                .transitions(origin + duration.saturating_sub(Duration::from_millis(1)))
+                .overlay
+                .expect("replacement before end");
+            assert!(before_end.active);
+            assert!(before_end.phase_progress < 1_000);
+            let end = scheduler
+                .transitions(origin + duration)
+                .overlay
+                .expect("replacement end");
+            assert!(!end.active);
+            assert_eq!((end.progress, end.phase_progress), (1_000, 1_000));
+        }
     }
 
     #[test]

@@ -1,4 +1,5 @@
 use super::super::*;
+use crate::session::queries::ShellOverlayCategory;
 impl ShellSession {
     pub(in crate::session) fn refresh_hit_map(&mut self) {
         self.refresh_hit_map_with_motion(ui::MotionTransitions::default());
@@ -8,11 +9,15 @@ impl ShellSession {
         &mut self,
         motion: ui::MotionTransitions,
     ) {
-        self.overlay_interaction_ready = ui::RenderContext {
+        let motion_ready = ui::RenderContext {
             transitions: motion,
             ..ui::RenderContext::default()
         }
         .overlay_interaction_ready();
+        let overlay_blocks_interaction = self
+            .active_overlay_descriptor()
+            .is_some_and(|overlay| overlay.target.is_some());
+        self.overlay_interaction_ready = !overlay_blocks_interaction || motion_ready;
         self.hit_map_generation = self.hit_map_generation.saturating_add(1);
         let active_screen = self.active_screen();
         let content_screen = self.content_screen();
@@ -45,6 +50,7 @@ impl ShellSession {
             explorer_model.as_ref(),
             diagnostics_model.as_ref(),
             motion,
+            overlay_blocks_interaction,
         );
         self.sync_home_entry_selection();
 
@@ -61,16 +67,16 @@ impl ShellSession {
     }
 
     pub(in crate::session) fn focus_order(&self) -> Vec<ShellComponent> {
+        let overlay = self.active_overlay_descriptor();
         if self.overlay_interaction_ready
-            && let Some(component) = self.notification_active_modal_component()
+            && let Some(overlay) = overlay.as_ref()
+            && matches!(
+                overlay.category,
+                ShellOverlayCategory::ShellModal | ShellOverlayCategory::ContextPopup
+            )
+            && let Some(component) = overlay.component()
         {
             return vec![component];
-        }
-        if self.overlay_interaction_ready && self.time_sync_dialog_visible {
-            return vec![ShellComponent::TimeSyncDialog];
-        }
-        if self.overlay_interaction_ready && self.active_screen() == ShellScreen::ExitConfirm {
-            return vec![ShellComponent::ExitDialog];
         }
         if self.active_screen() == ShellScreen::FirstRunSetup {
             return match self.setup_step {
@@ -83,7 +89,10 @@ impl ShellSession {
                     ShellComponent::SetupAdminHint,
                     ShellComponent::SetupSubmit,
                 ],
-                ui::SetupStep::Appearance if self.setup_custom_color_target.is_some() => {
+                ui::SetupStep::Appearance
+                    if self.overlay_interaction_ready
+                        && self.setup_custom_color_target.is_some() =>
+                {
                     vec![ShellComponent::SetupCustomColorDialog]
                 }
                 ui::SetupStep::Appearance => vec![
@@ -132,7 +141,7 @@ impl ShellSession {
             return vec![ShellComponent::Settings];
         }
         if self.active_screen() == ShellScreen::Diagnostics {
-            if !self.diagnostics_repair_preview.is_empty() {
+            if self.overlay_interaction_ready && !self.diagnostics_repair_preview.is_empty() {
                 return vec![ShellComponent::DiagnosticsRepairDialog];
             }
             return vec![ShellComponent::Diagnostics];
@@ -142,7 +151,7 @@ impl ShellSession {
             if matches!(ui::compute_shell_layout(area), ui::ShellLayout::Compact(_)) {
                 return vec![ShellComponent::CompactHome];
             }
-            if self.clock_create_state.is_some() {
+            if self.overlay_interaction_ready && self.clock_create_state.is_some() {
                 return vec![
                     ShellComponent::ClockCreateInput,
                     ShellComponent::ClockCreateAlarmButton,
@@ -157,9 +166,6 @@ impl ShellSession {
                 order.push(ShellComponent::ClockEntryList);
             }
             return order;
-        }
-        if self.overlay_interaction_ready && self.active_popup.is_some() {
-            return vec![ShellComponent::ContextMenu];
         }
         if self
             .hit_map

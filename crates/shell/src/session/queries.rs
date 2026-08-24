@@ -1,4 +1,35 @@
 use super::*;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(in crate::session) enum ShellOverlayCategory {
+    ShellModal,
+    PageDialog,
+    ContextPopup,
+    PagePopover,
+    Toast,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(in crate::session) struct ShellOverlayDescriptor {
+    pub kind: ui::MotionOverlayKind,
+    pub id: String,
+    pub category: ShellOverlayCategory,
+    pub target: Option<RoutedTarget>,
+}
+
+impl ShellOverlayDescriptor {
+    pub fn component(&self) -> Option<ShellComponent> {
+        match self.target {
+            Some(
+                RoutedTarget::Component(component)
+                | RoutedTarget::Popup(component)
+                | RoutedTarget::Modal(component),
+            ) => Some(component),
+            _ => None,
+        }
+    }
+}
+
 impl ShellSession {
     pub fn active_screen(&self) -> ShellScreen {
         self.screen_stack
@@ -91,6 +122,102 @@ impl ShellSession {
 
     pub fn active_popup(&self) -> Option<ShellPopup> {
         self.active_popup
+    }
+
+    pub(in crate::session) fn active_overlay_descriptor(&self) -> Option<ShellOverlayDescriptor> {
+        let dialog = |id: String, category, component| ShellOverlayDescriptor {
+            kind: ui::MotionOverlayKind::Dialog,
+            id,
+            category,
+            target: Some(RoutedTarget::Modal(component)),
+        };
+        if let Some(notification) = self.to_notification_view_model() {
+            return Some(dialog(
+                format!("notification:{}", notification.id),
+                ShellOverlayCategory::ShellModal,
+                self.notification_active_modal_component()?,
+            ));
+        }
+        if self.time_sync_dialog_visible {
+            return Some(dialog(
+                "time-sync".into(),
+                ShellOverlayCategory::ShellModal,
+                ShellComponent::TimeSyncDialog,
+            ));
+        }
+        if self.active_screen() == ShellScreen::ExitConfirm {
+            return Some(dialog(
+                "exit-confirm".into(),
+                ShellOverlayCategory::ShellModal,
+                ShellComponent::ExitDialog,
+            ));
+        }
+        if let Some(popup) = self.active_popup() {
+            return Some(ShellOverlayDescriptor {
+                kind: ui::MotionOverlayKind::Popover,
+                id: format!("popup:{popup:?}"),
+                category: ShellOverlayCategory::ContextPopup,
+                target: Some(RoutedTarget::Popup(ShellComponent::ContextMenu)),
+            });
+        }
+        if let Some(mode) = self.explorer_overlay_mode.as_ref() {
+            return Some(ShellOverlayDescriptor {
+                kind: ui::MotionOverlayKind::Popover,
+                id: format!("explorer:{mode:?}"),
+                category: ShellOverlayCategory::PagePopover,
+                target: Some(RoutedTarget::Component(ShellComponent::Explorer)),
+            });
+        }
+        if let Some(picker) = self
+            .settings_state
+            .as_ref()
+            .and_then(|settings| settings.picker.as_ref())
+        {
+            return Some(ShellOverlayDescriptor {
+                kind: ui::MotionOverlayKind::Popover,
+                id: format!("settings-picker:{:?}", picker.kind),
+                category: ShellOverlayCategory::PagePopover,
+                target: Some(RoutedTarget::Component(ShellComponent::Settings)),
+            });
+        }
+        let page_dialog = if self.setup_custom_color_target.is_some() {
+            Some(("setup-custom-color", ShellComponent::SetupCustomColorDialog))
+        } else if self.clock_create_state.is_some() {
+            Some(("clock-create", ShellComponent::ClockCreateInput))
+        } else if self.editor_settings_dialog.is_some() {
+            Some(("editor-settings", ShellComponent::Editor))
+        } else if !self.diagnostics_repair_preview.is_empty() {
+            Some((
+                "diagnostics-repair",
+                ShellComponent::DiagnosticsRepairDialog,
+            ))
+        } else if self.settings_state.as_ref().is_some_and(|settings| {
+            settings.color_editor.is_some()
+                || settings.weather_location_editor.is_some()
+                || settings.file_extensions_editor.is_some()
+                || settings.time_sync_server_editor.is_some()
+        }) {
+            Some(("settings-editor", ShellComponent::Settings))
+        } else {
+            None
+        };
+        if let Some((id, component)) = page_dialog {
+            return Some(dialog(
+                id.into(),
+                ShellOverlayCategory::PageDialog,
+                component,
+            ));
+        }
+        let notifications = self.app.notification_center();
+        (notifications.alert().is_none())
+            .then(|| notifications.toast())
+            .flatten()
+            .map(|toast| ShellOverlayDescriptor {
+                kind: ui::MotionOverlayKind::Toast,
+                id: toast.to_string(),
+                category: ShellOverlayCategory::Toast,
+                target: None,
+            })
     }
 
     pub fn hit_map(&self) -> &ShellHitMap {

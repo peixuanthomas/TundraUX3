@@ -375,7 +375,8 @@ pub fn schedule_motion_range(
     let phase_progress = match direction {
         MotionDirection::Entering | MotionDirection::Replacing => ease_out_cubic(normalized),
         MotionDirection::Exiting => ease_in_cubic(normalized),
-    };
+    }
+    .min(if active { 999 } else { 1_000 });
     let progress = interpolate_progress(start_progress, target_progress, phase_progress);
     MotionTransition {
         kind,
@@ -505,7 +506,7 @@ impl RenderContext {
         let entering_page = self.transitions.screen.is_some_and(|transition| {
             transition.active
                 && !matches!(transition.direction, MotionDirection::Exiting)
-                && transition.progress < 500
+                && transition.phase_progress < 500
         });
         let exiting_overlay = self.transitions.overlay.is_some_and(|transition| {
             transition.active
@@ -550,7 +551,15 @@ impl RenderContext {
         else {
             return;
         };
-        let progress = transition.progress;
+        let progress = if matches!(
+            transition.kind,
+            MotionTransitionKind::Focus | MotionTransitionKind::Page
+        ) || matches!(transition.direction, MotionDirection::Replacing)
+        {
+            transition.phase_progress
+        } else {
+            transition.progress
+        };
         self.theme.border = interpolate_color(self.theme.canvas, self.theme.border, progress);
         self.theme.focus = interpolate_color(self.theme.border, self.theme.focus, progress);
         if !matches!(transition.kind, MotionTransitionKind::Focus) {

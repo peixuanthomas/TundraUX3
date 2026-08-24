@@ -27,6 +27,7 @@ pub struct Toast {
     pub tone: ToastTone,
     pub shown_at: Duration,
     pub dismiss_at: Option<Duration>,
+    enter_start_progress: u16,
     dismiss_start_progress: u16,
 }
 
@@ -37,6 +38,7 @@ impl Toast {
             tone,
             shown_at: frame.now,
             dismiss_at: None,
+            enter_start_progress: 0,
             dismiss_start_progress: 1_000,
         }
     }
@@ -44,6 +46,13 @@ impl Toast {
     pub fn dismiss(&mut self, frame: MotionFrame) {
         self.dismiss_start_progress = self.visible_progress(frame);
         self.dismiss_at = Some(frame.now);
+    }
+
+    pub fn resume(&mut self, frame: MotionFrame) {
+        let progress = self.visible_progress(frame);
+        self.enter_start_progress = progress;
+        self.shown_at = frame.now;
+        self.dismiss_at = None;
     }
 
     pub fn is_visible(&self, frame: MotionFrame) -> bool {
@@ -66,7 +75,7 @@ impl Toast {
             None => schedule_motion_range(
                 MotionTransitionKind::Toast,
                 MotionDirection::Entering,
-                0,
+                self.enter_start_progress,
                 1_000,
                 self.shown_at,
                 frame,
@@ -95,7 +104,7 @@ impl Toast {
                 schedule_motion_range(
                     MotionTransitionKind::Toast,
                     MotionDirection::Entering,
-                    0,
+                    self.enter_start_progress,
                     1_000,
                     self.shown_at,
                     frame,

@@ -295,6 +295,7 @@ fn ranged_motion_is_continuous_and_overlay_exit_projection_is_endpoint_neutral()
             frame(60),
         );
         assert_eq!(reversed.progress, entering.progress, "{kind:?} jumped");
+        assert_eq!(reversed.phase_progress, 0);
         let settled = schedule_motion_range(
             kind,
             MotionDirection::Exiting,
@@ -304,7 +305,18 @@ fn ranged_motion_is_continuous_and_overlay_exit_projection_is_endpoint_neutral()
             frame(500),
         );
         assert_eq!(settled.progress, 0);
+        assert_eq!(settled.phase_progress, 1_000);
         assert!(!settled.active);
+        let reduced = schedule_motion_range(
+            kind,
+            MotionDirection::Exiting,
+            entering.progress,
+            0,
+            Duration::from_millis(60),
+            MotionFrame::reduced(Duration::from_millis(60)),
+        );
+        assert_eq!((reduced.progress, reduced.phase_progress), (0, 1_000));
+        assert!(!reduced.active);
     }
 
     let theme = TundraTheme::default();
@@ -380,6 +392,34 @@ fn toast_enter_and_exit_progress_remain_self_scheduled_behind_other_overlays() {
     assert_eq!(toast.visible_progress(frame(350)), 0);
     assert!(!toast.requests_redraw(frame(350)));
     assert!(!toast.is_visible(frame(350)));
+}
+
+#[test]
+fn toast_resume_reverses_from_the_visible_progress_in_full_and_reduced_motion() {
+    let frame = |millis| MotionFrame {
+        now: Duration::from_millis(millis),
+        delta: Duration::ZERO,
+        reduced_motion: false,
+    };
+    let mut toast = Toast::new("Saved", ToastTone::Info, frame(0));
+    toast.dismiss(frame(200));
+    let exiting = toast.visible_progress(frame(250));
+    toast.resume(frame(250));
+    assert_eq!(toast.visible_progress(frame(250)), exiting);
+    assert_eq!(toast.visible_progress(frame(500)), 1_000);
+
+    let mut reduced = Toast::new(
+        "Saved",
+        ToastTone::Info,
+        MotionFrame::reduced(Duration::ZERO),
+    );
+    reduced.dismiss(MotionFrame::reduced(Duration::from_millis(1)));
+    reduced.resume(MotionFrame::reduced(Duration::from_millis(2)));
+    assert_eq!(
+        reduced.visible_progress(MotionFrame::reduced(Duration::from_millis(2))),
+        1_000
+    );
+    assert!(!reduced.requests_redraw(MotionFrame::reduced(Duration::from_millis(2))));
 }
 
 #[test]

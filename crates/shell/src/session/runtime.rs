@@ -897,7 +897,6 @@ pub(super) fn run_fullscreen_shell_session<W: Write>(
         reduced_motion_enabled(&state),
     );
     let mut shell_toast: Option<ui::components::Toast> = None;
-    let mut shell_toast_deadline = None;
     let mut terminal_size_error = None;
     let mut terminal_suspended = false;
     let mut last_background_poll = runtime_origin;
@@ -1073,32 +1072,7 @@ pub(super) fn run_fullscreen_shell_session<W: Write>(
                 .is_none()
                 .then_some(chrome.status.toast.as_deref())
                 .flatten();
-            let toast_deadline = state.app.notification_center().toast_expires_at();
-            match visible_toast {
-                Some(message)
-                    if shell_toast.as_ref().is_none_or(|toast| {
-                        toast.message != message
-                            || toast.dismiss_at.is_some()
-                            || shell_toast_deadline != toast_deadline
-                    }) =>
-                {
-                    shell_toast = Some(ui::components::Toast::new(
-                        message,
-                        ui::components::ToastTone::Info,
-                        motion_frame,
-                    ));
-                    shell_toast_deadline = toast_deadline;
-                }
-                None => {
-                    if let Some(toast) = shell_toast.as_mut()
-                        && toast.dismiss_at.is_none()
-                    {
-                        toast.dismiss(motion_frame);
-                    }
-                    shell_toast_deadline = None;
-                }
-                Some(_) => {}
-            }
+            sync_shell_toast(&mut shell_toast, visible_toast, motion_frame);
             if shell_toast
                 .as_ref()
                 .is_some_and(|toast| !toast.is_visible(motion_frame))
@@ -1509,6 +1483,36 @@ fn reduced_motion_enabled(state: &ShellSession) -> bool {
             storage::MotionPreference::Reduced
         )
     })
+}
+
+fn sync_shell_toast(
+    toast: &mut Option<ui::components::Toast>,
+    visible_message: Option<&str>,
+    frame: ui::MotionFrame,
+) {
+    match visible_message {
+        Some(message) => match toast.as_mut() {
+            Some(toast) if toast.message == message => {
+                if toast.dismiss_at.is_some() {
+                    toast.resume(frame);
+                }
+            }
+            _ => {
+                *toast = Some(ui::components::Toast::new(
+                    message,
+                    ui::components::ToastTone::Info,
+                    frame,
+                ));
+            }
+        },
+        None => {
+            if let Some(toast) = toast.as_mut()
+                && toast.dismiss_at.is_none()
+            {
+                toast.dismiss(frame);
+            }
+        }
+    }
 }
 
 fn synchronize_motion_hit_map_after_input(
@@ -2319,6 +2323,7 @@ mod runtime_preflight_tests {
         assert!(runtime.contains("ui::RenderContext::from_theme_with_transitions("));
         assert!(runtime.contains("state.refresh_hit_map_with_motion(motion_transitions)"));
         assert!(runtime.contains("render_context.page_area(area)"));
+        assert!(runtime.contains("sync_shell_toast(&mut shell_toast"));
         for renderer in [
             "render_setup_with_context",
             "render_login_with_context",
@@ -2347,6 +2352,34 @@ mod runtime_preflight_tests {
         ] {
             assert!(!runtime.contains(legacy), "legacy runtime call {legacy}");
         }
+    }
+
+    #[test]
+    fn deferred_alert_toast_reentry_resumes_without_replaying_or_jumping() {
+        let frame = |millis| ui::MotionFrame {
+            now: Duration::from_millis(millis),
+            delta: Duration::ZERO,
+            reduced_motion: false,
+        };
+        let mut toast = None;
+        sync_shell_toast(&mut toast, Some("Saved"), frame(0));
+        sync_shell_toast(&mut toast, None, frame(200));
+        let exiting = toast
+            .as_ref()
+            .expect("exiting toast")
+            .visible_progress(frame(250));
+        sync_shell_toast(&mut toast, Some("Saved"), frame(250));
+        let resumed = toast.as_ref().expect("resumed toast");
+        assert_eq!(resumed.visible_progress(frame(250)), exiting);
+
+        let shown_at = resumed.shown_at;
+        sync_shell_toast(&mut toast, Some("Saved"), frame(500));
+        assert_eq!(toast.as_ref().expect("renewed toast").shown_at, shown_at);
+
+        sync_shell_toast(&mut toast, Some("Different"), frame(600));
+        let replacement = toast.as_ref().expect("replacement toast");
+        assert_eq!(replacement.message, "Different");
+        assert_eq!(replacement.visible_progress(frame(600)), 0);
     }
 
     fn recovery_asset_root(case: &str) -> PathBuf {
