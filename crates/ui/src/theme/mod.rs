@@ -40,6 +40,7 @@ impl RenderCapabilities {
 pub struct ThemeTokens {
     pub border_shape: BorderShape,
     pub canvas: Color,
+    pub editor_canvas: Color,
     pub surface: Color,
     pub raised: Color,
     pub border: Color,
@@ -61,6 +62,7 @@ impl ThemeTokens {
         Self {
             border_shape: BorderShape::Rounded,
             canvas: Color::Rgb(0x07, 0x11, 0x16),
+            editor_canvas: Color::Black,
             surface: Color::Rgb(0x0D, 0x1B, 0x22),
             raised: Color::Rgb(0x13, 0x26, 0x2F),
             border: Color::Rgb(0x29, 0x43, 0x4E),
@@ -101,6 +103,7 @@ impl ThemeTokens {
         Self {
             border_shape: self.border_shape,
             canvas: Color::Black,
+            editor_canvas: Color::Black,
             surface: Color::Black,
             raised: Color::DarkGray,
             border: Color::DarkGray,

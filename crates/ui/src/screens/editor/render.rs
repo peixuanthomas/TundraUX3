@@ -387,6 +387,17 @@ fn render_canvas(
     if layout.canvas_panel.is_empty() {
         return;
     }
+    let canvas_theme = TundraTheme {
+        background: context.theme.editor_canvas,
+        ..*theme
+    };
+    let canvas_context = RenderContext {
+        theme: crate::ThemeTokens {
+            surface: context.theme.editor_canvas,
+            ..context.theme
+        },
+        ..*context
+    };
     if layout.canvas_framed {
         let mut title = model.file_name.clone();
         if model.dirty {
@@ -405,11 +416,11 @@ fn render_canvas(
         Surface::new().titled(title).bordered(true).render_frame(
             frame,
             layout.canvas_panel,
-            context,
+            &canvas_context,
         );
     } else {
         frame.render_widget(
-            Paragraph::new("").style(theme.body_style()),
+            Paragraph::new("").style(canvas_theme.body_style()),
             layout.canvas_panel,
         );
     }
@@ -459,13 +470,13 @@ fn render_canvas(
             line_layout.document_line,
             layout,
             model,
-            theme,
+            &canvas_theme,
             usize::from(layout.canvas.width),
         );
         frame.render_widget(
             Paragraph::new(line)
                 .alignment(HorizontalAlignment::Left)
-                .style(theme.body_style()),
+                .style(canvas_theme.body_style()),
             line_layout.area,
         );
     }
@@ -476,7 +487,7 @@ fn render_canvas(
             layout.visible_capacity,
             layout.visible_start,
         )
-        .render_frame(frame, scrollbar.track, context);
+        .render_frame(frame, scrollbar.track, &canvas_context);
     }
 
     if let Some(scrollbar) = layout.horizontal_scrollbar {
@@ -486,7 +497,7 @@ fn render_canvas(
             layout.horizontal_scroll,
         )
         .orientation(ScrollbarOrientation::HorizontalBottom)
-        .render_frame(frame, scrollbar.track, context);
+        .render_frame(frame, scrollbar.track, &canvas_context);
     }
 
     if model.focus == EditorFocus::Canvas
@@ -768,7 +779,7 @@ fn span_style(span: &EditorRenderSpan, theme: &TundraTheme) -> Style {
         style = style.add_modifier(Modifier::UNDERLINED);
     }
     if span.inline_code {
-        style = style.fg(theme.border_color).bg(theme.muted);
+        style = style.fg(theme.border_color);
     }
     style
 }

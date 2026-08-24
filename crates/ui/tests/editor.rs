@@ -1,7 +1,7 @@
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use ratatui::layout::{Position, Rect};
-use ratatui::style::Modifier;
+use ratatui::style::{Color, Modifier};
 use ui::{
     EditorBlockArea, EditorBlockSourceMap, EditorDocumentPosition, EditorFocus, EditorHitTarget,
     EditorMenu, EditorMenuAction, EditorMode, EditorQuickAction, EditorQuickMenuViewModel,
@@ -109,12 +109,38 @@ fn rich_renderer_covers_markdown_blocks_and_terminal_fallbacks() {
     let (code_x, code_y) = find_text(&terminal, "inline_code");
     assert_eq!(
         terminal.backend().buffer()[(code_x, code_y)].bg,
-        theme.muted
+        Color::Black
     );
     let (link_x, link_y) = find_text(&terminal, "linked text");
     let link = &terminal.backend().buffer()[(link_x, link_y)];
     assert_eq!(link.fg, theme.accent_color);
     assert!(link.modifier.contains(Modifier::UNDERLINED));
+}
+
+#[test]
+fn editor_canvas_uses_black_for_text_and_empty_cells_only() {
+    let model = EditorViewModel::new(
+        "black.md",
+        vec![EditorRenderBlock::paragraph("canvas text")],
+    );
+    let layout = editor_layout(Rect::new(0, 0, 72, 16), &model);
+    let terminal = render(&model, 72, 16);
+    let buffer = terminal.backend().buffer();
+    let (text_x, text_y) = find_text(&terminal, "canvas text");
+
+    assert_eq!(buffer[(text_x, text_y)].bg, Color::Black);
+    assert_eq!(
+        buffer[(layout.canvas.x, layout.canvas.bottom().saturating_sub(1))].bg,
+        Color::Black
+    );
+    assert_ne!(
+        buffer[(layout.menu_bar.x, layout.menu_bar.y)].bg,
+        Color::Black
+    );
+    assert_ne!(
+        buffer[(layout.status_bar.x, layout.status_bar.y)].bg,
+        Color::Black
+    );
 }
 
 #[test]
