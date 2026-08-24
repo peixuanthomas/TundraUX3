@@ -160,6 +160,38 @@ impl ShellSession {
                 target: Some(RoutedTarget::Popup(ShellComponent::ContextMenu)),
             });
         }
+        if let Some(confirmation) = self.launcher_pending_confirmation.as_ref() {
+            let id = match confirmation {
+                LauncherPendingConfirmation::Launch { id, kind, .. } => {
+                    format!("launcher-confirm:launch:{id}:{kind:?}")
+                }
+                LauncherPendingConfirmation::Remove { ids, .. } => {
+                    format!("launcher-confirm:remove:{ids:?}")
+                }
+            };
+            return Some(ShellOverlayDescriptor {
+                kind: ui::MotionOverlayKind::Dialog,
+                id,
+                category: ShellOverlayCategory::PageDialog,
+                target: Some(RoutedTarget::Component(ShellComponent::Launcher)),
+            });
+        }
+        if let Some(menu) = self.editor_open_menu {
+            return Some(ShellOverlayDescriptor {
+                kind: ui::MotionOverlayKind::Popover,
+                id: format!("editor-open-menu:{menu:?}"),
+                category: ShellOverlayCategory::PagePopover,
+                target: Some(RoutedTarget::Component(ShellComponent::Editor)),
+            });
+        }
+        if self.editor_quick_menu_anchor.is_some() {
+            return Some(ShellOverlayDescriptor {
+                kind: ui::MotionOverlayKind::Popover,
+                id: "editor-quick-menu".into(),
+                category: ShellOverlayCategory::PagePopover,
+                target: Some(RoutedTarget::Component(ShellComponent::Editor)),
+            });
+        }
         if let Some(mode) = self.explorer_overlay_mode.as_ref() {
             return Some(ShellOverlayDescriptor {
                 kind: ui::MotionOverlayKind::Popover,
@@ -207,6 +239,20 @@ impl ShellSession {
                 ShellOverlayCategory::PageDialog,
                 component,
             ));
+        }
+        let user_management_mode = match &self.user_management_mode {
+            UserManagementMode::Browse => None,
+            UserManagementMode::Create(_) => Some("user-management:create"),
+            UserManagementMode::EditInfo(_) => Some("user-management:edit-info"),
+            UserManagementMode::Password(_) => Some("user-management:password"),
+        };
+        if let Some(id) = user_management_mode {
+            return Some(ShellOverlayDescriptor {
+                kind: ui::MotionOverlayKind::Dialog,
+                id: id.into(),
+                category: ShellOverlayCategory::PageDialog,
+                target: Some(RoutedTarget::Component(ShellComponent::UserManagement)),
+            });
         }
         let notifications = self.app.notification_center();
         (notifications.alert().is_none())

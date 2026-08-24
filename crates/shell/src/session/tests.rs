@@ -329,6 +329,285 @@ fn overlay_resolver_categories_share_readiness_input_focus_and_hit_regions() {
 }
 
 #[test]
+fn rendered_overlay_resolver_ids_are_variant_stable_and_precedence_is_preserved() {
+    let mut launcher = ShellSession::new_for_home_mode(
+        ShellLaunchConfig::default(),
+        (120, 40),
+        ShellHomeMode::User,
+    );
+    launcher.screen_stack = vec![ShellScreen::Launcher];
+    launcher.launcher_pending_confirmation = Some(LauncherPendingConfirmation::Launch {
+        id: "app-1".into(),
+        path: "/first/display/path".into(),
+        kind: LauncherExecutableKind::NativeBinary,
+    });
+    let launch = launcher
+        .active_overlay_descriptor()
+        .expect("launch confirm");
+    assert_eq!(launch.kind, ui::MotionOverlayKind::Dialog);
+    assert_eq!(launch.category, ShellOverlayCategory::PageDialog);
+    assert_eq!(
+        launch.target,
+        Some(RoutedTarget::Component(ShellComponent::Launcher))
+    );
+    launcher.launcher_pending_confirmation = Some(LauncherPendingConfirmation::Launch {
+        id: "app-1".into(),
+        path: "/changed/display/path".into(),
+        kind: LauncherExecutableKind::NativeBinary,
+    });
+    assert_eq!(
+        launcher
+            .active_overlay_descriptor()
+            .expect("stable launch")
+            .id,
+        launch.id
+    );
+
+    launcher.launcher_pending_confirmation = Some(LauncherPendingConfirmation::Remove {
+        ids: vec!["app-1".into()],
+        label: "First label".into(),
+    });
+    let remove = launcher
+        .active_overlay_descriptor()
+        .expect("remove confirm");
+    launcher.launcher_pending_confirmation = Some(LauncherPendingConfirmation::Remove {
+        ids: vec!["app-1".into()],
+        label: "Changed label".into(),
+    });
+    assert_eq!(
+        launcher
+            .active_overlay_descriptor()
+            .expect("stable remove")
+            .id,
+        remove.id
+    );
+    assert_ne!(launch.id, remove.id);
+
+    launcher.active_popup = Some(ShellPopup {
+        owner: Some(ShellComponent::Launcher),
+        anchor: (2, 2),
+    });
+    assert_eq!(
+        launcher
+            .active_overlay_descriptor()
+            .expect("popup precedence")
+            .category,
+        ShellOverlayCategory::ContextPopup
+    );
+    launcher.notify_modal(
+        "Priority",
+        "Shell modal wins",
+        ui::NotificationTone::Info,
+        vec![ShellNotificationAction::new("ok", "OK")],
+    );
+    assert_eq!(
+        launcher
+            .active_overlay_descriptor()
+            .expect("modal precedence")
+            .category,
+        ShellOverlayCategory::ShellModal
+    );
+
+    let mut editor = ShellSession::new_for_home_mode(
+        ShellLaunchConfig::default(),
+        (120, 40),
+        ShellHomeMode::User,
+    );
+    editor.screen_stack = vec![ShellScreen::Editor];
+    let mut menu_ids = Vec::new();
+    for menu in [
+        ui::EditorMenu::File,
+        ui::EditorMenu::Edit,
+        ui::EditorMenu::Insert,
+        ui::EditorMenu::Format,
+        ui::EditorMenu::View,
+        ui::EditorMenu::Settings,
+    ] {
+        editor.editor_open_menu = Some(menu);
+        let overlay = editor.active_overlay_descriptor().expect("editor menu");
+        assert_eq!(overlay.kind, ui::MotionOverlayKind::Popover);
+        assert_eq!(overlay.category, ShellOverlayCategory::PagePopover);
+        assert_eq!(
+            overlay.target,
+            Some(RoutedTarget::Component(ShellComponent::Editor))
+        );
+        menu_ids.push(overlay.id);
+    }
+    menu_ids.sort();
+    menu_ids.dedup();
+    assert_eq!(menu_ids.len(), 6);
+    editor.editor_open_menu = None;
+    editor.editor_quick_menu_anchor = Some((4, 5));
+    let quick = editor.active_overlay_descriptor().expect("quick menu");
+    editor.editor_quick_menu_anchor = Some((40, 15));
+    assert_eq!(
+        editor
+            .active_overlay_descriptor()
+            .expect("moved quick menu")
+            .id,
+        quick.id
+    );
+
+    let mut users = ShellSession::new_for_home_mode(
+        ShellLaunchConfig::default(),
+        (120, 40),
+        ShellHomeMode::User,
+    );
+    users.screen_stack = vec![ShellScreen::UserManagement];
+    users.user_management_mode = UserManagementMode::Create(UserManagementCreateForm {
+        username: "first".into(),
+        display_name: "First".into(),
+        password: "secret".into(),
+        role: UserRole::User,
+        focused_field: UserManagementFormField::Username,
+    });
+    let create = users.active_overlay_descriptor().expect("create user");
+    if let UserManagementMode::Create(form) = &mut users.user_management_mode {
+        form.username = "typing".into();
+    }
+    assert_eq!(
+        users.active_overlay_descriptor().expect("stable create").id,
+        create.id
+    );
+    users.user_management_mode = UserManagementMode::EditInfo(UserManagementInfoForm {
+        username: "user".into(),
+        display_name: "Display".into(),
+        focused_field: UserManagementFormField::DisplayName,
+    });
+    let edit = users.active_overlay_descriptor().expect("edit user");
+    users.user_management_mode = UserManagementMode::Password(UserManagementPasswordForm {
+        username: "user".into(),
+        password: "typed".into(),
+        focused_field: UserManagementFormField::Password,
+    });
+    let password = users.active_overlay_descriptor().expect("password user");
+    for overlay in [&create, &edit, &password] {
+        assert_eq!(overlay.kind, ui::MotionOverlayKind::Dialog);
+        assert_eq!(overlay.category, ShellOverlayCategory::PageDialog);
+        assert_eq!(
+            overlay.target,
+            Some(RoutedTarget::Component(ShellComponent::UserManagement))
+        );
+    }
+    assert_ne!(create.id, edit.id);
+    assert_ne!(edit.id, password.id);
+}
+
+#[test]
+fn newly_tracked_overlay_groups_share_keyboard_mouse_focus_and_readiness_gating() {
+    let mut launcher = ShellSession::new_for_home_mode(
+        ShellLaunchConfig::default(),
+        (120, 40),
+        ShellHomeMode::User,
+    );
+    launcher.screen_stack = vec![ShellScreen::Launcher];
+    launcher.launcher_pending_confirmation = Some(LauncherPendingConfirmation::Launch {
+        id: "app-1".into(),
+        path: "/app".into(),
+        kind: LauncherExecutableKind::NativeBinary,
+    });
+
+    let mut editor = ShellSession::new_for_home_mode(
+        ShellLaunchConfig::default(),
+        (120, 40),
+        ShellHomeMode::User,
+    );
+    editor.screen_stack = vec![ShellScreen::Editor];
+    editor.editor_open_menu = Some(ui::EditorMenu::File);
+
+    let mut users = ShellSession::new_for_home_mode(
+        ShellLaunchConfig::default(),
+        (120, 40),
+        ShellHomeMode::User,
+    );
+    users.screen_stack = vec![ShellScreen::UserManagement];
+    users.user_management_mode = UserManagementMode::Password(UserManagementPasswordForm {
+        username: "user".into(),
+        password: String::new(),
+        focused_field: UserManagementFormField::Password,
+    });
+
+    for (state, kind, owner) in [
+        (
+            &mut launcher,
+            ui::MotionTransitionKind::Dialog,
+            ShellComponent::Launcher,
+        ),
+        (
+            &mut editor,
+            ui::MotionTransitionKind::Popover,
+            ShellComponent::Editor,
+        ),
+        (
+            &mut users,
+            ui::MotionTransitionKind::Dialog,
+            ShellComponent::UserManagement,
+        ),
+    ] {
+        let entering = ui::MotionTransition {
+            kind,
+            direction: ui::MotionDirection::Entering,
+            progress: 0,
+            phase_progress: 0,
+            active: true,
+            next_redraw_in: Duration::from_millis(16),
+        };
+        state.refresh_hit_map_with_motion(ui::MotionTransitions {
+            overlay: Some(entering),
+            ..ui::MotionTransitions::default()
+        });
+        assert!(!state.overlay_interaction_ready);
+        assert_eq!(
+            state.route_key_input(&KeyInput::from_label("Enter")).1,
+            ShellCommand::Noop
+        );
+        assert_ne!(
+            state.route_key_input(&KeyInput::from_label("Esc")).1,
+            ShellCommand::Noop
+        );
+        assert_eq!(state.focus_order(), vec![owner]);
+        assert!(
+            state
+                .hit_map()
+                .regions()
+                .iter()
+                .all(|region| region.layer != ShellHitLayer::AppOverlay)
+        );
+        assert_eq!(
+            state
+                .route_input_at(
+                    InputEvent::mouse_down(PointerButton::Left, (1, 1)),
+                    Instant::now(),
+                )
+                .command,
+            ShellCommand::CaptureOverlayInput
+        );
+
+        state.refresh_hit_map_with_motion(ui::MotionTransitions {
+            overlay: Some(ui::MotionTransition {
+                progress: 1_000,
+                phase_progress: 1_000,
+                active: false,
+                next_redraw_in: Duration::ZERO,
+                ..entering
+            }),
+            ..ui::MotionTransitions::default()
+        });
+        assert!(state.overlay_interaction_ready);
+        assert_ne!(
+            state.route_key_input(&KeyInput::from_label("Enter")).1,
+            ShellCommand::Noop
+        );
+
+        state.refresh_hit_map_with_motion(ui::MotionTransitions::default());
+        assert!(
+            state.overlay_interaction_ready,
+            "Reduced/inactive motion settles ready"
+        );
+    }
+}
+
+#[test]
 fn exit_confirmation_names_the_physical_power_action_poweroff() {
     let root = std::env::temp_dir().join(format!(
         "tundra-shell-poweroff-label-{}",

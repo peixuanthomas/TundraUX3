@@ -504,6 +504,67 @@ mod tests {
     }
 
     #[test]
+    fn newly_tracked_overlay_groups_cover_enter_exit_and_replacement_frames() {
+        let origin = Instant::now();
+        for (overlay, duration) in [
+            ("launcher-confirm:launch", ui::MotionTimings::DIALOG),
+            ("popover:editor-file", ui::MotionTimings::POPOVER),
+            ("user-management:create", ui::MotionTimings::DIALOG),
+        ] {
+            let mut scheduler = RedrawScheduler::new(origin, id("screen", "owner", None), false);
+            scheduler.did_draw(origin);
+            scheduler.observe(origin, id("screen", "owner", Some(overlay)), false);
+            let start = scheduler.transitions(origin).overlay.expect("enter start");
+            assert_eq!((start.progress, start.phase_progress), (0, 0));
+            assert!(!start.interaction_ready());
+            let mid = scheduler
+                .transitions(origin + duration / 2)
+                .overlay
+                .expect("enter mid");
+            assert!(mid.active && mid.phase_progress > 0 && mid.phase_progress < 1_000);
+            let final_frame = scheduler
+                .transitions(origin + duration)
+                .overlay
+                .expect("enter final");
+            assert_eq!(
+                (final_frame.progress, final_frame.phase_progress),
+                (1_000, 1_000)
+            );
+            assert!(final_frame.interaction_ready());
+
+            scheduler.observe(origin + duration, id("screen", "owner", None), false);
+            let exit = scheduler
+                .transitions(origin + duration)
+                .overlay
+                .expect("exit start");
+            assert_eq!(exit.direction, ui::MotionDirection::Exiting);
+            assert_eq!((exit.progress, exit.phase_progress), (1_000, 0));
+            assert!(exit.interaction_ready());
+            let exited = scheduler
+                .transitions(origin + duration * 2)
+                .overlay
+                .expect("exit final");
+            assert!(!exited.active);
+            assert_eq!((exited.progress, exited.phase_progress), (0, 1_000));
+        }
+
+        for (prior, replacement) in [
+            ("launcher-confirm:launch", "launcher-confirm:remove"),
+            ("popover:editor-file", "popover:editor-edit"),
+            ("user-management:create", "user-management:password"),
+        ] {
+            let mut scheduler =
+                RedrawScheduler::new(origin, id("screen", "owner", Some(prior)), false);
+            scheduler.did_draw(origin);
+            scheduler.observe(origin, id("screen", "owner", Some(replacement)), false);
+            let motion = scheduler.transitions(origin).overlay.expect("replacement");
+            assert_eq!(motion.direction, ui::MotionDirection::Replacing);
+            assert_eq!((motion.progress, motion.phase_progress), (0, 0));
+            assert!(!motion.interaction_ready());
+        }
+    }
+
+    #[test]
     fn reduced_motion_has_zero_transition_duration() {
         let origin = Instant::now();
         let mut scheduler = RedrawScheduler::new(origin, id("home", "one", None), true);
