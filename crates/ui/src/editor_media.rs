@@ -424,7 +424,15 @@ fn query_terminal_capabilities(
         responses.push_byte(byte);
     }
 
-    Ok(interpret_terminal_capability_responses(responses, is_tmux))
+    let native_font_size = response_font_size(&responses.responses)
+        .is_none()
+        .then(native_terminal_font_size)
+        .flatten();
+    Ok(interpret_terminal_capability_responses(
+        responses,
+        is_tmux,
+        native_font_size,
+    ))
 }
 
 #[cfg(windows)]
@@ -507,7 +515,79 @@ fn query_terminal_capabilities(
         }
     }
 
-    Ok(interpret_terminal_capability_responses(responses, is_tmux))
+    let native_font_size = response_font_size(&responses.responses)
+        .is_none()
+        .then(native_terminal_font_size)
+        .flatten();
+    Ok(interpret_terminal_capability_responses(
+        responses,
+        is_tmux,
+        native_font_size,
+    ))
+}
+
+#[cfg(unix)]
+fn native_terminal_font_size() -> Option<FontSize> {
+    let mut window = libc::winsize {
+        ws_row: 0,
+        ws_col: 0,
+        ws_xpixel: 0,
+        ws_ypixel: 0,
+    };
+    if unsafe { libc::ioctl(libc::STDOUT_FILENO, libc::TIOCGWINSZ, &mut window) } < 0
+        || window.ws_col == 0
+        || window.ws_row == 0
+        || window.ws_xpixel == 0
+        || window.ws_ypixel == 0
+    {
+        return None;
+    }
+    font_size_from_terminal_geometry(
+        window.ws_xpixel,
+        window.ws_ypixel,
+        window.ws_col,
+        window.ws_row,
+    )
+}
+
+#[cfg(any(unix, test))]
+fn font_size_from_terminal_geometry(
+    pixel_width: u16,
+    pixel_height: u16,
+    columns: u16,
+    rows: u16,
+) -> Option<FontSize> {
+    if pixel_width == 0 || pixel_height == 0 || columns == 0 || rows == 0 {
+        return None;
+    }
+    valid_font_size(FontSize::new(pixel_width / columns, pixel_height / rows))
+}
+
+#[cfg(windows)]
+fn native_terminal_font_size() -> Option<FontSize> {
+    use windows_sys::Win32::Foundation::INVALID_HANDLE_VALUE;
+    use windows_sys::Win32::System::Console::{
+        CONSOLE_FONT_INFOEX, GetCurrentConsoleFontEx, GetStdHandle, STD_OUTPUT_HANDLE,
+    };
+
+    let output = unsafe { GetStdHandle(STD_OUTPUT_HANDLE) };
+    if output.is_null() || output == INVALID_HANDLE_VALUE {
+        return None;
+    }
+    let mut font = CONSOLE_FONT_INFOEX {
+        cbSize: std::mem::size_of::<CONSOLE_FONT_INFOEX>() as u32,
+        ..Default::default()
+    };
+    if unsafe { GetCurrentConsoleFontEx(output, 0, &mut font) } == 0
+        || font.dwFontSize.X <= 0
+        || font.dwFontSize.Y <= 0
+    {
+        return None;
+    }
+    valid_font_size(FontSize::new(
+        font.dwFontSize.X as u16,
+        font.dwFontSize.Y as u16,
+    ))
 }
 
 #[cfg(windows)]
@@ -619,6 +699,7 @@ impl TerminalResponseCollector {
 fn interpret_terminal_capability_responses(
     responses: TerminalResponseCollector,
     is_tmux: bool,
+    native_font_size: Option<FontSize>,
 ) -> TerminalCapabilityQuery {
     let iterm2_graphics = parse_iterm2_graphics_capabilities(&responses.raw);
     let standard_protocol = standard_protocol_from_responses(&responses.responses);
@@ -635,7 +716,7 @@ fn interpret_terminal_capability_responses(
         protocol_type: standard_protocol
             .or(iterm2_protocol)
             .unwrap_or(ProtocolType::Halfblocks),
-        font_size: font_size_from_responses(&responses.responses),
+        font_size: font_size_from_responses(&responses.responses, native_font_size),
         is_tmux,
         complete: responses.complete,
         had_unverified_graphics_hint,
@@ -771,16 +852,28 @@ fn responses_support_text_sizing_protocol(responses: &[CapabilityResponse]) -> b
 }
 
 #[cfg(any(unix, windows))]
-fn font_size_from_responses(responses: &[CapabilityResponse]) -> FontSize {
-    responses
-        .iter()
-        .find_map(|response| match response {
-            CapabilityResponse::CellSize(Some((width, height))) if *width > 0 && *height > 0 => {
-                Some(FontSize::new(*width, *height))
-            }
-            _ => None,
-        })
+fn font_size_from_responses(
+    responses: &[CapabilityResponse],
+    native_font_size: Option<FontSize>,
+) -> FontSize {
+    response_font_size(responses)
+        .or_else(|| native_font_size.and_then(valid_font_size))
         .unwrap_or(DEFAULT_TERMINAL_FONT_SIZE)
+}
+
+#[cfg(any(unix, windows))]
+fn response_font_size(responses: &[CapabilityResponse]) -> Option<FontSize> {
+    responses.iter().find_map(|response| match response {
+        CapabilityResponse::CellSize(Some((width, height))) => {
+            valid_font_size(FontSize::new(*width, *height))
+        }
+        _ => None,
+    })
+}
+
+#[cfg(any(unix, windows, test))]
+fn valid_font_size(font_size: FontSize) -> Option<FontSize> {
+    (font_size.width > 0 && font_size.height > 0).then_some(font_size)
 }
 
 #[cfg(any(unix, windows))]
@@ -1042,10 +1135,80 @@ mod tests {
     fn response_interpretation_preserves_measured_cell_size() {
         let mut responses = TerminalResponseCollector::new();
         responses.push_bytes(b"\x1b[6;9;17t\x1b_Gi=31;OK\x1b\\\x1b[0n");
-        let query = interpret_terminal_capability_responses(responses, false);
+        let query = interpret_terminal_capability_responses(responses, false, None);
         assert_eq!(query.protocol_type, ProtocolType::Kitty);
         assert_eq!((query.font_size.width, query.font_size.height), (17, 9));
         assert!(query.complete);
+    }
+
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn cell_geometry_priority_is_response_then_native_then_default() {
+        let interpret_font_size = |capability_responses: Vec<CapabilityResponse>,
+                                   native_font_size| {
+            interpret_terminal_capability_responses(
+                TerminalResponseCollector {
+                    parser: CapabilityParser::new(),
+                    responses: capability_responses,
+                    raw: Vec::new(),
+                    complete: true,
+                },
+                false,
+                native_font_size,
+            )
+            .font_size
+        };
+
+        let from_response = interpret_font_size(
+            vec![CapabilityResponse::CellSize(Some((7, 13)))],
+            Some(FontSize::new(8, 16)),
+        );
+        assert_eq!((from_response.width, from_response.height), (7, 13));
+
+        let from_native = interpret_font_size(Vec::new(), Some(FontSize::new(8, 16)));
+        assert_eq!((from_native.width, from_native.height), (8, 16));
+
+        let after_invalid_response = interpret_font_size(
+            vec![CapabilityResponse::CellSize(Some((0, 13)))],
+            Some(FontSize::new(9, 18)),
+        );
+        assert_eq!(
+            (after_invalid_response.width, after_invalid_response.height),
+            (9, 18)
+        );
+
+        for invalid_native in [FontSize::new(0, 16), FontSize::new(8, 0)] {
+            let fallback = interpret_font_size(Vec::new(), Some(invalid_native));
+            assert_eq!(
+                (fallback.width, fallback.height),
+                (
+                    DEFAULT_TERMINAL_FONT_SIZE.width,
+                    DEFAULT_TERMINAL_FONT_SIZE.height,
+                )
+            );
+        }
+
+        assert!(font_size_from_terminal_geometry(0, 320, 80, 20).is_none());
+        assert!(font_size_from_terminal_geometry(640, 0, 80, 20).is_none());
+        assert!(font_size_from_terminal_geometry(79, 320, 80, 20).is_none());
+        assert!(font_size_from_terminal_geometry(640, 19, 80, 20).is_none());
+        let divided = font_size_from_terminal_geometry(640, 320, 80, 20)
+            .expect("positive native terminal geometry");
+        assert_eq!((divided.width, divided.height), (8, 16));
+    }
+
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn native_cell_geometry_fallback_reaches_prepared_protocol_size() {
+        let font_size = font_size_from_responses(&[], Some(FontSize::new(8, 16)));
+        let picker =
+            EditorImagePicker::from_terminal_capabilities(ProtocolType::Kitty, font_size, false)
+                .expect("verified Kitty picker");
+        let prepared = picker
+            .prepare(DynamicImage::new_rgba8(100, 100), Rect::new(0, 0, 40, 40))
+            .expect("prepare native-geometry image");
+
+        assert_eq!(prepared.protocol.size(), Size::new(13, 7));
     }
 
     #[cfg(any(unix, windows))]
