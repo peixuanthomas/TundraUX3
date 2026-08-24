@@ -10,11 +10,11 @@ use platform::{
 use storage::{
     AppearanceConfig, BorderColor, BorderShape, ClockDocument, ClockEntryRecord, ClockProfile,
     EditorConfig, ExplorerConfig, ExplorerDateZone, ExplorerSizeFormat, ExplorerSortDirection,
-    ExplorerSortField, IconDisplayMode, LauncherConfig, LauncherEntryRecord,
-    LauncherExecutableKind, LauncherFingerprint, MotionPreference, RecentFilesDocument,
-    SCHEMA_VERSION, SecurityConfig, SessionsDocument, StateDocument, StorageConfig, StorageError,
-    StorageLayout, StorageManager, TimeSyncConfig, TimeSyncSource, TrashDocument, TrashRecord,
-    USERS_SCHEMA_VERSION, UserRecord, UsersDocument,
+    ExplorerSortField, LauncherConfig, LauncherEntryRecord, LauncherExecutableKind,
+    LauncherFingerprint, MotionPreference, RecentFilesDocument, SCHEMA_VERSION, SecurityConfig,
+    SessionsDocument, StateDocument, StorageConfig, StorageError, StorageLayout, StorageManager,
+    TimeSyncConfig, TimeSyncSource, TrashDocument, TrashRecord, USERS_SCHEMA_VERSION, UserRecord,
+    UsersDocument,
 };
 
 #[test]
@@ -129,7 +129,6 @@ fn toml_and_json_documents_round_trip() {
             border_shape: BorderShape::Square,
             border_color: BorderColor::Rgb(0x38, 0xBD, 0xF8),
             accent_color: BorderColor::LightMagenta,
-            icon_display_mode: IconDisplayMode::Ascii,
             motion_preference: MotionPreference::Reduced,
         },
         explorer: ExplorerConfig {
@@ -192,7 +191,6 @@ fn toml_and_json_documents_round_trip() {
     assert!(config_contents.contains("border_shape = \"square\""));
     assert!(config_contents.contains("border_color = \"#38BDF8\""));
     assert!(config_contents.contains("accent_color = \"light-magenta\""));
-    assert!(config_contents.contains("icon_display_mode = \"ascii\""));
     assert!(config_contents.contains("motion_preference = \"reduced\""));
     assert!(config_contents.contains("theme = \"light\""));
     assert!(config_contents.contains("size_format = \"bytes\""));
@@ -373,13 +371,12 @@ fn v1_appearance_migration_keeps_every_custom_visual_choice() {
     assert_eq!(appearance.border_shape, BorderShape::Square);
     assert_eq!(appearance.border_color, BorderColor::Rgb(0x38, 0xBD, 0xF8));
     assert_eq!(appearance.accent_color, BorderColor::LightMagenta);
-    assert_eq!(appearance.icon_display_mode, IconDisplayMode::Ascii);
     assert_eq!(appearance.motion_preference, MotionPreference::Full);
     let contents = fs::read_to_string(&layout.config_path).expect("migrated config contents");
     assert!(contents.contains("schema_version = 2"));
     assert!(contents.contains("border_color = \"#38BDF8\""));
     assert!(contents.contains("accent_color = \"light-magenta\""));
-    assert!(contents.contains("icon_display_mode = \"ascii\""));
+    assert!(!contents.contains("icon_display_mode"));
     assert!(opened.report.migrated_files.contains(&layout.config_path));
 
     cleanup(&base);
@@ -525,11 +522,11 @@ fn v2_user_appearance_migration_preserves_custom_accent_and_border() {
         BorderColor::Rgb(0x38, 0xBD, 0xF8)
     );
     assert_eq!(user.appearance.accent_color, BorderColor::LightMagenta);
-    assert_eq!(user.appearance.icon_display_mode, IconDisplayMode::Ascii);
     assert_eq!(user.appearance.motion_preference, MotionPreference::Full);
     let contents = fs::read_to_string(&layout.users_path).expect("migrated user contents");
     assert!(contents.contains("\"schema_version\": 3"));
     assert!(contents.contains("\"motion_preference\": \"full\""));
+    assert!(!contents.contains("icon_display_mode"));
     assert!(opened.report.migrated_files.contains(&layout.users_path));
 
     cleanup(&base);

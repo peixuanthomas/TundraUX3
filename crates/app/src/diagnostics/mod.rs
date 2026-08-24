@@ -1071,11 +1071,6 @@ mod tests {
             .find(|check| check.label == "banner")
             .and_then(|check| check.repair.clone())
             .expect("missing banner should be repairable");
-        let image_action = checks
-            .iter()
-            .find(|check| check.label == "home_icons/explorer.png")
-            .and_then(|check| check.repair.clone())
-            .expect("missing default theme image should be repairable");
         let app_paths = AppPaths::from_parts(
             root.join("app/config/config.toml"),
             root.join("app/data"),
@@ -1101,12 +1096,9 @@ mod tests {
             platform::mock::MockPlatform::new(user_dirs, app_paths).with_kind(PlatformKind::Macos);
 
         let result = execute_repair(&platform, &storage, action);
-        let image_result = execute_repair(&platform, &storage, image_action);
 
         assert!(result.success);
         assert!(result.changed);
-        assert!(image_result.success);
-        assert!(image_result.changed);
         assert!(matches!(
             result.action,
             DiagnosticsRepairAction::RestoreDefaultThemeFile { ref file_key, .. }
@@ -1118,18 +1110,6 @@ mod tests {
                 .find(|check| check.label == "banner")
                 .is_some_and(|check| check.status == DiagnosticStatus::Pass)
         );
-        assert!(matches!(
-            image_result.action,
-            DiagnosticsRepairAction::RestoreDefaultThemeFile { ref file_key, .. }
-                if file_key == "home_icons/explorer.png"
-        ));
-        assert!(
-            diagnostic_asset_checks(&root)
-                .iter()
-                .find(|check| check.label == "home_icons/explorer.png")
-                .is_some_and(|check| check.status == DiagnosticStatus::Pass)
-        );
-
         std::fs::remove_dir_all(root).expect("fixture cleanup");
     }
 

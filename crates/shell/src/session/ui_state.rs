@@ -96,7 +96,6 @@ pub(super) struct SettingsPickerState {
     pub(super) query: String,
     pub(super) selected_index: usize,
     pub(super) window_start: usize,
-    pub(super) image_icons_supported: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -444,9 +443,7 @@ pub struct UiSessionState {
     pub(super) diagnostics_restart_required: bool,
     pub(super) terminal_size: (u16, u16),
     pub(super) terminal_flags: ShellTerminalFlags,
-    pub(super) terminal_image_support: bool,
     pub(super) terminal_text_sizing_support: bool,
-    pub(super) pending_default_ascii_icon_fallback: bool,
     pub(super) focused_component: ShellComponent,
     pub(super) hovered_component: Option<ShellComponent>,
     pub(super) active_popup: Option<ShellPopup>,

@@ -916,7 +916,6 @@ impl ShellSession {
             border_shape: self.setup_border_shape,
             border_color: self.setup_theme_color,
             accent_color: self.setup_accent_color,
-            icon_display_mode: storage::IconDisplayMode::Image,
             ..storage::AppearanceConfig::default()
         };
         let users = UserService::with_debug_policy(storage.clone(), self.debug_policy);
@@ -944,7 +943,7 @@ impl ShellSession {
     }
 
     pub(in crate::session) fn complete_login(&mut self, session: AuthSession) {
-        let mut active_appearance = self.storage_manager.as_ref().and_then(|storage| {
+        let active_appearance = self.storage_manager.as_ref().and_then(|storage| {
             storage.load_users().ok().and_then(|users| {
                 users
                     .users
@@ -953,25 +952,6 @@ impl ShellSession {
                     .map(|user| user.appearance)
             })
         });
-        let mut icon_fallback_error = None;
-        if std::mem::take(&mut self.pending_default_ascii_icon_fallback)
-            && self.ascii_assets.theme_id() == ui::DEFAULT_THEME_ID
-            && active_appearance.as_ref().is_some_and(|appearance| {
-                appearance.icon_display_mode == storage::IconDisplayMode::Image
-            })
-            && let (Some(storage), Some(mut appearance)) =
-                (self.storage_manager.clone(), active_appearance.clone())
-        {
-            appearance.icon_display_mode = storage::IconDisplayMode::Ascii;
-            match UserService::with_debug_policy(storage, self.debug_policy).update_user_appearance(
-                &session,
-                &session.username,
-                appearance,
-            ) {
-                Ok(account) => active_appearance = Some(account.appearance),
-                Err(error) => icon_fallback_error = Some(format_core_error(&error)),
-            }
-        }
         self.app.dispatch_at(
             app::AppCommand::SetAuthSession(Some(session.clone())),
             Instant::now(),
@@ -988,12 +968,6 @@ impl ShellSession {
         self.setup_admin_password_confirm.clear();
         self.error_message = None;
         self.notify_status(format!("Signed in as {}", session.username));
-        if let Some(error) = icon_fallback_error {
-            self.notify_alert_with_tone(
-                format!("Could not save the ASCII icon fallback: {error}"),
-                ui::NotificationTone::Warning,
-            );
-        }
         self.home_mode = ShellHomeMode::User;
 
         if self.debug_home_after_login {

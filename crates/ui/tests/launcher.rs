@@ -4,19 +4,11 @@ use ratatui::layout::Rect;
 use ratatui::style::Color;
 use ui::{
     HomeDisplayMode, LauncherConfirmationKind, LauncherConfirmationViewModel, LauncherDropSide,
-    LauncherDropTarget, LauncherHitTarget, LauncherIconRenderer, LauncherItemStatus,
-    LauncherItemViewModel, LauncherToolbarAction, LauncherViewMode, LauncherViewModel,
-    NotificationTone, ShellChromeViewModel, ShellLayout, StatusViewModel, TundraTheme,
-    compute_shell_layout, launcher_layout, render_launcher, render_launcher_with_icons,
+    LauncherDropTarget, LauncherHitTarget, LauncherItemStatus, LauncherItemViewModel,
+    LauncherToolbarAction, LauncherViewMode, LauncherViewModel, NotificationTone,
+    ShellChromeViewModel, ShellLayout, StatusViewModel, TundraTheme, compute_shell_layout,
+    launcher_layout, render_launcher,
 };
-
-struct UnavailableLauncherIconRenderer;
-
-impl LauncherIconRenderer for UnavailableLauncherIconRenderer {
-    fn render_icon(&self, _item_id: &str, _frame: &mut ratatui::Frame<'_>, _area: Rect) -> bool {
-        false
-    }
-}
 
 fn item(index: usize, status: LauncherItemStatus) -> LauncherItemViewModel {
     LauncherItemViewModel::new(
@@ -132,48 +124,6 @@ fn large_icons_render_the_default_application_ascii_icon_when_native_icons_are_u
     assert!(output.contains("Launcher · Large icons"));
     assert!(output.contains("Application 0"));
     assert!(!icon_line.is_empty());
-    assert!(output.contains(icon_line));
-}
-
-#[test]
-fn built_in_launcher_item_falls_back_to_ascii_when_graphical_icon_loading_fails() {
-    let command_line = LauncherItemViewModel::command_line();
-    let model = LauncherViewModel::new(
-        vec![command_line],
-        Some(0),
-        LauncherViewMode::LargeIcons,
-        false,
-    );
-    let mut terminal = Terminal::new(TestBackend::new(100, 30)).expect("test terminal");
-
-    terminal
-        .draw(|frame| {
-            render_launcher_with_icons(
-                frame,
-                frame.area(),
-                &chrome((100, 30)),
-                &model,
-                &TundraTheme::default_dark(),
-                Some(&UnavailableLauncherIconRenderer),
-            );
-        })
-        .expect("render Launcher with unavailable graphical icon");
-
-    let icon_line = model
-        .item_icon(&model.items[0])
-        .expect("Command Line ASCII fallback icon")
-        .lines()
-        .iter()
-        .find(|line| !line.trim().is_empty())
-        .expect("non-empty ASCII icon line")
-        .trim();
-    let output = terminal
-        .backend()
-        .buffer()
-        .content()
-        .iter()
-        .map(|cell| cell.symbol())
-        .collect::<String>();
     assert!(output.contains(icon_line));
 }
 
@@ -427,14 +377,6 @@ fn built_in_command_line_is_fixed_and_has_no_management_toolbar_actions() {
         .item_icon(&command_line)
         .expect("Command Line ASCII Launcher asset");
     assert_eq!(asset_icon.key(), command_line.id);
-    let graphic_path = model
-        .item_graphic_path(&command_line)
-        .expect("Command Line graphical Launcher asset");
-    let graphic = image::ImageReader::open(&graphic_path)
-        .expect("open generated Command Line icon")
-        .decode()
-        .expect("decode generated Command Line icon");
-    assert_eq!((graphic.width(), graphic.height()), (256, 256));
     assert!(model.toolbar.iter().all(|button| !matches!(
         button.action,
         LauncherToolbarAction::Remove | LauncherToolbarAction::Reapprove

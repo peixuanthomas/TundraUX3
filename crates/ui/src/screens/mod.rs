@@ -27,11 +27,11 @@ pub use user_management::*;
 
 pub use launcher::{
     LauncherConfirmationKind, LauncherConfirmationLayout, LauncherConfirmationViewModel,
-    LauncherDropSide, LauncherDropTarget, LauncherHitTarget, LauncherIconRenderer,
-    LauncherItemCapabilities, LauncherItemLayout, LauncherItemSource, LauncherItemStatus,
-    LauncherItemViewModel, LauncherLayout, LauncherToolbarAction, LauncherToolbarButtonLayout,
+    LauncherDropSide, LauncherDropTarget, LauncherHitTarget, LauncherItemCapabilities,
+    LauncherItemLayout, LauncherItemSource, LauncherItemStatus, LauncherItemViewModel,
+    LauncherLayout, LauncherToolbarAction, LauncherToolbarButtonLayout,
     LauncherToolbarButtonViewModel, LauncherViewMode, LauncherViewModel, launcher_layout,
-    render_launcher, render_launcher_with_icons,
+    render_launcher,
 };
 pub use settings::{
     SettingsAppearancePreview, SettingsCardViewModel, SettingsCategory, SettingsCategoryLayout,

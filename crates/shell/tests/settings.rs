@@ -14,7 +14,7 @@ use shell::{
     HomeModeOverride, InputEvent, ShellLaunchConfig, ShellScreen, ShellSession,
     prepare_shell_startup,
 };
-use storage::{BorderShape, IconDisplayMode, StorageManager, TimeSyncSource};
+use storage::{BorderShape, StorageManager, TimeSyncSource};
 use ui::{SettingsCategory, SettingsField, SettingsPickerKind};
 
 fn default_config() -> ShellLaunchConfig {
@@ -426,97 +426,24 @@ fn normal_user_can_change_only_their_appearance() {
 }
 
 #[test]
-fn default_theme_icon_picker_persists_ascii_and_image_modes_when_supported() {
-    let fixture = FixtureRoot::new("theme-icon-mode-supported");
-    let platform = mock_platform(fixture.path());
-    let manager = initialize_users(&platform, true, false);
-    let mut state = logged_in_state(&platform, "NormalUser", "NormalPass123");
-    state.set_terminal_image_support(true);
-
-    open_settings_from_home(&mut state, &platform);
-    assert!(state.graphical_icons_enabled());
-    assert_eq!(
-        state.to_settings_view_model().unwrap().selected_field,
-        SettingsField::Theme
-    );
-
-    press(&mut state, &platform, "Enter");
-    assert_eq!(
-        state
-            .to_settings_view_model()
-            .unwrap()
-            .picker
-            .as_ref()
-            .map(|picker| picker.kind),
-        Some(SettingsPickerKind::Theme)
-    );
-    press(&mut state, &platform, "Enter");
-    let picker = state.to_settings_view_model().unwrap().picker.unwrap();
-    assert_eq!(picker.kind, SettingsPickerKind::DefaultThemeIcons);
-    assert_eq!(picker.options.len(), 2);
-    assert!(picker.options.iter().all(|option| option.enabled));
-    assert_eq!(picker.selected_index, 1);
-
-    press(&mut state, &platform, "Home");
-    press(&mut state, &platform, "Enter");
-    let normal = manager
-        .load_users()
-        .unwrap()
-        .users
-        .into_iter()
-        .find(|user| user.username == "NormalUser")
-        .expect("normal user");
-    assert_eq!(normal.appearance.icon_display_mode, IconDisplayMode::Ascii);
-    assert!(!state.graphical_icons_enabled());
-
-    press(&mut state, &platform, "Enter");
-    press(&mut state, &platform, "Enter");
-    press(&mut state, &platform, "Down");
-    press(&mut state, &platform, "Enter");
-    let normal = manager
-        .load_users()
-        .unwrap()
-        .users
-        .into_iter()
-        .find(|user| user.username == "NormalUser")
-        .expect("normal user");
-    assert_eq!(normal.appearance.icon_display_mode, IconDisplayMode::Image);
-    assert!(state.graphical_icons_enabled());
-}
-
-#[test]
-fn unsupported_terminal_locks_default_theme_to_ascii_and_disables_image_option() {
-    let fixture = FixtureRoot::new("theme-icon-mode-unsupported");
+fn default_theme_picker_contains_no_image_icon_mode() {
+    let fixture = FixtureRoot::new("theme-picker");
     let platform = mock_platform(fixture.path());
     initialize_users(&platform, true, false);
     let mut state = logged_in_state(&platform, "NormalUser", "NormalPass123");
-    state.set_terminal_image_support(false);
 
     open_settings_from_home(&mut state, &platform);
-    let appearance = state.to_settings_view_model().unwrap();
-    let theme = appearance
-        .cards
-        .iter()
-        .flat_map(|card| &card.items)
-        .find(|item| item.field == SettingsField::Theme)
-        .expect("Theme setting");
-    assert_eq!(theme.value, "Default theme / ASCII icons");
-    assert!(!state.graphical_icons_enabled());
-
-    press(&mut state, &platform, "Enter");
     press(&mut state, &platform, "Enter");
     let picker = state.to_settings_view_model().unwrap().picker.unwrap();
-    assert_eq!(picker.kind, SettingsPickerKind::DefaultThemeIcons);
-    assert_eq!(picker.selected_index, 0);
-    assert!(picker.options[0].enabled);
-    assert!(!picker.options[1].enabled);
-
-    press(&mut state, &platform, "Down");
-    press(&mut state, &platform, "Enter");
-    let model = state.to_settings_view_model().unwrap();
-    assert!(model.picker.is_some());
-    assert!(model.status.contains("unavailable"));
-    assert!(!state.graphical_icons_enabled());
+    assert_eq!(picker.kind, SettingsPickerKind::Theme);
+    assert_eq!(picker.options.len(), 1);
+    assert_eq!(picker.options[0].label, "Default theme");
+    assert!(
+        !picker.options[0]
+            .detail
+            .to_ascii_lowercase()
+            .contains("image")
+    );
 }
 
 #[test]

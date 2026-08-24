@@ -3,7 +3,6 @@ name = "default-home-icons"
 
 [items.explorer]
 label = "Explorer"
-image = "home_icons/explorer.png"
 lines = [
   ' _____ ',
   '/ ___ \',
@@ -13,7 +12,6 @@ lines = [
 
 [items.launcher]
 label = "Launcher"
-image = "home_icons/launcher.png"
 lines = [
   '  / \  ',
   ' /===\ ',
@@ -23,7 +21,6 @@ lines = [
 
 [items.editor]
 label = "Editor"
-image = "home_icons/editor.png"
 lines = [
   ' _____ ',
   '|==  |',
@@ -33,7 +30,6 @@ lines = [
 
 [items.settings]
 label = "Settings"
-image = "home_icons/settings.png"
 lines = [
   '-o-----',
   '---o---',
@@ -43,7 +39,6 @@ lines = [
 
 [items.diagnostics]
 label = "Diagnostics"
-image = "home_icons/diagnostics.png"
 lines = [
   ' _____ ',
   '| /\  |',
@@ -53,7 +48,6 @@ lines = [
 
 [items.user_management]
 label = "User Management"
-image = "home_icons/user_management.png"
 lines = [
   '  o o  ',
   ' /| |\ ',
@@ -63,7 +57,6 @@ lines = [
 
 [items.user_profile]
 label = "User Profile"
-image = "home_icons/user_profile.png"
 lines = [
   '   o   ',
   '  /|\  ',
@@ -73,7 +66,6 @@ lines = [
 
 [items.default]
 label = "Application"
-image = "home_icons/default.png"
 lines = [
   ' _____ ',
   '| ? ? |',

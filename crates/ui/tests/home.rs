@@ -2,47 +2,18 @@ use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier};
-use std::cell::RefCell;
 use ui::{
     AuthField, BootstrapAdminViewModel, ClockViewModel, DebugDiagnosticsViewModel,
-    ExitConfirmViewModel, HomeDisplayMode, HomeIconRenderer, HomeViewModel, LoginField,
-    LoginUserOptionViewModel, LoginViewModel, NOTIFICATION_TOO_SMALL_MESSAGE,
-    NotificationActionViewModel, NotificationLayout, NotificationLevel, NotificationTone,
-    NotificationViewModel, ShellChromeViewModel, ShellEntry, ShellLayout, StatusViewModel,
-    TimeSyncDialogViewModel, TundraTheme, UserManagementUserViewModel, UserManagementViewModel,
-    compute_shell_layout, home_entry_icon_area, home_logout_area, login_password_area,
-    login_password_visibility_area, login_user_list_area, login_user_list_visible_rows,
-    notification_layout, render_bootstrap_admin, render_clock, render_exit_confirmation,
-    render_home, render_home_with_icons, render_login, render_notification_overlay,
+    ExitConfirmViewModel, HomeDisplayMode, HomeViewModel, LoginField, LoginUserOptionViewModel,
+    LoginViewModel, NOTIFICATION_TOO_SMALL_MESSAGE, NotificationActionViewModel,
+    NotificationLayout, NotificationLevel, NotificationTone, NotificationViewModel,
+    ShellChromeViewModel, ShellEntry, ShellLayout, StatusViewModel, TimeSyncDialogViewModel,
+    TundraTheme, UserManagementUserViewModel, UserManagementViewModel, compute_shell_layout,
+    home_logout_area, login_password_area, login_password_visibility_area, login_user_list_area,
+    login_user_list_visible_rows, notification_layout, render_bootstrap_admin, render_clock,
+    render_exit_confirmation, render_home, render_login, render_notification_overlay,
     render_time_sync_failure_dialog, render_user_management, status_time_button_area,
 };
-
-#[derive(Default)]
-struct RecordingHomeIconRenderer {
-    calls: RefCell<Vec<(String, Rect)>>,
-}
-
-impl HomeIconRenderer for RecordingHomeIconRenderer {
-    fn render_icon(&self, entry_label: &str, _frame: &mut ratatui::Frame<'_>, area: Rect) -> bool {
-        self.calls
-            .borrow_mut()
-            .push((entry_label.to_string(), area));
-        true
-    }
-}
-
-struct UnavailableHomeIconRenderer;
-
-impl HomeIconRenderer for UnavailableHomeIconRenderer {
-    fn render_icon(
-        &self,
-        _entry_label: &str,
-        _frame: &mut ratatui::Frame<'_>,
-        _area: Rect,
-    ) -> bool {
-        false
-    }
-}
 
 #[test]
 fn debug_home_exposes_diagnostics_and_no_entries() {
@@ -328,63 +299,6 @@ fn user_home_preserves_ascii_icon_spacing_when_centered() {
         .home_icon_for_label("Settings")
         .expect("home view model should carry loaded icon assets");
 
-    assert_centered_icon_matches_asset(&terminal, tile, icon);
-}
-
-#[test]
-fn user_home_allocates_graphical_icons_in_the_centered_launcher_style_area() {
-    let entries = vec![ShellEntry::new("Explorer", "Browse files")];
-    let home = HomeViewModel::user("Strix", "2026-07-01 09:30", entries);
-    let chrome = chrome_for("Home");
-    let icons = RecordingHomeIconRenderer::default();
-    let mut terminal = Terminal::new(TestBackend::new(100, 30)).expect("test terminal");
-
-    terminal
-        .draw(|frame| {
-            render_home_with_icons(
-                frame,
-                frame.area(),
-                &chrome,
-                &home,
-                &TundraTheme::default_dark(),
-                Some(&icons),
-            );
-        })
-        .expect("render Home with graphical icons");
-
-    let main = main_rect(100, 30);
-    let tile = ui::home_entry_tile_areas(main, home.entries().len())[0];
-    assert_eq!(
-        icons.calls.borrow().as_slice(),
-        &[("Explorer".to_string(), home_entry_icon_area(tile))]
-    );
-}
-
-#[test]
-fn user_home_falls_back_to_ascii_when_graphical_icon_loading_is_unavailable() {
-    let entries = vec![ShellEntry::new("Explorer", "Browse files")];
-    let home = HomeViewModel::user("Strix", "2026-07-01 09:30", entries);
-    let chrome = chrome_for("Home");
-    let mut terminal = Terminal::new(TestBackend::new(100, 30)).expect("test terminal");
-
-    terminal
-        .draw(|frame| {
-            render_home_with_icons(
-                frame,
-                frame.area(),
-                &chrome,
-                &home,
-                &TundraTheme::default_dark(),
-                Some(&UnavailableHomeIconRenderer),
-            );
-        })
-        .expect("render Home with unavailable graphical icon");
-
-    let main = main_rect(100, 30);
-    let tile = ui::home_entry_tile_areas(main, home.entries().len())[0];
-    let icon = home
-        .home_icon_for_label("Explorer")
-        .expect("Explorer ASCII fallback icon");
     assert_centered_icon_matches_asset(&terminal, tile, icon);
 }
 

@@ -218,7 +218,6 @@ pub fn run_fullscreen_blocking_managed_with_outcome(
     let mut initial_startup = Some(initial_startup);
     let mut cached_time_sync = None;
     let mut force_lockscreen = false;
-    let mut show_terminal_graphics_notice = true;
     let mut session_recoveries = VecDeque::new();
     let mut explorer_task_runtime: Option<ShellExplorerTaskRuntime> = None;
     let mut diagnostics_task_runtime: Option<ShellDiagnosticsTaskRuntime> = None;
@@ -308,9 +307,6 @@ pub fn run_fullscreen_blocking_managed_with_outcome(
                     explorer_task_runtime: explorer_task_runtime.clone(),
                     diagnostics_task_runtime: diagnostics_task_runtime.clone(),
                     terminal_graphics_probe: &terminal_graphics_probe,
-                    show_terminal_graphics_notice: std::mem::take(
-                        &mut show_terminal_graphics_notice,
-                    ),
                 })
             }),
         );
@@ -365,265 +361,6 @@ pub(super) enum CachedTimeSyncResult {
         received_at: Instant,
     },
     Failure,
-}
-
-#[derive(Debug)]
-pub(super) struct LauncherIconRequest {
-    pub(super) id: String,
-    pub(super) path: std::path::PathBuf,
-}
-
-#[derive(Debug)]
-pub(super) struct LauncherIconResult {
-    pub(super) id: String,
-    pub(super) icon: Result<Option<PlatformIcon>, String>,
-}
-
-pub(super) struct CachedLauncherIcon {
-    pub(super) area: Rect,
-    pub(super) image: ui::PreparedEditorImage,
-}
-
-pub(super) struct LauncherIconRuntime {
-    pub(super) picker: ui::EditorImagePicker,
-    pub(super) requests: mpsc::Sender<LauncherIconRequest>,
-    pub(super) results: mpsc::Receiver<LauncherIconResult>,
-    pub(super) pending: HashSet<String>,
-    pub(super) unavailable: HashSet<String>,
-    pub(super) source_icons: HashMap<String, PlatformIcon>,
-    pub(super) prepared: HashMap<String, CachedLauncherIcon>,
-    pub(super) home_unavailable: HashSet<String>,
-    pub(super) home_prepared: HashMap<String, CachedLauncherIcon>,
-    pub(super) _worker: ManagedThreadHandle<()>,
-}
-
-impl LauncherIconRuntime {
-    fn spawn(
-        platform: std::sync::Arc<dyn Platform>,
-        picker: ui::EditorImagePicker,
-        watchdog: &AppWatchdog,
-    ) -> Result<Self, String> {
-        let (request_sender, request_receiver) = mpsc::channel::<LauncherIconRequest>();
-        let (result_sender, result_receiver) = mpsc::channel::<LauncherIconResult>();
-        let group = watchdog
-            .child_component(ComponentId::from_static("launcher-icons"))
-            .task_group("native-icons");
-        let worker = group
-            .spawn_thread(
-                TaskSpec {
-                    id: TaskId::from_static("loader"),
-                    kind: TaskKind::LongRunning,
-                    panic_action: PanicAction::ReportOnly,
-                    replay_safety: ReplaySafety::Never,
-                    restart_policy: RestartPolicy::never(),
-                },
-                move || {
-                    while let Ok(request) = request_receiver.recv() {
-                        let icon = platform
-                            .file_icon(&request.path, 128)
-                            .map_err(|error| error.to_string());
-                        if result_sender
-                            .send(LauncherIconResult {
-                                id: request.id,
-                                icon,
-                            })
-                            .is_err()
-                        {
-                            break;
-                        }
-                    }
-                },
-            )
-            .map_err(|error| error.to_string())?;
-        Ok(Self {
-            picker,
-            requests: request_sender,
-            results: result_receiver,
-            pending: HashSet::new(),
-            unavailable: HashSet::new(),
-            source_icons: HashMap::new(),
-            prepared: HashMap::new(),
-            home_unavailable: HashSet::new(),
-            home_prepared: HashMap::new(),
-            _worker: worker,
-        })
-    }
-
-    fn poll_results(&mut self) -> bool {
-        let mut changed = false;
-        while let Ok(result) = self.results.try_recv() {
-            changed = true;
-            self.pending.remove(&result.id);
-            match result.icon {
-                Ok(Some(icon)) => {
-                    self.source_icons.insert(result.id, icon);
-                }
-                Ok(None) | Err(_) => {
-                    self.unavailable.insert(result.id);
-                }
-            }
-        }
-        changed
-    }
-
-    fn sync(&mut self, model: &ui::LauncherViewModel, main: Rect) {
-        self.poll_results();
-        let ids = model
-            .items
-            .iter()
-            .map(|item| item.id.as_str())
-            .collect::<HashSet<_>>();
-        self.pending.retain(|id| ids.contains(id.as_str()));
-        self.unavailable.retain(|id| ids.contains(id.as_str()));
-        self.source_icons.retain(|id, _| ids.contains(id.as_str()));
-        self.prepared.retain(|id, _| ids.contains(id.as_str()));
-        if model.view_mode != app::launcher::LauncherViewMode::LargeIcons {
-            return;
-        }
-
-        let layout = ui::launcher_layout(main, model);
-        for item_layout in &layout.items {
-            let Some(item) = model.items.get(item_layout.index) else {
-                continue;
-            };
-            let needs_prepare = self
-                .prepared
-                .get(&item.id)
-                .is_none_or(|cached| cached.area != item_layout.icon_area);
-            if item.is_builtin() {
-                if needs_prepare && !self.unavailable.contains(&item.id) {
-                    self.prepared.remove(&item.id);
-                    let prepared = model
-                        .item_graphic_bytes(item)
-                        .ok_or_else(|| "Launcher icon asset is not cached".to_string())
-                        .and_then(|bytes| {
-                            self.picker
-                                .prepare_bytes(bytes, item_layout.icon_area)
-                                .map_err(|error| error.to_string())
-                        });
-                    match prepared {
-                        Ok(image) => {
-                            self.prepared.insert(
-                                item.id.clone(),
-                                CachedLauncherIcon {
-                                    area: item_layout.icon_area,
-                                    image,
-                                },
-                            );
-                        }
-                        Err(_) => {
-                            self.unavailable.insert(item.id.clone());
-                        }
-                    }
-                }
-                continue;
-            }
-            if needs_prepare
-                && let Some(icon) = self.source_icons.get(&item.id)
-                && let Ok(image) = self.picker.prepare_rgba(
-                    icon.width(),
-                    icon.height(),
-                    icon.rgba().to_vec(),
-                    item_layout.icon_area,
-                )
-            {
-                self.prepared.insert(
-                    item.id.clone(),
-                    CachedLauncherIcon {
-                        area: item_layout.icon_area,
-                        image,
-                    },
-                );
-            }
-            if !self.source_icons.contains_key(&item.id)
-                && !self.pending.contains(&item.id)
-                && !self.unavailable.contains(&item.id)
-                && self
-                    .requests
-                    .send(LauncherIconRequest {
-                        id: item.id.clone(),
-                        path: std::path::PathBuf::from(&item.path),
-                    })
-                    .is_ok()
-            {
-                self.pending.insert(item.id.clone());
-            }
-        }
-    }
-
-    fn sync_home(&mut self, model: &ui::HomeViewModel, main: Rect) {
-        let labels = model
-            .entries()
-            .iter()
-            .map(|entry| entry.label.as_str())
-            .collect::<HashSet<_>>();
-        self.home_unavailable
-            .retain(|label| labels.contains(label.as_str()));
-        self.home_prepared
-            .retain(|label, _| labels.contains(label.as_str()));
-
-        for (entry, tile) in model
-            .entries()
-            .iter()
-            .zip(ui::home_entry_tile_areas(main, model.entries().len()))
-        {
-            let icon_area = ui::home_entry_icon_area(tile);
-            if icon_area.width == 0 || icon_area.height == 0 {
-                continue;
-            }
-            let needs_prepare = self
-                .home_prepared
-                .get(&entry.label)
-                .is_none_or(|cached| cached.area != icon_area);
-            if !needs_prepare || self.home_unavailable.contains(&entry.label) {
-                continue;
-            }
-
-            self.home_prepared.remove(&entry.label);
-            let prepared = model
-                .home_icon_image_bytes_for_label(&entry.label)
-                .ok_or_else(|| "Home icon asset is not cached".to_string())
-                .and_then(|bytes| {
-                    self.picker
-                        .prepare_bytes(bytes, icon_area)
-                        .map_err(|error| error.to_string())
-                });
-            match prepared {
-                Ok(image) => {
-                    self.home_prepared.insert(
-                        entry.label.clone(),
-                        CachedLauncherIcon {
-                            area: icon_area,
-                            image,
-                        },
-                    );
-                }
-                Err(_) => {
-                    self.home_unavailable.insert(entry.label.clone());
-                }
-            }
-        }
-    }
-}
-
-impl ui::LauncherIconRenderer for LauncherIconRuntime {
-    fn render_icon(&self, item_id: &str, frame: &mut ratatui::Frame<'_>, area: Rect) -> bool {
-        let Some(icon) = self.prepared.get(item_id) else {
-            return false;
-        };
-        icon.image.render_centered(frame, area);
-        true
-    }
-}
-
-impl ui::HomeIconRenderer for LauncherIconRuntime {
-    fn render_icon(&self, entry_label: &str, frame: &mut ratatui::Frame<'_>, area: Rect) -> bool {
-        let Some(icon) = self.home_prepared.get(entry_label) else {
-            return false;
-        };
-        icon.image.render_centered(frame, area);
-        true
-    }
 }
 
 #[derive(Debug)]
@@ -812,7 +549,6 @@ pub(super) struct FullscreenShellSessionInput<'a, W> {
     explorer_task_runtime: Option<ShellExplorerTaskRuntime>,
     diagnostics_task_runtime: Option<ShellDiagnosticsTaskRuntime>,
     terminal_graphics_probe: &'a ui::TerminalGraphicsProbe,
-    show_terminal_graphics_notice: bool,
 }
 
 pub(super) fn run_fullscreen_shell_session<W: Write>(
@@ -834,7 +570,6 @@ pub(super) fn run_fullscreen_shell_session<W: Write>(
         explorer_task_runtime,
         diagnostics_task_runtime,
         terminal_graphics_probe,
-        show_terminal_graphics_notice,
     } = input;
     let terminal_size_requirement = ShellTerminalSizeRequirement::from_assets(&ascii_assets);
     let initial_size = checked_current_terminal_size(terminal_size_requirement)?;
@@ -842,13 +577,6 @@ pub(super) fn run_fullscreen_shell_session<W: Write>(
     if let Some(diagnostics) = diagnostics_task_runtime.as_ref() {
         diagnostics.set_terminal_graphics_probe(terminal_graphics_probe.status().clone());
     }
-    let mut launcher_icons = terminal_graphics_probe
-        .picker()
-        .cloned()
-        .and_then(|picker| {
-            LauncherIconRuntime::spawn(std::sync::Arc::clone(&platform), picker, shell_watchdog)
-                .ok()
-        });
     let theme_storage = startup.storage_manager.clone();
     if startup.auth_bootstrap_required {
         display_first_run_banner_with_assets_colored(
@@ -875,11 +603,7 @@ pub(super) fn run_fullscreen_shell_session<W: Write>(
             ),
         },
     );
-    state.set_terminal_image_support(launcher_icons.is_some());
     state.set_terminal_text_sizing_support(terminal_graphics_probe.text_sizing_protocol());
-    if show_terminal_graphics_notice {
-        state.apply_terminal_graphics_startup_policy(terminal_graphics_probe.status());
-    }
     state.launcher_task_runtime = Some(ShellLauncherTaskRuntime::new_managed(
         std::sync::Arc::clone(&platform),
         shell_watchdog.clone(),
@@ -992,12 +716,6 @@ pub(super) fn run_fullscreen_shell_session<W: Write>(
             ..RuntimeSnapshot::default()
         });
         let frame_now = Instant::now();
-        if launcher_icons
-            .as_mut()
-            .is_some_and(LauncherIconRuntime::poll_results)
-        {
-            redraw.request_redraw();
-        }
         theme_reloader.poll_at(frame_now, &mut theme, &mut state);
         let clock_snapshot = state.app.snapshot().clock;
         state.advance_clock_background_at(&clock_snapshot, frame_now);
@@ -1079,24 +797,6 @@ pub(super) fn run_fullscreen_shell_session<W: Write>(
             {
                 shell_toast = None;
             }
-            let graphical_icons_enabled = state.graphical_icons_enabled();
-            if graphical_icons_enabled
-                && let Some(icon_runtime) = launcher_icons.as_mut()
-                && let ui::ShellLayout::Full { main, .. } =
-                    ui::compute_shell_layout(render_context.page_area(Rect::new(
-                        0,
-                        0,
-                        state.terminal_size().0,
-                        state.terminal_size().1,
-                    )))
-            {
-                if let Some(launcher) = launcher.as_ref() {
-                    icon_runtime.sync(launcher, main);
-                }
-                if let Some(home) = home.as_ref() {
-                    icon_runtime.sync_home(home, main);
-                }
-            }
             let editor =
                 (content_screen == ShellScreen::Editor).then(|| state.to_editor_view_model());
             let settings = (content_screen == ShellScreen::Settings)
@@ -1171,24 +871,6 @@ pub(super) fn run_fullscreen_shell_session<W: Write>(
                             launcher.as_ref().expect("Launcher requires its view model"),
                             &render_context,
                         );
-                        if graphical_icons_enabled
-                            && let Some(icons) = launcher_icons.as_ref()
-                            && let ui::ShellLayout::Full { main, .. } =
-                                ui::compute_shell_layout(page_area)
-                        {
-                            let model =
-                                launcher.as_ref().expect("Launcher requires its view model");
-                            for item_layout in ui::launcher_layout(main, model).items {
-                                if let Some(item) = model.items.get(item_layout.index) {
-                                    ui::LauncherIconRenderer::render_icon(
-                                        icons,
-                                        &item.id,
-                                        frame,
-                                        item_layout.icon_area,
-                                    );
-                                }
-                            }
-                        }
                     }
                     ShellScreen::CommandLine => {
                         ui::render_command_line_with_context(
@@ -1251,25 +933,6 @@ pub(super) fn run_fullscreen_shell_session<W: Write>(
                             home.as_ref().expect("Home requires its view model"),
                             &render_context,
                         );
-                        if graphical_icons_enabled
-                            && let Some(icons) = launcher_icons.as_ref()
-                            && let ui::ShellLayout::Full { main, .. } =
-                                ui::compute_shell_layout(page_area)
-                        {
-                            let model = home.as_ref().expect("Home requires its view model");
-                            for (entry, tile) in model
-                                .entries()
-                                .iter()
-                                .zip(ui::home_entry_tile_areas(main, model.entries().len()))
-                            {
-                                ui::HomeIconRenderer::render_icon(
-                                    icons,
-                                    &entry.label,
-                                    frame,
-                                    ui::home_entry_icon_area(tile),
-                                );
-                            }
-                        }
                     }
                 }
 
@@ -1324,10 +987,7 @@ pub(super) fn run_fullscreen_shell_session<W: Write>(
         }
 
         let poll_now = Instant::now();
-        let background_work_outstanding = session_has_background_work(&state)
-            || launcher_icons
-                .as_ref()
-                .is_some_and(|icons| !icons.pending.is_empty());
+        let background_work_outstanding = session_has_background_work(&state);
         let background_poll_timeout = background_poll_timeout(
             background_work_outstanding,
             poll_now.saturating_duration_since(last_background_poll),
@@ -2346,8 +2006,6 @@ mod runtime_preflight_tests {
         for legacy in [
             "ui::render_setup(",
             "ui::render_login(",
-            "ui::render_launcher_with_icons(",
-            "ui::render_home_with_icons(",
             "ui::render_notification_overlay(",
         ] {
             assert!(!runtime.contains(legacy), "legacy runtime call {legacy}");
@@ -2409,7 +2067,7 @@ mod runtime_preflight_tests {
                     report
                         .warning_checks()
                         .iter()
-                        .any(|check| check.key == "home_icons/explorer.png")
+                        .any(|check| check.key == "home_icons")
                 );
                 Ok(StartupAssetRecoveryChoice::AutoRestore)
             },
@@ -2422,11 +2080,7 @@ mod runtime_preflight_tests {
 
         assert_eq!(choices.get(), 1);
         assert!(ui::check_default_theme(&root).is_ok());
-        assert!(
-            assets
-                .home_icon_image_bytes("explorer")
-                .is_some_and(|bytes| bytes.starts_with(b"\x89PNG\r\n\x1a\n"))
-        );
+        assert!(assets.home_icon_for_label("Explorer").is_some());
 
         std::fs::remove_dir_all(root).expect("clean startup recovery fixture");
     }
@@ -2834,7 +2488,6 @@ mod runtime_preflight_tests {
             border_shape: storage::BorderShape::Square,
             border_color: storage::BorderColor::Rgb(0x38, 0xBD, 0xF8),
             accent_color: storage::BorderColor::LightMagenta,
-            icon_display_mode: storage::IconDisplayMode::Image,
             ..storage::AppearanceConfig::default()
         };
         UserService::new(storage.clone())
@@ -2938,7 +2591,6 @@ mod runtime_preflight_tests {
             border_shape: storage::BorderShape::Square,
             border_color: storage::BorderColor::LightGreen,
             accent_color: storage::BorderColor::LightMagenta,
-            icon_display_mode: storage::IconDisplayMode::Image,
             ..storage::AppearanceConfig::default()
         };
         let users = UserService::new(storage.clone());

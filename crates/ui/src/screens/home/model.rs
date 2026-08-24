@@ -1,6 +1,5 @@
 use crate::home_icons::{AssetError, HomeIcon, HomeIconCatalog, RuntimeAsciiAssets};
 use crate::screens::diagnostics::DebugDiagnosticsViewModel;
-use std::path::PathBuf;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HomeDisplayMode {
@@ -195,18 +194,6 @@ impl HomeViewModel {
         self.home_icon_assets
             .as_ref()
             .and_then(|assets| assets.home_icon_for_label(label))
-    }
-
-    pub fn home_icon_image_path_for_label(&self, label: &str) -> Option<PathBuf> {
-        let assets = self.home_icon_assets.as_ref()?;
-        let icon = assets.home_icon_for_label(label)?;
-        assets.home_icon_image_path(icon.key())
-    }
-
-    pub fn home_icon_image_bytes_for_label(&self, label: &str) -> Option<&[u8]> {
-        let assets = self.home_icon_assets.as_ref()?;
-        let icon = assets.home_icon_for_label(label)?;
-        assets.home_icon_image_bytes(icon.key())
     }
 
     pub fn selected_entry_index(&self) -> usize {

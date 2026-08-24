@@ -17,11 +17,6 @@ const HOME_TILE_MAX_HEIGHT: u16 = 8;
 const HOME_TILE_MIN_HEIGHT: u16 = 3;
 const HOME_TILE_GAP: u16 = 1;
 
-pub trait HomeIconRenderer {
-    /// Returns true when a terminal image was rendered for `entry_label`.
-    fn render_icon(&self, entry_label: &str, frame: &mut Frame<'_>, area: Rect) -> bool;
-}
-
 pub fn render_home(
     frame: &mut Frame<'_>,
     area: Rect,
@@ -30,50 +25,31 @@ pub fn render_home(
     theme: &TundraTheme,
 ) {
     let context = RenderContext::from_theme(theme, Default::default(), Default::default());
-    render_home_with_icons_context(frame, area, chrome, home, &context, None);
+    render_home_context(frame, area, chrome, home, &context);
 }
 
-pub fn render_home_with_icons(
-    frame: &mut Frame<'_>,
-    area: Rect,
-    chrome: &ShellChromeViewModel,
-    home: &HomeViewModel,
-    theme: &TundraTheme,
-    icons: Option<&dyn HomeIconRenderer>,
-) {
-    let context = RenderContext::from_theme(theme, Default::default(), Default::default());
-    render_home_with_icons_context(frame, area, chrome, home, &context, icons);
-}
-
-pub(crate) fn render_home_with_icons_context(
+pub(crate) fn render_home_context(
     frame: &mut Frame<'_>,
     area: Rect,
     chrome: &ShellChromeViewModel,
     home: &HomeViewModel,
     context: &RenderContext,
-    icons: Option<&dyn HomeIconRenderer>,
 ) {
     let theme = &context.compatibility_theme();
     match compute_shell_layout(area) {
         ShellLayout::Compact(compact) => render_compact_home(frame, compact, chrome, theme),
         ShellLayout::Full { top, main, status } => {
             render_top(frame, top, chrome, theme);
-            render_main(frame, main, home, context, icons);
+            render_main(frame, main, home, context);
             render_status(frame, status, chrome, theme);
         }
     }
 }
 
-fn render_main(
-    frame: &mut Frame<'_>,
-    area: Rect,
-    home: &HomeViewModel,
-    context: &RenderContext,
-    icons: Option<&dyn HomeIconRenderer>,
-) {
+fn render_main(frame: &mut Frame<'_>, area: Rect, home: &HomeViewModel, context: &RenderContext) {
     match home.display_mode() {
         HomeDisplayMode::Debug | HomeDisplayMode::User | HomeDisplayMode::Auth => {
-            render_user_main(frame, area, home, context, icons)
+            render_user_main(frame, area, home, context)
         }
     }
 }
@@ -83,7 +59,6 @@ fn render_user_main(
     area: Rect,
     home: &HomeViewModel,
     context: &RenderContext,
-    icons: Option<&dyn HomeIconRenderer>,
 ) {
     let theme = &context.compatibility_theme();
     Surface::new()
@@ -118,10 +93,7 @@ fn render_user_main(
         surface.set_focused(selected);
         surface.render_surface_frame(frame, tile, theme);
         let icon_area = home_entry_icon_area(tile);
-        let rendered_graphic = icon_area.width > 0
-            && icon_area.height > 0
-            && icons.is_some_and(|icons| icons.render_icon(&entry.label, frame, icon_area));
-        if !rendered_graphic && let Some(icon) = home.home_icon_for_label(&entry.label) {
+        if let Some(icon) = home.home_icon_for_label(&entry.label) {
             for (row, line) in icon
                 .lines()
                 .iter()
@@ -292,11 +264,7 @@ pub fn home_entry_tile_areas(main: Rect, entry_count: usize) -> Vec<Rect> {
     areas
 }
 
-/// Returns the image allocation shared by Home's ASCII and graphical icons.
-///
-/// The first four inner rows historically hold the ASCII icon. Terminal
-/// images use the same allocation and [`crate::PreparedEditorImage::render_centered`],
-/// matching Launcher icon centering without moving Home labels.
+/// Returns the allocation for Home's ASCII icon.
 pub fn home_entry_icon_area(tile: Rect) -> Rect {
     Rect::new(
         tile.x.saturating_add(1),

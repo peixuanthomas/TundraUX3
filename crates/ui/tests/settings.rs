@@ -1,7 +1,7 @@
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use ratatui::layout::Rect;
-use ratatui::style::{Color, Modifier};
+use ratatui::style::Color;
 use ui::{
     BorderShape, HomeDisplayMode, NotificationTone, SettingsAppearancePreview,
     SettingsCardViewModel, SettingsCategory, SettingsColorEditorViewModel, SettingsControlKind,
@@ -367,57 +367,6 @@ fn renderer_draws_cards_preview_picker_and_status_into_the_buffer() {
     assert!(picker_output.contains("Choose timezone"));
     assert!(picker_output.contains("Search: tok_"));
     assert!(picker_output.contains("> Tokyo  Asia/Tokyo"));
-}
-
-#[test]
-fn unavailable_default_theme_image_option_is_rendered_dimmed() {
-    let mut model = sample_model();
-    model.picker = Some(SettingsPickerViewModel {
-        kind: SettingsPickerKind::DefaultThemeIcons,
-        title: "Default theme".to_string(),
-        query: String::new(),
-        options: vec![
-            SettingsPickerOptionViewModel::new("ASCII icons", "Always available"),
-            SettingsPickerOptionViewModel::new("Image icons", "Unsupported by this terminal")
-                .enabled(false),
-        ],
-        selected_index: 1,
-        window_start: 0,
-        searchable: false,
-    });
-    let mut terminal = Terminal::new(TestBackend::new(120, 32)).expect("test terminal");
-
-    terminal
-        .draw(|frame| {
-            render_settings(
-                frame,
-                frame.area(),
-                &chrome(),
-                &model,
-                &TundraTheme::default_dark(),
-            );
-        })
-        .expect("render disabled image icon option");
-
-    let buffer = terminal.backend().buffer();
-    let mut found = false;
-    for y in 0..buffer.area.height {
-        let row = (0..buffer.area.width)
-            .map(|x| buffer.cell((x, y)).map(|cell| cell.symbol()).unwrap_or(" "))
-            .collect::<String>();
-        let Some(start) = row.find("Image icons") else {
-            continue;
-        };
-        found = true;
-        for x in start..start + "Image icons".len() {
-            assert!(
-                buffer
-                    .cell((u16::try_from(x).unwrap(), y))
-                    .is_some_and(|cell| cell.modifier.contains(Modifier::DIM))
-            );
-        }
-    }
-    assert!(found, "disabled Image icons option should be visible");
 }
 
 #[test]

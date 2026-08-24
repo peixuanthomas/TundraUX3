@@ -23,10 +23,10 @@ use chrono::{DateTime, Timelike, Utc};
 use crossterm::event;
 use platform::{
     CapabilityStatus, DocumentFingerprint, FileAttributes, Platform, PlatformCapabilities,
-    PlatformIcon, PlatformKind, PlatformLifecycleEvent, TerminalControlHandler,
+    PlatformKind, PlatformLifecycleEvent, TerminalControlHandler,
 };
 use ratatui::layout::Rect;
-use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
+use std::collections::{BTreeMap, VecDeque};
 use std::fmt;
 use std::io::{self, Write};
 use std::path::PathBuf;
