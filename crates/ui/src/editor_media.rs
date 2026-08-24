@@ -12,7 +12,7 @@ use ratatui_image::Resize;
 use ratatui_image::picker::cap_parser::{
     Parser as CapabilityParser, QueryStdioOptions, Response as CapabilityResponse,
 };
-use ratatui_image::picker::{Capability, Picker, ProtocolType};
+use ratatui_image::picker::{Picker, ProtocolType};
 use ratatui_image::protocol::Protocol;
 
 pub const EDITOR_IMAGE_MAX_PIXELS: u64 = 20_000_000;
@@ -156,26 +156,10 @@ impl EditorImagePicker {
         }
         #[cfg(not(unix))]
         {
-            match Picker::from_query_stdio_with_options(
-                ratatui_image::picker::cap_parser::QueryStdioOptions {
-                    text_sizing_protocol: true,
-                    ..Default::default()
-                },
-            ) {
-                Ok(picker) => {
-                    let text_sizing_protocol = picker
-                        .capabilities()
-                        .contains(&Capability::TextSizingProtocol);
-                    match Self::from_picker(picker) {
-                        Ok(Some(picker)) => TerminalGraphicsProbe::verified(picker)
-                            .with_text_sizing_protocol(text_sizing_protocol),
-                        Ok(None) => TerminalGraphicsProbe::unsupported()
-                            .with_text_sizing_protocol(text_sizing_protocol),
-                        Err(error) => TerminalGraphicsProbe::no_response(error.to_string()),
-                    }
-                }
-                Err(error) => TerminalGraphicsProbe::no_response(error.to_string()),
-            }
+            // The supported ratatui-image stdio helper can leave a blocking
+            // reader behind after timing out. Until this component owns an
+            // equivalent bounded platform reader, do not start that helper.
+            TerminalGraphicsProbe::unsupported()
         }
     }
 
@@ -351,20 +335,11 @@ fn query_unix_terminal_capabilities(
     use std::io::{self, Write};
     use std::os::fd::AsRawFd;
 
-    let mut picker = Picker::from_query_stdio_with_options(QueryStdioOptions {
-        timeout,
-        text_sizing_protocol: true,
-        ..Default::default()
-    })
-    .map_err(EditorMediaError::Protocol)?;
-    let text_sizing_protocol = picker
-        .capabilities()
-        .contains(&Capability::TextSizingProtocol);
     let is_tmux = std::env::var_os("TMUX").is_some_and(|value| !value.is_empty());
-    let confirmation_query = graphics_capability_confirmation_query(is_tmux);
+    let query = terminal_capability_query(is_tmux);
     let mut stdout = io::stdout().lock();
     stdout
-        .write_all(confirmation_query.as_bytes())
+        .write_all(query.as_bytes())
         .and_then(|()| stdout.flush())
         .map_err(EditorMediaError::TerminalQuery)?;
 
@@ -435,7 +410,7 @@ fn query_unix_terminal_capabilities(
     }
 
     let iterm2_graphics = parse_iterm2_graphics_capabilities(&raw_responses);
-    let standard_protocol = standard_protocol_from_capabilities(picker.capabilities());
+    let standard_protocol = standard_protocol_from_responses(&responses);
     let iterm2_protocol = iterm2_graphics.and_then(|capabilities| {
         capabilities
             .sixel
@@ -444,7 +419,8 @@ fn query_unix_terminal_capabilities(
     });
     let had_unverified_graphics_hint = standard_protocol.is_none()
         && iterm2_protocol.is_none()
-        && picker.protocol_type() != ProtocolType::Halfblocks;
+        && terminal_has_graphics_environment_hint(is_tmux);
+    let mut picker = Picker::halfblocks();
     picker.set_protocol_type(
         standard_protocol
             .or(iterm2_protocol)
@@ -455,7 +431,7 @@ fn query_unix_terminal_capabilities(
         picker,
         complete,
         had_unverified_graphics_hint,
-        text_sizing_protocol,
+        text_sizing_protocol: responses_support_text_sizing_protocol(&responses),
     })
 }
 
@@ -482,9 +458,44 @@ fn terminal_probe_from_unix_query(query: UnixTerminalCapabilityQuery) -> Termina
 }
 
 #[cfg(unix)]
-fn graphics_capability_confirmation_query(is_tmux: bool) -> String {
+fn terminal_capability_query(is_tmux: bool) -> String {
+    let standard_query = CapabilityParser::query(
+        is_tmux,
+        QueryStdioOptions {
+            text_sizing_protocol: true,
+            ..Default::default()
+        },
+    );
     let (start, escape, end) = CapabilityParser::tmux_start_escape_end(is_tmux);
-    format!("{start}{escape}]1337;Capabilities{escape}\\{escape}[0n{end}")
+    let final_status_query = format!("{escape}[5n{end}");
+    let standard_commands = standard_query
+        .strip_suffix(&final_status_query)
+        .expect("ratatui-image capability query ends with a status query");
+    debug_assert!(standard_commands.starts_with(start));
+    format!("{standard_commands}{escape}]1337;Capabilities{escape}\\{final_status_query}")
+}
+
+#[cfg(unix)]
+fn terminal_has_graphics_environment_hint(is_tmux: bool) -> bool {
+    let nonempty = |name| std::env::var_os(name).is_some_and(|value| !value.is_empty());
+    if is_tmux && (nonempty("ITERM_SESSION_ID") || nonempty("WEZTERM_EXECUTABLE")) {
+        return true;
+    }
+    std::env::var("TERM_PROGRAM").is_ok_and(|term_program| {
+        [
+            "iTerm",
+            "WezTerm",
+            "mintty",
+            "vscode",
+            "Tabby",
+            "Hyper",
+            "rio",
+            "Bobcat",
+            "WarpTerminal",
+        ]
+        .iter()
+        .any(|hint| term_program.contains(hint))
+    }) || std::env::var("LC_TERMINAL").is_ok_and(|terminal| terminal.contains("iTerm"))
 }
 
 #[cfg(unix)]
@@ -525,14 +536,26 @@ fn iterm2_feature_present(features: &[u8], expected: &[u8]) -> bool {
 }
 
 #[cfg(unix)]
-fn standard_protocol_from_capabilities(capabilities: &[Capability]) -> Option<ProtocolType> {
-    if capabilities.contains(&Capability::Kitty) {
+fn standard_protocol_from_responses(responses: &[CapabilityResponse]) -> Option<ProtocolType> {
+    if responses.contains(&CapabilityResponse::Kitty) {
         Some(ProtocolType::Kitty)
-    } else if capabilities.contains(&Capability::Sixel) {
+    } else if responses.contains(&CapabilityResponse::Sixel) {
         Some(ProtocolType::Sixel)
     } else {
         None
     }
+}
+
+#[cfg(unix)]
+fn responses_support_text_sizing_protocol(responses: &[CapabilityResponse]) -> bool {
+    let positions = responses
+        .iter()
+        .filter_map(|response| match response {
+            CapabilityResponse::CursorPositionReport(x, y) => Some((*x, *y)),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    matches!(positions.as_slice(), [(x1, _), (x2, _), (x3, _)] if *x2 == x1.saturating_add(2) && *x3 == x2.saturating_add(2))
 }
 
 fn centered_protocol_area(allocation: Rect, protocol_size: Size) -> Rect {
@@ -586,15 +609,50 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn standard_capabilities_prefer_kitty_then_sixel() {
+    fn capability_query_orders_iterm_confirmation_before_one_final_terminator() {
+        for is_tmux in [false, true] {
+            let query = terminal_capability_query(is_tmux);
+            let (_, escape, end) = CapabilityParser::tmux_start_escape_end(is_tmux);
+            let kitty = query.find("_Gi=31").expect("kitty query");
+            let sixel = query.find("[c").expect("sixel query");
+            let iterm = query
+                .find("]1337;Capabilities")
+                .expect("iTerm2 confirmation query");
+            let status = format!("{escape}[5n");
+            let terminator = query.rfind(&status).expect("final status query");
+
+            assert!(kitty < sixel);
+            assert!(sixel < iterm);
+            assert!(iterm < terminator);
+            assert_eq!(query.matches(&status).count(), 1);
+            assert!(query.ends_with(&format!("{status}{end}")));
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn standard_responses_prefer_kitty_and_report_text_sizing() {
+        let raw = b"\x1b[?64;4c\x1b[1;1R\x1b_Gi=31;OK\x1b\\\x1b[1;3R\x1b[2;5R\x1b[0n";
+        let mut parser = CapabilityParser::new();
+        let responses = raw
+            .iter()
+            .flat_map(|byte| parser.push(char::from(*byte)))
+            .collect::<Vec<_>>();
         assert_eq!(
-            standard_protocol_from_capabilities(&[Capability::Sixel, Capability::Kitty]),
+            standard_protocol_from_responses(&responses),
             Some(ProtocolType::Kitty)
         );
+        assert!(responses_support_text_sizing_protocol(&responses));
+        assert!(responses.contains(&CapabilityResponse::Status));
         assert_eq!(
-            standard_protocol_from_capabilities(&[Capability::Sixel]),
+            standard_protocol_from_responses(&[CapabilityResponse::Sixel]),
             Some(ProtocolType::Sixel)
         );
+        assert!(!responses_support_text_sizing_protocol(&[
+            CapabilityResponse::CursorPositionReport(1, 1),
+            CapabilityResponse::CursorPositionReport(3, 1),
+            CapabilityResponse::CursorPositionReport(4, 1),
+        ]));
     }
 
     #[cfg(unix)]
