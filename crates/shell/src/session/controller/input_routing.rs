@@ -1,4 +1,5 @@
 use super::super::*;
+use crate::session::queries::ResolvedExplorerOverlay;
 impl ShellSession {
     pub(in crate::session) fn route_key_input(
         &self,
@@ -667,99 +668,80 @@ impl ShellSession {
             return (target, ShellCommand::CaptureOverlayInput);
         }
 
-        if self.explorer_overlay_mode.is_some() {
-            return self.route_explorer_overlay_key(key);
-        }
-
-        if self
-            .app
-            .explorer_state()
-            .and_then(|state| state.pending_restore.as_ref())
-            .is_some()
-        {
-            if key.phase != InputPhase::Press || key.has_non_shift_modifier() {
-                return (target, ShellCommand::CaptureOverlayInput);
+        match self.resolved_explorer_overlay() {
+            Some(ResolvedExplorerOverlay::RestoreConflict) => {
+                if key.phase != InputPhase::Press || key.has_non_shift_modifier() {
+                    return (target, ShellCommand::CaptureOverlayInput);
+                }
+                return match &key.key {
+                    InputKey::Enter | InputKey::Char('k' | 'K') => {
+                        (target, ShellCommand::ExplorerRestoreKeepBoth)
+                    }
+                    InputKey::Char('r' | 'R') => (target, ShellCommand::ExplorerRestoreReplace),
+                    InputKey::Escape | InputKey::Char('n' | 'N') => {
+                        (target, ShellCommand::ExplorerRestoreCancel)
+                    }
+                    _ => (target, ShellCommand::CaptureOverlayInput),
+                };
             }
-            return match &key.key {
-                InputKey::Enter | InputKey::Char('k' | 'K') => {
-                    (target, ShellCommand::ExplorerRestoreKeepBoth)
+            Some(ResolvedExplorerOverlay::OperationConflict) => {
+                if key.phase != InputPhase::Press || key.has_non_shift_modifier() {
+                    return (target, ShellCommand::CaptureOverlayInput);
                 }
-                InputKey::Char('r' | 'R') => (target, ShellCommand::ExplorerRestoreReplace),
-                InputKey::Escape | InputKey::Char('n' | 'N') => {
-                    (target, ShellCommand::ExplorerRestoreCancel)
-                }
-                _ => (target, ShellCommand::CaptureOverlayInput),
-            };
-        }
-
-        if self
-            .app
-            .explorer_state()
-            .and_then(|state| state.pending_conflict.as_ref())
-            .is_some()
-        {
-            if key.phase != InputPhase::Press || key.has_non_shift_modifier() {
-                return (target, ShellCommand::CaptureOverlayInput);
+                return match &key.key {
+                    InputKey::Enter | InputKey::Char('k' | 'K') => {
+                        (target, ShellCommand::ExplorerConflictKeepBoth)
+                    }
+                    InputKey::Char('r' | 'R') => (target, ShellCommand::ExplorerConflictReplace),
+                    InputKey::Char('s' | 'S') => (target, ShellCommand::ExplorerConflictSkip),
+                    InputKey::Char('a' | 'A') => {
+                        (target, ShellCommand::ExplorerConflictToggleApplyToRemaining)
+                    }
+                    InputKey::Escape | InputKey::Char('n' | 'N') => {
+                        (target, ShellCommand::ExplorerConflictCancel)
+                    }
+                    _ => (target, ShellCommand::CaptureOverlayInput),
+                };
             }
-            return match &key.key {
-                InputKey::Enter | InputKey::Char('k' | 'K') => {
-                    (target, ShellCommand::ExplorerConflictKeepBoth)
-                }
-                InputKey::Char('r' | 'R') => (target, ShellCommand::ExplorerConflictReplace),
-                InputKey::Char('s' | 'S') => (target, ShellCommand::ExplorerConflictSkip),
-                InputKey::Char('a' | 'A') => {
-                    (target, ShellCommand::ExplorerConflictToggleApplyToRemaining)
-                }
-                InputKey::Escape | InputKey::Char('n' | 'N') => {
-                    (target, ShellCommand::ExplorerConflictCancel)
-                }
-                _ => (target, ShellCommand::CaptureOverlayInput),
-            };
-        }
-
-        if self
-            .app
-            .explorer_state()
-            .and_then(|state| state.pending_dialog.as_ref())
-            .is_some()
-        {
-            let confirm = self
-                .app
-                .explorer_state()
-                .and_then(|state| state.pending_dialog.as_ref())
-                .map(|dialog| match dialog.kind {
+            Some(ResolvedExplorerOverlay::Input(_)) => {
+                return match &key.key {
+                    InputKey::Escape => (target, ShellCommand::CancelExplorerInput),
+                    InputKey::Enter => (target, ShellCommand::SubmitExplorerInput),
+                    InputKey::Backspace | InputKey::Delete => {
+                        (target, ShellCommand::ExplorerBackspace)
+                    }
+                    InputKey::Char(character) if !key.has_non_shift_modifier() => {
+                        (target, ShellCommand::AppendExplorerChar(*character))
+                    }
+                    _ => (target, ShellCommand::RecordInput),
+                };
+            }
+            Some(ResolvedExplorerOverlay::Semantic(_)) => {
+                return self.route_explorer_overlay_key(key);
+            }
+            Some(ResolvedExplorerOverlay::PendingDialog(kind)) => {
+                let confirm = match kind {
                     app::explorer::ExplorerDialogKind::DeleteToTrash => {
                         ShellCommand::ExplorerConfirmDelete
                     }
                     app::explorer::ExplorerDialogKind::DumpTrash => {
                         ShellCommand::ExplorerConfirmDumpTrash
                     }
-                })
-                .unwrap_or(ShellCommand::ExplorerConfirmDelete);
-            if key.phase != InputPhase::Press || key.has_non_shift_modifier() {
-                return (target, ShellCommand::CaptureOverlayInput);
+                };
+                if key.phase != InputPhase::Press || key.has_non_shift_modifier() {
+                    return (target, ShellCommand::CaptureOverlayInput);
+                }
+                return match &key.key {
+                    InputKey::Enter if key.is_unmodified_action_key() => (target, confirm.clone()),
+                    InputKey::Escape if key.is_unmodified_action_key() => {
+                        (target, ShellCommand::CancelExplorerInput)
+                    }
+                    InputKey::Char('y' | 'Y') => (target, confirm),
+                    InputKey::Char('n' | 'N') => (target, ShellCommand::CancelExplorerInput),
+                    _ => (target, ShellCommand::CaptureOverlayInput),
+                };
             }
-            return match &key.key {
-                InputKey::Enter if key.is_unmodified_action_key() => (target, confirm.clone()),
-                InputKey::Escape if key.is_unmodified_action_key() => {
-                    (target, ShellCommand::CancelExplorerInput)
-                }
-                InputKey::Char('y' | 'Y') => (target, confirm),
-                InputKey::Char('n' | 'N') => (target, ShellCommand::CancelExplorerInput),
-                _ => (target, ShellCommand::CaptureOverlayInput),
-            };
-        }
-
-        if self.explorer_input_mode != ExplorerInputMode::Browse {
-            return match &key.key {
-                InputKey::Escape => (target, ShellCommand::CancelExplorerInput),
-                InputKey::Enter => (target, ShellCommand::SubmitExplorerInput),
-                InputKey::Backspace | InputKey::Delete => (target, ShellCommand::ExplorerBackspace),
-                InputKey::Char(character) if !key.has_non_shift_modifier() => {
-                    (target, ShellCommand::AppendExplorerChar(*character))
-                }
-                _ => (target, ShellCommand::RecordInput),
-            };
+            None => {}
         }
 
         let is_trash = self

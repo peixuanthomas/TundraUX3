@@ -30,36 +30,99 @@ impl ShellOverlayDescriptor {
     }
 }
 
-pub(in crate::session) fn explorer_dialog_identity(
-    pending_restore: bool,
-    pending_conflict: bool,
-    input_mode: ExplorerInputMode,
-) -> Option<&'static str> {
-    if pending_restore {
-        Some("explorer-restore-conflict")
-    } else if pending_conflict {
-        Some("explorer-operation-conflict")
-    } else {
-        match input_mode {
-            ExplorerInputMode::NewFolder => Some("explorer-input:new-folder"),
-            ExplorerInputMode::NewTextFile => Some("explorer-input:new-text-file"),
-            ExplorerInputMode::Rename => Some("explorer-input:rename"),
-            ExplorerInputMode::RestoreDestination => Some("explorer-input:restore-destination"),
-            _ => None,
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(in crate::session) enum ResolvedExplorerOverlay {
+    RestoreConflict,
+    OperationConflict,
+    Input(ExplorerInputMode),
+    Semantic(ExplorerOverlayMode),
+    PendingDialog(app::explorer::ExplorerDialogKind),
+}
+
+impl ResolvedExplorerOverlay {
+    pub(in crate::session) fn descriptor(self) -> ShellOverlayDescriptor {
+        let (kind, id, category) = match self {
+            Self::RestoreConflict => (
+                ui::MotionOverlayKind::Dialog,
+                "explorer-restore-conflict",
+                ShellOverlayCategory::PageDialog,
+            ),
+            Self::OperationConflict => (
+                ui::MotionOverlayKind::Dialog,
+                "explorer-operation-conflict",
+                ShellOverlayCategory::PageDialog,
+            ),
+            Self::Input(mode) => (
+                ui::MotionOverlayKind::Dialog,
+                match mode {
+                    ExplorerInputMode::NewFolder => "explorer-input:new-folder",
+                    ExplorerInputMode::NewTextFile => "explorer-input:new-text-file",
+                    ExplorerInputMode::Rename => "explorer-input:rename",
+                    ExplorerInputMode::RestoreDestination => "explorer-input:restore-destination",
+                    _ => unreachable!("only rendered Explorer inputs resolve as overlays"),
+                },
+                ShellOverlayCategory::PageDialog,
+            ),
+            Self::Semantic(mode) => (
+                ui::MotionOverlayKind::Popover,
+                match mode {
+                    ExplorerOverlayMode::ContextMenu { .. } => "explorer-popover:context-menu",
+                    ExplorerOverlayMode::Sort { .. } => "explorer-popover:sort",
+                    ExplorerOverlayMode::Options => "explorer-popover:options",
+                    ExplorerOverlayMode::Properties => "explorer-popover:properties",
+                },
+                ShellOverlayCategory::PagePopover,
+            ),
+            Self::PendingDialog(kind) => (
+                ui::MotionOverlayKind::Dialog,
+                match kind {
+                    app::explorer::ExplorerDialogKind::DeleteToTrash => {
+                        "explorer-dialog:delete-to-trash"
+                    }
+                    app::explorer::ExplorerDialogKind::DumpTrash => "explorer-dialog:dump-trash",
+                },
+                ShellOverlayCategory::PageDialog,
+            ),
+        };
+        ShellOverlayDescriptor {
+            kind,
+            id: id.into(),
+            category,
+            target: Some(RoutedTarget::Component(ShellComponent::Explorer)),
         }
     }
 }
 
-fn explorer_popover_identity(mode: ExplorerOverlayMode) -> &'static str {
-    match mode {
-        ExplorerOverlayMode::ContextMenu { .. } => "explorer-popover:context-menu",
-        ExplorerOverlayMode::Sort { .. } => "explorer-popover:sort",
-        ExplorerOverlayMode::Options => "explorer-popover:options",
-        ExplorerOverlayMode::Properties => "explorer-popover:properties",
-    }
-}
-
 impl ShellSession {
+    pub(in crate::session) fn resolved_explorer_overlay(&self) -> Option<ResolvedExplorerOverlay> {
+        if self.content_screen() != ShellScreen::Explorer {
+            return None;
+        }
+        let explorer = self.app.explorer_state()?;
+        if explorer.pending_restore.is_some() {
+            return Some(ResolvedExplorerOverlay::RestoreConflict);
+        }
+        if explorer.pending_conflict.is_some() {
+            return Some(ResolvedExplorerOverlay::OperationConflict);
+        }
+        if matches!(
+            self.explorer_input_mode,
+            ExplorerInputMode::NewFolder
+                | ExplorerInputMode::NewTextFile
+                | ExplorerInputMode::Rename
+                | ExplorerInputMode::RestoreDestination
+        ) {
+            return Some(ResolvedExplorerOverlay::Input(self.explorer_input_mode));
+        }
+        if let Some(mode) = self.explorer_overlay_mode {
+            return Some(ResolvedExplorerOverlay::Semantic(mode));
+        }
+        explorer
+            .pending_dialog
+            .as_ref()
+            .map(|dialog| ResolvedExplorerOverlay::PendingDialog(dialog.kind))
+    }
+
     pub fn active_screen(&self) -> ShellScreen {
         self.screen_stack
             .last()
@@ -181,44 +244,8 @@ impl ShellSession {
                 ShellComponent::ExitDialog,
             ));
         }
-        if self.content_screen() == ShellScreen::Explorer
-            && let Some(explorer) = self.app.explorer_state()
-        {
-            let id = explorer_dialog_identity(
-                explorer.pending_restore.is_some(),
-                explorer.pending_conflict.is_some(),
-                self.explorer_input_mode,
-            );
-            if let Some(id) = id {
-                return Some(ShellOverlayDescriptor {
-                    kind: ui::MotionOverlayKind::Dialog,
-                    id: id.into(),
-                    category: ShellOverlayCategory::PageDialog,
-                    target: Some(RoutedTarget::Component(ShellComponent::Explorer)),
-                });
-            }
-            if let Some(mode) = self.explorer_overlay_mode {
-                return Some(ShellOverlayDescriptor {
-                    kind: ui::MotionOverlayKind::Popover,
-                    id: explorer_popover_identity(mode).into(),
-                    category: ShellOverlayCategory::PagePopover,
-                    target: Some(RoutedTarget::Component(ShellComponent::Explorer)),
-                });
-            }
-            if let Some(dialog) = explorer.pending_dialog.as_ref() {
-                let id = match dialog.kind {
-                    app::explorer::ExplorerDialogKind::DeleteToTrash => {
-                        "explorer-dialog:delete-to-trash"
-                    }
-                    app::explorer::ExplorerDialogKind::DumpTrash => "explorer-dialog:dump-trash",
-                };
-                return Some(ShellOverlayDescriptor {
-                    kind: ui::MotionOverlayKind::Dialog,
-                    id: id.into(),
-                    category: ShellOverlayCategory::PageDialog,
-                    target: Some(RoutedTarget::Component(ShellComponent::Explorer)),
-                });
-            }
+        if let Some(overlay) = self.resolved_explorer_overlay() {
+            return Some(overlay.descriptor());
         }
         if let Some(popup) = self.active_popup() {
             return Some(ShellOverlayDescriptor {

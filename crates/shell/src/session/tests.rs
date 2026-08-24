@@ -1,4 +1,4 @@
-use super::queries::{ShellOverlayCategory, explorer_dialog_identity};
+use super::queries::{ResolvedExplorerOverlay, ShellOverlayCategory};
 use super::*;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 
@@ -610,53 +610,35 @@ fn newly_tracked_overlay_groups_share_keyboard_mouse_focus_and_readiness_gating(
 fn explorer_dialog_and_transient_overlay_identities_are_semantic_and_stable() {
     let cases = [
         (
-            true,
-            false,
-            ExplorerInputMode::Browse,
+            ResolvedExplorerOverlay::RestoreConflict,
             "explorer-restore-conflict",
         ),
         (
-            false,
-            true,
-            ExplorerInputMode::Browse,
+            ResolvedExplorerOverlay::OperationConflict,
             "explorer-operation-conflict",
         ),
         (
-            false,
-            false,
-            ExplorerInputMode::NewFolder,
+            ResolvedExplorerOverlay::Input(ExplorerInputMode::NewFolder),
             "explorer-input:new-folder",
         ),
         (
-            false,
-            false,
-            ExplorerInputMode::NewTextFile,
+            ResolvedExplorerOverlay::Input(ExplorerInputMode::NewTextFile),
             "explorer-input:new-text-file",
         ),
         (
-            false,
-            false,
-            ExplorerInputMode::Rename,
+            ResolvedExplorerOverlay::Input(ExplorerInputMode::Rename),
             "explorer-input:rename",
         ),
         (
-            false,
-            false,
-            ExplorerInputMode::RestoreDestination,
+            ResolvedExplorerOverlay::Input(ExplorerInputMode::RestoreDestination),
             "explorer-input:restore-destination",
         ),
     ];
-    for (restore, conflict, mode, expected) in cases {
-        assert_eq!(
-            explorer_dialog_identity(restore, conflict, mode),
-            Some(expected)
-        );
+    for (resolved, expected) in cases {
+        let descriptor = resolved.descriptor();
+        assert_eq!(descriptor.id, expected);
+        assert_eq!(descriptor.kind, ui::MotionOverlayKind::Dialog);
     }
-    assert_eq!(
-        explorer_dialog_identity(true, true, ExplorerInputMode::Rename),
-        Some("explorer-restore-conflict"),
-        "restore conflict has the rendered precedence"
-    );
 
     let mut state = explorer_routing_test_state();
     state.explorer_input_mode = ExplorerInputMode::NewFolder;
@@ -675,8 +657,25 @@ fn explorer_dialog_and_transient_overlay_identities_are_semantic_and_stable() {
         state.active_overlay_descriptor().expect("stable input").id,
         input.id
     );
+    state.active_popup = Some(ShellPopup {
+        owner: Some(ShellComponent::Explorer),
+        anchor: (1, 1),
+    });
+    assert!(matches!(
+        state.resolved_explorer_overlay(),
+        Some(ResolvedExplorerOverlay::Input(ExplorerInputMode::NewFolder))
+    ));
+    assert_eq!(
+        state.route_key_input(&KeyInput::from_label("Enter")).1,
+        ShellCommand::SubmitExplorerInput
+    );
+    assert_eq!(
+        state.route_key_input(&KeyInput::from_label("Esc")).1,
+        ShellCommand::CancelExplorerInput
+    );
 
     state.explorer_input_mode = ExplorerInputMode::Browse;
+    state.active_popup = None;
     let mut explorer = state.app.explorer_state().expect("explorer state").clone();
     explorer.pending_conflict = Some(app::explorer::ExplorerConflict {
         source: "/source-a".into(),
@@ -705,6 +704,34 @@ fn explorer_dialog_and_transient_overlay_identities_are_semantic_and_stable() {
             .expect("stable conflict")
             .id,
         conflict.id
+    );
+    state.active_popup = Some(ShellPopup {
+        owner: Some(ShellComponent::Explorer),
+        anchor: (1, 1),
+    });
+    assert_eq!(
+        state.resolved_explorer_overlay(),
+        Some(ResolvedExplorerOverlay::OperationConflict)
+    );
+    assert_eq!(
+        state.route_key_input(&KeyInput::from_label("Enter")).1,
+        ShellCommand::ExplorerConflictKeepBoth
+    );
+    assert_eq!(
+        state.route_key_input(&KeyInput::from_label("r")).1,
+        ShellCommand::ExplorerConflictReplace
+    );
+    assert_eq!(
+        state.route_key_input(&KeyInput::from_label("s")).1,
+        ShellCommand::ExplorerConflictSkip
+    );
+    assert_eq!(
+        state.route_key_input(&KeyInput::from_label("a")).1,
+        ShellCommand::ExplorerConflictToggleApplyToRemaining
+    );
+    assert_eq!(
+        state.route_key_input(&KeyInput::from_label("Esc")).1,
+        ShellCommand::ExplorerConflictCancel
     );
 
     state.active_popup = Some(ShellPopup {
@@ -974,6 +1001,22 @@ fn explorer_dialogs_share_central_keyboard_mouse_focus_and_hit_map_gating() {
     ] {
         let mut state = explorer_routing_test_state();
         state.explorer_input_mode = mode;
+        state.active_popup = Some(ShellPopup {
+            owner: Some(ShellComponent::Explorer),
+            anchor: (1, 1),
+        });
+        assert_eq!(
+            state.resolved_explorer_overlay(),
+            Some(ResolvedExplorerOverlay::Input(mode))
+        );
+        assert_eq!(
+            state.route_key_input(&KeyInput::from_label("Enter")).1,
+            ShellCommand::SubmitExplorerInput
+        );
+        assert_eq!(
+            state.route_key_input(&KeyInput::from_label("Esc")).1,
+            ShellCommand::CancelExplorerInput
+        );
         state.refresh_hit_map_with_motion(ui::MotionTransitions {
             overlay: Some(entering),
             ..ui::MotionTransitions::default()
@@ -1069,6 +1112,10 @@ fn explorer_semantic_replacements_gate_input_while_active_popup_is_present() {
             anchor: (1, 1),
         });
         state.explorer_overlay_mode = Some(mode);
+        assert!(matches!(
+            state.resolved_explorer_overlay(),
+            Some(ResolvedExplorerOverlay::Semantic(resolved)) if resolved == mode
+        ));
         let descriptor = state
             .active_overlay_descriptor()
             .expect("semantic replacement");
@@ -1138,6 +1185,10 @@ fn explorer_semantic_replacements_gate_input_while_active_popup_is_present() {
             app::AppCommand::SetExplorerState(Some(explorer)),
             Instant::now(),
         );
+        assert!(matches!(
+            state.resolved_explorer_overlay(),
+            Some(ResolvedExplorerOverlay::PendingDialog(_))
+        ));
         let descriptor = state.active_overlay_descriptor().expect("pending dialog");
         assert_eq!(descriptor.kind, ui::MotionOverlayKind::Dialog);
         assert_eq!(descriptor.category, ShellOverlayCategory::PageDialog);
