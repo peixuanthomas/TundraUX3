@@ -135,6 +135,7 @@ pub struct AppearanceConfig {
     pub border_color: BorderColor,
     #[serde(deserialize_with = "deserialize_accent_color")]
     pub accent_color: AccentColor,
+    pub icon_display_mode: IconDisplayMode,
     /// Controls terminal UI transitions.  It is deliberately per-user so an
     /// accessibility preference never changes another user's session.
     #[serde(default)]
@@ -147,6 +148,7 @@ impl Default for AppearanceConfig {
             border_shape: BorderShape::Rounded,
             border_color: BorderColor::Rgb(0x29, 0x43, 0x4e),
             accent_color: BorderColor::Rgb(0x63, 0xd3, 0xe5),
+            icon_display_mode: IconDisplayMode::Image,
             motion_preference: MotionPreference::Full,
         }
     }
@@ -155,11 +157,12 @@ impl Default for AppearanceConfig {
 impl AppearanceConfig {
     /// The complete appearance written by pre-Glacier versions.  Migration
     /// intentionally treats only this exact tuple as the old default; any
-    /// custom border or accent choice stays untouched.
+    /// custom border, accent, or icon choice stays untouched.
     pub(crate) const fn is_legacy_default(&self) -> bool {
         matches!(self.border_shape, BorderShape::Rounded)
             && matches!(self.border_color, BorderColor::White)
             && matches!(self.accent_color, BorderColor::Cyan)
+            && matches!(self.icon_display_mode, IconDisplayMode::Image)
             && matches!(self.motion_preference, MotionPreference::Full)
     }
 }
@@ -169,6 +172,7 @@ const fn legacy_appearance_default() -> AppearanceConfig {
         border_shape: BorderShape::Rounded,
         border_color: BorderColor::White,
         accent_color: BorderColor::Cyan,
+        icon_display_mode: IconDisplayMode::Image,
         motion_preference: MotionPreference::Full,
     }
 }
@@ -186,6 +190,14 @@ impl MotionPreference {
     pub const fn reduced(self) -> bool {
         matches!(self, Self::Reduced)
     }
+}
+
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum IconDisplayMode {
+    Ascii,
+    #[default]
+    Image,
 }
 
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -649,6 +661,7 @@ mod glacier_migration_tests {
                 border_shape: BorderShape::Rounded,
                 border_color: BorderColor::Rgb(0x29, 0x43, 0x4e),
                 accent_color: BorderColor::Rgb(0x63, 0xd3, 0xe5),
+                icon_display_mode: IconDisplayMode::Image,
                 motion_preference: MotionPreference::Full,
             }
         );
@@ -680,6 +693,10 @@ mod glacier_migration_tests {
             },
             AppearanceConfig {
                 accent_color: BorderColor::LightMagenta,
+                ..legacy()
+            },
+            AppearanceConfig {
+                icon_display_mode: IconDisplayMode::Ascii,
                 ..legacy()
             },
             AppearanceConfig {

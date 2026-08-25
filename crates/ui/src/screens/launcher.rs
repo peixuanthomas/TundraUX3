@@ -299,6 +299,27 @@ impl LauncherViewModel {
             self.default_app_icon()
         }
     }
+
+    pub fn item_graphic_path(&self, item: &LauncherItemViewModel) -> Option<std::path::PathBuf> {
+        if item.is_builtin() {
+            self.ascii_assets.launcher_icon_image_path(&item.id)
+        } else {
+            None
+        }
+    }
+
+    pub fn item_graphic_bytes(&self, item: &LauncherItemViewModel) -> Option<&[u8]> {
+        if item.is_builtin() {
+            self.ascii_assets.launcher_icon_image_bytes(&item.id)
+        } else {
+            None
+        }
+    }
+}
+
+pub trait LauncherIconRenderer {
+    /// Returns true when a native image was rendered for `item_id`.
+    fn render_icon(&self, item_id: &str, frame: &mut Frame<'_>, area: Rect) -> bool;
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -685,22 +706,35 @@ pub fn render_launcher(
     theme: &TundraTheme,
 ) {
     let context = RenderContext::from_theme(theme, Default::default(), Default::default());
-    render_launcher_context(frame, area, chrome, model, &context);
+    render_launcher_with_icons_context(frame, area, chrome, model, &context, None);
 }
 
-pub(crate) fn render_launcher_context(
+pub fn render_launcher_with_icons(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    chrome: &ShellChromeViewModel,
+    model: &LauncherViewModel,
+    theme: &TundraTheme,
+    icons: Option<&dyn LauncherIconRenderer>,
+) {
+    let context = RenderContext::from_theme(theme, Default::default(), Default::default());
+    render_launcher_with_icons_context(frame, area, chrome, model, &context, icons);
+}
+
+pub(crate) fn render_launcher_with_icons_context(
     frame: &mut Frame<'_>,
     area: Rect,
     chrome: &ShellChromeViewModel,
     model: &LauncherViewModel,
     context: &RenderContext,
+    icons: Option<&dyn LauncherIconRenderer>,
 ) {
     let theme = &context.compatibility_theme();
     match compute_shell_layout(area) {
         ShellLayout::Compact(compact) => render_compact_home(frame, compact, chrome, theme),
         ShellLayout::Full { top, main, status } => {
             render_top(frame, top, chrome, theme);
-            render_launcher_main(frame, main, model, context);
+            render_launcher_main(frame, main, model, context, icons);
             render_status(frame, status, chrome, theme);
         }
     }
@@ -711,6 +745,7 @@ fn render_launcher_main(
     main: Rect,
     model: &LauncherViewModel,
     context: &RenderContext,
+    icons: Option<&dyn LauncherIconRenderer>,
 ) {
     let layout = launcher_layout(main, model);
     let theme = &context.compatibility_theme();
@@ -723,7 +758,7 @@ fn render_launcher_main(
         .render_frame(frame, layout.panel, context);
     render_launcher_toolbar(frame, &layout, model, context);
     match model.view_mode {
-        LauncherViewMode::LargeIcons => render_launcher_grid(frame, &layout, model, theme),
+        LauncherViewMode::LargeIcons => render_launcher_grid(frame, &layout, model, theme, icons),
         LauncherViewMode::Details => render_launcher_details(frame, &layout, model, context),
     }
     if let Some(indicator) = layout.drop_indicator {
@@ -778,6 +813,7 @@ fn render_launcher_grid(
     layout: &LauncherLayout,
     model: &LauncherViewModel,
     theme: &TundraTheme,
+    icons: Option<&dyn LauncherIconRenderer>,
 ) {
     if model.items.is_empty() {
         frame.render_widget(
@@ -801,7 +837,11 @@ fn render_launcher_grid(
         surface.state.selected = selected;
         surface.set_disabled(item.status != LauncherItemStatus::Ready);
         surface.render_surface_frame(frame, item_layout.area, theme);
-        render_default_ascii_icon(frame, item_layout.icon_area, model, item, style);
+        let rendered_native =
+            icons.is_some_and(|icons| icons.render_icon(&item.id, frame, item_layout.icon_area));
+        if !rendered_native {
+            render_default_ascii_icon(frame, item_layout.icon_area, model, item, style);
+        }
         let inner = inset(item_layout.area, 1);
         let name_y = item_layout
             .icon_area

@@ -1,4 +1,5 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
+use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::artwork::{
@@ -31,6 +32,7 @@ pub struct AsciiAssetStore {
     explorer_icons: ArtSet,
     home_icons: HomeIconCatalog,
     launcher_icons: ArtSet,
+    image_assets: BTreeMap<String, Vec<u8>>,
     clock_font: ClockFontAsset,
     text_arts: BTreeMap<String, TextArt>,
 }
@@ -53,6 +55,7 @@ impl AsciiAssetStore {
         let explorer_icons = load_explorer_icons(&resolver, theme_id)?;
         let home_icons = load_home_icon_catalog(&resolver, theme_id)?;
         let launcher_icons = load_launcher_icons(&resolver, theme_id)?;
+        let image_assets = load_image_assets(&resolver, theme_id, &home_icons, &launcher_icons)?;
         let clock_font = load_clock_font(&resolver, theme_id)?;
         let mut text_arts = BTreeMap::new();
         for (key, relative_path) in REQUIRED_TEXT_ARTS {
@@ -67,6 +70,7 @@ impl AsciiAssetStore {
             explorer_icons,
             home_icons,
             launcher_icons,
+            image_assets,
             clock_font,
             text_arts,
         })
@@ -98,6 +102,18 @@ impl AsciiAssetStore {
         &self.home_icons
     }
 
+    pub fn home_icon_image_path(&self, key: &str) -> Option<PathBuf> {
+        let relative_path = self.home_icons.icon_for_key(key)?.image_path()?;
+        self.image_assets
+            .contains_key(relative_path)
+            .then(|| self.resolver.asset_path(&self.theme_id, relative_path))
+    }
+
+    pub fn home_icon_image_bytes(&self, key: &str) -> Option<&[u8]> {
+        let relative_path = self.home_icons.icon_for_key(key)?.image_path()?;
+        self.image_assets.get(relative_path).map(Vec::as_slice)
+    }
+
     pub fn explorer_icon(&self, key: &str) -> Result<&ExplorerIcon, AssetError> {
         self.explorer_icons
             .get(key)
@@ -112,6 +128,18 @@ impl AsciiAssetStore {
 
     pub fn launcher_icon(&self, key: &str) -> Option<&LauncherIcon> {
         self.launcher_icons.get(key)
+    }
+
+    pub fn launcher_icon_image_path(&self, key: &str) -> Option<PathBuf> {
+        let relative_path = self.launcher_icon(key)?.image_path()?;
+        self.image_assets
+            .contains_key(relative_path)
+            .then(|| self.resolver.asset_path(&self.theme_id, relative_path))
+    }
+
+    pub fn launcher_icon_image_bytes(&self, key: &str) -> Option<&[u8]> {
+        let relative_path = self.launcher_icon(key)?.image_path()?;
+        self.image_assets.get(relative_path).map(Vec::as_slice)
     }
 
     pub fn clock_font(&self) -> &ClockFontAsset {
@@ -150,6 +178,44 @@ impl AsciiAssetStore {
     }
 }
 
+fn load_image_assets(
+    resolver: &AssetResolver,
+    theme_id: &str,
+    home_icons: &HomeIconCatalog,
+    launcher_icons: &ArtSet,
+) -> Result<BTreeMap<String, Vec<u8>>, AssetError> {
+    let relative_paths = home_icons
+        .icons()
+        .chain(launcher_icons.items())
+        .filter_map(ArtItem::image_path)
+        .map(str::to_string)
+        .collect::<BTreeSet<_>>();
+    let mut images = BTreeMap::new();
+
+    for relative_path in relative_paths {
+        let path = resolver.asset_path(theme_id, &relative_path);
+        let bytes = match fs::read(&path) {
+            Ok(bytes) => bytes,
+            Err(source) if source.kind() == std::io::ErrorKind::NotFound => {
+                return Err(AssetError::MissingAsset {
+                    asset: relative_path,
+                    path,
+                });
+            }
+            Err(source) => {
+                return Err(AssetError::ReadAsset {
+                    asset: relative_path,
+                    path,
+                    source,
+                });
+            }
+        };
+        images.insert(relative_path, bytes);
+    }
+
+    Ok(images)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -166,10 +232,29 @@ mod tests {
             .expect("canonical assets should load");
 
         assert_eq!(store.banner_lines("tundraux3").unwrap().len(), 10);
+        let explorer = store
+            .home_icon_catalog()
+            .icon("explorer")
+            .expect("Explorer Home icon");
+        assert_eq!(explorer.image_path(), Some("home_icons/explorer.png"));
+        assert!(
+            store
+                .home_icon_image_path("explorer")
+                .is_some_and(|path| path.is_file())
+        );
         let command_line = store
             .launcher_icon("builtin.command-line")
             .expect("Command Line Launcher icon");
         assert_eq!(command_line.label(), Some("Command Line"));
+        assert_eq!(
+            command_line.image_path(),
+            Some("launcher_icons/command_line.png")
+        );
+        assert!(
+            store
+                .launcher_icon_image_path("builtin.command-line")
+                .is_some_and(|path| path.is_file())
+        );
         assert_eq!(store.clock_font().height, 7);
         assert!(store.text_art("weathr/world/house").unwrap().height() >= 10);
         assert_eq!(
@@ -206,6 +291,31 @@ mod tests {
             store.explorer_icon("not-defined"),
             Err(AssetError::UnknownAsset { .. })
         ));
+    }
+
+    #[test]
+    fn launcher_icon_loading_rejects_a_missing_declared_image() {
+        let root = TemporaryAssetRoot::copy_of(Path::new(CANONICAL_ASSETS_DIR));
+        fs::remove_file(
+            root.path
+                .join("themes/default/launcher_icons/command_line.png"),
+        )
+        .expect("remove generated Launcher icon");
+
+        let error = AsciiAssetStore::load_with_root(&root.path, DEFAULT_THEME_ID)
+            .expect_err("a declared image is part of the theme and must load");
+        assert!(matches!(error, AssetError::MissingAsset { .. }));
+    }
+
+    #[test]
+    fn home_icon_loading_rejects_a_missing_declared_image() {
+        let root = TemporaryAssetRoot::copy_of(Path::new(CANONICAL_ASSETS_DIR));
+        fs::remove_file(root.path.join("themes/default/home_icons/explorer.png"))
+            .expect("remove generated Home icon");
+
+        let error = AsciiAssetStore::load_with_root(&root.path, DEFAULT_THEME_ID)
+            .expect_err("a declared image is part of the theme and must load");
+        assert!(matches!(error, AssetError::MissingAsset { .. }));
     }
 
     #[test]

@@ -192,12 +192,15 @@ pub(in crate::session) fn apply_terminal_graphics_check(
     let (status, message, remediation) = match terminal_graphics {
         ui::TerminalGraphicsProbeStatus::Verified(protocol) => (
             app::diagnostics::DiagnosticStatus::Pass,
-            format!("{} graphics protocol verified", protocol.label()),
+            format!(
+                "{} graphics protocol verified; image icons are available",
+                protocol.label()
+            ),
             None,
         ),
         ui::TerminalGraphicsProbeStatus::Unsupported => (
             app::diagnostics::DiagnosticStatus::Unsupported,
-            "Unsupported: the terminal responded but advertised no supported graphics protocol"
+            "Unsupported: the terminal responded but advertised no supported graphics protocol; ASCII icons are active"
                 .to_string(),
             None,
         ),
@@ -217,6 +220,61 @@ pub(in crate::session) fn apply_terminal_graphics_check(
 }
 
 impl ShellSession {
+    pub(in crate::session) fn apply_terminal_graphics_startup_policy(
+        &mut self,
+        status: &ui::TerminalGraphicsProbeStatus,
+    ) {
+        match status {
+            ui::TerminalGraphicsProbeStatus::Verified(_) => {}
+            ui::TerminalGraphicsProbeStatus::Unsupported
+                if self.ascii_assets.theme_id() == ui::DEFAULT_THEME_ID =>
+            {
+                if self.selected_login_icon_display_mode() != storage::IconDisplayMode::Image {
+                    return;
+                }
+                self.pending_default_ascii_icon_fallback = true;
+                self.notify_modal(
+                    "Terminal graphics unsupported",
+                    "This terminal responded but does not support a compatible graphics protocol. The Default theme will use ASCII icons, and the change will be saved after sign-in.",
+                    ui::NotificationTone::Warning,
+                    vec![ShellNotificationAction::new("continue", "Continue").cancel()],
+                );
+            }
+            ui::TerminalGraphicsProbeStatus::Unsupported => {
+                self.notify_modal(
+                    "Terminal graphics unsupported",
+                    "This terminal responded but does not support a compatible graphics protocol. The custom theme was left unchanged; graphical icons may not render.",
+                    ui::NotificationTone::Warning,
+                    vec![ShellNotificationAction::new("continue", "Continue").cancel()],
+                );
+            }
+            ui::TerminalGraphicsProbeStatus::NoResponse { reason } => {
+                self.notify_modal(
+                    "No terminal graphics response",
+                    format!(
+                        "TundraUX could not determine whether this terminal supports a graphics protocol ({reason}). Your theme was not changed."
+                    ),
+                    ui::NotificationTone::Warning,
+                    vec![ShellNotificationAction::new("continue", "Continue").cancel()],
+                );
+            }
+        }
+    }
+
+    fn selected_login_icon_display_mode(&self) -> storage::IconDisplayMode {
+        self.storage_manager
+            .as_ref()
+            .and_then(|storage| storage.load_users().ok())
+            .and_then(|users| {
+                users
+                    .users
+                    .into_iter()
+                    .find(|user| user.username == self.login_username)
+            })
+            .map(|user| user.appearance.icon_display_mode)
+            .unwrap_or_default()
+    }
+
     pub(in crate::session) fn open_diagnostics(&mut self) {
         if self.is_strict_guest() {
             self.notify_alert_with_tone(
@@ -1051,6 +1109,137 @@ mod diagnostics_shell_tests {
         assert_eq!(check.status, app::diagnostics::DiagnosticStatus::Pass);
         assert!(check.summary.contains("Sixel graphics protocol verified"));
         assert!(check.remediation.is_none());
+    }
+
+    #[test]
+    fn startup_graphics_policy_only_schedules_theme_change_for_unsupported() {
+        let mut unsupported = ShellSession::new(ShellLaunchConfig::default(), (120, 30));
+        unsupported
+            .apply_terminal_graphics_startup_policy(&ui::TerminalGraphicsProbeStatus::Unsupported);
+        assert!(unsupported.pending_default_ascii_icon_fallback);
+        assert_eq!(
+            unsupported
+                .to_notification_view_model()
+                .expect("unsupported notification")
+                .title,
+            "Terminal graphics unsupported"
+        );
+
+        let mut no_response = ShellSession::new(ShellLaunchConfig::default(), (120, 30));
+        no_response.apply_terminal_graphics_startup_policy(
+            &ui::TerminalGraphicsProbeStatus::NoResponse {
+                reason: "query timeout".to_string(),
+            },
+        );
+        assert!(!no_response.pending_default_ascii_icon_fallback);
+        let notice = no_response
+            .to_notification_view_model()
+            .expect("no-response notification");
+        assert_eq!(notice.title, "No terminal graphics response");
+        assert!(notice.message.contains("not changed"));
+
+        let mut verified = ShellSession::new(ShellLaunchConfig::default(), (120, 30));
+        verified.apply_terminal_graphics_startup_policy(
+            &ui::TerminalGraphicsProbeStatus::Verified(ui::EditorGraphicsProtocol::Kitty),
+        );
+        assert!(!verified.pending_default_ascii_icon_fallback);
+        assert!(verified.to_notification_view_model().is_none());
+    }
+
+    #[test]
+    fn unsupported_custom_theme_warns_without_scheduling_a_change() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "tundra-terminal-custom-theme-{}-{nonce}",
+            std::process::id()
+        ));
+        ui::restore_default_theme(&root).expect("restore theme fixture");
+        std::fs::rename(
+            root.join("themes").join(ui::DEFAULT_THEME_ID),
+            root.join("themes").join("custom"),
+        )
+        .expect("rename theme fixture");
+        let custom_assets =
+            ui::RuntimeAsciiAssets::load_with_root(&root, "custom").expect("load custom theme");
+        let startup = ShellStartupState::clean(
+            platform::PlatformKind::Windows,
+            platform::PlatformCapabilities::native_supported(),
+        );
+        let mut state = ShellSession::new_with_startup_and_assets(
+            ShellLaunchConfig::default(),
+            (120, 30),
+            startup,
+            custom_assets,
+        );
+
+        state.apply_terminal_graphics_startup_policy(&ui::TerminalGraphicsProbeStatus::Unsupported);
+
+        assert!(!state.pending_default_ascii_icon_fallback);
+        let notice = state
+            .to_notification_view_model()
+            .expect("custom theme warning");
+        assert!(notice.message.contains("custom theme was left unchanged"));
+        platform::cleanup_temp_path(&root).expect("clean fixture");
+    }
+
+    #[test]
+    fn unsupported_default_image_mode_is_persisted_as_ascii_after_login() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "tundra-terminal-icon-fallback-{}-{nonce}",
+            std::process::id()
+        ));
+        let paths = platform::build_windows_app_paths(
+            root.join("roaming"),
+            root.join("local"),
+            root.join("temp"),
+        )
+        .expect("test app paths");
+        let storage = StorageManager::open(paths).expect("test storage").manager;
+        UserService::new(storage.clone())
+            .bootstrap_admin_with_hint_and_appearance(
+                "AdminUser",
+                "StrongPass123",
+                None,
+                storage::AppearanceConfig::default(),
+            )
+            .expect("bootstrap user");
+        let session = SessionService::new(storage.clone())
+            .login("AdminUser", "StrongPass123")
+            .expect("login");
+        let mut state = ShellSession::new(ShellLaunchConfig::default(), (120, 30));
+        state.storage_manager = Some(storage.clone());
+        state.pending_default_ascii_icon_fallback = true;
+
+        state.complete_login(session);
+
+        let user = storage
+            .load_users()
+            .expect("load users")
+            .users
+            .into_iter()
+            .find(|user| user.username == "AdminUser")
+            .expect("admin user");
+        assert_eq!(
+            user.appearance.icon_display_mode,
+            storage::IconDisplayMode::Ascii
+        );
+        assert_eq!(
+            state
+                .app
+                .active_appearance()
+                .expect("active appearance")
+                .icon_display_mode,
+            storage::IconDisplayMode::Ascii
+        );
+
+        platform::cleanup_temp_path(&root).expect("clean fixture");
     }
 
     fn install_temporary_storage(state: &mut ShellSession) -> std::path::PathBuf {

@@ -1,5 +1,5 @@
 use std::fmt;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 pub use ascii_assets::{
@@ -59,12 +59,28 @@ impl RuntimeAsciiAssets {
         self.store.home_icon_catalog()
     }
 
+    pub fn home_icon_image_path(&self, key: &str) -> Option<PathBuf> {
+        self.store.home_icon_image_path(key)
+    }
+
+    pub fn home_icon_image_bytes(&self, key: &str) -> Option<&[u8]> {
+        self.store.home_icon_image_bytes(key)
+    }
+
     pub fn explorer_icon(&self, key: &str) -> Result<&ExplorerIcon, AssetError> {
         self.store.explorer_icon(key)
     }
 
     pub fn launcher_icon(&self, key: &str) -> Option<&LauncherIcon> {
         self.store.launcher_icon(key)
+    }
+
+    pub fn launcher_icon_image_path(&self, key: &str) -> Option<PathBuf> {
+        self.store.launcher_icon_image_path(key)
+    }
+
+    pub fn launcher_icon_image_bytes(&self, key: &str) -> Option<&[u8]> {
+        self.store.launcher_icon_image_bytes(key)
     }
 
     pub fn clock_font(&self) -> &ClockFontAsset {

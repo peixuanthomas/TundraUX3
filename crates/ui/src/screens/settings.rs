@@ -162,6 +162,7 @@ pub struct SettingsAppearancePreview {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SettingsPickerKind {
     Theme,
+    DefaultThemeIcons,
     Language,
     Timezone,
     BorderColor,
@@ -738,7 +739,11 @@ fn render_picker(
             theme.muted,
         );
     } else {
-        let help = "Arrows: choose    Enter: apply    Esc: cancel";
+        let help = if picker.kind == SettingsPickerKind::DefaultThemeIcons {
+            "Arrows: choose    Enter: apply    Esc: back"
+        } else {
+            "Arrows: choose    Enter: apply    Esc: cancel"
+        };
         frame.render_widget(
             Paragraph::new(Line::styled(help, theme.muted_style()))
                 .alignment(HorizontalAlignment::Left),

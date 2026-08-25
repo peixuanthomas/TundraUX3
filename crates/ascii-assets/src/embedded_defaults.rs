@@ -26,6 +26,21 @@ pub(crate) const EMBEDDED_DEFAULT_THEME_FILES: &[EmbeddedDefaultThemeFile] = &[
     embedded_default_theme_file!("explorer_icons", "explorer_icons.toml"),
     embedded_default_theme_file!("home_icons", "home_icons.toml"),
     embedded_default_theme_file!("launcher_icons", "launcher_icons.toml"),
+    embedded_default_theme_file!("home_icons/default.png", "home_icons/default.png"),
+    embedded_default_theme_file!("home_icons/diagnostics.png", "home_icons/diagnostics.png"),
+    embedded_default_theme_file!("home_icons/editor.png", "home_icons/editor.png"),
+    embedded_default_theme_file!("home_icons/explorer.png", "home_icons/explorer.png"),
+    embedded_default_theme_file!("home_icons/launcher.png", "home_icons/launcher.png"),
+    embedded_default_theme_file!("home_icons/settings.png", "home_icons/settings.png"),
+    embedded_default_theme_file!(
+        "home_icons/user_management.png",
+        "home_icons/user_management.png"
+    ),
+    embedded_default_theme_file!("home_icons/user_profile.png", "home_icons/user_profile.png"),
+    embedded_default_theme_file!(
+        "launcher_icons/command_line.png",
+        "launcher_icons/command_line.png"
+    ),
     embedded_default_theme_file!("weathr/render/clock_font", "weathr/render/clock_font.toml"),
     embedded_default_theme_file!("weathr/animation/airplane", "weathr/animation/airplane.txt"),
     embedded_default_theme_file!("weathr/animation/cloud_0", "weathr/animation/cloud_0.txt"),
@@ -94,9 +109,10 @@ mod tests {
     use super::*;
     use crate::required_assets;
     use std::collections::HashSet;
+    use std::path::Path;
 
     #[test]
-    fn embedded_default_theme_covers_required_ascii_assets() {
+    fn embedded_default_theme_covers_required_ascii_assets_and_images() {
         let embedded = EMBEDDED_DEFAULT_THEME_FILES
             .iter()
             .map(|asset| (asset.key, asset.relative_path))
@@ -107,7 +123,17 @@ mod tests {
             .collect::<HashSet<_>>();
 
         assert_eq!(embedded.len(), EMBEDDED_DEFAULT_THEME_FILES.len());
-        assert_eq!(embedded, required);
+        assert!(required.is_subset(&embedded));
+        assert_eq!(embedded.len(), required.len() + 9);
+        assert_eq!(
+            EMBEDDED_DEFAULT_THEME_FILES
+                .iter()
+                .filter(|asset| Path::new(asset.relative_path)
+                    .extension()
+                    .is_some_and(|extension| extension.eq_ignore_ascii_case("png")))
+                .count(),
+            9
+        );
         assert!(
             EMBEDDED_DEFAULT_THEME_FILES
                 .iter()

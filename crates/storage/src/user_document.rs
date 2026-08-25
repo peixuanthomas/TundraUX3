@@ -125,7 +125,7 @@ fn unix_millis() -> u64 {
 #[cfg(test)]
 mod glacier_user_migration_tests {
     use super::*;
-    use crate::{BorderColor, BorderShape, MotionPreference};
+    use crate::{BorderColor, BorderShape, IconDisplayMode, MotionPreference};
 
     fn user(appearance: AppearanceConfig) -> UserRecord {
         UserRecord {
@@ -151,6 +151,7 @@ mod glacier_user_migration_tests {
             border_shape: BorderShape::Rounded,
             border_color: BorderColor::White,
             accent_color: BorderColor::Cyan,
+            icon_display_mode: IconDisplayMode::Image,
             motion_preference: MotionPreference::Full,
         };
         let custom = AppearanceConfig {

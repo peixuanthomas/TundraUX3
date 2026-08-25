@@ -47,7 +47,8 @@ pub fn restore_default_theme_file(
     Ok(AssetRestoreReport { path, changed })
 }
 
-/// Restores every missing, unreadable, or invalid file in the default theme.
+/// Restores every missing, unreadable, or invalid file in the default theme,
+/// including raster images. Healthy files are preserved.
 pub fn restore_default_theme(root: &Path) -> Result<Vec<AssetRestoreReport>, AssetError> {
     check_default_theme(root)
         .checks
@@ -91,7 +92,25 @@ mod tests {
     }
 
     #[test]
-    fn restores_the_complete_default_theme() {
+    fn restores_embedded_default_theme_images() {
+        let root = TempDir::new("image-restore");
+
+        let restored = restore_default_theme_file(root.path(), "home_icons/explorer.png")
+            .expect("embedded image should be restored");
+
+        assert!(restored.changed);
+        assert!(restored.path.is_file());
+        assert!(
+            check_default_theme(root.path())
+                .checks
+                .iter()
+                .find(|check| check.key == "home_icons/explorer.png")
+                .is_some_and(|check| check.status == AssetCheckStatus::Pass)
+        );
+    }
+
+    #[test]
+    fn restores_the_complete_default_theme_including_images() {
         let root = TempDir::new("restore-all-defaults");
 
         let restored =
@@ -99,6 +118,16 @@ mod tests {
 
         assert_eq!(restored.len(), crate::default_theme_files().len());
         assert!(check_default_theme(root.path()).is_ok());
+        assert!(
+            root.path()
+                .join("themes/default/home_icons/explorer.png")
+                .is_file()
+        );
+        assert!(
+            root.path()
+                .join("themes/default/launcher_icons/command_line.png")
+                .is_file()
+        );
     }
 
     struct TempDir {

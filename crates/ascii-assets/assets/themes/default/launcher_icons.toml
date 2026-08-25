@@ -3,6 +3,7 @@ name = "default-launcher-icons"
 
 [items."builtin.command-line"]
 label = "Command Line"
+image = "launcher_icons/command_line.png"
 lines = [
   ' ______ ',
   '|cmd>  |',

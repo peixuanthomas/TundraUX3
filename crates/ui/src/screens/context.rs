@@ -12,7 +12,7 @@ pub fn render_home_with_context(
     model: &HomeViewModel,
     context: &RenderContext,
 ) {
-    super::home::render_home_context(frame, area, chrome, model, context);
+    super::home::render_home_with_icons_context(frame, area, chrome, model, context, None);
 }
 pub fn render_setup_with_context(
     frame: &mut Frame<'_>,
@@ -48,7 +48,7 @@ pub fn render_launcher_with_context(
     model: &LauncherViewModel,
     context: &RenderContext,
 ) {
-    super::launcher::render_launcher_context(frame, area, chrome, model, context);
+    super::launcher::render_launcher_with_icons_context(frame, area, chrome, model, context, None);
 }
 pub fn render_clock_with_context(
     frame: &mut Frame<'_>,

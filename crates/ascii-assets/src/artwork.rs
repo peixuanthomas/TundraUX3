@@ -1,5 +1,6 @@
 use std::collections::BTreeMap;
 use std::fs;
+use std::path::{Component, Path};
 
 use serde::Deserialize;
 
@@ -40,6 +41,7 @@ impl TextArt {
 pub struct ArtItem {
     pub key: String,
     pub label: Option<String>,
+    image_path: Option<String>,
     pub lines: Vec<String>,
     pub width: usize,
     pub height: usize,
@@ -56,6 +58,10 @@ impl ArtItem {
 
     pub fn lines(&self) -> &[String] {
         &self.lines
+    }
+
+    pub fn image_path(&self) -> Option<&str> {
+        self.image_path.as_deref()
     }
 
     pub fn width(&self) -> usize {
@@ -279,7 +285,12 @@ pub(crate) fn load_art_set(
 
     let mut items = BTreeMap::new();
     for (item_key, item_file) in file.items {
-        let ArtItemFile { label, lines, body } = item_file;
+        let ArtItemFile {
+            label,
+            image,
+            lines,
+            body,
+        } = item_file;
         let lines = match (lines, body) {
             (Some(lines), None) => lines,
             (None, Some(body)) => split_preserved_lines(&body),
@@ -304,11 +315,15 @@ pub(crate) fn load_art_set(
                 message: format!("art item {item_key} must contain at least one line"),
             });
         }
+        let image_path = image
+            .map(|image| validate_image_path(key, &item_key, image))
+            .transpose()?;
         items.insert(
             item_key.clone(),
             ArtItem {
                 key: item_key,
                 label,
+                image_path,
                 lines,
                 width,
                 height,
@@ -317,6 +332,41 @@ pub(crate) fn load_art_set(
     }
 
     Ok(ArtSet { items })
+}
+
+fn validate_image_path(
+    asset_key: &str,
+    item_key: &str,
+    image: String,
+) -> Result<String, AssetError> {
+    let relative = Path::new(&image);
+    if image.trim().is_empty()
+        || relative.is_absolute()
+        || !relative
+            .components()
+            .all(|component| matches!(component, Component::Normal(_)))
+    {
+        return Err(AssetError::InvalidAsset {
+            asset: asset_key.to_string(),
+            message: format!("art item {item_key} has an unsafe image path {image:?}"),
+        });
+    }
+    let supported = relative
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| {
+            matches!(
+                extension.to_ascii_lowercase().as_str(),
+                "gif" | "jpeg" | "jpg" | "png" | "webp"
+            )
+        });
+    if !supported {
+        return Err(AssetError::InvalidAsset {
+            asset: asset_key.to_string(),
+            message: format!("art item {item_key} image must be GIF, JPEG, PNG, or WebP"),
+        });
+    }
+    Ok(image)
 }
 
 pub(crate) fn read_asset_to_string(
@@ -412,6 +462,7 @@ struct ArtSetFile {
 #[derive(Debug, Deserialize)]
 struct ArtItemFile {
     label: Option<String>,
+    image: Option<String>,
     lines: Option<Vec<String>>,
     body: Option<String>,
 }
