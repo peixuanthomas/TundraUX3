@@ -356,6 +356,27 @@ struct TerminalCapabilityQuery {
 }
 
 #[cfg(any(unix, windows))]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+enum TerminalGraphicsCompatibility {
+    #[default]
+    Standard,
+    WezTerm,
+}
+
+#[cfg(any(unix, windows))]
+fn terminal_graphics_compatibility() -> TerminalGraphicsCompatibility {
+    let wezterm_executable =
+        std::env::var_os("WEZTERM_EXECUTABLE").is_some_and(|value| !value.is_empty());
+    let wezterm_program =
+        std::env::var("TERM_PROGRAM").is_ok_and(|value| value.contains("WezTerm"));
+    if wezterm_executable || wezterm_program {
+        TerminalGraphicsCompatibility::WezTerm
+    } else {
+        TerminalGraphicsCompatibility::Standard
+    }
+}
+
+#[cfg(any(unix, windows))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct Iterm2GraphicsCapabilities {
     file: bool,
@@ -370,7 +391,8 @@ fn query_terminal_capabilities(
     use std::os::fd::AsRawFd;
 
     let is_tmux = std::env::var_os("TMUX").is_some_and(|value| !value.is_empty());
-    write_terminal_capability_query(is_tmux)?;
+    let compatibility = terminal_graphics_compatibility();
+    write_terminal_capability_query(is_tmux, compatibility)?;
 
     let stdin = io::stdin();
     let fd = stdin.as_raw_fd();
@@ -432,6 +454,7 @@ fn query_terminal_capabilities(
         responses,
         is_tmux,
         native_font_size,
+        compatibility,
     ))
 }
 
@@ -450,13 +473,14 @@ fn query_terminal_capabilities(
     use windows_sys::Win32::System::Threading::WaitForSingleObject;
 
     let is_tmux = std::env::var_os("TMUX").is_some_and(|value| !value.is_empty());
+    let compatibility = terminal_graphics_compatibility();
     let input = unsafe { GetStdHandle(STD_INPUT_HANDLE) };
     if input.is_null() || input == INVALID_HANDLE_VALUE {
         return Err(EditorMediaError::TerminalQuery(io::Error::last_os_error()));
     }
     let _mode_guard = WindowsConsoleModeGuard::enable_virtual_terminal_input(input)
         .map_err(EditorMediaError::TerminalQuery)?;
-    write_terminal_capability_query(is_tmux)?;
+    write_terminal_capability_query(is_tmux, compatibility)?;
 
     let deadline = Instant::now() + timeout;
     let mut responses = TerminalResponseCollector::new();
@@ -523,6 +547,7 @@ fn query_terminal_capabilities(
         responses,
         is_tmux,
         native_font_size,
+        compatibility,
     ))
 }
 
@@ -641,10 +666,13 @@ fn windows_vt_byte_from_record(
 }
 
 #[cfg(any(unix, windows))]
-fn write_terminal_capability_query(is_tmux: bool) -> Result<(), EditorMediaError> {
+fn write_terminal_capability_query(
+    is_tmux: bool,
+    compatibility: TerminalGraphicsCompatibility,
+) -> Result<(), EditorMediaError> {
     use std::io::{self, Write};
 
-    let query = terminal_capability_query(is_tmux);
+    let query = terminal_capability_query(is_tmux, compatibility);
     let mut stdout = io::stdout().lock();
     stdout
         .write_all(query.as_bytes())
@@ -700,6 +728,7 @@ fn interpret_terminal_capability_responses(
     responses: TerminalResponseCollector,
     is_tmux: bool,
     native_font_size: Option<FontSize>,
+    compatibility: TerminalGraphicsCompatibility,
 ) -> TerminalCapabilityQuery {
     let iterm2_graphics = parse_iterm2_graphics_capabilities(&responses.raw);
     let standard_protocol = standard_protocol_from_responses(&responses.responses);
@@ -709,13 +738,20 @@ fn interpret_terminal_capability_responses(
             .then_some(ProtocolType::Sixel)
             .or_else(|| capabilities.file.then_some(ProtocolType::Iterm2))
     });
-    let had_unverified_graphics_hint = standard_protocol.is_none()
-        && iterm2_protocol.is_none()
-        && terminal_has_graphics_environment_hint(is_tmux);
+    let protocol_type = match compatibility {
+        TerminalGraphicsCompatibility::Standard => standard_protocol.or(iterm2_protocol),
+        // ratatui-image's Kitty backend uses Unicode placeholders, which
+        // WezTerm does not implement correctly. WezTerm does support the
+        // iTerm2 inline-image protocol; require a completed terminal handshake
+        // before selecting that environment-backed compatibility path.
+        TerminalGraphicsCompatibility::WezTerm => {
+            iterm2_protocol.or_else(|| responses.complete.then_some(ProtocolType::Iterm2))
+        }
+    };
+    let had_unverified_graphics_hint =
+        protocol_type.is_none() && terminal_has_graphics_environment_hint(is_tmux);
     TerminalCapabilityQuery {
-        protocol_type: standard_protocol
-            .or(iterm2_protocol)
-            .unwrap_or(ProtocolType::Halfblocks),
+        protocol_type: protocol_type.unwrap_or(ProtocolType::Halfblocks),
         font_size: font_size_from_responses(&responses.responses, native_font_size),
         is_tmux,
         complete: responses.complete,
@@ -751,11 +787,21 @@ fn terminal_probe_from_query(query: TerminalCapabilityQuery) -> TerminalGraphics
 }
 
 #[cfg(any(unix, windows))]
-fn terminal_capability_query(is_tmux: bool) -> String {
+fn terminal_capability_query(
+    is_tmux: bool,
+    compatibility: TerminalGraphicsCompatibility,
+) -> String {
+    let blacklist_protocols = match compatibility {
+        TerminalGraphicsCompatibility::Standard => Vec::new(),
+        TerminalGraphicsCompatibility::WezTerm => {
+            vec![ProtocolType::Kitty, ProtocolType::Sixel]
+        }
+    };
     let standard_query = CapabilityParser::query(
         is_tmux,
         QueryStdioOptions {
             text_sizing_protocol: true,
+            blacklist_protocols,
             ..Default::default()
         },
     );
@@ -941,7 +987,7 @@ mod tests {
     #[test]
     fn capability_query_orders_iterm_confirmation_before_one_final_terminator() {
         for is_tmux in [false, true] {
-            let query = terminal_capability_query(is_tmux);
+            let query = terminal_capability_query(is_tmux, TerminalGraphicsCompatibility::Standard);
             let (_, escape, end) = CapabilityParser::tmux_start_escape_end(is_tmux);
             let kitty = query.find("_Gi=31").expect("kitty query");
             let sixel = query.find("[c").expect("sixel query");
@@ -956,6 +1002,27 @@ mod tests {
             assert!(iterm < terminator);
             assert_eq!(query.matches(&status).count(), 1);
             assert!(query.ends_with(&format!("{status}{end}")));
+        }
+    }
+
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn wezterm_uses_iterm2_instead_of_kitty_unicode_placeholders() {
+        for is_tmux in [false, true] {
+            let query = terminal_capability_query(is_tmux, TerminalGraphicsCompatibility::WezTerm);
+            assert!(!query.contains("_Gi=31"));
+            assert!(!query.contains("[c"));
+            assert!(query.contains("]1337;Capabilities"));
+
+            let mut responses = TerminalResponseCollector::new();
+            responses.push_bytes(b"\x1b[0n");
+            let interpreted = interpret_terminal_capability_responses(
+                responses,
+                is_tmux,
+                Some(DEFAULT_TERMINAL_FONT_SIZE),
+                TerminalGraphicsCompatibility::WezTerm,
+            );
+            assert_eq!(interpreted.protocol_type, ProtocolType::Iterm2);
         }
     }
 
@@ -1135,7 +1202,12 @@ mod tests {
     fn response_interpretation_preserves_measured_cell_size() {
         let mut responses = TerminalResponseCollector::new();
         responses.push_bytes(b"\x1b[6;9;17t\x1b_Gi=31;OK\x1b\\\x1b[0n");
-        let query = interpret_terminal_capability_responses(responses, false, None);
+        let query = interpret_terminal_capability_responses(
+            responses,
+            false,
+            None,
+            TerminalGraphicsCompatibility::Standard,
+        );
         assert_eq!(query.protocol_type, ProtocolType::Kitty);
         assert_eq!((query.font_size.width, query.font_size.height), (17, 9));
         assert!(query.complete);
@@ -1155,6 +1227,7 @@ mod tests {
                 },
                 false,
                 native_font_size,
+                TerminalGraphicsCompatibility::Standard,
             )
             .font_size
         };
