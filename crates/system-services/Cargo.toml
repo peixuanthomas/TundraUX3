@@ -16,6 +16,7 @@ tokio = { version = "1", features = ["rt-multi-thread", "sync", "time", "macros"
 time = { path = "../time" }
 watchdog = { path = "../watchdog", features = ["tokio"] }
 system-services-model = { path = "../system-services-model" }
+platform = { path = "../platform" }
 
 [dev-dependencies]
 tempfile = "3.0"

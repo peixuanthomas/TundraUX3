@@ -2240,6 +2240,8 @@ mod runtime_preflight_tests {
                 time: system_services::TimeState::Local {
                     local_time: observed_at.fixed_offset(),
                 },
+                storage: system_services::StorageState::Loading,
+                network: system_services::NetworkState::Loading,
             }
         };
         let (snapshot_sender, mut snapshots) = tokio::sync::watch::channel(snapshot());

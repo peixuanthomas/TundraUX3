@@ -13,6 +13,25 @@ use crate::launcher::{LauncherCommand, LauncherController, LauncherEffect, Launc
 use identity::{AuthSession, UserAccount};
 use time::{ClockDisplay, ClockSnapshot, NetworkClock, TimeSyncResult};
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AppSystemStatusSnapshot {
+    pub revision: u64,
+    pub observed_at: chrono::DateTime<chrono::Utc>,
+    pub storage: system_services_model::StorageState,
+    pub network: system_services_model::NetworkState,
+}
+
+impl From<&system_services_model::SystemSnapshot> for AppSystemStatusSnapshot {
+    fn from(snapshot: &system_services_model::SystemSnapshot) -> Self {
+        Self {
+            revision: snapshot.revision,
+            observed_at: snapshot.observed_at,
+            storage: snapshot.storage.clone(),
+            network: snapshot.network.clone(),
+        }
+    }
+}
+
 /// Commands understood by the application state core.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AppCommand {
@@ -29,6 +48,7 @@ pub enum AppCommand {
     SetExplorerState(Option<ExplorerState>),
     SetLauncherState(Option<LauncherState>),
     SetDiagnosticsSnapshot(Option<DiagnosticsSnapshot>),
+    SetSystemStatusSnapshot(Option<AppSystemStatusSnapshot>),
     SetEditorState(Option<EditorState>),
     Editor(EditorCommand),
     SetEditorViewport(EditorViewport),
@@ -64,6 +84,7 @@ pub struct AppSnapshot<'a> {
     pub explorer: Option<&'a ExplorerState>,
     pub launcher: Option<&'a LauncherState>,
     pub diagnostics: Option<&'a DiagnosticsSnapshot>,
+    pub system_status: Option<&'a AppSystemStatusSnapshot>,
     pub editor: Option<&'a EditorState>,
 }
 
@@ -81,6 +102,7 @@ pub struct AppState {
     explorer_state: Option<ExplorerState>,
     launcher_state: Option<LauncherState>,
     diagnostics_snapshot: Option<DiagnosticsSnapshot>,
+    system_status_snapshot: Option<AppSystemStatusSnapshot>,
     editor_state: Option<EditorState>,
     pending_editor_effects: VecDeque<EditorEffect>,
 }
@@ -108,6 +130,7 @@ impl AppState {
             explorer_state: None,
             launcher_state: None,
             diagnostics_snapshot: None,
+            system_status_snapshot: None,
             editor_state: None,
             pending_editor_effects: VecDeque::new(),
         }
@@ -163,6 +186,10 @@ impl AppState {
             }
             AppCommand::SetDiagnosticsSnapshot(diagnostics_snapshot) => {
                 self.diagnostics_snapshot = diagnostics_snapshot;
+                AppAction::Redraw
+            }
+            AppCommand::SetSystemStatusSnapshot(system_status_snapshot) => {
+                self.system_status_snapshot = system_status_snapshot;
                 AppAction::Redraw
             }
             AppCommand::SetEditorState(editor_state) => {
@@ -227,6 +254,7 @@ impl AppState {
             explorer: self.explorer_state.as_ref(),
             launcher: self.launcher_state.as_ref(),
             diagnostics: self.diagnostics_snapshot.as_ref(),
+            system_status: self.system_status_snapshot.as_ref(),
             editor: self.editor_state.as_ref(),
         }
     }
@@ -355,6 +383,9 @@ impl AppState {
     pub fn diagnostics_snapshot(&self) -> Option<&DiagnosticsSnapshot> {
         self.diagnostics_snapshot.as_ref()
     }
+    pub fn system_status_snapshot(&self) -> Option<&AppSystemStatusSnapshot> {
+        self.system_status_snapshot.as_ref()
+    }
     pub fn editor_state(&self) -> Option<&EditorState> {
         self.editor_state.as_ref()
     }
@@ -392,6 +423,7 @@ impl PartialEq for AppState {
             && self.explorer_state == other.explorer_state
             && self.launcher_state == other.launcher_state
             && self.diagnostics_snapshot == other.diagnostics_snapshot
+            && self.system_status_snapshot == other.system_status_snapshot
             && self.editor_state == other.editor_state
             && self.pending_editor_effects == other.pending_editor_effects
     }
@@ -1043,5 +1075,36 @@ mod tests {
 
         let display = state.current_clock_display();
         assert!(display.warning.is_none());
+    }
+
+    #[test]
+    fn system_status_snapshot_is_copied_and_stored_as_read_only_app_state() {
+        let observed_at = Utc::now();
+        let source = system_services_model::SystemSnapshot {
+            revision: 7,
+            observed_at,
+            weather: system_services_model::WeatherState::Loading,
+            time: system_services_model::TimeState::Local {
+                local_time: observed_at.fixed_offset(),
+            },
+            storage: system_services_model::StorageState::Unavailable {
+                reason: "storage offline".to_string(),
+            },
+            network: system_services_model::NetworkState::Unavailable {
+                reason: "network offline".to_string(),
+            },
+        };
+        let status = AppSystemStatusSnapshot::from(&source);
+        let mut state = AppState::default();
+        assert_eq!(
+            state.dispatch_at(
+                AppCommand::SetSystemStatusSnapshot(Some(status.clone())),
+                Instant::now(),
+            ),
+            AppAction::Redraw
+        );
+        assert_eq!(state.system_status_snapshot(), Some(&status));
+        assert_eq!(state.snapshot().system_status, Some(&status));
+        assert_ne!(state, AppState::default());
     }
 }

@@ -22,6 +22,8 @@ use watchdog::{
 const DEFAULT_WEATHER_REFRESH: Duration = Duration::from_secs(5 * 60);
 const DEFAULT_LOCATION_REFRESH: Duration = Duration::from_secs(24 * 60 * 60);
 const DEFAULT_TIME_REFRESH: Duration = Duration::from_secs(5 * 60);
+const DEFAULT_SYSTEM_STATUS_BACKGROUND_REFRESH: Duration = Duration::from_secs(30);
+const DEFAULT_SYSTEM_STATUS_ACTIVE_REFRESH: Duration = Duration::from_secs(5);
 const SYSTEM_LOCATION_DETECTION_TIMEOUT: Duration = Duration::from_secs(3);
 const DEFAULT_BACKOFF: [Duration; 3] = [
     Duration::from_secs(30),
@@ -44,6 +46,9 @@ pub struct SystemServicesConfig {
     pub time_sync_interval: Duration,
     pub cache_dir: Option<PathBuf>,
     pub request_timeout: Duration,
+    pub storage_thresholds: StorageThresholds,
+    pub system_status_background_refresh_interval: Duration,
+    pub system_status_active_refresh_interval: Duration,
 }
 
 impl Default for SystemServicesConfig {
@@ -61,6 +66,14 @@ impl Default for SystemServicesConfig {
             time_sync_interval: DEFAULT_TIME_REFRESH,
             cache_dir: None,
             request_timeout: Duration::from_secs(10),
+            storage_thresholds: StorageThresholds {
+                low_available_bytes: 5 * 1024 * 1024 * 1024,
+                low_percentage: 10,
+                critical_available_bytes: 1024 * 1024 * 1024,
+                critical_percentage: 5,
+            },
+            system_status_background_refresh_interval: DEFAULT_SYSTEM_STATUS_BACKGROUND_REFRESH,
+            system_status_active_refresh_interval: DEFAULT_SYSTEM_STATUS_ACTIVE_REFRESH,
         }
     }
 }
@@ -303,6 +316,8 @@ enum Command {
     Reconfigure(SystemServicesConfig),
     RefreshWeather,
     SyncTime,
+    RefreshSystemStatus,
+    SetSystemStatusActive(bool),
     Validate(
         SystemServicesConfig,
         std_mpsc::Sender<Result<DateTime<Utc>, SystemServicesError>>,
@@ -333,6 +348,12 @@ impl SystemServicesHandle {
     }
     pub fn sync_time_now(&self) -> Result<(), SystemServicesError> {
         self.send(Command::SyncTime)
+    }
+    pub fn refresh_system_status(&self) -> Result<(), SystemServicesError> {
+        self.send(Command::RefreshSystemStatus)
+    }
+    pub fn set_system_status_active(&self, active: bool) -> Result<(), SystemServicesError> {
+        self.send(Command::SetSystemStatusActive(active))
     }
     pub fn validate_time_source(
         &self,
@@ -391,17 +412,32 @@ impl SystemServicesRuntime {
         watchdog: AppWatchdog,
         provider: Arc<dyn WeatherProvider>,
     ) -> (SystemServicesHandle, watch::Receiver<SystemSnapshot>) {
+        Self::start_with_platform_and_provider(
+            config,
+            watchdog,
+            Arc::from(platform::native_platform()),
+            provider,
+        )
+    }
+    pub fn start_with_platform_and_provider(
+        config: SystemServicesConfig,
+        watchdog: AppWatchdog,
+        platform: Arc<dyn platform::Platform>,
+        provider: Arc<dyn WeatherProvider>,
+    ) -> (SystemServicesHandle, watch::Receiver<SystemSnapshot>) {
         let initial = snapshot(
             0,
             WeatherState::Loading,
             TimeState::Local {
                 local_time: local_time_at(&config.timezone_id, Utc::now()),
             },
+            StorageState::Loading,
+            NetworkState::Loading,
         );
         let (snapshot_tx, snapshot_rx) = watch::channel(initial);
         let (command_tx, command_rx) = mpsc::unbounded_channel();
         let tasks = watchdog.task_group("system-services");
-        let mut worker_inputs = Some((config, provider, snapshot_tx, command_rx));
+        let mut worker_inputs = Some((config, platform, provider, snapshot_tx, command_rx));
         let join = tasks
             .spawn_thread(
                 TaskSpec {
@@ -412,14 +448,14 @@ impl SystemServicesRuntime {
                     restart_policy: RestartPolicy::never(),
                 },
                 move || {
-                    let (config, provider, snapshot_tx, command_rx) = worker_inputs
+                    let (config, platform, provider, snapshot_tx, command_rx) = worker_inputs
                         .take()
                         .expect("the non-restartable system services worker runs once");
                     let runtime = tokio::runtime::Builder::new_current_thread()
                         .enable_all()
                         .build();
                     if let Ok(runtime) = runtime {
-                        runtime.block_on(run(config, provider, snapshot_tx, command_rx));
+                        runtime.block_on(run(config, platform, provider, snapshot_tx, command_rx));
                     }
                 },
             )
@@ -438,6 +474,7 @@ impl SystemServicesRuntime {
 
 async fn run(
     mut config: SystemServicesConfig,
+    platform: Arc<dyn platform::Platform>,
     provider: Arc<dyn WeatherProvider>,
     snapshot_tx: watch::Sender<SystemSnapshot>,
     mut commands: mpsc::UnboundedReceiver<Command>,
@@ -445,6 +482,8 @@ async fn run(
     let mut weather_due = Instant::now();
     let mut time_due = Instant::now();
     let mut location_due = Instant::now();
+    let mut system_status_due = Instant::now();
+    let mut system_status_active = false;
     let mut system_location = None;
     let mut last_good: Option<WeatherSnapshot> = load_weather_cache(&config).ok().flatten();
     if let Some(cached) = last_good.clone() {
@@ -460,11 +499,15 @@ async fn run(
     let mut time_error: Option<String> = None;
     let mut pending_validation = None;
     'main: loop {
-        let tick = tokio::time::sleep(Duration::from_secs(1));
+        let tick = tokio::time::sleep(
+            system_status_due
+                .saturating_duration_since(Instant::now())
+                .min(Duration::from_secs(1)),
+        );
         tokio::pin!(tick);
         tokio::select! {
             _ = &mut tick => {},
-            command = commands.recv() => if apply_command(command, &mut config, &mut weather_due, &mut time_due, &mut location_due, &mut pending_validation) { break },
+            command = commands.recv() => if apply_command(command, &mut config, &mut weather_due, &mut time_due, &mut location_due, &mut system_status_due, &mut system_status_active, &mut pending_validation) { break },
         }
         let now = Instant::now();
         if let Some((candidate, sender)) = pending_validation.take() {
@@ -478,10 +521,19 @@ async fn run(
                 }
                 command = commands.recv() => {
                     let _ = sender.send(Err(SystemServicesError::Shutdown));
-                    if apply_command(command, &mut config, &mut weather_due, &mut time_due, &mut location_due, &mut pending_validation) { break; }
+                    if apply_command(command, &mut config, &mut weather_due, &mut time_due, &mut location_due, &mut system_status_due, &mut system_status_active, &mut pending_validation) { break; }
                     continue 'main;
                 }
             }
+        }
+        if now >= system_status_due {
+            refresh_system_status(&snapshot_tx, platform.as_ref(), config.storage_thresholds);
+            system_status_due = now
+                + if system_status_active {
+                    config.system_status_active_refresh_interval
+                } else {
+                    config.system_status_background_refresh_interval
+                };
         }
         if now >= weather_due {
             let should_refresh_location = location_due <= now;
@@ -503,7 +555,7 @@ async fn run(
             let result = tokio::select! {
                 result = &mut operation => result.map_err(|_| "weather request timed out".to_string()).and_then(|result| result),
                 command = commands.recv() => {
-                    if apply_command(command, &mut config, &mut weather_due, &mut time_due, &mut location_due, &mut pending_validation) { break; }
+                    if apply_command(command, &mut config, &mut weather_due, &mut time_due, &mut location_due, &mut system_status_due, &mut system_status_active, &mut pending_validation) { break; }
                     continue 'main;
                 }
             };
@@ -566,7 +618,7 @@ async fn run(
             let result = tokio::select! {
                 result = &mut operation => result.map_err(|_| "time request timed out".to_string()).and_then(|result| result),
                 command = commands.recv() => {
-                    if apply_command(command, &mut config, &mut weather_due, &mut time_due, &mut location_due, &mut pending_validation) { break; }
+                    if apply_command(command, &mut config, &mut weather_due, &mut time_due, &mut location_due, &mut system_status_due, &mut system_status_active, &mut pending_validation) { break; }
                     continue 'main;
                 }
             };
@@ -624,6 +676,8 @@ fn apply_command(
     weather_due: &mut Instant,
     time_due: &mut Instant,
     location_due: &mut Instant,
+    system_status_due: &mut Instant,
+    system_status_active: &mut bool,
     pending_validation: &mut Option<ValidationRequest>,
 ) -> bool {
     match command {
@@ -633,6 +687,7 @@ fn apply_command(
             *weather_due = Instant::now();
             *time_due = Instant::now();
             *location_due = Instant::now();
+            *system_status_due = Instant::now();
             false
         }
         Some(Command::RefreshWeather) => {
@@ -641,6 +696,15 @@ fn apply_command(
         }
         Some(Command::SyncTime) => {
             *time_due = Instant::now();
+            false
+        }
+        Some(Command::RefreshSystemStatus) => {
+            *system_status_due = Instant::now();
+            false
+        }
+        Some(Command::SetSystemStatusActive(active)) => {
+            *system_status_active = active;
+            *system_status_due = Instant::now();
             false
         }
         Some(Command::Validate(candidate, sender)) => {
@@ -654,15 +718,157 @@ fn retry_delay(failures: usize, standard: Duration) -> Duration {
     DEFAULT_BACKOFF[failures.saturating_sub(1).min(DEFAULT_BACKOFF.len() - 1)].min(standard)
 }
 fn publish(sender: &watch::Sender<SystemSnapshot>, weather: WeatherState, time: TimeState) {
-    let revision = sender.borrow().revision.saturating_add(1);
-    let _ = sender.send(snapshot(revision, weather, time));
+    let previous = sender.borrow().clone();
+    let _ = sender.send(snapshot(
+        previous.revision.saturating_add(1),
+        weather,
+        time,
+        previous.storage,
+        previous.network,
+    ));
 }
-fn snapshot(revision: u64, weather: WeatherState, time: TimeState) -> SystemSnapshot {
+
+fn refresh_system_status(
+    sender: &watch::Sender<SystemSnapshot>,
+    platform: &dyn platform::Platform,
+    thresholds: StorageThresholds,
+) {
+    let previous = sender.borrow().clone();
+    let storage = match platform.local_volumes() {
+        Ok(volumes) => StorageState::Ready(map_storage(volumes, thresholds)),
+        Err(error) => match previous.storage {
+            StorageState::Ready(last_good) | StorageState::Stale { last_good, .. } => {
+                StorageState::Stale {
+                    last_good,
+                    error: error.to_string(),
+                }
+            }
+            StorageState::Loading | StorageState::Unavailable { .. } => StorageState::Unavailable {
+                reason: error.to_string(),
+            },
+        },
+    };
+    let network = match platform.network_status() {
+        Ok(status) => NetworkState::Ready(map_network(status)),
+        Err(error) => match previous.network {
+            NetworkState::Ready(last_good) | NetworkState::Stale { last_good, .. } => {
+                NetworkState::Stale {
+                    last_good,
+                    error: error.to_string(),
+                }
+            }
+            NetworkState::Loading | NetworkState::Unavailable { .. } => NetworkState::Unavailable {
+                reason: error.to_string(),
+            },
+        },
+    };
+    let _ = sender.send(snapshot(
+        previous.revision.saturating_add(1),
+        previous.weather,
+        previous.time,
+        storage,
+        network,
+    ));
+}
+
+fn map_storage(
+    volumes: Vec<platform::LocalVolume>,
+    thresholds: StorageThresholds,
+) -> StorageSnapshot {
+    let volumes: Vec<_> = volumes
+        .into_iter()
+        .map(|volume| StorageVolumeSnapshot {
+            identifier: volume.root.to_string_lossy().into_owned(),
+            label: volume.label,
+            kind: match volume.kind {
+                platform::VolumeKind::Fixed => StorageVolumeKind::Fixed,
+                platform::VolumeKind::Removable => StorageVolumeKind::Removable,
+            },
+            is_system: volume.is_system,
+            access: match volume.access {
+                platform::VolumeAccess::ReadWrite => StorageVolumeAccess::ReadWrite,
+                platform::VolumeAccess::ReadOnly => StorageVolumeAccess::ReadOnly,
+                platform::VolumeAccess::Unavailable => StorageVolumeAccess::Unavailable,
+            },
+            total_bytes: volume.total_bytes,
+            available_bytes: volume.available_bytes,
+            pressure: thresholds.classify(volume.total_bytes, volume.available_bytes),
+        })
+        .collect();
+    let detected = volumes.iter().position(|volume| volume.is_system);
+    let fallback = volumes
+        .iter()
+        .position(|volume| volume.kind == StorageVolumeKind::Fixed);
+    let (system_volume_index, system_volume_source) = if let Some(index) = detected {
+        (Some(index), SystemVolumeSource::Detected)
+    } else if let Some(index) = fallback {
+        (Some(index), SystemVolumeSource::FixedVolumeFallback)
+    } else {
+        (None, SystemVolumeSource::Unavailable)
+    };
+    let overall_pressure = volumes
+        .iter()
+        .map(|volume| volume.pressure)
+        .filter(|pressure| *pressure != StoragePressure::Unknown)
+        .max()
+        .unwrap_or(StoragePressure::Unknown);
+    StorageSnapshot {
+        volumes,
+        overall_pressure,
+        system_volume_index,
+        system_volume_source,
+        sampled_at: Utc::now(),
+    }
+}
+
+fn map_network(status: platform::NetworkStatus) -> NetworkSnapshot {
+    let active_link_count = status.active_link_count();
+    let has_active_link = status.has_active_link();
+    let interfaces = status
+        .interfaces
+        .into_iter()
+        .map(|interface| NetworkInterfaceSnapshot {
+            name: interface.name,
+            display_name: interface.display_name,
+            kind: match interface.kind {
+                platform::NetworkInterfaceKind::Wired => NetworkInterfaceKind::Wired,
+                platform::NetworkInterfaceKind::Wireless => NetworkInterfaceKind::Wireless,
+                platform::NetworkInterfaceKind::Virtual => NetworkInterfaceKind::Virtual,
+                platform::NetworkInterfaceKind::Unknown => NetworkInterfaceKind::Unknown,
+            },
+            link_state: match interface.link_state {
+                platform::NetworkLinkState::Up => NetworkLinkState::Up,
+                platform::NetworkLinkState::Down => NetworkLinkState::Down,
+                platform::NetworkLinkState::Unknown => NetworkLinkState::Unknown,
+            },
+            addresses: interface
+                .addresses
+                .into_iter()
+                .map(|address| address.to_string())
+                .collect(),
+        })
+        .collect();
+    NetworkSnapshot {
+        interfaces,
+        active_link_count,
+        has_active_link,
+        sampled_at: Utc::now(),
+    }
+}
+fn snapshot(
+    revision: u64,
+    weather: WeatherState,
+    time: TimeState,
+    storage: StorageState,
+    network: NetworkState,
+) -> SystemSnapshot {
     SystemSnapshot {
         revision,
         observed_at: Utc::now(),
         weather,
         time,
+        storage,
+        network,
     }
 }
 
@@ -970,6 +1176,152 @@ mod tests {
     use super::*;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
+    fn mock_platform() -> platform::mock::MockPlatform {
+        let root = std::env::temp_dir().join("system-services-platform-test");
+        let user_dirs = platform::UserDirs::new(
+            root.join("Desktop"),
+            root.join("Documents"),
+            root.join("Downloads"),
+            root.join("Pictures"),
+            root.join("Videos"),
+            root.join("Music"),
+            root.join("Data"),
+        )
+        .unwrap();
+        let app_paths = platform::build_linux_app_paths(
+            root.join("Config"),
+            root.join("Data"),
+            root.join("Cache"),
+            root.join("State"),
+            root.join("Temp"),
+        )
+        .unwrap();
+        platform::mock::MockPlatform::new(user_dirs, app_paths)
+    }
+
+    #[test]
+    fn system_status_failures_are_independent_stale_and_recoverable() {
+        let platform = mock_platform();
+        platform.set_local_volumes_result(Ok(vec![platform::LocalVolume {
+            root: PathBuf::from("/"),
+            label: None,
+            kind: platform::VolumeKind::Fixed,
+            total_bytes: Some(1_000),
+            available_bytes: Some(500),
+            is_system: true,
+            access: platform::VolumeAccess::ReadWrite,
+        }]));
+        let observed_at = Utc::now();
+        let (sender, receiver) = watch::channel(SystemSnapshot {
+            revision: 0,
+            observed_at,
+            weather: WeatherState::Loading,
+            time: TimeState::Local {
+                local_time: observed_at.fixed_offset(),
+            },
+            storage: StorageState::Loading,
+            network: NetworkState::Loading,
+        });
+        let thresholds = SystemServicesConfig::default().storage_thresholds;
+        refresh_system_status(&sender, &platform, thresholds);
+        assert!(matches!(receiver.borrow().storage, StorageState::Ready(_)));
+        assert!(matches!(receiver.borrow().network, NetworkState::Ready(_)));
+
+        platform.set_local_volumes_result(Err(platform::PlatformError::Unsupported {
+            capability: "local_volumes",
+        }));
+        platform.set_network_status_result(Ok(platform::NetworkStatus::default()));
+        refresh_system_status(&sender, &platform, thresholds);
+        assert!(matches!(
+            receiver.borrow().storage,
+            StorageState::Stale { .. }
+        ));
+        assert!(matches!(receiver.borrow().network, NetworkState::Ready(_)));
+
+        platform.set_local_volumes_result(Ok(Vec::new()));
+        platform.set_network_status_result(Err(platform::PlatformError::Unsupported {
+            capability: "network_status",
+        }));
+        refresh_system_status(&sender, &platform, thresholds);
+        assert!(matches!(receiver.borrow().storage, StorageState::Ready(_)));
+        assert!(matches!(
+            receiver.borrow().network,
+            NetworkState::Stale { .. }
+        ));
+        assert!(
+            platform
+                .calls()
+                .iter()
+                .filter(|call| matches!(call, platform::mock::MockCall::LocalVolumes))
+                .count()
+                >= 3
+        );
+    }
+
+    #[test]
+    fn platform_storage_mapping_preserves_rows_pressure_and_fixed_fallback() {
+        let thresholds = StorageThresholds {
+            low_available_bytes: 500,
+            low_percentage: 20,
+            critical_available_bytes: 100,
+            critical_percentage: 5,
+        };
+        let mapped = map_storage(
+            vec![
+                platform::LocalVolume {
+                    root: PathBuf::from("/fixed"),
+                    label: Some("Fixed".to_string()),
+                    kind: platform::VolumeKind::Fixed,
+                    total_bytes: Some(10_000),
+                    available_bytes: Some(1_000),
+                    is_system: false,
+                    access: platform::VolumeAccess::ReadWrite,
+                },
+                platform::LocalVolume {
+                    root: PathBuf::from("/media/removable"),
+                    label: None,
+                    kind: platform::VolumeKind::Removable,
+                    total_bytes: Some(1_000),
+                    available_bytes: Some(50),
+                    is_system: false,
+                    access: platform::VolumeAccess::ReadOnly,
+                },
+            ],
+            thresholds,
+        );
+        assert_eq!(mapped.system_volume_index, Some(0));
+        assert_eq!(
+            mapped.system_volume_source,
+            SystemVolumeSource::FixedVolumeFallback
+        );
+        assert!(!mapped.volumes[0].is_system);
+        assert_eq!(mapped.overall_pressure, StoragePressure::Critical);
+    }
+
+    #[test]
+    fn platform_network_mapping_keeps_virtual_rows_but_excludes_them_from_active_count() {
+        let mapped = map_network(platform::NetworkStatus::new(vec![
+            platform::NetworkInterface {
+                name: "eth0".to_string(),
+                display_name: None,
+                kind: platform::NetworkInterfaceKind::Wired,
+                link_state: platform::NetworkLinkState::Up,
+                addresses: vec!["192.0.2.1".parse().unwrap()],
+            },
+            platform::NetworkInterface {
+                name: "vm0".to_string(),
+                display_name: Some("Virtual".to_string()),
+                kind: platform::NetworkInterfaceKind::Virtual,
+                link_state: platform::NetworkLinkState::Up,
+                addresses: vec!["2001:db8::1".parse().unwrap()],
+            },
+        ]));
+        assert_eq!(mapped.interfaces.len(), 2);
+        assert_eq!(mapped.active_link_count, 1);
+        assert!(mapped.has_active_link);
+        assert_eq!(mapped.interfaces[1].addresses, ["2001:db8::1"]);
+    }
+
     struct FakeProvider {
         outcomes: Mutex<Vec<Result<WeatherData, String>>>,
         calls: AtomicUsize,
@@ -1058,6 +1410,53 @@ mod tests {
             std::thread::sleep(Duration::from_millis(10));
         }
         panic!("snapshot predicate was not reached")
+    }
+    fn status_call_count(platform: &platform::mock::MockPlatform) -> usize {
+        platform
+            .calls()
+            .iter()
+            .filter(|call| matches!(call, platform::mock::MockCall::LocalVolumes))
+            .count()
+    }
+
+    #[test]
+    fn injected_platform_refreshes_immediately_manually_and_at_active_interval() {
+        let platform = Arc::new(mock_platform());
+        let provider = Arc::new(FakeProvider {
+            outcomes: Mutex::new(vec![Ok(sample())]),
+            calls: AtomicUsize::new(0),
+        });
+        let mut config = config();
+        config.timezone_location = Some(config.fallback_location.clone());
+        config.system_status_background_refresh_interval = Duration::from_secs(60);
+        config.system_status_active_refresh_interval = Duration::from_millis(30);
+        let platform_trait: Arc<dyn platform::Platform> = platform.clone();
+        let (handle, mut receiver) = SystemServicesRuntime::start_with_platform_and_provider(
+            config,
+            watchdog(),
+            platform_trait,
+            provider,
+        );
+        wait_until(&mut receiver, |snapshot| {
+            matches!(snapshot.storage, StorageState::Ready(_))
+                && matches!(snapshot.network, NetworkState::Ready(_))
+        });
+        let initial_calls = status_call_count(&platform);
+        handle.refresh_system_status().unwrap();
+        wait_until(&mut receiver, |_| {
+            status_call_count(&platform) > initial_calls
+        });
+        let manual_calls = status_call_count(&platform);
+        handle.set_system_status_active(true).unwrap();
+        wait_until(&mut receiver, |_| {
+            status_call_count(&platform) >= manual_calls + 2
+        });
+        handle.set_system_status_active(false).unwrap();
+        let before_background = status_call_count(&platform);
+        wait_until(&mut receiver, |_| {
+            status_call_count(&platform) > before_background
+        });
+        handle.shutdown().unwrap();
     }
     #[test]
     fn ready_stale_unavailable_and_manual_refresh_are_published() {

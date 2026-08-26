@@ -19,7 +19,7 @@ pub use application::notification::{
     Notification, NotificationAction, NotificationCenter, NotificationCommand, NotificationLevel,
     NotificationResponse, NotificationTone,
 };
-pub use application::{AppAction, AppCommand, AppSnapshot, AppState};
+pub use application::{AppAction, AppCommand, AppSnapshot, AppState, AppSystemStatusSnapshot};
 
 #[derive(Clone)]
 pub struct AppRuntimeContext {

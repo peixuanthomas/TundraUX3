@@ -21,3 +21,4 @@ watchdog = { path = "../watchdog" }
 unicode-segmentation = "1.12"
 unicode-width = "0.2"
 time = { version = "0.1.1", path = "../time" }
+system-services-model = { path = "../system-services-model" }

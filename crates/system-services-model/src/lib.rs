@@ -413,6 +413,8 @@ pub struct SystemSnapshot {
     pub observed_at: DateTime<Utc>,
     pub weather: WeatherState,
     pub time: TimeState,
+    pub storage: StorageState,
+    pub network: NetworkState,
 }
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TimeSyncMode {
