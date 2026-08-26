@@ -90,6 +90,16 @@ impl Tabs {
         self.handle_event_in(event, area, false)
     }
 
+    /// Returns the clipped cell geometry used by borderless tab rendering and input.
+    pub fn borderless_item_areas(&self, area: Rect) -> Vec<Rect> {
+        self.item_areas(area, false)
+    }
+
+    /// Returns the tab index at a terminal cell using borderless render geometry.
+    pub fn borderless_index_at(&self, area: Rect, column: u16, row: u16) -> Option<usize> {
+        self.index_at(area, column, row, false)
+    }
+
     fn handle_event_in(&mut self, event: InputEvent, area: Rect, bordered: bool) -> ComponentEvent {
         match event {
             InputEvent::Key(key) if !key.is_press_like() => ComponentEvent::None,
@@ -114,7 +124,7 @@ impl Tabs {
                 _ => ComponentEvent::None,
             },
             InputEvent::Mouse(mouse) => {
-                let index = self.tab_index_at(area, mouse.column(), mouse.row(), bordered);
+                let index = self.index_at(area, mouse.column(), mouse.row(), bordered);
                 match mouse.kind {
                     MouseKind::Move => {
                         if self.hovered != index {
@@ -204,23 +214,27 @@ impl Tabs {
         }
     }
 
-    fn tab_index_at(&self, area: Rect, column: u16, row: u16, bordered: bool) -> Option<usize> {
+    fn item_areas(&self, area: Rect, bordered: bool) -> Vec<Rect> {
         let inner = if bordered { inner_area(area) } else { area };
-        if !contains_point(inner, column, row) || row != inner.y {
-            return None;
-        }
-
         let mut tab_x = inner.x;
-        for (index, tab) in self.tabs.iter().enumerate() {
-            let width = u16::try_from(Line::from(tab.label.as_str()).width())
-                .unwrap_or(u16::MAX)
-                .saturating_add(2);
-            if column >= tab_x && column < tab_x.saturating_add(width) {
-                return Some(index);
-            }
-            tab_x = tab_x.saturating_add(width);
-        }
-        None
+        self.tabs
+            .iter()
+            .map(|tab| {
+                let width = u16::try_from(Line::from(tab.label.as_str()).width())
+                    .unwrap_or(u16::MAX)
+                    .saturating_add(2)
+                    .min(inner.right().saturating_sub(tab_x));
+                let item = Rect::new(tab_x, inner.y, width, u16::from(inner.height > 0));
+                tab_x = tab_x.saturating_add(width);
+                item
+            })
+            .collect()
+    }
+
+    fn index_at(&self, area: Rect, column: u16, row: u16, bordered: bool) -> Option<usize> {
+        self.item_areas(area, bordered)
+            .iter()
+            .position(|item| contains_point(*item, column, row))
     }
 
     fn ratatui_widget<'a>(&'a self, theme: &TundraTheme, bordered: bool) -> RatatuiTabs<'a> {

@@ -1,6 +1,9 @@
 use ratatui::layout::Rect;
 
-use super::model::{SystemStatusTab, SystemStatusViewModel};
+use super::model::{
+    SystemStatusContentViewModel, SystemStatusSectionState, SystemStatusTab, SystemStatusViewModel,
+};
+use crate::components::{TabItem, Tabs};
 use crate::screens::shell::{inset_rect, line_in_rect, rect_contains, usize_to_u16};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -30,6 +33,7 @@ pub struct SystemStatusLayout {
     pub tabs_area: Rect,
     pub tabs: Vec<SystemStatusTabLayout>,
     pub content_panel: Rect,
+    pub notice_area: Option<Rect>,
     pub rows_area: Rect,
     pub footer: Rect,
     pub refresh_button: Rect,
@@ -56,8 +60,38 @@ pub fn system_status_layout(main: Rect, model: &SystemStatusViewModel) -> System
         inner.width,
         footer.y.saturating_sub(content_y),
     );
-    let table_inner = inset_rect(content_panel, 1);
+    let content_inner = inset_rect(content_panel, 1);
     let item_count = model.item_count();
+    let has_stale_notice = match (&model.content, model.tab) {
+        (SystemStatusContentViewModel::Admin(admin), SystemStatusTab::Storage) => {
+            matches!(admin.storage_state, SystemStatusSectionState::Stale { .. })
+                && !admin.storage_rows.is_empty()
+        }
+        (SystemStatusContentViewModel::Admin(admin), SystemStatusTab::Network) => {
+            matches!(admin.network_state, SystemStatusSectionState::Stale { .. })
+                && !admin.network_rows.is_empty()
+        }
+        _ => false,
+    };
+    let notice_height = if has_stale_notice {
+        content_inner.height.min(2)
+    } else {
+        0
+    };
+    let notice_area = has_stale_notice.then(|| {
+        Rect::new(
+            content_inner.x,
+            content_inner.y,
+            content_inner.width,
+            notice_height,
+        )
+    });
+    let table_inner = Rect::new(
+        content_inner.x,
+        content_inner.y.saturating_add(notice_height),
+        content_inner.width,
+        content_inner.height.saturating_sub(notice_height),
+    );
     let table_header = u16::from(item_count > 0);
     let visible_capacity = usize::from(table_inner.height.saturating_sub(table_header));
     let max_start = item_count.saturating_sub(visible_capacity);
@@ -111,18 +145,18 @@ pub fn system_status_layout(main: Rect, model: &SystemStatusViewModel) -> System
         refresh_width,
         footer.height,
     );
-    let mut tab_x = tabs_area.x;
     let tabs = if model.is_admin() {
+        let component = Tabs::new(
+            "system-status.tabs.geometry",
+            SystemStatusTab::ALL
+                .into_iter()
+                .map(|tab| TabItem::new(tab.label(), tab.label()))
+                .collect(),
+        );
         SystemStatusTab::ALL
             .into_iter()
-            .map(|tab| {
-                let width = usize_to_u16(tab.label().chars().count())
-                    .saturating_add(4)
-                    .min(tabs_area.right().saturating_sub(tab_x));
-                let area = Rect::new(tab_x, tabs_area.y, width, tabs_area.height);
-                tab_x = tab_x.saturating_add(width);
-                SystemStatusTabLayout { tab, area }
-            })
+            .zip(component.borderless_item_areas(tabs_area))
+            .map(|(tab, area)| SystemStatusTabLayout { tab, area })
             .collect()
     } else {
         Vec::new()
@@ -134,6 +168,7 @@ pub fn system_status_layout(main: Rect, model: &SystemStatusViewModel) -> System
         tabs_area,
         tabs,
         content_panel,
+        notice_area,
         rows_area,
         footer,
         refresh_button,

@@ -573,6 +573,30 @@ fn tabs_hit_testing_uses_terminal_width_for_wide_labels() {
 }
 
 #[test]
+fn borderless_tabs_expose_the_same_clipped_cell_geometry_as_pointer_input() {
+    let mut tabs = Tabs::new(
+        "sections",
+        vec![TabItem::new("wide", "界面"), TabItem::new("files", "Files")],
+    );
+    tabs.set_selected(Some(1));
+    let area = Rect::new(3, 2, 10, 1);
+    let items = tabs.borderless_item_areas(area);
+
+    assert_eq!(items, vec![Rect::new(3, 2, 6, 1), Rect::new(9, 2, 4, 1)]);
+    assert_eq!(tabs.borderless_index_at(area, 8, 2), Some(0));
+    assert_eq!(tabs.borderless_index_at(area, 9, 2), Some(1));
+    assert_eq!(tabs.borderless_index_at(area, 12, 2), Some(1));
+    assert_eq!(tabs.borderless_index_at(area, 13, 2), None);
+    assert_eq!(
+        tabs.handle_event_borderless(
+            InputEvent::mouse(MouseEvent::click(8, 2, MouseButton::Left)),
+            area,
+        ),
+        ComponentEvent::Selected(ComponentId::new("sections"), 0)
+    );
+}
+
+#[test]
 fn command_palette_filters_query_and_activates_selected_command() {
     let mut palette = CommandPalette::new(
         "commands",

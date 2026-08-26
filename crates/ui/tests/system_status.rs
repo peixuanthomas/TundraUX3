@@ -16,12 +16,23 @@ fn admin_exposes_all_tabs_and_hit_targets() {
     let model = admin_model(SystemStatusTab::Storage, SystemStatusSectionState::Ready);
     let layout = system_status_layout(full_main(100, 24), &model);
     assert_eq!(layout.tabs.len(), 3);
-    for tab in SystemStatusTab::ALL {
+    for (index, tab) in SystemStatusTab::ALL.into_iter().enumerate() {
         let item = layout.tabs.iter().find(|item| item.tab == tab).unwrap();
         assert_eq!(
             system_status_hit_test(&layout, (item.area.x, item.area.y)),
             Some(SystemStatusHitTarget::Tab(tab))
         );
+        assert_eq!(
+            system_status_hit_test(&layout, (item.area.right().saturating_sub(1), item.area.y),),
+            Some(SystemStatusHitTarget::Tab(tab))
+        );
+        if let Some(next) = layout.tabs.get(index + 1) {
+            assert_eq!(item.area.right(), next.area.x);
+            assert_eq!(
+                system_status_hit_test(&layout, (next.area.x, next.area.y)),
+                Some(SystemStatusHitTarget::Tab(next.tab))
+            );
+        }
     }
     assert_eq!(
         system_status_hit_test(&layout, (layout.rows[0].area.x, layout.rows[0].area.y)),
@@ -31,6 +42,62 @@ fn admin_exposes_all_tabs_and_hit_targets() {
         system_status_hit_test(&layout, (layout.refresh_button.x, layout.refresh_button.y)),
         Some(SystemStatusHitTarget::Refresh)
     );
+}
+
+#[test]
+fn stale_storage_and_network_reserve_notice_without_covering_table_geometry() {
+    for tab in [SystemStatusTab::Storage, SystemStatusTab::Network] {
+        let mut ready = admin_model(tab, SystemStatusSectionState::Ready);
+        let mut stale = admin_model(tab, SystemStatusSectionState::Ready);
+        if let SystemStatusContentViewModel::Admin(admin) = &mut ready.content {
+            admin.storage_rows = vec![storage_row(0), storage_row(1)];
+            admin.network_rows = vec![network_row(0), network_row(1)];
+        }
+        if let SystemStatusContentViewModel::Admin(admin) = &mut stale.content {
+            admin.storage_rows = vec![storage_row(0), storage_row(1)];
+            admin.network_rows = vec![network_row(0), network_row(1)];
+            match tab {
+                SystemStatusTab::Storage => {
+                    admin.storage_state = SystemStatusSectionState::Stale {
+                        message: "Storage data is old".into(),
+                    }
+                }
+                SystemStatusTab::Network => {
+                    admin.network_state = SystemStatusSectionState::Stale {
+                        message: "Network data is old".into(),
+                    }
+                }
+                SystemStatusTab::Overview => unreachable!(),
+            }
+        }
+        let ready_layout = system_status_layout(full_main(100, 24), &ready);
+        let layout = system_status_layout(full_main(100, 24), &stale);
+        let notice = layout.notice_area.expect("stale notice");
+        assert_eq!(
+            layout.visible_capacity + usize::from(notice.height),
+            ready_layout.visible_capacity
+        );
+        assert!(notice.bottom() <= layout.rows_area.y);
+        assert_eq!(system_status_hit_test(&layout, (notice.x, notice.y)), None);
+        assert_eq!(
+            system_status_hit_test(&layout, (layout.rows[0].area.x, layout.rows[0].area.y)),
+            Some(SystemStatusHitTarget::Row(0))
+        );
+
+        let output = render(100, 24, &stale, TundraTheme::default_dark());
+        assert!(output.contains("Stale data"));
+        match tab {
+            SystemStatusTab::Storage => {
+                assert!(output.contains("Volume"));
+                assert!(output.contains("disk0"));
+            }
+            SystemStatusTab::Network => {
+                assert!(output.contains("Display name"));
+                assert!(output.contains("en0"));
+            }
+            SystemStatusTab::Overview => unreachable!(),
+        }
+    }
 }
 
 #[test]
@@ -111,14 +178,7 @@ fn admin_model(
             storage_state,
             storage_rows: vec![storage_row(0)],
             network_state: SystemStatusSectionState::Ready,
-            network_rows: vec![NetworkInterfaceRowViewModel {
-                name: "en0".into(),
-                display_name: "Wi-Fi".into(),
-                kind: "Wireless".into(),
-                link_state: "Up".into(),
-                addresses: "192.0.2.1".into(),
-                tone: ComponentTone::Success,
-            }],
+            network_rows: vec![network_row(0)],
         }),
         tab,
         selected_row: 0,
@@ -155,6 +215,17 @@ fn storage_row(index: usize) -> StorageVolumeRowViewModel {
         usage: "42 GB / 100 GB".into(),
         used_percentage: "42%".into(),
         pressure: "Normal".into(),
+        tone: ComponentTone::Success,
+    }
+}
+
+fn network_row(index: usize) -> NetworkInterfaceRowViewModel {
+    NetworkInterfaceRowViewModel {
+        name: format!("en{index}"),
+        display_name: "Wi-Fi".into(),
+        kind: "Wireless".into(),
+        link_state: "Up".into(),
+        addresses: "192.0.2.1".into(),
         tone: ComponentTone::Success,
     }
 }

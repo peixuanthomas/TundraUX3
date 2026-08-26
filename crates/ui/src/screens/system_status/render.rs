@@ -210,18 +210,7 @@ fn render_storage(
     table.selected = model.selected_index();
     table.state.focused = true;
     table.render_frame(frame, layout.rows_area, context);
-    if let SystemStatusSectionState::Stale { message } = &admin.storage_state {
-        EmptyState::new("Stale data").detail(message).render_frame(
-            frame,
-            Rect::new(
-                layout.rows_area.x,
-                layout.rows_area.y,
-                layout.rows_area.width,
-                layout.rows_area.height.min(2),
-            ),
-            context,
-        );
-    }
+    render_stale_notice(frame, layout, &admin.storage_state, context);
     render_scrollbar(frame, layout, model, context);
 }
 
@@ -262,19 +251,21 @@ fn render_network(
     table.selected = model.selected_index();
     table.state.focused = true;
     table.render_frame(frame, layout.rows_area, context);
-    if let SystemStatusSectionState::Stale { message } = &admin.network_state {
-        EmptyState::new("Stale data").detail(message).render_frame(
-            frame,
-            Rect::new(
-                layout.rows_area.x,
-                layout.rows_area.y,
-                layout.rows_area.width,
-                layout.rows_area.height.min(2),
-            ),
-            context,
-        );
-    }
+    render_stale_notice(frame, layout, &admin.network_state, context);
     render_scrollbar(frame, layout, model, context);
+}
+
+fn render_stale_notice(
+    frame: &mut Frame<'_>,
+    layout: &SystemStatusLayout,
+    state: &SystemStatusSectionState,
+    context: &RenderContext,
+) {
+    if let (Some(area), SystemStatusSectionState::Stale { message }) = (layout.notice_area, state) {
+        EmptyState::new("Stale data")
+            .detail(message)
+            .render_frame(frame, area, context);
+    }
 }
 
 fn render_state(
