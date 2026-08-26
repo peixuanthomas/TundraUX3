@@ -30,6 +30,8 @@ const FULL_DISK_ACCESS_SETTINGS_URI: &str =
     "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles";
 #[cfg(target_os = "macos")]
 const MNT_REMOVABLE: u32 = 0x0000_0200;
+#[cfg(target_os = "macos")]
+const MNT_DONTBROWSE: u32 = 0x0010_0000;
 
 #[cfg(target_os = "macos")]
 unsafe extern "C" {
@@ -502,7 +504,7 @@ fn macos_local_volumes() -> Result<Vec<LocalVolume>, PlatformError> {
                 .to_str()
                 .unwrap_or_default(),
         ));
-        if root.as_os_str().is_empty()
+        if !macos_mount_is_visible(&root, stats.f_flags)
             || (root != Path::new("/") && root_device.as_ref() == Some(&device))
             || seen_devices.insert(device, ()).is_some()
         {
@@ -530,6 +532,11 @@ fn macos_local_volumes() -> Result<Vec<LocalVolume>, PlatformError> {
     volumes.sort_by(|left, right| left.root.cmp(&right.root));
     volumes.dedup_by(|left, right| left.root == right.root);
     Ok(volumes)
+}
+
+#[cfg(target_os = "macos")]
+fn macos_mount_is_visible(root: &Path, mount_flags: u32) -> bool {
+    !root.as_os_str().is_empty() && (root == Path::new("/") || mount_flags & MNT_DONTBROWSE == 0)
 }
 
 #[cfg(target_os = "macos")]
@@ -608,7 +615,9 @@ fn macos_network_status() -> Result<NetworkStatus, PlatformError> {
 
 #[cfg(all(test, target_os = "macos"))]
 mod system_status_tests {
-    use super::{macos_interface_kind, macos_volume_kind};
+    use std::path::Path;
+
+    use super::{MNT_DONTBROWSE, macos_interface_kind, macos_mount_is_visible, macos_volume_kind};
     use crate::{NetworkInterfaceKind, VolumeKind};
 
     #[test]
@@ -618,6 +627,16 @@ mod system_status_tests {
             macos_volume_kind(super::MNT_REMOVABLE),
             VolumeKind::Removable
         );
+    }
+
+    #[test]
+    fn mount_visibility_keeps_root_and_excludes_hidden_auxiliary_mounts() {
+        assert!(macos_mount_is_visible(Path::new("/"), MNT_DONTBROWSE));
+        assert!(!macos_mount_is_visible(
+            Path::new("/System/Volumes/VM"),
+            MNT_DONTBROWSE
+        ));
+        assert!(macos_mount_is_visible(Path::new("/Volumes/External"), 0));
     }
 
     #[test]
