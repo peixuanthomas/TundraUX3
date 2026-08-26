@@ -2,6 +2,46 @@ use super::queries::{ResolvedExplorerOverlay, ShellOverlayCategory};
 use super::*;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 
+struct SystemStatusTestWeatherProvider;
+
+impl system_services::WeatherProvider for SystemStatusTestWeatherProvider {
+    fn current_weather<'life0, 'async_trait>(
+        &'life0 self,
+        _location: system_services::WeatherLocation,
+        _units: system_services::WeatherUnits,
+    ) -> std::pin::Pin<
+        Box<
+            dyn std::future::Future<Output = Result<system_services::WeatherData, String>>
+                + Send
+                + 'async_trait,
+        >,
+    >
+    where
+        'life0: 'async_trait,
+        Self: 'async_trait,
+    {
+        Box::pin(async { Err("weather disabled in system status test".into()) })
+    }
+}
+
+struct SystemStatusServiceGuard(Option<system_services::SystemServicesHandle>);
+
+impl Drop for SystemStatusServiceGuard {
+    fn drop(&mut self) {
+        if let Some(handle) = self.0.take() {
+            let _ = handle.shutdown();
+        }
+    }
+}
+
+struct SystemStatusTempGuard(PathBuf);
+
+impl Drop for SystemStatusTempGuard {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
 fn set_test_auth_role(state: &mut ShellSession, role: UserRole) {
     state.app.dispatch_at(
         app::AppCommand::SetAuthSession(Some(AuthSession {
@@ -187,8 +227,53 @@ fn system_status_alert_dedupe_upgrade_recovery_and_network_baseline() {
         state.system_status_storage_alerts.get("/sensitive/mount"),
         Some(&SystemStatusAlertLevel::Low)
     );
+    assert!(
+        state
+            .app
+            .notification_center()
+            .alert()
+            .unwrap()
+            .contains("/sensitive/mount")
+    );
+    assert!(
+        state
+            .app
+            .notification_center()
+            .alert()
+            .unwrap()
+            .contains("100 B")
+    );
+    assert_eq!(
+        state.app.notification_center().alert_tone(),
+        Some(ui::NotificationTone::Warning)
+    );
+    assert_eq!(state.app.notification_center().alert_count(), 1);
+    assert_eq!(
+        state.app.notification_center().alert_tone(),
+        Some(ui::NotificationTone::Warning)
+    );
+    assert!(
+        state
+            .app
+            .notification_center()
+            .alert_message_for_key("system-status.storage:/sensitive/mount")
+            .is_some()
+    );
+    let repeated = state.app.notification_center().alert().map(str::to_string);
     state.apply_system_status_snapshot(system_status_test_snapshot(
         2,
+        system_services::StoragePressure::Low,
+        true,
+        system_services::SystemVolumeSource::Detected,
+    ));
+    assert_eq!(state.app.notification_center().alert(), repeated.as_deref());
+    assert_eq!(state.app.notification_center().alert_count(), 1);
+    assert_eq!(
+        state.system_status_storage_alerts.get("/sensitive/mount"),
+        Some(&SystemStatusAlertLevel::Low)
+    );
+    state.apply_system_status_snapshot(system_status_test_snapshot(
+        3,
         system_services::StoragePressure::Critical,
         false,
         system_services::SystemVolumeSource::Detected,
@@ -197,17 +282,24 @@ fn system_status_alert_dedupe_upgrade_recovery_and_network_baseline() {
         state.system_status_storage_alerts.get("/sensitive/mount"),
         Some(&SystemStatusAlertLevel::Critical)
     );
+    assert_eq!(
+        state.app.notification_center().alert_tone(),
+        Some(ui::NotificationTone::Critical)
+    );
+    assert_eq!(state.app.notification_center().alert_count(), 2);
     assert!(state.system_status_disconnected_notified);
     state.apply_system_status_snapshot(system_status_test_snapshot(
-        3,
+        4,
         system_services::StoragePressure::Normal,
         true,
         system_services::SystemVolumeSource::Detected,
     ));
     assert!(state.system_status_storage_alerts.is_empty());
     assert!(!state.system_status_disconnected_notified);
+    assert!(state.app.notification_center().alert().is_none());
+    assert_eq!(state.app.notification_center().alert_count(), 0);
     state.apply_system_status_snapshot(system_status_test_snapshot(
-        4,
+        5,
         system_services::StoragePressure::Low,
         false,
         system_services::SystemVolumeSource::Detected,
@@ -217,9 +309,131 @@ fn system_status_alert_dedupe_upgrade_recovery_and_network_baseline() {
         Some(&SystemStatusAlertLevel::Low)
     );
     assert!(state.system_status_disconnected_notified);
-    state.reset_system_status_trackers();
+    assert_eq!(state.app.notification_center().alert_count(), 2);
+    assert_eq!(
+        state.app.notification_center().alert_tone(),
+        Some(ui::NotificationTone::Warning)
+    );
+    state.app.dispatch_at(
+        app::AppCommand::SetSystemStatusSnapshot(None),
+        Instant::now(),
+    );
+    state.complete_login(AuthSession {
+        session_id: "next-admin-session".into(),
+        user_id: "next-admin".into(),
+        username: "next-admin".into(),
+        role: UserRole::Admin,
+        started_at_epoch_ms: 2,
+    });
     assert!(state.system_status_network_baseline.is_none());
     assert!(state.system_status_storage_alerts.is_empty());
+    assert_eq!(state.app.notification_center().alert_count(), 0);
+
+    state.complete_login(AuthSession {
+        session_id: "user-session".into(),
+        user_id: "user-id".into(),
+        username: "user".into(),
+        role: UserRole::User,
+        started_at_epoch_ms: 3,
+    });
+    state.apply_system_status_snapshot(system_status_test_snapshot(
+        10,
+        system_services::StoragePressure::Low,
+        true,
+        system_services::SystemVolumeSource::Detected,
+    ));
+    let storage_key = "system-status.storage:/sensitive/mount";
+    let storage_message = state
+        .app
+        .notification_center()
+        .alert_message_for_key(storage_key)
+        .unwrap();
+    assert!(storage_message.contains("Device storage"));
+    for secret in [
+        "/sensitive/mount",
+        "secret-label",
+        "secret-iface",
+        "secret-display",
+        "192.0.2.99",
+        "2001:db8::99",
+    ] {
+        assert!(!storage_message.contains(secret));
+    }
+    assert_eq!(state.app.notification_center().alert_count(), 1);
+    assert_eq!(
+        state.app.notification_center().alert_tone(),
+        Some(ui::NotificationTone::Warning)
+    );
+    state.apply_system_status_snapshot(system_status_test_snapshot(
+        11,
+        system_services::StoragePressure::Low,
+        false,
+        system_services::SystemVolumeSource::Detected,
+    ));
+    let network_message = state
+        .app
+        .notification_center()
+        .alert_message_for_key("system-status.network")
+        .unwrap();
+    assert_eq!(network_message, "Network connection was lost");
+    for secret in [
+        "/sensitive/mount",
+        "secret-label",
+        "secret-iface",
+        "secret-display",
+        "192.0.2.99",
+        "2001:db8::99",
+    ] {
+        assert!(!network_message.contains(secret));
+    }
+    assert_eq!(state.app.notification_center().alert_count(), 2);
+    assert_eq!(
+        state.app.notification_center().alert_tone(),
+        Some(ui::NotificationTone::Warning)
+    );
+    state.apply_system_status_snapshot(system_status_test_snapshot(
+        12,
+        system_services::StoragePressure::Low,
+        false,
+        system_services::SystemVolumeSource::Detected,
+    ));
+    assert_eq!(state.app.notification_center().alert_count(), 2);
+    assert_eq!(
+        state.app.notification_center().alert_tone(),
+        Some(ui::NotificationTone::Warning)
+    );
+    state.apply_system_status_snapshot(system_status_test_snapshot(
+        13,
+        system_services::StoragePressure::Low,
+        true,
+        system_services::SystemVolumeSource::Detected,
+    ));
+    assert!(
+        state
+            .app
+            .notification_center()
+            .alert_message_for_key("system-status.network")
+            .is_none()
+    );
+    assert_eq!(state.app.notification_center().alert_count(), 1);
+    state.apply_system_status_snapshot(system_status_test_snapshot(
+        14,
+        system_services::StoragePressure::Low,
+        false,
+        system_services::SystemVolumeSource::Detected,
+    ));
+    assert!(
+        state
+            .app
+            .notification_center()
+            .alert_message_for_key("system-status.network")
+            .is_some()
+    );
+    assert_eq!(state.app.notification_center().alert_count(), 2);
+    assert_eq!(
+        state.app.notification_center().alert_tone(),
+        Some(ui::NotificationTone::Warning)
+    );
 }
 
 #[test]
@@ -307,6 +521,263 @@ fn system_status_mouse_wheel_and_scrollbar_drag_update_explicit_viewport() {
         ui::MouseEventKind::Up(PointerButton::Left),
     )));
     assert!(state.scrollbar_drag.is_none());
+}
+
+#[test]
+fn system_status_modal_focus_traps_and_restores_page_focus() {
+    let mut state = ShellSession::new_for_home_mode(
+        ShellLaunchConfig::default(),
+        (120, 40),
+        ShellHomeMode::User,
+    );
+    set_test_auth_role(&mut state, UserRole::Admin);
+    state.screen_stack.push(ShellScreen::SystemStatus);
+    state.focused_component = ShellComponent::SystemStatus;
+    state.notify_modal(
+        "Confirm",
+        "Modal over status",
+        ui::NotificationTone::Info,
+        vec![ShellNotificationAction::new("ok", "OK")],
+    );
+    state.refresh_hit_map();
+    assert_eq!(
+        state.focus_order(),
+        vec![ShellComponent::NotificationDialog]
+    );
+    assert_eq!(state.focused_component, ShellComponent::NotificationDialog);
+    state.move_focus(ui::FocusDirection::Next);
+    assert_eq!(state.focused_component, ShellComponent::NotificationDialog);
+    state.apply_input(InputEvent::from_key_label("Enter"));
+    state.refresh_hit_map();
+    assert_eq!(state.focus_order(), vec![ShellComponent::SystemStatus]);
+    assert_eq!(state.focused_component, ShellComponent::SystemStatus);
+
+    state.apply_time_sync_failure_for_test("offline");
+    state.refresh_hit_map();
+    assert_eq!(state.focus_order(), vec![ShellComponent::TimeSyncDialog]);
+    state.move_focus(ui::FocusDirection::Previous);
+    assert_eq!(state.focused_component, ShellComponent::TimeSyncDialog);
+    state.apply_input(InputEvent::from_key_label("Enter"));
+    state.refresh_hit_map();
+    assert_eq!(state.focused_component, ShellComponent::SystemStatus);
+}
+
+#[test]
+fn system_status_runtime_watch_drain_applies_revision_and_completes_refresh() {
+    let mut state = ShellSession::new_for_home_mode(
+        ShellLaunchConfig::default(),
+        (120, 40),
+        ShellHomeMode::User,
+    );
+    set_test_auth_role(&mut state, UserRole::Admin);
+    let initial = system_status_test_snapshot(
+        4,
+        system_services::StoragePressure::Normal,
+        true,
+        system_services::SystemVolumeSource::Detected,
+    );
+    state.apply_system_status_snapshot(initial.clone());
+    state.system_status_refresh_requested_revision = Some(4);
+    let system = |snapshot: app::AppSystemStatusSnapshot| system_services::SystemSnapshot {
+        revision: snapshot.revision,
+        observed_at: snapshot.observed_at,
+        weather: system_services::WeatherState::Loading,
+        time: system_services::TimeState::Local {
+            local_time: snapshot.observed_at.fixed_offset(),
+        },
+        storage: snapshot.storage,
+        network: snapshot.network,
+    };
+    let (sender, mut receiver) = tokio::sync::watch::channel(system(initial));
+    assert!(!drain_system_status_snapshot(&mut receiver, &mut state));
+    let updated = system_status_test_snapshot(
+        5,
+        system_services::StoragePressure::Critical,
+        false,
+        system_services::SystemVolumeSource::Detected,
+    );
+    sender.send(system(updated)).unwrap();
+    assert!(drain_system_status_snapshot(&mut receiver, &mut state));
+    assert_eq!(state.app.system_status_snapshot().unwrap().revision, 5);
+    assert!(state.system_status_refresh_requested_revision.is_none());
+}
+
+#[test]
+fn system_status_live_service_home_open_refresh_and_background_close() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!(
+        "tundra-shell-system-status-live-{}-{unique}",
+        std::process::id(),
+    ));
+    let _temp_guard = SystemStatusTempGuard(root.clone());
+    let user_dirs = platform::UserDirs::new(
+        root.join("Desktop"),
+        root.join("Documents"),
+        root.join("Downloads"),
+        root.join("Pictures"),
+        root.join("Videos"),
+        root.join("Music"),
+        root.join("UserData"),
+    )
+    .unwrap();
+    let app_paths = platform::build_linux_app_paths(
+        root.join("Config"),
+        root.join("Data"),
+        root.join("Cache"),
+        root.join("State"),
+        root.join("Temp"),
+    )
+    .unwrap();
+    let opened_storage = StorageManager::open(app_paths.clone()).unwrap();
+    let manager = opened_storage.manager.clone();
+    UserService::new(manager.clone())
+        .bootstrap_admin("StatusAdmin", "StrongPass123")
+        .unwrap();
+    let admin_session = SessionService::new(manager.clone())
+        .login("StatusAdmin", "StrongPass123")
+        .unwrap();
+    let platform = Arc::new(platform::mock::MockPlatform::new(user_dirs, app_paths));
+    platform.set_local_volumes_result(Ok(vec![platform::LocalVolume {
+        root: PathBuf::from("/live-system"),
+        label: Some("Live".into()),
+        kind: platform::VolumeKind::Fixed,
+        total_bytes: Some(10 * 1024_u64.pow(3)),
+        available_bytes: Some(6 * 1024_u64.pow(3)),
+        is_system: true,
+        access: platform::VolumeAccess::ReadWrite,
+    }]));
+    let watchdog = default_editor_watchdog()
+        .expect("watchdog")
+        .child_component(watchdog::ComponentId::new("system-status-live-test").unwrap());
+    let config = system_services::SystemServicesConfig::default();
+    let (handle, mut receiver) =
+        system_services::SystemServicesRuntime::start_with_platform_and_provider(
+            config.clone(),
+            watchdog.clone(),
+            platform.clone(),
+            Arc::new(SystemStatusTestWeatherProvider),
+        );
+    let _service_guard = SystemStatusServiceGuard(Some(handle.clone()));
+    let mut startup = ShellStartupState::clean(
+        PlatformKind::Linux,
+        PlatformCapabilities::native_supported(),
+    );
+    startup.storage_manager = Some(manager.clone());
+    let mut state = ShellSession::new_with_runtime_services(
+        ShellLaunchConfig::default(),
+        (120, 40),
+        startup,
+        ui::RuntimeAsciiAssets::load_default().unwrap(),
+        ShellRuntimeServices {
+            explorer: None,
+            diagnostics: None,
+            editor: ShellEditorTaskRuntime::unavailable(),
+            settings: ShellSettingsTaskRuntime::new_managed_with_system_services(
+                watchdog,
+                Some(handle),
+                config,
+            ),
+        },
+    );
+    state.complete_login(admin_session);
+    state.screen_stack = vec![ShellScreen::Home];
+    state.focused_component = ShellComponent::Home;
+    let index = state
+        .user_home_entries()
+        .iter()
+        .position(|entry| entry.label == "System Status")
+        .unwrap();
+    state.select_home_entry(index);
+    let baseline_revision = receiver.borrow_and_update().revision;
+    state.apply_input(InputEvent::from_key_label("Enter"));
+    assert_eq!(state.active_screen(), ShellScreen::SystemStatus);
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_time()
+        .build()
+        .unwrap();
+    runtime.block_on(async {
+        tokio::time::timeout(Duration::from_secs(3), async {
+            loop {
+                receiver.changed().await.unwrap();
+                apply_current_system_status_snapshot(&mut receiver, &mut state);
+                if state
+                    .app
+                    .system_status_snapshot()
+                    .is_some_and(|snapshot| snapshot.revision > baseline_revision)
+                {
+                    break;
+                }
+            }
+        })
+        .await
+        .expect("active status sample timed out");
+    });
+    let opened_revision = state
+        .app
+        .system_status_snapshot()
+        .expect("active sample")
+        .revision;
+    state.apply_input(InputEvent::from_key_label("R"));
+    assert_eq!(
+        state.system_status_refresh_requested_revision,
+        Some(opened_revision)
+    );
+    runtime.block_on(async {
+        tokio::time::timeout(Duration::from_secs(3), async {
+            while state.system_status_refresh_requested_revision.is_some() {
+                receiver.changed().await.unwrap();
+                apply_current_system_status_snapshot(&mut receiver, &mut state);
+            }
+        })
+        .await
+        .expect("refreshed status sample timed out");
+    });
+    assert!(state.system_status_refresh_requested_revision.is_none());
+    assert!(state.app.system_status_snapshot().unwrap().revision > opened_revision);
+    state.apply_input(InputEvent::from_key_label("Esc"));
+    assert_eq!(state.active_screen(), ShellScreen::Home);
+
+    state.open_settings();
+    state.apply_input(InputEvent::from_key_label("Tab"));
+    state.apply_input(InputEvent::from_key_label("Tab"));
+    assert_eq!(
+        state.to_settings_view_model().unwrap().selected_category,
+        ui::SettingsCategory::System
+    );
+    assert!(
+        matches!(&state.app.system_status_snapshot().unwrap().storage, system_services::StorageState::Ready(storage) if storage.overall_pressure == system_services::StoragePressure::Normal)
+    );
+    state.apply_input(InputEvent::from_key_label("Right"));
+    assert_eq!(
+        manager
+            .load_config()
+            .unwrap()
+            .system_status
+            .low_available_gib,
+        6
+    );
+    let changed_from = state.app.system_status_snapshot().unwrap().revision;
+    runtime.block_on(async {
+        tokio::time::timeout(Duration::from_secs(3), async {
+            loop { receiver.changed().await.unwrap(); apply_current_system_status_snapshot(&mut receiver, &mut state); if state.app.system_status_snapshot().is_some_and(|snapshot| snapshot.revision > changed_from && matches!(&snapshot.storage, system_services::StorageState::Ready(storage) if storage.overall_pressure == system_services::StoragePressure::Low)) { break; } }
+        }).await.expect("threshold reconfigure sample timed out");
+    });
+    state.request_settings_restore_defaults();
+    state.apply_input(InputEvent::from_key_label("R"));
+    assert_eq!(
+        manager.load_config().unwrap().system_status,
+        storage::SystemStatusConfig::default()
+    );
+    let restored_from = state.app.system_status_snapshot().unwrap().revision;
+    runtime.block_on(async {
+        tokio::time::timeout(Duration::from_secs(3), async {
+            loop { receiver.changed().await.unwrap(); apply_current_system_status_snapshot(&mut receiver, &mut state); if state.app.system_status_snapshot().is_some_and(|snapshot| snapshot.revision > restored_from && matches!(&snapshot.storage, system_services::StorageState::Ready(storage) if storage.overall_pressure == system_services::StoragePressure::Normal)) { break; } }
+        }).await.expect("restored threshold sample timed out");
+    });
+    drop(state);
 }
 
 #[test]

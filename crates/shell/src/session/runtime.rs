@@ -908,11 +908,7 @@ pub(super) fn run_fullscreen_shell_session<W: Write>(
     loop {
         let state_before_polling = state.clone();
         let theme_before_polling = theme;
-        if system_status_snapshots.has_changed().unwrap_or(false) {
-            state.apply_system_status_snapshot(app::AppSystemStatusSnapshot::from(
-                &*system_status_snapshots.borrow_and_update(),
-            ));
-        }
+        drain_system_status_snapshot(&mut system_status_snapshots, &mut state);
         // logind signals are delivered by a backend worker and drained here so
         // neither D-Bus nor policy authorization can block terminal input.
         for _ in 0..16 {
@@ -1489,6 +1485,25 @@ pub(super) fn run_fullscreen_shell_session<W: Write>(
         FullscreenShellSessionOutcome::Exit
     };
     Ok((outcome, state.ascii_assets.clone()))
+}
+
+pub(in crate::session) fn drain_system_status_snapshot(
+    snapshots: &mut tokio::sync::watch::Receiver<system_services::SystemSnapshot>,
+    state: &mut ShellSession,
+) -> bool {
+    if !snapshots.has_changed().unwrap_or(false) {
+        return false;
+    }
+    apply_current_system_status_snapshot(snapshots, state);
+    true
+}
+
+pub(in crate::session) fn apply_current_system_status_snapshot(
+    snapshots: &mut tokio::sync::watch::Receiver<system_services::SystemSnapshot>,
+    state: &mut ShellSession,
+) {
+    let snapshot = app::AppSystemStatusSnapshot::from(&*snapshots.borrow_and_update());
+    state.apply_system_status_snapshot(snapshot);
 }
 
 fn read_ready_terminal_event_batch(first: event::Event) -> io::Result<Vec<event::Event>> {
