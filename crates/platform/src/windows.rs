@@ -456,15 +456,16 @@ fn windows_local_volumes() -> Result<Vec<LocalVolume>, PlatformError> {
         let has_space = unsafe {
             GetDiskFreeSpaceExW(root_wide.as_ptr(), &mut available, &mut total, &mut free)
         } != 0;
+        let is_system = system_drive
+            .as_ref()
+            .is_some_and(|drive| root.starts_with(drive));
         volumes.push(LocalVolume {
             root,
             label,
             kind,
             total_bytes: has_space.then_some(total),
             available_bytes: has_space.then_some(available),
-            is_system: system_drive
-                .as_ref()
-                .is_some_and(|drive| root.starts_with(drive)),
+            is_system,
             access: windows_volume_access(filesystem_flags, has_space),
         });
         start = end + 1;

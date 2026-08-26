@@ -15,11 +15,12 @@ use crate::VolumeKind;
 use crate::paths::home_dir_from_env;
 use crate::{
     AppPaths, CapabilityStatus, DirectoryListing, FileAttributes, FileOpenPolicy, LocalVolume,
-    NetworkInterface, NetworkInterfaceKind, NetworkLinkState, NetworkStatus, Platform,
-    PlatformCapabilities, PlatformError, PlatformIcon, PlatformKind, ProcessExit, ProcessSpec,
-    StartupPermissionStatus, TrashEntry, TrashEntryId, TrashRestoreTarget, TrashStats, UserDirs,
-    VolumeAccess, build_macos_app_paths,
+    NetworkStatus, Platform, PlatformCapabilities, PlatformError, PlatformIcon, PlatformKind,
+    ProcessExit, ProcessSpec, StartupPermissionStatus, TrashEntry, TrashEntryId,
+    TrashRestoreTarget, TrashStats, UserDirs, build_macos_app_paths,
 };
+#[cfg(target_os = "macos")]
+use crate::{NetworkInterface, NetworkInterfaceKind, NetworkLinkState, VolumeAccess};
 
 const OPEN: &str = "/usr/bin/open";
 const PBCOPY: &str = "/usr/bin/pbcopy";
