@@ -4,10 +4,10 @@ use std::sync::Mutex;
 use std::time::SystemTime;
 
 use crate::{
-    AppPaths, DirectoryListing, FileAttributes, FileOpenPolicy, LocalVolume, Platform,
-    PlatformCapabilities, PlatformError, PlatformIcon, PlatformKind, ProcessExit, ProcessSpec,
-    ProcessStream, StartupPermissionStatus, TrashEntry, TrashEntryId, TrashRestoreTarget,
-    TrashStats, UserDirs,
+    AppPaths, DirectoryListing, FileAttributes, FileOpenPolicy, LocalVolume, NetworkStatus,
+    Platform, PlatformCapabilities, PlatformError, PlatformIcon, PlatformKind, ProcessExit,
+    ProcessSpec, ProcessStream, StartupPermissionStatus, TrashEntry, TrashEntryId,
+    TrashRestoreTarget, TrashStats, UserDirs,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -40,6 +40,7 @@ pub enum MockCall {
         target: PathBuf,
     },
     LocalVolumes,
+    NetworkStatus,
     ListTrash,
     TrashStats,
     MoveToTrash(Vec<PathBuf>),
@@ -69,6 +70,7 @@ pub struct MockPlatform {
     file_icons: Mutex<BTreeMap<PathBuf, Result<Option<PlatformIcon>, PlatformError>>>,
     rename_results: Mutex<BTreeMap<(PathBuf, PathBuf), Result<(), PlatformError>>>,
     local_volumes: Mutex<Result<Vec<LocalVolume>, PlatformError>>,
+    network_status: Mutex<Result<NetworkStatus, PlatformError>>,
     trash_entries: Mutex<Result<Vec<TrashEntry>, PlatformError>>,
     trash_stats: Mutex<Result<TrashStats, PlatformError>>,
     move_to_trash_result: Mutex<Result<(), PlatformError>>,
@@ -97,6 +99,7 @@ impl MockPlatform {
             file_icons: Mutex::new(BTreeMap::new()),
             rename_results: Mutex::new(BTreeMap::new()),
             local_volumes: Mutex::new(Ok(Vec::new())),
+            network_status: Mutex::new(Ok(NetworkStatus::default())),
             trash_entries: Mutex::new(Ok(Vec::new())),
             trash_stats: Mutex::new(Ok(TrashStats::default())),
             move_to_trash_result: Mutex::new(Ok(())),
@@ -242,6 +245,13 @@ impl MockPlatform {
             .local_volumes
             .lock()
             .expect("local volumes lock poisoned") = result;
+    }
+
+    pub fn set_network_status_result(&self, result: Result<NetworkStatus, PlatformError>) {
+        *self
+            .network_status
+            .lock()
+            .expect("network status lock poisoned") = result;
     }
 
     pub fn set_trash_entries_result(&self, result: Result<Vec<TrashEntry>, PlatformError>) {
@@ -421,6 +431,14 @@ impl Platform for MockPlatform {
         self.local_volumes
             .lock()
             .expect("local volumes lock poisoned")
+            .clone()
+    }
+
+    fn network_status(&self) -> Result<NetworkStatus, PlatformError> {
+        self.record(MockCall::NetworkStatus);
+        self.network_status
+            .lock()
+            .expect("network status lock poisoned")
             .clone()
     }
 

@@ -1,5 +1,5 @@
 #[cfg(target_os = "macos")]
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 #[cfg(target_os = "macos")]
 use std::ffi::{CStr, CString, c_char, c_void};
 use std::ffi::{OsStr, OsString};
@@ -15,9 +15,10 @@ use crate::VolumeKind;
 use crate::paths::home_dir_from_env;
 use crate::{
     AppPaths, CapabilityStatus, DirectoryListing, FileAttributes, FileOpenPolicy, LocalVolume,
-    Platform, PlatformCapabilities, PlatformError, PlatformIcon, PlatformKind, ProcessExit,
-    ProcessSpec, StartupPermissionStatus, TrashEntry, TrashEntryId, TrashRestoreTarget, TrashStats,
-    UserDirs, build_macos_app_paths,
+    NetworkInterface, NetworkInterfaceKind, NetworkLinkState, NetworkStatus, Platform,
+    PlatformCapabilities, PlatformError, PlatformIcon, PlatformKind, ProcessExit, ProcessSpec,
+    StartupPermissionStatus, TrashEntry, TrashEntryId, TrashRestoreTarget, TrashStats, UserDirs,
+    VolumeAccess, build_macos_app_paths,
 };
 
 const OPEN: &str = "/usr/bin/open";
@@ -258,6 +259,10 @@ impl Platform for MacosPlatform {
         macos_local_volumes()
     }
 
+    fn network_status(&self) -> Result<NetworkStatus, PlatformError> {
+        macos_network_status()
+    }
+
     fn list_trash(&self) -> Result<Vec<TrashEntry>, PlatformError> {
         macos_list_trash(self)
     }
@@ -436,74 +441,44 @@ struct TrashIndexEntry {
 
 #[cfg(target_os = "macos")]
 fn macos_local_volumes() -> Result<Vec<LocalVolume>, PlatformError> {
-    let root = PathBuf::from("/");
-    let root_probe = macos_volume_probe(&root);
-    let mut physical_disks = BTreeSet::new();
-    let mut mount_devices = BTreeSet::new();
-    if let Ok(metadata) = std::fs::metadata(&root) {
-        mount_devices.insert(metadata.dev());
+    let mut paths = vec![PathBuf::from("/")];
+    if let Ok(entries) = std::fs::read_dir("/Volumes") {
+        paths.extend(entries.filter_map(Result::ok).map(|entry| entry.path()));
     }
-    if let Some(probe) = &root_probe {
-        physical_disks.insert(probe.physical_disk.clone());
-    }
-    let mut volumes = vec![LocalVolume {
-        root: root.clone(),
-        label: Some("Macintosh HD".to_string()),
-        kind: root_probe
-            .map(|probe| probe.kind)
-            .unwrap_or(VolumeKind::Fixed),
-        total_bytes: None,
-        available_bytes: None,
-    }];
-    match std::fs::read_dir("/Volumes") {
-        Ok(directory) => {
-            for entry in directory {
-                let entry =
-                    entry.map_err(|error| macos_io("enumerate mounted volumes", None, error))?;
-                let path = entry.path();
-                let metadata = match std::fs::symlink_metadata(&path) {
-                    Ok(metadata) => metadata,
-                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
-                    Err(error) => {
-                        return Err(macos_io("inspect mounted volume", Some(&path), error));
-                    }
-                };
-                // /Volumes can contain aliases and network mounts. diskutil
-                // only resolves local disk-backed mount points, so requiring a
-                // successful result excludes SMB/NFS shares and stale links.
-                if !metadata.is_dir() || metadata.file_type().is_symlink() {
-                    continue;
-                }
-                if !mount_devices.insert(metadata.dev()) {
-                    continue;
-                }
-                let Some(probe) = macos_volume_probe(&path) else {
-                    mount_devices.remove(&metadata.dev());
-                    continue;
-                };
-                if !physical_disks.insert(probe.physical_disk) {
-                    mount_devices.remove(&metadata.dev());
-                    continue;
-                }
-                volumes.push(LocalVolume {
-                    label: path
-                        .file_name()
-                        .map(|name| name.to_string_lossy().into_owned()),
-                    root: path,
-                    kind: probe.kind,
-                    total_bytes: None,
-                    available_bytes: None,
-                });
-            }
+    let mut volumes = Vec::new();
+    for root in paths {
+        let Ok(path) = CString::new(root.as_os_str().as_encoded_bytes()) else {
+            continue;
+        };
+        let mut stats = std::mem::MaybeUninit::<libc::statfs>::zeroed();
+        if unsafe { libc::statfs(path.as_ptr(), stats.as_mut_ptr()) } != 0 {
+            continue;
         }
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-        Err(error) => {
-            return Err(macos_io(
-                "enumerate mounted volumes",
-                Some(Path::new("/Volumes")),
-                error,
-            ));
+        let stats = unsafe { stats.assume_init() };
+        if stats.f_flags & libc::MNT_LOCAL as u32 == 0 {
+            continue;
         }
+        let block_size = stats.f_bsize.max(1) as u64;
+        volumes.push(LocalVolume {
+            label: root
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+                .or_else(|| Some("Macintosh HD".to_string())),
+            kind: if root == Path::new("/") {
+                VolumeKind::Fixed
+            } else {
+                VolumeKind::Removable
+            },
+            total_bytes: stats.f_blocks.checked_mul(block_size),
+            available_bytes: stats.f_bavail.checked_mul(block_size),
+            is_system: root == Path::new("/"),
+            access: if stats.f_flags & libc::MNT_RDONLY as u32 != 0 {
+                VolumeAccess::ReadOnly
+            } else {
+                VolumeAccess::ReadWrite
+            },
+            root,
+        });
     }
 
     volumes.sort_by(|left, right| left.root.cmp(&right.root));
@@ -512,87 +487,77 @@ fn macos_local_volumes() -> Result<Vec<LocalVolume>, PlatformError> {
 }
 
 #[cfg(target_os = "macos")]
-struct MacVolumeProbe {
-    kind: VolumeKind,
-    physical_disk: String,
+fn macos_network_status() -> Result<NetworkStatus, PlatformError> {
+    let mut head = std::ptr::null_mut();
+    if unsafe { libc::getifaddrs(&mut head) } != 0 {
+        return Err(macos_io(
+            "enumerate network interfaces",
+            None,
+            std::io::Error::last_os_error(),
+        ));
+    }
+    let mut interfaces = BTreeMap::<String, NetworkInterface>::new();
+    let mut current = head;
+    while !current.is_null() {
+        let entry = unsafe { &*current };
+        let name = unsafe { CStr::from_ptr(entry.ifa_name) }
+            .to_string_lossy()
+            .into_owned();
+        if entry.ifa_flags & libc::IFF_LOOPBACK as u32 == 0 {
+            let interface = interfaces
+                .entry(name.clone())
+                .or_insert_with(|| NetworkInterface {
+                    name: name.clone(),
+                    display_name: None,
+                    kind: macos_interface_kind(&name),
+                    link_state: if entry.ifa_flags & libc::IFF_UP as u32 != 0
+                        && entry.ifa_flags & libc::IFF_RUNNING as u32 != 0
+                    {
+                        NetworkLinkState::Up
+                    } else {
+                        NetworkLinkState::Down
+                    },
+                    addresses: Vec::new(),
+                });
+            if !entry.ifa_addr.is_null() {
+                let address = match unsafe { (*entry.ifa_addr).sa_family as i32 } {
+                    libc::AF_INET => {
+                        let value = unsafe { &*(entry.ifa_addr as *const libc::sockaddr_in) };
+                        Some(std::net::IpAddr::V4(std::net::Ipv4Addr::from(
+                            value.sin_addr.s_addr.to_ne_bytes(),
+                        )))
+                    }
+                    libc::AF_INET6 => {
+                        let value = unsafe { &*(entry.ifa_addr as *const libc::sockaddr_in6) };
+                        Some(std::net::IpAddr::V6(std::net::Ipv6Addr::from(
+                            value.sin6_addr.s6_addr,
+                        )))
+                    }
+                    _ => None,
+                };
+                if let Some(address) = address.filter(|address| !address.is_loopback()) {
+                    interface.addresses.push(address);
+                }
+            }
+        }
+        current = entry.ifa_next;
+    }
+    unsafe { libc::freeifaddrs(head) };
+    Ok(NetworkStatus::new(interfaces.into_values().collect()))
 }
 
 #[cfg(target_os = "macos")]
-fn macos_volume_probe(root: &Path) -> Option<MacVolumeProbe> {
-    let plist = diskutil_info(root.as_os_str())?;
-    let physical_disk = plist_string(&plist, "ParentWholeDisk")
-        .or_else(|| plist_string(&plist, "DeviceIdentifier"))?
-        .to_string();
-    let whole_disk = diskutil_info(OsStr::new(&format!("/dev/{physical_disk}")))?;
-    if plist_string(&whole_disk, "VirtualOrPhysical") != Some("Physical")
-        || plist_protocol_is_nonlocal(&plist)
-        || plist_protocol_is_nonlocal(&whole_disk)
+fn macos_interface_kind(name: &str) -> NetworkInterfaceKind {
+    if ["utun", "awdl", "llw", "vmnet", "bridge", "gif", "stf"]
+        .iter()
+        .any(|prefix| name.starts_with(prefix))
     {
-        return None;
-    }
-    let kind = if plist_bool(&whole_disk, "Internal") == Some(true)
-        && plist_bool(&whole_disk, "RemovableMedia") != Some(true)
-        && plist_bool(&whole_disk, "Ejectable") != Some(true)
-    {
-        VolumeKind::Fixed
+        NetworkInterfaceKind::Virtual
+    } else if name.starts_with("en") {
+        NetworkInterfaceKind::Unknown
     } else {
-        VolumeKind::Removable
-    };
-    Some(MacVolumeProbe {
-        kind,
-        physical_disk,
-    })
-}
-
-#[cfg(target_os = "macos")]
-fn diskutil_info(target: &OsStr) -> Option<String> {
-    let output = Command::new("/usr/sbin/diskutil")
-        .args(["info", "-plist"])
-        .arg(target)
-        .output()
-        .ok()?;
-    if !output.status.success() {
-        return None;
+        NetworkInterfaceKind::Unknown
     }
-    Some(String::from_utf8_lossy(&output.stdout).into_owned())
-}
-
-#[cfg(target_os = "macos")]
-fn plist_bool(plist: &str, key: &str) -> Option<bool> {
-    let marker = format!("<key>{key}</key>");
-    let remainder = plist.split_once(&marker)?.1.trim_start();
-    if remainder.starts_with("<true/>") {
-        Some(true)
-    } else if remainder.starts_with("<false/>") {
-        Some(false)
-    } else {
-        None
-    }
-}
-
-#[cfg(target_os = "macos")]
-fn plist_string<'a>(plist: &'a str, key: &str) -> Option<&'a str> {
-    let marker = format!("<key>{key}</key>");
-    let remainder = plist.split_once(&marker)?.1.trim_start();
-    remainder
-        .strip_prefix("<string>")?
-        .split_once("</string>")
-        .map(|(value, _)| value)
-}
-
-#[cfg(target_os = "macos")]
-fn plist_protocol_is_nonlocal(plist: &str) -> bool {
-    ["BusProtocol", "Protocol"]
-        .into_iter()
-        .filter_map(|key| plist_string(plist, key))
-        .any(|protocol| {
-            let protocol = protocol.to_ascii_lowercase();
-            protocol.contains("network")
-                || protocol.contains("disk image")
-                || protocol.contains("virtual")
-                || protocol.contains("smb")
-                || protocol.contains("nfs")
-        })
 }
 
 #[cfg(target_os = "macos")]
@@ -1589,6 +1554,13 @@ fn macos_io(operation: &'static str, path: Option<&Path>, error: std::io::Error)
 fn macos_local_volumes() -> Result<Vec<LocalVolume>, PlatformError> {
     Err(PlatformError::Unsupported {
         capability: "local_volumes.macos",
+    })
+}
+
+#[cfg(not(target_os = "macos"))]
+fn macos_network_status() -> Result<NetworkStatus, PlatformError> {
+    Err(PlatformError::Unsupported {
+        capability: "network_status.macos",
     })
 }
 

@@ -8,9 +8,10 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use crate::{
     AppPaths, DirectoryEntryMetadata, DirectoryListing, DirectoryListingWarning, FileAttributes,
-    FileOpenPolicy, LocalVolume, Platform, PlatformCapabilities, PlatformError, PlatformIcon,
-    PlatformKind, ProcessExit, ProcessSpec, TrashEntry, TrashEntryId, TrashRestoreTarget,
-    TrashStats, UserDirs, VolumeKind, build_windows_app_paths,
+    FileOpenPolicy, LocalVolume, NetworkInterface, NetworkInterfaceKind, NetworkLinkState,
+    NetworkStatus, Platform, PlatformCapabilities, PlatformError, PlatformIcon, PlatformKind,
+    ProcessExit, ProcessSpec, TrashEntry, TrashEntryId, TrashRestoreTarget, TrashStats, UserDirs,
+    VolumeAccess, VolumeKind, build_windows_app_paths,
 };
 
 const SW_SHOWNORMAL: i32 = 1;
@@ -48,6 +49,7 @@ const WAIT_TIMEOUT: u32 = 0x0000_0102;
 const WAIT_FAILED: u32 = 0xffff_ffff;
 const DRIVE_REMOVABLE: u32 = 2;
 const DRIVE_FIXED: u32 = 3;
+const FILE_READ_ONLY_VOLUME: u32 = 0x0008_0000;
 const S_FALSE: i32 = 1;
 const RPC_E_CHANGED_MODE: i32 = 0x8001_0106u32 as i32;
 const COINIT_APARTMENTTHREADED: u32 = 0x2;
@@ -253,6 +255,10 @@ impl Platform for WindowsPlatform {
         windows_local_volumes()
     }
 
+    fn network_status(&self) -> Result<NetworkStatus, PlatformError> {
+        windows_network_status()
+    }
+
     fn list_trash(&self) -> Result<Vec<TrashEntry>, PlatformError> {
         windows_list_trash()
     }
@@ -377,6 +383,20 @@ fn windows_is_process_alive(pid: u32) -> Result<bool, PlatformError> {
 }
 
 fn windows_local_volumes() -> Result<Vec<LocalVolume>, PlatformError> {
+    let mut windows_directory = [0u16; 261];
+    let windows_length = unsafe {
+        GetWindowsDirectoryW(
+            windows_directory.as_mut_ptr(),
+            windows_directory.len() as u32,
+        )
+    } as usize;
+    let system_drive = (windows_length > 0 && windows_length < windows_directory.len())
+        .then(|| PathBuf::from(OsString::from_wide(&windows_directory[..windows_length])))
+        .and_then(|path| {
+            path.components()
+                .next()
+                .map(|component| PathBuf::from(component.as_os_str()))
+        });
     let required = unsafe { GetLogicalDriveStringsW(0, ptr::null_mut()) };
     if required == 0 {
         return Err(last_windows_error("GetLogicalDriveStringsW", None));
@@ -407,12 +427,13 @@ fn windows_local_volumes() -> Result<Vec<LocalVolume>, PlatformError> {
         };
 
         let mut label_buffer = [0u16; 261];
+        let mut filesystem_flags = 0u32;
         let label = if unsafe {
             GetVolumeInformationW(
                 root_wide.as_ptr(),
                 label_buffer.as_mut_ptr(),
                 label_buffer.len() as u32,
-                ptr::null_mut(),
+                &mut filesystem_flags,
                 ptr::null_mut(),
                 ptr::null_mut(),
                 ptr::null_mut(),
@@ -440,11 +461,86 @@ fn windows_local_volumes() -> Result<Vec<LocalVolume>, PlatformError> {
             kind,
             total_bytes: has_space.then_some(total),
             available_bytes: has_space.then_some(available),
+            is_system: system_drive
+                .as_ref()
+                .is_some_and(|drive| root.starts_with(drive)),
+            access: if filesystem_flags & FILE_READ_ONLY_VOLUME != 0 {
+                VolumeAccess::ReadOnly
+            } else if has_space {
+                VolumeAccess::ReadWrite
+            } else {
+                VolumeAccess::Unavailable
+            },
         });
         start = end + 1;
     }
     volumes.sort_by(|left, right| left.root.cmp(&right.root));
     Ok(volumes)
+}
+
+fn windows_network_status() -> Result<NetworkStatus, PlatformError> {
+    let mut size = 15_000u32;
+    loop {
+        let mut buffer = vec![0u8; size as usize];
+        let result = unsafe {
+            GetAdaptersAddresses(
+                0,
+                0x0010,
+                ptr::null_mut(),
+                buffer.as_mut_ptr() as *mut IpAdapterAddresses,
+                &mut size,
+            )
+        };
+        if result == 111 {
+            continue;
+        }
+        if result != 0 {
+            return Err(windows_error_from_code("GetAdaptersAddresses", result));
+        }
+        let mut output = Vec::new();
+        let mut adapter = buffer.as_ptr() as *const IpAdapterAddresses;
+        while !adapter.is_null() {
+            let value = unsafe { &*adapter };
+            let name =
+                unsafe { wide_ptr_to_string(value.friendly_name) }.unwrap_or_else(|| unsafe {
+                    std::ffi::CStr::from_ptr(value.adapter_name)
+                        .to_string_lossy()
+                        .into_owned()
+                });
+            let kind = match value.if_type {
+                6 => NetworkInterfaceKind::Wired,
+                71 => NetworkInterfaceKind::Wireless,
+                24 | 53 | 131 => NetworkInterfaceKind::Virtual,
+                _ => NetworkInterfaceKind::Unknown,
+            };
+            let mut addresses = Vec::new();
+            let mut unicast = value.first_unicast_address;
+            while !unicast.is_null() {
+                let item = unsafe { &*unicast };
+                if let Some(address) = unsafe { socket_address_to_ip(&item.address) }
+                    .filter(|address| !address.is_loopback())
+                {
+                    addresses.push(address);
+                }
+                unicast = item.next;
+            }
+            if value.if_type != 24 {
+                output.push(NetworkInterface {
+                    name: name.clone(),
+                    display_name: Some(name),
+                    kind,
+                    link_state: match value.oper_status {
+                        1 => NetworkLinkState::Up,
+                        2 => NetworkLinkState::Down,
+                        _ => NetworkLinkState::Unknown,
+                    },
+                    addresses,
+                });
+            }
+            adapter = value.next;
+        }
+        return Ok(NetworkStatus::new(output));
+    }
 }
 
 fn windows_list_trash() -> Result<Vec<TrashEntry>, PlatformError> {
@@ -1906,6 +2002,88 @@ unsafe extern "system" {
     ) -> i32;
 }
 
+#[repr(C)]
+struct SocketAddress {
+    sockaddr: *mut c_void,
+    length: i32,
+}
+
+#[repr(C)]
+struct IpAdapterUnicastAddress {
+    alignment: u64,
+    next: *mut IpAdapterUnicastAddress,
+    address: SocketAddress,
+}
+
+#[repr(C)]
+struct IpAdapterAddresses {
+    alignment: u64,
+    if_index: u32,
+    next: *mut IpAdapterAddresses,
+    adapter_name: *const i8,
+    first_unicast_address: *mut IpAdapterUnicastAddress,
+    first_anycast_address: *mut c_void,
+    first_multicast_address: *mut c_void,
+    first_dns_server_address: *mut c_void,
+    dns_suffix: *const u16,
+    description: *const u16,
+    friendly_name: *const u16,
+    physical_address: [u8; 8],
+    physical_address_length: u32,
+    flags: u32,
+    mtu: u32,
+    if_type: u32,
+    oper_status: u32,
+}
+
+unsafe fn wide_ptr_to_string(value: *const u16) -> Option<String> {
+    if value.is_null() {
+        return None;
+    }
+    let mut length = 0;
+    while unsafe { *value.add(length) } != 0 {
+        length += 1;
+    }
+    Some(String::from_utf16_lossy(unsafe {
+        std::slice::from_raw_parts(value, length)
+    }))
+}
+
+unsafe fn socket_address_to_ip(value: &SocketAddress) -> Option<std::net::IpAddr> {
+    if value.sockaddr.is_null() || value.length < 2 {
+        return None;
+    }
+    let family = unsafe { *(value.sockaddr as *const u16) } as i32;
+    match family {
+        2 if value.length >= 8 => {
+            let bytes =
+                unsafe { std::slice::from_raw_parts((value.sockaddr as *const u8).add(4), 4) };
+            Some(std::net::IpAddr::V4(std::net::Ipv4Addr::new(
+                bytes[0], bytes[1], bytes[2], bytes[3],
+            )))
+        }
+        23 if value.length >= 24 => {
+            let bytes =
+                unsafe { std::slice::from_raw_parts((value.sockaddr as *const u8).add(8), 16) };
+            let mut address = [0u8; 16];
+            address.copy_from_slice(bytes);
+            Some(std::net::IpAddr::V6(std::net::Ipv6Addr::from(address)))
+        }
+        _ => None,
+    }
+}
+
+#[link(name = "iphlpapi")]
+unsafe extern "system" {
+    fn GetAdaptersAddresses(
+        family: u32,
+        flags: u32,
+        reserved: *mut c_void,
+        addresses: *mut IpAdapterAddresses,
+        size: *mut u32,
+    ) -> u32;
+}
+
 #[link(name = "kernel32")]
 unsafe extern "system" {
     fn GetCurrentProcess() -> *mut c_void;
@@ -1913,6 +2091,7 @@ unsafe extern "system" {
     fn WaitForSingleObject(handle: *mut c_void, milliseconds: u32) -> u32;
     fn CloseHandle(object: *mut c_void) -> i32;
     fn GetLogicalDriveStringsW(buffer_length: u32, buffer: *mut u16) -> u32;
+    fn GetWindowsDirectoryW(buffer: *mut u16, size: u32) -> u32;
     fn GetDriveTypeW(root_path_name: *const u16) -> u32;
     fn GetVolumeInformationW(
         root_path_name: *const u16,

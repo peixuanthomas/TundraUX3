@@ -1,6 +1,7 @@
 use std::fmt;
 use std::fs;
 use std::io::Read;
+use std::net::IpAddr;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
@@ -73,6 +74,7 @@ pub struct PlatformCapabilities {
     pub file_attributes: CapabilityStatus,
     pub directory_listing: CapabilityStatus,
     pub local_volumes: CapabilityStatus,
+    pub network_status: CapabilityStatus,
     pub trash: CapabilityStatus,
     pub critical_dialog: CapabilityStatus,
     pub power: CapabilityStatus,
@@ -93,6 +95,7 @@ impl PlatformCapabilities {
             file_attributes: CapabilityStatus::Supported,
             directory_listing: CapabilityStatus::Supported,
             local_volumes: CapabilityStatus::Supported,
+            network_status: CapabilityStatus::Supported,
             trash: CapabilityStatus::Supported,
             critical_dialog: CapabilityStatus::Supported,
             power: CapabilityStatus::Supported,
@@ -113,13 +116,14 @@ impl PlatformCapabilities {
             file_attributes: CapabilityStatus::Unsupported,
             directory_listing: CapabilityStatus::Unsupported,
             local_volumes: CapabilityStatus::Unsupported,
+            network_status: CapabilityStatus::Unsupported,
             trash: CapabilityStatus::Unsupported,
             critical_dialog: CapabilityStatus::Unsupported,
             power: CapabilityStatus::Unsupported,
         }
     }
 
-    pub fn checks(&self) -> [(&'static str, CapabilityStatus); 15] {
+    pub fn checks(&self) -> [(&'static str, CapabilityStatus); 16] {
         [
             ("open_path", self.open_path),
             ("open_with", self.open_with),
@@ -133,6 +137,7 @@ impl PlatformCapabilities {
             ("file_attributes", self.file_attributes),
             ("directory_listing", self.directory_listing),
             ("local_volumes", self.local_volumes),
+            ("network_status", self.network_status),
             ("trash", self.trash),
             ("critical_dialog", self.critical_dialog),
             ("power", self.power),
@@ -146,6 +151,13 @@ pub enum VolumeKind {
     Removable,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VolumeAccess {
+    ReadWrite,
+    ReadOnly,
+    Unavailable,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LocalVolume {
     pub root: PathBuf,
@@ -153,6 +165,62 @@ pub struct LocalVolume {
     pub kind: VolumeKind,
     pub total_bytes: Option<u64>,
     pub available_bytes: Option<u64>,
+    pub is_system: bool,
+    pub access: VolumeAccess,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NetworkInterfaceKind {
+    Wired,
+    Wireless,
+    Virtual,
+    Unknown,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NetworkLinkState {
+    Up,
+    Down,
+    Unknown,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NetworkInterface {
+    pub name: String,
+    pub display_name: Option<String>,
+    pub kind: NetworkInterfaceKind,
+    pub link_state: NetworkLinkState,
+    pub addresses: Vec<IpAddr>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct NetworkStatus {
+    pub interfaces: Vec<NetworkInterface>,
+}
+
+impl NetworkStatus {
+    pub fn new(mut interfaces: Vec<NetworkInterface>) -> Self {
+        for interface in &mut interfaces {
+            interface.addresses.sort();
+            interface.addresses.dedup();
+        }
+        interfaces.sort_by(|left, right| left.name.cmp(&right.name));
+        Self { interfaces }
+    }
+
+    pub fn active_link_count(&self) -> usize {
+        self.interfaces
+            .iter()
+            .filter(|interface| {
+                interface.link_state == NetworkLinkState::Up
+                    && interface.kind != NetworkInterfaceKind::Virtual
+            })
+            .count()
+    }
+
+    pub fn has_active_link(&self) -> bool {
+        self.active_link_count() != 0
+    }
 }
 
 /// A platform-owned identifier for an item currently in the system Trash.
@@ -478,6 +546,12 @@ pub trait Platform: Send + Sync {
     fn local_volumes(&self) -> Result<Vec<LocalVolume>, PlatformError> {
         Err(PlatformError::Unsupported {
             capability: "local_volumes",
+        })
+    }
+
+    fn network_status(&self) -> Result<NetworkStatus, PlatformError> {
+        Err(PlatformError::Unsupported {
+            capability: "network_status",
         })
     }
 

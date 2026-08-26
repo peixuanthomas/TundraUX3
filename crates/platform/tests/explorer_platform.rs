@@ -6,7 +6,7 @@ use platform::mock::{MockCall, MockPlatform};
 use platform::{
     AppPaths, DirectoryListing, ExecutableKind, FileAttributes, FileOpenPolicy, LocalVolume,
     Platform, PlatformError, PlatformKind, TrashEntry, TrashRestoreTarget, TrashStats, UserDirs,
-    VolumeKind, cleanup_temp_path, default_file_open_policy,
+    VolumeAccess, VolumeKind, cleanup_temp_path, default_file_open_policy,
 };
 
 #[test]
@@ -287,6 +287,8 @@ fn mock_injects_and_records_volume_and_trash_operations() {
         kind: VolumeKind::Fixed,
         total_bytes: Some(1024),
         available_bytes: Some(512),
+        is_system: true,
+        access: VolumeAccess::ReadWrite,
     };
     platform.set_local_volumes_result(Ok(vec![volume.clone()]));
     assert_eq!(

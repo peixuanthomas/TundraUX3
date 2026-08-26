@@ -28,10 +28,11 @@ use watchdog::{
 
 use crate::paths::home_dir_from_env;
 use crate::{
-    AppPaths, ExecutableKind, FileAttributes, FileOpenPolicy, LocalVolume, Platform,
-    PlatformCapabilities, PlatformError, PlatformIcon, PlatformKind, PlatformLifecycleEvent,
-    ProcessExit, ProcessSpec, TrashEntry, TrashEntryId, TrashRestoreTarget, TrashStats, UserDirs,
-    VolumeKind, build_linux_app_paths,
+    AppPaths, ExecutableKind, FileAttributes, FileOpenPolicy, LocalVolume, NetworkInterface,
+    NetworkInterfaceKind, NetworkLinkState, NetworkStatus, Platform, PlatformCapabilities,
+    PlatformError, PlatformIcon, PlatformKind, PlatformLifecycleEvent, ProcessExit, ProcessSpec,
+    TrashEntry, TrashEntryId, TrashRestoreTarget, TrashStats, UserDirs, VolumeAccess, VolumeKind,
+    build_linux_app_paths,
 };
 
 const XDG_OPEN: &str = "xdg-open";
@@ -177,6 +178,10 @@ impl Platform for LinuxPlatform {
 
     fn local_volumes(&self) -> Result<Vec<LocalVolume>, PlatformError> {
         local_volumes()
+    }
+
+    fn network_status(&self) -> Result<NetworkStatus, PlatformError> {
+        linux_network_status()
     }
 
     fn list_trash(&self) -> Result<Vec<TrashEntry>, PlatformError> {
@@ -712,6 +717,7 @@ struct MountInfo {
     mount_point: PathBuf,
     fs_type: String,
     major_minor: String,
+    read_only: bool,
 }
 
 fn parse_mountinfo(reader: impl BufRead) -> Vec<MountInfo> {
@@ -729,6 +735,7 @@ fn parse_mountinfo(reader: impl BufRead) -> Vec<MountInfo> {
                 mount_point: unescape_mount_field(before[4]),
                 fs_type: after[0].to_string(),
                 major_minor: before[2].to_string(),
+                read_only: before[5].split(',').any(|option| option == "ro"),
             })
         })
         .collect()
@@ -775,8 +782,9 @@ fn local_volumes() -> Result<Vec<LocalVolume>, PlatformError> {
         {
             continue;
         }
-        let (total_bytes, available_bytes) =
-            statvfs_bytes(&mount.mount_point).unwrap_or((None, None));
+        let capacity = statvfs_bytes(&mount.mount_point);
+        let capacity_available = capacity.is_ok();
+        let (total_bytes, available_bytes) = capacity.unwrap_or((None, None));
         result.push(LocalVolume {
             label: mount
                 .mount_point
@@ -787,9 +795,113 @@ fn local_volumes() -> Result<Vec<LocalVolume>, PlatformError> {
             root: mount.mount_point,
             total_bytes,
             available_bytes,
+            is_system: mount.mount_point == Path::new("/"),
+            access: if mount.read_only {
+                VolumeAccess::ReadOnly
+            } else if capacity_available {
+                VolumeAccess::ReadWrite
+            } else {
+                VolumeAccess::Unavailable
+            },
         });
     }
     Ok(result)
+}
+
+fn linux_network_status() -> Result<NetworkStatus, PlatformError> {
+    let mut head = std::ptr::null_mut();
+    if unsafe { libc::getifaddrs(&mut head) } != 0 {
+        return Err(io_error(
+            "enumerate Linux network interfaces",
+            None,
+            io::Error::last_os_error(),
+        ));
+    }
+    let mut interfaces: HashMap<String, NetworkInterface> = HashMap::new();
+    let mut current = head;
+    while !current.is_null() {
+        let entry = unsafe { &*current };
+        let name = unsafe { std::ffi::CStr::from_ptr(entry.ifa_name) }
+            .to_string_lossy()
+            .into_owned();
+        let loopback = entry.ifa_flags & libc::IFF_LOOPBACK as u32 != 0;
+        if !loopback {
+            let interface = interfaces
+                .entry(name.clone())
+                .or_insert_with(|| NetworkInterface {
+                    name: name.clone(),
+                    display_name: None,
+                    kind: linux_interface_kind(&name),
+                    link_state: linux_link_state(&name, entry.ifa_flags),
+                    addresses: Vec::new(),
+                });
+            if !entry.ifa_addr.is_null() {
+                let family = unsafe { (*entry.ifa_addr).sa_family as i32 };
+                let address = match family {
+                    libc::AF_INET => {
+                        let value = unsafe { &*(entry.ifa_addr as *const libc::sockaddr_in) };
+                        Some(std::net::IpAddr::V4(std::net::Ipv4Addr::from(
+                            value.sin_addr.s_addr.to_ne_bytes(),
+                        )))
+                    }
+                    libc::AF_INET6 => {
+                        let value = unsafe { &*(entry.ifa_addr as *const libc::sockaddr_in6) };
+                        Some(std::net::IpAddr::V6(std::net::Ipv6Addr::from(
+                            value.sin6_addr.s6_addr,
+                        )))
+                    }
+                    _ => None,
+                };
+                if let Some(address) = address.filter(|address| !address.is_loopback()) {
+                    interface.addresses.push(address);
+                }
+            }
+        }
+        current = entry.ifa_next;
+    }
+    unsafe { libc::freeifaddrs(head) };
+    Ok(NetworkStatus::new(interfaces.into_values().collect()))
+}
+
+fn linux_interface_kind(name: &str) -> NetworkInterfaceKind {
+    linux_interface_kind_with_sysfs(name, Path::new("/sys/class/net"))
+}
+
+fn linux_interface_kind_with_sysfs(name: &str, sys_class_net: &Path) -> NetworkInterfaceKind {
+    const VIRTUAL_PREFIXES: &[&str] = &[
+        "veth",
+        "docker",
+        "br-",
+        "virbr",
+        "tun",
+        "tap",
+        "wg",
+        "tailscale",
+    ];
+    if VIRTUAL_PREFIXES
+        .iter()
+        .any(|prefix| name.starts_with(prefix))
+    {
+        NetworkInterfaceKind::Virtual
+    } else if sys_class_net.join(name).join("wireless").exists() {
+        NetworkInterfaceKind::Wireless
+    } else if sys_class_net.join(name).exists() {
+        NetworkInterfaceKind::Wired
+    } else {
+        NetworkInterfaceKind::Unknown
+    }
+}
+
+fn linux_link_state(name: &str, flags: u32) -> NetworkLinkState {
+    match fs::read_to_string(Path::new("/sys/class/net").join(name).join("operstate"))
+        .as_deref()
+        .map(str::trim)
+    {
+        Ok("up") => NetworkLinkState::Up,
+        Ok("down") => NetworkLinkState::Down,
+        _ if flags & libc::IFF_UP as u32 != 0 => NetworkLinkState::Up,
+        _ => NetworkLinkState::Unknown,
+    }
 }
 
 fn mount_kind(major_minor: &str) -> VolumeKind {
@@ -2134,13 +2246,14 @@ fn io_error(operation: &'static str, path: Option<PathBuf>, error: io::Error) ->
 mod tests {
     use super::{
         MountInfo, XdgBaseDirs, XdgUserDirs, ensure_private_dir, format_trash_timestamp,
-        is_local_block_mount_with_sysfs, list_trash_root, logind_allows_poweroff,
-        mount_kind_from_sysfs_path, move_one_to_trash_root, parse_mountinfo, parse_trash_timestamp,
-        parse_trashinfo, percent_decode_path, percent_encode_path, private_trash_root,
-        private_trash_root_with_topdir, restore_trash_item_from_root,
-        restore_trash_item_from_root_with, spawn_detached_child, validate_desktop_entry,
+        is_local_block_mount_with_sysfs, linux_interface_kind_with_sysfs, list_trash_root,
+        logind_allows_poweroff, mount_kind_from_sysfs_path, move_one_to_trash_root,
+        parse_mountinfo, parse_trash_timestamp, parse_trashinfo, percent_decode_path,
+        percent_encode_path, private_trash_root, private_trash_root_with_topdir,
+        restore_trash_item_from_root, restore_trash_item_from_root_with, spawn_detached_child,
+        validate_desktop_entry,
     };
-    use crate::{PlatformError, TrashRestoreTarget, VolumeKind};
+    use crate::{NetworkInterfaceKind, PlatformError, TrashRestoreTarget, VolumeKind};
     use std::ffi::OsString;
     use std::fs::{self, OpenOptions};
     use std::io::Cursor;
@@ -2258,6 +2371,33 @@ mod tests {
         ));
         assert_eq!(mounts[0].mount_point, Path::new("/media/tundra/My Disk"));
         assert_eq!(mounts[0].fs_type, "ext4");
+        assert!(!mounts[0].read_only);
+        let mounts = parse_mountinfo(Cursor::new("24 22 8:1 / / ro - ext4 /dev/sda1 ro\n"));
+        assert!(mounts[0].read_only);
+    }
+
+    #[test]
+    fn network_kind_uses_virtual_prefixes_and_wireless_sysfs_marker() {
+        let sysfs = test_path("sys-class-net");
+        fs::create_dir_all(sysfs.join("wlan0/wireless")).unwrap();
+        fs::create_dir_all(sysfs.join("eno1")).unwrap();
+        assert_eq!(
+            linux_interface_kind_with_sysfs("wlan0", &sysfs),
+            NetworkInterfaceKind::Wireless
+        );
+        assert_eq!(
+            linux_interface_kind_with_sysfs("eno1", &sysfs),
+            NetworkInterfaceKind::Wired
+        );
+        assert_eq!(
+            linux_interface_kind_with_sysfs("veth123", &sysfs),
+            NetworkInterfaceKind::Virtual
+        );
+        assert_eq!(
+            linux_interface_kind_with_sysfs("mystery", &sysfs),
+            NetworkInterfaceKind::Unknown
+        );
+        let _ = fs::remove_dir_all(sysfs);
     }
     #[test]
     fn trash_path_encoding_round_trips() {
@@ -2284,6 +2424,7 @@ mod tests {
             mount_point: PathBuf::from("/media/local"),
             fs_type: "ext4".to_string(),
             major_minor: "8:1".to_string(),
+            read_only: false,
         };
         let network = MountInfo {
             fs_type: "nfs4".to_string(),
