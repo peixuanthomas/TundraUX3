@@ -35,6 +35,8 @@ pub struct StorageConfig {
     pub launcher: LauncherConfig,
     #[serde(default)]
     pub security: SecurityConfig,
+    #[serde(default)]
+    pub system_status: SystemStatusConfig,
 }
 
 impl StorageConfig {
@@ -49,6 +51,7 @@ impl StorageConfig {
         changed |= self.launcher.migrate_legacy_pinned_apps();
         changed |= self.editor.normalize();
         changed |= self.time_sync.normalize();
+        changed |= self.system_status.normalize();
         if self.language != SUPPORTED_LANGUAGE {
             self.language = SUPPORTED_LANGUAGE.to_string();
             changed = true;
@@ -72,7 +75,56 @@ impl Default for StorageConfig {
             editor: EditorConfig::default(),
             launcher: LauncherConfig::default(),
             security: SecurityConfig::default(),
+            system_status: SystemStatusConfig::default(),
         }
+    }
+}
+
+pub const SYSTEM_STATUS_MIN_AVAILABLE_GIB: u16 = 1;
+pub const SYSTEM_STATUS_MAX_AVAILABLE_GIB: u16 = 1024;
+pub const SYSTEM_STATUS_MIN_PERCENTAGE: u8 = 1;
+pub const SYSTEM_STATUS_MAX_PERCENTAGE: u8 = 100;
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(default)]
+pub struct SystemStatusConfig {
+    pub low_available_gib: u16,
+    pub low_percentage: u8,
+    pub critical_available_gib: u16,
+    pub critical_percentage: u8,
+}
+
+impl Default for SystemStatusConfig {
+    fn default() -> Self {
+        Self {
+            low_available_gib: 5,
+            low_percentage: 10,
+            critical_available_gib: 1,
+            critical_percentage: 5,
+        }
+    }
+}
+
+impl SystemStatusConfig {
+    pub fn normalize(&mut self) -> bool {
+        let original = self.clone();
+        self.low_available_gib = self.low_available_gib.clamp(
+            SYSTEM_STATUS_MIN_AVAILABLE_GIB,
+            SYSTEM_STATUS_MAX_AVAILABLE_GIB,
+        );
+        self.critical_available_gib = self.critical_available_gib.clamp(
+            SYSTEM_STATUS_MIN_AVAILABLE_GIB,
+            SYSTEM_STATUS_MAX_AVAILABLE_GIB,
+        );
+        self.low_percentage = self
+            .low_percentage
+            .clamp(SYSTEM_STATUS_MIN_PERCENTAGE, SYSTEM_STATUS_MAX_PERCENTAGE);
+        self.critical_percentage = self
+            .critical_percentage
+            .clamp(SYSTEM_STATUS_MIN_PERCENTAGE, SYSTEM_STATUS_MAX_PERCENTAGE);
+        self.critical_available_gib = self.critical_available_gib.min(self.low_available_gib);
+        self.critical_percentage = self.critical_percentage.min(self.low_percentage);
+        *self != original
     }
 }
 
@@ -713,5 +765,41 @@ mod glacier_migration_tests {
             config.normalize();
             assert_eq!(config.appearance, expected);
         }
+    }
+
+    #[test]
+    fn system_status_defaults_and_normalization_are_stable() {
+        assert_eq!(
+            SystemStatusConfig::default(),
+            SystemStatusConfig {
+                low_available_gib: 5,
+                low_percentage: 10,
+                critical_available_gib: 1,
+                critical_percentage: 5,
+            }
+        );
+
+        let mut config = SystemStatusConfig {
+            low_available_gib: 0,
+            low_percentage: 101,
+            critical_available_gib: u16::MAX,
+            critical_percentage: 0,
+        };
+        assert!(config.normalize());
+        assert_eq!(config.low_available_gib, SYSTEM_STATUS_MIN_AVAILABLE_GIB);
+        assert_eq!(config.low_percentage, SYSTEM_STATUS_MAX_PERCENTAGE);
+        assert_eq!(config.critical_available_gib, config.low_available_gib);
+        assert_eq!(config.critical_percentage, SYSTEM_STATUS_MIN_PERCENTAGE);
+
+        let mut inverted = SystemStatusConfig {
+            low_available_gib: 20,
+            low_percentage: 30,
+            critical_available_gib: 21,
+            critical_percentage: 31,
+        };
+        assert!(inverted.normalize());
+        assert_eq!(inverted.critical_available_gib, 20);
+        assert_eq!(inverted.critical_percentage, 30);
+        assert!(!inverted.normalize());
     }
 }

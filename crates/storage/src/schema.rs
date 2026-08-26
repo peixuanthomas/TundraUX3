@@ -4,10 +4,9 @@ use crate::error::StorageError;
 
 /// Version of the global TOML configuration document.
 ///
-/// Version 2 introduces the Glacier Night appearance contract and its motion
-/// preference.  Documents from version 1 remain readable and are rewritten
-/// during initialization.
-pub const SCHEMA_VERSION: u32 = 2;
+/// Version 3 adds System Status storage-pressure thresholds. Documents from
+/// versions 1 and 2 remain readable and are rewritten during initialization.
+pub const SCHEMA_VERSION: u32 = 3;
 /// Version of the per-user document.
 ///
 /// Version 3 adds the same appearance contract to each user record.

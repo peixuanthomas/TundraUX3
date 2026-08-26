@@ -262,6 +262,151 @@ pub enum TimeState {
         error: String,
     },
 }
+
+/// Storage pressure ordered from least actionable to most severe.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum StoragePressure {
+    Unknown,
+    Normal,
+    Low,
+    Critical,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct StorageThresholds {
+    pub low_available_bytes: u64,
+    pub low_percentage: u8,
+    pub critical_available_bytes: u64,
+    pub critical_percentage: u8,
+}
+
+impl StorageThresholds {
+    pub fn classify(
+        self,
+        total_bytes: Option<u64>,
+        available_bytes: Option<u64>,
+    ) -> StoragePressure {
+        let (Some(total), Some(available)) = (total_bytes, available_bytes) else {
+            return StoragePressure::Unknown;
+        };
+        if total == 0 || available > total {
+            return StoragePressure::Unknown;
+        }
+
+        let percentage_at_most = |threshold: u8| {
+            u128::from(available) * 100 <= u128::from(total) * u128::from(threshold)
+        };
+        if available <= self.critical_available_bytes
+            || percentage_at_most(self.critical_percentage)
+        {
+            StoragePressure::Critical
+        } else if available <= self.low_available_bytes || percentage_at_most(self.low_percentage) {
+            StoragePressure::Low
+        } else {
+            StoragePressure::Normal
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StorageVolumeKind {
+    Fixed,
+    Removable,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StorageVolumeAccess {
+    ReadWrite,
+    ReadOnly,
+    Unavailable,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SystemVolumeSource {
+    Detected,
+    FixedVolumeFallback,
+    Unavailable,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StorageVolumeSnapshot {
+    pub identifier: String,
+    pub label: Option<String>,
+    pub kind: StorageVolumeKind,
+    pub is_system: bool,
+    pub access: StorageVolumeAccess,
+    pub total_bytes: Option<u64>,
+    pub available_bytes: Option<u64>,
+    pub pressure: StoragePressure,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StorageSnapshot {
+    pub volumes: Vec<StorageVolumeSnapshot>,
+    pub overall_pressure: StoragePressure,
+    pub system_volume_index: Option<usize>,
+    pub system_volume_source: SystemVolumeSource,
+    pub sampled_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum StorageState {
+    Loading,
+    Ready(StorageSnapshot),
+    Stale {
+        last_good: StorageSnapshot,
+        error: String,
+    },
+    Unavailable {
+        reason: String,
+    },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NetworkInterfaceKind {
+    Wired,
+    Wireless,
+    Virtual,
+    Unknown,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NetworkLinkState {
+    Up,
+    Down,
+    Unknown,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NetworkInterfaceSnapshot {
+    pub name: String,
+    pub display_name: Option<String>,
+    pub kind: NetworkInterfaceKind,
+    pub link_state: NetworkLinkState,
+    pub addresses: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NetworkSnapshot {
+    pub interfaces: Vec<NetworkInterfaceSnapshot>,
+    pub active_link_count: usize,
+    pub has_active_link: bool,
+    pub sampled_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum NetworkState {
+    Loading,
+    Ready(NetworkSnapshot),
+    Stale {
+        last_good: NetworkSnapshot,
+        error: String,
+    },
+    Unavailable {
+        reason: String,
+    },
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct SystemSnapshot {
     pub revision: u64,
@@ -285,6 +430,71 @@ mod tests {
         assert_eq!(
             format_temperature(0.0, TemperatureUnit::Fahrenheit),
             (32.0, "°F")
+        );
+    }
+
+    #[test]
+    fn storage_pressure_classification_covers_boundaries_and_precedence() {
+        let thresholds = StorageThresholds {
+            low_available_bytes: 200,
+            low_percentage: 20,
+            critical_available_bytes: 100,
+            critical_percentage: 5,
+        };
+
+        assert_eq!(
+            thresholds.classify(Some(2_000), Some(100)),
+            StoragePressure::Critical
+        );
+        assert_eq!(
+            thresholds.classify(Some(3_000), Some(200)),
+            StoragePressure::Low
+        );
+        assert_eq!(
+            thresholds.classify(Some(2_000), Some(201)),
+            StoragePressure::Low
+        );
+        assert_eq!(
+            thresholds.classify(Some(1_000), Some(50)),
+            StoragePressure::Critical
+        );
+        assert_eq!(
+            thresholds.classify(Some(1_000), Some(300)),
+            StoragePressure::Normal
+        );
+    }
+
+    #[test]
+    fn storage_pressure_rejects_unknown_and_invalid_capacities() {
+        let thresholds = StorageThresholds {
+            low_available_bytes: 1,
+            low_percentage: 10,
+            critical_available_bytes: 1,
+            critical_percentage: 5,
+        };
+        assert_eq!(thresholds.classify(None, Some(1)), StoragePressure::Unknown);
+        assert_eq!(thresholds.classify(Some(1), None), StoragePressure::Unknown);
+        assert_eq!(
+            thresholds.classify(Some(0), Some(0)),
+            StoragePressure::Unknown
+        );
+        assert_eq!(
+            thresholds.classify(Some(1), Some(2)),
+            StoragePressure::Unknown
+        );
+    }
+
+    #[test]
+    fn storage_pressure_percentage_math_does_not_overflow() {
+        let thresholds = StorageThresholds {
+            low_available_bytes: 0,
+            low_percentage: 50,
+            critical_available_bytes: 0,
+            critical_percentage: 1,
+        };
+        assert_eq!(
+            thresholds.classify(Some(u64::MAX), Some(u64::MAX / 2)),
+            StoragePressure::Low
         );
     }
 }

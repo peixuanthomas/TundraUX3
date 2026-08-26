@@ -173,6 +173,7 @@ fn toml_and_json_documents_round_trip() {
         security: SecurityConfig {
             allow_release_debug: true,
         },
+        system_status: storage::SystemStatusConfig::default(),
     };
     manager
         .save_config(&config)
@@ -376,12 +377,50 @@ fn v1_appearance_migration_keeps_every_custom_visual_choice() {
     assert_eq!(appearance.icon_display_mode, IconDisplayMode::Ascii);
     assert_eq!(appearance.motion_preference, MotionPreference::Full);
     let contents = fs::read_to_string(&layout.config_path).expect("migrated config contents");
-    assert!(contents.contains("schema_version = 2"));
+    assert!(contents.contains(&format!("schema_version = {SCHEMA_VERSION}")));
     assert!(contents.contains("border_color = \"#38BDF8\""));
     assert!(contents.contains("accent_color = \"light-magenta\""));
     assert!(contents.contains("icon_display_mode = \"ascii\""));
     assert!(opened.report.migrated_files.contains(&layout.config_path));
 
+    cleanup(&base);
+}
+
+#[test]
+fn v2_config_migrates_system_status_defaults_and_round_trips() {
+    let base = unique_temp_root("system-status-v2-migration");
+    let paths = app_paths(&base);
+    let layout = StorageLayout::from_app_paths(&paths);
+    fs::create_dir_all(layout.config_path.parent().expect("config parent"))
+        .expect("config parent should be writable");
+    fs::write(
+        &layout.config_path,
+        "schema_version = 2\ntheme = \"dark\"\n",
+    )
+    .expect("v2 config fixture");
+
+    let opened = StorageManager::open(paths).expect("v2 config should migrate");
+    let config = opened.manager.load_config().expect("migrated config");
+    assert_eq!(config.schema_version, SCHEMA_VERSION);
+    assert_eq!(config.system_status, storage::SystemStatusConfig::default());
+    assert!(opened.report.migrated_files.contains(&layout.config_path));
+
+    let contents = fs::read_to_string(&layout.config_path).expect("migrated contents");
+    assert!(contents.contains(&format!("schema_version = {SCHEMA_VERSION}")));
+    assert!(contents.contains("[system_status]"));
+    assert!(contents.contains("low_available_gib = 5"));
+
+    opened
+        .manager
+        .save_config(&config)
+        .expect("save migrated config");
+    assert_eq!(
+        opened
+            .manager
+            .load_config()
+            .expect("reload migrated config"),
+        config
+    );
     cleanup(&base);
 }
 
@@ -642,8 +681,11 @@ fn future_trash_schema_errors_without_modifying_file() {
     let paths = app_paths(&base);
     let layout = StorageLayout::from_app_paths(&paths);
     fs::create_dir_all(&layout.trash_path).expect("trash path should be writable");
-    let original = "{\n  \"schema_version\": 3,\n  \"records\": []\n}\n";
-    fs::write(&layout.trash_manifest_path, original).expect("future trash fixture");
+    let original = format!(
+        "{{\n  \"schema_version\": {},\n  \"records\": []\n}}\n",
+        SCHEMA_VERSION + 1
+    );
+    fs::write(&layout.trash_manifest_path, &original).expect("future trash fixture");
 
     let error = StorageManager::open(paths).expect_err("future trash should fail");
 
@@ -651,10 +693,10 @@ fn future_trash_schema_errors_without_modifying_file() {
         error,
         StorageError::UnsupportedSchema {
             document: "trash",
-            found: 3,
+            found,
             supported: SCHEMA_VERSION,
             ..
-        }
+        } if found == SCHEMA_VERSION + 1
     ));
     assert_eq!(
         fs::read_to_string(&layout.trash_manifest_path)
@@ -672,8 +714,11 @@ fn future_clock_schema_errors_without_modifying_file() {
     let paths = app_paths(&base);
     let layout = StorageLayout::from_app_paths(&paths);
     fs::create_dir_all(&layout.data_path).expect("data path should be writable");
-    let original = "{\n  \"schema_version\": 3,\n  \"profiles\": {}\n}\n";
-    fs::write(&layout.clock_path, original).expect("future clock fixture");
+    let original = format!(
+        "{{\n  \"schema_version\": {},\n  \"profiles\": {{}}\n}}\n",
+        SCHEMA_VERSION + 1
+    );
+    fs::write(&layout.clock_path, &original).expect("future clock fixture");
 
     let error = StorageManager::open(paths).expect_err("future clock should fail");
 
@@ -681,10 +726,10 @@ fn future_clock_schema_errors_without_modifying_file() {
         error,
         StorageError::UnsupportedSchema {
             document: "clock",
-            found: 3,
+            found,
             supported: SCHEMA_VERSION,
             ..
-        }
+        } if found == SCHEMA_VERSION + 1
     ));
     assert_eq!(
         fs::read_to_string(&layout.clock_path).expect("future clock should remain readable"),
@@ -702,8 +747,11 @@ fn future_toml_schema_errors_without_modifying_file() {
     let layout = StorageLayout::from_app_paths(&paths);
     fs::create_dir_all(layout.config_path.parent().expect("config parent"))
         .expect("config parent should be writable");
-    let original = "schema_version = 3\ntheme = \"future\"\n";
-    fs::write(&layout.config_path, original).expect("future TOML fixture");
+    let original = format!(
+        "schema_version = {}\ntheme = \"future\"\n",
+        SCHEMA_VERSION + 1
+    );
+    fs::write(&layout.config_path, &original).expect("future TOML fixture");
 
     let error = StorageManager::open(paths).expect_err("future config should fail");
 
@@ -711,10 +759,10 @@ fn future_toml_schema_errors_without_modifying_file() {
         error,
         StorageError::UnsupportedSchema {
             document: "config",
-            found: 3,
+            found,
             supported: SCHEMA_VERSION,
             ..
-        }
+        } if found == SCHEMA_VERSION + 1
     ));
     assert_eq!(
         fs::read_to_string(&layout.config_path).expect("future config should remain readable"),
