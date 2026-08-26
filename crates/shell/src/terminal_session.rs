@@ -10,7 +10,7 @@ use crossterm::terminal::{
 };
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
-use std::io::{self, IsTerminal, Write};
+use std::io::{self, Write};
 
 pub struct TerminalGuard<W: Write> {
     terminal: Terminal<CrosstermBackend<W>>,
@@ -128,17 +128,12 @@ pub fn detect_terminal_graphics_protocol() -> Result<Option<&'static str>, Strin
 /// that no other thread is reading terminal events until this function
 /// returns.
 pub fn probe_terminal_graphics_protocol() -> ui::TerminalGraphicsProbe {
-    if !io::stdin().is_terminal() || !io::stdout().is_terminal() {
-        return ui::TerminalGraphicsProbe::no_response(
-            "terminal graphics detection requires interactive stdin and stdout",
-        );
-    }
-
     let mut raw_mode = match TemporaryRawMode::enter() {
         Ok(raw_mode) => raw_mode,
         Err(error) => return ui::TerminalGraphicsProbe::no_response(error),
     };
-    let detected = ui::EditorImagePicker::probe_stdio();
+    let capabilities = platform::probe_terminal_graphics_capabilities();
+    let detected = map_terminal_graphics_capabilities(capabilities);
     match raw_mode.restore() {
         Ok(()) => detected,
         Err(error) => {
@@ -150,6 +145,41 @@ pub fn probe_terminal_graphics_protocol() -> ui::TerminalGraphicsProbe {
                 }
                 _ => ui::TerminalGraphicsProbe::no_response(restore_error),
             }
+        }
+    }
+}
+
+fn map_terminal_graphics_capabilities(
+    capabilities: platform::TerminalGraphicsCapabilities,
+) -> ui::TerminalGraphicsProbe {
+    let text_sizing_protocol = capabilities.text_sizing_protocol;
+    match capabilities.status {
+        platform::TerminalGraphicsProbeStatus::Verified(protocol) => {
+            let protocol = match protocol {
+                platform::TerminalGraphicsProtocol::Kitty => ui::EditorGraphicsProtocol::Kitty,
+                platform::TerminalGraphicsProtocol::Sixel => ui::EditorGraphicsProtocol::Sixel,
+                platform::TerminalGraphicsProtocol::Iterm2 => ui::EditorGraphicsProtocol::Iterm2,
+            };
+            let cell_size = capabilities
+                .cell_size
+                .unwrap_or(platform::TerminalCellSize {
+                    width: 10,
+                    height: 20,
+                });
+            ui::TerminalGraphicsProbe::from_terminal_capabilities(
+                protocol,
+                cell_size.width,
+                cell_size.height,
+                capabilities.is_tmux,
+                text_sizing_protocol,
+            )
+        }
+        platform::TerminalGraphicsProbeStatus::Unsupported => {
+            ui::TerminalGraphicsProbe::unsupported().with_text_sizing_protocol(text_sizing_protocol)
+        }
+        platform::TerminalGraphicsProbeStatus::NoResponse { reason } => {
+            ui::TerminalGraphicsProbe::no_response(reason)
+                .with_text_sizing_protocol(text_sizing_protocol)
         }
     }
 }
@@ -198,4 +228,59 @@ pub fn restore_terminal_best_effort() {
         DisableMouseCapture,
         LeaveAlternateScreen
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn platform_capabilities_map_explicitly_to_ui_probe() {
+        let probe = map_terminal_graphics_capabilities(platform::TerminalGraphicsCapabilities {
+            status: platform::TerminalGraphicsProbeStatus::Verified(
+                platform::TerminalGraphicsProtocol::Sixel,
+            ),
+            cell_size: Some(platform::TerminalCellSize {
+                width: 8,
+                height: 16,
+            }),
+            is_tmux: true,
+            text_sizing_protocol: true,
+        });
+        assert_eq!(
+            probe.status(),
+            &ui::TerminalGraphicsProbeStatus::Verified(ui::EditorGraphicsProtocol::Sixel)
+        );
+        assert!(probe.picker().is_some());
+        assert!(probe.text_sizing_protocol());
+
+        let unsupported =
+            map_terminal_graphics_capabilities(platform::TerminalGraphicsCapabilities {
+                status: platform::TerminalGraphicsProbeStatus::Unsupported,
+                cell_size: None,
+                is_tmux: false,
+                text_sizing_protocol: true,
+            });
+        assert_eq!(
+            unsupported.status(),
+            &ui::TerminalGraphicsProbeStatus::Unsupported
+        );
+        assert!(unsupported.text_sizing_protocol());
+
+        let no_response =
+            map_terminal_graphics_capabilities(platform::TerminalGraphicsCapabilities {
+                status: platform::TerminalGraphicsProbeStatus::NoResponse {
+                    reason: "timed out".to_string(),
+                },
+                cell_size: None,
+                is_tmux: false,
+                text_sizing_protocol: false,
+            });
+        assert_eq!(
+            no_response.status(),
+            &ui::TerminalGraphicsProbeStatus::NoResponse {
+                reason: "timed out".to_string(),
+            }
+        );
+    }
 }

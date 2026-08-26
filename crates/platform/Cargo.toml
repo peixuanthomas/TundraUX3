@@ -7,6 +7,7 @@ edition.workspace = true
 path = "src/lib.rs"
 
 [dependencies]
+ratatui-image.workspace = true
 same-file = "1"
 watchdog = { path = "../watchdog" }
 
@@ -21,3 +22,6 @@ zbus = { version = "5.18", features = ["blocking-api"] }
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
 signal-hook = "0.3"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_Console", "Win32_System_Threading"] }

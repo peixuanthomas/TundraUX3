@@ -40,9 +40,11 @@ pub use platform::{
 };
 pub use process::{ProcessExit, ProcessSpec, ProcessStream, validate_process_spec};
 pub use terminal::{
-    ENTER_FULLSCREEN_SEQUENCE, EXIT_FULLSCREEN_SEQUENCE, TerminalControlHandler,
-    is_windows_terminal_session, terminal_environment_check, terminal_environment_check_with,
-    terminal_environment_check_with_graphics_protocol, with_terminal_fullscreen,
+    ENTER_FULLSCREEN_SEQUENCE, EXIT_FULLSCREEN_SEQUENCE, TerminalCellSize, TerminalControlHandler,
+    TerminalGraphicsCapabilities, TerminalGraphicsProbeStatus, TerminalGraphicsProtocol,
+    is_windows_terminal_session, probe_terminal_graphics_capabilities, terminal_environment_check,
+    terminal_environment_check_with, terminal_environment_check_with_graphics_protocol,
+    with_terminal_fullscreen,
 };
 
 #[cfg(windows)]
