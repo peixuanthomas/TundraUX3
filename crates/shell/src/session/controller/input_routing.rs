@@ -83,6 +83,7 @@ impl ShellSession {
             let command = match &key.key {
                 InputKey::Escape => ShellCommand::CloseSystemStatus,
                 InputKey::Char('r' | 'R') => ShellCommand::SystemStatusRefresh,
+                InputKey::Char('d' | 'D') => ShellCommand::OpenDiagnostics,
                 InputKey::Left | InputKey::BackTab if admin => {
                     ShellCommand::SystemStatusTab(match self.system_status_tab {
                         ui::SystemStatusTab::Overview => ui::SystemStatusTab::Network,
@@ -210,9 +211,6 @@ impl ShellSession {
             }
             ShellScreen::Home if key.is_character('u') || key.is_character('U') => {
                 (RoutedTarget::Global, ShellCommand::OpenUserManagement)
-            }
-            ShellScreen::Home if key.is_character('d') || key.is_character('D') => {
-                (RoutedTarget::Global, ShellCommand::OpenDiagnostics)
             }
             ShellScreen::Home
                 if self.current_home_username().is_some()
@@ -1290,6 +1288,9 @@ impl ShellSession {
                         }
                         Some(ui::SystemStatusHitTarget::Refresh) => {
                             ShellCommand::SystemStatusRefresh
+                        }
+                        Some(ui::SystemStatusHitTarget::Diagnostics) => {
+                            ShellCommand::OpenDiagnostics
                         }
                         Some(ui::SystemStatusHitTarget::Scrollbar) => {
                             ShellCommand::SystemStatusScrollbarPointerDown(coordinates)

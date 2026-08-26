@@ -276,11 +276,12 @@ impl ShellSession {
     }
 
     pub(in crate::session) fn open_diagnostics(&mut self) {
-        if self.is_strict_guest() {
-            self.notify_alert_with_tone(
-                "Diagnostics requires an authenticated account",
-                ui::NotificationTone::Warning,
-            );
+        let authenticated = self
+            .app
+            .auth_session()
+            .is_some_and(|session| session.role != UserRole::Guest);
+        if !authenticated || self.active_screen() != ShellScreen::SystemStatus {
+            self.notify_status("Open Diagnostics from System Status");
             return;
         }
         self.diagnostics_restart_required = self.diagnostics_restart_is_required();
@@ -311,7 +312,11 @@ impl ShellSession {
         self.diagnostics_repair_selected = 0;
         self.diagnostics_repair_scroll_offset = 0;
         self.diagnostics_repair_confirm_selected = true;
-        self.focused_component = ShellComponent::Home;
+        self.focused_component = if self.active_screen() == ShellScreen::SystemStatus {
+            ShellComponent::SystemStatus
+        } else {
+            ShellComponent::Home
+        };
         self.refresh_hit_map();
     }
 
@@ -1057,7 +1062,8 @@ mod diagnostics_shell_tests {
             app::AppCommand::SetDiagnosticsSnapshot(Some(snapshot())),
             Instant::now(),
         );
-        state.screen_stack = vec![ShellScreen::Home];
+        state.screen_stack = vec![ShellScreen::Home, ShellScreen::SystemStatus];
+        state.focused_component = ShellComponent::SystemStatus;
         state
     }
 
@@ -1725,7 +1731,8 @@ mod diagnostics_shell_tests {
         state.set_diagnostics_tab(ui::DiagnosticsTab::Incidents);
         assert_eq!(state.diagnostics_tab, ui::DiagnosticsTab::Incidents);
         state.close_diagnostics();
-        assert_eq!(state.active_screen(), ShellScreen::Home);
+        assert_eq!(state.active_screen(), ShellScreen::SystemStatus);
+        assert_eq!(state.focused_component, ShellComponent::SystemStatus);
     }
 
     #[test]

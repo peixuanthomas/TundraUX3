@@ -118,6 +118,7 @@ fn system_status_role_gate_and_missing_service_reject_open() {
             labels.contains(&"System Status".to_string()),
             role != UserRole::Guest
         );
+        assert!(!labels.contains(&"Diagnostics".to_string()));
         let original_focus = state.focused_component;
         state.open_system_status();
         assert_eq!(state.active_screen(), ShellScreen::Home);
@@ -126,6 +127,90 @@ fn system_status_role_gate_and_missing_service_reject_open() {
             assert_eq!(state.status(), "System Status service unavailable");
         }
     }
+}
+
+#[test]
+fn diagnostics_opens_only_from_system_status_and_returns_through_parent() {
+    for role in [UserRole::Admin, UserRole::User] {
+        let mut state = ShellSession::new_for_home_mode(
+            ShellLaunchConfig::default(),
+            (120, 40),
+            ShellHomeMode::User,
+        );
+        set_test_auth_role(&mut state, role);
+
+        state.apply_input(InputEvent::from_key_label("D"));
+        assert_eq!(state.active_screen(), ShellScreen::Home);
+
+        state.apply_routed_event_once(
+            RoutedEvent {
+                input: InputEvent::from_key_label("D"),
+                target: RoutedTarget::Global,
+                command: ShellCommand::OpenDiagnostics,
+            },
+            &platform::mock::UnsupportedPlatform,
+            Instant::now(),
+        );
+        assert_eq!(state.active_screen(), ShellScreen::Home);
+        assert_eq!(state.status(), "Open Diagnostics from System Status");
+
+        state.screen_stack.push(ShellScreen::SystemStatus);
+        state.focused_component = ShellComponent::SystemStatus;
+        state.apply_input(InputEvent::from_key_label("D"));
+        assert_eq!(state.active_screen(), ShellScreen::Diagnostics);
+        assert_eq!(state.focused_component(), ShellComponent::Diagnostics);
+
+        state.apply_input(InputEvent::from_key_label("Esc"));
+        assert_eq!(state.active_screen(), ShellScreen::SystemStatus);
+        assert_eq!(state.focused_component(), ShellComponent::SystemStatus);
+        state.apply_input(InputEvent::from_key_label("Esc"));
+        assert_eq!(state.active_screen(), ShellScreen::Home);
+        assert_eq!(state.focused_component(), ShellComponent::Home);
+    }
+}
+
+#[test]
+fn diagnostics_system_status_mouse_target_opens_child_page() {
+    let mut state = ShellSession::new_for_home_mode(
+        ShellLaunchConfig::default(),
+        (120, 40),
+        ShellHomeMode::User,
+    );
+    set_test_auth_role(&mut state, UserRole::Admin);
+    state.screen_stack.push(ShellScreen::SystemStatus);
+    state.focused_component = ShellComponent::SystemStatus;
+    let model = state.to_system_status_view_model().unwrap();
+    let ui::ShellLayout::Full { main, .. } = ui::compute_shell_layout(Rect::new(0, 0, 120, 40))
+    else {
+        panic!("system status mouse test requires a full layout");
+    };
+    let button = ui::system_status_layout(main, &model).diagnostics_button;
+
+    state.apply_input(InputEvent::Mouse(ui::MouseEvent::new(
+        button.x,
+        button.y,
+        ui::MouseEventKind::Down(PointerButton::Left),
+    )));
+
+    assert_eq!(state.active_screen(), ShellScreen::Diagnostics);
+    assert_eq!(state.focused_component(), ShellComponent::Diagnostics);
+}
+
+#[test]
+fn diagnostics_rejects_guest_even_with_system_status_parent() {
+    let mut state = ShellSession::new_for_home_mode(
+        ShellLaunchConfig::default(),
+        (120, 40),
+        ShellHomeMode::User,
+    );
+    set_test_auth_role(&mut state, UserRole::Guest);
+    state.screen_stack.push(ShellScreen::SystemStatus);
+    state.focused_component = ShellComponent::SystemStatus;
+
+    state.open_diagnostics();
+
+    assert_eq!(state.active_screen(), ShellScreen::SystemStatus);
+    assert_eq!(state.status(), "Open Diagnostics from System Status");
 }
 
 #[test]

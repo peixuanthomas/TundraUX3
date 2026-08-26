@@ -236,7 +236,6 @@ impl ShellSession {
             "Launcher" => self.open_launcher(platform),
             "Editor" => self.open_editor(),
             "Settings" => self.open_settings(),
-            "Diagnostics" => self.open_diagnostics(),
             "System Status" => self.open_system_status(),
             "User Management" | "User Profile" => self.open_user_management(),
             label => {

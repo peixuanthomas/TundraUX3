@@ -933,11 +933,11 @@ fn user_state_builds_user_home_view_model() {
 
     assert_eq!(home.display_mode(), HomeDisplayMode::User);
     assert_eq!(home.diagnostics(), None);
-    assert_eq!(home.entries().len(), 6);
+    assert_eq!(home.entries().len(), 5);
     assert!(
         home.entries()
             .iter()
-            .any(|entry| entry.label == "Diagnostics")
+            .all(|entry| entry.label != "Diagnostics")
     );
     assert!(
         home.entries()
@@ -1075,7 +1075,6 @@ fn explicit_user_mode_shows_product_entries_without_diagnostics() {
             "Launcher",
             "Editor",
             "Settings",
-            "Diagnostics",
             "System Status",
         ]
     );
@@ -1092,7 +1091,7 @@ fn home_arrow_keys_update_selected_entry() {
     assert_eq!(state.selected_home_entry_index(), 1);
 
     state.apply_input(InputEvent::from_key_label("End"));
-    assert_eq!(state.selected_home_entry_index(), 5);
+    assert_eq!(state.selected_home_entry_index(), 4);
 }
 
 #[test]
