@@ -117,6 +117,7 @@ fn user_is_summary_only_and_ignores_admin_tab_and_rows() {
     let output = render(80, 20, &model, TundraTheme::default_dark());
     assert!(output.contains("Storage status: Healthy"));
     assert!(output.contains("Network status: Connected"));
+    assert!(output.contains("D Diagnostics"));
     assert!(!output.contains("en0"));
     assert!(output.contains("Diagnostics"));
     assert_eq!(

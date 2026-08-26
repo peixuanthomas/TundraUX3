@@ -83,7 +83,10 @@ fn render_main(
         }
         SystemStatusContentViewModel::User(user) => render_user(frame, &layout, user, theme),
     }
-    let feedback = model.feedback.as_deref().unwrap_or("R Refresh · Esc Home");
+    let feedback = model
+        .feedback
+        .as_deref()
+        .unwrap_or("D Diagnostics · R Refresh · Esc Home");
     let help_width = layout
         .footer
         .width
