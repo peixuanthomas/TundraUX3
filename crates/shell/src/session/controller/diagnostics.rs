@@ -313,7 +313,10 @@ impl ShellSession {
             self.focused_component = ShellComponent::SystemStatus;
             self.refresh_hit_map();
         } else {
-            self.pop_to_home();
+            let _ = self.settings_task_runtime.set_system_status_active(false);
+            self.screen_stack = vec![ShellScreen::Home];
+            self.focused_component = ShellComponent::Home;
+            self.refresh_hit_map();
         }
     }
 
@@ -1735,11 +1738,7 @@ mod diagnostics_shell_tests {
     #[test]
     fn diagnostics_close_without_system_status_parent_falls_back_to_home() {
         let mut state = state(UserRole::Admin);
-        state.screen_stack = vec![
-            ShellScreen::Home,
-            ShellScreen::Settings,
-            ShellScreen::Diagnostics,
-        ];
+        state.screen_stack = vec![ShellScreen::Settings, ShellScreen::Diagnostics];
         state.focused_component = ShellComponent::Diagnostics;
 
         state.close_diagnostics();
