@@ -212,12 +212,11 @@ impl ShellSession {
         };
         let max = model.item_count().saturating_sub(layout.visible_capacity);
         self.system_status_scroll_offset = if delta < 0 {
-            self.system_status_scroll_offset
+            layout
+                .visible_start
                 .saturating_sub(delta.unsigned_abs() as usize)
         } else {
-            self.system_status_scroll_offset
-                .saturating_add(delta as usize)
-                .min(max)
+            layout.visible_start.saturating_add(delta as usize).min(max)
         };
         if layout.visible_capacity > 0 {
             self.system_status_selected_row = self.system_status_selected_row.clamp(

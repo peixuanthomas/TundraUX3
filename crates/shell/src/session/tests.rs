@@ -487,6 +487,31 @@ fn system_status_mouse_wheel_and_scrollbar_drag_update_explicit_viewport() {
     state.focused_component = ShellComponent::SystemStatus;
     state.set_system_status_tab(ui::SystemStatusTab::Storage);
     state.refresh_hit_map();
+    state.apply_input(InputEvent::from_key_label("End"));
+    let model = state.to_system_status_view_model().unwrap();
+    let ui::ShellLayout::Full { main, .. } = ui::compute_shell_layout(Rect::new(0, 0, 80, 16))
+    else {
+        panic!()
+    };
+    let keyboard_layout = ui::system_status_layout(main, &model);
+    assert!(keyboard_layout.visible_start > 1);
+    assert_eq!(state.system_status_scroll_offset, 0);
+    state.apply_input(InputEvent::Mouse(ui::MouseEvent::new(
+        10,
+        8,
+        ui::MouseEventKind::Scroll(ScrollDirection::Up),
+    )));
+    let after_wheel_model = state.to_system_status_view_model().unwrap();
+    let after_wheel_layout = ui::system_status_layout(main, &after_wheel_model);
+    assert_eq!(
+        after_wheel_layout.visible_start,
+        keyboard_layout.visible_start.saturating_sub(1)
+    );
+    assert!(state.system_status_selected_row >= after_wheel_layout.visible_start);
+    assert!(
+        state.system_status_selected_row
+            < after_wheel_layout.visible_start + after_wheel_layout.visible_capacity
+    );
     state.apply_input(InputEvent::Mouse(ui::MouseEvent::new(
         10,
         8,
@@ -494,10 +519,6 @@ fn system_status_mouse_wheel_and_scrollbar_drag_update_explicit_viewport() {
     )));
     assert!(state.system_status_scroll_offset > 0);
     let model = state.to_system_status_view_model().unwrap();
-    let ui::ShellLayout::Full { main, .. } = ui::compute_shell_layout(Rect::new(0, 0, 80, 16))
-    else {
-        panic!()
-    };
     let layout = ui::system_status_layout(main, &model);
     let track = layout.scrollbar.expect("scrollbar");
     state.apply_input(InputEvent::Mouse(ui::MouseEvent::new(
