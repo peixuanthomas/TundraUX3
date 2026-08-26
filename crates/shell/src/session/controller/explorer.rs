@@ -225,6 +225,68 @@ impl ShellSession {
         self.resolve_notification_alert(EXPLORER_ALERT_KEY);
     }
 
+    pub(in crate::session) fn cycle_explorer_quick_location(
+        &mut self,
+        forward: bool,
+        platform: &dyn Platform,
+    ) {
+        let Some(state) = self.app.explorer_state() else {
+            return;
+        };
+        let model = self.to_explorer_view_model();
+        let enabled = model
+            .quick_locations
+            .iter()
+            .enumerate()
+            .filter_map(|(index, location)| location.enabled.then_some(index))
+            .collect::<Vec<_>>();
+        if enabled.is_empty() {
+            return;
+        }
+        let current = enabled.iter().position(|index| {
+            let location = &model.quick_locations[*index];
+            match location.kind {
+                app::explorer::ExplorerQuickLocationKind::Trash => {
+                    state.current_location.is_trash()
+                }
+                app::explorer::ExplorerQuickLocationKind::Directory
+                | app::explorer::ExplorerQuickLocationKind::Volume => state
+                    .current_location
+                    .path()
+                    .is_some_and(|path| path == std::path::Path::new(&location.path)),
+            }
+        });
+        let position = match (current, forward) {
+            (Some(position), true) => (position + 1) % enabled.len(),
+            (Some(position), false) => position.checked_sub(1).unwrap_or(enabled.len() - 1),
+            (None, true) => 0,
+            (None, false) => enabled.len() - 1,
+        };
+        self.activate_explorer_quick_location(enabled[position], platform);
+    }
+
+    fn activate_explorer_quick_location(&mut self, index: usize, platform: &dyn Platform) {
+        let location = self
+            .to_explorer_view_model()
+            .quick_locations
+            .get(index)
+            .filter(|location| location.enabled)
+            .cloned();
+        let Some(location) = location else {
+            return;
+        };
+        match location.kind {
+            app::explorer::ExplorerQuickLocationKind::Trash => {
+                self.apply_explorer_command(ExplorerCommand::NavigateTrash, platform)
+            }
+            app::explorer::ExplorerQuickLocationKind::Directory
+            | app::explorer::ExplorerQuickLocationKind::Volume => self.apply_explorer_command(
+                ExplorerCommand::Navigate(std::path::PathBuf::from(location.path)),
+                platform,
+            ),
+        }
+    }
+
     pub(in crate::session) fn apply_explorer_command(
         &mut self,
         command: ExplorerCommand,
@@ -573,25 +635,7 @@ impl ShellSession {
                 return;
             }
             ui::ExplorerHitTarget::QuickLocation(index) => {
-                let location = self
-                    .to_explorer_view_model()
-                    .quick_locations
-                    .get(index)
-                    .filter(|location| location.enabled)
-                    .cloned();
-                if let Some(location) = location {
-                    match location.kind {
-                        app::explorer::ExplorerQuickLocationKind::Trash => {
-                            self.apply_explorer_command(ExplorerCommand::NavigateTrash, platform)
-                        }
-                        app::explorer::ExplorerQuickLocationKind::Directory
-                        | app::explorer::ExplorerQuickLocationKind::Volume => self
-                            .apply_explorer_command(
-                                ExplorerCommand::Navigate(std::path::PathBuf::from(location.path)),
-                                platform,
-                            ),
-                    }
-                }
+                self.activate_explorer_quick_location(index, platform);
                 return;
             }
             ui::ExplorerHitTarget::Column(column) => {

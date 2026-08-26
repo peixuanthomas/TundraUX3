@@ -51,6 +51,171 @@ fn login_can_open_explorer_and_search_current_directory() {
 }
 
 #[test]
+fn tab_cycles_explorer_quick_locations_in_both_directions_and_wraps() {
+    let fixture = FixtureRoot::new("quick-location-tab-cycle");
+    let platform = mock_platform(fixture.path());
+    bootstrap_with_shell(&platform);
+    let mut state = logged_in_state(&platform);
+    state.apply_input_with_platform(InputEvent::from_key_label("e"), &platform);
+
+    let locations = state
+        .to_explorer_view_model()
+        .quick_locations
+        .into_iter()
+        .filter(|location| location.enabled)
+        .collect::<Vec<_>>();
+    let documents = locations
+        .iter()
+        .position(|location| location.path == fixture.path().join("Documents").to_string_lossy())
+        .expect("Documents quick location");
+    let next = (documents + 1) % locations.len();
+
+    state.apply_input_with_platform(InputEvent::from_key_label("Tab"), &platform);
+    assert_eq!(
+        state.last_command(),
+        Some(&ShellCommand::ExplorerNextQuickLocation)
+    );
+    let explorer = state.to_explorer_view_model();
+    if locations[next].kind == app::explorer::ExplorerQuickLocationKind::Trash {
+        assert!(explorer.is_trash);
+    } else {
+        assert_eq!(explorer.current_path, locations[next].path);
+    }
+
+    state.apply_input_with_platform(InputEvent::from_key_label("Shift+Tab"), &platform);
+    assert_eq!(
+        state.last_command(),
+        Some(&ShellCommand::ExplorerPreviousQuickLocation)
+    );
+    assert_eq!(
+        state.to_explorer_view_model().current_path,
+        locations[documents].path
+    );
+
+    for _ in 0..locations.len() - documents - 1 {
+        state.apply_input_with_platform(InputEvent::from_key_label("Tab"), &platform);
+    }
+    assert!(state.to_explorer_view_model().is_trash);
+    state.apply_input_with_platform(InputEvent::from_key_label("Tab"), &platform);
+    assert_eq!(
+        state.to_explorer_view_model().current_path,
+        locations[0].path
+    );
+}
+
+#[test]
+fn tab_from_non_quick_location_starts_at_the_directional_edge() {
+    let fixture = FixtureRoot::new("quick-location-tab-edge");
+    let platform = mock_platform(fixture.path());
+    bootstrap_with_shell(&platform);
+    let nested = fixture.path().join("Documents").join("nested");
+    fs::create_dir(&nested).expect("nested folder");
+    let mut state = logged_in_state(&platform);
+    state.apply_input_with_platform(InputEvent::from_key_label("e"), &platform);
+    state.apply_input_with_platform(InputEvent::from_key_label("Enter"), &platform);
+    assert_eq!(
+        state.to_explorer_view_model().current_path,
+        nested.to_string_lossy()
+    );
+
+    let locations = state
+        .to_explorer_view_model()
+        .quick_locations
+        .into_iter()
+        .filter(|location| location.enabled)
+        .collect::<Vec<_>>();
+    state.apply_input_with_platform(InputEvent::from_key_label("Tab"), &platform);
+    assert_eq!(
+        state.to_explorer_view_model().current_path,
+        locations.first().expect("first quick location").path
+    );
+
+    state.apply_input_with_platform(
+        InputEvent::Key(KeyInput::with_phase(
+            InputKey::Left,
+            InputModifiers {
+                alt: true,
+                ..InputModifiers::none()
+            },
+            InputPhase::Press,
+        )),
+        &platform,
+    );
+    assert_eq!(
+        state.to_explorer_view_model().current_path,
+        nested.to_string_lossy()
+    );
+    state.apply_input_with_platform(InputEvent::from_key_label("Shift+Tab"), &platform);
+    assert!(state.to_explorer_view_model().is_trash);
+}
+
+#[test]
+fn tab_does_not_navigate_when_explorer_sidebar_is_not_rendered() {
+    let fixture = FixtureRoot::new("quick-location-tab-hidden");
+    let platform = mock_platform(fixture.path());
+    bootstrap_with_shell(&platform);
+    let mut state = logged_in_state(&platform);
+    state.apply_input_with_platform(InputEvent::from_key_label("e"), &platform);
+    let initial = state.to_explorer_view_model().current_path;
+
+    state.apply_input_with_platform(
+        InputEvent::Resize {
+            width: 95,
+            height: 40,
+        },
+        &platform,
+    );
+    state.apply_input_with_platform(InputEvent::from_key_label("Tab"), &platform);
+
+    assert_eq!(state.last_command(), Some(&ShellCommand::RecordInput));
+    assert_eq!(state.to_explorer_view_model().current_path, initial);
+}
+
+#[test]
+fn disabled_quick_location_is_skipped_and_mouse_activation_is_ignored() {
+    let fixture = FixtureRoot::new("quick-location-disabled");
+    let platform = mock_platform(fixture.path());
+    bootstrap_with_shell(&platform);
+    let downloads = fixture.path().join("Downloads");
+    fs::create_dir(fixture.path().join("Pictures")).expect("Pictures quick location");
+    let mut state = logged_in_state(&platform);
+    state.apply_input_with_platform(InputEvent::from_key_label("e"), &platform);
+
+    let model = state.to_explorer_view_model();
+    let disabled_index = model
+        .quick_locations
+        .iter()
+        .position(|location| location.path == downloads.to_string_lossy())
+        .expect("Downloads quick location");
+    assert!(!model.quick_locations[disabled_index].enabled);
+    let pictures = fixture
+        .path()
+        .join("Pictures")
+        .to_string_lossy()
+        .into_owned();
+
+    state.apply_input_with_platform(InputEvent::from_key_label("Tab"), &platform);
+    assert_eq!(state.to_explorer_view_model().current_path, pictures);
+
+    let area = Rect::new(0, 0, state.terminal_size().0, state.terminal_size().1);
+    let ui::ShellLayout::Full { main, .. } = ui::compute_shell_layout(area) else {
+        panic!("disabled quick location test requires a full layout");
+    };
+    let layout = ui::explorer_layout(main, &state.to_explorer_view_model());
+    let disabled = layout
+        .quick_locations
+        .iter()
+        .find(|location| location.index == disabled_index)
+        .expect("visible disabled quick location");
+    let coordinates = (disabled.area.x.saturating_add(1), disabled.area.y);
+    state.apply_input_with_platform(
+        InputEvent::mouse_down(PointerButton::Left, coordinates),
+        &platform,
+    );
+    assert_eq!(state.to_explorer_view_model().current_path, pictures);
+}
+
+#[test]
 fn mouse_single_click_selects_and_double_click_opens_file() {
     let fixture = FixtureRoot::new("mouse-open");
     let platform = mock_platform(fixture.path());

@@ -771,6 +771,14 @@ impl ShellSession {
                 self.apply_explorer_command(ExplorerCommand::SelectPrevious, platform);
                 ShellAction::Redraw
             }
+            ShellCommand::ExplorerNextQuickLocation => {
+                self.cycle_explorer_quick_location(true, platform);
+                ShellAction::Redraw
+            }
+            ShellCommand::ExplorerPreviousQuickLocation => {
+                self.cycle_explorer_quick_location(false, platform);
+                ShellAction::Redraw
+            }
             ShellCommand::ExplorerNextExtend => {
                 let next = self
                     .app

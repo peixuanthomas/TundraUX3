@@ -794,8 +794,30 @@ impl ShellSession {
             .app
             .explorer_state()
             .is_some_and(|state| state.current_location.is_trash());
+        let quick_locations_visible = || {
+            let area = Rect::new(0, 0, self.terminal_size.0, self.terminal_size.1);
+            let ui::ShellLayout::Full { main, .. } = ui::compute_shell_layout(area) else {
+                return false;
+            };
+            ui::explorer_layout(main, &self.to_explorer_view_model())
+                .mode
+                .shows_sidebar()
+        };
         match &key.key {
             InputKey::Escape => (RoutedTarget::Global, ShellCommand::CloseExplorer),
+            InputKey::BackTab if !key.has_non_shift_modifier() && quick_locations_visible() => {
+                (target, ShellCommand::ExplorerPreviousQuickLocation)
+            }
+            InputKey::Tab
+                if !key.has_non_shift_modifier()
+                    && key.modifiers.shift
+                    && quick_locations_visible() =>
+            {
+                (target, ShellCommand::ExplorerPreviousQuickLocation)
+            }
+            InputKey::Tab if !key.has_non_shift_modifier() && quick_locations_visible() => {
+                (target, ShellCommand::ExplorerNextQuickLocation)
+            }
             InputKey::Char('l' | 'L') if key.modifiers.control || key.modifiers.super_key => {
                 (target, ShellCommand::BeginExplorerAddress)
             }

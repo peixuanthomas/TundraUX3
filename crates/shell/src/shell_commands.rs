@@ -116,6 +116,8 @@ pub enum ShellCommand {
     EditorCancelOpen,
     ExplorerNext,
     ExplorerPrevious,
+    ExplorerNextQuickLocation,
+    ExplorerPreviousQuickLocation,
     ExplorerNextExtend,
     ExplorerPreviousExtend,
     ExplorerSelectAll,
