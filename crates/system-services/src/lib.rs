@@ -24,6 +24,7 @@ const DEFAULT_LOCATION_REFRESH: Duration = Duration::from_secs(24 * 60 * 60);
 const DEFAULT_TIME_REFRESH: Duration = Duration::from_secs(5 * 60);
 const DEFAULT_SYSTEM_STATUS_BACKGROUND_REFRESH: Duration = Duration::from_secs(30);
 const DEFAULT_SYSTEM_STATUS_ACTIVE_REFRESH: Duration = Duration::from_secs(5);
+const MIN_SYSTEM_STATUS_REFRESH_INTERVAL: Duration = Duration::from_millis(10);
 const SYSTEM_LOCATION_DETECTION_TIMEOUT: Duration = Duration::from_secs(3);
 const DEFAULT_BACKOFF: [Duration; 3] = [
     Duration::from_secs(30),
@@ -528,12 +529,7 @@ async fn run(
         }
         if now >= system_status_due {
             refresh_system_status(&snapshot_tx, platform.as_ref(), config.storage_thresholds);
-            system_status_due = now
-                + if system_status_active {
-                    config.system_status_active_refresh_interval
-                } else {
-                    config.system_status_background_refresh_interval
-                };
+            system_status_due = now + system_status_refresh_interval(&config, system_status_active);
         }
         if now >= weather_due {
             let should_refresh_location = location_due <= now;
@@ -663,6 +659,15 @@ async fn run(
             ),
         );
     }
+}
+
+fn system_status_refresh_interval(config: &SystemServicesConfig, active: bool) -> Duration {
+    let configured = if active {
+        config.system_status_active_refresh_interval
+    } else {
+        config.system_status_background_refresh_interval
+    };
+    configured.max(MIN_SYSTEM_STATUS_REFRESH_INTERVAL)
 }
 
 type ValidationRequest = (
@@ -1417,6 +1422,103 @@ mod tests {
             .iter()
             .filter(|call| matches!(call, platform::mock::MockCall::LocalVolumes))
             .count()
+    }
+
+    fn network_status_call_count(platform: &platform::mock::MockPlatform) -> usize {
+        platform
+            .calls()
+            .iter()
+            .filter(|call| matches!(call, platform::mock::MockCall::NetworkStatus))
+            .count()
+    }
+
+    fn start_with_zero_status_intervals() -> (
+        SystemServicesHandle,
+        watch::Receiver<SystemSnapshot>,
+        Arc<platform::mock::MockPlatform>,
+    ) {
+        let platform = Arc::new(mock_platform());
+        let provider = Arc::new(FakeProvider {
+            outcomes: Mutex::new(vec![Ok(sample()), Ok(sample())]),
+            calls: AtomicUsize::new(0),
+        });
+        let mut config = config();
+        config.timezone_location = Some(config.fallback_location.clone());
+        config.system_status_background_refresh_interval = Duration::ZERO;
+        config.system_status_active_refresh_interval = Duration::ZERO;
+        let platform_trait: Arc<dyn platform::Platform> = platform.clone();
+        let (handle, receiver) = SystemServicesRuntime::start_with_platform_and_provider(
+            config,
+            watchdog(),
+            platform_trait,
+            provider,
+        );
+        (handle, receiver, platform)
+    }
+
+    #[test]
+    fn zero_background_interval_is_bounded_and_commands_remain_responsive() {
+        let (handle, mut receiver, platform) = start_with_zero_status_intervals();
+        wait_until(&mut receiver, |snapshot| {
+            matches!(snapshot.storage, StorageState::Ready(_))
+        });
+        std::thread::sleep(Duration::from_millis(75));
+        let storage_calls = status_call_count(&platform);
+        let network_calls = network_status_call_count(&platform);
+        assert!(
+            (1..=16).contains(&storage_calls),
+            "storage calls: {storage_calls}"
+        );
+        assert!(
+            (1..=16).contains(&network_calls),
+            "network calls: {network_calls}"
+        );
+
+        handle.refresh_system_status().unwrap();
+        wait_until(&mut receiver, |_| {
+            status_call_count(&platform) > storage_calls
+        });
+        let after_refresh = status_call_count(&platform);
+        let mut changed = config();
+        changed.timezone_location = Some(changed.fallback_location.clone());
+        changed.system_status_background_refresh_interval = Duration::ZERO;
+        changed.system_status_active_refresh_interval = Duration::ZERO;
+        handle.reconfigure(changed).unwrap();
+        wait_until(&mut receiver, |_| {
+            status_call_count(&platform) > after_refresh
+        });
+
+        let (shutdown_tx, shutdown_rx) = std_mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = shutdown_tx.send(handle.shutdown());
+        });
+        assert_eq!(
+            shutdown_rx.recv_timeout(Duration::from_secs(1)).unwrap(),
+            Ok(())
+        );
+    }
+
+    #[test]
+    fn zero_active_interval_is_bounded() {
+        let (handle, mut receiver, platform) = start_with_zero_status_intervals();
+        wait_until(&mut receiver, |snapshot| {
+            matches!(snapshot.network, NetworkState::Ready(_))
+        });
+        handle.set_system_status_active(true).unwrap();
+        let storage_baseline = status_call_count(&platform);
+        let network_baseline = network_status_call_count(&platform);
+        std::thread::sleep(Duration::from_millis(75));
+        let storage_calls = status_call_count(&platform) - storage_baseline;
+        let network_calls = network_status_call_count(&platform) - network_baseline;
+        assert!(
+            (1..=16).contains(&storage_calls),
+            "storage calls: {storage_calls}"
+        );
+        assert!(
+            (1..=16).contains(&network_calls),
+            "network calls: {network_calls}"
+        );
+        handle.shutdown().unwrap();
     }
 
     #[test]
