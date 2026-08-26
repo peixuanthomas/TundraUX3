@@ -28,6 +28,8 @@ const PBPASTE: &str = "/usr/bin/pbpaste";
 const OSASCRIPT: &str = "/usr/bin/osascript";
 const FULL_DISK_ACCESS_SETTINGS_URI: &str =
     "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles";
+#[cfg(target_os = "macos")]
+const MNT_REMOVABLE: u32 = 0x0000_0200;
 
 #[cfg(target_os = "macos")]
 unsafe extern "C" {
@@ -512,11 +514,7 @@ fn macos_local_volumes() -> Result<Vec<LocalVolume>, PlatformError> {
                 .file_name()
                 .map(|name| name.to_string_lossy().into_owned())
                 .or_else(|| Some("Macintosh HD".to_string())),
-            kind: if root == Path::new("/") {
-                VolumeKind::Fixed
-            } else {
-                VolumeKind::Removable
-            },
+            kind: macos_volume_kind(stats.f_flags),
             total_bytes: stats.f_blocks.checked_mul(block_size),
             available_bytes: stats.f_bavail.checked_mul(block_size),
             is_system: root == Path::new("/"),
@@ -532,6 +530,15 @@ fn macos_local_volumes() -> Result<Vec<LocalVolume>, PlatformError> {
     volumes.sort_by(|left, right| left.root.cmp(&right.root));
     volumes.dedup_by(|left, right| left.root == right.root);
     Ok(volumes)
+}
+
+#[cfg(target_os = "macos")]
+fn macos_volume_kind(mount_flags: u32) -> VolumeKind {
+    if mount_flags & MNT_REMOVABLE != 0 {
+        VolumeKind::Removable
+    } else {
+        VolumeKind::Fixed
+    }
 }
 
 #[cfg(target_os = "macos")]
@@ -601,8 +608,17 @@ fn macos_network_status() -> Result<NetworkStatus, PlatformError> {
 
 #[cfg(all(test, target_os = "macos"))]
 mod system_status_tests {
-    use super::macos_interface_kind;
-    use crate::NetworkInterfaceKind;
+    use super::{macos_interface_kind, macos_volume_kind};
+    use crate::{NetworkInterfaceKind, VolumeKind};
+
+    #[test]
+    fn volume_kind_uses_native_removable_mount_flag() {
+        assert_eq!(macos_volume_kind(0), VolumeKind::Fixed);
+        assert_eq!(
+            macos_volume_kind(super::MNT_REMOVABLE),
+            VolumeKind::Removable
+        );
+    }
 
     #[test]
     fn system_configuration_interface_types_map_to_public_kinds() {
