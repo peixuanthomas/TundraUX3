@@ -197,16 +197,25 @@ impl ShellSettingsTaskRuntime {
         }
     }
 
-    pub(in crate::session) fn refresh_system_status(&self) {
-        if let Some(system_services) = self.shared.system_services.as_ref() {
-            let _ = system_services.refresh_system_status();
-        }
+    pub(in crate::session) fn refresh_system_status(
+        &self,
+    ) -> Result<(), system_services::SystemServicesError> {
+        self.shared
+            .system_services
+            .as_ref()
+            .ok_or(system_services::SystemServicesError::Shutdown)?
+            .refresh_system_status()
     }
 
-    pub(in crate::session) fn set_system_status_active(&self, active: bool) {
-        if let Some(system_services) = self.shared.system_services.as_ref() {
-            let _ = system_services.set_system_status_active(active);
-        }
+    pub(in crate::session) fn set_system_status_active(
+        &self,
+        active: bool,
+    ) -> Result<(), system_services::SystemServicesError> {
+        self.shared
+            .system_services
+            .as_ref()
+            .ok_or(system_services::SystemServicesError::Shutdown)?
+            .set_system_status_active(active)
     }
 }
 
@@ -278,6 +287,169 @@ impl Eq for ShellSettingsTaskRuntime {}
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    struct UnavailableWeather;
+
+    impl system_services::WeatherProvider for UnavailableWeather {
+        fn current_weather<'life0, 'async_trait>(
+            &'life0 self,
+            _location: system_services::WeatherLocation,
+            _units: system_services::WeatherUnits,
+        ) -> std::pin::Pin<
+            Box<
+                dyn std::future::Future<Output = Result<system_services::WeatherData, String>>
+                    + Send
+                    + 'async_trait,
+            >,
+        >
+        where
+            'life0: 'async_trait,
+            Self: 'async_trait,
+        {
+            Box::pin(async { Err("weather unavailable in settings test".into()) })
+        }
+    }
+
+    fn system_status_platform() -> Arc<platform::mock::MockPlatform> {
+        let root = std::env::temp_dir().join(format!(
+            "tundra-settings-system-status-platform-{}",
+            NEXT_SETTINGS_RUNTIME_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        ));
+        let user_dirs = platform::UserDirs::new(
+            root.join("Desktop"),
+            root.join("Documents"),
+            root.join("Downloads"),
+            root.join("Pictures"),
+            root.join("Videos"),
+            root.join("Music"),
+            root.join("Data"),
+        )
+        .unwrap();
+        let app_paths = platform::build_linux_app_paths(
+            root.join("Config"),
+            root.join("Data"),
+            root.join("Cache"),
+            root.join("State"),
+            root.join("Temp"),
+        )
+        .unwrap();
+        let platform = Arc::new(platform::mock::MockPlatform::new(user_dirs, app_paths));
+        platform.set_local_volumes_result(Ok(vec![platform::LocalVolume {
+            root: PathBuf::from("/"),
+            label: Some("System".into()),
+            kind: platform::VolumeKind::Fixed,
+            total_bytes: Some(10 * 1024_u64.pow(3)),
+            available_bytes: Some(6 * 1024_u64.pow(3)),
+            is_system: true,
+            access: platform::VolumeAccess::ReadWrite,
+        }]));
+        platform
+    }
+
+    fn wait_for_system_status_snapshot(
+        receiver: &mut tokio::sync::watch::Receiver<system_services::SystemSnapshot>,
+        predicate: impl Fn(&system_services::SystemSnapshot) -> bool,
+    ) {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_time()
+            .build()
+            .expect("snapshot wait runtime");
+        runtime
+            .block_on(async {
+                tokio::time::timeout(Duration::from_secs(2), receiver.wait_for(predicate)).await
+            })
+            .expect("system status snapshot wait timed out")
+            .expect("system status snapshot sender closed");
+    }
+
+    fn system_status_runtime_with_handle(
+        handle: system_services::SystemServicesHandle,
+        config: system_services::SystemServicesConfig,
+    ) -> ShellSettingsTaskRuntime {
+        let (event_tx, event_rx) = mpsc::channel();
+        ShellSettingsTaskRuntime {
+            shared: Arc::new(ShellSettingsTaskShared {
+                task_group: None,
+                event_tx,
+                event_rx: Mutex::new(event_rx),
+                workers: Mutex::new(BTreeMap::new()),
+                next_request_id: std::sync::atomic::AtomicU64::new(1),
+                system_services: Some(handle),
+                system_services_config: Mutex::new(config),
+            }),
+        }
+    }
+
+    #[test]
+    fn system_status_operations_report_unavailable_runtime() {
+        let runtime = ShellSettingsTaskRuntime::unavailable();
+        assert_eq!(
+            runtime.refresh_system_status(),
+            Err(system_services::SystemServicesError::Shutdown)
+        );
+        assert_eq!(
+            runtime.set_system_status_active(true),
+            Err(system_services::SystemServicesError::Shutdown)
+        );
+        assert_eq!(
+            runtime.set_system_status_active(false),
+            Err(system_services::SystemServicesError::Shutdown)
+        );
+    }
+
+    #[test]
+    fn system_status_operations_forward_and_reconfigure_thresholds() {
+        let watchdog = default_editor_watchdog().expect("managed settings test watchdog");
+        let platform = system_status_platform();
+        let mut service_config = system_services::SystemServicesConfig::default();
+        service_config.request_timeout = Duration::from_millis(1);
+        service_config.weather_refresh_interval = Duration::from_secs(3600);
+        service_config.timezone_location = Some(service_config.fallback_location.clone());
+        service_config.system_status_background_refresh_interval = Duration::from_secs(3600);
+        service_config.system_status_active_refresh_interval = Duration::from_secs(3600);
+        let platform_trait: Arc<dyn platform::Platform> = platform;
+        let (handle, mut receiver) =
+            system_services::SystemServicesRuntime::start_with_platform_and_provider(
+                service_config.clone(),
+                watchdog.clone(),
+                platform_trait,
+                Arc::new(UnavailableWeather),
+            );
+        let runtime = system_status_runtime_with_handle(handle.clone(), service_config);
+
+        wait_for_system_status_snapshot(&mut receiver, |snapshot| snapshot.revision > 0);
+        let initial_revision = receiver.borrow().revision;
+        assert_eq!(runtime.set_system_status_active(true), Ok(()));
+        assert_eq!(runtime.set_system_status_active(false), Ok(()));
+        assert_eq!(runtime.refresh_system_status(), Ok(()));
+        wait_for_system_status_snapshot(&mut receiver, |snapshot| {
+            snapshot.revision > initial_revision
+        });
+
+        let before_reconfigure = receiver.borrow().revision;
+        let storage_config = storage::StorageConfig {
+            system_status: storage::SystemStatusConfig {
+                low_available_gib: 7,
+                low_percentage: 1,
+                critical_available_gib: 1,
+                critical_percentage: 1,
+            },
+            ..storage::StorageConfig::default()
+        };
+        runtime.reconfigure_system_services(&storage_config);
+        wait_for_system_status_snapshot(&mut receiver, |snapshot| {
+            snapshot.revision > before_reconfigure
+                && matches!(
+                    &snapshot.storage,
+                    system_services::StorageState::Ready(storage)
+                        if storage.overall_pressure == system_services::StoragePressure::Low
+                )
+        });
+        drop(receiver);
+        drop(runtime);
+        assert_eq!(handle.shutdown(), Ok(()));
+    }
+
     #[test]
     fn storage_mapping_preserves_runtime_only_configuration() {
         let base = system_services::SystemServicesConfig {
