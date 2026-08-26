@@ -10,6 +10,7 @@ pub(crate) mod launcher;
 pub(crate) mod notifications;
 pub(crate) mod settings;
 pub(crate) mod shell;
+pub(crate) mod system_status;
 pub mod timezone_map;
 pub(crate) mod user_management;
 
@@ -23,6 +24,7 @@ pub use explorer::*;
 pub use home::*;
 pub use notifications::*;
 pub use shell::*;
+pub use system_status::*;
 pub use user_management::*;
 
 pub use launcher::{
