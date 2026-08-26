@@ -864,10 +864,18 @@ fn linux_network_status() -> Result<NetworkStatus, PlatformError> {
 }
 
 fn linux_interface_kind(name: &str) -> NetworkInterfaceKind {
-    linux_interface_kind_with_sysfs(name, Path::new("/sys/class/net"))
+    linux_interface_kind_with_sysfs(
+        name,
+        Path::new("/sys/class/net"),
+        Path::new("/sys/devices/virtual/net"),
+    )
 }
 
-fn linux_interface_kind_with_sysfs(name: &str, sys_class_net: &Path) -> NetworkInterfaceKind {
+fn linux_interface_kind_with_sysfs(
+    name: &str,
+    sys_class_net: &Path,
+    sys_virtual_net: &Path,
+) -> NetworkInterfaceKind {
     const VIRTUAL_PREFIXES: &[&str] = &[
         "veth",
         "docker",
@@ -877,10 +885,20 @@ fn linux_interface_kind_with_sysfs(name: &str, sys_class_net: &Path) -> NetworkI
         "tap",
         "wg",
         "tailscale",
+        "br0",
+        "cni",
+        "flannel",
     ];
-    if VIRTUAL_PREFIXES
-        .iter()
-        .any(|prefix| name.starts_with(prefix))
+    let canonical_virtual = sys_class_net
+        .join(name)
+        .canonicalize()
+        .ok()
+        .is_some_and(|path| path.starts_with(sys_virtual_net));
+    if sys_virtual_net.join(name).exists()
+        || canonical_virtual
+        || VIRTUAL_PREFIXES
+            .iter()
+            .any(|prefix| name.starts_with(prefix))
     {
         NetworkInterfaceKind::Virtual
     } else if sys_class_net.join(name).join("wireless").exists() {
@@ -2382,21 +2400,42 @@ mod tests {
         fs::create_dir_all(sysfs.join("wlan0/wireless")).unwrap();
         fs::create_dir_all(sysfs.join("eno1")).unwrap();
         assert_eq!(
-            linux_interface_kind_with_sysfs("wlan0", &sysfs),
+            linux_interface_kind_with_sysfs("wlan0", &sysfs, &sysfs.join("virtual")),
             NetworkInterfaceKind::Wireless
         );
         assert_eq!(
-            linux_interface_kind_with_sysfs("eno1", &sysfs),
+            linux_interface_kind_with_sysfs("eno1", &sysfs, &sysfs.join("virtual")),
             NetworkInterfaceKind::Wired
         );
         assert_eq!(
-            linux_interface_kind_with_sysfs("veth123", &sysfs),
+            linux_interface_kind_with_sysfs("veth123", &sysfs, &sysfs.join("virtual")),
             NetworkInterfaceKind::Virtual
         );
         assert_eq!(
-            linux_interface_kind_with_sysfs("mystery", &sysfs),
+            linux_interface_kind_with_sysfs("mystery", &sysfs, &sysfs.join("virtual")),
             NetworkInterfaceKind::Unknown
         );
+        let _ = fs::remove_dir_all(sysfs);
+    }
+
+    #[test]
+    fn network_kind_detects_virtual_devices_without_known_names() {
+        let sysfs = test_path("sys-virtual-net");
+        let class = sysfs.join("class");
+        let virtual_net = sysfs.join("devices/virtual/net");
+        fs::create_dir_all(virtual_net.join("unexpected0")).unwrap();
+        fs::create_dir_all(&class).unwrap();
+        symlink(virtual_net.join("unexpected0"), class.join("unexpected0")).unwrap();
+        assert_eq!(
+            linux_interface_kind_with_sysfs("unexpected0", &class, &virtual_net),
+            NetworkInterfaceKind::Virtual
+        );
+        for name in ["br0", "cni0", "flannel.1"] {
+            assert_eq!(
+                linux_interface_kind_with_sysfs(name, &class, &virtual_net),
+                NetworkInterfaceKind::Virtual
+            );
+        }
         let _ = fs::remove_dir_all(sysfs);
     }
     #[test]

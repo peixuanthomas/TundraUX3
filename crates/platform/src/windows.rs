@@ -427,15 +427,16 @@ fn windows_local_volumes() -> Result<Vec<LocalVolume>, PlatformError> {
         };
 
         let mut label_buffer = [0u16; 261];
+        let mut volume_serial_number = 0u32;
         let mut filesystem_flags = 0u32;
         let label = if unsafe {
             GetVolumeInformationW(
                 root_wide.as_ptr(),
                 label_buffer.as_mut_ptr(),
                 label_buffer.len() as u32,
+                &mut volume_serial_number,
+                ptr::null_mut(),
                 &mut filesystem_flags,
-                ptr::null_mut(),
-                ptr::null_mut(),
                 ptr::null_mut(),
                 0,
             )
@@ -464,18 +465,22 @@ fn windows_local_volumes() -> Result<Vec<LocalVolume>, PlatformError> {
             is_system: system_drive
                 .as_ref()
                 .is_some_and(|drive| root.starts_with(drive)),
-            access: if filesystem_flags & FILE_READ_ONLY_VOLUME != 0 {
-                VolumeAccess::ReadOnly
-            } else if has_space {
-                VolumeAccess::ReadWrite
-            } else {
-                VolumeAccess::Unavailable
-            },
+            access: windows_volume_access(filesystem_flags, has_space),
         });
         start = end + 1;
     }
     volumes.sort_by(|left, right| left.root.cmp(&right.root));
     Ok(volumes)
+}
+
+fn windows_volume_access(filesystem_flags: u32, capacity_available: bool) -> VolumeAccess {
+    if filesystem_flags & FILE_READ_ONLY_VOLUME != 0 {
+        VolumeAccess::ReadOnly
+    } else if capacity_available {
+        VolumeAccess::ReadWrite
+    } else {
+        VolumeAccess::Unavailable
+    }
 }
 
 fn windows_network_status() -> Result<NetworkStatus, PlatformError> {
@@ -2018,7 +2023,6 @@ struct IpAdapterUnicastAddress {
 #[repr(C)]
 struct IpAdapterAddresses {
     alignment: u64,
-    if_index: u32,
     next: *mut IpAdapterAddresses,
     adapter_name: *const i8,
     first_unicast_address: *mut IpAdapterUnicastAddress,
@@ -2128,7 +2132,45 @@ mod tests {
     use std::ffi::OsStr;
     use std::path::Path;
 
-    use super::{ComApartment, create_file_operation, shell_parsing_name_wide, to_wide};
+    use super::{
+        ComApartment, FILE_READ_ONLY_VOLUME, IpAdapterAddresses, WindowsPlatform,
+        create_file_operation, shell_parsing_name_wide, to_wide, windows_volume_access,
+    };
+    use crate::{Platform, VolumeAccess};
+
+    #[test]
+    fn adapter_addresses_prefix_matches_windows_abi() {
+        assert_eq!(std::mem::offset_of!(IpAdapterAddresses, next), 8);
+        assert_eq!(
+            std::mem::offset_of!(IpAdapterAddresses, first_unicast_address),
+            24
+        );
+        assert_eq!(std::mem::offset_of!(IpAdapterAddresses, friendly_name), 72);
+        assert_eq!(std::mem::offset_of!(IpAdapterAddresses, if_type), 100);
+        assert_eq!(std::mem::offset_of!(IpAdapterAddresses, oper_status), 104);
+        assert_eq!(std::mem::size_of::<IpAdapterAddresses>(), 112);
+    }
+
+    #[test]
+    fn volume_access_uses_only_readonly_flag_and_capacity_result() {
+        assert_eq!(
+            windows_volume_access(FILE_READ_ONLY_VOLUME, true),
+            VolumeAccess::ReadOnly
+        );
+        assert_eq!(
+            windows_volume_access(FILE_READ_ONLY_VOLUME, false),
+            VolumeAccess::ReadOnly
+        );
+        assert_eq!(windows_volume_access(0, true), VolumeAccess::ReadWrite);
+        assert_eq!(windows_volume_access(0, false), VolumeAccess::Unavailable);
+    }
+
+    #[test]
+    fn native_network_enumeration_smoke() {
+        WindowsPlatform
+            .network_status()
+            .expect("enumerate Windows adapters");
+    }
 
     #[test]
     fn file_operation_com_class_exposes_the_declared_interface() {

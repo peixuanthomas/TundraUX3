@@ -54,6 +54,29 @@ unsafe extern "C" {}
 unsafe extern "C" {}
 
 #[cfg(target_os = "macos")]
+#[link(name = "SystemConfiguration", kind = "framework")]
+unsafe extern "C" {
+    fn SCNetworkInterfaceCopyAll() -> *const c_void;
+    fn SCNetworkInterfaceGetBSDName(interface: *const c_void) -> *const c_void;
+    fn SCNetworkInterfaceGetLocalizedDisplayName(interface: *const c_void) -> *const c_void;
+    fn SCNetworkInterfaceGetInterfaceType(interface: *const c_void) -> *const c_void;
+}
+
+#[cfg(target_os = "macos")]
+#[link(name = "CoreFoundation", kind = "framework")]
+unsafe extern "C" {
+    fn CFArrayGetCount(array: *const c_void) -> isize;
+    fn CFArrayGetValueAtIndex(array: *const c_void, index: isize) -> *const c_void;
+    fn CFStringGetCString(
+        string: *const c_void,
+        buffer: *mut c_char,
+        buffer_size: isize,
+        encoding: u32,
+    ) -> bool;
+    fn CFRelease(value: *const c_void);
+}
+
+#[cfg(target_os = "macos")]
 #[link(name = "CoreGraphics", kind = "framework")]
 unsafe extern "C" {
     fn CGImageGetWidth(image: *mut c_void) -> usize;
@@ -441,21 +464,46 @@ struct TrashIndexEntry {
 
 #[cfg(target_os = "macos")]
 fn macos_local_volumes() -> Result<Vec<LocalVolume>, PlatformError> {
-    let mut paths = vec![PathBuf::from("/")];
-    if let Ok(entries) = std::fs::read_dir("/Volumes") {
-        paths.extend(entries.filter_map(Result::ok).map(|entry| entry.path()));
+    let mut mount_table = std::ptr::null_mut();
+    let mount_count = unsafe { libc::getmntinfo(&mut mount_table, libc::MNT_NOWAIT) };
+    if mount_count <= 0 || mount_table.is_null() {
+        return Err(macos_io(
+            "enumerate mounted volumes",
+            None,
+            std::io::Error::last_os_error(),
+        ));
     }
     let mut volumes = Vec::new();
-    for root in paths {
-        let Ok(path) = CString::new(root.as_os_str().as_encoded_bytes()) else {
-            continue;
-        };
-        let mut stats = std::mem::MaybeUninit::<libc::statfs>::zeroed();
-        if unsafe { libc::statfs(path.as_ptr(), stats.as_mut_ptr()) } != 0 {
+    let root_device = (0..mount_count as usize).find_map(|index| {
+        let stats = unsafe { &*mount_table.add(index) };
+        let root = unsafe { CStr::from_ptr(stats.f_mntonname.as_ptr()) }.to_bytes();
+        (root == b"/").then(|| {
+            unsafe { CStr::from_ptr(stats.f_mntfromname.as_ptr()) }
+                .to_string_lossy()
+                .into_owned()
+        })
+    });
+    let mut seen_devices = BTreeMap::<String, ()>::new();
+    for index in 0..mount_count as usize {
+        let stats = unsafe { &*mount_table.add(index) };
+        if stats.f_flags & libc::MNT_LOCAL as u32 == 0 {
             continue;
         }
-        let stats = unsafe { stats.assume_init() };
-        if stats.f_flags & libc::MNT_LOCAL as u32 == 0 {
+        let device = unsafe { CStr::from_ptr(stats.f_mntfromname.as_ptr()) }
+            .to_string_lossy()
+            .into_owned();
+        if !device.starts_with("/dev/") {
+            continue;
+        }
+        let root = PathBuf::from(OsStr::new(
+            unsafe { CStr::from_ptr(stats.f_mntonname.as_ptr()) }
+                .to_str()
+                .unwrap_or_default(),
+        ));
+        if root.as_os_str().is_empty()
+            || (root != Path::new("/") && root_device.as_ref() == Some(&device))
+            || seen_devices.insert(device, ()).is_some()
+        {
             continue;
         }
         let block_size = stats.f_bsize.max(1) as u64;
@@ -488,6 +536,7 @@ fn macos_local_volumes() -> Result<Vec<LocalVolume>, PlatformError> {
 
 #[cfg(target_os = "macos")]
 fn macos_network_status() -> Result<NetworkStatus, PlatformError> {
+    let metadata = macos_network_interface_metadata();
     let mut head = std::ptr::null_mut();
     if unsafe { libc::getifaddrs(&mut head) } != 0 {
         return Err(macos_io(
@@ -504,12 +553,16 @@ fn macos_network_status() -> Result<NetworkStatus, PlatformError> {
             .to_string_lossy()
             .into_owned();
         if entry.ifa_flags & libc::IFF_LOOPBACK as u32 == 0 {
+            let (display_name, kind) = metadata
+                .get(&name)
+                .cloned()
+                .unwrap_or_else(|| (None, macos_interface_kind(None, &name)));
             let interface = interfaces
                 .entry(name.clone())
                 .or_insert_with(|| NetworkInterface {
                     name: name.clone(),
-                    display_name: None,
-                    kind: macos_interface_kind(&name),
+                    display_name,
+                    kind,
                     link_state: if entry.ifa_flags & libc::IFF_UP as u32 != 0
                         && entry.ifa_flags & libc::IFF_RUNNING as u32 != 0
                     {
@@ -546,18 +599,90 @@ fn macos_network_status() -> Result<NetworkStatus, PlatformError> {
     Ok(NetworkStatus::new(interfaces.into_values().collect()))
 }
 
+#[cfg(all(test, target_os = "macos"))]
+mod system_status_tests {
+    use super::macos_interface_kind;
+    use crate::NetworkInterfaceKind;
+
+    #[test]
+    fn system_configuration_interface_types_map_to_public_kinds() {
+        assert_eq!(
+            macos_interface_kind(Some("Ethernet"), "en0"),
+            NetworkInterfaceKind::Wired
+        );
+        assert_eq!(
+            macos_interface_kind(Some("IEEE80211"), "en1"),
+            NetworkInterfaceKind::Wireless
+        );
+        assert_eq!(
+            macos_interface_kind(Some("Bridge"), "bridge0"),
+            NetworkInterfaceKind::Virtual
+        );
+        assert_eq!(
+            macos_interface_kind(Some("VendorSpecific"), "custom0"),
+            NetworkInterfaceKind::Unknown
+        );
+    }
+}
+
 #[cfg(target_os = "macos")]
-fn macos_interface_kind(name: &str) -> NetworkInterfaceKind {
-    if ["utun", "awdl", "llw", "vmnet", "bridge", "gif", "stf"]
+fn macos_interface_kind(interface_type: Option<&str>, name: &str) -> NetworkInterfaceKind {
+    let normalized_type = interface_type.unwrap_or_default().to_ascii_lowercase();
+    if normalized_type == "ethernet" {
+        NetworkInterfaceKind::Wired
+    } else if normalized_type == "ieee80211" {
+        NetworkInterfaceKind::Wireless
+    } else if ["bridge", "vlan", "ppp", "6to4", "ipsec", "tunnel"]
         .iter()
-        .any(|prefix| name.starts_with(prefix))
+        .any(|kind| normalized_type.contains(kind))
+        || ["utun", "awdl", "llw", "vmnet", "bridge", "gif", "stf"]
+            .iter()
+            .any(|prefix| name.starts_with(prefix))
     {
         NetworkInterfaceKind::Virtual
-    } else if name.starts_with("en") {
-        NetworkInterfaceKind::Unknown
     } else {
         NetworkInterfaceKind::Unknown
     }
+}
+
+#[cfg(target_os = "macos")]
+fn macos_network_interface_metadata() -> BTreeMap<String, (Option<String>, NetworkInterfaceKind)> {
+    let mut result = BTreeMap::new();
+    let interfaces = unsafe { SCNetworkInterfaceCopyAll() };
+    if interfaces.is_null() {
+        return result;
+    }
+    let count = unsafe { CFArrayGetCount(interfaces) };
+    for index in 0..count {
+        let interface = unsafe { CFArrayGetValueAtIndex(interfaces, index) };
+        let Some(name) = cf_string(unsafe { SCNetworkInterfaceGetBSDName(interface) }) else {
+            continue;
+        };
+        let display_name =
+            cf_string(unsafe { SCNetworkInterfaceGetLocalizedDisplayName(interface) });
+        let interface_type = cf_string(unsafe { SCNetworkInterfaceGetInterfaceType(interface) });
+        let kind = macos_interface_kind(interface_type.as_deref(), &name);
+        result.insert(name, (display_name, kind));
+    }
+    unsafe { CFRelease(interfaces) };
+    result
+}
+
+#[cfg(target_os = "macos")]
+fn cf_string(value: *const c_void) -> Option<String> {
+    const UTF8: u32 = 0x0800_0100;
+    if value.is_null() {
+        return None;
+    }
+    let mut buffer = vec![0i8; 1024];
+    if !unsafe { CFStringGetCString(value, buffer.as_mut_ptr(), buffer.len() as isize, UTF8) } {
+        return None;
+    }
+    Some(
+        unsafe { CStr::from_ptr(buffer.as_ptr()) }
+            .to_string_lossy()
+            .into_owned(),
+    )
 }
 
 #[cfg(target_os = "macos")]

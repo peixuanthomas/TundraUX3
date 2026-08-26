@@ -1655,7 +1655,7 @@ fn platform_capability_summary_counts_native_supported_capabilities() {
 
     assert_eq!(
         summary,
-        "Windows: 15 supported, 0 best-effort, 0 unsupported"
+        "Windows: 16 supported, 0 best-effort, 0 unsupported"
     );
 }
 
