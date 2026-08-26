@@ -18,7 +18,7 @@ use crate::screens::shell::{
 };
 use crate::{RuntimeAsciiAssets, TundraTheme};
 
-const EXPLORER_HELP_LINE: &str = "Enter: open    Backspace: parent    N: folder    T: text file    R: rename    X/Delete: delete    C: copy    V: paste    /: search    H: hidden    Esc: back";
+const EXPLORER_HELP_LINE: &str = "Enter: open    Backspace: parent    N: folder    T: text file    R: rename    X/Delete: delete    C: copy    V: paste    /: search    H: hidden    Tab/Shift+Tab: quick access    Esc: back";
 
 pub fn render_explorer(
     frame: &mut Frame<'_>,
@@ -220,7 +220,8 @@ fn render_explorer_sidebar(
         model
             .quick_locations
             .iter()
-            .position(|location| location.current),
+            .position(|location| location.current)
+            .and_then(|index| index.checked_sub(layout.quick_location_visible_start)),
     );
     list.render_borderless_with_context(
         Rect::new(
@@ -445,8 +446,13 @@ fn render_explorer_footer(
     lines.push(feedback);
     lines.push(Line::styled(
         format!(
-            "Enter: open | Backspace: parent | /: search | Hidden files: {}",
-            if model.show_hidden { "shown" } else { "hidden" }
+            "Enter: open | Backspace: parent | /: search | Hidden files: {}{}",
+            if model.show_hidden { "shown" } else { "hidden" },
+            if layout.mode.shows_sidebar() {
+                " | Tab/Shift+Tab: quick access"
+            } else {
+                ""
+            }
         ),
         theme.muted_style(),
     ));

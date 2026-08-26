@@ -218,6 +218,50 @@ fn explorer_layout_uses_the_documented_responsive_breakpoints() {
 }
 
 #[test]
+fn explorer_quick_access_scrolls_current_location_into_view() {
+    let mut model = sample_model();
+    model.quick_locations = (0..12)
+        .map(|index| {
+            let mut location = ExplorerQuickLocationViewModel::new(
+                format!("location-{index}"),
+                format!("Location {index}"),
+                format!("/location/{index}"),
+                "folder",
+            );
+            location.current = index == 10;
+            location
+        })
+        .collect();
+
+    let layout = explorer_layout(Rect::new(0, 0, 96, 14), &model);
+    assert_eq!(layout.quick_location_visible_capacity, 7);
+    assert_eq!(layout.quick_location_visible_start, 4);
+    assert_eq!(
+        layout
+            .quick_locations
+            .iter()
+            .map(|location| location.index)
+            .collect::<Vec<_>>(),
+        vec![4, 5, 6, 7, 8, 9, 10]
+    );
+    let last = layout.quick_locations.last().expect("current location row");
+    assert_eq!(
+        layout.hit_test(last.area.x, last.area.y),
+        Some(ExplorerHitTarget::QuickLocation(10))
+    );
+
+    model.quick_locations[10].current = false;
+    model.quick_locations[0].current = true;
+    let first_layout = explorer_layout(Rect::new(0, 0, 96, 14), &model);
+    assert_eq!(first_layout.quick_location_visible_start, 0);
+
+    let narrow = explorer_layout(Rect::new(0, 0, 95, 14), &model);
+    assert_eq!(narrow.quick_location_visible_capacity, 0);
+    assert_eq!(narrow.quick_location_visible_start, 0);
+    assert!(narrow.quick_locations.is_empty());
+}
+
+#[test]
 fn explorer_layout_exposes_shared_mouse_hit_geometry() {
     let mut model = sample_model();
     model.set_history_availability(true, false);

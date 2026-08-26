@@ -121,6 +121,8 @@ pub struct ExplorerLayout {
     pub search: Rect,
     pub sidebar: Option<Rect>,
     pub sidebar_header: Option<Rect>,
+    pub quick_location_visible_start: usize,
+    pub quick_location_visible_capacity: usize,
     pub quick_locations: Vec<ExplorerQuickLocationLayout>,
     pub table: Rect,
     pub table_header: Rect,
@@ -308,20 +310,27 @@ pub fn explorer_layout(area: Rect, model: &ExplorerViewModel) -> ExplorerLayout 
         (None, body)
     };
     let sidebar_header = sidebar.map(|sidebar| line_in_rect(sidebar, sidebar.y));
+    let quick_location_visible_capacity = sidebar
+        .map(|sidebar| usize::from(sidebar.height.saturating_sub(1)))
+        .unwrap_or_default();
+    let quick_location_visible_start =
+        explorer_quick_location_visible_start(model, quick_location_visible_capacity);
     let quick_locations = sidebar.map_or_else(Vec::new, |sidebar| {
         model
             .quick_locations
             .iter()
             .enumerate()
-            .take(usize::from(sidebar.height.saturating_sub(1)))
-            .map(|(index, _)| ExplorerQuickLocationLayout {
+            .skip(quick_location_visible_start)
+            .take(quick_location_visible_capacity)
+            .enumerate()
+            .map(|(offset, (index, _))| ExplorerQuickLocationLayout {
                 index,
                 area: Rect::new(
                     sidebar.x,
                     sidebar
                         .y
                         .saturating_add(1)
-                        .saturating_add(usize_to_u16(index)),
+                        .saturating_add(usize_to_u16(offset)),
                     sidebar.width,
                     1,
                 ),
@@ -424,6 +433,8 @@ pub fn explorer_layout(area: Rect, model: &ExplorerViewModel) -> ExplorerLayout 
         search,
         sidebar,
         sidebar_header,
+        quick_location_visible_start,
+        quick_location_visible_capacity,
         quick_locations,
         table,
         table_header,
@@ -437,6 +448,20 @@ pub fn explorer_layout(area: Rect, model: &ExplorerViewModel) -> ExplorerLayout 
         visible_capacity,
         overlay,
     }
+}
+
+fn explorer_quick_location_visible_start(model: &ExplorerViewModel, capacity: usize) -> usize {
+    if model.quick_locations.is_empty() || capacity == 0 {
+        return 0;
+    }
+    let max_start = model.quick_locations.len().saturating_sub(capacity);
+    model
+        .quick_locations
+        .iter()
+        .position(|location| location.current)
+        .map(|current| current.saturating_add(1).saturating_sub(capacity))
+        .unwrap_or_default()
+        .min(max_start)
 }
 
 pub fn explorer_hit_test(
