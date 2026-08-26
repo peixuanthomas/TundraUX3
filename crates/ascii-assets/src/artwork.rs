@@ -208,6 +208,7 @@ pub(crate) fn load_home_icon_catalog(
         "editor",
         "settings",
         "diagnostics",
+        "system_status",
         "user_management",
         "user_profile",
         "default",

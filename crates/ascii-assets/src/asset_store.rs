@@ -242,6 +242,29 @@ mod tests {
                 .home_icon_image_path("explorer")
                 .is_some_and(|path| path.is_file())
         );
+        let system_status = store
+            .home_icon_catalog()
+            .icon("system_status")
+            .expect("System Status Home icon by key");
+        assert_eq!(system_status.label(), Some("System Status"));
+        assert_eq!(system_status.lines().len(), 4);
+        assert_eq!(
+            system_status.image_path(),
+            Some("home_icons/system_status.png")
+        );
+        assert_eq!(
+            store
+                .home_icon_catalog()
+                .icon_for_label("System Status")
+                .map(ArtItem::key),
+            Some("system_status")
+        );
+        assert!(
+            store
+                .home_icon_image_path("system_status")
+                .is_some_and(|path| path.is_file())
+        );
+        assert!(store.home_icon_image_bytes("system_status").is_some());
         let command_line = store
             .launcher_icon("builtin.command-line")
             .expect("Command Line Launcher icon");

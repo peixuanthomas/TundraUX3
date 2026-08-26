@@ -96,6 +96,7 @@ mod tests {
             "editor",
             "settings",
             "diagnostics",
+            "system_status",
             "user_management",
             "user_profile",
             "default",

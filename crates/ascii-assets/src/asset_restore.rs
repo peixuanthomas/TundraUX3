@@ -125,6 +125,11 @@ mod tests {
         );
         assert!(
             root.path()
+                .join("themes/default/home_icons/system_status.png")
+                .is_file()
+        );
+        assert!(
+            root.path()
                 .join("themes/default/launcher_icons/command_line.png")
                 .is_file()
         );

@@ -51,6 +51,16 @@ lines = [
   '|_____|',
 ]
 
+[items.system_status]
+label = "System Status"
+image = "home_icons/system_status.png"
+lines = [
+  ' _____ ',
+  '| ||  |',
+  '| ||| |',
+  '|_____|',
+]
+
 [items.user_management]
 label = "User Management"
 image = "home_icons/user_management.png"
