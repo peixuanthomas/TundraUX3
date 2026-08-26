@@ -22,6 +22,7 @@ pub struct SystemStatusRowLayout {
 pub enum SystemStatusHitTarget {
     Tab(SystemStatusTab),
     Row(usize),
+    Diagnostics,
     Refresh,
     Scrollbar,
 }
@@ -36,6 +37,7 @@ pub struct SystemStatusLayout {
     pub notice_area: Option<Rect>,
     pub rows_area: Rect,
     pub footer: Rect,
+    pub diagnostics_button: Rect,
     pub refresh_button: Rect,
     pub scrollbar: Option<Rect>,
     pub rows: Vec<SystemStatusRowLayout>,
@@ -139,10 +141,17 @@ pub fn system_status_layout(main: Rect, model: &SystemStatusViewModel) -> System
         })
         .collect();
     let refresh_width = 11.min(footer.width);
+    let diagnostics_width = 13.min(footer.width.saturating_sub(refresh_width));
     let refresh_button = Rect::new(
         footer.right().saturating_sub(refresh_width),
         footer.y,
         refresh_width,
+        footer.height,
+    );
+    let diagnostics_button = Rect::new(
+        refresh_button.x.saturating_sub(diagnostics_width),
+        footer.y,
+        diagnostics_width,
         footer.height,
     );
     let tabs = if model.is_admin() {
@@ -171,6 +180,7 @@ pub fn system_status_layout(main: Rect, model: &SystemStatusViewModel) -> System
         notice_area,
         rows_area,
         footer,
+        diagnostics_button,
         refresh_button,
         scrollbar,
         rows,
@@ -189,6 +199,9 @@ pub fn system_status_hit_test(
     }
     if rect_contains(layout.refresh_button, x, y) {
         return Some(SystemStatusHitTarget::Refresh);
+    }
+    if rect_contains(layout.diagnostics_button, x, y) {
+        return Some(SystemStatusHitTarget::Diagnostics);
     }
     if layout
         .scrollbar

@@ -87,6 +87,7 @@ fn render_main(
     let help_width = layout
         .footer
         .width
+        .saturating_sub(layout.diagnostics_button.width)
         .saturating_sub(layout.refresh_button.width);
     frame.render_widget(
         Paragraph::new(fit_cell(feedback, usize::from(help_width))).style(theme.muted_style()),
@@ -96,6 +97,11 @@ fn render_main(
             help_width,
             layout.footer.height,
         ),
+    );
+    Button::new("system-status.diagnostics", "Diagnostics").render_borderless_frame(
+        frame,
+        layout.diagnostics_button,
+        theme,
     );
     let mut refresh = Button::new(
         "system-status.refresh",

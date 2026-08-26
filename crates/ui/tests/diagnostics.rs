@@ -122,7 +122,8 @@ fn health_renderer_draws_two_columns_statuses_and_admin_details() {
     let output = terminal_output(&terminal);
     let layout = diagnostics_layout(full_main(140, 30), &model);
 
-    assert!(output.contains("Diagnostics"));
+    assert!(output.contains("System Status / Diagnostics"));
+    assert!(output.contains("Esc System Status"));
     assert!(output.contains("[Health]"));
     assert!(output.contains("[Logs]"));
     assert!(output.contains("[Incidents]"));

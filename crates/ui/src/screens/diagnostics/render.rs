@@ -51,7 +51,7 @@ fn render_diagnostics_main(
 ) {
     let layout = diagnostics_layout(main, model);
     Surface::new()
-        .titled("Diagnostics")
+        .titled("System Status / Diagnostics")
         .bordered(true)
         .render_frame(frame, layout.panel, context);
 
@@ -431,11 +431,11 @@ fn render_diagnostics_footer(
     theme: &TundraTheme,
 ) {
     let help = if model.restart_required {
-        "Restart required · Enter/R Restart · E Safe exit · Esc Home".to_string()
+        "Restart required · Enter/R Restart · E Safe exit · Esc System Status".to_string()
     } else if model.scanning {
-        "Scanning... · Esc Home".to_string()
+        "Scanning... · Esc System Status".to_string()
     } else {
-        let mut actions = vec!["R Rescan", "Tab Switch", "C Copy", "Esc Home"];
+        let mut actions = vec!["R Rescan", "Tab Switch", "C Copy", "Esc System Status"];
         if model.can_repair && model.tab == DiagnosticsTab::Health {
             actions.insert(1, "F Repair");
             actions.insert(2, "A Repair all");

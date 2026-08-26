@@ -39,6 +39,13 @@ fn admin_exposes_all_tabs_and_hit_targets() {
         Some(SystemStatusHitTarget::Row(0))
     );
     assert_eq!(
+        system_status_hit_test(
+            &layout,
+            (layout.diagnostics_button.x, layout.diagnostics_button.y)
+        ),
+        Some(SystemStatusHitTarget::Diagnostics)
+    );
+    assert_eq!(
         system_status_hit_test(&layout, (layout.refresh_button.x, layout.refresh_button.y)),
         Some(SystemStatusHitTarget::Refresh)
     );
@@ -111,6 +118,14 @@ fn user_is_summary_only_and_ignores_admin_tab_and_rows() {
     assert!(output.contains("Storage status: Healthy"));
     assert!(output.contains("Network status: Connected"));
     assert!(!output.contains("en0"));
+    assert!(output.contains("Diagnostics"));
+    assert_eq!(
+        system_status_hit_test(
+            &layout,
+            (layout.diagnostics_button.x, layout.diagnostics_button.y)
+        ),
+        Some(SystemStatusHitTarget::Diagnostics)
+    );
 }
 
 #[test]
@@ -137,6 +152,9 @@ fn loading_unavailable_and_empty_states_render() {
 fn narrow_terminal_and_two_themes_render_without_panicking() {
     let model = admin_model(SystemStatusTab::Overview, SystemStatusSectionState::Ready);
     let _ = render(20, 7, &model, TundraTheme::default_dark());
+    let narrow = system_status_layout(Rect::new(0, 0, 20, 5), &model);
+    assert!(narrow.diagnostics_button.right() <= narrow.refresh_button.x);
+    assert!(narrow.refresh_button.right() <= narrow.footer.right());
     let _ = render(
         80,
         20,
