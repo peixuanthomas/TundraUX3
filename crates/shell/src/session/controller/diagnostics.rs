@@ -305,19 +305,16 @@ impl ShellSession {
         if self.active_screen() == ShellScreen::Diagnostics {
             self.screen_stack.pop();
         }
-        if self.screen_stack.is_empty() {
-            self.screen_stack.push(ShellScreen::Home);
-        }
         self.diagnostics_repair_preview.clear();
         self.diagnostics_repair_selected = 0;
         self.diagnostics_repair_scroll_offset = 0;
         self.diagnostics_repair_confirm_selected = true;
-        self.focused_component = if self.active_screen() == ShellScreen::SystemStatus {
-            ShellComponent::SystemStatus
+        if self.active_screen() == ShellScreen::SystemStatus {
+            self.focused_component = ShellComponent::SystemStatus;
+            self.refresh_hit_map();
         } else {
-            ShellComponent::Home
-        };
-        self.refresh_hit_map();
+            self.pop_to_home();
+        }
     }
 
     pub(in crate::session) fn request_diagnostics_scan(&mut self) {
@@ -1733,6 +1730,22 @@ mod diagnostics_shell_tests {
         state.close_diagnostics();
         assert_eq!(state.active_screen(), ShellScreen::SystemStatus);
         assert_eq!(state.focused_component, ShellComponent::SystemStatus);
+    }
+
+    #[test]
+    fn diagnostics_close_without_system_status_parent_falls_back_to_home() {
+        let mut state = state(UserRole::Admin);
+        state.screen_stack = vec![
+            ShellScreen::Home,
+            ShellScreen::Settings,
+            ShellScreen::Diagnostics,
+        ];
+        state.focused_component = ShellComponent::Diagnostics;
+
+        state.close_diagnostics();
+
+        assert_eq!(state.active_screen(), ShellScreen::Home);
+        assert_eq!(state.focused_component, ShellComponent::Home);
     }
 
     #[test]
