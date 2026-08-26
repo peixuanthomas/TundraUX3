@@ -1874,7 +1874,9 @@ mod tests {
         assert!(matches!(next, TimeState::Degraded { ref error, .. } if error == "offline"));
     }
 
-    struct PendingProvider;
+    struct PendingProvider {
+        entered: Mutex<Option<std_mpsc::Sender<()>>>,
+    }
     #[async_trait]
     impl WeatherProvider for PendingProvider {
         async fn current_weather(
@@ -1882,19 +1884,29 @@ mod tests {
             _: WeatherLocation,
             _: WeatherUnits,
         ) -> Result<WeatherData, String> {
+            if let Some(entered) = self.entered.lock().unwrap().take() {
+                let _ = entered.send(());
+            }
             std::future::pending().await
         }
     }
 
     #[test]
     fn shutdown_and_reconfigure_cancel_pending_provider_wait() {
+        let mut initial = config();
+        initial.timezone_location = Some(initial.fallback_location.clone());
+        let (entered_tx, entered_rx) = std_mpsc::channel();
         let (handle, _) = SystemServicesRuntime::start_with_provider(
-            config(),
+            initial.clone(),
             watchdog(),
-            Arc::new(PendingProvider),
+            Arc::new(PendingProvider {
+                entered: Mutex::new(Some(entered_tx)),
+            }),
         );
-        std::thread::sleep(Duration::from_millis(50));
-        let mut changed = config();
+        entered_rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("pending provider must be entered before reconfigure");
+        let mut changed = initial;
         changed.timezone_id = "Asia/Shanghai".into();
         handle.reconfigure(changed).unwrap();
         let started = Instant::now();
