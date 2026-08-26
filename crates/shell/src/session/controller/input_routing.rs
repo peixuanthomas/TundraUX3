@@ -75,38 +75,7 @@ impl ShellSession {
             return self.route_diagnostics_key(key);
         }
         if self.active_screen() == ShellScreen::SystemStatus {
-            let target = RoutedTarget::Component(ShellComponent::SystemStatus);
-            let admin = self
-                .app
-                .auth_session()
-                .is_some_and(|s| s.role == UserRole::Admin);
-            let command = match &key.key {
-                InputKey::Escape => ShellCommand::CloseSystemStatus,
-                InputKey::Char('r' | 'R') => ShellCommand::SystemStatusRefresh,
-                InputKey::Char('d' | 'D') => ShellCommand::OpenDiagnostics,
-                InputKey::Left | InputKey::BackTab if admin => {
-                    ShellCommand::SystemStatusTab(match self.system_status_tab {
-                        ui::SystemStatusTab::Overview => ui::SystemStatusTab::Network,
-                        ui::SystemStatusTab::Storage => ui::SystemStatusTab::Overview,
-                        ui::SystemStatusTab::Network => ui::SystemStatusTab::Storage,
-                    })
-                }
-                InputKey::Right | InputKey::Tab if admin => {
-                    ShellCommand::SystemStatusTab(match self.system_status_tab {
-                        ui::SystemStatusTab::Overview => ui::SystemStatusTab::Storage,
-                        ui::SystemStatusTab::Storage => ui::SystemStatusTab::Network,
-                        ui::SystemStatusTab::Network => ui::SystemStatusTab::Overview,
-                    })
-                }
-                InputKey::Up if admin => ShellCommand::SystemStatusPrevious,
-                InputKey::Down if admin => ShellCommand::SystemStatusNext,
-                InputKey::PageUp if admin => ShellCommand::SystemStatusPageUp,
-                InputKey::PageDown if admin => ShellCommand::SystemStatusPageDown,
-                InputKey::Home if admin => ShellCommand::SystemStatusFirst,
-                InputKey::End if admin => ShellCommand::SystemStatusLast,
-                _ => ShellCommand::Noop,
-            };
-            return (target, command);
+            return self.route_system_status_key(key);
         }
 
         if self.active_screen() == ShellScreen::FirstRunSetup {
@@ -532,6 +501,140 @@ impl ShellSession {
             }
             _ => (target, ShellCommand::RecordInput),
         }
+    }
+
+    pub(in crate::session) fn route_system_status_key(
+        &self,
+        key: &KeyInput,
+    ) -> (RoutedTarget, ShellCommand) {
+        let target = RoutedTarget::Component(ShellComponent::SystemStatus);
+        let area = Rect::new(0, 0, self.terminal_size.0, self.terminal_size.1);
+        if matches!(ui::compute_shell_layout(area), ui::ShellLayout::Compact(_)) {
+            return if matches!(&key.key, InputKey::Escape) {
+                (RoutedTarget::Global, ShellCommand::CloseSystemStatus)
+            } else {
+                (
+                    RoutedTarget::Component(ShellComponent::CompactHome),
+                    ShellCommand::CaptureOverlayInput,
+                )
+            };
+        }
+
+        if !self.diagnostics_repair_preview.is_empty() {
+            let modal = RoutedTarget::Modal(ShellComponent::DiagnosticsRepairDialog);
+            return match &key.key {
+                InputKey::Escape => (modal, ShellCommand::DiagnosticsCancelRepair),
+                InputKey::Char('r' | 'R') => (RoutedTarget::Global, ShellCommand::Restart),
+                InputKey::Up => (modal, ShellCommand::DiagnosticsRepairPrevious),
+                InputKey::Down => (modal, ShellCommand::DiagnosticsRepairNext),
+                InputKey::Tab | InputKey::BackTab | InputKey::Left | InputKey::Right => {
+                    (modal, ShellCommand::DiagnosticsRepairToggleAction)
+                }
+                InputKey::Enter | InputKey::Char(' ')
+                    if self.diagnostics_repair_confirm_selected =>
+                {
+                    (modal, ShellCommand::DiagnosticsConfirmRepair)
+                }
+                InputKey::Enter | InputKey::Char(' ') => {
+                    (modal, ShellCommand::DiagnosticsCancelRepair)
+                }
+                _ => (modal, ShellCommand::CaptureOverlayInput),
+            };
+        }
+
+        let diagnostics_tab = self.system_status_tab.diagnostics_tab();
+        if diagnostics_tab.is_some() && self.diagnostics_restart_is_required() {
+            return match &key.key {
+                InputKey::Enter | InputKey::Char('r' | 'R') => {
+                    (RoutedTarget::Global, ShellCommand::Restart)
+                }
+                InputKey::Char('e' | 'E') => (RoutedTarget::Global, ShellCommand::RequestExit),
+                InputKey::Escape => (RoutedTarget::Global, ShellCommand::CloseSystemStatus),
+                InputKey::Tab | InputKey::Right => (
+                    target,
+                    ShellCommand::SystemStatusTab(self.next_system_status_tab(1)),
+                ),
+                InputKey::BackTab | InputKey::Left => (
+                    target,
+                    ShellCommand::SystemStatusTab(self.next_system_status_tab(-1)),
+                ),
+                _ => (target, ShellCommand::CaptureOverlayInput),
+            };
+        }
+
+        let command = match &key.key {
+            InputKey::Escape => ShellCommand::CloseSystemStatus,
+            InputKey::Tab | InputKey::Right => {
+                ShellCommand::SystemStatusTab(self.next_system_status_tab(1))
+            }
+            InputKey::BackTab | InputKey::Left => {
+                ShellCommand::SystemStatusTab(self.next_system_status_tab(-1))
+            }
+            InputKey::Char('r' | 'R') if diagnostics_tab.is_some() => {
+                ShellCommand::DiagnosticsRescan
+            }
+            InputKey::Char('r' | 'R') => ShellCommand::SystemStatusRefresh,
+            InputKey::Up if diagnostics_tab.is_some() => ShellCommand::DiagnosticsPrevious,
+            InputKey::Down if diagnostics_tab.is_some() => ShellCommand::DiagnosticsNext,
+            InputKey::PageUp if diagnostics_tab.is_some() => ShellCommand::DiagnosticsPageUp,
+            InputKey::PageDown if diagnostics_tab.is_some() => ShellCommand::DiagnosticsPageDown,
+            InputKey::Home if diagnostics_tab.is_some() => ShellCommand::DiagnosticsFirst,
+            InputKey::End if diagnostics_tab.is_some() => ShellCommand::DiagnosticsLast,
+            InputKey::Up => ShellCommand::SystemStatusPrevious,
+            InputKey::Down => ShellCommand::SystemStatusNext,
+            InputKey::PageUp => ShellCommand::SystemStatusPageUp,
+            InputKey::PageDown => ShellCommand::SystemStatusPageDown,
+            InputKey::Home => ShellCommand::SystemStatusFirst,
+            InputKey::End => ShellCommand::SystemStatusLast,
+            InputKey::Char('x' | 'X')
+                if diagnostics_tab.is_some() && !self.diagnostics_scanning =>
+            {
+                ShellCommand::Restart
+            }
+            InputKey::Char('f' | 'F') if diagnostics_tab == Some(ui::DiagnosticsTab::Health) => {
+                ShellCommand::DiagnosticsPreviewSelectedRepair
+            }
+            InputKey::Char('a' | 'A') if diagnostics_tab == Some(ui::DiagnosticsTab::Health) => {
+                ShellCommand::DiagnosticsPreviewAllRepairs
+            }
+            InputKey::Char('c' | 'C') if diagnostics_tab.is_some() => {
+                ShellCommand::DiagnosticsCopySummary
+            }
+            InputKey::Char('e' | 'E') if diagnostics_tab.is_some() => {
+                ShellCommand::DiagnosticsOpenLogsInExplorer
+            }
+            InputKey::Char('o' | 'O') if diagnostics_tab.is_some() => {
+                ShellCommand::DiagnosticsOpenReport
+            }
+            InputKey::Enter
+                if matches!(
+                    diagnostics_tab,
+                    Some(ui::DiagnosticsTab::Logs | ui::DiagnosticsTab::Incidents)
+                ) =>
+            {
+                ShellCommand::DiagnosticsOpenReport
+            }
+            _ => ShellCommand::Noop,
+        };
+        (target, command)
+    }
+
+    fn next_system_status_tab(&self, delta: isize) -> ui::SystemStatusTab {
+        let admin = self
+            .app
+            .auth_session()
+            .is_some_and(|session| session.role == UserRole::Admin);
+        let tabs: &[ui::SystemStatusTab] = if admin {
+            &ui::SystemStatusTab::ALL
+        } else {
+            &ui::SystemStatusTab::USER
+        };
+        let current = tabs
+            .iter()
+            .position(|tab| *tab == self.system_status_tab)
+            .unwrap_or(0) as isize;
+        let next = (current + delta).rem_euclid(tabs.len() as isize) as usize;
+        tabs[next]
     }
 
     pub(in crate::session) fn clock_button_activation_command(&self) -> ShellCommand {
@@ -1148,12 +1251,18 @@ impl ShellSession {
             }
         }
 
-        if self.active_screen() == ShellScreen::Diagnostics
-            && !self.diagnostics_repair_preview.is_empty()
+        if matches!(
+            self.active_screen(),
+            ShellScreen::Diagnostics | ShellScreen::SystemStatus
+        ) && !self.diagnostics_repair_preview.is_empty()
             && !self.notification_has_active_modal()
             && !self.time_sync_dialog_visible
         {
-            return self.route_diagnostics_mouse(mouse, hit_target);
+            return if self.active_screen() == ShellScreen::SystemStatus {
+                self.route_system_status_mouse(mouse, hit_target)
+            } else {
+                self.route_diagnostics_mouse(mouse, hit_target)
+            };
         }
 
         if !self.notification_has_active_modal()
@@ -1202,7 +1311,13 @@ impl ShellSession {
                     ui::MouseEventKind::Drag(PointerButton::Left),
                 ) => {
                     return (
-                        RoutedTarget::Component(ShellComponent::Diagnostics),
+                        RoutedTarget::Component(
+                            if self.active_screen() == ShellScreen::SystemStatus {
+                                ShellComponent::SystemStatus
+                            } else {
+                                ShellComponent::Diagnostics
+                            },
+                        ),
                         ShellCommand::DiagnosticsScrollbarDrag(coordinates),
                     );
                 }
@@ -1229,7 +1344,13 @@ impl ShellSession {
                     ui::MouseEventKind::Up(PointerButton::Left),
                 ) => {
                     return (
-                        RoutedTarget::Component(ShellComponent::Diagnostics),
+                        RoutedTarget::Component(
+                            if self.active_screen() == ShellScreen::SystemStatus {
+                                ShellComponent::SystemStatus
+                            } else {
+                                ShellComponent::Diagnostics
+                            },
+                        ),
                         ShellCommand::DiagnosticsScrollbarPointerUp,
                     );
                 }
@@ -1290,50 +1411,7 @@ impl ShellSession {
             return self.route_diagnostics_mouse(mouse, hit_target);
         }
         if self.active_screen() == ShellScreen::SystemStatus {
-            let target = RoutedTarget::Component(ShellComponent::SystemStatus);
-            let coordinates = mouse.coordinates();
-            if let ui::ShellLayout::Full { main, .. } = ui::compute_shell_layout(Rect::new(
-                0,
-                0,
-                self.terminal_size.0,
-                self.terminal_size.1,
-            )) && let Some(model) = self.to_system_status_view_model()
-            {
-                let layout = ui::system_status_layout(main, &model);
-                if let ui::MouseEventKind::Down(PointerButton::Left) = mouse.kind {
-                    let command = match ui::system_status_hit_test(&layout, coordinates) {
-                        Some(ui::SystemStatusHitTarget::Tab(tab)) => {
-                            ShellCommand::SystemStatusTab(tab)
-                        }
-                        Some(ui::SystemStatusHitTarget::Row(index)) => {
-                            ShellCommand::SystemStatusSelectRow(index)
-                        }
-                        Some(ui::SystemStatusHitTarget::Refresh) => {
-                            ShellCommand::SystemStatusRefresh
-                        }
-                        Some(ui::SystemStatusHitTarget::Diagnostics) => {
-                            ShellCommand::OpenDiagnostics
-                        }
-                        Some(ui::SystemStatusHitTarget::Scrollbar) => {
-                            ShellCommand::SystemStatusScrollbarPointerDown(coordinates)
-                        }
-                        None => ShellCommand::Noop,
-                    };
-                    return (target, command);
-                }
-            }
-            return (
-                target,
-                match mouse.kind {
-                    ui::MouseEventKind::Scroll(ScrollDirection::Up) => {
-                        ShellCommand::SystemStatusScroll(-1)
-                    }
-                    ui::MouseEventKind::Scroll(ScrollDirection::Down) => {
-                        ShellCommand::SystemStatusScroll(1)
-                    }
-                    _ => ShellCommand::Noop,
-                },
-            );
+            return self.route_system_status_mouse(mouse, hit_target);
         }
 
         if self.active_screen() == ShellScreen::UserManagement {
@@ -1723,6 +1801,108 @@ impl ShellSession {
             },
             _ => (routed, ShellCommand::CaptureOverlayInput),
         }
+    }
+
+    pub(in crate::session) fn route_system_status_mouse(
+        &mut self,
+        mouse: MouseInput,
+        hit_target: Option<ShellComponent>,
+    ) -> (RoutedTarget, ShellCommand) {
+        let coordinates = mouse.coordinates();
+        let target = if self.diagnostics_repair_preview.is_empty() {
+            RoutedTarget::Component(ShellComponent::SystemStatus)
+        } else {
+            RoutedTarget::Modal(ShellComponent::DiagnosticsRepairDialog)
+        };
+        let area = Rect::new(0, 0, self.terminal_size.0, self.terminal_size.1);
+        let ui::ShellLayout::Full { main, .. } = ui::compute_shell_layout(area) else {
+            return (
+                target_route(hit_target),
+                if matches!(mouse.kind, ui::MouseEventKind::Moved) {
+                    ShellCommand::Hover(hit_target)
+                } else {
+                    ShellCommand::CaptureOverlayInput
+                },
+            );
+        };
+        let Some(model) = self.to_system_status_view_model() else {
+            return (target, ShellCommand::Noop);
+        };
+        let layout = ui::system_status_layout(main, &model);
+        let hit = ui::system_status_hit_test(&layout, coordinates);
+        let diagnostics_active = self.system_status_tab.diagnostics_tab().is_some();
+
+        let command = match mouse.kind {
+            ui::MouseEventKind::Moved => ShellCommand::Hover(hit_target),
+            ui::MouseEventKind::Scroll(ScrollDirection::Up)
+                if self.diagnostics_repair_preview.is_empty() && diagnostics_active =>
+            {
+                ShellCommand::DiagnosticsPrevious
+            }
+            ui::MouseEventKind::Scroll(ScrollDirection::Down)
+                if self.diagnostics_repair_preview.is_empty() && diagnostics_active =>
+            {
+                ShellCommand::DiagnosticsNext
+            }
+            ui::MouseEventKind::Scroll(ScrollDirection::Up)
+                if self.diagnostics_repair_preview.is_empty() =>
+            {
+                ShellCommand::SystemStatusScroll(-1)
+            }
+            ui::MouseEventKind::Scroll(ScrollDirection::Down)
+                if self.diagnostics_repair_preview.is_empty() =>
+            {
+                ShellCommand::SystemStatusScroll(1)
+            }
+            ui::MouseEventKind::Down(PointerButton::Left) => match hit {
+                Some(ui::SystemStatusHitTarget::Tab(tab)) => ShellCommand::SystemStatusTab(tab),
+                Some(ui::SystemStatusHitTarget::Row(index)) => {
+                    ShellCommand::SystemStatusSelectRow(index)
+                }
+                Some(ui::SystemStatusHitTarget::Refresh) if diagnostics_active => {
+                    ShellCommand::DiagnosticsRescan
+                }
+                Some(ui::SystemStatusHitTarget::Refresh) => ShellCommand::SystemStatusRefresh,
+                Some(ui::SystemStatusHitTarget::Scrollbar) => {
+                    ShellCommand::SystemStatusScrollbarPointerDown(coordinates)
+                }
+                Some(ui::SystemStatusHitTarget::Diagnostics(
+                    ui::DiagnosticsHitTarget::Check(index)
+                    | ui::DiagnosticsHitTarget::Log(index)
+                    | ui::DiagnosticsHitTarget::Incident(index),
+                )) => ShellCommand::DiagnosticsSelectIndex(index),
+                Some(ui::SystemStatusHitTarget::Diagnostics(
+                    ui::DiagnosticsHitTarget::Scrollbar,
+                )) if self.diagnostics_repair_preview.is_empty() => {
+                    ShellCommand::DiagnosticsScrollbarPointerDown(coordinates)
+                }
+                Some(ui::SystemStatusHitTarget::Diagnostics(
+                    ui::DiagnosticsHitTarget::RepairConfirm,
+                )) => ShellCommand::DiagnosticsConfirmRepair,
+                Some(ui::SystemStatusHitTarget::Diagnostics(
+                    ui::DiagnosticsHitTarget::RepairRestart,
+                )) => ShellCommand::Restart,
+                Some(ui::SystemStatusHitTarget::Diagnostics(
+                    ui::DiagnosticsHitTarget::RepairCancel,
+                )) => ShellCommand::DiagnosticsCancelRepair,
+                Some(ui::SystemStatusHitTarget::Diagnostics(
+                    ui::DiagnosticsHitTarget::RepairItem(index),
+                )) => ShellCommand::DiagnosticsSelectRepairItem(index),
+                Some(ui::SystemStatusHitTarget::Diagnostics(
+                    ui::DiagnosticsHitTarget::Tab(_)
+                    | ui::DiagnosticsHitTarget::Scrollbar
+                    | ui::DiagnosticsHitTarget::RepairDialogSurface,
+                ))
+                | None => ShellCommand::CaptureOverlayInput,
+            },
+            _ => ShellCommand::CaptureOverlayInput,
+        };
+        let routed = if command == ShellCommand::Restart {
+            RoutedTarget::Global
+        } else {
+            target
+        };
+        (routed, command)
     }
 
     pub(in crate::session) fn route_user_management_mouse(

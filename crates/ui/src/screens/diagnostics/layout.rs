@@ -39,6 +39,24 @@ pub struct DiagnosticsRepairDialogLayout {
     pub visible_capacity: usize,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DiagnosticsContentLayout {
+    pub active_tab: DiagnosticsTab,
+    pub list_panel: Rect,
+    pub list_rows_area: Rect,
+    pub list_scrollbar: Option<DiagnosticsScrollbarLayout>,
+    pub rows: Vec<DiagnosticsRowLayout>,
+    pub detail_panel: Rect,
+    pub visible_start: usize,
+    pub visible_capacity: usize,
+}
+
+impl DiagnosticsContentLayout {
+    pub fn hit_test(&self, x: u16, y: u16) -> Option<DiagnosticsHitTarget> {
+        diagnostics_content_hit_test_parts(self.active_tab, self.list_scrollbar, &self.rows, x, y)
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DiagnosticsHitTarget {
     Tab(DiagnosticsTab),
@@ -72,42 +90,68 @@ pub struct DiagnosticsLayout {
 }
 
 impl DiagnosticsLayout {
+    pub fn content_layout(&self) -> DiagnosticsContentLayout {
+        DiagnosticsContentLayout {
+            active_tab: self.active_tab,
+            list_panel: self.list_panel,
+            list_rows_area: self.list_rows_area,
+            list_scrollbar: self.list_scrollbar,
+            rows: self.rows.clone(),
+            detail_panel: self.detail_panel,
+            visible_start: self.visible_start,
+            visible_capacity: self.visible_capacity,
+        }
+    }
+
     pub fn hit_test(&self, x: u16, y: u16) -> Option<DiagnosticsHitTarget> {
         if let Some(dialog) = &self.repair_dialog {
-            if let Some(row) = dialog.rows.iter().find(|row| rect_contains(row.area, x, y)) {
-                return Some(DiagnosticsHitTarget::RepairItem(row.index));
-            }
-            if rect_contains(dialog.confirm, x, y) {
-                return Some(DiagnosticsHitTarget::RepairConfirm);
-            }
-            if rect_contains(dialog.restart, x, y) {
-                return Some(DiagnosticsHitTarget::RepairRestart);
-            }
-            if rect_contains(dialog.cancel, x, y) {
-                return Some(DiagnosticsHitTarget::RepairCancel);
-            }
-            return rect_contains(dialog.dialog, x, y)
-                .then_some(DiagnosticsHitTarget::RepairDialogSurface);
+            return diagnostics_repair_dialog_hit_test(dialog, (x, y));
         }
 
         if let Some(tab) = self.tabs.iter().find(|tab| rect_contains(tab.area, x, y)) {
             return Some(DiagnosticsHitTarget::Tab(tab.tab));
         }
-        if self
-            .list_scrollbar
-            .is_some_and(|scrollbar| rect_contains(scrollbar.track, x, y))
-        {
-            return Some(DiagnosticsHitTarget::Scrollbar);
-        }
-        self.rows
-            .iter()
-            .find(|row| rect_contains(row.area, x, y))
-            .map(|row| match self.active_tab {
-                DiagnosticsTab::Health => DiagnosticsHitTarget::Check(row.index),
-                DiagnosticsTab::Incidents => DiagnosticsHitTarget::Incident(row.index),
-                DiagnosticsTab::Logs => DiagnosticsHitTarget::Log(row.index),
-            })
+        diagnostics_content_hit_test_parts(self.active_tab, self.list_scrollbar, &self.rows, x, y)
     }
+}
+
+pub fn diagnostics_repair_dialog_hit_test(
+    dialog: &DiagnosticsRepairDialogLayout,
+    coordinates: (u16, u16),
+) -> Option<DiagnosticsHitTarget> {
+    let (x, y) = coordinates;
+    if let Some(row) = dialog.rows.iter().find(|row| rect_contains(row.area, x, y)) {
+        return Some(DiagnosticsHitTarget::RepairItem(row.index));
+    }
+    if rect_contains(dialog.confirm, x, y) {
+        return Some(DiagnosticsHitTarget::RepairConfirm);
+    }
+    if rect_contains(dialog.restart, x, y) {
+        return Some(DiagnosticsHitTarget::RepairRestart);
+    }
+    if rect_contains(dialog.cancel, x, y) {
+        return Some(DiagnosticsHitTarget::RepairCancel);
+    }
+    rect_contains(dialog.dialog, x, y).then_some(DiagnosticsHitTarget::RepairDialogSurface)
+}
+
+fn diagnostics_content_hit_test_parts(
+    active_tab: DiagnosticsTab,
+    list_scrollbar: Option<DiagnosticsScrollbarLayout>,
+    rows: &[DiagnosticsRowLayout],
+    x: u16,
+    y: u16,
+) -> Option<DiagnosticsHitTarget> {
+    if list_scrollbar.is_some_and(|scrollbar| rect_contains(scrollbar.track, x, y)) {
+        return Some(DiagnosticsHitTarget::Scrollbar);
+    }
+    rows.iter()
+        .find(|row| rect_contains(row.area, x, y))
+        .map(|row| match active_tab {
+            DiagnosticsTab::Health => DiagnosticsHitTarget::Check(row.index),
+            DiagnosticsTab::Incidents => DiagnosticsHitTarget::Incident(row.index),
+            DiagnosticsTab::Logs => DiagnosticsHitTarget::Log(row.index),
+        })
 }
 
 /// Computes the two-column Diagnostics page and modal hit geometry.
@@ -125,6 +169,45 @@ pub fn diagnostics_layout(main: Rect, model: &DiagnosticsViewModel) -> Diagnosti
     let content_height = footer.y.saturating_sub(content_y);
     let content = Rect::new(inner.x, content_y, inner.width, content_height);
 
+    let content_layout = diagnostics_content_layout(content, model);
+
+    let mut tab_x = tabs_area.x;
+    let tabs = DiagnosticsTab::ALL
+        .into_iter()
+        .map(|tab| {
+            let desired = usize_to_u16(tab.label().chars().count()).saturating_add(4);
+            let width = desired.min(tabs_area.right().saturating_sub(tab_x));
+            let area = Rect::new(tab_x, tabs_area.y, width, tabs_area.height);
+            tab_x = tab_x.saturating_add(width);
+            DiagnosticsTabLayout { tab, area }
+        })
+        .collect();
+    DiagnosticsLayout {
+        panel,
+        active_tab: content_layout.active_tab,
+        header,
+        tabs_area,
+        tabs,
+        list_panel: content_layout.list_panel,
+        list_rows_area: content_layout.list_rows_area,
+        list_scrollbar: content_layout.list_scrollbar,
+        rows: content_layout.rows,
+        detail_panel: content_layout.detail_panel,
+        footer,
+        visible_start: content_layout.visible_start,
+        visible_capacity: content_layout.visible_capacity,
+        repair_dialog: model
+            .repair_dialog
+            .as_ref()
+            .map(|dialog| diagnostics_repair_dialog_layout(main, dialog)),
+    }
+}
+
+/// Computes the reusable list-and-details region used by Diagnostics hosts.
+pub fn diagnostics_content_layout(
+    content: Rect,
+    model: &DiagnosticsViewModel,
+) -> DiagnosticsContentLayout {
     let column_gap = u16::from(content.width >= 3);
     let available_width = content.width.saturating_sub(column_gap);
     let list_width = if available_width >= DIAGNOSTICS_LIST_MIN_WIDTH.saturating_mul(2) {
@@ -183,37 +266,23 @@ pub fn diagnostics_layout(main: Rect, model: &DiagnosticsViewModel) -> Diagnosti
         })
         .collect();
 
-    let mut tab_x = tabs_area.x;
-    let tabs = DiagnosticsTab::ALL
-        .into_iter()
-        .map(|tab| {
-            let desired = usize_to_u16(tab.label().chars().count()).saturating_add(4);
-            let width = desired.min(tabs_area.right().saturating_sub(tab_x));
-            let area = Rect::new(tab_x, tabs_area.y, width, tabs_area.height);
-            tab_x = tab_x.saturating_add(width);
-            DiagnosticsTabLayout { tab, area }
-        })
-        .collect();
-
-    DiagnosticsLayout {
-        panel,
+    DiagnosticsContentLayout {
         active_tab: model.tab,
-        header,
-        tabs_area,
-        tabs,
         list_panel,
         list_rows_area,
         list_scrollbar,
         rows,
         detail_panel,
-        footer,
         visible_start,
         visible_capacity,
-        repair_dialog: model
-            .repair_dialog
-            .as_ref()
-            .map(|dialog| diagnostics_repair_dialog_layout(main, dialog)),
     }
+}
+
+pub fn diagnostics_content_hit_test(
+    layout: &DiagnosticsContentLayout,
+    coordinates: (u16, u16),
+) -> Option<DiagnosticsHitTarget> {
+    layout.hit_test(coordinates.0, coordinates.1)
 }
 
 fn diagnostics_scrollbar_layout(
@@ -290,7 +359,7 @@ fn diagnostics_visible_start(
     start.min(max_start)
 }
 
-fn diagnostics_repair_dialog_layout(
+pub fn diagnostics_repair_dialog_layout(
     main: Rect,
     model: &DiagnosticsRepairDialogViewModel,
 ) -> DiagnosticsRepairDialogLayout {

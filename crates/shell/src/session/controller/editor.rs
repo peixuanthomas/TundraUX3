@@ -2093,6 +2093,9 @@ impl ShellSession {
             }
             ShellScreen::Explorer => EditorLoadNavigation::Explorer,
             ShellScreen::Diagnostics => EditorLoadNavigation::Diagnostics,
+            ShellScreen::SystemStatus if self.system_status_tab.diagnostics_tab().is_some() => {
+                EditorLoadNavigation::Diagnostics
+            }
             _ => EditorLoadNavigation::Editor,
         };
         let id = next_editor_task_id();
@@ -2237,12 +2240,17 @@ impl ShellSession {
             EditorLoadNavigation::Diagnostics => {
                 if let Some(editor_index) = (1..self.screen_stack.len()).rev().find(|index| {
                     self.screen_stack[*index] == ShellScreen::Editor
-                        && self.screen_stack[index.saturating_sub(1)] == ShellScreen::Diagnostics
+                        && matches!(
+                            self.screen_stack[index.saturating_sub(1)],
+                            ShellScreen::Diagnostics | ShellScreen::SystemStatus
+                        )
                 }) {
                     self.screen_stack.remove(editor_index);
                 }
                 if self.active_screen() == ShellScreen::Diagnostics {
                     self.focused_component = ShellComponent::Diagnostics;
+                } else if self.active_screen() == ShellScreen::SystemStatus {
+                    self.focused_component = ShellComponent::SystemStatus;
                 }
             }
             EditorLoadNavigation::Editor => {
@@ -2938,6 +2946,10 @@ impl ShellSession {
         } else if self.active_screen() == ShellScreen::Diagnostics {
             self.focused_component = ShellComponent::Diagnostics;
             self.notify_status("Diagnostics");
+            self.refresh_hit_map();
+        } else if self.active_screen() == ShellScreen::SystemStatus {
+            self.focused_component = ShellComponent::SystemStatus;
+            self.notify_status("System Status");
             self.refresh_hit_map();
         } else {
             self.pop_to_home();

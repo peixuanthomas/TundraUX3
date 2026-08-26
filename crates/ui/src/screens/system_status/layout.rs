@@ -5,6 +5,11 @@ use super::model::{
 };
 use crate::components::{TabItem, Tabs};
 use crate::screens::shell::{inset_rect, line_in_rect, rect_contains, usize_to_u16};
+use crate::{
+    DiagnosticsContentLayout, DiagnosticsHitTarget, DiagnosticsRepairDialogLayout,
+    diagnostics_content_hit_test, diagnostics_content_layout, diagnostics_repair_dialog_hit_test,
+    diagnostics_repair_dialog_layout,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SystemStatusTabLayout {
@@ -22,7 +27,7 @@ pub struct SystemStatusRowLayout {
 pub enum SystemStatusHitTarget {
     Tab(SystemStatusTab),
     Row(usize),
-    Diagnostics,
+    Diagnostics(DiagnosticsHitTarget),
     Refresh,
     Scrollbar,
 }
@@ -37,23 +42,20 @@ pub struct SystemStatusLayout {
     pub notice_area: Option<Rect>,
     pub rows_area: Rect,
     pub footer: Rect,
-    pub diagnostics_button: Rect,
     pub refresh_button: Rect,
     pub scrollbar: Option<Rect>,
     pub rows: Vec<SystemStatusRowLayout>,
     pub visible_start: usize,
     pub visible_capacity: usize,
+    pub diagnostics_content: Option<DiagnosticsContentLayout>,
+    pub diagnostics_repair_dialog: Option<DiagnosticsRepairDialogLayout>,
 }
 
 pub fn system_status_layout(main: Rect, model: &SystemStatusViewModel) -> SystemStatusLayout {
     let panel = main;
     let inner = inset_rect(panel, 1);
     let header = line_in_rect(inner, inner.y);
-    let tabs_area = if model.is_admin() {
-        line_in_rect(inner, header.bottom())
-    } else {
-        Rect::new(inner.x, header.bottom(), inner.width, 0)
-    };
+    let tabs_area = line_in_rect(inner, header.bottom());
     let footer = line_in_rect(inner, inner.bottom().saturating_sub(1));
     let content_y = tabs_area.bottom();
     let content_panel = Rect::new(
@@ -63,7 +65,11 @@ pub fn system_status_layout(main: Rect, model: &SystemStatusViewModel) -> System
         footer.y.saturating_sub(content_y),
     );
     let content_inner = inset_rect(content_panel, 1);
-    let item_count = model.item_count();
+    let item_count = if model.is_diagnostics() {
+        0
+    } else {
+        model.item_count()
+    };
     let has_stale_notice = match (&model.content, model.tab) {
         (SystemStatusContentViewModel::Admin(admin), SystemStatusTab::Storage) => {
             matches!(admin.storage_state, SystemStatusSectionState::Stale { .. })
@@ -98,7 +104,9 @@ pub fn system_status_layout(main: Rect, model: &SystemStatusViewModel) -> System
     let visible_capacity = usize::from(table_inner.height.saturating_sub(table_header));
     let max_start = item_count.saturating_sub(visible_capacity);
     let mut visible_start = model.scroll_offset.min(max_start);
-    if let Some(selected) = model.selected_index() {
+    if item_count > 0
+        && let Some(selected) = model.selected_index()
+    {
         if selected < visible_start {
             visible_start = selected;
         } else if visible_capacity > 0 && selected >= visible_start + visible_capacity {
@@ -141,35 +149,45 @@ pub fn system_status_layout(main: Rect, model: &SystemStatusViewModel) -> System
         })
         .collect();
     let refresh_width = 11.min(footer.width);
-    let diagnostics_width = 13.min(footer.width.saturating_sub(refresh_width));
     let refresh_button = Rect::new(
         footer.right().saturating_sub(refresh_width),
         footer.y,
         refresh_width,
         footer.height,
     );
-    let diagnostics_button = Rect::new(
-        refresh_button.x.saturating_sub(diagnostics_width),
-        footer.y,
-        diagnostics_width,
-        footer.height,
+    let component = Tabs::new(
+        "system-status.tabs.geometry",
+        model
+            .tabs()
+            .iter()
+            .map(|tab| {
+                TabItem::new(
+                    tab.label(),
+                    system_status_tab_label(*tab, tabs_area.width, model.is_admin()),
+                )
+            })
+            .collect(),
     );
-    let tabs = if model.is_admin() {
-        let component = Tabs::new(
-            "system-status.tabs.geometry",
-            SystemStatusTab::ALL
-                .into_iter()
-                .map(|tab| TabItem::new(tab.label(), tab.label()))
-                .collect(),
-        );
-        SystemStatusTab::ALL
-            .into_iter()
-            .zip(component.borderless_item_areas(tabs_area))
-            .map(|(tab, area)| SystemStatusTabLayout { tab, area })
-            .collect()
-    } else {
-        Vec::new()
-    };
+    let tabs = model
+        .tabs()
+        .iter()
+        .copied()
+        .zip(component.borderless_item_areas(tabs_area))
+        .map(|(tab, area)| SystemStatusTabLayout { tab, area })
+        .collect();
+    let diagnostics_content = model
+        .is_diagnostics()
+        .then(|| diagnostics_content_layout(content_inner, &model.diagnostics));
+    let diagnostics_repair_dialog = model
+        .is_diagnostics()
+        .then(|| {
+            model
+                .diagnostics
+                .repair_dialog
+                .as_ref()
+                .map(|dialog| diagnostics_repair_dialog_layout(main, dialog))
+        })
+        .flatten();
 
     SystemStatusLayout {
         panel,
@@ -180,12 +198,25 @@ pub fn system_status_layout(main: Rect, model: &SystemStatusViewModel) -> System
         notice_area,
         rows_area,
         footer,
-        diagnostics_button,
         refresh_button,
         scrollbar,
         rows,
         visible_start,
         visible_capacity,
+        diagnostics_content,
+        diagnostics_repair_dialog,
+    }
+}
+
+pub(crate) fn system_status_tab_label(
+    tab: SystemStatusTab,
+    available_width: u16,
+    admin: bool,
+) -> &'static str {
+    if admin && available_width < 53 {
+        tab.compact_label()
+    } else {
+        tab.label()
     }
 }
 
@@ -194,14 +225,20 @@ pub fn system_status_hit_test(
     coordinates: (u16, u16),
 ) -> Option<SystemStatusHitTarget> {
     let (x, y) = coordinates;
+    if let Some(dialog) = &layout.diagnostics_repair_dialog {
+        return diagnostics_repair_dialog_hit_test(dialog, coordinates)
+            .map(SystemStatusHitTarget::Diagnostics);
+    }
     if let Some(tab) = layout.tabs.iter().find(|tab| rect_contains(tab.area, x, y)) {
         return Some(SystemStatusHitTarget::Tab(tab.tab));
     }
     if rect_contains(layout.refresh_button, x, y) {
         return Some(SystemStatusHitTarget::Refresh);
     }
-    if rect_contains(layout.diagnostics_button, x, y) {
-        return Some(SystemStatusHitTarget::Diagnostics);
+    if let Some(diagnostics) = &layout.diagnostics_content
+        && let Some(target) = diagnostics_content_hit_test(diagnostics, coordinates)
+    {
+        return Some(SystemStatusHitTarget::Diagnostics(target));
     }
     if layout
         .scrollbar

@@ -100,6 +100,9 @@ impl ShellSession {
             if self.active_screen() == ShellScreen::Diagnostics {
                 self.focused_component = ShellComponent::Diagnostics;
                 self.notify_status("Diagnostics");
+            } else if self.active_screen() == ShellScreen::SystemStatus {
+                self.focused_component = ShellComponent::SystemStatus;
+                self.notify_status("System Status");
             } else {
                 self.pop_to_home();
                 self.notify_status("Ready");

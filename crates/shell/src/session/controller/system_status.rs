@@ -24,11 +24,24 @@ impl ShellSession {
         self.system_status_tab = ui::SystemStatusTab::Overview;
         self.system_status_selected_row = 0;
         self.system_status_scroll_offset = 0;
+        self.diagnostics_tab = ui::DiagnosticsTab::Health;
+        self.diagnostics_list_window_start = 0;
+        self.diagnostics_list_window_is_explicit = false;
+        self.diagnostics_feedback = None;
+        self.diagnostics_restart_required = self.diagnostics_restart_is_required();
+        if self.diagnostics_task_runtime.is_some() {
+            self.request_diagnostics_scan();
+        } else if self.app.diagnostics_snapshot().is_none() {
+            self.diagnostics_feedback = Some("Diagnostics runtime is unavailable".to_string());
+        }
     }
 
     pub(in crate::session) fn close_system_status(&mut self) {
         let _ = self.settings_task_runtime.set_system_status_active(false);
         self.clear_system_status_scrollbar_drag();
+        self.clear_diagnostics_scrollbar_drag();
+        self.diagnostics_repair_preview.clear();
+        self.reset_diagnostics_repair_dialog_selection();
         if self.active_screen() == ShellScreen::SystemStatus {
             self.screen_stack.pop();
         }
@@ -189,10 +202,29 @@ impl ShellSession {
     }
 
     pub(in crate::session) fn set_system_status_tab(&mut self, tab: ui::SystemStatusTab) {
+        let admin = self
+            .app
+            .auth_session()
+            .is_some_and(|session| session.role == UserRole::Admin);
+        if !admin
+            && matches!(
+                tab,
+                ui::SystemStatusTab::Storage | ui::SystemStatusTab::Network
+            )
+        {
+            return;
+        }
         self.system_status_tab = tab;
         self.system_status_selected_row = 0;
         self.system_status_scroll_offset = 0;
         self.clear_system_status_scrollbar_drag();
+        self.clear_diagnostics_scrollbar_drag();
+        if let Some(diagnostics_tab) = tab.diagnostics_tab() {
+            self.diagnostics_tab = diagnostics_tab;
+            self.diagnostics_list_window_start = 0;
+            self.diagnostics_list_window_is_explicit = false;
+            self.clamp_diagnostics_selection();
+        }
     }
 
     fn system_status_layout(&self) -> Option<(ui::SystemStatusViewModel, ui::SystemStatusLayout)> {

@@ -285,11 +285,8 @@ impl ShellSession {
             return;
         }
         self.diagnostics_restart_required = self.diagnostics_restart_is_required();
-        self.screen_stack.push(ShellScreen::Diagnostics);
-        self.focused_component = ShellComponent::Diagnostics;
-        self.diagnostics_tab = ui::DiagnosticsTab::Health;
-        self.diagnostics_list_window_start = 0;
-        self.diagnostics_list_window_is_explicit = false;
+        self.set_system_status_tab(ui::SystemStatusTab::Health);
+        self.focused_component = ShellComponent::SystemStatus;
         self.clear_diagnostics_scrollbar_drag();
         self.diagnostics_feedback = None;
         if self.diagnostics_task_runtime.is_some() {
@@ -302,6 +299,13 @@ impl ShellSession {
 
     pub(in crate::session) fn close_diagnostics(&mut self) {
         self.clear_diagnostics_scrollbar_drag();
+        if self.active_screen() == ShellScreen::SystemStatus {
+            self.cancel_diagnostics_repair_preview();
+            self.set_system_status_tab(ui::SystemStatusTab::Overview);
+            self.focused_component = ShellComponent::SystemStatus;
+            self.refresh_hit_map();
+            return;
+        }
         if self.active_screen() == ShellScreen::Diagnostics {
             self.screen_stack.pop();
         }
@@ -581,6 +585,9 @@ impl ShellSession {
 
     pub(in crate::session) fn set_diagnostics_tab(&mut self, tab: ui::DiagnosticsTab) {
         self.diagnostics_tab = tab;
+        if self.active_screen() == ShellScreen::SystemStatus {
+            self.system_status_tab = ui::SystemStatusTab::from_diagnostics(tab);
+        }
         self.diagnostics_list_window_start = 0;
         self.diagnostics_list_window_is_explicit = false;
         self.clear_diagnostics_scrollbar_drag();
@@ -605,11 +612,9 @@ impl ShellSession {
         &mut self,
         coordinates: CellPosition,
     ) {
-        let area = Rect::new(0, 0, self.terminal_size.0, self.terminal_size.1);
-        let ui::ShellLayout::Full { main, .. } = ui::compute_shell_layout(area) else {
+        let Some(layout) = self.active_diagnostics_content_layout() else {
             return;
         };
-        let layout = ui::diagnostics_layout(main, &self.to_diagnostics_view_model());
         let Some(scrollbar) = layout.list_scrollbar else {
             return;
         };
@@ -625,12 +630,10 @@ impl ShellSession {
         let Some(ScrollbarDragState::Diagnostics { grab_offset }) = self.scrollbar_drag else {
             return;
         };
-        let area = Rect::new(0, 0, self.terminal_size.0, self.terminal_size.1);
-        let ui::ShellLayout::Full { main, .. } = ui::compute_shell_layout(area) else {
+        let model = self.to_diagnostics_view_model();
+        let Some(layout) = self.active_diagnostics_content_layout() else {
             return;
         };
-        let model = self.to_diagnostics_view_model();
-        let layout = ui::diagnostics_layout(main, &model);
         let Some(scrollbar) = layout.list_scrollbar else {
             self.clear_diagnostics_scrollbar_drag();
             return;
@@ -657,6 +660,19 @@ impl ShellSession {
         } else {
             false
         }
+    }
+
+    fn active_diagnostics_content_layout(&self) -> Option<ui::DiagnosticsContentLayout> {
+        let area = Rect::new(0, 0, self.terminal_size.0, self.terminal_size.1);
+        let ui::ShellLayout::Full { main, .. } = ui::compute_shell_layout(area) else {
+            return None;
+        };
+        if self.active_screen() == ShellScreen::SystemStatus {
+            return self
+                .to_system_status_view_model()
+                .and_then(|model| ui::system_status_layout(main, &model).diagnostics_content);
+        }
+        Some(ui::diagnostics_layout(main, &self.to_diagnostics_view_model()).content_layout())
     }
 
     pub(in crate::session) fn preview_selected_diagnostics_repair(&mut self) {
@@ -1345,7 +1361,8 @@ mod diagnostics_shell_tests {
         assert!(!state.app.editor_state().unwrap().is_dirty());
 
         state.request_editor_close(&platform);
-        assert_eq!(state.active_screen(), ShellScreen::Diagnostics);
+        assert_eq!(state.active_screen(), ShellScreen::SystemStatus);
+        assert_eq!(state.system_status_tab, ui::SystemStatusTab::Logs);
         assert_eq!(state.diagnostics_tab, ui::DiagnosticsTab::Logs);
         assert!(state.app.editor_state().is_none());
         std::fs::remove_dir_all(directory).unwrap();
@@ -1525,7 +1542,7 @@ mod diagnostics_shell_tests {
 
         state.open_selected_diagnostics_report(&platform::mock::UnsupportedPlatform);
 
-        assert_eq!(state.active_screen(), ShellScreen::Diagnostics);
+        assert_eq!(state.active_screen(), ShellScreen::SystemStatus);
         let editor = state.app.editor_state().unwrap();
         assert!(editor.is_dirty());
         assert_eq!(editor.export_text(), "unsaved");
@@ -1692,8 +1709,8 @@ mod diagnostics_shell_tests {
 
         state.close_explorer();
 
-        assert_eq!(state.active_screen(), ShellScreen::Diagnostics);
-        assert_eq!(state.focused_component, ShellComponent::Diagnostics);
+        assert_eq!(state.active_screen(), ShellScreen::SystemStatus);
+        assert_eq!(state.focused_component, ShellComponent::SystemStatus);
         std::fs::remove_dir_all(root).unwrap();
     }
 
@@ -1704,7 +1721,7 @@ mod diagnostics_shell_tests {
 
         state.open_diagnostics_logs_in_explorer(&platform::mock::UnsupportedPlatform);
 
-        assert_eq!(state.active_screen(), ShellScreen::Diagnostics);
+        assert_eq!(state.active_screen(), ShellScreen::SystemStatus);
         assert!(
             state
                 .app
@@ -1718,7 +1735,8 @@ mod diagnostics_shell_tests {
     fn diagnostics_navigation_and_repair_preview_are_modal() {
         let mut state = state(UserRole::Admin);
         state.open_diagnostics();
-        assert_eq!(state.active_screen(), ShellScreen::Diagnostics);
+        assert_eq!(state.active_screen(), ShellScreen::SystemStatus);
+        assert_eq!(state.system_status_tab, ui::SystemStatusTab::Health);
 
         state.preview_selected_diagnostics_repair();
         assert_eq!(state.diagnostics_repair_preview.len(), 1);
@@ -1730,8 +1748,10 @@ mod diagnostics_shell_tests {
         state.cancel_diagnostics_repair_preview();
         state.set_diagnostics_tab(ui::DiagnosticsTab::Incidents);
         assert_eq!(state.diagnostics_tab, ui::DiagnosticsTab::Incidents);
+        assert_eq!(state.system_status_tab, ui::SystemStatusTab::Incidents);
         state.close_diagnostics();
         assert_eq!(state.active_screen(), ShellScreen::SystemStatus);
+        assert_eq!(state.system_status_tab, ui::SystemStatusTab::Overview);
         assert_eq!(state.focused_component, ShellComponent::SystemStatus);
     }
 
@@ -1795,8 +1815,15 @@ mod diagnostics_shell_tests {
         let ui::ShellLayout::Full { main, .. } = ui::compute_shell_layout(area) else {
             panic!("Diagnostics scrollbar test requires a full layout");
         };
-        let layout = ui::diagnostics_layout(main, &state.to_diagnostics_view_model());
+        let layout = ui::system_status_layout(
+            main,
+            &state
+                .to_system_status_view_model()
+                .expect("system status model"),
+        );
         let scrollbar = layout
+            .diagnostics_content
+            .expect("integrated diagnostics content")
             .list_scrollbar
             .expect("overflowing Diagnostics scrollbar");
         let grab = (
@@ -1823,7 +1850,14 @@ mod diagnostics_shell_tests {
         );
 
         let model = state.to_diagnostics_view_model();
-        let final_layout = ui::diagnostics_layout(main, &model);
+        let final_layout = ui::system_status_layout(
+            main,
+            &state
+                .to_system_status_view_model()
+                .expect("system status model"),
+        )
+        .diagnostics_content
+        .expect("integrated diagnostics content");
         assert_eq!(model.selected_check, 0);
         assert!(model.list_window_is_explicit);
         assert_eq!(

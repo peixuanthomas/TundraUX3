@@ -4,7 +4,9 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::Line;
 use ratatui::widgets::{Clear, Paragraph, Wrap};
 
-use super::layout::{DiagnosticsLayout, DiagnosticsRepairDialogLayout, diagnostics_layout};
+use super::layout::{
+    DiagnosticsContentLayout, DiagnosticsLayout, DiagnosticsRepairDialogLayout, diagnostics_layout,
+};
 use super::model::{
     DiagnosticsCheckViewModel, DiagnosticsIncidentViewModel, DiagnosticsRepairDialogViewModel,
     DiagnosticsStatus, DiagnosticsTab, DiagnosticsViewModel,
@@ -55,23 +57,10 @@ fn render_diagnostics_main(
         .bordered(true)
         .render_frame(frame, layout.panel, context);
 
-    render_diagnostics_header(frame, &layout, model, theme);
+    render_diagnostics_header(frame, layout.header, model, theme);
     render_diagnostics_tabs(frame, &layout, model, context);
-    Surface::new()
-        .titled(match model.tab {
-            DiagnosticsTab::Health => "Checks",
-            DiagnosticsTab::Logs => "Logs",
-            DiagnosticsTab::Incidents => "Incidents",
-        })
-        .bordered(true)
-        .render_frame(frame, layout.list_panel, context);
-    Surface::new()
-        .titled("Details")
-        .bordered(true)
-        .render_frame(frame, layout.detail_panel, context);
-    render_diagnostics_rows(frame, &layout, model, theme, context);
-    render_diagnostics_detail(frame, &layout, model, theme);
-    render_diagnostics_footer(frame, &layout, model, theme);
+    render_diagnostics_content(frame, &layout.content_layout(), model, theme, context);
+    render_diagnostics_footer(frame, layout.footer, model, theme, "Esc System Status");
 
     if let (Some(dialog_layout), Some(dialog)) =
         (layout.repair_dialog.as_ref(), model.repair_dialog.as_ref())
@@ -80,9 +69,9 @@ fn render_diagnostics_main(
     }
 }
 
-fn render_diagnostics_header(
+pub(crate) fn render_diagnostics_header(
     frame: &mut Frame<'_>,
-    layout: &DiagnosticsLayout,
+    area: Rect,
     model: &DiagnosticsViewModel,
     theme: &TundraTheme,
 ) {
@@ -148,14 +137,37 @@ fn render_diagnostics_header(
     let scanned_at = model.scanned_at.as_deref().unwrap_or("not yet scanned");
     render_clock_line(
         frame,
-        layout.header,
+        area,
         fit_cell(
             &format!("{state}    Last scan: {scanned_at}"),
-            usize::from(layout.header.width),
+            usize::from(area.width),
         ),
         style,
         HorizontalAlignment::Left,
     );
+}
+
+pub(crate) fn render_diagnostics_content(
+    frame: &mut Frame<'_>,
+    layout: &DiagnosticsContentLayout,
+    model: &DiagnosticsViewModel,
+    theme: &TundraTheme,
+    context: &RenderContext,
+) {
+    Surface::new()
+        .titled(match model.tab {
+            DiagnosticsTab::Health => "Checks",
+            DiagnosticsTab::Logs => "Logs",
+            DiagnosticsTab::Incidents => "Incidents",
+        })
+        .bordered(true)
+        .render_frame(frame, layout.list_panel, context);
+    Surface::new()
+        .titled("Details")
+        .bordered(true)
+        .render_frame(frame, layout.detail_panel, context);
+    render_diagnostics_rows(frame, layout, model, theme, context);
+    render_diagnostics_detail(frame, layout, model, theme);
 }
 
 fn render_diagnostics_tabs(
@@ -181,7 +193,7 @@ fn render_diagnostics_tabs(
 
 fn render_diagnostics_rows(
     frame: &mut Frame<'_>,
-    layout: &DiagnosticsLayout,
+    layout: &DiagnosticsContentLayout,
     model: &DiagnosticsViewModel,
     theme: &TundraTheme,
     context: &RenderContext,
@@ -277,7 +289,7 @@ fn render_diagnostics_rows(
 
 fn render_diagnostics_scrollbar(
     frame: &mut Frame<'_>,
-    layout: &DiagnosticsLayout,
+    layout: &DiagnosticsContentLayout,
     model: &DiagnosticsViewModel,
     context: &RenderContext,
 ) {
@@ -294,7 +306,7 @@ fn render_diagnostics_scrollbar(
 
 fn render_diagnostics_detail(
     frame: &mut Frame<'_>,
-    layout: &DiagnosticsLayout,
+    layout: &DiagnosticsContentLayout,
     model: &DiagnosticsViewModel,
     theme: &TundraTheme,
 ) {
@@ -424,18 +436,19 @@ fn diagnostics_incident_detail_lines(
     lines
 }
 
-fn render_diagnostics_footer(
+pub(crate) fn render_diagnostics_footer(
     frame: &mut Frame<'_>,
-    layout: &DiagnosticsLayout,
+    area: Rect,
     model: &DiagnosticsViewModel,
     theme: &TundraTheme,
+    close_hint: &str,
 ) {
     let help = if model.restart_required {
-        "Restart required · Enter/R Restart · E Safe exit · Esc System Status".to_string()
+        format!("Restart required · Enter/R Restart · E Safe exit · {close_hint}")
     } else if model.scanning {
-        "Scanning... · Esc System Status".to_string()
+        format!("Scanning... · {close_hint}")
     } else {
-        let mut actions = vec!["R Rescan", "Tab Switch", "C Copy", "Esc System Status"];
+        let mut actions = vec!["R Rescan", "Tab Switch", "C Copy", close_hint];
         if model.can_repair && model.tab == DiagnosticsTab::Health {
             actions.insert(1, "F Repair");
             actions.insert(2, "A Repair all");
@@ -462,8 +475,8 @@ fn render_diagnostics_footer(
         .map_or(help.clone(), |feedback| format!("{feedback} · {help}"));
     render_clock_line(
         frame,
-        layout.footer,
-        fit_cell(&text, usize::from(layout.footer.width)),
+        area,
+        fit_cell(&text, usize::from(area.width)),
         if model.restart_required {
             diagnostics_warning_style(theme)
         } else if model.feedback.is_some() {
@@ -475,7 +488,7 @@ fn render_diagnostics_footer(
     );
 }
 
-fn render_diagnostics_repair_dialog(
+pub(crate) fn render_diagnostics_repair_dialog(
     frame: &mut Frame<'_>,
     layout: &DiagnosticsRepairDialogLayout,
     model: &DiagnosticsRepairDialogViewModel,

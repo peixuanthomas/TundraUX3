@@ -149,6 +149,16 @@ pub(in crate::session) fn build_shell_hit_map(
                         area: main,
                         layer: ShellHitLayer::AppContent,
                     });
+                    if let Some(dialog) = diagnostics_model
+                        .and_then(|model| model.repair_dialog.as_ref())
+                        .map(|dialog| ui::diagnostics_repair_dialog_layout(main, dialog))
+                    {
+                        regions.push(ShellHitRegion {
+                            component: ShellComponent::DiagnosticsRepairDialog,
+                            area: dialog.dialog,
+                            layer: ShellHitLayer::AppOverlay,
+                        });
+                    }
                 }
                 ShellScreen::Diagnostics => {
                     regions.push(ShellHitRegion {

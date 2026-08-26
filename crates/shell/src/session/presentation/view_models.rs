@@ -6,6 +6,10 @@ impl ShellSession {
         if role == UserRole::Guest {
             return None;
         }
+        let mut diagnostics = self.to_diagnostics_view_model();
+        if let Some(tab) = self.system_status_tab.diagnostics_tab() {
+            diagnostics.tab = tab;
+        }
         let snapshot = self.app.system_status_snapshot();
         let (storage_state, storage) = match snapshot.map(|s| &s.storage) {
             Some(StorageState::Ready(v)) => (ui::SystemStatusSectionState::Ready, Some(v)),
@@ -99,7 +103,8 @@ impl ShellSession {
                     network_tone,
                     last_refreshed: refreshed,
                 }),
-                tab: ui::SystemStatusTab::Overview,
+                diagnostics,
+                tab: self.system_status_tab,
                 selected_row: 0,
                 scroll_offset: 0,
                 refreshing: self.system_status_refresh_requested_revision.is_some(),
@@ -192,6 +197,7 @@ impl ShellSession {
                 network_state,
                 network_rows,
             }),
+            diagnostics,
             tab: self.system_status_tab,
             selected_row: self.system_status_selected_row,
             scroll_offset: self.system_status_scroll_offset,

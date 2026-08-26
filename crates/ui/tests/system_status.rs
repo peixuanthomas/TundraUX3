@@ -3,7 +3,9 @@ use ratatui::backend::TestBackend;
 use ratatui::layout::Rect;
 use ui::components::ComponentTone;
 use ui::{
-    AdminSystemStatusViewModel, BorderShape, HomeDisplayMode, NetworkInterfaceRowViewModel,
+    AdminSystemStatusViewModel, BorderShape, DiagnosticsCheckViewModel, DiagnosticsHitTarget,
+    DiagnosticsRepairDialogViewModel, DiagnosticsRepairItemViewModel, DiagnosticsStatus,
+    DiagnosticsTab, DiagnosticsViewModel, HomeDisplayMode, NetworkInterfaceRowViewModel,
     NotificationTone, ShellChromeViewModel, ShellLayout, StatusViewModel,
     StorageVolumeRowViewModel, SystemStatusContentViewModel, SystemStatusHitTarget,
     SystemStatusOverviewViewModel, SystemStatusSectionState, SystemStatusTab,
@@ -15,7 +17,7 @@ use ui::{
 fn admin_exposes_all_tabs_and_hit_targets() {
     let model = admin_model(SystemStatusTab::Storage, SystemStatusSectionState::Ready);
     let layout = system_status_layout(full_main(100, 24), &model);
-    assert_eq!(layout.tabs.len(), 3);
+    assert_eq!(layout.tabs.len(), 6);
     for (index, tab) in SystemStatusTab::ALL.into_iter().enumerate() {
         let item = layout.tabs.iter().find(|item| item.tab == tab).unwrap();
         assert_eq!(
@@ -37,13 +39,6 @@ fn admin_exposes_all_tabs_and_hit_targets() {
     assert_eq!(
         system_status_hit_test(&layout, (layout.rows[0].area.x, layout.rows[0].area.y)),
         Some(SystemStatusHitTarget::Row(0))
-    );
-    assert_eq!(
-        system_status_hit_test(
-            &layout,
-            (layout.diagnostics_button.x, layout.diagnostics_button.y)
-        ),
-        Some(SystemStatusHitTarget::Diagnostics)
     );
     assert_eq!(
         system_status_hit_test(&layout, (layout.refresh_button.x, layout.refresh_button.y)),
@@ -74,7 +69,10 @@ fn stale_storage_and_network_reserve_notice_without_covering_table_geometry() {
                         message: "Network data is old".into(),
                     }
                 }
-                SystemStatusTab::Overview => unreachable!(),
+                SystemStatusTab::Overview
+                | SystemStatusTab::Health
+                | SystemStatusTab::Logs
+                | SystemStatusTab::Incidents => unreachable!(),
             }
         }
         let ready_layout = system_status_layout(full_main(100, 24), &ready);
@@ -102,30 +100,100 @@ fn stale_storage_and_network_reserve_notice_without_covering_table_geometry() {
                 assert!(output.contains("Display name"));
                 assert!(output.contains("en0"));
             }
-            SystemStatusTab::Overview => unreachable!(),
+            SystemStatusTab::Overview
+            | SystemStatusTab::Health
+            | SystemStatusTab::Logs
+            | SystemStatusTab::Incidents => unreachable!(),
         }
     }
 }
 
 #[test]
-fn user_is_summary_only_and_ignores_admin_tab_and_rows() {
+fn user_gets_summary_and_integrated_diagnostics_without_admin_tabs() {
     let model = user_model();
     let layout = system_status_layout(full_main(80, 20), &model);
-    assert!(layout.tabs.is_empty());
+    assert_eq!(
+        layout.tabs.iter().map(|tab| tab.tab).collect::<Vec<_>>(),
+        SystemStatusTab::USER
+    );
     assert!(layout.rows.is_empty());
     assert_eq!(model.item_count(), 0);
     let output = render(80, 20, &model, TundraTheme::default_dark());
     assert!(output.contains("Storage status: Healthy"));
     assert!(output.contains("Network status: Connected"));
-    assert!(output.contains("D Diagnostics"));
+    assert!(output.contains("Health"));
+    assert!(output.contains("Incidents"));
     assert!(!output.contains("en0"));
-    assert!(output.contains("Diagnostics"));
+    assert!(
+        !layout
+            .tabs
+            .iter()
+            .any(|tab| matches!(tab.tab, SystemStatusTab::Storage | SystemStatusTab::Network))
+    );
+}
+
+#[test]
+fn diagnostics_health_is_a_normal_system_status_tab_with_shared_content_hits() {
+    let mut model = admin_model(SystemStatusTab::Health, SystemStatusSectionState::Ready);
+    model.diagnostics.checks = vec![DiagnosticsCheckViewModel {
+        id: "paths.data".into(),
+        label: "Data path".into(),
+        category: "Paths".into(),
+        status: DiagnosticsStatus::Warning,
+        summary: "Directory is missing".into(),
+        detail: "Data directory is missing".into(),
+        remediation: "Create the directory".into(),
+        repairable: true,
+    }];
+    let layout = system_status_layout(full_main(120, 28), &model);
+    let diagnostics = layout
+        .diagnostics_content
+        .as_ref()
+        .expect("health tab content");
+    let row = diagnostics.rows.first().expect("health check row");
     assert_eq!(
-        system_status_hit_test(
-            &layout,
-            (layout.diagnostics_button.x, layout.diagnostics_button.y)
-        ),
-        Some(SystemStatusHitTarget::Diagnostics)
+        system_status_hit_test(&layout, (row.area.x, row.area.y)),
+        Some(SystemStatusHitTarget::Diagnostics(
+            DiagnosticsHitTarget::Check(0)
+        ))
+    );
+
+    let output = render(120, 28, &model, TundraTheme::default_dark());
+    assert!(output.contains("System Status"));
+    assert!(output.contains("Checks"));
+    assert!(output.contains("Details"));
+    assert!(output.contains("Data path"));
+    assert!(!output.contains("System Status / Diagnostics"));
+    assert!(!output.contains("D Diagnostics"));
+}
+
+#[test]
+fn integrated_diagnostics_repair_dialog_owns_modal_hit_targets() {
+    let mut model = admin_model(SystemStatusTab::Health, SystemStatusSectionState::Ready);
+    model.diagnostics.repair_dialog = Some(DiagnosticsRepairDialogViewModel {
+        items: vec![DiagnosticsRepairItemViewModel {
+            id: "paths.data".into(),
+            label: "Create data directory".into(),
+        }],
+        selected: 0,
+        confirm_selected: true,
+        scroll_offset: 0,
+    });
+    let layout = system_status_layout(full_main(120, 28), &model);
+    let dialog = layout
+        .diagnostics_repair_dialog
+        .as_ref()
+        .expect("integrated repair dialog");
+    assert_eq!(
+        system_status_hit_test(&layout, (dialog.confirm.x, dialog.confirm.y)),
+        Some(SystemStatusHitTarget::Diagnostics(
+            DiagnosticsHitTarget::RepairConfirm
+        ))
+    );
+    assert_eq!(
+        system_status_hit_test(&layout, (layout.tabs[0].area.x, layout.tabs[0].area.y)),
+        None,
+        "the modal must block page tabs"
     );
 }
 
@@ -154,8 +222,16 @@ fn narrow_terminal_and_two_themes_render_without_panicking() {
     let model = admin_model(SystemStatusTab::Overview, SystemStatusSectionState::Ready);
     let _ = render(20, 7, &model, TundraTheme::default_dark());
     let narrow = system_status_layout(Rect::new(0, 0, 20, 5), &model);
-    assert!(narrow.diagnostics_button.right() <= narrow.refresh_button.x);
     assert!(narrow.refresh_button.right() <= narrow.footer.right());
+    let minimum_full = system_status_layout(full_main(50, 12), &model);
+    assert_eq!(minimum_full.tabs.len(), SystemStatusTab::ALL.len());
+    assert!(minimum_full.tabs.iter().all(|tab| tab.area.width > 0));
+    assert!(
+        minimum_full
+            .tabs
+            .last()
+            .is_some_and(|tab| tab.area.right() <= minimum_full.tabs_area.right())
+    );
     let _ = render(
         80,
         20,
@@ -199,6 +275,7 @@ fn admin_model(
             network_state: SystemStatusSectionState::Ready,
             network_rows: vec![network_row(0)],
         }),
+        diagnostics: diagnostics_model(DiagnosticsTab::Health),
         tab,
         selected_row: 0,
         scroll_offset: 0,
@@ -217,11 +294,33 @@ fn user_model() -> SystemStatusViewModel {
             network_tone: ComponentTone::Success,
             last_refreshed: "now".into(),
         }),
-        tab: SystemStatusTab::Network,
+        diagnostics: diagnostics_model(DiagnosticsTab::Health),
+        tab: SystemStatusTab::Overview,
         selected_row: 99,
         scroll_offset: 99,
         refreshing: false,
         feedback: None,
+    }
+}
+
+fn diagnostics_model(tab: DiagnosticsTab) -> DiagnosticsViewModel {
+    DiagnosticsViewModel {
+        tab,
+        checks: Vec::new(),
+        incidents: Vec::new(),
+        logs: Vec::new(),
+        selected_check: 0,
+        selected_incident: 0,
+        selected_log: 0,
+        list_window_start: 0,
+        list_window_is_explicit: false,
+        scanning: false,
+        can_view_details: true,
+        can_repair: true,
+        restart_required: false,
+        repair_dialog: None,
+        feedback: None,
+        scanned_at: Some("now".into()),
     }
 }
 

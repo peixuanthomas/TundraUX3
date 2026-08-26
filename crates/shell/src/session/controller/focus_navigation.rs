@@ -36,8 +36,11 @@ impl ShellSession {
             (content_screen == ShellScreen::Clock).then(|| self.to_clock_view_model());
         let explorer_model =
             (content_screen == ShellScreen::Explorer).then(|| self.to_explorer_view_model());
-        let diagnostics_model =
-            (content_screen == ShellScreen::Diagnostics).then(|| self.to_diagnostics_view_model());
+        let diagnostics_model = matches!(
+            content_screen,
+            ShellScreen::Diagnostics | ShellScreen::SystemStatus
+        )
+        .then(|| self.to_diagnostics_view_model());
         self.hit_map = build_shell_hit_map(
             self.terminal_size,
             content_screen,
@@ -91,6 +94,9 @@ impl ShellSession {
             return vec![component];
         }
         if self.active_screen() == ShellScreen::SystemStatus {
+            if self.overlay_interaction_ready && !self.diagnostics_repair_preview.is_empty() {
+                return vec![ShellComponent::DiagnosticsRepairDialog];
+            }
             return vec![ShellComponent::SystemStatus];
         }
         if self.active_screen() == ShellScreen::FirstRunSetup {

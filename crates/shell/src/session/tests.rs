@@ -130,7 +130,7 @@ fn system_status_role_gate_and_missing_service_reject_open() {
 }
 
 #[test]
-fn diagnostics_opens_only_from_system_status_and_returns_through_parent() {
+fn diagnostics_is_integrated_into_system_status_tabs() {
     for role in [UserRole::Admin, UserRole::User] {
         let mut state = ShellSession::new_for_home_mode(
             ShellLaunchConfig::default(),
@@ -156,13 +156,11 @@ fn diagnostics_opens_only_from_system_status_and_returns_through_parent() {
 
         state.screen_stack.push(ShellScreen::SystemStatus);
         state.focused_component = ShellComponent::SystemStatus;
-        state.apply_input(InputEvent::from_key_label("D"));
-        assert_eq!(state.active_screen(), ShellScreen::Diagnostics);
-        assert_eq!(state.focused_component(), ShellComponent::Diagnostics);
-
-        state.apply_input(InputEvent::from_key_label("Esc"));
+        state.open_diagnostics();
         assert_eq!(state.active_screen(), ShellScreen::SystemStatus);
+        assert_eq!(state.system_status_tab, ui::SystemStatusTab::Health);
         assert_eq!(state.focused_component(), ShellComponent::SystemStatus);
+
         state.apply_input(InputEvent::from_key_label("Esc"));
         assert_eq!(state.active_screen(), ShellScreen::Home);
         assert_eq!(state.focused_component(), ShellComponent::Home);
@@ -170,7 +168,7 @@ fn diagnostics_opens_only_from_system_status_and_returns_through_parent() {
 }
 
 #[test]
-fn diagnostics_system_status_mouse_target_opens_child_page() {
+fn diagnostics_system_status_tab_mouse_target_keeps_one_page() {
     let mut state = ShellSession::new_for_home_mode(
         ShellLaunchConfig::default(),
         (120, 40),
@@ -184,16 +182,54 @@ fn diagnostics_system_status_mouse_target_opens_child_page() {
     else {
         panic!("system status mouse test requires a full layout");
     };
-    let button = ui::system_status_layout(main, &model).diagnostics_button;
+    let tab = ui::system_status_layout(main, &model)
+        .tabs
+        .into_iter()
+        .find(|tab| tab.tab == ui::SystemStatusTab::Health)
+        .expect("health tab");
 
     state.apply_input(InputEvent::Mouse(ui::MouseEvent::new(
-        button.x,
-        button.y,
+        tab.area.x,
+        tab.area.y,
         ui::MouseEventKind::Down(PointerButton::Left),
     )));
 
-    assert_eq!(state.active_screen(), ShellScreen::Diagnostics);
-    assert_eq!(state.focused_component(), ShellComponent::Diagnostics);
+    assert_eq!(state.active_screen(), ShellScreen::SystemStatus);
+    assert_eq!(state.system_status_tab, ui::SystemStatusTab::Health);
+    assert_eq!(state.focused_component(), ShellComponent::SystemStatus);
+}
+
+#[test]
+fn system_status_keyboard_cycles_role_visible_tabs_and_routes_diagnostics_actions() {
+    let mut user = ShellSession::new_for_home_mode(
+        ShellLaunchConfig::default(),
+        (120, 40),
+        ShellHomeMode::User,
+    );
+    set_test_auth_role(&mut user, UserRole::User);
+    user.screen_stack.push(ShellScreen::SystemStatus);
+    user.focused_component = ShellComponent::SystemStatus;
+    assert_eq!(
+        user.route_key_input(&KeyInput::from_label("Tab")).1,
+        ShellCommand::SystemStatusTab(ui::SystemStatusTab::Health)
+    );
+    user.set_system_status_tab(ui::SystemStatusTab::Health);
+    assert_eq!(
+        user.route_key_input(&KeyInput::from_label("r")).1,
+        ShellCommand::DiagnosticsRescan
+    );
+    assert_eq!(
+        user.route_key_input(&KeyInput::from_label("Down")).1,
+        ShellCommand::DiagnosticsNext
+    );
+
+    let mut admin = user;
+    set_test_auth_role(&mut admin, UserRole::Admin);
+    admin.set_system_status_tab(ui::SystemStatusTab::Overview);
+    assert_eq!(
+        admin.route_key_input(&KeyInput::from_label("Shift+Tab")).1,
+        ShellCommand::SystemStatusTab(ui::SystemStatusTab::Incidents)
+    );
 }
 
 #[test]

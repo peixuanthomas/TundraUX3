@@ -3,13 +3,17 @@ use ratatui::layout::{HorizontalAlignment, Rect};
 use ratatui::text::Line;
 use ratatui::widgets::{Paragraph, Wrap};
 
-use super::layout::{SystemStatusLayout, system_status_layout};
+use super::layout::{SystemStatusLayout, system_status_layout, system_status_tab_label};
 use super::model::{
     AdminSystemStatusViewModel, SystemStatusContentViewModel, SystemStatusSectionState,
     SystemStatusTab, SystemStatusViewModel, UserSystemStatusViewModel,
 };
 use crate::components::{
     Button, DataTable, EmptyState, Scrollbar, Surface, TabItem, Tabs, tone_color,
+};
+use crate::screens::diagnostics::{
+    render_diagnostics_content, render_diagnostics_footer, render_diagnostics_header,
+    render_diagnostics_repair_dialog,
 };
 use crate::screens::shell::{fit_cell, render_compact_home, render_status, render_top};
 use crate::{RenderContext, ShellChromeViewModel, ShellLayout, TundraTheme, compute_shell_layout};
@@ -55,20 +59,22 @@ fn render_main(
         .titled("System Status")
         .bordered(true)
         .render_frame(frame, layout.panel, context);
-    let heading = if model.refreshing {
-        "Refreshing system status..."
+    if model.is_diagnostics() {
+        render_diagnostics_header(frame, layout.header, &model.diagnostics, theme);
     } else {
-        "Storage and network health"
-    };
-    frame.render_widget(
-        Paragraph::new(fit_cell(heading, usize::from(layout.header.width)))
-            .style(theme.title_style()),
-        layout.header,
-    );
-    if model.is_admin() {
-        render_tabs(frame, &layout, model, theme);
+        let heading = if model.refreshing {
+            "Refreshing system status..."
+        } else {
+            "Storage, network, and diagnostics health"
+        };
+        frame.render_widget(
+            Paragraph::new(fit_cell(heading, usize::from(layout.header.width)))
+                .style(theme.title_style()),
+            layout.header,
+        );
     }
-    let title = if model.is_admin() {
+    render_tabs(frame, &layout, model, theme);
+    let title = if model.is_admin() || model.is_diagnostics() {
         model.tab.label()
     } else {
         "Summary"
@@ -77,45 +83,64 @@ fn render_main(
         .titled(title)
         .bordered(true)
         .render_frame(frame, layout.content_panel, context);
-    match &model.content {
-        SystemStatusContentViewModel::Admin(admin) => {
-            render_admin(frame, &layout, model, admin, theme, context)
+    if let Some(diagnostics) = &layout.diagnostics_content {
+        render_diagnostics_content(frame, diagnostics, &model.diagnostics, theme, context);
+    } else {
+        match &model.content {
+            SystemStatusContentViewModel::Admin(admin) => {
+                render_admin(frame, &layout, model, admin, theme, context)
+            }
+            SystemStatusContentViewModel::User(user) => render_user(frame, &layout, user, theme),
         }
-        SystemStatusContentViewModel::User(user) => render_user(frame, &layout, user, theme),
     }
-    let feedback = model
-        .feedback
-        .as_deref()
-        .unwrap_or("D Diagnostics · R Refresh · Esc Home");
     let help_width = layout
         .footer
         .width
-        .saturating_sub(layout.diagnostics_button.width)
         .saturating_sub(layout.refresh_button.width);
-    frame.render_widget(
-        Paragraph::new(fit_cell(feedback, usize::from(help_width))).style(theme.muted_style()),
-        Rect::new(
-            layout.footer.x,
-            layout.footer.y,
-            help_width,
-            layout.footer.height,
-        ),
+    let help_area = Rect::new(
+        layout.footer.x,
+        layout.footer.y,
+        help_width,
+        layout.footer.height,
     );
-    Button::new("system-status.diagnostics", "Diagnostics").render_borderless_frame(
-        frame,
-        layout.diagnostics_button,
-        theme,
-    );
+    if model.is_diagnostics() {
+        render_diagnostics_footer(frame, help_area, &model.diagnostics, theme, "Esc Home");
+    } else {
+        let feedback = model
+            .feedback
+            .as_deref()
+            .unwrap_or("Tab Switch · R Refresh · Esc Home");
+        frame.render_widget(
+            Paragraph::new(fit_cell(feedback, usize::from(help_width))).style(theme.muted_style()),
+            help_area,
+        );
+    }
+    let diagnostics_busy = model.diagnostics.scanning || model.diagnostics.restart_required;
     let mut refresh = Button::new(
         "system-status.refresh",
-        if model.refreshing {
+        if model.is_diagnostics() && model.diagnostics.scanning {
+            "Scanning"
+        } else if model.is_diagnostics() {
+            "Rescan"
+        } else if model.refreshing {
             "Refreshing"
         } else {
             "Refresh"
         },
     );
-    refresh.set_disabled(model.refreshing);
+    refresh.set_disabled(if model.is_diagnostics() {
+        diagnostics_busy
+    } else {
+        model.refreshing
+    });
     refresh.render_borderless_frame(frame, layout.refresh_button, theme);
+
+    if let (Some(dialog_layout), Some(dialog)) = (
+        layout.diagnostics_repair_dialog.as_ref(),
+        model.diagnostics.repair_dialog.as_ref(),
+    ) {
+        render_diagnostics_repair_dialog(frame, dialog_layout, dialog, theme, context);
+    }
 }
 
 fn render_tabs(
@@ -124,21 +149,19 @@ fn render_tabs(
     model: &SystemStatusViewModel,
     theme: &TundraTheme,
 ) {
-    let items = SystemStatusTab::ALL
-        .into_iter()
+    let items = model
+        .tabs()
+        .iter()
+        .copied()
         .map(|tab| {
             TabItem::new(
                 format!("system-status.tab.{}", tab.label().to_ascii_lowercase()),
-                tab.label(),
+                system_status_tab_label(tab, layout.tabs_area.width, model.is_admin()),
             )
         })
         .collect();
     let mut tabs = Tabs::new("system-status.tabs", items);
-    tabs.set_selected(
-        SystemStatusTab::ALL
-            .iter()
-            .position(|tab| *tab == model.tab),
-    );
+    tabs.set_selected(model.tabs().iter().position(|tab| *tab == model.tab));
     tabs.render_borderless_frame(frame, layout.tabs_area, theme);
 }
 
@@ -175,6 +198,7 @@ fn render_admin(
         ),
         SystemStatusTab::Storage => render_storage(frame, layout, model, admin, context),
         SystemStatusTab::Network => render_network(frame, layout, model, admin, context),
+        SystemStatusTab::Health | SystemStatusTab::Logs | SystemStatusTab::Incidents => {}
     }
 }
 

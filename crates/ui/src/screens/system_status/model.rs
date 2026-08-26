@@ -1,4 +1,5 @@
 use crate::components::ComponentTone;
+use crate::{DiagnosticsTab, DiagnosticsViewModel};
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum SystemStatusTab {
@@ -6,16 +7,58 @@ pub enum SystemStatusTab {
     Overview,
     Storage,
     Network,
+    Health,
+    Logs,
+    Incidents,
 }
 
 impl SystemStatusTab {
-    pub const ALL: [Self; 3] = [Self::Overview, Self::Storage, Self::Network];
+    pub const ALL: [Self; 6] = [
+        Self::Overview,
+        Self::Storage,
+        Self::Network,
+        Self::Health,
+        Self::Logs,
+        Self::Incidents,
+    ];
+    pub const USER: [Self; 4] = [Self::Overview, Self::Health, Self::Logs, Self::Incidents];
 
     pub const fn label(self) -> &'static str {
         match self {
             Self::Overview => "Overview",
             Self::Storage => "Storage",
             Self::Network => "Network",
+            Self::Health => "Health",
+            Self::Logs => "Logs",
+            Self::Incidents => "Incidents",
+        }
+    }
+
+    pub const fn compact_label(self) -> &'static str {
+        match self {
+            Self::Overview => "Info",
+            Self::Storage => "Disk",
+            Self::Network => "Net",
+            Self::Health => "Health",
+            Self::Logs => "Logs",
+            Self::Incidents => "Events",
+        }
+    }
+
+    pub const fn diagnostics_tab(self) -> Option<DiagnosticsTab> {
+        match self {
+            Self::Health => Some(DiagnosticsTab::Health),
+            Self::Logs => Some(DiagnosticsTab::Logs),
+            Self::Incidents => Some(DiagnosticsTab::Incidents),
+            Self::Overview | Self::Storage | Self::Network => None,
+        }
+    }
+
+    pub const fn from_diagnostics(tab: DiagnosticsTab) -> Self {
+        match tab {
+            DiagnosticsTab::Health => Self::Health,
+            DiagnosticsTab::Logs => Self::Logs,
+            DiagnosticsTab::Incidents => Self::Incidents,
         }
     }
 }
@@ -87,6 +130,7 @@ pub enum SystemStatusContentViewModel {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SystemStatusViewModel {
     pub content: SystemStatusContentViewModel,
+    pub diagnostics: DiagnosticsViewModel,
     pub tab: SystemStatusTab,
     pub selected_row: usize,
     pub scroll_offset: usize,
@@ -103,16 +147,37 @@ impl SystemStatusViewModel {
             (SystemStatusContentViewModel::Admin(admin), SystemStatusTab::Network) => {
                 admin.network_rows.len()
             }
+            (_, SystemStatusTab::Health | SystemStatusTab::Logs | SystemStatusTab::Incidents) => {
+                self.diagnostics.item_count()
+            }
             _ => 0,
         }
     }
 
     pub fn selected_index(&self) -> Option<usize> {
         let count = self.item_count();
-        (count > 0).then(|| self.selected_row.min(count - 1))
+        (count > 0).then(|| {
+            if self.is_diagnostics() {
+                self.diagnostics.selected_index().min(count - 1)
+            } else {
+                self.selected_row.min(count - 1)
+            }
+        })
     }
 
     pub const fn is_admin(&self) -> bool {
         matches!(self.content, SystemStatusContentViewModel::Admin(_))
+    }
+
+    pub fn tabs(&self) -> &'static [SystemStatusTab] {
+        if self.is_admin() {
+            &SystemStatusTab::ALL
+        } else {
+            &SystemStatusTab::USER
+        }
+    }
+
+    pub const fn is_diagnostics(&self) -> bool {
+        self.tab.diagnostics_tab().is_some()
     }
 }
