@@ -231,53 +231,21 @@ impl ShellSession {
         platform: &dyn Platform,
     ) {
         let model = self.to_explorer_view_model();
-        let enabled = model
-            .quick_locations
-            .iter()
-            .enumerate()
-            .filter_map(|(index, location)| location.enabled.then_some(index))
-            .collect::<Vec<_>>();
-        if enabled.is_empty() {
-            return;
+        if let Some(index) = explorer_quick_location_index(&model, forward) {
+            self.activate_explorer_quick_location(index, platform);
         }
-        let current = enabled
-            .iter()
-            .position(|index| model.quick_locations[*index].current);
-        let position = match (current, forward) {
-            (Some(position), true) => (position + 1) % enabled.len(),
-            (Some(position), false) => position.checked_sub(1).unwrap_or(enabled.len() - 1),
-            (None, true) => 0,
-            (None, false) => enabled.len() - 1,
-        };
-        self.activate_explorer_quick_location(enabled[position], platform);
     }
 
     fn activate_explorer_quick_location(&mut self, index: usize, platform: &dyn Platform) {
-        let enabled = self
-            .to_explorer_view_model()
-            .quick_locations
-            .get(index)
-            .is_some_and(|location| location.enabled);
-        if !enabled {
-            return;
-        }
-        let location = self
+        let model = self.to_explorer_view_model();
+        let Some(command) = self
             .app
             .explorer_state()
-            .and_then(|state| state.quick_locations.get(index))
-            .cloned();
-        let Some(location) = location else {
+            .and_then(|state| explorer_quick_location_command(&model, state, index))
+        else {
             return;
         };
-        match location.kind {
-            app::explorer::ExplorerQuickLocationKind::Trash => {
-                self.apply_explorer_command(ExplorerCommand::NavigateTrash, platform)
-            }
-            app::explorer::ExplorerQuickLocationKind::Directory
-            | app::explorer::ExplorerQuickLocationKind::Volume => {
-                self.apply_explorer_command(ExplorerCommand::Navigate(location.path), platform)
-            }
-        }
+        self.apply_explorer_command(command, platform);
     }
 
     pub(in crate::session) fn apply_explorer_command(
@@ -1179,6 +1147,46 @@ impl ShellSession {
     }
 }
 
+fn explorer_quick_location_index(model: &ui::ExplorerViewModel, forward: bool) -> Option<usize> {
+    let enabled = model
+        .quick_locations
+        .iter()
+        .enumerate()
+        .filter_map(|(index, location)| location.enabled.then_some(index))
+        .collect::<Vec<_>>();
+    let current = enabled
+        .iter()
+        .position(|index| model.quick_locations[*index].current);
+    match (current, forward) {
+        (Some(position), true) => Some(enabled[(position + 1) % enabled.len()]),
+        (Some(position), false) => {
+            Some(enabled[position.checked_sub(1).unwrap_or(enabled.len() - 1)])
+        }
+        (None, true) => enabled.first().copied(),
+        (None, false) => enabled.last().copied(),
+    }
+}
+
+fn explorer_quick_location_command(
+    model: &ui::ExplorerViewModel,
+    state: &app::explorer::ExplorerState,
+    index: usize,
+) -> Option<ExplorerCommand> {
+    model
+        .quick_locations
+        .get(index)
+        .is_some_and(|location| location.enabled)
+        .then(|| state.quick_locations.get(index))
+        .flatten()
+        .map(|location| match location.kind {
+            app::explorer::ExplorerQuickLocationKind::Trash => ExplorerCommand::NavigateTrash,
+            app::explorer::ExplorerQuickLocationKind::Directory
+            | app::explorer::ExplorerQuickLocationKind::Volume => {
+                ExplorerCommand::Navigate(location.path.clone())
+            }
+        })
+}
+
 pub(in crate::session) fn explorer_toggle_modifier(
     kind: PlatformKind,
     modifiers: InputModifiers,
@@ -1234,7 +1242,10 @@ pub(in crate::session) fn explorer_sort_field(
 
 #[cfg(test)]
 mod tests {
-    use super::{explorer_copy_modifier, explorer_toggle_modifier};
+    use super::{
+        explorer_copy_modifier, explorer_quick_location_command, explorer_quick_location_index,
+        explorer_toggle_modifier,
+    };
     use crate::InputModifiers;
     use platform::PlatformKind;
 
@@ -1256,5 +1267,44 @@ mod tests {
             PlatformKind::Linux,
             InputModifiers::ALT
         ));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn quick_location_helpers_preserve_raw_non_utf8_paths() {
+        use std::ffi::OsString;
+        use std::os::unix::ffi::OsStringExt;
+
+        let raw_path =
+            std::path::PathBuf::from("/tmp").join(OsString::from_vec(b"raw-volume-\xff".to_vec()));
+        let mut state = app::explorer::ExplorerState::new("/current", false);
+        state.quick_locations = vec![
+            app::explorer::ExplorerQuickLocation::new("before", "Before", "/before", "folder"),
+            app::explorer::ExplorerQuickLocation::volume("raw", "Raw", raw_path.clone()),
+            app::explorer::ExplorerQuickLocation::new("after", "After", "/after", "folder"),
+        ];
+        let mut model = ui::ExplorerViewModel::new("/current", Vec::new(), None);
+        model.quick_locations = state
+            .quick_locations
+            .iter()
+            .map(|location| {
+                let mut view = ui::ExplorerQuickLocationViewModel::new(
+                    location.id.clone(),
+                    location.label.clone(),
+                    location.path.display().to_string(),
+                    location.icon_key.clone(),
+                );
+                view.kind = location.kind;
+                view
+            })
+            .collect();
+        model.quick_locations[1].current = true;
+
+        assert_eq!(explorer_quick_location_index(&model, true), Some(2));
+        assert_eq!(explorer_quick_location_index(&model, false), Some(0));
+        assert_eq!(
+            explorer_quick_location_command(&model, &state, 1),
+            Some(app::explorer::ExplorerCommand::Navigate(raw_path))
+        );
     }
 }
