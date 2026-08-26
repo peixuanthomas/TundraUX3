@@ -228,6 +228,10 @@ impl PreparedEditorImage {
         self.kind
     }
 
+    pub fn render_size(&self) -> Size {
+        self.protocol.size()
+    }
+
     pub fn render(&self, frame: &mut Frame<'_>, area: Rect) {
         frame.render_widget(Image::new(&self.protocol), area);
     }
@@ -341,6 +345,45 @@ mod tests {
         let image = rgba_image(2, 1, vec![255; 8]).expect("valid RGBA bytes");
         assert_eq!(image.width(), 2);
         assert_eq!(image.height(), 1);
+    }
+
+    #[test]
+    fn pure_capabilities_select_protocols_and_measured_render_geometry() {
+        for protocol in [
+            EditorGraphicsProtocol::Kitty,
+            EditorGraphicsProtocol::Sixel,
+            EditorGraphicsProtocol::Iterm2,
+        ] {
+            let probe =
+                TerminalGraphicsProbe::from_terminal_capabilities(protocol, 5, 10, true, false);
+            let prepared = probe
+                .picker()
+                .unwrap()
+                .prepare(DynamicImage::new_rgba8(100, 100), Rect::new(0, 0, 40, 40))
+                .unwrap();
+            assert_eq!(prepared.protocol(), protocol);
+            assert_eq!(prepared.render_size(), Size::new(20, 10));
+            assert!(matches!(
+                (&prepared.protocol, protocol),
+                (Protocol::Kitty(_), EditorGraphicsProtocol::Kitty)
+                    | (Protocol::Sixel(_), EditorGraphicsProtocol::Sixel)
+                    | (Protocol::ITerm2(_), EditorGraphicsProtocol::Iterm2)
+            ));
+        }
+
+        let default = TerminalGraphicsProbe::from_terminal_capabilities(
+            EditorGraphicsProtocol::Kitty,
+            10,
+            20,
+            false,
+            false,
+        );
+        let prepared = default
+            .picker()
+            .unwrap()
+            .prepare(DynamicImage::new_rgba8(100, 100), Rect::new(0, 0, 40, 40))
+            .unwrap();
+        assert_eq!(prepared.render_size(), Size::new(10, 5));
     }
 
     #[test]

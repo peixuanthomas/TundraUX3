@@ -253,6 +253,17 @@ mod tests {
         );
         assert!(probe.picker().is_some());
         assert!(probe.text_sizing_protocol());
+        let prepared = probe
+            .picker()
+            .unwrap()
+            .prepare_rgba(
+                100,
+                100,
+                vec![255; 100 * 100 * 4],
+                ratatui::layout::Rect::new(0, 0, 40, 40),
+            )
+            .unwrap();
+        assert_eq!(prepared.render_size(), ratatui::layout::Size::new(13, 7));
 
         let unsupported =
             map_terminal_graphics_capabilities(platform::TerminalGraphicsCapabilities {
