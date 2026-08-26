@@ -291,23 +291,44 @@ mod tests {
     struct UnavailableWeather;
 
     struct SystemServicesShutdownGuard {
-        handle: system_services::SystemServicesHandle,
+        handle: Option<system_services::SystemServicesHandle>,
     }
 
     impl SystemServicesShutdownGuard {
         fn new(handle: system_services::SystemServicesHandle) -> Self {
-            Self { handle }
+            Self {
+                handle: Some(handle),
+            }
         }
 
         fn handle(&self) -> &system_services::SystemServicesHandle {
-            &self.handle
+            self.handle.as_ref().expect("shutdown handle is available")
+        }
+
+        fn finish(mut self) {
+            let result = shutdown_system_services_with_timeout(
+                self.handle.take().expect("shutdown handle is available"),
+            );
+            assert_eq!(result, Ok(Ok(())), "system services shutdown failed");
         }
     }
 
     impl Drop for SystemServicesShutdownGuard {
         fn drop(&mut self) {
-            let _ = self.handle.shutdown();
+            if let Some(handle) = self.handle.take() {
+                let _ = shutdown_system_services_with_timeout(handle);
+            }
         }
+    }
+
+    fn shutdown_system_services_with_timeout(
+        handle: system_services::SystemServicesHandle,
+    ) -> Result<Result<(), system_services::SystemServicesError>, mpsc::RecvTimeoutError> {
+        let (result_tx, result_rx) = mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = result_tx.send(handle.shutdown());
+        });
+        result_rx.recv_timeout(Duration::from_secs(5))
     }
 
     impl system_services::WeatherProvider for UnavailableWeather {
@@ -431,6 +452,7 @@ mod tests {
         let platform = system_status_platform();
         let mut service_config = system_services::SystemServicesConfig::default();
         service_config.request_timeout = Duration::from_millis(1);
+        service_config.time_sync_mode = system_services::TimeSyncMode::OperatingSystem;
         service_config.weather_refresh_interval = Duration::from_secs(3600);
         service_config.timezone_location = Some(service_config.fallback_location.clone());
         service_config.system_status_background_refresh_interval = Duration::from_secs(3600);
@@ -476,7 +498,7 @@ mod tests {
                 )
         });
         drop(runtime);
-        drop(shutdown_guard);
+        shutdown_guard.finish();
     }
 
     #[test]

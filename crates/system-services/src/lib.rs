@@ -634,9 +634,10 @@ async fn run(
                     time_error = Some(error);
                     time_failures += 1;
                     time_due = now + retry_delay(time_failures, config.time_sync_interval);
+                    let weather = snapshot_tx.borrow().weather.clone();
                     publish(
                         &snapshot_tx,
-                        snapshot_tx.borrow().weather.clone(),
+                        weather,
                         current_time_state(
                             &config,
                             anchor.as_ref(),
@@ -1403,6 +1404,58 @@ mod tests {
             cache_dir: Some(tempfile::tempdir().unwrap().keep()),
             ..SystemServicesConfig::default()
         }
+    }
+
+    #[test]
+    fn network_time_failure_publishes_degraded_state_and_shutdown_completes() {
+        let (result_tx, result_rx) = std_mpsc::channel();
+        std::thread::spawn(move || {
+            let result = (|| -> Result<(), String> {
+                let mut runtime_config = config();
+                runtime_config.time_sync_mode = TimeSyncMode::Network;
+                runtime_config.time_server_url = Some("not a valid URL".to_string());
+                runtime_config.request_timeout = Duration::from_millis(100);
+                runtime_config.timezone_location = Some(runtime_config.fallback_location.clone());
+                let provider = Arc::new(FakeProvider {
+                    outcomes: Mutex::new(vec![Err("weather unavailable".to_string())]),
+                    calls: AtomicUsize::new(0),
+                });
+                let (handle, mut receiver) = SystemServicesRuntime::start_with_provider(
+                    runtime_config,
+                    watchdog(),
+                    provider,
+                );
+                let wait_runtime = tokio::runtime::Builder::new_current_thread()
+                    .enable_time()
+                    .build()
+                    .map_err(|error| error.to_string())?;
+                let observed = wait_runtime.block_on(async {
+                    tokio::time::timeout(Duration::from_secs(3), async {
+                        loop {
+                            let snapshot = receiver.borrow_and_update();
+                            if snapshot.revision > 0
+                                && matches!(snapshot.time, TimeState::Degraded { .. })
+                            {
+                                return Ok::<(), watch::error::RecvError>(());
+                            }
+                            drop(snapshot);
+                            receiver.changed().await?;
+                        }
+                    })
+                    .await
+                });
+                observed
+                    .map_err(|_| "degraded time snapshot timed out".to_string())?
+                    .map_err(|error| error.to_string())?;
+                handle.shutdown().map_err(|error| error.to_string())
+            })();
+            let _ = result_tx.send(result);
+        });
+
+        let result = result_rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("time failure lifecycle must finish within five seconds");
+        assert_eq!(result, Ok(()));
     }
     fn wait_until(
         receiver: &mut watch::Receiver<SystemSnapshot>,
