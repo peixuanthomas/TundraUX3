@@ -196,6 +196,34 @@ impl ShellSettingsTaskRuntime {
             *base = next;
         }
     }
+
+    pub(in crate::session) fn refresh_system_status(&self) {
+        if let Some(system_services) = self.shared.system_services.as_ref() {
+            let _ = system_services.refresh_system_status();
+        }
+    }
+
+    pub(in crate::session) fn set_system_status_active(&self, active: bool) {
+        if let Some(system_services) = self.shared.system_services.as_ref() {
+            let _ = system_services.set_system_status_active(active);
+        }
+    }
+}
+
+pub(in crate::session) fn system_status_thresholds_from_storage(
+    config: &storage::SystemStatusConfig,
+) -> system_services::StorageThresholds {
+    const BYTES_PER_GIB: u64 = 1024_u64 * 1024 * 1024;
+    system_services::StorageThresholds {
+        low_available_bytes: u64::from(config.low_available_gib)
+            .checked_mul(BYTES_PER_GIB)
+            .expect("bounded GiB threshold fits in u64"),
+        low_percentage: config.low_percentage,
+        critical_available_bytes: u64::from(config.critical_available_gib)
+            .checked_mul(BYTES_PER_GIB)
+            .expect("bounded GiB threshold fits in u64"),
+        critical_percentage: config.critical_percentage,
+    }
 }
 
 fn system_services_config_for_time_sync(
@@ -211,7 +239,7 @@ fn system_services_config_for_time_sync(
     config
 }
 
-fn system_services_config_for_storage_config(
+pub(in crate::session) fn system_services_config_for_storage_config(
     base: &system_services::SystemServicesConfig,
     storage_config: &storage::StorageConfig,
 ) -> system_services::SystemServicesConfig {
@@ -226,6 +254,8 @@ fn system_services_config_for_storage_config(
             longitude: timezone.longitude,
             city: Some(timezone.label),
         });
+    config.storage_thresholds =
+        system_status_thresholds_from_storage(&storage_config.system_status);
     config
 }
 
@@ -277,5 +307,36 @@ mod tests {
         assert_eq!(mapped.time_sync_interval, base.time_sync_interval);
         assert_eq!(mapped.request_timeout, base.request_timeout);
         assert_eq!(mapped.fallback_location, base.fallback_location);
+    }
+
+    #[test]
+    fn storage_mapping_maps_thresholds_to_exact_binary_bytes() {
+        let storage_config = storage::StorageConfig {
+            system_status: storage::SystemStatusConfig {
+                low_available_gib: 7,
+                low_percentage: 13,
+                critical_available_gib: 2,
+                critical_percentage: 6,
+            },
+            ..storage::StorageConfig::default()
+        };
+        let base = system_services::SystemServicesConfig {
+            weather_refresh_interval: Duration::from_secs(5),
+            time_sync_interval: Duration::from_secs(30),
+            ..system_services::SystemServicesConfig::default()
+        };
+        let mapped = system_services_config_for_storage_config(&base, &storage_config);
+        assert_eq!(
+            mapped.storage_thresholds.low_available_bytes,
+            7 * 1024_u64.pow(3)
+        );
+        assert_eq!(mapped.storage_thresholds.low_percentage, 13);
+        assert_eq!(
+            mapped.storage_thresholds.critical_available_bytes,
+            2 * 1024_u64.pow(3)
+        );
+        assert_eq!(mapped.storage_thresholds.critical_percentage, 6);
+        assert_eq!(mapped.weather_refresh_interval, Duration::from_secs(5));
+        assert_eq!(mapped.time_sync_interval, Duration::from_secs(30));
     }
 }

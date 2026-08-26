@@ -19,14 +19,16 @@ pub enum SettingsCategory {
     #[default]
     Appearance,
     RegionTime,
+    System,
     FileExplorer,
     Editor,
 }
 
 impl SettingsCategory {
-    pub const ALL: [Self; 4] = [
+    pub const ALL: [Self; 5] = [
         Self::Appearance,
         Self::RegionTime,
+        Self::System,
         Self::FileExplorer,
         Self::Editor,
     ];
@@ -35,6 +37,7 @@ impl SettingsCategory {
         match self {
             Self::Appearance => "Appearance",
             Self::RegionTime => "Region & Time",
+            Self::System => "System",
             Self::FileExplorer => "File Explorer",
             Self::Editor => "Editor",
         }
@@ -44,6 +47,7 @@ impl SettingsCategory {
         match self {
             Self::Appearance => "Theme, motion, icons, colors and borders",
             Self::RegionTime => "Language, city and timezone",
+            Self::System => "Storage pressure warning thresholds",
             Self::FileExplorer => "Display, sorting and safety",
             Self::Editor => "Cursor and file associations",
         }
@@ -62,6 +66,10 @@ pub enum SettingsField {
     TimeSyncSource,
     TimeSyncServer,
     WeatherLocation,
+    SystemLowAvailable,
+    SystemLowPercentage,
+    SystemCriticalAvailable,
+    SystemCriticalPercentage,
     ShowHidden,
     ShowSystem,
     ShowExtensions,

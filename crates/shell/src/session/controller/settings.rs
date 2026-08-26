@@ -21,6 +21,13 @@ pub(in crate::session) const REGION_SETTINGS_FIELDS: &[ui::SettingsField] = &[
     ui::SettingsField::TimeSyncServer,
     ui::SettingsField::RestoreDefaults,
 ];
+pub(in crate::session) const SYSTEM_SETTINGS_FIELDS: &[ui::SettingsField] = &[
+    ui::SettingsField::SystemLowAvailable,
+    ui::SettingsField::SystemLowPercentage,
+    ui::SettingsField::SystemCriticalAvailable,
+    ui::SettingsField::SystemCriticalPercentage,
+    ui::SettingsField::RestoreDefaults,
+];
 pub(in crate::session) const EXPLORER_SETTINGS_FIELDS: &[ui::SettingsField] = &[
     ui::SettingsField::ShowHidden,
     ui::SettingsField::ShowSystem,
@@ -536,6 +543,38 @@ impl ShellSession {
             ui::SettingsField::ConfirmNameConflicts => {
                 config.explorer.confirm_name_conflicts = !config.explorer.confirm_name_conflicts
             }
+            ui::SettingsField::SystemLowAvailable => {
+                config.system_status.low_available_gib = adjust_u16_setting(
+                    config.system_status.low_available_gib,
+                    increase,
+                    storage::SYSTEM_STATUS_MIN_AVAILABLE_GIB,
+                    storage::SYSTEM_STATUS_MAX_AVAILABLE_GIB,
+                )
+            }
+            ui::SettingsField::SystemLowPercentage => {
+                config.system_status.low_percentage = adjust_u8_setting_in_range(
+                    config.system_status.low_percentage,
+                    increase,
+                    storage::SYSTEM_STATUS_MIN_PERCENTAGE,
+                    storage::SYSTEM_STATUS_MAX_PERCENTAGE,
+                )
+            }
+            ui::SettingsField::SystemCriticalAvailable => {
+                config.system_status.critical_available_gib = adjust_u16_setting(
+                    config.system_status.critical_available_gib,
+                    increase,
+                    storage::SYSTEM_STATUS_MIN_AVAILABLE_GIB,
+                    storage::SYSTEM_STATUS_MAX_AVAILABLE_GIB,
+                )
+            }
+            ui::SettingsField::SystemCriticalPercentage => {
+                config.system_status.critical_percentage = adjust_u8_setting_in_range(
+                    config.system_status.critical_percentage,
+                    increase,
+                    storage::SYSTEM_STATUS_MIN_PERCENTAGE,
+                    storage::SYSTEM_STATUS_MAX_PERCENTAGE,
+                )
+            }
             ui::SettingsField::CursorAcceleration => {
                 config.editor.cursor_acceleration_enabled =
                     !config.editor.cursor_acceleration_enabled
@@ -565,6 +604,7 @@ impl ShellSession {
             _ => return,
         }
         config.editor = normalized_editor_config(config.editor);
+        config.system_status.normalize();
         if let Err(error) = storage.save_config(&config) {
             self.set_settings_error(format!("Could not save Settings: {error}"));
             return;
@@ -1584,6 +1624,7 @@ impl ShellSession {
                 config.time_sync = defaults.time_sync;
                 config.weather_location = defaults.weather_location;
             }
+            ui::SettingsCategory::System => config.system_status = defaults.system_status,
             ui::SettingsCategory::FileExplorer => config.explorer = defaults.explorer,
             ui::SettingsCategory::Editor => config.editor = defaults.editor,
             ui::SettingsCategory::Appearance => unreachable!(),
@@ -1697,6 +1738,7 @@ pub(in crate::session) fn settings_fields(
     match category {
         ui::SettingsCategory::Appearance => APPEARANCE_SETTINGS_FIELDS,
         ui::SettingsCategory::RegionTime => REGION_SETTINGS_FIELDS,
+        ui::SettingsCategory::System => SYSTEM_SETTINGS_FIELDS,
         ui::SettingsCategory::FileExplorer => EXPLORER_SETTINGS_FIELDS,
         ui::SettingsCategory::Editor => EDITOR_SETTINGS_FIELDS,
     }
@@ -1862,6 +1904,46 @@ pub(in crate::session) fn settings_cards(
                         global_enabled
                             && config.time_sync.source == storage::TimeSyncSource::NetworkServer,
                     ),
+                ],
+            ),
+            Card::new("Reset", vec![reset(global_enabled)]),
+        ],
+        ui::SettingsCategory::System => vec![
+            Card::new(
+                "Storage pressure",
+                vec![
+                    Item::new(
+                        Field::SystemLowAvailable,
+                        "Low available",
+                        format!("{} GiB", config.system_status.low_available_gib),
+                        "Low pressure is reported when either the available-space or percentage threshold is reached.",
+                        Kind::Stepper,
+                    )
+                    .enabled(global_enabled),
+                    Item::new(
+                        Field::SystemLowPercentage,
+                        "Low percentage",
+                        format!("{}%", config.system_status.low_percentage),
+                        "Low pressure is reported when either the absolute or percentage threshold is reached.",
+                        Kind::Stepper,
+                    )
+                    .enabled(global_enabled),
+                    Item::new(
+                        Field::SystemCriticalAvailable,
+                        "Critical available",
+                        format!("{} GiB", config.system_status.critical_available_gib),
+                        "Critical pressure is reported when either the available-space or percentage threshold is reached.",
+                        Kind::Stepper,
+                    )
+                    .enabled(global_enabled),
+                    Item::new(
+                        Field::SystemCriticalPercentage,
+                        "Critical percentage",
+                        format!("{}%", config.system_status.critical_percentage),
+                        "Critical pressure is reported when either the absolute or percentage threshold is reached.",
+                        Kind::Stepper,
+                    )
+                    .enabled(global_enabled),
                 ],
             ),
             Card::new("Reset", vec![reset(global_enabled)]),
@@ -2163,6 +2245,22 @@ pub(in crate::session) fn cycle_explorer_sort_field(
     values[(index + delta).clamp(0, values.len().saturating_sub(1) as isize) as usize]
 }
 
+fn adjust_u16_setting(value: u16, increase: bool, minimum: u16, maximum: u16) -> u16 {
+    if increase {
+        value.saturating_add(1).min(maximum)
+    } else {
+        value.saturating_sub(1).max(minimum)
+    }
+}
+
+fn adjust_u8_setting_in_range(value: u8, increase: bool, minimum: u8, maximum: u8) -> u8 {
+    if increase {
+        value.saturating_add(1).min(maximum)
+    } else {
+        value.saturating_sub(1).max(minimum)
+    }
+}
+
 pub(in crate::session) fn settings_field_label(field: ui::SettingsField) -> &'static str {
     match field {
         ui::SettingsField::Theme => "Theme",
@@ -2193,6 +2291,10 @@ pub(in crate::session) fn settings_field_label(field: ui::SettingsField) -> &'st
         ui::SettingsField::TimeSyncSource => "Time source",
         ui::SettingsField::TimeSyncServer => "Time synchronization server",
         ui::SettingsField::WeatherLocation => "Weather location",
+        ui::SettingsField::SystemLowAvailable => "Low available",
+        ui::SettingsField::SystemLowPercentage => "Low percentage",
+        ui::SettingsField::SystemCriticalAvailable => "Critical available",
+        ui::SettingsField::SystemCriticalPercentage => "Critical percentage",
         ui::SettingsField::RestoreDefaults => "Defaults",
     }
 }

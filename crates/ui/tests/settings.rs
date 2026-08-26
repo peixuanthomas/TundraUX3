@@ -17,7 +17,7 @@ fn wide_layout_uses_a_left_category_column_and_right_detail_cards() {
     let model = sample_model();
     let layout = settings_layout(Rect::new(0, 0, 120, 32), &model);
 
-    assert_eq!(layout.category_cards.len(), 4);
+    assert_eq!(layout.category_cards.len(), 5);
     assert_eq!(
         layout.category_cards[0].category,
         SettingsCategory::Appearance
@@ -52,7 +52,7 @@ fn eighty_by_twenty_four_layout_keeps_the_left_category_column() {
     let model = sample_model();
     let layout = settings_layout(Rect::new(0, 0, 80, 24), &model);
 
-    assert_eq!(layout.category_cards.len(), 4);
+    assert_eq!(layout.category_cards.len(), 5);
     assert!(
         layout
             .category_cards
@@ -68,6 +68,33 @@ fn eighty_by_twenty_four_layout_keeps_the_left_category_column() {
     );
     assert_eq!(layout.category_cards[0].area.width, 16);
     assert!(layout.fields.iter().all(|field| field.area.x == 21));
+}
+
+#[test]
+fn system_category_has_storage_pressure_metadata() {
+    assert_eq!(SettingsCategory::ALL[2], SettingsCategory::System);
+    assert_eq!(SettingsCategory::System.label(), "System");
+    assert!(
+        SettingsCategory::System
+            .description()
+            .contains("Storage pressure")
+    );
+
+    for field in [
+        SettingsField::SystemLowAvailable,
+        SettingsField::SystemLowPercentage,
+        SettingsField::SystemCriticalAvailable,
+        SettingsField::SystemCriticalPercentage,
+    ] {
+        let item = SettingsItemViewModel::new(
+            field,
+            "Threshold",
+            "1",
+            "Storage",
+            SettingsControlKind::Stepper,
+        );
+        assert_eq!(item.kind, SettingsControlKind::Stepper);
+    }
 }
 
 #[test]

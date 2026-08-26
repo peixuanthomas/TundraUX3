@@ -42,6 +42,7 @@ fn tab_cycles_sections_while_arrows_select_right_hand_settings() {
 
     for expected in [
         SettingsCategory::RegionTime,
+        SettingsCategory::System,
         SettingsCategory::FileExplorer,
         SettingsCategory::Editor,
         SettingsCategory::Appearance,
@@ -66,6 +67,92 @@ fn tab_cycles_sections_while_arrows_select_right_hand_settings() {
     let editor = state.to_settings_view_model().unwrap();
     assert_eq!(editor.selected_category, SettingsCategory::Editor);
     assert_eq!(editor.selected_field, SettingsField::CursorAcceleration);
+}
+
+#[test]
+fn system_settings_show_defaults_and_persist_normalized_steps() {
+    let fixture = FixtureRoot::new("system-settings");
+    let platform = mock_platform(fixture.path());
+    let manager = initialize_users(&platform, false, false);
+    let mut state = logged_in_state(&platform, "AdminUser", "StrongPass123");
+
+    open_settings_from_home(&mut state, &platform);
+    press(&mut state, &platform, "Tab");
+    press(&mut state, &platform, "Tab");
+    let system = state.to_settings_view_model().unwrap();
+    assert_eq!(system.selected_category, SettingsCategory::System);
+    let items = system
+        .cards
+        .iter()
+        .flat_map(|card| &card.items)
+        .collect::<Vec<_>>();
+    assert_eq!(items[0].field, SettingsField::SystemLowAvailable);
+    assert_eq!(items[0].value, "5 GiB");
+    assert_eq!(items[0].kind, ui::SettingsControlKind::Stepper);
+    assert_eq!(items[1].value, "10%");
+    assert_eq!(items[2].value, "1 GiB");
+    assert_eq!(items[3].value, "5%");
+
+    press(&mut state, &platform, "Left");
+    assert_eq!(
+        manager
+            .load_config()
+            .unwrap()
+            .system_status
+            .low_available_gib,
+        4
+    );
+
+    let mut config = manager.load_config().unwrap();
+    config.system_status.low_available_gib = 5;
+    config.system_status.critical_available_gib = 5;
+    manager.save_config(&config).unwrap();
+    press(&mut state, &platform, "Left");
+    let saved = manager.load_config().unwrap();
+    assert_eq!(saved.system_status.low_available_gib, 4);
+    assert_eq!(saved.system_status.critical_available_gib, 4);
+
+    press(&mut state, &platform, "Down");
+    press(&mut state, &platform, "Down");
+    press(&mut state, &platform, "Right");
+    assert_eq!(
+        manager
+            .load_config()
+            .unwrap()
+            .system_status
+            .critical_available_gib,
+        4
+    );
+}
+
+#[test]
+fn normal_user_system_settings_are_read_only() {
+    let fixture = FixtureRoot::new("system-settings-user");
+    let platform = mock_platform(fixture.path());
+    let manager = initialize_users(&platform, true, false);
+    let mut state = logged_in_state(&platform, "NormalUser", "NormalPass123");
+    open_settings_from_home(&mut state, &platform);
+    press(&mut state, &platform, "Tab");
+    press(&mut state, &platform, "Tab");
+
+    let before = manager.load_config().unwrap();
+    let model = state.to_settings_view_model().unwrap();
+    assert!(
+        model
+            .cards
+            .iter()
+            .flat_map(|card| &card.items)
+            .all(|item| !item.enabled)
+    );
+    assert!(
+        model
+            .cards
+            .iter()
+            .flat_map(|card| &card.items)
+            .all(|item| item.kind == ui::SettingsControlKind::ReadOnly)
+    );
+    press(&mut state, &platform, "Right");
+    assert_eq!(manager.load_config().unwrap(), before);
 }
 
 #[test]
@@ -105,7 +192,8 @@ fn admin_settings_immediately_persist_global_changes_and_confirm_picker_selectio
         highlighted_timezone
     );
 
-    // Tab advances to File Explorer and selects its first setting immediately.
+    // System sits between Region & Time and File Explorer.
+    press(&mut state, &platform, "Tab");
     press(&mut state, &platform, "Tab");
     assert_eq!(
         state.to_settings_view_model().unwrap().selected_category,
@@ -310,7 +398,7 @@ fn editor_settings_save_normalized_explorer_open_suffixes() {
     let mut state = logged_in_state(&platform, "AdminUser", "StrongPass123");
 
     open_settings_from_home(&mut state, &platform);
-    for _ in 0..3 {
+    for _ in 0..4 {
         press(&mut state, &platform, "Tab");
     }
     assert_eq!(
