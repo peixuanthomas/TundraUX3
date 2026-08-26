@@ -944,6 +944,7 @@ impl ShellSession {
     }
 
     pub(in crate::session) fn complete_login(&mut self, session: AuthSession) {
+        self.reset_system_status_trackers();
         let mut active_appearance = self.storage_manager.as_ref().and_then(|storage| {
             storage.load_users().ok().and_then(|users| {
                 users
@@ -976,6 +977,9 @@ impl ShellSession {
             app::AppCommand::SetAuthSession(Some(session.clone())),
             Instant::now(),
         );
+        if let Some(snapshot) = self.app.system_status_snapshot().cloned() {
+            self.evaluate_system_status_alerts(&snapshot);
+        }
         self.app.dispatch_at(
             app::AppCommand::SetActiveAppearance(active_appearance),
             Instant::now(),

@@ -1,5 +1,156 @@
 use super::super::*;
 impl ShellSession {
+    pub fn to_system_status_view_model(&self) -> Option<ui::SystemStatusViewModel> {
+        use system_services::*;
+        let role = self.app.auth_session()?.role;
+        if role == UserRole::Guest {
+            return None;
+        }
+        let snapshot = self.app.system_status_snapshot();
+        let (storage_state, storage) = match snapshot.map(|s| &s.storage) {
+            Some(StorageState::Ready(v)) => (ui::SystemStatusSectionState::Ready, Some(v)),
+            Some(StorageState::Stale { last_good, error }) => (
+                ui::SystemStatusSectionState::Stale {
+                    message: error.clone(),
+                },
+                Some(last_good),
+            ),
+            Some(StorageState::Unavailable { reason }) => (
+                ui::SystemStatusSectionState::Unavailable {
+                    message: reason.clone(),
+                },
+                None,
+            ),
+            _ => (ui::SystemStatusSectionState::Loading, None),
+        };
+        let pressure = storage
+            .map(|s| s.overall_pressure)
+            .unwrap_or(StoragePressure::Unknown);
+        let system_volume =
+            storage.and_then(|s| s.system_volume_index.and_then(|i| s.volumes.get(i)));
+        let usage = system_volume
+            .map(volume_usage)
+            .unwrap_or_else(|| "Unknown".into());
+        let refreshed = snapshot
+            .map(|s| s.observed_at.format("%Y-%m-%d %H:%M:%S UTC").to_string())
+            .unwrap_or_else(|| "Not yet".into());
+        if role == UserRole::User {
+            let usage = if storage
+                .is_some_and(|s| s.system_volume_source == SystemVolumeSource::FixedVolumeFallback)
+            {
+                format!("{usage} (source unknown)")
+            } else {
+                usage
+            };
+            let link = match snapshot.map(|s| &s.network) {
+                Some(NetworkState::Ready(n)) => Some(n.has_active_link),
+                Some(NetworkState::Stale { last_good, .. }) => Some(last_good.has_active_link),
+                _ => None,
+            };
+            return Some(ui::SystemStatusViewModel {
+                content: ui::SystemStatusContentViewModel::User(ui::UserSystemStatusViewModel {
+                    storage_status: pressure_label(pressure).into(),
+                    storage_tone: pressure_tone(pressure),
+                    system_volume_usage: usage,
+                    network_status: link
+                        .map(|v| if v { "Connected" } else { "Disconnected" })
+                        .unwrap_or("Unknown")
+                        .into(),
+                    network_tone: link
+                        .map(|v| {
+                            if v {
+                                ui::components::ComponentTone::Success
+                            } else {
+                                ui::components::ComponentTone::Warning
+                            }
+                        })
+                        .unwrap_or(ui::components::ComponentTone::Muted),
+                    last_refreshed: refreshed,
+                }),
+                tab: ui::SystemStatusTab::Overview,
+                selected_row: 0,
+                scroll_offset: 0,
+                refreshing: self.system_status_refresh_requested_revision.is_some(),
+                feedback: None,
+            });
+        }
+        let (network_state, network) = match snapshot.map(|s| &s.network) {
+            Some(NetworkState::Ready(v)) => (ui::SystemStatusSectionState::Ready, Some(v)),
+            Some(NetworkState::Stale { last_good, error }) => (
+                ui::SystemStatusSectionState::Stale {
+                    message: error.clone(),
+                },
+                Some(last_good),
+            ),
+            Some(NetworkState::Unavailable { reason }) => (
+                ui::SystemStatusSectionState::Unavailable {
+                    message: reason.clone(),
+                },
+                None,
+            ),
+            _ => (ui::SystemStatusSectionState::Loading, None),
+        };
+        let storage_rows = storage
+            .map(|s| {
+                s.volumes
+                    .iter()
+                    .map(|v| ui::StorageVolumeRowViewModel {
+                        volume: v.identifier.clone(),
+                        kind: format!("{:?}", v.kind),
+                        system_volume: if v.is_system { "Yes" } else { "No" }.into(),
+                        access: format!("{:?}", v.access),
+                        usage: volume_usage(v),
+                        used_percentage: used_percentage(v)
+                            .map(|p| format!("{p:.1}%"))
+                            .unwrap_or_else(|| "Unknown".into()),
+                        pressure: pressure_label(v.pressure).into(),
+                        tone: pressure_tone(v.pressure),
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        let network_rows = network
+            .map(|n| {
+                n.interfaces
+                    .iter()
+                    .map(|i| ui::NetworkInterfaceRowViewModel {
+                        name: i.name.clone(),
+                        display_name: i.display_name.clone().unwrap_or_default(),
+                        kind: format!("{:?}", i.kind),
+                        link_state: format!("{:?}", i.link_state),
+                        addresses: i.addresses.join(", "),
+                        tone: if i.link_state == NetworkLinkState::Up {
+                            ui::components::ComponentTone::Success
+                        } else {
+                            ui::components::ComponentTone::Muted
+                        },
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        Some(ui::SystemStatusViewModel {
+            content: ui::SystemStatusContentViewModel::Admin(ui::AdminSystemStatusViewModel {
+                overview: ui::SystemStatusOverviewViewModel {
+                    storage_status: pressure_label(pressure).into(),
+                    storage_tone: pressure_tone(pressure),
+                    system_volume_usage: usage,
+                    active_link_count: network
+                        .map(|n| n.active_link_count.to_string())
+                        .unwrap_or_else(|| "Unknown".into()),
+                    last_refreshed: refreshed,
+                },
+                storage_state,
+                storage_rows,
+                network_state,
+                network_rows,
+            }),
+            tab: self.system_status_tab,
+            selected_row: self.system_status_selected_row,
+            scroll_offset: self.system_status_scroll_offset,
+            refreshing: self.system_status_refresh_requested_revision.is_some(),
+            feedback: None,
+        })
+    }
     pub fn to_home_view_model(&self) -> ui::HomeViewModel {
         let user = self.current_home_username().unwrap_or("Unauthenticated");
         let model = ui::HomeViewModel::user_with_selection_and_icon_assets(
@@ -956,5 +1107,38 @@ impl ShellSession {
                 time_button_selected: self.time_button_selected(),
             },
         }
+    }
+}
+
+fn used_percentage(v: &system_services::StorageVolumeSnapshot) -> Option<f64> {
+    let (Some(total), Some(avail)) = (v.total_bytes, v.available_bytes) else {
+        return None;
+    };
+    (total > 0 && avail <= total).then(|| (total - avail) as f64 * 100.0 / total as f64)
+}
+fn volume_usage(v: &system_services::StorageVolumeSnapshot) -> String {
+    match (v.total_bytes, v.available_bytes, used_percentage(v)) {
+        (Some(total), Some(avail), Some(_)) => format!(
+            "{} / {}",
+            super::super::controller::system_status::format_bytes(total - avail),
+            super::super::controller::system_status::format_bytes(total)
+        ),
+        _ => "Unknown".into(),
+    }
+}
+fn pressure_label(v: system_services::StoragePressure) -> &'static str {
+    match v {
+        system_services::StoragePressure::Unknown => "Unknown",
+        system_services::StoragePressure::Normal => "Normal",
+        system_services::StoragePressure::Low => "Low",
+        system_services::StoragePressure::Critical => "Critical",
+    }
+}
+fn pressure_tone(v: system_services::StoragePressure) -> ui::components::ComponentTone {
+    match v {
+        system_services::StoragePressure::Normal => ui::components::ComponentTone::Success,
+        system_services::StoragePressure::Low => ui::components::ComponentTone::Warning,
+        system_services::StoragePressure::Critical => ui::components::ComponentTone::Danger,
+        _ => ui::components::ComponentTone::Muted,
     }
 }

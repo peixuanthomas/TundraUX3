@@ -81,6 +81,8 @@ impl ShellSession {
         self.user_management_message = None;
         self.selected_home_entry_index = 0;
         self.settings_state = None;
+        self.settings_task_runtime.set_system_status_active(false);
+        self.reset_system_status_trackers();
         self.launcher_drag = None;
         self.replace_explorer_state(None);
         self.explorer_input_mode = ExplorerInputMode::Browse;
@@ -235,6 +237,7 @@ impl ShellSession {
             "Editor" => self.open_editor(),
             "Settings" => self.open_settings(),
             "Diagnostics" => self.open_diagnostics(),
+            "System Status" => self.open_system_status(),
             "User Management" | "User Profile" => self.open_user_management(),
             label => {
                 self.error_message = None;

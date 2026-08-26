@@ -109,6 +109,7 @@ impl ShellSession {
             ShellScreen::Launcher => ShellComponent::Launcher,
             ShellScreen::CommandLine => ShellComponent::CommandLine,
             ShellScreen::Editor => ShellComponent::Editor,
+            ShellScreen::SystemStatus => ShellComponent::SystemStatus,
             _ => ShellComponent::Home,
         };
         let login_users = startup.login_users.clone();
@@ -185,6 +186,13 @@ impl ShellSession {
             selected_home_entry_index: 0,
             settings_state: None,
             settings_task_runtime: runtime_services.settings,
+            system_status_tab: ui::SystemStatusTab::Overview,
+            system_status_selected_row: 0,
+            system_status_scroll_offset: 0,
+            system_status_refresh_requested_revision: None,
+            system_status_storage_alerts: BTreeMap::new(),
+            system_status_network_baseline: None,
+            system_status_disconnected_notified: false,
             launcher_selected_index: 0,
             launcher_view_mode: app::launcher::LauncherViewMode::LargeIcons,
             launcher_viewport_offset: 0,

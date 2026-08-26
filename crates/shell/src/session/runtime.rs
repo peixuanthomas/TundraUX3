@@ -875,6 +875,10 @@ pub(super) fn run_fullscreen_shell_session<W: Write>(
             ),
         },
     );
+    let mut system_status_snapshots = system_services.subscribe();
+    state.apply_system_status_snapshot(app::AppSystemStatusSnapshot::from(
+        &*system_status_snapshots.borrow_and_update(),
+    ));
     state.set_terminal_image_support(launcher_icons.is_some());
     state.set_terminal_text_sizing_support(terminal_graphics_probe.text_sizing_protocol());
     if show_terminal_graphics_notice {
@@ -904,6 +908,11 @@ pub(super) fn run_fullscreen_shell_session<W: Write>(
     loop {
         let state_before_polling = state.clone();
         let theme_before_polling = theme;
+        if system_status_snapshots.has_changed().unwrap_or(false) {
+            state.apply_system_status_snapshot(app::AppSystemStatusSnapshot::from(
+                &*system_status_snapshots.borrow_and_update(),
+            ));
+        }
         // logind signals are delivered by a backend worker and drained here so
         // neither D-Bus nor policy authorization can block terminal input.
         for _ in 0..16 {
@@ -1104,6 +1113,9 @@ pub(super) fn run_fullscreen_shell_session<W: Write>(
                 .flatten();
             let diagnostics = (content_screen == ShellScreen::Diagnostics)
                 .then(|| state.to_diagnostics_view_model());
+            let system_status = (content_screen == ShellScreen::SystemStatus)
+                .then(|| state.to_system_status_view_model())
+                .flatten();
             let notification = (content_screen != ShellScreen::CommandLine)
                 .then(|| state.to_notification_view_model())
                 .flatten();
@@ -1234,6 +1246,17 @@ pub(super) fn run_fullscreen_shell_session<W: Write>(
                             &render_context,
                         );
                     }
+                    ShellScreen::SystemStatus => {
+                        ui::render_system_status_contextual(
+                            frame,
+                            page_area,
+                            &chrome,
+                            system_status
+                                .as_ref()
+                                .expect("System Status requires its view model"),
+                            &render_context,
+                        );
+                    }
                     ShellScreen::Clock => {
                         ui::render_clock_with_context(
                             frame,
@@ -1324,10 +1347,17 @@ pub(super) fn run_fullscreen_shell_session<W: Write>(
         }
 
         let poll_now = Instant::now();
-        let background_work_outstanding = session_has_background_work(&state)
-            || launcher_icons
-                .as_ref()
-                .is_some_and(|icons| !icons.pending.is_empty());
+        // The system-status watch receiver is intentionally polled even while
+        // the user is idle, so snapshots reach AppState within the 250 ms
+        // background cadence without a busy loop.
+        let background_work_outstanding = if system_status_snapshots.has_changed().is_ok() {
+            true
+        } else {
+            session_has_background_work(&state)
+                || launcher_icons
+                    .as_ref()
+                    .is_some_and(|icons| !icons.pending.is_empty())
+        };
         let background_poll_timeout = background_poll_timeout(
             background_work_outstanding,
             poll_now.saturating_duration_since(last_background_poll),
@@ -2018,6 +2048,7 @@ pub(super) fn system_services_config_for_startup(
         return services;
     };
     services.weather_location = config.weather_location;
+    services.storage_thresholds = system_status_thresholds_from_storage(&config.system_status);
     services.timezone_id = config.timezone.clone();
     services.time_sync_mode = match config.time_sync.source {
         storage::TimeSyncSource::NetworkServer => system_services::TimeSyncMode::Network,

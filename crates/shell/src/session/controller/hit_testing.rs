@@ -143,6 +143,13 @@ pub(in crate::session) fn build_shell_hit_map(
                         layer: ShellHitLayer::AppContent,
                     });
                 }
+                ShellScreen::SystemStatus => {
+                    regions.push(ShellHitRegion {
+                        component: ShellComponent::SystemStatus,
+                        area: main,
+                        layer: ShellHitLayer::AppContent,
+                    });
+                }
                 ShellScreen::Diagnostics => {
                     regions.push(ShellHitRegion {
                         component: ShellComponent::Diagnostics,

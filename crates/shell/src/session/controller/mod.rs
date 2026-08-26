@@ -17,6 +17,7 @@ mod launcher_tasks;
 mod notifications;
 mod settings;
 mod settings_tasks;
+pub(super) mod system_status;
 mod time_sync;
 mod user_management;
 

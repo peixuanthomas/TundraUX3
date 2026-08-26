@@ -1113,6 +1113,76 @@ impl ShellSession {
                 self.close_diagnostics();
                 ShellAction::Redraw
             }
+            ShellCommand::OpenSystemStatus => {
+                self.open_system_status();
+                ShellAction::Redraw
+            }
+            ShellCommand::CloseSystemStatus => {
+                self.close_system_status();
+                ShellAction::Redraw
+            }
+            ShellCommand::SystemStatusTab(tab) => {
+                self.system_status_tab = tab;
+                self.system_status_selected_row = 0;
+                self.system_status_scroll_offset = 0;
+                ShellAction::Redraw
+            }
+            ShellCommand::SystemStatusPrevious => {
+                self.system_status_selected_row = self.system_status_selected_row.saturating_sub(1);
+                ShellAction::Redraw
+            }
+            ShellCommand::SystemStatusNext => {
+                let count = self
+                    .to_system_status_view_model()
+                    .map(|m| m.item_count())
+                    .unwrap_or(0);
+                self.system_status_selected_row =
+                    (self.system_status_selected_row + 1).min(count.saturating_sub(1));
+                ShellAction::Redraw
+            }
+            ShellCommand::SystemStatusPageUp => {
+                self.system_status_selected_row =
+                    self.system_status_selected_row.saturating_sub(10);
+                ShellAction::Redraw
+            }
+            ShellCommand::SystemStatusPageDown => {
+                let count = self
+                    .to_system_status_view_model()
+                    .map(|m| m.item_count())
+                    .unwrap_or(0);
+                self.system_status_selected_row =
+                    (self.system_status_selected_row + 10).min(count.saturating_sub(1));
+                ShellAction::Redraw
+            }
+            ShellCommand::SystemStatusFirst => {
+                self.system_status_selected_row = 0;
+                ShellAction::Redraw
+            }
+            ShellCommand::SystemStatusLast => {
+                self.system_status_selected_row = self
+                    .to_system_status_view_model()
+                    .map(|m| m.item_count().saturating_sub(1))
+                    .unwrap_or(0);
+                ShellAction::Redraw
+            }
+            ShellCommand::SystemStatusSelectRow(index) => {
+                self.system_status_selected_row = index;
+                ShellAction::Redraw
+            }
+            ShellCommand::SystemStatusScroll(delta) => {
+                self.system_status_scroll_offset = if delta < 0 {
+                    self.system_status_scroll_offset
+                        .saturating_sub(delta.unsigned_abs() as usize)
+                } else {
+                    self.system_status_scroll_offset
+                        .saturating_add(delta as usize)
+                };
+                ShellAction::Redraw
+            }
+            ShellCommand::SystemStatusRefresh => {
+                self.refresh_system_status();
+                ShellAction::Redraw
+            }
             ShellCommand::DiagnosticsHealthTab => {
                 self.set_diagnostics_tab(ui::DiagnosticsTab::Health);
                 ShellAction::Redraw

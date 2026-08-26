@@ -74,6 +74,39 @@ impl ShellSession {
         if self.active_screen() == ShellScreen::Diagnostics {
             return self.route_diagnostics_key(key);
         }
+        if self.active_screen() == ShellScreen::SystemStatus {
+            let target = RoutedTarget::Component(ShellComponent::SystemStatus);
+            let admin = self
+                .app
+                .auth_session()
+                .is_some_and(|s| s.role == UserRole::Admin);
+            let command = match &key.key {
+                InputKey::Escape => ShellCommand::CloseSystemStatus,
+                InputKey::Char('r' | 'R') => ShellCommand::SystemStatusRefresh,
+                InputKey::Left | InputKey::BackTab if admin => {
+                    ShellCommand::SystemStatusTab(match self.system_status_tab {
+                        ui::SystemStatusTab::Overview => ui::SystemStatusTab::Network,
+                        ui::SystemStatusTab::Storage => ui::SystemStatusTab::Overview,
+                        ui::SystemStatusTab::Network => ui::SystemStatusTab::Storage,
+                    })
+                }
+                InputKey::Right | InputKey::Tab if admin => {
+                    ShellCommand::SystemStatusTab(match self.system_status_tab {
+                        ui::SystemStatusTab::Overview => ui::SystemStatusTab::Storage,
+                        ui::SystemStatusTab::Storage => ui::SystemStatusTab::Network,
+                        ui::SystemStatusTab::Network => ui::SystemStatusTab::Overview,
+                    })
+                }
+                InputKey::Up if admin => ShellCommand::SystemStatusPrevious,
+                InputKey::Down if admin => ShellCommand::SystemStatusNext,
+                InputKey::PageUp if admin => ShellCommand::SystemStatusPageUp,
+                InputKey::PageDown if admin => ShellCommand::SystemStatusPageDown,
+                InputKey::Home if admin => ShellCommand::SystemStatusFirst,
+                InputKey::End if admin => ShellCommand::SystemStatusLast,
+                _ => ShellCommand::Noop,
+            };
+            return (target, command);
+        }
 
         if self.active_screen() == ShellScreen::FirstRunSetup {
             return self.route_setup_key(key);
@@ -1217,6 +1250,49 @@ impl ShellSession {
 
         if self.active_screen() == ShellScreen::Diagnostics {
             return self.route_diagnostics_mouse(mouse, hit_target);
+        }
+        if self.active_screen() == ShellScreen::SystemStatus {
+            let target = RoutedTarget::Component(ShellComponent::SystemStatus);
+            let coordinates = mouse.coordinates();
+            if let ui::ShellLayout::Full { main, .. } = ui::compute_shell_layout(Rect::new(
+                0,
+                0,
+                self.terminal_size.0,
+                self.terminal_size.1,
+            )) && let Some(model) = self.to_system_status_view_model()
+            {
+                let layout = ui::system_status_layout(main, &model);
+                if let ui::MouseEventKind::Down(PointerButton::Left) = mouse.kind {
+                    let command = match ui::system_status_hit_test(&layout, coordinates) {
+                        Some(ui::SystemStatusHitTarget::Tab(tab)) => {
+                            ShellCommand::SystemStatusTab(tab)
+                        }
+                        Some(ui::SystemStatusHitTarget::Row(index)) => {
+                            ShellCommand::SystemStatusSelectRow(index)
+                        }
+                        Some(ui::SystemStatusHitTarget::Refresh) => {
+                            ShellCommand::SystemStatusRefresh
+                        }
+                        Some(ui::SystemStatusHitTarget::Scrollbar) => {
+                            ShellCommand::SystemStatusSelectRow(layout.visible_start)
+                        }
+                        None => ShellCommand::Noop,
+                    };
+                    return (target, command);
+                }
+            }
+            return (
+                target,
+                match mouse.kind {
+                    ui::MouseEventKind::Scroll(ScrollDirection::Up) => {
+                        ShellCommand::SystemStatusScroll(-1)
+                    }
+                    ui::MouseEventKind::Scroll(ScrollDirection::Down) => {
+                        ShellCommand::SystemStatusScroll(1)
+                    }
+                    _ => ShellCommand::Noop,
+                },
+            );
         }
 
         if self.active_screen() == ShellScreen::UserManagement {

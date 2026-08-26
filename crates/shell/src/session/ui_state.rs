@@ -139,6 +139,12 @@ pub(super) struct SettingsState {
     pub(super) time_sync_validation_request_id: Option<u64>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum SystemStatusAlertLevel {
+    Low,
+    Critical,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) enum EditorReloadPolicy {
     Log { path: std::path::PathBuf },
@@ -390,6 +396,13 @@ pub struct UiSessionState {
     pub(super) selected_home_entry_index: usize,
     pub(super) settings_state: Option<SettingsState>,
     pub(super) settings_task_runtime: ShellSettingsTaskRuntime,
+    pub(super) system_status_tab: ui::SystemStatusTab,
+    pub(super) system_status_selected_row: usize,
+    pub(super) system_status_scroll_offset: usize,
+    pub(super) system_status_refresh_requested_revision: Option<u64>,
+    pub(super) system_status_storage_alerts: BTreeMap<String, SystemStatusAlertLevel>,
+    pub(super) system_status_network_baseline: Option<bool>,
+    pub(super) system_status_disconnected_notified: bool,
     pub(super) launcher_selected_index: usize,
     pub(super) launcher_view_mode: app::launcher::LauncherViewMode,
     pub(super) launcher_viewport_offset: usize,
