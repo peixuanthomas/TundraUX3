@@ -230,9 +230,6 @@ impl ShellSession {
         forward: bool,
         platform: &dyn Platform,
     ) {
-        let Some(state) = self.app.explorer_state() else {
-            return;
-        };
         let model = self.to_explorer_view_model();
         let enabled = model
             .quick_locations
@@ -243,19 +240,9 @@ impl ShellSession {
         if enabled.is_empty() {
             return;
         }
-        let current = enabled.iter().position(|index| {
-            let location = &model.quick_locations[*index];
-            match location.kind {
-                app::explorer::ExplorerQuickLocationKind::Trash => {
-                    state.current_location.is_trash()
-                }
-                app::explorer::ExplorerQuickLocationKind::Directory
-                | app::explorer::ExplorerQuickLocationKind::Volume => state
-                    .current_location
-                    .path()
-                    .is_some_and(|path| path == std::path::Path::new(&location.path)),
-            }
-        });
+        let current = enabled
+            .iter()
+            .position(|index| model.quick_locations[*index].current);
         let position = match (current, forward) {
             (Some(position), true) => (position + 1) % enabled.len(),
             (Some(position), false) => position.checked_sub(1).unwrap_or(enabled.len() - 1),
@@ -266,11 +253,18 @@ impl ShellSession {
     }
 
     fn activate_explorer_quick_location(&mut self, index: usize, platform: &dyn Platform) {
-        let location = self
+        let enabled = self
             .to_explorer_view_model()
             .quick_locations
             .get(index)
-            .filter(|location| location.enabled)
+            .is_some_and(|location| location.enabled);
+        if !enabled {
+            return;
+        }
+        let location = self
+            .app
+            .explorer_state()
+            .and_then(|state| state.quick_locations.get(index))
             .cloned();
         let Some(location) = location else {
             return;
@@ -280,10 +274,9 @@ impl ShellSession {
                 self.apply_explorer_command(ExplorerCommand::NavigateTrash, platform)
             }
             app::explorer::ExplorerQuickLocationKind::Directory
-            | app::explorer::ExplorerQuickLocationKind::Volume => self.apply_explorer_command(
-                ExplorerCommand::Navigate(std::path::PathBuf::from(location.path)),
-                platform,
-            ),
+            | app::explorer::ExplorerQuickLocationKind::Volume => {
+                self.apply_explorer_command(ExplorerCommand::Navigate(location.path), platform)
+            }
         }
     }
 

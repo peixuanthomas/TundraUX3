@@ -4,8 +4,8 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use platform::mock::{MockCall, MockPlatform};
 use platform::{
-    Platform, PlatformCapabilities, PlatformKind, UserDirs, build_windows_app_paths,
-    cleanup_temp_path,
+    LocalVolume, Platform, PlatformCapabilities, PlatformKind, UserDirs, VolumeAccess, VolumeKind,
+    build_windows_app_paths, cleanup_temp_path,
 };
 use ratatui::layout::Rect;
 use shell::{
@@ -213,6 +213,85 @@ fn disabled_quick_location_is_skipped_and_mouse_activation_is_ignored() {
         &platform,
     );
     assert_eq!(state.to_explorer_view_model().current_path, pictures);
+}
+
+#[cfg(unix)]
+#[test]
+fn quick_location_cycle_preserves_non_utf8_volume_paths() {
+    if cfg!(target_os = "macos") {
+        return;
+    }
+
+    use std::ffi::OsString;
+    use std::os::unix::ffi::OsStringExt;
+
+    let fixture = FixtureRoot::new("quick-location-non-utf8");
+    let platform = mock_platform(fixture.path());
+    bootstrap_with_shell(&platform);
+    let raw_volume = fixture
+        .path()
+        .join(OsString::from_vec(b"raw-volume-\xff".to_vec()));
+    let next_volume = fixture.path().join("next-volume");
+    fs::create_dir(&raw_volume).expect("raw volume");
+    fs::create_dir(&next_volume).expect("next volume");
+    platform.set_local_volumes_result(Ok(vec![
+        LocalVolume {
+            root: raw_volume.clone(),
+            label: Some("Raw volume".to_string()),
+            kind: VolumeKind::Fixed,
+            total_bytes: None,
+            available_bytes: None,
+            is_system: false,
+            access: VolumeAccess::ReadWrite,
+        },
+        LocalVolume {
+            root: next_volume.clone(),
+            label: Some("Next volume".to_string()),
+            kind: VolumeKind::Fixed,
+            total_bytes: None,
+            available_bytes: None,
+            is_system: false,
+            access: VolumeAccess::ReadWrite,
+        },
+    ]));
+    let mut state = logged_in_state(&platform);
+    state.apply_input_with_platform(InputEvent::from_key_label("e"), &platform);
+
+    state.apply_input_with_platform(InputEvent::from_key_label("Tab"), &platform);
+    assert!(
+        platform
+            .calls()
+            .iter()
+            .any(|call| matches!(call, MockCall::ReadDirectory(path) if path == &raw_volume))
+    );
+    assert!(
+        state
+            .to_explorer_view_model()
+            .quick_locations
+            .iter()
+            .any(|location| location.current && location.label == "Raw volume")
+    );
+
+    state.apply_input_with_platform(InputEvent::from_key_label("Tab"), &platform);
+    assert!(
+        platform
+            .calls()
+            .iter()
+            .any(|call| matches!(call, MockCall::ReadDirectory(path) if path == &next_volume))
+    );
+    state.apply_input_with_platform(InputEvent::from_key_label("Shift+Tab"), &platform);
+    assert!(
+        state
+            .to_explorer_view_model()
+            .quick_locations
+            .iter()
+            .any(|location| location.current && location.label == "Raw volume")
+    );
+    state.apply_input_with_platform(InputEvent::from_key_label("Shift+Tab"), &platform);
+    assert_eq!(
+        state.to_explorer_view_model().current_path,
+        fixture.path().join("Documents").to_string_lossy()
+    );
 }
 
 #[test]
