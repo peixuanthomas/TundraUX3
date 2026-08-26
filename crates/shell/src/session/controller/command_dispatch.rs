@@ -1122,9 +1122,7 @@ impl ShellSession {
                 ShellAction::Redraw
             }
             ShellCommand::SystemStatusTab(tab) => {
-                self.system_status_tab = tab;
-                self.system_status_selected_row = 0;
-                self.system_status_scroll_offset = 0;
+                self.set_system_status_tab(tab);
                 ShellAction::Redraw
             }
             ShellCommand::SystemStatusPrevious => {
@@ -1170,17 +1168,23 @@ impl ShellSession {
                 ShellAction::Redraw
             }
             ShellCommand::SystemStatusScroll(delta) => {
-                self.system_status_scroll_offset = if delta < 0 {
-                    self.system_status_scroll_offset
-                        .saturating_sub(delta.unsigned_abs() as usize)
-                } else {
-                    self.system_status_scroll_offset
-                        .saturating_add(delta as usize)
-                };
+                self.scroll_system_status(delta);
                 ShellAction::Redraw
             }
             ShellCommand::SystemStatusRefresh => {
                 self.refresh_system_status();
+                ShellAction::Redraw
+            }
+            ShellCommand::SystemStatusScrollbarPointerDown(coordinates) => {
+                self.begin_system_status_scrollbar_drag(coordinates);
+                ShellAction::Redraw
+            }
+            ShellCommand::SystemStatusScrollbarDrag(coordinates) => {
+                self.drag_system_status_scrollbar(coordinates);
+                ShellAction::Redraw
+            }
+            ShellCommand::SystemStatusScrollbarPointerUp => {
+                self.clear_system_status_scrollbar_drag();
                 ShellAction::Redraw
             }
             ShellCommand::DiagnosticsHealthTab => {

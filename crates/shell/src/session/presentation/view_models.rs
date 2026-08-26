@@ -32,7 +32,8 @@ impl ShellSession {
             .map(volume_usage)
             .unwrap_or_else(|| "Unknown".into());
         let refreshed = snapshot
-            .map(|s| s.observed_at.format("%Y-%m-%d %H:%M:%S UTC").to_string())
+            .and_then(successful_system_status_sampled_at)
+            .map(|sampled| sampled.format("%Y-%m-%d %H:%M:%S UTC").to_string())
             .unwrap_or_else(|| "Not yet".into());
         if role == UserRole::User {
             let usage = if storage
@@ -42,29 +43,60 @@ impl ShellSession {
             } else {
                 usage
             };
-            let link = match snapshot.map(|s| &s.network) {
-                Some(NetworkState::Ready(n)) => Some(n.has_active_link),
-                Some(NetworkState::Stale { last_good, .. }) => Some(last_good.has_active_link),
-                _ => None,
+            let (storage_status, storage_tone) = match snapshot.map(|s| &s.storage) {
+                None | Some(StorageState::Loading) => {
+                    ("Loading".into(), ui::components::ComponentTone::Muted)
+                }
+                Some(StorageState::Unavailable { .. }) => {
+                    ("Unavailable".into(), ui::components::ComponentTone::Muted)
+                }
+                Some(StorageState::Ready(_)) => {
+                    (pressure_label(pressure).into(), pressure_tone(pressure))
+                }
+                Some(StorageState::Stale { .. }) => (
+                    format!("{} (stale)", pressure_label(pressure)),
+                    pressure_tone(pressure),
+                ),
+            };
+            let (network_status, network_tone) = match snapshot.map(|s| &s.network) {
+                None | Some(NetworkState::Loading) => {
+                    ("Loading".into(), ui::components::ComponentTone::Muted)
+                }
+                Some(NetworkState::Unavailable { .. }) => {
+                    ("Unavailable".into(), ui::components::ComponentTone::Muted)
+                }
+                Some(NetworkState::Ready(n)) => (
+                    if n.has_active_link {
+                        "Connected"
+                    } else {
+                        "Disconnected"
+                    }
+                    .into(),
+                    if n.has_active_link {
+                        ui::components::ComponentTone::Success
+                    } else {
+                        ui::components::ComponentTone::Warning
+                    },
+                ),
+                Some(NetworkState::Stale { last_good, .. }) => (
+                    format!(
+                        "{} (stale)",
+                        if last_good.has_active_link {
+                            "Connected"
+                        } else {
+                            "Disconnected"
+                        }
+                    ),
+                    ui::components::ComponentTone::Warning,
+                ),
             };
             return Some(ui::SystemStatusViewModel {
                 content: ui::SystemStatusContentViewModel::User(ui::UserSystemStatusViewModel {
-                    storage_status: pressure_label(pressure).into(),
-                    storage_tone: pressure_tone(pressure),
+                    storage_status,
+                    storage_tone,
                     system_volume_usage: usage,
-                    network_status: link
-                        .map(|v| if v { "Connected" } else { "Disconnected" })
-                        .unwrap_or("Unknown")
-                        .into(),
-                    network_tone: link
-                        .map(|v| {
-                            if v {
-                                ui::components::ComponentTone::Success
-                            } else {
-                                ui::components::ComponentTone::Warning
-                            }
-                        })
-                        .unwrap_or(ui::components::ComponentTone::Muted),
+                    network_status,
+                    network_tone,
                     last_refreshed: refreshed,
                 }),
                 tab: ui::SystemStatusTab::Overview,
@@ -90,14 +122,30 @@ impl ShellSession {
             ),
             _ => (ui::SystemStatusSectionState::Loading, None),
         };
+        let fallback_index = storage
+            .filter(|s| s.system_volume_source == SystemVolumeSource::FixedVolumeFallback)
+            .and_then(|s| s.system_volume_index);
+        let usage = if fallback_index.is_some() {
+            format!("{usage} (fixed-volume fallback; source unknown)")
+        } else {
+            usage
+        };
         let storage_rows = storage
             .map(|s| {
                 s.volumes
                     .iter()
-                    .map(|v| ui::StorageVolumeRowViewModel {
+                    .enumerate()
+                    .map(|(index, v)| ui::StorageVolumeRowViewModel {
                         volume: v.identifier.clone(),
                         kind: format!("{:?}", v.kind),
-                        system_volume: if v.is_system { "Yes" } else { "No" }.into(),
+                        system_volume: if Some(index) == fallback_index {
+                            "Fallback (source unknown)"
+                        } else if v.is_system {
+                            "Yes"
+                        } else {
+                            "No"
+                        }
+                        .into(),
                         access: format!("{:?}", v.access),
                         usage: volume_usage(v),
                         used_percentage: used_percentage(v)
@@ -1115,6 +1163,21 @@ fn used_percentage(v: &system_services::StorageVolumeSnapshot) -> Option<f64> {
         return None;
     };
     (total > 0 && avail <= total).then(|| (total - avail) as f64 * 100.0 / total as f64)
+}
+fn successful_system_status_sampled_at(
+    snapshot: &app::AppSystemStatusSnapshot,
+) -> Option<chrono::DateTime<Utc>> {
+    let storage = match &snapshot.storage {
+        system_services::StorageState::Ready(value) => Some(value.sampled_at),
+        system_services::StorageState::Stale { last_good, .. } => Some(last_good.sampled_at),
+        _ => None,
+    };
+    let network = match &snapshot.network {
+        system_services::NetworkState::Ready(value) => Some(value.sampled_at),
+        system_services::NetworkState::Stale { last_good, .. } => Some(last_good.sampled_at),
+        _ => None,
+    };
+    storage.into_iter().chain(network).max()
 }
 fn volume_usage(v: &system_services::StorageVolumeSnapshot) -> String {
     match (v.total_bytes, v.available_bytes, used_percentage(v)) {

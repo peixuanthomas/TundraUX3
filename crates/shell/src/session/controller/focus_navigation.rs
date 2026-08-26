@@ -73,6 +73,9 @@ impl ShellSession {
     }
 
     pub(in crate::session) fn focus_order(&self) -> Vec<ShellComponent> {
+        if self.active_screen() == ShellScreen::SystemStatus {
+            return vec![ShellComponent::SystemStatus];
+        }
         let overlay = self.active_overlay_descriptor();
         if self.overlay_interaction_ready
             && overlay.as_ref().and_then(|overlay| overlay.component())

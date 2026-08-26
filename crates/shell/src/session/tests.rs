@@ -15,6 +15,300 @@ fn set_test_auth_role(state: &mut ShellSession, role: UserRole) {
     );
 }
 
+fn system_status_test_snapshot(
+    revision: u64,
+    pressure: system_services::StoragePressure,
+    link: bool,
+    source: system_services::SystemVolumeSource,
+) -> app::AppSystemStatusSnapshot {
+    let sampled_at = Utc::now();
+    app::AppSystemStatusSnapshot {
+        revision,
+        observed_at: sampled_at,
+        storage: system_services::StorageState::Ready(system_services::StorageSnapshot {
+            volumes: vec![system_services::StorageVolumeSnapshot {
+                identifier: "/sensitive/mount".into(),
+                label: Some("secret-label".into()),
+                kind: system_services::StorageVolumeKind::Fixed,
+                is_system: true,
+                access: system_services::StorageVolumeAccess::ReadWrite,
+                total_bytes: Some(1000),
+                available_bytes: Some(100),
+                pressure,
+            }],
+            overall_pressure: pressure,
+            system_volume_index: Some(0),
+            system_volume_source: source,
+            sampled_at,
+        }),
+        network: system_services::NetworkState::Ready(system_services::NetworkSnapshot {
+            interfaces: vec![system_services::NetworkInterfaceSnapshot {
+                name: "secret-iface".into(),
+                display_name: Some("secret-display".into()),
+                kind: system_services::NetworkInterfaceKind::Virtual,
+                link_state: if link {
+                    system_services::NetworkLinkState::Up
+                } else {
+                    system_services::NetworkLinkState::Down
+                },
+                addresses: vec!["192.0.2.99".into(), "2001:db8::99".into()],
+            }],
+            active_link_count: usize::from(link),
+            has_active_link: link,
+            sampled_at,
+        }),
+    }
+}
+
+#[test]
+fn system_status_role_gate_and_missing_service_reject_open() {
+    for role in [UserRole::Admin, UserRole::User, UserRole::Guest] {
+        let mut state = ShellSession::new_for_home_mode(
+            ShellLaunchConfig::default(),
+            (120, 40),
+            ShellHomeMode::User,
+        );
+        set_test_auth_role(&mut state, role);
+        let labels = state
+            .user_home_entries()
+            .into_iter()
+            .map(|entry| entry.label)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            labels.contains(&"System Status".to_string()),
+            role != UserRole::Guest
+        );
+        let original_focus = state.focused_component;
+        state.open_system_status();
+        assert_eq!(state.active_screen(), ShellScreen::Home);
+        assert_eq!(state.focused_component, original_focus);
+        if role != UserRole::Guest {
+            assert_eq!(state.status(), "System Status service unavailable");
+        }
+    }
+}
+
+#[test]
+fn system_status_admin_fallback_and_user_stale_unavailable_are_desensitized() {
+    let mut state = ShellSession::new_for_home_mode(
+        ShellLaunchConfig::default(),
+        (120, 40),
+        ShellHomeMode::User,
+    );
+    set_test_auth_role(&mut state, UserRole::Admin);
+    let snapshot = system_status_test_snapshot(
+        1,
+        system_services::StoragePressure::Low,
+        true,
+        system_services::SystemVolumeSource::FixedVolumeFallback,
+    );
+    state.apply_system_status_snapshot(snapshot.clone());
+    let admin = state.to_system_status_view_model().unwrap();
+    let ui::SystemStatusContentViewModel::Admin(admin) = admin.content else {
+        panic!()
+    };
+    assert!(
+        admin
+            .overview
+            .system_volume_usage
+            .contains("fixed-volume fallback; source unknown")
+    );
+    assert_eq!(
+        admin.storage_rows[0].system_volume,
+        "Fallback (source unknown)"
+    );
+
+    set_test_auth_role(&mut state, UserRole::User);
+    let mut stale = snapshot;
+    let storage = match stale.storage {
+        system_services::StorageState::Ready(value) => value,
+        _ => unreachable!(),
+    };
+    let network = match stale.network {
+        system_services::NetworkState::Ready(value) => value,
+        _ => unreachable!(),
+    };
+    stale.storage = system_services::StorageState::Stale {
+        last_good: storage,
+        error: "/sensitive/mount secret-label".into(),
+    };
+    stale.network = system_services::NetworkState::Stale {
+        last_good: network,
+        error: "secret-iface secret-display 192.0.2.99 2001:db8::99".into(),
+    };
+    state.apply_system_status_snapshot(stale);
+    let model = state.to_system_status_view_model().unwrap();
+    let debug = format!("{model:?}");
+    assert!(debug.contains("(stale)"));
+    for secret in [
+        "/sensitive/mount",
+        "secret-label",
+        "secret-iface",
+        "secret-display",
+        "192.0.2.99",
+        "2001:db8::99",
+    ] {
+        assert!(!debug.contains(secret), "leaked {secret}");
+    }
+    let mut unavailable = system_status_test_snapshot(
+        2,
+        system_services::StoragePressure::Normal,
+        true,
+        system_services::SystemVolumeSource::Detected,
+    );
+    unavailable.storage = system_services::StorageState::Unavailable {
+        reason: "/sensitive/mount".into(),
+    };
+    unavailable.network = system_services::NetworkState::Unavailable {
+        reason: "secret-iface".into(),
+    };
+    state.apply_system_status_snapshot(unavailable);
+    let debug = format!("{:?}", state.to_system_status_view_model().unwrap());
+    assert!(debug.contains("Unavailable"));
+    assert!(!debug.contains("sensitive"));
+    assert!(!debug.contains("secret-iface"));
+}
+
+#[test]
+fn system_status_alert_dedupe_upgrade_recovery_and_network_baseline() {
+    let mut state = ShellSession::new_for_home_mode(
+        ShellLaunchConfig::default(),
+        (120, 40),
+        ShellHomeMode::User,
+    );
+    set_test_auth_role(&mut state, UserRole::Admin);
+    state.apply_system_status_snapshot(system_status_test_snapshot(
+        1,
+        system_services::StoragePressure::Low,
+        true,
+        system_services::SystemVolumeSource::Detected,
+    ));
+    assert_eq!(
+        state.system_status_storage_alerts.get("/sensitive/mount"),
+        Some(&SystemStatusAlertLevel::Low)
+    );
+    state.apply_system_status_snapshot(system_status_test_snapshot(
+        2,
+        system_services::StoragePressure::Critical,
+        false,
+        system_services::SystemVolumeSource::Detected,
+    ));
+    assert_eq!(
+        state.system_status_storage_alerts.get("/sensitive/mount"),
+        Some(&SystemStatusAlertLevel::Critical)
+    );
+    assert!(state.system_status_disconnected_notified);
+    state.apply_system_status_snapshot(system_status_test_snapshot(
+        3,
+        system_services::StoragePressure::Normal,
+        true,
+        system_services::SystemVolumeSource::Detected,
+    ));
+    assert!(state.system_status_storage_alerts.is_empty());
+    assert!(!state.system_status_disconnected_notified);
+    state.apply_system_status_snapshot(system_status_test_snapshot(
+        4,
+        system_services::StoragePressure::Low,
+        false,
+        system_services::SystemVolumeSource::Detected,
+    ));
+    assert_eq!(
+        state.system_status_storage_alerts.get("/sensitive/mount"),
+        Some(&SystemStatusAlertLevel::Low)
+    );
+    assert!(state.system_status_disconnected_notified);
+    state.reset_system_status_trackers();
+    assert!(state.system_status_network_baseline.is_none());
+    assert!(state.system_status_storage_alerts.is_empty());
+}
+
+#[test]
+fn system_status_focus_clock_roundtrip_and_close_restore_home() {
+    let mut state = ShellSession::new_for_home_mode(
+        ShellLaunchConfig::default(),
+        (120, 40),
+        ShellHomeMode::User,
+    );
+    set_test_auth_role(&mut state, UserRole::Admin);
+    state.screen_stack.push(ShellScreen::SystemStatus);
+    state.focused_component = ShellComponent::SystemStatus;
+    state.refresh_hit_map();
+    assert_eq!(state.focus_order(), vec![ShellComponent::SystemStatus]);
+    state.open_clock();
+    state.close_clock();
+    assert_eq!(state.active_screen(), ShellScreen::SystemStatus);
+    assert_eq!(state.focused_component(), ShellComponent::SystemStatus);
+    state.close_system_status();
+    assert_eq!(state.active_screen(), ShellScreen::Home);
+    assert_eq!(state.focused_component(), ShellComponent::Home);
+}
+
+#[test]
+fn system_status_mouse_wheel_and_scrollbar_drag_update_explicit_viewport() {
+    let mut state = ShellSession::new_for_home_mode(
+        ShellLaunchConfig::default(),
+        (80, 16),
+        ShellHomeMode::User,
+    );
+    set_test_auth_role(&mut state, UserRole::Admin);
+    let mut snapshot = system_status_test_snapshot(
+        1,
+        system_services::StoragePressure::Normal,
+        true,
+        system_services::SystemVolumeSource::Detected,
+    );
+    let system_services::StorageState::Ready(ref mut storage) = snapshot.storage else {
+        unreachable!()
+    };
+    let template = storage.volumes[0].clone();
+    storage.volumes = (0..30)
+        .map(|index| system_services::StorageVolumeSnapshot {
+            identifier: format!("volume-{index}"),
+            is_system: index == 0,
+            ..template.clone()
+        })
+        .collect();
+    state.apply_system_status_snapshot(snapshot);
+    state.screen_stack.push(ShellScreen::SystemStatus);
+    state.focused_component = ShellComponent::SystemStatus;
+    state.set_system_status_tab(ui::SystemStatusTab::Storage);
+    state.refresh_hit_map();
+    state.apply_input(InputEvent::Mouse(ui::MouseEvent::new(
+        10,
+        8,
+        ui::MouseEventKind::Scroll(ScrollDirection::Down),
+    )));
+    assert!(state.system_status_scroll_offset > 0);
+    let model = state.to_system_status_view_model().unwrap();
+    let ui::ShellLayout::Full { main, .. } = ui::compute_shell_layout(Rect::new(0, 0, 80, 16))
+    else {
+        panic!()
+    };
+    let layout = ui::system_status_layout(main, &model);
+    let track = layout.scrollbar.expect("scrollbar");
+    state.apply_input(InputEvent::Mouse(ui::MouseEvent::new(
+        track.x,
+        track.bottom().saturating_sub(1),
+        ui::MouseEventKind::Down(PointerButton::Left),
+    )));
+    assert!(matches!(
+        state.scrollbar_drag,
+        Some(ScrollbarDragState::SystemStatus { .. })
+    ));
+    state.apply_input(InputEvent::Mouse(ui::MouseEvent::new(
+        track.x,
+        track.bottom().saturating_sub(1),
+        ui::MouseEventKind::Drag(PointerButton::Left),
+    )));
+    assert!(state.system_status_scroll_offset > 1);
+    state.apply_input(InputEvent::Mouse(ui::MouseEvent::new(
+        track.x,
+        track.bottom().saturating_sub(1),
+        ui::MouseEventKind::Up(PointerButton::Left),
+    )));
+    assert!(state.scrollbar_drag.is_none());
+}
+
 #[test]
 fn shell_and_lockscreen_share_the_same_session_recovery_budget() {
     let now = Instant::now();

@@ -1187,6 +1187,24 @@ impl ShellSession {
                     );
                 }
                 (
+                    Some(ScrollbarDragState::SystemStatus { .. }),
+                    ui::MouseEventKind::Drag(PointerButton::Left),
+                ) => {
+                    return (
+                        RoutedTarget::Component(ShellComponent::SystemStatus),
+                        ShellCommand::SystemStatusScrollbarDrag(coordinates),
+                    );
+                }
+                (
+                    Some(ScrollbarDragState::SystemStatus { .. }),
+                    ui::MouseEventKind::Up(PointerButton::Left),
+                ) => {
+                    return (
+                        RoutedTarget::Component(ShellComponent::SystemStatus),
+                        ShellCommand::SystemStatusScrollbarPointerUp,
+                    );
+                }
+                (
                     Some(ScrollbarDragState::Diagnostics { .. }),
                     ui::MouseEventKind::Up(PointerButton::Left),
                 ) => {
@@ -1274,7 +1292,7 @@ impl ShellSession {
                             ShellCommand::SystemStatusRefresh
                         }
                         Some(ui::SystemStatusHitTarget::Scrollbar) => {
-                            ShellCommand::SystemStatusSelectRow(layout.visible_start)
+                            ShellCommand::SystemStatusScrollbarPointerDown(coordinates)
                         }
                         None => ShellCommand::Noop,
                     };

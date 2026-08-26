@@ -26,6 +26,9 @@ pub(super) enum ScrollbarDragState {
     Diagnostics {
         grab_offset: u16,
     },
+    SystemStatus {
+        grab_offset: u16,
+    },
     Editor {
         axis: ScrollbarAxis,
         grab_offset: u16,
