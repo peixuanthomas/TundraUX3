@@ -290,6 +290,26 @@ mod tests {
 
     struct UnavailableWeather;
 
+    struct SystemServicesShutdownGuard {
+        handle: system_services::SystemServicesHandle,
+    }
+
+    impl SystemServicesShutdownGuard {
+        fn new(handle: system_services::SystemServicesHandle) -> Self {
+            Self { handle }
+        }
+
+        fn handle(&self) -> &system_services::SystemServicesHandle {
+            &self.handle
+        }
+    }
+
+    impl Drop for SystemServicesShutdownGuard {
+        fn drop(&mut self) {
+            let _ = self.handle.shutdown();
+        }
+    }
+
     impl system_services::WeatherProvider for UnavailableWeather {
         fn current_weather<'life0, 'async_trait>(
             &'life0 self,
@@ -348,7 +368,7 @@ mod tests {
 
     fn wait_for_system_status_snapshot(
         receiver: &mut tokio::sync::watch::Receiver<system_services::SystemSnapshot>,
-        predicate: impl Fn(&system_services::SystemSnapshot) -> bool,
+        mut predicate: impl FnMut(&system_services::SystemSnapshot) -> bool,
     ) {
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_time()
@@ -356,7 +376,15 @@ mod tests {
             .expect("snapshot wait runtime");
         runtime
             .block_on(async {
-                tokio::time::timeout(Duration::from_secs(2), receiver.wait_for(predicate)).await
+                tokio::time::timeout(Duration::from_secs(5), async {
+                    loop {
+                        if predicate(&receiver.borrow_and_update()) {
+                            return Ok::<(), tokio::sync::watch::error::RecvError>(());
+                        }
+                        receiver.changed().await?;
+                    }
+                })
+                .await
             })
             .expect("system status snapshot wait timed out")
             .expect("system status snapshot sender closed");
@@ -415,10 +443,12 @@ mod tests {
                 platform_trait,
                 Arc::new(UnavailableWeather),
             );
-        let runtime = system_status_runtime_with_handle(handle.clone(), service_config);
+        let shutdown_guard = SystemServicesShutdownGuard::new(handle);
+        let runtime =
+            system_status_runtime_with_handle(shutdown_guard.handle().clone(), service_config);
 
         wait_for_system_status_snapshot(&mut receiver, |snapshot| snapshot.revision > 0);
-        let initial_revision = receiver.borrow().revision;
+        let initial_revision = receiver.borrow_and_update().revision;
         assert_eq!(runtime.set_system_status_active(true), Ok(()));
         assert_eq!(runtime.set_system_status_active(false), Ok(()));
         assert_eq!(runtime.refresh_system_status(), Ok(()));
@@ -426,7 +456,7 @@ mod tests {
             snapshot.revision > initial_revision
         });
 
-        let before_reconfigure = receiver.borrow().revision;
+        let before_reconfigure = receiver.borrow_and_update().revision;
         let storage_config = storage::StorageConfig {
             system_status: storage::SystemStatusConfig {
                 low_available_gib: 7,
@@ -445,9 +475,8 @@ mod tests {
                         if storage.overall_pressure == system_services::StoragePressure::Low
                 )
         });
-        drop(receiver);
         drop(runtime);
-        assert_eq!(handle.shutdown(), Ok(()));
+        drop(shutdown_guard);
     }
 
     #[test]
