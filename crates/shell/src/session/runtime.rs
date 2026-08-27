@@ -1022,7 +1022,6 @@ pub(super) fn run_fullscreen_shell_session<W: Write>(
             reduced_motion_enabled(&state),
         );
         if redraw.is_due(frame_now) {
-            let active_screen = state.active_screen();
             let content_screen = state.content_screen();
             let chrome = state.to_shell_chrome_view_model();
             // Construct only the model that can be rendered this frame. Explorer,
@@ -1117,11 +1116,10 @@ pub(super) fn run_fullscreen_shell_session<W: Write>(
             let system_status = (content_screen == ShellScreen::SystemStatus)
                 .then(|| state.to_system_status_view_model())
                 .flatten();
-            let notification = (content_screen != ShellScreen::CommandLine)
+            let notification = (content_screen != ShellScreen::CommandLine
+                || state.active_screen() == ShellScreen::ExitConfirm)
                 .then(|| state.to_notification_view_model())
                 .flatten();
-            let exit_confirmation = ui::ExitConfirmViewModel::new();
-
             state.refresh_hit_map_with_motion(motion_transitions);
             let terminal_area = Rect::new(0, 0, state.terminal_size().0, state.terminal_size().1);
             let page_area = render_context.page_area(terminal_area);
@@ -1311,14 +1309,9 @@ pub(super) fn run_fullscreen_shell_session<W: Write>(
                     }
                 }
 
-                if notification.is_none() && active_screen == ShellScreen::ExitConfirm {
-                    ui::render_exit_confirmation_with_context(
-                        frame,
-                        area,
-                        &exit_confirmation,
-                        &render_context,
-                    );
-                }
+                // ExitConfirm is only a routing marker. Its notification is the
+                // sole visual so a queued follow-up cannot expose the legacy
+                // confirmation dialog for one frame and flash before returning.
                 if notification.is_none()
                     && let Some(dialog) = time_sync_dialog.as_ref()
                 {
@@ -2489,6 +2482,7 @@ mod runtime_preflight_tests {
         assert!(runtime.contains("state.refresh_hit_map_with_motion(motion_transitions)"));
         assert!(runtime.contains("render_context.page_area(area)"));
         assert!(runtime.contains("sync_shell_toast(&mut shell_toast"));
+        assert!(runtime.contains("|| state.active_screen() == ShellScreen::ExitConfirm"));
         for renderer in [
             "render_setup_with_context",
             "render_login_with_context",
@@ -2502,7 +2496,6 @@ mod runtime_preflight_tests {
             "render_diagnostics_with_context",
             "render_clock_with_context",
             "render_home_with_context",
-            "render_exit_confirmation_with_context",
             "render_time_sync_failure_dialog_with_context",
             "render_notification_overlay_with_context",
         ] {
@@ -2514,6 +2507,7 @@ mod runtime_preflight_tests {
             "ui::render_launcher_with_icons(",
             "ui::render_home_with_icons(",
             "ui::render_notification_overlay(",
+            "ui::render_exit_confirmation_with_context(",
         ] {
             assert!(!runtime.contains(legacy), "legacy runtime call {legacy}");
         }

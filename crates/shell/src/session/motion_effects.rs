@@ -2,7 +2,7 @@ use super::*;
 use crate::session::queries::ShellOverlayCategory;
 use ratatui::{
     buffer::{Buffer, Cell, CellDiffOption},
-    layout::{Position, Rect},
+    layout::{Margin, Position, Rect},
     style::Style,
 };
 use tachyonfx::{
@@ -98,6 +98,7 @@ pub(super) struct ShellMotionEffects {
     outgoing_block_remaining: Duration,
     active_visual_outgoing: Option<ActiveVisualOutgoing>,
     suppress_focus_after_generic_popup: bool,
+    exit_confirmation: bool,
 }
 
 impl ShellMotionEffects {
@@ -127,7 +128,22 @@ impl ShellMotionEffects {
         }
 
         let screen = state.content_screen();
-        if self.screen.is_some_and(|old| old != screen) {
+        let exit_confirmation = state.active_screen() == ShellScreen::ExitConfirm;
+        let exit_confirmation_transition = self.exit_confirmation != exit_confirmation;
+        if exit_confirmation && exit_confirmation_transition {
+            // A unique-effect cancellation still processes the superseded effect
+            // once before removing it. Drop the visual queue outright so the exit
+            // dialog cannot inherit one last page frame and flash underneath.
+            self.manager = EffectManager::default();
+            self.effects_scheduled_since_process = false;
+            self.overlay = None;
+            self.overlay_snapshot = None;
+            self.overlay_underlay_snapshot = None;
+            self.overlay_gate = Duration::ZERO;
+            self.outgoing_block_remaining = Duration::ZERO;
+            self.active_visual_outgoing = None;
+        }
+        if !exit_confirmation && self.screen.is_some_and(|old| old != screen) {
             let area = shell_main_area(page_area);
             if !area.is_empty() {
                 let fx = page_effect(screen, area, theme);
@@ -147,6 +163,8 @@ impl ShellMotionEffects {
             false
         };
         if !suppress_focus
+            && !exit_confirmation
+            && !self.exit_confirmation
             && self.focus.is_some_and(|old| old != focus)
             && let Some(area) = focused_area(state, focus)
         {
@@ -377,7 +395,7 @@ impl ShellMotionEffects {
             }
         }
 
-        if was_reduced && screen == ShellScreen::Settings {
+        if was_reduced && screen == ShellScreen::Settings && !exit_confirmation {
             let area = shell_main_area(page_area);
             if !area.is_empty() {
                 self.schedule(
@@ -581,6 +599,7 @@ impl ShellMotionEffects {
         self.overlay_underlay_snapshot = None;
         self.active_visual_outgoing = None;
         self.suppress_focus_after_generic_popup = false;
+        self.exit_confirmation = false;
     }
 
     fn remember(&mut self, state: &ShellSession, bounds: Rect) {
@@ -588,6 +607,7 @@ impl ShellMotionEffects {
         self.focus = Some(state.focused_component());
         self.overlay = current_overlay(state);
         self.bounds = Some(bounds);
+        self.exit_confirmation = state.active_screen() == ShellScreen::ExitConfirm;
     }
 }
 
@@ -608,15 +628,23 @@ fn overlay_duration(kind: ui::MotionOverlayKind) -> Duration {
 
 fn page_effect(screen: ShellScreen, area: Rect, theme: ui::ThemeTokens) -> Effect {
     if matches!(screen, ShellScreen::Editor | ShellScreen::CommandLine) {
-        return fx::sweep_in(
-            Motion::LeftToRight,
-            6,
-            0,
-            theme.canvas,
-            (PAGE_MS, Interpolation::QuadOut),
-        )
-        .with_area(area)
-        .with_filter(CellFilter::Text);
+        return fx::parallel(&[
+            fx::sweep_in(
+                Motion::LeftToRight,
+                6,
+                0,
+                theme.canvas,
+                (PAGE_MS, Interpolation::QuadOut),
+            )
+            .with_area(area)
+            .with_filter(CellFilter::Text),
+            fx::fade_from_fg(theme.accent_soft, (PAGE_MS, Interpolation::QuadOut))
+                .with_area(area)
+                .with_filter(surface_border_filter())
+                .with_pattern(
+                    DiagonalPattern::top_left_to_bottom_right().with_transition_width(6.0),
+                ),
+        ]);
     }
     fx::parallel(&[
         fx::coalesce_from(
@@ -629,7 +657,7 @@ fn page_effect(screen: ShellScreen, area: Rect, theme: ui::ThemeTokens) -> Effec
         .with_rng(SimpleRng::new(EFFECT_SEED)),
         fx::fade_from_fg(theme.accent_soft, (PAGE_MS, Interpolation::QuadOut))
             .with_area(area)
-            .with_filter(CellFilter::Text)
+            .with_filter(surface_animation_filter())
             .with_pattern(DiagonalPattern::top_left_to_bottom_right().with_transition_width(6.0)),
     ])
 }
@@ -641,22 +669,30 @@ fn overlay_enter_effect(kind: ui::MotionOverlayKind, area: Rect, theme: ui::Them
                 Style::default().fg(theme.accent_soft),
                 (DIALOG_MS, Interpolation::QuadOut),
             )
+            .with_area(area)
             .with_filter(CellFilter::Text)
             .with_pattern(RadialPattern::center().with_transition_width(4.0))
             .with_rng(SimpleRng::new(EFFECT_SEED)),
             fx::fade_from_fg(theme.accent_soft, (DIALOG_MS, Interpolation::QuadOut))
-                .with_filter(CellFilter::Text),
+                .with_area(area)
+                .with_filter(surface_animation_filter()),
         ])
         .with_area(area),
-        ui::MotionOverlayKind::Popover => fx::sweep_in(
-            Motion::UpToDown,
-            4,
-            0,
-            theme.accent_soft,
-            (POPOVER_MS, Interpolation::QuadOut),
-        )
-        .with_area(area)
-        .with_filter(CellFilter::Text),
+        ui::MotionOverlayKind::Popover => fx::parallel(&[
+            fx::sweep_in(
+                Motion::UpToDown,
+                4,
+                0,
+                theme.accent_soft,
+                (POPOVER_MS, Interpolation::QuadOut),
+            )
+            .with_area(area)
+            .with_filter(CellFilter::Text),
+            fx::fade_from_fg(theme.accent_soft, (POPOVER_MS, Interpolation::QuadOut))
+                .with_area(area)
+                .with_filter(surface_border_filter())
+                .with_pattern(SweepPattern::up_to_down(4)),
+        ]),
         ui::MotionOverlayKind::Toast => fx::consume_tick(),
     }
 }
@@ -667,13 +703,24 @@ fn preference_preview_effect(area: Rect, theme: ui::ThemeTokens) -> Effect {
             Style::default().fg(theme.raised),
             (PREVIEW_MS, Interpolation::QuadOut),
         )
+        .with_area(area)
+        .with_filter(CellFilter::Text)
         .with_pattern(RadialPattern::center().with_transition_width(5.0))
         .with_rng(SimpleRng::new(EFFECT_SEED)),
         fx::fade_from_fg(theme.accent_soft, (PREVIEW_MS, Interpolation::QuadOut))
+            .with_area(area)
+            .with_filter(surface_animation_filter())
             .with_pattern(RadialPattern::center().with_transition_width(5.0)),
     ])
     .with_area(area)
-    .with_filter(CellFilter::Text)
+}
+
+fn surface_border_filter() -> CellFilter {
+    CellFilter::Outer(Margin::new(1, 1))
+}
+
+fn surface_animation_filter() -> CellFilter {
+    CellFilter::AnyOf(vec![CellFilter::Text, surface_border_filter()])
 }
 
 fn outgoing_snapshot_effect(
@@ -1065,6 +1112,94 @@ mod tests {
             .map(|p| buffer[p].symbol().to_owned())
             .collect();
         assert_eq!(before, after);
+    }
+
+    #[test]
+    fn page_and_dialog_recipes_animate_their_surface_borders() {
+        fn bordered_buffer(area: Rect, border: ratatui::style::Color) -> Buffer {
+            let mut buffer = Buffer::empty(area);
+            for position in area.positions() {
+                if position.x == area.x
+                    || position.x == area.right().saturating_sub(1)
+                    || position.y == area.y
+                    || position.y == area.bottom().saturating_sub(1)
+                {
+                    buffer[position].set_symbol("─").set_fg(border);
+                }
+            }
+            buffer
+        }
+
+        let area = Rect::new(0, 0, 12, 6);
+        let theme = ui::ThemeTokens::glacier_night();
+        for mut effect in [
+            page_effect(ShellScreen::Home, area, theme),
+            overlay_enter_effect(ui::MotionOverlayKind::Dialog, area, theme),
+        ] {
+            let mut buffer = bordered_buffer(area, theme.border);
+            effect.process(Duration::from_millis(60), &mut buffer, area);
+            assert!(area.positions().any(|position| {
+                let outer = position.x == area.x
+                    || position.x == area.right().saturating_sub(1)
+                    || position.y == area.y
+                    || position.y == area.bottom().saturating_sub(1);
+                outer && buffer[position].fg != theme.border
+            }));
+            assert!(
+                area.positions()
+                    .filter(|position| {
+                        position.x == area.x
+                            || position.x == area.right().saturating_sub(1)
+                            || position.y == area.y
+                            || position.y == area.bottom().saturating_sub(1)
+                    })
+                    .all(|position| buffer[position].symbol() == "─")
+            );
+        }
+    }
+
+    #[test]
+    fn exit_confirmation_preempts_underlying_page_motion() {
+        let full = Rect::new(0, 0, 120, 40);
+        let main = shell_main_area(full);
+        let theme = ui::ThemeTokens::glacier_night();
+        let mut state = ShellSession::new_for_home_mode(
+            ShellLaunchConfig::default(),
+            (120, 40),
+            ShellHomeMode::User,
+        );
+        while state.notification_dismiss_active_modal_without_response() {}
+        state.refresh_hit_map();
+
+        let mut motion = ShellMotionEffects::default();
+        motion.update(&state, full, full, None, theme, false);
+        let mut initial = Buffer::empty(full);
+        motion.process(Duration::ZERO, &mut initial, &state);
+        motion.schedule(
+            MotionEffectId::Page,
+            page_effect(ShellScreen::Home, main, theme),
+        );
+        motion.process(Duration::ZERO, &mut initial, &state);
+
+        state.apply_input_with_platform(
+            InputEvent::from_key_label("q"),
+            &platform::mock::UnsupportedPlatform,
+        );
+        assert_eq!(state.active_screen(), ShellScreen::ExitConfirm);
+        motion.update(&state, full, full, None, theme, false);
+        assert_eq!(motion.overlay_gate, Duration::from_millis(90));
+
+        let corner = Position::new(main.x, main.y);
+        let exit_area = overlay_area(&state).expect("exit confirmation area");
+        assert!(!exit_area.contains(corner), "{exit_area:?}");
+        let mut exit_frame = Buffer::empty(full);
+        exit_frame[corner].set_symbol("┌").set_fg(theme.border);
+        motion.process(Duration::ZERO, &mut exit_frame, &state);
+        motion.process(Duration::from_millis(60), &mut exit_frame, &state);
+
+        assert_eq!(exit_frame[corner].symbol(), "┌");
+        assert_eq!(exit_frame[corner].fg, theme.border);
+        assert!(motion.exit_confirmation);
     }
 
     #[test]
