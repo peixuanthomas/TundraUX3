@@ -114,6 +114,7 @@ impl ShellMotionEffects {
             if !self.reduced || self.manager.is_running() {
                 self.clear();
             }
+            self.completed_exit = None;
             self.reduced = true;
             self.remember(state, full_area);
             return;
@@ -1126,6 +1127,133 @@ mod tests {
         assert_eq!(motion.overlay_gate, Duration::ZERO);
         assert!(motion.take_deferred_close(&state).is_some());
         assert!(motion.take_deferred_close(&state).is_none());
+    }
+
+    #[test]
+    fn reduced_cleanup_invalidates_completed_exit_before_same_id_reopens() {
+        fn theme_picker() -> SettingsPickerState {
+            SettingsPickerState {
+                kind: ui::SettingsPickerKind::Theme,
+                query: String::new(),
+                selected_index: 0,
+                window_start: 0,
+                image_icons_supported: false,
+            }
+        }
+
+        let full = Rect::new(0, 0, 120, 40);
+        let theme = ui::ThemeTokens::glacier_night();
+        let mut state = ShellSession::new_for_home_mode(
+            ShellLaunchConfig::default(),
+            (120, 40),
+            ShellHomeMode::User,
+        );
+        while state.notification_dismiss_active_modal_without_response() {}
+        state.screen_stack = vec![ShellScreen::Settings];
+        state.settings_state = Some(SettingsState {
+            category: ui::SettingsCategory::Appearance,
+            selected_field: ui::SettingsField::Theme,
+            status: String::new(),
+            scroll_offset: 0,
+            picker: None,
+            color_editor: None,
+            weather_location_editor: None,
+            file_extensions_editor: None,
+            time_sync_server_editor: None,
+            time_sync_validation_request_id: None,
+        });
+        state.refresh_hit_map();
+        let mut motion = ShellMotionEffects::default();
+        motion.update(&state, full, full, None, theme, false);
+        let mut buffer = Buffer::filled(full, Cell::new("N"));
+        motion.process(Duration::ZERO, &mut buffer, &state);
+
+        state.settings_state.as_mut().unwrap().picker = Some(theme_picker());
+        state.refresh_hit_map();
+        motion.update(&state, full, full, None, theme, false);
+        let snapshot_area = Rect::new(20, 8, 30, 10);
+        motion.overlay_snapshot = Some(CellSnapshot {
+            area: snapshot_area,
+            cells: snapshot_area
+                .positions()
+                .map(|position| (position, Cell::new("P")))
+                .collect(),
+        });
+        motion.overlay_underlay_snapshot = Some(FrozenUnderlaySnapshot {
+            screen: state.content_screen(),
+            bounds: full,
+            snapshot: CellSnapshot {
+                area: snapshot_area,
+                cells: snapshot_area
+                    .positions()
+                    .map(|position| (position, Cell::new("N")))
+                    .collect(),
+            },
+        });
+        assert!(motion.overlay_snapshot.is_some());
+        assert!(motion.overlay_underlay_snapshot.is_some());
+        let original = current_overlay(&state).expect("theme picker");
+        let routed = state.route_input_at(InputEvent::from_key_label("Esc"), Instant::now());
+        assert_eq!(
+            motion.intercept_input(&routed),
+            MotionInputDisposition::Defer
+        );
+
+        motion.update(&state, full, full, None, theme, true);
+        let deferred = motion
+            .take_deferred_close(&state)
+            .expect("Reduced makes close flushable");
+        state.apply_routed_event(
+            deferred,
+            &platform::mock::UnsupportedPlatform,
+            Instant::now(),
+        );
+        assert!(motion.take_deferred_close(&state).is_none());
+        assert_eq!(motion.completed_exit.as_ref(), Some(&original));
+        motion.update(&state, full, full, None, theme, true);
+        assert!(motion.completed_exit.is_none());
+        assert!(!motion.manager.is_running());
+        assert_eq!(motion.overlay_gate, Duration::ZERO);
+
+        motion.update(&state, full, full, None, theme, false);
+        buffer = Buffer::filled(full, Cell::new("N"));
+        motion.process(Duration::ZERO, &mut buffer, &state);
+        state.settings_state.as_mut().unwrap().picker = Some(theme_picker());
+        state.refresh_hit_map();
+        motion.update(&state, full, full, None, theme, false);
+        assert_eq!(current_overlay(&state).as_ref(), Some(&original));
+        motion.overlay_snapshot = Some(CellSnapshot {
+            area: snapshot_area,
+            cells: snapshot_area
+                .positions()
+                .map(|position| (position, Cell::new("P")))
+                .collect(),
+        });
+        motion.overlay_underlay_snapshot = Some(FrozenUnderlaySnapshot {
+            screen: state.content_screen(),
+            bounds: full,
+            snapshot: CellSnapshot {
+                area: snapshot_area,
+                cells: snapshot_area
+                    .positions()
+                    .map(|position| (position, Cell::new("N")))
+                    .collect(),
+            },
+        });
+
+        state.settings_state.as_mut().unwrap().picker = None;
+        state.refresh_hit_map();
+        motion.update(&state, full, full, None, theme, false);
+        assert!(motion.completed_exit.is_none());
+        assert!(motion.manager.is_running());
+        assert_eq!(
+            motion.outgoing_block_remaining,
+            Duration::from_millis(POPOVER_MS.into())
+        );
+        assert_eq!(
+            motion.overlay_gate,
+            Duration::from_millis(POPOVER_MS.into())
+        );
     }
 
     #[test]
