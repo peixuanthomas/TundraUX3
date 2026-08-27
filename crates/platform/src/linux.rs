@@ -785,6 +785,7 @@ fn local_volumes() -> Result<Vec<LocalVolume>, PlatformError> {
         let capacity = statvfs_bytes(&mount.mount_point);
         let capacity_available = capacity.is_ok();
         let (total_bytes, available_bytes) = capacity.unwrap_or((None, None));
+        let is_system = mount.mount_point == Path::new("/");
         result.push(LocalVolume {
             label: mount
                 .mount_point
@@ -795,7 +796,7 @@ fn local_volumes() -> Result<Vec<LocalVolume>, PlatformError> {
             root: mount.mount_point,
             total_bytes,
             available_bytes,
-            is_system: mount.mount_point == Path::new("/"),
+            is_system,
             access: if mount.read_only {
                 VolumeAccess::ReadOnly
             } else if capacity_available {
