@@ -305,6 +305,7 @@ pub struct SettingsLayout {
     pub category_cards: Vec<SettingsCategoryLayout>,
     pub fields: Vec<SettingsFieldLayout>,
     pub picker_options: Vec<SettingsPickerOptionLayout>,
+    pub picker_dialog: Option<Rect>,
     pub color_editor: Option<Rect>,
     pub weather_location_editor: Option<Rect>,
     pub file_extensions_editor: Option<Rect>,
@@ -393,8 +394,10 @@ pub fn settings_layout(area: Rect, model: &SettingsViewModel) -> SettingsLayout 
     }
 
     let mut picker_options = Vec::new();
+    let mut picker_dialog = None;
     if let Some(picker) = &model.picker {
         let dialog = centered(area, area.width.min(78), area.height.min(24));
+        picker_dialog = Some(dialog);
         let list = picker_list_area(dialog, picker.kind == SettingsPickerKind::Timezone);
         let visible_rows = usize::from(list.height);
         let start = picker.window_start.min(picker.options.len());
@@ -415,6 +418,7 @@ pub fn settings_layout(area: Rect, model: &SettingsViewModel) -> SettingsLayout 
         category_cards,
         fields,
         picker_options,
+        picker_dialog,
         color_editor: model
             .color_editor
             .as_ref()

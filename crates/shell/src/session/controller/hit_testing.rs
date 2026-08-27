@@ -1,4 +1,5 @@
 use super::super::*;
+use crate::session::queries::{ShellOverlayCategory, ShellOverlayDescriptor};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(in crate::session) enum DragDirection {
     Up,
@@ -34,6 +35,11 @@ pub(in crate::session) fn build_shell_hit_map(
     clock_model: Option<&ui::ClockViewModel>,
     explorer_model: Option<&ui::ExplorerViewModel>,
     diagnostics_model: Option<&ui::DiagnosticsViewModel>,
+    launcher_model: Option<&ui::LauncherViewModel>,
+    editor_model: Option<&ui::EditorViewModel>,
+    settings_model: Option<&ui::SettingsViewModel>,
+    user_management_model: Option<&ui::UserManagementViewModel>,
+    overlay_descriptor: Option<&ShellOverlayDescriptor>,
     motion: ui::MotionTransitions,
     overlay_blocks_interaction: bool,
     generic_context_popup_visible: bool,
@@ -319,6 +325,68 @@ pub(in crate::session) fn build_shell_hit_map(
             area: layout.dialog,
             layer: ShellHitLayer::ShellModal,
         });
+    }
+
+    let active_component = overlay_descriptor.and_then(ShellOverlayDescriptor::component);
+    regions.retain(|region| {
+        !matches!(
+            region.layer,
+            ShellHitLayer::AppOverlay | ShellHitLayer::ShellModal
+        ) || Some(region.component) == active_component
+    });
+
+    if let Some(descriptor) = overlay_descriptor
+        && descriptor.category != ShellOverlayCategory::ShellModal
+        && let Some(component) = descriptor.component()
+        && let ui::ShellLayout::Full { main, .. } = ui::compute_shell_layout(area)
+    {
+        let surface = match content_screen {
+            ShellScreen::Explorer => explorer_model.and_then(|model| {
+                ui::explorer_layout(main, model)
+                    .overlay
+                    .map(|layout| layout.area)
+            }),
+            ShellScreen::Launcher => launcher_model.and_then(|model| {
+                ui::launcher_layout(main, model)
+                    .confirmation
+                    .map(|layout| layout.area)
+            }),
+            ShellScreen::Editor => editor_model.and_then(|model| {
+                let layout = ui::editor_layout(main, model);
+                match descriptor.kind {
+                    ui::MotionOverlayKind::Popover => layout.menu_popup.or(layout.quick_menu_popup),
+                    ui::MotionOverlayKind::Dialog => {
+                        layout.settings.map(|settings| settings.dialog)
+                    }
+                    ui::MotionOverlayKind::Toast => None,
+                }
+            }),
+            ShellScreen::Settings => settings_model.and_then(|model| {
+                let layout = ui::settings_layout(main, model);
+                layout
+                    .picker_dialog
+                    .or(layout.color_editor)
+                    .or(layout.weather_location_editor)
+                    .or(layout.file_extensions_editor)
+                    .or(layout.time_sync_server_editor)
+            }),
+            ShellScreen::UserManagement => user_management_model.and_then(|model| {
+                ui::user_management_layout(main, model)
+                    .form
+                    .map(|form| form.dialog)
+            }),
+            _ => None,
+        };
+        if let Some(surface) = surface.filter(|surface| !surface.is_empty()) {
+            regions.push(ShellHitRegion {
+                component,
+                area: surface,
+                layer: match descriptor.category {
+                    ShellOverlayCategory::ShellModal => ShellHitLayer::ShellModal,
+                    _ => ShellHitLayer::AppOverlay,
+                },
+            });
+        }
     }
 
     ShellHitMap::new(terminal_size, generation, regions)

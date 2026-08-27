@@ -1472,13 +1472,15 @@ fn newly_tracked_overlay_groups_share_keyboard_mouse_focus_and_readiness_gating(
             ShellCommand::Noop
         );
         assert_eq!(state.focus_order(), vec![owner]);
-        assert!(
-            state
-                .hit_map()
-                .regions()
-                .iter()
-                .all(|region| region.layer != ShellHitLayer::AppOverlay)
-        );
+        let has_surface =
+            state.hit_map().regions().iter().any(|region| {
+                region.layer == ShellHitLayer::AppOverlay && region.component == owner
+            });
+        if owner == ShellComponent::Editor {
+            assert!(!has_surface, "unrendered Editor menu has no layout surface");
+        } else {
+            assert!(has_surface, "missing overlay surface for {owner:?}");
+        }
         assert_eq!(
             state
                 .route_input_at(
@@ -1511,6 +1513,41 @@ fn newly_tracked_overlay_groups_share_keyboard_mouse_focus_and_readiness_gating(
             "Reduced/inactive motion settles ready"
         );
     }
+}
+
+#[test]
+fn rendered_editor_menu_hit_surface_matches_editor_layout() {
+    let mut state = ShellSession::new_for_home_mode(
+        ShellLaunchConfig::default(),
+        (120, 40),
+        ShellHomeMode::User,
+    );
+    state.app.dispatch_at(
+        app::AppCommand::SetEditorState(Some(EditorState::untitled(
+            app::editor::DocumentKind::PlainText,
+        ))),
+        Instant::now(),
+    );
+    state.screen_stack = vec![ShellScreen::Editor];
+    state.editor_open_menu = Some(ui::EditorMenu::File);
+    state.refresh_hit_map();
+    let ui::ShellLayout::Full { main, .. } = ui::compute_shell_layout(Rect::new(0, 0, 120, 40))
+    else {
+        panic!("full layout");
+    };
+    let expected = ui::editor_layout(main, &state.to_editor_view_model())
+        .menu_popup
+        .expect("rendered menu popup");
+    let surfaces = state
+        .hit_map()
+        .regions()
+        .iter()
+        .filter(|region| {
+            region.layer == ShellHitLayer::AppOverlay && region.component == ShellComponent::Editor
+        })
+        .map(|region| region.area)
+        .collect::<Vec<_>>();
+    assert_eq!(surfaces, vec![expected]);
 }
 
 #[test]
