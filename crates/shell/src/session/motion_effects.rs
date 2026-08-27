@@ -151,6 +151,20 @@ impl ShellMotionEffects {
                 self.completed_exit = None;
                 self.overlay_underlay_snapshot = None;
                 self.outgoing_block_remaining = Duration::ZERO;
+                if let Some(new) = overlay
+                    .as_ref()
+                    .filter(|new| !new.immediate && new.kind != ui::MotionOverlayKind::Toast)
+                    && let Some(area) = overlay_area(state)
+                    && let Some(underlay) =
+                        self.freeze_underlay(state.content_screen(), full_area, area)
+                {
+                    self.overlay_underlay_snapshot = Some(underlay);
+                    self.schedule(
+                        MotionEffectId::Overlay,
+                        overlay_enter_effect(new.kind, area, theme),
+                    );
+                    self.overlay_gate = overlay_duration(new.kind) / 2;
+                }
             } else if critical {
                 self.manager.cancel_unique_effect(MotionEffectId::Overlay);
                 self.overlay_snapshot = None;
@@ -1099,6 +1113,60 @@ mod tests {
             motion.intercept_input(&pointer),
             MotionInputDisposition::Apply
         );
+    }
+
+    #[test]
+    fn completed_notification_exit_schedules_promoted_notification_enter() {
+        let full = Rect::new(0, 0, 120, 40);
+        let theme = ui::ThemeTokens::glacier_night();
+        let mut state = ShellSession::new(ShellLaunchConfig::default(), (120, 40));
+        while state.notification_dismiss_active_modal_without_response() {}
+        state.refresh_hit_map();
+        let mut motion = ShellMotionEffects::default();
+        motion.update(&state, full, full, None, theme, false);
+        let mut natural = Buffer::filled(full, Cell::new("N"));
+        motion.process(Duration::ZERO, &mut natural, &state);
+
+        state.notify_modal("A", "First", ui::NotificationTone::Info, Vec::new());
+        state.notify_modal("B", "Second", ui::NotificationTone::Info, Vec::new());
+        state.refresh_hit_map();
+        motion.update(&state, full, full, None, theme, false);
+        let first = current_overlay(&state).expect("first notification");
+        let mut first_frame = Buffer::filled(full, Cell::new("A"));
+        motion.process(Duration::ZERO, &mut first_frame, &state);
+        let cancel = state
+            .clone()
+            .route_input_at(InputEvent::from_key_label("Esc"), Instant::now());
+        assert_eq!(
+            motion.intercept_input(&cancel),
+            MotionInputDisposition::Defer
+        );
+        motion.process(Duration::from_millis(180), &mut first_frame, &state);
+        motion.process(Duration::from_millis(180), &mut first_frame, &state);
+        let routed = motion
+            .take_deferred_close(&state)
+            .expect("completed cancel");
+        state.apply_routed_event(routed, platform::native_platform().as_ref(), Instant::now());
+        state.refresh_hit_map();
+        let second = current_overlay(&state).expect("promoted notification");
+        assert_ne!(second, first);
+
+        motion.update(&state, full, full, None, theme, false);
+        assert!(motion.manager.is_running());
+        assert_eq!(motion.overlay_gate, Duration::from_millis(90));
+        assert!(motion.completed_exit.is_none());
+        let activate = state
+            .clone()
+            .route_input_at(InputEvent::from_key_label("Enter"), Instant::now());
+        assert_eq!(
+            motion.intercept_input(&activate),
+            MotionInputDisposition::Block
+        );
+        let mut second_frame = Buffer::filled(full, Cell::new("B"));
+        motion.process(Duration::from_secs(1), &mut second_frame, &state);
+        assert!(motion.manager.is_running());
+        assert_eq!(motion.overlay_gate, Duration::from_millis(90));
+        assert!(motion.take_deferred_close(&state).is_none());
     }
 
     #[test]

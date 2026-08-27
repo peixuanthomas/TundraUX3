@@ -1235,6 +1235,105 @@ fn overlay_resolver_categories_share_readiness_input_focus_and_hit_regions() {
 }
 
 #[test]
+fn setup_clock_and_diagnostics_publish_exact_overlay_surfaces_while_gated() {
+    let gated = ui::MotionTransitions {
+        overlay: Some(ui::MotionTransition {
+            kind: ui::MotionTransitionKind::Dialog,
+            direction: ui::MotionDirection::Entering,
+            progress: 100,
+            phase_progress: 100,
+            active: true,
+            next_redraw_in: Duration::from_millis(16),
+        }),
+        ..ui::MotionTransitions::default()
+    };
+    let mut state = ShellSession::new_for_home_mode(
+        ShellLaunchConfig::default(),
+        (120, 40),
+        ShellHomeMode::User,
+    );
+    let terminal = Rect::new(0, 0, 120, 40);
+    let ui::ShellLayout::Full { main, .. } = ui::compute_shell_layout(terminal) else {
+        panic!("expected full layout");
+    };
+
+    state.screen_stack = vec![ShellScreen::FirstRunSetup];
+    state.setup_custom_color_target = Some(ui::SetupCustomColorTarget::Theme);
+    let setup_area = ui::setup_custom_color_dialog_area(main);
+    for motion in [ui::MotionTransitions::default(), gated] {
+        state.refresh_hit_map_with_motion(motion);
+        assert_eq!(
+            overlay_areas_for(&state, ShellComponent::SetupCustomColorDialog),
+            vec![setup_area]
+        );
+    }
+
+    state.setup_custom_color_target = None;
+    state.screen_stack = vec![ShellScreen::Clock];
+    state.clock_create_state = Some(ClockCreateState::default());
+    let clock_model = state.to_clock_view_model();
+    let clock_layout = ui::clock_page_layout(main, &clock_model)
+        .create_dialog
+        .expect("create dialog");
+    state.refresh_hit_map();
+    assert!(
+        overlay_areas_for(&state, ShellComponent::ClockCreateInput).contains(&clock_layout.dialog)
+    );
+    assert!(
+        state
+            .focus_order()
+            .contains(&ShellComponent::ClockCreateInput)
+    );
+    assert_eq!(
+        state.route_key_input(&KeyInput::from_label("Tab")).1,
+        ShellCommand::ClockCreateFocusNext
+    );
+    state.refresh_hit_map_with_motion(gated);
+    assert!(
+        overlay_areas_for(&state, ShellComponent::ClockCreateInput).contains(&clock_layout.dialog)
+    );
+    assert!(
+        !state
+            .focus_order()
+            .contains(&ShellComponent::ClockCreateInput)
+    );
+
+    state.clock_create_state = None;
+    state.screen_stack = vec![ShellScreen::Diagnostics];
+    state.diagnostics_repair_preview =
+        vec![app::diagnostics::DiagnosticsRepairAction::CreateDirectory {
+            label: "Data".into(),
+            path: std::path::PathBuf::from("/private/example/data"),
+        }];
+    let diagnostics_model = state.to_diagnostics_view_model();
+    let diagnostics_area = ui::diagnostics_layout(main, &diagnostics_model)
+        .repair_dialog
+        .expect("repair dialog")
+        .dialog;
+    for motion in [ui::MotionTransitions::default(), gated] {
+        state.refresh_hit_map_with_motion(motion);
+        assert_eq!(
+            overlay_areas_for(&state, ShellComponent::DiagnosticsRepairDialog),
+            vec![diagnostics_area]
+        );
+    }
+
+    state.screen_stack = vec![ShellScreen::SystemStatus];
+    let system_dialog = state
+        .to_diagnostics_view_model()
+        .repair_dialog
+        .expect("system-status repair dialog");
+    let system_area = ui::diagnostics_repair_dialog_layout(main, &system_dialog).dialog;
+    for motion in [ui::MotionTransitions::default(), gated] {
+        state.refresh_hit_map_with_motion(motion);
+        assert_eq!(
+            overlay_areas_for(&state, ShellComponent::DiagnosticsRepairDialog),
+            vec![system_area]
+        );
+    }
+}
+
+#[test]
 fn rendered_overlay_resolver_ids_are_variant_stable_and_precedence_is_preserved() {
     let mut launcher = ShellSession::new_for_home_mode(
         ShellLaunchConfig::default(),
@@ -2002,12 +2101,15 @@ fn explorer_dialogs_share_central_keyboard_mouse_focus_and_hit_map_gating() {
             ShellCommand::Noop
         );
         assert_eq!(state.focus_order(), vec![ShellComponent::Explorer]);
-        assert!(
+        assert_eq!(
             state
                 .hit_map()
                 .regions()
                 .iter()
-                .all(|region| region.layer != ShellHitLayer::AppOverlay)
+                .filter(|region| region.layer == ShellHitLayer::AppOverlay)
+                .map(|region| region.area)
+                .collect::<Vec<_>>(),
+            vec![explorer_overlay_surface(&state)]
         );
         assert_eq!(
             state
@@ -2123,12 +2225,15 @@ fn explorer_semantic_replacements_gate_input_while_active_popup_is_present() {
             ShellCommand::Noop
         );
         assert_eq!(state.focus_order(), vec![ShellComponent::Explorer]);
-        assert!(
+        assert_eq!(
             state
                 .hit_map()
                 .regions()
                 .iter()
-                .all(|region| region.layer != ShellHitLayer::AppOverlay)
+                .filter(|region| region.layer == ShellHitLayer::AppOverlay)
+                .map(|region| region.area)
+                .collect::<Vec<_>>(),
+            vec![explorer_overlay_surface(&state)]
         );
         assert_eq!(
             state
@@ -3550,6 +3655,33 @@ fn explorer_routing_test_state() -> ShellSession {
     state.replace_explorer_state(Some(ExplorerState::new(".", false)));
     state.refresh_hit_map();
     state
+}
+
+fn explorer_overlay_surface(state: &ShellSession) -> Rect {
+    let terminal = Rect::new(0, 0, state.terminal_size.0, state.terminal_size.1);
+    let ui::ShellLayout::Full { main, .. } = ui::compute_shell_layout(terminal) else {
+        panic!("expected full shell layout");
+    };
+    ui::explorer_layout(main, &state.to_explorer_view_model())
+        .overlay
+        .expect("active Explorer overlay layout")
+        .area
+}
+
+fn overlay_areas_for(state: &ShellSession, component: ShellComponent) -> Vec<Rect> {
+    state
+        .hit_map()
+        .regions()
+        .iter()
+        .filter(|region| {
+            region.component == component
+                && matches!(
+                    region.layer,
+                    ShellHitLayer::AppOverlay | ShellHitLayer::ShellModal
+                )
+        })
+        .map(|region| region.area)
+        .collect()
 }
 
 fn hit_region_center(state: &ShellSession, component: ShellComponent) -> CellPosition {

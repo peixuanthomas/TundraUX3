@@ -341,6 +341,20 @@ pub(in crate::session) fn build_shell_hit_map(
         && let ui::ShellLayout::Full { main, .. } = ui::compute_shell_layout(area)
     {
         let surface = match content_screen {
+            ShellScreen::FirstRunSetup => Some(ui::setup_custom_color_dialog_area(main)),
+            ShellScreen::Clock => clock_model.and_then(|model| {
+                ui::clock_page_layout(main, model)
+                    .create_dialog
+                    .map(|dialog| dialog.dialog)
+            }),
+            ShellScreen::Diagnostics => diagnostics_model.and_then(|model| {
+                ui::diagnostics_layout(main, model)
+                    .repair_dialog
+                    .map(|dialog| dialog.dialog)
+            }),
+            ShellScreen::SystemStatus => diagnostics_model
+                .and_then(|model| model.repair_dialog.as_ref())
+                .map(|dialog| ui::diagnostics_repair_dialog_layout(main, dialog).dialog),
             ShellScreen::Explorer => explorer_model.and_then(|model| {
                 ui::explorer_layout(main, model)
                     .overlay
@@ -377,14 +391,19 @@ pub(in crate::session) fn build_shell_hit_map(
             }),
             _ => None,
         };
-        if let Some(surface) = surface.filter(|surface| !surface.is_empty()) {
+        let layer = match descriptor.category {
+            ShellOverlayCategory::ShellModal => ShellHitLayer::ShellModal,
+            _ => ShellHitLayer::AppOverlay,
+        };
+        if let Some(surface) = surface.filter(|surface| !surface.is_empty())
+            && !regions.iter().any(|region| {
+                region.component == component && region.area == surface && region.layer == layer
+            })
+        {
             regions.push(ShellHitRegion {
                 component,
                 area: surface,
-                layer: match descriptor.category {
-                    ShellOverlayCategory::ShellModal => ShellHitLayer::ShellModal,
-                    _ => ShellHitLayer::AppOverlay,
-                },
+                layer,
             });
         }
     }
