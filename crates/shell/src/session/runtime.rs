@@ -1362,6 +1362,15 @@ pub(super) fn run_fullscreen_shell_session<W: Write>(
             break;
         }
 
+        // An exit effect can finish on the frame just drawn. Apply its already-routed
+        // action before deriving any blocking poll deadline, then immediately render the
+        // resulting natural state on the next loop iteration.
+        if let Some(routed) = motion_effects.take_deferred_close(&state) {
+            state.apply_routed_event(routed, platform.as_ref(), Instant::now());
+            redraw.request_redraw();
+            continue;
+        }
+
         let poll_now = Instant::now();
         // The system-status watch receiver is intentionally polled even while
         // the user is idle, so snapshots reach AppState within the 250 ms
@@ -1392,10 +1401,6 @@ pub(super) fn run_fullscreen_shell_session<W: Write>(
             command_line_timeout_is_state && state_poll_timeout <= redraw_timeout;
         let mut action = None;
         let mut terminal_event_received = false;
-        if let Some(input) = motion_effects.take_deferred_close() {
-            action = Some(state.apply_input_with_platform(input, platform.as_ref()));
-            redraw.request_redraw();
-        }
         if event::poll(poll_timeout)? {
             terminal_event_received = true;
             let terminal_events = read_ready_terminal_event_batch(event::read()?)?;
@@ -1407,7 +1412,8 @@ pub(super) fn run_fullscreen_shell_session<W: Write>(
                     terminal_size_error = Some(io::Error::other(error));
                     break;
                 }
-                if matches!(&terminal_event, event::Event::Resize(_, _)) {
+                let boundary_changed = matches!(&terminal_event, event::Event::Resize(_, _));
+                if boundary_changed {
                     motion_effects.cancel_for_bounds_change();
                 }
                 let input = crossterm_event_to_input(terminal_event);
@@ -1429,15 +1435,10 @@ pub(super) fn run_fullscreen_shell_session<W: Write>(
                     }
                     action = Some(ShellAction::Redraw);
                 } else {
-                    // Route against a clone solely to classify semantic cancellation before
-                    // mutation; the real state still goes through the complete input preamble.
-                    let semantic_cancel = motion_effects.has_interactive_overlay()
-                        && state
-                            .clone()
-                            .route_input_at(input.clone(), Instant::now())
-                            .command
-                            .is_overlay_cancel_or_close();
-                    match motion_effects.intercept_input(&input, semantic_cancel) {
+                    // Bind semantic command/target before deferral. Immediate inputs still
+                    // traverse the real state's complete input preamble.
+                    let routed = state.clone().route_input_at(input.clone(), Instant::now());
+                    match motion_effects.intercept_input(&routed) {
                         MotionInputDisposition::Apply => {
                             action =
                                 Some(state.apply_input_with_platform(input, platform.as_ref()));
@@ -1454,6 +1455,19 @@ pub(super) fn run_fullscreen_shell_session<W: Write>(
                     identity_before_input,
                     Instant::now(),
                 );
+                synchronize_motion_effects_after_input(
+                    &state,
+                    &mut motion_effects,
+                    &theme,
+                    terminal_graphics_probe,
+                );
+                if boundary_changed && let Some(routed) = motion_effects.take_deferred_close(&state)
+                {
+                    action =
+                        Some(state.apply_routed_event(routed, platform.as_ref(), Instant::now()));
+                    redraw.request_redraw();
+                    break;
+                }
                 if action.is_some_and(|action| action != ShellAction::Redraw) {
                     break;
                 }
@@ -1616,6 +1630,29 @@ fn synchronize_motion_hit_map_after_input(
     }
     redraw.observe(now, identity_after_input, reduced_motion_enabled(state));
     state.refresh_hit_map_with_motion(redraw.transitions(now));
+}
+
+fn synchronize_motion_effects_after_input(
+    state: &ShellSession,
+    motion_effects: &mut ShellMotionEffects,
+    theme: &ui::TundraTheme,
+    terminal_graphics_probe: &ui::TerminalGraphicsProbe,
+) {
+    let terminal_area = Rect::new(0, 0, state.terminal_size().0, state.terminal_size().1);
+    let capabilities = shell_render_capabilities(terminal_graphics_probe);
+    let tokens = theme.tokens().for_capability(capabilities.color);
+    let status_area = match ui::compute_shell_layout(terminal_area) {
+        ui::ShellLayout::Full { status, .. } => Some(status),
+        ui::ShellLayout::Compact(_) => None,
+    };
+    motion_effects.update(
+        state,
+        terminal_area,
+        terminal_area,
+        status_area,
+        tokens,
+        reduced_motion_enabled(state),
+    );
 }
 
 fn session_render_state_changed(before: &ShellSession, after: &ShellSession) -> bool {

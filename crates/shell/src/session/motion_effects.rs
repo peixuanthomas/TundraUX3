@@ -40,6 +40,12 @@ struct CellSnapshot {
     cells: Vec<(Position, Cell)>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct DeferredClose {
+    routed: RoutedEvent,
+    overlay: OverlayIdentity,
+}
+
 /// Post-widget Glacier Flow orchestration. It deliberately owns no layout: every area is
 /// supplied by the ordinary shell layout/hit map, keeping visual motion out of routing.
 #[derive(Debug, Default)]
@@ -52,7 +58,7 @@ pub(super) struct ShellMotionEffects {
     bounds: Option<Rect>,
     reduced: bool,
     overlay_gate: Duration,
-    deferred_close: Option<InputEvent>,
+    deferred_close: Option<DeferredClose>,
     exiting: bool,
     theme: Option<ui::ThemeTokens>,
 }
@@ -113,25 +119,41 @@ impl ShellMotionEffects {
                     let outgoing = self
                         .overlay_snapshot
                         .take()
-                        .map(|snapshot| outgoing_snapshot_effect(snapshot, old.kind))
-                        .unwrap_or_else(fx::consume_tick);
-                    let incoming = overlay_area(state)
-                        .map(|area| overlay_enter_effect(new.kind, area, theme))
-                        .unwrap_or_else(fx::consume_tick);
-                    self.manager.add_unique_effect(
-                        MotionEffectId::Overlay,
-                        fx::sequence(&[outgoing, incoming]),
-                    );
-                    self.overlay_gate = overlay_duration(old.kind) + overlay_duration(new.kind) / 2;
+                        .map(|snapshot| outgoing_snapshot_effect(snapshot, old.kind));
+                    let incoming =
+                        overlay_area(state).map(|area| overlay_enter_effect(new.kind, area, theme));
+                    self.overlay_gate = Duration::ZERO;
+                    match (outgoing, incoming) {
+                        (Some(outgoing), Some(incoming)) => {
+                            self.manager.add_unique_effect(
+                                MotionEffectId::Overlay,
+                                fx::sequence(&[outgoing, incoming]),
+                            );
+                            self.overlay_gate =
+                                overlay_duration(old.kind) + overlay_duration(new.kind) / 2;
+                        }
+                        (Some(effect), None) => {
+                            self.manager
+                                .add_unique_effect(MotionEffectId::Overlay, effect);
+                            self.overlay_gate = overlay_duration(old.kind);
+                        }
+                        (None, Some(effect)) => {
+                            self.manager
+                                .add_unique_effect(MotionEffectId::Overlay, effect);
+                            self.overlay_gate = overlay_duration(new.kind) / 2;
+                        }
+                        (None, None) => {}
+                    }
                 }
                 (Some(old), _) if old.kind != ui::MotionOverlayKind::Toast => {
+                    self.overlay_gate = Duration::ZERO;
                     if let Some(snapshot) = self.overlay_snapshot.take() {
                         self.manager.add_unique_effect(
                             MotionEffectId::Overlay,
                             outgoing_snapshot_effect(snapshot, old.kind),
                         );
+                        self.overlay_gate = overlay_duration(old.kind);
                     }
-                    self.overlay_gate = overlay_duration(old.kind);
                 }
                 (_, Some(new)) if new.kind != ui::MotionOverlayKind::Toast => {
                     if let Some(area) = overlay_area(state) {
@@ -209,59 +231,64 @@ impl ShellMotionEffects {
         !self.reduced && self.manager.is_running()
     }
 
-    pub(super) fn has_interactive_overlay(&self) -> bool {
-        self.overlay
-            .as_ref()
-            .is_some_and(|overlay| overlay.kind != ui::MotionOverlayKind::Toast)
-    }
-
     pub(super) fn cancel_for_bounds_change(&mut self) {
         self.clear();
     }
 
     // Escape is the one cancellation path identifiable before controller mutation at
     // this boundary. Other close buttons use the localized post-action snapshot path.
-    pub(super) fn intercept_input(
-        &mut self,
-        input: &InputEvent,
-        semantic_cancel: bool,
-    ) -> MotionInputDisposition {
+    pub(super) fn intercept_input(&mut self, routed: &RoutedEvent) -> MotionInputDisposition {
+        let input = &routed.input;
         if self.reduced || matches!(input, InputEvent::Tick | InputEvent::Shutdown) {
+            return MotionInputDisposition::Apply;
+        }
+        if matches!(
+            input,
+            InputEvent::Resize { .. } | InputEvent::FocusGained | InputEvent::FocusLost
+        ) {
             return MotionInputDisposition::Apply;
         }
         if self.exiting {
             return MotionInputDisposition::Block;
         }
         let escape = matches!(input, InputEvent::Key(key) if key.label() == "Esc");
-        if (escape || semantic_cancel)
+        if self.overlay_gate > Duration::ZERO
+            && !escape
+            && (input.is_keyboard() || input.is_mouse())
+        {
+            return MotionInputDisposition::Block;
+        }
+        if (escape || routed.command.is_overlay_cancel_or_close())
             && let Some(overlay) = self.overlay.as_ref()
             && overlay.kind != ui::MotionOverlayKind::Toast
         {
-            self.deferred_close = Some(input.clone());
+            let Some(snapshot) = self.overlay_snapshot.as_ref() else {
+                return MotionInputDisposition::Apply;
+            };
+            let Some(theme) = self.theme else {
+                return MotionInputDisposition::Apply;
+            };
+            self.deferred_close = Some(DeferredClose {
+                routed: routed.clone(),
+                overlay: overlay.clone(),
+            });
             self.overlay_gate = overlay_duration(overlay.kind);
             self.exiting = true;
-            let exit = match (self.theme, self.overlay_snapshot.as_ref()) {
-                (Some(theme), Some(snapshot)) => {
-                    fx::fade_to_fg(theme.muted, (self.overlay_gate, Interpolation::QuadOut))
-                        .with_area(snapshot.area)
-                        .with_filter(CellFilter::Text)
-                }
-                _ => fx::sleep(self.overlay_gate),
-            };
+            let exit = fx::fade_to_fg(theme.muted, (self.overlay_gate, Interpolation::QuadOut))
+                .with_area(snapshot.area)
+                .with_filter(CellFilter::Text);
             self.manager
                 .add_unique_effect(MotionEffectId::Overlay, exit);
             return MotionInputDisposition::Defer;
         }
-        if self.overlay_gate > Duration::ZERO && (input.is_keyboard() || input.is_mouse()) {
-            return MotionInputDisposition::Block;
-        }
         MotionInputDisposition::Apply
     }
 
-    pub(super) fn take_deferred_close(&mut self) -> Option<InputEvent> {
+    pub(super) fn take_deferred_close(&mut self, state: &ShellSession) -> Option<RoutedEvent> {
         if self.exiting && self.overlay_gate == Duration::ZERO {
             self.exiting = false;
-            return self.deferred_close.take();
+            let deferred = self.deferred_close.take()?;
+            return (current_overlay(state) == Some(deferred.overlay)).then_some(deferred.routed);
         }
         None
     }
@@ -483,43 +510,209 @@ mod tests {
 
     #[test]
     fn semantic_cancel_is_deferred_and_replayed_once() {
+        let mut state = ShellSession::new(ShellLaunchConfig::default(), (120, 40));
+        state.apply_input(InputEvent::from_key_label("q"));
+        let overlay = current_overlay(&state).unwrap();
         let mut motion = ShellMotionEffects {
-            overlay: Some(OverlayIdentity {
-                kind: ui::MotionOverlayKind::Dialog,
-                id: "dialog".into(),
+            overlay: Some(overlay),
+            overlay_snapshot: Some(CellSnapshot {
+                area: Rect::new(1, 1, 2, 1),
+                cells: Vec::new(),
             }),
+            theme: Some(ui::ThemeTokens::glacier_night()),
             ..ShellMotionEffects::default()
         };
-        let routed = RoutedEvent {
-            input: InputEvent::from_key_label("Esc"),
-            target: RoutedTarget::Global,
-            command: ShellCommand::CancelExit,
-        };
+        let routed = state
+            .clone()
+            .route_input_at(InputEvent::from_key_label("Esc"), Instant::now());
         assert_eq!(
-            motion.intercept_input(&routed.input, true),
+            motion.intercept_input(&routed),
             MotionInputDisposition::Defer
         );
-        assert!(motion.take_deferred_close().is_none());
+        assert!(motion.take_deferred_close(&state).is_none());
         motion.overlay_gate = Duration::ZERO;
-        assert_eq!(motion.take_deferred_close(), Some(routed.input));
-        assert!(motion.take_deferred_close().is_none());
+        assert_eq!(motion.take_deferred_close(&state), Some(routed));
+        assert!(motion.take_deferred_close(&state).is_none());
     }
 
     #[test]
     fn reduced_motion_cancels_effects_and_flushes_pending_close() {
+        let mut state = ShellSession::new(ShellLaunchConfig::default(), (120, 40));
+        state.apply_input(InputEvent::from_key_label("q"));
+        let overlay = current_overlay(&state).unwrap();
+        let routed = state
+            .clone()
+            .route_input_at(InputEvent::from_key_label("Esc"), Instant::now());
         let mut motion = ShellMotionEffects {
-            overlay: Some(OverlayIdentity {
-                kind: ui::MotionOverlayKind::Popover,
-                id: "menu".into(),
-            }),
-            deferred_close: Some(InputEvent::from_key_label("Esc")),
+            overlay: Some(overlay.clone()),
+            deferred_close: Some(DeferredClose { routed, overlay }),
             exiting: true,
             overlay_gate: Duration::from_millis(80),
             ..ShellMotionEffects::default()
         };
         motion.clear();
         assert_eq!(motion.overlay_gate, Duration::ZERO);
-        assert!(motion.take_deferred_close().is_some());
-        assert!(motion.take_deferred_close().is_none());
+        assert!(motion.take_deferred_close(&state).is_some());
+        assert!(motion.take_deferred_close(&state).is_none());
+    }
+
+    #[test]
+    fn missing_overlay_snapshot_closes_immediately_without_invisible_delay() {
+        let mut state = ShellSession::new(ShellLaunchConfig::default(), (120, 40));
+        state.apply_input(InputEvent::from_key_label("q"));
+        let routed = state
+            .clone()
+            .route_input_at(InputEvent::from_key_label("Esc"), Instant::now());
+        let mut motion = ShellMotionEffects {
+            overlay: current_overlay(&state),
+            theme: Some(ui::ThemeTokens::glacier_night()),
+            ..ShellMotionEffects::default()
+        };
+        assert_eq!(
+            motion.intercept_input(&routed),
+            MotionInputDisposition::Apply
+        );
+        assert_eq!(motion.overlay_gate, Duration::ZERO);
+        assert!(!motion.manager.is_running());
+    }
+
+    #[test]
+    fn resize_bypasses_exit_gate_and_flushes_original_route_once() {
+        let mut state = ShellSession::new(ShellLaunchConfig::default(), (120, 40));
+        state.apply_input(InputEvent::from_key_label("q"));
+        let overlay = current_overlay(&state).unwrap();
+        let close = state
+            .clone()
+            .route_input_at(InputEvent::from_key_label("Esc"), Instant::now());
+        let resize = state.clone().route_input_at(
+            InputEvent::Resize {
+                width: 100,
+                height: 30,
+            },
+            Instant::now(),
+        );
+        let mut motion = ShellMotionEffects {
+            overlay: Some(overlay.clone()),
+            deferred_close: Some(DeferredClose {
+                routed: close.clone(),
+                overlay,
+            }),
+            exiting: true,
+            overlay_gate: Duration::from_millis(90),
+            ..ShellMotionEffects::default()
+        };
+        assert_eq!(
+            motion.intercept_input(&resize),
+            MotionInputDisposition::Apply
+        );
+        let generation = state.hit_map_generation();
+        state.apply_input(resize.input.clone());
+        assert_eq!(state.terminal_size(), (100, 30));
+        assert!(state.hit_map_generation() > generation);
+        assert_eq!(state.hit_map().terminal_size(), (100, 30));
+        motion.cancel_for_bounds_change();
+        assert_eq!(motion.take_deferred_close(&state), Some(close));
+        assert!(motion.take_deferred_close(&state).is_none());
+        assert!(!motion.manager.is_running());
+        assert!(motion.overlay_snapshot.is_none());
+    }
+
+    #[test]
+    fn preempted_overlay_never_retargets_deferred_cancel() {
+        let mut state = ShellSession::new(ShellLaunchConfig::default(), (120, 40));
+        state.apply_input(InputEvent::from_key_label("q"));
+        let overlay = OverlayIdentity {
+            kind: ui::MotionOverlayKind::Dialog,
+            id: "preempted:A".into(),
+        };
+        let routed = state
+            .clone()
+            .route_input_at(InputEvent::from_key_label("Esc"), Instant::now());
+        let mut motion = ShellMotionEffects {
+            deferred_close: Some(DeferredClose {
+                routed,
+                overlay: overlay.clone(),
+            }),
+            exiting: true,
+            ..ShellMotionEffects::default()
+        };
+        assert_eq!(
+            current_overlay(&state).unwrap().kind,
+            ui::MotionOverlayKind::Dialog
+        );
+        assert_ne!(current_overlay(&state), Some(overlay));
+        assert!(motion.take_deferred_close(&state).is_none());
+        assert!(motion.deferred_close.is_none());
+    }
+
+    #[test]
+    fn identity_sync_gates_confirm_before_first_render() {
+        let mut state = ShellSession::new(ShellLaunchConfig::default(), (120, 40));
+        let mut motion = ShellMotionEffects::default();
+        motion.update(
+            &state,
+            Rect::new(0, 0, 120, 40),
+            Rect::new(0, 0, 120, 40),
+            Some(Rect::new(0, 37, 120, 3)),
+            ui::ThemeTokens::glacier_night(),
+            false,
+        );
+        state.apply_input(InputEvent::from_key_label("q"));
+        motion.update(
+            &state,
+            Rect::new(0, 0, 120, 40),
+            Rect::new(0, 0, 120, 40),
+            Some(Rect::new(0, 37, 120, 3)),
+            ui::ThemeTokens::glacier_night(),
+            false,
+        );
+        assert!(motion.overlay_gate > Duration::ZERO);
+        let confirm = state
+            .clone()
+            .route_input_at(InputEvent::from_key_label("Enter"), Instant::now());
+        assert_eq!(
+            motion.intercept_input(&confirm),
+            MotionInputDisposition::Block
+        );
+        let outside = state.clone().route_input_at(
+            InputEvent::mouse_down(PointerButton::Left, (0, 0)),
+            Instant::now(),
+        );
+        assert_eq!(
+            motion.intercept_input(&outside),
+            MotionInputDisposition::Block
+        );
+    }
+
+    #[test]
+    fn replacement_with_only_incoming_geometry_gates_from_mutation() {
+        let mut state = ShellSession::new(ShellLaunchConfig::default(), (120, 40));
+        let mut motion = ShellMotionEffects {
+            overlay: Some(OverlayIdentity {
+                kind: ui::MotionOverlayKind::Popover,
+                id: "preempted".into(),
+            }),
+            ..ShellMotionEffects::default()
+        };
+        state.apply_input(InputEvent::from_key_label("q"));
+        motion.update(
+            &state,
+            Rect::new(0, 0, 120, 40),
+            Rect::new(0, 0, 120, 40),
+            Some(Rect::new(0, 37, 120, 3)),
+            ui::ThemeTokens::glacier_night(),
+            false,
+        );
+        assert_eq!(
+            motion.overlay_gate,
+            overlay_duration(ui::MotionOverlayKind::Dialog) / 2
+        );
+        let confirm = state
+            .clone()
+            .route_input_at(InputEvent::from_key_label("Enter"), Instant::now());
+        assert_eq!(
+            motion.intercept_input(&confirm),
+            MotionInputDisposition::Block
+        );
     }
 }
