@@ -173,6 +173,7 @@ pub struct SettingsAppearancePreview {
 pub enum SettingsPickerKind {
     Theme,
     DefaultThemeIcons,
+    AnimationSpeed,
     Language,
     Timezone,
     BorderColor,

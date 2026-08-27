@@ -10,6 +10,7 @@ use platform::{
     AppPaths, PlatformCapabilities, PlatformKind, UserDirs, build_windows_app_paths,
     cleanup_temp_path,
 };
+use ratatui::layout::Rect;
 use shell::{
     HomeModeOverride, InputEvent, ShellLaunchConfig, ShellScreen, ShellSession,
     prepare_shell_startup,
@@ -548,6 +549,46 @@ fn animation_speed_is_per_user_adjustable_and_has_a_default_button() {
             .appearance
     };
     assert_eq!(normal_appearance().animation_speed_percent, 125);
+
+    let terminal_area = Rect::new(0, 0, 120, 40);
+    let ui::ShellLayout::Full { main, .. } = ui::compute_shell_layout(terminal_area) else {
+        panic!("expected full settings layout");
+    };
+    let speed_area = ui::settings_layout(main, &state.to_settings_view_model().unwrap())
+        .fields
+        .into_iter()
+        .find(|field| field.field == SettingsField::AnimationSpeed)
+        .expect("visible animation speed field")
+        .area;
+    state.apply_input_with_platform(
+        InputEvent::mouse_down(ui::MouseButton::Left, (speed_area.x, speed_area.y)),
+        &platform,
+    );
+    let picker_model = state.to_settings_view_model().unwrap();
+    let picker = picker_model
+        .picker
+        .as_ref()
+        .expect("animation speed picker");
+    assert_eq!(picker.kind, SettingsPickerKind::AnimationSpeed);
+    assert_eq!(picker.selected_index, 3);
+    assert_eq!(picker.options.len(), 7);
+    assert_eq!(normal_appearance().animation_speed_percent, 125);
+
+    let fastest = ui::settings_layout(main, &picker_model)
+        .picker_options
+        .into_iter()
+        .find(|option| option.index == 6)
+        .expect("200% picker option")
+        .area;
+    state.apply_input_with_platform(
+        InputEvent::mouse_down(ui::MouseButton::Left, (fastest.x, fastest.y)),
+        &platform,
+    );
+    assert_eq!(normal_appearance().animation_speed_percent, 200);
+    assert!(state.to_settings_view_model().unwrap().picker.is_none());
+
+    press(&mut state, &platform, "Left");
+    assert_eq!(normal_appearance().animation_speed_percent, 175);
 
     press(&mut state, &platform, "Down");
     assert_eq!(

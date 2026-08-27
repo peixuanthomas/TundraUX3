@@ -294,7 +294,11 @@ impl ShellSession {
                 if let Some(state) = self.settings_state.as_mut() {
                     state.selected_field = field;
                 }
-                self.activate_selected_setting(platform);
+                if field == ui::SettingsField::AnimationSpeed {
+                    self.open_settings_picker(ui::SettingsPickerKind::AnimationSpeed);
+                } else {
+                    self.activate_selected_setting(platform);
+                }
             }
             Some(ui::SettingsHitTarget::PickerOption(index)) => {
                 if let Some(state) = self.settings_state.as_mut()
@@ -703,10 +707,20 @@ impl ShellSession {
     }
 
     pub(in crate::session) fn open_settings_picker(&mut self, kind: ui::SettingsPickerKind) {
+        if kind == ui::SettingsPickerKind::AnimationSpeed
+            && self
+                .app
+                .active_appearance()
+                .is_some_and(|appearance| appearance.motion_preference.reduced())
+        {
+            self.set_settings_error("Enable Full motion to adjust animation speed");
+            return;
+        }
         if !matches!(
             kind,
             ui::SettingsPickerKind::Theme
                 | ui::SettingsPickerKind::DefaultThemeIcons
+                | ui::SettingsPickerKind::AnimationSpeed
                 | ui::SettingsPickerKind::BorderColor
                 | ui::SettingsPickerKind::AccentColor
         ) && !self.can_change_global_settings()
@@ -756,6 +770,13 @@ impl ShellSession {
                         .unwrap_or(0)
                 }
             }
+            ui::SettingsPickerKind::AnimationSpeed => self
+                .app
+                .active_appearance()
+                .map(|appearance| {
+                    animation_speed_picker_index(appearance.normalized_animation_speed_percent())
+                })
+                .unwrap_or(0),
             ui::SettingsPickerKind::Language => app::setup_language_options()
                 .iter()
                 .position(|option| option.code == config.language)
@@ -948,6 +969,22 @@ impl ShellSession {
                 }
                 appearance.icon_display_mode = icon_display_mode;
                 if self.save_settings_appearance(appearance, "Default theme icon mode")
+                    && let Some(state) = self.settings_state.as_mut()
+                {
+                    state.picker = None;
+                }
+            }
+            ui::SettingsPickerKind::AnimationSpeed => {
+                let Some(mut appearance) = self.app.active_appearance().cloned() else {
+                    return;
+                };
+                if appearance.motion_preference.reduced() {
+                    self.set_settings_error("Enable Full motion to adjust animation speed");
+                    return;
+                }
+                appearance.animation_speed_percent =
+                    animation_speed_for_picker_index(picker.selected_index);
+                if self.save_settings_appearance(appearance, "Animation speed")
                     && let Some(state) = self.settings_state.as_mut()
                 {
                     state.picker = None;
@@ -2199,6 +2236,18 @@ pub(in crate::session) fn settings_picker_options(
             )
             .enabled(picker.image_icons_supported),
         ],
+        ui::SettingsPickerKind::AnimationSpeed => (storage::MIN_ANIMATION_SPEED_PERCENT
+            ..=storage::MAX_ANIMATION_SPEED_PERCENT)
+            .step_by(usize::from(storage::ANIMATION_SPEED_STEP_PERCENT))
+            .map(|speed| {
+                let detail = match speed.cmp(&storage::DEFAULT_ANIMATION_SPEED_PERCENT) {
+                    std::cmp::Ordering::Less => "Slower than default",
+                    std::cmp::Ordering::Equal => "Default",
+                    std::cmp::Ordering::Greater => "Faster than default",
+                };
+                ui::SettingsPickerOptionViewModel::new(format!("{speed}%"), detail)
+            })
+            .collect(),
         ui::SettingsPickerKind::Language => app::setup_language_options()
             .into_iter()
             .filter(|option| {
@@ -2244,6 +2293,28 @@ pub(in crate::session) fn color_picker_initial_index(color: storage::BorderColor
         .unwrap_or_else(|| ui::setup_standard_color_options().len())
 }
 
+pub(in crate::session) fn animation_speed_picker_index(speed: u16) -> usize {
+    let normalized = speed.clamp(
+        storage::MIN_ANIMATION_SPEED_PERCENT,
+        storage::MAX_ANIMATION_SPEED_PERCENT,
+    );
+    let offset = normalized.saturating_sub(storage::MIN_ANIMATION_SPEED_PERCENT);
+    usize::from(
+        offset.saturating_add(storage::ANIMATION_SPEED_STEP_PERCENT / 2)
+            / storage::ANIMATION_SPEED_STEP_PERCENT,
+    )
+}
+
+pub(in crate::session) fn animation_speed_for_picker_index(index: usize) -> u16 {
+    storage::MIN_ANIMATION_SPEED_PERCENT
+        .saturating_add(
+            u16::try_from(index)
+                .unwrap_or(u16::MAX)
+                .saturating_mul(storage::ANIMATION_SPEED_STEP_PERCENT),
+        )
+        .min(storage::MAX_ANIMATION_SPEED_PERCENT)
+}
+
 pub(in crate::session) fn settings_picker_visible_rows(terminal_height: u16) -> usize {
     usize::from(terminal_height.saturating_sub(10).clamp(4, 18))
 }
@@ -2252,6 +2323,7 @@ pub(in crate::session) fn picker_title(kind: ui::SettingsPickerKind) -> &'static
     match kind {
         ui::SettingsPickerKind::Theme => "Choose theme",
         ui::SettingsPickerKind::DefaultThemeIcons => "Default theme",
+        ui::SettingsPickerKind::AnimationSpeed => "Choose animation speed",
         ui::SettingsPickerKind::Language => "Choose language",
         ui::SettingsPickerKind::Timezone => "Choose city and timezone",
         ui::SettingsPickerKind::BorderColor => "Choose border color",
@@ -2263,6 +2335,7 @@ pub(in crate::session) fn picker_label(kind: ui::SettingsPickerKind) -> &'static
     match kind {
         ui::SettingsPickerKind::Theme => "Theme",
         ui::SettingsPickerKind::DefaultThemeIcons => "Default theme icon mode",
+        ui::SettingsPickerKind::AnimationSpeed => "Animation speed",
         ui::SettingsPickerKind::BorderColor => "Border color",
         ui::SettingsPickerKind::AccentColor => "Accent color",
         ui::SettingsPickerKind::Language => "Language",
