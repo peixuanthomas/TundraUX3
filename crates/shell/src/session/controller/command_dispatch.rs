@@ -25,9 +25,21 @@ impl ShellSession {
         platform: &dyn Platform,
         received_at: Instant,
     ) -> ShellAction {
+        if let Some(action) = self.apply_input_preamble_at(&input, received_at) {
+            return action;
+        }
+        let routed = self.route_input_at(input, received_at);
+        self.apply_routed_event(routed, platform, received_at)
+    }
+
+    pub(in crate::session) fn apply_input_preamble_at(
+        &mut self,
+        input: &InputEvent,
+        received_at: Instant,
+    ) -> Option<ShellAction> {
         self.notification_expire(received_at);
         self.expire_login_password_visibility_at(received_at);
-        let requests_shutdown = match &input {
+        let requests_shutdown = match input {
             InputEvent::Shutdown => true,
             InputEvent::Key(key) => {
                 key.is_ctrl_c()
@@ -43,15 +55,15 @@ impl ShellSession {
             && !requests_shutdown
         {
             self.prepare_return_to_lockscreen();
-            return self
-                .app
-                .dispatch_at(app::AppCommand::ConfirmExit, received_at);
+            return Some(
+                self.app
+                    .dispatch_at(app::AppCommand::ConfirmExit, received_at),
+            );
         }
-        if self.login_idle_tracking_active() && resets_login_idle_timeout(&input) {
+        if self.login_idle_tracking_active() && resets_login_idle_timeout(input) {
             self.login_idle_deadline = received_at + LOGIN_IDLE_TIMEOUT;
         }
-        let routed = self.route_input_at(input, received_at);
-        self.apply_routed_event(routed, platform, received_at)
+        None
     }
 
     pub fn route_input_at(&mut self, input: InputEvent, received_at: Instant) -> RoutedEvent {

@@ -900,6 +900,7 @@ pub(super) fn run_fullscreen_shell_session<W: Write>(
         RedrawIdentity::from_session(&state),
         reduced_motion_enabled(&state),
     );
+    let mut motion_effects = ShellMotionEffects::default();
     let mut shell_toast: Option<ui::components::Toast> = None;
     let mut terminal_size_error = None;
     let mut terminal_suspended = false;
@@ -931,6 +932,10 @@ pub(super) fn run_fullscreen_shell_session<W: Write>(
                 }
                 PlatformLifecycleEvent::PrepareForSleep if !terminal_suspended => {
                     let _ = state.persist_editor_recovery_now(Instant::now());
+                    if let Some(routed) = motion_effects.cancel_for_suspend(&state) {
+                        state.apply_routed_event(routed, platform.as_ref(), Instant::now());
+                        redraw.request_redraw();
+                    }
                     guard.restore()?;
                     terminal_suspended = true;
                 }
@@ -1118,6 +1123,20 @@ pub(super) fn run_fullscreen_shell_session<W: Write>(
             let exit_confirmation = ui::ExitConfirmViewModel::new();
 
             state.refresh_hit_map_with_motion(motion_transitions);
+            let terminal_area = Rect::new(0, 0, state.terminal_size().0, state.terminal_size().1);
+            let page_area = render_context.page_area(terminal_area);
+            let status_area = match ui::compute_shell_layout(page_area) {
+                ui::ShellLayout::Full { status, .. } => Some(status),
+                ui::ShellLayout::Compact(_) => None,
+            };
+            motion_effects.update(
+                &state,
+                terminal_area,
+                page_area,
+                status_area,
+                render_context.theme,
+                motion_frame.reduced_motion,
+            );
             guard.terminal_mut().draw(|frame| {
                 let area = frame.area();
                 let page_area = render_context.page_area(area);
@@ -1325,12 +1344,16 @@ pub(super) fn run_fullscreen_shell_session<W: Write>(
                 {
                     toast.render_frame(frame, status, &render_context);
                 }
+                motion_effects.process(motion_frame.delta, frame.buffer_mut(), &state);
             })?;
             let toast_requests_redraw = shell_toast
                 .as_ref()
                 .is_some_and(|toast| toast.requests_redraw(motion_frame));
             redraw.did_draw(frame_now);
             if toast_requests_redraw {
+                redraw.request_animation_frame(frame_now);
+            }
+            if motion_effects.is_running() {
                 redraw.request_animation_frame(frame_now);
             }
         }
@@ -1340,6 +1363,15 @@ pub(super) fn run_fullscreen_shell_session<W: Write>(
         }
         if state.shutdown_requested() {
             break;
+        }
+
+        // An exit effect can finish on the frame just drawn. Apply its already-routed
+        // action before deriving any blocking poll deadline, then immediately render the
+        // resulting natural state on the next loop iteration.
+        if let Some(routed) = motion_effects.take_deferred_close(&state) {
+            state.apply_routed_event(routed, platform.as_ref(), Instant::now());
+            redraw.request_redraw();
+            continue;
         }
 
         let poll_now = Instant::now();
@@ -1377,11 +1409,15 @@ pub(super) fn run_fullscreen_shell_session<W: Write>(
             let terminal_events = read_ready_terminal_event_batch(event::read()?)?;
             for terminal_event in terminal_events {
                 let identity_before_input = RedrawIdentity::from_session(&state);
-                if let event::Event::Resize(width, height) = terminal_event
-                    && let Err(error) = terminal_size_requirement.validate((width, height))
+                if let event::Event::Resize(width, height) = &terminal_event
+                    && let Err(error) = terminal_size_requirement.validate((*width, *height))
                 {
                     terminal_size_error = Some(io::Error::other(error));
                     break;
+                }
+                let boundary_changed = matches!(&terminal_event, event::Event::Resize(_, _));
+                if boundary_changed {
+                    motion_effects.cancel_for_bounds_change();
                 }
                 let input = crossterm_event_to_input(terminal_event);
                 let command_line_captures = command_line_captures_input(&state, &input);
@@ -1402,7 +1438,18 @@ pub(super) fn run_fullscreen_shell_session<W: Write>(
                     }
                     action = Some(ShellAction::Redraw);
                 } else {
-                    action = Some(state.apply_input_with_platform(input, platform.as_ref()));
+                    let received_at = Instant::now();
+                    let (input_action, motion_blocked) = dispatch_motion_aware_input(
+                        &mut state,
+                        &mut motion_effects,
+                        input,
+                        platform.as_ref(),
+                        received_at,
+                    );
+                    action = Some(input_action);
+                    if motion_blocked {
+                        redraw.request_animation_frame(received_at);
+                    }
                 }
                 synchronize_motion_hit_map_after_input(
                     &mut state,
@@ -1410,6 +1457,18 @@ pub(super) fn run_fullscreen_shell_session<W: Write>(
                     identity_before_input,
                     Instant::now(),
                 );
+                synchronize_motion_effects_after_input(
+                    &state,
+                    &mut motion_effects,
+                    &theme,
+                    terminal_graphics_probe,
+                );
+                if let Some(routed) = motion_effects.take_deferred_close(&state) {
+                    action =
+                        Some(state.apply_routed_event(routed, platform.as_ref(), Instant::now()));
+                    redraw.request_redraw();
+                    break;
+                }
                 if action.is_some_and(|action| action != ShellAction::Redraw) {
                     break;
                 }
@@ -1485,6 +1544,33 @@ pub(super) fn run_fullscreen_shell_session<W: Write>(
         FullscreenShellSessionOutcome::Exit
     };
     Ok((outcome, state.ascii_assets.clone()))
+}
+
+pub(super) fn dispatch_motion_aware_input(
+    state: &mut ShellSession,
+    motion: &mut ShellMotionEffects,
+    input: InputEvent,
+    platform: &dyn Platform,
+    received_at: Instant,
+) -> (ShellAction, bool) {
+    if let Some(action) = state.apply_input_preamble_at(&input, received_at) {
+        return (action, false);
+    }
+    if motion.blocks_before_route(&input) {
+        return (ShellAction::Redraw, true);
+    }
+    // Route once against live state. Deferred replay applies this exact semantic event
+    // and deliberately skips the already-run preamble.
+    let routed = state.route_input_at(input, received_at);
+    match motion.intercept_input(&routed) {
+        MotionInputDisposition::Apply => (
+            state.apply_routed_event(routed, platform, received_at),
+            false,
+        ),
+        MotionInputDisposition::Defer | MotionInputDisposition::Block => {
+            (ShellAction::Redraw, true)
+        }
+    }
 }
 
 pub(in crate::session) fn drain_system_status_snapshot(
@@ -1572,6 +1658,29 @@ fn synchronize_motion_hit_map_after_input(
     }
     redraw.observe(now, identity_after_input, reduced_motion_enabled(state));
     state.refresh_hit_map_with_motion(redraw.transitions(now));
+}
+
+fn synchronize_motion_effects_after_input(
+    state: &ShellSession,
+    motion_effects: &mut ShellMotionEffects,
+    theme: &ui::TundraTheme,
+    terminal_graphics_probe: &ui::TerminalGraphicsProbe,
+) {
+    let terminal_area = Rect::new(0, 0, state.terminal_size().0, state.terminal_size().1);
+    let capabilities = shell_render_capabilities(terminal_graphics_probe);
+    let tokens = theme.tokens().for_capability(capabilities.color);
+    let status_area = match ui::compute_shell_layout(terminal_area) {
+        ui::ShellLayout::Full { status, .. } => Some(status),
+        ui::ShellLayout::Compact(_) => None,
+    };
+    motion_effects.update(
+        state,
+        terminal_area,
+        terminal_area,
+        status_area,
+        tokens,
+        reduced_motion_enabled(state),
+    );
 }
 
 fn session_render_state_changed(before: &ShellSession, after: &ShellSession) -> bool {

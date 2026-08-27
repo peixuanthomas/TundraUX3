@@ -15,6 +15,7 @@ pub(in crate::session) struct ShellOverlayDescriptor {
     pub id: String,
     pub category: ShellOverlayCategory,
     pub target: Option<RoutedTarget>,
+    pub immediate: bool,
 }
 
 impl ShellOverlayDescriptor {
@@ -89,6 +90,7 @@ impl ResolvedExplorerOverlay {
             id: id.into(),
             category,
             target: Some(RoutedTarget::Component(ShellComponent::Explorer)),
+            immediate: false,
         }
     }
 }
@@ -222,13 +224,22 @@ impl ShellSession {
             id,
             category,
             target: Some(RoutedTarget::Modal(component)),
+            immediate: false,
         };
         if let Some(notification) = self.to_notification_view_model() {
-            return Some(dialog(
+            let mut descriptor = dialog(
                 format!("notification:{}", notification.id),
                 ShellOverlayCategory::ShellModal,
                 self.notification_active_modal_component()?,
-            ));
+            );
+            let active_key = self
+                .app
+                .notification_center()
+                .active_modal()
+                .and_then(|modal| modal.key.as_deref());
+            descriptor.immediate = notification.tone == ui::NotificationTone::Critical
+                && active_key != Some(EXIT_CONFIRM_NOTIFICATION_KEY);
+            return Some(descriptor);
         }
         if self.time_sync_dialog_visible {
             return Some(dialog(
@@ -253,6 +264,7 @@ impl ShellSession {
                 id: format!("popup:{:?}", popup.owner),
                 category: ShellOverlayCategory::ContextPopup,
                 target: Some(RoutedTarget::Popup(ShellComponent::ContextMenu)),
+                immediate: false,
             });
         }
         if let Some(confirmation) = self.launcher_pending_confirmation.as_ref() {
@@ -269,6 +281,7 @@ impl ShellSession {
                 id,
                 category: ShellOverlayCategory::PageDialog,
                 target: Some(RoutedTarget::Component(ShellComponent::Launcher)),
+                immediate: false,
             });
         }
         if let Some(menu) = self.editor_open_menu {
@@ -277,6 +290,7 @@ impl ShellSession {
                 id: format!("editor-open-menu:{menu:?}"),
                 category: ShellOverlayCategory::PagePopover,
                 target: Some(RoutedTarget::Component(ShellComponent::Editor)),
+                immediate: false,
             });
         }
         if self.editor_quick_menu_anchor.is_some() {
@@ -285,6 +299,7 @@ impl ShellSession {
                 id: "editor-quick-menu".into(),
                 category: ShellOverlayCategory::PagePopover,
                 target: Some(RoutedTarget::Component(ShellComponent::Editor)),
+                immediate: false,
             });
         }
         if let Some(picker) = self
@@ -297,6 +312,7 @@ impl ShellSession {
                 id: format!("settings-picker:{:?}", picker.kind),
                 category: ShellOverlayCategory::PagePopover,
                 target: Some(RoutedTarget::Component(ShellComponent::Settings)),
+                immediate: false,
             });
         }
         let page_dialog = if self.setup_custom_color_target.is_some() {
@@ -351,6 +367,7 @@ impl ShellSession {
                 id: id.into(),
                 category: ShellOverlayCategory::PageDialog,
                 target: Some(RoutedTarget::Component(ShellComponent::UserManagement)),
+                immediate: false,
             });
         }
         let notifications = self.app.notification_center();
@@ -362,6 +379,7 @@ impl ShellSession {
                 id: format!("toast:{deadline:?}"),
                 category: ShellOverlayCategory::Toast,
                 target: None,
+                immediate: false,
             })
     }
 

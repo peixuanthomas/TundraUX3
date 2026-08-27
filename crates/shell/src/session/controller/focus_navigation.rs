@@ -36,6 +36,27 @@ impl ShellSession {
             (content_screen == ShellScreen::Clock).then(|| self.to_clock_view_model());
         let explorer_model =
             (content_screen == ShellScreen::Explorer).then(|| self.to_explorer_view_model());
+        let page_overlay_owner = overlay_descriptor.as_ref().and_then(|overlay| {
+            (!matches!(
+                overlay.category,
+                ShellOverlayCategory::ShellModal | ShellOverlayCategory::Toast
+            ))
+            .then(|| overlay.component())
+            .flatten()
+        });
+        let launcher_model = (content_screen == ShellScreen::Launcher
+            && page_overlay_owner == Some(ShellComponent::Launcher))
+        .then(|| self.to_launcher_view_model());
+        let editor_model = (content_screen == ShellScreen::Editor
+            && page_overlay_owner == Some(ShellComponent::Editor))
+        .then(|| self.to_editor_view_model());
+        let settings_model = (content_screen == ShellScreen::Settings
+            && page_overlay_owner == Some(ShellComponent::Settings))
+        .then(|| self.to_settings_view_model())
+        .flatten();
+        let user_management_model = (content_screen == ShellScreen::UserManagement
+            && page_overlay_owner == Some(ShellComponent::UserManagement))
+        .then(|| self.to_user_management_view_model());
         let diagnostics_model = matches!(
             content_screen,
             ShellScreen::Diagnostics | ShellScreen::SystemStatus
@@ -57,6 +78,11 @@ impl ShellSession {
             clock_model.as_ref(),
             explorer_model.as_ref(),
             diagnostics_model.as_ref(),
+            launcher_model.as_ref(),
+            editor_model.as_ref(),
+            settings_model.as_ref(),
+            user_management_model.as_ref(),
+            overlay_descriptor.as_ref(),
             motion,
             overlay_blocks_interaction,
             generic_context_popup_visible,
