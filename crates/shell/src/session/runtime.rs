@@ -932,7 +932,10 @@ pub(super) fn run_fullscreen_shell_session<W: Write>(
                 }
                 PlatformLifecycleEvent::PrepareForSleep if !terminal_suspended => {
                     let _ = state.persist_editor_recovery_now(Instant::now());
-                    motion_effects.cancel_for_bounds_change();
+                    if let Some(routed) = motion_effects.cancel_for_suspend(&state) {
+                        state.apply_routed_event(routed, platform.as_ref(), Instant::now());
+                        redraw.request_redraw();
+                    }
                     guard.restore()?;
                     terminal_suspended = true;
                 }
@@ -1461,8 +1464,7 @@ pub(super) fn run_fullscreen_shell_session<W: Write>(
                     &theme,
                     terminal_graphics_probe,
                 );
-                if boundary_changed && let Some(routed) = motion_effects.take_deferred_close(&state)
-                {
+                if let Some(routed) = motion_effects.take_deferred_close(&state) {
                     action =
                         Some(state.apply_routed_event(routed, platform.as_ref(), Instant::now()));
                     redraw.request_redraw();
