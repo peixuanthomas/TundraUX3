@@ -349,6 +349,29 @@ pub struct ShortcutConflict {
 
 pub type ShellAction = app::AppAction;
 
+impl ShellCommand {
+    pub(crate) fn is_overlay_cancel_or_close(&self) -> bool {
+        matches!(
+            self,
+            Self::CancelExit
+                | Self::CancelSetupCustomColor
+                | Self::LauncherCancelConfirmation
+                | Self::EditorCancelClose
+                | Self::EditorCancelOpen
+                | Self::ExplorerRestoreCancel
+                | Self::ExplorerConflictCancel
+                | Self::ExplorerCancelOperation
+                | Self::CancelExplorerInput
+                | Self::DiagnosticsCancelRepair
+                | Self::ClockCloseCreate
+                | Self::CancelUserManagementForm
+                | Self::ClosePopup
+                | Self::CloseTimeSyncDialog
+                | Self::NotificationCancel
+        )
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ShellTerminalFlags {
     pub raw_mode: bool,

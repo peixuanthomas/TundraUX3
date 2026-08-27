@@ -59,6 +59,7 @@ const CLOCK_DUE_NOTIFICATION_KEY_PREFIX: &str = "clock.due";
 mod command_line_runtime;
 mod construction;
 mod controller;
+mod motion_effects;
 mod presentation;
 mod queries;
 mod redraw;
@@ -69,6 +70,7 @@ mod ui_state;
 
 use command_line_runtime::*;
 use controller::*;
+use motion_effects::*;
 use presentation::*;
 use redraw::*;
 use runtime::*;

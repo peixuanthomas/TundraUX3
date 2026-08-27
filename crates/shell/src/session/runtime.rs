@@ -900,6 +900,7 @@ pub(super) fn run_fullscreen_shell_session<W: Write>(
         RedrawIdentity::from_session(&state),
         reduced_motion_enabled(&state),
     );
+    let mut motion_effects = ShellMotionEffects::default();
     let mut shell_toast: Option<ui::components::Toast> = None;
     let mut terminal_size_error = None;
     let mut terminal_suspended = false;
@@ -931,6 +932,7 @@ pub(super) fn run_fullscreen_shell_session<W: Write>(
                 }
                 PlatformLifecycleEvent::PrepareForSleep if !terminal_suspended => {
                     let _ = state.persist_editor_recovery_now(Instant::now());
+                    motion_effects.cancel_for_bounds_change();
                     guard.restore()?;
                     terminal_suspended = true;
                 }
@@ -1118,6 +1120,20 @@ pub(super) fn run_fullscreen_shell_session<W: Write>(
             let exit_confirmation = ui::ExitConfirmViewModel::new();
 
             state.refresh_hit_map_with_motion(motion_transitions);
+            let terminal_area = Rect::new(0, 0, state.terminal_size().0, state.terminal_size().1);
+            let page_area = render_context.page_area(terminal_area);
+            let status_area = match ui::compute_shell_layout(page_area) {
+                ui::ShellLayout::Full { status, .. } => Some(status),
+                ui::ShellLayout::Compact(_) => None,
+            };
+            motion_effects.update(
+                &state,
+                terminal_area,
+                page_area,
+                status_area,
+                render_context.theme,
+                motion_frame.reduced_motion,
+            );
             guard.terminal_mut().draw(|frame| {
                 let area = frame.area();
                 let page_area = render_context.page_area(area);
@@ -1325,12 +1341,16 @@ pub(super) fn run_fullscreen_shell_session<W: Write>(
                 {
                     toast.render_frame(frame, status, &render_context);
                 }
+                motion_effects.process(motion_frame.delta, frame.buffer_mut(), &state);
             })?;
             let toast_requests_redraw = shell_toast
                 .as_ref()
                 .is_some_and(|toast| toast.requests_redraw(motion_frame));
             redraw.did_draw(frame_now);
             if toast_requests_redraw {
+                redraw.request_animation_frame(frame_now);
+            }
+            if motion_effects.is_running() {
                 redraw.request_animation_frame(frame_now);
             }
         }
@@ -1372,16 +1392,23 @@ pub(super) fn run_fullscreen_shell_session<W: Write>(
             command_line_timeout_is_state && state_poll_timeout <= redraw_timeout;
         let mut action = None;
         let mut terminal_event_received = false;
+        if let Some(input) = motion_effects.take_deferred_close() {
+            action = Some(state.apply_input_with_platform(input, platform.as_ref()));
+            redraw.request_redraw();
+        }
         if event::poll(poll_timeout)? {
             terminal_event_received = true;
             let terminal_events = read_ready_terminal_event_batch(event::read()?)?;
             for terminal_event in terminal_events {
                 let identity_before_input = RedrawIdentity::from_session(&state);
-                if let event::Event::Resize(width, height) = terminal_event
-                    && let Err(error) = terminal_size_requirement.validate((width, height))
+                if let event::Event::Resize(width, height) = &terminal_event
+                    && let Err(error) = terminal_size_requirement.validate((*width, *height))
                 {
                     terminal_size_error = Some(io::Error::other(error));
                     break;
+                }
+                if matches!(&terminal_event, event::Event::Resize(_, _)) {
+                    motion_effects.cancel_for_bounds_change();
                 }
                 let input = crossterm_event_to_input(terminal_event);
                 let command_line_captures = command_line_captures_input(&state, &input);
@@ -1402,7 +1429,24 @@ pub(super) fn run_fullscreen_shell_session<W: Write>(
                     }
                     action = Some(ShellAction::Redraw);
                 } else {
-                    action = Some(state.apply_input_with_platform(input, platform.as_ref()));
+                    // Route against a clone solely to classify semantic cancellation before
+                    // mutation; the real state still goes through the complete input preamble.
+                    let semantic_cancel = motion_effects.has_interactive_overlay()
+                        && state
+                            .clone()
+                            .route_input_at(input.clone(), Instant::now())
+                            .command
+                            .is_overlay_cancel_or_close();
+                    match motion_effects.intercept_input(&input, semantic_cancel) {
+                        MotionInputDisposition::Apply => {
+                            action =
+                                Some(state.apply_input_with_platform(input, platform.as_ref()));
+                        }
+                        MotionInputDisposition::Defer | MotionInputDisposition::Block => {
+                            action = Some(ShellAction::Redraw);
+                            redraw.request_animation_frame(Instant::now());
+                        }
+                    }
                 }
                 synchronize_motion_hit_map_after_input(
                     &mut state,
