@@ -1,6 +1,6 @@
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
-use ratatui::text::{Line, Span};
+use ratatui::text::Line;
 use ratatui::widgets::{Gauge, Paragraph};
 
 use super::layout::{SystemStatusLayout, system_status_layout, system_status_tab_label};
@@ -88,10 +88,10 @@ fn render_main(
     } else {
         match &model.content {
             SystemStatusContentViewModel::Admin(admin) => {
-                render_admin(frame, &layout, model, admin, theme, context)
+                render_admin(frame, &layout, model, admin, context)
             }
             SystemStatusContentViewModel::User(user) => {
-                render_user(frame, &layout, user, &model.diagnostics, theme)
+                render_user(frame, &layout, user, &model.diagnostics, context)
             }
         }
     }
@@ -172,7 +172,6 @@ fn render_admin(
     layout: &SystemStatusLayout,
     model: &SystemStatusViewModel,
     admin: &AdminSystemStatusViewModel,
-    theme: &TundraTheme,
     context: &RenderContext,
 ) {
     match model.tab {
@@ -190,7 +189,7 @@ fn render_admin(
                 last_refreshed: &admin.overview.last_refreshed,
             },
             &model.diagnostics,
-            theme,
+            context,
         ),
         SystemStatusTab::Storage => render_storage(frame, layout, model, admin, context),
         SystemStatusTab::Network => render_network(frame, layout, model, admin, context),
@@ -345,7 +344,7 @@ fn render_user(
     layout: &SystemStatusLayout,
     user: &UserSystemStatusViewModel,
     diagnostics: &crate::DiagnosticsViewModel,
-    theme: &TundraTheme,
+    context: &RenderContext,
 ) {
     render_overview(
         frame,
@@ -361,7 +360,7 @@ fn render_user(
             last_refreshed: &user.last_refreshed,
         },
         diagnostics,
-        theme,
+        context,
     );
 }
 
@@ -382,60 +381,83 @@ fn render_overview(
     area: Rect,
     data: OverviewData<'_>,
     diagnostics: &crate::DiagnosticsViewModel,
-    theme: &TundraTheme,
+    context: &RenderContext,
 ) {
-    let gauge_height = if area.height >= 6 { 2 } else { 1 };
-    let [
-        disk_header,
-        disk_gauge,
-        diagnostics_area,
-        network_area,
-        refreshed_area,
-    ] = Layout::vertical([
-        Constraint::Length(1),
-        Constraint::Length(gauge_height),
-        Constraint::Length(1),
-        Constraint::Length(1),
-        Constraint::Length(1),
+    if area.is_empty() {
+        return;
+    }
+    let theme = &context.compatibility_theme();
+    let storage_height = if area.height >= 8 {
+        4
+    } else {
+        area.height.min(3)
+    };
+    let vertical_gap = u16::from(area.height.saturating_sub(storage_height) >= 4);
+    let [storage_card, _, lower_cards] = Layout::vertical([
+        Constraint::Length(storage_height),
+        Constraint::Length(vertical_gap),
+        Constraint::Min(0),
     ])
     .areas(area);
+    let horizontal_gap = u16::from(lower_cards.width >= 43);
+    let [diagnostics_card, _, network_card] = Layout::horizontal([
+        Constraint::Percentage(50),
+        Constraint::Length(horizontal_gap),
+        Constraint::Min(0),
+    ])
+    .areas(lower_cards);
 
-    frame.render_widget(
-        Paragraph::new(status_line(
-            "System disk",
-            format!("{} · {}", data.storage_status, data.system_volume_usage),
-            data.storage_tone,
-            theme,
-        )),
-        disk_header,
-    );
-
-    if let Some(percentage) = data.system_volume_used_percentage {
-        frame.render_widget(
-            Gauge::default()
-                .style(theme.surface_style())
-                .gauge_style(theme.body_style().fg(tone_color(data.storage_tone, theme)))
-                .percent(u16::from(percentage))
-                .label(format!("{percentage}% used"))
-                .use_unicode(true),
-            disk_gauge,
-        );
-    } else {
-        frame.render_widget(
-            Paragraph::new("Usage unavailable").style(theme.muted_style()),
-            disk_gauge,
-        );
+    let storage_surface = Surface::new()
+        .titled(format!(" System disk · {} ", data.storage_status))
+        .bordered(true)
+        .raised(true);
+    let storage_inner = storage_surface.inner(storage_card);
+    storage_surface.render_frame(frame, storage_card, context);
+    if storage_inner.height > 0 {
+        let show_details = storage_inner.height > 1;
+        let [details_area, gauge_area] = Layout::vertical([
+            Constraint::Length(u16::from(show_details)),
+            Constraint::Min(0),
+        ])
+        .areas(storage_inner);
+        if show_details {
+            frame.render_widget(
+                Paragraph::new(data.system_volume_usage).style(theme.muted_style()),
+                details_area,
+            );
+        }
+        if let Some(percentage) = data.system_volume_used_percentage {
+            let label = if show_details {
+                format!("{percentage}% used")
+            } else {
+                format!("{percentage}% used · {}", data.system_volume_usage)
+            };
+            frame.render_widget(
+                Gauge::default()
+                    .style(theme.surface_style())
+                    .gauge_style(theme.body_style().fg(tone_color(data.storage_tone, theme)))
+                    .percent(u16::from(percentage))
+                    .label(label)
+                    .use_unicode(true),
+                gauge_area,
+            );
+        } else {
+            frame.render_widget(
+                Paragraph::new("Usage unavailable").style(theme.muted_style()),
+                gauge_area,
+            );
+        }
     }
 
     let (diagnostics_status, diagnostics_tone) = diagnostics_overview(diagnostics);
-    frame.render_widget(
-        Paragraph::new(status_line(
-            "Diagnostics",
-            diagnostics_status,
-            diagnostics_tone,
-            theme,
-        )),
-        diagnostics_area,
+    render_overview_card(
+        frame,
+        diagnostics_card,
+        "Diagnostics",
+        diagnostics_status,
+        diagnostics_tone,
+        None,
+        context,
     );
 
     let network_status = match data.active_link_count {
@@ -443,22 +465,45 @@ fn render_overview(
         Some(count) => format!("{} · {count} active links", data.network_status),
         None => data.network_status.to_string(),
     };
-    frame.render_widget(
-        Paragraph::new(status_line(
-            "Network",
-            network_status,
-            data.network_tone,
-            theme,
-        )),
-        network_area,
+    render_overview_card(
+        frame,
+        network_card,
+        "Network",
+        network_status,
+        data.network_tone,
+        Some(format!("Updated {}", data.last_refreshed)),
+        context,
     );
-    frame.render_widget(
-        Paragraph::new(Line::from(vec![
-            Span::styled(format!("{:<13}", "Updated"), theme.muted_style()),
-            Span::styled(data.last_refreshed.to_string(), theme.muted_style()),
-        ])),
-        refreshed_area,
-    );
+}
+
+#[allow(clippy::too_many_arguments)]
+fn render_overview_card(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    title: &str,
+    value: String,
+    tone: crate::components::ComponentTone,
+    detail: Option<String>,
+    context: &RenderContext,
+) {
+    if area.is_empty() {
+        return;
+    }
+    let theme = &context.compatibility_theme();
+    let surface = Surface::new()
+        .titled(format!(" {title} "))
+        .bordered(true)
+        .raised(true);
+    let inner = surface.inner(area);
+    surface.render_frame(frame, area, context);
+    let mut lines = vec![Line::styled(
+        value,
+        theme.body_style().fg(tone_color(tone, theme)),
+    )];
+    if let Some(detail) = detail {
+        lines.push(Line::styled(detail, theme.muted_style()));
+    }
+    frame.render_widget(Paragraph::new(lines), inner);
 }
 
 fn diagnostics_overview(
@@ -507,16 +552,4 @@ fn diagnostics_overview(
     } else {
         ("No issues".to_string(), ComponentTone::Success)
     }
-}
-
-fn status_line(
-    label: &str,
-    value: String,
-    tone: crate::components::ComponentTone,
-    theme: &TundraTheme,
-) -> Line<'static> {
-    Line::from(vec![
-        Span::styled(format!("{label:<13}"), theme.muted_style()),
-        Span::styled(value, theme.body_style().fg(tone_color(tone, theme))),
-    ])
 }
