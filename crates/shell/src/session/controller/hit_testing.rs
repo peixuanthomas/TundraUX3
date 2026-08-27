@@ -277,7 +277,19 @@ pub(in crate::session) fn build_shell_hit_map(
     let overlay_interaction_ready =
         !overlay_blocks_interaction || motion_context.overlay_interaction_ready();
     if !overlay_interaction_ready {
-        regions.retain(|region| region.layer != ShellHitLayer::AppOverlay);
+        let clock_create_active = overlay_descriptor.and_then(ShellOverlayDescriptor::component)
+            == Some(ShellComponent::ClockCreateInput);
+        regions.retain(|region| {
+            region.layer != ShellHitLayer::AppOverlay
+                || (clock_create_active
+                    && matches!(
+                        region.component,
+                        ShellComponent::ClockCreateDialog
+                            | ShellComponent::ClockCreateInput
+                            | ShellComponent::ClockCreateAlarmButton
+                            | ShellComponent::ClockCreateCountdownButton
+                    ))
+        });
     }
 
     if overlay_interaction_ready
@@ -333,6 +345,13 @@ pub(in crate::session) fn build_shell_hit_map(
             region.layer,
             ShellHitLayer::AppOverlay | ShellHitLayer::ShellModal
         ) || Some(region.component) == active_component
+            || (active_component == Some(ShellComponent::ClockCreateInput)
+                && matches!(
+                    region.component,
+                    ShellComponent::ClockCreateDialog
+                        | ShellComponent::ClockCreateAlarmButton
+                        | ShellComponent::ClockCreateCountdownButton
+                ))
     });
 
     if let Some(descriptor) = overlay_descriptor
@@ -397,7 +416,11 @@ pub(in crate::session) fn build_shell_hit_map(
         };
         if let Some(surface) = surface.filter(|surface| !surface.is_empty())
             && !regions.iter().any(|region| {
-                region.component == component && region.area == surface && region.layer == layer
+                region.area == surface
+                    && region.layer == layer
+                    && (region.component == component
+                        || (component == ShellComponent::ClockCreateInput
+                            && region.component == ShellComponent::ClockCreateDialog))
             })
         {
             regions.push(ShellHitRegion {

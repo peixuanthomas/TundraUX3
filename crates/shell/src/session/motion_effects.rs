@@ -441,8 +441,37 @@ impl ShellMotionEffects {
 
     // Escape is the one cancellation path identifiable before controller mutation at
     // this boundary. Other close buttons use the localized post-action snapshot path.
+    pub(super) fn blocks_before_route(&self, input: &InputEvent) -> bool {
+        if self.reduced
+            || matches!(input, InputEvent::Tick | InputEvent::Shutdown)
+            || matches!(
+                input,
+                InputEvent::Resize { .. } | InputEvent::FocusGained | InputEvent::FocusLost
+            )
+            || self
+                .overlay
+                .as_ref()
+                .is_some_and(|overlay| overlay.immediate)
+        {
+            return false;
+        }
+        if self.outgoing_block_remaining > Duration::ZERO
+            && (input.is_keyboard() || input.is_mouse())
+        {
+            return true;
+        }
+        if self.exiting {
+            return true;
+        }
+        let escape = matches!(input, InputEvent::Key(key) if key.label() == "Esc");
+        self.overlay_gate > Duration::ZERO && !escape && (input.is_keyboard() || input.is_mouse())
+    }
+
     pub(super) fn intercept_input(&mut self, routed: &RoutedEvent) -> MotionInputDisposition {
         let input = &routed.input;
+        if self.blocks_before_route(input) {
+            return MotionInputDisposition::Block;
+        }
         if self.reduced || matches!(input, InputEvent::Tick | InputEvent::Shutdown) {
             return MotionInputDisposition::Apply;
         }
@@ -459,21 +488,7 @@ impl ShellMotionEffects {
         {
             return MotionInputDisposition::Apply;
         }
-        if self.outgoing_block_remaining > Duration::ZERO
-            && (input.is_keyboard() || input.is_mouse())
-        {
-            return MotionInputDisposition::Block;
-        }
-        if self.exiting {
-            return MotionInputDisposition::Block;
-        }
         let escape = matches!(input, InputEvent::Key(key) if key.label() == "Esc");
-        if self.overlay_gate > Duration::ZERO
-            && !escape
-            && (input.is_keyboard() || input.is_mouse())
-        {
-            return MotionInputDisposition::Block;
-        }
         if (escape || routed.command.is_overlay_cancel_or_close())
             && let Some(overlay) = self.overlay.as_ref()
             && overlay.kind != ui::MotionOverlayKind::Toast
@@ -870,6 +885,7 @@ fn bounds_for_regions(regions: impl Iterator<Item = Rect>) -> Option<Rect> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::session::runtime::dispatch_motion_aware_input;
     #[test]
     fn snapshots_exclude_image_protocol_skip_cells() {
         let area = Rect::new(0, 0, 2, 1);
@@ -879,6 +895,112 @@ mod tests {
         let snapshot = snapshot_normal_cells(&buffer, area).unwrap();
         assert_eq!(snapshot.cells.len(), 1);
         assert_eq!(snapshot.cells[0].0, Position::new(0, 0));
+    }
+
+    #[test]
+    fn clock_dialog_motion_surface_preserves_input_and_button_hit_targets() {
+        let mut state = ShellSession::new_for_home_mode(
+            ShellLaunchConfig::default(),
+            (120, 40),
+            ShellHomeMode::User,
+        );
+        state.screen_stack = vec![ShellScreen::Clock];
+        state.clock_create_state = Some(ClockCreateState::default());
+        state.refresh_hit_map();
+        let full = Rect::new(0, 0, 120, 40);
+        let ui::ShellLayout::Full { main, .. } = ui::compute_shell_layout(full) else {
+            panic!("expected full layout");
+        };
+        let layout = ui::clock_page_layout(main, &state.to_clock_view_model())
+            .create_dialog
+            .expect("create dialog");
+        assert_eq!(overlay_area(&state), Some(layout.dialog));
+        assert_eq!(
+            focused_area(&state, ShellComponent::ClockCreateInput),
+            Some(layout.input)
+        );
+        for (area, expected) in [
+            (layout.create_alarm, ShellCommand::ClockCreateAlarm),
+            (layout.create_countdown, ShellCommand::ClockCreateCountdown),
+        ] {
+            let center = (
+                area.x.saturating_add(area.width / 2),
+                area.y.saturating_add(area.height / 2),
+            );
+            assert_eq!(
+                state
+                    .route_input_at(
+                        InputEvent::mouse_down(PointerButton::Left, center),
+                        Instant::now(),
+                    )
+                    .command,
+                expected
+            );
+        }
+    }
+
+    #[test]
+    fn motion_dispatch_runs_login_preamble_before_deferral_and_pre_route_blocking() {
+        fn login_exit_fixture(now: Instant) -> (ShellSession, ShellMotionEffects) {
+            let full = Rect::new(0, 0, 120, 40);
+            let theme = ui::ThemeTokens::glacier_night();
+            let mut state = ShellSession::new(ShellLaunchConfig::default(), (120, 40));
+            while state.notification_dismiss_active_modal_without_response() {}
+            state.screen_stack = vec![ShellScreen::Login];
+            state.refresh_hit_map();
+            let mut motion = ShellMotionEffects::default();
+            motion.update(&state, full, full, None, theme, false);
+            let mut buffer = Buffer::filled(full, Cell::new("N"));
+            motion.process(Duration::ZERO, &mut buffer, &state);
+            state.screen_stack.push(ShellScreen::ExitConfirm);
+            state.refresh_hit_map();
+            motion.update(&state, full, full, None, theme, false);
+            buffer = Buffer::filled(full, Cell::new("A"));
+            motion.process(Duration::ZERO, &mut buffer, &state);
+            state.login_idle_deadline = now + Duration::from_secs(1);
+            (state, motion)
+        }
+
+        let platform = platform::mock::UnsupportedPlatform;
+        let now = Instant::now();
+        let (mut expired, mut expired_motion) = login_exit_fixture(now);
+        expired.login_idle_deadline = now - Duration::from_millis(1);
+        let (_, motion_blocked) = dispatch_motion_aware_input(
+            &mut expired,
+            &mut expired_motion,
+            InputEvent::from_key_label("Esc"),
+            &platform,
+            now,
+        );
+        assert!(!motion_blocked);
+        assert!(expired.return_to_lockscreen_requested());
+        assert!(expired_motion.deferred_close.is_none());
+
+        let (mut active, mut active_motion) = login_exit_fixture(now);
+        let (_, motion_blocked) = dispatch_motion_aware_input(
+            &mut active,
+            &mut active_motion,
+            InputEvent::from_key_label("Esc"),
+            &platform,
+            now,
+        );
+        assert!(motion_blocked);
+        assert_eq!(active.login_idle_deadline, now + LOGIN_IDLE_TIMEOUT);
+        assert!(active_motion.deferred_close.is_some());
+
+        active_motion.deferred_close = None;
+        active_motion.exiting = false;
+        active_motion.outgoing_block_remaining = Duration::from_millis(50);
+        let previous_click = active.last_click;
+        let (_, motion_blocked) = dispatch_motion_aware_input(
+            &mut active,
+            &mut active_motion,
+            InputEvent::mouse_down(PointerButton::Left, (4, 4)),
+            &platform,
+            now + Duration::from_millis(1),
+        );
+        assert!(motion_blocked);
+        assert_eq!(active.last_click, previous_click);
     }
 
     #[test]

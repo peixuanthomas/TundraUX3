@@ -1438,18 +1438,17 @@ pub(super) fn run_fullscreen_shell_session<W: Write>(
                     }
                     action = Some(ShellAction::Redraw);
                 } else {
-                    // Bind semantic command/target before deferral. Immediate inputs still
-                    // traverse the real state's complete input preamble.
-                    let routed = state.clone().route_input_at(input.clone(), Instant::now());
-                    match motion_effects.intercept_input(&routed) {
-                        MotionInputDisposition::Apply => {
-                            action =
-                                Some(state.apply_input_with_platform(input, platform.as_ref()));
-                        }
-                        MotionInputDisposition::Defer | MotionInputDisposition::Block => {
-                            action = Some(ShellAction::Redraw);
-                            redraw.request_animation_frame(Instant::now());
-                        }
+                    let received_at = Instant::now();
+                    let (input_action, motion_blocked) = dispatch_motion_aware_input(
+                        &mut state,
+                        &mut motion_effects,
+                        input,
+                        platform.as_ref(),
+                        received_at,
+                    );
+                    action = Some(input_action);
+                    if motion_blocked {
+                        redraw.request_animation_frame(received_at);
                     }
                 }
                 synchronize_motion_hit_map_after_input(
@@ -1545,6 +1544,33 @@ pub(super) fn run_fullscreen_shell_session<W: Write>(
         FullscreenShellSessionOutcome::Exit
     };
     Ok((outcome, state.ascii_assets.clone()))
+}
+
+pub(super) fn dispatch_motion_aware_input(
+    state: &mut ShellSession,
+    motion: &mut ShellMotionEffects,
+    input: InputEvent,
+    platform: &dyn Platform,
+    received_at: Instant,
+) -> (ShellAction, bool) {
+    if let Some(action) = state.apply_input_preamble_at(&input, received_at) {
+        return (action, false);
+    }
+    if motion.blocks_before_route(&input) {
+        return (ShellAction::Redraw, true);
+    }
+    // Route once against live state. Deferred replay applies this exact semantic event
+    // and deliberately skips the already-run preamble.
+    let routed = state.route_input_at(input, received_at);
+    match motion.intercept_input(&routed) {
+        MotionInputDisposition::Apply => (
+            state.apply_routed_event(routed, platform, received_at),
+            false,
+        ),
+        MotionInputDisposition::Defer | MotionInputDisposition::Block => {
+            (ShellAction::Redraw, true)
+        }
+    }
 }
 
 pub(in crate::session) fn drain_system_status_snapshot(

@@ -1276,8 +1276,9 @@ fn setup_clock_and_diagnostics_publish_exact_overlay_surfaces_while_gated() {
         .create_dialog
         .expect("create dialog");
     state.refresh_hit_map();
-    assert!(
-        overlay_areas_for(&state, ShellComponent::ClockCreateInput).contains(&clock_layout.dialog)
+    assert_eq!(
+        overlay_areas_for(&state, ShellComponent::ClockCreateDialog),
+        vec![clock_layout.dialog]
     );
     assert!(
         state
@@ -1289,8 +1290,9 @@ fn setup_clock_and_diagnostics_publish_exact_overlay_surfaces_while_gated() {
         ShellCommand::ClockCreateFocusNext
     );
     state.refresh_hit_map_with_motion(gated);
-    assert!(
-        overlay_areas_for(&state, ShellComponent::ClockCreateInput).contains(&clock_layout.dialog)
+    assert_eq!(
+        overlay_areas_for(&state, ShellComponent::ClockCreateDialog),
+        vec![clock_layout.dialog]
     );
     assert!(
         !state
