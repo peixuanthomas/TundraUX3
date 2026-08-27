@@ -1,4 +1,5 @@
 use super::*;
+use crate::session::queries::ShellOverlayCategory;
 use ratatui::{
     buffer::{Buffer, Cell, CellDiffOption},
     layout::{Position, Rect},
@@ -56,6 +57,15 @@ struct FrozenUnderlaySnapshot {
 }
 
 #[derive(Debug, Clone)]
+struct ActiveVisualOutgoing {
+    identity: OverlayIdentity,
+    old: CellSnapshot,
+    underlay: FrozenUnderlaySnapshot,
+    total: Duration,
+    remaining: Duration,
+}
+
+#[derive(Debug, Clone)]
 struct ExitSnapshotState {
     old: Vec<(Position, Cell)>,
     underlay: Option<Vec<(Position, Cell)>>,
@@ -86,6 +96,8 @@ pub(super) struct ShellMotionEffects {
     overlay_underlay_snapshot: Option<FrozenUnderlaySnapshot>,
     effects_scheduled_since_process: bool,
     outgoing_block_remaining: Duration,
+    active_visual_outgoing: Option<ActiveVisualOutgoing>,
+    suppress_focus_after_generic_popup: bool,
 }
 
 impl ShellMotionEffects {
@@ -122,8 +134,19 @@ impl ShellMotionEffects {
             }
         }
 
+        let generic_popup = is_unrendered_generic_popup(state);
         let focus = state.focused_component();
-        if self.focus.is_some_and(|old| old != focus)
+        let suppress_focus = if generic_popup {
+            self.suppress_focus_after_generic_popup = true;
+            true
+        } else if self.suppress_focus_after_generic_popup {
+            self.suppress_focus_after_generic_popup = false;
+            true
+        } else {
+            false
+        };
+        if !suppress_focus
+            && self.focus.is_some_and(|old| old != focus)
             && let Some(area) = focused_area(state, focus)
         {
             self.schedule(
@@ -172,73 +195,160 @@ impl ShellMotionEffects {
                 self.exiting = false;
                 self.overlay_underlay_snapshot = None;
                 self.outgoing_block_remaining = Duration::ZERO;
+                self.active_visual_outgoing = None;
             } else if restoring_deferred {
                 self.manager.cancel_unique_effect(MotionEffectId::Overlay);
                 self.overlay_gate = Duration::ZERO;
                 self.exiting = true;
             } else {
-                match (&previous_overlay, &overlay) {
-                    (Some(old), Some(new))
-                        if old.kind != ui::MotionOverlayKind::Toast
-                            && new.kind != ui::MotionOverlayKind::Toast =>
-                    {
+                if let (Some(visual), Some(new)) =
+                    (self.active_visual_outgoing.clone(), overlay.as_ref())
+                    && visual.remaining > Duration::ZERO
+                    && visual.underlay.screen == screen
+                    && visual.underlay.bounds == full_area
+                    && new.kind != ui::MotionOverlayKind::Toast
+                {
+                    let replacement = overlay_area(state).and_then(|new_area| {
+                        let union = visual.old.area.union(new_area);
+                        let base = self.freeze_underlay(screen, full_area, union)?;
+                        let new_underlay = self.freeze_underlay(screen, full_area, new_area)?;
+                        Some((base, new_underlay, new_area))
+                    });
+                    if let Some((base, new_underlay, new_area)) = replacement {
+                        let consumed = visual.total.saturating_sub(visual.remaining);
+                        let linear = consumed.as_secs_f32() / visual.total.as_secs_f32();
+                        let start_alpha = 1.0 - (1.0 - linear.clamp(0.0, 1.0)).powi(2);
+                        let outgoing = outgoing_snapshot_effect_from(
+                            visual.old.clone(),
+                            Some(base.snapshot),
+                            visual.identity.kind,
+                            start_alpha,
+                            visual.remaining,
+                        );
+                        self.schedule(
+                            MotionEffectId::Overlay,
+                            fx::sequence(&[
+                                outgoing,
+                                overlay_enter_effect(new.kind, new_area, theme),
+                            ]),
+                        );
+                        self.overlay_underlay_snapshot = Some(new_underlay);
+                        self.overlay_gate = visual.remaining + overlay_duration(new.kind) / 2;
+                        self.outgoing_block_remaining = visual.remaining;
+                    } else {
+                        self.manager.cancel_unique_effect(MotionEffectId::Overlay);
+                        self.active_visual_outgoing = None;
+                        self.overlay_snapshot = None;
+                        self.overlay_underlay_snapshot = None;
                         self.overlay_gate = Duration::ZERO;
                         self.outgoing_block_remaining = Duration::ZERO;
-                        let old_snapshot = self.overlay_snapshot.take();
-                        let new_area = overlay_area(state);
-                        let replacement = old_snapshot.and_then(|old_snapshot| {
-                            let new_area = new_area?;
-                            let union = old_snapshot.area.union(new_area);
-                            let base =
-                                self.freeze_underlay(state.content_screen(), full_area, union)?;
-                            let new_underlay =
-                                self.freeze_underlay(state.content_screen(), full_area, new_area)?;
-                            Some((old_snapshot, base, new_underlay, new_area))
-                        });
-                        if let Some((old_snapshot, base, new_underlay, new_area)) = replacement {
-                            let outgoing = outgoing_snapshot_effect(
+                    }
+                } else {
+                    match (&previous_overlay, &overlay) {
+                        (Some(old), Some(new))
+                            if old.kind != ui::MotionOverlayKind::Toast
+                                && new.kind != ui::MotionOverlayKind::Toast =>
+                        {
+                            self.overlay_gate = Duration::ZERO;
+                            self.outgoing_block_remaining = Duration::ZERO;
+                            let old_snapshot = self.overlay_snapshot.take();
+                            let new_area = overlay_area(state);
+                            let replacement = old_snapshot.and_then(|old_snapshot| {
+                                let new_area = new_area?;
+                                let union = old_snapshot.area.union(new_area);
+                                let base =
+                                    self.freeze_underlay(state.content_screen(), full_area, union)?;
+                                let old_underlay = self.freeze_underlay(
+                                    state.content_screen(),
+                                    full_area,
+                                    old_snapshot.area,
+                                )?;
+                                let new_underlay = self.freeze_underlay(
+                                    state.content_screen(),
+                                    full_area,
+                                    new_area,
+                                )?;
+                                Some((old_snapshot, base, old_underlay, new_underlay, new_area))
+                            });
+                            if let Some((
                                 old_snapshot,
-                                Some(base.snapshot),
-                                old.kind,
-                            );
-                            let incoming = overlay_enter_effect(new.kind, new_area, theme);
-                            self.schedule(
-                                MotionEffectId::Overlay,
-                                fx::sequence(&[outgoing, incoming]),
-                            );
-                            self.overlay_underlay_snapshot = Some(new_underlay);
-                            self.overlay_gate =
-                                overlay_duration(old.kind) + overlay_duration(new.kind) / 2;
-                            self.outgoing_block_remaining = overlay_duration(old.kind);
-                        } else {
-                            self.manager.cancel_unique_effect(MotionEffectId::Overlay);
-                            self.overlay_snapshot = None;
-                            self.overlay_underlay_snapshot = None;
+                                base,
+                                old_underlay,
+                                new_underlay,
+                                new_area,
+                            )) = replacement
+                            {
+                                let outgoing = outgoing_snapshot_effect(
+                                    old_snapshot.clone(),
+                                    Some(base.snapshot),
+                                    old.kind,
+                                );
+                                let incoming = overlay_enter_effect(new.kind, new_area, theme);
+                                self.schedule(
+                                    MotionEffectId::Overlay,
+                                    fx::sequence(&[outgoing, incoming]),
+                                );
+                                self.overlay_underlay_snapshot = Some(new_underlay);
+                                self.overlay_gate =
+                                    overlay_duration(old.kind) + overlay_duration(new.kind) / 2;
+                                self.outgoing_block_remaining = overlay_duration(old.kind);
+                                self.active_visual_outgoing = Some(ActiveVisualOutgoing {
+                                    identity: old.clone(),
+                                    old: old_snapshot,
+                                    underlay: old_underlay,
+                                    total: overlay_duration(old.kind),
+                                    remaining: overlay_duration(old.kind),
+                                });
+                            } else {
+                                self.manager.cancel_unique_effect(MotionEffectId::Overlay);
+                                self.overlay_snapshot = None;
+                                self.overlay_underlay_snapshot = None;
+                            }
                         }
-                    }
-                    (Some(old), _) if old.kind != ui::MotionOverlayKind::Toast => {
-                        self.overlay_gate = Duration::ZERO;
-                        if let Some(snapshot) = self.overlay_snapshot.take() {
-                            self.schedule(
-                                MotionEffectId::Overlay,
-                                outgoing_snapshot_effect(snapshot, None, old.kind),
-                            );
-                            self.overlay_gate = overlay_duration(old.kind);
-                            self.outgoing_block_remaining = overlay_duration(old.kind);
+                        (Some(old), _) if old.kind != ui::MotionOverlayKind::Toast => {
+                            self.overlay_gate = Duration::ZERO;
+                            let outgoing = self.overlay_snapshot.take().and_then(|snapshot| {
+                                let underlay = self.overlay_underlay_snapshot.take()?;
+                                (underlay.screen == screen && underlay.bounds == full_area)
+                                    .then_some((snapshot, underlay))
+                            });
+                            if let Some((snapshot, underlay)) = outgoing {
+                                self.schedule(
+                                    MotionEffectId::Overlay,
+                                    outgoing_snapshot_effect(
+                                        snapshot.clone(),
+                                        Some(underlay.snapshot.clone()),
+                                        old.kind,
+                                    ),
+                                );
+                                self.overlay_gate = overlay_duration(old.kind);
+                                self.outgoing_block_remaining = overlay_duration(old.kind);
+                                self.active_visual_outgoing = Some(ActiveVisualOutgoing {
+                                    identity: old.clone(),
+                                    old: snapshot,
+                                    underlay,
+                                    total: overlay_duration(old.kind),
+                                    remaining: overlay_duration(old.kind),
+                                });
+                            } else {
+                                self.manager.cancel_unique_effect(MotionEffectId::Overlay);
+                                self.active_visual_outgoing = None;
+                                self.outgoing_block_remaining = Duration::ZERO;
+                            }
                         }
-                    }
-                    (_, Some(new)) if new.kind != ui::MotionOverlayKind::Toast => {
-                        if let Some(area) = overlay_area(state) {
-                            self.overlay_underlay_snapshot =
-                                self.freeze_underlay(state.content_screen(), full_area, area);
-                            self.schedule(
-                                MotionEffectId::Overlay,
-                                overlay_enter_effect(new.kind, area, theme),
-                            );
-                            self.overlay_gate = overlay_duration(new.kind) / 2;
+                        (_, Some(new)) if new.kind != ui::MotionOverlayKind::Toast => {
+                            if let Some(area) = overlay_area(state) {
+                                self.overlay_underlay_snapshot =
+                                    self.freeze_underlay(state.content_screen(), full_area, area);
+                                self.schedule(
+                                    MotionEffectId::Overlay,
+                                    overlay_enter_effect(new.kind, area, theme),
+                                );
+                                self.overlay_gate = overlay_duration(new.kind) / 2;
+                            }
                         }
+                        _ => {}
                     }
-                    _ => {}
                 }
             }
             if let Some(area) = status_area.filter(|area| !area.is_empty()) {
@@ -308,6 +418,12 @@ impl ShellMotionEffects {
         self.outgoing_block_remaining = self
             .outgoing_block_remaining
             .saturating_sub(effective_delta);
+        if let Some(outgoing) = self.active_visual_outgoing.as_mut() {
+            outgoing.remaining = outgoing.remaining.saturating_sub(effective_delta);
+            if outgoing.remaining == Duration::ZERO {
+                self.active_visual_outgoing = None;
+            }
+        }
     }
 
     pub(super) fn is_running(&self) -> bool {
@@ -447,6 +563,8 @@ impl ShellMotionEffects {
         self.outgoing_block_remaining = Duration::ZERO;
         self.base_snapshot = None;
         self.overlay_underlay_snapshot = None;
+        self.active_visual_outgoing = None;
+        self.suppress_focus_after_generic_popup = false;
     }
 
     fn remember(&mut self, state: &ShellSession, bounds: Rect) {
@@ -547,10 +665,17 @@ fn outgoing_snapshot_effect(
     underlay: Option<CellSnapshot>,
     kind: ui::MotionOverlayKind,
 ) -> Effect {
-    let duration = match kind {
-        ui::MotionOverlayKind::Dialog => DIALOG_MS,
-        _ => POPOVER_MS,
-    };
+    outgoing_snapshot_effect_from(snapshot, underlay, kind, 0.0, overlay_duration(kind))
+}
+
+fn outgoing_snapshot_effect_from(
+    snapshot: CellSnapshot,
+    underlay: Option<CellSnapshot>,
+    kind: ui::MotionOverlayKind,
+    start_alpha: f32,
+    duration: Duration,
+) -> Effect {
+    let duration = u32::try_from(duration.as_millis()).unwrap_or(u32::MAX);
     let area = underlay
         .as_ref()
         .map_or(snapshot.area, |underlay| underlay.area);
@@ -577,10 +702,11 @@ fn outgoing_snapshot_effect(
         ui::MotionOverlayKind::Dialog => fx::effect_fn_buf(
             state.clone(),
             (duration, Interpolation::QuadOut),
-            |state, context, buffer| {
+            move |state, context, buffer| {
+                let alpha = start_alpha + (1.0 - start_alpha) * context.alpha();
                 let protected = protected_skip_positions(buffer);
                 restore_underlay(state, buffer, &protected);
-                if context.alpha() <= 0.0 {
+                if alpha <= 0.0 {
                     for (position, old) in &state.old {
                         if protected.contains(position) {
                             continue;
@@ -591,12 +717,12 @@ fn outgoing_snapshot_effect(
                     }
                     return;
                 }
-                if context.alpha() >= 1.0 {
+                if alpha >= 1.0 {
                     return;
                 }
                 let mut pattern = RadialPattern::center()
                     .with_transition_width(4.0)
-                    .for_frame(context.alpha(), context.area);
+                    .for_frame(alpha, context.area);
                 for (position, old) in &state.old {
                     if protected.contains(position) {
                         continue;
@@ -611,10 +737,11 @@ fn outgoing_snapshot_effect(
         ui::MotionOverlayKind::Popover => fx::effect_fn_buf(
             state,
             (duration, Interpolation::QuadOut),
-            |state, context, buffer| {
+            move |state, context, buffer| {
+                let alpha = start_alpha + (1.0 - start_alpha) * context.alpha();
                 let protected = protected_skip_positions(buffer);
                 restore_underlay(state, buffer, &protected);
-                if context.alpha() <= 0.0 {
+                if alpha <= 0.0 {
                     for (position, old) in &state.old {
                         if protected.contains(position) {
                             continue;
@@ -625,11 +752,10 @@ fn outgoing_snapshot_effect(
                     }
                     return;
                 }
-                if context.alpha() >= 1.0 {
+                if alpha >= 1.0 {
                     return;
                 }
-                let mut pattern =
-                    SweepPattern::down_to_up(4).for_frame(context.alpha(), context.area);
+                let mut pattern = SweepPattern::down_to_up(4).for_frame(alpha, context.area);
                 for (position, old) in &state.old {
                     if protected.contains(position) {
                         continue;
@@ -690,11 +816,22 @@ fn shell_main_area(page_area: Rect) -> Rect {
 fn current_overlay(state: &ShellSession) -> Option<OverlayIdentity> {
     state
         .active_overlay_descriptor()
+        .filter(|overlay| {
+            !(overlay.category == ShellOverlayCategory::ContextPopup
+                && overlay.component() == Some(ShellComponent::ContextMenu))
+        })
         .map(|overlay| OverlayIdentity {
             kind: overlay.kind,
             id: overlay.id,
             immediate: overlay.immediate,
         })
+}
+
+fn is_unrendered_generic_popup(state: &ShellSession) -> bool {
+    state.active_overlay_descriptor().is_some_and(|overlay| {
+        overlay.category == ShellOverlayCategory::ContextPopup
+            && overlay.component() == Some(ShellComponent::ContextMenu)
+    })
 }
 
 fn overlay_area(state: &ShellSession) -> Option<Rect> {
@@ -815,11 +952,7 @@ mod tests {
             ShellHomeMode::User,
         );
         while state.notification_dismiss_active_modal_without_response() {}
-        state.active_popup = Some(ShellPopup {
-            owner: Some(ShellComponent::Home),
-            anchor: (20, 10),
-        });
-        state.refresh_hit_map();
+        state.apply_input(InputEvent::from_key_label("q"));
         let overlay = current_overlay(&state).unwrap();
         let mut motion = ShellMotionEffects {
             overlay: Some(overlay),
@@ -1170,6 +1303,115 @@ mod tests {
     }
 
     #[test]
+    fn asynchronous_overlay_preserves_remaining_visual_outgoing() {
+        let full = Rect::new(0, 0, 120, 40);
+        let theme = ui::ThemeTokens::glacier_night();
+        let mut state = ShellSession::new(ShellLaunchConfig::default(), (120, 40));
+        while state.notification_dismiss_active_modal_without_response() {}
+        state.refresh_hit_map();
+        let mut motion = ShellMotionEffects::default();
+        motion.update(&state, full, full, None, theme, false);
+        let mut buffer = Buffer::filled(full, Cell::new("N"));
+        motion.process(Duration::ZERO, &mut buffer, &state);
+
+        state.notify_modal("A", "Outgoing", ui::NotificationTone::Info, Vec::new());
+        state.refresh_hit_map();
+        motion.update(&state, full, full, None, theme, false);
+        buffer = Buffer::filled(full, Cell::new("A"));
+        motion.process(Duration::ZERO, &mut buffer, &state);
+        assert!(state.notification_dismiss_active_modal_without_response());
+        state.refresh_hit_map();
+        motion.update(&state, full, full, None, theme, false);
+        assert_eq!(
+            motion.active_visual_outgoing.as_ref().unwrap().remaining,
+            Duration::from_millis(180)
+        );
+        motion.process(Duration::from_secs(1), &mut buffer, &state);
+        motion.process(Duration::from_millis(60), &mut buffer, &state);
+        assert_eq!(
+            motion.active_visual_outgoing.as_ref().unwrap().remaining,
+            Duration::from_millis(120)
+        );
+
+        state.notify_modal("B", "Incoming", ui::NotificationTone::Info, Vec::new());
+        state.refresh_hit_map();
+        motion.update(&state, full, full, None, theme, false);
+        assert_eq!(
+            motion.active_visual_outgoing.as_ref().unwrap().remaining,
+            Duration::from_millis(120)
+        );
+        assert_eq!(motion.outgoing_block_remaining, Duration::from_millis(120));
+        assert_eq!(motion.overlay_gate, Duration::from_millis(210));
+        motion.process(Duration::from_secs(1), &mut buffer, &state);
+        assert_eq!(motion.outgoing_block_remaining, Duration::from_millis(120));
+        motion.process(Duration::from_millis(120), &mut buffer, &state);
+        assert!(motion.active_visual_outgoing.is_none());
+        assert_eq!(motion.outgoing_block_remaining, Duration::ZERO);
+        assert!(motion.manager.is_running());
+        assert_eq!(motion.overlay_gate, Duration::from_millis(90));
+    }
+
+    #[test]
+    fn generic_context_popup_is_motion_neutral_but_explorer_overlay_is_not() {
+        let full = Rect::new(0, 0, 120, 40);
+        let theme = ui::ThemeTokens::glacier_night();
+        let mut state = ShellSession::new_for_home_mode(
+            ShellLaunchConfig::default(),
+            (120, 40),
+            ShellHomeMode::User,
+        );
+        while state.notification_dismiss_active_modal_without_response() {}
+        let mut motion = ShellMotionEffects::default();
+        motion.update(&state, full, full, None, theme, false);
+        let mut buffer = Buffer::filled(full, Cell::new("N"));
+        let natural = buffer.clone();
+        state.active_popup = Some(ShellPopup {
+            owner: Some(ShellComponent::Home),
+            anchor: (20, 10),
+        });
+        state.focused_component = ShellComponent::ContextMenu;
+        state.refresh_hit_map();
+        motion.update(&state, full, full, None, theme, false);
+        let generic_input = state
+            .clone()
+            .route_input_at(InputEvent::from_key_label("Enter"), Instant::now());
+        assert_eq!(
+            motion.intercept_input(&generic_input),
+            MotionInputDisposition::Apply
+        );
+        motion.process(Duration::from_millis(16), &mut buffer, &state);
+        assert_eq!(buffer, natural);
+        assert!(!motion.manager.is_running());
+        assert_eq!(motion.overlay_gate, Duration::ZERO);
+        state.active_popup = None;
+        state.focused_component = ShellComponent::Home;
+        state.refresh_hit_map();
+        motion.update(&state, full, full, None, theme, false);
+        assert!(!motion.manager.is_running());
+
+        state.screen_stack = vec![ShellScreen::Explorer];
+        state.replace_explorer_state(Some(ExplorerState::new(".", false)));
+        state.explorer_overlay_mode = Some(ExplorerOverlayMode::Options);
+        state.active_popup = Some(ShellPopup {
+            owner: Some(ShellComponent::Explorer),
+            anchor: (20, 10),
+        });
+        state.focused_component = ShellComponent::Explorer;
+        state.refresh_hit_map();
+        let ui::ShellLayout::Full { main, .. } = ui::compute_shell_layout(full) else {
+            panic!("expected full layout");
+        };
+        let expected = ui::explorer_layout(main, &state.to_explorer_view_model())
+            .overlay
+            .expect("Explorer semantic overlay")
+            .area;
+        assert_eq!(overlay_area(&state), Some(expected));
+        motion.update(&state, full, full, None, theme, false);
+        assert!(motion.manager.is_running());
+        assert_eq!(motion.overlay_gate, Duration::from_millis(80));
+    }
+
+    #[test]
     fn identity_sync_gates_confirm_before_first_render() {
         let mut state = ShellSession::new_for_home_mode(
             ShellLaunchConfig::default(),
@@ -1429,6 +1671,17 @@ mod tests {
         let mut motion = ShellMotionEffects {
             overlay: Some(old),
             overlay_snapshot: snapshot_normal_cells(&old_buffer, area),
+            overlay_underlay_snapshot: Some(FrozenUnderlaySnapshot {
+                screen: state.content_screen(),
+                bounds: Rect::new(0, 0, 120, 40),
+                snapshot: CellSnapshot {
+                    area,
+                    cells: area
+                        .positions()
+                        .map(|position| (position, Cell::new("N")))
+                        .collect(),
+                },
+            }),
             bounds: Some(Rect::new(0, 0, 120, 40)),
             screen: Some(state.content_screen()),
             ..ShellMotionEffects::default()
