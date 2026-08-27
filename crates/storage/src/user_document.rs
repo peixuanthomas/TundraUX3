@@ -153,6 +153,7 @@ mod glacier_user_migration_tests {
             accent_color: BorderColor::Cyan,
             icon_display_mode: IconDisplayMode::Image,
             motion_preference: MotionPreference::Full,
+            animation_speed_percent: crate::DEFAULT_ANIMATION_SPEED_PERCENT,
         };
         let custom = AppearanceConfig {
             accent_color: BorderColor::Blue,

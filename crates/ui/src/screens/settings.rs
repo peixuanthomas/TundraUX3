@@ -61,6 +61,8 @@ pub enum SettingsField {
     BorderColor,
     AccentColor,
     MotionPreference,
+    AnimationSpeed,
+    ResetAnimationSpeed,
     Language,
     Timezone,
     TimeSyncSource,

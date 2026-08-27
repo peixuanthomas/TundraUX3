@@ -131,6 +131,7 @@ fn toml_and_json_documents_round_trip() {
             accent_color: BorderColor::LightMagenta,
             icon_display_mode: IconDisplayMode::Ascii,
             motion_preference: MotionPreference::Reduced,
+            animation_speed_percent: 125,
         },
         explorer: ExplorerConfig {
             show_hidden: true,

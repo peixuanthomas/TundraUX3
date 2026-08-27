@@ -7,6 +7,10 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use crate::schema::{SCHEMA_VERSION, VersionedDocument};
 
 pub const SUPPORTED_LANGUAGE: &str = "en-US";
+pub const DEFAULT_ANIMATION_SPEED_PERCENT: u16 = 100;
+pub const MIN_ANIMATION_SPEED_PERCENT: u16 = 50;
+pub const MAX_ANIMATION_SPEED_PERCENT: u16 = 200;
+pub const ANIMATION_SPEED_STEP_PERCENT: u16 = 25;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct StorageConfig {
@@ -192,6 +196,11 @@ pub struct AppearanceConfig {
     /// accessibility preference never changes another user's session.
     #[serde(default)]
     pub motion_preference: MotionPreference,
+    #[serde(
+        default = "default_animation_speed_percent",
+        deserialize_with = "deserialize_animation_speed_percent"
+    )]
+    pub animation_speed_percent: u16,
 }
 
 impl Default for AppearanceConfig {
@@ -202,6 +211,7 @@ impl Default for AppearanceConfig {
             accent_color: BorderColor::Rgb(0x63, 0xd3, 0xe5),
             icon_display_mode: IconDisplayMode::Image,
             motion_preference: MotionPreference::Full,
+            animation_speed_percent: DEFAULT_ANIMATION_SPEED_PERCENT,
         }
     }
 }
@@ -216,6 +226,12 @@ impl AppearanceConfig {
             && matches!(self.accent_color, BorderColor::Cyan)
             && matches!(self.icon_display_mode, IconDisplayMode::Image)
             && matches!(self.motion_preference, MotionPreference::Full)
+            && self.animation_speed_percent == DEFAULT_ANIMATION_SPEED_PERCENT
+    }
+
+    pub fn normalized_animation_speed_percent(&self) -> u16 {
+        self.animation_speed_percent
+            .clamp(MIN_ANIMATION_SPEED_PERCENT, MAX_ANIMATION_SPEED_PERCENT)
     }
 }
 
@@ -226,7 +242,22 @@ const fn legacy_appearance_default() -> AppearanceConfig {
         accent_color: BorderColor::Cyan,
         icon_display_mode: IconDisplayMode::Image,
         motion_preference: MotionPreference::Full,
+        animation_speed_percent: DEFAULT_ANIMATION_SPEED_PERCENT,
     }
+}
+
+const fn default_animation_speed_percent() -> u16 {
+    DEFAULT_ANIMATION_SPEED_PERCENT
+}
+
+fn deserialize_animation_speed_percent<'de, DeserializerType>(
+    deserializer: DeserializerType,
+) -> Result<u16, DeserializerType::Error>
+where
+    DeserializerType: Deserializer<'de>,
+{
+    Ok(u16::deserialize(deserializer)?
+        .clamp(MIN_ANIMATION_SPEED_PERCENT, MAX_ANIMATION_SPEED_PERCENT))
 }
 
 /// Accessibility preference for Frost Motion.
@@ -715,10 +746,27 @@ mod glacier_migration_tests {
                 accent_color: BorderColor::Rgb(0x63, 0xd3, 0xe5),
                 icon_display_mode: IconDisplayMode::Image,
                 motion_preference: MotionPreference::Full,
+                animation_speed_percent: DEFAULT_ANIMATION_SPEED_PERCENT,
             }
         );
         let appearance = AppearanceConfig::default();
         assert_eq!(appearance, StorageConfig::default().appearance);
+    }
+
+    #[test]
+    fn animation_speed_defaults_and_clamps_when_loaded() {
+        let missing: AppearanceConfig = serde_json::from_str("{}").expect("default appearance");
+        let below: AppearanceConfig = serde_json::from_str(r#"{"animation_speed_percent":0}"#)
+            .expect("lower bound appearance");
+        let above: AppearanceConfig = serde_json::from_str(r#"{"animation_speed_percent":999}"#)
+            .expect("upper bound appearance");
+
+        assert_eq!(
+            missing.animation_speed_percent,
+            DEFAULT_ANIMATION_SPEED_PERCENT
+        );
+        assert_eq!(below.animation_speed_percent, MIN_ANIMATION_SPEED_PERCENT);
+        assert_eq!(above.animation_speed_percent, MAX_ANIMATION_SPEED_PERCENT);
     }
 
     #[test]
@@ -753,6 +801,10 @@ mod glacier_migration_tests {
             },
             AppearanceConfig {
                 motion_preference: MotionPreference::Reduced,
+                ..legacy()
+            },
+            AppearanceConfig {
+                animation_speed_percent: 125,
                 ..legacy()
             },
         ];

@@ -129,11 +129,25 @@ impl Default for ThemeTokens {
 
 /// A per-frame description for terminal animation. `now` is supplied by the
 /// host, which makes transition tests deterministic and avoids hidden clocks.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MotionFrame {
     pub now: Duration,
     pub delta: Duration,
     pub reduced_motion: bool,
+    /// Playback rate as a percentage. `100` is the design-time duration,
+    /// while `200` plays the same motion twice as fast.
+    pub animation_speed_percent: u16,
+}
+
+impl Default for MotionFrame {
+    fn default() -> Self {
+        Self {
+            now: Duration::ZERO,
+            delta: Duration::ZERO,
+            reduced_motion: false,
+            animation_speed_percent: 100,
+        }
+    }
 }
 
 impl MotionFrame {
@@ -142,6 +156,16 @@ impl MotionFrame {
             now,
             delta: Duration::ZERO,
             reduced_motion: true,
+            animation_speed_percent: 100,
+        }
+    }
+
+    pub fn scaled_delta(self) -> Duration {
+        if self.reduced_motion {
+            Duration::ZERO
+        } else {
+            self.delta
+                .mul_f64(f64::from(self.animation_speed_percent.max(1)) / 100.0)
         }
     }
 }
@@ -159,11 +183,11 @@ impl MotionTimings {
     pub const TOAST_ENTER: Duration = Duration::from_millis(200);
     pub const TOAST_EXIT: Duration = Duration::from_millis(150);
 
-    pub const fn resolve(frame: MotionFrame, duration: Duration) -> Duration {
+    pub fn resolve(frame: MotionFrame, duration: Duration) -> Duration {
         if frame.reduced_motion {
             Duration::ZERO
         } else {
-            duration
+            duration.mul_f64(100.0 / f64::from(frame.animation_speed_percent.max(1)))
         }
     }
 }
@@ -360,14 +384,17 @@ pub fn schedule_motion_range(
             next_redraw_in: Duration::ZERO,
         };
     }
-    let full_duration = match (kind, direction) {
-        (MotionTransitionKind::Page, _) => MotionTimings::PAGE,
-        (MotionTransitionKind::Focus, _) => MotionTimings::FOCUS,
-        (MotionTransitionKind::Dialog, _) => MotionTimings::DIALOG,
-        (MotionTransitionKind::Popover, _) => MotionTimings::POPOVER,
-        (MotionTransitionKind::Toast, MotionDirection::Exiting) => MotionTimings::TOAST_EXIT,
-        (MotionTransitionKind::Toast, _) => MotionTimings::TOAST_ENTER,
-    };
+    let full_duration = MotionTimings::resolve(
+        frame,
+        match (kind, direction) {
+            (MotionTransitionKind::Page, _) => MotionTimings::PAGE,
+            (MotionTransitionKind::Focus, _) => MotionTimings::FOCUS,
+            (MotionTransitionKind::Dialog, _) => MotionTimings::DIALOG,
+            (MotionTransitionKind::Popover, _) => MotionTimings::POPOVER,
+            (MotionTransitionKind::Toast, MotionDirection::Exiting) => MotionTimings::TOAST_EXIT,
+            (MotionTransitionKind::Toast, _) => MotionTimings::TOAST_ENTER,
+        },
+    );
     let distance = start_progress.abs_diff(target_progress);
     let duration = full_duration.mul_f64(f64::from(distance) / 1_000.0);
     let elapsed = frame.now.saturating_sub(changed_at);
@@ -589,6 +616,7 @@ impl RenderContext {
                 now,
                 delta: Duration::ZERO,
                 reduced_motion,
+                animation_speed_percent: 100,
             },
             capabilities,
         )

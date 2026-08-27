@@ -14,7 +14,7 @@ use shell::{
     HomeModeOverride, InputEvent, ShellLaunchConfig, ShellScreen, ShellSession,
     prepare_shell_startup,
 };
-use storage::{BorderShape, IconDisplayMode, StorageManager, TimeSyncSource};
+use storage::{BorderShape, IconDisplayMode, MotionPreference, StorageManager, TimeSyncSource};
 use ui::{SettingsCategory, SettingsField, SettingsPickerKind};
 
 fn default_config() -> ShellLaunchConfig {
@@ -511,6 +511,78 @@ fn normal_user_can_change_only_their_appearance() {
             .status
             .starts_with("Error:")
     );
+}
+
+#[test]
+fn animation_speed_is_per_user_adjustable_and_has_a_default_button() {
+    let fixture = FixtureRoot::new("animation-speed");
+    let platform = mock_platform(fixture.path());
+    let manager = initialize_users(&platform, true, false);
+    let mut state = logged_in_state(&platform, "NormalUser", "NormalPass123");
+
+    open_settings_from_home(&mut state, &platform);
+    for _ in 0..5 {
+        press(&mut state, &platform, "Down");
+    }
+    let model = state.to_settings_view_model().unwrap();
+    assert_eq!(model.selected_field, SettingsField::AnimationSpeed);
+    let speed = model
+        .cards
+        .iter()
+        .flat_map(|card| &card.items)
+        .find(|item| item.field == SettingsField::AnimationSpeed)
+        .expect("animation speed setting");
+    assert_eq!(speed.value, "100%");
+    assert_eq!(speed.kind, ui::SettingsControlKind::Stepper);
+    assert!(speed.enabled);
+
+    press(&mut state, &platform, "Right");
+    let normal_appearance = || {
+        manager
+            .load_users()
+            .unwrap()
+            .users
+            .into_iter()
+            .find(|user| user.username == "NormalUser")
+            .unwrap()
+            .appearance
+    };
+    assert_eq!(normal_appearance().animation_speed_percent, 125);
+
+    press(&mut state, &platform, "Down");
+    assert_eq!(
+        state.to_settings_view_model().unwrap().selected_field,
+        SettingsField::ResetAnimationSpeed
+    );
+    press(&mut state, &platform, "Enter");
+    assert_eq!(normal_appearance().animation_speed_percent, 100);
+
+    press(&mut state, &platform, "Up");
+    press(&mut state, &platform, "Up");
+    assert_eq!(
+        state.to_settings_view_model().unwrap().selected_field,
+        SettingsField::MotionPreference
+    );
+    press(&mut state, &platform, "Enter");
+    assert_eq!(
+        normal_appearance().motion_preference,
+        MotionPreference::Reduced
+    );
+    let reduced = state.to_settings_view_model().unwrap();
+    for field in [
+        SettingsField::AnimationSpeed,
+        SettingsField::ResetAnimationSpeed,
+    ] {
+        assert!(
+            !reduced
+                .cards
+                .iter()
+                .flat_map(|card| &card.items)
+                .find(|item| item.field == field)
+                .expect("animation setting")
+                .enabled
+        );
+    }
 }
 
 #[test]

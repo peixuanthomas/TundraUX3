@@ -128,6 +128,7 @@ fn pure_motion_schedule_covers_start_mid_end_interruption_reversal_and_idle() {
         now: Duration::from_millis(millis),
         delta: Duration::ZERO,
         reduced_motion: false,
+        animation_speed_percent: 100,
     };
     let start = schedule_motion(home, settings, Duration::from_millis(10), frame(10));
     assert!(
@@ -215,6 +216,7 @@ fn render_context_exposes_observable_page_and_overlay_frames() {
         now: Duration::from_millis(millis),
         delta: Duration::ZERO,
         reduced_motion: false,
+        animation_speed_percent: 100,
     };
     let theme = TundraTheme::default();
     let area = Rect::new(0, 0, 80, 24);
@@ -271,6 +273,7 @@ fn ranged_motion_is_continuous_and_overlay_exit_projection_is_endpoint_neutral()
         now: Duration::from_millis(millis),
         delta: Duration::ZERO,
         reduced_motion: false,
+        animation_speed_percent: 100,
     };
     for kind in [
         MotionTransitionKind::Page,
@@ -348,11 +351,45 @@ fn ranged_motion_is_continuous_and_overlay_exit_projection_is_endpoint_neutral()
 }
 
 #[test]
+fn animation_speed_scales_transition_duration_and_effect_delta() {
+    let frame = |millis, speed| MotionFrame {
+        now: Duration::from_millis(millis),
+        delta: Duration::from_millis(16),
+        reduced_motion: false,
+        animation_speed_percent: speed,
+    };
+    let transition = |millis, speed| {
+        schedule_motion_range(
+            MotionTransitionKind::Page,
+            MotionDirection::Entering,
+            0,
+            1_000,
+            Duration::ZERO,
+            frame(millis, speed),
+        )
+    };
+
+    assert!(transition(110, 100).active);
+    assert!(!transition(110, 200).active);
+    assert!(transition(220, 50).active);
+    assert_eq!(
+        MotionTimings::resolve(frame(0, 200), MotionTimings::PAGE),
+        Duration::from_millis(110)
+    );
+    assert_eq!(frame(0, 200).scaled_delta(), Duration::from_millis(32));
+    assert_eq!(
+        MotionFrame::reduced(Duration::ZERO).scaled_delta(),
+        Duration::ZERO
+    );
+}
+
+#[test]
 fn replacement_interaction_uses_lifecycle_phase_not_carried_visible_progress() {
     let frame = |millis| MotionFrame {
         now: Duration::from_millis(millis),
         delta: Duration::ZERO,
         reduced_motion: false,
+        animation_speed_percent: 100,
     };
     let start = schedule_motion_range(
         MotionTransitionKind::Dialog,
@@ -418,6 +455,7 @@ fn toast_enter_and_exit_progress_remain_self_scheduled_behind_other_overlays() {
         now: Duration::from_millis(millis),
         delta: Duration::ZERO,
         reduced_motion: false,
+        animation_speed_percent: 100,
     };
     let mut toast = Toast::new("Saved", ToastTone::Success, frame(0));
     assert_eq!(toast.visible_progress(frame(0)), 0);
@@ -448,6 +486,7 @@ fn toast_resume_reverses_from_the_visible_progress_in_full_and_reduced_motion() 
         now: Duration::from_millis(millis),
         delta: Duration::ZERO,
         reduced_motion: false,
+        animation_speed_percent: 100,
     };
     let mut toast = Toast::new("Saved", ToastTone::Info, frame(0));
     toast.dismiss(frame(200));
@@ -550,6 +589,7 @@ fn frost_motion_only_requests_redraw_while_active_and_respects_reduced_motion() 
         now: Duration::ZERO,
         delta: Duration::ZERO,
         reduced_motion: false,
+        animation_speed_percent: 100,
     };
     let mut motion = FrostMotion::default();
     motion.begin(start, MotionTimings::FOCUS);
@@ -560,6 +600,7 @@ fn frost_motion_only_requests_redraw_while_active_and_respects_reduced_motion() 
         now: Duration::from_millis(60),
         delta: Duration::from_millis(16),
         reduced_motion: false,
+        animation_speed_percent: 100,
     };
     assert!(motion.requests_redraw(halfway));
     assert!(motion.progress(halfway, true) > 500);
@@ -573,6 +614,7 @@ fn frost_motion_only_requests_redraw_while_active_and_respects_reduced_motion() 
         now: Duration::from_millis(241),
         delta: Duration::from_millis(16),
         reduced_motion: false,
+        animation_speed_percent: 100,
     };
     assert!(!motion.requests_redraw(finished));
     let reduced = MotionFrame::reduced(Duration::from_millis(242));

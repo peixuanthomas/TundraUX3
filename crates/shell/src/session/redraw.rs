@@ -105,12 +105,13 @@ impl RedrawScheduler {
                 .is_some_and(|deadline| now >= deadline)
     }
 
-    pub(super) fn frame(&self, now: Instant) -> ui::MotionFrame {
+    pub(super) fn frame(&self, now: Instant, animation_speed_percent: u16) -> ui::MotionFrame {
         let now = self.elapsed(now);
         ui::MotionFrame {
             now,
             delta: now.saturating_sub(self.last_frame_at),
             reduced_motion: self.reduced_motion,
+            animation_speed_percent,
         }
     }
 
@@ -255,7 +256,9 @@ mod tests {
     fn reduced_motion_is_forwarded_to_independent_widgets() {
         let origin = Instant::now();
         let scheduler = RedrawScheduler::new(origin, id("home", "one", None), true);
-        assert!(scheduler.frame(origin).reduced_motion);
+        let frame = scheduler.frame(origin, 125);
+        assert!(frame.reduced_motion);
+        assert_eq!(frame.animation_speed_percent, 125);
     }
 
     #[test]

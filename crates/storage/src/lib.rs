@@ -17,12 +17,13 @@ mod user_document;
 
 pub use clock_document::{ClockDocument, ClockEntryRecord, ClockProfile};
 pub use config_document::{
-    AccentColor, AppearanceConfig, BorderColor, BorderColorParseError, BorderShape,
-    DEFAULT_ACCENT_COLOR, DEFAULT_EDITOR_EXPLORER_OPEN_EXTENSIONS, EditorConfig, ExplorerConfig,
-    ExplorerDateZone, ExplorerSizeFormat, ExplorerSortDirection, ExplorerSortField,
-    IconDisplayMode, LauncherConfig, LauncherEntryRecord, LauncherExecutableKind,
-    LauncherFingerprint, MAX_EDITOR_EXPLORER_OPEN_EXTENSION_LEN,
-    MAX_EDITOR_EXPLORER_OPEN_EXTENSIONS, MotionPreference, SYSTEM_STATUS_MAX_AVAILABLE_GIB,
+    ANIMATION_SPEED_STEP_PERCENT, AccentColor, AppearanceConfig, BorderColor,
+    BorderColorParseError, BorderShape, DEFAULT_ACCENT_COLOR, DEFAULT_ANIMATION_SPEED_PERCENT,
+    DEFAULT_EDITOR_EXPLORER_OPEN_EXTENSIONS, EditorConfig, ExplorerConfig, ExplorerDateZone,
+    ExplorerSizeFormat, ExplorerSortDirection, ExplorerSortField, IconDisplayMode, LauncherConfig,
+    LauncherEntryRecord, LauncherExecutableKind, LauncherFingerprint, MAX_ANIMATION_SPEED_PERCENT,
+    MAX_EDITOR_EXPLORER_OPEN_EXTENSION_LEN, MAX_EDITOR_EXPLORER_OPEN_EXTENSIONS,
+    MIN_ANIMATION_SPEED_PERCENT, MotionPreference, SYSTEM_STATUS_MAX_AVAILABLE_GIB,
     SYSTEM_STATUS_MAX_PERCENTAGE, SYSTEM_STATUS_MIN_AVAILABLE_GIB, SYSTEM_STATUS_MIN_PERCENTAGE,
     SecurityConfig, StorageConfig, SystemStatusConfig, TimeSyncConfig, TimeSyncSource,
     normalize_editor_explorer_open_extension,

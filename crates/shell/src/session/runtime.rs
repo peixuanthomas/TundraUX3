@@ -1068,7 +1068,7 @@ pub(super) fn run_fullscreen_shell_session<W: Write>(
                 }
                 model
             });
-            let motion_frame = redraw.frame(frame_now);
+            let motion_frame = redraw.frame(frame_now, animation_speed_percent(&state));
             let motion_transitions = redraw.transitions(frame_now);
             let render_context = ui::RenderContext::from_theme_with_transitions(
                 &theme,
@@ -1344,7 +1344,7 @@ pub(super) fn run_fullscreen_shell_session<W: Write>(
                 {
                     toast.render_frame(frame, status, &render_context);
                 }
-                motion_effects.process(motion_frame.delta, frame.buffer_mut(), &state);
+                motion_effects.process(motion_frame.scaled_delta(), frame.buffer_mut(), &state);
             })?;
             let toast_requests_redraw = shell_toast
                 .as_ref()
@@ -1614,6 +1614,14 @@ fn reduced_motion_enabled(state: &ShellSession) -> bool {
             storage::MotionPreference::Reduced
         )
     })
+}
+
+fn animation_speed_percent(state: &ShellSession) -> u16 {
+    state
+        .app
+        .active_appearance()
+        .map(storage::AppearanceConfig::normalized_animation_speed_percent)
+        .unwrap_or(storage::DEFAULT_ANIMATION_SPEED_PERCENT)
 }
 
 fn sync_shell_toast(
@@ -2517,6 +2525,7 @@ mod runtime_preflight_tests {
             now: Duration::from_millis(millis),
             delta: Duration::ZERO,
             reduced_motion: false,
+            animation_speed_percent: 100,
         };
         let mut toast = None;
         sync_shell_toast(&mut toast, Some("Saved"), frame(0));

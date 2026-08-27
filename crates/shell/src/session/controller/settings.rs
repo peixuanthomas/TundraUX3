@@ -11,6 +11,8 @@ pub(in crate::session) const APPEARANCE_SETTINGS_FIELDS: &[ui::SettingsField] = 
     ui::SettingsField::BorderColor,
     ui::SettingsField::AccentColor,
     ui::SettingsField::MotionPreference,
+    ui::SettingsField::AnimationSpeed,
+    ui::SettingsField::ResetAnimationSpeed,
     ui::SettingsField::RestoreDefaults,
 ];
 pub(in crate::session) const REGION_SETTINGS_FIELDS: &[ui::SettingsField] = &[
@@ -405,6 +407,7 @@ impl ShellSession {
             ui::SettingsField::TimeSyncServer => self.open_settings_time_sync_server(),
             ui::SettingsField::WeatherLocation => self.open_settings_weather_location(),
             ui::SettingsField::ExplorerOpenExtensions => self.open_settings_file_extensions(),
+            ui::SettingsField::ResetAnimationSpeed => self.reset_settings_animation_speed(),
             ui::SettingsField::RestoreDefaults => self.request_settings_restore_defaults(),
             _ => self.adjust_selected_setting(1, platform),
         }
@@ -440,6 +443,10 @@ impl ShellSession {
             self.request_settings_restore_defaults();
             return;
         }
+        if field == ui::SettingsField::ResetAnimationSpeed {
+            self.reset_settings_animation_speed();
+            return;
+        }
         if field == ui::SettingsField::BorderShape {
             let Some(mut appearance) = self.app.active_appearance().cloned() else {
                 return;
@@ -460,6 +467,27 @@ impl ShellSession {
                 storage::MotionPreference::Reduced => storage::MotionPreference::Full,
             };
             self.save_settings_appearance(appearance, "Motion");
+            return;
+        }
+        if field == ui::SettingsField::AnimationSpeed {
+            let Some(mut appearance) = self.app.active_appearance().cloned() else {
+                return;
+            };
+            if appearance.motion_preference.reduced() {
+                self.set_settings_error("Enable Full motion to adjust animation speed");
+                return;
+            }
+            let speed = appearance.normalized_animation_speed_percent();
+            appearance.animation_speed_percent = if direction >= 0 {
+                speed
+                    .saturating_add(storage::ANIMATION_SPEED_STEP_PERCENT)
+                    .min(storage::MAX_ANIMATION_SPEED_PERCENT)
+            } else {
+                speed
+                    .saturating_sub(storage::ANIMATION_SPEED_STEP_PERCENT)
+                    .max(storage::MIN_ANIMATION_SPEED_PERCENT)
+            };
+            self.save_settings_appearance(appearance, "Animation speed");
             return;
         }
         if field == ui::SettingsField::TimeSyncSource {
@@ -651,6 +679,18 @@ impl ShellSession {
                 false
             }
         }
+    }
+
+    pub(in crate::session) fn reset_settings_animation_speed(&mut self) {
+        let Some(mut appearance) = self.app.active_appearance().cloned() else {
+            return;
+        };
+        if appearance.motion_preference.reduced() {
+            self.set_settings_error("Enable Full motion to restore animation speed");
+            return;
+        }
+        appearance.animation_speed_percent = storage::DEFAULT_ANIMATION_SPEED_PERCENT;
+        self.save_settings_appearance(appearance, "Animation speed default");
     }
 
     pub(in crate::session) fn refresh_asset_cache_for_theme(
@@ -1776,6 +1816,7 @@ pub(in crate::session) fn settings_cards(
         )
         .enabled(enabled)
     };
+    let motion_enabled = !appearance.motion_preference.reduced();
     match state.category {
         ui::SettingsCategory::Appearance => vec![
             Card::new(
@@ -1831,6 +1872,11 @@ pub(in crate::session) fn settings_cards(
                         "Used for selection and focus; must differ from the border.",
                         Kind::Palette,
                     ),
+                ],
+            ),
+            Card::new(
+                "Animation",
+                vec![
                     Item::new(
                         Field::MotionPreference,
                         "Motion",
@@ -1841,6 +1887,22 @@ pub(in crate::session) fn settings_cards(
                         "Use Reduced to disable interface transitions while preserving essential refreshes.",
                         Kind::Cycle,
                     ),
+                    Item::new(
+                        Field::AnimationSpeed,
+                        "Animation speed",
+                        format!("{}%", appearance.normalized_animation_speed_percent()),
+                        "Adjust transition speed from 50% to 200% in 25% steps.",
+                        Kind::Stepper,
+                    )
+                    .enabled(motion_enabled),
+                    Item::new(
+                        Field::ResetAnimationSpeed,
+                        "Restore speed default",
+                        "Reset",
+                        "Restore animation speed to the 100% default.",
+                        Kind::Action,
+                    )
+                    .enabled(motion_enabled),
                 ],
             ),
             Card::new("Reset", vec![reset(true)]),
@@ -2286,6 +2348,8 @@ pub(in crate::session) fn settings_field_label(field: ui::SettingsField) -> &'st
         ui::SettingsField::BorderColor => "Border color",
         ui::SettingsField::AccentColor => "Accent color",
         ui::SettingsField::MotionPreference => "Motion",
+        ui::SettingsField::AnimationSpeed => "Animation speed",
+        ui::SettingsField::ResetAnimationSpeed => "Animation speed default",
         ui::SettingsField::Language => "Language",
         ui::SettingsField::Timezone => "Timezone",
         ui::SettingsField::TimeSyncSource => "Time source",
