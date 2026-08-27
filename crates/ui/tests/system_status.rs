@@ -119,8 +119,13 @@ fn user_gets_summary_and_integrated_diagnostics_without_admin_tabs() {
     assert!(layout.rows.is_empty());
     assert_eq!(model.item_count(), 0);
     let output = render(80, 20, &model, TundraTheme::default_dark());
-    assert!(output.contains("Storage status: Healthy"));
-    assert!(output.contains("Network status: Connected"));
+    assert!(output.contains("System disk"));
+    assert!(output.contains("42% used"));
+    assert!(output.contains('█'));
+    assert!(output.contains("Diagnostics"));
+    assert!(output.contains("No issues"));
+    assert!(output.contains("Network"));
+    assert!(output.contains("Connected"));
     assert!(output.contains("Health"));
     assert!(output.contains("Incidents"));
     assert!(!output.contains("en0"));
@@ -130,6 +135,33 @@ fn user_gets_summary_and_integrated_diagnostics_without_admin_tabs() {
             .iter()
             .any(|tab| matches!(tab.tab, SystemStatusTab::Storage | SystemStatusTab::Network))
     );
+}
+
+#[test]
+fn overview_counts_diagnostics_warnings() {
+    let mut model = admin_model(SystemStatusTab::Overview, SystemStatusSectionState::Ready);
+    model.diagnostics.checks = vec![
+        diagnostics_check("storage.one", DiagnosticsStatus::Warning),
+        diagnostics_check("storage.two", DiagnosticsStatus::Warning),
+        diagnostics_check("paths.data", DiagnosticsStatus::Pass),
+    ];
+
+    let output = render(80, 20, &model, TundraTheme::default_dark());
+
+    assert!(output.contains("Diagnostics"));
+    assert!(output.contains("2 warnings"));
+    assert!(!output.contains("No issues"));
+}
+
+#[test]
+fn overview_does_not_claim_diagnostics_are_healthy_before_first_scan() {
+    let mut model = admin_model(SystemStatusTab::Overview, SystemStatusSectionState::Ready);
+    model.diagnostics.scanned_at = None;
+
+    let output = render(80, 20, &model, TundraTheme::default_dark());
+
+    assert!(output.contains("Not scanned"));
+    assert!(!output.contains("No issues"));
 }
 
 #[test]
@@ -266,7 +298,10 @@ fn admin_model(
             overview: SystemStatusOverviewViewModel {
                 storage_status: "Healthy".into(),
                 storage_tone: ComponentTone::Success,
-                system_volume_usage: "42%".into(),
+                system_volume_usage: "42 GB / 100 GB".into(),
+                system_volume_used_percentage: Some(42),
+                network_status: "Connected".into(),
+                network_tone: ComponentTone::Success,
                 active_link_count: "1".into(),
                 last_refreshed: "now".into(),
             },
@@ -289,7 +324,8 @@ fn user_model() -> SystemStatusViewModel {
         content: SystemStatusContentViewModel::User(UserSystemStatusViewModel {
             storage_status: "Healthy".into(),
             storage_tone: ComponentTone::Success,
-            system_volume_usage: "42%".into(),
+            system_volume_usage: "42 GB / 100 GB".into(),
+            system_volume_used_percentage: Some(42),
             network_status: "Connected".into(),
             network_tone: ComponentTone::Success,
             last_refreshed: "now".into(),
@@ -300,6 +336,19 @@ fn user_model() -> SystemStatusViewModel {
         scroll_offset: 99,
         refreshing: false,
         feedback: None,
+    }
+}
+
+fn diagnostics_check(id: &str, status: DiagnosticsStatus) -> DiagnosticsCheckViewModel {
+    DiagnosticsCheckViewModel {
+        id: id.into(),
+        label: id.into(),
+        category: "Storage".into(),
+        status,
+        summary: String::new(),
+        detail: String::new(),
+        remediation: String::new(),
+        repairable: false,
     }
 }
 

@@ -76,6 +76,9 @@ pub struct SystemStatusOverviewViewModel {
     pub storage_status: String,
     pub storage_tone: ComponentTone,
     pub system_volume_usage: String,
+    pub system_volume_used_percentage: Option<u8>,
+    pub network_status: String,
+    pub network_tone: ComponentTone,
     pub active_link_count: String,
     pub last_refreshed: String,
 }
@@ -116,6 +119,7 @@ pub struct UserSystemStatusViewModel {
     pub storage_status: String,
     pub storage_tone: ComponentTone,
     pub system_volume_usage: String,
+    pub system_volume_used_percentage: Option<u8>,
     pub network_status: String,
     pub network_tone: ComponentTone,
     pub last_refreshed: String,

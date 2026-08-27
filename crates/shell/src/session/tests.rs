@@ -274,6 +274,8 @@ fn system_status_admin_fallback_and_user_stale_unavailable_are_desensitized() {
             .system_volume_usage
             .contains("fixed-volume fallback; source unknown")
     );
+    assert_eq!(admin.overview.system_volume_used_percentage, Some(90));
+    assert_eq!(admin.overview.network_status, "Connected");
     assert_eq!(
         admin.storage_rows[0].system_volume,
         "Fallback (source unknown)"

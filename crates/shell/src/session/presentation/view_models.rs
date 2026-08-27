@@ -35,10 +35,45 @@ impl ShellSession {
         let usage = system_volume
             .map(volume_usage)
             .unwrap_or_else(|| "Unknown".into());
+        let system_volume_used_percentage = system_volume
+            .and_then(used_percentage)
+            .map(|percentage| percentage.round().clamp(0.0, 100.0) as u8);
         let refreshed = snapshot
             .and_then(successful_system_status_sampled_at)
             .map(|sampled| sampled.format("%Y-%m-%d %H:%M:%S UTC").to_string())
             .unwrap_or_else(|| "Not yet".into());
+        let (network_status, network_tone) = match snapshot.map(|s| &s.network) {
+            None | Some(NetworkState::Loading) => {
+                ("Loading".into(), ui::components::ComponentTone::Muted)
+            }
+            Some(NetworkState::Unavailable { .. }) => {
+                ("Unavailable".into(), ui::components::ComponentTone::Muted)
+            }
+            Some(NetworkState::Ready(n)) => (
+                if n.has_active_link {
+                    "Connected"
+                } else {
+                    "Disconnected"
+                }
+                .into(),
+                if n.has_active_link {
+                    ui::components::ComponentTone::Success
+                } else {
+                    ui::components::ComponentTone::Warning
+                },
+            ),
+            Some(NetworkState::Stale { last_good, .. }) => (
+                format!(
+                    "{} (stale)",
+                    if last_good.has_active_link {
+                        "Connected"
+                    } else {
+                        "Disconnected"
+                    }
+                ),
+                ui::components::ComponentTone::Warning,
+            ),
+        };
         if role == UserRole::User {
             let usage = if storage
                 .is_some_and(|s| s.system_volume_source == SystemVolumeSource::FixedVolumeFallback)
@@ -62,43 +97,12 @@ impl ShellSession {
                     pressure_tone(pressure),
                 ),
             };
-            let (network_status, network_tone) = match snapshot.map(|s| &s.network) {
-                None | Some(NetworkState::Loading) => {
-                    ("Loading".into(), ui::components::ComponentTone::Muted)
-                }
-                Some(NetworkState::Unavailable { .. }) => {
-                    ("Unavailable".into(), ui::components::ComponentTone::Muted)
-                }
-                Some(NetworkState::Ready(n)) => (
-                    if n.has_active_link {
-                        "Connected"
-                    } else {
-                        "Disconnected"
-                    }
-                    .into(),
-                    if n.has_active_link {
-                        ui::components::ComponentTone::Success
-                    } else {
-                        ui::components::ComponentTone::Warning
-                    },
-                ),
-                Some(NetworkState::Stale { last_good, .. }) => (
-                    format!(
-                        "{} (stale)",
-                        if last_good.has_active_link {
-                            "Connected"
-                        } else {
-                            "Disconnected"
-                        }
-                    ),
-                    ui::components::ComponentTone::Warning,
-                ),
-            };
             return Some(ui::SystemStatusViewModel {
                 content: ui::SystemStatusContentViewModel::User(ui::UserSystemStatusViewModel {
                     storage_status,
                     storage_tone,
                     system_volume_usage: usage,
+                    system_volume_used_percentage,
                     network_status,
                     network_tone,
                     last_refreshed: refreshed,
@@ -187,6 +191,9 @@ impl ShellSession {
                     storage_status: pressure_label(pressure).into(),
                     storage_tone: pressure_tone(pressure),
                     system_volume_usage: usage,
+                    system_volume_used_percentage,
+                    network_status,
+                    network_tone,
                     active_link_count: network
                         .map(|n| n.active_link_count.to_string())
                         .unwrap_or_else(|| "Unknown".into()),
