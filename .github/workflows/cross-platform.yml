@@ -27,6 +27,11 @@ jobs:
       - name: Compile workspace
         shell: bash
         run: cargo build --workspace --locked
+      - name: Test system metrics
+        shell: bash
+        run: |
+          cargo test --locked -p platform --test system_status
+          cargo test --locked -p system-services
       - name: Check Weathr dependency boundary
         shell: bash
         run: bash scripts/check-weathr-dependency-boundary.sh
