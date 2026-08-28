@@ -223,6 +223,66 @@ fn system_status_history_uses_rolling_observation_window() {
 }
 
 #[test]
+fn system_status_history_expires_without_new_ready_insertions() {
+    let mut state = ShellSession::new_for_home_mode(
+        ShellLaunchConfig::default(),
+        (120, 40),
+        ShellHomeMode::User,
+    );
+    set_test_auth_role(&mut state, UserRole::Admin);
+    let base = Utc::now();
+    let mut ready = system_status_metric_snapshot(1);
+    ready.metrics.sampled_at = base;
+    state.apply_system_status_snapshot(ready);
+    let mut later = system_status_metric_snapshot(2);
+    later.metrics.sampled_at = base + chrono::Duration::seconds(61);
+    later.metrics.uptime = system_services::MetricState::Loading;
+    later.metrics.cpu = system_services::MetricState::Stale {
+        last_good: system_services::CpuSnapshot {
+            usage_percent: 25.0,
+            per_core_percent: vec![25.0],
+            logical_core_count: 1,
+            physical_core_count: Some(1),
+        },
+        error: "stale".into(),
+    };
+    later.metrics.memory = system_services::MetricState::Unavailable {
+        reason: "unavailable".into(),
+    };
+    later.metrics.network_io = system_services::MetricState::Loading;
+    later.metrics.thermal = system_services::MetricState::Stale {
+        last_good: vec![],
+        error: "stale".into(),
+    };
+    state.apply_system_status_snapshot(later);
+    assert!(state.system_status_history.cpu.is_empty());
+    assert!(state.system_status_history.memory.is_empty());
+    assert!(state.system_status_history.network_received.is_empty());
+    assert!(state.system_status_history.network_transmitted.is_empty());
+    assert!(state.system_status_history.temperature.is_empty());
+    let model = state.to_system_status_view_model().unwrap();
+    for kind in [
+        ui::SystemStatusWidgetKind::Cpu,
+        ui::SystemStatusWidgetKind::Memory,
+        ui::SystemStatusWidgetKind::Network,
+    ] {
+        let trend = model
+            .dashboard
+            .wide_widgets
+            .iter()
+            .find(|widget| widget.kind == kind)
+            .unwrap()
+            .trend
+            .as_ref()
+            .unwrap();
+        assert!(
+            trend.is_empty(),
+            "expired {kind:?} points are not presented"
+        );
+    }
+}
+
+#[test]
 fn system_status_arrow_navigation_reaches_offscreen_cards_and_scroll_clamps() {
     let mut state = ShellSession::new_for_home_mode(
         ShellLaunchConfig::default(),

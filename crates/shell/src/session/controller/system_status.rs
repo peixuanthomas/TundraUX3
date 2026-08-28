@@ -1082,6 +1082,18 @@ impl ShellSession {
     }
 
     fn record_system_status_history(&mut self, snapshot: &app::AppSystemStatusSnapshot) {
+        let observed_at = snapshot.metrics.sampled_at;
+        expire_system_status_history(&mut self.system_status_history.cpu, observed_at);
+        expire_system_status_history(&mut self.system_status_history.memory, observed_at);
+        expire_system_status_history(
+            &mut self.system_status_history.network_received,
+            observed_at,
+        );
+        expire_system_status_history(
+            &mut self.system_status_history.network_transmitted,
+            observed_at,
+        );
+        expire_system_status_history(&mut self.system_status_history.temperature, observed_at);
         let MetricState::Ready(uptime) = &snapshot.metrics.uptime else {
             return;
         };
@@ -1089,7 +1101,6 @@ impl ShellSession {
             return;
         }
         self.system_status_history.last_uptime_seconds = Some(uptime.seconds);
-        let observed_at = snapshot.metrics.sampled_at;
         if let MetricState::Ready(cpu) = &snapshot.metrics.cpu {
             push_system_status_history(
                 &mut self.system_status_history.cpu,
@@ -1323,6 +1334,17 @@ fn push_system_status_history(
     observed_at: chrono::DateTime<chrono::Utc>,
     value: u64,
 ) {
+    expire_system_status_history(history, observed_at);
+    while history.len() >= 60 {
+        history.pop_front();
+    }
+    history.push_back(SystemStatusHistoryPoint { observed_at, value });
+}
+
+fn expire_system_status_history(
+    history: &mut VecDeque<SystemStatusHistoryPoint>,
+    observed_at: chrono::DateTime<chrono::Utc>,
+) {
     let cutoff = observed_at - chrono::Duration::seconds(60);
     while history
         .front()
@@ -1330,10 +1352,6 @@ fn push_system_status_history(
     {
         history.pop_front();
     }
-    while history.len() >= 60 {
-        history.pop_front();
-    }
-    history.push_back(SystemStatusHistoryPoint { observed_at, value });
 }
 
 pub(in crate::session) const fn ui_widget_kind(
