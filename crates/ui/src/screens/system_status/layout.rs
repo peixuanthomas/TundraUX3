@@ -1,205 +1,281 @@
-use ratatui::layout::Rect;
-
-use super::model::{
-    SystemStatusContentViewModel, SystemStatusSectionState, SystemStatusTab, SystemStatusViewModel,
-};
-use crate::components::{TabItem, Tabs};
+use super::model::*;
 use crate::screens::shell::{inset_rect, line_in_rect, rect_contains, usize_to_u16};
 use crate::{
     DiagnosticsContentLayout, DiagnosticsHitTarget, DiagnosticsRepairDialogLayout,
     diagnostics_content_hit_test, diagnostics_content_layout, diagnostics_repair_dialog_hit_test,
     diagnostics_repair_dialog_layout,
 };
+use ratatui::layout::Rect;
 
+pub const LOGICAL_ROW_HEIGHT: u16 = 2;
+pub const LOGICAL_ROW_GAP: u16 = 1;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct SystemStatusTabLayout {
-    pub tab: SystemStatusTab,
+pub struct SystemStatusWidgetLayout {
+    pub kind: SystemStatusWidgetKind,
+    pub size: SystemStatusWidgetSize,
+    pub logical_column: u16,
+    pub logical_row: u16,
     pub area: Rect,
+    pub preview: bool,
+    pub preview_valid: bool,
 }
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SystemStatusRowLayout {
     pub index: usize,
     pub area: Rect,
 }
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SystemStatusHitTarget {
-    Tab(SystemStatusTab),
+    Widget(SystemStatusWidgetKind),
+    PickerItem(usize),
     Row(usize),
     Diagnostics(DiagnosticsHitTarget),
     Refresh,
+    Edit,
+    Add,
+    Size,
+    Remove,
+    Save,
+    Cancel,
     Scrollbar,
 }
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SystemStatusLayout {
     pub panel: Rect,
     pub header: Rect,
-    pub tabs_area: Rect,
-    pub tabs: Vec<SystemStatusTabLayout>,
     pub content_panel: Rect,
+    pub canvas: Rect,
+    pub footer: Rect,
+    pub profile: SystemStatusDashboardProfile,
+    pub column_count: u16,
+    pub widgets: Vec<SystemStatusWidgetLayout>,
+    pub picker_items: Vec<SystemStatusRowLayout>,
+    pub visible_row_start: u16,
+    pub visible_row_end: u16,
+    pub scrollbar: Option<Rect>,
+    pub empty_canvas: bool,
+    pub refresh_button: Rect,
+    pub edit_button: Rect,
+    pub add_button: Rect,
+    pub size_button: Rect,
+    pub remove_button: Rect,
+    pub save_button: Rect,
+    pub cancel_button: Rect,
     pub notice_area: Option<Rect>,
     pub rows_area: Rect,
-    pub footer: Rect,
-    pub refresh_button: Rect,
-    pub scrollbar: Option<Rect>,
     pub rows: Vec<SystemStatusRowLayout>,
     pub visible_start: usize,
     pub visible_capacity: usize,
     pub diagnostics_content: Option<DiagnosticsContentLayout>,
     pub diagnostics_repair_dialog: Option<DiagnosticsRepairDialogLayout>,
 }
-
+fn button_from_right(footer: Rect, right: &mut u16, width: u16) -> Rect {
+    let w = width.min(*right - footer.x);
+    *right = right.saturating_sub(w);
+    let r = Rect::new(*right, footer.y, w, footer.height);
+    *right = right.saturating_sub(u16::from(*right > footer.x));
+    r
+}
 pub fn system_status_layout(main: Rect, model: &SystemStatusViewModel) -> SystemStatusLayout {
     let panel = main;
     let inner = inset_rect(panel, 1);
     let header = line_in_rect(inner, inner.y);
-    let tabs_area = line_in_rect(inner, header.bottom());
     let footer = line_in_rect(inner, inner.bottom().saturating_sub(1));
-    let content_y = tabs_area.bottom();
     let content_panel = Rect::new(
         inner.x,
-        content_y,
+        header.bottom(),
         inner.width,
-        footer.y.saturating_sub(content_y),
+        footer.y.saturating_sub(header.bottom()),
     );
-    let content_inner = inset_rect(content_panel, 1);
-    let item_count = if model.is_diagnostics() {
-        0
+    let canvas = inset_rect(content_panel, 1);
+    let wide = content_panel.width.saturating_sub(7) / 8 >= 10;
+    let profile = if wide {
+        SystemStatusDashboardProfile::Wide
     } else {
-        model.item_count()
+        SystemStatusDashboardProfile::Narrow
     };
-    let has_stale_notice = match (&model.content, model.tab) {
-        (SystemStatusContentViewModel::Admin(admin), SystemStatusTab::Storage) => {
-            matches!(admin.storage_state, SystemStatusSectionState::Stale { .. })
-                && !admin.storage_rows.is_empty()
-        }
-        (SystemStatusContentViewModel::Admin(admin), SystemStatusTab::Network) => {
-            matches!(admin.network_state, SystemStatusSectionState::Stale { .. })
-                && !admin.network_rows.is_empty()
-        }
-        _ => false,
-    };
-    let notice_height = if has_stale_notice {
-        content_inner.height.min(2)
-    } else {
-        0
-    };
-    let notice_area = has_stale_notice.then(|| {
+    let column_count: u16 = if wide { 8 } else { 4 };
+    let mut right = footer.right();
+    let refresh_button = button_from_right(footer, &mut right, 11);
+    let edit_button = button_from_right(footer, &mut right, 8);
+    right = footer.right();
+    let cancel_button = button_from_right(footer, &mut right, 10);
+    let save_button = button_from_right(footer, &mut right, 8);
+    let remove_button = button_from_right(footer, &mut right, 10);
+    let size_button = button_from_right(footer, &mut right, 8);
+    let add_button = button_from_right(footer, &mut right, 7);
+    let empty_canvas = canvas.height < 5;
+    let visible_row_start = model.dashboard.scroll_row;
+    let visible_rows =
+        canvas.height.saturating_add(LOGICAL_ROW_GAP) / (LOGICAL_ROW_HEIGHT + LOGICAL_ROW_GAP);
+    let visible_row_end = visible_row_start.saturating_add(visible_rows);
+    let all = model.dashboard.widgets(profile);
+    let max_row = all
+        .iter()
+        .map(|w| w.row.saturating_add(w.size.rows()))
+        .max()
+        .unwrap_or(0);
+    let scrollbar = (max_row > visible_rows && canvas.width > 2 && !empty_canvas)
+        .then(|| Rect::new(canvas.right().saturating_sub(1), canvas.y, 1, canvas.height));
+    let grid_width = canvas
+        .width
+        .saturating_sub(if scrollbar.is_some() { 2 } else { 0 });
+    let gaps = column_count.saturating_sub(1);
+    let cell_w = grid_width.saturating_sub(gaps) / column_count;
+    let rect_for = |column: u16, row: u16, size: SystemStatusWidgetSize| {
+        let rel = row.saturating_sub(visible_row_start);
         Rect::new(
-            content_inner.x,
-            content_inner.y,
-            content_inner.width,
-            notice_height,
+            canvas.x.saturating_add(column.saturating_mul(cell_w + 1)),
+            canvas
+                .y
+                .saturating_add(rel.saturating_mul(LOGICAL_ROW_HEIGHT + LOGICAL_ROW_GAP)),
+            size.cols()
+                .saturating_mul(cell_w)
+                .saturating_add(size.cols().saturating_sub(1)),
+            size.rows()
+                .saturating_mul(LOGICAL_ROW_HEIGHT)
+                .saturating_add(
+                    size.rows()
+                        .saturating_sub(1)
+                        .saturating_mul(LOGICAL_ROW_GAP),
+                ),
         )
-    });
-    let table_inner = Rect::new(
-        content_inner.x,
-        content_inner.y.saturating_add(notice_height),
-        content_inner.width,
-        content_inner.height.saturating_sub(notice_height),
-    );
-    let table_header = u16::from(item_count > 0);
-    let visible_capacity = usize::from(table_inner.height.saturating_sub(table_header));
-    let max_start = item_count.saturating_sub(visible_capacity);
-    let mut visible_start = model.scroll_offset.min(max_start);
-    if item_count > 0
-        && let Some(selected) = model.selected_index()
-    {
-        if selected < visible_start {
-            visible_start = selected;
-        } else if visible_capacity > 0 && selected >= visible_start + visible_capacity {
-            visible_start = selected + 1 - visible_capacity;
+    };
+    let mut widgets = if empty_canvas {
+        vec![]
+    } else {
+        all.iter()
+            .filter(|w| {
+                w.row < visible_row_end
+                    && w.row.saturating_add(w.size.rows()) > visible_row_start
+                    && w.column.saturating_add(w.size.cols()) <= column_count
+            })
+            .map(|w| SystemStatusWidgetLayout {
+                kind: w.kind,
+                size: w.size,
+                logical_column: w.column,
+                logical_row: w.row,
+                area: rect_for(w.column, w.row, w.size).intersection(canvas),
+                preview: false,
+                preview_valid: true,
+            })
+            .collect()
+    };
+    if let Some(d) = model.dashboard.dragging.filter(|_| model.dashboard.editing) {
+        if let Some(source) = all.iter().find(|w| w.kind == d.kind) {
+            widgets.push(SystemStatusWidgetLayout {
+                kind: d.kind,
+                size: source.size,
+                logical_column: d.column,
+                logical_row: d.row,
+                area: rect_for(d.column, d.row, source.size).intersection(canvas),
+                preview: true,
+                preview_valid: d.valid,
+            });
         }
     }
-    let scrollbar = (item_count > visible_capacity
-        && table_inner.width >= 3
-        && visible_capacity > 0)
-        .then(|| {
-            Rect::new(
-                table_inner.right().saturating_sub(1),
-                table_inner.y,
-                1,
-                table_inner.height,
-            )
-        });
+    // Detail tables and diagnostics reuse the established inner content geometry.
+    let detail = match model.route {
+        SystemStatusRoute::Detail(d) => Some(d),
+        _ => None,
+    };
+    let item_count = model.item_count();
+    let table_inner = canvas;
+    let visible_capacity =
+        usize::from(table_inner.height.saturating_sub(u16::from(item_count > 0)));
+    let visible_start = model
+        .scroll_offset
+        .min(item_count.saturating_sub(visible_capacity));
     let rows_area = Rect::new(
         table_inner.x,
         table_inner.y,
         table_inner
             .width
-            .saturating_sub(if scrollbar.is_some() { 2 } else { 0 }),
+            .saturating_sub(u16::from(item_count > visible_capacity) * 2),
         table_inner.height,
     );
     let rows = (visible_start..item_count)
         .take(visible_capacity)
         .enumerate()
-        .map(|(offset, index)| SystemStatusRowLayout {
+        .map(|(o, index)| SystemStatusRowLayout {
             index,
             area: Rect::new(
                 rows_area.x,
                 rows_area
                     .y
-                    .saturating_add(table_header)
-                    .saturating_add(usize_to_u16(offset)),
+                    .saturating_add(1)
+                    .saturating_add(usize_to_u16(o)),
                 rows_area.width,
                 1,
             ),
         })
         .collect();
-    let refresh_width = 11.min(footer.width);
-    let refresh_button = Rect::new(
-        footer.right().saturating_sub(refresh_width),
-        footer.y,
-        refresh_width,
-        footer.height,
-    );
-    let component = Tabs::new(
-        "system-status.tabs.geometry",
-        model
-            .tabs()
-            .iter()
-            .map(|tab| {
-                TabItem::new(
-                    tab.label(),
-                    system_status_tab_label(*tab, tabs_area.width, model.is_admin()),
-                )
-            })
-            .collect(),
-    );
-    let tabs = model
-        .tabs()
-        .iter()
-        .copied()
-        .zip(component.borderless_item_areas(tabs_area))
-        .map(|(tab, area)| SystemStatusTabLayout { tab, area })
-        .collect();
-    let diagnostics_content = model
-        .is_diagnostics()
-        .then(|| diagnostics_content_layout(content_inner, &model.diagnostics));
-    let diagnostics_repair_dialog = model
-        .is_diagnostics()
-        .then(|| {
-            model
-                .diagnostics
-                .repair_dialog
-                .as_ref()
-                .map(|dialog| diagnostics_repair_dialog_layout(main, dialog))
+    let picker_items = model
+        .dashboard
+        .picker
+        .as_ref()
+        .map(|p| {
+            let w = panel.width.min(42);
+            let h = panel
+                .height
+                .min((p.items.len() as u16).saturating_add(2).max(5));
+            let area = Rect::new(
+                panel.x + (panel.width - w) / 2,
+                panel.y + (panel.height - h) / 2,
+                w,
+                h,
+            );
+            p.items
+                .iter()
+                .enumerate()
+                .take(area.height.saturating_sub(2) as usize)
+                .map(|(index, _)| SystemStatusRowLayout {
+                    index,
+                    area: Rect::new(
+                        area.x.saturating_add(1),
+                        area.y.saturating_add(1 + index as u16),
+                        area.width.saturating_sub(2),
+                        1,
+                    ),
+                })
+                .collect()
         })
-        .flatten();
-
+        .unwrap_or_default();
+    let diagnostics_content = matches!(
+        detail,
+        Some(SystemStatusDetail::Diagnostics | SystemStatusDetail::Activity)
+    )
+    .then(|| diagnostics_content_layout(canvas, &model.diagnostics));
+    let diagnostics_repair_dialog = diagnostics_content.as_ref().and_then(|_| {
+        model
+            .diagnostics
+            .repair_dialog
+            .as_ref()
+            .map(|d| diagnostics_repair_dialog_layout(main, d))
+    });
     SystemStatusLayout {
         panel,
         header,
-        tabs_area,
-        tabs,
         content_panel,
-        notice_area,
-        rows_area,
+        canvas,
         footer,
-        refresh_button,
+        profile,
+        column_count,
+        widgets,
+        picker_items,
+        visible_row_start,
+        visible_row_end,
         scrollbar,
+        empty_canvas,
+        refresh_button,
+        edit_button,
+        add_button,
+        size_button,
+        remove_button,
+        save_button,
+        cancel_button,
+        notice_area: None,
+        rows_area,
         rows,
         visible_start,
         visible_capacity,
@@ -207,48 +283,52 @@ pub fn system_status_layout(main: Rect, model: &SystemStatusViewModel) -> System
         diagnostics_repair_dialog,
     }
 }
-
-pub(crate) fn system_status_tab_label(
-    tab: SystemStatusTab,
-    available_width: u16,
-    admin: bool,
-) -> &'static str {
-    if admin && available_width < 53 {
-        tab.compact_label()
-    } else {
-        tab.label()
-    }
-}
-
 pub fn system_status_hit_test(
-    layout: &SystemStatusLayout,
-    coordinates: (u16, u16),
+    l: &SystemStatusLayout,
+    p: (u16, u16),
 ) -> Option<SystemStatusHitTarget> {
-    let (x, y) = coordinates;
-    if let Some(dialog) = &layout.diagnostics_repair_dialog {
-        return diagnostics_repair_dialog_hit_test(dialog, coordinates)
-            .map(SystemStatusHitTarget::Diagnostics);
+    let (x, y) = p;
+    if !l.picker_items.is_empty() {
+        return l
+            .picker_items
+            .iter()
+            .find(|r| rect_contains(r.area, x, y))
+            .map(|r| SystemStatusHitTarget::PickerItem(r.index));
     }
-    if let Some(tab) = layout.tabs.iter().find(|tab| rect_contains(tab.area, x, y)) {
-        return Some(SystemStatusHitTarget::Tab(tab.tab));
+    if let Some(d) = &l.diagnostics_repair_dialog {
+        return diagnostics_repair_dialog_hit_test(d, p).map(SystemStatusHitTarget::Diagnostics);
     }
-    if rect_contains(layout.refresh_button, x, y) {
-        return Some(SystemStatusHitTarget::Refresh);
+    if let Some(d) = &l.diagnostics_content {
+        if let Some(t) = diagnostics_content_hit_test(d, p) {
+            return Some(SystemStatusHitTarget::Diagnostics(t));
+        }
     }
-    if let Some(diagnostics) = &layout.diagnostics_content
-        && let Some(target) = diagnostics_content_hit_test(diagnostics, coordinates)
-    {
-        return Some(SystemStatusHitTarget::Diagnostics(target));
+    for (a, t) in [
+        (l.refresh_button, SystemStatusHitTarget::Refresh),
+        (l.edit_button, SystemStatusHitTarget::Edit),
+        (l.add_button, SystemStatusHitTarget::Add),
+        (l.size_button, SystemStatusHitTarget::Size),
+        (l.remove_button, SystemStatusHitTarget::Remove),
+        (l.save_button, SystemStatusHitTarget::Save),
+        (l.cancel_button, SystemStatusHitTarget::Cancel),
+    ] {
+        if rect_contains(a, x, y) {
+            return Some(t);
+        }
     }
-    if layout
-        .scrollbar
-        .is_some_and(|area| rect_contains(area, x, y))
-    {
+    if l.scrollbar.is_some_and(|a| rect_contains(a, x, y)) {
         return Some(SystemStatusHitTarget::Scrollbar);
     }
-    layout
-        .rows
+    if let Some(w) = l
+        .widgets
         .iter()
-        .find(|row| rect_contains(row.area, x, y))
-        .map(|row| SystemStatusHitTarget::Row(row.index))
+        .rev()
+        .find(|w| !w.preview && rect_contains(w.area, x, y))
+    {
+        return Some(SystemStatusHitTarget::Widget(w.kind));
+    }
+    l.rows
+        .iter()
+        .find(|r| rect_contains(r.area, x, y))
+        .map(|r| SystemStatusHitTarget::Row(r.index))
 }

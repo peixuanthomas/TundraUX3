@@ -1,298 +1,190 @@
-use ratatui::Terminal;
-use ratatui::backend::TestBackend;
-use ratatui::layout::Rect;
+use ratatui::{Terminal, backend::TestBackend, layout::Rect};
 use ui::components::ComponentTone;
-use ui::{
-    AdminSystemStatusViewModel, BorderShape, DiagnosticsCheckViewModel, DiagnosticsHitTarget,
-    DiagnosticsRepairDialogViewModel, DiagnosticsRepairItemViewModel, DiagnosticsStatus,
-    DiagnosticsTab, DiagnosticsViewModel, HomeDisplayMode, NetworkInterfaceRowViewModel,
-    NotificationTone, ShellChromeViewModel, ShellLayout, StatusViewModel,
-    StorageVolumeRowViewModel, SystemStatusContentViewModel, SystemStatusHitTarget,
-    SystemStatusOverviewViewModel, SystemStatusSectionState, SystemStatusTab,
-    SystemStatusViewModel, TundraTheme, UserSystemStatusViewModel, compute_shell_layout,
-    render_system_status, system_status_hit_test, system_status_layout,
-};
+use ui::*;
 
 #[test]
-fn admin_exposes_all_tabs_and_hit_targets() {
-    let model = admin_model(SystemStatusTab::Storage, SystemStatusSectionState::Ready);
-    let layout = system_status_layout(full_main(100, 24), &model);
-    assert_eq!(layout.tabs.len(), 6);
-    for (index, tab) in SystemStatusTab::ALL.into_iter().enumerate() {
-        let item = layout.tabs.iter().find(|item| item.tab == tab).unwrap();
-        assert_eq!(
-            system_status_hit_test(&layout, (item.area.x, item.area.y)),
-            Some(SystemStatusHitTarget::Tab(tab))
-        );
-        assert_eq!(
-            system_status_hit_test(&layout, (item.area.right().saturating_sub(1), item.area.y),),
-            Some(SystemStatusHitTarget::Tab(tab))
-        );
-        if let Some(next) = layout.tabs.get(index + 1) {
-            assert_eq!(item.area.right(), next.area.x);
-            assert_eq!(
-                system_status_hit_test(&layout, (next.area.x, next.area.y)),
-                Some(SystemStatusHitTarget::Tab(next.tab))
-            );
-        }
-    }
+fn breakpoint_is_exact() {
+    let m = model();
     assert_eq!(
-        system_status_hit_test(&layout, (layout.rows[0].area.x, layout.rows[0].area.y)),
-        Some(SystemStatusHitTarget::Row(0))
+        system_status_layout(Rect::new(0, 0, 88, 20), &m).column_count,
+        4
     );
     assert_eq!(
-        system_status_hit_test(&layout, (layout.refresh_button.x, layout.refresh_button.y)),
-        Some(SystemStatusHitTarget::Refresh)
-    );
+        system_status_layout(Rect::new(0, 0, 89, 20), &m).column_count,
+        8
+    )
 }
-
 #[test]
-fn stale_storage_and_network_reserve_notice_without_covering_table_geometry() {
-    for tab in [SystemStatusTab::Storage, SystemStatusTab::Network] {
-        let mut ready = admin_model(tab, SystemStatusSectionState::Ready);
-        let mut stale = admin_model(tab, SystemStatusSectionState::Ready);
-        if let SystemStatusContentViewModel::Admin(admin) = &mut ready.content {
-            admin.storage_rows = vec![storage_row(0), storage_row(1)];
-            admin.network_rows = vec![network_row(0), network_row(1)];
-        }
-        if let SystemStatusContentViewModel::Admin(admin) = &mut stale.content {
-            admin.storage_rows = vec![storage_row(0), storage_row(1)];
-            admin.network_rows = vec![network_row(0), network_row(1)];
-            match tab {
-                SystemStatusTab::Storage => {
-                    admin.storage_state = SystemStatusSectionState::Stale {
-                        message: "Storage data is old".into(),
-                    }
-                }
-                SystemStatusTab::Network => {
-                    admin.network_state = SystemStatusSectionState::Stale {
-                        message: "Network data is old".into(),
-                    }
-                }
-                SystemStatusTab::Overview
-                | SystemStatusTab::Health
-                | SystemStatusTab::Logs
-                | SystemStatusTab::Incidents => unreachable!(),
-            }
-        }
-        let ready_layout = system_status_layout(full_main(100, 24), &ready);
-        let layout = system_status_layout(full_main(100, 24), &stale);
-        let notice = layout.notice_area.expect("stale notice");
-        assert_eq!(
-            layout.visible_capacity + usize::from(notice.height),
-            ready_layout.visible_capacity
-        );
-        assert!(notice.bottom() <= layout.rows_area.y);
-        assert_eq!(system_status_hit_test(&layout, (notice.x, notice.y)), None);
-        assert_eq!(
-            system_status_hit_test(&layout, (layout.rows[0].area.x, layout.rows[0].area.y)),
-            Some(SystemStatusHitTarget::Row(0))
-        );
-
-        let output = render(100, 24, &stale, TundraTheme::default_dark());
-        assert!(output.contains("Stale data"));
-        match tab {
-            SystemStatusTab::Storage => {
-                assert!(output.contains("Volume"));
-                assert!(output.contains("disk0"));
-            }
-            SystemStatusTab::Network => {
-                assert!(output.contains("Display name"));
-                assert!(output.contains("en0"));
-            }
-            SystemStatusTab::Overview
-            | SystemStatusTab::Health
-            | SystemStatusTab::Logs
-            | SystemStatusTab::Incidents => unreachable!(),
+fn three_sizes_have_expected_geometry_and_no_overlap() {
+    let m = model();
+    let l = system_status_layout(full_main(100, 24), &m);
+    let small = l
+        .widgets
+        .iter()
+        .find(|w| w.kind == SystemStatusWidgetKind::Cpu)
+        .unwrap();
+    let wide = l
+        .widgets
+        .iter()
+        .find(|w| w.kind == SystemStatusWidgetKind::Memory)
+        .unwrap();
+    let large = l
+        .widgets
+        .iter()
+        .find(|w| w.kind == SystemStatusWidgetKind::SystemOverview)
+        .unwrap();
+    assert_eq!(small.area.height, 5);
+    assert_eq!(wide.area.height, 5);
+    assert_eq!(large.area.height, 11);
+    for (i, a) in l.widgets.iter().enumerate() {
+        for b in l.widgets.iter().skip(i + 1) {
+            assert!(a.area.intersection(b.area).is_empty())
         }
     }
 }
-
 #[test]
-fn user_gets_summary_and_integrated_diagnostics_without_admin_tabs() {
-    let model = user_model();
-    let layout = system_status_layout(full_main(80, 20), &model);
+fn logical_scroll_scrollbar_and_widget_hits() {
+    let mut m = model();
+    m.dashboard.wide_widgets.push(widget(
+        SystemStatusWidgetKind::Activity,
+        SystemStatusWidgetSize::Wide,
+        0,
+        9,
+    ));
+    m.dashboard.scroll_row = 2;
+    let l = system_status_layout(full_main(100, 20), &m);
+    assert_eq!(l.visible_row_start, 2);
+    let bar = l.scrollbar.unwrap();
     assert_eq!(
-        layout.tabs.iter().map(|tab| tab.tab).collect::<Vec<_>>(),
-        SystemStatusTab::USER
+        system_status_hit_test(&l, (bar.x, bar.y)),
+        Some(SystemStatusHitTarget::Scrollbar)
     );
-    assert!(layout.rows.is_empty());
-    assert_eq!(model.item_count(), 0);
-    let output = render(80, 20, &model, TundraTheme::default_dark());
-    assert!(output.contains("System disk"));
-    assert!(output.contains("42% used"));
-    assert!(output.contains('█'));
-    assert!(output.contains("Diagnostics"));
-    assert!(output.contains("No issues"));
-    assert!(output.contains("Network"));
-    assert!(output.contains("Connected"));
-    assert!(output.contains("Health"));
-    assert!(output.contains("Incidents"));
-    assert!(!output.contains("en0"));
-    assert!(
-        !layout
-            .tabs
-            .iter()
-            .any(|tab| matches!(tab.tab, SystemStatusTab::Storage | SystemStatusTab::Network))
+    let w = l.widgets.iter().find(|w| !w.preview).unwrap();
+    assert_eq!(
+        system_status_hit_test(&l, (w.area.x, w.area.y)),
+        Some(SystemStatusHitTarget::Widget(w.kind))
+    )
+}
+#[test]
+fn dashboard_has_no_global_tabs_and_footer_switches_modes() {
+    let mut m = model();
+    let out = render(100, 24, &m);
+    assert!(out.contains("Dashboard"));
+    assert!(!out.contains("Overview  Storage  Network"));
+    assert!(out.contains("Edit"));
+    assert!(out.contains("Refresh"));
+    let l = system_status_layout(full_main(100, 24), &m);
+    assert_eq!(
+        system_status_hit_test(&l, (l.edit_button.x, l.edit_button.y)),
+        Some(SystemStatusHitTarget::Edit)
     );
+    m.dashboard.editing = true;
+    let out = render(100, 24, &m);
+    for s in ["Add", "Size", "Remove", "Save", "Cancel"] {
+        assert!(out.contains(s))
+    }
 }
-
 #[test]
-fn overview_counts_diagnostics_warnings() {
-    let mut model = admin_model(SystemStatusTab::Overview, SystemStatusSectionState::Ready);
-    model.diagnostics.checks = vec![
-        diagnostics_check("storage.one", DiagnosticsStatus::Warning),
-        diagnostics_check("storage.two", DiagnosticsStatus::Warning),
-        diagnostics_check("paths.data", DiagnosticsStatus::Pass),
-    ];
-
-    let output = render(80, 20, &model, TundraTheme::default_dark());
-
-    assert!(output.contains("Diagnostics"));
-    assert!(output.contains("2 warnings"));
-    assert!(!output.contains("No issues"));
+fn too_short_uses_empty_state_but_keeps_footer() {
+    let m = model();
+    let l = system_status_layout(Rect::new(0, 0, 80, 8), &m);
+    assert!(l.empty_canvas);
+    assert!(l.refresh_button.width > 0);
 }
-
 #[test]
-fn overview_does_not_claim_diagnostics_are_healthy_before_first_scan() {
-    let mut model = admin_model(SystemStatusTab::Overview, SystemStatusSectionState::Ready);
-    model.diagnostics.scanned_at = None;
-
-    let output = render(80, 20, &model, TundraTheme::default_dark());
-
-    assert!(output.contains("Not scanned"));
-    assert!(!output.contains("No issues"));
+fn all_kinds_and_sizes_and_states_render() {
+    for kind in SystemStatusWidgetKind::ALL {
+        for size in [
+            SystemStatusWidgetSize::Small,
+            SystemStatusWidgetSize::Wide,
+            SystemStatusWidgetSize::Large,
+        ] {
+            let mut m = model();
+            m.dashboard.wide_widgets = vec![widget(kind, size, 0, 0)];
+            let out = render(100, 24, &m);
+            assert!(out.contains(kind.label()));
+            assert!(out.contains("42%"));
+            if size != SystemStatusWidgetSize::Small {
+                assert!(out.contains("secondary"))
+            }
+        }
+    }
+    for state in [
+        SystemStatusWidgetState::Loading,
+        SystemStatusWidgetState::Stale {
+            message: "old".into(),
+        },
+        SystemStatusWidgetState::Unavailable {
+            message: "denied".into(),
+        },
+    ] {
+        let mut m = model();
+        m.dashboard.wide_widgets[0].state = state;
+        let out = render(100, 24, &m);
+        assert!(out.contains("Loading") || out.contains("Stale") || out.contains("Unavailable"))
+    }
 }
-
 #[test]
-fn diagnostics_health_is_a_normal_system_status_tab_with_shared_content_hits() {
-    let mut model = admin_model(SystemStatusTab::Health, SystemStatusSectionState::Ready);
-    model.diagnostics.checks = vec![DiagnosticsCheckViewModel {
-        id: "paths.data".into(),
+fn storage_network_and_diagnostics_details_remain_integrated() {
+    let mut m = model();
+    m.route = SystemStatusRoute::Detail(SystemStatusDetail::Storage);
+    assert!(render(100, 24, &m).contains("disk0"));
+    m.route = SystemStatusRoute::Detail(SystemStatusDetail::Network);
+    assert!(render(100, 24, &m).contains("en0"));
+    m.route = SystemStatusRoute::Detail(SystemStatusDetail::Diagnostics);
+    m.diagnostics.checks.push(DiagnosticsCheckViewModel {
+        id: "check".into(),
         label: "Data path".into(),
         category: "Paths".into(),
         status: DiagnosticsStatus::Warning,
-        summary: "Directory is missing".into(),
-        detail: "Data directory is missing".into(),
-        remediation: "Create the directory".into(),
+        summary: "missing".into(),
+        detail: "missing".into(),
+        remediation: "repair".into(),
         repairable: true,
-    }];
-    let layout = system_status_layout(full_main(120, 28), &model);
-    let diagnostics = layout
-        .diagnostics_content
-        .as_ref()
-        .expect("health tab content");
-    let row = diagnostics.rows.first().expect("health check row");
+    });
+    let l = system_status_layout(full_main(120, 28), &m);
+    let row = l.diagnostics_content.as_ref().unwrap().rows[0].area;
     assert_eq!(
-        system_status_hit_test(&layout, (row.area.x, row.area.y)),
+        system_status_hit_test(&l, (row.x, row.y)),
         Some(SystemStatusHitTarget::Diagnostics(
             DiagnosticsHitTarget::Check(0)
         ))
     );
-
-    let output = render(120, 28, &model, TundraTheme::default_dark());
-    assert!(output.contains("System Status"));
-    assert!(output.contains("Checks"));
-    assert!(output.contains("Details"));
-    assert!(output.contains("Data path"));
-    assert!(!output.contains("System Status / Diagnostics"));
-    assert!(!output.contains("D Diagnostics"));
+    assert!(render(120, 28, &m).contains("Data path"))
 }
-
 #[test]
-fn integrated_diagnostics_repair_dialog_owns_modal_hit_targets() {
-    let mut model = admin_model(SystemStatusTab::Health, SystemStatusSectionState::Ready);
-    model.diagnostics.repair_dialog = Some(DiagnosticsRepairDialogViewModel {
-        items: vec![DiagnosticsRepairItemViewModel {
-            id: "paths.data".into(),
-            label: "Create data directory".into(),
-        }],
-        selected: 0,
-        confirm_selected: true,
-        scroll_offset: 0,
-    });
-    let layout = system_status_layout(full_main(120, 28), &model);
-    let dialog = layout
-        .diagnostics_repair_dialog
-        .as_ref()
-        .expect("integrated repair dialog");
-    assert_eq!(
-        system_status_hit_test(&layout, (dialog.confirm.x, dialog.confirm.y)),
-        Some(SystemStatusHitTarget::Diagnostics(
-            DiagnosticsHitTarget::RepairConfirm
-        ))
-    );
-    assert_eq!(
-        system_status_hit_test(&layout, (layout.tabs[0].area.x, layout.tabs[0].area.y)),
-        None,
-        "the modal must block page tabs"
-    );
-}
-
-#[test]
-fn loading_unavailable_and_empty_states_render() {
-    let loading = admin_model(SystemStatusTab::Storage, SystemStatusSectionState::Loading);
-    assert!(render(80, 20, &loading, TundraTheme::default_dark()).contains("Loading..."));
-    let mut unavailable = admin_model(SystemStatusTab::Network, SystemStatusSectionState::Ready);
-    if let SystemStatusContentViewModel::Admin(admin) = &mut unavailable.content {
-        admin.network_state = SystemStatusSectionState::Unavailable {
-            message: "Permission denied".into(),
-        };
+fn theme_and_size_smoke() {
+    for theme in [
+        TundraTheme::default_dark().with_border_shape(BorderShape::Rounded),
+        TundraTheme::default().with_border_shape(BorderShape::Square),
+    ] {
+        for (w, h) in [(50, 12), (80, 20), (100, 24)] {
+            let _ = render_theme(w, h, &model(), theme.clone());
+        }
     }
-    assert!(
-        render(80, 20, &unavailable, TundraTheme::default_dark()).contains("Permission denied")
-    );
-    let mut empty = admin_model(SystemStatusTab::Storage, SystemStatusSectionState::Ready);
-    if let SystemStatusContentViewModel::Admin(admin) = &mut empty.content {
-        admin.storage_rows.clear();
+}
+
+fn widget(
+    kind: SystemStatusWidgetKind,
+    size: SystemStatusWidgetSize,
+    column: u16,
+    row: u16,
+) -> SystemStatusWidgetViewModel {
+    SystemStatusWidgetViewModel {
+        kind,
+        size,
+        column,
+        row,
+        state: SystemStatusWidgetState::Ready,
+        tone: ComponentTone::Accent,
+        primary: "42%".into(),
+        secondary: vec!["secondary".into()],
+        trend: Some(vec![1, 3, 2, 5]),
+        compact_rows: vec![vec!["process".into(), "12%".into()]],
+        openable: true,
     }
-    assert!(render(80, 20, &empty, TundraTheme::default_dark()).contains("No storage volumes"));
 }
-
-#[test]
-fn narrow_terminal_and_two_themes_render_without_panicking() {
-    let model = admin_model(SystemStatusTab::Overview, SystemStatusSectionState::Ready);
-    let _ = render(20, 7, &model, TundraTheme::default_dark());
-    let narrow = system_status_layout(Rect::new(0, 0, 20, 5), &model);
-    assert!(narrow.refresh_button.right() <= narrow.footer.right());
-    let minimum_full = system_status_layout(full_main(50, 12), &model);
-    assert_eq!(minimum_full.tabs.len(), SystemStatusTab::ALL.len());
-    assert!(minimum_full.tabs.iter().all(|tab| tab.area.width > 0));
-    assert!(
-        minimum_full
-            .tabs
-            .last()
-            .is_some_and(|tab| tab.area.right() <= minimum_full.tabs_area.right())
-    );
-    let _ = render(
-        80,
-        20,
-        &model,
-        TundraTheme::default_dark().with_border_shape(BorderShape::Square),
-    );
-}
-
-#[test]
-fn scroll_window_and_scrollbar_hit_are_stable() {
-    let mut model = admin_model(SystemStatusTab::Storage, SystemStatusSectionState::Ready);
-    if let SystemStatusContentViewModel::Admin(admin) = &mut model.content {
-        admin.storage_rows = (0..20).map(storage_row).collect();
-    }
-    model.selected_row = 18;
-    let layout = system_status_layout(full_main(80, 16), &model);
-    assert!(layout.visible_start > 0);
-    assert!(layout.rows.iter().any(|row| row.index == 18));
-    let scrollbar = layout.scrollbar.expect("scrollbar");
-    assert_eq!(
-        system_status_hit_test(&layout, (scrollbar.x, scrollbar.y)),
-        Some(SystemStatusHitTarget::Scrollbar)
-    );
-}
-
-fn admin_model(
-    tab: SystemStatusTab,
-    storage_state: SystemStatusSectionState,
-) -> SystemStatusViewModel {
+fn model() -> SystemStatusViewModel {
     SystemStatusViewModel {
         content: SystemStatusContentViewModel::Admin(AdminSystemStatusViewModel {
             overview: SystemStatusOverviewViewModel {
@@ -305,59 +197,80 @@ fn admin_model(
                 active_link_count: "1".into(),
                 last_refreshed: "now".into(),
             },
-            storage_state,
-            storage_rows: vec![storage_row(0)],
+            storage_state: SystemStatusSectionState::Ready,
+            storage_rows: vec![StorageVolumeRowViewModel {
+                volume: "disk0".into(),
+                kind: "APFS".into(),
+                system_volume: "Yes".into(),
+                access: "Read/write".into(),
+                usage: "42 GB".into(),
+                used_percentage: "42%".into(),
+                pressure: "Normal".into(),
+                tone: ComponentTone::Success,
+            }],
             network_state: SystemStatusSectionState::Ready,
-            network_rows: vec![network_row(0)],
+            network_rows: vec![NetworkInterfaceRowViewModel {
+                name: "en0".into(),
+                display_name: "Wi-Fi".into(),
+                kind: "Wireless".into(),
+                link_state: "Up".into(),
+                addresses: "192.0.2.1".into(),
+                tone: ComponentTone::Success,
+            }],
         }),
-        diagnostics: diagnostics_model(DiagnosticsTab::Health),
-        tab,
+        diagnostics: diagnostics(),
+        route: SystemStatusRoute::Dashboard,
+        dashboard: SystemStatusDashboardViewModel {
+            wide_widgets: vec![
+                widget(
+                    SystemStatusWidgetKind::SystemOverview,
+                    SystemStatusWidgetSize::Large,
+                    0,
+                    0,
+                ),
+                widget(
+                    SystemStatusWidgetKind::Cpu,
+                    SystemStatusWidgetSize::Small,
+                    4,
+                    0,
+                ),
+                widget(
+                    SystemStatusWidgetKind::Memory,
+                    SystemStatusWidgetSize::Wide,
+                    4,
+                    2,
+                ),
+            ],
+            narrow_widgets: vec![
+                widget(
+                    SystemStatusWidgetKind::Cpu,
+                    SystemStatusWidgetSize::Small,
+                    0,
+                    0,
+                ),
+                widget(
+                    SystemStatusWidgetKind::Memory,
+                    SystemStatusWidgetSize::Small,
+                    2,
+                    0,
+                ),
+            ],
+            selected: Some(SystemStatusWidgetKind::Cpu),
+            updated: "now".into(),
+            ..Default::default()
+        },
         selected_row: 0,
         scroll_offset: 0,
         refreshing: false,
         feedback: None,
     }
 }
-
-fn user_model() -> SystemStatusViewModel {
-    SystemStatusViewModel {
-        content: SystemStatusContentViewModel::User(UserSystemStatusViewModel {
-            storage_status: "Healthy".into(),
-            storage_tone: ComponentTone::Success,
-            system_volume_usage: "42 GB / 100 GB".into(),
-            system_volume_used_percentage: Some(42),
-            network_status: "Connected".into(),
-            network_tone: ComponentTone::Success,
-            last_refreshed: "now".into(),
-        }),
-        diagnostics: diagnostics_model(DiagnosticsTab::Health),
-        tab: SystemStatusTab::Overview,
-        selected_row: 99,
-        scroll_offset: 99,
-        refreshing: false,
-        feedback: None,
-    }
-}
-
-fn diagnostics_check(id: &str, status: DiagnosticsStatus) -> DiagnosticsCheckViewModel {
-    DiagnosticsCheckViewModel {
-        id: id.into(),
-        label: id.into(),
-        category: "Storage".into(),
-        status,
-        summary: String::new(),
-        detail: String::new(),
-        remediation: String::new(),
-        repairable: false,
-    }
-}
-
-fn diagnostics_model(tab: DiagnosticsTab) -> DiagnosticsViewModel {
+fn diagnostics() -> DiagnosticsViewModel {
     DiagnosticsViewModel {
-        tab,
-        checks: Vec::new(),
-        incidents: Vec::new(),
-        logs: Vec::new(),
+        tab: DiagnosticsTab::Health,
+        checks: vec![],
+        incidents: vec![],
+        logs: vec![],
         selected_check: 0,
         selected_incident: 0,
         selected_log: 0,
@@ -372,37 +285,12 @@ fn diagnostics_model(tab: DiagnosticsTab) -> DiagnosticsViewModel {
         scanned_at: Some("now".into()),
     }
 }
-
-fn storage_row(index: usize) -> StorageVolumeRowViewModel {
-    StorageVolumeRowViewModel {
-        volume: format!("disk{index}"),
-        kind: "APFS".into(),
-        system_volume: "Yes".into(),
-        access: "Read/write".into(),
-        usage: "42 GB / 100 GB".into(),
-        used_percentage: "42%".into(),
-        pressure: "Normal".into(),
-        tone: ComponentTone::Success,
-    }
-}
-
-fn network_row(index: usize) -> NetworkInterfaceRowViewModel {
-    NetworkInterfaceRowViewModel {
-        name: format!("en{index}"),
-        display_name: "Wi-Fi".into(),
-        kind: "Wireless".into(),
-        link_state: "Up".into(),
-        addresses: "192.0.2.1".into(),
-        tone: ComponentTone::Success,
-    }
-}
-
-fn render(width: u16, height: u16, model: &SystemStatusViewModel, theme: TundraTheme) -> String {
-    let chrome = ShellChromeViewModel {
+fn chrome(w: u16, h: u16) -> ShellChromeViewModel {
+    ShellChromeViewModel {
         app_name: "TundraUX 3".into(),
         build_mode: "test".into(),
         display_mode: HomeDisplayMode::Auth,
-        terminal_size: (width, height),
+        terminal_size: (w, h),
         screen_stack: vec!["System Status".into()],
         status: StatusViewModel {
             status: "Ready".into(),
@@ -412,23 +300,28 @@ fn render(width: u16, height: u16, model: &SystemStatusViewModel, theme: TundraT
             time_button_label: None,
             time_button_selected: false,
         },
-    };
-    let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+    }
+}
+fn render(w: u16, h: u16, m: &SystemStatusViewModel) -> String {
+    render_theme(w, h, m, TundraTheme::default_dark())
+}
+fn render_theme(w: u16, h: u16, m: &SystemStatusViewModel, t: TundraTheme) -> String {
+    let mut terminal = Terminal::new(TestBackend::new(w, h)).unwrap();
+    let c = chrome(w, h);
     terminal
-        .draw(|frame| render_system_status(frame, frame.area(), &chrome, model, &theme))
+        .draw(|f| render_system_status(f, f.area(), &c, m, &t))
         .unwrap();
     terminal
         .backend()
         .buffer()
         .content()
         .iter()
-        .map(|cell| cell.symbol())
+        .map(|c| c.symbol())
         .collect()
 }
-
-fn full_main(width: u16, height: u16) -> Rect {
-    match compute_shell_layout(Rect::new(0, 0, width, height)) {
+fn full_main(w: u16, h: u16) -> Rect {
+    match compute_shell_layout(Rect::new(0, 0, w, h)) {
         ShellLayout::Full { main, .. } => main,
-        ShellLayout::Compact(_) => panic!("expected full layout"),
+        _ => panic!(),
     }
 }

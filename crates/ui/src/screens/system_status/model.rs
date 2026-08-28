@@ -1,6 +1,233 @@
 use crate::components::ComponentTone;
 use crate::{DiagnosticsTab, DiagnosticsViewModel};
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+pub enum SystemStatusWidgetKind {
+    #[default]
+    SystemOverview,
+    Cpu,
+    Memory,
+    Storage,
+    Network,
+    Temperature,
+    Battery,
+    UptimeLoad,
+    TopProcesses,
+    Diagnostics,
+    Activity,
+}
+impl SystemStatusWidgetKind {
+    pub const ALL: [Self; 11] = [
+        Self::SystemOverview,
+        Self::Cpu,
+        Self::Memory,
+        Self::Storage,
+        Self::Network,
+        Self::Temperature,
+        Self::Battery,
+        Self::UptimeLoad,
+        Self::TopProcesses,
+        Self::Diagnostics,
+        Self::Activity,
+    ];
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::SystemOverview => "System Overview",
+            Self::Cpu => "CPU",
+            Self::Memory => "Memory",
+            Self::Storage => "Storage",
+            Self::Network => "Network",
+            Self::Temperature => "Temperature",
+            Self::Battery => "Battery",
+            Self::UptimeLoad => "Uptime & Load",
+            Self::TopProcesses => "Top Processes",
+            Self::Diagnostics => "Diagnostics",
+            Self::Activity => "Activity",
+        }
+    }
+    pub const fn detail(self) -> SystemStatusDetail {
+        match self {
+            Self::SystemOverview => SystemStatusDetail::Overview,
+            Self::Cpu => SystemStatusDetail::Cpu,
+            Self::Memory => SystemStatusDetail::Memory,
+            Self::Storage => SystemStatusDetail::Storage,
+            Self::Network => SystemStatusDetail::Network,
+            Self::Temperature => SystemStatusDetail::Thermal,
+            Self::Battery => SystemStatusDetail::Power,
+            Self::UptimeLoad => SystemStatusDetail::UptimeLoad,
+            Self::TopProcesses => SystemStatusDetail::Processes,
+            Self::Diagnostics => SystemStatusDetail::Diagnostics,
+            Self::Activity => SystemStatusDetail::Activity,
+        }
+    }
+}
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum SystemStatusWidgetSize {
+    #[default]
+    Small,
+    Wide,
+    Large,
+}
+impl SystemStatusWidgetSize {
+    pub const fn cols(self) -> u16 {
+        match self {
+            Self::Small => 2,
+            _ => 4,
+        }
+    }
+    pub const fn rows(self) -> u16 {
+        match self {
+            Self::Large => 4,
+            _ => 2,
+        }
+    }
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Small => "2x2",
+            Self::Wide => "2x4",
+            Self::Large => "4x4",
+        }
+    }
+    pub const fn cycle(self) -> Self {
+        match self {
+            Self::Small => Self::Wide,
+            Self::Wide => Self::Large,
+            Self::Large => Self::Small,
+        }
+    }
+}
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub enum SystemStatusWidgetState {
+    #[default]
+    Loading,
+    Ready,
+    Stale {
+        message: String,
+    },
+    Unavailable {
+        message: String,
+    },
+}
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct SystemStatusWidgetViewModel {
+    pub kind: SystemStatusWidgetKind,
+    pub size: SystemStatusWidgetSize,
+    pub column: u16,
+    pub row: u16,
+    pub state: SystemStatusWidgetState,
+    pub tone: ComponentTone,
+    pub primary: String,
+    pub secondary: Vec<String>,
+    pub trend: Option<Vec<u64>>,
+    pub compact_rows: Vec<Vec<String>>,
+    pub openable: bool,
+}
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum SystemStatusDashboardProfile {
+    #[default]
+    Wide,
+    Narrow,
+}
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct SystemStatusActionState {
+    pub refresh_disabled: bool,
+    pub edit_disabled: bool,
+    pub add_disabled: bool,
+    pub size_disabled: bool,
+    pub remove_disabled: bool,
+    pub save_disabled: bool,
+    pub cancel_disabled: bool,
+}
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SystemStatusPickerItemViewModel {
+    pub kind: SystemStatusWidgetKind,
+    pub label: String,
+    pub detail: String,
+    pub enabled: bool,
+}
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct SystemStatusPickerViewModel {
+    pub title: String,
+    pub items: Vec<SystemStatusPickerItemViewModel>,
+    pub selected: usize,
+}
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct SystemStatusDialogViewModel {
+    pub title: String,
+    pub message: String,
+    pub confirm_label: String,
+    pub cancel_label: String,
+}
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SystemStatusDragPreview {
+    pub kind: SystemStatusWidgetKind,
+    pub column: u16,
+    pub row: u16,
+    pub valid: bool,
+}
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct SystemStatusDashboardViewModel {
+    pub wide_widgets: Vec<SystemStatusWidgetViewModel>,
+    pub narrow_widgets: Vec<SystemStatusWidgetViewModel>,
+    pub selected: Option<SystemStatusWidgetKind>,
+    pub scroll_row: u16,
+    pub editing: bool,
+    pub dirty: bool,
+    pub feedback: Option<String>,
+    pub picker: Option<SystemStatusPickerViewModel>,
+    pub dialog: Option<SystemStatusDialogViewModel>,
+    pub dragging: Option<SystemStatusDragPreview>,
+    pub actions: SystemStatusActionState,
+    pub updated: String,
+}
+impl SystemStatusDashboardViewModel {
+    pub fn widgets(&self, p: SystemStatusDashboardProfile) -> &[SystemStatusWidgetViewModel] {
+        match p {
+            SystemStatusDashboardProfile::Wide => &self.wide_widgets,
+            SystemStatusDashboardProfile::Narrow => &self.narrow_widgets,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum SystemStatusDetail {
+    #[default]
+    Overview,
+    Cpu,
+    Memory,
+    Storage,
+    Network,
+    Thermal,
+    Power,
+    UptimeLoad,
+    Processes,
+    Diagnostics,
+    Activity,
+}
+impl SystemStatusDetail {
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Overview => "Overview",
+            Self::Cpu => "CPU",
+            Self::Memory => "Memory",
+            Self::Storage => "Storage",
+            Self::Network => "Network",
+            Self::Thermal => "Thermal",
+            Self::Power => "Power",
+            Self::UptimeLoad => "Uptime & Load",
+            Self::Processes => "Processes",
+            Self::Diagnostics => "Diagnostics",
+            Self::Activity => "Activity",
+        }
+    }
+}
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum SystemStatusRoute {
+    #[default]
+    Dashboard,
+    Detail(SystemStatusDetail),
+}
+
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum SystemStatusTab {
     #[default]
@@ -11,7 +238,6 @@ pub enum SystemStatusTab {
     Logs,
     Incidents,
 }
-
 impl SystemStatusTab {
     pub const ALL: [Self; 6] = [
         Self::Overview,
@@ -22,7 +248,6 @@ impl SystemStatusTab {
         Self::Incidents,
     ];
     pub const USER: [Self; 4] = [Self::Overview, Self::Health, Self::Logs, Self::Incidents];
-
     pub const fn label(self) -> &'static str {
         match self {
             Self::Overview => "Overview",
@@ -33,36 +258,15 @@ impl SystemStatusTab {
             Self::Incidents => "Incidents",
         }
     }
-
-    pub const fn compact_label(self) -> &'static str {
-        match self {
-            Self::Overview => "Info",
-            Self::Storage => "Disk",
-            Self::Network => "Net",
-            Self::Health => "Health",
-            Self::Logs => "Logs",
-            Self::Incidents => "Events",
-        }
-    }
-
     pub const fn diagnostics_tab(self) -> Option<DiagnosticsTab> {
         match self {
             Self::Health => Some(DiagnosticsTab::Health),
             Self::Logs => Some(DiagnosticsTab::Logs),
             Self::Incidents => Some(DiagnosticsTab::Incidents),
-            Self::Overview | Self::Storage | Self::Network => None,
-        }
-    }
-
-    pub const fn from_diagnostics(tab: DiagnosticsTab) -> Self {
-        match tab {
-            DiagnosticsTab::Health => Self::Health,
-            DiagnosticsTab::Logs => Self::Logs,
-            DiagnosticsTab::Incidents => Self::Incidents,
+            _ => None,
         }
     }
 }
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SystemStatusSectionState {
     Loading,
@@ -70,7 +274,6 @@ pub enum SystemStatusSectionState {
     Stale { message: String },
     Unavailable { message: String },
 }
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SystemStatusOverviewViewModel {
     pub storage_status: String,
@@ -82,7 +285,6 @@ pub struct SystemStatusOverviewViewModel {
     pub active_link_count: String,
     pub last_refreshed: String,
 }
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StorageVolumeRowViewModel {
     pub volume: String,
@@ -94,7 +296,6 @@ pub struct StorageVolumeRowViewModel {
     pub pressure: String,
     pub tone: ComponentTone,
 }
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NetworkInterfaceRowViewModel {
     pub name: String,
@@ -104,7 +305,6 @@ pub struct NetworkInterfaceRowViewModel {
     pub addresses: String,
     pub tone: ComponentTone,
 }
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AdminSystemStatusViewModel {
     pub overview: SystemStatusOverviewViewModel,
@@ -113,7 +313,6 @@ pub struct AdminSystemStatusViewModel {
     pub network_state: SystemStatusSectionState,
     pub network_rows: Vec<NetworkInterfaceRowViewModel>,
 }
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UserSystemStatusViewModel {
     pub storage_status: String,
@@ -124,64 +323,54 @@ pub struct UserSystemStatusViewModel {
     pub network_tone: ComponentTone,
     pub last_refreshed: String,
 }
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SystemStatusContentViewModel {
     Admin(AdminSystemStatusViewModel),
     User(UserSystemStatusViewModel),
 }
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SystemStatusViewModel {
     pub content: SystemStatusContentViewModel,
     pub diagnostics: DiagnosticsViewModel,
-    pub tab: SystemStatusTab,
+    pub route: SystemStatusRoute,
+    pub dashboard: SystemStatusDashboardViewModel,
     pub selected_row: usize,
     pub scroll_offset: usize,
     pub refreshing: bool,
     pub feedback: Option<String>,
 }
-
 impl SystemStatusViewModel {
+    pub fn detail_widget(&self, d: SystemStatusDetail) -> Option<&SystemStatusWidgetViewModel> {
+        self.dashboard
+            .wide_widgets
+            .iter()
+            .chain(&self.dashboard.narrow_widgets)
+            .find(|w| w.kind.detail() == d)
+    }
     pub fn item_count(&self) -> usize {
-        match (&self.content, self.tab) {
-            (SystemStatusContentViewModel::Admin(admin), SystemStatusTab::Storage) => {
-                admin.storage_rows.len()
-            }
-            (SystemStatusContentViewModel::Admin(admin), SystemStatusTab::Network) => {
-                admin.network_rows.len()
-            }
-            (_, SystemStatusTab::Health | SystemStatusTab::Logs | SystemStatusTab::Incidents) => {
-                self.diagnostics.item_count()
-            }
+        match (&self.content, self.route) {
+            (
+                SystemStatusContentViewModel::Admin(a),
+                SystemStatusRoute::Detail(SystemStatusDetail::Storage),
+            ) => a.storage_rows.len(),
+            (
+                SystemStatusContentViewModel::Admin(a),
+                SystemStatusRoute::Detail(SystemStatusDetail::Network),
+            ) => a.network_rows.len(),
+            (
+                _,
+                SystemStatusRoute::Detail(
+                    SystemStatusDetail::Diagnostics | SystemStatusDetail::Activity,
+                ),
+            ) => self.diagnostics.item_count(),
             _ => 0,
         }
     }
-
     pub fn selected_index(&self) -> Option<usize> {
-        let count = self.item_count();
-        (count > 0).then(|| {
-            if self.is_diagnostics() {
-                self.diagnostics.selected_index().min(count - 1)
-            } else {
-                self.selected_row.min(count - 1)
-            }
-        })
+        let n = self.item_count();
+        (n > 0).then(|| self.selected_row.min(n - 1))
     }
-
     pub const fn is_admin(&self) -> bool {
         matches!(self.content, SystemStatusContentViewModel::Admin(_))
-    }
-
-    pub fn tabs(&self) -> &'static [SystemStatusTab] {
-        if self.is_admin() {
-            &SystemStatusTab::ALL
-        } else {
-            &SystemStatusTab::USER
-        }
-    }
-
-    pub const fn is_diagnostics(&self) -> bool {
-        self.tab.diagnostics_tab().is_some()
     }
 }

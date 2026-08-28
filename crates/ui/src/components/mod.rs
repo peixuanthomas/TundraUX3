@@ -15,6 +15,7 @@ mod dialog;
 mod empty_state;
 mod foundation;
 mod list;
+mod metric_card;
 mod nav_rail;
 mod picker;
 mod scrollbar;
@@ -35,6 +36,7 @@ pub use foundation::{
     KeyModifiers, MouseButton, MouseInput, MouseKind, contains_point,
 };
 pub use list::{List, ListItem};
+pub use metric_card::MetricCard;
 pub use nav_rail::{NavRail, NavRailItem};
 pub use picker::Picker;
 pub use scrollbar::{Scrollbar, ScrollbarOrientation};
