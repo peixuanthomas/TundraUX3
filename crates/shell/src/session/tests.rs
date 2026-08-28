@@ -181,6 +181,129 @@ fn system_status_history_deduplicates_uptime_rejects_stale_and_caps_queues() {
 }
 
 #[test]
+fn system_status_history_uses_rolling_observation_window() {
+    let mut state = ShellSession::new_for_home_mode(
+        ShellLaunchConfig::default(),
+        (120, 40),
+        ShellHomeMode::User,
+    );
+    set_test_auth_role(&mut state, UserRole::Admin);
+    let base = Utc::now();
+    for (uptime, seconds) in [(1, 0), (2, 30), (3, 60)] {
+        let mut sample = system_status_metric_snapshot(uptime);
+        sample.metrics.sampled_at = base + chrono::Duration::seconds(seconds);
+        state.apply_system_status_snapshot(sample);
+    }
+    assert_eq!(
+        state.system_status_history.cpu.len(),
+        3,
+        "the exactly-60-second boundary remains"
+    );
+    let mut sample = system_status_metric_snapshot(4);
+    sample.metrics.sampled_at = base + chrono::Duration::seconds(61);
+    state.apply_system_status_snapshot(sample);
+    assert_eq!(state.system_status_history.cpu.len(), 3);
+    assert_eq!(
+        state.system_status_history.cpu.front().unwrap().observed_at,
+        base + chrono::Duration::seconds(30)
+    );
+    let cpu = state
+        .to_system_status_view_model()
+        .unwrap()
+        .dashboard
+        .wide_widgets
+        .into_iter()
+        .find(|w| w.kind == ui::SystemStatusWidgetKind::Cpu)
+        .unwrap();
+    assert_eq!(
+        cpu.trend.unwrap().len(),
+        3,
+        "presentation exposes only retained chronological values"
+    );
+}
+
+#[test]
+fn system_status_arrow_navigation_reaches_offscreen_cards_and_scroll_clamps() {
+    let mut state = ShellSession::new_for_home_mode(
+        ShellLaunchConfig::default(),
+        (100, 20),
+        ShellHomeMode::User,
+    );
+    set_test_auth_role(&mut state, UserRole::Admin);
+    state.screen_stack.push(ShellScreen::SystemStatus);
+    state.focused_component = ShellComponent::SystemStatus;
+    state.begin_system_status_dashboard_edit();
+    let mut draft = state.system_status_dashboard_draft.take().unwrap();
+    draft.add_widget(storage::SystemStatusWidgetKind::Battery);
+    let battery = draft
+        .wide
+        .placements
+        .iter_mut()
+        .find(|p| p.kind == storage::SystemStatusWidgetKind::Battery)
+        .unwrap();
+    battery.column = 0;
+    battery.row = 20;
+    state.system_status_dashboard_draft = Some(draft);
+    state.system_status_selected_widget = Some(storage::SystemStatusWidgetKind::UptimeLoad);
+    state.system_status_dashboard_focus =
+        ui::SystemStatusDashboardFocus::Widget(ui::SystemStatusWidgetKind::UptimeLoad);
+    state.select_system_status_widget_direction(0, 1);
+    assert_eq!(
+        state.system_status_selected_widget,
+        Some(storage::SystemStatusWidgetKind::Battery)
+    );
+    assert!(state.system_status_dashboard_scroll_row > 0);
+    state.select_system_status_widget_direction(0, -1);
+    assert_ne!(
+        state.system_status_selected_widget,
+        Some(storage::SystemStatusWidgetKind::Battery)
+    );
+    let focused = state.system_status_selected_widget.unwrap();
+    let (_, layout) = state.system_status_layout().unwrap();
+    let widget = state
+        .to_system_status_view_model()
+        .unwrap()
+        .dashboard
+        .wide_widgets
+        .into_iter()
+        .find(|w| w.kind == super::controller::system_status::ui_widget_kind(focused))
+        .unwrap();
+    assert!(
+        widget.row >= layout.visible_row_start
+            && widget.row + widget.size.rows() <= layout.visible_row_end
+    );
+
+    state.system_status_selected_widget = Some(storage::SystemStatusWidgetKind::Battery);
+    state.scroll_system_status_focused_widget_into_view(ui::SystemStatusWidgetKind::Battery);
+    state.remove_selected_system_status_widget();
+    let (_, layout) = state.system_status_layout().unwrap();
+    assert_eq!(
+        state.system_status_dashboard_scroll_row,
+        layout.visible_row_start
+    );
+    assert!(!layout.widgets.is_empty());
+    let replacement = super::controller::system_status::ui_widget_kind(
+        state.system_status_selected_widget.unwrap(),
+    );
+    assert!(
+        layout
+            .widgets
+            .iter()
+            .any(|widget| widget.kind == replacement)
+    );
+
+    state.system_status_dashboard_scroll_row = 20;
+    state.terminal_size = (80, 20);
+    state.clamp_system_status_dashboard_scroll();
+    let (_, narrow) = state.system_status_layout().unwrap();
+    assert_eq!(
+        state.system_status_dashboard_scroll_row,
+        narrow.visible_row_start
+    );
+    assert!(!narrow.widgets.is_empty());
+}
+
+#[test]
 fn system_status_metric_vm_exposes_progress_bars_status_and_booted_rows() {
     let mut state = ShellSession::new_for_home_mode(
         ShellLaunchConfig::default(),

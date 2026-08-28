@@ -602,7 +602,13 @@ impl ShellSession {
                         })
                         .collect();
                 }
-                model.trend = Some(self.system_status_history.cpu.iter().copied().collect());
+                model.trend = Some(
+                    self.system_status_history
+                        .cpu
+                        .iter()
+                        .map(|point| point.value)
+                        .collect(),
+                );
             }
             storage::SystemStatusWidgetKind::Memory => {
                 let state = metrics.map(|metrics| &metrics.memory);
@@ -655,7 +661,13 @@ impl ShellSession {
                         ],
                     ];
                 }
-                model.trend = Some(self.system_status_history.memory.iter().copied().collect());
+                model.trend = Some(
+                    self.system_status_history
+                        .memory
+                        .iter()
+                        .map(|point| point.value)
+                        .collect(),
+                );
             }
             storage::SystemStatusWidgetKind::Storage => {
                 let state = snapshot.map(|snapshot| &snapshot.storage);
@@ -746,7 +758,7 @@ impl ShellSession {
                     self.system_status_history
                         .network_received
                         .iter()
-                        .copied()
+                        .map(|point| point.value)
                         .collect(),
                 );
                 model.tone = if network.is_some_and(|network| network.has_active_link) {
@@ -789,7 +801,7 @@ impl ShellSession {
                     self.system_status_history
                         .temperature
                         .iter()
-                        .copied()
+                        .map(|point| point.value)
                         .collect(),
                 );
             }

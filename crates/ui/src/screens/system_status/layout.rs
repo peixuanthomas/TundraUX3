@@ -120,16 +120,19 @@ pub fn system_status_layout(main: Rect, model: &SystemStatusViewModel) -> System
     let size_button = button_from_right(footer, &mut right, 8);
     let add_button = button_from_right(footer, &mut right, 7);
     let empty_canvas = canvas.height < 5;
-    let visible_row_start = model.dashboard.scroll_row;
     let visible_rows =
         canvas.height.saturating_add(LOGICAL_ROW_GAP) / (LOGICAL_ROW_HEIGHT + LOGICAL_ROW_GAP);
-    let visible_row_end = visible_row_start.saturating_add(visible_rows);
     let all = model.dashboard.widgets(profile);
     let max_row = all
         .iter()
         .map(|w| w.row.saturating_add(w.size.rows()))
         .max()
         .unwrap_or(0);
+    let visible_row_start = model
+        .dashboard
+        .scroll_row
+        .min(max_row.saturating_sub(visible_rows));
+    let visible_row_end = visible_row_start.saturating_add(visible_rows);
     let dashboard_scrollbar = (max_row > visible_rows && canvas.width > 2 && !empty_canvas)
         .then(|| Rect::new(canvas.right().saturating_sub(1), canvas.y, 1, canvas.height));
     let grid_width = canvas

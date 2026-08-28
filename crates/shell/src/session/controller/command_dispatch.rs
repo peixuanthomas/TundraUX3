@@ -228,6 +228,9 @@ impl ShellSession {
             }
             ShellCommand::RefreshHitMap { width, height } => {
                 self.terminal_size = (width, height);
+                if self.active_screen() == ShellScreen::SystemStatus {
+                    self.clamp_system_status_dashboard_scroll();
+                }
                 self.notification_pointer_capture = None;
                 self.last_resize_event = Some(format!("{width}x{height}"));
                 if self.active_screen() == ShellScreen::FirstRunSetup {

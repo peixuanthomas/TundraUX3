@@ -150,12 +150,17 @@ pub(super) enum SystemStatusAlertLevel {
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub(super) struct SystemStatusMetricHistory {
-    pub(super) cpu: VecDeque<u64>,
-    pub(super) memory: VecDeque<u64>,
-    pub(super) network_received: VecDeque<u64>,
-    pub(super) network_transmitted: VecDeque<u64>,
-    pub(super) temperature: VecDeque<u64>,
+    pub(super) cpu: VecDeque<SystemStatusHistoryPoint>,
+    pub(super) memory: VecDeque<SystemStatusHistoryPoint>,
+    pub(super) network_received: VecDeque<SystemStatusHistoryPoint>,
+    pub(super) network_transmitted: VecDeque<SystemStatusHistoryPoint>,
+    pub(super) temperature: VecDeque<SystemStatusHistoryPoint>,
     pub(super) last_uptime_seconds: Option<u64>,
+}
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct SystemStatusHistoryPoint {
+    pub(super) observed_at: chrono::DateTime<chrono::Utc>,
+    pub(super) value: u64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]

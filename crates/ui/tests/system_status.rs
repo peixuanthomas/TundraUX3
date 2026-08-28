@@ -66,6 +66,22 @@ fn logical_scroll_scrollbar_and_widget_hits() {
     )
 }
 #[test]
+fn dashboard_scroll_is_clamped_after_content_shrinks() {
+    let mut m = model();
+    m.dashboard.scroll_row = u16::MAX;
+    let l = system_status_layout(full_main(100, 20), &m);
+    let extent = m
+        .dashboard
+        .widgets(l.profile)
+        .iter()
+        .map(|w| w.row + w.size.rows())
+        .max()
+        .unwrap();
+    let capacity = l.visible_row_end - l.visible_row_start;
+    assert_eq!(l.visible_row_start, extent.saturating_sub(capacity));
+    assert!(!l.widgets.is_empty());
+}
+#[test]
 fn dashboard_has_no_global_tabs_and_footer_switches_modes() {
     let mut m = model();
     let out = render(100, 24, &m);
