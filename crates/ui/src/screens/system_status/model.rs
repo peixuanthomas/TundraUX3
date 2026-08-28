@@ -360,6 +360,12 @@ pub struct SystemStatusViewModel {
     pub feedback: Option<String>,
 }
 impl SystemStatusViewModel {
+    pub const fn activity_tab(&self) -> DiagnosticsTab {
+        match self.diagnostics.tab {
+            DiagnosticsTab::Incidents => DiagnosticsTab::Incidents,
+            DiagnosticsTab::Health | DiagnosticsTab::Logs => DiagnosticsTab::Logs,
+        }
+    }
     pub fn detail_widget(&self, d: SystemStatusDetail) -> Option<&SystemStatusWidgetViewModel> {
         self.dashboard
             .wide_widgets

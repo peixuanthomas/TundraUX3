@@ -153,6 +153,51 @@ fn storage_network_and_diagnostics_details_remain_integrated() {
     assert!(render(120, 28, &m).contains("Data path"))
 }
 #[test]
+fn activity_has_only_local_logs_and_incidents_tabs() {
+    let mut m = model();
+    m.route = SystemStatusRoute::Detail(SystemStatusDetail::Activity);
+    m.diagnostics.tab = DiagnosticsTab::Health;
+    let l = system_status_layout(full_main(120, 28), &m);
+    assert_eq!(
+        l.activity_tabs
+            .iter()
+            .map(|tab| tab.tab)
+            .collect::<Vec<_>>(),
+        vec![DiagnosticsTab::Logs, DiagnosticsTab::Incidents]
+    );
+    assert_eq!(
+        l.diagnostics_content.as_ref().unwrap().active_tab,
+        DiagnosticsTab::Logs
+    );
+    let tabs_area = l.activity_tabs_area.expect("activity tab bar");
+    assert!(l.diagnostics_content.as_ref().unwrap().list_panel.y >= tabs_area.bottom());
+    for tab in &l.activity_tabs {
+        assert_eq!(
+            system_status_hit_test(&l, (tab.area.x, tab.area.y)),
+            Some(SystemStatusHitTarget::Diagnostics(
+                DiagnosticsHitTarget::Tab(tab.tab)
+            ))
+        );
+    }
+    let out = render(120, 28, &m);
+    assert!(out.contains("Logs"));
+    assert!(out.contains("Incidents"));
+
+    m.route = SystemStatusRoute::Detail(SystemStatusDetail::Diagnostics);
+    let diagnostics = system_status_layout(full_main(120, 28), &m);
+    assert!(diagnostics.activity_tabs_area.is_none());
+    assert!(diagnostics.activity_tabs.is_empty());
+    assert_eq!(
+        diagnostics
+            .diagnostics_content
+            .as_ref()
+            .unwrap()
+            .list_panel
+            .y,
+        diagnostics.canvas.y
+    );
+}
+#[test]
 fn theme_and_size_smoke() {
     for theme in [
         TundraTheme::default_dark().with_border_shape(BorderShape::Rounded),

@@ -1,7 +1,7 @@
 use super::{layout::*, model::*};
 use crate::components::{
     Button, ComponentState, DataTable, Dialog, DialogAction, EmptyState, List, ListItem,
-    MetricCard, Scrollbar, Surface, tone_color,
+    MetricCard, Scrollbar, Surface, TabItem, Tabs, tone_color,
 };
 use crate::screens::diagnostics::{
     render_diagnostics_content, render_diagnostics_footer, render_diagnostics_header,
@@ -306,11 +306,28 @@ fn render_detail(
         SystemStatusDetail::Storage => render_storage(frame, l, model, context),
         SystemStatusDetail::Network => render_network(frame, l, model, context),
         SystemStatusDetail::Diagnostics | SystemStatusDetail::Activity => {
-            render_diagnostics_header(frame, l.header, &model.diagnostics, theme);
-            if let Some(dl) = &l.diagnostics_content {
-                render_diagnostics_content(frame, dl, &model.diagnostics, theme, context)
+            let mut diagnostics = model.diagnostics.clone();
+            if d == SystemStatusDetail::Activity {
+                diagnostics.tab = model.activity_tab();
+                if let Some(area) = l.activity_tabs_area {
+                    let mut tabs = Tabs::new(
+                        "system-status.activity.tabs",
+                        vec![
+                            TabItem::new("system-status.activity.logs", "Logs"),
+                            TabItem::new("system-status.activity.incidents", "Incidents"),
+                        ],
+                    );
+                    tabs.set_selected(Some(usize::from(
+                        diagnostics.tab == crate::DiagnosticsTab::Incidents,
+                    )));
+                    tabs.render_borderless_frame(frame, area, theme);
+                }
             }
-            render_diagnostics_footer(frame, l.footer, &model.diagnostics, theme, "Esc Dashboard");
+            render_diagnostics_header(frame, l.header, &diagnostics, theme);
+            if let Some(dl) = &l.diagnostics_content {
+                render_diagnostics_content(frame, dl, &diagnostics, theme, context)
+            }
+            render_diagnostics_footer(frame, l.footer, &diagnostics, theme, "Esc Dashboard");
             if let (Some(dl), Some(dialog)) = (
                 l.diagnostics_repair_dialog.as_ref(),
                 model.diagnostics.repair_dialog.as_ref(),

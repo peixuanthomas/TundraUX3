@@ -253,6 +253,57 @@ fn system_status_keyboard_navigates_dashboard_and_routes_detail_actions() {
 }
 
 #[test]
+fn system_status_activity_local_tabs_route_mouse_without_leaving_page() {
+    let mut state = ShellSession::new_for_home_mode(
+        ShellLaunchConfig::default(),
+        (120, 40),
+        ShellHomeMode::User,
+    );
+    set_test_auth_role(&mut state, UserRole::Admin);
+    state.screen_stack.push(ShellScreen::SystemStatus);
+    state.focused_component = ShellComponent::SystemStatus;
+    state.set_system_status_tab(ui::SystemStatusTab::Logs);
+    let model = state.to_system_status_view_model().unwrap();
+    let ui::ShellLayout::Full { main, .. } = ui::compute_shell_layout(Rect::new(0, 0, 120, 40))
+    else {
+        panic!()
+    };
+    let layout = ui::system_status_layout(main, &model);
+    let incidents = layout
+        .activity_tabs
+        .iter()
+        .find(|tab| tab.tab == ui::DiagnosticsTab::Incidents)
+        .unwrap()
+        .area;
+    state.apply_input(InputEvent::Mouse(ui::MouseEvent::new(
+        incidents.x,
+        incidents.y,
+        ui::MouseEventKind::Down(PointerButton::Left),
+    )));
+    assert_eq!(state.diagnostics_tab, ui::DiagnosticsTab::Incidents);
+    assert_eq!(
+        state.system_status_route,
+        ui::SystemStatusRoute::Detail(ui::SystemStatusDetail::Activity)
+    );
+
+    let model = state.to_system_status_view_model().unwrap();
+    let layout = ui::system_status_layout(main, &model);
+    let logs = layout
+        .activity_tabs
+        .iter()
+        .find(|tab| tab.tab == ui::DiagnosticsTab::Logs)
+        .unwrap()
+        .area;
+    state.apply_input(InputEvent::Mouse(ui::MouseEvent::new(
+        logs.x,
+        logs.y,
+        ui::MouseEventKind::Down(PointerButton::Left),
+    )));
+    assert_eq!(state.diagnostics_tab, ui::DiagnosticsTab::Logs);
+    assert_eq!(state.active_screen(), ShellScreen::SystemStatus);
+}
+
+#[test]
 fn system_status_dashboard_focus_wraps_skips_disabled_and_activates() {
     let mut state = ShellSession::new_for_home_mode(
         ShellLaunchConfig::default(),

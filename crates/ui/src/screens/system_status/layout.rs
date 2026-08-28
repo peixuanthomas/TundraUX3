@@ -1,5 +1,5 @@
 use super::model::*;
-use crate::components::{Dialog, DialogAction};
+use crate::components::{Dialog, DialogAction, TabItem, Tabs};
 use crate::screens::shell::{inset_rect, line_in_rect, rect_contains, usize_to_u16};
 use crate::{
     DiagnosticsContentLayout, DiagnosticsHitTarget, DiagnosticsRepairDialogLayout,
@@ -23,6 +23,11 @@ pub struct SystemStatusWidgetLayout {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SystemStatusRowLayout {
     pub index: usize,
+    pub area: Rect,
+}
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SystemStatusActivityTabLayout {
+    pub tab: crate::DiagnosticsTab,
     pub area: Rect,
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -68,6 +73,8 @@ pub struct SystemStatusLayout {
     pub notice_area: Option<Rect>,
     pub detail_summary_area: Rect,
     pub detail_trend_area: Rect,
+    pub activity_tabs_area: Option<Rect>,
+    pub activity_tabs: Vec<SystemStatusActivityTabLayout>,
     pub rows_area: Rect,
     pub rows: Vec<SystemStatusRowLayout>,
     pub visible_start: usize,
@@ -350,11 +357,46 @@ pub fn system_status_layout(main: Rect, model: &SystemStatusViewModel) -> System
                 .collect()
         })
         .unwrap_or_default();
+    let activity_tabs_area = matches!(detail, Some(SystemStatusDetail::Activity))
+        .then(|| Rect::new(canvas.x, canvas.y, canvas.width, canvas.height.min(1)));
+    let activity_tabs = activity_tabs_area
+        .map(|area| {
+            let tabs = Tabs::new(
+                "system-status.activity.tabs.geometry",
+                vec![
+                    TabItem::new("system-status.activity.logs", "Logs"),
+                    TabItem::new("system-status.activity.incidents", "Incidents"),
+                ],
+            );
+            [
+                crate::DiagnosticsTab::Logs,
+                crate::DiagnosticsTab::Incidents,
+            ]
+            .into_iter()
+            .zip(tabs.borderless_item_areas(area))
+            .map(|(tab, area)| SystemStatusActivityTabLayout { tab, area })
+            .collect()
+        })
+        .unwrap_or_default();
+    let diagnostics_area = activity_tabs_area.map_or(canvas, |tabs| {
+        Rect::new(
+            canvas.x,
+            tabs.bottom(),
+            canvas.width,
+            canvas.bottom().saturating_sub(tabs.bottom()),
+        )
+    });
     let diagnostics_content = matches!(
         detail,
         Some(SystemStatusDetail::Diagnostics | SystemStatusDetail::Activity)
     )
-    .then(|| diagnostics_content_layout(canvas, &model.diagnostics));
+    .then(|| {
+        let mut diagnostics = model.diagnostics.clone();
+        if matches!(detail, Some(SystemStatusDetail::Activity)) {
+            diagnostics.tab = model.activity_tab();
+        }
+        diagnostics_content_layout(diagnostics_area, &diagnostics)
+    });
     let diagnostics_repair_dialog = diagnostics_content.as_ref().and_then(|_| {
         model
             .diagnostics
@@ -401,6 +443,8 @@ pub fn system_status_layout(main: Rect, model: &SystemStatusViewModel) -> System
         notice_area: None,
         detail_summary_area,
         detail_trend_area,
+        activity_tabs_area,
+        activity_tabs,
         rows_area,
         rows,
         visible_start,
@@ -434,6 +478,15 @@ pub fn system_status_hit_test(
     }
     if let Some(d) = &l.diagnostics_repair_dialog {
         return diagnostics_repair_dialog_hit_test(d, p).map(SystemStatusHitTarget::Diagnostics);
+    }
+    if let Some(tab) = l
+        .activity_tabs
+        .iter()
+        .find(|tab| rect_contains(tab.area, x, y))
+    {
+        return Some(SystemStatusHitTarget::Diagnostics(
+            DiagnosticsHitTarget::Tab(tab.tab),
+        ));
     }
     if let Some(d) = &l.diagnostics_content {
         if let Some(t) = diagnostics_content_hit_test(d, p) {
