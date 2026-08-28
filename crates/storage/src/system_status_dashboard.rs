@@ -318,6 +318,7 @@ fn normalize_layout(layout: &mut DashboardLayout, widgets: &[SystemStatusWidgetK
         let (column, row) = first_fit(&normalized, SystemStatusWidgetSize::Small, columns, 0, 0);
         normalized.push(placement(kind, column, row, SystemStatusWidgetSize::Small));
     }
+    normalized.sort_by_key(|placement| (placement.row, placement.column, placement.kind));
     layout.placements = normalized;
 }
 

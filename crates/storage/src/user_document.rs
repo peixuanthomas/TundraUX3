@@ -33,9 +33,7 @@ impl VersionedDocument for UsersDocument {
 
 impl UsersDocument {
     pub(crate) fn normalize(&mut self) -> bool {
-        if self.schema_version == USERS_SCHEMA_VERSION {
-            return false;
-        }
+        let mut changed = self.schema_version != USERS_SCHEMA_VERSION;
 
         if self.schema_version < 3 {
             for user in &mut self.users {
@@ -49,8 +47,13 @@ impl UsersDocument {
                 user.system_status_dashboard = SystemStatusDashboardConfig::for_role(&user.role);
             }
         }
+        for user in &mut self.users {
+            let dashboard_before = user.system_status_dashboard.clone();
+            user.system_status_dashboard.normalize();
+            changed |= user.system_status_dashboard != dashboard_before;
+        }
         self.schema_version = USERS_SCHEMA_VERSION;
-        true
+        changed
     }
 
     pub(crate) fn from_legacy_v1(legacy: UsersV1Document) -> Self {
@@ -133,7 +136,10 @@ fn unix_millis() -> u64 {
 #[cfg(test)]
 mod glacier_user_migration_tests {
     use super::*;
-    use crate::{BorderColor, BorderShape, IconDisplayMode, MotionPreference};
+    use crate::{
+        BorderColor, BorderShape, DashboardLayout, IconDisplayMode, MotionPreference,
+        SystemStatusWidgetKind, SystemStatusWidgetSize, WidgetPlacement,
+    };
 
     fn user(appearance: AppearanceConfig) -> UserRecord {
         UserRecord {
@@ -219,5 +225,159 @@ mod glacier_user_migration_tests {
             record.system_status_dashboard,
             SystemStatusDashboardConfig::for_role("User")
         );
+    }
+
+    #[test]
+    fn current_schema_repairs_dashboard_once_without_replacing_custom_layout_or_user_fields() {
+        let appearance = AppearanceConfig {
+            border_shape: BorderShape::Square,
+            accent_color: BorderColor::LightMagenta,
+            ..AppearanceConfig::default()
+        };
+        let mut record = user(appearance.clone());
+        record.id = "custom-id".into();
+        record.username = "custom-user".into();
+        record.display_name = "Custom User".into();
+        record.role = "Admin".into();
+        record.password_hash = "preserved-hash".into();
+        record.password_hint = Some("preserved hint".into());
+        record.failed_login_attempts = 2;
+        record.locked_until_epoch_ms = Some(55);
+        record.created_at_epoch_ms = 11;
+        record.updated_at_epoch_ms = 22;
+        record.last_login_at_epoch_ms = Some(33);
+        record.system_status_dashboard = SystemStatusDashboardConfig {
+            widgets: vec![
+                SystemStatusWidgetKind::Cpu,
+                SystemStatusWidgetKind::Cpu,
+                SystemStatusWidgetKind::Memory,
+                SystemStatusWidgetKind::Storage,
+            ],
+            wide: DashboardLayout {
+                placements: vec![
+                    WidgetPlacement {
+                        kind: SystemStatusWidgetKind::Cpu,
+                        column: 0,
+                        row: 0,
+                        size: SystemStatusWidgetSize::Wide,
+                    },
+                    WidgetPlacement {
+                        kind: SystemStatusWidgetKind::Cpu,
+                        column: 4,
+                        row: 0,
+                        size: SystemStatusWidgetSize::Small,
+                    },
+                    WidgetPlacement {
+                        kind: SystemStatusWidgetKind::Memory,
+                        column: 7,
+                        row: 0,
+                        size: SystemStatusWidgetSize::Small,
+                    },
+                    WidgetPlacement {
+                        kind: SystemStatusWidgetKind::Storage,
+                        column: 6,
+                        row: 0,
+                        size: SystemStatusWidgetSize::Small,
+                    },
+                ],
+            },
+            narrow: DashboardLayout {
+                placements: vec![
+                    WidgetPlacement {
+                        kind: SystemStatusWidgetKind::Memory,
+                        column: 9,
+                        row: 0,
+                        size: SystemStatusWidgetSize::Wide,
+                    },
+                    WidgetPlacement {
+                        kind: SystemStatusWidgetKind::Memory,
+                        column: 0,
+                        row: 2,
+                        size: SystemStatusWidgetSize::Small,
+                    },
+                    WidgetPlacement {
+                        kind: SystemStatusWidgetKind::Cpu,
+                        column: 0,
+                        row: 4,
+                        size: SystemStatusWidgetSize::Large,
+                    },
+                ],
+            },
+        };
+        let mut document = UsersDocument {
+            schema_version: USERS_SCHEMA_VERSION,
+            users: vec![record],
+        };
+
+        assert!(document.normalize());
+        let repaired = &document.users[0];
+        assert_eq!(
+            repaired.system_status_dashboard.widgets,
+            vec![
+                SystemStatusWidgetKind::Cpu,
+                SystemStatusWidgetKind::Memory,
+                SystemStatusWidgetKind::Storage,
+            ]
+        );
+        assert_eq!(
+            repaired.system_status_dashboard.wide.placements,
+            vec![
+                WidgetPlacement {
+                    kind: SystemStatusWidgetKind::Cpu,
+                    column: 0,
+                    row: 0,
+                    size: SystemStatusWidgetSize::Wide,
+                },
+                WidgetPlacement {
+                    kind: SystemStatusWidgetKind::Storage,
+                    column: 6,
+                    row: 0,
+                    size: SystemStatusWidgetSize::Small,
+                },
+                WidgetPlacement {
+                    kind: SystemStatusWidgetKind::Memory,
+                    column: 4,
+                    row: 1,
+                    size: SystemStatusWidgetSize::Small,
+                },
+            ]
+        );
+        assert_eq!(
+            repaired.system_status_dashboard.narrow.placements,
+            vec![
+                WidgetPlacement {
+                    kind: SystemStatusWidgetKind::Memory,
+                    column: 0,
+                    row: 0,
+                    size: SystemStatusWidgetSize::Wide,
+                },
+                WidgetPlacement {
+                    kind: SystemStatusWidgetKind::Storage,
+                    column: 0,
+                    row: 2,
+                    size: SystemStatusWidgetSize::Small,
+                },
+                WidgetPlacement {
+                    kind: SystemStatusWidgetKind::Cpu,
+                    column: 0,
+                    row: 4,
+                    size: SystemStatusWidgetSize::Large,
+                },
+            ]
+        );
+        assert_eq!(repaired.id, "custom-id");
+        assert_eq!(repaired.username, "custom-user");
+        assert_eq!(repaired.display_name, "Custom User");
+        assert_eq!(repaired.role, "Admin");
+        assert_eq!(repaired.password_hash, "preserved-hash");
+        assert_eq!(repaired.password_hint.as_deref(), Some("preserved hint"));
+        assert_eq!(repaired.appearance, appearance);
+        assert!(repaired.enabled);
+        assert_eq!(repaired.failed_login_attempts, 2);
+        assert_eq!(repaired.locked_until_epoch_ms, Some(55));
+        assert_eq!(repaired.created_at_epoch_ms, 11);
+        assert_eq!(repaired.updated_at_epoch_ms, 22);
+        assert_eq!(repaired.last_login_at_epoch_ms, Some(33));
+        assert!(!document.normalize());
     }
 }
