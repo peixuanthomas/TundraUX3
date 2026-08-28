@@ -198,6 +198,30 @@ fn activity_has_only_local_logs_and_incidents_tabs() {
     );
 }
 #[test]
+fn size_picker_renders_exact_rows_and_captures_dashboard_hits() {
+    let mut m = model();
+    m.dashboard.editing = true;
+    m.dashboard.size_picker = Some(SystemStatusSizePickerViewModel { selected: 1 });
+    let l = system_status_layout(full_main(100, 24), &m);
+    assert_eq!(l.size_picker_items.len(), 3);
+    for (index, row) in l.size_picker_items.iter().enumerate() {
+        assert_eq!(
+            system_status_hit_test(&l, (row.area.x, row.area.y)),
+            Some(SystemStatusHitTarget::SizePickerItem(index))
+        );
+    }
+    let widget = l.widgets.first().unwrap().area;
+    assert_eq!(
+        system_status_hit_test(&l, (widget.x, widget.y)),
+        None,
+        "modal captures underlying widget hits"
+    );
+    let out = render(100, 24, &m);
+    for label in ["2x2", "2x4", "4x4"] {
+        assert!(out.contains(label));
+    }
+}
+#[test]
 fn theme_and_size_smoke() {
     for theme in [
         TundraTheme::default_dark().with_border_shape(BorderShape::Rounded),

@@ -222,6 +222,27 @@ fn render_overlays(
     model: &SystemStatusViewModel,
     context: &RenderContext,
 ) {
+    if let Some(p) = model.dashboard.size_picker {
+        let w = l.panel.width.min(42);
+        let h = l.panel.height.min(5);
+        let area = Rect::new(
+            l.panel.x + (l.panel.width - w) / 2,
+            l.panel.y + (l.panel.height - h) / 2,
+            w,
+            h,
+        );
+        frame.render_widget(Clear, area);
+        let items = ["2x2", "2x4", "4x4"]
+            .into_iter()
+            .enumerate()
+            .map(|(index, label)| ListItem::new(format!("system-status.size.{index}"), label))
+            .collect();
+        let mut list = List::new("system-status.size-list", items).titled("Widget size");
+        list.set_selected(Some(p.selected));
+        list.set_focused(true);
+        list.render_frame(frame, area, &context.compatibility_theme());
+        return;
+    }
     if let Some(p) = &model.dashboard.picker {
         let w = l.panel.width.min(42);
         let h = l

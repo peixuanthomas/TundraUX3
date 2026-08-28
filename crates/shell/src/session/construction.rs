@@ -193,6 +193,7 @@ impl ShellSession {
             system_status_dashboard_scroll_row: 0,
             system_status_dashboard_draft: None,
             system_status_add_picker: None,
+            system_status_size_picker: None,
             system_status_discard_dialog: false,
             system_status_discard_confirm_selected: true,
             system_status_dashboard_feedback: None,

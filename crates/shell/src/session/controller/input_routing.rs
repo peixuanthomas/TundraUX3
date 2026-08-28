@@ -577,6 +577,21 @@ impl ShellSession {
             };
         }
 
+        if self.system_status_size_picker.is_some() {
+            let modal = RoutedTarget::Modal(ShellComponent::SystemStatus);
+            return match &key.key {
+                InputKey::Escape => (modal, ShellCommand::SystemStatusCloseSizePicker),
+                InputKey::Up | InputKey::BackTab => {
+                    (modal, ShellCommand::SystemStatusSizePickerPrevious)
+                }
+                InputKey::Down | InputKey::Tab => (modal, ShellCommand::SystemStatusSizePickerNext),
+                InputKey::Enter | InputKey::Char(' ') => {
+                    (modal, ShellCommand::SystemStatusSizePickerActivate)
+                }
+                _ => (modal, ShellCommand::CaptureOverlayInput),
+            };
+        }
+
         let diagnostics_active = matches!(
             self.system_status_route,
             ui::SystemStatusRoute::Detail(
@@ -1909,7 +1924,10 @@ impl ShellSession {
         let coordinates = mouse.coordinates();
         let target = if !self.diagnostics_repair_preview.is_empty() {
             RoutedTarget::Modal(ShellComponent::DiagnosticsRepairDialog)
-        } else if self.system_status_discard_dialog || self.system_status_add_picker.is_some() {
+        } else if self.system_status_discard_dialog
+            || self.system_status_add_picker.is_some()
+            || self.system_status_size_picker.is_some()
+        {
             RoutedTarget::Modal(ShellComponent::SystemStatus)
         } else {
             RoutedTarget::Component(ShellComponent::SystemStatus)
@@ -1939,13 +1957,17 @@ impl ShellSession {
         let editing = self.system_status_dashboard_draft.is_some();
         let modal_open = !self.diagnostics_repair_preview.is_empty()
             || self.system_status_discard_dialog
-            || self.system_status_add_picker.is_some();
+            || self.system_status_add_picker.is_some()
+            || self.system_status_size_picker.is_some();
 
         let activate_hit = |hit| match hit {
             Some(ui::SystemStatusHitTarget::DialogConfirm) => ShellCommand::SystemStatusDiscardEdit,
             Some(ui::SystemStatusHitTarget::DialogCancel) => ShellCommand::SystemStatusContinueEdit,
             Some(ui::SystemStatusHitTarget::PickerItem(index)) => {
                 ShellCommand::SystemStatusPickerActivateAt(index)
+            }
+            Some(ui::SystemStatusHitTarget::SizePickerItem(index)) => {
+                ShellCommand::SystemStatusSizePickerActivateAt(index)
             }
             Some(ui::SystemStatusHitTarget::Widget(kind)) if !editing => {
                 ShellCommand::SystemStatusOpenWidget(kind)
@@ -1982,6 +2004,9 @@ impl ShellSession {
                 Some(ui::SystemStatusHitTarget::PickerItem(index)) => {
                     ShellCommand::SystemStatusPickerSelect(index)
                 }
+                Some(ui::SystemStatusHitTarget::SizePickerItem(index)) => {
+                    ShellCommand::SystemStatusSizePickerSelect(index)
+                }
                 Some(ui::SystemStatusHitTarget::Widget(kind)) if editing => {
                     ShellCommand::SystemStatusWidgetPointerDown(kind, coordinates)
                 }
@@ -1995,7 +2020,7 @@ impl ShellSession {
                     ShellCommand::SystemStatusOpenAddPicker
                 }
                 Some(ui::SystemStatusHitTarget::Size) if editing => {
-                    ShellCommand::SystemStatusCycleWidgetSize
+                    ShellCommand::SystemStatusOpenSizePicker
                 }
                 Some(ui::SystemStatusHitTarget::Remove) if editing => {
                     ShellCommand::SystemStatusRemoveWidget
@@ -2063,6 +2088,9 @@ impl ShellSession {
                 }
                 Some(ui::SystemStatusHitTarget::PickerItem(index)) => {
                     ShellCommand::SystemStatusPickerSelect(index)
+                }
+                Some(ui::SystemStatusHitTarget::SizePickerItem(index)) => {
+                    ShellCommand::SystemStatusSizePickerSelect(index)
                 }
                 Some(ui::SystemStatusHitTarget::Widget(kind)) if !editing => {
                     ShellCommand::SystemStatusSelectWidget(kind)

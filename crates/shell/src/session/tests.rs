@@ -389,6 +389,120 @@ fn system_status_dashboard_focus_restores_and_tabs_offscreen() {
 }
 
 #[test]
+fn system_status_size_shortcut_cycles_and_picker_applies_active_profile_only() {
+    let mut state = ShellSession::new_for_home_mode(
+        ShellLaunchConfig::default(),
+        (120, 40),
+        ShellHomeMode::User,
+    );
+    set_test_auth_role(&mut state, UserRole::Admin);
+    state.screen_stack.push(ShellScreen::SystemStatus);
+    state.focused_component = ShellComponent::SystemStatus;
+    state.begin_system_status_dashboard_edit();
+    state.system_status_selected_widget = Some(storage::SystemStatusWidgetKind::Cpu);
+    state.system_status_dashboard_focus =
+        ui::SystemStatusDashboardFocus::Widget(ui::SystemStatusWidgetKind::Cpu);
+    let size = |state: &ShellSession, profile| {
+        state
+            .system_status_dashboard_draft
+            .as_ref()
+            .unwrap()
+            .layout(profile)
+            .placements
+            .iter()
+            .find(|p| p.kind == storage::SystemStatusWidgetKind::Cpu)
+            .unwrap()
+            .size
+    };
+    let before = size(&state, storage::DashboardProfile::Wide);
+    state.apply_input(InputEvent::from_key_label("s"));
+    assert_eq!(
+        size(&state, storage::DashboardProfile::Wide),
+        before.cycle(),
+        "S remains immediate cycle"
+    );
+
+    state.system_status_dashboard_focus = ui::SystemStatusDashboardFocus::Size;
+    state.apply_input(InputEvent::from_key_label("Enter"));
+    let expected = match size(&state, storage::DashboardProfile::Wide) {
+        storage::SystemStatusWidgetSize::Small => 0,
+        storage::SystemStatusWidgetSize::Wide => 1,
+        storage::SystemStatusWidgetSize::Large => 2,
+    };
+    assert_eq!(state.system_status_size_picker.unwrap().selected, expected);
+    let unchanged = state.system_status_dashboard_draft.clone().unwrap();
+    state.apply_input(InputEvent::from_key_label("Esc"));
+    assert_eq!(
+        state.system_status_dashboard_draft.as_ref().unwrap(),
+        &unchanged,
+        "Esc does not resize"
+    );
+
+    let narrow_before = size(&state, storage::DashboardProfile::Narrow);
+    state.open_system_status_size_picker();
+    state.select_system_status_size_picker_item(2);
+    state.apply_system_status_size_picker();
+    assert_eq!(
+        size(&state, storage::DashboardProfile::Wide),
+        storage::SystemStatusWidgetSize::Large
+    );
+    assert_eq!(
+        size(&state, storage::DashboardProfile::Narrow),
+        narrow_before,
+        "other profile is unchanged"
+    );
+    assert_eq!(
+        state.system_status_dashboard_focus,
+        ui::SystemStatusDashboardFocus::Size
+    );
+}
+
+#[test]
+fn system_status_size_picker_double_clicks_exact_size_and_transitions_clear_it() {
+    let mut state = ShellSession::new_for_home_mode(
+        ShellLaunchConfig::default(),
+        (120, 40),
+        ShellHomeMode::User,
+    );
+    set_test_auth_role(&mut state, UserRole::Admin);
+    state.screen_stack.push(ShellScreen::SystemStatus);
+    state.focused_component = ShellComponent::SystemStatus;
+    state.begin_system_status_dashboard_edit();
+    state.system_status_selected_widget = Some(storage::SystemStatusWidgetKind::Cpu);
+    state.open_system_status_size_picker();
+    let model = state.to_system_status_view_model().unwrap();
+    let ui::ShellLayout::Full { main, .. } = ui::compute_shell_layout(Rect::new(0, 0, 120, 40))
+    else {
+        panic!()
+    };
+    let row = ui::system_status_layout(main, &model).size_picker_items[2].area;
+    state.apply_input(InputEvent::Mouse(ui::MouseEvent::new(
+        row.x,
+        row.y,
+        ui::MouseEventKind::DoubleClick(PointerButton::Left),
+    )));
+    let wide = state
+        .system_status_dashboard_draft
+        .as_ref()
+        .unwrap()
+        .wide
+        .placements
+        .iter()
+        .find(|p| p.kind == storage::SystemStatusWidgetKind::Cpu)
+        .unwrap();
+    assert_eq!(wide.size, storage::SystemStatusWidgetSize::Large);
+    assert!(state.system_status_size_picker.is_none());
+
+    state.open_system_status_size_picker();
+    state.open_system_status_add_picker();
+    assert!(state.system_status_size_picker.is_none());
+    state.close_system_status_add_picker();
+    state.open_system_status_size_picker();
+    state.finish_cancel_system_status_dashboard_edit();
+    assert!(state.system_status_size_picker.is_none());
+}
+
+#[test]
 fn diagnostics_rejects_guest_even_with_system_status_parent() {
     let mut state = ShellSession::new_for_home_mode(
         ShellLaunchConfig::default(),

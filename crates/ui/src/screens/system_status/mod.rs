@@ -13,8 +13,8 @@ pub use model::{
     SystemStatusDashboardProfile, SystemStatusDashboardViewModel, SystemStatusDetail,
     SystemStatusDialogViewModel, SystemStatusDragPreview, SystemStatusOverviewViewModel,
     SystemStatusPickerItemViewModel, SystemStatusPickerViewModel, SystemStatusRoute,
-    SystemStatusSectionState, SystemStatusTab, SystemStatusViewModel, SystemStatusWidgetKind,
-    SystemStatusWidgetSize, SystemStatusWidgetState, SystemStatusWidgetViewModel,
-    UserSystemStatusViewModel,
+    SystemStatusSectionState, SystemStatusSizePickerViewModel, SystemStatusTab,
+    SystemStatusViewModel, SystemStatusWidgetKind, SystemStatusWidgetSize, SystemStatusWidgetState,
+    SystemStatusWidgetViewModel, UserSystemStatusViewModel,
 };
 pub use render::{render_system_status, render_system_status_contextual};

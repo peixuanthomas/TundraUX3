@@ -1229,6 +1229,35 @@ impl ShellSession {
                 self.cycle_selected_system_status_widget_size();
                 ShellAction::Redraw
             }
+            ShellCommand::SystemStatusOpenSizePicker => {
+                self.open_system_status_size_picker();
+                ShellAction::Redraw
+            }
+            ShellCommand::SystemStatusCloseSizePicker => {
+                self.close_system_status_size_picker();
+                ShellAction::Redraw
+            }
+            ShellCommand::SystemStatusSizePickerPrevious => {
+                self.move_system_status_size_picker(-1);
+                ShellAction::Redraw
+            }
+            ShellCommand::SystemStatusSizePickerNext => {
+                self.move_system_status_size_picker(1);
+                ShellAction::Redraw
+            }
+            ShellCommand::SystemStatusSizePickerSelect(index) => {
+                self.select_system_status_size_picker_item(index);
+                ShellAction::Redraw
+            }
+            ShellCommand::SystemStatusSizePickerActivate => {
+                self.apply_system_status_size_picker();
+                ShellAction::Redraw
+            }
+            ShellCommand::SystemStatusSizePickerActivateAt(index) => {
+                self.select_system_status_size_picker_item(index);
+                self.apply_system_status_size_picker();
+                ShellAction::Redraw
+            }
             ShellCommand::SystemStatusRemoveWidget => {
                 self.remove_selected_system_status_widget();
                 ShellAction::Redraw

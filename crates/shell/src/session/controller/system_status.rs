@@ -40,6 +40,7 @@ impl ShellSession {
         self.system_status_dashboard_scroll_row = 0;
         self.system_status_dashboard_draft = None;
         self.system_status_add_picker = None;
+        self.system_status_size_picker = None;
         self.system_status_discard_dialog = false;
         self.system_status_discard_confirm_selected = true;
         self.system_status_dashboard_feedback = None;
@@ -68,6 +69,7 @@ impl ShellSession {
         self.reset_diagnostics_repair_dialog_selection();
         self.system_status_dashboard_draft = None;
         self.system_status_add_picker = None;
+        self.system_status_size_picker = None;
         self.system_status_discard_dialog = false;
         self.system_status_discard_confirm_selected = true;
         self.system_status_widget_drag = None;
@@ -234,6 +236,7 @@ impl ShellSession {
         self.system_status_dashboard_scroll_row = 0;
         self.system_status_dashboard_draft = None;
         self.system_status_add_picker = None;
+        self.system_status_size_picker = None;
         self.system_status_discard_dialog = false;
         self.system_status_discard_confirm_selected = true;
         self.system_status_dashboard_feedback = None;
@@ -341,6 +344,7 @@ impl ShellSession {
         }
         self.system_status_dashboard_draft = Some(self.system_status_dashboard_config());
         self.system_status_add_picker = None;
+        self.system_status_size_picker = None;
         self.system_status_discard_dialog = false;
         self.system_status_discard_confirm_selected = true;
         self.system_status_dashboard_feedback = Some("Editing dashboard".to_string());
@@ -363,6 +367,7 @@ impl ShellSession {
     pub(in crate::session) fn finish_cancel_system_status_dashboard_edit(&mut self) {
         self.system_status_dashboard_draft = None;
         self.system_status_add_picker = None;
+        self.system_status_size_picker = None;
         self.system_status_discard_dialog = false;
         self.system_status_discard_confirm_selected = true;
         self.system_status_widget_drag = None;
@@ -400,6 +405,7 @@ impl ShellSession {
                 );
                 self.system_status_dashboard_draft = None;
                 self.system_status_add_picker = None;
+                self.system_status_size_picker = None;
                 self.system_status_discard_dialog = false;
                 self.system_status_discard_confirm_selected = true;
                 self.system_status_widget_drag = None;
@@ -421,6 +427,7 @@ impl ShellSession {
             return;
         }
         self.system_status_dashboard_focus = ui::SystemStatusDashboardFocus::Add;
+        self.system_status_size_picker = None;
         let selected = SYSTEM_STATUS_WIDGET_KINDS
             .iter()
             .position(|kind| self.system_status_picker_kind_enabled(*kind))
@@ -430,6 +437,7 @@ impl ShellSession {
 
     pub(in crate::session) fn close_system_status_add_picker(&mut self) {
         self.system_status_add_picker = None;
+        self.system_status_size_picker = None;
     }
 
     pub(in crate::session) fn move_system_status_add_picker(&mut self, delta: isize) {
@@ -531,6 +539,87 @@ impl ShellSession {
             .map(|placement| placement.size.cycle());
         if let (Some(dashboard), Some(next)) = (self.system_status_dashboard_draft.as_mut(), next) {
             dashboard.resize_widget(profile, kind, next);
+        }
+    }
+
+    pub(in crate::session) fn open_system_status_size_picker(&mut self) {
+        let (Some(kind), Some((_, layout))) = (
+            self.system_status_selected_widget,
+            self.system_status_layout(),
+        ) else {
+            return;
+        };
+        if self.system_status_dashboard_draft.is_none() {
+            return;
+        }
+        let profile = storage_profile(layout.profile);
+        let Some(size) = self
+            .system_status_dashboard_draft
+            .as_ref()
+            .and_then(|dashboard| {
+                dashboard
+                    .layout(profile)
+                    .placements
+                    .iter()
+                    .find(|placement| placement.kind == kind)
+                    .map(|placement| placement.size)
+            })
+        else {
+            return;
+        };
+        let selected = match size {
+            storage::SystemStatusWidgetSize::Small => 0,
+            storage::SystemStatusWidgetSize::Wide => 1,
+            storage::SystemStatusWidgetSize::Large => 2,
+        };
+        self.system_status_dashboard_focus = ui::SystemStatusDashboardFocus::Size;
+        self.system_status_add_picker = None;
+        self.system_status_size_picker = Some(SystemStatusSizePickerState { selected });
+    }
+
+    pub(in crate::session) fn close_system_status_size_picker(&mut self) {
+        self.system_status_size_picker = None;
+        self.system_status_dashboard_focus = ui::SystemStatusDashboardFocus::Size;
+    }
+
+    pub(in crate::session) fn move_system_status_size_picker(&mut self, delta: isize) {
+        if let Some(picker) = self.system_status_size_picker.as_mut() {
+            picker.selected = (picker.selected as isize + delta).rem_euclid(3) as usize;
+        }
+    }
+
+    pub(in crate::session) fn select_system_status_size_picker_item(&mut self, index: usize) {
+        if index < 3 {
+            if let Some(picker) = self.system_status_size_picker.as_mut() {
+                picker.selected = index;
+            }
+        }
+    }
+
+    pub(in crate::session) fn apply_system_status_size_picker(&mut self) {
+        let Some(index) = self
+            .system_status_size_picker
+            .as_ref()
+            .map(|picker| picker.selected)
+        else {
+            return;
+        };
+        let (Some(kind), Some((_, layout))) = (
+            self.system_status_selected_widget,
+            self.system_status_layout(),
+        ) else {
+            return;
+        };
+        let size = match index {
+            0 => storage::SystemStatusWidgetSize::Small,
+            1 => storage::SystemStatusWidgetSize::Wide,
+            2 => storage::SystemStatusWidgetSize::Large,
+            _ => return,
+        };
+        if let Some(dashboard) = self.system_status_dashboard_draft.as_mut() {
+            dashboard.resize_widget(storage_profile(layout.profile), kind, size);
+            self.system_status_size_picker = None;
+            self.system_status_dashboard_focus = ui::SystemStatusDashboardFocus::Size;
         }
     }
 
@@ -754,7 +843,7 @@ impl ShellSession {
             (false, Focus::Edit) => self.begin_system_status_dashboard_edit(),
             (false, Focus::Refresh) => self.refresh_system_status(),
             (true, Focus::Add) => self.open_system_status_add_picker(),
-            (true, Focus::Size) => self.cycle_selected_system_status_widget_size(),
+            (true, Focus::Size) => self.open_system_status_size_picker(),
             (true, Focus::Remove) => self.remove_selected_system_status_widget(),
             (true, Focus::Save) => self.save_system_status_dashboard(),
             (true, Focus::Cancel) => self.request_cancel_system_status_dashboard_edit(),

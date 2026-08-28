@@ -34,6 +34,7 @@ pub struct SystemStatusActivityTabLayout {
 pub enum SystemStatusHitTarget {
     Widget(SystemStatusWidgetKind),
     PickerItem(usize),
+    SizePickerItem(usize),
     Row(usize),
     Diagnostics(DiagnosticsHitTarget),
     Refresh,
@@ -58,6 +59,7 @@ pub struct SystemStatusLayout {
     pub column_count: u16,
     pub widgets: Vec<SystemStatusWidgetLayout>,
     pub picker_items: Vec<SystemStatusRowLayout>,
+    pub size_picker_items: Vec<SystemStatusRowLayout>,
     pub dialog_actions: Vec<SystemStatusRowLayout>,
     pub visible_row_start: u16,
     pub visible_row_end: u16,
@@ -314,6 +316,31 @@ pub fn system_status_layout(main: Rect, model: &SystemStatusViewModel) -> System
                 .collect()
         })
         .unwrap_or_default();
+    let size_picker_items = model
+        .dashboard
+        .size_picker
+        .map(|_| {
+            let w = panel.width.min(42);
+            let h = panel.height.min(5);
+            let area = Rect::new(
+                panel.x + (panel.width - w) / 2,
+                panel.y + (panel.height - h) / 2,
+                w,
+                h,
+            );
+            (0..3)
+                .map(|index| SystemStatusRowLayout {
+                    index,
+                    area: Rect::new(
+                        area.x.saturating_add(1),
+                        area.y.saturating_add(1 + index as u16),
+                        area.width.saturating_sub(2),
+                        1,
+                    ),
+                })
+                .collect()
+        })
+        .unwrap_or_default();
     let dialog_actions = model
         .dashboard
         .dialog
@@ -428,6 +455,7 @@ pub fn system_status_layout(main: Rect, model: &SystemStatusViewModel) -> System
         column_count,
         widgets,
         picker_items,
+        size_picker_items,
         dialog_actions,
         visible_row_start,
         visible_row_end,
@@ -475,6 +503,13 @@ pub fn system_status_hit_test(
             .iter()
             .find(|r| rect_contains(r.area, x, y))
             .map(|r| SystemStatusHitTarget::PickerItem(r.index));
+    }
+    if !l.size_picker_items.is_empty() {
+        return l
+            .size_picker_items
+            .iter()
+            .find(|r| rect_contains(r.area, x, y))
+            .map(|r| SystemStatusHitTarget::SizePickerItem(r.index));
     }
     if let Some(d) = &l.diagnostics_repair_dialog {
         return diagnostics_repair_dialog_hit_test(d, p).map(SystemStatusHitTarget::Diagnostics);

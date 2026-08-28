@@ -312,6 +312,11 @@ impl ShellSession {
             dirty,
             feedback: self.system_status_dashboard_feedback.clone(),
             picker,
+            size_picker: self.system_status_size_picker.map(|picker| {
+                ui::SystemStatusSizePickerViewModel {
+                    selected: picker.selected,
+                }
+            }),
             dialog: self
                 .system_status_discard_dialog
                 .then(|| ui::SystemStatusDialogViewModel {

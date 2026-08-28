@@ -162,6 +162,10 @@ pub(super) struct SystemStatusMetricHistory {
 pub(super) struct SystemStatusAddPickerState {
     pub(super) selected: usize,
 }
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(super) struct SystemStatusSizePickerState {
+    pub(super) selected: usize,
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct SystemStatusWidgetDragState {
@@ -430,6 +434,7 @@ pub struct UiSessionState {
     pub(super) system_status_dashboard_scroll_row: u16,
     pub(super) system_status_dashboard_draft: Option<storage::SystemStatusDashboardConfig>,
     pub(super) system_status_add_picker: Option<SystemStatusAddPickerState>,
+    pub(super) system_status_size_picker: Option<SystemStatusSizePickerState>,
     pub(super) system_status_discard_dialog: bool,
     pub(super) system_status_discard_confirm_selected: bool,
     pub(super) system_status_dashboard_feedback: Option<String>,

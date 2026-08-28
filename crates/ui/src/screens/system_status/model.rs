@@ -167,6 +167,10 @@ pub struct SystemStatusPickerViewModel {
     pub items: Vec<SystemStatusPickerItemViewModel>,
     pub selected: usize,
 }
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct SystemStatusSizePickerViewModel {
+    pub selected: usize,
+}
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct SystemStatusDialogViewModel {
     pub title: String,
@@ -193,6 +197,7 @@ pub struct SystemStatusDashboardViewModel {
     pub dirty: bool,
     pub feedback: Option<String>,
     pub picker: Option<SystemStatusPickerViewModel>,
+    pub size_picker: Option<SystemStatusSizePickerViewModel>,
     pub dialog: Option<SystemStatusDialogViewModel>,
     pub dragging: Option<SystemStatusDragPreview>,
     pub actions: SystemStatusActionState,
