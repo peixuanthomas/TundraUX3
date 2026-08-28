@@ -136,7 +136,6 @@ impl ShellMotionEffects {
             // dialog cannot inherit one last page frame and flash underneath.
             self.manager = EffectManager::default();
             self.effects_scheduled_since_process = false;
-            self.overlay = None;
             self.overlay_snapshot = None;
             self.overlay_underlay_snapshot = None;
             self.overlay_gate = Duration::ZERO;
