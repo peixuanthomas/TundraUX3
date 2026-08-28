@@ -8,7 +8,7 @@ use identity::{
 use platform::{AppPaths, cleanup_temp_path};
 use storage::{
     AppearanceConfig, BorderColor, BorderShape, ClockProfile, IconDisplayMode, StorageManager,
-    UserRecord,
+    SystemStatusDashboardConfig, SystemStatusWidgetKind, UserRecord,
 };
 
 #[test]
@@ -283,6 +283,87 @@ fn appearance_updates_are_self_managed_for_users_and_admins() {
     users
         .update_user_appearance(&admin, "AdminUser", appearance)
         .expect("admin can update own appearance");
+}
+
+#[test]
+fn dashboard_updates_are_self_managed_and_require_an_enabled_authenticated_user() {
+    let fixture = FixtureRoot::new("self-managed-dashboard");
+    let manager = storage(fixture.path());
+    let users = UserService::new(manager.clone());
+    users
+        .bootstrap_admin("AdminUser", "StrongPass123")
+        .expect("bootstrap");
+    let admin = SessionService::new(manager.clone())
+        .login("AdminUser", "StrongPass123")
+        .unwrap();
+    users
+        .create_user(
+            &admin,
+            "NormalUser",
+            "Normal User",
+            UserRole::User,
+            "NormalPass123",
+        )
+        .unwrap();
+    let normal = SessionService::new(manager.clone())
+        .login("NormalUser", "NormalPass123")
+        .unwrap();
+    let mut dashboard = SystemStatusDashboardConfig::for_role("User");
+    dashboard.add_widget(SystemStatusWidgetKind::Activity);
+
+    let updated = users
+        .update_user_system_status_dashboard(&normal, "NormalUser", dashboard.clone())
+        .unwrap();
+    assert_eq!(updated.system_status_dashboard, dashboard);
+    assert_eq!(
+        manager.load_users().unwrap().users[1].system_status_dashboard,
+        dashboard
+    );
+    assert!(matches!(
+        users.update_user_system_status_dashboard(
+            &normal,
+            "AdminUser",
+            SystemStatusDashboardConfig::default()
+        ),
+        Err(CoreError::PermissionDenied {
+            action: PermissionAction::ManageOwnUser,
+            ..
+        })
+    ));
+    assert!(matches!(
+        users.update_user_system_status_dashboard(
+            &admin,
+            "NormalUser",
+            SystemStatusDashboardConfig::default()
+        ),
+        Err(CoreError::PermissionDenied {
+            action: PermissionAction::ManageOwnUser,
+            ..
+        })
+    ));
+
+    let mut guest_equivalent = normal.clone();
+    guest_equivalent.role = UserRole::Guest;
+    assert!(matches!(
+        users.update_user_system_status_dashboard(
+            &guest_equivalent,
+            "NormalUser",
+            SystemStatusDashboardConfig::default()
+        ),
+        Err(CoreError::PermissionDenied {
+            action: PermissionAction::ManageOwnUser,
+            ..
+        })
+    ));
+    users.disable_user(&admin, "NormalUser").unwrap();
+    assert!(matches!(
+        users.update_user_system_status_dashboard(
+            &normal,
+            "NormalUser",
+            SystemStatusDashboardConfig::default()
+        ),
+        Err(CoreError::AccountDisabled)
+    ));
 }
 
 #[test]

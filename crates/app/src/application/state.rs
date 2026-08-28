@@ -45,6 +45,7 @@ pub enum AppCommand {
         synchronized_utc: Option<chrono::DateTime<chrono::Utc>>,
     },
     SetActiveAppearance(Option<storage::AppearanceConfig>),
+    SetActiveSystemStatusDashboard(Option<storage::SystemStatusDashboardConfig>),
     SetExplorerState(Option<ExplorerState>),
     SetLauncherState(Option<LauncherState>),
     SetDiagnosticsSnapshot(Option<DiagnosticsSnapshot>),
@@ -81,6 +82,7 @@ pub struct AppSnapshot<'a> {
     pub managed_users: &'a [UserAccount],
     pub storage_config: &'a storage::StorageConfig,
     pub active_appearance: Option<&'a storage::AppearanceConfig>,
+    pub active_system_status_dashboard: Option<&'a storage::SystemStatusDashboardConfig>,
     pub explorer: Option<&'a ExplorerState>,
     pub launcher: Option<&'a LauncherState>,
     pub diagnostics: Option<&'a DiagnosticsSnapshot>,
@@ -99,6 +101,7 @@ pub struct AppState {
     managed_users: Vec<UserAccount>,
     storage_config: storage::StorageConfig,
     active_appearance: Option<storage::AppearanceConfig>,
+    active_system_status_dashboard: Option<storage::SystemStatusDashboardConfig>,
     explorer_state: Option<ExplorerState>,
     launcher_state: Option<LauncherState>,
     diagnostics_snapshot: Option<DiagnosticsSnapshot>,
@@ -127,6 +130,7 @@ impl AppState {
             managed_users: Vec::new(),
             storage_config,
             active_appearance: None,
+            active_system_status_dashboard: None,
             explorer_state: None,
             launcher_state: None,
             diagnostics_snapshot: None,
@@ -174,6 +178,10 @@ impl AppState {
             }
             AppCommand::SetActiveAppearance(active_appearance) => {
                 self.active_appearance = active_appearance;
+                AppAction::Redraw
+            }
+            AppCommand::SetActiveSystemStatusDashboard(dashboard) => {
+                self.active_system_status_dashboard = dashboard;
                 AppAction::Redraw
             }
             AppCommand::SetExplorerState(explorer_state) => {
@@ -251,6 +259,7 @@ impl AppState {
             managed_users: &self.managed_users,
             storage_config: &self.storage_config,
             active_appearance: self.active_appearance.as_ref(),
+            active_system_status_dashboard: self.active_system_status_dashboard.as_ref(),
             explorer: self.explorer_state.as_ref(),
             launcher: self.launcher_state.as_ref(),
             diagnostics: self.diagnostics_snapshot.as_ref(),
@@ -325,6 +334,9 @@ impl AppState {
     }
     pub fn active_appearance(&self) -> Option<&storage::AppearanceConfig> {
         self.active_appearance.as_ref()
+    }
+    pub fn active_system_status_dashboard(&self) -> Option<&storage::SystemStatusDashboardConfig> {
+        self.active_system_status_dashboard.as_ref()
     }
     pub fn explorer_state(&self) -> Option<&ExplorerState> {
         self.explorer_state.as_ref()
@@ -420,6 +432,7 @@ impl PartialEq for AppState {
             && self.managed_users == other.managed_users
             && self.storage_config == other.storage_config
             && self.active_appearance == other.active_appearance
+            && self.active_system_status_dashboard == other.active_system_status_dashboard
             && self.explorer_state == other.explorer_state
             && self.launcher_state == other.launcher_state
             && self.diagnostics_snapshot == other.diagnostics_snapshot
@@ -476,6 +489,7 @@ mod tests {
             locked_until_epoch_ms: None,
             password_hint: None,
             appearance: storage::AppearanceConfig::default(),
+            system_status_dashboard: storage::SystemStatusDashboardConfig::for_role("User"),
             created_at_epoch_ms: 1,
             updated_at_epoch_ms: 1,
             last_login_at_epoch_ms: None,
@@ -970,6 +984,35 @@ mod tests {
     }
 
     #[test]
+    fn active_system_status_dashboard_is_canonical_app_state_and_affects_equality() {
+        let dashboard = storage::SystemStatusDashboardConfig::for_role("Admin");
+        let mut state = AppState::default();
+        let unchanged = state.clone();
+        assert!(state.active_system_status_dashboard().is_none());
+        assert!(state.snapshot().active_system_status_dashboard.is_none());
+
+        assert_eq!(
+            state.dispatch_at(
+                AppCommand::SetActiveSystemStatusDashboard(Some(dashboard.clone())),
+                Instant::now(),
+            ),
+            AppAction::Redraw
+        );
+        assert_eq!(state.active_system_status_dashboard(), Some(&dashboard));
+        assert_eq!(
+            state.snapshot().active_system_status_dashboard,
+            Some(&dashboard)
+        );
+        assert_ne!(state, unchanged);
+
+        state.dispatch_at(
+            AppCommand::SetActiveSystemStatusDashboard(None),
+            Instant::now(),
+        );
+        assert_eq!(state, unchanged);
+    }
+
+    #[test]
     fn replacing_non_timezone_config_preserves_clock_anchor() {
         let mut config = storage::StorageConfig {
             timezone: "UTC".to_string(),
@@ -1093,6 +1136,7 @@ mod tests {
             network: system_services_model::NetworkState::Unavailable {
                 reason: "network offline".to_string(),
             },
+            metrics: system_services_model::SystemMetricsSnapshot::loading(),
         };
         let status = AppSystemStatusSnapshot::from(&source);
         let mut state = AppState::default();

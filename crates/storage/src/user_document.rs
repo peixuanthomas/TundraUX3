@@ -2,8 +2,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 
-use crate::AppearanceConfig;
 use crate::schema::{USERS_SCHEMA_VERSION, VersionedDocument};
+use crate::{AppearanceConfig, SystemStatusDashboardConfig};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct UsersDocument {
@@ -44,6 +44,11 @@ impl UsersDocument {
                 }
             }
         }
+        if self.schema_version < 4 {
+            for user in &mut self.users {
+                user.system_status_dashboard = SystemStatusDashboardConfig::for_role(&user.role);
+            }
+        }
         self.schema_version = USERS_SCHEMA_VERSION;
         true
     }
@@ -64,6 +69,7 @@ impl UsersDocument {
                     password_hash: String::new(),
                     password_hint: None,
                     appearance: AppearanceConfig::default(),
+                    system_status_dashboard: SystemStatusDashboardConfig::for_role("User"),
                     enabled: false,
                     failed_login_attempts: 0,
                     locked_until_epoch_ms: None,
@@ -92,6 +98,8 @@ pub struct UserRecord {
     pub password_hint: Option<String>,
     #[serde(default)]
     pub appearance: AppearanceConfig,
+    #[serde(default)]
+    pub system_status_dashboard: SystemStatusDashboardConfig,
     pub enabled: bool,
     pub failed_login_attempts: u32,
     pub locked_until_epoch_ms: Option<u64>,
@@ -136,6 +144,7 @@ mod glacier_user_migration_tests {
             password_hash: String::new(),
             password_hint: None,
             appearance,
+            system_status_dashboard: SystemStatusDashboardConfig::for_role("User"),
             enabled: true,
             failed_login_attempts: 0,
             locked_until_epoch_ms: None,
@@ -167,5 +176,48 @@ mod glacier_user_migration_tests {
         assert_eq!(document.users[0].appearance, AppearanceConfig::default());
         assert_eq!(document.users[1].appearance, custom);
         assert_eq!(document.schema_version, USERS_SCHEMA_VERSION);
+    }
+
+    #[test]
+    fn users_schema_three_receives_role_specific_dashboard_defaults() {
+        let mut admin = user(AppearanceConfig::default());
+        admin.role = "Admin".into();
+        let mut ordinary = user(AppearanceConfig::default());
+        ordinary.system_status_dashboard.widgets = vec![crate::SystemStatusWidgetKind::Activity];
+        let mut document = UsersDocument {
+            schema_version: 3,
+            users: vec![admin, ordinary],
+        };
+        assert!(document.normalize());
+        assert!(
+            document.users[0]
+                .system_status_dashboard
+                .widgets
+                .contains(&crate::SystemStatusWidgetKind::TopProcesses)
+        );
+        assert!(
+            document.users[1]
+                .system_status_dashboard
+                .widgets
+                .contains(&crate::SystemStatusWidgetKind::Diagnostics)
+        );
+        assert!(
+            !document.users[1]
+                .system_status_dashboard
+                .widgets
+                .contains(&crate::SystemStatusWidgetKind::Activity)
+        );
+    }
+
+    #[test]
+    fn missing_dashboard_field_uses_ordinary_default() {
+        let value = serde_json::to_value(user(AppearanceConfig::default())).unwrap();
+        let mut object = value.as_object().unwrap().clone();
+        object.remove("system_status_dashboard");
+        let record: UserRecord = serde_json::from_value(object.into()).unwrap();
+        assert_eq!(
+            record.system_status_dashboard,
+            SystemStatusDashboardConfig::for_role("User")
+        );
     }
 }

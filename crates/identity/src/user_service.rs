@@ -1,4 +1,6 @@
-use storage::{AppearanceConfig, StorageManager, UserRecord, UsersDocument};
+use storage::{
+    AppearanceConfig, StorageManager, SystemStatusDashboardConfig, UserRecord, UsersDocument,
+};
 
 use crate::authorization::{DebugPolicy, PermissionAction, PermissionService, UserRole};
 use crate::credentials::{hash_password, normalize_password_hint, validate_password};
@@ -82,6 +84,9 @@ impl UserService {
             password_hash: hash_password(password)?,
             password_hint,
             appearance,
+            system_status_dashboard: SystemStatusDashboardConfig::for_role(
+                UserRole::Admin.as_str(),
+            ),
             enabled: true,
             failed_login_attempts: 0,
             locked_until_epoch_ms: None,
@@ -162,6 +167,7 @@ impl UserService {
             password_hash: hash_password(password)?,
             password_hint: None,
             appearance: AppearanceConfig::default(),
+            system_status_dashboard: SystemStatusDashboardConfig::for_role(role.as_str()),
             enabled: true,
             failed_login_attempts: 0,
             locked_until_epoch_ms: None,
@@ -216,6 +222,35 @@ impl UserService {
         }
         self.authorize_manage_own_user(actor, "update_user_appearance")?;
         document.users[index].appearance = appearance;
+        document.users[index].updated_at_epoch_ms = unix_millis();
+        let account = UserAccount::from_record(&document.users[index]);
+        self.storage.save_users(&document)?;
+        Ok(account)
+    }
+
+    pub fn update_user_system_status_dashboard(
+        &self,
+        actor: &AuthSession,
+        username: &str,
+        mut dashboard: SystemStatusDashboardConfig,
+    ) -> Result<UserAccount, CoreError> {
+        let mut document = self.storage.load_users()?;
+        let Some(index) = find_user_index(&document, username) else {
+            return Err(CoreError::UserNotFound);
+        };
+        let target = &document.users[index];
+        if !is_same_user(actor, target) {
+            return Err(CoreError::PermissionDenied {
+                action: PermissionAction::ManageOwnUser,
+                reason: "system_status_dashboard_is_self_managed".to_string(),
+            });
+        }
+        if !target.enabled {
+            return Err(CoreError::AccountDisabled);
+        }
+        self.authorize_manage_own_user(actor, "update_user_system_status_dashboard")?;
+        dashboard.normalize();
+        document.users[index].system_status_dashboard = dashboard;
         document.users[index].updated_at_epoch_ms = unix_millis();
         let account = UserAccount::from_record(&document.users[index]);
         self.storage.save_users(&document)?;

@@ -10,7 +10,7 @@ pub const SCHEMA_VERSION: u32 = 3;
 /// Version of the per-user document.
 ///
 /// Version 3 adds the same appearance contract to each user record.
-pub const USERS_SCHEMA_VERSION: u32 = 3;
+pub const USERS_SCHEMA_VERSION: u32 = 4;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StorageFormat {

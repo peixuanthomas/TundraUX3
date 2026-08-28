@@ -12,6 +12,7 @@ mod recovery;
 mod reset;
 mod schema;
 mod state_documents;
+mod system_status_dashboard;
 mod trash_document;
 mod user_document;
 
@@ -40,5 +41,9 @@ pub use manager::{RecoveredFile, StorageLoadReport, StorageManager, StorageOpen}
 pub use reset::{StorageResetReport, reset_saved_content};
 pub use schema::{SCHEMA_VERSION, StorageFormat, USERS_SCHEMA_VERSION, VersionedDocument};
 pub use state_documents::{RecentFilesDocument, SessionsDocument, StateDocument};
+pub use system_status_dashboard::{
+    DashboardLayout, DashboardProfile, SystemStatusDashboardConfig, SystemStatusWidgetKind,
+    SystemStatusWidgetSize, WidgetPlacement,
+};
 pub use trash_document::{TrashDocument, TrashRecord};
 pub use user_document::{UserRecord, UsersDocument};

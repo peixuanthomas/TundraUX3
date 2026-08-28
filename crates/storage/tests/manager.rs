@@ -212,6 +212,7 @@ fn toml_and_json_documents_round_trip() {
             password_hash: "$argon2id$placeholder".to_string(),
             password_hint: Some("project password".to_string()),
             appearance: AppearanceConfig::default(),
+            system_status_dashboard: storage::SystemStatusDashboardConfig::for_role("User"),
             enabled: true,
             failed_login_attempts: 0,
             locked_until_epoch_ms: None,
@@ -568,7 +569,7 @@ fn v2_user_appearance_migration_preserves_custom_accent_and_border() {
     assert_eq!(user.appearance.icon_display_mode, IconDisplayMode::Ascii);
     assert_eq!(user.appearance.motion_preference, MotionPreference::Full);
     let contents = fs::read_to_string(&layout.users_path).expect("migrated user contents");
-    assert!(contents.contains("\"schema_version\": 3"));
+    assert!(contents.contains("\"schema_version\": 4"));
     assert!(contents.contains("\"motion_preference\": \"full\""));
     assert!(opened.report.migrated_files.contains(&layout.users_path));
 
@@ -787,7 +788,7 @@ fn future_json_schema_errors_without_modifying_file() {
         "schema_version = 1\ntheme = \"dark\"\n\n[shortcuts]\n\n[explorer]\nshow_hidden = false\n\n[launcher]\npinned_apps = []\npinned_dirs = []\n",
     )
     .expect("current TOML fixture");
-    let original = "{\n  \"schema_version\": 4,\n  \"users\": []\n}\n";
+    let original = "{\n  \"schema_version\": 5,\n  \"users\": []\n}\n";
     fs::write(&layout.users_path, original).expect("future JSON fixture");
 
     let error = StorageManager::open(paths).expect_err("future JSON should fail");
@@ -796,7 +797,7 @@ fn future_json_schema_errors_without_modifying_file() {
         error,
         StorageError::UnsupportedSchema {
             document: "users",
-            found: 4,
+            found: 5,
             supported: USERS_SCHEMA_VERSION,
             ..
         }
