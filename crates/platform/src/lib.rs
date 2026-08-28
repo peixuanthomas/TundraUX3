@@ -43,7 +43,7 @@ pub use process::{ProcessExit, ProcessSpec, ProcessStream, validate_process_spec
 pub use system_monitor::{
     BatterySample, BatterySampleState, CpuSample, FastSystemSample, LoadSample, MemorySample,
     NativeSystemMonitor, NetworkIoInterfaceSample, ProcessMetricSample, SlowSystemSample,
-    SystemMonitor, ThermalSensorSample,
+    SystemIdentitySample, SystemMonitor, ThermalSensorSample,
 };
 pub use terminal::{
     ENTER_FULLSCREEN_SEQUENCE, EXIT_FULLSCREEN_SEQUENCE, TerminalCellSize, TerminalControlHandler,

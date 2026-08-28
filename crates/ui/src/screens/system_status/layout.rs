@@ -1,4 +1,5 @@
 use super::model::*;
+use crate::components::{Dialog, DialogAction};
 use crate::screens::shell::{inset_rect, line_in_rect, rect_contains, usize_to_u16};
 use crate::{
     DiagnosticsContentLayout, DiagnosticsHitTarget, DiagnosticsRepairDialogLayout,
@@ -37,6 +38,8 @@ pub enum SystemStatusHitTarget {
     Remove,
     Save,
     Cancel,
+    DialogConfirm,
+    DialogCancel,
     Scrollbar,
 }
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -50,6 +53,7 @@ pub struct SystemStatusLayout {
     pub column_count: u16,
     pub widgets: Vec<SystemStatusWidgetLayout>,
     pub picker_items: Vec<SystemStatusRowLayout>,
+    pub dialog_actions: Vec<SystemStatusRowLayout>,
     pub visible_row_start: u16,
     pub visible_row_end: u16,
     pub scrollbar: Option<Rect>,
@@ -62,6 +66,8 @@ pub struct SystemStatusLayout {
     pub save_button: Rect,
     pub cancel_button: Rect,
     pub notice_area: Option<Rect>,
+    pub detail_summary_area: Rect,
+    pub detail_trend_area: Rect,
     pub rows_area: Rect,
     pub rows: Vec<SystemStatusRowLayout>,
     pub visible_start: usize,
@@ -115,11 +121,11 @@ pub fn system_status_layout(main: Rect, model: &SystemStatusViewModel) -> System
         .map(|w| w.row.saturating_add(w.size.rows()))
         .max()
         .unwrap_or(0);
-    let scrollbar = (max_row > visible_rows && canvas.width > 2 && !empty_canvas)
+    let dashboard_scrollbar = (max_row > visible_rows && canvas.width > 2 && !empty_canvas)
         .then(|| Rect::new(canvas.right().saturating_sub(1), canvas.y, 1, canvas.height));
     let grid_width = canvas
         .width
-        .saturating_sub(if scrollbar.is_some() { 2 } else { 0 });
+        .saturating_sub(if dashboard_scrollbar.is_some() { 2 } else { 0 });
     let gaps = column_count.saturating_sub(1);
     let cell_w = grid_width.saturating_sub(gaps) / column_count;
     let rect_for = |column: u16, row: u16, size: SystemStatusWidgetSize| {
@@ -180,18 +186,78 @@ pub fn system_status_layout(main: Rect, model: &SystemStatusViewModel) -> System
         _ => None,
     };
     let item_count = model.item_count();
-    let table_inner = canvas;
+    let formatted_detail = detail.is_some_and(|detail| {
+        !matches!(
+            detail,
+            SystemStatusDetail::Storage
+                | SystemStatusDetail::Network
+                | SystemStatusDetail::Diagnostics
+                | SystemStatusDetail::Activity
+        )
+    });
+    let detail_summary_height = if formatted_detail {
+        canvas.height.min(4)
+    } else {
+        0
+    };
+    let detail_trend_height = if formatted_detail
+        && detail
+            .and_then(|detail| model.detail_widget(detail))
+            .and_then(|widget| widget.trend.as_ref())
+            .is_some_and(|trend| !trend.is_empty())
+        && canvas.height > detail_summary_height.saturating_add(2)
+    {
+        2
+    } else {
+        0
+    };
+    let detail_summary_area = Rect::new(canvas.x, canvas.y, canvas.width, detail_summary_height);
+    let detail_trend_area = Rect::new(
+        canvas.x,
+        detail_summary_area.bottom(),
+        canvas.width,
+        detail_trend_height,
+    );
+    let table_inner = if formatted_detail {
+        Rect::new(
+            canvas.x,
+            detail_trend_area.bottom(),
+            canvas.width,
+            canvas.bottom().saturating_sub(detail_trend_area.bottom()),
+        )
+    } else {
+        canvas
+    };
     let visible_capacity =
         usize::from(table_inner.height.saturating_sub(u16::from(item_count > 0)));
-    let visible_start = model
-        .scroll_offset
-        .min(item_count.saturating_sub(visible_capacity));
+    let maximum_start = item_count.saturating_sub(visible_capacity);
+    let requested_start = model.scroll_offset.min(maximum_start);
+    let visible_start = if visible_capacity == 0 {
+        requested_start
+    } else if model.selected_row < requested_start {
+        model.selected_row.min(maximum_start)
+    } else if model.selected_row >= requested_start.saturating_add(visible_capacity) {
+        model
+            .selected_row
+            .saturating_add(1)
+            .saturating_sub(visible_capacity)
+            .min(maximum_start)
+    } else {
+        requested_start
+    };
+    let detail_has_scroll = item_count > visible_capacity
+        && !matches!(
+            model.route,
+            SystemStatusRoute::Detail(
+                SystemStatusDetail::Diagnostics | SystemStatusDetail::Activity
+            )
+        );
     let rows_area = Rect::new(
         table_inner.x,
         table_inner.y,
         table_inner
             .width
-            .saturating_sub(u16::from(item_count > visible_capacity) * 2),
+            .saturating_sub(u16::from(detail_has_scroll) * 2),
         table_inner.height,
     );
     let rows = (visible_start..item_count)
@@ -241,6 +307,49 @@ pub fn system_status_layout(main: Rect, model: &SystemStatusViewModel) -> System
                 .collect()
         })
         .unwrap_or_default();
+    let dialog_actions = model
+        .dashboard
+        .dialog
+        .as_ref()
+        .map(|dialog_model| {
+            let w = panel.width.min(48);
+            let h = panel.height.min(8);
+            let area = Rect::new(
+                panel.x + (panel.width - w) / 2,
+                panel.y + (panel.height - h) / 2,
+                w,
+                h,
+            );
+            let dialog = Dialog::new(
+                "system-status.dialog",
+                &dialog_model.title,
+                &dialog_model.message,
+                vec![
+                    DialogAction::new(
+                        "confirm",
+                        if dialog_model.confirm_label.is_empty() {
+                            "Confirm"
+                        } else {
+                            &dialog_model.confirm_label
+                        },
+                    ),
+                    DialogAction::new(
+                        "cancel",
+                        if dialog_model.cancel_label.is_empty() {
+                            "Cancel"
+                        } else {
+                            &dialog_model.cancel_label
+                        },
+                    ),
+                ],
+            );
+            dialog
+                .action_areas(area)
+                .into_iter()
+                .map(|(index, area)| SystemStatusRowLayout { index, area })
+                .collect()
+        })
+        .unwrap_or_default();
     let diagnostics_content = matches!(
         detail,
         Some(SystemStatusDetail::Diagnostics | SystemStatusDetail::Activity)
@@ -253,6 +362,20 @@ pub fn system_status_layout(main: Rect, model: &SystemStatusViewModel) -> System
             .as_ref()
             .map(|d| diagnostics_repair_dialog_layout(main, d))
     });
+    let scrollbar = match model.route {
+        SystemStatusRoute::Dashboard => dashboard_scrollbar,
+        SystemStatusRoute::Detail(
+            SystemStatusDetail::Diagnostics | SystemStatusDetail::Activity,
+        ) => None,
+        SystemStatusRoute::Detail(_) => detail_has_scroll.then(|| {
+            Rect::new(
+                table_inner.right().saturating_sub(1),
+                table_inner.y,
+                1,
+                table_inner.height,
+            )
+        }),
+    };
     SystemStatusLayout {
         panel,
         header,
@@ -263,6 +386,7 @@ pub fn system_status_layout(main: Rect, model: &SystemStatusViewModel) -> System
         column_count,
         widgets,
         picker_items,
+        dialog_actions,
         visible_row_start,
         visible_row_end,
         scrollbar,
@@ -275,6 +399,8 @@ pub fn system_status_layout(main: Rect, model: &SystemStatusViewModel) -> System
         save_button,
         cancel_button,
         notice_area: None,
+        detail_summary_area,
+        detail_trend_area,
         rows_area,
         rows,
         visible_start,
@@ -288,6 +414,17 @@ pub fn system_status_hit_test(
     p: (u16, u16),
 ) -> Option<SystemStatusHitTarget> {
     let (x, y) = p;
+    if !l.dialog_actions.is_empty() {
+        return l
+            .dialog_actions
+            .iter()
+            .find(|action| rect_contains(action.area, x, y))
+            .and_then(|action| match action.index {
+                0 => Some(SystemStatusHitTarget::DialogConfirm),
+                1 => Some(SystemStatusHitTarget::DialogCancel),
+                _ => None,
+            });
+    }
     if !l.picker_items.is_empty() {
         return l
             .picker_items

@@ -101,6 +101,11 @@ impl Dialog {
         self.set_selected_action(index);
     }
 
+    /// Returns the button areas used by both rendering and hit testing.
+    pub fn action_areas(&self, area: Rect) -> Vec<(usize, Rect)> {
+        self.action_layout(area)
+    }
+
     pub fn handle_event(&mut self, event: InputEvent, area: Rect) -> ComponentEvent {
         if !self.open {
             return ComponentEvent::None;

@@ -939,6 +939,15 @@ fn refresh_slow_metrics(
     match monitor {
         Ok(monitor) => match monitor.sample_slow() {
             Ok(sample) => {
+                metrics.identity = match sample.identity {
+                    Ok(value) => MetricState::Ready(SystemIdentitySnapshot {
+                        host_name: value.host_name,
+                        os_name: value.os_name,
+                        os_version: value.os_version,
+                        kernel_version: value.kernel_version,
+                    }),
+                    Err(reason) => unavailable_or_stale(&metrics.identity, reason),
+                };
                 metrics.thermal = match sample.thermal {
                     Ok(values) => MetricState::Ready(
                         values
@@ -987,6 +996,7 @@ fn refresh_slow_metrics(
             }
             Err(error) => {
                 let error = error.to_string();
+                metrics.identity = unavailable_or_stale(&metrics.identity, error.clone());
                 metrics.thermal = unavailable_or_stale(&metrics.thermal, error.clone());
                 metrics.batteries = unavailable_or_stale(&metrics.batteries, error.clone());
                 metrics.processes = unavailable_or_stale(&metrics.processes, error);
@@ -994,6 +1004,7 @@ fn refresh_slow_metrics(
         },
         Err(error) => {
             let error = error.to_string();
+            metrics.identity = unavailable_or_stale(&metrics.identity, error.clone());
             metrics.thermal = unavailable_or_stale(&metrics.thermal, error.clone());
             metrics.batteries = unavailable_or_stale(&metrics.batteries, error.clone());
             metrics.processes = unavailable_or_stale(&metrics.processes, error);

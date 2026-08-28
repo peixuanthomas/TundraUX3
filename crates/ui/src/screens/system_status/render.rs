@@ -1,7 +1,7 @@
 use super::{layout::*, model::*};
 use crate::components::{
     Button, ComponentState, DataTable, Dialog, DialogAction, EmptyState, List, ListItem,
-    MetricCard, Scrollbar, Surface,
+    MetricCard, Scrollbar, Surface, tone_color,
 };
 use crate::screens::diagnostics::{
     render_diagnostics_content, render_diagnostics_footer, render_diagnostics_header,
@@ -10,9 +10,10 @@ use crate::screens::diagnostics::{
 use crate::screens::shell::{fit_cell, render_compact_home, render_status, render_top};
 use crate::{RenderContext, ShellChromeViewModel, ShellLayout, TundraTheme, compute_shell_layout};
 use ratatui::Frame;
-use ratatui::layout::{Constraint, Layout, Rect};
+use ratatui::layout::Rect;
+use ratatui::style::Style;
 use ratatui::text::Line;
-use ratatui::widgets::{Clear, Paragraph};
+use ratatui::widgets::{Clear, Paragraph, Sparkline};
 
 pub fn render_system_status(
     frame: &mut Frame<'_>,
@@ -266,6 +267,7 @@ fn render_overlays(
             ],
         );
         dialog.open();
+        dialog.set_selected_action(Some(d.selected_action));
         dialog.render_frame(frame, area, &context.compatibility_theme())
     }
 }
@@ -303,7 +305,7 @@ fn render_detail(
         }
         _ => {
             if let Some(vm) = model.detail_widget(d) {
-                render_formatted_detail(frame, l.canvas, vm, context)
+                render_formatted_detail(frame, l, model, vm, context)
             } else {
                 EmptyState::new("No data")
                     .detail("This metric is not available.")
@@ -324,29 +326,81 @@ fn render_detail(
 }
 fn render_formatted_detail(
     frame: &mut Frame<'_>,
-    area: Rect,
+    layout: &SystemStatusLayout,
+    model: &SystemStatusViewModel,
     vm: &SystemStatusWidgetViewModel,
     context: &RenderContext,
 ) {
-    let [summary, table] =
-        Layout::vertical([Constraint::Length(3.min(area.height)), Constraint::Min(0)]).areas(area);
-    frame.render_widget(
-        Paragraph::new(
-            std::iter::once(Line::raw(vm.primary.as_str()))
-                .chain(vm.secondary.iter().map(|s| Line::raw(s.as_str())))
-                .collect::<Vec<_>>(),
-        ),
-        summary,
-    );
+    match &vm.state {
+        SystemStatusWidgetState::Loading => {
+            EmptyState::new("Loading...").render_frame(frame, layout.canvas, context);
+            return;
+        }
+        SystemStatusWidgetState::Unavailable { message } => {
+            EmptyState::new("Unavailable").detail(message).render_frame(
+                frame,
+                layout.canvas,
+                context,
+            );
+            return;
+        }
+        SystemStatusWidgetState::Stale { message } if vm.primary.is_empty() => {
+            EmptyState::new("Stale data").detail(message).render_frame(
+                frame,
+                layout.canvas,
+                context,
+            );
+            return;
+        }
+        _ => {}
+    }
+    let mut summary_lines = std::iter::once(Line::raw(vm.primary.as_str()))
+        .chain(vm.secondary.iter().map(|line| Line::raw(line.as_str())))
+        .collect::<Vec<_>>();
+    if let SystemStatusWidgetState::Stale { message } = &vm.state {
+        summary_lines.push(Line::styled(
+            format!("Stale: {message}"),
+            Style::default().fg(context.theme.warning),
+        ));
+    }
+    frame.render_widget(Paragraph::new(summary_lines), layout.detail_summary_area);
+    if let Some(trend) = vm.trend.as_ref().filter(|trend| !trend.is_empty()) {
+        frame.render_widget(
+            Sparkline::default()
+                .data(trend)
+                .style(Style::default().fg(tone_color(vm.tone, &context.compatibility_theme()))),
+            layout.detail_trend_area,
+        );
+    }
     if !vm.compact_rows.is_empty() {
-        let cols = vm.compact_rows.iter().map(Vec::len).max().unwrap_or(1);
-        DataTable::new(
+        let mut table = DataTable::new(
             "system-status.detail",
-            (0..cols).map(|i| format!("Field {}", i + 1)),
+            detail_headers(vm.kind),
             vm.compact_rows.clone(),
         )
         .bordered(false)
-        .render_frame(frame, table, context)
+        .with_viewport_start(layout.visible_start);
+        table.selected = model.selected_index();
+        table.state.focused = true;
+        table.render_frame(frame, layout.rows_area, context);
+        detail_scroll(frame, layout, model, context)
+    }
+}
+fn detail_headers(kind: SystemStatusWidgetKind) -> Vec<&'static str> {
+    match kind {
+        SystemStatusWidgetKind::SystemOverview => vec!["Subsystem", "Status"],
+        SystemStatusWidgetKind::Cpu => vec!["Core", "Usage"],
+        SystemStatusWidgetKind::Memory => vec!["Metric", "Value"],
+        SystemStatusWidgetKind::Storage => vec!["Volume", "Usage"],
+        SystemStatusWidgetKind::Network => vec!["Interface", "Down", "Up"],
+        SystemStatusWidgetKind::Temperature => vec!["Sensor", "Current", "Critical"],
+        SystemStatusWidgetKind::Battery => vec!["Battery", "Charge", "State"],
+        SystemStatusWidgetKind::UptimeLoad => vec!["Window", "Load"],
+        SystemStatusWidgetKind::TopProcesses => {
+            vec!["Sort", "PID", "Process", "CPU", "Memory"]
+        }
+        SystemStatusWidgetKind::Diagnostics => vec!["Check", "Status"],
+        SystemStatusWidgetKind::Activity => vec!["When", "App", "Summary"],
     }
 }
 fn render_storage(
@@ -416,13 +470,23 @@ fn render_network(
     }
     let mut t = DataTable::new(
         "system-status.network",
-        ["Name", "Display name", "Kind", "Link", "Addresses"],
+        [
+            "Name",
+            "Display name",
+            "Kind",
+            "Link",
+            "Down",
+            "Up",
+            "Addresses",
+        ],
         a.network_rows.iter().map(|r| {
             vec![
                 r.name.clone(),
                 r.display_name.clone(),
                 r.kind.clone(),
                 r.link_state.clone(),
+                r.received_rate.clone(),
+                r.transmitted_rate.clone(),
                 r.addresses.clone(),
             ]
         }),
@@ -467,13 +531,7 @@ fn detail_scroll(
     model: &SystemStatusViewModel,
     context: &RenderContext,
 ) {
-    if model.item_count() > l.visible_capacity {
-        let a = Rect::new(
-            l.rows_area.right().saturating_sub(1),
-            l.rows_area.y,
-            1,
-            l.rows_area.height,
-        );
+    if let Some(a) = l.scrollbar {
         Scrollbar::new(model.item_count(), l.visible_capacity, l.visible_start)
             .render_frame(frame, a, context)
     }

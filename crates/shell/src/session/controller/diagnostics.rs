@@ -586,7 +586,16 @@ impl ShellSession {
     pub(in crate::session) fn set_diagnostics_tab(&mut self, tab: ui::DiagnosticsTab) {
         self.diagnostics_tab = tab;
         if self.active_screen() == ShellScreen::SystemStatus {
-            self.system_status_tab = ui::SystemStatusTab::from_diagnostics(tab);
+            self.system_status_tab = match tab {
+                ui::DiagnosticsTab::Health => ui::SystemStatusTab::Health,
+                ui::DiagnosticsTab::Logs => ui::SystemStatusTab::Logs,
+                ui::DiagnosticsTab::Incidents => ui::SystemStatusTab::Incidents,
+            };
+            self.system_status_route = if tab == ui::DiagnosticsTab::Health {
+                ui::SystemStatusRoute::Detail(ui::SystemStatusDetail::Diagnostics)
+            } else {
+                ui::SystemStatusRoute::Detail(ui::SystemStatusDetail::Activity)
+            };
         }
         self.diagnostics_list_window_start = 0;
         self.diagnostics_list_window_is_explicit = false;

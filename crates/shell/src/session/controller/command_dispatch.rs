@@ -1141,6 +1141,109 @@ impl ShellSession {
                 self.close_system_status();
                 ShellAction::Redraw
             }
+            ShellCommand::SystemStatusBack => {
+                self.back_from_system_status_detail();
+                ShellAction::Redraw
+            }
+            ShellCommand::SystemStatusActivateSelectedWidget => {
+                if let Some(kind) = self.system_status_selected_widget {
+                    self.open_system_status_detail(kind);
+                }
+                ShellAction::Redraw
+            }
+            ShellCommand::SystemStatusSelectWidget(kind) => {
+                self.select_system_status_widget(kind);
+                ShellAction::Redraw
+            }
+            ShellCommand::SystemStatusSelectWidgetDirection(column, row) => {
+                self.select_system_status_widget_direction(column, row);
+                ShellAction::Redraw
+            }
+            ShellCommand::SystemStatusBeginEdit => {
+                self.begin_system_status_dashboard_edit();
+                ShellAction::Redraw
+            }
+            ShellCommand::SystemStatusRequestCancelEdit => {
+                self.request_cancel_system_status_dashboard_edit();
+                ShellAction::Redraw
+            }
+            ShellCommand::SystemStatusDiscardEdit => {
+                self.finish_cancel_system_status_dashboard_edit();
+                ShellAction::Redraw
+            }
+            ShellCommand::SystemStatusContinueEdit => {
+                self.continue_system_status_dashboard_edit();
+                ShellAction::Redraw
+            }
+            ShellCommand::SystemStatusToggleDiscardAction => {
+                self.system_status_discard_confirm_selected =
+                    !self.system_status_discard_confirm_selected;
+                ShellAction::Redraw
+            }
+            ShellCommand::SystemStatusSaveDashboard => {
+                self.save_system_status_dashboard();
+                ShellAction::Redraw
+            }
+            ShellCommand::SystemStatusOpenAddPicker => {
+                self.open_system_status_add_picker();
+                ShellAction::Redraw
+            }
+            ShellCommand::SystemStatusCloseAddPicker => {
+                self.close_system_status_add_picker();
+                ShellAction::Redraw
+            }
+            ShellCommand::SystemStatusPickerPrevious => {
+                self.move_system_status_add_picker(-1);
+                ShellAction::Redraw
+            }
+            ShellCommand::SystemStatusPickerNext => {
+                self.move_system_status_add_picker(1);
+                ShellAction::Redraw
+            }
+            ShellCommand::SystemStatusPickerSelect(index) => {
+                self.select_system_status_picker_item(index);
+                ShellAction::Redraw
+            }
+            ShellCommand::SystemStatusPickerActivate => {
+                self.add_selected_system_status_widget();
+                ShellAction::Redraw
+            }
+            ShellCommand::SystemStatusPickerActivateAt(index) => {
+                self.select_system_status_picker_item(index);
+                self.add_selected_system_status_widget();
+                ShellAction::Redraw
+            }
+            ShellCommand::SystemStatusCycleWidgetSize => {
+                self.cycle_selected_system_status_widget_size();
+                ShellAction::Redraw
+            }
+            ShellCommand::SystemStatusRemoveWidget => {
+                self.remove_selected_system_status_widget();
+                ShellAction::Redraw
+            }
+            ShellCommand::SystemStatusMoveWidget(column, row) => {
+                self.move_selected_system_status_widget(column, row);
+                ShellAction::Redraw
+            }
+            ShellCommand::SystemStatusWidgetPointerDown(kind, coordinates) => {
+                self.begin_system_status_widget_drag(kind, coordinates);
+                ShellAction::Redraw
+            }
+            ShellCommand::SystemStatusOpenWidget(kind) => {
+                self.select_system_status_widget(kind);
+                if let Some(kind) = self.system_status_selected_widget {
+                    self.open_system_status_detail(kind);
+                }
+                ShellAction::Redraw
+            }
+            ShellCommand::SystemStatusWidgetDrag(coordinates) => {
+                self.update_system_status_widget_drag(coordinates);
+                ShellAction::Redraw
+            }
+            ShellCommand::SystemStatusWidgetDrop(coordinates) => {
+                self.finish_system_status_widget_drag(coordinates);
+                ShellAction::Redraw
+            }
             ShellCommand::SystemStatusTab(tab) => {
                 self.set_system_status_tab(tab);
                 ShellAction::Redraw

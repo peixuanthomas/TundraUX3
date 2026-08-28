@@ -3,8 +3,8 @@ mod model;
 mod render;
 
 pub use layout::{
-    SystemStatusHitTarget, SystemStatusLayout, SystemStatusRowLayout, SystemStatusWidgetLayout,
-    system_status_hit_test, system_status_layout,
+    LOGICAL_ROW_GAP, LOGICAL_ROW_HEIGHT, SystemStatusHitTarget, SystemStatusLayout,
+    SystemStatusRowLayout, SystemStatusWidgetLayout, system_status_hit_test, system_status_layout,
 };
 pub use model::{
     AdminSystemStatusViewModel, NetworkInterfaceRowViewModel, StorageVolumeRowViewModel,

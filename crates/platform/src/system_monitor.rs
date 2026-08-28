@@ -85,8 +85,17 @@ pub struct ProcessMetricSample {
     pub memory_bytes: u64,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SystemIdentitySample {
+    pub host_name: Option<String>,
+    pub os_name: Option<String>,
+    pub os_version: Option<String>,
+    pub kernel_version: Option<String>,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct SlowSystemSample {
+    pub identity: Result<SystemIdentitySample, String>,
     pub thermal: Result<Vec<ThermalSensorSample>, String>,
     pub batteries: Result<Vec<BatterySample>, String>,
     pub top_cpu: Vec<ProcessMetricSample>,
@@ -260,7 +269,23 @@ impl SystemMonitor for NativeSystemMonitor {
                 .then_with(|| a.pid.cmp(&b.pid))
         });
         top_memory.truncate(20);
+        let identity = SystemIdentitySample {
+            host_name: System::host_name(),
+            os_name: System::name(),
+            os_version: System::os_version(),
+            kernel_version: System::kernel_version(),
+        };
+        let identity = if identity.host_name.is_none()
+            && identity.os_name.is_none()
+            && identity.os_version.is_none()
+            && identity.kernel_version.is_none()
+        {
+            Err("system identity is unavailable".to_string())
+        } else {
+            Ok(identity)
+        };
         Ok(SlowSystemSample {
+            identity,
             thermal,
             batteries,
             top_cpu,

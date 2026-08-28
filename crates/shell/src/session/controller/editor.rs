@@ -2093,7 +2093,14 @@ impl ShellSession {
             }
             ShellScreen::Explorer => EditorLoadNavigation::Explorer,
             ShellScreen::Diagnostics => EditorLoadNavigation::Diagnostics,
-            ShellScreen::SystemStatus if self.system_status_tab.diagnostics_tab().is_some() => {
+            ShellScreen::SystemStatus
+                if matches!(
+                    self.system_status_route,
+                    ui::SystemStatusRoute::Detail(
+                        ui::SystemStatusDetail::Diagnostics | ui::SystemStatusDetail::Activity
+                    )
+                ) =>
+            {
                 EditorLoadNavigation::Diagnostics
             }
             _ => EditorLoadNavigation::Editor,

@@ -157,6 +157,7 @@ pub struct SystemStatusDialogViewModel {
     pub message: String,
     pub confirm_label: String,
     pub cancel_label: String,
+    pub selected_action: usize,
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SystemStatusDragPreview {
@@ -302,6 +303,8 @@ pub struct NetworkInterfaceRowViewModel {
     pub display_name: String,
     pub kind: String,
     pub link_state: String,
+    pub received_rate: String,
+    pub transmitted_rate: String,
     pub addresses: String,
     pub tone: ComponentTone,
 }
@@ -363,6 +366,10 @@ impl SystemStatusViewModel {
                     SystemStatusDetail::Diagnostics | SystemStatusDetail::Activity,
                 ),
             ) => self.diagnostics.item_count(),
+            (_, SystemStatusRoute::Detail(detail)) => self
+                .detail_widget(detail)
+                .map(|widget| widget.compact_rows.len())
+                .unwrap_or(0),
             _ => 0,
         }
     }

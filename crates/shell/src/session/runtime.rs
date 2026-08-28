@@ -2398,6 +2398,7 @@ mod runtime_preflight_tests {
                 },
                 storage: system_services::StorageState::Loading,
                 network: system_services::NetworkState::Loading,
+                metrics: system_services::SystemMetricsSnapshot::loading(),
             }
         };
         let (snapshot_sender, mut snapshots) = tokio::sync::watch::channel(snapshot());
@@ -3058,6 +3059,7 @@ mod runtime_preflight_tests {
             password_hash: String::new(),
             password_hint: None,
             appearance,
+            system_status_dashboard: storage::SystemStatusDashboardConfig::for_role("Admin"),
             enabled: true,
             failed_login_attempts: 0,
             locked_until_epoch_ms: None,

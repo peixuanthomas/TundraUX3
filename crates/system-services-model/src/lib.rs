@@ -504,8 +504,17 @@ pub struct ProcessRankingsSnapshot {
     pub top_memory: Vec<ProcessMetricSnapshot>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SystemIdentitySnapshot {
+    pub host_name: Option<String>,
+    pub os_name: Option<String>,
+    pub os_version: Option<String>,
+    pub kernel_version: Option<String>,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct SystemMetricsSnapshot {
+    pub identity: MetricState<SystemIdentitySnapshot>,
     pub cpu: MetricState<CpuSnapshot>,
     pub memory: MetricState<MemorySnapshot>,
     pub load: MetricState<LoadSnapshot>,
@@ -520,6 +529,7 @@ pub struct SystemMetricsSnapshot {
 impl SystemMetricsSnapshot {
     pub fn loading() -> Self {
         Self {
+            identity: MetricState::Loading,
             cpu: MetricState::Loading,
             memory: MetricState::Loading,
             load: MetricState::Loading,

@@ -13,12 +13,13 @@ use crate::launcher::{LauncherCommand, LauncherController, LauncherEffect, Launc
 use identity::{AuthSession, UserAccount};
 use time::{ClockDisplay, ClockSnapshot, NetworkClock, TimeSyncResult};
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct AppSystemStatusSnapshot {
     pub revision: u64,
     pub observed_at: chrono::DateTime<chrono::Utc>,
     pub storage: system_services_model::StorageState,
     pub network: system_services_model::NetworkState,
+    pub metrics: system_services_model::SystemMetricsSnapshot,
 }
 
 impl From<&system_services_model::SystemSnapshot> for AppSystemStatusSnapshot {
@@ -28,12 +29,13 @@ impl From<&system_services_model::SystemSnapshot> for AppSystemStatusSnapshot {
             observed_at: snapshot.observed_at,
             storage: snapshot.storage.clone(),
             network: snapshot.network.clone(),
+            metrics: snapshot.metrics.clone(),
         }
     }
 }
 
 /// Commands understood by the application state core.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum AppCommand {
     Tick,
     Notification(NotificationCommand),

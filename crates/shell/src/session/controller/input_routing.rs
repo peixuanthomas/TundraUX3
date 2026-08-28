@@ -542,99 +542,183 @@ impl ShellSession {
             };
         }
 
-        let diagnostics_tab = self.system_status_tab.diagnostics_tab();
-        if diagnostics_tab.is_some() && self.diagnostics_restart_is_required() {
+        if self.system_status_discard_dialog {
+            let modal = RoutedTarget::Modal(ShellComponent::SystemStatus);
+            return match &key.key {
+                InputKey::Enter | InputKey::Char(' ')
+                    if self.system_status_discard_confirm_selected =>
+                {
+                    (modal, ShellCommand::SystemStatusDiscardEdit)
+                }
+                InputKey::Enter | InputKey::Char(' ') => {
+                    (modal, ShellCommand::SystemStatusContinueEdit)
+                }
+                InputKey::Tab
+                | InputKey::BackTab
+                | InputKey::Left
+                | InputKey::Right
+                | InputKey::Up
+                | InputKey::Down => (modal, ShellCommand::SystemStatusToggleDiscardAction),
+                InputKey::Escape => (modal, ShellCommand::SystemStatusContinueEdit),
+                _ => (modal, ShellCommand::CaptureOverlayInput),
+            };
+        }
+
+        if self.system_status_add_picker.is_some() {
+            let modal = RoutedTarget::Modal(ShellComponent::SystemStatus);
+            return match &key.key {
+                InputKey::Escape => (modal, ShellCommand::SystemStatusCloseAddPicker),
+                InputKey::Up => (modal, ShellCommand::SystemStatusPickerPrevious),
+                InputKey::Down | InputKey::Tab => (modal, ShellCommand::SystemStatusPickerNext),
+                InputKey::Enter | InputKey::Char(' ') => {
+                    (modal, ShellCommand::SystemStatusPickerActivate)
+                }
+                _ => (modal, ShellCommand::CaptureOverlayInput),
+            };
+        }
+
+        let diagnostics_active = matches!(
+            self.system_status_route,
+            ui::SystemStatusRoute::Detail(
+                ui::SystemStatusDetail::Diagnostics | ui::SystemStatusDetail::Activity
+            )
+        );
+        let diagnostics_tab = diagnostics_active.then_some(self.diagnostics_tab);
+        if diagnostics_active && self.diagnostics_restart_is_required() {
             return match &key.key {
                 InputKey::Enter | InputKey::Char('r' | 'R') => {
                     (RoutedTarget::Global, ShellCommand::Restart)
                 }
                 InputKey::Char('e' | 'E') => (RoutedTarget::Global, ShellCommand::RequestExit),
-                InputKey::Escape => (RoutedTarget::Global, ShellCommand::CloseSystemStatus),
-                InputKey::Tab | InputKey::Right => (
-                    target,
-                    ShellCommand::SystemStatusTab(self.next_system_status_tab(1)),
-                ),
-                InputKey::BackTab | InputKey::Left => (
-                    target,
-                    ShellCommand::SystemStatusTab(self.next_system_status_tab(-1)),
-                ),
+                InputKey::Escape => (target, ShellCommand::SystemStatusBack),
                 _ => (target, ShellCommand::CaptureOverlayInput),
             };
         }
 
+        if let ui::SystemStatusRoute::Detail(detail) = self.system_status_route {
+            let command = match &key.key {
+                InputKey::Escape => ShellCommand::SystemStatusBack,
+                InputKey::Char('r' | 'R') if diagnostics_active => ShellCommand::DiagnosticsRescan,
+                InputKey::Char('r' | 'R') => ShellCommand::SystemStatusRefresh,
+                InputKey::Tab | InputKey::Right if detail == ui::SystemStatusDetail::Activity => {
+                    if self.diagnostics_tab == ui::DiagnosticsTab::Logs {
+                        ShellCommand::DiagnosticsIncidentsTab
+                    } else {
+                        ShellCommand::DiagnosticsLogsTab
+                    }
+                }
+                InputKey::BackTab | InputKey::Left
+                    if detail == ui::SystemStatusDetail::Activity =>
+                {
+                    if self.diagnostics_tab == ui::DiagnosticsTab::Incidents {
+                        ShellCommand::DiagnosticsLogsTab
+                    } else {
+                        ShellCommand::DiagnosticsIncidentsTab
+                    }
+                }
+                InputKey::Up if diagnostics_active => ShellCommand::DiagnosticsPrevious,
+                InputKey::Down if diagnostics_active => ShellCommand::DiagnosticsNext,
+                InputKey::PageUp if diagnostics_active => ShellCommand::DiagnosticsPageUp,
+                InputKey::PageDown if diagnostics_active => ShellCommand::DiagnosticsPageDown,
+                InputKey::Home if diagnostics_active => ShellCommand::DiagnosticsFirst,
+                InputKey::End if diagnostics_active => ShellCommand::DiagnosticsLast,
+                InputKey::Up => ShellCommand::SystemStatusPrevious,
+                InputKey::Down => ShellCommand::SystemStatusNext,
+                InputKey::PageUp => ShellCommand::SystemStatusPageUp,
+                InputKey::PageDown => ShellCommand::SystemStatusPageDown,
+                InputKey::Home => ShellCommand::SystemStatusFirst,
+                InputKey::End => ShellCommand::SystemStatusLast,
+                InputKey::Char('x' | 'X') if diagnostics_active && !self.diagnostics_scanning => {
+                    ShellCommand::Restart
+                }
+                InputKey::Char('f' | 'F')
+                    if diagnostics_tab == Some(ui::DiagnosticsTab::Health) =>
+                {
+                    ShellCommand::DiagnosticsPreviewSelectedRepair
+                }
+                InputKey::Char('a' | 'A')
+                    if diagnostics_tab == Some(ui::DiagnosticsTab::Health) =>
+                {
+                    ShellCommand::DiagnosticsPreviewAllRepairs
+                }
+                InputKey::Char('c' | 'C') if diagnostics_active => {
+                    ShellCommand::DiagnosticsCopySummary
+                }
+                InputKey::Char('e' | 'E') if diagnostics_active => {
+                    ShellCommand::DiagnosticsOpenLogsInExplorer
+                }
+                InputKey::Char('o' | 'O') if diagnostics_active => {
+                    ShellCommand::DiagnosticsOpenReport
+                }
+                InputKey::Enter
+                    if matches!(
+                        diagnostics_tab,
+                        Some(ui::DiagnosticsTab::Logs | ui::DiagnosticsTab::Incidents)
+                    ) =>
+                {
+                    ShellCommand::DiagnosticsOpenReport
+                }
+                _ => ShellCommand::Noop,
+            };
+            return (target, command);
+        }
+
+        if self.system_status_dashboard_draft.is_some() {
+            let command = match &key.key {
+                InputKey::Escape => ShellCommand::SystemStatusRequestCancelEdit,
+                InputKey::Char('s' | 'S') if key.modifiers.is_control() => {
+                    ShellCommand::SystemStatusSaveDashboard
+                }
+                InputKey::Char('a' | 'A') if !key.modifiers.has_non_shift_modifier() => {
+                    ShellCommand::SystemStatusOpenAddPicker
+                }
+                InputKey::Char('s' | 'S') if !key.modifiers.has_non_shift_modifier() => {
+                    ShellCommand::SystemStatusCycleWidgetSize
+                }
+                InputKey::Delete | InputKey::Backspace => ShellCommand::SystemStatusRemoveWidget,
+                InputKey::Left if key.modifiers.shift => {
+                    ShellCommand::SystemStatusMoveWidget(-1, 0)
+                }
+                InputKey::Right if key.modifiers.shift => {
+                    ShellCommand::SystemStatusMoveWidget(1, 0)
+                }
+                InputKey::Up if key.modifiers.shift => ShellCommand::SystemStatusMoveWidget(0, -1),
+                InputKey::Down if key.modifiers.shift => ShellCommand::SystemStatusMoveWidget(0, 1),
+                InputKey::Left | InputKey::BackTab => {
+                    ShellCommand::SystemStatusSelectWidgetDirection(-1, 0)
+                }
+                InputKey::Right | InputKey::Tab => {
+                    ShellCommand::SystemStatusSelectWidgetDirection(1, 0)
+                }
+                InputKey::Up => ShellCommand::SystemStatusSelectWidgetDirection(0, -1),
+                InputKey::Down => ShellCommand::SystemStatusSelectWidgetDirection(0, 1),
+                InputKey::PageUp => ShellCommand::SystemStatusScroll(-2),
+                InputKey::PageDown => ShellCommand::SystemStatusScroll(2),
+                _ => ShellCommand::Noop,
+            };
+            return (target, command);
+        }
+
         let command = match &key.key {
             InputKey::Escape => ShellCommand::CloseSystemStatus,
-            InputKey::Tab | InputKey::Right => {
-                ShellCommand::SystemStatusTab(self.next_system_status_tab(1))
-            }
-            InputKey::BackTab | InputKey::Left => {
-                ShellCommand::SystemStatusTab(self.next_system_status_tab(-1))
-            }
-            InputKey::Char('r' | 'R') if diagnostics_tab.is_some() => {
-                ShellCommand::DiagnosticsRescan
-            }
             InputKey::Char('r' | 'R') => ShellCommand::SystemStatusRefresh,
-            InputKey::Up if diagnostics_tab.is_some() => ShellCommand::DiagnosticsPrevious,
-            InputKey::Down if diagnostics_tab.is_some() => ShellCommand::DiagnosticsNext,
-            InputKey::PageUp if diagnostics_tab.is_some() => ShellCommand::DiagnosticsPageUp,
-            InputKey::PageDown if diagnostics_tab.is_some() => ShellCommand::DiagnosticsPageDown,
-            InputKey::Home if diagnostics_tab.is_some() => ShellCommand::DiagnosticsFirst,
-            InputKey::End if diagnostics_tab.is_some() => ShellCommand::DiagnosticsLast,
-            InputKey::Up => ShellCommand::SystemStatusPrevious,
-            InputKey::Down => ShellCommand::SystemStatusNext,
-            InputKey::PageUp => ShellCommand::SystemStatusPageUp,
-            InputKey::PageDown => ShellCommand::SystemStatusPageDown,
-            InputKey::Home => ShellCommand::SystemStatusFirst,
-            InputKey::End => ShellCommand::SystemStatusLast,
-            InputKey::Char('x' | 'X')
-                if diagnostics_tab.is_some() && !self.diagnostics_scanning =>
-            {
-                ShellCommand::Restart
+            InputKey::Char('e' | 'E') => ShellCommand::SystemStatusBeginEdit,
+            InputKey::Enter | InputKey::Char(' ') => {
+                ShellCommand::SystemStatusActivateSelectedWidget
             }
-            InputKey::Char('f' | 'F') if diagnostics_tab == Some(ui::DiagnosticsTab::Health) => {
-                ShellCommand::DiagnosticsPreviewSelectedRepair
+            InputKey::Left | InputKey::BackTab => {
+                ShellCommand::SystemStatusSelectWidgetDirection(-1, 0)
             }
-            InputKey::Char('a' | 'A') if diagnostics_tab == Some(ui::DiagnosticsTab::Health) => {
-                ShellCommand::DiagnosticsPreviewAllRepairs
+            InputKey::Right | InputKey::Tab => {
+                ShellCommand::SystemStatusSelectWidgetDirection(1, 0)
             }
-            InputKey::Char('c' | 'C') if diagnostics_tab.is_some() => {
-                ShellCommand::DiagnosticsCopySummary
-            }
-            InputKey::Char('e' | 'E') if diagnostics_tab.is_some() => {
-                ShellCommand::DiagnosticsOpenLogsInExplorer
-            }
-            InputKey::Char('o' | 'O') if diagnostics_tab.is_some() => {
-                ShellCommand::DiagnosticsOpenReport
-            }
-            InputKey::Enter
-                if matches!(
-                    diagnostics_tab,
-                    Some(ui::DiagnosticsTab::Logs | ui::DiagnosticsTab::Incidents)
-                ) =>
-            {
-                ShellCommand::DiagnosticsOpenReport
-            }
+            InputKey::Up => ShellCommand::SystemStatusSelectWidgetDirection(0, -1),
+            InputKey::Down => ShellCommand::SystemStatusSelectWidgetDirection(0, 1),
+            InputKey::PageUp => ShellCommand::SystemStatusScroll(-2),
+            InputKey::PageDown => ShellCommand::SystemStatusScroll(2),
             _ => ShellCommand::Noop,
         };
         (target, command)
-    }
-
-    fn next_system_status_tab(&self, delta: isize) -> ui::SystemStatusTab {
-        let admin = self
-            .app
-            .auth_session()
-            .is_some_and(|session| session.role == UserRole::Admin);
-        let tabs: &[ui::SystemStatusTab] = if admin {
-            &ui::SystemStatusTab::ALL
-        } else {
-            &ui::SystemStatusTab::USER
-        };
-        let current = tabs
-            .iter()
-            .position(|tab| *tab == self.system_status_tab)
-            .unwrap_or(0) as isize;
-        let next = (current + delta).rem_euclid(tabs.len() as isize) as usize;
-        tabs[next]
     }
 
     pub(in crate::session) fn clock_button_activation_command(&self) -> ShellCommand {
@@ -1270,6 +1354,23 @@ impl ShellSession {
             && self.active_popup.is_none()
         {
             let coordinates = mouse.coordinates();
+            if self.system_status_widget_drag.is_some() {
+                match mouse.kind {
+                    ui::MouseEventKind::Drag(PointerButton::Left) => {
+                        return (
+                            RoutedTarget::Component(ShellComponent::SystemStatus),
+                            ShellCommand::SystemStatusWidgetDrag(coordinates),
+                        );
+                    }
+                    ui::MouseEventKind::Up(PointerButton::Left) => {
+                        return (
+                            RoutedTarget::Component(ShellComponent::SystemStatus),
+                            ShellCommand::SystemStatusWidgetDrop(coordinates),
+                        );
+                    }
+                    _ => {}
+                }
+            }
             if self.launcher_drag.is_some() {
                 match mouse.kind {
                     ui::MouseEventKind::Drag(PointerButton::Left) => {
@@ -1809,10 +1910,12 @@ impl ShellSession {
         hit_target: Option<ShellComponent>,
     ) -> (RoutedTarget, ShellCommand) {
         let coordinates = mouse.coordinates();
-        let target = if self.diagnostics_repair_preview.is_empty() {
-            RoutedTarget::Component(ShellComponent::SystemStatus)
-        } else {
+        let target = if !self.diagnostics_repair_preview.is_empty() {
             RoutedTarget::Modal(ShellComponent::DiagnosticsRepairDialog)
+        } else if self.system_status_discard_dialog || self.system_status_add_picker.is_some() {
+            RoutedTarget::Modal(ShellComponent::SystemStatus)
+        } else {
+            RoutedTarget::Component(ShellComponent::SystemStatus)
         };
         let area = Rect::new(0, 0, self.terminal_size.0, self.terminal_size.1);
         let ui::ShellLayout::Full { main, .. } = ui::compute_shell_layout(area) else {
@@ -1830,32 +1933,82 @@ impl ShellSession {
         };
         let layout = ui::system_status_layout(main, &model);
         let hit = ui::system_status_hit_test(&layout, coordinates);
-        let diagnostics_active = self.system_status_tab.diagnostics_tab().is_some();
+        let diagnostics_active = matches!(
+            self.system_status_route,
+            ui::SystemStatusRoute::Detail(
+                ui::SystemStatusDetail::Diagnostics | ui::SystemStatusDetail::Activity
+            )
+        );
+        let editing = self.system_status_dashboard_draft.is_some();
+        let modal_open = !self.diagnostics_repair_preview.is_empty()
+            || self.system_status_discard_dialog
+            || self.system_status_add_picker.is_some();
+
+        let activate_hit = |hit| match hit {
+            Some(ui::SystemStatusHitTarget::DialogConfirm) => ShellCommand::SystemStatusDiscardEdit,
+            Some(ui::SystemStatusHitTarget::DialogCancel) => ShellCommand::SystemStatusContinueEdit,
+            Some(ui::SystemStatusHitTarget::PickerItem(index)) => {
+                ShellCommand::SystemStatusPickerActivateAt(index)
+            }
+            Some(ui::SystemStatusHitTarget::Widget(kind)) if !editing => {
+                ShellCommand::SystemStatusOpenWidget(kind)
+            }
+            _ => ShellCommand::CaptureOverlayInput,
+        };
 
         let command = match mouse.kind {
             ui::MouseEventKind::Moved => ShellCommand::Hover(hit_target),
             ui::MouseEventKind::Scroll(ScrollDirection::Up)
-                if self.diagnostics_repair_preview.is_empty() && diagnostics_active =>
+                if !modal_open && diagnostics_active =>
             {
                 ShellCommand::DiagnosticsPrevious
             }
             ui::MouseEventKind::Scroll(ScrollDirection::Down)
-                if self.diagnostics_repair_preview.is_empty() && diagnostics_active =>
+                if !modal_open && diagnostics_active =>
             {
                 ShellCommand::DiagnosticsNext
             }
-            ui::MouseEventKind::Scroll(ScrollDirection::Up)
-                if self.diagnostics_repair_preview.is_empty() =>
-            {
+            ui::MouseEventKind::Scroll(ScrollDirection::Up) if !modal_open => {
                 ShellCommand::SystemStatusScroll(-1)
             }
-            ui::MouseEventKind::Scroll(ScrollDirection::Down)
-                if self.diagnostics_repair_preview.is_empty() =>
-            {
+            ui::MouseEventKind::Scroll(ScrollDirection::Down) if !modal_open => {
                 ShellCommand::SystemStatusScroll(1)
             }
+            ui::MouseEventKind::DoubleClick(PointerButton::Left) => activate_hit(hit),
             ui::MouseEventKind::Down(PointerButton::Left) => match hit {
-                Some(ui::SystemStatusHitTarget::Tab(tab)) => ShellCommand::SystemStatusTab(tab),
+                Some(ui::SystemStatusHitTarget::DialogConfirm) => {
+                    ShellCommand::SystemStatusDiscardEdit
+                }
+                Some(ui::SystemStatusHitTarget::DialogCancel) => {
+                    ShellCommand::SystemStatusContinueEdit
+                }
+                Some(ui::SystemStatusHitTarget::PickerItem(index)) => {
+                    ShellCommand::SystemStatusPickerSelect(index)
+                }
+                Some(ui::SystemStatusHitTarget::Widget(kind)) if editing => {
+                    ShellCommand::SystemStatusWidgetPointerDown(kind, coordinates)
+                }
+                Some(ui::SystemStatusHitTarget::Widget(kind)) => {
+                    ShellCommand::SystemStatusSelectWidget(kind)
+                }
+                Some(ui::SystemStatusHitTarget::Edit) if !editing => {
+                    ShellCommand::SystemStatusBeginEdit
+                }
+                Some(ui::SystemStatusHitTarget::Add) if editing => {
+                    ShellCommand::SystemStatusOpenAddPicker
+                }
+                Some(ui::SystemStatusHitTarget::Size) if editing => {
+                    ShellCommand::SystemStatusCycleWidgetSize
+                }
+                Some(ui::SystemStatusHitTarget::Remove) if editing => {
+                    ShellCommand::SystemStatusRemoveWidget
+                }
+                Some(ui::SystemStatusHitTarget::Save) if editing => {
+                    ShellCommand::SystemStatusSaveDashboard
+                }
+                Some(ui::SystemStatusHitTarget::Cancel) if editing => {
+                    ShellCommand::SystemStatusRequestCancelEdit
+                }
                 Some(ui::SystemStatusHitTarget::Row(index)) => {
                     ShellCommand::SystemStatusSelectRow(index)
                 }
@@ -1866,6 +2019,15 @@ impl ShellSession {
                 Some(ui::SystemStatusHitTarget::Scrollbar) => {
                     ShellCommand::SystemStatusScrollbarPointerDown(coordinates)
                 }
+                Some(ui::SystemStatusHitTarget::Diagnostics(ui::DiagnosticsHitTarget::Tab(
+                    ui::DiagnosticsTab::Health,
+                ))) => ShellCommand::SystemStatusTab(ui::SystemStatusTab::Health),
+                Some(ui::SystemStatusHitTarget::Diagnostics(ui::DiagnosticsHitTarget::Tab(
+                    ui::DiagnosticsTab::Logs,
+                ))) => ShellCommand::SystemStatusTab(ui::SystemStatusTab::Logs),
+                Some(ui::SystemStatusHitTarget::Diagnostics(ui::DiagnosticsHitTarget::Tab(
+                    ui::DiagnosticsTab::Incidents,
+                ))) => ShellCommand::SystemStatusTab(ui::SystemStatusTab::Incidents),
                 Some(ui::SystemStatusHitTarget::Diagnostics(
                     ui::DiagnosticsHitTarget::Check(index)
                     | ui::DiagnosticsHitTarget::Log(index)
@@ -1889,11 +2051,26 @@ impl ShellSession {
                     ui::DiagnosticsHitTarget::RepairItem(index),
                 )) => ShellCommand::DiagnosticsSelectRepairItem(index),
                 Some(ui::SystemStatusHitTarget::Diagnostics(
-                    ui::DiagnosticsHitTarget::Tab(_)
-                    | ui::DiagnosticsHitTarget::Scrollbar
+                    ui::DiagnosticsHitTarget::Scrollbar
                     | ui::DiagnosticsHitTarget::RepairDialogSurface,
                 ))
+                | Some(_)
                 | None => ShellCommand::CaptureOverlayInput,
+            },
+            ui::MouseEventKind::Click(PointerButton::Left) => match hit {
+                Some(ui::SystemStatusHitTarget::DialogConfirm) => {
+                    ShellCommand::SystemStatusDiscardEdit
+                }
+                Some(ui::SystemStatusHitTarget::DialogCancel) => {
+                    ShellCommand::SystemStatusContinueEdit
+                }
+                Some(ui::SystemStatusHitTarget::PickerItem(index)) => {
+                    ShellCommand::SystemStatusPickerSelect(index)
+                }
+                Some(ui::SystemStatusHitTarget::Widget(kind)) if !editing => {
+                    ShellCommand::SystemStatusSelectWidget(kind)
+                }
+                _ => ShellCommand::CaptureOverlayInput,
             },
             _ => ShellCommand::CaptureOverlayInput,
         };

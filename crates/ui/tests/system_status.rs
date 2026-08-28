@@ -214,6 +214,8 @@ fn model() -> SystemStatusViewModel {
                 display_name: "Wi-Fi".into(),
                 kind: "Wireless".into(),
                 link_state: "Up".into(),
+                received_rate: "2.4 MiB/s".into(),
+                transmitted_rate: "0.6 MiB/s".into(),
                 addresses: "192.0.2.1".into(),
                 tone: ComponentTone::Success,
             }],

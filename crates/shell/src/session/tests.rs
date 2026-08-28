@@ -65,6 +65,7 @@ fn system_status_test_snapshot(
     app::AppSystemStatusSnapshot {
         revision,
         observed_at: sampled_at,
+        metrics: system_services::SystemMetricsSnapshot::loading(),
         storage: system_services::StorageState::Ready(system_services::StorageSnapshot {
             volumes: vec![system_services::StorageVolumeSnapshot {
                 identifier: "/sensitive/mount".into(),
@@ -159,8 +160,15 @@ fn diagnostics_is_integrated_into_system_status_tabs() {
         state.open_diagnostics();
         assert_eq!(state.active_screen(), ShellScreen::SystemStatus);
         assert_eq!(state.system_status_tab, ui::SystemStatusTab::Health);
+        assert_eq!(
+            state.system_status_route,
+            ui::SystemStatusRoute::Detail(ui::SystemStatusDetail::Diagnostics)
+        );
         assert_eq!(state.focused_component(), ShellComponent::SystemStatus);
 
+        state.apply_input(InputEvent::from_key_label("Esc"));
+        assert_eq!(state.active_screen(), ShellScreen::SystemStatus);
+        assert_eq!(state.system_status_route, ui::SystemStatusRoute::Dashboard);
         state.apply_input(InputEvent::from_key_label("Esc"));
         assert_eq!(state.active_screen(), ShellScreen::Home);
         assert_eq!(state.focused_component(), ShellComponent::Home);
@@ -168,13 +176,13 @@ fn diagnostics_is_integrated_into_system_status_tabs() {
 }
 
 #[test]
-fn diagnostics_system_status_tab_mouse_target_keeps_one_page() {
+fn system_status_widget_double_click_opens_detail_without_leaving_page() {
     let mut state = ShellSession::new_for_home_mode(
         ShellLaunchConfig::default(),
         (120, 40),
         ShellHomeMode::User,
     );
-    set_test_auth_role(&mut state, UserRole::Admin);
+    set_test_auth_role(&mut state, UserRole::User);
     state.screen_stack.push(ShellScreen::SystemStatus);
     state.focused_component = ShellComponent::SystemStatus;
     let model = state.to_system_status_view_model().unwrap();
@@ -182,25 +190,29 @@ fn diagnostics_system_status_tab_mouse_target_keeps_one_page() {
     else {
         panic!("system status mouse test requires a full layout");
     };
-    let tab = ui::system_status_layout(main, &model)
-        .tabs
+    let widget = ui::system_status_layout(main, &model)
+        .widgets
         .into_iter()
-        .find(|tab| tab.tab == ui::SystemStatusTab::Health)
-        .expect("health tab");
+        .find(|widget| widget.kind == ui::SystemStatusWidgetKind::Diagnostics)
+        .expect("diagnostics widget");
 
     state.apply_input(InputEvent::Mouse(ui::MouseEvent::new(
-        tab.area.x,
-        tab.area.y,
-        ui::MouseEventKind::Down(PointerButton::Left),
+        widget.area.x.saturating_add(1),
+        widget.area.y.saturating_add(1),
+        ui::MouseEventKind::DoubleClick(PointerButton::Left),
     )));
 
     assert_eq!(state.active_screen(), ShellScreen::SystemStatus);
     assert_eq!(state.system_status_tab, ui::SystemStatusTab::Health);
+    assert_eq!(
+        state.system_status_route,
+        ui::SystemStatusRoute::Detail(ui::SystemStatusDetail::Diagnostics)
+    );
     assert_eq!(state.focused_component(), ShellComponent::SystemStatus);
 }
 
 #[test]
-fn system_status_keyboard_cycles_role_visible_tabs_and_routes_diagnostics_actions() {
+fn system_status_keyboard_navigates_dashboard_and_routes_detail_actions() {
     let mut user = ShellSession::new_for_home_mode(
         ShellLaunchConfig::default(),
         (120, 40),
@@ -211,7 +223,15 @@ fn system_status_keyboard_cycles_role_visible_tabs_and_routes_diagnostics_action
     user.focused_component = ShellComponent::SystemStatus;
     assert_eq!(
         user.route_key_input(&KeyInput::from_label("Tab")).1,
-        ShellCommand::SystemStatusTab(ui::SystemStatusTab::Health)
+        ShellCommand::SystemStatusSelectWidgetDirection(1, 0)
+    );
+    assert_eq!(
+        user.route_key_input(&KeyInput::from_label("Enter")).1,
+        ShellCommand::SystemStatusActivateSelectedWidget
+    );
+    assert_eq!(
+        user.route_key_input(&KeyInput::from_label("e")).1,
+        ShellCommand::SystemStatusBeginEdit
     );
     user.set_system_status_tab(ui::SystemStatusTab::Health);
     assert_eq!(
@@ -228,7 +248,7 @@ fn system_status_keyboard_cycles_role_visible_tabs_and_routes_diagnostics_action
     admin.set_system_status_tab(ui::SystemStatusTab::Overview);
     assert_eq!(
         admin.route_key_input(&KeyInput::from_label("Shift+Tab")).1,
-        ShellCommand::SystemStatusTab(ui::SystemStatusTab::Incidents)
+        ShellCommand::SystemStatusSelectWidgetDirection(-1, 0)
     );
 }
 
@@ -731,6 +751,7 @@ fn system_status_runtime_watch_drain_applies_revision_and_completes_refresh() {
         },
         storage: snapshot.storage,
         network: snapshot.network,
+        metrics: snapshot.metrics,
     };
     let (sender, mut receiver) = tokio::sync::watch::channel(system(initial));
     assert!(!drain_system_status_snapshot(&mut receiver, &mut state));

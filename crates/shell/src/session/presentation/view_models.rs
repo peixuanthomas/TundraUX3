@@ -1,3 +1,4 @@
+use super::super::controller::system_status::format_bytes;
 use super::super::*;
 impl ShellSession {
     pub fn to_system_status_view_model(&self) -> Option<ui::SystemStatusViewModel> {
@@ -7,8 +8,14 @@ impl ShellSession {
             return None;
         }
         let mut diagnostics = self.to_diagnostics_view_model();
-        if let Some(tab) = self.system_status_tab.diagnostics_tab() {
-            diagnostics.tab = tab;
+        match self.system_status_route {
+            ui::SystemStatusRoute::Detail(ui::SystemStatusDetail::Diagnostics) => {
+                diagnostics.tab = ui::DiagnosticsTab::Health;
+            }
+            ui::SystemStatusRoute::Detail(ui::SystemStatusDetail::Activity) => {
+                diagnostics.tab = self.diagnostics_tab;
+            }
+            _ => {}
         }
         let snapshot = self.app.system_status_snapshot();
         let (storage_state, storage) = match snapshot.map(|s| &s.storage) {
@@ -40,7 +47,7 @@ impl ShellSession {
             .map(|percentage| percentage.round().clamp(0.0, 100.0) as u8);
         let refreshed = snapshot
             .and_then(successful_system_status_sampled_at)
-            .map(|sampled| sampled.format("%Y-%m-%d %H:%M:%S UTC").to_string())
+            .map(format_sample_age)
             .unwrap_or_else(|| "Not yet".into());
         let (network_status, network_tone) = match snapshot.map(|s| &s.network) {
             None | Some(NetworkState::Loading) => {
@@ -74,6 +81,13 @@ impl ShellSession {
                 ui::components::ComponentTone::Warning,
             ),
         };
+        let dashboard = self.to_system_status_dashboard_view_model(
+            role,
+            snapshot,
+            storage,
+            &diagnostics,
+            &refreshed,
+        );
         if role == UserRole::User {
             let usage = if storage
                 .is_some_and(|s| s.system_volume_source == SystemVolumeSource::FixedVolumeFallback)
@@ -108,9 +122,10 @@ impl ShellSession {
                     last_refreshed: refreshed,
                 }),
                 diagnostics,
-                tab: self.system_status_tab,
-                selected_row: 0,
-                scroll_offset: 0,
+                route: self.system_status_route,
+                dashboard,
+                selected_row: self.system_status_selected_row,
+                scroll_offset: self.system_status_scroll_offset,
                 refreshing: self.system_status_refresh_requested_revision.is_some(),
                 feedback: None,
             });
@@ -166,21 +181,35 @@ impl ShellSession {
                     .collect()
             })
             .unwrap_or_default();
+        let network_io = snapshot.and_then(|snapshot| metric_value(&snapshot.metrics.network_io));
         let network_rows = network
             .map(|n| {
                 n.interfaces
                     .iter()
-                    .map(|i| ui::NetworkInterfaceRowViewModel {
-                        name: i.name.clone(),
-                        display_name: i.display_name.clone().unwrap_or_default(),
-                        kind: format!("{:?}", i.kind),
-                        link_state: format!("{:?}", i.link_state),
-                        addresses: i.addresses.join(", "),
-                        tone: if i.link_state == NetworkLinkState::Up {
-                            ui::components::ComponentTone::Success
-                        } else {
-                            ui::components::ComponentTone::Muted
-                        },
+                    .map(|i| {
+                        let rates = network_io.and_then(|io| {
+                            io.interfaces
+                                .iter()
+                                .find(|interface| interface.name == i.name)
+                        });
+                        ui::NetworkInterfaceRowViewModel {
+                            name: i.name.clone(),
+                            display_name: i.display_name.clone().unwrap_or_default(),
+                            kind: format!("{:?}", i.kind),
+                            link_state: format!("{:?}", i.link_state),
+                            received_rate: rates
+                                .map(|rate| format_rate(rate.received_bytes_per_second))
+                                .unwrap_or_else(|| "Unavailable".to_string()),
+                            transmitted_rate: rates
+                                .map(|rate| format_rate(rate.transmitted_bytes_per_second))
+                                .unwrap_or_else(|| "Unavailable".to_string()),
+                            addresses: i.addresses.join(", "),
+                            tone: if i.link_state == NetworkLinkState::Up {
+                                ui::components::ComponentTone::Success
+                            } else {
+                                ui::components::ComponentTone::Muted
+                            },
+                        }
                     })
                     .collect()
             })
@@ -205,13 +234,615 @@ impl ShellSession {
                 network_rows,
             }),
             diagnostics,
-            tab: self.system_status_tab,
+            route: self.system_status_route,
+            dashboard,
             selected_row: self.system_status_selected_row,
             scroll_offset: self.system_status_scroll_offset,
             refreshing: self.system_status_refresh_requested_revision.is_some(),
             feedback: None,
         })
     }
+
+    fn to_system_status_dashboard_view_model(
+        &self,
+        role: UserRole,
+        snapshot: Option<&app::AppSystemStatusSnapshot>,
+        storage_snapshot: Option<&system_services::StorageSnapshot>,
+        diagnostics: &ui::DiagnosticsViewModel,
+        refreshed: &str,
+    ) -> ui::SystemStatusDashboardViewModel {
+        let dashboard = self.system_status_dashboard_config();
+        let widgets_for = |profile: storage::DashboardProfile| {
+            dashboard
+                .layout(profile)
+                .placements
+                .iter()
+                .filter(|placement| self.system_status_widget_allowed(placement.kind))
+                .map(|placement| {
+                    self.to_system_status_widget_view_model(
+                        role,
+                        placement,
+                        snapshot,
+                        storage_snapshot,
+                        diagnostics,
+                        refreshed,
+                    )
+                })
+                .collect::<Vec<_>>()
+        };
+        let picker = self.system_status_add_picker.as_ref().map(|picker| {
+            let items = super::super::controller::system_status::SYSTEM_STATUS_WIDGET_KINDS
+                .iter()
+                .copied()
+                .map(|kind| {
+                    let already_added = dashboard.widgets.contains(&kind);
+                    let reason = if already_added {
+                        Some("Already added".to_string())
+                    } else {
+                        self.system_status_widget_unavailable_reason(kind)
+                    };
+                    ui::SystemStatusPickerItemViewModel {
+                        kind: super::super::controller::system_status::ui_widget_kind(kind),
+                        label: super::super::controller::system_status::ui_widget_kind(kind)
+                            .label()
+                            .to_string(),
+                        detail: reason.clone().unwrap_or_default(),
+                        enabled: !already_added
+                            && reason.is_none()
+                            && self.system_status_picker_kind_enabled(kind),
+                    }
+                })
+                .collect();
+            ui::SystemStatusPickerViewModel {
+                title: "Add widget".to_string(),
+                items,
+                selected: picker.selected,
+            }
+        });
+        let dirty = self.system_status_dashboard_is_dirty();
+        ui::SystemStatusDashboardViewModel {
+            wide_widgets: widgets_for(storage::DashboardProfile::Wide),
+            narrow_widgets: widgets_for(storage::DashboardProfile::Narrow),
+            selected: self
+                .system_status_selected_widget
+                .map(super::super::controller::system_status::ui_widget_kind),
+            scroll_row: self.system_status_dashboard_scroll_row,
+            editing: self.system_status_dashboard_draft.is_some(),
+            dirty,
+            feedback: self.system_status_dashboard_feedback.clone(),
+            picker,
+            dialog: self
+                .system_status_discard_dialog
+                .then(|| ui::SystemStatusDialogViewModel {
+                    title: "Discard dashboard changes?".to_string(),
+                    message: "Your unsaved widget layout changes will be lost.".to_string(),
+                    confirm_label: "Discard".to_string(),
+                    cancel_label: "Continue editing".to_string(),
+                    selected_action: usize::from(!self.system_status_discard_confirm_selected),
+                }),
+            dragging: None,
+            actions: ui::SystemStatusActionState {
+                refresh_disabled: self.system_status_refresh_requested_revision.is_some(),
+                edit_disabled: false,
+                add_disabled: !super::super::controller::system_status::SYSTEM_STATUS_WIDGET_KINDS
+                    .iter()
+                    .copied()
+                    .any(|kind| self.system_status_picker_kind_enabled(kind)),
+                size_disabled: self.system_status_selected_widget.is_none(),
+                remove_disabled: self.system_status_selected_widget.is_none(),
+                save_disabled: !dirty,
+                cancel_disabled: false,
+            },
+            updated: refreshed.to_string(),
+        }
+    }
+
+    fn to_system_status_widget_view_model(
+        &self,
+        role: UserRole,
+        placement: &storage::WidgetPlacement,
+        snapshot: Option<&app::AppSystemStatusSnapshot>,
+        storage_snapshot: Option<&system_services::StorageSnapshot>,
+        diagnostics: &ui::DiagnosticsViewModel,
+        refreshed: &str,
+    ) -> ui::SystemStatusWidgetViewModel {
+        use system_services::MetricState;
+        use ui::components::ComponentTone;
+
+        let metrics = snapshot.map(|snapshot| &snapshot.metrics);
+        let kind = super::super::controller::system_status::ui_widget_kind(placement.kind);
+        let size = super::super::controller::system_status::ui_widget_size(placement.size);
+        let mut model = ui::SystemStatusWidgetViewModel {
+            kind,
+            size,
+            column: u16::from(placement.column),
+            row: placement.row,
+            state: ui::SystemStatusWidgetState::Loading,
+            tone: ComponentTone::Accent,
+            primary: String::new(),
+            secondary: Vec::new(),
+            trend: None,
+            compact_rows: Vec::new(),
+            openable: self.system_status_widget_detail_allowed(placement.kind),
+        };
+
+        match placement.kind {
+            storage::SystemStatusWidgetKind::SystemOverview => {
+                model.state = if snapshot.is_some() {
+                    ui::SystemStatusWidgetState::Ready
+                } else {
+                    ui::SystemStatusWidgetState::Loading
+                };
+                model.primary = format!("Updated {refreshed}");
+                if let Some(metrics) = metrics {
+                    if let Some(cpu) = metric_value(&metrics.cpu) {
+                        model
+                            .secondary
+                            .push(format!("CPU {:.0}%", cpu.usage_percent));
+                    }
+                    if let Some(memory) = metric_value(&metrics.memory) {
+                        model.secondary.push(format!(
+                            "Memory {} / {}",
+                            format_bytes(memory.used_bytes),
+                            format_bytes(memory.total_bytes)
+                        ));
+                    }
+                }
+                if let Some(storage) = storage_snapshot {
+                    model.secondary.push(format!(
+                        "Storage {}",
+                        pressure_label(storage.overall_pressure)
+                    ));
+                }
+                if let Some(network) = snapshot.and_then(successful_network_snapshot) {
+                    model.secondary.push(if network.has_active_link {
+                        "Network connected".to_string()
+                    } else {
+                        "Network disconnected".to_string()
+                    });
+                }
+                if let Some(metrics) = metrics {
+                    if let Some(identity) = metric_value(&metrics.identity) {
+                        let os = [identity.os_name.as_deref(), identity.os_version.as_deref()]
+                            .into_iter()
+                            .flatten()
+                            .collect::<Vec<_>>()
+                            .join(" ");
+                        model.compact_rows.push(vec![
+                            "System".to_string(),
+                            identity
+                                .host_name
+                                .clone()
+                                .unwrap_or_else(|| "Unavailable".to_string()),
+                        ]);
+                        model.compact_rows.push(vec![
+                            "OS".to_string(),
+                            if os.is_empty() {
+                                "Unavailable".to_string()
+                            } else {
+                                os
+                            },
+                        ]);
+                        model.compact_rows.push(vec![
+                            "Kernel".to_string(),
+                            identity
+                                .kernel_version
+                                .clone()
+                                .unwrap_or_else(|| "Unavailable".to_string()),
+                        ]);
+                    }
+                    if let Some(uptime) = metric_value(&metrics.uptime) {
+                        model
+                            .compact_rows
+                            .push(vec!["Uptime".to_string(), format_duration(uptime.seconds)]);
+                    }
+                    if let Some(cpu) = metric_value(&metrics.cpu) {
+                        model.compact_rows.push(vec![
+                            "CPU".to_string(),
+                            format!("{:.0}% used", cpu.usage_percent),
+                        ]);
+                    }
+                    if let Some(memory) = metric_value(&metrics.memory) {
+                        model.compact_rows.push(vec![
+                            "Memory".to_string(),
+                            format!(
+                                "{} / {}",
+                                format_bytes(memory.used_bytes),
+                                format_bytes(memory.total_bytes)
+                            ),
+                        ]);
+                    }
+                }
+                if let Some(storage) = storage_snapshot {
+                    model.compact_rows.push(vec![
+                        "Storage".to_string(),
+                        pressure_label(storage.overall_pressure).to_string(),
+                    ]);
+                }
+                if let Some(network) = snapshot.and_then(successful_network_snapshot) {
+                    model.compact_rows.push(vec![
+                        "Network".to_string(),
+                        if network.has_active_link {
+                            "Connected"
+                        } else {
+                            "Disconnected"
+                        }
+                        .to_string(),
+                    ]);
+                }
+            }
+            storage::SystemStatusWidgetKind::Cpu => {
+                let state = metrics.map(|metrics| &metrics.cpu);
+                let (widget_state, cpu) = metric_widget_state(state, role == UserRole::Admin);
+                model.state = widget_state;
+                if let Some(cpu) = cpu {
+                    model.primary = format!("{:.0}% used", cpu.usage_percent);
+                    model.secondary.push(format!(
+                        "{} logical cores{}",
+                        cpu.logical_core_count,
+                        cpu.physical_core_count
+                            .map(|count| format!(" · {count} physical"))
+                            .unwrap_or_default()
+                    ));
+                    if let Some(load) = metrics.and_then(|metrics| metric_value(&metrics.load)) {
+                        model.secondary.push(format!(
+                            "Load {:.2} / {:.2} / {:.2}",
+                            load.one, load.five, load.fifteen
+                        ));
+                    }
+                    model.compact_rows = cpu
+                        .per_core_percent
+                        .iter()
+                        .enumerate()
+                        .map(|(index, value)| {
+                            vec![format!("Core {}", index + 1), format!("{value:.0}%")]
+                        })
+                        .collect();
+                }
+                model.trend = Some(self.system_status_history.cpu.iter().copied().collect());
+            }
+            storage::SystemStatusWidgetKind::Memory => {
+                let state = metrics.map(|metrics| &metrics.memory);
+                let (widget_state, memory) = metric_widget_state(state, role == UserRole::Admin);
+                model.state = widget_state;
+                if let Some(memory) = memory {
+                    let percentage = if memory.total_bytes == 0 {
+                        0
+                    } else {
+                        memory.used_bytes.saturating_mul(100) / memory.total_bytes
+                    };
+                    model.primary = format!("{percentage}% used");
+                    model.secondary.push(format!(
+                        "{} / {}",
+                        format_bytes(memory.used_bytes),
+                        format_bytes(memory.total_bytes)
+                    ));
+                    model.secondary.push(format!(
+                        "{} available · Swap {} / {}",
+                        format_bytes(memory.available_bytes),
+                        format_bytes(memory.swap_used_bytes),
+                        format_bytes(memory.swap_total_bytes)
+                    ));
+                    model.compact_rows = vec![
+                        vec![
+                            "Available".to_string(),
+                            format_bytes(memory.available_bytes),
+                        ],
+                        vec![
+                            "Swap used".to_string(),
+                            format_bytes(memory.swap_used_bytes),
+                        ],
+                    ];
+                }
+                model.trend = Some(self.system_status_history.memory.iter().copied().collect());
+            }
+            storage::SystemStatusWidgetKind::Storage => {
+                let state = snapshot.map(|snapshot| &snapshot.storage);
+                model.state = storage_widget_state(state, role == UserRole::Admin);
+                if let Some(storage) = storage_snapshot {
+                    let system = storage
+                        .system_volume_index
+                        .and_then(|index| storage.volumes.get(index));
+                    model.primary = system
+                        .and_then(used_percentage)
+                        .map(|value| format!("{value:.0}% used"))
+                        .unwrap_or_else(|| pressure_label(storage.overall_pressure).to_string());
+                    if let Some(system) = system {
+                        model.secondary.push(volume_usage(system));
+                        if let Some(available) = system.available_bytes {
+                            model
+                                .secondary
+                                .push(format!("{} available", format_bytes(available)));
+                        }
+                    }
+                    model.compact_rows = storage
+                        .volumes
+                        .iter()
+                        .map(|volume| {
+                            vec![
+                                if role == UserRole::Admin {
+                                    volume.identifier.clone()
+                                } else {
+                                    "Device storage".to_string()
+                                },
+                                volume_usage(volume),
+                            ]
+                        })
+                        .collect();
+                    model.tone = pressure_tone(storage.overall_pressure);
+                }
+            }
+            storage::SystemStatusWidgetKind::Network => {
+                let state = metrics.map(|metrics| &metrics.network_io);
+                let (widget_state, io) = metric_widget_state(state, role == UserRole::Admin);
+                model.state = widget_state;
+                let network = snapshot.and_then(successful_network_snapshot);
+                model.primary = network
+                    .map(|network| {
+                        if network.has_active_link {
+                            "Connected".to_string()
+                        } else {
+                            "Disconnected".to_string()
+                        }
+                    })
+                    .unwrap_or_else(|| "Link unavailable".to_string());
+                if let Some(io) = io {
+                    model.secondary.push(format!(
+                        "Down {} · Up {}",
+                        format_rate(io.total_received_bytes_per_second),
+                        format_rate(io.total_transmitted_bytes_per_second)
+                    ));
+                    model.compact_rows = io
+                        .interfaces
+                        .iter()
+                        .map(|interface| {
+                            vec![
+                                interface.name.clone(),
+                                format_rate(interface.received_bytes_per_second),
+                                format_rate(interface.transmitted_bytes_per_second),
+                            ]
+                        })
+                        .collect();
+                }
+                model.trend = Some(
+                    self.system_status_history
+                        .network_received
+                        .iter()
+                        .copied()
+                        .collect(),
+                );
+                model.tone = if network.is_some_and(|network| network.has_active_link) {
+                    ComponentTone::Success
+                } else {
+                    ComponentTone::Warning
+                };
+            }
+            storage::SystemStatusWidgetKind::Temperature => {
+                let state = metrics.map(|metrics| &metrics.thermal);
+                let (widget_state, sensors) = metric_widget_state(state, role == UserRole::Admin);
+                model.state = widget_state;
+                if let Some(sensors) = sensors {
+                    let hottest = sensors
+                        .iter()
+                        .filter(|sensor| sensor.temperature_celsius.is_finite())
+                        .max_by(|left, right| {
+                            left.temperature_celsius
+                                .total_cmp(&right.temperature_celsius)
+                        });
+                    if let Some(hottest) = hottest {
+                        model.primary = format!("{:.1} °C", hottest.temperature_celsius);
+                        model.secondary.push(hottest.label.clone());
+                    }
+                    model.compact_rows = sensors
+                        .iter()
+                        .map(|sensor| {
+                            vec![
+                                sensor.label.clone(),
+                                format!("{:.1} °C", sensor.temperature_celsius),
+                                sensor
+                                    .critical_celsius
+                                    .map(|value| format!("critical {value:.1} °C"))
+                                    .unwrap_or_default(),
+                            ]
+                        })
+                        .collect();
+                }
+                model.trend = Some(
+                    self.system_status_history
+                        .temperature
+                        .iter()
+                        .copied()
+                        .collect(),
+                );
+            }
+            storage::SystemStatusWidgetKind::Battery => {
+                let state = metrics.map(|metrics| &metrics.batteries);
+                let (widget_state, batteries) = metric_widget_state(state, role == UserRole::Admin);
+                model.state = widget_state;
+                if let Some(batteries) = batteries {
+                    if let Some(battery) = batteries.first() {
+                        model.primary =
+                            format!("{:.0}% · {:?}", battery.charge_percent, battery.state);
+                        let time = battery
+                            .time_to_empty_seconds
+                            .or(battery.time_to_full_seconds);
+                        if let Some(seconds) = time {
+                            model.secondary.push(format_duration(seconds));
+                        }
+                    }
+                    model.compact_rows = batteries
+                        .iter()
+                        .enumerate()
+                        .map(|(index, battery)| {
+                            vec![
+                                battery
+                                    .model
+                                    .clone()
+                                    .unwrap_or_else(|| format!("Battery {}", index + 1)),
+                                format!("{:.0}%", battery.charge_percent),
+                                format!("{:?}", battery.state),
+                            ]
+                        })
+                        .collect();
+                }
+            }
+            storage::SystemStatusWidgetKind::UptimeLoad => {
+                let state = metrics.map(|metrics| &metrics.uptime);
+                let (widget_state, uptime) = metric_widget_state(state, role == UserRole::Admin);
+                model.state = widget_state;
+                if let Some(uptime) = uptime {
+                    model.primary = format_duration(uptime.seconds);
+                }
+                if let Some(metrics) = metrics {
+                    match &metrics.load {
+                        MetricState::Ready(load)
+                        | MetricState::Stale {
+                            last_good: load, ..
+                        } => {
+                            model.secondary.push(format!(
+                                "Load {:.2} / {:.2} / {:.2}",
+                                load.one, load.five, load.fifteen
+                            ));
+                            model.compact_rows = vec![
+                                vec!["1 minute".to_string(), format!("{:.2}", load.one)],
+                                vec!["5 minutes".to_string(), format!("{:.2}", load.five)],
+                                vec!["15 minutes".to_string(), format!("{:.2}", load.fifteen)],
+                            ];
+                        }
+                        MetricState::Unavailable { reason } => {
+                            model.secondary.push(reason.clone());
+                        }
+                        MetricState::Loading => {}
+                    }
+                }
+            }
+            storage::SystemStatusWidgetKind::TopProcesses => {
+                let state = metrics.map(|metrics| &metrics.processes);
+                let (widget_state, processes) = metric_widget_state(state, true);
+                model.state = widget_state;
+                if let Some(processes) = processes {
+                    if let Some(process) = processes.top_cpu.first() {
+                        model.primary =
+                            format!("{} · {:.1}% CPU", process.name, process.cpu_percent);
+                    }
+                    model.secondary = processes
+                        .top_cpu
+                        .iter()
+                        .take(3)
+                        .map(|process| {
+                            format!(
+                                "{} · {:.1}% · {}",
+                                process.name,
+                                process.cpu_percent,
+                                format_bytes(process.memory_bytes)
+                            )
+                        })
+                        .collect();
+                    model.compact_rows = processes
+                        .top_cpu
+                        .iter()
+                        .take(20)
+                        .map(|process| {
+                            vec![
+                                "CPU".to_string(),
+                                process.pid.to_string(),
+                                process.name.clone(),
+                                format!("{:.1}%", process.cpu_percent),
+                                format_bytes(process.memory_bytes),
+                            ]
+                        })
+                        .chain(processes.top_memory.iter().take(20).map(|process| {
+                            vec![
+                                "Memory".to_string(),
+                                process.pid.to_string(),
+                                process.name.clone(),
+                                format!("{:.1}%", process.cpu_percent),
+                                format_bytes(process.memory_bytes),
+                            ]
+                        }))
+                        .collect();
+                }
+            }
+            storage::SystemStatusWidgetKind::Diagnostics => {
+                model.state = if diagnostics.scanned_at.is_some() {
+                    ui::SystemStatusWidgetState::Ready
+                } else if diagnostics.scanning {
+                    ui::SystemStatusWidgetState::Loading
+                } else if let Some(message) = diagnostics.feedback.clone() {
+                    ui::SystemStatusWidgetState::Unavailable { message }
+                } else {
+                    ui::SystemStatusWidgetState::Ready
+                };
+                let warnings = diagnostics
+                    .checks
+                    .iter()
+                    .filter(|check| check.status == ui::DiagnosticsStatus::Warning)
+                    .count();
+                let failures = diagnostics
+                    .checks
+                    .iter()
+                    .filter(|check| check.status == ui::DiagnosticsStatus::Fail)
+                    .count();
+                model.primary = if failures == 0 && warnings == 0 {
+                    "No issues".to_string()
+                } else {
+                    format!("{failures} failures · {warnings} warnings")
+                };
+                model.secondary = diagnostics
+                    .checks
+                    .iter()
+                    .filter(|check| check.status != ui::DiagnosticsStatus::Pass)
+                    .take(3)
+                    .map(|check| check.summary.clone())
+                    .collect();
+                model.compact_rows = diagnostics
+                    .checks
+                    .iter()
+                    .map(|check| vec![check.label.clone(), format!("{:?}", check.status)])
+                    .collect();
+                model.tone = if failures > 0 {
+                    ComponentTone::Danger
+                } else if warnings > 0 {
+                    ComponentTone::Warning
+                } else {
+                    ComponentTone::Success
+                };
+            }
+            storage::SystemStatusWidgetKind::Activity => {
+                model.state = if diagnostics.scanned_at.is_some() {
+                    ui::SystemStatusWidgetState::Ready
+                } else if diagnostics.scanning {
+                    ui::SystemStatusWidgetState::Loading
+                } else {
+                    ui::SystemStatusWidgetState::Ready
+                };
+                model.primary = format!(
+                    "{} logs · {} incidents",
+                    diagnostics.logs.len(),
+                    diagnostics.incidents.len()
+                );
+                model.secondary = diagnostics
+                    .incidents
+                    .iter()
+                    .take(3)
+                    .map(|incident| incident.summary.clone())
+                    .collect();
+                model.compact_rows = diagnostics
+                    .incidents
+                    .iter()
+                    .map(|incident| {
+                        vec![
+                            incident.occurred_at.clone(),
+                            incident.app.clone(),
+                            incident.summary.clone(),
+                        ]
+                    })
+                    .collect();
+            }
+        }
+        model
+    }
+
     pub fn to_home_view_model(&self) -> ui::HomeViewModel {
         let user = self.current_home_username().unwrap_or("Unauthenticated");
         let model = ui::HomeViewModel::user_with_selection_and_icon_assets(
@@ -1171,6 +1802,113 @@ impl ShellSession {
     }
 }
 
+fn metric_value<T>(state: &system_services::MetricState<T>) -> Option<&T> {
+    match state {
+        system_services::MetricState::Ready(value)
+        | system_services::MetricState::Stale {
+            last_good: value, ..
+        } => Some(value),
+        system_services::MetricState::Loading
+        | system_services::MetricState::Unavailable { .. } => None,
+    }
+}
+
+fn metric_widget_state<'a, T>(
+    state: Option<&'a system_services::MetricState<T>>,
+    expose_error: bool,
+) -> (ui::SystemStatusWidgetState, Option<&'a T>) {
+    match state {
+        None | Some(system_services::MetricState::Loading) => {
+            (ui::SystemStatusWidgetState::Loading, None)
+        }
+        Some(system_services::MetricState::Ready(value)) => {
+            (ui::SystemStatusWidgetState::Ready, Some(value))
+        }
+        Some(system_services::MetricState::Stale { last_good, error }) => (
+            ui::SystemStatusWidgetState::Stale {
+                message: if expose_error {
+                    error.clone()
+                } else {
+                    "Metric data is stale".to_string()
+                },
+            },
+            Some(last_good),
+        ),
+        Some(system_services::MetricState::Unavailable { reason }) => (
+            ui::SystemStatusWidgetState::Unavailable {
+                message: if expose_error {
+                    reason.clone()
+                } else {
+                    "Metric is unavailable".to_string()
+                },
+            },
+            None,
+        ),
+    }
+}
+
+fn storage_widget_state(
+    state: Option<&system_services::StorageState>,
+    expose_error: bool,
+) -> ui::SystemStatusWidgetState {
+    match state {
+        None | Some(system_services::StorageState::Loading) => ui::SystemStatusWidgetState::Loading,
+        Some(system_services::StorageState::Ready(_)) => ui::SystemStatusWidgetState::Ready,
+        Some(system_services::StorageState::Stale { error, .. }) => {
+            ui::SystemStatusWidgetState::Stale {
+                message: if expose_error {
+                    error.clone()
+                } else {
+                    "Storage data is stale".to_string()
+                },
+            }
+        }
+        Some(system_services::StorageState::Unavailable { reason }) => {
+            ui::SystemStatusWidgetState::Unavailable {
+                message: if expose_error {
+                    reason.clone()
+                } else {
+                    "Storage is unavailable".to_string()
+                },
+            }
+        }
+    }
+}
+
+fn successful_network_snapshot(
+    snapshot: &app::AppSystemStatusSnapshot,
+) -> Option<&system_services::NetworkSnapshot> {
+    match &snapshot.network {
+        system_services::NetworkState::Ready(value)
+        | system_services::NetworkState::Stale {
+            last_good: value, ..
+        } => Some(value),
+        system_services::NetworkState::Loading
+        | system_services::NetworkState::Unavailable { .. } => None,
+    }
+}
+
+fn format_rate(bytes_per_second: f64) -> String {
+    let rate = bytes_per_second.max(0.0).round() as u64;
+    format!(
+        "{}/s",
+        super::super::controller::system_status::format_bytes(rate)
+    )
+}
+
+fn format_duration(seconds: u64) -> String {
+    let days = seconds / 86_400;
+    let hours = seconds % 86_400 / 3_600;
+    let minutes = seconds % 3_600 / 60;
+    if days > 0 {
+        format!("{days}d {hours}h {minutes}m")
+    } else if hours > 0 {
+        format!("{hours}h {minutes}m")
+    } else {
+        format!("{minutes}m")
+    }
+}
+
 fn used_percentage(v: &system_services::StorageVolumeSnapshot) -> Option<f64> {
     let (Some(total), Some(avail)) = (v.total_bytes, v.available_bytes) else {
         return None;
@@ -1190,7 +1928,36 @@ fn successful_system_status_sampled_at(
         system_services::NetworkState::Stale { last_good, .. } => Some(last_good.sampled_at),
         _ => None,
     };
-    storage.into_iter().chain(network).max()
+    let metrics = (metric_has_sample(&snapshot.metrics.cpu)
+        || metric_has_sample(&snapshot.metrics.identity)
+        || metric_has_sample(&snapshot.metrics.memory)
+        || metric_has_sample(&snapshot.metrics.load)
+        || metric_has_sample(&snapshot.metrics.uptime)
+        || metric_has_sample(&snapshot.metrics.network_io)
+        || metric_has_sample(&snapshot.metrics.thermal)
+        || metric_has_sample(&snapshot.metrics.batteries)
+        || metric_has_sample(&snapshot.metrics.processes))
+    .then_some(snapshot.metrics.sampled_at);
+    storage.into_iter().chain(network).chain(metrics).max()
+}
+fn metric_has_sample<T>(state: &system_services::MetricState<T>) -> bool {
+    matches!(
+        state,
+        system_services::MetricState::Ready(_) | system_services::MetricState::Stale { .. }
+    )
+}
+fn format_sample_age(sampled_at: chrono::DateTime<Utc>) -> String {
+    let seconds = Utc::now()
+        .signed_duration_since(sampled_at)
+        .num_seconds()
+        .max(0) as u64;
+    match seconds {
+        0..=1 => "just now".to_string(),
+        2..=59 => format!("{seconds}s ago"),
+        60..=3_599 => format!("{}m ago", seconds / 60),
+        3_600..=86_399 => format!("{}h ago", seconds / 3_600),
+        _ => format!("{}d ago", seconds / 86_400),
+    }
 }
 fn volume_usage(v: &system_services::StorageVolumeSnapshot) -> String {
     match (v.total_bytes, v.available_bytes, used_percentage(v)) {

@@ -945,15 +945,20 @@ impl ShellSession {
 
     pub(in crate::session) fn complete_login(&mut self, session: AuthSession) {
         self.reset_system_status_trackers();
-        let mut active_appearance = self.storage_manager.as_ref().and_then(|storage| {
-            storage.load_users().ok().and_then(|users| {
-                users
-                    .users
-                    .into_iter()
-                    .find(|user| user.id == session.user_id)
-                    .map(|user| user.appearance)
+        let (mut active_appearance, active_dashboard) = self
+            .storage_manager
+            .as_ref()
+            .and_then(|storage| {
+                storage.load_users().ok().and_then(|users| {
+                    users
+                        .users
+                        .into_iter()
+                        .find(|user| user.id == session.user_id)
+                        .map(|user| (user.appearance, user.system_status_dashboard))
+                })
             })
-        });
+            .map(|(appearance, dashboard)| (Some(appearance), Some(dashboard)))
+            .unwrap_or((None, None));
         let mut icon_fallback_error = None;
         if std::mem::take(&mut self.pending_default_ascii_icon_fallback)
             && self.ascii_assets.theme_id() == ui::DEFAULT_THEME_ID
@@ -982,6 +987,10 @@ impl ShellSession {
         }
         self.app.dispatch_at(
             app::AppCommand::SetActiveAppearance(active_appearance),
+            Instant::now(),
+        );
+        self.app.dispatch_at(
+            app::AppCommand::SetActiveSystemStatusDashboard(active_dashboard),
             Instant::now(),
         );
         self.login_username = session.username.clone();

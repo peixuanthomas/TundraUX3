@@ -13,7 +13,7 @@ pub enum FocusIntent {
 
 /// High-level UI intents. Application commands stay UI-independent inside
 /// [`Self::App`]; all other variants are handled by the UI session or Shell.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum UiIntent {
     App(Box<app::AppCommand>),
     Focus(FocusIntent),
