@@ -350,7 +350,7 @@ impl ShellSession {
         snapshot: Option<&app::AppSystemStatusSnapshot>,
         storage_snapshot: Option<&system_services::StorageSnapshot>,
         diagnostics: &ui::DiagnosticsViewModel,
-        refreshed: &str,
+        _refreshed: &str,
     ) -> ui::SystemStatusWidgetViewModel {
         use system_services::MetricState;
         use ui::components::ComponentTone;
@@ -368,44 +368,122 @@ impl ShellSession {
             primary: String::new(),
             secondary: Vec::new(),
             trend: None,
+            progress_percent: None,
+            bars: Vec::new(),
             compact_rows: Vec::new(),
             openable: self.system_status_widget_detail_allowed(placement.kind),
         };
 
         match placement.kind {
             storage::SystemStatusWidgetKind::SystemOverview => {
-                model.state = if snapshot.is_some() {
-                    ui::SystemStatusWidgetState::Ready
+                let failed = diagnostics
+                    .checks
+                    .iter()
+                    .any(|check| check.status == ui::DiagnosticsStatus::Fail);
+                let warned = diagnostics
+                    .checks
+                    .iter()
+                    .any(|check| check.status == ui::DiagnosticsStatus::Warning);
+                let critical = storage_snapshot.is_some_and(|storage| {
+                    storage.overall_pressure == system_services::StoragePressure::Critical
+                });
+                let low = storage_snapshot.is_some_and(|storage| {
+                    storage.overall_pressure == system_services::StoragePressure::Low
+                });
+                let disconnected = snapshot
+                    .and_then(successful_network_snapshot)
+                    .is_some_and(|network| !network.has_active_link);
+                let stale = snapshot.is_some_and(|snapshot| {
+                    matches!(
+                        snapshot.storage,
+                        system_services::StorageState::Stale { .. }
+                    ) || matches!(
+                        snapshot.network,
+                        system_services::NetworkState::Stale { .. }
+                    ) || matches!(snapshot.metrics.identity, MetricState::Stale { .. })
+                        || matches!(snapshot.metrics.cpu, MetricState::Stale { .. })
+                        || matches!(snapshot.metrics.memory, MetricState::Stale { .. })
+                        || matches!(snapshot.metrics.load, MetricState::Stale { .. })
+                        || matches!(snapshot.metrics.uptime, MetricState::Stale { .. })
+                        || matches!(snapshot.metrics.network_io, MetricState::Stale { .. })
+                        || matches!(snapshot.metrics.thermal, MetricState::Stale { .. })
+                        || matches!(snapshot.metrics.batteries, MetricState::Stale { .. })
+                        || matches!(snapshot.metrics.processes, MetricState::Stale { .. })
+                });
+                let unavailable = snapshot.is_some_and(|snapshot| {
+                    matches!(
+                        snapshot.storage,
+                        system_services::StorageState::Unavailable { .. }
+                    ) || matches!(
+                        snapshot.network,
+                        system_services::NetworkState::Unavailable { .. }
+                    ) || matches!(snapshot.metrics.identity, MetricState::Unavailable { .. })
+                        || matches!(snapshot.metrics.cpu, MetricState::Unavailable { .. })
+                        || matches!(snapshot.metrics.memory, MetricState::Unavailable { .. })
+                        || matches!(snapshot.metrics.load, MetricState::Unavailable { .. })
+                        || matches!(snapshot.metrics.uptime, MetricState::Unavailable { .. })
+                        || matches!(snapshot.metrics.network_io, MetricState::Unavailable { .. })
+                        || matches!(snapshot.metrics.thermal, MetricState::Unavailable { .. })
+                        || matches!(snapshot.metrics.batteries, MetricState::Unavailable { .. })
+                        || matches!(snapshot.metrics.processes, MetricState::Unavailable { .. })
+                });
+                if snapshot.is_none() {
+                    model.state = ui::SystemStatusWidgetState::Loading;
+                } else if critical || failed {
+                    model.state = ui::SystemStatusWidgetState::Ready;
+                    model.primary = "Needs attention".into();
+                    model.tone = ComponentTone::Danger;
+                } else if low || disconnected || warned {
+                    model.state = ui::SystemStatusWidgetState::Ready;
+                    model.primary = "Needs attention".into();
+                    model.tone = ComponentTone::Warning;
+                } else if stale {
+                    model.state = ui::SystemStatusWidgetState::Stale {
+                        message: "Some system data is stale".into(),
+                    };
+                    model.primary = "Degraded".into();
+                    model.tone = ComponentTone::Warning;
+                } else if unavailable {
+                    model.state = ui::SystemStatusWidgetState::Ready;
+                    model.primary = "Degraded".into();
+                    model.tone = ComponentTone::Warning;
                 } else {
-                    ui::SystemStatusWidgetState::Loading
-                };
-                model.primary = format!("Updated {refreshed}");
+                    model.state = ui::SystemStatusWidgetState::Ready;
+                    model.primary = "Healthy".into();
+                    model.tone = ComponentTone::Success;
+                }
                 if let Some(metrics) = metrics {
+                    let mut core = Vec::new();
                     if let Some(cpu) = metric_value(&metrics.cpu) {
-                        model
-                            .secondary
-                            .push(format!("CPU {:.0}%", cpu.usage_percent));
+                        core.push(format!("CPU {:.0}%", cpu.usage_percent));
                     }
                     if let Some(memory) = metric_value(&metrics.memory) {
-                        model.secondary.push(format!(
+                        core.push(format!(
                             "Memory {} / {}",
                             format_bytes(memory.used_bytes),
                             format_bytes(memory.total_bytes)
                         ));
                     }
+                    if !core.is_empty() {
+                        model.secondary.push(core.join(" · "));
+                    }
                 }
+                let mut subsystem = Vec::new();
                 if let Some(storage) = storage_snapshot {
-                    model.secondary.push(format!(
+                    subsystem.push(format!(
                         "Storage {}",
                         pressure_label(storage.overall_pressure)
                     ));
                 }
                 if let Some(network) = snapshot.and_then(successful_network_snapshot) {
-                    model.secondary.push(if network.has_active_link {
+                    subsystem.push(if network.has_active_link {
                         "Network connected".to_string()
                     } else {
                         "Network disconnected".to_string()
                     });
+                }
+                if !subsystem.is_empty() {
+                    model.secondary.push(subsystem.join(" · "));
                 }
                 if let Some(metrics) = metrics {
                     if let Some(identity) = metric_value(&metrics.identity) {
@@ -441,6 +519,14 @@ impl ShellSession {
                         model
                             .compact_rows
                             .push(vec!["Uptime".to_string(), format_duration(uptime.seconds)]);
+                        let booted = metrics.sampled_at
+                            - chrono::Duration::seconds(
+                                i64::try_from(uptime.seconds).unwrap_or(i64::MAX),
+                            );
+                        model.compact_rows.push(vec![
+                            "Booted".into(),
+                            booted.format("%Y-%m-%d %H:%M UTC").to_string(),
+                        ]);
                     }
                     if let Some(cpu) = metric_value(&metrics.cpu) {
                         model.compact_rows.push(vec![
@@ -482,6 +568,17 @@ impl ShellSession {
                 let (widget_state, cpu) = metric_widget_state(state, role == UserRole::Admin);
                 model.state = widget_state;
                 if let Some(cpu) = cpu {
+                    model.progress_percent =
+                        Some(cpu.usage_percent.round().clamp(0.0, 100.0) as u16);
+                    model.bars = cpu
+                        .per_core_percent
+                        .iter()
+                        .enumerate()
+                        .map(|(index, value)| ui::SystemStatusBarItem {
+                            label: format!("C{}", index + 1),
+                            value: value.round().clamp(0.0, 100.0) as u64,
+                        })
+                        .collect();
                     model.primary = format!("{:.0}% used", cpu.usage_percent);
                     model.secondary.push(format!(
                         "{} logical cores{}",
@@ -518,6 +615,24 @@ impl ShellSession {
                         memory.used_bytes.saturating_mul(100) / memory.total_bytes
                     };
                     model.primary = format!("{percentage}% used");
+                    model.progress_percent = Some(percentage.min(100) as u16);
+                    if memory.total_bytes > 0 {
+                        model.bars.push(ui::SystemStatusBarItem {
+                            label: "RAM".into(),
+                            value: percentage.min(100),
+                        });
+                    }
+                    if memory.swap_total_bytes > 0 {
+                        model.bars.push(ui::SystemStatusBarItem {
+                            label: "Swap".into(),
+                            value: memory
+                                .swap_used_bytes
+                                .saturating_mul(100)
+                                .checked_div(memory.swap_total_bytes)
+                                .unwrap_or(0)
+                                .min(100),
+                        });
+                    }
                     model.secondary.push(format!(
                         "{} / {}",
                         format_bytes(memory.used_bytes),
@@ -553,6 +668,23 @@ impl ShellSession {
                         .and_then(used_percentage)
                         .map(|value| format!("{value:.0}% used"))
                         .unwrap_or_else(|| pressure_label(storage.overall_pressure).to_string());
+                    model.progress_percent = system
+                        .and_then(used_percentage)
+                        .map(|value| value.round().clamp(0.0, 100.0) as u16);
+                    model.bars = storage
+                        .volumes
+                        .iter()
+                        .filter_map(|volume| {
+                            used_percentage(volume).map(|value| ui::SystemStatusBarItem {
+                                label: if role == UserRole::Admin {
+                                    volume.identifier.clone()
+                                } else {
+                                    "Storage".into()
+                                },
+                                value: value.round().clamp(0.0, 100.0) as u64,
+                            })
+                        })
+                        .collect();
                     if let Some(system) = system {
                         model.secondary.push(volume_usage(system));
                         if let Some(available) = system.available_bytes {
@@ -667,6 +799,8 @@ impl ShellSession {
                 model.state = widget_state;
                 if let Some(batteries) = batteries {
                     if let Some(battery) = batteries.first() {
+                        model.progress_percent =
+                            Some(battery.charge_percent.round().clamp(0.0, 100.0) as u16);
                         model.primary =
                             format!("{:.0}% · {:?}", battery.charge_percent, battery.state);
                         let time = battery
@@ -676,6 +810,17 @@ impl ShellSession {
                             model.secondary.push(format_duration(seconds));
                         }
                     }
+                    model.bars = batteries
+                        .iter()
+                        .enumerate()
+                        .map(|(index, battery)| ui::SystemStatusBarItem {
+                            label: battery
+                                .model
+                                .clone()
+                                .unwrap_or_else(|| format!("B{}", index + 1)),
+                            value: battery.charge_percent.round().clamp(0.0, 100.0) as u64,
+                        })
+                        .collect();
                     model.compact_rows = batteries
                         .iter()
                         .enumerate()
@@ -698,6 +843,16 @@ impl ShellSession {
                 model.state = widget_state;
                 if let Some(uptime) = uptime {
                     model.primary = format_duration(uptime.seconds);
+                    if let Some(metrics) = metrics {
+                        let booted = metrics.sampled_at
+                            - chrono::Duration::seconds(
+                                i64::try_from(uptime.seconds).unwrap_or(i64::MAX),
+                            );
+                        model.compact_rows.push(vec![
+                            "Booted".into(),
+                            booted.format("%Y-%m-%d %H:%M UTC").to_string(),
+                        ]);
+                    }
                 }
                 if let Some(metrics) = metrics {
                     match &metrics.load {
@@ -709,11 +864,11 @@ impl ShellSession {
                                 "Load {:.2} / {:.2} / {:.2}",
                                 load.one, load.five, load.fifteen
                             ));
-                            model.compact_rows = vec![
+                            model.compact_rows.extend(vec![
                                 vec!["1 minute".to_string(), format!("{:.2}", load.one)],
                                 vec!["5 minutes".to_string(), format!("{:.2}", load.five)],
                                 vec!["15 minutes".to_string(), format!("{:.2}", load.fifteen)],
-                            ];
+                            ]);
                         }
                         MetricState::Unavailable { reason } => {
                             model.secondary.push(reason.clone());
@@ -828,10 +983,18 @@ impl ShellSession {
                     diagnostics.incidents.len()
                 );
                 model.secondary = diagnostics
-                    .incidents
+                    .logs
                     .iter()
+                    .max_by_key(|log| &log.modified_at)
+                    .map(|log| log.path.clone())
+                    .into_iter()
+                    .chain(
+                        diagnostics
+                            .incidents
+                            .iter()
+                            .map(|incident| incident.summary.clone()),
+                    )
                     .take(3)
-                    .map(|incident| incident.summary.clone())
                     .collect();
                 model.compact_rows = diagnostics
                     .incidents

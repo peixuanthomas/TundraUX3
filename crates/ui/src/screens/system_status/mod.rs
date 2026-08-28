@@ -9,11 +9,11 @@ pub use layout::{
 };
 pub use model::{
     AdminSystemStatusViewModel, NetworkInterfaceRowViewModel, StorageVolumeRowViewModel,
-    SystemStatusActionState, SystemStatusContentViewModel, SystemStatusDashboardFocus,
-    SystemStatusDashboardProfile, SystemStatusDashboardViewModel, SystemStatusDetail,
-    SystemStatusDialogViewModel, SystemStatusDragPreview, SystemStatusOverviewViewModel,
-    SystemStatusPickerItemViewModel, SystemStatusPickerViewModel, SystemStatusRoute,
-    SystemStatusSectionState, SystemStatusSizePickerViewModel, SystemStatusTab,
+    SystemStatusActionState, SystemStatusBarItem, SystemStatusContentViewModel,
+    SystemStatusDashboardFocus, SystemStatusDashboardProfile, SystemStatusDashboardViewModel,
+    SystemStatusDetail, SystemStatusDialogViewModel, SystemStatusDragPreview,
+    SystemStatusOverviewViewModel, SystemStatusPickerItemViewModel, SystemStatusPickerViewModel,
+    SystemStatusRoute, SystemStatusSectionState, SystemStatusSizePickerViewModel, SystemStatusTab,
     SystemStatusViewModel, SystemStatusWidgetKind, SystemStatusWidgetSize, SystemStatusWidgetState,
     SystemStatusWidgetViewModel, UserSystemStatusViewModel,
 };

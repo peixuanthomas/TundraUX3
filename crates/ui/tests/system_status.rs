@@ -104,8 +104,9 @@ fn all_kinds_and_sizes_and_states_render() {
             let out = render(100, 24, &m);
             assert!(out.contains(kind.label()));
             assert!(out.contains("42%"));
-            if size != SystemStatusWidgetSize::Small {
-                assert!(out.contains("secondary"))
+            assert!(out.contains("secondary"));
+            if size == SystemStatusWidgetSize::Large {
+                assert!(out.contains("A"));
             }
         }
     }
@@ -249,6 +250,11 @@ fn widget(
         primary: "42%".into(),
         secondary: vec!["secondary".into()],
         trend: Some(vec![1, 3, 2, 5]),
+        progress_percent: Some(42),
+        bars: vec![SystemStatusBarItem {
+            label: "A".into(),
+            value: 42,
+        }],
         compact_rows: vec![vec!["process".into(), "12%".into()]],
         openable: true,
     }

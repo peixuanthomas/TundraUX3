@@ -108,6 +108,11 @@ pub enum SystemStatusWidgetState {
         message: String,
     },
 }
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SystemStatusBarItem {
+    pub label: String,
+    pub value: u64,
+}
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct SystemStatusWidgetViewModel {
     pub kind: SystemStatusWidgetKind,
@@ -119,6 +124,8 @@ pub struct SystemStatusWidgetViewModel {
     pub primary: String,
     pub secondary: Vec<String>,
     pub trend: Option<Vec<u64>>,
+    pub progress_percent: Option<u16>,
+    pub bars: Vec<SystemStatusBarItem>,
     pub compact_rows: Vec<Vec<String>>,
     pub openable: bool,
 }

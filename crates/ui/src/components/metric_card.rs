@@ -2,7 +2,7 @@ use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::Line;
-use ratatui::widgets::{Paragraph, Sparkline};
+use ratatui::widgets::{Bar, BarChart, BarGroup, Gauge, Paragraph, Sparkline};
 
 use super::{ComponentState, EmptyState, Surface, tone_color};
 use crate::{
@@ -78,8 +78,26 @@ impl<'a> MetricCard<'a> {
         } else {
             0
         };
-        let [text_area, trend_area] =
-            Layout::vertical([Constraint::Min(0), Constraint::Length(trend_h)]).areas(inner);
+        let gauge_h = u16::from(
+            self.model.size == SystemStatusWidgetSize::Small
+                && self.model.progress_percent.is_some()
+                && inner.height >= 2,
+        );
+        let bars_h = if self.model.size == SystemStatusWidgetSize::Large
+            && !self.model.bars.is_empty()
+            && inner.height >= 6
+        {
+            3
+        } else {
+            0
+        };
+        let [text_area, gauge_area, bars_area, trend_area] = Layout::vertical([
+            Constraint::Min(0),
+            Constraint::Length(gauge_h),
+            Constraint::Length(bars_h),
+            Constraint::Length(trend_h),
+        ])
+        .areas(inner);
         let mut lines = vec![Line::styled(
             self.model.primary.as_str(),
             Style::default()
@@ -93,6 +111,10 @@ impl<'a> MetricCard<'a> {
                 .iter()
                 .take(text_area.height.saturating_sub(1) as usize)
             {
+                lines.push(Line::styled(line.as_str(), theme.muted_style()));
+            }
+        } else if text_area.height > 1 {
+            if let Some(line) = self.model.secondary.first() {
                 lines.push(Line::styled(line.as_str(), theme.muted_style()));
             }
         }
@@ -113,6 +135,37 @@ impl<'a> MetricCard<'a> {
             ));
         }
         frame.render_widget(Paragraph::new(lines), text_area);
+        if gauge_h > 0 {
+            let value = self.model.progress_percent.unwrap_or_default().min(100);
+            frame.render_widget(
+                Gauge::default()
+                    .percent(value)
+                    .gauge_style(Style::default().fg(tone_color(self.model.tone, theme)))
+                    .style(theme.surface_style()),
+                gauge_area,
+            );
+        }
+        if bars_h > 0 {
+            let bars = self
+                .model
+                .bars
+                .iter()
+                .take(8)
+                .map(|item| {
+                    Bar::default()
+                        .value(item.value.min(100))
+                        .label(Line::from(item.label.as_str()))
+                })
+                .collect::<Vec<_>>();
+            frame.render_widget(
+                BarChart::default()
+                    .data(BarGroup::default().bars(&bars))
+                    .bar_style(Style::default().fg(tone_color(self.model.tone, theme)))
+                    .value_style(theme.muted_style())
+                    .max(100),
+                bars_area,
+            );
+        }
         if trend_h > 0 {
             if let Some(data) = &self.model.trend {
                 frame.render_widget(

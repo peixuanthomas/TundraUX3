@@ -181,6 +181,101 @@ fn system_status_history_deduplicates_uptime_rejects_stale_and_caps_queues() {
 }
 
 #[test]
+fn system_status_metric_vm_exposes_progress_bars_status_and_booted_rows() {
+    let mut state = ShellSession::new_for_home_mode(
+        ShellLaunchConfig::default(),
+        (120, 40),
+        ShellHomeMode::User,
+    );
+    set_test_auth_role(&mut state, UserRole::Admin);
+    let mut snapshot = system_status_metric_snapshot(3_600);
+    if let system_services::MetricState::Ready(cpu) = &mut snapshot.metrics.cpu {
+        cpu.usage_percent = 140.0;
+        cpu.per_core_percent = vec![-5.0, 150.0];
+    }
+    state.apply_system_status_snapshot(snapshot);
+    let model = state.to_system_status_view_model().unwrap();
+    let widgets = &model.dashboard.wide_widgets;
+    let overview = widgets
+        .iter()
+        .find(|widget| widget.kind == ui::SystemStatusWidgetKind::SystemOverview)
+        .unwrap();
+    assert_eq!(overview.primary, "Healthy");
+    assert_eq!(overview.tone, ui::components::ComponentTone::Success);
+    assert!(overview.secondary.len() <= 2);
+    assert!(
+        overview
+            .compact_rows
+            .iter()
+            .any(|row| row.first().is_some_and(|label| label == "Booted"))
+    );
+    let cpu = widgets
+        .iter()
+        .find(|widget| widget.kind == ui::SystemStatusWidgetKind::Cpu)
+        .unwrap();
+    assert_eq!(cpu.progress_percent, Some(100));
+    assert_eq!(
+        cpu.bars.iter().map(|bar| bar.value).collect::<Vec<_>>(),
+        vec![0, 100]
+    );
+    let memory = widgets
+        .iter()
+        .find(|widget| widget.kind == ui::SystemStatusWidgetKind::Memory)
+        .unwrap();
+    assert_eq!(memory.progress_percent, Some(40));
+    assert_eq!(
+        memory.bars.first().map(|bar| bar.label.as_str()),
+        Some("RAM")
+    );
+    let storage = widgets
+        .iter()
+        .find(|widget| widget.kind == ui::SystemStatusWidgetKind::Storage)
+        .unwrap();
+    assert_eq!(storage.progress_percent, Some(90));
+    let uptime = widgets
+        .iter()
+        .find(|widget| widget.kind == ui::SystemStatusWidgetKind::UptimeLoad)
+        .unwrap();
+    assert!(
+        uptime
+            .compact_rows
+            .iter()
+            .any(|row| row.first().is_some_and(|label| label == "Booted"))
+    );
+
+    state.apply_system_status_snapshot(system_status_test_snapshot(
+        4_000,
+        system_services::StoragePressure::Critical,
+        true,
+        system_services::SystemVolumeSource::Detected,
+    ));
+    let model = state.to_system_status_view_model().unwrap();
+    let overview = model
+        .dashboard
+        .wide_widgets
+        .iter()
+        .find(|widget| widget.kind == ui::SystemStatusWidgetKind::SystemOverview)
+        .unwrap();
+    assert_eq!(overview.primary, "Needs attention");
+    assert_eq!(overview.tone, ui::components::ComponentTone::Danger);
+
+    let mut degraded = system_status_metric_snapshot(4_100);
+    degraded.metrics.thermal = system_services::MetricState::Unavailable {
+        reason: "No sensors".into(),
+    };
+    state.apply_system_status_snapshot(degraded);
+    let model = state.to_system_status_view_model().unwrap();
+    let overview = model
+        .dashboard
+        .wide_widgets
+        .iter()
+        .find(|widget| widget.kind == ui::SystemStatusWidgetKind::SystemOverview)
+        .unwrap();
+    assert_eq!(overview.primary, "Degraded");
+    assert_eq!(overview.tone, ui::components::ComponentTone::Warning);
+}
+
+#[test]
 fn system_status_role_gate_and_missing_service_reject_open() {
     for role in [UserRole::Admin, UserRole::User, UserRole::Guest] {
         let mut state = ShellSession::new_for_home_mode(
