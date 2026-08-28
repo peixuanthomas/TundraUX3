@@ -101,6 +101,85 @@ fn system_status_test_snapshot(
     }
 }
 
+fn system_status_metric_snapshot(uptime: u64) -> app::AppSystemStatusSnapshot {
+    let mut snapshot = system_status_test_snapshot(
+        uptime,
+        system_services::StoragePressure::Normal,
+        true,
+        system_services::SystemVolumeSource::Detected,
+    );
+    snapshot.metrics.uptime =
+        system_services::MetricState::Ready(system_services::UptimeSnapshot { seconds: uptime });
+    snapshot.metrics.cpu = system_services::MetricState::Ready(system_services::CpuSnapshot {
+        usage_percent: 25.0,
+        per_core_percent: vec![25.0],
+        logical_core_count: 1,
+        physical_core_count: Some(1),
+    });
+    snapshot.metrics.memory =
+        system_services::MetricState::Ready(system_services::MemorySnapshot {
+            total_bytes: 100,
+            used_bytes: 40,
+            available_bytes: 60,
+            swap_total_bytes: 0,
+            swap_used_bytes: 0,
+        });
+    snapshot.metrics.network_io =
+        system_services::MetricState::Ready(system_services::NetworkIoSnapshot {
+            interfaces: vec![],
+            total_received_bytes: 1,
+            total_transmitted_bytes: 2,
+            total_received_bytes_per_second: 3.0,
+            total_transmitted_bytes_per_second: 4.0,
+        });
+    snapshot.metrics.thermal =
+        system_services::MetricState::Ready(vec![system_services::ThermalSensorSnapshot {
+            label: "CPU".into(),
+            temperature_celsius: 50.0,
+            critical_celsius: Some(90.0),
+        }]);
+    snapshot
+}
+
+#[test]
+fn system_status_history_deduplicates_uptime_rejects_stale_and_caps_queues() {
+    let mut state = ShellSession::new_for_home_mode(
+        ShellLaunchConfig::default(),
+        (120, 40),
+        ShellHomeMode::User,
+    );
+    set_test_auth_role(&mut state, UserRole::Admin);
+    let first = system_status_metric_snapshot(10);
+    state.apply_system_status_snapshot(first.clone());
+    state.apply_system_status_snapshot(first);
+    assert_eq!(state.system_status_history.cpu.len(), 1);
+    state.apply_system_status_snapshot(system_status_metric_snapshot(11));
+    assert_eq!(state.system_status_history.cpu.len(), 2);
+    let mut stale = system_status_metric_snapshot(12);
+    stale.metrics.uptime = system_services::MetricState::Stale {
+        last_good: system_services::UptimeSnapshot { seconds: 12 },
+        error: "old".into(),
+    };
+    state.apply_system_status_snapshot(stale);
+    assert_eq!(
+        state.system_status_history.cpu.len(),
+        2,
+        "stale uptime inserts no fake points"
+    );
+    for uptime in 20..90 {
+        state.apply_system_status_snapshot(system_status_metric_snapshot(uptime));
+    }
+    for len in [
+        state.system_status_history.cpu.len(),
+        state.system_status_history.memory.len(),
+        state.system_status_history.network_received.len(),
+        state.system_status_history.network_transmitted.len(),
+        state.system_status_history.temperature.len(),
+    ] {
+        assert!(len <= 60);
+    }
+}
+
 #[test]
 fn system_status_role_gate_and_missing_service_reject_open() {
     for role in [UserRole::Admin, UserRole::User, UserRole::Guest] {
@@ -500,6 +579,280 @@ fn system_status_size_picker_double_clicks_exact_size_and_transitions_clear_it()
     state.open_system_status_size_picker();
     state.finish_cancel_system_status_dashboard_edit();
     assert!(state.system_status_size_picker.is_none());
+}
+
+#[test]
+fn system_status_draft_profiles_catalog_cancel_and_save_failure_are_isolated() {
+    let mut state = ShellSession::new_for_home_mode(
+        ShellLaunchConfig::default(),
+        (80, 24),
+        ShellHomeMode::User,
+    );
+    set_test_auth_role(&mut state, UserRole::Admin);
+    state.screen_stack.push(ShellScreen::SystemStatus);
+    state.focused_component = ShellComponent::SystemStatus;
+    let baseline = state.system_status_dashboard_config();
+    state.begin_system_status_dashboard_edit();
+    state.system_status_selected_widget = Some(storage::SystemStatusWidgetKind::Cpu);
+    state.move_selected_system_status_widget(1, 2);
+    state.cycle_selected_system_status_widget_size();
+    let changed = state.system_status_dashboard_draft.as_ref().unwrap();
+    assert_eq!(
+        changed.wide, baseline.wide,
+        "narrow edits leave wide semantics identical"
+    );
+    assert_ne!(changed.narrow, baseline.narrow);
+    state.finish_cancel_system_status_dashboard_edit();
+    assert_eq!(
+        state.system_status_dashboard_config(),
+        baseline,
+        "Cancel restores baseline"
+    );
+
+    state.begin_system_status_dashboard_edit();
+    let add_kind = storage::SystemStatusWidgetKind::Battery;
+    let picker_index = super::controller::system_status::SYSTEM_STATUS_WIDGET_KINDS
+        .iter()
+        .position(|kind| *kind == add_kind)
+        .unwrap();
+    state.open_system_status_add_picker();
+    state.select_system_status_picker_item(picker_index);
+    state.apply_input(InputEvent::from_key_label("Enter"));
+    let added = state
+        .system_status_dashboard_draft
+        .as_ref()
+        .unwrap()
+        .clone();
+    assert_eq!(
+        added
+            .widgets
+            .iter()
+            .filter(|kind| **kind == add_kind)
+            .count(),
+        1
+    );
+    for layout in [&added.wide, &added.narrow] {
+        assert_eq!(
+            layout
+                .placements
+                .iter()
+                .filter(|p| p.kind == add_kind)
+                .count(),
+            1
+        );
+    }
+    state.remove_selected_system_status_widget();
+    let removed = state.system_status_dashboard_draft.as_ref().unwrap();
+    assert!(!removed.widgets.contains(&add_kind));
+    assert_eq!(
+        removed.wide, baseline.wide,
+        "removal does not compact unrelated wide gaps"
+    );
+    assert_eq!(
+        removed.narrow, baseline.narrow,
+        "removal does not compact unrelated narrow gaps"
+    );
+
+    state.system_status_selected_widget = Some(storage::SystemStatusWidgetKind::Cpu);
+    state.cycle_selected_system_status_widget_size();
+    let dirty = state.system_status_dashboard_draft.clone().unwrap();
+    state.save_system_status_dashboard();
+    assert_eq!(state.system_status_dashboard_draft.as_ref(), Some(&dirty));
+    assert_eq!(state.app.active_system_status_dashboard(), None);
+    assert!(
+        state
+            .system_status_dashboard_feedback
+            .as_deref()
+            .unwrap_or_default()
+            .contains("Storage unavailable")
+    );
+}
+
+#[test]
+fn system_status_permissions_filter_without_mutating_persisted_catalog() {
+    let persisted = storage::SystemStatusDashboardConfig::for_role("Admin");
+    let mut user = ShellSession::new_for_home_mode(
+        ShellLaunchConfig::default(),
+        (120, 40),
+        ShellHomeMode::User,
+    );
+    set_test_auth_role(&mut user, UserRole::User);
+    user.app.dispatch_at(
+        app::AppCommand::SetActiveSystemStatusDashboard(Some(persisted.clone())),
+        Instant::now(),
+    );
+    assert!(!user.system_status_picker_kind_enabled(storage::SystemStatusWidgetKind::TopProcesses));
+    for kind in [
+        storage::SystemStatusWidgetKind::Storage,
+        storage::SystemStatusWidgetKind::Network,
+        storage::SystemStatusWidgetKind::TopProcesses,
+    ] {
+        user.open_system_status_detail(kind);
+        assert_eq!(user.system_status_route, ui::SystemStatusRoute::Dashboard);
+        assert!(
+            user.system_status_dashboard_feedback
+                .as_deref()
+                .unwrap_or_default()
+                .contains("Administrator")
+        );
+    }
+    assert!(
+        user.app
+            .active_system_status_dashboard()
+            .unwrap()
+            .widgets
+            .contains(&storage::SystemStatusWidgetKind::TopProcesses)
+    );
+
+    set_test_auth_role(&mut user, UserRole::Admin);
+    for (kind, detail) in [
+        (
+            storage::SystemStatusWidgetKind::Storage,
+            ui::SystemStatusDetail::Storage,
+        ),
+        (
+            storage::SystemStatusWidgetKind::Network,
+            ui::SystemStatusDetail::Network,
+        ),
+        (
+            storage::SystemStatusWidgetKind::TopProcesses,
+            ui::SystemStatusDetail::Processes,
+        ),
+    ] {
+        user.back_from_system_status_detail();
+        user.open_system_status_detail(kind);
+        assert_eq!(
+            user.system_status_route,
+            ui::SystemStatusRoute::Detail(detail)
+        );
+    }
+}
+
+#[test]
+fn system_status_drag_changes_only_active_profile_and_clears_capture() {
+    let mut state = ShellSession::new_for_home_mode(
+        ShellLaunchConfig::default(),
+        (120, 40),
+        ShellHomeMode::User,
+    );
+    set_test_auth_role(&mut state, UserRole::Admin);
+    state.screen_stack.push(ShellScreen::SystemStatus);
+    state.focused_component = ShellComponent::SystemStatus;
+    state.begin_system_status_dashboard_edit();
+    state.system_status_selected_widget = Some(storage::SystemStatusWidgetKind::Cpu);
+    let inactive = state
+        .system_status_dashboard_draft
+        .as_ref()
+        .unwrap()
+        .narrow
+        .clone();
+    let before = state
+        .system_status_dashboard_draft
+        .as_ref()
+        .unwrap()
+        .wide
+        .clone();
+    let model = state.to_system_status_view_model().unwrap();
+    let ui::ShellLayout::Full { main, .. } = ui::compute_shell_layout(Rect::new(0, 0, 120, 40))
+    else {
+        panic!()
+    };
+    let layout = ui::system_status_layout(main, &model);
+    let card = layout
+        .widgets
+        .iter()
+        .find(|widget| widget.kind == ui::SystemStatusWidgetKind::Cpu)
+        .unwrap();
+    let down = (card.area.x.saturating_add(1), card.area.y.saturating_add(1));
+    let target = (
+        down.0,
+        down.1
+            .saturating_add(6)
+            .min(layout.canvas.bottom().saturating_sub(1)),
+    );
+    state.begin_system_status_widget_drag(ui::SystemStatusWidgetKind::Cpu, down);
+    assert!(state.system_status_widget_drag.is_some());
+    state.update_system_status_widget_drag(target);
+    state.finish_system_status_widget_drag(target);
+    assert!(state.system_status_widget_drag.is_none());
+    let draft = state.system_status_dashboard_draft.as_ref().unwrap();
+    assert_ne!(draft.wide, before);
+    assert_eq!(draft.narrow, inactive);
+    let rendered = state.to_system_status_view_model().unwrap();
+    let layout = ui::system_status_layout(main, &rendered);
+    for (index, left) in layout.widgets.iter().filter(|w| !w.preview).enumerate() {
+        for right in layout.widgets.iter().filter(|w| !w.preview).skip(index + 1) {
+            assert!(
+                left.area.intersection(right.area).is_empty(),
+                "resolved placements do not overlap"
+            );
+        }
+    }
+}
+
+#[test]
+fn system_status_save_persists_dashboard_to_user_record() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!(
+        "tundra-shell-dashboard-save-{}-{unique}",
+        std::process::id()
+    ));
+    let _guard = SystemStatusTempGuard(root.clone());
+    let paths = platform::build_linux_app_paths(
+        root.join("Config"),
+        root.join("Data"),
+        root.join("Cache"),
+        root.join("State"),
+        root.join("Temp"),
+    )
+    .unwrap();
+    let manager = StorageManager::open(paths).unwrap().manager;
+    UserService::new(manager.clone())
+        .bootstrap_admin("DashboardAdmin", "StrongPass123")
+        .unwrap();
+    let login = SessionService::new(manager.clone())
+        .login("DashboardAdmin", "StrongPass123")
+        .unwrap();
+    let mut startup = ShellStartupState::clean(
+        PlatformKind::Linux,
+        PlatformCapabilities::native_supported(),
+    );
+    startup.storage_manager = Some(manager.clone());
+    let mut state =
+        ShellSession::new_with_startup(ShellLaunchConfig::default(), (120, 40), startup);
+    state.complete_login(login);
+    let loaded = state
+        .app
+        .active_system_status_dashboard()
+        .cloned()
+        .expect("login loads dashboard");
+    state.screen_stack.push(ShellScreen::SystemStatus);
+    state.focused_component = ShellComponent::SystemStatus;
+    state.begin_system_status_dashboard_edit();
+    let index = super::controller::system_status::SYSTEM_STATUS_WIDGET_KINDS
+        .iter()
+        .position(|kind| *kind == storage::SystemStatusWidgetKind::Battery)
+        .unwrap();
+    state.open_system_status_add_picker();
+    state.select_system_status_picker_item(index);
+    state.apply_input(InputEvent::from_key_label("Enter"));
+    let expected = state.system_status_dashboard_draft.clone().unwrap();
+    assert_ne!(expected, loaded);
+    state.save_system_status_dashboard();
+    assert!(state.system_status_dashboard_draft.is_none());
+    assert_eq!(state.app.active_system_status_dashboard(), Some(&expected));
+    let persisted = manager
+        .load_users()
+        .unwrap()
+        .users
+        .into_iter()
+        .find(|user| user.username == "DashboardAdmin")
+        .unwrap()
+        .system_status_dashboard;
+    assert_eq!(persisted, expected);
 }
 
 #[test]
