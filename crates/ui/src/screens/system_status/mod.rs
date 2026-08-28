@@ -8,11 +8,12 @@ pub use layout::{
 };
 pub use model::{
     AdminSystemStatusViewModel, NetworkInterfaceRowViewModel, StorageVolumeRowViewModel,
-    SystemStatusActionState, SystemStatusContentViewModel, SystemStatusDashboardProfile,
-    SystemStatusDashboardViewModel, SystemStatusDetail, SystemStatusDialogViewModel,
-    SystemStatusDragPreview, SystemStatusOverviewViewModel, SystemStatusPickerItemViewModel,
-    SystemStatusPickerViewModel, SystemStatusRoute, SystemStatusSectionState, SystemStatusTab,
-    SystemStatusViewModel, SystemStatusWidgetKind, SystemStatusWidgetSize, SystemStatusWidgetState,
-    SystemStatusWidgetViewModel, UserSystemStatusViewModel,
+    SystemStatusActionState, SystemStatusContentViewModel, SystemStatusDashboardFocus,
+    SystemStatusDashboardProfile, SystemStatusDashboardViewModel, SystemStatusDetail,
+    SystemStatusDialogViewModel, SystemStatusDragPreview, SystemStatusOverviewViewModel,
+    SystemStatusPickerItemViewModel, SystemStatusPickerViewModel, SystemStatusRoute,
+    SystemStatusSectionState, SystemStatusTab, SystemStatusViewModel, SystemStatusWidgetKind,
+    SystemStatusWidgetSize, SystemStatusWidgetState, SystemStatusWidgetViewModel,
+    UserSystemStatusViewModel,
 };
 pub use render::{render_system_status, render_system_status_contextual};

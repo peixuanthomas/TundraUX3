@@ -189,6 +189,7 @@ impl ShellSession {
             system_status_route: ui::SystemStatusRoute::Dashboard,
             system_status_tab: ui::SystemStatusTab::Overview,
             system_status_selected_widget: None,
+            system_status_dashboard_focus: ui::SystemStatusDashboardFocus::default(),
             system_status_dashboard_scroll_row: 0,
             system_status_dashboard_draft: None,
             system_status_add_picker: None,

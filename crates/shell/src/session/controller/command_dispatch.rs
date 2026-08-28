@@ -1151,6 +1151,18 @@ impl ShellSession {
                 }
                 ShellAction::Redraw
             }
+            ShellCommand::SystemStatusFocusNext => {
+                self.move_system_status_dashboard_focus(1);
+                ShellAction::Redraw
+            }
+            ShellCommand::SystemStatusFocusPrevious => {
+                self.move_system_status_dashboard_focus(-1);
+                ShellAction::Redraw
+            }
+            ShellCommand::SystemStatusActivateFocus => {
+                self.activate_system_status_dashboard_focus();
+                ShellAction::Redraw
+            }
             ShellCommand::SystemStatusSelectWidget(kind) => {
                 self.select_system_status_widget(kind);
                 ShellAction::Redraw

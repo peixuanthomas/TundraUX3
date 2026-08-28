@@ -91,7 +91,7 @@ fn render_dashboard(
                 let mut card = MetricCard::new(vm);
                 card.state = ComponentState::default()
                     .selected(model.dashboard.selected == Some(g.kind))
-                    .focused(model.dashboard.selected == Some(g.kind));
+                    .focused(model.dashboard.focus == SystemStatusDashboardFocus::Widget(g.kind));
                 card.render_frame(frame, g.area, context)
             }
         }
@@ -141,6 +141,7 @@ fn render_dashboard(
             l.add_button,
             "Add",
             model.dashboard.actions.add_disabled,
+            model.dashboard.focus == SystemStatusDashboardFocus::Add,
             theme,
         );
         button(
@@ -148,6 +149,7 @@ fn render_dashboard(
             l.size_button,
             "Size",
             model.dashboard.actions.size_disabled,
+            model.dashboard.focus == SystemStatusDashboardFocus::Size,
             theme,
         );
         button(
@@ -155,6 +157,7 @@ fn render_dashboard(
             l.remove_button,
             "Remove",
             model.dashboard.actions.remove_disabled,
+            model.dashboard.focus == SystemStatusDashboardFocus::Remove,
             theme,
         );
         button(
@@ -162,6 +165,7 @@ fn render_dashboard(
             l.save_button,
             "Save",
             model.dashboard.actions.save_disabled,
+            model.dashboard.focus == SystemStatusDashboardFocus::Save,
             theme,
         );
         button(
@@ -169,6 +173,7 @@ fn render_dashboard(
             l.cancel_button,
             "Cancel",
             model.dashboard.actions.cancel_disabled,
+            model.dashboard.focus == SystemStatusDashboardFocus::Cancel,
             theme,
         )
     } else {
@@ -177,6 +182,7 @@ fn render_dashboard(
             l.edit_button,
             "Edit",
             model.dashboard.actions.edit_disabled,
+            model.dashboard.focus == SystemStatusDashboardFocus::Edit,
             theme,
         );
         button(
@@ -188,17 +194,26 @@ fn render_dashboard(
                 "Refresh"
             },
             model.dashboard.actions.refresh_disabled || model.refreshing,
+            model.dashboard.focus == SystemStatusDashboardFocus::Refresh,
             theme,
         )
     }
     render_overlays(frame, l, model, context)
 }
-fn button(frame: &mut Frame<'_>, area: Rect, label: &str, disabled: bool, theme: &TundraTheme) {
+fn button(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    label: &str,
+    disabled: bool,
+    focused: bool,
+    theme: &TundraTheme,
+) {
     let mut b = Button::new(
         format!("system-status.{}", label.to_ascii_lowercase()),
         label,
     );
     b.set_disabled(disabled);
+    b.set_focused(focused);
     b.render_borderless_frame(frame, area, theme)
 }
 fn render_overlays(
@@ -321,7 +336,14 @@ fn render_detail(
             Paragraph::new("Esc Dashboard · R Refresh").style(theme.muted_style()),
             l.footer,
         );
-        button(frame, l.refresh_button, "Refresh", model.refreshing, theme)
+        button(
+            frame,
+            l.refresh_button,
+            "Refresh",
+            model.refreshing,
+            false,
+            theme,
+        )
     }
 }
 fn render_formatted_detail(

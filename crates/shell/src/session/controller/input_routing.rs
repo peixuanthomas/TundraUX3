@@ -684,12 +684,12 @@ impl ShellSession {
                 }
                 InputKey::Up if key.modifiers.shift => ShellCommand::SystemStatusMoveWidget(0, -1),
                 InputKey::Down if key.modifiers.shift => ShellCommand::SystemStatusMoveWidget(0, 1),
-                InputKey::Left | InputKey::BackTab => {
-                    ShellCommand::SystemStatusSelectWidgetDirection(-1, 0)
-                }
-                InputKey::Right | InputKey::Tab => {
-                    ShellCommand::SystemStatusSelectWidgetDirection(1, 0)
-                }
+                InputKey::BackTab => ShellCommand::SystemStatusFocusPrevious,
+                InputKey::Tab if key.modifiers.shift => ShellCommand::SystemStatusFocusPrevious,
+                InputKey::Tab => ShellCommand::SystemStatusFocusNext,
+                InputKey::Enter | InputKey::Char(' ') => ShellCommand::SystemStatusActivateFocus,
+                InputKey::Left => ShellCommand::SystemStatusSelectWidgetDirection(-1, 0),
+                InputKey::Right => ShellCommand::SystemStatusSelectWidgetDirection(1, 0),
                 InputKey::Up => ShellCommand::SystemStatusSelectWidgetDirection(0, -1),
                 InputKey::Down => ShellCommand::SystemStatusSelectWidgetDirection(0, 1),
                 InputKey::PageUp => ShellCommand::SystemStatusScroll(-2),
@@ -703,15 +703,12 @@ impl ShellSession {
             InputKey::Escape => ShellCommand::CloseSystemStatus,
             InputKey::Char('r' | 'R') => ShellCommand::SystemStatusRefresh,
             InputKey::Char('e' | 'E') => ShellCommand::SystemStatusBeginEdit,
-            InputKey::Enter | InputKey::Char(' ') => {
-                ShellCommand::SystemStatusActivateSelectedWidget
-            }
-            InputKey::Left | InputKey::BackTab => {
-                ShellCommand::SystemStatusSelectWidgetDirection(-1, 0)
-            }
-            InputKey::Right | InputKey::Tab => {
-                ShellCommand::SystemStatusSelectWidgetDirection(1, 0)
-            }
+            InputKey::Enter | InputKey::Char(' ') => ShellCommand::SystemStatusActivateFocus,
+            InputKey::BackTab => ShellCommand::SystemStatusFocusPrevious,
+            InputKey::Tab if key.modifiers.shift => ShellCommand::SystemStatusFocusPrevious,
+            InputKey::Tab => ShellCommand::SystemStatusFocusNext,
+            InputKey::Left => ShellCommand::SystemStatusSelectWidgetDirection(-1, 0),
+            InputKey::Right => ShellCommand::SystemStatusSelectWidgetDirection(1, 0),
             InputKey::Up => ShellCommand::SystemStatusSelectWidgetDirection(0, -1),
             InputKey::Down => ShellCommand::SystemStatusSelectWidgetDirection(0, 1),
             InputKey::PageUp => ShellCommand::SystemStatusScroll(-2),

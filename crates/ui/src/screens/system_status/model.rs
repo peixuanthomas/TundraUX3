@@ -128,6 +128,22 @@ pub enum SystemStatusDashboardProfile {
     Wide,
     Narrow,
 }
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SystemStatusDashboardFocus {
+    Widget(SystemStatusWidgetKind),
+    Edit,
+    Refresh,
+    Add,
+    Size,
+    Remove,
+    Save,
+    Cancel,
+}
+impl Default for SystemStatusDashboardFocus {
+    fn default() -> Self {
+        Self::Widget(SystemStatusWidgetKind::SystemOverview)
+    }
+}
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct SystemStatusActionState {
     pub refresh_disabled: bool,
@@ -171,6 +187,7 @@ pub struct SystemStatusDashboardViewModel {
     pub wide_widgets: Vec<SystemStatusWidgetViewModel>,
     pub narrow_widgets: Vec<SystemStatusWidgetViewModel>,
     pub selected: Option<SystemStatusWidgetKind>,
+    pub focus: SystemStatusDashboardFocus,
     pub scroll_row: u16,
     pub editing: bool,
     pub dirty: bool,

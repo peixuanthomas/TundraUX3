@@ -306,6 +306,7 @@ impl ShellSession {
             selected: self
                 .system_status_selected_widget
                 .map(super::super::controller::system_status::ui_widget_kind),
+            focus: self.system_status_dashboard_focus,
             scroll_row: self.system_status_dashboard_scroll_row,
             editing: self.system_status_dashboard_draft.is_some(),
             dirty,

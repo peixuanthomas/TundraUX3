@@ -223,11 +223,11 @@ fn system_status_keyboard_navigates_dashboard_and_routes_detail_actions() {
     user.focused_component = ShellComponent::SystemStatus;
     assert_eq!(
         user.route_key_input(&KeyInput::from_label("Tab")).1,
-        ShellCommand::SystemStatusSelectWidgetDirection(1, 0)
+        ShellCommand::SystemStatusFocusNext
     );
     assert_eq!(
         user.route_key_input(&KeyInput::from_label("Enter")).1,
-        ShellCommand::SystemStatusActivateSelectedWidget
+        ShellCommand::SystemStatusActivateFocus
     );
     assert_eq!(
         user.route_key_input(&KeyInput::from_label("e")).1,
@@ -248,7 +248,92 @@ fn system_status_keyboard_navigates_dashboard_and_routes_detail_actions() {
     admin.set_system_status_tab(ui::SystemStatusTab::Overview);
     assert_eq!(
         admin.route_key_input(&KeyInput::from_label("Shift+Tab")).1,
-        ShellCommand::SystemStatusSelectWidgetDirection(-1, 0)
+        ShellCommand::SystemStatusFocusPrevious
+    );
+}
+
+#[test]
+fn system_status_dashboard_focus_wraps_skips_disabled_and_activates() {
+    let mut state = ShellSession::new_for_home_mode(
+        ShellLaunchConfig::default(),
+        (120, 40),
+        ShellHomeMode::User,
+    );
+    set_test_auth_role(&mut state, UserRole::Admin);
+    state.screen_stack.push(ShellScreen::SystemStatus);
+    state.focused_component = ShellComponent::SystemStatus;
+    state.ensure_system_status_widget_selection();
+    state.restore_system_status_widget_focus();
+    let first = state.system_status_dashboard_focus;
+    state.system_status_dashboard_focus = ui::SystemStatusDashboardFocus::Refresh;
+    state.move_system_status_dashboard_focus(1);
+    assert_eq!(state.system_status_dashboard_focus, first, "forward wraps");
+    state.move_system_status_dashboard_focus(-1);
+    assert_eq!(
+        state.system_status_dashboard_focus,
+        ui::SystemStatusDashboardFocus::Refresh,
+        "reverse wraps"
+    );
+
+    state.begin_system_status_dashboard_edit();
+    state.system_status_selected_widget = None;
+    state.system_status_dashboard_focus = ui::SystemStatusDashboardFocus::Add;
+    state.move_system_status_dashboard_focus(1);
+    assert_eq!(
+        state.system_status_dashboard_focus,
+        ui::SystemStatusDashboardFocus::Cancel,
+        "disabled Size, Remove, and clean Save are skipped"
+    );
+    state.apply_input(InputEvent::from_key_label("Enter"));
+    assert!(
+        state.system_status_dashboard_draft.is_none(),
+        "focused Cancel activates"
+    );
+}
+
+#[test]
+fn system_status_dashboard_focus_restores_and_tabs_offscreen() {
+    let mut state = ShellSession::new_for_home_mode(
+        ShellLaunchConfig::default(),
+        (100, 20),
+        ShellHomeMode::User,
+    );
+    set_test_auth_role(&mut state, UserRole::Admin);
+    state.screen_stack.push(ShellScreen::SystemStatus);
+    state.focused_component = ShellComponent::SystemStatus;
+    state.ensure_system_status_widget_selection();
+    let kind = state.system_status_selected_widget.expect("default widget");
+    state.system_status_dashboard_focus = ui::SystemStatusDashboardFocus::Widget(
+        super::controller::system_status::ui_widget_kind(kind),
+    );
+    state.open_system_status_detail(kind);
+    state.back_from_system_status_detail();
+    assert_eq!(
+        state.system_status_dashboard_focus,
+        ui::SystemStatusDashboardFocus::Widget(super::controller::system_status::ui_widget_kind(
+            kind
+        ))
+    );
+
+    state.begin_system_status_dashboard_edit();
+    let draft = state.system_status_dashboard_draft.as_mut().unwrap();
+    let last = draft.wide.placements.last_mut().unwrap();
+    last.row = 20;
+    let last_kind = super::controller::system_status::ui_widget_kind(last.kind);
+    let order = state.system_status_dashboard_focus_order();
+    let position = order
+        .iter()
+        .position(|focus| *focus == ui::SystemStatusDashboardFocus::Widget(last_kind))
+        .unwrap();
+    state.system_status_dashboard_focus = order[position.saturating_sub(1)];
+    state.move_system_status_dashboard_focus(1);
+    assert_eq!(
+        state.system_status_dashboard_focus,
+        ui::SystemStatusDashboardFocus::Widget(last_kind)
+    );
+    assert!(
+        state.system_status_dashboard_scroll_row > 0,
+        "Tab scrolls the offscreen widget into view"
     );
 }
 

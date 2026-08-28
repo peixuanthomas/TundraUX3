@@ -426,6 +426,7 @@ pub struct UiSessionState {
     pub(super) system_status_route: ui::SystemStatusRoute,
     pub(super) system_status_tab: ui::SystemStatusTab,
     pub(super) system_status_selected_widget: Option<storage::SystemStatusWidgetKind>,
+    pub(super) system_status_dashboard_focus: ui::SystemStatusDashboardFocus,
     pub(super) system_status_dashboard_scroll_row: u16,
     pub(super) system_status_dashboard_draft: Option<storage::SystemStatusDashboardConfig>,
     pub(super) system_status_add_picker: Option<SystemStatusAddPickerState>,

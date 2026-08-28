@@ -45,6 +45,7 @@ impl ShellSession {
         self.system_status_dashboard_feedback = None;
         self.system_status_widget_drag = None;
         self.ensure_system_status_widget_selection();
+        self.restore_system_status_widget_focus();
         self.system_status_selected_row = 0;
         self.system_status_scroll_offset = 0;
         self.diagnostics_tab = ui::DiagnosticsTab::Health;
@@ -229,6 +230,7 @@ impl ShellSession {
         self.system_status_refresh_requested_revision = None;
         self.system_status_route = ui::SystemStatusRoute::Dashboard;
         self.system_status_selected_widget = None;
+        self.system_status_dashboard_focus = ui::SystemStatusDashboardFocus::default();
         self.system_status_dashboard_scroll_row = 0;
         self.system_status_dashboard_draft = None;
         self.system_status_add_picker = None;
@@ -343,6 +345,7 @@ impl ShellSession {
         self.system_status_discard_confirm_selected = true;
         self.system_status_dashboard_feedback = Some("Editing dashboard".to_string());
         self.ensure_system_status_widget_selection();
+        self.restore_system_status_widget_focus();
     }
 
     pub(in crate::session) fn request_cancel_system_status_dashboard_edit(&mut self) {
@@ -365,6 +368,7 @@ impl ShellSession {
         self.system_status_widget_drag = None;
         self.system_status_dashboard_feedback = Some("Dashboard changes cancelled".to_string());
         self.ensure_system_status_widget_selection();
+        self.restore_system_status_widget_focus();
     }
 
     pub(in crate::session) fn continue_system_status_dashboard_edit(&mut self) {
@@ -400,6 +404,8 @@ impl ShellSession {
                 self.system_status_discard_confirm_selected = true;
                 self.system_status_widget_drag = None;
                 self.system_status_dashboard_feedback = Some("Saved dashboard".to_string());
+                self.ensure_system_status_widget_selection();
+                self.restore_system_status_widget_focus();
             }
             Err(error) => {
                 self.system_status_dashboard_feedback = Some(format!(
@@ -414,6 +420,7 @@ impl ShellSession {
         if self.system_status_dashboard_draft.is_none() {
             return;
         }
+        self.system_status_dashboard_focus = ui::SystemStatusDashboardFocus::Add;
         let selected = SYSTEM_STATUS_WIDGET_KINDS
             .iter()
             .position(|kind| self.system_status_picker_kind_enabled(*kind))
@@ -474,6 +481,8 @@ impl ShellSession {
             .is_some_and(|dashboard| dashboard.add_widget(kind))
         {
             self.system_status_selected_widget = Some(kind);
+            self.system_status_dashboard_focus =
+                ui::SystemStatusDashboardFocus::Widget(ui_widget_kind(kind));
             self.system_status_dashboard_feedback =
                 Some(format!("Added {}", ui_widget_kind(kind).label()));
         }
@@ -493,6 +502,11 @@ impl ShellSession {
                 Some(format!("Removed {}", ui_widget_kind(kind).label()));
             self.system_status_selected_widget = None;
             self.ensure_system_status_widget_selection();
+            self.system_status_dashboard_focus = self
+                .system_status_selected_widget
+                .map(ui_widget_kind)
+                .map(ui::SystemStatusDashboardFocus::Widget)
+                .unwrap_or(ui::SystemStatusDashboardFocus::Cancel);
         }
     }
 
@@ -572,6 +586,11 @@ impl ShellSession {
             .collect::<Vec<_>>();
         if widgets.is_empty() {
             self.system_status_selected_widget = None;
+            self.system_status_dashboard_focus = if self.system_status_dashboard_draft.is_some() {
+                ui::SystemStatusDashboardFocus::Cancel
+            } else {
+                ui::SystemStatusDashboardFocus::Edit
+            };
             return;
         }
         let current = self
@@ -580,6 +599,8 @@ impl ShellSession {
             .and_then(|kind| widgets.iter().find(|widget| widget.kind == kind).copied());
         let Some(current) = current else {
             self.system_status_selected_widget = Some(storage_widget_kind(widgets[0].kind));
+            self.system_status_dashboard_focus =
+                ui::SystemStatusDashboardFocus::Widget(widgets[0].kind);
             return;
         };
         let center = |area: Rect| {
@@ -621,6 +642,123 @@ impl ShellSession {
             .map(|(_, kind)| storage_widget_kind(kind));
         if let Some(candidate) = candidate {
             self.system_status_selected_widget = Some(candidate);
+            self.system_status_dashboard_focus =
+                ui::SystemStatusDashboardFocus::Widget(ui_widget_kind(candidate));
+        }
+    }
+
+    pub(in crate::session) fn system_status_dashboard_focus_order(
+        &self,
+    ) -> Vec<ui::SystemStatusDashboardFocus> {
+        let Some((model, layout)) = self.system_status_layout() else {
+            return Vec::new();
+        };
+        let mut widgets = model
+            .dashboard
+            .widgets(layout.profile)
+            .iter()
+            .collect::<Vec<_>>();
+        widgets.sort_by_key(|widget| (widget.row, widget.column));
+        let mut order = widgets
+            .into_iter()
+            .map(|widget| ui::SystemStatusDashboardFocus::Widget(widget.kind))
+            .collect::<Vec<_>>();
+        let actions = model.dashboard.actions;
+        if model.dashboard.editing {
+            for (disabled, focus) in [
+                (actions.add_disabled, ui::SystemStatusDashboardFocus::Add),
+                (actions.size_disabled, ui::SystemStatusDashboardFocus::Size),
+                (
+                    actions.remove_disabled,
+                    ui::SystemStatusDashboardFocus::Remove,
+                ),
+                (actions.save_disabled, ui::SystemStatusDashboardFocus::Save),
+            ] {
+                if !disabled {
+                    order.push(focus);
+                }
+            }
+            order.push(ui::SystemStatusDashboardFocus::Cancel);
+        } else {
+            if !actions.edit_disabled {
+                order.push(ui::SystemStatusDashboardFocus::Edit);
+            }
+            if !actions.refresh_disabled {
+                order.push(ui::SystemStatusDashboardFocus::Refresh);
+            }
+        }
+        order
+    }
+
+    pub(in crate::session) fn move_system_status_dashboard_focus(&mut self, delta: isize) {
+        let order = self.system_status_dashboard_focus_order();
+        if order.is_empty() {
+            return;
+        }
+        let current = order
+            .iter()
+            .position(|focus| *focus == self.system_status_dashboard_focus)
+            .unwrap_or_else(|| {
+                if delta < 0 {
+                    0
+                } else {
+                    order.len().saturating_sub(1)
+                }
+            });
+        let next = (current as isize + delta).rem_euclid(order.len() as isize) as usize;
+        self.system_status_dashboard_focus = order[next];
+        if let ui::SystemStatusDashboardFocus::Widget(kind) = order[next] {
+            self.system_status_selected_widget = Some(storage_widget_kind(kind));
+            self.scroll_system_status_focused_widget_into_view(kind);
+        }
+    }
+
+    fn scroll_system_status_focused_widget_into_view(&mut self, kind: ui::SystemStatusWidgetKind) {
+        let Some((model, layout)) = self.system_status_layout() else {
+            return;
+        };
+        let Some(widget) = model
+            .dashboard
+            .widgets(layout.profile)
+            .iter()
+            .find(|widget| widget.kind == kind)
+        else {
+            return;
+        };
+        let capacity = layout
+            .visible_row_end
+            .saturating_sub(layout.visible_row_start);
+        if widget.row < layout.visible_row_start {
+            self.system_status_dashboard_scroll_row = widget.row;
+        } else if widget.row.saturating_add(widget.size.rows()) > layout.visible_row_end {
+            self.system_status_dashboard_scroll_row = widget
+                .row
+                .saturating_add(widget.size.rows())
+                .saturating_sub(capacity);
+        }
+    }
+
+    pub(in crate::session) fn activate_system_status_dashboard_focus(&mut self) {
+        use ui::SystemStatusDashboardFocus as Focus;
+        if !self
+            .system_status_dashboard_focus_order()
+            .contains(&self.system_status_dashboard_focus)
+        {
+            return;
+        }
+        let editing = self.system_status_dashboard_draft.is_some();
+        match (editing, self.system_status_dashboard_focus) {
+            (false, Focus::Widget(kind)) => {
+                self.open_system_status_detail(storage_widget_kind(kind))
+            }
+            (false, Focus::Edit) => self.begin_system_status_dashboard_edit(),
+            (false, Focus::Refresh) => self.refresh_system_status(),
+            (true, Focus::Add) => self.open_system_status_add_picker(),
+            (true, Focus::Size) => self.cycle_selected_system_status_widget_size(),
+            (true, Focus::Remove) => self.remove_selected_system_status_widget(),
+            (true, Focus::Save) => self.save_system_status_dashboard(),
+            (true, Focus::Cancel) => self.request_cancel_system_status_dashboard_edit(),
+            _ => {}
         }
     }
 
@@ -629,6 +767,7 @@ impl ShellSession {
         kind: ui::SystemStatusWidgetKind,
     ) {
         self.system_status_selected_widget = Some(storage_widget_kind(kind));
+        self.system_status_dashboard_focus = ui::SystemStatusDashboardFocus::Widget(kind);
     }
 
     pub(in crate::session) fn begin_system_status_widget_drag(
@@ -816,7 +955,7 @@ impl ShellSession {
                 .is_some_and(|session| session.role == UserRole::Admin))
     }
 
-    fn ensure_system_status_widget_selection(&mut self) {
+    pub(in crate::session) fn ensure_system_status_widget_selection(&mut self) {
         let dashboard = self.system_status_dashboard_config();
         let selected_valid = self.system_status_selected_widget.is_some_and(|selected| {
             dashboard.widgets.contains(&selected) && self.system_status_widget_allowed(selected)
@@ -827,6 +966,18 @@ impl ShellSession {
                 .into_iter()
                 .find(|kind| self.system_status_widget_allowed(*kind));
         }
+    }
+
+    pub(in crate::session) fn restore_system_status_widget_focus(&mut self) {
+        self.system_status_dashboard_focus = self
+            .system_status_selected_widget
+            .map(ui_widget_kind)
+            .map(ui::SystemStatusDashboardFocus::Widget)
+            .unwrap_or(if self.system_status_dashboard_draft.is_some() {
+                ui::SystemStatusDashboardFocus::Cancel
+            } else {
+                ui::SystemStatusDashboardFocus::Edit
+            });
     }
 
     fn record_system_status_history(&mut self, snapshot: &app::AppSystemStatusSnapshot) {
