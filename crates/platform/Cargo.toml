@@ -10,6 +10,8 @@ path = "src/lib.rs"
 ratatui-image.workspace = true
 same-file = "1"
 watchdog = { path = "../watchdog" }
+sysinfo = "0.39"
+battery = "0.7.8"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 # Keep desktop-only integrations out of the Windows and macOS dependency graph.

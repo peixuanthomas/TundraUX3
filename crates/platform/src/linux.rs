@@ -47,6 +47,9 @@ static DETACHED_TASK_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 pub struct LinuxPlatform;
 
 impl Platform for LinuxPlatform {
+    fn create_system_monitor(&self) -> Result<Box<dyn crate::SystemMonitor>, PlatformError> {
+        crate::NativeSystemMonitor::new().map(|monitor| Box::new(monitor) as Box<_>)
+    }
     fn kind(&self) -> PlatformKind {
         PlatformKind::Linux
     }

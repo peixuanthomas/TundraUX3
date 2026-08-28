@@ -23,7 +23,8 @@ const DEFAULT_WEATHER_REFRESH: Duration = Duration::from_secs(5 * 60);
 const DEFAULT_LOCATION_REFRESH: Duration = Duration::from_secs(24 * 60 * 60);
 const DEFAULT_TIME_REFRESH: Duration = Duration::from_secs(5 * 60);
 const DEFAULT_SYSTEM_STATUS_BACKGROUND_REFRESH: Duration = Duration::from_secs(30);
-const DEFAULT_SYSTEM_STATUS_ACTIVE_REFRESH: Duration = Duration::from_secs(5);
+const DEFAULT_SYSTEM_STATUS_ACTIVE_REFRESH: Duration = Duration::from_secs(1);
+const DEFAULT_SYSTEM_STATUS_ACTIVE_SLOW_REFRESH: Duration = Duration::from_secs(5);
 const MIN_SYSTEM_STATUS_REFRESH_INTERVAL: Duration = Duration::from_millis(10);
 const SYSTEM_LOCATION_DETECTION_TIMEOUT: Duration = Duration::from_secs(3);
 const DEFAULT_BACKOFF: [Duration; 3] = [
@@ -50,6 +51,7 @@ pub struct SystemServicesConfig {
     pub storage_thresholds: StorageThresholds,
     pub system_status_background_refresh_interval: Duration,
     pub system_status_active_refresh_interval: Duration,
+    pub system_status_active_slow_refresh_interval: Duration,
 }
 
 impl Default for SystemServicesConfig {
@@ -75,6 +77,7 @@ impl Default for SystemServicesConfig {
             },
             system_status_background_refresh_interval: DEFAULT_SYSTEM_STATUS_BACKGROUND_REFRESH,
             system_status_active_refresh_interval: DEFAULT_SYSTEM_STATUS_ACTIVE_REFRESH,
+            system_status_active_slow_refresh_interval: DEFAULT_SYSTEM_STATUS_ACTIVE_SLOW_REFRESH,
         }
     }
 }
@@ -434,6 +437,7 @@ impl SystemServicesRuntime {
             },
             StorageState::Loading,
             NetworkState::Loading,
+            SystemMetricsSnapshot::loading(),
         );
         let (snapshot_tx, snapshot_rx) = watch::channel(initial);
         let (command_tx, command_rx) = mpsc::unbounded_channel();
@@ -484,6 +488,8 @@ async fn run(
     let mut time_due = Instant::now();
     let mut location_due = Instant::now();
     let mut system_status_due = Instant::now();
+    let mut system_fast_due = Instant::now();
+    let mut system_slow_due = Instant::now();
     let mut system_status_active = false;
     let mut system_location = None;
     let mut last_good: Option<WeatherSnapshot> = load_weather_cache(&config).ok().flatten();
@@ -499,16 +505,19 @@ async fn run(
     let mut anchor: Option<TimeAnchor> = None;
     let mut time_error: Option<String> = None;
     let mut pending_validation = None;
+    let mut system_monitor = platform.create_system_monitor();
     'main: loop {
         let tick = tokio::time::sleep(
             system_status_due
+                .min(system_fast_due)
+                .min(system_slow_due)
                 .saturating_duration_since(Instant::now())
                 .min(Duration::from_secs(1)),
         );
         tokio::pin!(tick);
         tokio::select! {
             _ = &mut tick => {},
-            command = commands.recv() => if apply_command(command, &mut config, &mut weather_due, &mut time_due, &mut location_due, &mut system_status_due, &mut system_status_active, &mut pending_validation) { break },
+            command = commands.recv() => if apply_command(command, &mut config, &mut weather_due, &mut time_due, &mut location_due, &mut system_status_due, &mut system_fast_due, &mut system_slow_due, &mut system_status_active, &mut pending_validation) { break },
         }
         let now = Instant::now();
         if let Some((candidate, sender)) = pending_validation.take() {
@@ -522,7 +531,7 @@ async fn run(
                 }
                 command = commands.recv() => {
                     let _ = sender.send(Err(SystemServicesError::Shutdown));
-                    if apply_command(command, &mut config, &mut weather_due, &mut time_due, &mut location_due, &mut system_status_due, &mut system_status_active, &mut pending_validation) { break; }
+                    if apply_command(command, &mut config, &mut weather_due, &mut time_due, &mut location_due, &mut system_status_due, &mut system_fast_due, &mut system_slow_due, &mut system_status_active, &mut pending_validation) { break; }
                     continue 'main;
                 }
             }
@@ -530,6 +539,32 @@ async fn run(
         if now >= system_status_due {
             refresh_system_status(&snapshot_tx, platform.as_ref(), config.storage_thresholds);
             system_status_due = now + system_status_refresh_interval(&config, system_status_active);
+        }
+        if now >= system_fast_due {
+            refresh_fast_metrics(&snapshot_tx, &mut system_monitor);
+            system_fast_due = now
+                + if system_status_active {
+                    config
+                        .system_status_active_refresh_interval
+                        .max(MIN_SYSTEM_STATUS_REFRESH_INTERVAL)
+                } else {
+                    config
+                        .system_status_background_refresh_interval
+                        .max(MIN_SYSTEM_STATUS_REFRESH_INTERVAL)
+                };
+        }
+        if now >= system_slow_due {
+            refresh_slow_metrics(&snapshot_tx, &mut system_monitor);
+            system_slow_due = now
+                + if system_status_active {
+                    config
+                        .system_status_active_slow_refresh_interval
+                        .max(MIN_SYSTEM_STATUS_REFRESH_INTERVAL)
+                } else {
+                    config
+                        .system_status_background_refresh_interval
+                        .max(MIN_SYSTEM_STATUS_REFRESH_INTERVAL)
+                };
         }
         if now >= weather_due {
             let should_refresh_location = location_due <= now;
@@ -551,7 +586,7 @@ async fn run(
             let result = tokio::select! {
                 result = &mut operation => result.map_err(|_| "weather request timed out".to_string()).and_then(|result| result),
                 command = commands.recv() => {
-                    if apply_command(command, &mut config, &mut weather_due, &mut time_due, &mut location_due, &mut system_status_due, &mut system_status_active, &mut pending_validation) { break; }
+                    if apply_command(command, &mut config, &mut weather_due, &mut time_due, &mut location_due, &mut system_status_due, &mut system_fast_due, &mut system_slow_due, &mut system_status_active, &mut pending_validation) { break; }
                     continue 'main;
                 }
             };
@@ -614,7 +649,7 @@ async fn run(
             let result = tokio::select! {
                 result = &mut operation => result.map_err(|_| "time request timed out".to_string()).and_then(|result| result),
                 command = commands.recv() => {
-                    if apply_command(command, &mut config, &mut weather_due, &mut time_due, &mut location_due, &mut system_status_due, &mut system_status_active, &mut pending_validation) { break; }
+                    if apply_command(command, &mut config, &mut weather_due, &mut time_due, &mut location_due, &mut system_status_due, &mut system_fast_due, &mut system_slow_due, &mut system_status_active, &mut pending_validation) { break; }
                     continue 'main;
                 }
             };
@@ -664,7 +699,7 @@ async fn run(
 
 fn system_status_refresh_interval(config: &SystemServicesConfig, active: bool) -> Duration {
     let configured = if active {
-        config.system_status_active_refresh_interval
+        config.system_status_active_slow_refresh_interval
     } else {
         config.system_status_background_refresh_interval
     };
@@ -683,6 +718,8 @@ fn apply_command(
     time_due: &mut Instant,
     location_due: &mut Instant,
     system_status_due: &mut Instant,
+    system_fast_due: &mut Instant,
+    system_slow_due: &mut Instant,
     system_status_active: &mut bool,
     pending_validation: &mut Option<ValidationRequest>,
 ) -> bool {
@@ -694,6 +731,8 @@ fn apply_command(
             *time_due = Instant::now();
             *location_due = Instant::now();
             *system_status_due = Instant::now();
+            *system_fast_due = Instant::now();
+            *system_slow_due = Instant::now();
             false
         }
         Some(Command::RefreshWeather) => {
@@ -706,11 +745,15 @@ fn apply_command(
         }
         Some(Command::RefreshSystemStatus) => {
             *system_status_due = Instant::now();
+            *system_fast_due = Instant::now();
+            *system_slow_due = Instant::now();
             false
         }
         Some(Command::SetSystemStatusActive(active)) => {
             *system_status_active = active;
             *system_status_due = Instant::now();
+            *system_fast_due = Instant::now();
+            *system_slow_due = Instant::now();
             false
         }
         Some(Command::Validate(candidate, sender)) => {
@@ -731,6 +774,7 @@ fn publish(sender: &watch::Sender<SystemSnapshot>, weather: WeatherState, time: 
         time,
         previous.storage,
         previous.network,
+        previous.metrics,
     ));
 }
 
@@ -774,7 +818,214 @@ fn refresh_system_status(
         previous.time,
         storage,
         network,
+        previous.metrics,
     ));
+}
+
+fn unavailable_or_stale<T: Clone>(previous: &MetricState<T>, error: String) -> MetricState<T> {
+    match previous {
+        MetricState::Ready(last_good) | MetricState::Stale { last_good, .. } => {
+            MetricState::Stale {
+                last_good: last_good.clone(),
+                error,
+            }
+        }
+        MetricState::Loading | MetricState::Unavailable { .. } => {
+            MetricState::Unavailable { reason: error }
+        }
+    }
+}
+
+fn refresh_fast_metrics(
+    sender: &watch::Sender<SystemSnapshot>,
+    monitor: &mut Result<Box<dyn platform::SystemMonitor>, platform::PlatformError>,
+) {
+    let previous = sender.borrow().clone();
+    let mut metrics = previous.metrics.clone();
+    match monitor {
+        Ok(monitor) => match monitor.sample_fast() {
+            Ok(sample) => {
+                metrics.cpu = MetricState::Ready(CpuSnapshot {
+                    usage_percent: sample.cpu.usage_percent,
+                    per_core_percent: sample.cpu.per_core_percent,
+                    logical_core_count: sample.cpu.logical_core_count,
+                    physical_core_count: sample.cpu.physical_core_count,
+                });
+                metrics.memory = MetricState::Ready(MemorySnapshot {
+                    total_bytes: sample.memory.total_bytes,
+                    used_bytes: sample.memory.used_bytes,
+                    available_bytes: sample.memory.available_bytes,
+                    swap_total_bytes: sample.memory.swap_total_bytes,
+                    swap_used_bytes: sample.memory.swap_used_bytes,
+                });
+                metrics.uptime = MetricState::Ready(UptimeSnapshot {
+                    seconds: sample.uptime_seconds,
+                });
+                metrics.load = if sample.load.supported {
+                    MetricState::Ready(LoadSnapshot {
+                        one: sample.load.one,
+                        five: sample.load.five,
+                        fifteen: sample.load.fifteen,
+                    })
+                } else {
+                    MetricState::Unavailable {
+                        reason: "load average is unsupported on this platform".into(),
+                    }
+                };
+                let interfaces = sample
+                    .network_interfaces
+                    .into_iter()
+                    .map(|value| NetworkIoInterfaceSnapshot {
+                        name: value.name,
+                        received_bytes: value.received_bytes,
+                        transmitted_bytes: value.transmitted_bytes,
+                        received_bytes_per_second: value.received_bytes_per_second,
+                        transmitted_bytes_per_second: value.transmitted_bytes_per_second,
+                    })
+                    .collect::<Vec<_>>();
+                let aggregate = interfaces
+                    .iter()
+                    .filter(|value| !is_loopback_interface(&value.name));
+                let (mut rx, mut tx, mut rx_rate, mut tx_rate) = (0, 0, 0.0, 0.0);
+                for value in aggregate {
+                    rx += value.received_bytes;
+                    tx += value.transmitted_bytes;
+                    rx_rate += value.received_bytes_per_second;
+                    tx_rate += value.transmitted_bytes_per_second;
+                }
+                metrics.network_io = MetricState::Ready(NetworkIoSnapshot {
+                    interfaces,
+                    total_received_bytes: rx,
+                    total_transmitted_bytes: tx,
+                    total_received_bytes_per_second: rx_rate,
+                    total_transmitted_bytes_per_second: tx_rate,
+                });
+            }
+            Err(error) => {
+                let error = error.to_string();
+                metrics.cpu = unavailable_or_stale(&metrics.cpu, error.clone());
+                metrics.memory = unavailable_or_stale(&metrics.memory, error.clone());
+                metrics.load = unavailable_or_stale(&metrics.load, error.clone());
+                metrics.uptime = unavailable_or_stale(&metrics.uptime, error.clone());
+                metrics.network_io = unavailable_or_stale(&metrics.network_io, error);
+            }
+        },
+        Err(error) => {
+            let error = error.to_string();
+            metrics.cpu = unavailable_or_stale(&metrics.cpu, error.clone());
+            metrics.memory = unavailable_or_stale(&metrics.memory, error.clone());
+            metrics.load = unavailable_or_stale(&metrics.load, error.clone());
+            metrics.uptime = unavailable_or_stale(&metrics.uptime, error.clone());
+            metrics.network_io = unavailable_or_stale(&metrics.network_io, error);
+        }
+    }
+    metrics.sampled_at = Utc::now();
+    let _ = sender.send(snapshot(
+        previous.revision.saturating_add(1),
+        previous.weather,
+        previous.time,
+        previous.storage,
+        previous.network,
+        metrics,
+    ));
+}
+
+fn refresh_slow_metrics(
+    sender: &watch::Sender<SystemSnapshot>,
+    monitor: &mut Result<Box<dyn platform::SystemMonitor>, platform::PlatformError>,
+) {
+    let previous = sender.borrow().clone();
+    let mut metrics = previous.metrics.clone();
+    match monitor {
+        Ok(monitor) => match monitor.sample_slow() {
+            Ok(sample) => {
+                metrics.thermal = match sample.thermal {
+                    Ok(values) => MetricState::Ready(
+                        values
+                            .into_iter()
+                            .map(|v| ThermalSensorSnapshot {
+                                label: v.label,
+                                temperature_celsius: v.temperature_celsius,
+                                critical_celsius: v.critical_celsius,
+                            })
+                            .collect(),
+                    ),
+                    Err(reason) => MetricState::Unavailable { reason },
+                };
+                metrics.batteries = match sample.batteries {
+                    Ok(values) => MetricState::Ready(
+                        values
+                            .into_iter()
+                            .map(|v| BatterySnapshot {
+                                vendor: v.vendor,
+                                model: v.model,
+                                state: match v.state {
+                                    platform::BatterySampleState::Charging => {
+                                        BatteryState::Charging
+                                    }
+                                    platform::BatterySampleState::Discharging => {
+                                        BatteryState::Discharging
+                                    }
+                                    platform::BatterySampleState::Full => BatteryState::Full,
+                                    platform::BatterySampleState::Empty => BatteryState::Empty,
+                                    platform::BatterySampleState::Unknown => BatteryState::Unknown,
+                                },
+                                charge_percent: v.charge_percent,
+                                energy_wh: v.energy_wh,
+                                energy_full_wh: v.energy_full_wh,
+                                time_to_empty_seconds: v.time_to_empty_seconds,
+                                time_to_full_seconds: v.time_to_full_seconds,
+                            })
+                            .collect(),
+                    ),
+                    Err(reason) => MetricState::Unavailable { reason },
+                };
+                metrics.processes = MetricState::Ready(ProcessRankingsSnapshot {
+                    top_cpu: sample.top_cpu.into_iter().map(map_process).collect(),
+                    top_memory: sample.top_memory.into_iter().map(map_process).collect(),
+                });
+            }
+            Err(error) => {
+                let error = error.to_string();
+                metrics.thermal = unavailable_or_stale(&metrics.thermal, error.clone());
+                metrics.batteries = unavailable_or_stale(&metrics.batteries, error.clone());
+                metrics.processes = unavailable_or_stale(&metrics.processes, error);
+            }
+        },
+        Err(error) => {
+            let error = error.to_string();
+            metrics.thermal = unavailable_or_stale(&metrics.thermal, error.clone());
+            metrics.batteries = unavailable_or_stale(&metrics.batteries, error.clone());
+            metrics.processes = unavailable_or_stale(&metrics.processes, error);
+        }
+    }
+    metrics.sampled_at = Utc::now();
+    let _ = sender.send(snapshot(
+        previous.revision.saturating_add(1),
+        previous.weather,
+        previous.time,
+        previous.storage,
+        previous.network,
+        metrics,
+    ));
+}
+
+fn map_process(value: platform::ProcessMetricSample) -> ProcessMetricSnapshot {
+    ProcessMetricSnapshot {
+        pid: value.pid,
+        name: value.name,
+        cpu_percent: value.cpu_percent,
+        memory_bytes: value.memory_bytes,
+    }
+}
+
+fn is_loopback_interface(name: &str) -> bool {
+    let name = name.to_ascii_lowercase();
+    name == "lo"
+        || name
+            .strip_prefix("lo")
+            .is_some_and(|suffix| suffix.chars().all(|character| character.is_ascii_digit()))
+        || name.starts_with("loopback")
 }
 
 fn map_storage(
@@ -867,6 +1118,7 @@ fn snapshot(
     time: TimeState,
     storage: StorageState,
     network: NetworkState,
+    metrics: SystemMetricsSnapshot,
 ) -> SystemSnapshot {
     SystemSnapshot {
         revision,
@@ -875,6 +1127,7 @@ fn snapshot(
         time,
         storage,
         network,
+        metrics,
     }
 }
 
@@ -1227,6 +1480,7 @@ mod tests {
             },
             storage: StorageState::Loading,
             network: NetworkState::Loading,
+            metrics: SystemMetricsSnapshot::loading(),
         });
         let thresholds = SystemServicesConfig::default().storage_thresholds;
         refresh_system_status(&sender, &platform, thresholds);
@@ -1499,6 +1753,7 @@ mod tests {
         config.timezone_location = Some(config.fallback_location.clone());
         config.system_status_background_refresh_interval = Duration::ZERO;
         config.system_status_active_refresh_interval = Duration::ZERO;
+        config.system_status_active_slow_refresh_interval = Duration::ZERO;
         let platform_trait: Arc<dyn platform::Platform> = platform.clone();
         let (handle, receiver) = SystemServicesRuntime::start_with_platform_and_provider(
             config,
@@ -1536,6 +1791,7 @@ mod tests {
         changed.timezone_location = Some(changed.fallback_location.clone());
         changed.system_status_background_refresh_interval = Duration::ZERO;
         changed.system_status_active_refresh_interval = Duration::ZERO;
+        changed.system_status_active_slow_refresh_interval = Duration::ZERO;
         handle.reconfigure(changed).unwrap();
         wait_until(&mut receiver, |_| {
             status_call_count(&platform) > after_refresh
@@ -1585,6 +1841,7 @@ mod tests {
         config.timezone_location = Some(config.fallback_location.clone());
         config.system_status_background_refresh_interval = Duration::from_secs(60);
         config.system_status_active_refresh_interval = Duration::from_millis(30);
+        config.system_status_active_slow_refresh_interval = Duration::from_millis(30);
         let platform_trait: Arc<dyn platform::Platform> = platform.clone();
         let (handle, mut receiver) = SystemServicesRuntime::start_with_platform_and_provider(
             config,

@@ -7,6 +7,7 @@ pub mod mock;
 mod paths;
 mod platform;
 mod process;
+mod system_monitor;
 mod terminal;
 
 #[cfg(windows)]
@@ -39,6 +40,11 @@ pub use platform::{
     default_file_open_policy, default_read_directory, default_rename_path, native_platform,
 };
 pub use process::{ProcessExit, ProcessSpec, ProcessStream, validate_process_spec};
+pub use system_monitor::{
+    BatterySample, BatterySampleState, CpuSample, FastSystemSample, LoadSample, MemorySample,
+    NativeSystemMonitor, NetworkIoInterfaceSample, ProcessMetricSample, SlowSystemSample,
+    SystemMonitor, ThermalSensorSample,
+};
 pub use terminal::{
     ENTER_FULLSCREEN_SEQUENCE, EXIT_FULLSCREEN_SEQUENCE, TerminalCellSize, TerminalControlHandler,
     TerminalGraphicsCapabilities, TerminalGraphicsProbeStatus, TerminalGraphicsProtocol,

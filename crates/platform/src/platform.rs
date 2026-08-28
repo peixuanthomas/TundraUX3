@@ -6,8 +6,8 @@ use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
 use crate::{
-    AppPaths, PathResolutionError, ProcessExit, ProcessSpec, UserDirs, cleanup_temp_path,
-    create_temp_dir, create_temp_file,
+    AppPaths, PathResolutionError, ProcessExit, ProcessSpec, SystemMonitor, UserDirs,
+    cleanup_temp_path, create_temp_dir, create_temp_file,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -552,6 +552,12 @@ pub trait Platform: Send + Sync {
     fn network_status(&self) -> Result<NetworkStatus, PlatformError> {
         Err(PlatformError::Unsupported {
             capability: "network_status",
+        })
+    }
+
+    fn create_system_monitor(&self) -> Result<Box<dyn SystemMonitor>, PlatformError> {
+        Err(PlatformError::Unsupported {
+            capability: "system_monitor",
         })
     }
 

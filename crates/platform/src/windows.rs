@@ -78,6 +78,9 @@ const BI_RGB: u32 = 0;
 pub struct WindowsPlatform;
 
 impl Platform for WindowsPlatform {
+    fn create_system_monitor(&self) -> Result<Box<dyn crate::SystemMonitor>, PlatformError> {
+        crate::NativeSystemMonitor::new().map(|monitor| Box::new(monitor) as Box<_>)
+    }
     fn kind(&self) -> PlatformKind {
         PlatformKind::Windows
     }

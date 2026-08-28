@@ -105,6 +105,9 @@ unsafe extern "C" {
 pub struct MacosPlatform;
 
 impl Platform for MacosPlatform {
+    fn create_system_monitor(&self) -> Result<Box<dyn crate::SystemMonitor>, PlatformError> {
+        crate::NativeSystemMonitor::new().map(|monitor| Box::new(monitor) as Box<_>)
+    }
     fn kind(&self) -> PlatformKind {
         PlatformKind::Macos
     }

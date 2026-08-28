@@ -6,7 +6,7 @@ use std::time::SystemTime;
 use crate::{
     AppPaths, DirectoryListing, FileAttributes, FileOpenPolicy, LocalVolume, NetworkStatus,
     Platform, PlatformCapabilities, PlatformError, PlatformIcon, PlatformKind, ProcessExit,
-    ProcessSpec, ProcessStream, StartupPermissionStatus, TrashEntry, TrashEntryId,
+    ProcessSpec, ProcessStream, StartupPermissionStatus, SystemMonitor, TrashEntry, TrashEntryId,
     TrashRestoreTarget, TrashStats, UserDirs,
 };
 
@@ -41,6 +41,7 @@ pub enum MockCall {
     },
     LocalVolumes,
     NetworkStatus,
+    CreateSystemMonitor,
     ListTrash,
     TrashStats,
     MoveToTrash(Vec<PathBuf>),
@@ -51,7 +52,6 @@ pub enum MockCall {
     },
 }
 
-#[derive(Debug)]
 pub struct MockPlatform {
     kind: PlatformKind,
     capabilities: PlatformCapabilities,
@@ -71,6 +71,7 @@ pub struct MockPlatform {
     rename_results: Mutex<BTreeMap<(PathBuf, PathBuf), Result<(), PlatformError>>>,
     local_volumes: Mutex<Result<Vec<LocalVolume>, PlatformError>>,
     network_status: Mutex<Result<NetworkStatus, PlatformError>>,
+    system_monitor: Mutex<Option<Result<Box<dyn SystemMonitor>, PlatformError>>>,
     trash_entries: Mutex<Result<Vec<TrashEntry>, PlatformError>>,
     trash_stats: Mutex<Result<TrashStats, PlatformError>>,
     move_to_trash_result: Mutex<Result<(), PlatformError>>,
@@ -100,6 +101,7 @@ impl MockPlatform {
             rename_results: Mutex::new(BTreeMap::new()),
             local_volumes: Mutex::new(Ok(Vec::new())),
             network_status: Mutex::new(Ok(NetworkStatus::default())),
+            system_monitor: Mutex::new(None),
             trash_entries: Mutex::new(Ok(Vec::new())),
             trash_stats: Mutex::new(Ok(TrashStats::default())),
             move_to_trash_result: Mutex::new(Ok(())),
@@ -252,6 +254,13 @@ impl MockPlatform {
             .network_status
             .lock()
             .expect("network status lock poisoned") = result;
+    }
+
+    pub fn set_system_monitor_result(&self, result: Result<Box<dyn SystemMonitor>, PlatformError>) {
+        *self
+            .system_monitor
+            .lock()
+            .expect("system monitor lock poisoned") = Some(result);
     }
 
     pub fn set_trash_entries_result(&self, result: Result<Vec<TrashEntry>, PlatformError>) {
@@ -440,6 +449,17 @@ impl Platform for MockPlatform {
             .lock()
             .expect("network status lock poisoned")
             .clone()
+    }
+
+    fn create_system_monitor(&self) -> Result<Box<dyn SystemMonitor>, PlatformError> {
+        self.record(MockCall::CreateSystemMonitor);
+        self.system_monitor
+            .lock()
+            .expect("system monitor lock poisoned")
+            .take()
+            .unwrap_or(Err(PlatformError::Unsupported {
+                capability: "system_monitor",
+            }))
     }
 
     fn list_trash(&self) -> Result<Vec<TrashEntry>, PlatformError> {
