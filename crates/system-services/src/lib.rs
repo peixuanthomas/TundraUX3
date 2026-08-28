@@ -959,7 +959,7 @@ fn refresh_slow_metrics(
                             })
                             .collect(),
                     ),
-                    Err(reason) => MetricState::Unavailable { reason },
+                    Err(reason) => unavailable_or_stale(&metrics.thermal, reason),
                 };
                 metrics.batteries = match sample.batteries {
                     Ok(values) => MetricState::Ready(
@@ -987,7 +987,7 @@ fn refresh_slow_metrics(
                             })
                             .collect(),
                     ),
-                    Err(reason) => MetricState::Unavailable { reason },
+                    Err(reason) => unavailable_or_stale(&metrics.batteries, reason),
                 };
                 metrics.processes = MetricState::Ready(ProcessRankingsSnapshot {
                     top_cpu: sample.top_cpu.into_iter().map(map_process).collect(),
@@ -1444,6 +1444,7 @@ fn save_location_cache(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::VecDeque;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     fn mock_platform() -> platform::mock::MockPlatform {
@@ -1467,6 +1468,202 @@ mod tests {
         )
         .unwrap();
         platform::mock::MockPlatform::new(user_dirs, app_paths)
+    }
+
+    struct ScriptedSlowMonitor {
+        samples: VecDeque<platform::SlowSystemSample>,
+    }
+
+    impl platform::SystemMonitor for ScriptedSlowMonitor {
+        fn sample_fast(&mut self) -> Result<platform::FastSystemSample, platform::PlatformError> {
+            Err(platform::PlatformError::Unsupported {
+                capability: "test.fast_system_sample",
+            })
+        }
+
+        fn sample_slow(&mut self) -> Result<platform::SlowSystemSample, platform::PlatformError> {
+            Ok(self.samples.pop_front().expect("scripted slow sample"))
+        }
+    }
+
+    fn slow_sample(
+        thermal: Result<Vec<platform::ThermalSensorSample>, &str>,
+        batteries: Result<Vec<platform::BatterySample>, &str>,
+    ) -> platform::SlowSystemSample {
+        platform::SlowSystemSample {
+            identity: Ok(platform::SystemIdentitySample {
+                host_name: Some("host".into()),
+                os_name: Some("os".into()),
+                os_version: Some("1".into()),
+                kernel_version: Some("1".into()),
+            }),
+            thermal: thermal.map_err(str::to_string),
+            batteries: batteries.map_err(str::to_string),
+            top_cpu: Vec::new(),
+            top_memory: Vec::new(),
+        }
+    }
+
+    fn metrics_channel() -> (
+        watch::Sender<SystemSnapshot>,
+        watch::Receiver<SystemSnapshot>,
+    ) {
+        let observed_at = Utc::now();
+        watch::channel(SystemSnapshot {
+            revision: 0,
+            observed_at,
+            weather: WeatherState::Loading,
+            time: TimeState::Local {
+                local_time: observed_at.fixed_offset(),
+            },
+            storage: StorageState::Loading,
+            network: NetworkState::Loading,
+            metrics: SystemMetricsSnapshot::loading(),
+        })
+    }
+
+    #[test]
+    fn thermal_inner_failures_retain_last_good_and_recover_independently() {
+        let first_good = vec![platform::ThermalSensorSample {
+            label: "CPU".into(),
+            temperature_celsius: 42.0,
+            critical_celsius: Some(100.0),
+        }];
+        let recovered = vec![platform::ThermalSensorSample {
+            label: "CPU".into(),
+            temperature_celsius: 39.0,
+            critical_celsius: Some(100.0),
+        }];
+        let battery = vec![platform::BatterySample {
+            vendor: Some("Vendor".into()),
+            model: Some("Model".into()),
+            state: platform::BatterySampleState::Charging,
+            charge_percent: 50.0,
+            energy_wh: 20.0,
+            energy_full_wh: 40.0,
+            time_to_empty_seconds: None,
+            time_to_full_seconds: Some(600),
+        }];
+        let samples = VecDeque::from([
+            slow_sample(Err("thermal unavailable"), Ok(battery.clone())),
+            slow_sample(Ok(first_good.clone()), Ok(battery.clone())),
+            slow_sample(Err("thermal read failed"), Ok(battery.clone())),
+            slow_sample(Err("thermal retry failed"), Ok(battery.clone())),
+            slow_sample(Ok(recovered.clone()), Ok(battery)),
+        ]);
+        let mut monitor: Result<Box<dyn platform::SystemMonitor>, _> =
+            Ok(Box::new(ScriptedSlowMonitor { samples }));
+        let (sender, receiver) = metrics_channel();
+
+        refresh_slow_metrics(&sender, &mut monitor);
+        assert!(
+            matches!(receiver.borrow().metrics.thermal, MetricState::Unavailable { ref reason } if reason == "thermal unavailable")
+        );
+        assert!(matches!(
+            receiver.borrow().metrics.batteries,
+            MetricState::Ready(_)
+        ));
+        refresh_slow_metrics(&sender, &mut monitor);
+        let expected_first = vec![ThermalSensorSnapshot {
+            label: "CPU".into(),
+            temperature_celsius: 42.0,
+            critical_celsius: Some(100.0),
+        }];
+        assert_eq!(
+            receiver.borrow().metrics.thermal,
+            MetricState::Ready(expected_first.clone())
+        );
+        refresh_slow_metrics(&sender, &mut monitor);
+        assert_eq!(
+            receiver.borrow().metrics.thermal,
+            MetricState::Stale {
+                last_good: expected_first.clone(),
+                error: "thermal read failed".into()
+            }
+        );
+        assert!(matches!(
+            receiver.borrow().metrics.batteries,
+            MetricState::Ready(_)
+        ));
+        refresh_slow_metrics(&sender, &mut monitor);
+        assert_eq!(
+            receiver.borrow().metrics.thermal,
+            MetricState::Stale {
+                last_good: expected_first,
+                error: "thermal retry failed".into()
+            }
+        );
+        refresh_slow_metrics(&sender, &mut monitor);
+        assert!(
+            matches!(receiver.borrow().metrics.thermal, MetricState::Ready(ref values) if values[0].temperature_celsius == 39.0)
+        );
+    }
+
+    #[test]
+    fn battery_inner_failures_retain_last_good_and_recover_independently() {
+        let thermal = vec![platform::ThermalSensorSample {
+            label: "CPU".into(),
+            temperature_celsius: 42.0,
+            critical_celsius: None,
+        }];
+        let battery = |charge_percent| platform::BatterySample {
+            vendor: Some("Vendor".into()),
+            model: Some("Model".into()),
+            state: platform::BatterySampleState::Discharging,
+            charge_percent,
+            energy_wh: 20.0,
+            energy_full_wh: 40.0,
+            time_to_empty_seconds: Some(900),
+            time_to_full_seconds: None,
+        };
+        let samples = VecDeque::from([
+            slow_sample(Ok(thermal.clone()), Err("battery unavailable")),
+            slow_sample(Ok(thermal.clone()), Ok(vec![battery(50.0)])),
+            slow_sample(Ok(thermal.clone()), Err("battery read failed")),
+            slow_sample(Ok(thermal.clone()), Err("battery retry failed")),
+            slow_sample(Ok(thermal), Ok(vec![battery(75.0)])),
+        ]);
+        let mut monitor: Result<Box<dyn platform::SystemMonitor>, _> =
+            Ok(Box::new(ScriptedSlowMonitor { samples }));
+        let (sender, receiver) = metrics_channel();
+
+        refresh_slow_metrics(&sender, &mut monitor);
+        assert!(
+            matches!(receiver.borrow().metrics.batteries, MetricState::Unavailable { ref reason } if reason == "battery unavailable")
+        );
+        assert!(matches!(
+            receiver.borrow().metrics.thermal,
+            MetricState::Ready(_)
+        ));
+        refresh_slow_metrics(&sender, &mut monitor);
+        let expected_first = match receiver.borrow().metrics.batteries.clone() {
+            MetricState::Ready(values) => values,
+            state => panic!("expected ready battery state, got {state:?}"),
+        };
+        refresh_slow_metrics(&sender, &mut monitor);
+        assert_eq!(
+            receiver.borrow().metrics.batteries,
+            MetricState::Stale {
+                last_good: expected_first.clone(),
+                error: "battery read failed".into()
+            }
+        );
+        assert!(matches!(
+            receiver.borrow().metrics.thermal,
+            MetricState::Ready(_)
+        ));
+        refresh_slow_metrics(&sender, &mut monitor);
+        assert_eq!(
+            receiver.borrow().metrics.batteries,
+            MetricState::Stale {
+                last_good: expected_first,
+                error: "battery retry failed".into()
+            }
+        );
+        refresh_slow_metrics(&sender, &mut monitor);
+        assert!(
+            matches!(receiver.borrow().metrics.batteries, MetricState::Ready(ref values) if values[0].charge_percent == 75.0)
+        );
     }
 
     #[test]
