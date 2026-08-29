@@ -86,6 +86,8 @@ impl Default for SystemServicesConfig {
 pub enum SystemServicesError {
     #[error("system services runtime is shut down")]
     Shutdown,
+    #[error("system services request was cancelled")]
+    Cancelled,
     #[error("system services request timed out")]
     Timeout,
     #[error("time source validation failed: {0}")]
@@ -555,7 +557,7 @@ async fn run(
                                 break 'main;
                             }
                             CommandDisposition::Reconfigured | CommandDisposition::ReplaceValidation => {
-                                let _ = sender.send(Err(SystemServicesError::Shutdown));
+                                let _ = sender.send(Err(SystemServicesError::Cancelled));
                                 continue 'main;
                             }
                             CommandDisposition::RefreshWeather | CommandDisposition::SyncTime | CommandDisposition::Continue => {}
@@ -824,7 +826,7 @@ fn apply_command(
         }
         Some(Command::Reconfigure(next)) => {
             if let Some((_, sender)) = pending_validation.take() {
-                let _ = sender.send(Err(SystemServicesError::Shutdown));
+                let _ = sender.send(Err(SystemServicesError::Cancelled));
             }
             *config = next;
             *weather_due = Instant::now();
@@ -858,7 +860,7 @@ fn apply_command(
         }
         Some(Command::Validate(candidate, sender)) => {
             if let Some((_, previous_sender)) = pending_validation.replace((candidate, sender)) {
-                let _ = previous_sender.send(Err(SystemServicesError::Shutdown));
+                let _ = previous_sender.send(Err(SystemServicesError::Cancelled));
             }
             CommandDisposition::ReplaceValidation
         }
@@ -1898,8 +1900,12 @@ mod tests {
     }
 
     struct GatedProvider {
-        started: std_mpsc::Sender<()>,
-        release: tokio::sync::Notify,
+        started: std_mpsc::Sender<WeatherInvocation>,
+        calls: Arc<AtomicUsize>,
+    }
+
+    struct WeatherInvocation {
+        complete: tokio::sync::oneshot::Sender<()>,
     }
 
     #[async_trait]
@@ -1909,8 +1915,10 @@ mod tests {
             _location: WeatherLocation,
             _units: WeatherUnits,
         ) -> Result<WeatherData, String> {
-            let _ = self.started.send(());
-            self.release.notified().await;
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            let (complete, completion) = tokio::sync::oneshot::channel();
+            let _ = self.started.send(WeatherInvocation { complete });
+            let _ = completion.await;
             Ok(sample())
         }
     }
@@ -1920,30 +1928,49 @@ mod tests {
         slow_calls: Arc<AtomicUsize>,
     }
 
-    struct HangingHttpServer {
+    struct ControllableHttpServer {
         url: String,
-        accepted: std_mpsc::Receiver<()>,
+        accepted: std_mpsc::Receiver<usize>,
+        respond: std_mpsc::Sender<usize>,
+        accepted_count: Arc<AtomicUsize>,
         stop: std_mpsc::Sender<()>,
         join: Option<std::thread::JoinHandle<()>>,
     }
 
-    impl HangingHttpServer {
+    impl ControllableHttpServer {
         fn start() -> Self {
             let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
             listener.set_nonblocking(true).unwrap();
             let address = listener.local_addr().unwrap();
             let (accepted_tx, accepted) = std_mpsc::channel();
+            let (respond, respond_rx) = std_mpsc::channel();
             let (stop, stop_rx) = std_mpsc::channel();
+            let accepted_count = Arc::new(AtomicUsize::new(0));
+            let thread_accepted_count = accepted_count.clone();
             let join = std::thread::spawn(move || {
-                let mut connections = Vec::new();
+                use std::io::Write as _;
+                let mut connections =
+                    std::collections::BTreeMap::<usize, std::net::TcpStream>::new();
+                let mut next_id = 0usize;
                 loop {
                     if stop_rx.try_recv().is_ok() {
                         break;
                     }
+                    while let Ok(id) = respond_rx.try_recv() {
+                        if let Some(mut stream) = connections.remove(&id) {
+                            let _ = stream.write_all(
+                                b"HTTP/1.1 200 OK\r\nDate: Wed, 21 Oct 2015 07:28:00 GMT\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                            );
+                            let _ = stream.flush();
+                        }
+                    }
                     match listener.accept() {
                         Ok((stream, _)) => {
-                            connections.push(stream);
-                            let _ = accepted_tx.send(());
+                            let id = next_id;
+                            next_id += 1;
+                            connections.insert(id, stream);
+                            thread_accepted_count.fetch_add(1, Ordering::SeqCst);
+                            let _ = accepted_tx.send(id);
                         }
                         Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
                             std::thread::sleep(Duration::from_millis(2));
@@ -1955,28 +1982,29 @@ mod tests {
             Self {
                 url: format!("http://{address}/"),
                 accepted,
+                respond,
+                accepted_count,
                 stop,
                 join: Some(join),
             }
         }
 
-        fn wait_for_request(&self) {
+        fn wait_for_request(&self) -> usize {
             self.accepted
                 .recv_timeout(Duration::from_secs(5))
-                .expect("time request must reach the hanging loopback server");
+                .expect("time request must reach the controllable loopback server")
         }
 
-        fn assert_no_new_request(&self) {
-            assert!(
-                self.accepted
-                    .recv_timeout(Duration::from_millis(150))
-                    .is_err(),
-                "unrelated command must not restart the pending time request"
-            );
+        fn respond(&self, id: usize) {
+            self.respond.send(id).unwrap();
+        }
+
+        fn accepted_count(&self) -> usize {
+            self.accepted_count.load(Ordering::SeqCst)
         }
     }
 
-    impl Drop for HangingHttpServer {
+    impl Drop for ControllableHttpServer {
         fn drop(&mut self) {
             let _ = self.stop.send(());
             if let Some(join) = self.join.take() {
@@ -2333,8 +2361,8 @@ mod tests {
         handle.shutdown().unwrap();
     }
 
-    #[test]
-    fn active_metrics_progress_while_weather_provider_is_pending() {
+    #[tokio::test]
+    async fn active_metrics_progress_while_weather_provider_is_pending() {
         let platform = Arc::new(mock_platform());
         let fast_calls = Arc::new(AtomicUsize::new(0));
         let slow_calls = Arc::new(AtomicUsize::new(0));
@@ -2343,9 +2371,10 @@ mod tests {
             slow_calls: slow_calls.clone(),
         })));
         let (started_tx, started_rx) = std_mpsc::channel();
+        let provider_calls = Arc::new(AtomicUsize::new(0));
         let provider = Arc::new(GatedProvider {
             started: started_tx,
-            release: tokio::sync::Notify::new(),
+            calls: provider_calls.clone(),
         });
         let mut runtime_config = config();
         runtime_config.timezone_location = Some(runtime_config.fallback_location.clone());
@@ -2354,14 +2383,14 @@ mod tests {
         runtime_config.system_status_active_refresh_interval = Duration::from_millis(20);
         runtime_config.system_status_active_slow_refresh_interval = Duration::from_millis(40);
         let platform_trait: Arc<dyn platform::Platform> = platform.clone();
-        let (handle, _receiver) = SystemServicesRuntime::start_with_platform_and_provider(
+        let (handle, mut receiver) = SystemServicesRuntime::start_with_platform_and_provider(
             runtime_config.clone(),
             watchdog(),
             platform_trait,
             provider,
         );
 
-        started_rx
+        let first_invocation = started_rx
             .recv_timeout(Duration::from_secs(1))
             .expect("weather provider must enter its initial pending operation");
         handle.set_system_status_active(true).unwrap();
@@ -2377,15 +2406,19 @@ mod tests {
         assert!(fast_calls.load(Ordering::SeqCst) >= 3);
         assert!(slow_calls.load(Ordering::SeqCst) >= 2);
         assert!(status_call_count(&platform) >= 2);
-        assert!(
-            started_rx.try_recv().is_err(),
-            "status commands must preserve the pending weather operation"
-        );
+        first_invocation.complete.send(()).unwrap();
+        wait_for_snapshot_event(&mut receiver, |snapshot| {
+            matches!(snapshot.weather, WeatherState::Ready(_))
+        })
+        .await;
+        assert_eq!(provider_calls.load(Ordering::SeqCst), 1);
 
         handle.reconfigure(runtime_config).unwrap();
-        started_rx
+        let restarted = started_rx
             .recv_timeout(Duration::from_secs(1))
             .expect("reconfigure must cancel and restart pending weather promptly");
+        restarted.complete.send(()).unwrap();
+        wait_for_snapshot_event(&mut receiver, |snapshot| snapshot.revision > 0).await;
         let (shutdown_tx, shutdown_rx) = std_mpsc::channel();
         std::thread::spawn(move || {
             let _ = shutdown_tx.send(handle.shutdown());
@@ -2396,9 +2429,9 @@ mod tests {
         );
     }
 
-    #[test]
-    fn active_metrics_preserve_pending_time_sync_request() {
-        let server = HangingHttpServer::start();
+    #[tokio::test]
+    async fn active_metrics_preserve_pending_time_sync_request() {
+        let server = ControllableHttpServer::start();
         let platform = Arc::new(mock_platform());
         let fast_calls = Arc::new(AtomicUsize::new(0));
         let slow_calls = Arc::new(AtomicUsize::new(0));
@@ -2419,14 +2452,14 @@ mod tests {
         runtime_config.system_status_active_refresh_interval = Duration::from_millis(20);
         runtime_config.system_status_active_slow_refresh_interval = Duration::from_millis(40);
         let platform_trait: Arc<dyn platform::Platform> = platform.clone();
-        let (handle, _receiver) = SystemServicesRuntime::start_with_platform_and_provider(
+        let (handle, mut receiver) = SystemServicesRuntime::start_with_platform_and_provider(
             runtime_config,
             watchdog(),
             platform_trait,
             provider,
         );
 
-        server.wait_for_request();
+        let first_request = server.wait_for_request();
         handle.set_system_status_active(true).unwrap();
         handle.refresh_system_status().unwrap();
         let deadline = std::time::Instant::now() + Duration::from_secs(1);
@@ -2440,7 +2473,12 @@ mod tests {
         assert!(fast_calls.load(Ordering::SeqCst) >= 3);
         assert!(slow_calls.load(Ordering::SeqCst) >= 2);
         assert!(status_call_count(&platform) >= 2);
-        server.assert_no_new_request();
+        server.respond(first_request);
+        wait_for_snapshot_event(&mut receiver, |snapshot| {
+            matches!(snapshot.time, TimeState::Synced { .. })
+        })
+        .await;
+        assert_eq!(server.accepted_count(), 1);
 
         let (shutdown_tx, shutdown_rx) = std_mpsc::channel();
         std::thread::spawn(move || {
@@ -2454,7 +2492,7 @@ mod tests {
 
     #[test]
     fn status_commands_preserve_pending_time_validation() {
-        let server = HangingHttpServer::start();
+        let server = ControllableHttpServer::start();
         let platform = Arc::new(mock_platform());
         let fast_calls = Arc::new(AtomicUsize::new(0));
         let slow_calls = Arc::new(AtomicUsize::new(0));
@@ -2481,26 +2519,178 @@ mod tests {
         let mut candidate = config();
         candidate.time_sync_mode = TimeSyncMode::Network;
         candidate.time_server_url = Some(server.url.clone());
-        candidate.request_timeout = Duration::from_secs(3);
+        candidate.request_timeout = Duration::from_secs(5);
         let validation_handle = handle.clone();
         let (result_tx, result_rx) = std_mpsc::channel();
         std::thread::spawn(move || {
             let _ = result_tx.send(validation_handle.validate_time_source(candidate));
         });
 
-        server.wait_for_request();
+        let first_request = server.wait_for_request();
         handle.set_system_status_active(true).unwrap();
         handle.refresh_system_status().unwrap();
-        assert!(
-            result_rx.recv_timeout(Duration::from_millis(150)).is_err(),
-            "status commands must not cancel validation or report shutdown"
-        );
-        server.assert_no_new_request();
+        let deadline = std::time::Instant::now() + Duration::from_secs(2);
+        while (fast_calls.load(Ordering::SeqCst) < 2 || status_call_count(&platform) < 2)
+            && std::time::Instant::now() < deadline
+        {
+            std::thread::sleep(Duration::from_millis(10));
+        }
         assert!(fast_calls.load(Ordering::SeqCst) >= 2);
+        assert!(status_call_count(&platform) >= 2);
+        server.respond(first_request);
+        let expected = "2015-10-21T07:28:00Z".parse::<DateTime<Utc>>().unwrap();
         assert_eq!(
             result_rx.recv_timeout(Duration::from_secs(5)).unwrap(),
-            Err(SystemServicesError::Timeout)
+            Ok(expected)
         );
+        assert_eq!(server.accepted_count(), 1);
+        handle.shutdown().unwrap();
+    }
+
+    fn network_validation_config(url: &str) -> SystemServicesConfig {
+        let mut candidate = config();
+        candidate.time_sync_mode = TimeSyncMode::Network;
+        candidate.time_server_url = Some(url.to_string());
+        candidate.request_timeout = Duration::from_secs(5);
+        candidate
+    }
+
+    fn spawn_validation(
+        handle: SystemServicesHandle,
+        candidate: SystemServicesConfig,
+    ) -> std_mpsc::Receiver<Result<DateTime<Utc>, SystemServicesError>> {
+        let (result_tx, result_rx) = std_mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = result_tx.send(handle.validate_time_source(candidate));
+        });
+        result_rx
+    }
+
+    #[test]
+    fn active_validation_replacement_reconfigure_and_shutdown_are_distinct() {
+        let server = ControllableHttpServer::start();
+        let provider = Arc::new(FakeProvider {
+            outcomes: Mutex::new(vec![Ok(sample()), Ok(sample())]),
+            calls: AtomicUsize::new(0),
+        });
+        let platform: Arc<dyn platform::Platform> = Arc::new(mock_platform());
+        let mut runtime_config = config();
+        runtime_config.timezone_location = Some(runtime_config.fallback_location.clone());
+        let (handle, _receiver) = SystemServicesRuntime::start_with_platform_and_provider(
+            runtime_config.clone(),
+            watchdog(),
+            platform,
+            provider,
+        );
+        let expected = "2015-10-21T07:28:00Z".parse::<DateTime<Utc>>().unwrap();
+
+        let first = spawn_validation(handle.clone(), network_validation_config(&server.url));
+        let _first_request = server.wait_for_request();
+        let replacement = spawn_validation(handle.clone(), network_validation_config(&server.url));
+        assert_eq!(
+            first.recv_timeout(Duration::from_secs(5)).unwrap(),
+            Err(SystemServicesError::Cancelled)
+        );
+        let replacement_request = server.wait_for_request();
+        server.respond(replacement_request);
+        assert_eq!(
+            replacement.recv_timeout(Duration::from_secs(5)).unwrap(),
+            Ok(expected)
+        );
+
+        let reconfigured = spawn_validation(handle.clone(), network_validation_config(&server.url));
+        let _reconfigured_request = server.wait_for_request();
+        runtime_config.timezone_id = "Asia/Shanghai".into();
+        handle.reconfigure(runtime_config).unwrap();
+        assert_eq!(
+            reconfigured.recv_timeout(Duration::from_secs(5)).unwrap(),
+            Err(SystemServicesError::Cancelled)
+        );
+
+        let shutting_down =
+            spawn_validation(handle.clone(), network_validation_config(&server.url));
+        let _shutdown_request = server.wait_for_request();
+        handle.shutdown().unwrap();
+        assert_eq!(
+            shutting_down.recv_timeout(Duration::from_secs(5)).unwrap(),
+            Err(SystemServicesError::Shutdown)
+        );
+    }
+
+    #[tokio::test]
+    async fn queued_validation_replacement_and_reconfigure_are_cancelled() {
+        let server = ControllableHttpServer::start();
+        let (started_tx, started_rx) = std_mpsc::channel();
+        let provider_calls = Arc::new(AtomicUsize::new(0));
+        let provider = Arc::new(GatedProvider {
+            started: started_tx,
+            calls: provider_calls.clone(),
+        });
+        let platform: Arc<dyn platform::Platform> = Arc::new(mock_platform());
+        let mut runtime_config = config();
+        runtime_config.timezone_location = Some(runtime_config.fallback_location.clone());
+        runtime_config.request_timeout = Duration::from_secs(5);
+        let (handle, mut receiver) = SystemServicesRuntime::start_with_platform_and_provider(
+            runtime_config.clone(),
+            watchdog(),
+            platform,
+            provider,
+        );
+        let first_weather = started_rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("weather operation must be pending");
+        let (first_queued_tx, first_queued) = std_mpsc::channel();
+        handle
+            .send(Command::Validate(
+                network_validation_config(&server.url),
+                first_queued_tx,
+            ))
+            .unwrap();
+        let (newest_tx, newest) = std_mpsc::channel();
+        handle
+            .send(Command::Validate(
+                network_validation_config(&server.url),
+                newest_tx,
+            ))
+            .unwrap();
+        assert_eq!(
+            first_queued.recv_timeout(Duration::from_secs(5)).unwrap(),
+            Err(SystemServicesError::Cancelled)
+        );
+        first_weather.complete.send(()).unwrap();
+        let newest_request = server.wait_for_request();
+        server.respond(newest_request);
+        assert!(newest.recv_timeout(Duration::from_secs(5)).unwrap().is_ok());
+
+        handle.refresh_weather().unwrap();
+        let pending_weather = started_rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("manual weather operation must be pending");
+        let (queued_for_reconfigure_tx, queued_for_reconfigure) = std_mpsc::channel();
+        handle
+            .send(Command::Validate(
+                network_validation_config(&server.url),
+                queued_for_reconfigure_tx,
+            ))
+            .unwrap();
+        runtime_config.timezone_id = "Asia/Shanghai".into();
+        handle.reconfigure(runtime_config).unwrap();
+        assert_eq!(
+            queued_for_reconfigure
+                .recv_timeout(Duration::from_secs(5))
+                .unwrap(),
+            Err(SystemServicesError::Cancelled)
+        );
+        drop(pending_weather);
+        let replacement_weather = started_rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("reconfigure must restart weather");
+        replacement_weather.complete.send(()).unwrap();
+        wait_for_snapshot_event(&mut receiver, |snapshot| {
+            matches!(snapshot.weather, WeatherState::Ready(_))
+        })
+        .await;
+        assert!(provider_calls.load(Ordering::SeqCst) >= 3);
         handle.shutdown().unwrap();
     }
     #[tokio::test]
