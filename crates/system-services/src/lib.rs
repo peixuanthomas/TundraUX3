@@ -524,48 +524,44 @@ async fn run(
             let operation =
                 tokio::time::timeout(candidate.request_timeout, validate_time(&candidate));
             tokio::pin!(operation);
-            tokio::select! {
-                result = &mut operation => {
-                    let result = result.unwrap_or(Err(SystemServicesError::Timeout));
-                    let _ = sender.send(result);
-                }
-                command = commands.recv() => {
-                    let _ = sender.send(Err(SystemServicesError::Shutdown));
-                    if apply_command(command, &mut config, &mut weather_due, &mut time_due, &mut location_due, &mut system_status_due, &mut system_fast_due, &mut system_slow_due, &mut system_status_active, &mut pending_validation) { break; }
-                    continue 'main;
+            loop {
+                let system_tick = tokio::time::sleep(
+                    system_status_due
+                        .min(system_fast_due)
+                        .min(system_slow_due)
+                        .saturating_duration_since(Instant::now()),
+                );
+                tokio::pin!(system_tick);
+                tokio::select! {
+                    result = &mut operation => {
+                        let result = result.unwrap_or(Err(SystemServicesError::Timeout));
+                        let _ = sender.send(result);
+                        break;
+                    }
+                    command = commands.recv() => {
+                        let _ = sender.send(Err(SystemServicesError::Shutdown));
+                        if apply_command(command, &mut config, &mut weather_due, &mut time_due, &mut location_due, &mut system_status_due, &mut system_fast_due, &mut system_slow_due, &mut system_status_active, &mut pending_validation) { break 'main; }
+                        continue 'main;
+                    }
+                    _ = &mut system_tick => refresh_due_system_sources(
+                        Instant::now(), &config, system_status_active, &snapshot_tx,
+                        platform.as_ref(), &mut system_monitor, &mut system_status_due,
+                        &mut system_fast_due, &mut system_slow_due,
+                    ),
                 }
             }
         }
-        if now >= system_status_due {
-            refresh_system_status(&snapshot_tx, platform.as_ref(), config.storage_thresholds);
-            system_status_due = now + system_status_refresh_interval(&config, system_status_active);
-        }
-        if now >= system_fast_due {
-            refresh_fast_metrics(&snapshot_tx, &mut system_monitor);
-            system_fast_due = now
-                + if system_status_active {
-                    config
-                        .system_status_active_refresh_interval
-                        .max(MIN_SYSTEM_STATUS_REFRESH_INTERVAL)
-                } else {
-                    config
-                        .system_status_background_refresh_interval
-                        .max(MIN_SYSTEM_STATUS_REFRESH_INTERVAL)
-                };
-        }
-        if now >= system_slow_due {
-            refresh_slow_metrics(&snapshot_tx, &mut system_monitor);
-            system_slow_due = now
-                + if system_status_active {
-                    config
-                        .system_status_active_slow_refresh_interval
-                        .max(MIN_SYSTEM_STATUS_REFRESH_INTERVAL)
-                } else {
-                    config
-                        .system_status_background_refresh_interval
-                        .max(MIN_SYSTEM_STATUS_REFRESH_INTERVAL)
-                };
-        }
+        refresh_due_system_sources(
+            now,
+            &config,
+            system_status_active,
+            &snapshot_tx,
+            platform.as_ref(),
+            &mut system_monitor,
+            &mut system_status_due,
+            &mut system_fast_due,
+            &mut system_slow_due,
+        );
         if now >= weather_due {
             let should_refresh_location = location_due <= now;
             let operation_config = config.clone();
@@ -583,11 +579,25 @@ async fn run(
                 Ok::<_, String>((location, weather))
             });
             tokio::pin!(operation);
-            let result = tokio::select! {
-                result = &mut operation => result.map_err(|_| "weather request timed out".to_string()).and_then(|result| result),
-                command = commands.recv() => {
-                    if apply_command(command, &mut config, &mut weather_due, &mut time_due, &mut location_due, &mut system_status_due, &mut system_fast_due, &mut system_slow_due, &mut system_status_active, &mut pending_validation) { break; }
-                    continue 'main;
+            let result = loop {
+                let system_tick = tokio::time::sleep(
+                    system_status_due
+                        .min(system_fast_due)
+                        .min(system_slow_due)
+                        .saturating_duration_since(Instant::now()),
+                );
+                tokio::pin!(system_tick);
+                tokio::select! {
+                    result = &mut operation => break result.map_err(|_| "weather request timed out".to_string()).and_then(|result| result),
+                    command = commands.recv() => {
+                        if apply_command(command, &mut config, &mut weather_due, &mut time_due, &mut location_due, &mut system_status_due, &mut system_fast_due, &mut system_slow_due, &mut system_status_active, &mut pending_validation) { break 'main; }
+                        continue 'main;
+                    }
+                    _ = &mut system_tick => refresh_due_system_sources(
+                        Instant::now(), &config, system_status_active, &snapshot_tx,
+                        platform.as_ref(), &mut system_monitor, &mut system_status_due,
+                        &mut system_fast_due, &mut system_slow_due,
+                    ),
                 }
             };
             location_due = now + config.location_refresh_interval;
@@ -646,11 +656,25 @@ async fn run(
                 synchronize_time(&operation_config),
             );
             tokio::pin!(operation);
-            let result = tokio::select! {
-                result = &mut operation => result.map_err(|_| "time request timed out".to_string()).and_then(|result| result),
-                command = commands.recv() => {
-                    if apply_command(command, &mut config, &mut weather_due, &mut time_due, &mut location_due, &mut system_status_due, &mut system_fast_due, &mut system_slow_due, &mut system_status_active, &mut pending_validation) { break; }
-                    continue 'main;
+            let result = loop {
+                let system_tick = tokio::time::sleep(
+                    system_status_due
+                        .min(system_fast_due)
+                        .min(system_slow_due)
+                        .saturating_duration_since(Instant::now()),
+                );
+                tokio::pin!(system_tick);
+                tokio::select! {
+                    result = &mut operation => break result.map_err(|_| "time request timed out".to_string()).and_then(|result| result),
+                    command = commands.recv() => {
+                        if apply_command(command, &mut config, &mut weather_due, &mut time_due, &mut location_due, &mut system_status_due, &mut system_fast_due, &mut system_slow_due, &mut system_status_active, &mut pending_validation) { break 'main; }
+                        continue 'main;
+                    }
+                    _ = &mut system_tick => refresh_due_system_sources(
+                        Instant::now(), &config, system_status_active, &snapshot_tx,
+                        platform.as_ref(), &mut system_monitor, &mut system_status_due,
+                        &mut system_fast_due, &mut system_slow_due,
+                    ),
                 }
             };
             match result {
@@ -694,6 +718,50 @@ async fn run(
                 Instant::now(),
             ),
         );
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn refresh_due_system_sources(
+    now: Instant,
+    config: &SystemServicesConfig,
+    active: bool,
+    sender: &watch::Sender<SystemSnapshot>,
+    platform: &dyn platform::Platform,
+    monitor: &mut Result<Box<dyn platform::SystemMonitor>, platform::PlatformError>,
+    system_status_due: &mut Instant,
+    system_fast_due: &mut Instant,
+    system_slow_due: &mut Instant,
+) {
+    if now >= *system_status_due {
+        refresh_system_status(sender, platform, config.storage_thresholds);
+        *system_status_due = now + system_status_refresh_interval(config, active);
+    }
+    if now >= *system_fast_due {
+        refresh_fast_metrics(sender, monitor);
+        *system_fast_due = now
+            + if active {
+                config
+                    .system_status_active_refresh_interval
+                    .max(MIN_SYSTEM_STATUS_REFRESH_INTERVAL)
+            } else {
+                config
+                    .system_status_background_refresh_interval
+                    .max(MIN_SYSTEM_STATUS_REFRESH_INTERVAL)
+            };
+    }
+    if now >= *system_slow_due {
+        refresh_slow_metrics(sender, monitor);
+        *system_slow_due = now
+            + if active {
+                config
+                    .system_status_active_slow_refresh_interval
+                    .max(MIN_SYSTEM_STATUS_REFRESH_INTERVAL)
+            } else {
+                config
+                    .system_status_background_refresh_interval
+                    .max(MIN_SYSTEM_STATUS_REFRESH_INTERVAL)
+            };
     }
 }
 
@@ -1794,6 +1862,74 @@ mod tests {
         outcomes: Mutex<Vec<Result<WeatherData, String>>>,
         calls: AtomicUsize,
     }
+
+    struct GatedProvider {
+        started: std_mpsc::Sender<()>,
+        release: tokio::sync::Notify,
+    }
+
+    #[async_trait]
+    impl WeatherProvider for GatedProvider {
+        async fn current_weather(
+            &self,
+            _location: WeatherLocation,
+            _units: WeatherUnits,
+        ) -> Result<WeatherData, String> {
+            let _ = self.started.send(());
+            self.release.notified().await;
+            Ok(sample())
+        }
+    }
+
+    struct CountingMonitor {
+        fast_calls: Arc<AtomicUsize>,
+        slow_calls: Arc<AtomicUsize>,
+    }
+
+    impl platform::SystemMonitor for CountingMonitor {
+        fn sample_fast(&mut self) -> Result<platform::FastSystemSample, platform::PlatformError> {
+            self.fast_calls.fetch_add(1, Ordering::SeqCst);
+            Ok(platform::FastSystemSample {
+                cpu: platform::CpuSample {
+                    usage_percent: 1.0,
+                    per_core_percent: vec![1.0],
+                    logical_core_count: 1,
+                    physical_core_count: Some(1),
+                },
+                memory: platform::MemorySample {
+                    total_bytes: 1,
+                    used_bytes: 0,
+                    available_bytes: 1,
+                    swap_total_bytes: 0,
+                    swap_used_bytes: 0,
+                },
+                uptime_seconds: 1,
+                load: platform::LoadSample {
+                    supported: true,
+                    one: 0.0,
+                    five: 0.0,
+                    fifteen: 0.0,
+                },
+                network_interfaces: Vec::new(),
+            })
+        }
+
+        fn sample_slow(&mut self) -> Result<platform::SlowSystemSample, platform::PlatformError> {
+            self.slow_calls.fetch_add(1, Ordering::SeqCst);
+            Ok(platform::SlowSystemSample {
+                identity: Ok(platform::SystemIdentitySample {
+                    host_name: Some("host".into()),
+                    os_name: Some("os".into()),
+                    os_version: Some("1".into()),
+                    kernel_version: Some("1".into()),
+                }),
+                thermal: Err("no thermal sensors".into()),
+                batteries: Err("no batteries".into()),
+                top_cpu: Vec::new(),
+                top_memory: Vec::new(),
+            })
+        }
+    }
     #[async_trait]
     impl WeatherProvider for FakeProvider {
         async fn current_weather(
@@ -2077,6 +2213,67 @@ mod tests {
             status_call_count(&platform) > before_background
         });
         handle.shutdown().unwrap();
+    }
+
+    #[test]
+    fn active_metrics_progress_while_weather_provider_is_pending() {
+        let platform = Arc::new(mock_platform());
+        let fast_calls = Arc::new(AtomicUsize::new(0));
+        let slow_calls = Arc::new(AtomicUsize::new(0));
+        platform.set_system_monitor_result(Ok(Box::new(CountingMonitor {
+            fast_calls: fast_calls.clone(),
+            slow_calls: slow_calls.clone(),
+        })));
+        let (started_tx, started_rx) = std_mpsc::channel();
+        let provider = Arc::new(GatedProvider {
+            started: started_tx,
+            release: tokio::sync::Notify::new(),
+        });
+        let mut runtime_config = config();
+        runtime_config.timezone_location = Some(runtime_config.fallback_location.clone());
+        runtime_config.request_timeout = Duration::from_secs(5);
+        runtime_config.system_status_background_refresh_interval = Duration::from_secs(60);
+        runtime_config.system_status_active_refresh_interval = Duration::from_millis(20);
+        runtime_config.system_status_active_slow_refresh_interval = Duration::from_millis(40);
+        let platform_trait: Arc<dyn platform::Platform> = platform.clone();
+        let (handle, _receiver) = SystemServicesRuntime::start_with_platform_and_provider(
+            runtime_config.clone(),
+            watchdog(),
+            platform_trait,
+            provider,
+        );
+
+        started_rx
+            .recv_timeout(Duration::from_secs(1))
+            .expect("weather provider must enter its initial pending operation");
+        handle.set_system_status_active(true).unwrap();
+        started_rx
+            .recv_timeout(Duration::from_secs(1))
+            .expect("activation must restart the pending weather operation");
+        let deadline = std::time::Instant::now() + Duration::from_secs(1);
+        while (fast_calls.load(Ordering::SeqCst) < 3
+            || slow_calls.load(Ordering::SeqCst) < 2
+            || status_call_count(&platform) < 2)
+            && std::time::Instant::now() < deadline
+        {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(fast_calls.load(Ordering::SeqCst) >= 3);
+        assert!(slow_calls.load(Ordering::SeqCst) >= 2);
+        assert!(status_call_count(&platform) >= 2);
+
+        handle.reconfigure(runtime_config).unwrap();
+        started_rx
+            .recv_timeout(Duration::from_secs(1))
+            .expect("reconfigure must cancel and restart pending weather promptly");
+        let (shutdown_tx, shutdown_rx) = std_mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = shutdown_tx.send(handle.shutdown());
+        });
+        assert_eq!(
+            shutdown_rx.recv_timeout(Duration::from_secs(1)).unwrap(),
+            Ok(())
+        );
     }
     #[test]
     fn ready_stale_unavailable_and_manual_refresh_are_published() {
