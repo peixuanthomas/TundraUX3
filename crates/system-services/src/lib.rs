@@ -329,6 +329,16 @@ enum Command {
     Shutdown,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CommandDisposition {
+    Shutdown,
+    Reconfigured,
+    RefreshWeather,
+    SyncTime,
+    ReplaceValidation,
+    Continue,
+}
+
 struct RuntimeShared {
     commands: mpsc::UnboundedSender<Command>,
     join: Mutex<Option<ManagedThreadHandle<()>>>,
@@ -517,7 +527,7 @@ async fn run(
         tokio::pin!(tick);
         tokio::select! {
             _ = &mut tick => {},
-            command = commands.recv() => if apply_command(command, &mut config, &mut weather_due, &mut time_due, &mut location_due, &mut system_status_due, &mut system_fast_due, &mut system_slow_due, &mut system_status_active, &mut pending_validation) { break },
+            command = commands.recv() => if apply_command(command, &mut config, &mut weather_due, &mut time_due, &mut location_due, &mut system_status_due, &mut system_fast_due, &mut system_slow_due, &mut system_status_active, &mut pending_validation) == CommandDisposition::Shutdown { break },
         }
         let now = Instant::now();
         if let Some((candidate, sender)) = pending_validation.take() {
@@ -539,9 +549,17 @@ async fn run(
                         break;
                     }
                     command = commands.recv() => {
-                        let _ = sender.send(Err(SystemServicesError::Shutdown));
-                        if apply_command(command, &mut config, &mut weather_due, &mut time_due, &mut location_due, &mut system_status_due, &mut system_fast_due, &mut system_slow_due, &mut system_status_active, &mut pending_validation) { break 'main; }
-                        continue 'main;
+                        match apply_command(command, &mut config, &mut weather_due, &mut time_due, &mut location_due, &mut system_status_due, &mut system_fast_due, &mut system_slow_due, &mut system_status_active, &mut pending_validation) {
+                            CommandDisposition::Shutdown => {
+                                let _ = sender.send(Err(SystemServicesError::Shutdown));
+                                break 'main;
+                            }
+                            CommandDisposition::Reconfigured | CommandDisposition::ReplaceValidation => {
+                                let _ = sender.send(Err(SystemServicesError::Shutdown));
+                                continue 'main;
+                            }
+                            CommandDisposition::RefreshWeather | CommandDisposition::SyncTime | CommandDisposition::Continue => {}
+                        }
                     }
                     _ = &mut system_tick => refresh_due_system_sources(
                         Instant::now(), &config, system_status_active, &snapshot_tx,
@@ -590,8 +608,11 @@ async fn run(
                 tokio::select! {
                     result = &mut operation => break result.map_err(|_| "weather request timed out".to_string()).and_then(|result| result),
                     command = commands.recv() => {
-                        if apply_command(command, &mut config, &mut weather_due, &mut time_due, &mut location_due, &mut system_status_due, &mut system_fast_due, &mut system_slow_due, &mut system_status_active, &mut pending_validation) { break 'main; }
-                        continue 'main;
+                        match apply_command(command, &mut config, &mut weather_due, &mut time_due, &mut location_due, &mut system_status_due, &mut system_fast_due, &mut system_slow_due, &mut system_status_active, &mut pending_validation) {
+                            CommandDisposition::Shutdown => break 'main,
+                            CommandDisposition::Reconfigured | CommandDisposition::RefreshWeather => continue 'main,
+                            CommandDisposition::SyncTime | CommandDisposition::ReplaceValidation | CommandDisposition::Continue => {}
+                        }
                     }
                     _ = &mut system_tick => refresh_due_system_sources(
                         Instant::now(), &config, system_status_active, &snapshot_tx,
@@ -667,8 +688,11 @@ async fn run(
                 tokio::select! {
                     result = &mut operation => break result.map_err(|_| "time request timed out".to_string()).and_then(|result| result),
                     command = commands.recv() => {
-                        if apply_command(command, &mut config, &mut weather_due, &mut time_due, &mut location_due, &mut system_status_due, &mut system_fast_due, &mut system_slow_due, &mut system_status_active, &mut pending_validation) { break 'main; }
-                        continue 'main;
+                        match apply_command(command, &mut config, &mut weather_due, &mut time_due, &mut location_due, &mut system_status_due, &mut system_fast_due, &mut system_slow_due, &mut system_status_active, &mut pending_validation) {
+                            CommandDisposition::Shutdown => break 'main,
+                            CommandDisposition::Reconfigured | CommandDisposition::SyncTime => continue 'main,
+                            CommandDisposition::RefreshWeather | CommandDisposition::ReplaceValidation | CommandDisposition::Continue => {}
+                        }
                     }
                     _ = &mut system_tick => refresh_due_system_sources(
                         Instant::now(), &config, system_status_active, &snapshot_tx,
@@ -790,10 +814,18 @@ fn apply_command(
     system_slow_due: &mut Instant,
     system_status_active: &mut bool,
     pending_validation: &mut Option<ValidationRequest>,
-) -> bool {
+) -> CommandDisposition {
     match command {
-        Some(Command::Shutdown) | None => true,
+        Some(Command::Shutdown) | None => {
+            if let Some((_, sender)) = pending_validation.take() {
+                let _ = sender.send(Err(SystemServicesError::Shutdown));
+            }
+            CommandDisposition::Shutdown
+        }
         Some(Command::Reconfigure(next)) => {
+            if let Some((_, sender)) = pending_validation.take() {
+                let _ = sender.send(Err(SystemServicesError::Shutdown));
+            }
             *config = next;
             *weather_due = Instant::now();
             *time_due = Instant::now();
@@ -801,32 +833,34 @@ fn apply_command(
             *system_status_due = Instant::now();
             *system_fast_due = Instant::now();
             *system_slow_due = Instant::now();
-            false
+            CommandDisposition::Reconfigured
         }
         Some(Command::RefreshWeather) => {
             *weather_due = Instant::now();
-            false
+            CommandDisposition::RefreshWeather
         }
         Some(Command::SyncTime) => {
             *time_due = Instant::now();
-            false
+            CommandDisposition::SyncTime
         }
         Some(Command::RefreshSystemStatus) => {
             *system_status_due = Instant::now();
             *system_fast_due = Instant::now();
             *system_slow_due = Instant::now();
-            false
+            CommandDisposition::Continue
         }
         Some(Command::SetSystemStatusActive(active)) => {
             *system_status_active = active;
             *system_status_due = Instant::now();
             *system_fast_due = Instant::now();
             *system_slow_due = Instant::now();
-            false
+            CommandDisposition::Continue
         }
         Some(Command::Validate(candidate, sender)) => {
-            *pending_validation = Some((candidate, sender));
-            false
+            if let Some((_, previous_sender)) = pending_validation.replace((candidate, sender)) {
+                let _ = previous_sender.send(Err(SystemServicesError::Shutdown));
+            }
+            CommandDisposition::ReplaceValidation
         }
     }
 }
@@ -1886,6 +1920,71 @@ mod tests {
         slow_calls: Arc<AtomicUsize>,
     }
 
+    struct HangingHttpServer {
+        url: String,
+        accepted: std_mpsc::Receiver<()>,
+        stop: std_mpsc::Sender<()>,
+        join: Option<std::thread::JoinHandle<()>>,
+    }
+
+    impl HangingHttpServer {
+        fn start() -> Self {
+            let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
+            listener.set_nonblocking(true).unwrap();
+            let address = listener.local_addr().unwrap();
+            let (accepted_tx, accepted) = std_mpsc::channel();
+            let (stop, stop_rx) = std_mpsc::channel();
+            let join = std::thread::spawn(move || {
+                let mut connections = Vec::new();
+                loop {
+                    if stop_rx.try_recv().is_ok() {
+                        break;
+                    }
+                    match listener.accept() {
+                        Ok((stream, _)) => {
+                            connections.push(stream);
+                            let _ = accepted_tx.send(());
+                        }
+                        Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                            std::thread::sleep(Duration::from_millis(2));
+                        }
+                        Err(_) => break,
+                    }
+                }
+            });
+            Self {
+                url: format!("http://{address}/"),
+                accepted,
+                stop,
+                join: Some(join),
+            }
+        }
+
+        fn wait_for_request(&self) {
+            self.accepted
+                .recv_timeout(Duration::from_secs(5))
+                .expect("time request must reach the hanging loopback server");
+        }
+
+        fn assert_no_new_request(&self) {
+            assert!(
+                self.accepted
+                    .recv_timeout(Duration::from_millis(150))
+                    .is_err(),
+                "unrelated command must not restart the pending time request"
+            );
+        }
+    }
+
+    impl Drop for HangingHttpServer {
+        fn drop(&mut self) {
+            let _ = self.stop.send(());
+            if let Some(join) = self.join.take() {
+                let _ = join.join();
+            }
+        }
+    }
+
     impl platform::SystemMonitor for CountingMonitor {
         fn sample_fast(&mut self) -> Result<platform::FastSystemSample, platform::PlatformError> {
             self.fast_calls.fetch_add(1, Ordering::SeqCst);
@@ -2266,9 +2365,7 @@ mod tests {
             .recv_timeout(Duration::from_secs(1))
             .expect("weather provider must enter its initial pending operation");
         handle.set_system_status_active(true).unwrap();
-        started_rx
-            .recv_timeout(Duration::from_secs(1))
-            .expect("activation must restart the pending weather operation");
+        handle.refresh_system_status().unwrap();
         let deadline = std::time::Instant::now() + Duration::from_secs(1);
         while (fast_calls.load(Ordering::SeqCst) < 3
             || slow_calls.load(Ordering::SeqCst) < 2
@@ -2280,6 +2377,10 @@ mod tests {
         assert!(fast_calls.load(Ordering::SeqCst) >= 3);
         assert!(slow_calls.load(Ordering::SeqCst) >= 2);
         assert!(status_call_count(&platform) >= 2);
+        assert!(
+            started_rx.try_recv().is_err(),
+            "status commands must preserve the pending weather operation"
+        );
 
         handle.reconfigure(runtime_config).unwrap();
         started_rx
@@ -2293,6 +2394,114 @@ mod tests {
             shutdown_rx.recv_timeout(Duration::from_secs(1)).unwrap(),
             Ok(())
         );
+    }
+
+    #[test]
+    fn active_metrics_preserve_pending_time_sync_request() {
+        let server = HangingHttpServer::start();
+        let platform = Arc::new(mock_platform());
+        let fast_calls = Arc::new(AtomicUsize::new(0));
+        let slow_calls = Arc::new(AtomicUsize::new(0));
+        platform.set_system_monitor_result(Ok(Box::new(CountingMonitor {
+            fast_calls: fast_calls.clone(),
+            slow_calls: slow_calls.clone(),
+        })));
+        let provider = Arc::new(FakeProvider {
+            outcomes: Mutex::new(vec![Ok(sample())]),
+            calls: AtomicUsize::new(0),
+        });
+        let mut runtime_config = config();
+        runtime_config.timezone_location = Some(runtime_config.fallback_location.clone());
+        runtime_config.time_sync_mode = TimeSyncMode::Network;
+        runtime_config.time_server_url = Some(server.url.clone());
+        runtime_config.request_timeout = Duration::from_secs(5);
+        runtime_config.system_status_background_refresh_interval = Duration::from_secs(60);
+        runtime_config.system_status_active_refresh_interval = Duration::from_millis(20);
+        runtime_config.system_status_active_slow_refresh_interval = Duration::from_millis(40);
+        let platform_trait: Arc<dyn platform::Platform> = platform.clone();
+        let (handle, _receiver) = SystemServicesRuntime::start_with_platform_and_provider(
+            runtime_config,
+            watchdog(),
+            platform_trait,
+            provider,
+        );
+
+        server.wait_for_request();
+        handle.set_system_status_active(true).unwrap();
+        handle.refresh_system_status().unwrap();
+        let deadline = std::time::Instant::now() + Duration::from_secs(1);
+        while (fast_calls.load(Ordering::SeqCst) < 3
+            || slow_calls.load(Ordering::SeqCst) < 2
+            || status_call_count(&platform) < 2)
+            && std::time::Instant::now() < deadline
+        {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(fast_calls.load(Ordering::SeqCst) >= 3);
+        assert!(slow_calls.load(Ordering::SeqCst) >= 2);
+        assert!(status_call_count(&platform) >= 2);
+        server.assert_no_new_request();
+
+        let (shutdown_tx, shutdown_rx) = std_mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = shutdown_tx.send(handle.shutdown());
+        });
+        assert_eq!(
+            shutdown_rx.recv_timeout(Duration::from_secs(1)).unwrap(),
+            Ok(())
+        );
+    }
+
+    #[test]
+    fn status_commands_preserve_pending_time_validation() {
+        let server = HangingHttpServer::start();
+        let platform = Arc::new(mock_platform());
+        let fast_calls = Arc::new(AtomicUsize::new(0));
+        let slow_calls = Arc::new(AtomicUsize::new(0));
+        platform.set_system_monitor_result(Ok(Box::new(CountingMonitor {
+            fast_calls: fast_calls.clone(),
+            slow_calls,
+        })));
+        let provider = Arc::new(FakeProvider {
+            outcomes: Mutex::new(vec![Ok(sample())]),
+            calls: AtomicUsize::new(0),
+        });
+        let mut runtime_config = config();
+        runtime_config.timezone_location = Some(runtime_config.fallback_location.clone());
+        runtime_config.system_status_background_refresh_interval = Duration::from_secs(60);
+        runtime_config.system_status_active_refresh_interval = Duration::from_millis(20);
+        runtime_config.system_status_active_slow_refresh_interval = Duration::from_millis(40);
+        let platform_trait: Arc<dyn platform::Platform> = platform.clone();
+        let (handle, _receiver) = SystemServicesRuntime::start_with_platform_and_provider(
+            runtime_config,
+            watchdog(),
+            platform_trait,
+            provider,
+        );
+        let mut candidate = config();
+        candidate.time_sync_mode = TimeSyncMode::Network;
+        candidate.time_server_url = Some(server.url.clone());
+        candidate.request_timeout = Duration::from_secs(3);
+        let validation_handle = handle.clone();
+        let (result_tx, result_rx) = std_mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = result_tx.send(validation_handle.validate_time_source(candidate));
+        });
+
+        server.wait_for_request();
+        handle.set_system_status_active(true).unwrap();
+        handle.refresh_system_status().unwrap();
+        assert!(
+            result_rx.recv_timeout(Duration::from_millis(150)).is_err(),
+            "status commands must not cancel validation or report shutdown"
+        );
+        server.assert_no_new_request();
+        assert!(fast_calls.load(Ordering::SeqCst) >= 2);
+        assert_eq!(
+            result_rx.recv_timeout(Duration::from_secs(5)).unwrap(),
+            Err(SystemServicesError::Timeout)
+        );
+        handle.shutdown().unwrap();
     }
     #[tokio::test]
     async fn ready_stale_unavailable_and_manual_refresh_are_published() {
