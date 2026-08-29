@@ -2067,6 +2067,25 @@ mod tests {
         }
         panic!("snapshot predicate was not reached")
     }
+
+    async fn wait_for_snapshot_event(
+        receiver: &mut watch::Receiver<SystemSnapshot>,
+        predicate: impl Fn(&SystemSnapshot) -> bool,
+    ) {
+        tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                if predicate(&receiver.borrow_and_update()) {
+                    return;
+                }
+                receiver
+                    .changed()
+                    .await
+                    .expect("system service snapshot sender must remain open");
+            }
+        })
+        .await
+        .expect("system service snapshot condition timed out");
+    }
     fn status_call_count(platform: &platform::mock::MockPlatform) -> usize {
         platform
             .calls()
@@ -2275,8 +2294,8 @@ mod tests {
             Ok(())
         );
     }
-    #[test]
-    fn ready_stale_unavailable_and_manual_refresh_are_published() {
+    #[tokio::test]
+    async fn ready_stale_unavailable_and_manual_refresh_are_published() {
         let provider = Arc::new(FakeProvider {
             outcomes: Mutex::new(vec![
                 Ok(sample()),
@@ -2285,44 +2304,71 @@ mod tests {
             ]),
             calls: AtomicUsize::new(0),
         });
-        let (handle, mut receiver) =
-            SystemServicesRuntime::start_with_provider(config(), watchdog(), provider);
-        wait_until(&mut receiver, |snapshot| {
+        let platform: Arc<dyn platform::Platform> = Arc::new(mock_platform());
+        let mut runtime_config = config();
+        runtime_config.timezone_location = Some(runtime_config.fallback_location.clone());
+        let (handle, mut receiver) = SystemServicesRuntime::start_with_platform_and_provider(
+            runtime_config,
+            watchdog(),
+            platform,
+            provider,
+        );
+        wait_for_snapshot_event(&mut receiver, |snapshot| {
             matches!(snapshot.weather, WeatherState::Ready(_))
-        });
+        })
+        .await;
         handle.refresh_weather().unwrap();
-        wait_until(&mut receiver, |snapshot| {
+        wait_for_snapshot_event(&mut receiver, |snapshot| {
             matches!(snapshot.weather, WeatherState::Stale { .. })
-        });
+        })
+        .await;
         handle.shutdown().unwrap();
         let unavailable = Arc::new(FakeProvider {
             outcomes: Mutex::new(vec![Err("offline".to_string())]),
             calls: AtomicUsize::new(0),
         });
-        let (handle, mut receiver) =
-            SystemServicesRuntime::start_with_provider(config(), watchdog(), unavailable);
-        wait_until(&mut receiver, |snapshot| {
+        let platform: Arc<dyn platform::Platform> = Arc::new(mock_platform());
+        let mut runtime_config = config();
+        runtime_config.timezone_location = Some(runtime_config.fallback_location.clone());
+        let (handle, mut receiver) = SystemServicesRuntime::start_with_platform_and_provider(
+            runtime_config,
+            watchdog(),
+            platform,
+            unavailable,
+        );
+        wait_for_snapshot_event(&mut receiver, |snapshot| {
             matches!(snapshot.weather, WeatherState::Unavailable { .. })
-        });
+        })
+        .await;
         handle.shutdown().unwrap();
     }
-    #[test]
-    fn reconfiguration_and_shutdown_are_controllable() {
+    #[tokio::test]
+    async fn reconfiguration_and_shutdown_are_controllable() {
         let provider = Arc::new(FakeProvider {
             outcomes: Mutex::new(vec![Ok(sample()), Ok(sample())]),
             calls: AtomicUsize::new(0),
         });
-        let (handle, mut receiver) =
-            SystemServicesRuntime::start_with_provider(config(), watchdog(), provider.clone());
-        wait_until(&mut receiver, |snapshot| {
+        let platform: Arc<dyn platform::Platform> = Arc::new(mock_platform());
+        let mut runtime_config = config();
+        runtime_config.timezone_location = Some(runtime_config.fallback_location.clone());
+        let (handle, mut receiver) = SystemServicesRuntime::start_with_platform_and_provider(
+            runtime_config,
+            watchdog(),
+            platform,
+            provider.clone(),
+        );
+        wait_for_snapshot_event(&mut receiver, |snapshot| {
             matches!(snapshot.weather, WeatherState::Ready(_))
-        });
+        })
+        .await;
         let mut changed = config();
         changed.timezone_id = "Asia/Shanghai".to_string();
+        changed.timezone_location = Some(changed.fallback_location.clone());
         handle.reconfigure(changed).unwrap();
-        wait_until(&mut receiver, |_| {
+        wait_for_snapshot_event(&mut receiver, |_| {
             provider.calls.load(Ordering::SeqCst) >= 2
-        });
+        })
+        .await;
         handle.shutdown().unwrap();
         assert!(matches!(
             handle.refresh_weather(),
