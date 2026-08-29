@@ -903,11 +903,17 @@ impl ShellSession {
             .checked_div(column_step)
             .unwrap_or(0)
             .min(widget.size.cols().saturating_sub(1));
-        let grab_row = coordinates
+        let hidden_rows = layout
+            .visible_row_start
+            .saturating_sub(widget.logical_row)
+            .min(widget.size.rows().saturating_sub(1));
+        let visible_grab_row = coordinates
             .1
             .saturating_sub(widget.area.y)
             .checked_div(ui::LOGICAL_ROW_HEIGHT + ui::LOGICAL_ROW_GAP)
-            .unwrap_or(0)
+            .unwrap_or(0);
+        let grab_row = hidden_rows
+            .saturating_add(visible_grab_row)
             .min(widget.size.rows().saturating_sub(1));
         self.system_status_widget_drag = Some(SystemStatusWidgetDragState {
             kind: storage_widget_kind(kind),

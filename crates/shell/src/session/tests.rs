@@ -1107,6 +1107,63 @@ fn system_status_drag_changes_only_active_profile_and_clears_capture() {
 }
 
 #[test]
+fn system_status_clipped_widget_click_release_preserves_drag_origin() {
+    let mut state = ShellSession::new_for_home_mode(
+        ShellLaunchConfig::default(),
+        (120, 20),
+        ShellHomeMode::User,
+    );
+    set_test_auth_role(&mut state, UserRole::Admin);
+    state.screen_stack.push(ShellScreen::SystemStatus);
+    state.focused_component = ShellComponent::SystemStatus;
+    state.begin_system_status_dashboard_edit();
+    state.system_status_dashboard_scroll_row = 1;
+    state.clamp_system_status_dashboard_scroll();
+    let (model, layout) = state.system_status_layout().unwrap();
+    assert_eq!(layout.visible_row_start, 1);
+    let overview = model
+        .dashboard
+        .widgets(layout.profile)
+        .iter()
+        .find(|widget| {
+            widget.kind == ui::SystemStatusWidgetKind::SystemOverview
+                && widget.row == 0
+                && widget.size.rows() > 1
+        })
+        .unwrap();
+    let clipped = layout
+        .widgets
+        .iter()
+        .find(|widget| widget.kind == overview.kind && !widget.preview)
+        .unwrap();
+    assert_eq!(clipped.area.y, layout.canvas.y);
+    let profile = super::controller::system_status::storage_profile(layout.profile);
+    let before = state
+        .system_status_dashboard_draft
+        .as_ref()
+        .unwrap()
+        .layout(profile)
+        .placements
+        .clone();
+    let pointer = (clipped.area.x.saturating_add(1), clipped.area.y);
+    state.begin_system_status_widget_drag(overview.kind, pointer);
+    assert!(state.system_status_widget_drag.is_some());
+    state.finish_system_status_widget_drag(pointer);
+    assert!(state.system_status_widget_drag.is_none());
+    let after = state
+        .system_status_dashboard_draft
+        .as_ref()
+        .unwrap()
+        .layout(profile)
+        .placements
+        .clone();
+    assert_eq!(
+        after, before,
+        "pointer down/up without movement preserves every placement"
+    );
+}
+
+#[test]
 fn system_status_save_persists_dashboard_to_user_record() {
     let unique = SystemTime::now()
         .duration_since(UNIX_EPOCH)
