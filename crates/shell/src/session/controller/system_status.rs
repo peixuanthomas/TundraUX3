@@ -426,7 +426,8 @@ impl ShellSession {
     }
 
     pub(in crate::session) fn open_system_status_add_picker(&mut self) {
-        if self.system_status_dashboard_draft.is_none() {
+        if self.system_status_dashboard_draft.is_none() || !self.system_status_has_addable_widget()
+        {
             return;
         }
         self.system_status_dashboard_focus = ui::SystemStatusDashboardFocus::Add;
@@ -434,7 +435,7 @@ impl ShellSession {
         let selected = SYSTEM_STATUS_WIDGET_KINDS
             .iter()
             .position(|kind| self.system_status_picker_kind_enabled(*kind))
-            .unwrap_or(0);
+            .expect("addable widget checked");
         self.system_status_add_picker = Some(SystemStatusAddPickerState { selected });
     }
 
@@ -465,11 +466,27 @@ impl ShellSession {
     }
 
     pub(in crate::session) fn select_system_status_picker_item(&mut self, index: usize) {
-        if index < SYSTEM_STATUS_WIDGET_KINDS.len() {
+        if SYSTEM_STATUS_WIDGET_KINDS
+            .get(index)
+            .is_some_and(|kind| self.system_status_picker_kind_enabled(*kind))
+        {
             if let Some(picker) = self.system_status_add_picker.as_mut() {
                 picker.selected = index;
             }
         }
+    }
+
+    pub(in crate::session) fn activate_system_status_picker_item(&mut self, index: usize) {
+        let Some(kind) = SYSTEM_STATUS_WIDGET_KINDS.get(index).copied() else {
+            return;
+        };
+        if !self.system_status_picker_kind_enabled(kind) {
+            return;
+        }
+        if let Some(picker) = self.system_status_add_picker.as_mut() {
+            picker.selected = index;
+        }
+        self.add_selected_system_status_widget();
     }
 
     pub(in crate::session) fn add_selected_system_status_widget(&mut self) {
@@ -992,6 +1009,13 @@ impl ShellSession {
                 .widgets
                 .contains(&kind)
             && self.system_status_widget_unavailable_reason(kind).is_none()
+    }
+
+    pub(in crate::session) fn system_status_has_addable_widget(&self) -> bool {
+        SYSTEM_STATUS_WIDGET_KINDS
+            .iter()
+            .copied()
+            .any(|kind| self.system_status_picker_kind_enabled(kind))
     }
 
     pub(in crate::session) fn system_status_widget_unavailable_reason(

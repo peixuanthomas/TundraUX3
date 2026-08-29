@@ -330,10 +330,7 @@ impl ShellSession {
             actions: ui::SystemStatusActionState {
                 refresh_disabled: self.system_status_refresh_requested_revision.is_some(),
                 edit_disabled: false,
-                add_disabled: !super::super::controller::system_status::SYSTEM_STATUS_WIDGET_KINDS
-                    .iter()
-                    .copied()
-                    .any(|kind| self.system_status_picker_kind_enabled(kind)),
+                add_disabled: !self.system_status_has_addable_widget(),
                 size_disabled: self.system_status_selected_widget.is_none(),
                 remove_disabled: self.system_status_selected_widget.is_none(),
                 save_disabled: !dirty,
@@ -742,17 +739,19 @@ impl ShellSession {
                         format_rate(io.total_received_bytes_per_second),
                         format_rate(io.total_transmitted_bytes_per_second)
                     ));
-                    model.compact_rows = io
-                        .interfaces
-                        .iter()
-                        .map(|interface| {
-                            vec![
-                                interface.name.clone(),
-                                format_rate(interface.received_bytes_per_second),
-                                format_rate(interface.transmitted_bytes_per_second),
-                            ]
-                        })
-                        .collect();
+                    if role == UserRole::Admin {
+                        model.compact_rows = io
+                            .interfaces
+                            .iter()
+                            .map(|interface| {
+                                vec![
+                                    interface.name.clone(),
+                                    format_rate(interface.received_bytes_per_second),
+                                    format_rate(interface.transmitted_bytes_per_second),
+                                ]
+                            })
+                            .collect();
+                    }
                 }
                 model.trend = Some(
                     self.system_status_history

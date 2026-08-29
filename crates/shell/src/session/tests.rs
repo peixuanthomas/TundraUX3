@@ -447,6 +447,153 @@ fn system_status_short_add_picker_double_click_uses_visible_absolute_index() {
 }
 
 #[test]
+fn system_status_disabled_add_and_picker_rows_are_inert() {
+    let mut state = ShellSession::new_for_home_mode(
+        ShellLaunchConfig::default(),
+        (120, 40),
+        ShellHomeMode::User,
+    );
+    set_test_auth_role(&mut state, UserRole::Admin);
+    state.screen_stack.push(ShellScreen::SystemStatus);
+    state.focused_component = ShellComponent::SystemStatus;
+    state.begin_system_status_dashboard_edit();
+    for kind in super::controller::system_status::SYSTEM_STATUS_WIDGET_KINDS {
+        state
+            .system_status_dashboard_draft
+            .as_mut()
+            .unwrap()
+            .add_widget(kind);
+    }
+    let model = state.to_system_status_view_model().unwrap();
+    assert!(model.dashboard.actions.add_disabled);
+    assert_eq!(
+        state.route_key_input(&KeyInput::from_label("a")).1,
+        ShellCommand::Noop
+    );
+    let ui::ShellLayout::Full { main, .. } = ui::compute_shell_layout(Rect::new(0, 0, 120, 40))
+    else {
+        panic!()
+    };
+    let layout = ui::system_status_layout(main, &model);
+    state.apply_input(InputEvent::Mouse(ui::MouseEvent::new(
+        layout.add_button.x,
+        layout.add_button.y,
+        ui::MouseEventKind::Down(PointerButton::Left),
+    )));
+    assert!(state.system_status_add_picker.is_none());
+
+    state.finish_cancel_system_status_dashboard_edit();
+    state.begin_system_status_dashboard_edit();
+    state.open_system_status_add_picker();
+    let selected = state.system_status_add_picker.unwrap().selected;
+    let before = state.system_status_dashboard_draft.clone().unwrap();
+    let model = state.to_system_status_view_model().unwrap();
+    let layout = ui::system_status_layout(main, &model);
+    let disabled = layout
+        .picker_items
+        .iter()
+        .find(|row| !model.dashboard.picker.as_ref().unwrap().items[row.index].enabled)
+        .unwrap();
+    for kind in [
+        ui::MouseEventKind::Down(PointerButton::Left),
+        ui::MouseEventKind::DoubleClick(PointerButton::Left),
+    ] {
+        state.apply_input(InputEvent::Mouse(ui::MouseEvent::new(
+            disabled.area.x,
+            disabled.area.y,
+            kind,
+        )));
+    }
+    assert_eq!(state.system_status_add_picker.unwrap().selected, selected);
+    assert_eq!(
+        state.system_status_dashboard_draft.as_ref().unwrap(),
+        &before
+    );
+    state.activate_system_status_picker_item(disabled.index);
+    assert_eq!(state.system_status_add_picker.unwrap().selected, selected);
+    assert_eq!(
+        state.system_status_dashboard_draft.as_ref().unwrap(),
+        &before
+    );
+}
+
+#[test]
+fn system_status_network_compact_rows_redact_user_interface_names() {
+    let mut state = ShellSession::new_for_home_mode(
+        ShellLaunchConfig::default(),
+        (120, 40),
+        ShellHomeMode::User,
+    );
+    set_test_auth_role(&mut state, UserRole::User);
+    let mut snapshot = system_status_metric_snapshot(10);
+    snapshot.metrics.network_io =
+        system_services::MetricState::Ready(system_services::NetworkIoSnapshot {
+            interfaces: vec![system_services::NetworkIoInterfaceSnapshot {
+                name: "secret-iface".into(),
+                received_bytes: 1,
+                transmitted_bytes: 2,
+                received_bytes_per_second: 3.0,
+                transmitted_bytes_per_second: 4.0,
+            }],
+            total_received_bytes: 1,
+            total_transmitted_bytes: 2,
+            total_received_bytes_per_second: 3.0,
+            total_transmitted_bytes_per_second: 4.0,
+        });
+    state.apply_system_status_snapshot(snapshot);
+    state.begin_system_status_dashboard_edit();
+    state
+        .system_status_dashboard_draft
+        .as_mut()
+        .unwrap()
+        .resize_widget(
+            storage::DashboardProfile::Wide,
+            storage::SystemStatusWidgetKind::Network,
+            storage::SystemStatusWidgetSize::Large,
+        );
+    let user = state
+        .to_system_status_view_model()
+        .unwrap()
+        .dashboard
+        .wide_widgets
+        .into_iter()
+        .find(|widget| widget.kind == ui::SystemStatusWidgetKind::Network)
+        .unwrap();
+    assert_eq!(user.size, ui::SystemStatusWidgetSize::Large);
+    assert!(user.primary.contains("Connected"));
+    assert!(
+        user.secondary
+            .iter()
+            .any(|line| line.contains("Down") && line.contains("Up"))
+    );
+    assert!(user.compact_rows.is_empty());
+    assert!(
+        !format!(
+            "{:?}{:?}{:?}",
+            user.primary, user.secondary, user.compact_rows
+        )
+        .contains("secret-iface")
+    );
+
+    set_test_auth_role(&mut state, UserRole::Admin);
+    let admin = state
+        .to_system_status_view_model()
+        .unwrap()
+        .dashboard
+        .wide_widgets
+        .into_iter()
+        .find(|widget| widget.kind == ui::SystemStatusWidgetKind::Network)
+        .unwrap();
+    assert!(
+        admin
+            .compact_rows
+            .iter()
+            .flatten()
+            .any(|value| value == "secret-iface")
+    );
+}
+
+#[test]
 fn system_status_metric_vm_exposes_progress_bars_status_and_booted_rows() {
     let mut state = ShellSession::new_for_home_mode(
         ShellLaunchConfig::default(),

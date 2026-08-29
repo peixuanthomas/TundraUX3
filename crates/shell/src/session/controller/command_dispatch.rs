@@ -1224,8 +1224,7 @@ impl ShellSession {
                 ShellAction::Redraw
             }
             ShellCommand::SystemStatusPickerActivateAt(index) => {
-                self.select_system_status_picker_item(index);
-                self.add_selected_system_status_widget();
+                self.activate_system_status_picker_item(index);
                 ShellAction::Redraw
             }
             ShellCommand::SystemStatusCycleWidgetSize => {

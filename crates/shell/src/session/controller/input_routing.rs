@@ -685,7 +685,11 @@ impl ShellSession {
                     ShellCommand::SystemStatusSaveDashboard
                 }
                 InputKey::Char('a' | 'A') if !key.modifiers.has_non_shift_modifier() => {
-                    ShellCommand::SystemStatusOpenAddPicker
+                    if self.system_status_has_addable_widget() {
+                        ShellCommand::SystemStatusOpenAddPicker
+                    } else {
+                        ShellCommand::Noop
+                    }
                 }
                 InputKey::Char('s' | 'S') if !key.modifiers.has_non_shift_modifier() => {
                     ShellCommand::SystemStatusCycleWidgetSize
@@ -1959,11 +1963,19 @@ impl ShellSession {
             || self.system_status_discard_dialog
             || self.system_status_add_picker.is_some()
             || self.system_status_size_picker.is_some();
+        let picker_enabled = |index: usize| {
+            model
+                .dashboard
+                .picker
+                .as_ref()
+                .and_then(|picker| picker.items.get(index))
+                .is_some_and(|item| item.enabled)
+        };
 
         let activate_hit = |hit| match hit {
             Some(ui::SystemStatusHitTarget::DialogConfirm) => ShellCommand::SystemStatusDiscardEdit,
             Some(ui::SystemStatusHitTarget::DialogCancel) => ShellCommand::SystemStatusContinueEdit,
-            Some(ui::SystemStatusHitTarget::PickerItem(index)) => {
+            Some(ui::SystemStatusHitTarget::PickerItem(index)) if picker_enabled(index) => {
                 ShellCommand::SystemStatusPickerActivateAt(index)
             }
             Some(ui::SystemStatusHitTarget::SizePickerItem(index)) => {
@@ -2001,7 +2013,7 @@ impl ShellSession {
                 Some(ui::SystemStatusHitTarget::DialogCancel) => {
                     ShellCommand::SystemStatusContinueEdit
                 }
-                Some(ui::SystemStatusHitTarget::PickerItem(index)) => {
+                Some(ui::SystemStatusHitTarget::PickerItem(index)) if picker_enabled(index) => {
                     ShellCommand::SystemStatusPickerSelect(index)
                 }
                 Some(ui::SystemStatusHitTarget::SizePickerItem(index)) => {
@@ -2016,7 +2028,9 @@ impl ShellSession {
                 Some(ui::SystemStatusHitTarget::Edit) if !editing => {
                     ShellCommand::SystemStatusBeginEdit
                 }
-                Some(ui::SystemStatusHitTarget::Add) if editing => {
+                Some(ui::SystemStatusHitTarget::Add)
+                    if editing && self.system_status_has_addable_widget() =>
+                {
                     ShellCommand::SystemStatusOpenAddPicker
                 }
                 Some(ui::SystemStatusHitTarget::Size) if editing => {
@@ -2086,7 +2100,7 @@ impl ShellSession {
                 Some(ui::SystemStatusHitTarget::DialogCancel) => {
                     ShellCommand::SystemStatusContinueEdit
                 }
-                Some(ui::SystemStatusHitTarget::PickerItem(index)) => {
+                Some(ui::SystemStatusHitTarget::PickerItem(index)) if picker_enabled(index) => {
                     ShellCommand::SystemStatusPickerSelect(index)
                 }
                 Some(ui::SystemStatusHitTarget::SizePickerItem(index)) => {
