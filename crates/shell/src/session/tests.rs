@@ -557,6 +557,44 @@ fn system_status_clean_save_is_inert_for_shortcut_mouse_and_direct_call() {
 }
 
 #[test]
+fn system_status_pending_refresh_is_inert_for_keyboard_mouse_and_direct_call() {
+    let mut state = ShellSession::new_for_home_mode(
+        ShellLaunchConfig::default(),
+        (120, 40),
+        ShellHomeMode::User,
+    );
+    set_test_auth_role(&mut state, UserRole::Admin);
+    state.screen_stack.push(ShellScreen::SystemStatus);
+    state.focused_component = ShellComponent::SystemStatus;
+    state.system_status_refresh_requested_revision = Some(41);
+    state.system_status_dashboard_feedback = Some("keep feedback".into());
+    let marker = state.system_status_refresh_requested_revision;
+    let feedback = state.system_status_dashboard_feedback.clone();
+    let model = state.to_system_status_view_model().unwrap();
+    assert!(model.dashboard.actions.refresh_disabled);
+    assert_eq!(
+        state.route_key_input(&KeyInput::from_label("r")).1,
+        ShellCommand::Noop
+    );
+    let ui::ShellLayout::Full { main, .. } = ui::compute_shell_layout(Rect::new(0, 0, 120, 40))
+    else {
+        panic!()
+    };
+    let refresh = ui::system_status_layout(main, &model).refresh_button;
+    for kind in [
+        ui::MouseEventKind::Down(PointerButton::Left),
+        ui::MouseEventKind::Click(PointerButton::Left),
+    ] {
+        state.apply_input(InputEvent::Mouse(ui::MouseEvent::new(
+            refresh.x, refresh.y, kind,
+        )));
+    }
+    state.refresh_system_status();
+    assert_eq!(state.system_status_refresh_requested_revision, marker);
+    assert_eq!(state.system_status_dashboard_feedback, feedback);
+}
+
+#[test]
 fn system_status_add_picker_redacts_unavailable_reasons_for_users() {
     let sentinel = "/sensitive/backend/path secret-device";
     let mut state = ShellSession::new_for_home_mode(

@@ -724,7 +724,13 @@ impl ShellSession {
 
         let command = match &key.key {
             InputKey::Escape => ShellCommand::CloseSystemStatus,
-            InputKey::Char('r' | 'R') => ShellCommand::SystemStatusRefresh,
+            InputKey::Char('r' | 'R') => {
+                if self.system_status_refresh_requested_revision.is_some() {
+                    ShellCommand::Noop
+                } else {
+                    ShellCommand::SystemStatusRefresh
+                }
+            }
             InputKey::Char('e' | 'E') => ShellCommand::SystemStatusBeginEdit,
             InputKey::Enter | InputKey::Char(' ') => ShellCommand::SystemStatusActivateFocus,
             InputKey::BackTab => ShellCommand::SystemStatusFocusPrevious,
@@ -2057,7 +2063,11 @@ impl ShellSession {
                 Some(ui::SystemStatusHitTarget::Refresh) if diagnostics_active => {
                     ShellCommand::DiagnosticsRescan
                 }
-                Some(ui::SystemStatusHitTarget::Refresh) => ShellCommand::SystemStatusRefresh,
+                Some(ui::SystemStatusHitTarget::Refresh)
+                    if !model.dashboard.actions.refresh_disabled =>
+                {
+                    ShellCommand::SystemStatusRefresh
+                }
                 Some(ui::SystemStatusHitTarget::Scrollbar) => {
                     ShellCommand::SystemStatusScrollbarPointerDown(coordinates)
                 }

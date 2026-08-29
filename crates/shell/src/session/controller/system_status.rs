@@ -84,6 +84,9 @@ impl ShellSession {
     }
 
     pub(in crate::session) fn refresh_system_status(&mut self) {
+        if self.system_status_refresh_requested_revision.is_some() {
+            return;
+        }
         if self.settings_task_runtime.refresh_system_status().is_ok() {
             self.system_status_refresh_requested_revision = self
                 .app
