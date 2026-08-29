@@ -82,6 +82,54 @@ fn dashboard_scroll_is_clamped_after_content_shrinks() {
     assert!(!l.widgets.is_empty());
 }
 #[test]
+fn dashboard_partial_scroll_clips_cards_without_overlap() {
+    let mut m = model();
+    m.dashboard.wide_widgets = vec![
+        widget(
+            SystemStatusWidgetKind::Cpu,
+            SystemStatusWidgetSize::Wide,
+            0,
+            0,
+        ),
+        widget(
+            SystemStatusWidgetKind::Memory,
+            SystemStatusWidgetSize::Wide,
+            0,
+            2,
+        ),
+    ];
+    m.dashboard.scroll_row = 1;
+    let l = system_status_layout(Rect::new(0, 0, 120, 12), &m);
+    assert_eq!(l.visible_row_start, 1);
+    let upper = l
+        .widgets
+        .iter()
+        .find(|w| w.kind == SystemStatusWidgetKind::Cpu)
+        .unwrap();
+    let lower = l
+        .widgets
+        .iter()
+        .find(|w| w.kind == SystemStatusWidgetKind::Memory)
+        .unwrap();
+    assert_eq!(upper.area.y, l.canvas.y);
+    assert_eq!(upper.area.height, LOGICAL_ROW_HEIGHT);
+    assert_eq!(
+        lower.area.y,
+        l.canvas.y + LOGICAL_ROW_HEIGHT + LOGICAL_ROW_GAP
+    );
+    assert!(upper.area.intersection(lower.area).is_empty());
+    assert_eq!(
+        system_status_hit_test(&l, (upper.area.x, upper.area.y)),
+        Some(SystemStatusHitTarget::Widget(SystemStatusWidgetKind::Cpu))
+    );
+    assert_eq!(
+        system_status_hit_test(&l, (lower.area.x, lower.area.y)),
+        Some(SystemStatusHitTarget::Widget(
+            SystemStatusWidgetKind::Memory
+        ))
+    );
+}
+#[test]
 fn dashboard_has_no_global_tabs_and_footer_switches_modes() {
     let mut m = model();
     let out = render(100, 24, &m);

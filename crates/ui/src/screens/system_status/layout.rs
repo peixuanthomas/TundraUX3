@@ -141,15 +141,9 @@ pub fn system_status_layout(main: Rect, model: &SystemStatusViewModel) -> System
     let gaps = column_count.saturating_sub(1);
     let cell_w = grid_width.saturating_sub(gaps) / column_count;
     let rect_for = |column: u16, row: u16, size: SystemStatusWidgetSize| {
-        let rel = row.saturating_sub(visible_row_start);
-        Rect::new(
-            canvas.x.saturating_add(column.saturating_mul(cell_w + 1)),
-            canvas
-                .y
-                .saturating_add(rel.saturating_mul(LOGICAL_ROW_HEIGHT + LOGICAL_ROW_GAP)),
-            size.cols()
-                .saturating_mul(cell_w)
-                .saturating_add(size.cols().saturating_sub(1)),
+        let stride = i32::from(LOGICAL_ROW_HEIGHT + LOGICAL_ROW_GAP);
+        let full_y = i32::from(canvas.y) + (i32::from(row) - i32::from(visible_row_start)) * stride;
+        let full_height = i32::from(
             size.rows()
                 .saturating_mul(LOGICAL_ROW_HEIGHT)
                 .saturating_add(
@@ -157,7 +151,21 @@ pub fn system_status_layout(main: Rect, model: &SystemStatusViewModel) -> System
                         .saturating_sub(1)
                         .saturating_mul(LOGICAL_ROW_GAP),
                 ),
+        );
+        let clipped_y = full_y.max(i32::from(canvas.y));
+        let clipped_bottom = full_y
+            .saturating_add(full_height)
+            .min(i32::from(canvas.bottom()))
+            .max(clipped_y);
+        Rect::new(
+            canvas.x.saturating_add(column.saturating_mul(cell_w + 1)),
+            u16::try_from(clipped_y).unwrap_or(canvas.y),
+            size.cols()
+                .saturating_mul(cell_w)
+                .saturating_add(size.cols().saturating_sub(1)),
+            u16::try_from(clipped_bottom.saturating_sub(clipped_y)).unwrap_or(0),
         )
+        .intersection(canvas)
     };
     let mut widgets = if empty_canvas {
         vec![]
@@ -173,7 +181,7 @@ pub fn system_status_layout(main: Rect, model: &SystemStatusViewModel) -> System
                 size: w.size,
                 logical_column: w.column,
                 logical_row: w.row,
-                area: rect_for(w.column, w.row, w.size).intersection(canvas),
+                area: rect_for(w.column, w.row, w.size),
                 preview: false,
                 preview_valid: true,
             })

@@ -364,6 +364,44 @@ fn system_status_arrow_navigation_reaches_offscreen_cards_and_scroll_clamps() {
 }
 
 #[test]
+fn system_status_add_scrolls_new_bottom_widget_fully_into_view() {
+    let mut state = ShellSession::new_for_home_mode(
+        ShellLaunchConfig::default(),
+        (120, 20),
+        ShellHomeMode::User,
+    );
+    set_test_auth_role(&mut state, UserRole::Admin);
+    state.screen_stack.push(ShellScreen::SystemStatus);
+    state.focused_component = ShellComponent::SystemStatus;
+    state.begin_system_status_dashboard_edit();
+    let index = super::controller::system_status::SYSTEM_STATUS_WIDGET_KINDS
+        .iter()
+        .position(|kind| *kind == storage::SystemStatusWidgetKind::Activity)
+        .unwrap();
+    state.open_system_status_add_picker();
+    state.select_system_status_picker_item(index);
+    state.add_selected_system_status_widget();
+    assert_eq!(
+        state.system_status_selected_widget,
+        Some(storage::SystemStatusWidgetKind::Activity)
+    );
+    assert_eq!(
+        state.system_status_dashboard_focus,
+        ui::SystemStatusDashboardFocus::Widget(ui::SystemStatusWidgetKind::Activity)
+    );
+    assert!(state.system_status_dashboard_scroll_row > 0);
+    let (model, layout) = state.system_status_layout().unwrap();
+    let activity = model
+        .dashboard
+        .widgets(layout.profile)
+        .iter()
+        .find(|widget| widget.kind == ui::SystemStatusWidgetKind::Activity)
+        .unwrap();
+    assert!(activity.row >= layout.visible_row_start);
+    assert!(activity.row + activity.size.rows() <= layout.visible_row_end);
+}
+
+#[test]
 fn system_status_metric_vm_exposes_progress_bars_status_and_booted_rows() {
     let mut state = ShellSession::new_for_home_mode(
         ShellLaunchConfig::default(),

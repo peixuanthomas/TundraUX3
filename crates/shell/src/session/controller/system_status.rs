@@ -496,6 +496,7 @@ impl ShellSession {
                 ui::SystemStatusDashboardFocus::Widget(ui_widget_kind(kind));
             self.system_status_dashboard_feedback =
                 Some(format!("Added {}", ui_widget_kind(kind).label()));
+            self.scroll_system_status_focused_widget_into_view(ui_widget_kind(kind));
         }
         self.system_status_add_picker = None;
         self.clamp_system_status_dashboard_scroll();
