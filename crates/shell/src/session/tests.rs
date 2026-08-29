@@ -518,6 +518,111 @@ fn system_status_disabled_add_and_picker_rows_are_inert() {
 }
 
 #[test]
+fn system_status_clean_save_is_inert_for_shortcut_mouse_and_direct_call() {
+    let mut state = ShellSession::new_for_home_mode(
+        ShellLaunchConfig::default(),
+        (120, 40),
+        ShellHomeMode::User,
+    );
+    set_test_auth_role(&mut state, UserRole::Admin);
+    state.screen_stack.push(ShellScreen::SystemStatus);
+    state.focused_component = ShellComponent::SystemStatus;
+    state.begin_system_status_dashboard_edit();
+    let draft = state.system_status_dashboard_draft.clone();
+    let active = state.app.active_system_status_dashboard().cloned();
+    let focus = state.system_status_dashboard_focus;
+    let feedback = state.system_status_dashboard_feedback.clone();
+    assert_eq!(
+        state.route_key_input(&KeyInput::from_label("Ctrl+S")).1,
+        ShellCommand::Noop
+    );
+    let model = state.to_system_status_view_model().unwrap();
+    assert!(model.dashboard.actions.save_disabled);
+    let ui::ShellLayout::Full { main, .. } = ui::compute_shell_layout(Rect::new(0, 0, 120, 40))
+    else {
+        panic!()
+    };
+    let save = ui::system_status_layout(main, &model).save_button;
+    for kind in [
+        ui::MouseEventKind::Down(PointerButton::Left),
+        ui::MouseEventKind::Click(PointerButton::Left),
+    ] {
+        state.apply_input(InputEvent::Mouse(ui::MouseEvent::new(save.x, save.y, kind)));
+    }
+    state.save_system_status_dashboard();
+    assert_eq!(state.system_status_dashboard_draft, draft);
+    assert_eq!(state.app.active_system_status_dashboard().cloned(), active);
+    assert_eq!(state.system_status_dashboard_focus, focus);
+    assert_eq!(state.system_status_dashboard_feedback, feedback);
+}
+
+#[test]
+fn system_status_add_picker_redacts_unavailable_reasons_for_users() {
+    let sentinel = "/sensitive/backend/path secret-device";
+    let mut state = ShellSession::new_for_home_mode(
+        ShellLaunchConfig::default(),
+        (120, 40),
+        ShellHomeMode::User,
+    );
+    set_test_auth_role(&mut state, UserRole::User);
+    let mut snapshot = system_status_metric_snapshot(10);
+    snapshot.metrics.thermal = system_services::MetricState::Unavailable {
+        reason: sentinel.into(),
+    };
+    snapshot.metrics.batteries = system_services::MetricState::Unavailable {
+        reason: sentinel.into(),
+    };
+    state.apply_system_status_snapshot(snapshot);
+    state.begin_system_status_dashboard_edit();
+    let config = state.system_status_dashboard_draft.clone().unwrap();
+    state.open_system_status_add_picker();
+    let user = state
+        .to_system_status_view_model()
+        .unwrap()
+        .dashboard
+        .picker
+        .unwrap();
+    let temperature = user
+        .items
+        .iter()
+        .find(|item| item.kind == ui::SystemStatusWidgetKind::Temperature)
+        .unwrap();
+    let battery = user
+        .items
+        .iter()
+        .find(|item| item.kind == ui::SystemStatusWidgetKind::Battery)
+        .unwrap();
+    assert_eq!(temperature.detail, "Temperature sensors unavailable");
+    assert_eq!(battery.detail, "No battery detected");
+    assert!(!temperature.enabled && !battery.enabled);
+    assert!(!format!("{:?}", user).contains(sentinel));
+    assert_eq!(
+        state.system_status_dashboard_draft.as_ref().unwrap(),
+        &config
+    );
+
+    set_test_auth_role(&mut state, UserRole::Admin);
+    let admin = state
+        .to_system_status_view_model()
+        .unwrap()
+        .dashboard
+        .picker
+        .unwrap();
+    for kind in [
+        ui::SystemStatusWidgetKind::Temperature,
+        ui::SystemStatusWidgetKind::Battery,
+    ] {
+        let item = admin.items.iter().find(|item| item.kind == kind).unwrap();
+        assert_eq!(item.detail, sentinel);
+        assert!(!item.enabled);
+    }
+    assert_eq!(
+        state.system_status_dashboard_draft.as_ref().unwrap(),
+        &config
+    );
+}
+
+#[test]
 fn system_status_network_compact_rows_redact_user_interface_names() {
     let mut state = ShellSession::new_for_home_mode(
         ShellLaunchConfig::default(),

@@ -682,7 +682,11 @@ impl ShellSession {
             let command = match &key.key {
                 InputKey::Escape => ShellCommand::SystemStatusRequestCancelEdit,
                 InputKey::Char('s' | 'S') if key.modifiers.is_control() => {
-                    ShellCommand::SystemStatusSaveDashboard
+                    if self.system_status_dashboard_is_dirty() {
+                        ShellCommand::SystemStatusSaveDashboard
+                    } else {
+                        ShellCommand::Noop
+                    }
                 }
                 InputKey::Char('a' | 'A') if !key.modifiers.has_non_shift_modifier() => {
                     if self.system_status_has_addable_widget() {
@@ -2039,7 +2043,9 @@ impl ShellSession {
                 Some(ui::SystemStatusHitTarget::Remove) if editing => {
                     ShellCommand::SystemStatusRemoveWidget
                 }
-                Some(ui::SystemStatusHitTarget::Save) if editing => {
+                Some(ui::SystemStatusHitTarget::Save)
+                    if editing && !model.dashboard.actions.save_disabled =>
+                {
                     ShellCommand::SystemStatusSaveDashboard
                 }
                 Some(ui::SystemStatusHitTarget::Cancel) if editing => {

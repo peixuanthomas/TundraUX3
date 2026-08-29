@@ -387,6 +387,9 @@ impl ShellSession {
         let Some(dashboard) = self.system_status_dashboard_draft.clone() else {
             return;
         };
+        if !self.system_status_dashboard_is_dirty() {
+            return;
+        }
         let Some(storage) = self.storage_manager.clone() else {
             self.system_status_dashboard_feedback = Some("Storage unavailable".to_string());
             return;
@@ -1026,13 +1029,25 @@ impl ShellSession {
             return Some("Administrator permission is required".to_string());
         }
         let metrics = &self.app.system_status_snapshot()?.metrics;
+        let admin = self
+            .app
+            .auth_session()
+            .is_some_and(|session| session.role == UserRole::Admin);
         match kind {
             storage::SystemStatusWidgetKind::Temperature => match &metrics.thermal {
-                MetricState::Unavailable { reason } => Some(reason.clone()),
+                MetricState::Unavailable { reason } => Some(if admin {
+                    reason.clone()
+                } else {
+                    "Temperature sensors unavailable".to_string()
+                }),
                 _ => None,
             },
             storage::SystemStatusWidgetKind::Battery => match &metrics.batteries {
-                MetricState::Unavailable { reason } => Some(reason.clone()),
+                MetricState::Unavailable { reason } => Some(if admin {
+                    reason.clone()
+                } else {
+                    "No battery detected".to_string()
+                }),
                 _ => None,
             },
             _ => None,
