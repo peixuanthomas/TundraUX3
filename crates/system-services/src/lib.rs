@@ -2411,6 +2411,10 @@ mod tests {
             matches!(snapshot.weather, WeatherState::Ready(_))
         })
         .await;
+        let first_sampled_at = match &receiver.borrow().weather {
+            WeatherState::Ready(weather) => weather.sampled_at,
+            state => panic!("expected ready weather, got {state:?}"),
+        };
         assert_eq!(provider_calls.load(Ordering::SeqCst), 1);
 
         handle.reconfigure(runtime_config).unwrap();
@@ -2418,7 +2422,11 @@ mod tests {
             .recv_timeout(Duration::from_secs(1))
             .expect("reconfigure must cancel and restart pending weather promptly");
         restarted.complete.send(()).unwrap();
-        wait_for_snapshot_event(&mut receiver, |snapshot| snapshot.revision > 0).await;
+        wait_for_snapshot_event(&mut receiver, |snapshot| {
+            matches!(&snapshot.weather, WeatherState::Ready(weather) if weather.sampled_at > first_sampled_at)
+        })
+        .await;
+        assert_eq!(provider_calls.load(Ordering::SeqCst), 2);
         let (shutdown_tx, shutdown_rx) = std_mpsc::channel();
         std::thread::spawn(move || {
             let _ = shutdown_tx.send(handle.shutdown());
@@ -2615,6 +2623,7 @@ mod tests {
             shutting_down.recv_timeout(Duration::from_secs(5)).unwrap(),
             Err(SystemServicesError::Shutdown)
         );
+        assert_eq!(server.accepted_count(), 4);
     }
 
     #[tokio::test]
@@ -2661,6 +2670,14 @@ mod tests {
         let newest_request = server.wait_for_request();
         server.respond(newest_request);
         assert!(newest.recv_timeout(Duration::from_secs(5)).unwrap().is_ok());
+        wait_for_snapshot_event(&mut receiver, |snapshot| {
+            matches!(snapshot.weather, WeatherState::Ready(_))
+        })
+        .await;
+        let prior_sampled_at = match &receiver.borrow().weather {
+            WeatherState::Ready(weather) => weather.sampled_at,
+            state => panic!("expected ready weather, got {state:?}"),
+        };
 
         handle.refresh_weather().unwrap();
         let pending_weather = started_rx
@@ -2681,16 +2698,19 @@ mod tests {
                 .unwrap(),
             Err(SystemServicesError::Cancelled)
         );
-        drop(pending_weather);
         let replacement_weather = started_rx
             .recv_timeout(Duration::from_secs(5))
             .expect("reconfigure must restart weather");
+        assert!(
+            pending_weather.complete.send(()).is_err(),
+            "reconfigure must cancel the old weather future"
+        );
         replacement_weather.complete.send(()).unwrap();
         wait_for_snapshot_event(&mut receiver, |snapshot| {
-            matches!(snapshot.weather, WeatherState::Ready(_))
+            matches!(&snapshot.weather, WeatherState::Ready(weather) if weather.sampled_at > prior_sampled_at)
         })
         .await;
-        assert!(provider_calls.load(Ordering::SeqCst) >= 3);
+        assert_eq!(provider_calls.load(Ordering::SeqCst), 3);
         handle.shutdown().unwrap();
     }
     #[tokio::test]
