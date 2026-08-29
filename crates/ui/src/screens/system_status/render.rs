@@ -265,7 +265,9 @@ fn render_overlays(
                     .disabled(!i.enabled)
             })
             .collect();
-        let mut list = List::new("system-status.add-list", items).titled(&p.title);
+        let mut list = List::new("system-status.add-list", items)
+            .with_viewport_start(l.picker_viewport_start)
+            .titled(&p.title);
         list.set_selected(Some(p.selected));
         list.set_focused(true);
         list.render_frame(frame, area, &context.compatibility_theme())

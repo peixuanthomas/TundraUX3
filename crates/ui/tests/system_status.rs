@@ -287,6 +287,41 @@ fn size_picker_renders_exact_rows_and_captures_dashboard_hits() {
     }
 }
 #[test]
+fn add_picker_viewport_hit_rows_match_absolute_rendered_items() {
+    let mut m = model();
+    m.dashboard.editing = true;
+    m.dashboard.picker = Some(SystemStatusPickerViewModel {
+        title: "Add widget".into(),
+        items: SystemStatusWidgetKind::ALL
+            .into_iter()
+            .map(|kind| SystemStatusPickerItemViewModel {
+                kind,
+                label: kind.label().into(),
+                detail: String::new(),
+                enabled: true,
+            })
+            .collect(),
+        selected: 5,
+    });
+    let main = full_main(100, 12);
+    let l = system_status_layout(main, &m);
+    assert_eq!(l.picker_viewport_start, 2);
+    assert_eq!(
+        l.picker_items
+            .iter()
+            .map(|row| row.index)
+            .collect::<Vec<_>>(),
+        vec![2, 3, 4, 5]
+    );
+    assert!(!l.picker_items.iter().any(|row| row.index < 2));
+    let temperature = l.picker_items.iter().find(|row| row.index == 5).unwrap();
+    assert_eq!(
+        system_status_hit_test(&l, (temperature.area.x, temperature.area.y)),
+        Some(SystemStatusHitTarget::PickerItem(5))
+    );
+    assert!(render(100, 12, &m).contains("Temperature"));
+}
+#[test]
 fn theme_and_size_smoke() {
     for theme in [
         TundraTheme::default_dark().with_border_shape(BorderShape::Rounded),

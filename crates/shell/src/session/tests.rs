@@ -402,6 +402,51 @@ fn system_status_add_scrolls_new_bottom_widget_fully_into_view() {
 }
 
 #[test]
+fn system_status_short_add_picker_double_click_uses_visible_absolute_index() {
+    let mut state = ShellSession::new_for_home_mode(
+        ShellLaunchConfig::default(),
+        (120, 12),
+        ShellHomeMode::User,
+    );
+    set_test_auth_role(&mut state, UserRole::Admin);
+    state.screen_stack.push(ShellScreen::SystemStatus);
+    state.focused_component = ShellComponent::SystemStatus;
+    state.begin_system_status_dashboard_edit();
+    state.open_system_status_add_picker();
+    state.select_system_status_picker_item(5);
+    let (model, layout) = state.system_status_layout().unwrap();
+    assert_eq!(
+        model.dashboard.picker.as_ref().unwrap().items[5].kind,
+        ui::SystemStatusWidgetKind::Temperature
+    );
+    let row = layout
+        .picker_items
+        .iter()
+        .find(|row| row.index == 5)
+        .unwrap()
+        .area;
+    state.apply_input(InputEvent::Mouse(ui::MouseEvent::new(
+        row.x,
+        row.y,
+        ui::MouseEventKind::DoubleClick(PointerButton::Left),
+    )));
+    assert_eq!(
+        state.system_status_selected_widget,
+        Some(storage::SystemStatusWidgetKind::Temperature)
+    );
+    let draft = state.system_status_dashboard_draft.as_ref().unwrap();
+    assert_eq!(
+        draft
+            .widgets
+            .iter()
+            .filter(|kind| **kind == storage::SystemStatusWidgetKind::Temperature)
+            .count(),
+        1
+    );
+    assert!(state.system_status_add_picker.is_none());
+}
+
+#[test]
 fn system_status_metric_vm_exposes_progress_bars_status_and_booted_rows() {
     let mut state = ShellSession::new_for_home_mode(
         ShellLaunchConfig::default(),

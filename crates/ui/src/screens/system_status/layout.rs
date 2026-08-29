@@ -59,6 +59,7 @@ pub struct SystemStatusLayout {
     pub column_count: u16,
     pub widgets: Vec<SystemStatusWidgetLayout>,
     pub picker_items: Vec<SystemStatusRowLayout>,
+    pub picker_viewport_start: usize,
     pub size_picker_items: Vec<SystemStatusRowLayout>,
     pub dialog_actions: Vec<SystemStatusRowLayout>,
     pub visible_row_start: u16,
@@ -296,6 +297,7 @@ pub fn system_status_layout(main: Rect, model: &SystemStatusViewModel) -> System
             ),
         })
         .collect();
+    let mut picker_viewport_start = 0;
     let picker_items = model
         .dashboard
         .picker
@@ -311,15 +313,20 @@ pub fn system_status_layout(main: Rect, model: &SystemStatusViewModel) -> System
                 w,
                 h,
             );
+            let visible_height = area.height.saturating_sub(2) as usize;
+            picker_viewport_start =
+                crate::components::List::automatic_viewport_start(p.selected, visible_height);
             p.items
                 .iter()
                 .enumerate()
-                .take(area.height.saturating_sub(2) as usize)
-                .map(|(index, _)| SystemStatusRowLayout {
+                .skip(picker_viewport_start)
+                .take(visible_height)
+                .enumerate()
+                .map(|(visible_index, (index, _))| SystemStatusRowLayout {
                     index,
                     area: Rect::new(
                         area.x.saturating_add(1),
-                        area.y.saturating_add(1 + index as u16),
+                        area.y.saturating_add(1 + visible_index as u16),
                         area.width.saturating_sub(2),
                         1,
                     ),
@@ -466,6 +473,7 @@ pub fn system_status_layout(main: Rect, model: &SystemStatusViewModel) -> System
         column_count,
         widgets,
         picker_items,
+        picker_viewport_start,
         size_picker_items,
         dialog_actions,
         visible_row_start,

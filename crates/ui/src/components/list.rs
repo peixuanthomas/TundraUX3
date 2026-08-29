@@ -62,6 +62,14 @@ pub struct List {
 }
 
 impl List {
+    /// Automatic viewport origin that keeps an absolute selection visible.
+    pub const fn automatic_viewport_start(selected: usize, visible_height: usize) -> usize {
+        if visible_height == 0 {
+            0
+        } else {
+            selected.saturating_add(1).saturating_sub(visible_height)
+        }
+    }
     pub fn render_with_context(
         &self,
         area: Rect,
@@ -385,8 +393,19 @@ impl List {
 
         self.viewport_start.unwrap_or_else(|| {
             self.selected
-                .map(|selected| selected.saturating_add(1).saturating_sub(height))
+                .map(|selected| Self::automatic_viewport_start(selected, height))
                 .unwrap_or(0)
         })
+    }
+}
+
+#[cfg(test)]
+mod viewport_tests {
+    use super::List;
+    #[test]
+    fn automatic_viewport_boundaries() {
+        assert_eq!(List::automatic_viewport_start(5, 4), 2);
+        assert_eq!(List::automatic_viewport_start(5, 0), 0);
+        assert_eq!(List::automatic_viewport_start(3, 4), 0);
     }
 }
