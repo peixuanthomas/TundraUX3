@@ -277,7 +277,7 @@ impl SystemStatusTab {
         Self::Logs,
         Self::Incidents,
     ];
-    pub const USER: [Self; 4] = [Self::Overview, Self::Health, Self::Logs, Self::Incidents];
+    pub const USER: [Self; 6] = Self::ALL;
     pub const fn label(self) -> &'static str {
         match self {
             Self::Overview => "Overview",

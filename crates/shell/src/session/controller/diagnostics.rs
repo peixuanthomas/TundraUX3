@@ -1295,7 +1295,7 @@ mod diagnostics_shell_tests {
     }
 
     #[test]
-    fn diagnostics_redacts_user_details_and_enables_admin_repairs() {
+    fn diagnostics_shares_details_with_users_but_keeps_repairs_admin_only() {
         let mut user_state = state(UserRole::User);
         let (private_log_directory, private_log_path) =
             temporary_document("private.log", b"private");
@@ -1306,12 +1306,11 @@ mod diagnostics_shell_tests {
             snapshot.checks[0].summary = "/private/example/data cannot be opened".to_string();
         });
         let user = user_state.to_diagnostics_view_model();
-        assert!(!user.can_view_details);
+        assert!(user.can_view_details);
         assert!(!user.can_repair);
-        assert_eq!(user.checks[0].summary, "Application path needs attention");
-        assert!(!user.checks[0].summary.contains("/private"));
-        assert!(user.checks[0].detail.is_empty());
-        assert!(user.logs.is_empty());
+        assert!(user.checks[0].summary.contains("/private/example/data"));
+        assert!(user.checks[0].detail.contains("/private/example/data"));
+        assert_eq!(user.logs[0].relative_path, "private.log");
 
         let mut admin_state = state(UserRole::Admin);
         let user_logs = user_state.app.diagnostics_snapshot().unwrap().logs.clone();

@@ -112,14 +112,24 @@ pub fn system_status_layout(main: Rect, model: &SystemStatusViewModel) -> System
     };
     let column_count: u16 = if wide { 8 } else { 4 };
     let mut right = footer.right();
-    let refresh_button = button_from_right(footer, &mut right, 11);
-    let edit_button = button_from_right(footer, &mut right, 8);
+    let mut refresh_button = button_from_right(footer, &mut right, 11);
+    let mut edit_button = button_from_right(footer, &mut right, 8);
     right = footer.right();
-    let cancel_button = button_from_right(footer, &mut right, 10);
-    let save_button = button_from_right(footer, &mut right, 8);
-    let remove_button = button_from_right(footer, &mut right, 10);
-    let size_button = button_from_right(footer, &mut right, 8);
-    let add_button = button_from_right(footer, &mut right, 7);
+    let mut cancel_button = button_from_right(footer, &mut right, 10);
+    let mut save_button = button_from_right(footer, &mut right, 8);
+    let mut remove_button = button_from_right(footer, &mut right, 10);
+    let mut size_button = button_from_right(footer, &mut right, 8);
+    let mut add_button = button_from_right(footer, &mut right, 7);
+    if model.dashboard.editing {
+        refresh_button = Rect::default();
+        edit_button = Rect::default();
+    } else {
+        add_button = Rect::default();
+        size_button = Rect::default();
+        remove_button = Rect::default();
+        save_button = Rect::default();
+        cancel_button = Rect::default();
+    }
     let empty_canvas = canvas.height < 5;
     let visible_rows =
         canvas.height.saturating_add(LOGICAL_ROW_GAP) / (LOGICAL_ROW_HEIGHT + LOGICAL_ROW_GAP);

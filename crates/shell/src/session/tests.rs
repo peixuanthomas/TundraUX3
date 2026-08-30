@@ -595,7 +595,7 @@ fn system_status_pending_refresh_is_inert_for_keyboard_mouse_and_direct_call() {
 }
 
 #[test]
-fn system_status_add_picker_redacts_unavailable_reasons_for_users() {
+fn system_status_add_picker_shows_full_unavailable_reasons_to_users() {
     let sentinel = "/sensitive/backend/path secret-device";
     let mut state = ShellSession::new_for_home_mode(
         ShellLaunchConfig::default(),
@@ -630,10 +630,10 @@ fn system_status_add_picker_redacts_unavailable_reasons_for_users() {
         .iter()
         .find(|item| item.kind == ui::SystemStatusWidgetKind::Battery)
         .unwrap();
-    assert_eq!(temperature.detail, "Temperature sensors unavailable");
-    assert_eq!(battery.detail, "No battery detected");
+    assert_eq!(temperature.detail, sentinel);
+    assert_eq!(battery.detail, sentinel);
     assert!(!temperature.enabled && !battery.enabled);
-    assert!(!format!("{:?}", user).contains(sentinel));
+    assert!(format!("{:?}", user).contains(sentinel));
     assert_eq!(
         state.system_status_dashboard_draft.as_ref().unwrap(),
         &config
@@ -661,7 +661,7 @@ fn system_status_add_picker_redacts_unavailable_reasons_for_users() {
 }
 
 #[test]
-fn system_status_network_compact_rows_redact_user_interface_names() {
+fn system_status_network_compact_rows_show_interface_names_to_users() {
     let mut state = ShellSession::new_for_home_mode(
         ShellLaunchConfig::default(),
         (120, 40),
@@ -709,13 +709,11 @@ fn system_status_network_compact_rows_redact_user_interface_names() {
             .iter()
             .any(|line| line.contains("Down") && line.contains("Up"))
     );
-    assert!(user.compact_rows.is_empty());
     assert!(
-        !format!(
-            "{:?}{:?}{:?}",
-            user.primary, user.secondary, user.compact_rows
-        )
-        .contains("secret-iface")
+        user.compact_rows
+            .iter()
+            .flatten()
+            .any(|value| value == "secret-iface")
     );
 
     set_test_auth_role(&mut state, UserRole::Admin);
@@ -1332,7 +1330,7 @@ fn system_status_draft_profiles_catalog_cancel_and_save_failure_are_isolated() {
 }
 
 #[test]
-fn system_status_permissions_filter_without_mutating_persisted_catalog() {
+fn system_status_users_share_admin_view_permissions() {
     let persisted = storage::SystemStatusDashboardConfig::for_role("Admin");
     let mut user = ShellSession::new_for_home_mode(
         ShellLaunchConfig::default(),
@@ -1344,30 +1342,10 @@ fn system_status_permissions_filter_without_mutating_persisted_catalog() {
         app::AppCommand::SetActiveSystemStatusDashboard(Some(persisted.clone())),
         Instant::now(),
     );
-    assert!(!user.system_status_picker_kind_enabled(storage::SystemStatusWidgetKind::TopProcesses));
-    for kind in [
-        storage::SystemStatusWidgetKind::Storage,
-        storage::SystemStatusWidgetKind::Network,
-        storage::SystemStatusWidgetKind::TopProcesses,
-    ] {
-        user.open_system_status_detail(kind);
-        assert_eq!(user.system_status_route, ui::SystemStatusRoute::Dashboard);
-        assert!(
-            user.system_status_dashboard_feedback
-                .as_deref()
-                .unwrap_or_default()
-                .contains("Administrator")
-        );
-    }
+    assert!(user.system_status_widget_allowed(storage::SystemStatusWidgetKind::TopProcesses));
     assert!(
-        user.app
-            .active_system_status_dashboard()
-            .unwrap()
-            .widgets
-            .contains(&storage::SystemStatusWidgetKind::TopProcesses)
+        user.system_status_widget_detail_allowed(storage::SystemStatusWidgetKind::TopProcesses)
     );
-
-    set_test_auth_role(&mut user, UserRole::Admin);
     for (kind, detail) in [
         (
             storage::SystemStatusWidgetKind::Storage,
@@ -1389,6 +1367,18 @@ fn system_status_permissions_filter_without_mutating_persisted_catalog() {
             ui::SystemStatusRoute::Detail(detail)
         );
     }
+    assert!(
+        user.app
+            .active_system_status_dashboard()
+            .unwrap()
+            .widgets
+            .contains(&storage::SystemStatusWidgetKind::TopProcesses)
+    );
+
+    user.set_system_status_tab(ui::SystemStatusTab::Storage);
+    assert_eq!(user.system_status_tab, ui::SystemStatusTab::Storage);
+    user.set_system_status_tab(ui::SystemStatusTab::Network);
+    assert_eq!(user.system_status_tab, ui::SystemStatusTab::Network);
 }
 
 #[test]
@@ -1398,7 +1388,7 @@ fn system_status_drag_changes_only_active_profile_and_clears_capture() {
         (120, 40),
         ShellHomeMode::User,
     );
-    set_test_auth_role(&mut state, UserRole::Admin);
+    set_test_auth_role(&mut state, UserRole::User);
     state.screen_stack.push(ShellScreen::SystemStatus);
     state.focused_component = ShellComponent::SystemStatus;
     state.begin_system_status_dashboard_edit();
@@ -1433,16 +1423,53 @@ fn system_status_drag_changes_only_active_profile_and_clears_capture() {
             .saturating_add(6)
             .min(layout.canvas.bottom().saturating_sub(1)),
     );
-    state.begin_system_status_widget_drag(ui::SystemStatusWidgetKind::Cpu, down);
+    let started_at = Instant::now();
+    state.apply_input_at(
+        InputEvent::mouse_down(PointerButton::Left, down),
+        started_at,
+    );
     assert!(state.system_status_widget_drag.is_some());
-    state.update_system_status_widget_drag(target);
-    state.finish_system_status_widget_drag(target);
+    state.apply_input_at(
+        InputEvent::mouse_drag(PointerButton::Left, target),
+        started_at + Duration::from_millis(20),
+    );
+    state.apply_input_at(
+        InputEvent::mouse_up(PointerButton::Left, target),
+        started_at + Duration::from_millis(40),
+    );
     assert!(state.system_status_widget_drag.is_none());
     let draft = state.system_status_dashboard_draft.as_ref().unwrap();
     assert_ne!(draft.wide, before);
     assert_eq!(draft.narrow, inactive);
     let rendered = state.to_system_status_view_model().unwrap();
     let layout = ui::system_status_layout(main, &rendered);
+    assert!(!rendered.dashboard.actions.save_disabled);
+    let save_coordinates = (layout.save_button.x, layout.save_button.y);
+    assert_eq!(
+        ui::system_status_hit_test(&layout, save_coordinates),
+        Some(ui::SystemStatusHitTarget::Save)
+    );
+    assert_eq!(
+        state.hit_map.layer_at(save_coordinates),
+        Some(ShellHitLayer::AppContent)
+    );
+    assert_eq!(
+        state
+            .route_input_at(
+                InputEvent::mouse_down(PointerButton::Left, save_coordinates),
+                started_at + Duration::from_millis(60),
+            )
+            .command,
+        ShellCommand::SystemStatusSaveDashboard
+    );
+    state.apply_input_at(
+        InputEvent::mouse_down(
+            PointerButton::Left,
+            (layout.cancel_button.x, layout.cancel_button.y),
+        ),
+        started_at + Duration::from_millis(80),
+    );
+    assert!(state.system_status_discard_dialog);
     for (index, left) in layout.widgets.iter().filter(|w| !w.preview).enumerate() {
         for right in layout.widgets.iter().filter(|w| !w.preview).skip(index + 1) {
             assert!(
@@ -1593,7 +1620,7 @@ fn diagnostics_rejects_guest_even_with_system_status_parent() {
 }
 
 #[test]
-fn system_status_admin_fallback_and_user_stale_unavailable_are_desensitized() {
+fn system_status_users_receive_full_storage_and_network_details() {
     let mut state = ShellSession::new_for_home_mode(
         ShellLaunchConfig::default(),
         (120, 40),
@@ -1644,6 +1671,10 @@ fn system_status_admin_fallback_and_user_stale_unavailable_are_desensitized() {
     };
     state.apply_system_status_snapshot(stale);
     let model = state.to_system_status_view_model().unwrap();
+    assert!(matches!(
+        model.content,
+        ui::SystemStatusContentViewModel::Admin(_)
+    ));
     let debug = format!("{model:?}");
     assert!(debug.contains("(stale)"));
     for secret in [
@@ -1654,7 +1685,7 @@ fn system_status_admin_fallback_and_user_stale_unavailable_are_desensitized() {
         "192.0.2.99",
         "2001:db8::99",
     ] {
-        assert!(!debug.contains(secret), "leaked {secret}");
+        assert!(debug.contains(secret), "missing {secret}");
     }
     let mut unavailable = system_status_test_snapshot(
         2,
@@ -1671,8 +1702,8 @@ fn system_status_admin_fallback_and_user_stale_unavailable_are_desensitized() {
     state.apply_system_status_snapshot(unavailable);
     let debug = format!("{:?}", state.to_system_status_view_model().unwrap());
     assert!(debug.contains("Unavailable"));
-    assert!(!debug.contains("sensitive"));
-    assert!(!debug.contains("secret-iface"));
+    assert!(debug.contains("sensitive"));
+    assert!(debug.contains("secret-iface"));
 }
 
 #[test]
@@ -1814,16 +1845,15 @@ fn system_status_alert_dedupe_upgrade_recovery_and_network_baseline() {
         .notification_center()
         .alert_message_for_key(storage_key)
         .unwrap();
-    assert!(storage_message.contains("Device storage"));
-    for secret in [
-        "/sensitive/mount",
+    assert!(storage_message.contains("/sensitive/mount"));
+    for unrelated_detail in [
         "secret-label",
         "secret-iface",
         "secret-display",
         "192.0.2.99",
         "2001:db8::99",
     ] {
-        assert!(!storage_message.contains(secret));
+        assert!(!storage_message.contains(unrelated_detail));
     }
     assert_eq!(state.app.notification_center().alert_count(), 1);
     assert_eq!(
@@ -4891,7 +4921,7 @@ fn explorer_never_receives_shell_chrome_pointer_commands_and_clears_drag() {
 }
 
 #[test]
-fn watchdog_incident_redacts_details_and_actions_for_standard_users() {
+fn watchdog_incident_shows_details_and_view_actions_to_standard_users() {
     let mut state = ShellSession::new_for_home_mode(
         ShellLaunchConfig::default(),
         (120, 40),
@@ -4933,14 +4963,19 @@ fn watchdog_incident_redacts_details_and_actions_for_standard_users() {
     );
 
     let modal = state.to_notification_view_model().expect("watchdog modal");
-    assert!(modal.message.contains("restricted to administrators"));
-    assert!(!modal.message.contains("SECRET"));
-    assert!(!modal.message.contains("/private"));
+    assert!(modal.message.contains("SECRET"));
+    assert!(modal.message.contains("/private"));
     assert!(
         modal
             .actions
             .iter()
-            .all(|action| { action.id != "open-report" && action.id != "copy-summary" })
+            .any(|action| action.id == "open-report")
+    );
+    assert!(
+        modal
+            .actions
+            .iter()
+            .any(|action| action.id == "copy-summary")
     );
 }
 

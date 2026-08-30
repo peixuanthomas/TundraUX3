@@ -142,7 +142,20 @@ fn dashboard_has_no_global_tabs_and_footer_switches_modes() {
         system_status_hit_test(&l, (l.edit_button.x, l.edit_button.y)),
         Some(SystemStatusHitTarget::Edit)
     );
+    assert!(l.save_button.is_empty());
+    assert!(l.cancel_button.is_empty());
     m.dashboard.editing = true;
+    let editing = system_status_layout(full_main(100, 24), &m);
+    assert!(editing.edit_button.is_empty());
+    assert!(editing.refresh_button.is_empty());
+    assert_eq!(
+        system_status_hit_test(&editing, (editing.save_button.x, editing.save_button.y)),
+        Some(SystemStatusHitTarget::Save)
+    );
+    assert_eq!(
+        system_status_hit_test(&editing, (editing.cancel_button.x, editing.cancel_button.y)),
+        Some(SystemStatusHitTarget::Cancel)
+    );
     let out = render(100, 24, &m);
     for s in ["Add", "Size", "Remove", "Save", "Cancel"] {
         assert!(out.contains(s))

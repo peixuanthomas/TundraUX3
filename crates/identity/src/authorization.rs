@@ -151,14 +151,15 @@ impl PermissionService {
                 UserRole::User | UserRole::Admin => Authorization::allow(),
                 UserRole::Guest => Authorization::deny("not_authenticated"),
             },
-            PermissionAction::ManageOwnUser => match role {
-                UserRole::User | UserRole::Admin => Authorization::allow(),
-                UserRole::Guest => Authorization::deny("not_authenticated"),
-            },
+            PermissionAction::ManageOwnUser | PermissionAction::ViewDiagnosticsDetails => {
+                match role {
+                    UserRole::User | UserRole::Admin => Authorization::allow(),
+                    UserRole::Guest => Authorization::deny("not_authenticated"),
+                }
+            }
             PermissionAction::ManageUsers
             | PermissionAction::ExecuteCommandLine
             | PermissionAction::ManageLauncher
-            | PermissionAction::ViewDiagnosticsDetails
             | PermissionAction::RepairDiagnostics
             | PermissionAction::ChangeSettings => match role {
                 UserRole::Admin => Authorization::allow(),

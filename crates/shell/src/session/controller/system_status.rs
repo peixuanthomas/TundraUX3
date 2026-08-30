@@ -176,11 +176,8 @@ impl ShellSession {
                                 .available_bytes
                                 .map(format_bytes)
                                 .unwrap_or_else(|| "unknown".into());
-                            let message = if role == UserRole::Admin {
-                                format!("Storage {} has {available} available", volume.identifier)
-                            } else {
-                                format!("Device storage is running low ({available} available)")
-                            };
+                            let message =
+                                format!("Storage {} has {available} available", volume.identifier);
                             let tone = if next == SystemStatusAlertLevel::Critical {
                                 ui::NotificationTone::Critical
                             } else {
@@ -250,18 +247,6 @@ impl ShellSession {
     }
 
     pub(in crate::session) fn set_system_status_tab(&mut self, tab: ui::SystemStatusTab) {
-        let admin = self
-            .app
-            .auth_session()
-            .is_some_and(|session| session.role == UserRole::Admin);
-        if !admin
-            && matches!(
-                tab,
-                ui::SystemStatusTab::Storage | ui::SystemStatusTab::Network
-            )
-        {
-            return;
-        }
         self.system_status_tab = tab;
         self.system_status_route = match tab {
             ui::SystemStatusTab::Overview => ui::SystemStatusRoute::Dashboard,
@@ -1032,25 +1017,13 @@ impl ShellSession {
             return Some("Administrator permission is required".to_string());
         }
         let metrics = &self.app.system_status_snapshot()?.metrics;
-        let admin = self
-            .app
-            .auth_session()
-            .is_some_and(|session| session.role == UserRole::Admin);
         match kind {
             storage::SystemStatusWidgetKind::Temperature => match &metrics.thermal {
-                MetricState::Unavailable { reason } => Some(if admin {
-                    reason.clone()
-                } else {
-                    "Temperature sensors unavailable".to_string()
-                }),
+                MetricState::Unavailable { reason } => Some(reason.clone()),
                 _ => None,
             },
             storage::SystemStatusWidgetKind::Battery => match &metrics.batteries {
-                MetricState::Unavailable { reason } => Some(if admin {
-                    reason.clone()
-                } else {
-                    "No battery detected".to_string()
-                }),
+                MetricState::Unavailable { reason } => Some(reason.clone()),
                 _ => None,
             },
             _ => None,
@@ -1081,12 +1054,10 @@ impl ShellSession {
 
     pub(in crate::session) fn system_status_widget_allowed(
         &self,
-        kind: storage::SystemStatusWidgetKind,
+        _kind: storage::SystemStatusWidgetKind,
     ) -> bool {
         let role = self.app.auth_session().map(|session| session.role);
         role.is_some_and(|role| role != UserRole::Guest)
-            && (!matches!(kind, storage::SystemStatusWidgetKind::TopProcesses)
-                || role == Some(UserRole::Admin))
     }
 
     pub(in crate::session) fn system_status_widget_detail_allowed(
@@ -1094,15 +1065,6 @@ impl ShellSession {
         kind: storage::SystemStatusWidgetKind,
     ) -> bool {
         self.system_status_widget_allowed(kind)
-            && (!matches!(
-                kind,
-                storage::SystemStatusWidgetKind::Storage
-                    | storage::SystemStatusWidgetKind::Network
-                    | storage::SystemStatusWidgetKind::TopProcesses
-            ) || self
-                .app
-                .auth_session()
-                .is_some_and(|session| session.role == UserRole::Admin))
     }
 
     pub(in crate::session) fn ensure_system_status_widget_selection(&mut self) {

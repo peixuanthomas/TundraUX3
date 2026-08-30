@@ -88,48 +88,6 @@ impl ShellSession {
             &diagnostics,
             &refreshed,
         );
-        if role == UserRole::User {
-            let usage = if storage
-                .is_some_and(|s| s.system_volume_source == SystemVolumeSource::FixedVolumeFallback)
-            {
-                format!("{usage} (source unknown)")
-            } else {
-                usage
-            };
-            let (storage_status, storage_tone) = match snapshot.map(|s| &s.storage) {
-                None | Some(StorageState::Loading) => {
-                    ("Loading".into(), ui::components::ComponentTone::Muted)
-                }
-                Some(StorageState::Unavailable { .. }) => {
-                    ("Unavailable".into(), ui::components::ComponentTone::Muted)
-                }
-                Some(StorageState::Ready(_)) => {
-                    (pressure_label(pressure).into(), pressure_tone(pressure))
-                }
-                Some(StorageState::Stale { .. }) => (
-                    format!("{} (stale)", pressure_label(pressure)),
-                    pressure_tone(pressure),
-                ),
-            };
-            return Some(ui::SystemStatusViewModel {
-                content: ui::SystemStatusContentViewModel::User(ui::UserSystemStatusViewModel {
-                    storage_status,
-                    storage_tone,
-                    system_volume_usage: usage,
-                    system_volume_used_percentage,
-                    network_status,
-                    network_tone,
-                    last_refreshed: refreshed,
-                }),
-                diagnostics,
-                route: self.system_status_route,
-                dashboard,
-                selected_row: self.system_status_selected_row,
-                scroll_offset: self.system_status_scroll_offset,
-                refreshing: self.system_status_refresh_requested_revision.is_some(),
-                feedback: None,
-            });
-        }
         let (network_state, network) = match snapshot.map(|s| &s.network) {
             Some(NetworkState::Ready(v)) => (ui::SystemStatusSectionState::Ready, Some(v)),
             Some(NetworkState::Stale { last_good, error }) => (
@@ -352,6 +310,7 @@ impl ShellSession {
         use system_services::MetricState;
         use ui::components::ComponentTone;
 
+        let can_view_all = role != UserRole::Guest;
         let metrics = snapshot.map(|snapshot| &snapshot.metrics);
         let kind = super::super::controller::system_status::ui_widget_kind(placement.kind);
         let size = super::super::controller::system_status::ui_widget_size(placement.size);
@@ -562,7 +521,7 @@ impl ShellSession {
             }
             storage::SystemStatusWidgetKind::Cpu => {
                 let state = metrics.map(|metrics| &metrics.cpu);
-                let (widget_state, cpu) = metric_widget_state(state, role == UserRole::Admin);
+                let (widget_state, cpu) = metric_widget_state(state, can_view_all);
                 model.state = widget_state;
                 if let Some(cpu) = cpu {
                     model.progress_percent =
@@ -609,7 +568,7 @@ impl ShellSession {
             }
             storage::SystemStatusWidgetKind::Memory => {
                 let state = metrics.map(|metrics| &metrics.memory);
-                let (widget_state, memory) = metric_widget_state(state, role == UserRole::Admin);
+                let (widget_state, memory) = metric_widget_state(state, can_view_all);
                 model.state = widget_state;
                 if let Some(memory) = memory {
                     let percentage = if memory.total_bytes == 0 {
@@ -668,7 +627,7 @@ impl ShellSession {
             }
             storage::SystemStatusWidgetKind::Storage => {
                 let state = snapshot.map(|snapshot| &snapshot.storage);
-                model.state = storage_widget_state(state, role == UserRole::Admin);
+                model.state = storage_widget_state(state, can_view_all);
                 if let Some(storage) = storage_snapshot {
                     let system = storage
                         .system_volume_index
@@ -685,7 +644,7 @@ impl ShellSession {
                         .iter()
                         .filter_map(|volume| {
                             used_percentage(volume).map(|value| ui::SystemStatusBarItem {
-                                label: if role == UserRole::Admin {
+                                label: if can_view_all {
                                     volume.identifier.clone()
                                 } else {
                                     "Storage".into()
@@ -707,7 +666,7 @@ impl ShellSession {
                         .iter()
                         .map(|volume| {
                             vec![
-                                if role == UserRole::Admin {
+                                if can_view_all {
                                     volume.identifier.clone()
                                 } else {
                                     "Device storage".to_string()
@@ -721,7 +680,7 @@ impl ShellSession {
             }
             storage::SystemStatusWidgetKind::Network => {
                 let state = metrics.map(|metrics| &metrics.network_io);
-                let (widget_state, io) = metric_widget_state(state, role == UserRole::Admin);
+                let (widget_state, io) = metric_widget_state(state, can_view_all);
                 model.state = widget_state;
                 let network = snapshot.and_then(successful_network_snapshot);
                 model.primary = network
@@ -739,7 +698,7 @@ impl ShellSession {
                         format_rate(io.total_received_bytes_per_second),
                         format_rate(io.total_transmitted_bytes_per_second)
                     ));
-                    if role == UserRole::Admin {
+                    if can_view_all {
                         model.compact_rows = io
                             .interfaces
                             .iter()
@@ -768,7 +727,7 @@ impl ShellSession {
             }
             storage::SystemStatusWidgetKind::Temperature => {
                 let state = metrics.map(|metrics| &metrics.thermal);
-                let (widget_state, sensors) = metric_widget_state(state, role == UserRole::Admin);
+                let (widget_state, sensors) = metric_widget_state(state, can_view_all);
                 model.state = widget_state;
                 if let Some(sensors) = sensors {
                     let hottest = sensors
@@ -806,7 +765,7 @@ impl ShellSession {
             }
             storage::SystemStatusWidgetKind::Battery => {
                 let state = metrics.map(|metrics| &metrics.batteries);
-                let (widget_state, batteries) = metric_widget_state(state, role == UserRole::Admin);
+                let (widget_state, batteries) = metric_widget_state(state, can_view_all);
                 model.state = widget_state;
                 if let Some(batteries) = batteries {
                     if let Some(battery) = batteries.first() {
@@ -850,7 +809,7 @@ impl ShellSession {
             }
             storage::SystemStatusWidgetKind::UptimeLoad => {
                 let state = metrics.map(|metrics| &metrics.uptime);
-                let (widget_state, uptime) = metric_widget_state(state, role == UserRole::Admin);
+                let (widget_state, uptime) = metric_widget_state(state, can_view_all);
                 model.state = widget_state;
                 if let Some(uptime) = uptime {
                     model.primary = format_duration(uptime.seconds);
