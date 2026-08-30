@@ -1369,7 +1369,7 @@ impl ShellSession {
             && !self.time_sync_dialog_visible
         {
             return if self.active_screen() == ShellScreen::SystemStatus {
-                self.route_system_status_mouse(mouse, hit_target)
+                self.route_system_status_mouse(mouse, hit_target, received_at)
             } else {
                 self.route_diagnostics_mouse(mouse, hit_target)
             };
@@ -1538,7 +1538,7 @@ impl ShellSession {
             return self.route_diagnostics_mouse(mouse, hit_target);
         }
         if self.active_screen() == ShellScreen::SystemStatus {
-            return self.route_system_status_mouse(mouse, hit_target);
+            return self.route_system_status_mouse(mouse, hit_target, received_at);
         }
 
         if self.active_screen() == ShellScreen::UserManagement {
@@ -1934,6 +1934,7 @@ impl ShellSession {
         &mut self,
         mouse: MouseInput,
         hit_target: Option<ShellComponent>,
+        received_at: Instant,
     ) -> (RoutedTarget, ShellCommand) {
         let coordinates = mouse.coordinates();
         let target = if !self.diagnostics_repair_preview.is_empty() {
@@ -2032,9 +2033,15 @@ impl ShellSession {
                 Some(ui::SystemStatusHitTarget::Widget(kind)) if editing => {
                     ShellCommand::SystemStatusWidgetPointerDown(kind, coordinates)
                 }
-                Some(ui::SystemStatusHitTarget::Widget(kind)) => {
-                    ShellCommand::SystemStatusSelectWidget(kind)
-                }
+                Some(ui::SystemStatusHitTarget::Widget(kind)) => match self.register_click(
+                    Some(ShellComponent::SystemStatus),
+                    coordinates,
+                    PointerButton::Left,
+                    received_at,
+                ) {
+                    ClickKind::Double => ShellCommand::SystemStatusOpenWidget(kind),
+                    ClickKind::Single => ShellCommand::SystemStatusSelectWidget(kind),
+                },
                 Some(ui::SystemStatusHitTarget::Edit) if !editing => {
                     ShellCommand::SystemStatusBeginEdit
                 }

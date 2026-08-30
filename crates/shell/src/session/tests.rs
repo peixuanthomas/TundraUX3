@@ -906,7 +906,7 @@ fn diagnostics_is_integrated_into_system_status_tabs() {
 }
 
 #[test]
-fn system_status_widget_double_click_opens_detail_without_leaving_page() {
+fn system_status_widget_double_click_from_terminal_events_opens_detail() {
     let mut state = ShellSession::new_for_home_mode(
         ShellLaunchConfig::default(),
         (120, 40),
@@ -926,11 +926,23 @@ fn system_status_widget_double_click_opens_detail_without_leaving_page() {
         .find(|widget| widget.kind == ui::SystemStatusWidgetKind::Diagnostics)
         .expect("diagnostics widget");
 
-    state.apply_input(InputEvent::Mouse(ui::MouseEvent::new(
+    let coordinates = (
         widget.area.x.saturating_add(1),
         widget.area.y.saturating_add(1),
-        ui::MouseEventKind::DoubleClick(PointerButton::Left),
-    )));
+    );
+    let first_click_at = Instant::now();
+    state.apply_input_at(
+        InputEvent::mouse_down(PointerButton::Left, coordinates),
+        first_click_at,
+    );
+    state.apply_input_at(
+        InputEvent::mouse_up(PointerButton::Left, coordinates),
+        first_click_at + Duration::from_millis(50),
+    );
+    state.apply_input_at(
+        InputEvent::mouse_down(PointerButton::Left, coordinates),
+        first_click_at + Duration::from_millis(100),
+    );
 
     assert_eq!(state.active_screen(), ShellScreen::SystemStatus);
     assert_eq!(state.system_status_tab, ui::SystemStatusTab::Health);
