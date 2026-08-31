@@ -95,6 +95,8 @@ pub enum SettingsField {
     CursorHorizontalStep,
     CursorVerticalStep,
     RestoreDefaults,
+    InstalledVersion,
+    RemoteVersion,
     CheckUpdates,
     StartUpdate,
 }
@@ -401,32 +403,27 @@ pub fn settings_layout(area: Rect, model: &SettingsViewModel) -> SettingsLayout 
         .collect();
 
     let mut fields = Vec::new();
-    let mut y = detail_area.y.saturating_sub(
-        model
-            .scroll_offset
-            .min(detail_area.height.saturating_add(200)),
-    );
+    let mut y = i32::from(detail_area.y) - i32::from(model.scroll_offset);
     if model.appearance_preview.is_some() {
-        y = y.saturating_add(5);
+        y += 5;
     }
     for card in &model.cards {
         let height = (card.items.len() as u16).saturating_add(2).max(3);
-        let card_area = Rect::new(detail_area.x, y, detail_area.width, height);
         for (index, item) in card.items.iter().enumerate() {
-            let row = Rect::new(
-                card_area.x.saturating_add(1),
-                card_area.y.saturating_add(1).saturating_add(index as u16),
-                card_area.width.saturating_sub(2),
-                1,
-            );
-            if let Some(visible) = rect_intersection(row, detail_area) {
+            let row_y = y + 1 + i32::try_from(index).unwrap_or(i32::MAX);
+            if row_y >= i32::from(detail_area.y) && row_y < i32::from(detail_area.bottom()) {
                 fields.push(SettingsFieldLayout {
                     field: item.field,
-                    area: visible,
+                    area: Rect::new(
+                        detail_area.x.saturating_add(1),
+                        row_y as u16,
+                        detail_area.width.saturating_sub(2),
+                        1,
+                    ),
                 });
             }
         }
-        y = y.saturating_add(height).saturating_add(1);
+        y += i32::from(height) + 1;
     }
 
     let mut picker_options = Vec::new();
@@ -591,17 +588,10 @@ fn render_settings_content(
 
     let detail_area = settings_detail_area(layout);
     if let Some(preview) = model.appearance_preview {
-        let preview_area = Rect::new(
-            detail_area.x,
-            detail_area.y.saturating_sub(
-                model
-                    .scroll_offset
-                    .min(detail_area.height.saturating_add(200)),
-            ),
-            detail_area.width,
-            4,
-        );
-        if let Some(visible) = rect_intersection(preview_area, detail_area) {
+        let preview_y = i32::from(detail_area.y) - i32::from(model.scroll_offset);
+        if let Some((visible, _)) =
+            visible_scrolled_rect(detail_area.x, preview_y, detail_area.width, 4, detail_area)
+        {
             let preview_theme = TundraTheme {
                 border_shape: preview.border_shape,
                 border_color: preview.border_color,
@@ -664,32 +654,30 @@ fn render_cards(
     context: &RenderContext,
 ) {
     let theme = &context.compatibility_theme();
-    let mut y = detail_area.y.saturating_sub(
-        model
-            .scroll_offset
-            .min(detail_area.height.saturating_add(200)),
-    );
+    let mut y = i32::from(detail_area.y) - i32::from(model.scroll_offset);
     if model.appearance_preview.is_some() {
-        y = y.saturating_add(5);
+        y += 5;
     }
     for card in &model.cards {
         let height = (card.items.len() as u16).saturating_add(2).max(3);
-        let card_area = Rect::new(detail_area.x, y, detail_area.width, height);
-        if let Some(visible) = rect_intersection(card_area, detail_area) {
+        if let Some((visible, _)) =
+            visible_scrolled_rect(detail_area.x, y, detail_area.width, height, detail_area)
+        {
             Surface::new()
                 .titled(format!(" {} ", card.title))
                 .bordered(true)
                 .raised(true)
                 .render_frame(frame, visible, context);
         }
-        let rows_area = Rect::new(
-            card_area.x.saturating_add(1),
-            card_area.y.saturating_add(1),
-            card_area.width.saturating_sub(2),
-            u16::try_from(card.items.len()).unwrap_or(u16::MAX),
-        );
-        let Some(visible_rows) = rect_intersection(rows_area, detail_area) else {
-            y = y.saturating_add(height).saturating_add(1);
+        let rows_height = u16::try_from(card.items.len()).unwrap_or(u16::MAX);
+        let Some((visible_rows, skipped_rows)) = visible_scrolled_rect(
+            detail_area.x.saturating_add(1),
+            y + 1,
+            detail_area.width.saturating_sub(2),
+            rows_height,
+            detail_area,
+        ) else {
+            y += i32::from(height) + 1;
             continue;
         };
         let value_width = card
@@ -698,13 +686,13 @@ fn render_cards(
             .map(settings_control_width)
             .max()
             .unwrap_or(0)
-            .min(rows_area.width / 2);
+            .min(visible_rows.width / 2);
         let rows = card
             .items
             .iter()
             .map(|item| vec![item.label.clone(), String::new()])
             .collect::<Vec<_>>();
-        let first_visible = usize::from(visible_rows.y.saturating_sub(rows_area.y));
+        let first_visible = usize::from(skipped_rows);
         let visible_end = first_visible.saturating_add(usize::from(visible_rows.height));
         let selected = card
             .items
@@ -743,15 +731,11 @@ fn render_cards(
         table.render_frame(frame, visible_rows, context);
 
         for (index, item) in card.items.iter().enumerate() {
-            let row = Rect::new(
-                rows_area.x,
-                rows_area.y.saturating_add(index as u16),
-                rows_area.width,
-                1,
-            );
-            let Some(row) = rect_intersection(row, detail_area) else {
+            let row_y = y + 1 + i32::try_from(index).unwrap_or(i32::MAX);
+            if row_y < i32::from(detail_area.y) || row_y >= i32::from(detail_area.bottom()) {
                 continue;
-            };
+            }
+            let row = Rect::new(visible_rows.x, row_y as u16, visible_rows.width, 1);
             render_settings_control(
                 frame,
                 Rect::new(
@@ -765,7 +749,7 @@ fn render_cards(
                 theme,
             );
         }
-        y = y.saturating_add(height).saturating_add(1);
+        y += i32::from(height) + 1;
     }
 
     if model.selected_category == SettingsCategory::Update
@@ -778,7 +762,7 @@ fn render_cards(
 fn render_update_commits(
     frame: &mut Frame<'_>,
     detail_area: Rect,
-    y: u16,
+    y: i32,
     update: &SettingsUpdateViewModel,
     context: &RenderContext,
 ) {
@@ -811,8 +795,9 @@ fn render_update_commits(
         .unwrap_or(u16::MAX)
         .saturating_add(2)
         .max(3);
-    let area = Rect::new(detail_area.x, y, detail_area.width, height);
-    let Some(visible) = rect_intersection(area, detail_area) else {
+    let Some((visible, _)) =
+        visible_scrolled_rect(detail_area.x, y, detail_area.width, height, detail_area)
+    else {
         return;
     };
     Surface::new()
@@ -820,14 +805,13 @@ fn render_update_commits(
         .bordered(true)
         .raised(true)
         .render_frame(frame, visible, context);
-    let content = Rect::new(
-        area.x.saturating_add(2),
-        area.y.saturating_add(1),
-        area.width.saturating_sub(4),
+    if let Some((content, skipped)) = visible_scrolled_rect(
+        detail_area.x.saturating_add(2),
+        y + 1,
+        detail_area.width.saturating_sub(4),
         height.saturating_sub(2),
-    );
-    if let Some(content) = rect_intersection(content, detail_area) {
-        let skipped = content.y.saturating_sub(area.y.saturating_add(1));
+        detail_area,
+    ) {
         frame.render_widget(
             Paragraph::new(lines.join("\n"))
                 .style(theme.body_style())
@@ -1363,6 +1347,25 @@ fn rect_intersection(first: Rect, second: Rect) -> Option<Rect> {
     let right = first.right().min(second.right());
     let bottom = first.bottom().min(second.bottom());
     (right > x && bottom > y).then(|| Rect::new(x, y, right - x, bottom - y))
+}
+
+fn visible_scrolled_rect(
+    x: u16,
+    y: i32,
+    width: u16,
+    height: u16,
+    clip: Rect,
+) -> Option<(Rect, u16)> {
+    let top = y.max(i32::from(clip.y));
+    let bottom = (y + i32::from(height)).min(i32::from(clip.bottom()));
+    if width == 0 || bottom <= top {
+        return None;
+    }
+    let skipped = u16::try_from(top.saturating_sub(y)).unwrap_or(u16::MAX);
+    Some((
+        Rect::new(x, top as u16, width, (bottom - top) as u16),
+        skipped,
+    ))
 }
 
 fn contains(area: Rect, point: (u16, u16)) -> bool {

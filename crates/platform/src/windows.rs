@@ -73,6 +73,7 @@ const SHGFI_ICON: u32 = 0x0000_0100;
 const SHGFI_LARGEICON: u32 = 0x0000_0000;
 const DI_NORMAL: u32 = 0x0003;
 const BI_RGB: u32 = 0;
+const REPLACEFILE_WRITE_THROUGH: u32 = 0x0000_0001;
 
 #[derive(Debug, Clone, Copy, Default)]
 pub struct WindowsPlatform;
@@ -322,6 +323,33 @@ impl Platform for WindowsPlatform {
     ) -> crate::ExternalOpenPolicy {
         crate::platform::windows_external_open_policy(path, attributes)
     }
+}
+
+pub(crate) fn replace_file_with_backup(
+    target: &Path,
+    replacement: &Path,
+    backup: &Path,
+) -> Result<(), PlatformError> {
+    let target = to_wide(target.as_os_str());
+    let replacement = to_wide(replacement.as_os_str());
+    let backup = to_wide(backup.as_os_str());
+    let replaced = unsafe {
+        ReplaceFileW(
+            target.as_ptr(),
+            replacement.as_ptr(),
+            backup.as_ptr(),
+            REPLACEFILE_WRITE_THROUGH,
+            ptr::null_mut(),
+            ptr::null_mut(),
+        )
+    };
+    if replaced == 0 {
+        return Err(PlatformError::Native {
+            operation: "replace update file",
+            message: format!("Windows error {}", unsafe { GetLastError() }),
+        });
+    }
+    Ok(())
 }
 
 fn windows_show_critical_error(title: &str, body: &str) -> Result<(), PlatformError> {
@@ -2129,6 +2157,14 @@ unsafe extern "system" {
     fn GlobalLock(h_mem: *mut c_void) -> *mut c_void;
     fn GlobalUnlock(h_mem: *mut c_void) -> i32;
     fn GlobalFree(h_mem: *mut c_void) -> *mut c_void;
+    fn ReplaceFileW(
+        replaced_file_name: *const u16,
+        replacement_file_name: *const u16,
+        backup_file_name: *const u16,
+        replace_flags: u32,
+        exclude: *mut c_void,
+        reserved: *mut c_void,
+    ) -> i32;
 }
 
 #[cfg(test)]

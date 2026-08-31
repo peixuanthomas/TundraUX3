@@ -7,6 +7,13 @@ pub(in crate::session) struct SettingsTimeSyncValidationEvent {
     pub(in crate::session) result: TimeSyncResult,
 }
 
+#[derive(Debug)]
+pub(in crate::session) enum SettingsUpdateTaskEvent {
+    Progress(app::update::UpdateProgress),
+    CheckCompleted(Result<app::update::UpdateCheckResult, String>),
+    PrepareCompleted(Result<std::path::PathBuf, String>),
+}
+
 pub(in crate::session) struct ShellSettingsTaskShared {
     pub(in crate::session) task_group: Option<ManagedTaskGroup>,
     pub(in crate::session) event_tx: mpsc::Sender<SettingsTimeSyncValidationEvent>,
@@ -15,6 +22,10 @@ pub(in crate::session) struct ShellSettingsTaskShared {
     pub(in crate::session) next_request_id: std::sync::atomic::AtomicU64,
     pub(in crate::session) system_services: Option<system_services::SystemServicesHandle>,
     pub(in crate::session) system_services_config: Mutex<system_services::SystemServicesConfig>,
+    pub(in crate::session) update_event_tx: mpsc::Sender<SettingsUpdateTaskEvent>,
+    pub(in crate::session) update_event_rx: Mutex<mpsc::Receiver<SettingsUpdateTaskEvent>>,
+    pub(in crate::session) update_worker: Mutex<Option<ManagedThreadHandle<()>>>,
+    pub(in crate::session) platform: Option<std::sync::Arc<dyn Platform>>,
 }
 
 pub(in crate::session) static NEXT_SETTINGS_RUNTIME_ID: std::sync::atomic::AtomicU64 =
@@ -27,6 +38,11 @@ impl Drop for ShellSettingsTaskShared {
                 worker.cancel();
             }
         }
+        if let Ok(worker) = self.update_worker.get_mut()
+            && let Some(worker) = worker.as_ref()
+        {
+            worker.cancel();
+        }
     }
 }
 
@@ -38,6 +54,7 @@ pub(in crate::session) struct ShellSettingsTaskRuntime {
 impl ShellSettingsTaskRuntime {
     pub(in crate::session) fn unavailable() -> Self {
         let (event_tx, event_rx) = mpsc::channel();
+        let (update_event_tx, update_event_rx) = mpsc::channel();
         Self {
             shared: Arc::new(ShellSettingsTaskShared {
                 task_group: None,
@@ -47,6 +64,10 @@ impl ShellSettingsTaskRuntime {
                 next_request_id: std::sync::atomic::AtomicU64::new(1),
                 system_services: None,
                 system_services_config: Mutex::new(system_services::SystemServicesConfig::default()),
+                update_event_tx,
+                update_event_rx: Mutex::new(update_event_rx),
+                update_worker: Mutex::new(None),
+                platform: None,
             }),
         }
     }
@@ -56,6 +77,7 @@ impl ShellSettingsTaskRuntime {
             watchdog,
             None,
             system_services::SystemServicesConfig::default(),
+            None,
         )
     }
 
@@ -63,10 +85,12 @@ impl ShellSettingsTaskRuntime {
         watchdog: AppWatchdog,
         system_services: Option<system_services::SystemServicesHandle>,
         system_services_config: system_services::SystemServicesConfig,
+        platform: Option<std::sync::Arc<dyn Platform>>,
     ) -> Self {
         use std::sync::atomic::Ordering;
 
         let (event_tx, event_rx) = mpsc::channel();
+        let (update_event_tx, update_event_rx) = mpsc::channel();
         let runtime_id = NEXT_SETTINGS_RUNTIME_ID
             .fetch_add(1, Ordering::Relaxed)
             .max(1);
@@ -81,8 +105,171 @@ impl ShellSettingsTaskRuntime {
                 next_request_id: std::sync::atomic::AtomicU64::new(1),
                 system_services,
                 system_services_config: Mutex::new(system_services_config),
+                update_event_tx,
+                update_event_rx: Mutex::new(update_event_rx),
+                update_worker: Mutex::new(None),
+                platform,
             }),
         }
+    }
+
+    pub(in crate::session) fn update_supported(&self) -> bool {
+        self.shared
+            .platform
+            .as_ref()
+            .is_some_and(|platform| platform.kind() == platform::PlatformKind::Windows)
+    }
+
+    pub(in crate::session) fn update_busy(&self) -> bool {
+        self.shared
+            .update_worker
+            .lock()
+            .is_ok_and(|worker| worker.is_some())
+    }
+
+    pub(in crate::session) fn submit_update_check(
+        &self,
+        identity: app::update::BuildIdentity,
+    ) -> Result<(), String> {
+        let task_group = self
+            .shared
+            .task_group
+            .clone()
+            .ok_or_else(|| "Update worker is unavailable".to_string())?;
+        if !self.update_supported() {
+            return Err("Automatic updates are supported only on Windows".to_string());
+        }
+        let mut worker_slot = self
+            .shared
+            .update_worker
+            .lock()
+            .map_err(|_| "Update task registry is unavailable".to_string())?;
+        if worker_slot.is_some() {
+            return Err("An update task is already running".to_string());
+        }
+        let request_id = self
+            .shared
+            .next_request_id
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+            .max(1);
+        let task_id = TaskId::new(format!("check-update-{}", request_id % 64))
+            .map_err(|error| format!("invalid update check task: {error}"))?;
+        let events = self.shared.update_event_tx.clone();
+        let worker = task_group
+            .spawn_thread(TaskSpec::one_shot(task_id), move || {
+                let _ = events.send(SettingsUpdateTaskEvent::Progress(
+                    app::update::UpdateProgress {
+                        phase: app::update::UpdatePhase::Checking,
+                        message: "Checking GitHub default branch".to_string(),
+                    },
+                ));
+                let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    app::update::check_for_updates(&identity).map_err(|error| error.to_string())
+                }));
+                match result {
+                    Ok(result) => {
+                        let _ = events.send(SettingsUpdateTaskEvent::CheckCompleted(result));
+                    }
+                    Err(payload) => {
+                        let _ = events.send(SettingsUpdateTaskEvent::CheckCompleted(Err(
+                            "Update check worker panicked".to_string(),
+                        )));
+                        std::panic::resume_unwind(payload);
+                    }
+                }
+            })
+            .map_err(|error| format!("Could not start update check: {error}"))?;
+        *worker_slot = Some(worker);
+        Ok(())
+    }
+
+    pub(in crate::session) fn submit_update_prepare(
+        &self,
+        check: app::update::UpdateCheckResult,
+        install_dir: std::path::PathBuf,
+    ) -> Result<(), String> {
+        let task_group = self
+            .shared
+            .task_group
+            .clone()
+            .ok_or_else(|| "Update worker is unavailable".to_string())?;
+        let platform = self
+            .shared
+            .platform
+            .clone()
+            .ok_or_else(|| "Windows update platform is unavailable".to_string())?;
+        if platform.kind() != platform::PlatformKind::Windows {
+            return Err("Automatic updates are supported only on Windows".to_string());
+        }
+        let mut worker_slot = self
+            .shared
+            .update_worker
+            .lock()
+            .map_err(|_| "Update task registry is unavailable".to_string())?;
+        if worker_slot.is_some() {
+            return Err("An update task is already running".to_string());
+        }
+        let request_id = self
+            .shared
+            .next_request_id
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+            .max(1);
+        let task_id = TaskId::new(format!("prepare-update-{}", request_id % 64))
+            .map_err(|error| format!("invalid update build task: {error}"))?;
+        let events = self.shared.update_event_tx.clone();
+        let worker = task_group
+            .spawn_thread(TaskSpec::one_shot(task_id), move || {
+                let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    let mut report = |progress: app::update::UpdateProgress| {
+                        let _ = events.send(SettingsUpdateTaskEvent::Progress(progress));
+                    };
+                    let prepared =
+                        app::update::prepare_update(platform.as_ref(), &check, &mut report)?;
+                    let work_dir = prepared.work_dir.clone();
+                    report(app::update::UpdateProgress {
+                        phase: app::update::UpdatePhase::PreparingReplacement,
+                        message: "Preparing rollback files and restart helper".to_string(),
+                    });
+                    let staged = app::update::stage_update_for_apply(&prepared, &install_dir);
+                    let _ = platform.cleanup_temp_path(&work_dir);
+                    staged.map(|staged| staged.manifest_path)
+                }));
+                match result {
+                    Ok(result) => {
+                        let _ = events.send(SettingsUpdateTaskEvent::PrepareCompleted(
+                            result.map_err(|error| error.to_string()),
+                        ));
+                    }
+                    Err(payload) => {
+                        let _ = events.send(SettingsUpdateTaskEvent::PrepareCompleted(Err(
+                            "Update build worker panicked".to_string(),
+                        )));
+                        std::panic::resume_unwind(payload);
+                    }
+                }
+            })
+            .map_err(|error| format!("Could not start update build: {error}"))?;
+        *worker_slot = Some(worker);
+        Ok(())
+    }
+
+    pub(in crate::session) fn drain_update_events(&self) -> Vec<SettingsUpdateTaskEvent> {
+        let Ok(receiver) = self.shared.update_event_rx.lock() else {
+            return Vec::new();
+        };
+        let events = std::iter::from_fn(|| receiver.try_recv().ok()).collect::<Vec<_>>();
+        drop(receiver);
+        if events.iter().any(|event| {
+            matches!(
+                event,
+                SettingsUpdateTaskEvent::CheckCompleted(_)
+                    | SettingsUpdateTaskEvent::PrepareCompleted(_)
+            )
+        }) && let Ok(mut worker) = self.shared.update_worker.lock()
+        {
+            *worker = None;
+        }
+        events
     }
 
     pub(in crate::session) fn submit_time_sync_validation(
@@ -416,6 +603,7 @@ mod tests {
         config: system_services::SystemServicesConfig,
     ) -> ShellSettingsTaskRuntime {
         let (event_tx, event_rx) = mpsc::channel();
+        let (update_event_tx, update_event_rx) = mpsc::channel();
         ShellSettingsTaskRuntime {
             shared: Arc::new(ShellSettingsTaskShared {
                 task_group: None,
@@ -425,6 +613,10 @@ mod tests {
                 next_request_id: std::sync::atomic::AtomicU64::new(1),
                 system_services: Some(handle),
                 system_services_config: Mutex::new(config),
+                update_event_tx,
+                update_event_rx: Mutex::new(update_event_rx),
+                update_worker: Mutex::new(None),
+                platform: None,
             }),
         }
     }

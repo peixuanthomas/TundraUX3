@@ -215,6 +215,12 @@ where
                 weathr_launcher,
             )
         }
+        Ok(CliCommand::UpdateProbe) => write_update_probe(stdout),
+        Ok(CliCommand::ApplyUpdate {
+            manifest,
+            parent_pid,
+            recover_only,
+        }) => run_update_helper(&manifest, parent_pid, recover_only, stderr),
         Err(error) => {
             let _ = writeln!(stderr, "ERROR: {error}");
             let _ = write_help(stderr);
@@ -304,10 +310,48 @@ where
             })
         }
         Ok(CliCommand::Weathr) => run_weathr(platform, stderr, weathr_launcher),
+        Ok(CliCommand::UpdateProbe) => write_update_probe(stdout),
+        Ok(CliCommand::ApplyUpdate {
+            manifest,
+            parent_pid,
+            recover_only,
+        }) => run_update_helper(&manifest, parent_pid, recover_only, stderr),
         Err(error) => {
             let _ = writeln!(stderr, "ERROR: {error}");
             let _ = write_help(stderr);
             2
+        }
+    }
+}
+
+fn write_update_probe(output: &mut impl Write) -> i32 {
+    let identity = app::update::current_build_identity();
+    let commit = identity.commit_sha.as_deref().unwrap_or("unknown");
+    let dirty = if identity.dirty { "dirty" } else { "clean" };
+    let _ = writeln!(
+        output,
+        "protocol={}\nversion={}\ncommit={}\nstate={}",
+        app::update::UPDATE_PROTOCOL_VERSION,
+        identity.package_version,
+        commit,
+        dirty
+    );
+    0
+}
+
+fn run_update_helper(
+    manifest: &Path,
+    parent_pid: u32,
+    recover_only: bool,
+    stderr: &mut impl Write,
+) -> i32 {
+    match app::update::apply_update_transaction(manifest, parent_pid, recover_only) {
+        Ok(()) => 0,
+        Err(error) => {
+            let _ = platform::native_platform()
+                .show_critical_error("TundraUX update recovery failed", &error.to_string());
+            let _ = writeln!(stderr, "ERROR: {error}");
+            1
         }
     }
 }

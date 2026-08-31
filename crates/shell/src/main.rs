@@ -2,9 +2,35 @@ use std::sync::Arc;
 use watchdog::{ProcessWatchdog, WatchdogConfig, WatchdogRuntime};
 
 fn main() {
-    if let Err(error) = shell::parse_shell_args(std::env::args().skip(1)) {
+    let args = std::env::args().skip(1).collect::<Vec<_>>();
+    if args.as_slice() == ["__update-probe"] {
+        let identity = app::update::current_build_identity();
+        println!("protocol={}", app::update::UPDATE_PROTOCOL_VERSION);
+        println!("version={}", identity.package_version);
+        println!(
+            "commit={}",
+            identity.commit_sha.as_deref().unwrap_or("unknown")
+        );
+        println!("dirty={}", identity.dirty);
+        return;
+    }
+    if let Err(error) = shell::parse_shell_args(args) {
         eprintln!("tundra-shell failed: {error}");
         std::process::exit(2);
+    }
+
+    if std::env::var_os(app::update::UPDATE_READY_FILE_ENV).is_none() {
+        match app::update::recover_interrupted_update_from_current_exe(std::process::id()) {
+            Ok(true) => return,
+            Ok(false) => {}
+            Err(error) => {
+                let platform = platform::native_platform();
+                let _ = platform
+                    .show_critical_error("TundraUX update recovery failed", &error.to_string());
+                eprintln!("tundra-shell update recovery failed: {error}");
+                std::process::exit(5);
+            }
+        }
     }
 
     let (watchdog_runtime, process_watchdog) = match start_watchdog() {
@@ -41,6 +67,15 @@ fn main() {
                 4
             }
         },
+        (Ok(shell::ShellRunOutcome::UpdatePrepared(manifest)), Ok(())) => {
+            match app::update::launch_update_helper(&manifest, std::process::id()) {
+                Ok(()) => 0,
+                Err(error) => {
+                    eprintln!("tundra-shell update helper failed to start: {error}");
+                    4
+                }
+            }
+        }
         (_, Err(error)) => {
             eprintln!("tundra-shell watchdog shutdown failed: {error}");
             3

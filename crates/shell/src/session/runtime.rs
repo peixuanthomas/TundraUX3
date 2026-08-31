@@ -67,14 +67,16 @@ pub fn run_shell_blocking_managed(
         ShellRunOutcome::Exit => Ok(()),
         ShellRunOutcome::RestartRequested => Err(restart_requires_binary_entrypoint()),
         ShellRunOutcome::ResetRequested => Err(reset_requires_binary_entrypoint()),
+        ShellRunOutcome::UpdatePrepared(_) => Err(update_requires_binary_entrypoint()),
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ShellRunOutcome {
     Exit,
     RestartRequested,
     ResetRequested,
+    UpdatePrepared(std::path::PathBuf),
 }
 
 pub fn run_shell_blocking_managed_with_outcome(
@@ -142,6 +144,7 @@ pub fn run_fullscreen_blocking_managed(
         ShellRunOutcome::Exit => Ok(()),
         ShellRunOutcome::RestartRequested => Err(restart_requires_binary_entrypoint()),
         ShellRunOutcome::ResetRequested => Err(reset_requires_binary_entrypoint()),
+        ShellRunOutcome::UpdatePrepared(_) => Err(update_requires_binary_entrypoint()),
     }
 }
 
@@ -156,6 +159,13 @@ fn reset_requires_binary_entrypoint() -> io::Error {
     io::Error::new(
         io::ErrorKind::Interrupted,
         "Command Line requested a storage reset; the binary entry point must restart Shell",
+    )
+}
+
+fn update_requires_binary_entrypoint() -> io::Error {
+    io::Error::new(
+        io::ErrorKind::Interrupted,
+        "the binary entry point must launch the prepared update helper",
     )
 }
 
@@ -328,6 +338,9 @@ pub fn run_fullscreen_blocking_managed_with_outcome(
                     FullscreenShellSessionOutcome::ResetRequested => {
                         return Ok(ShellRunOutcome::ResetRequested);
                     }
+                    FullscreenShellSessionOutcome::UpdatePrepared(manifest) => {
+                        return Ok(ShellRunOutcome::UpdatePrepared(manifest));
+                    }
                 }
             }
             Ok(Err(error)) => return Err(error),
@@ -350,12 +363,13 @@ pub fn run_fullscreen_blocking_managed_with_outcome(
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) enum FullscreenShellSessionOutcome {
     Exit,
     RestartRequested,
     ReturnToLockscreen,
     ResetRequested,
+    UpdatePrepared(std::path::PathBuf),
 }
 
 #[derive(Debug, Clone)]
@@ -872,6 +886,7 @@ pub(super) fn run_fullscreen_shell_session<W: Write>(
                 shell_watchdog.clone(),
                 Some(system_services.clone()),
                 settings_services_config,
+                Some(std::sync::Arc::clone(&platform)),
             ),
         },
     );
@@ -905,6 +920,7 @@ pub(super) fn run_fullscreen_shell_session<W: Write>(
     let mut terminal_size_error = None;
     let mut terminal_suspended = false;
     let mut last_background_poll = runtime_origin;
+    let mut update_ready_marked = false;
 
     loop {
         let state_before_polling = state.clone();
@@ -1339,6 +1355,10 @@ pub(super) fn run_fullscreen_shell_session<W: Write>(
                 }
                 motion_effects.process(motion_frame.scaled_delta(), frame.buffer_mut(), &state);
             })?;
+            if !update_ready_marked {
+                app::update::mark_update_ready_from_env().map_err(io::Error::other)?;
+                update_ready_marked = true;
+            }
             let toast_requests_redraw = shell_toast
                 .as_ref()
                 .is_some_and(|toast| toast.requests_redraw(motion_frame));
@@ -1527,7 +1547,9 @@ pub(super) fn run_fullscreen_shell_session<W: Write>(
         return Err(error);
     }
 
-    let outcome = if reset_requested {
+    let outcome = if let Some(manifest) = state.update_apply_manifest().map(ToOwned::to_owned) {
+        FullscreenShellSessionOutcome::UpdatePrepared(manifest)
+    } else if reset_requested {
         FullscreenShellSessionOutcome::ResetRequested
     } else if state.restart_requested {
         FullscreenShellSessionOutcome::RestartRequested
@@ -1701,6 +1723,7 @@ fn session_has_background_work(state: &ShellSession) -> bool {
             .settings_state
             .as_ref()
             .is_some_and(|settings| settings.time_sync_validation_request_id.is_some())
+        || state.settings_task_runtime.update_busy()
         || state
             .app
             .explorer_state()

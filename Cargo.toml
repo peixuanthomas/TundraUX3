@@ -18,6 +18,7 @@ resolver = "3"
 [workspace.package]
 version = "0.1.1"
 edition = "2024"
+rust-version = "1.85"
 
 [workspace.dependencies]
 ratatui = { version = "=0.30.2", default-features = false, features = [

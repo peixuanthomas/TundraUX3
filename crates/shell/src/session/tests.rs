@@ -2264,6 +2264,7 @@ fn system_status_live_service_home_open_refresh_and_background_close() {
                 watchdog,
                 Some(handle),
                 config,
+                None,
             ),
         },
     );

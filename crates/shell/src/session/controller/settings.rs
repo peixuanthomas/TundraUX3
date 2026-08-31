@@ -54,6 +54,12 @@ pub(in crate::session) const EDITOR_SETTINGS_FIELDS: &[ui::SettingsField] = &[
     ui::SettingsField::CursorVerticalStep,
     ui::SettingsField::RestoreDefaults,
 ];
+pub(in crate::session) const UPDATE_SETTINGS_FIELDS: &[ui::SettingsField] = &[
+    ui::SettingsField::InstalledVersion,
+    ui::SettingsField::RemoteVersion,
+    ui::SettingsField::CheckUpdates,
+    ui::SettingsField::StartUpdate,
+];
 
 impl ShellSession {
     pub(in crate::session) fn open_settings(&mut self) {
@@ -168,6 +174,28 @@ impl ShellSession {
         platform: &dyn Platform,
     ) {
         if self.settings_state.is_none() {
+            return;
+        }
+        if self.settings_update_state.confirmation_open {
+            if key.has_non_shift_modifier() {
+                return;
+            }
+            match key.key {
+                InputKey::Escape => self.cancel_update_confirmation(),
+                InputKey::Left | InputKey::Right | InputKey::Tab | InputKey::BackTab => {
+                    self.settings_update_state.confirm_selected =
+                        !self.settings_update_state.confirm_selected;
+                }
+                InputKey::Enter | InputKey::Char(' ') => {
+                    if self.settings_update_state.confirm_selected {
+                        self.begin_confirmed_update();
+                    } else {
+                        self.cancel_update_confirmation();
+                    }
+                }
+                _ => {}
+            }
+            self.refresh_hit_map();
             return;
         }
         if self
@@ -287,6 +315,8 @@ impl ShellSession {
         };
         let layout = ui::settings_layout(app_area, &model);
         match ui::settings_hit_test(&layout, coordinates) {
+            Some(ui::SettingsHitTarget::UpdateConfirm) => self.begin_confirmed_update(),
+            Some(ui::SettingsHitTarget::UpdateCancel) => self.cancel_update_confirmation(),
             Some(ui::SettingsHitTarget::Category(category)) => {
                 self.select_settings_category(category);
             }
@@ -344,6 +374,9 @@ impl ShellSession {
             state.status = "Ready".to_string();
         }
         self.notify_status(format!("Settings: {}", category.label()));
+        if category == ui::SettingsCategory::Update && !self.settings_update_state.checked_once {
+            self.begin_update_check();
+        }
     }
 
     pub(in crate::session) fn select_settings_field_delta(&mut self, delta: isize) {
@@ -373,7 +406,7 @@ impl ShellSession {
             state.scroll_offset = if delta < 0 {
                 state.scroll_offset.saturating_sub(delta.unsigned_abs())
             } else {
-                state.scroll_offset.saturating_add(delta as u16).min(200)
+                state.scroll_offset.saturating_add(delta as u16).min(2_000)
             };
         }
     }
@@ -413,6 +446,9 @@ impl ShellSession {
             ui::SettingsField::ExplorerOpenExtensions => self.open_settings_file_extensions(),
             ui::SettingsField::ResetAnimationSpeed => self.reset_settings_animation_speed(),
             ui::SettingsField::RestoreDefaults => self.request_settings_restore_defaults(),
+            ui::SettingsField::CheckUpdates => self.begin_update_check(),
+            ui::SettingsField::StartUpdate => self.open_update_confirmation(),
+            ui::SettingsField::InstalledVersion | ui::SettingsField::RemoteVersion => {}
             _ => self.adjust_selected_setting(1, platform),
         }
     }
@@ -439,8 +475,16 @@ impl ShellSession {
                 | ui::SettingsField::WeatherLocation
                 | ui::SettingsField::ExplorerOpenExtensions
                 | ui::SettingsField::TimeSyncServer
+                | ui::SettingsField::CheckUpdates
+                | ui::SettingsField::StartUpdate
         ) {
             self.activate_selected_setting(platform);
+            return;
+        }
+        if matches!(
+            field,
+            ui::SettingsField::InstalledVersion | ui::SettingsField::RemoteVersion
+        ) {
             return;
         }
         if field == ui::SettingsField::RestoreDefaults {
@@ -1281,6 +1325,114 @@ impl ShellSession {
         }
     }
 
+    pub(in crate::session) fn begin_update_check(&mut self) {
+        self.settings_update_state.checked_once = true;
+        self.settings_update_state.confirmation_open = false;
+        self.settings_update_state.error = None;
+        if !self.settings_task_runtime.update_supported() {
+            self.settings_update_state.status =
+                "Automatic updates are supported only on Windows".to_string();
+            self.settings_update_state.phase = None;
+            return;
+        }
+        if self.settings_update_state.busy || self.settings_task_runtime.update_busy() {
+            self.settings_update_state.status = "An update task is already running".to_string();
+            return;
+        }
+        match self
+            .settings_task_runtime
+            .submit_update_check(app::update::current_build_identity())
+        {
+            Ok(()) => {
+                self.settings_update_state.busy = true;
+                self.settings_update_state.phase = Some(app::update::UpdatePhase::Checking);
+                self.settings_update_state.status = "Checking GitHub…".to_string();
+                self.notify_status("Checking for updates…");
+            }
+            Err(error) => self.set_update_error(error),
+        }
+    }
+
+    pub(in crate::session) fn open_update_confirmation(&mut self) {
+        if !self.settings_task_runtime.update_supported() {
+            self.set_update_error("Automatic updates are supported only on Windows");
+            return;
+        }
+        if !self.can_change_global_settings() {
+            self.set_update_error("Administrator permission is required to install updates");
+            return;
+        }
+        if self.settings_update_state.busy {
+            self.set_update_error("Wait for the current update task to finish");
+            return;
+        }
+        let Some(check) = self.settings_update_state.check_result.as_ref() else {
+            self.set_update_error("Check GitHub before starting an update");
+            return;
+        };
+        let identity = app::update::current_build_identity();
+        if matches!(check.relation, app::update::UpdateRelation::Identical) && !identity.dirty {
+            self.settings_update_state.status = "This build is already up to date".to_string();
+            return;
+        }
+        self.settings_update_state.confirmation_open = true;
+        self.settings_update_state.confirm_selected = true;
+    }
+
+    pub(in crate::session) fn cancel_update_confirmation(&mut self) {
+        self.settings_update_state.confirmation_open = false;
+        self.settings_update_state.confirm_selected = true;
+        self.settings_update_state.status = "Update cancelled".to_string();
+    }
+
+    pub(in crate::session) fn begin_confirmed_update(&mut self) {
+        if !self.settings_update_state.confirmation_open {
+            return;
+        }
+        self.settings_update_state.confirmation_open = false;
+        if !self.can_change_global_settings() {
+            self.set_update_error("Administrator permission is required to install updates");
+            return;
+        }
+        let Some(check) = self.settings_update_state.check_result.clone() else {
+            self.set_update_error("The update check result is no longer available");
+            return;
+        };
+        let install_dir = match std::env::current_exe()
+            .ok()
+            .and_then(|path| path.parent().map(std::path::Path::to_path_buf))
+        {
+            Some(path) => path,
+            None => {
+                self.set_update_error("Could not locate the running TundraUX installation");
+                return;
+            }
+        };
+        match self
+            .settings_task_runtime
+            .submit_update_prepare(check, install_dir)
+        {
+            Ok(()) => {
+                self.settings_update_state.busy = true;
+                self.settings_update_state.error = None;
+                self.settings_update_state.phase = Some(app::update::UpdatePhase::Downloading);
+                self.settings_update_state.status =
+                    "Downloading the selected GitHub source snapshot…".to_string();
+                self.notify_status("Update started; TundraUX will restart automatically");
+            }
+            Err(error) => self.set_update_error(error),
+        }
+    }
+
+    fn set_update_error(&mut self, message: impl Into<String>) {
+        let message = message.into();
+        self.settings_update_state.busy = false;
+        self.settings_update_state.phase = Some(app::update::UpdatePhase::Failed);
+        self.settings_update_state.status = format!("Update failed: {message}");
+        self.settings_update_state.error = Some(message.clone());
+        self.notify_status(format!("Update failed: {message}"));
+    }
+
     pub(in crate::session) fn poll_settings_background_tasks(&mut self) {
         let events = self
             .settings_task_runtime
@@ -1317,6 +1469,36 @@ impl ShellSession {
                         }
                     }
                     self.show_time_sync_failure_dialog(message);
+                }
+            }
+        }
+
+        for event in self.settings_task_runtime.drain_update_events() {
+            match event {
+                SettingsUpdateTaskEvent::Progress(progress) => {
+                    self.settings_update_state.phase = Some(progress.phase);
+                    self.settings_update_state.status = progress.message;
+                }
+                SettingsUpdateTaskEvent::CheckCompleted(Ok(result)) => {
+                    self.settings_update_state.busy = false;
+                    self.settings_update_state.phase = None;
+                    self.settings_update_state.error = None;
+                    self.settings_update_state.checked_at = Some(Utc::now());
+                    self.settings_update_state.status = update_relation_label(&result.relation);
+                    self.settings_update_state.check_result = Some(result);
+                }
+                SettingsUpdateTaskEvent::CheckCompleted(Err(error))
+                | SettingsUpdateTaskEvent::PrepareCompleted(Err(error)) => {
+                    self.set_update_error(error);
+                }
+                SettingsUpdateTaskEvent::PrepareCompleted(Ok(manifest_path)) => {
+                    self.settings_update_state.busy = false;
+                    self.settings_update_state.phase =
+                        Some(app::update::UpdatePhase::WaitingForRestart);
+                    self.settings_update_state.status =
+                        "Update prepared; restarting TundraUX…".to_string();
+                    self.update_apply_manifest = Some(manifest_path);
+                    self.shutdown_requested = true;
                 }
             }
         }
@@ -1705,6 +1887,7 @@ impl ShellSession {
             ui::SettingsCategory::FileExplorer => config.explorer = defaults.explorer,
             ui::SettingsCategory::Editor => config.editor = defaults.editor,
             ui::SettingsCategory::Appearance => unreachable!(),
+            ui::SettingsCategory::Update => return,
         }
         if let Err(error) = storage.save_config(&config) {
             self.set_settings_error(format!("Could not restore defaults: {error}"));
@@ -1730,14 +1913,24 @@ impl ShellSession {
         let config = self.app.storage_config();
         let appearance = self.app.active_appearance()?;
         let global_enabled = self.can_change_global_settings();
-        let cards = settings_cards(
-            state,
-            config,
-            appearance,
-            global_enabled,
-            self.ascii_assets.theme_id(),
-            self.terminal_image_support,
-        );
+        let identity = app::update::current_build_identity();
+        let cards = if state.category == ui::SettingsCategory::Update {
+            update_settings_cards(
+                &identity,
+                &self.settings_update_state,
+                self.settings_task_runtime.update_supported(),
+                global_enabled,
+            )
+        } else {
+            settings_cards(
+                state,
+                config,
+                appearance,
+                global_enabled,
+                self.ascii_assets.theme_id(),
+                self.terminal_image_support,
+            )
+        };
         let appearance_preview = (state.category == ui::SettingsCategory::Appearance).then_some(
             ui::SettingsAppearancePreview {
                 border_shape: match appearance.border_shape {
@@ -1791,12 +1984,58 @@ impl ShellSession {
                 validating: editor.validating,
             }
         });
+        let update = (state.category == ui::SettingsCategory::Update).then(|| {
+            let check = self.settings_update_state.check_result.as_ref();
+            let replacement = identity.dirty
+                || check.is_some_and(|result| {
+                    !matches!(result.relation, app::update::UpdateRelation::Behind { .. })
+                });
+            ui::SettingsUpdateViewModel {
+                commits: check
+                    .map(|result| {
+                        result
+                            .commits
+                            .iter()
+                            .map(|commit| ui::SettingsUpdateCommitViewModel {
+                                sha: short_sha(&commit.sha),
+                                message: commit.message.clone(),
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default(),
+                empty_message: self.settings_update_state.status.clone(),
+                confirmation: self.settings_update_state.confirmation_open.then(|| {
+                    ui::SettingsUpdateConfirmationViewModel {
+                        title: if replacement {
+                            "Replace with GitHub version".to_string()
+                        } else {
+                            "Install update".to_string()
+                        },
+                        body: if replacement {
+                            "This is a non-standard, dirty, ahead, diverged, or unknown build. TundraUX will download the exact checked GitHub commit, compile it locally, replace both programs and the Default theme, then restart immediately. If startup fails, the previous local version will be restored.".to_string()
+                        } else {
+                            "TundraUX will download the exact checked GitHub commit, compile it locally, replace both programs and the Default theme, then restart immediately. If startup fails, the previous local version will be restored.".to_string()
+                        },
+                        confirm_label: if replacement {
+                            "Replace and restart".to_string()
+                        } else {
+                            "Update and restart".to_string()
+                        },
+                        confirm_selected: self.settings_update_state.confirm_selected,
+                    }
+                }),
+            }
+        });
         Some(ui::SettingsViewModel {
             selected_category: state.category,
             selected_field: state.selected_field,
             cards,
             appearance_preview,
-            status: state.status.clone(),
+            status: if state.category == ui::SettingsCategory::Update {
+                self.settings_update_state.status.clone()
+            } else {
+                state.status.clone()
+            },
             locked_message: (!global_enabled && state.category != ui::SettingsCategory::Appearance)
                 .then_some("Locked: administrator permission is required".to_string()),
             scroll_offset: state.scroll_offset,
@@ -1805,6 +2044,7 @@ impl ShellSession {
             weather_location_editor,
             file_extensions_editor,
             time_sync_server_editor,
+            update,
         })
     }
 }
@@ -1818,6 +2058,146 @@ pub(in crate::session) fn settings_fields(
         ui::SettingsCategory::System => SYSTEM_SETTINGS_FIELDS,
         ui::SettingsCategory::FileExplorer => EXPLORER_SETTINGS_FIELDS,
         ui::SettingsCategory::Editor => EDITOR_SETTINGS_FIELDS,
+        ui::SettingsCategory::Update => UPDATE_SETTINGS_FIELDS,
+    }
+}
+
+fn update_settings_cards(
+    identity: &app::update::BuildIdentity,
+    update: &SettingsUpdateState,
+    supported: bool,
+    admin: bool,
+) -> Vec<ui::SettingsCardViewModel> {
+    use ui::{
+        SettingsCardViewModel as Card, SettingsControlKind as Kind, SettingsField as Field,
+        SettingsItemViewModel as Item,
+    };
+    let local_sha = identity
+        .commit_sha
+        .as_deref()
+        .map(str::to_string)
+        .unwrap_or_else(|| "unknown".to_string());
+    let local_state = if identity.dirty { "dirty" } else { "clean" };
+    let (remote_value, remote_description) = update
+        .check_result
+        .as_ref()
+        .map(|result| {
+            let checked = update
+                .checked_at
+                .map(|value| value.format("%Y-%m-%d %H:%M:%S UTC").to_string())
+                .unwrap_or_else(|| "unknown time".to_string());
+            (
+                format!(
+                    "{} @ {}",
+                    result.default_branch,
+                    short_sha(&result.head_sha)
+                ),
+                format!(
+                    "Full SHA: {}. Checked {checked}. {}",
+                    result.head_sha,
+                    update_relation_label(&result.relation)
+                ),
+            )
+        })
+        .unwrap_or_else(|| {
+            (
+                "Not checked".to_string(),
+                "Open this page or choose Check again to query GitHub.".to_string(),
+            )
+        });
+    let identity_requires_replacement = identity.dirty
+        || identity.commit_sha.is_none()
+        || update.check_result.as_ref().is_some_and(|result| {
+            matches!(
+                result.relation,
+                app::update::UpdateRelation::Ahead { .. }
+                    | app::update::UpdateRelation::Diverged { .. }
+                    | app::update::UpdateRelation::Unknown
+            )
+        });
+    let can_start = supported
+        && admin
+        && !update.busy
+        && update.check_result.as_ref().is_some_and(|result| {
+            identity.dirty || !matches!(result.relation, app::update::UpdateRelation::Identical)
+        });
+    let start_label = if update
+        .check_result
+        .as_ref()
+        .is_some_and(|result| matches!(result.relation, app::update::UpdateRelation::Identical))
+        && !identity.dirty
+    {
+        "Already up to date"
+    } else if identity_requires_replacement {
+        "Replace with GitHub version"
+    } else {
+        "Start update"
+    };
+    vec![
+        Card::new(
+            "Installed build",
+            vec![Item::new(
+                Field::InstalledVersion,
+                "Version",
+                format!("{} ({})", identity.package_version, short_sha(&local_sha)),
+                format!("Full SHA: {local_sha}. Build state: {local_state}."),
+                Kind::ReadOnly,
+            )],
+        ),
+        Card::new(
+            "GitHub default branch",
+            vec![Item::new(
+                Field::RemoteVersion,
+                "Latest commit",
+                remote_value,
+                remote_description,
+                Kind::ReadOnly,
+            )],
+        ),
+        Card::new(
+            "Actions",
+            vec![
+                Item::new(
+                    Field::CheckUpdates,
+                    "Check again",
+                    if update.busy { "Working…" } else { "Check GitHub" },
+                    "Refresh the default branch, commit relation, and commit messages.",
+                    Kind::Action,
+                )
+                .enabled(supported && !update.busy),
+                Item::new(
+                    Field::StartUpdate,
+                    start_label,
+                    if admin { "Confirm once" } else { "Administrator only" },
+                    "Download, compile, replace, and restart automatically. Rust is never installed automatically.",
+                    Kind::Action,
+                )
+                .enabled(can_start),
+            ],
+        ),
+    ]
+}
+
+fn short_sha(value: &str) -> String {
+    value.chars().take(7).collect()
+}
+
+fn update_relation_label(relation: &app::update::UpdateRelation) -> String {
+    match relation {
+        app::update::UpdateRelation::Identical => "Already up to date".to_string(),
+        app::update::UpdateRelation::Behind { remote_ahead } => {
+            format!("Behind GitHub by {remote_ahead} commit(s)")
+        }
+        app::update::UpdateRelation::Ahead { local_ahead } => {
+            format!("Local build is ahead by {local_ahead} commit(s)")
+        }
+        app::update::UpdateRelation::Diverged {
+            remote_ahead,
+            local_ahead,
+        } => format!(
+            "Builds diverged: GitHub has {remote_ahead} new commit(s), local has {local_ahead}"
+        ),
+        app::update::UpdateRelation::Unknown => "The local commit is unknown to GitHub".to_string(),
     }
 }
 
@@ -2213,6 +2593,7 @@ pub(in crate::session) fn settings_cards(
             ),
             Card::new("Reset", vec![reset(global_enabled)]),
         ],
+        ui::SettingsCategory::Update => Vec::new(),
     }
 }
 
@@ -2433,6 +2814,10 @@ pub(in crate::session) fn settings_field_label(field: ui::SettingsField) -> &'st
         ui::SettingsField::SystemCriticalAvailable => "Critical available",
         ui::SettingsField::SystemCriticalPercentage => "Critical percentage",
         ui::SettingsField::RestoreDefaults => "Defaults",
+        ui::SettingsField::InstalledVersion => "Installed version",
+        ui::SettingsField::RemoteVersion => "GitHub version",
+        ui::SettingsField::CheckUpdates => "Check updates",
+        ui::SettingsField::StartUpdate => "Start update",
     }
 }
 
@@ -2474,6 +2859,101 @@ pub(in crate::session) fn parse_editor_explorer_open_extensions(
         extensions.push(extension);
     }
     Ok(extensions)
+}
+
+#[cfg(test)]
+mod update_tests {
+    use super::*;
+
+    fn checked_update_state(relation: app::update::UpdateRelation) -> SettingsUpdateState {
+        SettingsUpdateState {
+            check_result: Some(app::update::UpdateCheckResult {
+                default_branch: "master".to_string(),
+                head_sha: "abcdef1234567890".to_string(),
+                relation,
+                commits: vec![app::update::UpdateCommit {
+                    sha: "abcdef1234567890".to_string(),
+                    message: "Complete commit message\nwith body".to_string(),
+                }],
+            }),
+            checked_at: Some(Utc::now()),
+            phase: None,
+            status: "Checked".to_string(),
+            error: None,
+            confirmation_open: false,
+            confirm_selected: true,
+            busy: false,
+            checked_once: true,
+        }
+    }
+
+    #[test]
+    fn update_settings_enable_install_only_for_supported_admin_builds() {
+        let identity = app::update::BuildIdentity {
+            package_version: "0.1.1".to_string(),
+            commit_sha: Some("1111111111111111".to_string()),
+            dirty: false,
+        };
+        let update = checked_update_state(app::update::UpdateRelation::Behind { remote_ahead: 1 });
+        let admin_cards = update_settings_cards(&identity, &update, true, true);
+        let admin_start = admin_cards
+            .iter()
+            .flat_map(|card| &card.items)
+            .find(|item| item.field == ui::SettingsField::StartUpdate)
+            .unwrap();
+        assert!(admin_start.enabled);
+        assert_eq!(admin_start.label, "Start update");
+
+        let user_cards = update_settings_cards(&identity, &update, true, false);
+        let user_start = user_cards
+            .iter()
+            .flat_map(|card| &card.items)
+            .find(|item| item.field == ui::SettingsField::StartUpdate)
+            .unwrap();
+        assert!(!user_start.enabled);
+
+        let unsupported = update_settings_cards(&identity, &update, false, true);
+        assert!(
+            unsupported
+                .iter()
+                .flat_map(|card| &card.items)
+                .filter(|item| {
+                    matches!(
+                        item.field,
+                        ui::SettingsField::CheckUpdates | ui::SettingsField::StartUpdate
+                    )
+                })
+                .all(|item| !item.enabled)
+        );
+    }
+
+    #[test]
+    fn update_settings_warn_for_dirty_and_diverged_builds() {
+        let identity = app::update::BuildIdentity {
+            package_version: "0.1.1".to_string(),
+            commit_sha: Some("1111111111111111".to_string()),
+            dirty: true,
+        };
+        let update = checked_update_state(app::update::UpdateRelation::Diverged {
+            remote_ahead: 2,
+            local_ahead: 3,
+        });
+        let cards = update_settings_cards(&identity, &update, true, true);
+        let start = cards
+            .iter()
+            .flat_map(|card| &card.items)
+            .find(|item| item.field == ui::SettingsField::StartUpdate)
+            .unwrap();
+        assert!(start.enabled);
+        assert_eq!(start.label, "Replace with GitHub version");
+        let remote = cards
+            .iter()
+            .flat_map(|card| &card.items)
+            .find(|item| item.field == ui::SettingsField::RemoteVersion)
+            .unwrap();
+        assert!(remote.description.contains("Builds diverged"));
+        assert!(remote.description.contains("abcdef1234567890"));
+    }
 }
 
 pub(in crate::session) fn format_editor_explorer_open_extensions(extensions: &[String]) -> String {

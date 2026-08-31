@@ -18,6 +18,14 @@ pub enum CliCommand {
     TestMatrix,
     Weathr,
     Help,
+    #[doc(hidden)]
+    UpdateProbe,
+    #[doc(hidden)]
+    ApplyUpdate {
+        manifest: std::path::PathBuf,
+        parent_pid: u32,
+        recover_only: bool,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -70,6 +78,7 @@ pub enum CliError {
     UnsupportedConfigField(String),
     UnexpectedArgument(String),
     InvalidReplArgument(String),
+    InvalidProcessId(String),
 }
 
 impl fmt::Display for CliError {
@@ -99,6 +108,7 @@ impl fmt::Display for CliError {
             Self::InvalidReplArgument(argument) => {
                 write!(formatter, "unsupported repl argument: {argument}")
             }
+            Self::InvalidProcessId(value) => write!(formatter, "invalid process id: {value}"),
         }
     }
 }
@@ -131,9 +141,28 @@ where
         "test-frost" => parse_no_extra_args(&args, CliCommand::TestFrost),
         "test-matrix" => parse_no_extra_args(&args, CliCommand::TestMatrix),
         "weathr" => parse_no_extra_args(&args, CliCommand::Weathr),
+        "__update-probe" => parse_no_extra_args(&args, CliCommand::UpdateProbe),
+        "__apply-update" => parse_internal_update_args(&args, false),
+        "__recover-update" => parse_internal_update_args(&args, true),
         "-h" | "--help" | "help" => Ok(CliCommand::Help),
         other => Err(CliError::UnknownCommand(other.to_string())),
     }
+}
+
+fn parse_internal_update_args(args: &[String], recover_only: bool) -> Result<CliCommand, CliError> {
+    let [manifest, parent_pid] = args else {
+        return Err(CliError::MissingArgument(
+            "update manifest and parent process id",
+        ));
+    };
+    let parent_pid = parent_pid
+        .parse::<u32>()
+        .map_err(|_| CliError::InvalidProcessId(parent_pid.clone()))?;
+    Ok(CliCommand::ApplyUpdate {
+        manifest: std::path::PathBuf::from(manifest),
+        parent_pid,
+        recover_only,
+    })
 }
 
 fn parse_asset_args(args: &[String]) -> Result<AssetAction, CliError> {

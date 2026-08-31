@@ -897,6 +897,28 @@ pub fn default_rename_path(source: &Path, target: &Path) -> Result<(), PlatformE
     })
 }
 
+/// Atomically replaces an existing file while retaining its previous contents
+/// at `backup`. The update helper uses this only after the running executable
+/// has exited, so Windows no longer has the destination image locked.
+pub fn replace_file_with_backup(
+    target: &Path,
+    replacement: &Path,
+    backup: &Path,
+) -> Result<(), PlatformError> {
+    #[cfg(windows)]
+    {
+        return crate::windows::replace_file_with_backup(target, replacement, backup);
+    }
+
+    #[cfg(not(windows))]
+    {
+        let _ = (target, replacement, backup);
+        Err(PlatformError::Unsupported {
+            capability: "update.replace_file",
+        })
+    }
+}
+
 fn is_cross_device_error(error: &std::io::Error) -> bool {
     matches!(error.raw_os_error(), Some(17 | 18))
 }

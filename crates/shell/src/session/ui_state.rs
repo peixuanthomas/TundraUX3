@@ -168,6 +168,35 @@ pub(super) struct SystemStatusAddPickerState {
     pub(super) selected: usize,
     pub(super) anchor: Option<CellPosition>,
 }
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct SettingsUpdateState {
+    pub(super) check_result: Option<app::update::UpdateCheckResult>,
+    pub(super) checked_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub(super) phase: Option<app::update::UpdatePhase>,
+    pub(super) status: String,
+    pub(super) error: Option<String>,
+    pub(super) confirmation_open: bool,
+    pub(super) confirm_selected: bool,
+    pub(super) busy: bool,
+    pub(super) checked_once: bool,
+}
+
+impl Default for SettingsUpdateState {
+    fn default() -> Self {
+        Self {
+            check_result: None,
+            checked_at: None,
+            phase: None,
+            status: "Not checked".to_string(),
+            error: None,
+            confirmation_open: false,
+            confirm_selected: true,
+            busy: false,
+            checked_once: false,
+        }
+    }
+}
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub(super) struct SystemStatusSizePickerState {
     pub(super) selected: usize,
@@ -434,6 +463,8 @@ pub struct UiSessionState {
     pub(super) selected_home_entry_index: usize,
     pub(super) settings_state: Option<SettingsState>,
     pub(super) settings_task_runtime: ShellSettingsTaskRuntime,
+    pub(super) settings_update_state: SettingsUpdateState,
+    pub(super) update_apply_manifest: Option<std::path::PathBuf>,
     pub(super) system_status_route: ui::SystemStatusRoute,
     pub(super) system_status_tab: ui::SystemStatusTab,
     pub(super) system_status_selected_widget: Option<storage::SystemStatusWidgetKind>,

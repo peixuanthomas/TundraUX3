@@ -109,6 +109,27 @@ fn repl_arg_dispatches_with_an_internal_embedded_mode() {
 }
 
 #[test]
+fn internal_update_commands_are_parsed_but_not_advertised() {
+    assert_eq!(parse_args(["__update-probe"]), Ok(CliCommand::UpdateProbe));
+    assert_eq!(
+        parse_args(["__apply-update", "C:\\stage\\transaction.json", "42"]),
+        Ok(CliCommand::ApplyUpdate {
+            manifest: PathBuf::from("C:\\stage\\transaction.json"),
+            parent_pid: 42,
+            recover_only: false,
+        })
+    );
+    assert_eq!(
+        parse_args(["__recover-update", "C:\\stage\\transaction.json", "43"]),
+        Ok(CliCommand::ApplyUpdate {
+            manifest: PathBuf::from("C:\\stage\\transaction.json"),
+            parent_pid: 43,
+            recover_only: true,
+        })
+    );
+}
+
+#[test]
 fn config_args_parse_safe_get_and_set_commands() {
     assert_eq!(
         parse_args(["config"]),

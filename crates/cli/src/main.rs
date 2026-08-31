@@ -7,6 +7,15 @@ use watchdog::{
 
 fn main() {
     let args = std::env::args().skip(1).collect::<Vec<_>>();
+    if matches!(
+        cli::parse_args(&args),
+        Ok(cli::CliCommand::UpdateProbe) | Ok(cli::CliCommand::ApplyUpdate { .. })
+    ) {
+        let mut stdout = std::io::stdout();
+        let mut stderr = std::io::stderr();
+        let exit_code = cli::run(args, &mut stdout, &mut stderr);
+        std::process::exit(exit_code);
+    }
     let parent_managed = is_parent_managed_command_line(&args);
     let (watchdog_runtime, process_watchdog) = match start_watchdog(parent_managed) {
         Ok(value) => value,

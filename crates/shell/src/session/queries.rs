@@ -181,6 +181,10 @@ impl ShellSession {
         self.restart_requested
     }
 
+    pub fn update_apply_manifest(&self) -> Option<&std::path::Path> {
+        self.update_apply_manifest.as_deref()
+    }
+
     pub fn terminal_flags(&self) -> ShellTerminalFlags {
         self.terminal_flags
     }

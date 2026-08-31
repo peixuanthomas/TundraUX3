@@ -38,6 +38,7 @@ pub use platform::{
     StartupPermissionStatus, TrashEntry, TrashEntryId, TrashRestoreTarget, TrashStats,
     VolumeAccess, VolumeKind, default_external_open_policy, default_file_attributes,
     default_file_open_policy, default_read_directory, default_rename_path, native_platform,
+    replace_file_with_backup,
 };
 pub use process::{ProcessExit, ProcessSpec, ProcessStream, validate_process_spec};
 pub use system_monitor::{

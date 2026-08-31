@@ -186,6 +186,8 @@ impl ShellSession {
             selected_home_entry_index: 0,
             settings_state: None,
             settings_task_runtime: runtime_services.settings,
+            settings_update_state: SettingsUpdateState::default(),
+            update_apply_manifest: None,
             system_status_route: ui::SystemStatusRoute::Dashboard,
             system_status_tab: ui::SystemStatusTab::Overview,
             system_status_selected_widget: None,
@@ -297,6 +299,22 @@ impl ShellSession {
             scrollbar_drag: None,
         };
         let mut state = Self { app, ui };
+        if let Some(target) = std::env::var_os(app::update::UPDATE_TARGET_SHA_ENV) {
+            let target = target.to_string_lossy();
+            state.notify_toast(format!(
+                "Updated TundraUX to {}",
+                target.chars().take(7).collect::<String>()
+            ));
+        }
+        if let Some(reason) = std::env::var_os(app::update::UPDATE_ROLLBACK_ENV) {
+            state.notify_alert_with_tone(
+                format!(
+                    "Update failed and the previous version was restored: {}",
+                    reason.to_string_lossy()
+                ),
+                ui::NotificationTone::Error,
+            );
+        }
         state.refresh_hit_map();
         if !auth_gate_enabled && let Some(restored_session) = startup.restored_session.as_ref() {
             state.apply_restored_session(restored_session);
