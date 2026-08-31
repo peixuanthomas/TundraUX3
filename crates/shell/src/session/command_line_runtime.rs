@@ -711,6 +711,7 @@ fn portable_error(error: impl ToString) -> io::Error {
 #[derive(Default)]
 struct OscFilter {
     state: OscFilterState,
+    utf8_continuations: u8,
 }
 
 #[derive(Default)]
@@ -730,9 +731,12 @@ impl OscFilter {
     fn filter(&mut self, bytes: &[u8]) -> Vec<u8> {
         let mut output = Vec::with_capacity(bytes.len());
         for &byte in bytes {
+            let utf8_continuation = self.advance_utf8(byte);
             match &mut self.state {
                 OscFilterState::Ground => {
-                    if byte == 0x1b {
+                    if utf8_continuation {
+                        output.push(byte);
+                    } else if byte == 0x1b {
                         self.state = OscFilterState::Escape;
                     } else if byte == 0x9d {
                         self.state = OscFilterState::Osc { escape_seen: false };
@@ -750,15 +754,35 @@ impl OscFilter {
                     }
                 }
                 OscFilterState::Osc { escape_seen } => {
-                    if byte == 0x07 || byte == 0x9c || (*escape_seen && byte == b'\\') {
+                    if !utf8_continuation
+                        && (byte == 0x07 || byte == 0x9c || (*escape_seen && byte == b'\\'))
+                    {
                         self.state = OscFilterState::Ground;
-                    } else {
+                    } else if !utf8_continuation {
                         *escape_seen = byte == 0x1b;
                     }
                 }
             }
         }
         output
+    }
+
+    /// Keeps C1 control bytes distinct from identical byte values inside a
+    /// UTF-8 character. For example, `保` ends in `0x9d`; only a standalone
+    /// `0x9d` starts an eight-bit OSC sequence.
+    fn advance_utf8(&mut self, byte: u8) -> bool {
+        if self.utf8_continuations > 0 && (0x80..=0xbf).contains(&byte) {
+            self.utf8_continuations -= 1;
+            return true;
+        }
+
+        self.utf8_continuations = match byte {
+            0xc2..=0xdf => 1,
+            0xe0..=0xef => 2,
+            0xf0..=0xf4 => 3,
+            _ => 0,
+        };
+        false
     }
 }
 
@@ -1498,6 +1522,15 @@ mod tests {
             Duration::from_secs(5),
             "output from typed command",
         );
+        const UTF8_MARKER: &str = "TUNDRA_PTY_UTF8_保留所有权利_OK";
+        pty.write(format!("echo {UTF8_MARKER}\r").as_bytes())
+            .expect("write UTF-8 command to ConPTY");
+        assert_snapshot_contains(
+            pty,
+            UTF8_MARKER,
+            Duration::from_secs(5),
+            "UTF-8 output from typed command",
+        );
 
         host.terminate();
         drop(host);
@@ -1548,6 +1581,19 @@ mod tests {
             filter.filter(b"safe\x9d52;c;payload\x9cafter"),
             b"safeafter"
         );
+    }
+
+    #[test]
+    fn preserves_utf8_bytes_that_match_c1_osc_controls() {
+        let mut filter = OscFilter::default();
+        let text = "系统保留所有权利。\u{4fdc}";
+        let mut filtered = Vec::new();
+
+        for chunk in text.as_bytes().chunks(2) {
+            filtered.extend(filter.filter(chunk));
+        }
+
+        assert_eq!(filtered, text.as_bytes());
     }
 
     #[test]
