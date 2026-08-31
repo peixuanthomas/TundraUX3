@@ -1949,6 +1949,7 @@ mod tests {
             let thread_accepted_count = accepted_count.clone();
             let join = std::thread::spawn(move || {
                 use std::io::Write as _;
+                use std::net::Shutdown;
                 let mut connections =
                     std::collections::BTreeMap::<usize, std::net::TcpStream>::new();
                 let mut next_id = 0usize;
@@ -1958,14 +1959,22 @@ mod tests {
                     }
                     while let Ok(id) = respond_rx.try_recv() {
                         if let Some(mut stream) = connections.remove(&id) {
-                            let _ = stream.write_all(
-                                b"HTTP/1.1 200 OK\r\nDate: Wed, 21 Oct 2015 07:28:00 GMT\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
-                            );
-                            let _ = stream.flush();
+                            if stream
+                                .write_all(
+                                    b"HTTP/1.1 200 OK\r\nDate: Wed, 21 Oct 2015 07:28:00 GMT\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                                )
+                                .and_then(|()| stream.flush())
+                                .is_ok()
+                            {
+                                let _ = stream.shutdown(Shutdown::Write);
+                            }
                         }
                     }
                     match listener.accept() {
-                        Ok((stream, _)) => {
+                        Ok((mut stream, _)) => {
+                            if read_http_request_header(&mut stream).is_err() {
+                                continue;
+                            }
                             let id = next_id;
                             next_id += 1;
                             connections.insert(id, stream);
@@ -2001,6 +2010,37 @@ mod tests {
 
         fn accepted_count(&self) -> usize {
             self.accepted_count.load(Ordering::SeqCst)
+        }
+    }
+
+    fn read_http_request_header(stream: &mut std::net::TcpStream) -> std::io::Result<()> {
+        use std::io::{Error, ErrorKind, Read as _};
+
+        const MAX_HEADER_BYTES: usize = 32 * 1024;
+        stream.set_nonblocking(false)?;
+        stream.set_read_timeout(Some(Duration::from_secs(2)))?;
+        let mut header = Vec::with_capacity(1024);
+        let mut chunk = [0_u8; 1024];
+        loop {
+            if header.len() == MAX_HEADER_BYTES {
+                return Err(Error::new(
+                    ErrorKind::InvalidData,
+                    "HTTP request header exceeds test server limit",
+                ));
+            }
+            let remaining = MAX_HEADER_BYTES - header.len();
+            let read_limit = chunk.len().min(remaining);
+            let read = stream.read(&mut chunk[..read_limit])?;
+            if read == 0 {
+                return Err(Error::new(
+                    ErrorKind::UnexpectedEof,
+                    "connection closed before HTTP request header completed",
+                ));
+            }
+            header.extend_from_slice(&chunk[..read]);
+            if header.windows(4).any(|window| window == b"\r\n\r\n") {
+                return Ok(());
+            }
         }
     }
 
