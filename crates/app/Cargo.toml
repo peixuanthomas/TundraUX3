@@ -2,6 +2,7 @@
 name = "app"
 version.workspace = true
 edition.workspace = true
+build = "build.rs"
 
 [lib]
 path = "src/lib.rs"
@@ -22,3 +23,7 @@ unicode-segmentation = "1.12"
 unicode-width = "0.2"
 time = { version = "0.1.1", path = "../time" }
 system-services-model = { path = "../system-services-model" }
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
+semver = "1"
+toml = "0.8"
+zip = { version = "2", default-features = false, features = ["deflate"] }

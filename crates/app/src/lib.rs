@@ -3,6 +3,7 @@ pub mod diagnostics;
 pub mod editor;
 pub mod explorer;
 pub mod launcher;
+pub mod update;
 
 pub use editor::markdown_codec;
 pub use editor::recovery as editor_recovery;
