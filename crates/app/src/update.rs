@@ -728,42 +728,71 @@ pub fn recover_interrupted_update_from_current_exe(parent_pid: u32) -> Result<bo
         let install_dir = executable
             .parent()
             .ok_or_else(|| UpdateError::new("TundraUX executable has no parent directory"))?;
-        let root = install_dir.join(".tundra-update");
-        let Ok(entries) = fs::read_dir(&root) else {
-            return Ok(false);
-        };
-        let mut manifests = entries
-            .filter_map(Result::ok)
-            .map(|entry| entry.path().join("transaction.json"))
-            .filter(|path| path.is_file())
-            .collect::<Vec<_>>();
-        manifests.sort();
-        for manifest_path in manifests {
-            let manifest = load_manifest(&manifest_path)?;
-            match manifest.state {
-                TransactionState::Committed | TransactionState::RolledBack => {
-                    let _ = fs::remove_dir_all(&manifest.transaction_dir);
-                }
-                TransactionState::Prepared => {
-                    launch_helper_mode(&manifest_path, parent_pid, false)?;
-                    return Ok(true);
-                }
-                TransactionState::Applying
-                | TransactionState::AwaitingReady
-                | TransactionState::RollingBack => {
-                    launch_helper_mode(&manifest_path, parent_pid, true)?;
-                    return Ok(true);
-                }
-                TransactionState::Failed => {
-                    return Err(UpdateError::new(format!(
-                        "an update transaction requires manual recovery: {}",
-                        manifest.transaction_dir.display()
-                    )));
-                }
+        scan_update_recovery(install_dir, parent_pid, &launch_helper_mode)
+    }
+}
+
+#[cfg(windows)]
+fn scan_update_recovery(
+    install_dir: &Path,
+    parent_pid: u32,
+    launch_helper: &dyn Fn(&Path, u32, bool) -> Result<(), UpdateError>,
+) -> Result<bool, UpdateError> {
+    let install_dir = fs::canonicalize(install_dir).map_err(|error| {
+        UpdateError::new(format!(
+            "could not resolve installation directory for update recovery: {error}"
+        ))
+    })?;
+    let root = install_dir.join(".tundra-update");
+    let entries = match fs::read_dir(&root) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(false),
+        Err(error) => {
+            return Err(UpdateError::new(format!(
+                "could not read update recovery directory {}: {error}",
+                root.display()
+            )));
+        }
+    };
+    let mut manifests = Vec::new();
+    for entry in entries {
+        let entry = entry.map_err(|error| {
+            UpdateError::new(format!(
+                "could not read an entry in update recovery directory {}: {error}",
+                root.display()
+            ))
+        })?;
+        let manifest_path = entry.path().join("transaction.json");
+        if manifest_path.is_file() {
+            manifests.push(manifest_path);
+        }
+    }
+    manifests.sort();
+    for manifest_path in manifests {
+        let manifest = load_manifest(&manifest_path)?;
+        match manifest.state {
+            TransactionState::Committed | TransactionState::RolledBack => {
+                let _ = fs::remove_dir_all(&manifest.transaction_dir);
+            }
+            TransactionState::Prepared => {
+                launch_helper(&manifest_path, parent_pid, false)?;
+                return Ok(true);
+            }
+            TransactionState::Applying
+            | TransactionState::AwaitingReady
+            | TransactionState::RollingBack => {
+                launch_helper(&manifest_path, parent_pid, true)?;
+                return Ok(true);
+            }
+            TransactionState::Failed => {
+                return Err(UpdateError::new(format!(
+                    "an update transaction requires manual recovery: {}",
+                    manifest.transaction_dir.display()
+                )));
             }
         }
-        Ok(false)
     }
+    Ok(false)
 }
 
 pub fn mark_update_ready_from_env() -> Result<(), UpdateError> {
@@ -1905,5 +1934,67 @@ mod tests {
             TransactionState::RolledBack
         );
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(windows)]
+    fn recovery_scan_fixture(name: &str, state: TransactionState) -> (PathBuf, PathBuf, PathBuf) {
+        let root = update_test_root(name);
+        let install = root.join("install");
+        fs::create_dir_all(&install).unwrap();
+        let canonical_install = fs::canonicalize(&install).unwrap();
+        assert_ne!(install, canonical_install);
+        let transaction_dir = canonical_install.join(".tundra-update/tx");
+        fs::create_dir_all(&transaction_dir).unwrap();
+        let manifest_path = transaction_dir.join("transaction.json");
+        let manifest = TransactionManifest {
+            protocol: UPDATE_PROTOCOL_VERSION,
+            target_sha: "abc".to_owned(),
+            install_dir: canonical_install,
+            transaction_dir,
+            state,
+            assets_replaced: false,
+            cli_replaced: false,
+            shell_replaced: false,
+        };
+        write_manifest(&manifest_path, &manifest).unwrap();
+        (root, install, manifest_path)
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn update_recovery_scan_canonicalizes_install_path_for_cleanup_and_recovery() {
+        let (root, install, manifest_path) =
+            recovery_scan_fixture("recovery-scan-committed", TransactionState::Committed);
+        let launches = std::sync::Mutex::new(Vec::new());
+        assert!(
+            !scan_update_recovery(&install, 41, &|path, pid, recover_only| {
+                launches
+                    .lock()
+                    .unwrap()
+                    .push((path.to_owned(), pid, recover_only));
+                Ok(())
+            })
+            .unwrap()
+        );
+        assert!(!manifest_path.parent().unwrap().exists());
+        assert!(launches.lock().unwrap().is_empty());
+        fs::remove_dir_all(root).unwrap();
+
+        for state in [TransactionState::Applying, TransactionState::AwaitingReady] {
+            let (root, install, manifest_path) = recovery_scan_fixture("recovery-scan", state);
+            let launches = std::sync::Mutex::new(Vec::new());
+            assert!(
+                scan_update_recovery(&install, 42, &|path, pid, recover_only| {
+                    launches
+                        .lock()
+                        .unwrap()
+                        .push((path.to_owned(), pid, recover_only));
+                    Ok(())
+                })
+                .unwrap()
+            );
+            assert_eq!(*launches.lock().unwrap(), vec![(manifest_path, 42, true)]);
+            fs::remove_dir_all(root).unwrap();
+        }
     }
 }
