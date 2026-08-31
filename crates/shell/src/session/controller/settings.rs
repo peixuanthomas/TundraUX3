@@ -403,11 +403,7 @@ impl ShellSession {
 
     pub(in crate::session) fn scroll_settings(&mut self, delta: i16) {
         if let Some(state) = self.settings_state.as_mut() {
-            state.scroll_offset = if delta < 0 {
-                state.scroll_offset.saturating_sub(delta.unsigned_abs())
-            } else {
-                state.scroll_offset.saturating_add(delta as u16).min(2_000)
-            };
+            state.scroll_offset = settings_scroll_offset(state.scroll_offset, delta);
         }
     }
 
@@ -2861,6 +2857,14 @@ pub(in crate::session) fn parse_editor_explorer_open_extensions(
     Ok(extensions)
 }
 
+fn settings_scroll_offset(current: u16, delta: i16) -> u16 {
+    if delta < 0 {
+        current.saturating_sub(delta.unsigned_abs())
+    } else {
+        current.saturating_add(delta as u16)
+    }
+}
+
 #[cfg(test)]
 mod update_tests {
     use super::*;
@@ -2953,6 +2957,13 @@ mod update_tests {
             .unwrap();
         assert!(remote.description.contains("Builds diverged"));
         assert!(remote.description.contains("abcdef1234567890"));
+    }
+
+    #[test]
+    fn update_settings_scroll_retains_offsets_beyond_two_thousand() {
+        assert_eq!(settings_scroll_offset(2_001, 6), 2_007);
+        assert_eq!(settings_scroll_offset(u16::MAX - 2, 6), u16::MAX);
+        assert_eq!(settings_scroll_offset(2_007, -6), 2_001);
     }
 }
 
