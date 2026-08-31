@@ -7,7 +7,8 @@ use ui::{
     SettingsCardViewModel, SettingsCategory, SettingsColorEditorViewModel, SettingsControlKind,
     SettingsField, SettingsFileExtensionsEditorViewModel, SettingsHitTarget, SettingsItemViewModel,
     SettingsPickerKind, SettingsPickerOptionViewModel, SettingsPickerViewModel,
-    SettingsTimeSyncServerEditorViewModel, SettingsViewModel,
+    SettingsTimeSyncServerEditorViewModel, SettingsUpdateCommitViewModel,
+    SettingsUpdateConfirmationViewModel, SettingsUpdateViewModel, SettingsViewModel,
     SettingsWeatherLocationEditorViewModel, ShellChromeViewModel, StatusViewModel, TundraTheme,
     render_settings, settings_hit_test, settings_layout,
 };
@@ -17,7 +18,7 @@ fn wide_layout_uses_a_left_category_column_and_right_detail_cards() {
     let model = sample_model();
     let layout = settings_layout(Rect::new(0, 0, 120, 32), &model);
 
-    assert_eq!(layout.category_cards.len(), 5);
+    assert_eq!(layout.category_cards.len(), 6);
     assert_eq!(
         layout.category_cards[0].category,
         SettingsCategory::Appearance
@@ -52,7 +53,7 @@ fn eighty_by_twenty_four_layout_keeps_the_left_category_column() {
     let model = sample_model();
     let layout = settings_layout(Rect::new(0, 0, 80, 24), &model);
 
-    assert_eq!(layout.category_cards.len(), 5);
+    assert_eq!(layout.category_cards.len(), 6);
     assert!(
         layout
             .category_cards
@@ -566,7 +567,134 @@ fn sample_model() -> SettingsViewModel {
         weather_location_editor: None,
         file_extensions_editor: None,
         time_sync_server_editor: None,
+        update: None,
     }
+}
+
+#[test]
+fn update_is_the_last_settings_category() {
+    assert_eq!(SettingsCategory::ALL.len(), 6);
+    assert_eq!(SettingsCategory::ALL[5], SettingsCategory::Update);
+    assert_eq!(SettingsCategory::Update.label(), "Update");
+    assert_eq!(
+        SettingsCategory::Update.description(),
+        "Version, commits and source updates"
+    );
+}
+
+#[test]
+fn update_commits_wrap_complete_messages_and_follow_detail_scroll() {
+    let mut model = sample_model();
+    model.selected_category = SettingsCategory::Update;
+    model.appearance_preview = None;
+    model.cards.clear();
+    model.update = Some(SettingsUpdateViewModel {
+        commits: vec![SettingsUpdateCommitViewModel {
+            sha: "1234567890abcdef".to_string(),
+            message: "First line\nsecond line keeps all of the commit message visible".to_string(),
+        }],
+        empty_message: "No new commits".to_string(),
+        confirmation: None,
+    });
+    let mut terminal = Terminal::new(TestBackend::new(80, 24)).expect("test terminal");
+    terminal
+        .draw(|frame| {
+            render_settings(
+                frame,
+                frame.area(),
+                &chrome(),
+                &model,
+                &TundraTheme::default_dark(),
+            );
+        })
+        .expect("render update commits");
+    let output = terminal_output(&terminal);
+    assert!(output.contains("12345678"));
+    for part in ["First line", "second line", "commit message visible"] {
+        assert!(output.contains(part), "missing wrapped commit text: {part}");
+    }
+
+    let first_row = terminal
+        .backend()
+        .buffer()
+        .content()
+        .iter()
+        .position(|cell| cell.symbol() == "1")
+        .expect("commit row")
+        / 80;
+    model.scroll_offset = 1;
+    terminal
+        .draw(|frame| {
+            render_settings(
+                frame,
+                frame.area(),
+                &chrome(),
+                &model,
+                &TundraTheme::default_dark(),
+            );
+        })
+        .expect("render scrolled commits");
+    let second_row = terminal
+        .backend()
+        .buffer()
+        .content()
+        .iter()
+        .position(|cell| cell.symbol() == "1")
+        .expect("scrolled commit row")
+        / 80;
+    assert!(second_row < first_row);
+}
+
+#[test]
+fn update_confirmation_draws_buttons_and_blocks_underlying_hits() {
+    let mut model = sample_model();
+    model.update = Some(SettingsUpdateViewModel {
+        commits: Vec::new(),
+        empty_message: "Up to date".to_string(),
+        confirmation: Some(SettingsUpdateConfirmationViewModel {
+            title: "Install update?".to_string(),
+            body: "The source will be downloaded and compiled.\nThe app will restart immediately."
+                .to_string(),
+            confirm_label: "Start update".to_string(),
+            confirm_selected: true,
+        }),
+    });
+    let layout = settings_layout(Rect::new(0, 0, 120, 32), &model);
+    let confirm = layout.update_confirm_button.expect("confirm button");
+    let cancel = layout.update_cancel_button.expect("cancel button");
+    assert_eq!(
+        settings_hit_test(&layout, (confirm.x, confirm.y)),
+        Some(SettingsHitTarget::UpdateConfirm)
+    );
+    assert_eq!(
+        settings_hit_test(&layout, (cancel.x, cancel.y)),
+        Some(SettingsHitTarget::UpdateCancel)
+    );
+    let field = layout.fields.first().expect("underlying field");
+    assert_eq!(
+        settings_hit_test(&layout, (field.area.x, field.area.y)),
+        None
+    );
+    assert_eq!(settings_hit_test(&layout, (0, 0)), None);
+
+    let mut terminal = Terminal::new(TestBackend::new(120, 32)).expect("test terminal");
+    terminal
+        .draw(|frame| {
+            render_settings(
+                frame,
+                frame.area(),
+                &chrome(),
+                &model,
+                &TundraTheme::default_dark(),
+            );
+        })
+        .expect("render update confirmation");
+    let output = terminal_output(&terminal);
+    assert!(output.contains("Install update?"));
+    assert!(output.contains("The source will be downloaded and compiled."));
+    assert!(output.contains("The app will restart immediately."));
+    assert!(output.contains("[Start update]"));
+    assert!(output.contains("[Cancel]"));
 }
 
 fn chrome() -> ShellChromeViewModel {

@@ -41,6 +41,7 @@ pub use settings::{
     SettingsFieldLayout, SettingsFileExtensionsEditorViewModel, SettingsHitTarget,
     SettingsItemViewModel, SettingsLayout, SettingsPickerKind, SettingsPickerOptionLayout,
     SettingsPickerOptionViewModel, SettingsPickerViewModel, SettingsTimeSyncServerEditorViewModel,
+    SettingsUpdateCommitViewModel, SettingsUpdateConfirmationViewModel, SettingsUpdateViewModel,
     SettingsViewModel, SettingsWeatherLocationEditorViewModel, render_settings, settings_hit_test,
     settings_layout,
 };

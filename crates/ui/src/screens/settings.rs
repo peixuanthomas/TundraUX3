@@ -22,15 +22,17 @@ pub enum SettingsCategory {
     System,
     FileExplorer,
     Editor,
+    Update,
 }
 
 impl SettingsCategory {
-    pub const ALL: [Self; 5] = [
+    pub const ALL: [Self; 6] = [
         Self::Appearance,
         Self::RegionTime,
         Self::System,
         Self::FileExplorer,
         Self::Editor,
+        Self::Update,
     ];
 
     pub const fn label(self) -> &'static str {
@@ -40,6 +42,7 @@ impl SettingsCategory {
             Self::System => "System",
             Self::FileExplorer => "File Explorer",
             Self::Editor => "Editor",
+            Self::Update => "Update",
         }
     }
 
@@ -50,6 +53,7 @@ impl SettingsCategory {
             Self::System => "Storage pressure warning thresholds",
             Self::FileExplorer => "Display, sorting and safety",
             Self::Editor => "Cursor and file associations",
+            Self::Update => "Version, commits and source updates",
         }
     }
 }
@@ -91,6 +95,8 @@ pub enum SettingsField {
     CursorHorizontalStep,
     CursorVerticalStep,
     RestoreDefaults,
+    CheckUpdates,
+    StartUpdate,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -271,6 +277,28 @@ pub struct SettingsViewModel {
     pub weather_location_editor: Option<SettingsWeatherLocationEditorViewModel>,
     pub file_extensions_editor: Option<SettingsFileExtensionsEditorViewModel>,
     pub time_sync_server_editor: Option<SettingsTimeSyncServerEditorViewModel>,
+    pub update: Option<SettingsUpdateViewModel>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SettingsUpdateCommitViewModel {
+    pub sha: String,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SettingsUpdateConfirmationViewModel {
+    pub title: String,
+    pub body: String,
+    pub confirm_label: String,
+    pub confirm_selected: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SettingsUpdateViewModel {
+    pub commits: Vec<SettingsUpdateCommitViewModel>,
+    pub empty_message: String,
+    pub confirmation: Option<SettingsUpdateConfirmationViewModel>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -300,6 +328,8 @@ pub enum SettingsHitTarget {
     WeatherLocationEditor,
     FileExtensionsEditor,
     TimeSyncServerEditor,
+    UpdateConfirm,
+    UpdateCancel,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -313,6 +343,9 @@ pub struct SettingsLayout {
     pub weather_location_editor: Option<Rect>,
     pub file_extensions_editor: Option<Rect>,
     pub time_sync_server_editor: Option<Rect>,
+    pub update_confirmation: Option<Rect>,
+    pub update_confirm_button: Option<Rect>,
+    pub update_cancel_button: Option<Rect>,
 }
 
 pub fn render_settings(
@@ -416,6 +449,28 @@ pub fn settings_layout(area: Rect, model: &SettingsViewModel) -> SettingsLayout 
         }));
     }
 
+    let update_confirmation = model
+        .update
+        .as_ref()
+        .and_then(|update| update.confirmation.as_ref())
+        .map(|_| centered(area, area.width.min(72), area.height.min(14)));
+    let update_confirm_button = update_confirmation.map(|dialog| {
+        Rect::new(
+            dialog.x.saturating_add(dialog.width / 2).saturating_sub(18),
+            dialog.bottom().saturating_sub(3),
+            17,
+            1,
+        )
+    });
+    let update_cancel_button = update_confirmation.map(|dialog| {
+        Rect::new(
+            dialog.x.saturating_add(dialog.width / 2).saturating_add(1),
+            dialog.bottom().saturating_sub(3),
+            12,
+            1,
+        )
+    });
+
     SettingsLayout {
         main: area,
         category_cards,
@@ -438,10 +493,28 @@ pub fn settings_layout(area: Rect, model: &SettingsViewModel) -> SettingsLayout 
             .time_sync_server_editor
             .as_ref()
             .map(|_| centered(area, area.width.min(76), area.height.min(11))),
+        update_confirmation,
+        update_confirm_button,
+        update_cancel_button,
     }
 }
 
 pub fn settings_hit_test(layout: &SettingsLayout, point: (u16, u16)) -> Option<SettingsHitTarget> {
+    if layout.update_confirmation.is_some() {
+        if layout
+            .update_confirm_button
+            .is_some_and(|area| contains(area, point))
+        {
+            return Some(SettingsHitTarget::UpdateConfirm);
+        }
+        if layout
+            .update_cancel_button
+            .is_some_and(|area| contains(area, point))
+        {
+            return Some(SettingsHitTarget::UpdateCancel);
+        }
+        return None;
+    }
     if let Some(area) = layout.time_sync_server_editor
         && contains(area, point)
     {
@@ -575,6 +648,13 @@ fn render_settings_content(
     if let Some(editor) = &model.time_sync_server_editor {
         render_time_sync_server_editor(frame, layout.main, editor, context);
     }
+    if let Some(confirmation) = model
+        .update
+        .as_ref()
+        .and_then(|update| update.confirmation.as_ref())
+    {
+        render_update_confirmation(frame, layout, confirmation, context);
+    }
 }
 
 fn render_cards(
@@ -686,6 +766,118 @@ fn render_cards(
             );
         }
         y = y.saturating_add(height).saturating_add(1);
+    }
+
+    if model.selected_category == SettingsCategory::Update
+        && let Some(update) = &model.update
+    {
+        render_update_commits(frame, detail_area, y, update, context);
+    }
+}
+
+fn render_update_commits(
+    frame: &mut Frame<'_>,
+    detail_area: Rect,
+    y: u16,
+    update: &SettingsUpdateViewModel,
+    context: &RenderContext,
+) {
+    let theme = &context.compatibility_theme();
+    let width = detail_area.width.saturating_sub(4).max(1);
+    let lines = if update.commits.is_empty() {
+        vec![update.empty_message.clone()]
+    } else {
+        update
+            .commits
+            .iter()
+            .map(|commit| {
+                format!(
+                    "{}  {}",
+                    commit.sha.chars().take(8).collect::<String>(),
+                    commit
+                        .message
+                        .split_whitespace()
+                        .collect::<Vec<_>>()
+                        .join(" ")
+                )
+            })
+            .collect::<Vec<_>>()
+    };
+    let content_height = lines
+        .iter()
+        .map(|line| terminal_width(line).div_ceil(usize::from(width)).max(1))
+        .sum::<usize>();
+    let height = u16::try_from(content_height)
+        .unwrap_or(u16::MAX)
+        .saturating_add(2)
+        .max(3);
+    let area = Rect::new(detail_area.x, y, detail_area.width, height);
+    let Some(visible) = rect_intersection(area, detail_area) else {
+        return;
+    };
+    Surface::new()
+        .titled(" Commits ")
+        .bordered(true)
+        .raised(true)
+        .render_frame(frame, visible, context);
+    let content = Rect::new(
+        area.x.saturating_add(2),
+        area.y.saturating_add(1),
+        area.width.saturating_sub(4),
+        height.saturating_sub(2),
+    );
+    if let Some(content) = rect_intersection(content, detail_area) {
+        let skipped = content.y.saturating_sub(area.y.saturating_add(1));
+        frame.render_widget(
+            Paragraph::new(lines.join("\n"))
+                .style(theme.body_style())
+                .wrap(Wrap { trim: true })
+                .scroll((skipped, 0)),
+            content,
+        );
+    }
+}
+
+fn render_update_confirmation(
+    frame: &mut Frame<'_>,
+    layout: &SettingsLayout,
+    confirmation: &SettingsUpdateConfirmationViewModel,
+    context: &RenderContext,
+) {
+    let Some(dialog) = layout.update_confirmation else {
+        return;
+    };
+    let theme = &context.compatibility_theme();
+    frame.render_widget(Clear, dialog);
+    Surface::new()
+        .titled(format!(" {} ", confirmation.title))
+        .bordered(true)
+        .raised(true)
+        .render_frame(frame, dialog, context);
+    frame.render_widget(
+        Paragraph::new(confirmation.body.clone())
+            .style(theme.body_style())
+            .alignment(HorizontalAlignment::Center)
+            .wrap(Wrap { trim: true }),
+        Rect::new(
+            dialog.x.saturating_add(2),
+            dialog.y.saturating_add(2),
+            dialog.width.saturating_sub(4),
+            dialog.height.saturating_sub(6),
+        ),
+    );
+    if let Some(area) = layout.update_confirm_button {
+        let mut button = Button::new(
+            "settings.update.confirm",
+            format!("[{}]", confirmation.confirm_label),
+        );
+        button.state.selected = confirmation.confirm_selected;
+        button.render_borderless_frame(frame, area, theme);
+    }
+    if let Some(area) = layout.update_cancel_button {
+        let mut button = Button::new("settings.update.cancel", "[Cancel]");
+        button.state.selected = !confirmation.confirm_selected;
+        button.render_borderless_frame(frame, area, theme);
     }
 }
 
