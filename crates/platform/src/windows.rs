@@ -73,7 +73,6 @@ const SHGFI_ICON: u32 = 0x0000_0100;
 const SHGFI_LARGEICON: u32 = 0x0000_0000;
 const DI_NORMAL: u32 = 0x0003;
 const BI_RGB: u32 = 0;
-const REPLACEFILE_WRITE_THROUGH: u32 = 0x0000_0001;
 
 #[derive(Debug, Clone, Copy, Default)]
 pub struct WindowsPlatform;
@@ -338,7 +337,7 @@ pub(crate) fn replace_file_with_backup(
             target.as_ptr(),
             replacement.as_ptr(),
             backup.as_ptr(),
-            REPLACEFILE_WRITE_THROUGH,
+            0,
             ptr::null_mut(),
             ptr::null_mut(),
         )

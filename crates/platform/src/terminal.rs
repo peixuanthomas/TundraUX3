@@ -1191,7 +1191,8 @@ mod graphics_tests {
         let platform_source = std::fs::read_to_string(
             std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/terminal.rs"),
         )
-        .unwrap();
+        .unwrap()
+        .replace("\r\n", "\n");
         assert!(platform_source.contains("probe_terminal_graphics_capabilities"));
         assert!(platform_source.contains("CapabilityParser"));
         for declaration in [

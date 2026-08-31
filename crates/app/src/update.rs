@@ -374,13 +374,56 @@ fn prepare_in(
     .bytes()
     .map_err(|e| UpdateError::new(format!("source download failed: {e}")))?;
     let source_root = extract_archive(bytes.as_ref(), &work_dir.join("source"))?;
+    prepare_extracted(platform, check, progress, work_dir, &source_root)
+}
+
+trait PreparationOperations {
+    fn run(&self, spec: &ProcessSpec, name: &str) -> Result<ProcessExit, UpdateError>;
+    fn probe(&self, executable: &Path, expected_sha: &str) -> Result<(), UpdateError>;
+}
+
+struct PlatformPreparationOperations<'a>(&'a dyn Platform);
+
+impl PreparationOperations for PlatformPreparationOperations<'_> {
+    fn run(&self, spec: &ProcessSpec, name: &str) -> Result<ProcessExit, UpdateError> {
+        run_checked(self.0, spec.clone(), name)
+    }
+
+    fn probe(&self, executable: &Path, expected_sha: &str) -> Result<(), UpdateError> {
+        validate_update_probe(executable, expected_sha)
+    }
+}
+
+fn prepare_extracted(
+    platform: &dyn Platform,
+    check: &UpdateCheckResult,
+    progress: &mut dyn FnMut(UpdateProgress),
+    work_dir: &Path,
+    source_root: &Path,
+) -> Result<PreparedUpdate, UpdateError> {
+    prepare_extracted_with_operations(
+        check,
+        progress,
+        work_dir,
+        source_root,
+        &PlatformPreparationOperations(platform),
+    )
+}
+
+fn prepare_extracted_with_operations(
+    check: &UpdateCheckResult,
+    progress: &mut dyn FnMut(UpdateProgress),
+    work_dir: &Path,
+    source_root: &Path,
+    operations: &dyn PreparationOperations,
+) -> Result<PreparedUpdate, UpdateError> {
     notify(
         progress,
         UpdatePhase::CheckingToolchain,
         "Checking Rust toolchain",
     );
     let required = required_rust_version(&source_root.join("Cargo.toml"))?;
-    let rustc = run_checked(platform, ProcessSpec::new("rustc").arg("-Vv"), "rustc")?;
+    let rustc = operations.run(&ProcessSpec::new("rustc").arg("-Vv"), "rustc")?;
     if let Some(required) = required {
         let installed = parse_rustc_version(&rustc.stdout.utf8_lossy())?;
         if installed < required {
@@ -389,7 +432,7 @@ fn prepare_in(
             )));
         }
     }
-    run_checked(platform, ProcessSpec::new("cargo").arg("-V"), "cargo")?;
+    operations.run(&ProcessSpec::new("cargo").arg("-V"), "cargo")?;
     notify(
         progress,
         UpdatePhase::Compiling,
@@ -410,9 +453,9 @@ fn prepare_in(
         .arg(target.to_string_lossy())
         .current_dir(&source_root)
         .env("TUNDRAUX3_BUILD_COMMIT", &check.head_sha);
-    run_checked(platform, build, "cargo build")?;
+    operations.run(&build, "cargo build")?;
     notify(progress, UpdatePhase::Staging, "Validating compiled files");
-    validate_products(work_dir, &source_root, &target, &check.head_sha)
+    validate_products_with_operations(work_dir, source_root, &target, &check.head_sha, operations)
 }
 
 fn notify(progress: &mut dyn FnMut(UpdateProgress), phase: UpdatePhase, message: &str) {
@@ -533,15 +576,16 @@ fn extract_archive(bytes: &[u8], destination: &Path) -> Result<PathBuf, UpdateEr
     Ok(roots[0].clone())
 }
 
-fn validate_products(
+fn validate_products_with_operations(
     work_dir: &Path,
     source_root: &Path,
     target: &Path,
     sha: &str,
+    operations: &dyn PreparationOperations,
 ) -> Result<PreparedUpdate, UpdateError> {
     let prepared = validate_product_paths(work_dir, source_root, target, sha)?;
-    validate_update_probe(&prepared.cli_exe, sha)?;
-    validate_update_probe(&prepared.shell_exe, sha)?;
+    operations.probe(&prepared.cli_exe, sha)?;
+    operations.probe(&prepared.shell_exe, sha)?;
     Ok(prepared)
 }
 
@@ -749,32 +793,124 @@ pub fn apply_update_transaction(
         wait_for_process_exit(parent_pid, Duration::from_secs(30))?;
         let mut manifest = load_manifest(manifest_path)?;
         validate_running_helper(&manifest)?;
-        if recover_only {
-            return rollback_and_restart(manifest_path, &mut manifest, "update was interrupted");
-        }
-        if manifest.state != TransactionState::Prepared {
-            return rollback_and_restart(
-                manifest_path,
-                &mut manifest,
-                "update transaction was not in the prepared state",
-            );
-        }
+        run_update_transaction(
+            manifest_path,
+            &mut manifest,
+            recover_only,
+            &WindowsTransactionOperations,
+        )
+    }
+}
 
-        manifest.state = TransactionState::Applying;
-        write_manifest(manifest_path, &manifest)?;
-        let apply_result = apply_prepared_files(manifest_path, &mut manifest)
-            .and_then(|_| launch_and_verify_new_shell(manifest_path, &mut manifest));
-        match apply_result {
-            Ok(()) => Ok(()),
-            Err(error) => {
-                match rollback_and_restart(manifest_path, &mut manifest, &error.to_string()) {
-                    Ok(()) => Ok(()),
-                    Err(rollback) => Err(UpdateError::new(format!(
-                        "update failed: {error}; rollback also failed: {rollback}"
-                    ))),
-                }
+#[cfg(windows)]
+trait TransactionOperations {
+    fn rename(&self, source: &Path, target: &Path) -> Result<(), UpdateError>;
+    fn replace(&self, target: &Path, replacement: &Path, backup: &Path) -> Result<(), UpdateError>;
+    fn launch_new_and_wait(
+        &self,
+        paths: &TransactionPaths,
+        target_sha: &str,
+    ) -> Result<(), UpdateError>;
+    fn launch_restored(&self, shell: &Path, reason: &str) -> Result<(), UpdateError>;
+}
+
+#[cfg(windows)]
+struct WindowsTransactionOperations;
+
+#[cfg(windows)]
+impl TransactionOperations for WindowsTransactionOperations {
+    fn rename(&self, source: &Path, target: &Path) -> Result<(), UpdateError> {
+        fs::rename(source, target).map_err(UpdateError::from)
+    }
+
+    fn replace(&self, target: &Path, replacement: &Path, backup: &Path) -> Result<(), UpdateError> {
+        platform::replace_file_with_backup(target, replacement, backup)
+            .map_err(|error| UpdateError::new(error.to_string()))
+    }
+
+    fn launch_new_and_wait(
+        &self,
+        paths: &TransactionPaths,
+        target_sha: &str,
+    ) -> Result<(), UpdateError> {
+        let mut child = std::process::Command::new(&paths.installed_shell)
+            .env(UPDATE_READY_FILE_ENV, &paths.ready)
+            .env(UPDATE_TARGET_SHA_ENV, target_sha)
+            .spawn()
+            .map_err(|error| UpdateError::new(format!("could not start updated Shell: {error}")))?;
+        let deadline = std::time::Instant::now() + Duration::from_secs(60);
+        while std::time::Instant::now() < deadline {
+            if paths.ready.is_file() {
+                return Ok(());
             }
+            if let Some(status) = child.try_wait().map_err(|error| {
+                UpdateError::new(format!("could not monitor updated Shell: {error}"))
+            })? {
+                return Err(UpdateError::new(format!(
+                    "updated Shell exited before becoming ready: {status}"
+                )));
+            }
+            std::thread::sleep(Duration::from_millis(100));
         }
+        let _ = child.kill();
+        let _ = child.wait();
+        Err(UpdateError::new(
+            "updated Shell did not become ready within 60 seconds",
+        ))
+    }
+
+    fn launch_restored(&self, shell: &Path, reason: &str) -> Result<(), UpdateError> {
+        std::process::Command::new(shell)
+            .env(UPDATE_ROLLBACK_ENV, reason)
+            .spawn()
+            .map(|_| ())
+            .map_err(|error| UpdateError::new(format!("could not restart restored Shell: {error}")))
+    }
+}
+
+#[cfg(windows)]
+fn run_update_transaction(
+    manifest_path: &Path,
+    manifest: &mut TransactionManifest,
+    recover_only: bool,
+    operations: &dyn TransactionOperations,
+) -> Result<(), UpdateError> {
+    if recover_only {
+        return rollback_and_restart_with_operations(
+            manifest_path,
+            manifest,
+            "update was interrupted",
+            operations,
+        );
+    }
+    if manifest.state != TransactionState::Prepared {
+        return rollback_and_restart_with_operations(
+            manifest_path,
+            manifest,
+            "update transaction was not in the prepared state",
+            operations,
+        );
+    }
+
+    manifest.state = TransactionState::Applying;
+    write_manifest(manifest_path, manifest)?;
+    let apply_result = apply_prepared_files_with_operations(manifest_path, manifest, operations)
+        .and_then(|_| {
+            launch_and_verify_new_shell_with_operations(manifest_path, manifest, operations)
+        });
+    match apply_result {
+        Ok(()) => Ok(()),
+        Err(error) => match rollback_and_restart_with_operations(
+            manifest_path,
+            manifest,
+            &error.to_string(),
+            operations,
+        ) {
+            Ok(()) => Ok(()),
+            Err(rollback) => Err(UpdateError::new(format!(
+                "update failed: {error}; rollback also failed: {rollback}"
+            ))),
+        },
     }
 }
 
@@ -798,74 +934,69 @@ fn validate_running_helper(manifest: &TransactionManifest) -> Result<(), UpdateE
     Ok(())
 }
 
-#[cfg(windows)]
+#[cfg(all(windows, test))]
 fn apply_prepared_files(
     manifest_path: &Path,
     manifest: &mut TransactionManifest,
+) -> Result<(), UpdateError> {
+    apply_prepared_files_with_operations(manifest_path, manifest, &WindowsTransactionOperations)
+}
+
+#[cfg(windows)]
+fn apply_prepared_files_with_operations(
+    manifest_path: &Path,
+    manifest: &mut TransactionManifest,
+    operations: &dyn TransactionOperations,
 ) -> Result<(), UpdateError> {
     let paths = transaction_paths(manifest);
     if paths.ready.exists() {
         fs::remove_file(&paths.ready)?;
     }
 
-    fs::rename(&paths.installed_assets, &paths.backup_assets)
+    operations
+        .rename(&paths.installed_assets, &paths.backup_assets)
         .map_err(|error| UpdateError::new(format!("could not back up default assets: {error}")))?;
-    fs::rename(&paths.new_assets, &paths.installed_assets).map_err(|error| {
-        let _ = fs::rename(&paths.backup_assets, &paths.installed_assets);
-        UpdateError::new(format!("could not install default assets: {error}"))
-    })?;
+    operations
+        .rename(&paths.new_assets, &paths.installed_assets)
+        .map_err(|error| {
+            let _ = operations.rename(&paths.backup_assets, &paths.installed_assets);
+            UpdateError::new(format!("could not install default assets: {error}"))
+        })?;
     manifest.assets_replaced = true;
     write_manifest(manifest_path, manifest)?;
 
-    platform::replace_file_with_backup(&paths.installed_cli, &paths.new_cli, &paths.backup_cli)
+    operations
+        .replace(&paths.installed_cli, &paths.new_cli, &paths.backup_cli)
         .map_err(|error| UpdateError::new(format!("could not replace tundra-cli.exe: {error}")))?;
     manifest.cli_replaced = true;
     write_manifest(manifest_path, manifest)?;
 
-    platform::replace_file_with_backup(
-        &paths.installed_shell,
-        &paths.new_shell,
-        &paths.backup_shell,
-    )
-    .map_err(|error| UpdateError::new(format!("could not replace tundra-shell.exe: {error}")))?;
+    operations
+        .replace(
+            &paths.installed_shell,
+            &paths.new_shell,
+            &paths.backup_shell,
+        )
+        .map_err(|error| {
+            UpdateError::new(format!("could not replace tundra-shell.exe: {error}"))
+        })?;
     manifest.shell_replaced = true;
     manifest.state = TransactionState::AwaitingReady;
     write_manifest(manifest_path, manifest)
 }
 
 #[cfg(windows)]
-fn launch_and_verify_new_shell(
+fn launch_and_verify_new_shell_with_operations(
     manifest_path: &Path,
     manifest: &mut TransactionManifest,
+    operations: &dyn TransactionOperations,
 ) -> Result<(), UpdateError> {
     let paths = transaction_paths(manifest);
-    let mut child = std::process::Command::new(&paths.installed_shell)
-        .env(UPDATE_READY_FILE_ENV, &paths.ready)
-        .env(UPDATE_TARGET_SHA_ENV, &manifest.target_sha)
-        .spawn()
-        .map_err(|error| UpdateError::new(format!("could not start updated Shell: {error}")))?;
-    let deadline = std::time::Instant::now() + Duration::from_secs(60);
-    while std::time::Instant::now() < deadline {
-        if paths.ready.is_file() {
-            manifest.state = TransactionState::Committed;
-            write_manifest(manifest_path, manifest)?;
-            cleanup_committed_payload(manifest);
-            return Ok(());
-        }
-        if let Some(status) = child.try_wait().map_err(|error| {
-            UpdateError::new(format!("could not monitor updated Shell: {error}"))
-        })? {
-            return Err(UpdateError::new(format!(
-                "updated Shell exited before becoming ready: {status}"
-            )));
-        }
-        std::thread::sleep(Duration::from_millis(100));
-    }
-    let _ = child.kill();
-    let _ = child.wait();
-    Err(UpdateError::new(
-        "updated Shell did not become ready within 60 seconds",
-    ))
+    operations.launch_new_and_wait(&paths, &manifest.target_sha)?;
+    manifest.state = TransactionState::Committed;
+    write_manifest(manifest_path, manifest)?;
+    cleanup_committed_payload(manifest);
+    Ok(())
 }
 
 #[cfg(windows)]
@@ -886,24 +1017,35 @@ fn cleanup_committed_payload(manifest: &TransactionManifest) {
 }
 
 #[cfg(windows)]
-fn rollback_and_restart(
+fn rollback_and_restart_with_operations(
     manifest_path: &Path,
     manifest: &mut TransactionManifest,
     reason: &str,
+    operations: &dyn TransactionOperations,
 ) -> Result<(), UpdateError> {
-    rollback_files(manifest_path, manifest)?;
+    rollback_files_with_operations(manifest_path, manifest, operations)?;
     let paths = transaction_paths(manifest);
-    std::process::Command::new(&paths.installed_shell)
-        .env(UPDATE_ROLLBACK_ENV, reason)
-        .spawn()
-        .map_err(|error| UpdateError::new(format!("could not restart restored Shell: {error}")))?;
+    if let Err(error) = operations.launch_restored(&paths.installed_shell, reason) {
+        manifest.state = TransactionState::Failed;
+        write_manifest(manifest_path, manifest)?;
+        return Err(error);
+    }
     Ok(())
 }
 
-#[cfg(windows)]
+#[cfg(all(windows, test))]
 fn rollback_files(
     manifest_path: &Path,
     manifest: &mut TransactionManifest,
+) -> Result<(), UpdateError> {
+    rollback_files_with_operations(manifest_path, manifest, &WindowsTransactionOperations)
+}
+
+#[cfg(windows)]
+fn rollback_files_with_operations(
+    manifest_path: &Path,
+    manifest: &mut TransactionManifest,
+    operations: &dyn TransactionOperations,
 ) -> Result<(), UpdateError> {
     manifest.state = TransactionState::RollingBack;
     write_manifest(manifest_path, manifest)?;
@@ -911,14 +1053,15 @@ fn rollback_files(
     fs::create_dir_all(manifest.transaction_dir.join("failed"))?;
 
     if paths.backup_shell.is_file() {
-        platform::replace_file_with_backup(
-            &paths.installed_shell,
-            &paths.backup_shell,
-            &paths.failed_shell,
-        )
-        .map_err(|error| {
-            UpdateError::new(format!("could not restore tundra-shell.exe: {error}"))
-        })?;
+        operations
+            .replace(
+                &paths.installed_shell,
+                &paths.backup_shell,
+                &paths.failed_shell,
+            )
+            .map_err(|error| {
+                UpdateError::new(format!("could not restore tundra-shell.exe: {error}"))
+            })?;
         manifest.shell_replaced = false;
         write_manifest(manifest_path, manifest)?;
     } else if manifest.shell_replaced {
@@ -931,12 +1074,11 @@ fn rollback_files(
         write_manifest(manifest_path, manifest)?;
     }
     if paths.backup_cli.is_file() {
-        platform::replace_file_with_backup(
-            &paths.installed_cli,
-            &paths.backup_cli,
-            &paths.failed_cli,
-        )
-        .map_err(|error| UpdateError::new(format!("could not restore tundra-cli.exe: {error}")))?;
+        operations
+            .replace(&paths.installed_cli, &paths.backup_cli, &paths.failed_cli)
+            .map_err(|error| {
+                UpdateError::new(format!("could not restore tundra-cli.exe: {error}"))
+            })?;
         manifest.cli_replaced = false;
         write_manifest(manifest_path, manifest)?;
     } else if manifest.cli_replaced {
@@ -950,13 +1092,17 @@ fn rollback_files(
     }
     if paths.backup_assets.is_dir() {
         if paths.installed_assets.exists() {
-            fs::rename(&paths.installed_assets, &paths.failed_assets).map_err(|error| {
-                UpdateError::new(format!("could not move failed default assets: {error}"))
-            })?;
+            operations
+                .rename(&paths.installed_assets, &paths.failed_assets)
+                .map_err(|error| {
+                    UpdateError::new(format!("could not move failed default assets: {error}"))
+                })?;
         }
-        fs::rename(&paths.backup_assets, &paths.installed_assets).map_err(|error| {
-            UpdateError::new(format!("could not restore default assets: {error}"))
-        })?;
+        operations
+            .rename(&paths.backup_assets, &paths.installed_assets)
+            .map_err(|error| {
+                UpdateError::new(format!("could not restore default assets: {error}"))
+            })?;
         manifest.assets_replaced = false;
         write_manifest(manifest_path, manifest)?;
     } else if manifest.assets_replaced {
@@ -1176,6 +1322,8 @@ fn transaction_paths(manifest: &TransactionManifest) -> TransactionPaths {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use platform::ProcessStream;
+    use std::cell::Cell;
     use std::io::Write;
 
     #[test]
@@ -1257,6 +1405,129 @@ mod tests {
                 .is_ok()
         );
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[derive(Clone, Copy)]
+    enum PreparationFailure {
+        MissingRustc,
+        MissingCargo,
+        RustcTooOld,
+        Locked,
+        Compile,
+        MissingProduct,
+        CliProbe,
+        ShellProbe,
+    }
+
+    struct FakePreparationOperations {
+        failure: PreparationFailure,
+    }
+
+    impl PreparationOperations for FakePreparationOperations {
+        fn run(&self, spec: &ProcessSpec, name: &str) -> Result<ProcessExit, UpdateError> {
+            if name == "rustc" && matches!(self.failure, PreparationFailure::MissingRustc) {
+                return Err(UpdateError::new("could not run rustc: missing"));
+            }
+            if name == "cargo" && matches!(self.failure, PreparationFailure::MissingCargo) {
+                return Err(UpdateError::new("could not run cargo: missing"));
+            }
+            let failed_build = name == "cargo build"
+                && matches!(
+                    self.failure,
+                    PreparationFailure::Locked | PreparationFailure::Compile
+                );
+            let stdout = if name == "rustc" {
+                if matches!(self.failure, PreparationFailure::RustcTooOld) {
+                    b"rustc 1.70.0\nrelease: 1.70.0\n".to_vec()
+                } else {
+                    b"rustc 1.90.0\nrelease: 1.90.0\n".to_vec()
+                }
+            } else {
+                Vec::new()
+            };
+            assert!(name != "cargo build" || spec.args_slice().iter().any(|arg| arg == "--locked"));
+            if failed_build {
+                return Err(UpdateError::new(
+                    if matches!(self.failure, PreparationFailure::Locked) {
+                        "cargo build failed: lock file needs to be updated"
+                    } else {
+                        "cargo build failed: compiler error"
+                    },
+                ));
+            }
+            Ok(ProcessExit {
+                code: Some(0),
+                stdout: ProcessStream::from_bytes(stdout),
+                stderr: ProcessStream::from_bytes(Vec::new()),
+            })
+        }
+
+        fn probe(&self, executable: &Path, _expected_sha: &str) -> Result<(), UpdateError> {
+            let cli = executable
+                .file_name()
+                .is_some_and(|name| name == "tundra-cli.exe");
+            if (cli && matches!(self.failure, PreparationFailure::CliProbe))
+                || (!cli && matches!(self.failure, PreparationFailure::ShellProbe))
+            {
+                Err(UpdateError::new(
+                    "compiled program reported the wrong update protocol or commit",
+                ))
+            } else {
+                Ok(())
+            }
+        }
+    }
+
+    #[test]
+    fn update_preparation_failures_never_touch_installation() {
+        for (index, failure) in [
+            PreparationFailure::MissingRustc,
+            PreparationFailure::MissingCargo,
+            PreparationFailure::RustcTooOld,
+            PreparationFailure::Locked,
+            PreparationFailure::Compile,
+            PreparationFailure::MissingProduct,
+            PreparationFailure::CliProbe,
+            PreparationFailure::ShellProbe,
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let root = update_test_root(&format!("prepare-failure-{index}"));
+            let source = root.join("source");
+            let target = root.join("target/release");
+            let install = root.join("unrelated-install");
+            fs::create_dir_all(source.join("assets/themes/default")).unwrap();
+            fs::create_dir_all(&target).unwrap();
+            fs::create_dir_all(&install).unwrap();
+            fs::write(
+                source.join("Cargo.toml"),
+                "[workspace.package]\nrust-version = \"1.80\"\n",
+            )
+            .unwrap();
+            fs::write(install.join("sentinel"), b"unchanged").unwrap();
+            if !matches!(failure, PreparationFailure::MissingProduct) {
+                fs::write(target.join("tundra-shell.exe"), b"shell").unwrap();
+                fs::write(target.join("tundra-cli.exe"), b"cli").unwrap();
+            }
+            let check = UpdateCheckResult {
+                default_branch: "master".to_owned(),
+                head_sha: "target-sha".to_owned(),
+                relation: UpdateRelation::Behind { remote_ahead: 1 },
+                commits: Vec::new(),
+            };
+            let error = prepare_extracted_with_operations(
+                &check,
+                &mut |_| {},
+                &root,
+                &source,
+                &FakePreparationOperations { failure },
+            )
+            .unwrap_err();
+            assert!(!error.to_string().is_empty());
+            assert_eq!(fs::read(install.join("sentinel")).unwrap(), b"unchanged");
+            fs::remove_dir_all(root).unwrap();
+        }
     }
 
     fn update_test_root(name: &str) -> PathBuf {
@@ -1436,6 +1707,202 @@ mod tests {
         assert_eq!(
             fs::read(install.join("assets/themes/custom/theme.txt")).unwrap(),
             b"custom theme"
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(windows)]
+    #[derive(Clone, Copy, PartialEq, Eq)]
+    enum TransactionFailure {
+        Assets,
+        Cli,
+        Shell,
+        NewLaunch,
+        ReadyTimeout,
+        RestoredLaunch,
+        None,
+    }
+
+    #[cfg(windows)]
+    struct FakeTransactionOperations {
+        failure: TransactionFailure,
+        injected: Cell<bool>,
+    }
+
+    #[cfg(windows)]
+    impl TransactionOperations for FakeTransactionOperations {
+        fn rename(&self, source: &Path, target: &Path) -> Result<(), UpdateError> {
+            if self.failure == TransactionFailure::Assets
+                && !self.injected.get()
+                && source.ends_with("new/default-assets")
+            {
+                self.injected.set(true);
+                return Err(UpdateError::new("injected asset replacement failure"));
+            }
+            fs::rename(source, target).map_err(UpdateError::from)
+        }
+
+        fn replace(
+            &self,
+            target: &Path,
+            replacement: &Path,
+            backup: &Path,
+        ) -> Result<(), UpdateError> {
+            let failure = if target
+                .file_name()
+                .is_some_and(|name| name == "tundra-cli.exe")
+            {
+                TransactionFailure::Cli
+            } else {
+                TransactionFailure::Shell
+            };
+            if self.failure == failure
+                && !self.injected.get()
+                && replacement.to_string_lossy().contains("\\new\\")
+            {
+                self.injected.set(true);
+                return Err(UpdateError::new("injected executable replacement failure"));
+            }
+            if target.exists() {
+                fs::rename(target, backup)?;
+            }
+            fs::rename(replacement, target)?;
+            Ok(())
+        }
+
+        fn launch_new_and_wait(
+            &self,
+            _paths: &TransactionPaths,
+            _target_sha: &str,
+        ) -> Result<(), UpdateError> {
+            match self.failure {
+                TransactionFailure::NewLaunch | TransactionFailure::RestoredLaunch => {
+                    Err(UpdateError::new("injected new Shell launch failure"))
+                }
+                TransactionFailure::ReadyTimeout => Err(UpdateError::new(
+                    "updated Shell did not become ready within 60 seconds",
+                )),
+                _ => Ok(()),
+            }
+        }
+
+        fn launch_restored(&self, _shell: &Path, _reason: &str) -> Result<(), UpdateError> {
+            if self.failure == TransactionFailure::RestoredLaunch {
+                Err(UpdateError::new("injected restored Shell launch failure"))
+            } else {
+                Ok(())
+            }
+        }
+    }
+
+    #[cfg(windows)]
+    fn transaction_fixture(name: &str) -> (PathBuf, PathBuf, TransactionManifest) {
+        let root = update_test_root(name);
+        let install = root.join("install");
+        let transaction_dir = install.join(".tundra-update/tx");
+        let new = transaction_dir.join("new");
+        fs::create_dir_all(new.join("default-assets")).unwrap();
+        fs::create_dir_all(transaction_dir.join("backup")).unwrap();
+        fs::create_dir_all(install.join("assets/themes/default")).unwrap();
+        fs::create_dir_all(install.join("assets/themes/custom")).unwrap();
+        fs::write(install.join("tundra-shell.exe"), b"old shell").unwrap();
+        fs::write(install.join("tundra-cli.exe"), b"old cli").unwrap();
+        fs::write(
+            install.join("assets/themes/default/theme.txt"),
+            b"old theme",
+        )
+        .unwrap();
+        fs::write(
+            install.join("assets/themes/custom/theme.txt"),
+            b"custom theme",
+        )
+        .unwrap();
+        fs::write(new.join("tundra-shell.exe"), b"new shell").unwrap();
+        fs::write(new.join("tundra-cli.exe"), b"new cli").unwrap();
+        fs::write(new.join("default-assets/theme.txt"), b"new theme").unwrap();
+        let manifest_path = transaction_dir.join("transaction.json");
+        let manifest = TransactionManifest {
+            protocol: UPDATE_PROTOCOL_VERSION,
+            target_sha: "abc".to_owned(),
+            install_dir: install,
+            transaction_dir,
+            state: TransactionState::Prepared,
+            assets_replaced: false,
+            cli_replaced: false,
+            shell_replaced: false,
+        };
+        write_manifest(&manifest_path, &manifest).unwrap();
+        (root, manifest_path, manifest)
+    }
+
+    #[cfg(windows)]
+    fn assert_old_install_preserved(manifest: &TransactionManifest) {
+        assert_eq!(
+            fs::read(manifest.install_dir.join("tundra-shell.exe")).unwrap(),
+            b"old shell"
+        );
+        assert_eq!(
+            fs::read(manifest.install_dir.join("tundra-cli.exe")).unwrap(),
+            b"old cli"
+        );
+        assert_eq!(
+            fs::read(manifest.install_dir.join("assets/themes/default/theme.txt")).unwrap(),
+            b"old theme"
+        );
+        assert_eq!(
+            fs::read(manifest.install_dir.join("assets/themes/custom/theme.txt")).unwrap(),
+            b"custom theme"
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn update_injected_transaction_failures_restore_every_installed_file() {
+        for failure in [
+            TransactionFailure::Assets,
+            TransactionFailure::Cli,
+            TransactionFailure::Shell,
+            TransactionFailure::NewLaunch,
+            TransactionFailure::ReadyTimeout,
+            TransactionFailure::RestoredLaunch,
+        ] {
+            let (root, path, mut manifest) = transaction_fixture("injected-transaction");
+            let operations = FakeTransactionOperations {
+                failure,
+                injected: Cell::new(false),
+            };
+            let result = run_update_transaction(&path, &mut manifest, false, &operations);
+            if failure == TransactionFailure::RestoredLaunch {
+                assert!(result.is_err());
+                assert_eq!(
+                    load_manifest(&path).unwrap().state,
+                    TransactionState::Failed
+                );
+            } else {
+                assert!(result.is_ok());
+            }
+            assert_old_install_preserved(&manifest);
+            assert!(path.is_file(), "transaction journal must be retained");
+            fs::remove_dir_all(root).unwrap();
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn update_interrupted_journal_recovers_old_installation() {
+        let (root, path, mut manifest) = transaction_fixture("interrupted");
+        let operations = FakeTransactionOperations {
+            failure: TransactionFailure::None,
+            injected: Cell::new(false),
+        };
+        manifest.state = TransactionState::Applying;
+        write_manifest(&path, &manifest).unwrap();
+        apply_prepared_files_with_operations(&path, &mut manifest, &operations).unwrap();
+        run_update_transaction(&path, &mut manifest, true, &operations).unwrap();
+        assert_old_install_preserved(&manifest);
+        assert_eq!(
+            load_manifest(&path).unwrap().state,
+            TransactionState::RolledBack
         );
         fs::remove_dir_all(root).unwrap();
     }
