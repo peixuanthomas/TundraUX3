@@ -46,6 +46,7 @@ fn tab_cycles_sections_while_arrows_select_right_hand_settings() {
         SettingsCategory::System,
         SettingsCategory::FileExplorer,
         SettingsCategory::Editor,
+        SettingsCategory::Update,
         SettingsCategory::Appearance,
     ] {
         press(&mut state, &platform, "Tab");
@@ -58,6 +59,11 @@ fn tab_cycles_sections_while_arrows_select_right_hand_settings() {
         state.to_settings_view_model().unwrap().selected_field,
         SettingsField::Theme
     );
+
+    press(&mut state, &platform, "Shift+Tab");
+    let update = state.to_settings_view_model().unwrap();
+    assert_eq!(update.selected_category, SettingsCategory::Update);
+    assert_eq!(update.selected_field, SettingsField::InstalledVersion);
 
     press(&mut state, &platform, "Shift+Tab");
     let editor = state.to_settings_view_model().unwrap();
