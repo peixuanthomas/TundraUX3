@@ -72,6 +72,60 @@ fn eighty_by_twenty_four_layout_keeps_the_left_category_column() {
 }
 
 #[test]
+fn settings_scrollbar_only_appears_when_content_overflows() {
+    let mut model = sample_model();
+    model.scroll_offset = u16::MAX;
+
+    let fitting = settings_layout(Rect::new(0, 0, 120, 32), &model);
+    assert_eq!(fitting.max_scroll_offset, 0);
+    assert_eq!(fitting.scroll_offset, 0);
+    assert!(fitting.scrollbar.is_none());
+
+    let no_viewport = settings_layout(Rect::new(0, 0, 80, 1), &model);
+    assert_eq!(no_viewport.max_scroll_offset, 0);
+    assert_eq!(no_viewport.scroll_offset, 0);
+    assert!(no_viewport.scrollbar.is_none());
+
+    let overflowing = settings_layout(Rect::new(0, 0, 80, 12), &model);
+    let track = overflowing.scrollbar.expect("settings scrollbar");
+    assert!(overflowing.max_scroll_offset > 0);
+    assert_eq!(overflowing.scroll_offset, overflowing.max_scroll_offset);
+    assert_eq!(track.x, overflowing.detail.right());
+    assert_eq!(track.y, overflowing.detail.y);
+    assert_eq!(track.height, overflowing.detail.height);
+
+    let mut terminal = Terminal::new(TestBackend::new(80, 12)).expect("test terminal");
+    let mut rendered_layout = None;
+    terminal
+        .draw(|frame| {
+            rendered_layout = Some(render_settings(
+                frame,
+                frame.area(),
+                &chrome(),
+                &model,
+                &TundraTheme::default_dark(),
+            ));
+        })
+        .expect("render overflowing settings");
+    let rendered_track = rendered_layout
+        .expect("rendered settings layout")
+        .scrollbar
+        .expect("rendered settings scrollbar");
+    let symbols = (rendered_track.y..rendered_track.bottom())
+        .map(|y| {
+            terminal
+                .backend()
+                .buffer()
+                .cell((rendered_track.x, y))
+                .expect("scrollbar cell")
+                .symbol()
+        })
+        .collect::<Vec<_>>();
+    assert!(symbols.iter().all(|symbol| matches!(*symbol, "│" | "┃")));
+    assert!(symbols.contains(&"┃"));
+}
+
+#[test]
 fn system_category_has_storage_pressure_metadata() {
     assert_eq!(SettingsCategory::ALL[2], SettingsCategory::System);
     assert_eq!(SettingsCategory::System.label(), "System");
@@ -591,7 +645,10 @@ fn update_commits_wrap_complete_messages_and_follow_detail_scroll() {
     model.update = Some(SettingsUpdateViewModel {
         commits: vec![SettingsUpdateCommitViewModel {
             sha: "1234567890abcdef".to_string(),
-            message: "First line\nsecond line keeps all of the commit message visible".to_string(),
+            message: format!(
+                "First line\nsecond line keeps all of the commit message visible {}",
+                "with additional details ".repeat(80)
+            ),
         }],
         empty_message: "No new commits".to_string(),
         confirmation: None,

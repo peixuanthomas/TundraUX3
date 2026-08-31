@@ -393,17 +393,46 @@ impl ShellSession {
     }
 
     pub(in crate::session) fn select_settings_field_at(&mut self, index: usize) {
-        let Some(state) = self.settings_state.as_mut() else {
-            return;
-        };
-        let fields = settings_fields(state.category);
-        state.selected_field = fields[index.min(fields.len().saturating_sub(1))];
-        state.scroll_offset = (index as u16).saturating_sub(6);
+        {
+            let Some(state) = self.settings_state.as_mut() else {
+                return;
+            };
+            let fields = settings_fields(state.category);
+            state.selected_field = fields[index.min(fields.len().saturating_sub(1))];
+            state.scroll_offset = u16::try_from(index).unwrap_or(u16::MAX).saturating_sub(6);
+        }
+        self.clamp_settings_scroll();
     }
 
     pub(in crate::session) fn scroll_settings(&mut self, delta: i16) {
+        let Some(layout) = self.current_settings_layout() else {
+            return;
+        };
+        let next = settings_scroll_offset(layout.scroll_offset, delta, layout.max_scroll_offset);
         if let Some(state) = self.settings_state.as_mut() {
-            state.scroll_offset = settings_scroll_offset(state.scroll_offset, delta);
+            state.scroll_offset = next;
+        }
+    }
+
+    fn current_settings_layout(&self) -> Option<ui::SettingsLayout> {
+        let model = self.to_settings_view_model()?;
+        let terminal = Rect::new(0, 0, self.terminal_size.0, self.terminal_size.1);
+        let main = match ui::compute_shell_layout(terminal) {
+            ui::ShellLayout::Compact(compact) => compact,
+            ui::ShellLayout::Full { main, .. } => main,
+        };
+        Some(ui::settings_layout(main, &model))
+    }
+
+    pub(in crate::session) fn clamp_settings_scroll(&mut self) {
+        let Some(scroll_offset) = self
+            .current_settings_layout()
+            .map(|layout| layout.scroll_offset)
+        else {
+            return;
+        };
+        if let Some(state) = self.settings_state.as_mut() {
+            state.scroll_offset = scroll_offset;
         }
     }
 
@@ -2857,12 +2886,13 @@ pub(in crate::session) fn parse_editor_explorer_open_extensions(
     Ok(extensions)
 }
 
-fn settings_scroll_offset(current: u16, delta: i16) -> u16 {
-    if delta < 0 {
+fn settings_scroll_offset(current: u16, delta: i16, maximum: u16) -> u16 {
+    let next = if delta < 0 {
         current.saturating_sub(delta.unsigned_abs())
     } else {
         current.saturating_add(delta as u16)
-    }
+    };
+    next.min(maximum)
 }
 
 #[cfg(test)]
@@ -2960,10 +2990,11 @@ mod update_tests {
     }
 
     #[test]
-    fn update_settings_scroll_retains_offsets_beyond_two_thousand() {
-        assert_eq!(settings_scroll_offset(2_001, 6), 2_007);
-        assert_eq!(settings_scroll_offset(u16::MAX - 2, 6), u16::MAX);
-        assert_eq!(settings_scroll_offset(2_007, -6), 2_001);
+    fn settings_scroll_stops_at_the_content_boundaries() {
+        assert_eq!(settings_scroll_offset(2_001, 6, 2_004), 2_004);
+        assert_eq!(settings_scroll_offset(2_007, -6, 2_100), 2_001);
+        assert_eq!(settings_scroll_offset(0, -6, 2_100), 0);
+        assert_eq!(settings_scroll_offset(0, 6, 0), 0);
     }
 }
 

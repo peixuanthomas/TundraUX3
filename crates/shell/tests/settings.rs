@@ -77,6 +77,82 @@ fn tab_cycles_sections_while_arrows_select_right_hand_settings() {
 }
 
 #[test]
+fn mouse_wheel_scrolls_only_to_the_settings_content_boundary() {
+    let fixture = FixtureRoot::new("bounded-settings-scroll");
+    let platform = mock_platform(fixture.path());
+    initialize_users(&platform, false, false);
+    let mut state = logged_in_state(&platform, "AdminUser", "StrongPass123");
+    open_settings_from_home(&mut state, &platform);
+
+    state.apply_input_with_platform(
+        InputEvent::Resize {
+            width: 120,
+            height: 60,
+        },
+        &platform,
+    );
+    for _ in 0..20 {
+        state.apply_input_with_platform(
+            InputEvent::mouse_scroll(shell::ScrollDirection::Down, (60, 10)),
+            &platform,
+        );
+    }
+    let fitting_model = state.to_settings_view_model().expect("settings model");
+    let fitting_main = match ui::compute_shell_layout(Rect::new(0, 0, 120, 60)) {
+        ui::ShellLayout::Compact(compact) => compact,
+        ui::ShellLayout::Full { main, .. } => main,
+    };
+    let fitting_layout = ui::settings_layout(fitting_main, &fitting_model);
+    assert_eq!(fitting_model.scroll_offset, 0);
+    assert_eq!(fitting_layout.max_scroll_offset, 0);
+    assert!(fitting_layout.scrollbar.is_none());
+
+    state.apply_input_with_platform(
+        InputEvent::Resize {
+            width: 120,
+            height: 12,
+        },
+        &platform,
+    );
+    let overflowing_model = state.to_settings_view_model().expect("settings model");
+    let overflowing_main = match ui::compute_shell_layout(Rect::new(0, 0, 120, 12)) {
+        ui::ShellLayout::Compact(compact) => compact,
+        ui::ShellLayout::Full { main, .. } => main,
+    };
+    let overflowing_layout = ui::settings_layout(overflowing_main, &overflowing_model);
+    assert!(overflowing_layout.scrollbar.is_some());
+    assert!(overflowing_layout.max_scroll_offset > 0);
+
+    for _ in 0..100 {
+        state.apply_input_with_platform(
+            InputEvent::mouse_scroll(shell::ScrollDirection::Down, (60, 6)),
+            &platform,
+        );
+    }
+    assert_eq!(
+        state
+            .to_settings_view_model()
+            .expect("scrolled settings model")
+            .scroll_offset,
+        overflowing_layout.max_scroll_offset
+    );
+
+    state.apply_input_with_platform(
+        InputEvent::Resize {
+            width: 120,
+            height: 60,
+        },
+        &platform,
+    );
+    let resized_model = state
+        .to_settings_view_model()
+        .expect("resized settings model");
+    let resized_layout = ui::settings_layout(fitting_main, &resized_model);
+    assert_eq!(resized_model.scroll_offset, 0);
+    assert!(resized_layout.scrollbar.is_none());
+}
+
+#[test]
 fn system_settings_show_defaults_and_persist_normalized_steps() {
     let fixture = FixtureRoot::new("system-settings");
     let platform = mock_platform(fixture.path());

@@ -231,6 +231,9 @@ impl ShellSession {
                 if self.active_screen() == ShellScreen::SystemStatus {
                     self.clamp_system_status_dashboard_scroll();
                 }
+                if self.active_screen() == ShellScreen::Settings {
+                    self.clamp_settings_scroll();
+                }
                 self.notification_pointer_capture = None;
                 self.last_resize_event = Some(format!("{width}x{height}"));
                 if self.active_screen() == ShellScreen::FirstRunSetup {

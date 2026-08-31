@@ -337,6 +337,11 @@ pub enum SettingsHitTarget {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SettingsLayout {
     pub main: Rect,
+    pub detail: Rect,
+    pub scrollbar: Option<Rect>,
+    pub content_height: usize,
+    pub max_scroll_offset: u16,
+    pub scroll_offset: u16,
     pub category_cards: Vec<SettingsCategoryLayout>,
     pub fields: Vec<SettingsFieldLayout>,
     pub picker_options: Vec<SettingsPickerOptionLayout>,
@@ -383,7 +388,35 @@ pub(crate) fn render_settings_context(
 }
 
 pub fn settings_layout(area: Rect, model: &SettingsViewModel) -> SettingsLayout {
-    let (category_area, detail_area) = settings_content_areas(area);
+    let (category_area, raw_detail_area) = settings_content_areas(area);
+    let mut detail_area = Rect::new(
+        raw_detail_area.x,
+        raw_detail_area.y,
+        raw_detail_area.width,
+        raw_detail_area.height.saturating_sub(1),
+    );
+    let mut content_height = settings_content_height(detail_area.width, model);
+    let scrollbar = (content_height > usize::from(detail_area.height)
+        && detail_area.width > 0
+        && detail_area.height > 0)
+        .then(|| {
+            let track = Rect::new(
+                detail_area.right().saturating_sub(1),
+                detail_area.y,
+                1,
+                detail_area.height,
+            );
+            detail_area.width = detail_area.width.saturating_sub(1);
+            content_height = settings_content_height(detail_area.width, model);
+            track
+        });
+    let max_scroll_offset = if scrollbar.is_some() {
+        u16::try_from(content_height.saturating_sub(usize::from(detail_area.height)))
+            .unwrap_or(u16::MAX)
+    } else {
+        0
+    };
+    let scroll_offset = model.scroll_offset.min(max_scroll_offset);
     let category_cards = SettingsCategory::ALL
         .into_iter()
         .enumerate()
@@ -403,12 +436,15 @@ pub fn settings_layout(area: Rect, model: &SettingsViewModel) -> SettingsLayout 
         .collect();
 
     let mut fields = Vec::new();
-    let mut y = i32::from(detail_area.y) - i32::from(model.scroll_offset);
+    let mut y = i32::from(detail_area.y) - i32::from(scroll_offset);
     if model.appearance_preview.is_some() {
         y += 5;
     }
     for card in &model.cards {
-        let height = (card.items.len() as u16).saturating_add(2).max(3);
+        let height = u16::try_from(card.items.len())
+            .unwrap_or(u16::MAX)
+            .saturating_add(2)
+            .max(3);
         for (index, item) in card.items.iter().enumerate() {
             let row_y = y + 1 + i32::try_from(index).unwrap_or(i32::MAX);
             if row_y >= i32::from(detail_area.y) && row_y < i32::from(detail_area.bottom()) {
@@ -470,6 +506,11 @@ pub fn settings_layout(area: Rect, model: &SettingsViewModel) -> SettingsLayout 
 
     SettingsLayout {
         main: area,
+        detail: detail_area,
+        scrollbar,
+        content_height,
+        max_scroll_offset,
+        scroll_offset,
         category_cards,
         fields,
         picker_options,
@@ -586,9 +627,9 @@ fn render_settings_content(
     categories.set_focused(true);
     categories.render_with_context(settings_category_area(layout), frame.buffer_mut(), context);
 
-    let detail_area = settings_detail_area(layout);
+    let detail_area = layout.detail;
     if let Some(preview) = model.appearance_preview {
-        let preview_y = i32::from(detail_area.y) - i32::from(model.scroll_offset);
+        let preview_y = i32::from(detail_area.y) - i32::from(layout.scroll_offset);
         if let Some((visible, _)) =
             visible_scrolled_rect(detail_area.x, preview_y, detail_area.width, 4, detail_area)
         {
@@ -620,8 +661,16 @@ fn render_settings_content(
         }
     }
 
-    render_cards(frame, detail_area, model, context);
-    render_settings_footer(frame, detail_area, model, context);
+    render_cards(frame, detail_area, layout.scroll_offset, model, context);
+    if let Some(scrollbar) = layout.scrollbar {
+        Scrollbar::new(
+            layout.content_height,
+            usize::from(detail_area.height),
+            usize::from(layout.scroll_offset),
+        )
+        .render_frame(frame, scrollbar, context);
+    }
+    render_settings_footer(frame, settings_raw_detail_area(layout), model, context);
 
     if let Some(picker) = &model.picker {
         render_picker(frame, layout.main, picker, context);
@@ -650,16 +699,20 @@ fn render_settings_content(
 fn render_cards(
     frame: &mut Frame<'_>,
     detail_area: Rect,
+    scroll_offset: u16,
     model: &SettingsViewModel,
     context: &RenderContext,
 ) {
     let theme = &context.compatibility_theme();
-    let mut y = i32::from(detail_area.y) - i32::from(model.scroll_offset);
+    let mut y = i32::from(detail_area.y) - i32::from(scroll_offset);
     if model.appearance_preview.is_some() {
         y += 5;
     }
     for card in &model.cards {
-        let height = (card.items.len() as u16).saturating_add(2).max(3);
+        let height = u16::try_from(card.items.len())
+            .unwrap_or(u16::MAX)
+            .saturating_add(2)
+            .max(3);
         if let Some((visible, _)) =
             visible_scrolled_rect(detail_area.x, y, detail_area.width, height, detail_area)
         {
@@ -759,6 +812,69 @@ fn render_cards(
     }
 }
 
+fn settings_content_height(detail_width: u16, model: &SettingsViewModel) -> usize {
+    let mut next_y = 0usize;
+    let mut content_height = 0usize;
+
+    if model.appearance_preview.is_some() {
+        content_height = 4;
+        next_y = 5;
+    }
+
+    for card in &model.cards {
+        let height = u16::try_from(card.items.len())
+            .unwrap_or(u16::MAX)
+            .saturating_add(2)
+            .max(3);
+        content_height = content_height.max(next_y.saturating_add(usize::from(height)));
+        next_y = next_y.saturating_add(usize::from(height)).saturating_add(1);
+    }
+
+    if model.selected_category == SettingsCategory::Update
+        && let Some(update) = &model.update
+    {
+        let lines = update_commit_lines(update);
+        content_height = content_height
+            .max(next_y.saturating_add(usize::from(update_commits_height(detail_width, &lines))));
+    }
+
+    content_height
+}
+
+fn update_commit_lines(update: &SettingsUpdateViewModel) -> Vec<String> {
+    if update.commits.is_empty() {
+        return vec![update.empty_message.clone()];
+    }
+
+    update
+        .commits
+        .iter()
+        .map(|commit| {
+            format!(
+                "{}  {}",
+                commit.sha.chars().take(8).collect::<String>(),
+                commit
+                    .message
+                    .split_whitespace()
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            )
+        })
+        .collect()
+}
+
+fn update_commits_height(detail_width: u16, lines: &[String]) -> u16 {
+    let width = detail_width.saturating_sub(4).max(1);
+    let content_height = lines
+        .iter()
+        .map(|line| terminal_width(line).div_ceil(usize::from(width)).max(1))
+        .sum::<usize>();
+    u16::try_from(content_height)
+        .unwrap_or(u16::MAX)
+        .saturating_add(2)
+        .max(3)
+}
+
 fn render_update_commits(
     frame: &mut Frame<'_>,
     detail_area: Rect,
@@ -767,34 +883,8 @@ fn render_update_commits(
     context: &RenderContext,
 ) {
     let theme = &context.compatibility_theme();
-    let width = detail_area.width.saturating_sub(4).max(1);
-    let lines = if update.commits.is_empty() {
-        vec![update.empty_message.clone()]
-    } else {
-        update
-            .commits
-            .iter()
-            .map(|commit| {
-                format!(
-                    "{}  {}",
-                    commit.sha.chars().take(8).collect::<String>(),
-                    commit
-                        .message
-                        .split_whitespace()
-                        .collect::<Vec<_>>()
-                        .join(" ")
-                )
-            })
-            .collect::<Vec<_>>()
-    };
-    let content_height = lines
-        .iter()
-        .map(|line| terminal_width(line).div_ceil(usize::from(width)).max(1))
-        .sum::<usize>();
-    let height = u16::try_from(content_height)
-        .unwrap_or(u16::MAX)
-        .saturating_add(2)
-        .max(3);
+    let lines = update_commit_lines(update);
+    let height = update_commits_height(detail_area.width, &lines);
     let Some((visible, _)) =
         visible_scrolled_rect(detail_area.x, y, detail_area.width, height, detail_area)
     else {
@@ -1209,7 +1299,7 @@ fn render_controlled_text_input(
     input.render_borderless_frame_with_prefix(frame, area, &input_theme, prefix);
 }
 
-fn settings_detail_area(layout: &SettingsLayout) -> Rect {
+fn settings_raw_detail_area(layout: &SettingsLayout) -> Rect {
     settings_content_areas(layout.main).1
 }
 
