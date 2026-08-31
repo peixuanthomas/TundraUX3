@@ -10,13 +10,12 @@ use platform::{
 use ratatui::layout::Rect;
 use shell::{
     HomeModeOverride, InputEvent, InputKey, InputModifiers, InputPhase, KeyInput, PointerButton,
-    ScrollDirection, ShellAction, ShellComponent, ShellHomeMode, ShellLaunchConfig, ShellScreen,
-    ShellSession, prepare_shell_startup,
+    ShellAction, ShellComponent, ShellLaunchConfig, ShellScreen, ShellSession,
+    prepare_shell_startup,
 };
 use ui::{
-    EditorDocumentPosition, EditorFocus, EditorHitTarget, EditorMenu, EditorMenuAction, EditorMode,
-    EditorQuickAction, EditorRenderBlock, EditorSettingsControl, EditorSettingsField,
-    EditorTextPosition, EditorToolbarAction, ShellLayout,
+    EditorHitTarget, EditorMenu, EditorMode, EditorSettingsControl, EditorSettingsField,
+    EditorToolbarAction, ShellLayout,
 };
 
 fn default_config() -> ShellLaunchConfig {
@@ -26,10 +25,10 @@ fn default_config() -> ShellLaunchConfig {
 }
 
 #[test]
-fn home_editor_entry_opens_a_rich_markdown_document() {
+fn launcher_editor_entry_opens_a_plain_text_document() {
     let fixture = FixtureRoot::new("home-open");
     let platform = mock_platform(fixture.path());
-    let mut state = new_user_home_state();
+    let mut state = new_user_home_state(&platform);
 
     open_editor_from_home(&mut state, &platform);
 
@@ -37,19 +36,25 @@ fn home_editor_entry_opens_a_rich_markdown_document() {
     assert_eq!(state.focused_component(), ShellComponent::Editor);
     assert_eq!(
         state.screen_stack(),
-        &[ShellScreen::Home, ShellScreen::Editor]
+        &[
+            ShellScreen::Home,
+            ShellScreen::Launcher,
+            ShellScreen::Editor
+        ]
     );
     let editor = state.to_editor_view_model();
-    assert_eq!(editor.file_name, "Untitled.md");
-    assert_eq!(editor.mode, EditorMode::Rich);
+    assert_eq!(editor.file_name, "Untitled.txt");
+    assert_eq!(editor.mode, EditorMode::Source);
     assert!(!editor.dirty);
+    assert!(editor.blocks.is_empty());
+    assert!(current_editor_layout(&state).modes.is_empty());
 }
 
 #[test]
 fn terminal_text_sizing_capability_reaches_the_editor_view_model() {
     let fixture = FixtureRoot::new("text-sizing");
     let platform = mock_platform(fixture.path());
-    let mut state = new_user_home_state();
+    let mut state = new_user_home_state(&platform);
     state.set_terminal_text_sizing_support(true);
 
     open_editor_from_home(&mut state, &platform);
@@ -61,7 +66,7 @@ fn terminal_text_sizing_capability_reaches_the_editor_view_model() {
 fn editor_accepts_unicode_and_inserts_spaces_for_tab() {
     let fixture = FixtureRoot::new("unicode-tab");
     let platform = mock_platform(fixture.path());
-    let mut state = new_user_home_state();
+    let mut state = new_user_home_state(&platform);
     open_editor_from_home(&mut state, &platform);
 
     type_text(&mut state, &platform, "你好🙂");
@@ -219,496 +224,69 @@ fn editor_vertical_scrollbar_thumb_drags_to_both_ends() {
 }
 
 #[test]
-fn rich_source_toggle_preserves_markdown_and_rendered_content() {
-    let fixture = FixtureRoot::new("mode-toggle");
+fn plain_text_editor_omits_markdown_controls_and_preserves_markdown_syntax() {
+    let fixture = FixtureRoot::new("plain-text-controls");
     let platform = mock_platform(fixture.path());
-    let mut state = new_user_home_state();
-    open_editor_from_home(&mut state, &platform);
-    type_text(&mut state, &platform, "标题");
-    state.apply_input_with_platform(ctrl_alt('2'), &platform);
-
-    let rich = state.to_editor_view_model();
-    assert_eq!(rich.mode, EditorMode::Rich);
-    assert_eq!(rich.source, None);
-    assert!(rich.rich_cursor.is_some());
-    assert!(matches!(
-        rich.render_blocks(),
-        [EditorRenderBlock::Heading { level: 2, .. }]
-    ));
-    assert!(!rich.render_blocks().is_empty());
-
-    state.apply_input_with_platform(ctrl_shift('m'), &platform);
-    let source = state.to_editor_view_model();
-    assert_eq!(source.mode, EditorMode::Source);
-    assert_eq!(source.source_lines.join("\n"), "## 标题");
-
-    state.apply_input_with_platform(ctrl_shift('m'), &platform);
-    let rich_again = state.to_editor_view_model();
-    assert_eq!(rich_again.mode, EditorMode::Rich);
-    assert_eq!(rich_again.source, None);
-    assert_eq!(rich_again.word_count, rich.word_count);
-    assert!(matches!(
-        rich_again.render_blocks(),
-        [EditorRenderBlock::Heading { level: 2, .. }]
-    ));
-}
-
-#[test]
-fn rich_space_and_enter_update_the_projection_immediately() {
-    let fixture = FixtureRoot::new("rich-whitespace-projection");
-    let platform = mock_platform(fixture.path());
-    let mut state = new_user_home_state();
+    let mut state = new_user_home_state(&platform);
     open_editor_from_home(&mut state, &platform);
 
-    type_text(&mut state, &platform, "a ");
-    let spaced = state.to_editor_view_model();
-    assert_eq!(spaced.source, None);
-    let spaced_cursor = spaced.rich_cursor.expect("Rich cursor");
-    assert_eq!(spaced_cursor.grapheme_offset, 2);
-    let spaced_layout = current_editor_layout(&state);
-    assert_eq!(
-        spaced_layout.visual_position_for_document(EditorDocumentPosition::Rich(spaced_cursor)),
-        Some(EditorTextPosition::new(0, 2))
-    );
-
-    state.apply_input_with_platform(InputEvent::from_key_label("Enter"), &platform);
-    let newline = state.to_editor_view_model();
-    assert_eq!(newline.source, None);
-    let newline_cursor = newline.rich_cursor.expect("Rich cursor after newline");
-    assert_eq!(newline_cursor.container_id, spaced_cursor.container_id);
-    assert_eq!(newline_cursor.grapheme_offset, 3);
-    let newline_layout = current_editor_layout(&state);
-    assert_eq!(newline_layout.document_line_count, 2);
-    assert_eq!(
-        newline_layout.visual_position_for_document(EditorDocumentPosition::Rich(newline_cursor)),
-        Some(EditorTextPosition::new(1, 0))
-    );
-    let blank_hit = newline_layout
-        .hit_test_document(newline_layout.canvas.x, newline_layout.canvas.y + 1)
-        .expect("trailing blank line is mapped");
-    assert_eq!(
-        blank_hit.position,
-        EditorDocumentPosition::Rich(newline_cursor)
-    );
-    assert!(blank_hit.editable);
-
-    state.apply_input_with_platform(InputEvent::from_key_label("Enter"), &platform);
-    type_text(&mut state, &platform, "b");
-    let third_line = state.to_editor_view_model();
-    assert_eq!(third_line.source, None);
-    let third_cursor = third_line.rich_cursor.expect("third-line Rich cursor");
-    assert_eq!(third_cursor.grapheme_offset, 5);
-    let third_layout = current_editor_layout(&state);
-    assert_eq!(third_layout.document_line_count, 3);
-    assert_eq!(
-        third_layout.visual_position_for_document(EditorDocumentPosition::Rich(third_cursor)),
-        Some(EditorTextPosition::new(2, 1))
-    );
-}
-
-#[test]
-fn enter_after_heading_starts_an_independent_paragraph() {
-    let fixture = FixtureRoot::new("heading-enter-paragraph");
-    let platform = mock_platform(fixture.path());
-    let mut state = new_user_home_state();
-    open_editor_from_home(&mut state, &platform);
-
-    type_text(&mut state, &platform, "Heading");
-    state.apply_input_with_platform(ctrl_alt('1'), &platform);
-    state.apply_input_with_platform(InputEvent::from_key_label("Enter"), &platform);
-    type_text(&mut state, &platform, "Body");
-
-    let rich = state.to_editor_view_model();
-    assert!(matches!(
-        rich.render_blocks(),
-        [
-            EditorRenderBlock::Heading { level: 1, .. },
-            EditorRenderBlock::Paragraph(_)
-        ]
-    ));
-
-    state.apply_input_with_platform(ctrl_alt('2'), &platform);
-    assert!(matches!(
-        state.to_editor_view_model().render_blocks(),
-        [
-            EditorRenderBlock::Heading { level: 1, .. },
-            EditorRenderBlock::Heading { level: 2, .. }
-        ]
-    ));
-
-    let layout = current_editor_layout(&state);
-    let paragraph = layout
-        .toolbar_items
-        .iter()
-        .find(|item| item.action == EditorToolbarAction::ParagraphStyle)
-        .expect("paragraph toolbar item");
-    state.apply_input_with_platform(
-        InputEvent::mouse_down(PointerButton::Left, (paragraph.area.x, paragraph.area.y)),
-        &platform,
-    );
-    assert!(matches!(
-        state.to_editor_view_model().render_blocks(),
-        [
-            EditorRenderBlock::Heading { level: 1, .. },
-            EditorRenderBlock::Paragraph(_)
-        ]
-    ));
-
-    state.apply_input_with_platform(ctrl_shift('m'), &platform);
-    let source_lines = state.to_editor_view_model().source_lines;
-    assert_eq!(source_lines.first().map(String::as_str), Some("# Heading"));
-    assert_eq!(source_lines.last().map(String::as_str), Some("Body"));
-    assert_eq!(
-        source_lines
-            .iter()
-            .filter(|line| line.starts_with("# "))
-            .count(),
-        1
-    );
-}
-
-#[test]
-fn rich_trailing_space_uses_terminal_cell_width_for_the_caret() {
-    let fixture = FixtureRoot::new("rich-wide-space-projection");
-    let platform = mock_platform(fixture.path());
-    let mut state = new_user_home_state();
-    open_editor_from_home(&mut state, &platform);
-
-    type_text(&mut state, &platform, "好 ");
-
-    let cursor = state
-        .to_editor_view_model()
-        .rich_cursor
-        .expect("Rich cursor");
-    assert_eq!(
-        current_editor_layout(&state)
-            .visual_position_for_document(EditorDocumentPosition::Rich(cursor)),
-        Some(EditorTextPosition::new(0, 3))
-    );
-}
-
-#[test]
-fn collapsed_inline_toolbar_action_keeps_the_document_stable_and_restores_the_caret() {
-    let fixture = FixtureRoot::new("collapsed-toolbar");
-    let platform = mock_platform(fixture.path());
-    let mut state = new_user_home_state();
-    open_editor_from_home(&mut state, &platform);
-    let layout = current_editor_layout(&state);
-    let bold = layout
-        .toolbar_items
-        .iter()
-        .find(|item| item.action == EditorToolbarAction::Bold)
-        .expect("Bold toolbar item");
-
-    state.apply_input_with_platform(
-        InputEvent::mouse_down(PointerButton::Left, (bold.area.x, bold.area.y)),
-        &platform,
-    );
-
-    let after_click = state.to_editor_view_model();
-    assert_eq!(after_click.source, None);
-    assert_eq!(after_click.focus, EditorFocus::Canvas);
-    assert!(rendered_text(&after_click).is_empty());
-    assert!(
-        after_click
-            .status_message
-            .as_deref()
-            .is_some_and(|message| { message.contains("Select text") })
-    );
-
-    type_text(&mut state, &platform, "x");
-    let typed = state.to_editor_view_model();
-    assert_eq!(typed.source, None);
-    assert_eq!(rendered_text(&typed), "x");
-}
-
-#[test]
-fn inline_code_toolbar_formats_only_the_caret_line_without_a_selection() {
-    let fixture = FixtureRoot::new("caret-line-inline-code");
-    let platform = mock_platform(fixture.path());
-    let mut state = new_user_home_state();
-    open_editor_from_home(&mut state, &platform);
-    type_text(&mut state, &platform, "one");
-    state.apply_input_with_platform(InputEvent::from_key_label("Enter"), &platform);
-    type_text(&mut state, &platform, "two");
-    state.apply_input_with_platform(InputEvent::from_key_label("Enter"), &platform);
-    type_text(&mut state, &platform, "three");
-
-    let layout = current_editor_layout(&state);
-    let code = layout
-        .toolbar_items
-        .iter()
-        .find(|item| item.action == EditorToolbarAction::InlineCode)
-        .expect("Code toolbar item");
-    state.apply_input_with_platform(
-        InputEvent::mouse_down(PointerButton::Left, (code.area.x, code.area.y)),
-        &platform,
-    );
-
-    let rich = state.to_editor_view_model();
-    let spans = rich
-        .render_blocks()
-        .iter()
-        .flat_map(|block| match block {
-            EditorRenderBlock::Paragraph(spans) => spans.as_slice(),
-            _ => &[],
-        })
-        .collect::<Vec<_>>();
-    assert!(
-        spans
-            .iter()
-            .any(|span| span.text == "three" && span.inline_code)
-    );
-    assert!(
-        spans
-            .iter()
-            .filter(|span| span.text == "one" || span.text == "two")
-            .all(|span| !span.inline_code)
-    );
-    assert!(
-        !rich
-            .status_message
-            .as_deref()
-            .is_some_and(|message| message.contains("Select text"))
-    );
-
-    state.apply_input_with_platform(ctrl_shift('m'), &platform);
-    assert_eq!(
-        state.to_editor_view_model().source_lines.join("\n"),
-        "one\ntwo\n`three`"
-    );
-}
-
-#[test]
-fn selected_text_formats_from_the_toolbar_without_exposing_markers_in_rich_view() {
-    let fixture = FixtureRoot::new("selected-toolbar-format");
-    let platform = mock_platform(fixture.path());
-    let mut state = new_user_home_state();
-    open_editor_from_home(&mut state, &platform);
-    type_text(&mut state, &platform, "text");
+    type_text(&mut state, &platform, "# **text**");
     state.apply_input_with_platform(ctrl('a'), &platform);
-    let layout = current_editor_layout(&state);
-    let bold = layout
-        .toolbar_items
-        .iter()
-        .find(|item| item.action == EditorToolbarAction::Bold)
-        .expect("Bold toolbar item");
-
-    state.apply_input_with_platform(
-        InputEvent::mouse_down(PointerButton::Left, (bold.area.x, bold.area.y)),
-        &platform,
-    );
-
-    let editor = state.to_editor_view_model();
-    assert_eq!(editor.source, None);
-    assert_eq!(editor.selection_offsets, None);
-    assert_eq!(editor.rich_selection, None);
-    assert_eq!(editor.focus, EditorFocus::Canvas);
-    let rich_text = editor
-        .render_blocks()
-        .iter()
-        .flat_map(|block| match block {
-            ui::EditorRenderBlock::Paragraph(spans) => spans.as_slice(),
-            _ => &[],
-        })
-        .find(|span| span.text == "text")
-        .expect("rendered text span");
-    assert!(rich_text.bold);
-
-    state.apply_input_with_platform(ctrl_shift('m'), &platform);
-    assert_eq!(
-        state.to_editor_view_model().source_lines.join("\n"),
-        "**text**"
-    );
-}
-
-#[test]
-fn navigation_delete_space_and_newline_after_bold_never_expose_markdown_or_leave_rich_mode() {
-    let fixture = FixtureRoot::new("bold-then-whitespace");
-    let platform = mock_platform(fixture.path());
-    let mut state = new_user_home_state();
-    open_editor_from_home(&mut state, &platform);
-    type_text(&mut state, &platform, "Codex");
-    state.apply_input_with_platform(ctrl('a'), &platform);
-    state.apply_input_with_platform(ctrl('b'), &platform);
-
-    // Exercise edits at a position inside a formatted run. The caret is a
-    // grapheme position in the Rich model, never an offset into `**...**`.
-    state.apply_input_with_platform(InputEvent::from_key_label("Left"), &platform);
-    state.apply_input_with_platform(InputEvent::from_key_label("Backspace"), &platform);
-    type_text(&mut state, &platform, "e");
-    state.apply_input_with_platform(InputEvent::from_key_label("End"), &platform);
-    type_text(&mut state, &platform, " ");
-    state.apply_input_with_platform(InputEvent::from_key_label("Enter"), &platform);
-    type_text(&mut state, &platform, "next");
-
-    let editor = state.to_editor_view_model();
-    assert_eq!(editor.mode, EditorMode::Rich);
-    assert_eq!(editor.source, None);
-    assert_eq!(editor.selection_offsets, None);
-    let rendered = rendered_text(&editor);
-    assert!(rendered.contains("Codex"));
-    assert!(rendered.contains("next"));
-    assert!(!rendered.contains("**"));
-    let cursor = editor.rich_cursor.expect("Rich cursor after editing");
-    assert_eq!(
-        current_editor_layout(&state)
-            .visual_position_for_document(EditorDocumentPosition::Rich(cursor)),
-        Some(EditorTextPosition::new(1, 4))
-    );
-
-    // Markdown is only materialized at the explicit Rich -> Source boundary.
-    state.apply_input_with_platform(ctrl_shift('m'), &platform);
-    let markdown = state.to_editor_view_model().source_lines.join("\n");
-    assert_eq!(markdown.replace("**", ""), "Codex \nnext");
-}
-
-#[test]
-fn source_mode_rejects_markdown_toolbar_and_shortcut_actions() {
-    let fixture = FixtureRoot::new("source-format-gate");
-    let platform = mock_platform(fixture.path());
-    let mut state = new_user_home_state();
-    open_editor_from_home(&mut state, &platform);
-    type_text(&mut state, &platform, "source text");
-    state.apply_input_with_platform(ctrl_shift('m'), &platform);
-    state.apply_input_with_platform(ctrl('a'), &platform);
-    let original = state.to_editor_view_model().source_lines.join("\n");
-
     for shortcut in [
         ctrl('b'),
         ctrl('i'),
         ctrl('k'),
+        ctrl_shift('m'),
         ctrl_shift('x'),
-        ctrl_alt('2'),
+        InputEvent::from_key_label("Ctrl+Alt+2"),
     ] {
         state.apply_input_with_platform(shortcut, &platform);
     }
-    assert_eq!(
-        state.to_editor_view_model().source_lines.join("\n"),
-        original
-    );
-
-    let layout = current_editor_layout(&state);
-    for action in [
-        EditorToolbarAction::ParagraphStyle,
-        EditorToolbarAction::Bold,
-        EditorToolbarAction::Italic,
-        EditorToolbarAction::Strikethrough,
-        EditorToolbarAction::InlineCode,
-        EditorToolbarAction::BulletList,
-        EditorToolbarAction::OrderedList,
-        EditorToolbarAction::Quote,
-        EditorToolbarAction::Link,
-        EditorToolbarAction::Image,
-        EditorToolbarAction::Table,
-    ] {
-        let item = layout
-            .toolbar_items
-            .iter()
-            .find(|item| item.action == action)
-            .expect("formatting toolbar item");
-        assert!(!item.enabled, "{action:?} must be disabled");
-        state.apply_input_with_platform(
-            InputEvent::mouse_down(PointerButton::Left, (item.area.x, item.area.y)),
-            &platform,
-        );
-    }
-    assert_eq!(
-        state.to_editor_view_model().source_lines.join("\n"),
-        original
-    );
-}
-
-#[test]
-fn menu_items_are_visible_and_dispatch_commands() {
-    let fixture = FixtureRoot::new("menu-dispatch");
-    let platform = mock_platform(fixture.path());
-    let mut state = new_user_home_state();
-    open_editor_from_home(&mut state, &platform);
-    let view_menu = current_editor_layout(&state)
-        .menus
-        .into_iter()
-        .find(|menu| menu.menu == EditorMenu::View)
-        .expect("View menu");
-    state.apply_input_with_platform(
-        InputEvent::mouse_down(PointerButton::Left, (view_menu.area.x, view_menu.area.y)),
-        &platform,
-    );
-    let open_layout = current_editor_layout(&state);
-    assert!(open_layout.menu_popup.is_some());
-    let source = open_layout
-        .menu_items
-        .iter()
-        .find(|item| item.action == EditorMenuAction::Mode(EditorMode::Source))
-        .expect("Source menu action");
-
-    state.apply_input_with_platform(
-        InputEvent::mouse_down(PointerButton::Left, (source.area.x, source.area.y)),
-        &platform,
-    );
 
     let editor = state.to_editor_view_model();
     assert_eq!(editor.mode, EditorMode::Source);
-    assert_eq!(editor.open_menu, None);
-    assert_eq!(editor.focus, EditorFocus::Canvas);
-}
+    assert_eq!(editor.source_lines.join("\n"), "# **text**");
+    assert!(editor.render_blocks().is_empty());
 
-#[test]
-fn rich_canvas_click_edits_a_logical_grapheme_position() {
-    let fixture = FixtureRoot::new("rich-source-hit");
-    let platform = mock_platform(fixture.path());
-    let mut state = new_user_home_state();
-    open_editor_from_home(&mut state, &platform);
-    type_text(&mut state, &platform, "Title");
-    state.apply_input_with_platform(ctrl_alt('1'), &platform);
-
-    let editor = state.to_editor_view_model();
-    assert_eq!(editor.source, None);
-    let heading_range = editor
-        .render_blocks()
-        .iter()
-        .find_map(|block| match block {
-            EditorRenderBlock::Heading { spans, .. } => {
-                spans.first().and_then(|span| span.rich_range)
-            }
-            _ => None,
-        })
-        .expect("heading logical range");
     let layout = current_editor_layout(&state);
-    let visual = layout
-        .visual_position_for_document(EditorDocumentPosition::Rich(heading_range.start))
-        .expect("heading content Rich position is visible");
-    let coordinates = (
-        layout.canvas.x + u16::try_from(visual.column).expect("visual column"),
-        layout.canvas.y
-            + u16::try_from(visual.line.saturating_sub(layout.visible_start)).expect("visual row"),
-    );
-    let hit = layout
-        .hit_test_document(coordinates.0, coordinates.1)
-        .expect("logical Rich hit");
+    assert!(layout.modes.is_empty());
     assert_eq!(
-        hit.position,
-        EditorDocumentPosition::Rich(heading_range.start)
+        layout
+            .menus
+            .iter()
+            .map(|item| item.menu)
+            .collect::<Vec<_>>(),
+        vec![EditorMenu::File, EditorMenu::Edit, EditorMenu::Settings]
     );
-    assert!(hit.editable);
+    assert_eq!(
+        layout
+            .toolbar_items
+            .iter()
+            .map(|item| item.action)
+            .collect::<Vec<_>>(),
+        vec![
+            EditorToolbarAction::New,
+            EditorToolbarAction::Open,
+            EditorToolbarAction::Save,
+            EditorToolbarAction::Undo,
+            EditorToolbarAction::Redo,
+            EditorToolbarAction::Find,
+        ]
+    );
+
+    let coordinates = editor_canvas_point(&state);
     state.apply_input_with_platform(
-        InputEvent::mouse_down(PointerButton::Left, coordinates),
+        InputEvent::mouse_down(PointerButton::Right, coordinates),
         &platform,
     );
-    type_text(&mut state, &platform, "X");
-    state.apply_input_with_platform(ctrl_shift('m'), &platform);
-
-    assert_eq!(
-        state.to_editor_view_model().source_lines.join("\n"),
-        "# XTitle"
-    );
+    assert_eq!(state.to_editor_view_model().quick_menu, None);
 }
 
 #[test]
 fn escape_closes_an_open_menu_before_closing_the_document() {
     let fixture = FixtureRoot::new("escape-menu");
     let platform = mock_platform(fixture.path());
-    let mut state = new_user_home_state();
+    let mut state = new_user_home_state(&platform);
     open_editor_from_home(&mut state, &platform);
 
     let file_menu = current_editor_layout(&state)
@@ -730,135 +308,13 @@ fn escape_closes_an_open_menu_before_closing_the_document() {
     assert_eq!(state.to_editor_view_model().open_menu, None);
 
     state.apply_input_with_platform(InputEvent::from_key_label("Esc"), &platform);
-    assert_eq!(state.active_screen(), ShellScreen::Home);
+    assert_eq!(state.active_screen(), ShellScreen::Launcher);
 }
-
-#[test]
-fn quick_menu_requires_a_rich_selection_and_preserves_it_when_opened() {
-    let fixture = FixtureRoot::new("quick-menu-gate");
-    let platform = mock_platform(fixture.path());
-    let mut state = new_user_home_state();
-    open_editor_from_home(&mut state, &platform);
-
-    let coordinates = editor_canvas_point(&state);
-    state.apply_input_with_platform(
-        InputEvent::mouse_down(PointerButton::Right, coordinates),
-        &platform,
-    );
-    assert_eq!(state.to_editor_view_model().quick_menu, None);
-
-    type_text(&mut state, &platform, "selected text");
-    state.apply_input_with_platform(ctrl('a'), &platform);
-    let selection = state
-        .to_editor_view_model()
-        .rich_selection
-        .expect("Rich selection before opening the quick menu");
-    let coordinates = open_editor_quick_menu(&mut state, &platform);
-    let editor = state.to_editor_view_model();
-    let menu = editor.quick_menu.expect("quick menu view model");
-    assert_eq!(menu.anchor, coordinates);
-    assert!(menu.block_actions_enabled);
-    assert_eq!(editor.rich_selection, Some(selection));
-
-    state.apply_input_with_platform(ctrl_shift('m'), &platform);
-    state.apply_input_with_platform(ctrl('a'), &platform);
-    let coordinates = editor_canvas_point(&state);
-    state.apply_input_with_platform(
-        InputEvent::mouse_down(PointerButton::Right, coordinates),
-        &platform,
-    );
-    assert_eq!(state.to_editor_view_model().mode, EditorMode::Source);
-    assert_eq!(state.to_editor_view_model().quick_menu, None);
-}
-
-#[test]
-fn quick_menu_dispatches_inline_and_heading_formats() {
-    let fixture = FixtureRoot::new("quick-menu-format");
-    let platform = mock_platform(fixture.path());
-    let mut bold = new_user_home_state();
-    open_editor_from_home(&mut bold, &platform);
-    type_text(&mut bold, &platform, "Bold");
-    bold.apply_input_with_platform(ctrl('a'), &platform);
-    open_editor_quick_menu(&mut bold, &platform);
-    click_editor_quick_action(&mut bold, &platform, EditorQuickAction::Bold);
-    assert_eq!(bold.to_editor_view_model().quick_menu, None);
-    bold.apply_input_with_platform(ctrl_shift('m'), &platform);
-    assert_eq!(
-        bold.to_editor_view_model().source_lines.join("\n"),
-        "**Bold**"
-    );
-
-    let mut heading = new_user_home_state();
-    open_editor_from_home(&mut heading, &platform);
-    type_text(&mut heading, &platform, "Heading");
-    heading.apply_input_with_platform(ctrl('a'), &platform);
-    open_editor_quick_menu(&mut heading, &platform);
-    click_editor_quick_action(&mut heading, &platform, EditorQuickAction::Heading(2));
-    assert_eq!(heading.to_editor_view_model().quick_menu, None);
-    heading.apply_input_with_platform(ctrl_shift('m'), &platform);
-    assert_eq!(
-        heading.to_editor_view_model().source_lines.join("\n"),
-        "## Heading"
-    );
-}
-
-#[test]
-fn quick_menu_popup_swallows_clicks_and_escape_scroll_and_external_click_close_it() {
-    let fixture = FixtureRoot::new("quick-menu-dismiss");
-    let platform = mock_platform(fixture.path());
-    let mut state = new_user_home_state();
-    open_editor_from_home(&mut state, &platform);
-    type_text(&mut state, &platform, "keep selected");
-    state.apply_input_with_platform(ctrl('a'), &platform);
-    let selection = state.to_editor_view_model().rich_selection;
-    let anchor = open_editor_quick_menu(&mut state, &platform);
-    let popup = current_editor_layout(&state)
-        .quick_menu_popup
-        .expect("quick menu popup");
-    assert_eq!(
-        current_editor_layout(&state).hit_test(popup.x, popup.y),
-        Some(EditorHitTarget::QuickMenuPopup)
-    );
-    state.apply_input_with_platform(
-        InputEvent::mouse_down(PointerButton::Left, (popup.x, popup.y)),
-        &platform,
-    );
-    assert!(state.to_editor_view_model().quick_menu.is_some());
-    assert_eq!(state.to_editor_view_model().rich_selection, selection);
-
-    state.apply_input_with_platform(InputEvent::from_key_label("Esc"), &platform);
-    assert_eq!(state.active_screen(), ShellScreen::Editor);
-    assert_eq!(state.to_editor_view_model().quick_menu, None);
-    assert_eq!(state.to_editor_view_model().rich_selection, selection);
-    assert!(state.to_notification_view_model().is_none());
-
-    open_editor_quick_menu(&mut state, &platform);
-    state.apply_input_with_platform(
-        InputEvent::mouse_scroll(ScrollDirection::Down, anchor),
-        &platform,
-    );
-    assert_eq!(state.to_editor_view_model().quick_menu, None);
-    assert_eq!(state.to_editor_view_model().rich_selection, selection);
-
-    open_editor_quick_menu(&mut state, &platform);
-    let layout = current_editor_layout(&state);
-    let outside = (layout.canvas.x, layout.canvas.y);
-    assert!(matches!(
-        layout.hit_test(outside.0, outside.1),
-        Some(EditorHitTarget::Canvas(_))
-    ));
-    state.apply_input_with_platform(
-        InputEvent::mouse_down(PointerButton::Left, outside),
-        &platform,
-    );
-    assert_eq!(state.to_editor_view_model().quick_menu, None);
-}
-
 #[test]
 fn repeated_command_shortcut_does_not_trigger_a_one_shot_action() {
     let fixture = FixtureRoot::new("repeat-shortcut");
     let platform = mock_platform(fixture.path());
-    let mut state = new_user_home_state();
+    let mut state = new_user_home_state(&platform);
     open_editor_from_home(&mut state, &platform);
 
     state.apply_input_with_platform(
@@ -878,10 +334,10 @@ fn repeated_command_shortcut_does_not_trigger_a_one_shot_action() {
 
 #[test]
 fn held_direction_keys_accelerate_non_linearly_with_slower_vertical_shift_selection() {
-    let mut state = new_user_home_state();
-    state.apply_input(InputEvent::from_key_label("Right"));
-    state.apply_input(InputEvent::from_key_label("Right"));
-    state.apply_input(InputEvent::from_key_label("Enter"));
+    let fixture = FixtureRoot::new("cursor-acceleration");
+    let platform = mock_platform(fixture.path());
+    let mut state = new_user_home_state(&platform);
+    open_editor_from_home(&mut state, &platform);
     assert_eq!(state.active_screen(), ShellScreen::Editor);
     for character in "01234567890123456789\n".repeat(20).chars() {
         state.apply_input(InputEvent::from_key_label(character.to_string()));
@@ -1108,47 +564,10 @@ fn editor_settings_restore_defaults_and_persist_saved_acceleration_values() {
 }
 
 #[test]
-fn word_style_heading_and_link_shortcuts_edit_the_native_rich_model() {
-    let fixture = FixtureRoot::new("format-shortcuts");
-    let platform = mock_platform(fixture.path());
-    let mut state = new_user_home_state();
-    open_editor_from_home(&mut state, &platform);
-    type_text(&mut state, &platform, "Heading");
-
-    state.apply_input_with_platform(ctrl_alt('2'), &platform);
-    state.apply_input_with_platform(ctrl_shift('m'), &platform);
-    assert_eq!(
-        state.to_editor_view_model().source_lines.join("\n"),
-        "## Heading"
-    );
-    state.apply_input_with_platform(ctrl_shift('m'), &platform);
-
-    state.apply_input_with_platform(ctrl('z'), &platform);
-    state.apply_input_with_platform(ctrl('a'), &platform);
-    state.apply_input_with_platform(ctrl('k'), &platform);
-    let rich = state.to_editor_view_model();
-    assert_eq!(rich.mode, EditorMode::Rich);
-    assert_eq!(rich.source, None);
-    let link = rich
-        .render_blocks()
-        .iter()
-        .flat_map(block_spans)
-        .find(|span| span.text == "Heading")
-        .expect("linked Rich span");
-    assert!(link.link);
-
-    state.apply_input_with_platform(ctrl_shift('m'), &platform);
-    assert_eq!(
-        state.to_editor_view_model().source_lines.join("\n"),
-        "[Heading](https://)"
-    );
-}
-
-#[test]
 fn ctrl_c_copies_selection_in_editor_instead_of_shutting_down() {
     let fixture = FixtureRoot::new("copy");
     let platform = mock_platform(fixture.path());
-    let mut state = new_user_home_state();
+    let mut state = new_user_home_state(&platform);
     open_editor_from_home(&mut state, &platform);
     type_text(&mut state, &platform, "copy me");
     state.apply_input_with_platform(ctrl('a'), &platform);
@@ -1173,7 +592,7 @@ fn ctrl_c_copies_selection_in_editor_instead_of_shutting_down() {
 fn dirty_editor_close_can_be_cancelled_or_discarded() {
     let fixture = FixtureRoot::new("dirty-close");
     let platform = mock_platform(fixture.path());
-    let mut state = new_user_home_state();
+    let mut state = new_user_home_state(&platform);
     open_editor_from_home(&mut state, &platform);
     type_text(&mut state, &platform, "unsaved");
 
@@ -1200,8 +619,11 @@ fn dirty_editor_close_can_be_cancelled_or_discarded() {
     state.apply_input_with_platform(InputEvent::from_key_label("Tab"), &platform);
     state.apply_input_with_platform(InputEvent::from_key_label("Enter"), &platform);
 
-    assert_eq!(state.active_screen(), ShellScreen::Home);
-    assert_eq!(state.screen_stack(), &[ShellScreen::Home]);
+    assert_eq!(state.active_screen(), ShellScreen::Launcher);
+    assert_eq!(
+        state.screen_stack(),
+        &[ShellScreen::Home, ShellScreen::Launcher]
+    );
     assert!(state.to_notification_view_model().is_none());
 }
 
@@ -1209,7 +631,7 @@ fn dirty_editor_close_can_be_cancelled_or_discarded() {
 fn dirty_editor_open_requires_a_decision_and_cancel_preserves_the_buffer() {
     let fixture = FixtureRoot::new("dirty-open-cancel");
     let platform = mock_platform(fixture.path());
-    let mut state = new_user_home_state();
+    let mut state = new_user_home_state(&platform);
     open_editor_from_home(&mut state, &platform);
     type_text(&mut state, &platform, "keep this unsaved text");
 
@@ -1276,16 +698,9 @@ fn discard_then_open_replaces_the_buffer_only_after_a_file_is_selected() {
         editor.path_hint.as_deref(),
         Some(replacement.to_string_lossy().as_ref())
     );
-    assert_eq!(editor.mode, EditorMode::Rich);
-    assert_eq!(editor.source, None);
-    assert_eq!(rendered_text(&editor), "replacement");
+    assert_eq!(editor.mode, EditorMode::Source);
+    assert_eq!(editor.source_lines.join("\n"), "replacement");
     assert!(!editor.dirty);
-
-    state.apply_input_with_platform(ctrl_shift('m'), &platform);
-    assert_eq!(
-        state.to_editor_view_model().source_lines.join("\n"),
-        "replacement"
-    );
 }
 
 #[test]
@@ -1328,340 +743,8 @@ fn save_then_open_continues_to_the_picker_after_the_save_succeeds() {
         editor.path_hint.as_deref(),
         Some(replacement.to_string_lossy().as_ref())
     );
-    assert_eq!(editor.mode, EditorMode::Rich);
-    assert_eq!(editor.source, None);
-    assert_eq!(rendered_text(&editor), "replacement");
-
-    state.apply_input_with_platform(ctrl_shift('m'), &platform);
-    assert_eq!(
-        state.to_editor_view_model().source_lines.join("\n"),
-        "replacement"
-    );
-}
-
-#[test]
-fn pasted_markdown_syntax_remains_plain_rich_text() {
-    let fixture = FixtureRoot::new("rich-paste-is-text");
-    let platform = mock_platform(fixture.path());
-    let mut state = new_user_home_state();
-    open_editor_from_home(&mut state, &platform);
-    let markdown = "| A |\n| - |\n| B |";
-    state.apply_input_with_platform(InputEvent::Paste(markdown.to_string()), &platform);
-
-    let editor = state.to_editor_view_model();
-    assert_eq!(editor.mode, EditorMode::Rich);
-    assert_eq!(editor.source, None);
-    assert!(editor.render_blocks().iter().all(|block| {
-        !matches!(
-            block,
-            EditorRenderBlock::Table { .. } | EditorRenderBlock::RichTable { .. }
-        )
-    }));
-    assert_eq!(rendered_text(&editor), markdown);
-    let cursor = editor.rich_cursor.expect("Rich cursor after paste");
-    let layout = current_editor_layout(&state);
-    assert_eq!(
-        layout.visual_position_for_document(EditorDocumentPosition::Rich(cursor)),
-        Some(EditorTextPosition::new(2, 5))
-    );
-
-    // The Markdown representation is created only at this explicit boundary
-    // and escapes the pasted punctuation so it cannot become a GFM table.
-    state.apply_input_with_platform(ctrl_shift('m'), &platform);
-    let source = state.to_editor_view_model().source_lines.join("\n");
-    assert!(source.contains("\\|"));
-    state.apply_input_with_platform(ctrl_shift('m'), &platform);
-    assert!(
-        state
-            .to_editor_view_model()
-            .render_blocks()
-            .iter()
-            .all(|block| {
-                !matches!(
-                    block,
-                    EditorRenderBlock::Table { .. } | EditorRenderBlock::RichTable { .. }
-                )
-            })
-    );
-}
-
-#[test]
-fn typed_markdown_punctuation_never_changes_rich_structure() {
-    let fixture = FixtureRoot::new("rich-syntax-is-text");
-    let platform = mock_platform(fixture.path());
-    let mut state = new_user_home_state();
-    open_editor_from_home(&mut state, &platform);
-    let literal = "* **** `\n# \n---\n| A |";
-
-    type_text(&mut state, &platform, literal);
-
-    let rich = state.to_editor_view_model();
-    assert_eq!(rich.mode, EditorMode::Rich);
-    assert_eq!(rich.source, None);
-    assert_eq!(rendered_text(&rich), literal);
-    assert!(matches!(
-        rich.render_blocks(),
-        [EditorRenderBlock::Paragraph(_)]
-    ));
-    assert!(rich.render_blocks().iter().all(|block| {
-        !matches!(
-            block,
-            EditorRenderBlock::Heading { .. }
-                | EditorRenderBlock::HorizontalRule
-                | EditorRenderBlock::CodeBlock { .. }
-                | EditorRenderBlock::Table { .. }
-                | EditorRenderBlock::RichTable { .. }
-        )
-    }));
-
-    state.apply_input_with_platform(ctrl_shift('m'), &platform);
-    let markdown = state.to_editor_view_model().source_lines.join("\n");
-    for escaped in ["\\*", "\\`", "\\#", "\\-", "\\|"] {
-        assert!(
-            markdown.contains(escaped),
-            "missing escaped literal {escaped:?}"
-        );
-    }
-}
-
-#[test]
-fn rich_table_cells_accept_direct_input_and_column_edges_resize() {
-    let fixture = FixtureRoot::new("rich-table-edit");
-    let platform = mock_platform(fixture.path());
-    let mut state = new_user_home_state();
-    open_editor_from_home(&mut state, &platform);
-    click_toolbar_action(&mut state, &platform, EditorToolbarAction::Table);
-
-    let editor = state.to_editor_view_model();
-    assert_eq!(editor.source, None);
-    let (table_id, empty_cell) = editor
-        .render_blocks()
-        .iter()
-        .find_map(|block| match block {
-            EditorRenderBlock::RichTable { table_id, rows, .. } => rows
-                .first()
-                .and_then(|row| row.first())
-                .and_then(|cell| cell.spans.first())
-                .map(|span| (*table_id, span)),
-            _ => None,
-        })
-        .expect("empty table cell");
-    assert!(empty_cell.text.is_empty());
-    assert_eq!(empty_cell.source_range, None);
-    let empty_position = empty_cell
-        .rich_range
-        .expect("empty table cell insertion point")
-        .start;
-    let layout = current_editor_layout(&state);
-    let empty_position = layout
-        .visual_position_for_document(EditorDocumentPosition::Rich(empty_position))
-        .expect("empty table cell maps to Rich coordinates");
-    assert!(empty_position.line >= layout.visible_start);
-    let empty_coordinates = (
-        layout.canvas.x
-            + empty_position
-                .column
-                .saturating_sub(layout.horizontal_scroll) as u16,
-        layout.canvas.y + empty_position.line.saturating_sub(layout.visible_start) as u16,
-    );
-    let empty_hit = layout
-        .hit_test_document(empty_coordinates.0, empty_coordinates.1)
-        .expect("table cell is directly editable");
-    assert!(empty_hit.editable);
-    assert!(matches!(
-        empty_hit.position,
-        EditorDocumentPosition::Rich(_)
-    ));
-
-    state.apply_input_with_platform(
-        InputEvent::mouse_down(PointerButton::Left, empty_coordinates),
-        &platform,
-    );
-    type_text(&mut state, &platform, "old");
-    let edited = state.to_editor_view_model();
-    assert_eq!(edited.source, None);
-    assert!(rich_table_cell_text(&edited, table_id, 0, 0).is_some_and(|text| text == "old"));
-
-    let layout = current_editor_layout(&state);
-    let first_edge = *layout
-        .table_resize_handles
-        .first()
-        .expect("table column resize edge");
-    assert_eq!(first_edge.table_id, Some(table_id));
-    let drag_y = first_edge.area.y + u16::from(first_edge.area.height > 1);
-    state.apply_input_with_platform(
-        InputEvent::mouse_down(PointerButton::Left, (first_edge.area.x, drag_y)),
-        &platform,
-    );
-    state.apply_input_with_platform(
-        InputEvent::mouse_drag(PointerButton::Left, (first_edge.area.x + 4, drag_y)),
-        &platform,
-    );
-    state.apply_input_with_platform(
-        InputEvent::mouse_up(PointerButton::Left, (first_edge.area.x + 4, drag_y)),
-        &platform,
-    );
-
-    let resized = current_editor_layout(&state)
-        .table_resize_handles
-        .first()
-        .copied()
-        .expect("resized first column edge");
-    assert_eq!(resized.width, first_edge.width + 4);
-    assert_eq!(resized.table_id, Some(table_id));
-
-    let shrink_y = resized.area.y + u16::from(resized.area.height > 1);
-    state.apply_input_with_platform(
-        InputEvent::mouse_down(PointerButton::Left, (resized.area.x, shrink_y)),
-        &platform,
-    );
-    state.apply_input_with_platform(
-        InputEvent::mouse_drag(
-            PointerButton::Left,
-            (resized.area.x.saturating_sub(3), shrink_y),
-        ),
-        &platform,
-    );
-    state.apply_input_with_platform(
-        InputEvent::mouse_up(
-            PointerButton::Left,
-            (resized.area.x.saturating_sub(3), shrink_y),
-        ),
-        &platform,
-    );
-    let shrunk = current_editor_layout(&state)
-        .table_resize_handles
-        .first()
-        .copied()
-        .expect("shrunk first column edge");
-    assert_eq!(shrunk.width, first_edge.width + 1);
-    assert_eq!(shrunk.table_id, Some(table_id));
-    assert!(
-        rich_table_cell_text(&state.to_editor_view_model(), table_id, 0, 0)
-            .is_some_and(|text| text == "old")
-    );
-
-    state.apply_input_with_platform(ctrl_shift('m'), &platform);
-    assert!(
-        state
-            .to_editor_view_model()
-            .source_lines
-            .join("\n")
-            .contains("old")
-    );
-}
-
-#[test]
-fn rich_table_outer_edges_add_and_remove_columns_with_mouse_buttons() {
-    let fixture = FixtureRoot::new("rich-table-edges");
-    let platform = mock_platform(fixture.path());
-    let mut state = new_user_home_state();
-    open_editor_from_home(&mut state, &platform);
-    click_toolbar_action(&mut state, &platform, EditorToolbarAction::Table);
-
-    let table_id = rich_table_id(&state.to_editor_view_model()).expect("native Rich table ID");
-    assert_eq!(
-        rich_table_column_count(&state.to_editor_view_model(), table_id),
-        Some(3)
-    );
-
-    let layout = current_editor_layout(&state);
-    let left = layout
-        .table_edge_handles
-        .iter()
-        .find(|handle| {
-            handle.table_id == Some(table_id) && handle.edge == ui::EditorTableEdge::Left
-        })
-        .expect("left outer table edge");
-    state.apply_input_with_platform(
-        InputEvent::mouse_down(PointerButton::Left, (left.area.x, left.area.y + 1)),
-        &platform,
-    );
-    assert_eq!(rich_table_id(&state.to_editor_view_model()), Some(table_id));
-    assert_eq!(
-        rich_table_column_count(&state.to_editor_view_model(), table_id),
-        Some(4)
-    );
-
-    state.apply_input_with_platform(ctrl('a'), &platform);
-    open_editor_quick_menu(&mut state, &platform);
-    assert!(state.to_editor_view_model().quick_menu.is_some());
-
-    let layout = current_editor_layout(&state);
-    let left = layout
-        .table_edge_handles
-        .iter()
-        .find(|handle| {
-            handle.table_id == Some(table_id) && handle.edge == ui::EditorTableEdge::Left
-        })
-        .expect("updated left outer table edge");
-    state.apply_input_with_platform(
-        InputEvent::mouse_down(PointerButton::Right, (left.area.x, left.area.y + 1)),
-        &platform,
-    );
-    assert_eq!(rich_table_id(&state.to_editor_view_model()), Some(table_id));
-    assert_eq!(
-        rich_table_column_count(&state.to_editor_view_model(), table_id),
-        Some(3)
-    );
-    assert_eq!(state.to_editor_view_model().quick_menu, None);
-
-    let layout = current_editor_layout(&state);
-    let right = layout
-        .table_edge_handles
-        .iter()
-        .find(|handle| {
-            handle.table_id == Some(table_id) && handle.edge == ui::EditorTableEdge::Right
-        })
-        .expect("right outer table edge");
-    state.apply_input_with_platform(
-        InputEvent::mouse_down(PointerButton::Left, (right.area.x, right.area.y + 1)),
-        &platform,
-    );
-    assert_eq!(rich_table_id(&state.to_editor_view_model()), Some(table_id));
-    assert_eq!(
-        rich_table_column_count(&state.to_editor_view_model(), table_id),
-        Some(4)
-    );
-}
-
-#[test]
-fn new_table_exposes_an_editable_paragraph_below_it() {
-    let fixture = FixtureRoot::new("rich-table-following-paragraph");
-    let platform = mock_platform(fixture.path());
-    let mut state = new_user_home_state();
-    open_editor_from_home(&mut state, &platform);
-    click_toolbar_action(&mut state, &platform, EditorToolbarAction::Table);
-
-    let editor = state.to_editor_view_model();
-    assert_eq!(editor.source, None);
-    let paragraph_index = editor
-        .render_blocks()
-        .iter()
-        .position(|block| matches!(block, EditorRenderBlock::Paragraph(_)))
-        .expect("paragraph below table");
-    let layout = current_editor_layout(&state);
-    let paragraph_area = layout
-        .block_areas
-        .iter()
-        .find(|area| area.block_index == paragraph_index)
-        .expect("paragraph layout area");
-    let coordinates = (paragraph_area.area.x, paragraph_area.area.y);
-    let below = layout
-        .hit_test_document(coordinates.0, coordinates.1)
-        .expect("paragraph below table has a logical Rich insertion point");
-    assert!(below.editable);
-    assert!(matches!(below.position, EditorDocumentPosition::Rich(_)));
-    state.apply_input_with_platform(
-        InputEvent::mouse_down(PointerButton::Left, coordinates),
-        &platform,
-    );
-    type_text(&mut state, &platform, "below");
-    let edited = state.to_editor_view_model();
-    assert_eq!(edited.source, None);
-    assert!(
-        matches!(edited.render_blocks().last(), Some(EditorRenderBlock::Paragraph(spans)) if spans.iter().map(|span| span.text.as_str()).collect::<String>() == "below")
-    );
+    assert_eq!(editor.mode, EditorMode::Source);
+    assert_eq!(editor.source_lines.join("\n"), "replacement");
 }
 
 #[test]
@@ -1908,7 +991,7 @@ fn closing_editor_returns_to_the_original_explorer_for_markdown_and_text_files()
             "close-to-explorer-markdown",
             "note.md",
             "# Title",
-            EditorMode::Rich,
+            EditorMode::Source,
         ),
         (
             "close-to-explorer-text",
@@ -2130,62 +1213,6 @@ fn shutdown_flushes_recovery_without_waiting_for_the_autosave_tick() {
     assert!(editor.dirty);
 }
 
-fn block_spans(block: &EditorRenderBlock) -> &[ui::EditorRenderSpan] {
-    match block {
-        EditorRenderBlock::Paragraph(spans)
-        | EditorRenderBlock::Heading { spans, .. }
-        | EditorRenderBlock::BulletListItem { spans, .. }
-        | EditorRenderBlock::OrderedListItem { spans, .. }
-        | EditorRenderBlock::Quote { spans, .. }
-        | EditorRenderBlock::Footnote { spans, .. } => spans,
-        _ => &[],
-    }
-}
-
-fn rendered_text(model: &ui::EditorViewModel) -> String {
-    let mut output = String::new();
-    for block in model.render_blocks() {
-        match block {
-            EditorRenderBlock::Paragraph(_)
-            | EditorRenderBlock::Heading { .. }
-            | EditorRenderBlock::BulletListItem { .. }
-            | EditorRenderBlock::OrderedListItem { .. }
-            | EditorRenderBlock::Quote { .. }
-            | EditorRenderBlock::Footnote { .. } => {
-                for span in block_spans(block) {
-                    output.push_str(&span.text);
-                }
-            }
-            EditorRenderBlock::CodeBlock { lines, .. } => output.push_str(&lines.join("\n")),
-            EditorRenderBlock::RawHtml(raw) => output.push_str(raw),
-            EditorRenderBlock::Image { markdown } => output.push_str(markdown),
-            EditorRenderBlock::HorizontalRule
-            | EditorRenderBlock::Table { .. }
-            | EditorRenderBlock::RichTable { .. }
-            | EditorRenderBlock::Blank => {}
-        }
-    }
-    output
-}
-
-fn click_toolbar_action(
-    state: &mut ShellSession,
-    platform: &MockPlatform,
-    action: EditorToolbarAction,
-) {
-    let item = current_editor_layout(state)
-        .toolbar_items
-        .iter()
-        .find(|item| item.action == action)
-        .copied()
-        .unwrap_or_else(|| panic!("missing toolbar action: {action:?}"));
-    assert!(item.enabled, "toolbar action is disabled: {action:?}");
-    state.apply_input_with_platform(
-        InputEvent::mouse_down(PointerButton::Left, (item.area.x, item.area.y)),
-        platform,
-    );
-}
-
 fn editor_canvas_point(state: &ShellSession) -> (u16, u16) {
     let layout = current_editor_layout(state);
     let coordinates = (
@@ -2199,75 +1226,9 @@ fn editor_canvas_point(state: &ShellSession) -> (u16, u16) {
     coordinates
 }
 
-fn open_editor_quick_menu(state: &mut ShellSession, platform: &MockPlatform) -> (u16, u16) {
-    let coordinates = editor_canvas_point(state);
-    state.apply_input_with_platform(
-        InputEvent::mouse_down(PointerButton::Right, coordinates),
-        platform,
-    );
-    assert!(state.to_editor_view_model().quick_menu.is_some());
-    coordinates
-}
-
-fn click_editor_quick_action(
-    state: &mut ShellSession,
-    platform: &MockPlatform,
-    action: EditorQuickAction,
-) {
-    let item = current_editor_layout(state)
-        .quick_menu_items
-        .iter()
-        .find(|item| item.action == action)
-        .copied()
-        .unwrap_or_else(|| panic!("missing quick action: {action:?}"));
-    assert!(item.enabled, "quick action is disabled: {action:?}");
-    state.apply_input_with_platform(
-        InputEvent::mouse_down(PointerButton::Left, (item.area.x, item.area.y)),
-        platform,
-    );
-}
-
-fn rich_table_id(model: &ui::EditorViewModel) -> Option<ui::NodeId> {
-    model
-        .render_blocks()
-        .iter()
-        .find_map(EditorRenderBlock::table_id)
-}
-
-fn rich_table_column_count(model: &ui::EditorViewModel, table_id: ui::NodeId) -> Option<usize> {
-    model.render_blocks().iter().find_map(|block| match block {
-        EditorRenderBlock::RichTable {
-            table_id: candidate,
-            header,
-            ..
-        } if *candidate == table_id => Some(header.len()),
-        _ => None,
-    })
-}
-
-fn rich_table_cell_text(
-    model: &ui::EditorViewModel,
-    table_id: ui::NodeId,
-    row: usize,
-    column: usize,
-) -> Option<String> {
-    model.render_blocks().iter().find_map(|block| match block {
-        EditorRenderBlock::RichTable {
-            table_id: candidate,
-            rows,
-            ..
-        } if *candidate == table_id => rows.get(row).and_then(|row| row.get(column)).map(|cell| {
-            cell.spans
-                .iter()
-                .map(|span| span.text.as_str())
-                .collect::<String>()
-        }),
-        _ => None,
-    })
-}
-
-fn new_user_home_state() -> ShellSession {
-    ShellSession::new_for_home_mode(default_config(), (120, 40), ShellHomeMode::User)
+fn new_user_home_state(platform: &MockPlatform) -> ShellSession {
+    bootstrap_with_shell(platform);
+    logged_in_state(platform)
 }
 
 fn current_editor_layout(state: &ShellSession) -> ui::EditorLayout {
@@ -2298,7 +1259,18 @@ fn click_editor_setting(
 
 fn open_editor_from_home(state: &mut ShellSession, platform: &MockPlatform) {
     state.apply_input_with_platform(InputEvent::from_key_label("Right"), platform);
-    state.apply_input_with_platform(InputEvent::from_key_label("Right"), platform);
+    state.apply_input_with_platform(InputEvent::from_key_label("Enter"), platform);
+    assert_eq!(state.active_screen(), ShellScreen::Launcher);
+    let editor_index = state
+        .to_launcher_view_model()
+        .items
+        .iter()
+        .position(|item| item.id == app::EDITOR_APPLICATION.id)
+        .expect("built-in Editor application");
+    state.apply_input_with_platform(InputEvent::from_key_label("Home"), platform);
+    for _ in 0..editor_index {
+        state.apply_input_with_platform(InputEvent::from_key_label("Right"), platform);
+    }
     state.apply_input_with_platform(InputEvent::from_key_label("Enter"), platform);
 }
 
@@ -2346,18 +1318,6 @@ fn ctrl(character: char) -> InputEvent {
 
 fn ctrl_shift(character: char) -> InputEvent {
     modified_key(character, true, true)
-}
-
-fn ctrl_alt(character: char) -> InputEvent {
-    InputEvent::Key(KeyInput::with_phase(
-        InputKey::Char(character),
-        InputModifiers {
-            control: true,
-            alt: true,
-            ..InputModifiers::none()
-        },
-        InputPhase::Press,
-    ))
 }
 
 fn modified_key(character: char, control: bool, shift: bool) -> InputEvent {

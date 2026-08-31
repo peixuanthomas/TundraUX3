@@ -90,10 +90,14 @@ mod tests {
                 .join("themes/default/launcher_icons/command_line.png")
                 .is_file()
         );
+        assert!(
+            copied_root
+                .join("themes/default/launcher_icons/editor.png")
+                .is_file()
+        );
         for icon in [
             "explorer",
             "launcher",
-            "editor",
             "settings",
             "diagnostics",
             "system_status",

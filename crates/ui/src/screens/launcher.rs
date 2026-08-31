@@ -86,9 +86,8 @@ impl LauncherItemViewModel {
         }
     }
 
-    /// The non-persisted, fixed Launcher entry for the embedded CLI application.
-    pub fn command_line() -> Self {
-        let descriptor = app::COMMAND_LINE_APPLICATION;
+    /// A non-persisted, fixed Launcher entry supplied by Tundra itself.
+    pub fn built_in(descriptor: app::BuiltInApplicationDescriptor) -> Self {
         Self {
             id: descriptor.id.to_string(),
             name: descriptor.name.to_string(),
@@ -99,6 +98,10 @@ impl LauncherItemViewModel {
             capabilities: LauncherItemCapabilities::BUILT_IN,
             selected: false,
         }
+    }
+
+    pub fn command_line() -> Self {
+        Self::built_in(app::COMMAND_LINE_APPLICATION)
     }
 
     pub fn is_builtin(&self) -> bool {

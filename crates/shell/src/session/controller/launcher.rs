@@ -22,7 +22,17 @@ impl ShellSession {
     }
 
     pub(in crate::session) fn built_in_launcher_count(&self) -> usize {
-        usize::from(self.can_execute_command_line())
+        self.built_in_launcher_applications().len()
+    }
+
+    pub(in crate::session) fn built_in_launcher_applications(
+        &self,
+    ) -> Vec<app::BuiltInApplicationDescriptor> {
+        app::BUILT_IN_LAUNCHER_APPLICATIONS
+            .iter()
+            .copied()
+            .filter(|descriptor| !descriptor.admin_only || self.can_execute_command_line())
+            .collect()
     }
 
     pub(in crate::session) fn launcher_item_count(&self) -> usize {
@@ -44,8 +54,12 @@ impl ShellSession {
             })
     }
 
-    pub(in crate::session) fn command_line_is_selected(&self) -> bool {
-        self.can_execute_command_line() && self.launcher_selected_index == 0
+    pub(in crate::session) fn selected_built_in_launcher_application(
+        &self,
+    ) -> Option<app::BuiltInApplicationDescriptor> {
+        self.built_in_launcher_applications()
+            .get(self.launcher_selected_index)
+            .copied()
     }
 
     pub(in crate::session) fn open_launcher(&mut self, platform: &dyn Platform) {
@@ -327,8 +341,15 @@ impl ShellSession {
     }
 
     pub(in crate::session) fn request_launcher_launch(&mut self, platform: &dyn Platform) {
-        if self.command_line_is_selected() {
-            self.open_command_line();
+        if let Some(application) = self.selected_built_in_launcher_application() {
+            match application.id {
+                id if id == app::COMMAND_LINE_APPLICATION.id => self.open_command_line(),
+                id if id == app::EDITOR_APPLICATION.id => self.open_editor(),
+                _ => self.notify_status(format!(
+                    "{} is not available in this build",
+                    application.name
+                )),
+            }
             return;
         }
         if let Some(id) = self.selected_launcher_id() {
@@ -522,13 +543,17 @@ impl ShellSession {
     }
 
     pub fn to_launcher_view_model(&self) -> ui::LauncherViewModel {
-        let built_in_count = self.built_in_launcher_count();
-        let mut items = Vec::new();
-        if built_in_count > 0 {
-            let mut command_line = ui::LauncherItemViewModel::command_line();
-            command_line.selected = self.launcher_selected_index == 0;
-            items.push(command_line);
-        }
+        let built_in_applications = self.built_in_launcher_applications();
+        let built_in_count = built_in_applications.len();
+        let mut items = built_in_applications
+            .into_iter()
+            .enumerate()
+            .map(|(index, descriptor)| {
+                let mut item = ui::LauncherItemViewModel::built_in(descriptor);
+                item.selected = self.launcher_selected_index == index;
+                item
+            })
+            .collect::<Vec<_>>();
         if let Some(state) = self.app.launcher_state() {
             items.extend(
                 state

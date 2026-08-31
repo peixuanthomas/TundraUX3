@@ -92,10 +92,17 @@ mod tests {
     }
 
     #[test]
-    fn restores_embedded_default_theme_images() {
+    fn restores_the_editor_launcher_image_and_marks_it_valid() {
         let root = TempDir::new("image-restore");
+        assert!(
+            check_default_theme(root.path())
+                .checks
+                .iter()
+                .find(|check| check.key == "launcher_icons/editor.png")
+                .is_some_and(|check| check.status == AssetCheckStatus::Warning)
+        );
 
-        let restored = restore_default_theme_file(root.path(), "home_icons/explorer.png")
+        let restored = restore_default_theme_file(root.path(), "launcher_icons/editor.png")
             .expect("embedded image should be restored");
 
         assert!(restored.changed);
@@ -104,7 +111,7 @@ mod tests {
             check_default_theme(root.path())
                 .checks
                 .iter()
-                .find(|check| check.key == "home_icons/explorer.png")
+                .find(|check| check.key == "launcher_icons/editor.png")
                 .is_some_and(|check| check.status == AssetCheckStatus::Pass)
         );
     }
@@ -131,6 +138,11 @@ mod tests {
         assert!(
             root.path()
                 .join("themes/default/launcher_icons/command_line.png")
+                .is_file()
+        );
+        assert!(
+            root.path()
+                .join("themes/default/launcher_icons/editor.png")
                 .is_file()
         );
     }

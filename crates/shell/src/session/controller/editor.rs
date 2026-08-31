@@ -112,7 +112,7 @@ impl ShellSession {
         self.editor_close_after_save = false;
         self.editor_open_after_save = false;
         self.editor_discard_for_open = false;
-        self.editor_message = Some("New Markdown document".to_string());
+        self.editor_message = Some("New text document".to_string());
         self.restore_editor_recovery_if_present();
         self.rebuild_editor_rich_render_cache();
         if self.active_screen() != ShellScreen::Editor {
@@ -410,16 +410,6 @@ pub(in crate::session) fn editor_metadata_from_recovery(
     }
 }
 
-pub(in crate::session) fn editor_recovery_rich_line_ending(
-    ending: app::editor::LineEnding,
-) -> app::rich_document::RichLineEnding {
-    match ending {
-        app::editor::LineEnding::Lf => app::rich_document::RichLineEnding::Lf,
-        app::editor::LineEnding::CrLf => app::rich_document::RichLineEnding::CrLf,
-        app::editor::LineEnding::Cr => app::rich_document::RichLineEnding::Cr,
-    }
-}
-
 pub(in crate::session) fn editor_recovery_base(
     path: Option<&std::path::PathBuf>,
     saved_content_hash: Option<u64>,
@@ -452,29 +442,16 @@ pub(in crate::session) fn restore_editor_recovery_v2(
     bool,
     Option<String>,
 ) {
-    let kind = match record.document_kind {
-        app::editor_recovery::RecoveryDocumentKind::Markdown => app::editor::DocumentKind::Markdown,
-        app::editor_recovery::RecoveryDocumentKind::PlainText => {
-            app::editor::DocumentKind::PlainText
-        }
-    };
+    let kind = app::editor::DocumentKind::PlainText;
     let (mut state, fingerprint, unbound) =
         editor_recovery_base(record.path.as_ref(), record.saved_content_hash, kind);
     state.document.metadata = editor_metadata_from_recovery(record.metadata);
     match record.payload {
         app::editor_recovery::EditorRecoveryPayload::Rich {
-            document,
-            cursor,
-            selection,
-            ..
+            markdown_fallback, ..
         } => {
-            state.install_rich_draft(
-                document,
-                cursor,
-                selection.map(|selection| {
-                    app::rich_edit::RichSelection::new(selection.start, selection.end)
-                }),
-            );
+            let cursor = markdown_fallback.len();
+            state.install_source_draft(markdown_fallback, cursor, None);
         }
         app::editor_recovery::EditorRecoveryPayload::Source {
             text,
@@ -968,7 +945,7 @@ impl ShellSession {
                 return;
             }
             // Navigation and text editing may repeat while a key is held, but
-            // document/clipboard/format actions must run once per physical key
+            // document and clipboard actions must run once per physical key
             // press. In particular, a repeated Ctrl+W must never close a newly
             // opened document after the first close has already completed.
             if repeated {
@@ -978,22 +955,6 @@ impl ShellSession {
                 InputKey::Char(character) => character.to_ascii_lowercase(),
                 _ => '\0',
             };
-            if key.modifiers.alt {
-                let format = match character {
-                    '0' => Some(app::editor::FormatCommand::Paragraph),
-                    '1'..='6' => Some(app::editor::FormatCommand::Heading(
-                        character.to_digit(10).unwrap_or_default() as u8,
-                    )),
-                    _ => None,
-                };
-                if let Some(format) = format {
-                    self.apply_editor_command(
-                        app::editor::EditorCommand::ApplyFormat(format),
-                        platform,
-                    );
-                    return;
-                }
-            }
             let command = match (character, key.modifiers.shift) {
                 ('n', _) => {
                     if self
@@ -1019,7 +980,7 @@ impl ShellSession {
                         self.editor_table_column_widths.clear();
                         self.editor_table_resize = None;
                         self.editor_fingerprint = None;
-                        self.editor_message = Some("New Markdown document".to_string());
+                        self.editor_message = Some("New text document".to_string());
                         self.rebuild_editor_rich_render_cache();
                     }
                     return;
@@ -1030,20 +991,10 @@ impl ShellSession {
                 ('w', _) => app::editor::EditorCommand::RequestClose,
                 ('z', false) => app::editor::EditorCommand::Undo,
                 ('y', _) | ('z', true) => app::editor::EditorCommand::Redo,
-                ('x', true) => app::editor::EditorCommand::ApplyFormat(
-                    app::editor::FormatCommand::Strikethrough,
-                ),
                 ('x', false) => app::editor::EditorCommand::Cut,
                 ('c', _) => app::editor::EditorCommand::Copy,
                 ('v', _) => app::editor::EditorCommand::RequestPaste,
                 ('a', _) => app::editor::EditorCommand::SelectAll,
-                ('b', _) => {
-                    app::editor::EditorCommand::ApplyFormat(app::editor::FormatCommand::Bold)
-                }
-                ('i', _) => {
-                    app::editor::EditorCommand::ApplyFormat(app::editor::FormatCommand::Italic)
-                }
-                ('m', true) => app::editor::EditorCommand::ToggleMode,
                 ('f', _) => {
                     self.editor_message = Some("Find is not available in this build".to_string());
                     return;
@@ -1052,12 +1003,6 @@ impl ShellSession {
                     self.editor_message =
                         Some("Replace is not available in this build".to_string());
                     return;
-                }
-                ('k', _) => {
-                    app::editor::EditorCommand::ApplyFormat(app::editor::FormatCommand::Link {
-                        url: "https://".to_string(),
-                        title: None,
-                    })
                 }
                 _ => return,
             };
@@ -2762,30 +2707,10 @@ impl ShellSession {
 
         let (mut state, fingerprint, unbound, warning) = match recovery {
             app::editor_recovery::VersionedEditorRecovery::V1(record) => {
-                let kind = if record.markdown {
-                    app::editor::DocumentKind::Markdown
-                } else {
-                    app::editor::DocumentKind::PlainText
-                };
+                let kind = app::editor::DocumentKind::PlainText;
                 let (mut state, fingerprint, unbound) =
                     editor_recovery_base(record.path.as_ref(), record.saved_content_hash, kind);
-                if record.source_mode || kind == app::editor::DocumentKind::PlainText {
-                    state.install_source_draft(record.source, record.cursor, None);
-                } else {
-                    match app::markdown_codec::MarkdownCodec::import_with_metadata(
-                        &record.source,
-                        state.document.metadata.utf8_bom,
-                        editor_recovery_rich_line_ending(
-                            state.document.metadata.preferred_line_ending,
-                        ),
-                    ) {
-                        Ok(import) => {
-                            let cursor = import.positions.rich_position_for(record.cursor);
-                            state.install_rich_draft(import.document, cursor, None);
-                        }
-                        Err(_) => state.install_source_draft(record.source, record.cursor, None),
-                    }
-                }
+                state.install_source_draft(record.source, record.cursor, None);
                 (state, fingerprint, unbound, None)
             }
             app::editor_recovery::VersionedEditorRecovery::V2(record) => {
@@ -2949,6 +2874,12 @@ impl ShellSession {
         if self.active_screen() == ShellScreen::Explorer && self.app.explorer_state().is_some() {
             self.focused_component = ShellComponent::Explorer;
             self.notify_status("Explorer");
+            self.refresh_hit_map();
+        } else if self.active_screen() == ShellScreen::Launcher
+            && self.app.launcher_state().is_some()
+        {
+            self.focused_component = ShellComponent::Launcher;
+            self.notify_status("Launcher");
             self.refresh_hit_map();
         } else if self.active_screen() == ShellScreen::Diagnostics {
             self.focused_component = ShellComponent::Diagnostics;

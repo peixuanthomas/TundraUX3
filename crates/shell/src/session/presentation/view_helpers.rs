@@ -600,7 +600,6 @@ pub(in crate::session) fn user_home_entries() -> Vec<ui::ShellEntry> {
     vec![
         ui::ShellEntry::new("Explorer", "Browse files"),
         ui::ShellEntry::new("Launcher", "Open apps and commands"),
-        ui::ShellEntry::new("Editor", "Edit text files"),
         ui::ShellEntry::new("Settings", "Adjust TundraUX"),
         ui::ShellEntry::new("System Status", "View storage and network health"),
     ]

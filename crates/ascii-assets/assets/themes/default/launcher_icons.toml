@@ -10,3 +10,13 @@ lines = [
   '|      |',
   '|______|',
 ]
+
+[items."builtin.editor"]
+label = "Editor"
+image = "launcher_icons/editor.png"
+lines = [
+  ' _____ ',
+  '|==  |',
+  '|  __|',
+  '|_/__|',
+]

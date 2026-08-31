@@ -28,7 +28,6 @@ pub(crate) const EMBEDDED_DEFAULT_THEME_FILES: &[EmbeddedDefaultThemeFile] = &[
     embedded_default_theme_file!("launcher_icons", "launcher_icons.toml"),
     embedded_default_theme_file!("home_icons/default.png", "home_icons/default.png"),
     embedded_default_theme_file!("home_icons/diagnostics.png", "home_icons/diagnostics.png"),
-    embedded_default_theme_file!("home_icons/editor.png", "home_icons/editor.png"),
     embedded_default_theme_file!("home_icons/explorer.png", "home_icons/explorer.png"),
     embedded_default_theme_file!("home_icons/launcher.png", "home_icons/launcher.png"),
     embedded_default_theme_file!("home_icons/settings.png", "home_icons/settings.png"),
@@ -45,6 +44,7 @@ pub(crate) const EMBEDDED_DEFAULT_THEME_FILES: &[EmbeddedDefaultThemeFile] = &[
         "launcher_icons/command_line.png",
         "launcher_icons/command_line.png"
     ),
+    embedded_default_theme_file!("launcher_icons/editor.png", "launcher_icons/editor.png"),
     embedded_default_theme_file!("weathr/render/clock_font", "weathr/render/clock_font.toml"),
     embedded_default_theme_file!("weathr/animation/airplane", "weathr/animation/airplane.txt"),
     embedded_default_theme_file!("weathr/animation/cloud_0", "weathr/animation/cloud_0.txt"),
@@ -128,10 +128,7 @@ mod tests {
 
         assert_eq!(embedded.len(), EMBEDDED_DEFAULT_THEME_FILES.len());
         assert!(required.is_subset(&embedded));
-        assert!(embedded.contains(&(
-            "home_icons/system_status.png",
-            "home_icons/system_status.png"
-        )));
+        assert!(embedded.contains(&("launcher_icons/editor.png", "launcher_icons/editor.png")));
         assert_eq!(embedded.len(), required.len() + 10);
         assert_eq!(
             EMBEDDED_DEFAULT_THEME_FILES

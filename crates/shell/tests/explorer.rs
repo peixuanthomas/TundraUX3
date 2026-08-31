@@ -512,12 +512,14 @@ fn admin_batch_adds_launcher_targets_and_high_risk_launch_requires_confirmation(
     state.apply_input_with_platform(InputEvent::from_key_label("Enter"), &platform);
     assert_eq!(state.active_screen(), ShellScreen::Launcher);
     assert_eq!(state.focused_component(), ShellComponent::Launcher);
-    assert_eq!(state.to_launcher_view_model().items.len(), 3);
+    assert_eq!(state.to_launcher_view_model().items.len(), 4);
 
     let launcher = state.to_launcher_view_model();
-    assert_eq!(launcher.items.len(), 3);
+    assert_eq!(launcher.items.len(), 4);
     assert_eq!(launcher.items[0].id, app::COMMAND_LINE_APPLICATION.id);
     assert!(launcher.items[0].is_builtin());
+    assert_eq!(launcher.items[1].id, app::EDITOR_APPLICATION.id);
+    assert!(launcher.items[1].is_builtin());
     assert!(
         launcher
             .items
@@ -543,8 +545,8 @@ fn admin_batch_adds_launcher_targets_and_high_risk_launch_requires_confirmation(
         panic!("Launcher drag test requires the full shell layout");
     };
     let layout = ui::launcher_layout(main, &launcher);
-    let source = layout.items[1].area;
-    let destination = layout.items[2].area;
+    let source = layout.items[2].area;
+    let destination = layout.items[3].area;
     let source_point = (
         source.x.saturating_add(source.width / 2),
         source.y.saturating_add(1),
@@ -566,7 +568,7 @@ fn admin_batch_adds_launcher_targets_and_high_risk_launch_requires_confirmation(
         dragging
             .drop_target
             .map(ui::LauncherDropTarget::insertion_index),
-        Some(3)
+        Some(4)
     );
     assert!(
         ui::launcher_layout(main, &dragging)
@@ -584,13 +586,13 @@ fn admin_batch_adds_launcher_targets_and_high_risk_launch_requires_confirmation(
             .iter()
             .map(|item| item.name.as_str())
             .collect::<Vec<_>>(),
-        vec!["Command Line", "script.cmd", "program.exe"]
+        vec!["Command Line", "Editor", "script.cmd", "program.exe"]
     );
 
     let launcher = state.to_launcher_view_model();
     let layout = ui::launcher_layout(main, &launcher);
-    let source = layout.items[2].area;
-    let destination = layout.items[1].area;
+    let source = layout.items[3].area;
+    let destination = layout.items[2].area;
     let source_point = (
         source.x.saturating_add(source.width / 2),
         source.y.saturating_add(1),
@@ -615,7 +617,7 @@ fn admin_batch_adds_launcher_targets_and_high_risk_launch_requires_confirmation(
             .iter()
             .map(|item| item.name.as_str())
             .collect::<Vec<_>>(),
-        vec!["Command Line", "program.exe", "script.cmd"]
+        vec!["Command Line", "Editor", "program.exe", "script.cmd"]
     );
     let storage = StorageManager::open(platform.app_paths().expect("app paths"))
         .expect("storage")

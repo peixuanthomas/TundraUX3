@@ -278,6 +278,16 @@ mod tests {
                 .launcher_icon_image_path("builtin.command-line")
                 .is_some_and(|path| path.is_file())
         );
+        let editor = store
+            .launcher_icon("builtin.editor")
+            .expect("Editor Launcher icon");
+        assert_eq!(editor.label(), Some("Editor"));
+        assert_eq!(editor.image_path(), Some("launcher_icons/editor.png"));
+        assert!(
+            store
+                .launcher_icon_image_path("builtin.editor")
+                .is_some_and(|path| path.is_file())
+        );
         assert_eq!(store.clock_font().height, 7);
         assert!(store.text_art("weathr/world/house").unwrap().height() >= 10);
         assert_eq!(

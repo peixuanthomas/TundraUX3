@@ -3753,22 +3753,26 @@ fn exit_confirmation_names_the_physical_power_action_poweroff() {
 }
 
 #[test]
-fn command_line_is_a_fixed_admin_only_launcher_item() {
+fn fixed_launcher_items_include_editor_and_keep_command_line_admin_only() {
     let mut admin = ShellSession::new(ShellLaunchConfig::default(), (120, 40));
     set_test_auth_role(&mut admin, UserRole::Admin);
 
     let launcher = admin.to_launcher_view_model();
-    assert_eq!(launcher.items.len(), 1);
-    let item = &launcher.items[0];
-    assert_eq!(item.id, app::COMMAND_LINE_APPLICATION.id);
-    assert!(item.is_builtin());
-    assert!(!item.capabilities.removable);
-    assert!(!item.capabilities.reapprovable);
-    assert!(!item.capabilities.reorderable);
+    assert_eq!(launcher.items.len(), 2);
+    assert_eq!(launcher.items[0].id, app::COMMAND_LINE_APPLICATION.id);
+    assert_eq!(launcher.items[1].id, app::EDITOR_APPLICATION.id);
+    assert!(launcher.items.iter().all(|item| item.is_builtin()));
+    assert!(launcher.items.iter().all(|item| {
+        !item.capabilities.removable
+            && !item.capabilities.reapprovable
+            && !item.capabilities.reorderable
+    }));
 
     let mut user = ShellSession::new(ShellLaunchConfig::default(), (120, 40));
     set_test_auth_role(&mut user, UserRole::User);
-    assert!(user.to_launcher_view_model().items.is_empty());
+    let launcher = user.to_launcher_view_model();
+    assert_eq!(launcher.items.len(), 1);
+    assert_eq!(launcher.items[0].id, app::EDITOR_APPLICATION.id);
 }
 
 #[test]

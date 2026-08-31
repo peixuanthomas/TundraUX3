@@ -784,34 +784,15 @@ pub(super) fn menu_layout(area: Rect) -> (Vec<EditorMenuLayout>, Vec<EditorModeL
     if area.is_empty() {
         return (Vec::new(), Vec::new());
     }
-    let mode_specs = [(EditorMode::Rich, 6u16), (EditorMode::Source, 8u16)];
-    let mode_width = mode_specs.iter().map(|(_, width)| *width).sum::<u16>();
-    let mode_start = area.right().saturating_sub(mode_width.min(area.width));
-    let mut modes = Vec::new();
-    let mut x = mode_start;
-    for (mode, width) in mode_specs {
-        let width = width.min(area.right().saturating_sub(x));
-        if width == 0 {
-            break;
-        }
-        modes.push(EditorModeLayout {
-            mode,
-            area: Rect::new(x, area.y, width, 1),
-        });
-        x = x.saturating_add(width);
-    }
     let menu_specs = [
         (EditorMenu::File, 6u16),
         (EditorMenu::Edit, 6u16),
-        (EditorMenu::Insert, 8u16),
-        (EditorMenu::Format, 8u16),
-        (EditorMenu::View, 6u16),
         (EditorMenu::Settings, 10u16),
     ];
     let mut menus = Vec::new();
-    x = area.x;
+    let mut x = area.x;
     for (menu, width) in menu_specs {
-        if x.saturating_add(width) > mode_start {
+        if x.saturating_add(width) > area.right() {
             break;
         }
         menus.push(EditorMenuLayout {
@@ -820,7 +801,7 @@ pub(super) fn menu_layout(area: Rect) -> (Vec<EditorMenuLayout>, Vec<EditorModeL
         });
         x = x.saturating_add(width);
     }
-    (menus, modes)
+    (menus, Vec::new())
 }
 
 pub(super) fn menu_popup_layout(
@@ -1167,19 +1148,7 @@ pub(super) fn toolbar_specs() -> Vec<(EditorToolbarAction, &'static str, u16)> {
         toolbar_spec(EditorToolbarAction::Save),
         toolbar_spec(EditorToolbarAction::Undo),
         toolbar_spec(EditorToolbarAction::Redo),
-        toolbar_spec(EditorToolbarAction::ParagraphStyle),
-        toolbar_spec(EditorToolbarAction::Bold),
-        toolbar_spec(EditorToolbarAction::Italic),
-        toolbar_spec(EditorToolbarAction::Strikethrough),
-        toolbar_spec(EditorToolbarAction::InlineCode),
-        toolbar_spec(EditorToolbarAction::BulletList),
-        toolbar_spec(EditorToolbarAction::OrderedList),
-        toolbar_spec(EditorToolbarAction::Quote),
-        toolbar_spec(EditorToolbarAction::Link),
-        toolbar_spec(EditorToolbarAction::Image),
-        toolbar_spec(EditorToolbarAction::Table),
         toolbar_spec(EditorToolbarAction::Find),
-        toolbar_spec(EditorToolbarAction::More),
     ]
 }
 

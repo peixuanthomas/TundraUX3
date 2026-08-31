@@ -1,8 +1,7 @@
 //! Domain model for Tundra's single-document terminal editor.
 //!
-//! Source mode edits the canonical document. Rich mode edits an isolated
-//! working buffer and only synchronizes it at explicit mode/save boundaries.
-//! This keeps live UI input away from the persisted Markdown snapshot.
+//! The built-in editor edits the canonical document as plain text. Markdown
+//! files use the same text buffer as every other supported file.
 
 pub mod markdown_codec;
 pub mod recovery;
@@ -55,19 +54,10 @@ pub enum DocumentKind {
 }
 
 impl DocumentKind {
-    pub fn from_path(path: &Path) -> Self {
-        let extension = path
-            .extension()
-            .and_then(|extension| extension.to_str())
-            .unwrap_or_default();
-        if ["md", "markdown", "mdown", "mkd"]
-            .iter()
-            .any(|candidate| extension.eq_ignore_ascii_case(candidate))
-        {
-            Self::Markdown
-        } else {
-            Self::PlainText
-        }
+    pub fn from_path(_path: &Path) -> Self {
+        // Files opened by the built-in editor are always treated as plain
+        // text, including files whose names use Markdown extensions.
+        Self::PlainText
     }
 
     pub const fn initial_mode(self) -> EditorMode {
@@ -1734,7 +1724,7 @@ impl Default for EditorState {
 
 impl EditorState {
     pub fn new() -> Self {
-        Self::untitled(DocumentKind::Markdown)
+        Self::untitled(DocumentKind::PlainText)
     }
 
     pub fn untitled(kind: DocumentKind) -> Self {

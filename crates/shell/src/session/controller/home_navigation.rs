@@ -236,7 +236,6 @@ impl ShellSession {
         match entry.label.as_str() {
             "Explorer" => self.open_explorer(platform),
             "Launcher" => self.open_launcher(platform),
-            "Editor" => self.open_editor(),
             "Settings" => self.open_settings(),
             "System Status" => self.open_system_status(),
             "User Management" | "User Profile" => self.open_user_management(),

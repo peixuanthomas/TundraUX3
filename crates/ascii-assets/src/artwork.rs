@@ -205,7 +205,6 @@ pub(crate) fn load_home_icon_catalog(
     for required in [
         "explorer",
         "launcher",
-        "editor",
         "settings",
         "diagnostics",
         "system_status",
@@ -228,7 +227,16 @@ pub(crate) fn load_launcher_icons(
     resolver: &AssetResolver,
     theme_id: &str,
 ) -> Result<ArtSet, AssetError> {
-    load_art_set(resolver, theme_id, "launcher_icons", "launcher_icons.toml")
+    let icons = load_art_set(resolver, theme_id, "launcher_icons", "launcher_icons.toml")?;
+    for required in ["builtin.command-line", "builtin.editor"] {
+        if icons.get(required).is_none() {
+            return Err(AssetError::InvalidAsset {
+                asset: "launcher_icons".to_string(),
+                message: format!("missing required built-in application icon {required}"),
+            });
+        }
+    }
+    Ok(icons)
 }
 
 pub(crate) fn load_explorer_icons(

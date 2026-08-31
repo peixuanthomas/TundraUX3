@@ -66,8 +66,10 @@ fn launcher_view_model_is_safe_before_launcher_state_is_loaded() {
 
     let launcher = state.to_launcher_view_model();
 
-    assert!(launcher.items.is_empty());
-    assert_eq!(launcher.selected_index, None);
+    assert_eq!(launcher.items.len(), 1);
+    assert_eq!(launcher.items[0].id, app::EDITOR_APPLICATION.id);
+    assert!(launcher.items[0].is_builtin());
+    assert_eq!(launcher.selected_index, Some(0));
     assert_eq!(launcher.view_mode, ui::LauncherViewMode::LargeIcons);
 }
 
@@ -933,7 +935,7 @@ fn user_state_builds_user_home_view_model() {
 
     assert_eq!(home.display_mode(), HomeDisplayMode::User);
     assert_eq!(home.diagnostics(), None);
-    assert_eq!(home.entries().len(), 5);
+    assert_eq!(home.entries().len(), 4);
     assert!(
         home.entries()
             .iter()
@@ -1070,13 +1072,7 @@ fn explicit_user_mode_shows_product_entries_without_diagnostics() {
         .collect();
     assert_eq!(
         labels,
-        vec![
-            "Explorer",
-            "Launcher",
-            "Editor",
-            "Settings",
-            "System Status",
-        ]
+        vec!["Explorer", "Launcher", "Settings", "System Status",]
     );
 }
 
@@ -1091,7 +1087,7 @@ fn home_arrow_keys_update_selected_entry() {
     assert_eq!(state.selected_home_entry_index(), 1);
 
     state.apply_input(InputEvent::from_key_label("End"));
-    assert_eq!(state.selected_home_entry_index(), 4);
+    assert_eq!(state.selected_home_entry_index(), 3);
 }
 
 #[test]

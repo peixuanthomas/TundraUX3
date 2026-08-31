@@ -32,8 +32,17 @@ pub const COMMAND_LINE_APPLICATION: BuiltInApplicationDescriptor = BuiltInApplic
     fixed_in_launcher: true,
 };
 
+pub const EDITOR_APPLICATION: BuiltInApplicationDescriptor = BuiltInApplicationDescriptor {
+    id: "builtin.editor",
+    name: "Editor",
+    description: "Edit plain-text files",
+    type_label: "Built-in application",
+    admin_only: false,
+    fixed_in_launcher: true,
+};
+
 pub const BUILT_IN_LAUNCHER_APPLICATIONS: &[BuiltInApplicationDescriptor] =
-    &[COMMAND_LINE_APPLICATION];
+    &[COMMAND_LINE_APPLICATION, EDITOR_APPLICATION];
 
 pub fn setup_language_options() -> Vec<SetupLanguageOption> {
     vec![SetupLanguageOption {
@@ -167,13 +176,14 @@ mod tests {
     use super::*;
 
     #[test]
-    fn command_line_is_a_fixed_admin_launcher_application() {
-        assert_eq!(BUILT_IN_LAUNCHER_APPLICATIONS, &[COMMAND_LINE_APPLICATION]);
-        let descriptor = BUILT_IN_LAUNCHER_APPLICATIONS
-            .first()
-            .expect("Command Line built-in descriptor");
-        assert_eq!(descriptor.id, "builtin.command-line");
-        assert!(descriptor.admin_only);
-        assert!(descriptor.fixed_in_launcher);
+    fn built_in_launcher_applications_describe_command_line_and_editor() {
+        assert_eq!(
+            BUILT_IN_LAUNCHER_APPLICATIONS,
+            &[COMMAND_LINE_APPLICATION, EDITOR_APPLICATION]
+        );
+        assert!(COMMAND_LINE_APPLICATION.admin_only);
+        assert!(COMMAND_LINE_APPLICATION.fixed_in_launcher);
+        assert!(!EDITOR_APPLICATION.admin_only);
+        assert!(EDITOR_APPLICATION.fixed_in_launcher);
     }
 }

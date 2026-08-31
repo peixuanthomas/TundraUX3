@@ -46,16 +46,30 @@ fn picker_snapshot(effects: Vec<EditorEffect>) -> SaveSnapshot {
 }
 
 #[test]
-fn new_documents_choose_the_expected_mode_and_name() {
-    let markdown = EditorState::new();
+fn new_documents_default_to_plain_text_while_explicit_markdown_remains_supported_internally() {
+    let text = EditorState::new();
+    assert_eq!(text.document.kind, DocumentKind::PlainText);
+    assert_eq!(text.mode, EditorMode::Source);
+    assert_eq!(text.document.display_name(), "Untitled.txt");
+    assert!(!text.is_dirty());
+
+    let markdown = EditorState::untitled(DocumentKind::Markdown);
     assert_eq!(markdown.document.kind, DocumentKind::Markdown);
     assert_eq!(markdown.mode, EditorMode::Rich);
     assert_eq!(markdown.document.display_name(), "Untitled.md");
-    assert!(!markdown.is_dirty());
+}
 
-    let text = EditorState::untitled(DocumentKind::PlainText);
-    assert_eq!(text.mode, EditorMode::Source);
-    assert_eq!(text.document.display_name(), "Untitled.txt");
+#[test]
+fn markdown_file_paths_open_as_plain_text_and_cannot_enter_rich_mode() {
+    let mut editor = EditorState::open("README.md", b"# raw **markdown**").expect("UTF-8 text");
+
+    assert_eq!(editor.document.kind, DocumentKind::PlainText);
+    assert_eq!(editor.mode, EditorMode::Source);
+    assert_eq!(editor.source(), "# raw **markdown**");
+    assert!(editor.rich_document().is_none());
+
+    editor.apply(EditorCommand::SetMode(EditorMode::Rich));
+    assert_eq!(editor.mode, EditorMode::Source);
 }
 
 #[test]
@@ -536,7 +550,7 @@ fn read_only_editor_allows_view_mode_changes() {
 
 #[test]
 fn rich_unicode_graphemes_use_logical_positions_and_delete_atomically() {
-    let mut editor = EditorState::new();
+    let mut editor = EditorState::untitled(DocumentKind::Markdown);
     editor.apply(EditorCommand::InsertText("A好e\u{301}🙂".to_owned()));
     assert_eq!(editor.export_text(), "A好e\u{301}🙂");
     assert_eq!(editor.rich_cursor().unwrap().grapheme_offset, 4);
@@ -695,7 +709,7 @@ fn source_vertical_navigation_preserves_grapheme_columns_without_line_strings() 
 
 #[test]
 fn rich_selection_copy_cut_paste_and_undo_share_the_native_model() {
-    let mut editor = EditorState::new();
+    let mut editor = EditorState::untitled(DocumentKind::Markdown);
     editor.apply(EditorCommand::InsertText("alpha beta".to_owned()));
     let id = rich_container(&editor);
     select_rich(&mut editor, id, 0, 5);
@@ -1535,7 +1549,7 @@ fn rich_punctuation_is_plain_text_and_does_not_rebuild_structure() {
 
 #[test]
 fn table_commands_use_stable_table_ids_and_leave_an_editable_paragraph() {
-    let mut editor = EditorState::new();
+    let mut editor = EditorState::untitled(DocumentKind::Markdown);
     editor.apply(EditorCommand::ApplyFormat(FormatCommand::Table {
         columns: 2,
         rows: 1,
@@ -2139,7 +2153,7 @@ fn save_effect_is_revisioned_and_does_not_mark_saved_early() {
     else {
         panic!("expected one SaveFilePicker effect, got {effects:?}");
     };
-    assert_eq!(suggested_name, "Untitled.md");
+    assert_eq!(suggested_name, "Untitled.txt");
     assert_eq!(snapshot.revision, revision);
     assert_eq!(snapshot.to_bytes().unwrap(), b"body");
     assert!(editor.is_dirty());
@@ -2170,7 +2184,7 @@ fn successful_save_of_an_old_revision_leaves_current_revision_dirty() {
     assert_ne!(current_revision, saved.revision);
 
     editor.apply(EditorCommand::MarkSaved {
-        path: Some(PathBuf::from("note.md")),
+        path: None,
         revision: saved.revision,
     });
     assert_eq!(editor.saved_revision(), saved.revision);
@@ -2182,7 +2196,7 @@ fn successful_save_of_an_old_revision_leaves_current_revision_dirty() {
 
 #[test]
 fn save_as_non_markdown_converts_the_session_to_source_after_success() {
-    let mut editor = EditorState::new();
+    let mut editor = EditorState::untitled(DocumentKind::Markdown);
     editor.apply(EditorCommand::InsertText("body".to_owned()));
     let cursor = editor.rich_cursor();
     let snapshot = picker_snapshot(editor.apply(EditorCommand::RequestSaveAs));

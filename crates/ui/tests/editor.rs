@@ -4,16 +4,16 @@ use ratatui::layout::{Position, Rect};
 use ratatui::style::{Color, Modifier};
 use ui::{
     EditorBlockArea, EditorBlockSourceMap, EditorDocumentPosition, EditorFocus, EditorHitTarget,
-    EditorMenu, EditorMenuAction, EditorMode, EditorQuickAction, EditorQuickMenuViewModel,
-    EditorRenderBlock, EditorRenderSpan, EditorSelection, EditorSettingsControl,
-    EditorSettingsField, EditorSettingsViewModel, EditorSourceRange, EditorSourceSelection,
-    EditorSourceWindowLine, EditorTableAlignment, EditorTableCell, EditorTableEdge,
-    EditorTextPosition, EditorToolbarAction, EditorViewModel, NodeId, RichPosition, RichRange,
-    TundraTheme, editor_layout, render_editor,
+    EditorMenu, EditorMenuAction, EditorQuickAction, EditorQuickMenuViewModel, EditorRenderBlock,
+    EditorRenderSpan, EditorSelection, EditorSettingsControl, EditorSettingsField,
+    EditorSettingsViewModel, EditorSourceRange, EditorSourceSelection, EditorSourceWindowLine,
+    EditorTableAlignment, EditorTableCell, EditorTableEdge, EditorTextPosition,
+    EditorToolbarAction, EditorViewModel, NodeId, RichPosition, RichRange, TundraTheme,
+    editor_layout, render_editor,
 };
 
 #[test]
-fn minimum_editor_layout_keeps_save_mode_canvas_and_status_available() {
+fn minimum_editor_layout_keeps_plain_text_controls_canvas_and_status_available() {
     let model = sample_model();
     let layout = editor_layout(Rect::new(0, 0, 50, 12), &model);
 
@@ -21,27 +21,19 @@ fn minimum_editor_layout_keeps_save_mode_canvas_and_status_available() {
     assert_eq!(layout.toolbar, Rect::new(0, 1, 50, 1));
     assert_eq!(layout.status_bar, Rect::new(0, 11, 50, 1));
     assert!(layout.canvas.height >= 7);
-    assert!(layout.toolbar_overflow);
+    assert!(!layout.toolbar_overflow);
 
     let save = toolbar_item(&layout, EditorToolbarAction::Save);
     assert_eq!(
         layout.hit_test(save.area.x, save.area.y),
         Some(EditorHitTarget::Toolbar(EditorToolbarAction::Save))
     );
-    let source = layout
-        .modes
-        .iter()
-        .find(|item| item.mode == EditorMode::Source)
-        .expect("source mode");
-    assert_eq!(
-        layout.hit_test(source.area.x, source.area.y),
-        Some(EditorHitTarget::Mode(EditorMode::Source))
-    );
+    assert!(layout.modes.is_empty());
     assert!(
         layout
             .toolbar_items
             .iter()
-            .any(|item| item.action == EditorToolbarAction::More)
+            .all(|item| item.action != EditorToolbarAction::More)
     );
 }
 
@@ -61,7 +53,7 @@ fn shell_minimum_main_height_degrades_without_losing_the_editing_canvas() {
             .iter()
             .any(|item| item.action == EditorToolbarAction::Save)
     );
-    assert_eq!(layout.modes.len(), 2);
+    assert!(layout.modes.is_empty());
 }
 
 #[test]
@@ -165,18 +157,11 @@ fn source_mode_preserves_markdown_and_highlights_the_selection() {
     let unselected = &terminal.backend().buffer()[(layout.canvas.x + 4, layout.canvas.y)];
     assert_ne!(unselected.bg, TundraTheme::default_dark().accent_color);
 
-    let source = layout
-        .modes
-        .iter()
-        .find(|item| item.mode == EditorMode::Source)
-        .expect("source mode");
-    let source_cell = &terminal.backend().buffer()[(source.area.x, source.area.y)];
-    assert_eq!(source_cell.fg, TundraTheme::default_dark().accent_color);
-    assert_eq!(source_cell.bg, TundraTheme::default_dark().background);
+    assert!(layout.modes.is_empty());
 }
 
 #[test]
-fn source_mode_disables_markdown_toolbar_actions_and_keeps_plain_actions_available() {
+fn source_mode_omits_markdown_toolbar_actions_and_keeps_plain_actions_available() {
     let model = EditorViewModel::source("README.md", "plain **source**");
     let layout = editor_layout(Rect::new(0, 0, 140, 14), &model);
     let formatting = [
@@ -194,20 +179,17 @@ fn source_mode_disables_markdown_toolbar_actions_and_keeps_plain_actions_availab
     ];
 
     for action in formatting {
-        let item = toolbar_item(&layout, action);
-        assert!(!item.enabled, "{action:?} must be disabled in Source mode");
-        assert_eq!(layout.hit_test(item.area.x, item.area.y), None);
+        assert!(
+            layout
+                .toolbar_items
+                .iter()
+                .all(|item| item.action != action),
+            "{action:?} must not appear in the plain-text editor"
+        );
     }
     assert!(toolbar_item(&layout, EditorToolbarAction::New).enabled);
     assert!(toolbar_item(&layout, EditorToolbarAction::Open).enabled);
     assert!(toolbar_item(&layout, EditorToolbarAction::Save).enabled);
-
-    let terminal = render(&model, 140, 14);
-    let bold = toolbar_item(&layout, EditorToolbarAction::Bold);
-    assert_eq!(
-        terminal.backend().buffer()[(bold.area.x + 1, bold.area.y)].fg,
-        TundraTheme::default_dark().muted
-    );
 }
 
 #[test]
@@ -216,27 +198,25 @@ fn open_menu_renders_a_clickable_overlay_above_the_toolbar_and_canvas() {
         "menu.md",
         vec![EditorRenderBlock::paragraph("canvas content")],
     );
-    model.open_menu = Some(EditorMenu::Format);
+    model.open_menu = Some(EditorMenu::Edit);
+    model.toolbar.can_undo = true;
     let layout = editor_layout(Rect::new(0, 0, 72, 16), &model);
-    let popup = layout.menu_popup.expect("Format popup");
-    let bold = layout
+    let popup = layout.menu_popup.expect("Edit popup");
+    let undo = layout
         .menu_items
         .iter()
-        .find(|item| item.action == EditorMenuAction::Toolbar(EditorToolbarAction::Bold))
-        .expect("Bold menu item");
+        .find(|item| item.action == EditorMenuAction::Toolbar(EditorToolbarAction::Undo))
+        .expect("Undo menu item");
 
     assert!(popup.height > 2);
     assert_eq!(
-        layout.hit_test(bold.area.x, bold.area.y),
+        layout.hit_test(undo.area.x, undo.area.y),
         Some(EditorHitTarget::MenuAction(EditorMenuAction::Toolbar(
-            EditorToolbarAction::Bold
+            EditorToolbarAction::Undo
         )))
     );
     let terminal = render(&model, 72, 16);
-    assert!(terminal_output(&terminal).contains("Strikethrough"));
-    let (bold_x, bold_y) = find_text(&terminal, "Bold");
-    assert!(bold_y >= popup.y && bold_y < popup.bottom());
-    assert!(bold_x >= popup.x && bold_x < popup.right());
+    assert!(terminal_output(&terminal).contains("Undo"));
 }
 
 #[test]
@@ -294,7 +274,6 @@ fn editor_button_groups_preserve_selected_disabled_and_menu_surface_styles() {
     let mut model = sample_model();
     model.focus = EditorFocus::Toolbar;
     model.selected_toolbar_action = Some(EditorToolbarAction::Open);
-    model.toolbar.bold = true;
     model.settings = Some(EditorSettingsViewModel {
         editable: true,
         enabled: true,
@@ -319,16 +298,9 @@ fn editor_button_groups_preserve_selected_disabled_and_menu_surface_styles() {
     assert_eq!(settings_cell.bg, theme.background);
     assert!(settings_cell.modifier.contains(Modifier::BOLD));
 
-    let source_mode = layout
-        .modes
-        .iter()
-        .find(|item| item.mode == EditorMode::Source)
-        .expect("source mode");
-    let source_cell = &buffer[(source_mode.area.x, source_mode.area.y)];
-    assert_eq!(source_cell.fg, theme.muted);
-    assert_eq!(source_cell.bg, theme.muted);
+    assert!(layout.modes.is_empty());
 
-    for action in [EditorToolbarAction::Open, EditorToolbarAction::Bold] {
+    for action in [EditorToolbarAction::Open] {
         let item = toolbar_item(&layout, action);
         let cell = &buffer[(item.area.x, item.area.y)];
         assert_eq!(cell.fg, theme.accent_color, "{action:?}");

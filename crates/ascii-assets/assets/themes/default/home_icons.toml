@@ -21,16 +21,6 @@ lines = [
   ' /___\ ',
 ]
 
-[items.editor]
-label = "Editor"
-image = "home_icons/editor.png"
-lines = [
-  ' _____ ',
-  '|==  |',
-  '|  __|',
-  '|_/__|',
-]
-
 [items.settings]
 label = "Settings"
 image = "home_icons/settings.png"

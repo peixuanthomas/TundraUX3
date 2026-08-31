@@ -1,6 +1,6 @@
 # TundraUX3
 
-TundraUX3 是一个使用 Rust 编写的终端桌面环境实验项目。它以完整的 TUI 会话整合锁屏、登录、主页、文件管理、应用启动、Markdown 编辑、设置、诊断和通知等功能。
+TundraUX3 是一个使用 Rust 编写的终端桌面环境实验项目。它以完整的 TUI 会话整合锁屏、登录、主页、文件管理、应用启动、纯文本编辑、设置、诊断和通知等功能。
 
 项目基于 [Ratatui](https://ratatui.rs/) 与 [crossterm](https://github.com/crossterm-rs/crossterm)，面向 Windows 11、macOS 和 Linux 桌面环境。当前仍处于实验阶段，建议在兼容 crossterm 的真实终端中体验。
 
@@ -9,7 +9,7 @@ TundraUX3 是一个使用 Rust 编写的终端桌面环境实验项目。它以�
 - 首次启动配置、账户登录、角色权限与登录保护
 - 天气锁屏、时钟、通知中心和可定制外观
 - 文件管理器、应用启动器与内嵌命令行
-- 支持源码/富文本视图的 Markdown 编辑器
+- 从 Launcher 打开的纯文本编辑器；Markdown 文件按原文编辑，不做预览或格式解析
 - 跨平台存储、系统集成、诊断和故障恢复
 - 后台任务监督、异常报告与终端安全恢复
 
