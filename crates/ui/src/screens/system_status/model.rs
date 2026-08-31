@@ -205,6 +205,7 @@ pub struct SystemStatusDashboardViewModel {
     pub feedback: Option<String>,
     pub picker: Option<SystemStatusPickerViewModel>,
     pub size_picker: Option<SystemStatusSizePickerViewModel>,
+    pub picker_anchor: Option<(u16, u16)>,
     pub dialog: Option<SystemStatusDialogViewModel>,
     pub dragging: Option<SystemStatusDragPreview>,
     pub actions: SystemStatusActionState,

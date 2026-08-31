@@ -211,6 +211,8 @@ pub enum ShellCommand {
     SystemStatusSizePickerSelect(usize),
     SystemStatusSizePickerActivate,
     SystemStatusSizePickerActivateAt(usize),
+    SystemStatusOpenWidgetQuickMenu(ui::SystemStatusWidgetKind, CellPosition),
+    SystemStatusOpenAddQuickMenu(CellPosition),
     SystemStatusRemoveWidget,
     SystemStatusMoveWidget(i16, i16),
     SystemStatusWidgetPointerDown(ui::SystemStatusWidgetKind, CellPosition),

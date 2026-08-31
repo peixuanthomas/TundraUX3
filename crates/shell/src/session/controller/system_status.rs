@@ -417,6 +417,10 @@ impl ShellSession {
     }
 
     pub(in crate::session) fn open_system_status_add_picker(&mut self) {
+        self.open_system_status_add_picker_at(None);
+    }
+
+    fn open_system_status_add_picker_at(&mut self, anchor: Option<CellPosition>) {
         if self.system_status_dashboard_draft.is_none() || !self.system_status_has_addable_widget()
         {
             return;
@@ -427,7 +431,19 @@ impl ShellSession {
             .iter()
             .position(|kind| self.system_status_picker_kind_enabled(*kind))
             .expect("addable widget checked");
-        self.system_status_add_picker = Some(SystemStatusAddPickerState { selected });
+        self.system_status_add_picker = Some(SystemStatusAddPickerState { selected, anchor });
+    }
+
+    pub(in crate::session) fn open_system_status_add_quick_menu(&mut self, anchor: CellPosition) {
+        if !matches!(self.system_status_route, ui::SystemStatusRoute::Dashboard)
+            || !self.system_status_has_addable_widget()
+        {
+            return;
+        }
+        if self.system_status_dashboard_draft.is_none() {
+            self.begin_system_status_dashboard_edit();
+        }
+        self.open_system_status_add_picker_at(Some(anchor));
     }
 
     pub(in crate::session) fn close_system_status_add_picker(&mut self) {
@@ -561,6 +577,10 @@ impl ShellSession {
     }
 
     pub(in crate::session) fn open_system_status_size_picker(&mut self) {
+        self.open_system_status_size_picker_at(None);
+    }
+
+    fn open_system_status_size_picker_at(&mut self, anchor: Option<CellPosition>) {
         let (Some(kind), Some((_, layout))) = (
             self.system_status_selected_widget,
             self.system_status_layout(),
@@ -592,7 +612,22 @@ impl ShellSession {
         };
         self.system_status_dashboard_focus = ui::SystemStatusDashboardFocus::Size;
         self.system_status_add_picker = None;
-        self.system_status_size_picker = Some(SystemStatusSizePickerState { selected });
+        self.system_status_size_picker = Some(SystemStatusSizePickerState { selected, anchor });
+    }
+
+    pub(in crate::session) fn open_system_status_widget_quick_menu(
+        &mut self,
+        kind: ui::SystemStatusWidgetKind,
+        anchor: CellPosition,
+    ) {
+        if !matches!(self.system_status_route, ui::SystemStatusRoute::Dashboard) {
+            return;
+        }
+        if self.system_status_dashboard_draft.is_none() {
+            self.begin_system_status_dashboard_edit();
+        }
+        self.select_system_status_widget(kind);
+        self.open_system_status_size_picker_at(Some(anchor));
     }
 
     pub(in crate::session) fn close_system_status_size_picker(&mut self) {

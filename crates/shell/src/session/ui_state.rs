@@ -166,10 +166,12 @@ pub(super) struct SystemStatusHistoryPoint {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub(super) struct SystemStatusAddPickerState {
     pub(super) selected: usize,
+    pub(super) anchor: Option<CellPosition>,
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub(super) struct SystemStatusSizePickerState {
     pub(super) selected: usize,
+    pub(super) anchor: Option<CellPosition>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

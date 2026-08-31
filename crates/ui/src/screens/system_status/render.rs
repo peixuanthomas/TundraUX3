@@ -118,7 +118,7 @@ fn render_dashboard(
         .unwrap_or(if model.dashboard.editing {
             "Arrows Move · Enter Select · Esc Cancel"
         } else {
-            "E Edit · Enter Details · R Refresh · Esc Home"
+            "Right-click Quick Edit · E Edit · Enter Details · R Refresh · Esc Home"
         });
     let action_left = if model.dashboard.editing {
         l.add_button.x
@@ -225,12 +225,7 @@ fn render_overlays(
     if let Some(p) = model.dashboard.size_picker {
         let w = l.panel.width.min(42);
         let h = l.panel.height.min(5);
-        let area = Rect::new(
-            l.panel.x + (l.panel.width - w) / 2,
-            l.panel.y + (l.panel.height - h) / 2,
-            w,
-            h,
-        );
+        let area = system_status_picker_area(l.panel, w, h, model.dashboard.picker_anchor);
         frame.render_widget(Clear, area);
         let items = ["2x2", "2x4", "4x4"]
             .into_iter()
@@ -249,12 +244,7 @@ fn render_overlays(
             .panel
             .height
             .min((p.items.len() as u16).saturating_add(2).max(5));
-        let area = Rect::new(
-            l.panel.x + (l.panel.width - w) / 2,
-            l.panel.y + (l.panel.height - h) / 2,
-            w,
-            h,
-        );
+        let area = system_status_picker_area(l.panel, w, h, model.dashboard.picker_anchor);
         frame.render_widget(Clear, area);
         let items = p
             .items

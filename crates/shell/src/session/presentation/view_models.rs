@@ -275,6 +275,15 @@ impl ShellSession {
                     selected: picker.selected,
                 }
             }),
+            picker_anchor: self
+                .system_status_add_picker
+                .as_ref()
+                .and_then(|picker| picker.anchor)
+                .or_else(|| {
+                    self.system_status_size_picker
+                        .as_ref()
+                        .and_then(|picker| picker.anchor)
+                }),
             dialog: self
                 .system_status_discard_dialog
                 .then(|| ui::SystemStatusDialogViewModel {

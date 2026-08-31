@@ -92,6 +92,32 @@ fn button_from_right(footer: Rect, right: &mut u16, width: u16) -> Rect {
     *right = right.saturating_sub(u16::from(*right > footer.x));
     r
 }
+
+pub(super) fn system_status_picker_area(
+    panel: Rect,
+    width: u16,
+    height: u16,
+    anchor: Option<(u16, u16)>,
+) -> Rect {
+    let width = panel.width.min(width);
+    let height = panel.height.min(height);
+    let (x, y) = anchor.map_or_else(
+        || {
+            (
+                panel.x + panel.width.saturating_sub(width) / 2,
+                panel.y + panel.height.saturating_sub(height) / 2,
+            )
+        },
+        |(x, y)| {
+            (
+                x.clamp(panel.x, panel.right().saturating_sub(width)),
+                y.clamp(panel.y, panel.bottom().saturating_sub(height)),
+            )
+        },
+    );
+    Rect::new(x, y, width, height)
+}
+
 pub fn system_status_layout(main: Rect, model: &SystemStatusViewModel) -> SystemStatusLayout {
     let panel = main;
     let inner = inset_rect(panel, 1);
@@ -317,12 +343,7 @@ pub fn system_status_layout(main: Rect, model: &SystemStatusViewModel) -> System
             let h = panel
                 .height
                 .min((p.items.len() as u16).saturating_add(2).max(5));
-            let area = Rect::new(
-                panel.x + (panel.width - w) / 2,
-                panel.y + (panel.height - h) / 2,
-                w,
-                h,
-            );
+            let area = system_status_picker_area(panel, w, h, model.dashboard.picker_anchor);
             let visible_height = area.height.saturating_sub(2) as usize;
             picker_viewport_start =
                 crate::components::List::automatic_viewport_start(p.selected, visible_height);
@@ -350,12 +371,7 @@ pub fn system_status_layout(main: Rect, model: &SystemStatusViewModel) -> System
         .map(|_| {
             let w = panel.width.min(42);
             let h = panel.height.min(5);
-            let area = Rect::new(
-                panel.x + (panel.width - w) / 2,
-                panel.y + (panel.height - h) / 2,
-                w,
-                h,
-            );
+            let area = system_status_picker_area(panel, w, h, model.dashboard.picker_anchor);
             (0..3)
                 .map(|index| SystemStatusRowLayout {
                     index,

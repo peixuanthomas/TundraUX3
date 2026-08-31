@@ -1260,6 +1260,14 @@ impl ShellSession {
                 self.apply_system_status_size_picker();
                 ShellAction::Redraw
             }
+            ShellCommand::SystemStatusOpenWidgetQuickMenu(kind, anchor) => {
+                self.open_system_status_widget_quick_menu(kind, anchor);
+                ShellAction::Redraw
+            }
+            ShellCommand::SystemStatusOpenAddQuickMenu(anchor) => {
+                self.open_system_status_add_quick_menu(anchor);
+                ShellAction::Redraw
+            }
             ShellCommand::SystemStatusRemoveWidget => {
                 self.remove_selected_system_status_widget();
                 ShellAction::Redraw

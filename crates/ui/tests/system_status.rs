@@ -280,8 +280,13 @@ fn size_picker_renders_exact_rows_and_captures_dashboard_hits() {
     let mut m = model();
     m.dashboard.editing = true;
     m.dashboard.size_picker = Some(SystemStatusSizePickerViewModel { selected: 1 });
-    let l = system_status_layout(full_main(100, 24), &m);
+    let main = full_main(100, 24);
+    let anchor = (main.x + 10, main.y + 4);
+    m.dashboard.picker_anchor = Some(anchor);
+    let l = system_status_layout(main, &m);
     assert_eq!(l.size_picker_items.len(), 3);
+    assert_eq!(l.size_picker_items[0].area.x, anchor.0 + 1);
+    assert_eq!(l.size_picker_items[0].area.y, anchor.1 + 1);
     for (index, row) in l.size_picker_items.iter().enumerate() {
         assert_eq!(
             system_status_hit_test(&l, (row.area.x, row.area.y)),

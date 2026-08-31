@@ -993,6 +993,73 @@ fn system_status_keyboard_navigates_dashboard_and_routes_detail_actions() {
 }
 
 #[test]
+fn system_status_right_click_opens_contextual_edit_pickers() {
+    let mut state = ShellSession::new_for_home_mode(
+        ShellLaunchConfig::default(),
+        (120, 40),
+        ShellHomeMode::User,
+    );
+    set_test_auth_role(&mut state, UserRole::Admin);
+    state.screen_stack.push(ShellScreen::SystemStatus);
+    state.focused_component = ShellComponent::SystemStatus;
+
+    let (_, layout) = state.system_status_layout().unwrap();
+    let widget = layout
+        .widgets
+        .iter()
+        .find(|widget| !widget.preview)
+        .copied()
+        .unwrap();
+    let widget_point = (widget.area.x + 1, widget.area.y + 1);
+    state.apply_input(InputEvent::mouse_down(PointerButton::Right, widget_point));
+
+    assert!(state.system_status_dashboard_draft.is_some());
+    assert_eq!(
+        state.system_status_selected_widget,
+        Some(super::controller::system_status::storage_widget_kind(
+            widget.kind
+        ))
+    );
+    assert_eq!(
+        state.system_status_size_picker.unwrap().anchor,
+        Some(widget_point)
+    );
+    let contextual_layout = ui::system_status_layout(
+        match ui::compute_shell_layout(Rect::new(0, 0, 120, 40)) {
+            ui::ShellLayout::Full { main, .. } => main,
+            _ => panic!(),
+        },
+        &state.to_system_status_view_model().unwrap(),
+    );
+    assert_eq!(
+        contextual_layout.size_picker_items[0].area.x,
+        widget_point.0 + 1
+    );
+
+    state.close_system_status_size_picker();
+    state.finish_cancel_system_status_dashboard_edit();
+    let layout = ui::system_status_layout(
+        match ui::compute_shell_layout(Rect::new(0, 0, 120, 40)) {
+            ui::ShellLayout::Full { main, .. } => main,
+            _ => panic!(),
+        },
+        &state.to_system_status_view_model().unwrap(),
+    );
+    let blank_point = (layout.canvas.y..layout.canvas.bottom())
+        .flat_map(|y| (layout.canvas.x..layout.canvas.right()).map(move |x| (x, y)))
+        .find(|point| ui::system_status_hit_test(&layout, *point).is_none())
+        .expect("dashboard has blank canvas space");
+    state.apply_input(InputEvent::mouse_down(PointerButton::Right, blank_point));
+
+    assert!(state.system_status_dashboard_draft.is_some());
+    assert_eq!(
+        state.system_status_add_picker.unwrap().anchor,
+        Some(blank_point)
+    );
+    assert!(state.system_status_size_picker.is_none());
+}
+
+#[test]
 fn system_status_activity_local_tabs_route_mouse_without_leaving_page() {
     let mut state = ShellSession::new_for_home_mode(
         ShellLaunchConfig::default(),

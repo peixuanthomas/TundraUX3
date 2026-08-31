@@ -1974,6 +1974,11 @@ impl ShellSession {
             || self.system_status_discard_dialog
             || self.system_status_add_picker.is_some()
             || self.system_status_size_picker.is_some();
+        let dashboard_canvas = matches!(model.route, ui::SystemStatusRoute::Dashboard)
+            && coordinates.0 >= layout.canvas.x
+            && coordinates.0 < layout.canvas.right()
+            && coordinates.1 >= layout.canvas.y
+            && coordinates.1 < layout.canvas.bottom();
         let picker_enabled = |index: usize| {
             model
                 .dashboard
@@ -2015,6 +2020,16 @@ impl ShellSession {
             }
             ui::MouseEventKind::Scroll(ScrollDirection::Down) if !modal_open => {
                 ShellCommand::SystemStatusScroll(1)
+            }
+            ui::MouseEventKind::Down(PointerButton::Right) if !modal_open && dashboard_canvas => {
+                self.last_click = None;
+                match hit {
+                    Some(ui::SystemStatusHitTarget::Widget(kind)) => {
+                        ShellCommand::SystemStatusOpenWidgetQuickMenu(kind, coordinates)
+                    }
+                    None => ShellCommand::SystemStatusOpenAddQuickMenu(coordinates),
+                    _ => ShellCommand::CaptureOverlayInput,
+                }
             }
             ui::MouseEventKind::DoubleClick(PointerButton::Left) => activate_hit(hit),
             ui::MouseEventKind::Down(PointerButton::Left) => match hit {
