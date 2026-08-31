@@ -864,7 +864,7 @@ impl ShellSession {
         &mut self,
         platform: &dyn Platform,
     ) {
-        if !self.diagnostics_can_view_details() {
+        if !self.diagnostics_can_explore_logs() {
             self.notify_alert_with_tone(
                 "Only administrators can explore the diagnostic log folder",
                 ui::NotificationTone::Warning,
@@ -898,6 +898,12 @@ impl ShellSession {
             ExplorerPurpose::DiagnosticsLogs,
         );
         self.notify_toast("Opened diagnostic log folder in Explorer");
+    }
+
+    fn diagnostics_can_explore_logs(&self) -> bool {
+        self.app
+            .auth_session()
+            .is_some_and(|session| session.role == UserRole::Admin)
     }
 
     pub(in crate::session) fn open_selected_diagnostics_report(

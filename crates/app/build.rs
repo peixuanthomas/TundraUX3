@@ -21,6 +21,7 @@ fn main() {
             );
         }
     }
+    emit_tracked_file_rerun_directives(&workspace);
 
     let explicit = std::env::var("TUNDRAUX3_BUILD_COMMIT")
         .ok()
@@ -44,6 +45,32 @@ fn main() {
         commit.unwrap_or_else(|| "unknown".into())
     );
     println!("cargo:rustc-env=TUNDRAUX3_BUILD_DIRTY={dirty}");
+}
+
+fn emit_tracked_file_rerun_directives(workspace: &std::path::Path) {
+    let Ok(output) = Command::new("git")
+        .args(["ls-files", "-z"])
+        .current_dir(workspace)
+        .output()
+    else {
+        return;
+    };
+    if !output.status.success() {
+        return;
+    }
+    for relative in output
+        .stdout
+        .split(|byte| *byte == 0)
+        .filter(|path| !path.is_empty())
+    {
+        let Ok(relative) = std::str::from_utf8(relative) else {
+            continue;
+        };
+        let path = workspace.join(relative);
+        if path.is_file() {
+            println!("cargo:rerun-if-changed={}", path.display());
+        }
+    }
 }
 
 fn git_output(workspace: &std::path::Path, args: &[&str]) -> Option<String> {

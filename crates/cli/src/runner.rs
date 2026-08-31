@@ -395,6 +395,7 @@ fn launch_weathr_managed(
         shutdown: Arc::new(AtomicBool::new(false)),
         minimum_terminal_size: options.minimum_terminal_size,
         exit_semantic: weathr::ExitSemantic::Quit,
+        first_frame_callback: None,
     };
     let result = weathr::run_display_blocking(input).map(|_| ());
     let _ = services.shutdown();

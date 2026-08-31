@@ -272,6 +272,9 @@ pub fn run_fullscreen_blocking_managed_with_outcome(
                 shutdown: terminal_control.shutdown_flag(),
                 minimum_terminal_size: Some(terminal_size_requirement.as_terminal_size()),
                 exit_semantic: weathr::ExitSemantic::Start,
+                first_frame_callback: Some(Arc::new(|| {
+                    app::update::mark_update_ready_from_env().map_err(io::Error::other)
+                })),
             };
             let lockscreen_result = weathr_watchdog.run_boundary(
                 BoundarySpec::new("shell-lockscreen-ui-session", BoundaryKind::UiSession)

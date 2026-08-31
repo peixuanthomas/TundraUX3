@@ -12,6 +12,7 @@ use crate::theme::ThemeRegistry;
 use chrono::Datelike;
 use crossterm::event::{self, Event, KeyCode, KeyModifiers};
 use std::io;
+use std::sync::Arc;
 use std::time::Duration;
 use system_services_model::{SystemSnapshot, TimeState, WeatherLocation, WeatherState};
 
@@ -203,14 +204,19 @@ impl App {
         &mut self,
         renderer: &mut TerminalRenderer,
     ) -> io::Result<AppRunOutcome> {
-        self.run_with_outcome_and_shutdown(renderer, &std::sync::atomic::AtomicBool::new(false))
-            .await
+        self.run_with_outcome_and_shutdown(
+            renderer,
+            &std::sync::atomic::AtomicBool::new(false),
+            None,
+        )
+        .await
     }
 
     pub(crate) async fn run_with_outcome_and_shutdown(
         &mut self,
         renderer: &mut TerminalRenderer,
         shutdown: &std::sync::atomic::AtomicBool,
+        mut first_frame_callback: Option<Arc<dyn Fn() -> io::Result<()> + Send + Sync>>,
     ) -> io::Result<AppRunOutcome> {
         let mut rng = rand::rng();
 
@@ -419,7 +425,7 @@ impl App {
                 )?;
             }
 
-            renderer.flush()?;
+            flush_and_notify_first_frame(&mut first_frame_callback, || renderer.flush())?;
 
             if event::poll(FRAME_DURATION)? {
                 match event::read()? {
@@ -444,6 +450,17 @@ impl App {
     }
 }
 
+fn flush_and_notify_first_frame(
+    callback: &mut Option<Arc<dyn Fn() -> io::Result<()> + Send + Sync>>,
+    flush: impl FnOnce() -> io::Result<()>,
+) -> io::Result<()> {
+    flush()?;
+    if let Some(callback) = callback.take() {
+        callback()?;
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -453,6 +470,49 @@ mod tests {
     use crate::theme::catalogue::DEFAULT_PALETTE;
     use crate::theme::{Theme, ThemeRegistry};
     use std::io;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    #[test]
+    fn first_frame_callback_runs_once_after_successful_flush() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let callback_calls = calls.clone();
+        let mut callback: Option<Arc<dyn Fn() -> io::Result<()> + Send + Sync>> =
+            Some(Arc::new(move || {
+                callback_calls.fetch_add(1, Ordering::SeqCst);
+                Ok(())
+            }));
+
+        flush_and_notify_first_frame(&mut callback, || Ok(())).unwrap();
+        flush_and_notify_first_frame(&mut callback, || Ok(())).unwrap();
+
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn first_frame_callback_error_is_returned() {
+        let mut callback: Option<Arc<dyn Fn() -> io::Result<()> + Send + Sync>> =
+            Some(Arc::new(|| Err(io::Error::other("ready failed"))));
+        let error = flush_and_notify_first_frame(&mut callback, || Ok(())).unwrap_err();
+        assert_eq!(error.to_string(), "ready failed");
+    }
+
+    #[test]
+    fn first_frame_callback_waits_for_successful_flush() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let callback_calls = calls.clone();
+        let mut callback: Option<Arc<dyn Fn() -> io::Result<()> + Send + Sync>> =
+            Some(Arc::new(move || {
+                callback_calls.fetch_add(1, Ordering::SeqCst);
+                Ok(())
+            }));
+        assert!(
+            flush_and_notify_first_frame(&mut callback, || Err(io::Error::other("flush failed")))
+                .is_err()
+        );
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+        flush_and_notify_first_frame(&mut callback, || Ok(())).unwrap();
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+    }
 
     struct TestScene {
         id: &'static str,

@@ -29,6 +29,7 @@ pub struct WeathrDisplayInput {
     pub shutdown: Arc<AtomicBool>,
     pub minimum_terminal_size: Option<(u16, u16)>,
     pub exit_semantic: ExitSemantic,
+    pub first_frame_callback: Option<Arc<dyn Fn() -> io::Result<()> + Send + Sync>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -172,8 +173,9 @@ async fn run_display_inner(
         assets,
     })?;
     renderer.init()?;
+    let first_frame_callback = input.first_frame_callback;
     let run_result = app
-        .run_with_outcome_and_shutdown(&mut renderer, &input.shutdown)
+        .run_with_outcome_and_shutdown(&mut renderer, &input.shutdown, first_frame_callback)
         .await
         .map(|outcome| input.exit_semantic.resolve(outcome))
         .map_err(WeathrRunError::Run);
