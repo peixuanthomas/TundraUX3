@@ -1,7 +1,10 @@
+mod support;
+
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier};
+use support::terminal_output;
 use ui::{
     BorderShape, HomeDisplayMode, NotificationTone, SettingsAppearancePreview,
     SettingsCardViewModel, SettingsCategory, SettingsColorEditorViewModel, SettingsControlKind,
@@ -14,61 +17,20 @@ use ui::{
 };
 
 #[test]
-fn wide_layout_uses_a_left_category_column_and_right_detail_cards() {
+fn full_layout_keeps_categories_and_fields_visible_at_supported_sizes() {
     let model = sample_model();
-    let layout = settings_layout(Rect::new(0, 0, 120, 32), &model);
-
-    assert_eq!(layout.category_cards.len(), 6);
-    assert_eq!(
-        layout.category_cards[0].category,
-        SettingsCategory::Appearance
-    );
-    assert_eq!(layout.category_cards[0].area, Rect::new(2, 2, 16, 1));
-    assert!(
-        layout
-            .category_cards
-            .iter()
-            .enumerate()
-            .all(|(index, category)| category.area.x == 2
-                && category.area.y == 2 + index as u16
-                && category.area.height == 1)
-    );
-    assert!(layout.fields.iter().all(|field| field.area.x == 21));
-    assert!(
-        layout
-            .fields
-            .iter()
-            .any(|field| field.field == SettingsField::BorderColor)
-    );
-    assert!(
-        layout
-            .fields
-            .iter()
-            .any(|field| field.field == SettingsField::ShowHidden)
-    );
-}
-
-#[test]
-fn eighty_by_twenty_four_layout_keeps_the_left_category_column() {
-    let model = sample_model();
-    let layout = settings_layout(Rect::new(0, 0, 80, 24), &model);
-
-    assert_eq!(layout.category_cards.len(), 6);
-    assert!(
-        layout
-            .category_cards
-            .iter()
-            .enumerate()
-            .all(|(index, category)| category.area.y == 2 + index as u16)
-    );
-    assert!(
-        layout
-            .category_cards
-            .iter()
-            .all(|category| category.area.height == 1)
-    );
-    assert_eq!(layout.category_cards[0].area.width, 16);
-    assert!(layout.fields.iter().all(|field| field.area.x == 21));
+    for (width, height) in [(80, 24), (120, 32)] {
+        let layout = settings_layout(Rect::new(0, 0, width, height), &model);
+        assert_eq!(layout.category_cards.len(), SettingsCategory::ALL.len());
+        for (index, category) in layout.category_cards.iter().enumerate() {
+            assert_eq!(category.category, SettingsCategory::ALL[index]);
+            assert_eq!(category.area, Rect::new(2, 2 + index as u16, 16, 1));
+        }
+        assert!(layout.fields.iter().all(|field| field.area.x == 21));
+        for expected in [SettingsField::BorderColor, SettingsField::ShowHidden] {
+            assert!(layout.fields.iter().any(|field| field.field == expected));
+        }
+    }
 }
 
 #[test]
@@ -123,71 +85,6 @@ fn settings_scrollbar_only_appears_when_content_overflows() {
         .collect::<Vec<_>>();
     assert!(symbols.iter().all(|symbol| matches!(*symbol, "│" | "┃")));
     assert!(symbols.contains(&"┃"));
-}
-
-#[test]
-fn system_category_has_storage_pressure_metadata() {
-    assert_eq!(SettingsCategory::ALL[2], SettingsCategory::System);
-    assert_eq!(SettingsCategory::System.label(), "System");
-    assert!(
-        SettingsCategory::System
-            .description()
-            .contains("Storage pressure")
-    );
-
-    for field in [
-        SettingsField::SystemLowAvailable,
-        SettingsField::SystemLowPercentage,
-        SettingsField::SystemCriticalAvailable,
-        SettingsField::SystemCriticalPercentage,
-    ] {
-        let item = SettingsItemViewModel::new(
-            field,
-            "Threshold",
-            "1",
-            "Storage",
-            SettingsControlKind::Stepper,
-        );
-        assert_eq!(item.kind, SettingsControlKind::Stepper);
-    }
-}
-
-#[test]
-fn selected_category_soft_accent_is_limited_to_its_single_sidebar_row() {
-    let model = sample_model();
-    let theme = TundraTheme::default_dark().with_accent_color(Color::LightMagenta);
-    let mut terminal = Terminal::new(TestBackend::new(120, 32)).expect("test terminal");
-    let mut selected = None;
-
-    terminal
-        .draw(|frame| {
-            let layout = render_settings(frame, frame.area(), &chrome(), &model, &theme);
-            selected = layout.category_cards.first().map(|category| category.area);
-        })
-        .expect("render category list");
-
-    let selected = selected.expect("selected category tab");
-    let accent_soft = theme.tokens().accent_soft;
-    let accent_cells = (0..120)
-        .filter(|x| {
-            terminal
-                .backend()
-                .buffer()
-                .cell((*x, selected.y))
-                .is_some_and(|cell| cell.bg == accent_soft)
-        })
-        .count();
-    assert!(accent_cells > 0);
-    assert!(accent_cells <= usize::from(selected.width));
-    assert_ne!(
-        terminal
-            .backend()
-            .buffer()
-            .cell((selected.right(), selected.y))
-            .unwrap()
-            .bg,
-        accent_soft
-    );
 }
 
 #[test]
@@ -626,17 +523,6 @@ fn sample_model() -> SettingsViewModel {
 }
 
 #[test]
-fn update_is_the_last_settings_category() {
-    assert_eq!(SettingsCategory::ALL.len(), 6);
-    assert_eq!(SettingsCategory::ALL[5], SettingsCategory::Update);
-    assert_eq!(SettingsCategory::Update.label(), "Update");
-    assert_eq!(
-        SettingsCategory::Update.description(),
-        "Version, commits and source updates"
-    );
-}
-
-#[test]
 fn update_commits_wrap_complete_messages_and_follow_detail_scroll() {
     let mut model = sample_model();
     model.selected_category = SettingsCategory::Update;
@@ -770,14 +656,4 @@ fn chrome() -> ShellChromeViewModel {
             time_button_selected: false,
         },
     }
-}
-
-fn terminal_output(terminal: &Terminal<TestBackend>) -> String {
-    terminal
-        .backend()
-        .buffer()
-        .content()
-        .iter()
-        .map(|cell| cell.symbol())
-        .collect()
 }

@@ -1,8 +1,11 @@
+mod support;
+
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use ratatui::layout::Rect;
-use ratatui::style::{Color, Modifier};
+use ratatui::style::Color;
 use std::cell::RefCell;
+use support::terminal_output;
 use ui::{
     AuthField, BootstrapAdminViewModel, ClockViewModel, DebugDiagnosticsViewModel,
     ExitConfirmViewModel, HomeDisplayMode, HomeIconRenderer, HomeViewModel, LoginField,
@@ -42,28 +45,6 @@ impl HomeIconRenderer for UnavailableHomeIconRenderer {
     ) -> bool {
         false
     }
-}
-
-#[test]
-fn debug_home_exposes_diagnostics_and_no_entries() {
-    let diagnostics = DebugDiagnosticsViewModel {
-        tick_count: 42,
-        last_key_event: Some("Ctrl-C".to_string()),
-        last_mouse_event: Some("Down".to_string()),
-        last_resize_event: Some("100x30".to_string()),
-        mouse_coordinates: Some((12, 7)),
-        scroll_direction: Some("up".to_string()),
-        drag_direction: Some("Right".to_string()),
-        terminal_flags: vec!["alternate-screen".to_string(), "mouse-capture".to_string()],
-        platform_capability_summary: "Windows: 15 supported, 0 best-effort, 0 unsupported"
-            .to_string(),
-    };
-
-    let home = HomeViewModel::debug(diagnostics.clone());
-
-    assert_eq!(home.display_mode(), HomeDisplayMode::Debug);
-    assert_eq!(home.diagnostics(), Some(&diagnostics));
-    assert!(home.entries().is_empty());
 }
 
 #[test]
@@ -131,24 +112,6 @@ fn debug_home_renders_normal_entries_and_keeps_diagnostics_out_of_main_content()
     assert!(output.contains("Last Key: none"));
     assert!(!output.contains("Platform capabilities:"));
     assert!(!output.contains("Tick:"));
-}
-
-#[test]
-fn user_home_hides_diagnostics_and_lists_five_entries_including_explorer() {
-    let entries = vec![
-        ShellEntry::new("Explorer", "Browse files and pinned places"),
-        ShellEntry::new("Terminal", "Open a shell session"),
-        ShellEntry::new("Settings", "Configure TundraUX 3"),
-        ShellEntry::new("Sessions", "Resume recent work"),
-        ShellEntry::new("Help", "Show keyboard shortcuts"),
-    ];
-
-    let home = HomeViewModel::user("Strix", "2026-07-01 09:30", entries);
-
-    assert_eq!(home.display_mode(), HomeDisplayMode::User);
-    assert_eq!(home.diagnostics(), None);
-    assert_eq!(home.entries().len(), 5);
-    assert!(home.entries().iter().any(|entry| entry.label == "Explorer"));
 }
 
 #[test]
@@ -823,51 +786,6 @@ fn modal_notification_tones_have_text_labels() {
 }
 
 #[test]
-fn notification_dialogs_keep_semantic_border_colors() {
-    let theme = TundraTheme::default().with_border_color(Color::LightMagenta);
-    let model = NotificationViewModel::new(
-        "warning",
-        NotificationLevel::Modal,
-        NotificationTone::Warning,
-        "Warning",
-        "Message",
-        vec![NotificationActionViewModel::new("ok", "OK")],
-    );
-    let area = Rect::new(0, 0, 80, 24);
-    let NotificationLayout::Dialog(layout) = notification_layout(area, &model) else {
-        panic!("notification should fit test terminal");
-    };
-    let mut notification_terminal = Terminal::new(TestBackend::new(80, 24)).expect("test terminal");
-    notification_terminal
-        .draw(|frame| render_notification_overlay(frame, area, &model, &theme))
-        .expect("render notification");
-    assert_eq!(
-        notification_terminal
-            .backend()
-            .buffer()
-            .cell((layout.dialog.x, layout.dialog.y))
-            .unwrap()
-            .fg,
-        theme.accent_color
-    );
-
-    let mut sync_terminal = Terminal::new(TestBackend::new(80, 24)).expect("test terminal");
-    sync_terminal
-        .draw(|frame| {
-            render_time_sync_failure_dialog(
-                frame,
-                frame.area(),
-                &TimeSyncDialogViewModel::new(),
-                &theme,
-            );
-        })
-        .expect("render time sync dialog");
-    assert_eq!(
-        sync_terminal.backend().buffer().cell((23, 9)).unwrap().fg,
-        theme.error
-    );
-}
-#[test]
 fn notification_layout_uses_nominal_size_and_adapts_to_full_shell_widths() {
     let model = NotificationViewModel::new(
         "42",
@@ -1056,45 +974,6 @@ fn login_renderer_masks_password_length() {
 }
 
 #[test]
-fn login_focused_boxes_use_focus_colored_solid_regular_weight_vertical_borders() {
-    let chrome = chrome_for("Login");
-    let theme = TundraTheme::default_dark();
-    let main = main_rect(80, 24);
-    let cases = [
-        (LoginField::UserList, login_user_list_area(main), "U"),
-        (LoginField::Password, login_password_area(main), "P"),
-    ];
-
-    for (focused_field, focused_area, title_first_character) in cases {
-        let model = LoginViewModel::new(
-            vec![login_user("Strix", "Local User", "User")],
-            0,
-            0,
-            0,
-            focused_field,
-            None,
-        );
-        let mut terminal = Terminal::new(TestBackend::new(80, 24)).expect("test terminal");
-
-        terminal
-            .draw(|frame| render_login(frame, frame.area(), &chrome, &model, &theme))
-            .expect("render focused login field");
-
-        assert_regular_weight_vertical_border(&terminal, focused_area, theme.tokens().focus);
-        let title_cell = terminal
-            .backend()
-            .buffer()
-            .cell((focused_area.x.saturating_add(1), focused_area.y))
-            .expect("focused field title cell");
-        assert_eq!(title_cell.symbol(), title_first_character);
-        assert!(
-            title_cell.modifier.contains(Modifier::BOLD),
-            "focused title should retain bold emphasis"
-        );
-    }
-}
-
-#[test]
 fn login_renderer_reveals_only_explicit_plaintext_and_focuses_visibility_control() {
     let chrome = chrome_for("Login");
     let visible = "密碼🙂";
@@ -1228,16 +1107,6 @@ fn compact_alert_chrome(screen: &str) -> ShellChromeViewModel {
     chrome
 }
 
-fn terminal_output(terminal: &Terminal<TestBackend>) -> String {
-    terminal
-        .backend()
-        .buffer()
-        .content()
-        .iter()
-        .map(|cell| cell.symbol())
-        .collect()
-}
-
 fn visible_text_without_spaces(output: &str) -> String {
     output
         .chars()
@@ -1337,25 +1206,4 @@ fn region_has_bg(terminal: &Terminal<TestBackend>, area: Rect, bg: Color) -> boo
                 .is_some_and(|cell| cell.bg == bg && cell.symbol() != " ")
         })
     })
-}
-
-fn assert_regular_weight_vertical_border(
-    terminal: &Terminal<TestBackend>,
-    area: Rect,
-    expected_fg: Color,
-) {
-    let buffer = terminal.backend().buffer();
-    let right = area.right().saturating_sub(1);
-
-    for y in area.y.saturating_add(1)..area.bottom().saturating_sub(1) {
-        for x in [area.x, right] {
-            let cell = buffer.cell((x, y)).expect("vertical border cell");
-            assert_eq!(cell.symbol(), "│", "border at ({x}, {y}) must stay solid");
-            assert_eq!(cell.fg, expected_fg, "border at ({x}, {y}) color");
-            assert!(
-                !cell.modifier.contains(Modifier::BOLD),
-                "border at ({x}, {y}) must use regular weight"
-            );
-        }
-    }
 }

@@ -1,6 +1,9 @@
+mod support;
+
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use ratatui::layout::Rect;
+use support::terminal_output;
 use ui::{
     ExplorerBreadcrumbViewModel, ExplorerConflictChoice, ExplorerConflictViewModel,
     ExplorerContextMenuItemViewModel, ExplorerContextMenuViewModel, ExplorerDialogViewModel,
@@ -756,14 +759,4 @@ fn overlay_control_area(model: &ExplorerViewModel, target: &ExplorerOverlayContr
         .find(|control| &control.control == target)
         .expect("overlay control")
         .area
-}
-
-fn terminal_output(terminal: &Terminal<TestBackend>) -> String {
-    terminal
-        .backend()
-        .buffer()
-        .content()
-        .iter()
-        .map(|cell| cell.symbol())
-        .collect()
 }

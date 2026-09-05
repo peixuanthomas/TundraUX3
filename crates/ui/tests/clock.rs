@@ -1,7 +1,10 @@
+mod support;
+
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use ratatui::layout::Rect;
 use ratatui::style::Color;
+use support::terminal_output;
 use ui::{
     ClockCreateDialogFocus, ClockCreateDialogViewModel, ClockEntryKind, ClockEntryViewModel,
     ClockPageMode, ClockViewModel, HomeDisplayMode, NotificationTone, RuntimeAsciiAssets,
@@ -317,16 +320,6 @@ fn chrome(width: u16, height: u16) -> ShellChromeViewModel {
             time_button_selected: false,
         },
     }
-}
-
-fn terminal_output(terminal: &Terminal<TestBackend>) -> String {
-    terminal
-        .backend()
-        .buffer()
-        .content()
-        .iter()
-        .map(|cell| cell.symbol())
-        .collect()
 }
 
 fn region_text(terminal: &Terminal<TestBackend>, area: Rect) -> String {

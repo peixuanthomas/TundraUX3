@@ -1,7 +1,10 @@
+mod support;
+
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use ratatui::layout::Rect;
 use ratatui::style::Color;
+use support::terminal_output;
 use ui::components::Scrollbar as GlacierScrollbar;
 use ui::{
     DiagnosticsCheckViewModel, DiagnosticsHitTarget, DiagnosticsIncidentViewModel,
@@ -421,16 +424,6 @@ fn full_main(width: u16, height: u16) -> Rect {
         ShellLayout::Full { main, .. } => main,
         ShellLayout::Compact(_) => panic!("test dimensions should produce a full shell"),
     }
-}
-
-fn terminal_output(terminal: &Terminal<TestBackend>) -> String {
-    terminal
-        .backend()
-        .buffer()
-        .content()
-        .iter()
-        .map(|cell| cell.symbol())
-        .collect()
 }
 
 fn region_has_fg(terminal: &Terminal<TestBackend>, area: Rect, fg: Color) -> bool {

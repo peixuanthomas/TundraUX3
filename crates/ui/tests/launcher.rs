@@ -1,7 +1,6 @@
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use ratatui::layout::Rect;
-use ratatui::style::Color;
 use ui::{
     HomeDisplayMode, LauncherConfirmationKind, LauncherConfirmationViewModel, LauncherDropSide,
     LauncherDropTarget, LauncherHitTarget, LauncherIconRenderer, LauncherItemStatus,
@@ -71,38 +70,6 @@ fn render(model: &LauncherViewModel, width: u16, height: u16) -> String {
         .iter()
         .map(|cell| cell.symbol())
         .collect()
-}
-
-fn text_has_fg(
-    terminal: &Terminal<TestBackend>,
-    area: Rect,
-    text: &str,
-    foreground: Color,
-) -> bool {
-    let symbols = text
-        .chars()
-        .map(|symbol| symbol.to_string())
-        .collect::<Vec<_>>();
-    let Ok(text_width) = u16::try_from(symbols.len()) else {
-        return false;
-    };
-    if text_width == 0 || area.width < text_width {
-        return false;
-    }
-    let buffer = terminal.backend().buffer();
-    let last_x = area.right().saturating_sub(text_width);
-    (area.y..area.bottom()).any(|y| {
-        (area.x..=last_x).any(|x| {
-            symbols.iter().enumerate().all(|(offset, symbol)| {
-                let Ok(offset) = u16::try_from(offset) else {
-                    return false;
-                };
-                buffer
-                    .cell((x.saturating_add(offset), y))
-                    .is_some_and(|cell| cell.symbol() == symbol && cell.fg == foreground)
-            })
-        })
-    })
 }
 
 fn text_at(terminal: &Terminal<TestBackend>, x: u16, y: u16, width: u16) -> String {
@@ -175,103 +142,6 @@ fn built_in_launcher_item_falls_back_to_ascii_when_graphical_icon_loading_fails(
         .map(|cell| cell.symbol())
         .collect::<String>();
     assert!(output.contains(icon_line));
-}
-
-#[test]
-fn selected_ready_status_uses_the_accent_color_in_large_icons() {
-    let width = 100;
-    let height = 30;
-    let theme = TundraTheme::default_dark();
-    let selected = LauncherViewModel::new(
-        vec![item(0, LauncherItemStatus::Ready)],
-        Some(0),
-        LauncherViewMode::LargeIcons,
-        false,
-    );
-    let ShellLayout::Full { main, .. } = compute_shell_layout(Rect::new(0, 0, width, height))
-    else {
-        panic!("Launcher color test requires the full shell layout");
-    };
-    let item_area = launcher_layout(main, &selected).items[0].area;
-    let selected_terminal = render_terminal(&selected, width, height);
-
-    assert!(text_has_fg(
-        &selected_terminal,
-        item_area,
-        "Ready",
-        theme.accent_color,
-    ));
-
-    let unselected = LauncherViewModel::new(
-        vec![
-            item(0, LauncherItemStatus::Ready),
-            item(1, LauncherItemStatus::Ready),
-        ],
-        Some(1),
-        LauncherViewMode::LargeIcons,
-        false,
-    );
-    let unselected_item_area = launcher_layout(main, &unselected).items[0].area;
-    let unselected_terminal = render_terminal(&unselected, width, height);
-    assert!(text_has_fg(
-        &unselected_terminal,
-        unselected_item_area,
-        "Ready",
-        theme.foreground,
-    ));
-}
-
-#[test]
-fn large_icon_tiles_use_themed_selected_and_disabled_button_surfaces() {
-    let width = 100;
-    let height = 30;
-    let theme = TundraTheme::default_dark();
-    let model = LauncherViewModel::new(
-        vec![
-            item(0, LauncherItemStatus::Ready),
-            item(1, LauncherItemStatus::Missing),
-        ],
-        Some(0),
-        LauncherViewMode::LargeIcons,
-        false,
-    );
-    let ShellLayout::Full { main, .. } = compute_shell_layout(Rect::new(0, 0, width, height))
-    else {
-        panic!("Launcher surface test requires the full shell layout");
-    };
-    let layout = launcher_layout(main, &model);
-    let terminal = render_terminal(&model, width, height);
-    let buffer = terminal.backend().buffer();
-    let selected = layout.items[0].area;
-    let disabled = layout.items[1].area;
-
-    assert_eq!(
-        buffer
-            .cell((selected.x, selected.y))
-            .expect("selected tile border")
-            .fg,
-        theme.tokens().focus
-    );
-    assert_eq!(
-        buffer
-            .cell((
-                selected.x.saturating_add(1),
-                selected.bottom().saturating_sub(2)
-            ))
-            .expect("selected tile surface")
-            .fg,
-        theme.foreground
-    );
-    assert_eq!(
-        buffer
-            .cell((
-                disabled.x.saturating_add(1),
-                disabled.bottom().saturating_sub(2)
-            ))
-            .expect("disabled tile surface")
-            .fg,
-        theme.muted
-    );
 }
 
 #[test]

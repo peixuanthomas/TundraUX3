@@ -506,6 +506,8 @@ PTY smoke 使用隔离的 XDG 目录和 140 × 40 的真实 PTY 进入 Shell。�
 
 预览动画、可行性 POC、无断言在线探针、平凡 getter/cache，以及与上层工作流重复的逐字符或逐像素断言不进入固定 workspace 测试；只有对应明确用户可见回归时才应加入。
 
+较长的单元测试放在相邻的 `tests/模块名.rs` 中，由原模块通过 `#[cfg(test)]` 和 `#[path]` 引入；crate 入口的测试使用 `src/tests.rs`。这样仍可测试私有函数，也不会让测试占据业务源码的大半篇幅。相同操作的不同输入优先用表格循环检查；界面集成测试共用的输出读取函数放在 `crates/ui/tests/support`，不再每个文件复制一份。
+
 ## Linux 打包
 
 Linux 发行物面向 x86_64。Ubuntu/Debian 可生成 tarball 与 `.deb`；Fedora 或其他 Linux 可仅生成 tarball：

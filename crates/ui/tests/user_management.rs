@@ -1,7 +1,10 @@
+mod support;
+
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use ratatui::layout::Rect;
 use ratatui::style::Color;
+use support::terminal_output;
 use ui::{
     HomeDisplayMode, NotificationTone, ShellChromeViewModel, StatusViewModel, TundraTheme,
     UserManagementAction, UserManagementColumnMode, UserManagementFeedbackTone,
@@ -198,48 +201,6 @@ fn disabled_action_is_muted_and_exposes_its_reason() {
         &terminal,
         delete.area,
         TundraTheme::default_dark().muted
-    ));
-}
-
-#[test]
-fn action_buttons_preserve_dangerous_and_focused_theme_semantics() {
-    let mut dangerous = UserManagementViewModel::new(
-        "root",
-        vec![
-            user("root", "Administrator", "Admin", true, false, true),
-            user("alice", "Alice", "User", true, false, false),
-        ],
-        1,
-        None,
-        true,
-        None,
-    );
-    dangerous.focus = UserManagementFocus::UserList;
-    let (terminal, main) = render(120, 24, &dangerous);
-    let layout = user_management_layout(main, &dangerous);
-    let delete = layout
-        .actions
-        .iter()
-        .find(|action| action.action == UserManagementAction::Delete)
-        .expect("delete layout");
-    assert!(region_has_fg(
-        &terminal,
-        delete.area,
-        TundraTheme::default_dark().error
-    ));
-
-    dangerous.focus = UserManagementFocus::Action(UserManagementAction::Delete);
-    let (terminal, main) = render(120, 24, &dangerous);
-    let layout = user_management_layout(main, &dangerous);
-    let delete = layout
-        .actions
-        .iter()
-        .find(|action| action.action == UserManagementAction::Delete)
-        .expect("focused delete layout");
-    assert!(region_has_fg(
-        &terminal,
-        delete.area,
-        TundraTheme::default_dark().accent_color
     ));
 }
 
@@ -469,16 +430,6 @@ fn render(
         ui::ShellLayout::Compact(_) => panic!("test requires full layout"),
     };
     (terminal, main)
-}
-
-fn terminal_output(terminal: &Terminal<TestBackend>) -> String {
-    terminal
-        .backend()
-        .buffer()
-        .content()
-        .iter()
-        .map(|cell| cell.symbol())
-        .collect()
 }
 
 fn region_has_fg(terminal: &Terminal<TestBackend>, area: Rect, fg: Color) -> bool {

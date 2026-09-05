@@ -1245,10 +1245,7 @@ pub(in crate::session) fn explorer_sort_field(
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        explorer_copy_modifier, explorer_quick_location_command, explorer_quick_location_index,
-        explorer_toggle_modifier,
-    };
+    use super::{explorer_copy_modifier, explorer_toggle_modifier};
     use crate::InputModifiers;
     use platform::PlatformKind;
 

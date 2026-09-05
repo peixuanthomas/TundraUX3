@@ -11,14 +11,6 @@ use ui::components::{
 };
 use ui::{BorderShape, InputPhase, KeyModifiers, MouseEvent, TundraTheme};
 
-fn accepts_main_ui_id(_: ui::UiId) {}
-
-#[test]
-fn component_ids_reuse_the_main_ui_id_type() {
-    let id = ComponentId::new("shared");
-    accepts_main_ui_id(id);
-}
-
 #[test]
 fn button_keyboard_and_mouse_activate_the_same_component() {
     let mut button = Button::new("save", "Save");

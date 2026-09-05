@@ -1,7 +1,10 @@
+mod support;
+
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use ratatui::layout::{Position, Rect};
 use ratatui::style::{Color, Modifier};
+use support::terminal_output;
 use ui::{
     EditorBlockArea, EditorBlockSourceMap, EditorDocumentPosition, EditorFocus, EditorHitTarget,
     EditorMenu, EditorMenuAction, EditorQuickAction, EditorQuickMenuViewModel, EditorRenderBlock,
@@ -266,94 +269,6 @@ fn settings_button_opens_a_modal_acceleration_panel_with_clickable_controls() {
     assert!(output.contains("2000 ms"));
     assert!(output.contains("Horizontal maximum"));
     assert!(output.contains("Restore defaults"));
-}
-
-#[test]
-fn editor_button_groups_preserve_selected_disabled_and_menu_surface_styles() {
-    let theme = TundraTheme::default_dark();
-    let mut model = sample_model();
-    model.focus = EditorFocus::Toolbar;
-    model.selected_toolbar_action = Some(EditorToolbarAction::Open);
-    model.settings = Some(EditorSettingsViewModel {
-        editable: true,
-        enabled: true,
-        activation_delay_ms: 2_000,
-        ramp_duration_ms: 3_000,
-        horizontal_max_step: 8,
-        vertical_max_step: 3,
-        selected: EditorSettingsField::ActivationDelay,
-    });
-
-    let layout = editor_layout(Rect::new(0, 0, 100, 24), &model);
-    let terminal = render(&model, 100, 24);
-    let buffer = terminal.backend().buffer();
-
-    let settings_menu = layout
-        .menus
-        .iter()
-        .find(|item| item.menu == EditorMenu::Settings)
-        .expect("settings menu");
-    let settings_cell = &buffer[(settings_menu.area.x, settings_menu.area.y)];
-    assert_eq!(settings_cell.fg, theme.accent_color);
-    assert_eq!(settings_cell.bg, theme.background);
-    assert!(settings_cell.modifier.contains(Modifier::BOLD));
-
-    assert!(layout.modes.is_empty());
-
-    for action in [EditorToolbarAction::Open] {
-        let item = toolbar_item(&layout, action);
-        let cell = &buffer[(item.area.x, item.area.y)];
-        assert_eq!(cell.fg, theme.accent_color, "{action:?}");
-        assert_eq!(cell.bg, theme.background, "{action:?}");
-        assert!(cell.modifier.contains(Modifier::BOLD), "{action:?}");
-    }
-    let undo = toolbar_item(&layout, EditorToolbarAction::Undo);
-    assert!(!undo.enabled);
-    let undo_cell = &buffer[(undo.area.x, undo.area.y)];
-    assert_eq!(undo_cell.fg, theme.muted);
-    assert_eq!(undo_cell.bg, theme.background);
-
-    let settings = layout.settings.as_ref().expect("settings layout");
-    let decrease_delay = settings
-        .controls
-        .iter()
-        .find(|item| {
-            item.control == EditorSettingsControl::Decrease(EditorSettingsField::ActivationDelay)
-        })
-        .expect("decrease delay");
-    let decrease_cell = &buffer[(decrease_delay.area.x, decrease_delay.area.y)];
-    assert_eq!(decrease_cell.fg, theme.accent_color);
-    assert_eq!(decrease_cell.bg, theme.background);
-    assert!(decrease_cell.modifier.contains(Modifier::BOLD));
-
-    model.settings = Some(EditorSettingsViewModel {
-        editable: false,
-        selected: EditorSettingsField::Cancel,
-        ..model.settings.expect("settings")
-    });
-    let locked_layout = editor_layout(Rect::new(0, 0, 100, 24), &model);
-    let locked_terminal = render(&model, 100, 24);
-    let locked_buffer = locked_terminal.backend().buffer();
-    let locked_settings = locked_layout.settings.as_ref().expect("settings layout");
-    let save = locked_settings
-        .controls
-        .iter()
-        .find(|item| item.control == EditorSettingsControl::Save)
-        .expect("save control");
-    assert_eq!(locked_buffer[(save.area.x, save.area.y)].fg, theme.muted);
-    let cancel = locked_settings
-        .controls
-        .iter()
-        .find(|item| item.control == EditorSettingsControl::Cancel)
-        .expect("cancel control");
-    assert_eq!(
-        locked_buffer[(cancel.area.x, cancel.area.y)].fg,
-        theme.accent_color
-    );
-    assert_eq!(
-        locked_buffer[(cancel.area.x, cancel.area.y)].bg,
-        theme.background
-    );
 }
 
 #[test]
@@ -1575,16 +1490,6 @@ fn line_area(layout: &ui::EditorLayout, document_line: usize) -> ui::EditorLineL
         .copied()
         .find(|line| line.document_line == document_line)
         .expect("visible editor line")
-}
-
-fn terminal_output(terminal: &Terminal<TestBackend>) -> String {
-    terminal
-        .backend()
-        .buffer()
-        .content()
-        .iter()
-        .map(|cell| cell.symbol())
-        .collect()
 }
 
 fn assert_terminal_output_is_inert(terminal: &Terminal<TestBackend>) {

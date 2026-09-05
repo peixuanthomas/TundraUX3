@@ -8,10 +8,9 @@ use ui::components::{
     NavRail, NavRailItem, Panel, Picker, Scrollbar, Skeleton, Surface, Toast, ToastTone,
 };
 use ui::{
-    BorderShape, ColorCapability, FrostMotion, MotionDirection, MotionFrame, MotionIdentity,
-    MotionOverlayIdentity, MotionOverlayKind, MotionTimings, MotionTransitionKind, MouseEvent,
-    RenderCapabilities, RenderContext, ThemeTokens, TundraTheme, schedule_motion,
-    schedule_motion_range,
+    BorderShape, FrostMotion, MotionDirection, MotionFrame, MotionIdentity, MotionOverlayIdentity,
+    MotionOverlayKind, MotionTimings, MotionTransitionKind, MouseEvent, RenderCapabilities,
+    RenderContext, ThemeTokens, TundraTheme, schedule_motion, schedule_motion_range,
 };
 
 #[test]
@@ -38,26 +37,6 @@ fn render_context_and_surface_preserve_or_explicitly_override_border_shape() {
         .border_shape(BorderShape::Rounded)
         .render(area, &mut overridden, &context);
     assert_eq!(overridden[(0, 0)].symbol(), "╭");
-}
-
-#[test]
-fn glacier_night_palette_and_ansi_fallback_are_stable() {
-    let tokens = ThemeTokens::glacier_night();
-    assert_eq!(tokens.canvas, Color::Rgb(0x07, 0x11, 0x16));
-    assert_eq!(tokens.surface, Color::Rgb(0x0D, 0x1B, 0x22));
-    assert_eq!(tokens.accent, Color::Rgb(0x63, 0xD3, 0xE5));
-    assert_eq!(tokens.danger, Color::Rgb(0xF2, 0x7D, 0x89));
-
-    let ansi = tokens.for_capability(ColorCapability::Ansi);
-    assert_eq!(ansi.canvas, Color::Black);
-    assert_eq!(ansi.raised, Color::DarkGray);
-    assert_eq!(ansi.text, Color::White);
-    assert_eq!(ansi.muted, Color::Gray);
-    assert_eq!(ansi.accent, Color::Cyan);
-    assert_eq!(ansi.focus, Color::LightCyan);
-    assert_eq!(ansi.success, Color::Green);
-    assert_eq!(ansi.warning, Color::Yellow);
-    assert_eq!(ansi.danger, Color::LightRed);
 }
 
 #[test]

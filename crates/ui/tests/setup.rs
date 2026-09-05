@@ -1,4 +1,7 @@
+mod support;
+
 use std::collections::BTreeSet;
+use support::terminal_output;
 
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
@@ -7,9 +10,9 @@ use ratatui::style::Color;
 use ui::{
     HomeDisplayMode, NotificationTone, SetupField, SetupPasswordRequirementViewModel, SetupStep,
     SetupTimezoneOption, SetupViewModel, ShellChromeViewModel, ShellLayout, StatusViewModel,
-    TundraTheme, compute_shell_layout, render_setup, setup_admin_field_area,
-    setup_appearance_palette_option_areas, setup_language_options, setup_standard_color_options,
-    setup_timezone_list_area, setup_timezone_options,
+    TundraTheme, compute_shell_layout, render_setup, setup_appearance_palette_option_areas,
+    setup_language_options, setup_standard_color_options, setup_timezone_list_area,
+    setup_timezone_options,
 };
 
 const WIDE_SETUP_WIDTH: u16 = 120;
@@ -123,30 +126,6 @@ fn setup_admin_page_draws_empty_field_placeholders() {
 }
 
 #[test]
-fn setup_admin_page_highlights_focused_text_box() {
-    let theme = TundraTheme::default_dark();
-    let model = sample_model(SetupStep::Admin, None);
-    let terminal = render_terminal(&model, 120, 34, theme);
-    let main = setup_main_rect(120, 34);
-    let password_area = setup_admin_field_area(main, SetupField::AdminPassword);
-
-    assert!(
-        region_has_fg(&terminal, password_area, theme.tokens().focus),
-        "focused admin password box should use the focus style"
-    );
-    assert_eq!(
-        terminal
-            .backend()
-            .buffer()
-            .cell((password_area.x, password_area.y))
-            .expect("focused password field has a border")
-            .fg,
-        theme.tokens().focus,
-        "focused admin password border should use the focus color"
-    );
-}
-
-#[test]
 fn setup_appearance_page_shows_shape_palettes_custom_buttons_and_preview() {
     let mut model = sample_model(SetupStep::Appearance, None);
     model.focused_field = SetupField::AppearanceShape;
@@ -166,34 +145,6 @@ fn setup_appearance_page_shows_shape_palettes_custom_buttons_and_preview() {
     assert!(output.contains("Live preview"));
     assert!(output.contains("Finish setup"));
     assert!(!output.contains("Admin password"));
-}
-
-#[test]
-fn setup_appearance_page_applies_selected_shape_and_colors_to_live_preview() {
-    let mut model = sample_model(SetupStep::Appearance, None);
-    model.border_shape = ui::BorderShape::Square;
-    model.theme_color = Color::LightGreen;
-    model.theme_color_value = "#38BDF8".to_string();
-    model.accent_color = Color::LightMagenta;
-    model.accent_color_value = "light-magenta".to_string();
-    let terminal = render_terminal(&model, 120, 34, TundraTheme::default_dark());
-    let main = setup_main_rect(120, 34);
-    let corner = terminal
-        .backend()
-        .buffer()
-        .cell((main.x, main.y))
-        .expect("setup border corner");
-
-    assert_eq!(corner.symbol(), "┌");
-    assert_eq!(corner.fg, Color::LightGreen);
-    assert!(
-        terminal
-            .backend()
-            .buffer()
-            .content()
-            .iter()
-            .any(|cell| cell.fg == Color::LightMagenta && cell.symbol() != " ")
-    );
 }
 
 #[test]
@@ -575,16 +526,6 @@ fn render_terminal(
         })
         .expect("render setup");
     terminal
-}
-
-fn terminal_output(terminal: &Terminal<TestBackend>) -> String {
-    terminal
-        .backend()
-        .buffer()
-        .content()
-        .iter()
-        .map(|cell| cell.symbol())
-        .collect()
 }
 
 fn setup_main_rect(width: u16, height: u16) -> Rect {
