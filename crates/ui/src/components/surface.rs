@@ -89,6 +89,7 @@ impl Surface {
         });
         let mut block = Block::default().style(style);
         if self.bordered {
+            // Colour the border glyphs without painting a band around the panel.
             block = block
                 .borders(Borders::ALL)
                 .border_type(
@@ -96,17 +97,17 @@ impl Surface {
                         .unwrap_or(context.theme.border_shape)
                         .border_type(),
                 )
-                .border_style(
-                    Style::default()
-                        .fg(tokens.border)
-                        .bg(style.bg.unwrap_or(tokens.surface)),
-                );
+                .border_style(Style::default().fg(tokens.border).bg(tokens.canvas));
         }
         if let Some(title) = &self.title {
             block = block.title(title.as_str()).title_style(
                 Style::default()
                     .fg(tokens.accent)
-                    .bg(style.bg.unwrap_or(tokens.surface))
+                    .bg(if self.bordered {
+                        tokens.canvas
+                    } else {
+                        style.bg.unwrap_or(tokens.surface)
+                    })
                     .add_modifier(Modifier::BOLD),
             );
         }

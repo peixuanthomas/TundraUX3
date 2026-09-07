@@ -92,7 +92,7 @@ impl ThemeTokens {
 
     /// Uses the explicitly limited ANSI palette when true colour is not
     /// available. The mapping intentionally stays stable across terminals:
-    /// black/dark-gray surfaces, white/gray text, cyan/light-cyan focus,
+    /// black surfaces, white/gray text, cyan/light-cyan focus,
     /// green success, yellow warning, and light-red danger.
     pub fn for_capability(self, capability: ColorCapability) -> Self {
         if capability == ColorCapability::TrueColor {
@@ -105,8 +105,11 @@ impl ThemeTokens {
             canvas: Color::Black,
             editor_canvas: Color::Black,
             surface: Color::Black,
-            raised: Color::DarkGray,
-            border: Color::DarkGray,
+            raised: Color::Black,
+            border: match self.border {
+                Color::Rgb(..) | Color::Indexed(_) => Color::DarkGray,
+                color => color,
+            },
             text: Color::White,
             muted: Color::Gray,
             accent,
@@ -752,7 +755,7 @@ impl TundraTheme {
         } else {
             tokens.border
         };
-        solid_border_style(Style::default().fg(color).bg(tokens.surface))
+        solid_border_style(Style::default().fg(color).bg(self.background))
     }
 
     pub fn title_style(&self) -> Style {
