@@ -1,35 +1,21 @@
 use std::fmt;
 use std::io::Write;
 use std::path::Path;
-use std::sync::Arc;
-use std::sync::atomic::AtomicBool;
 
 use platform::Platform;
 use storage::{BorderColor, StorageConfig, StorageLayout, StorageManager};
-use watchdog::{AppCriticality, AppDescriptor, AppId, AppWatchdog, ProcessWatchdog};
+use watchdog::{AppWatchdog, ProcessWatchdog};
 
 use crate::arguments::{CliCommand, parse_args};
 use crate::asset_command::run_asset;
 use crate::config_command::run_config;
+use crate::debug_command::{drain_watchdog_incidents, run_watchdog_test};
 use crate::doctor::run_doctor;
-use crate::help_text::{write_explain, write_help};
+use crate::help_text::{write_debug_help, write_explain, write_help};
 use crate::path_report::run_paths;
 use crate::storage_reset::run_new;
-use crate::weathr_command::{
-    WeathrLaunchOptions, drain_watchdog_incidents, run_weathr, run_weathr_managed,
-};
 
 const CLEAR_TERMINAL_SEQUENCE: &[u8] = b"\x1b[3J\x1b[2J\x1b[H";
-
-/// Watchdog registration is a host concern, not part of Weathr's display API.
-pub fn weathr_watchdog_descriptor() -> AppDescriptor {
-    AppDescriptor::new(
-        AppId::from_static("weathr"),
-        "Weathr",
-        env!("CARGO_PKG_VERSION"),
-        AppCriticality::SessionCritical,
-    )
-}
 
 pub fn run<I, S, Stdout, Stderr>(args: I, stdout: &mut Stdout, stderr: &mut Stderr) -> i32
 where
@@ -45,7 +31,7 @@ where
 pub fn run_managed<I, S, Stdout, Stderr>(
     args: I,
     process_watchdog: &ProcessWatchdog,
-    weathr_watchdog: AppWatchdog,
+    cli_watchdog: AppWatchdog,
     stdout: &mut Stdout,
     stderr: &mut Stderr,
 ) -> i32
@@ -62,7 +48,7 @@ where
         stdout,
         stderr,
         process_watchdog,
-        weathr_watchdog,
+        cli_watchdog,
     )
 }
 
@@ -72,7 +58,7 @@ pub fn run_with_platform_and_watchdog<I, S, Stdout, Stderr>(
     stdout: &mut Stdout,
     stderr: &mut Stderr,
     process_watchdog: &ProcessWatchdog,
-    weathr_watchdog: AppWatchdog,
+    cli_watchdog: AppWatchdog,
 ) -> i32
 where
     I: IntoIterator<Item = S>,
@@ -82,30 +68,25 @@ where
 {
     let args = args
         .into_iter()
-        .map(|argument| argument.as_ref().to_string())
+        .map(|arg| arg.as_ref().to_string())
         .collect::<Vec<_>>();
+    let mut execute = |command: &[String]| {
+        let code = dispatch(
+            command,
+            platform,
+            stdout,
+            stderr,
+            None,
+            Some((process_watchdog, &cli_watchdog)),
+        );
+        drain_watchdog_incidents(process_watchdog, stderr);
+        code
+    };
     if let Ok(CliCommand::Repl { embedded }) = parse_args(&args) {
-        return crate::repl::run_repl(embedded, |command| {
-            run_with_platform_and_managed_weathr_launcher(
-                command,
-                platform,
-                stdout,
-                stderr,
-                process_watchdog,
-                weathr_watchdog.clone(),
-                launch_weathr_managed,
-            )
-        });
+        crate::repl::run_repl(embedded, execute)
+    } else {
+        execute(&args)
     }
-    run_with_platform_and_managed_weathr_launcher(
-        args,
-        platform,
-        stdout,
-        stderr,
-        process_watchdog,
-        weathr_watchdog,
-        launch_weathr_managed,
-    )
 }
 
 pub fn run_with_platform<I, S, Stdout, Stderr>(
@@ -122,115 +103,14 @@ where
 {
     let args = args
         .into_iter()
-        .map(|argument| argument.as_ref().to_string())
+        .map(|arg| arg.as_ref().to_string())
         .collect::<Vec<_>>();
     if let Ok(CliCommand::Repl { embedded }) = parse_args(&args) {
         return crate::repl::run_repl(embedded, |command| {
-            run_with_platform_and_weathr_launcher(command, platform, stdout, stderr, launch_weathr)
+            dispatch(command, platform, stdout, stderr, None, None)
         });
     }
-    run_with_platform_and_weathr_launcher(args, platform, stdout, stderr, launch_weathr)
-}
-
-#[doc(hidden)]
-pub fn run_with_platform_and_weathr_launcher<I, S, Stdout, Stderr, Launcher, LaunchError>(
-    args: I,
-    platform: &dyn Platform,
-    stdout: &mut Stdout,
-    stderr: &mut Stderr,
-    weathr_launcher: Launcher,
-) -> i32
-where
-    I: IntoIterator<Item = S>,
-    S: AsRef<str>,
-    Stdout: Write,
-    Stderr: Write,
-    Launcher: FnOnce(WeathrLaunchOptions) -> Result<(), LaunchError>,
-    LaunchError: fmt::Display,
-{
-    run_with_platform_and_weathr_launcher_and_asset_root(
-        args,
-        platform,
-        stdout,
-        stderr,
-        weathr_launcher,
-        None,
-    )
-}
-
-#[doc(hidden)]
-pub fn run_with_platform_and_managed_weathr_launcher<I, S, Stdout, Stderr, Launcher>(
-    args: I,
-    platform: &dyn Platform,
-    stdout: &mut Stdout,
-    stderr: &mut Stderr,
-    process_watchdog: &ProcessWatchdog,
-    weathr_watchdog: AppWatchdog,
-    weathr_launcher: Launcher,
-) -> i32
-where
-    I: IntoIterator<Item = S>,
-    S: AsRef<str>,
-    Stdout: Write,
-    Stderr: Write,
-    Launcher: FnOnce(WeathrLaunchOptions, AppWatchdog) -> Result<(), weathr::WeathrRunError>,
-{
-    let mut routed_by_weathr = false;
-    let exit_code = match parse_args(args) {
-        Ok(CliCommand::Asset(action)) => run_asset(stdout, stderr, action, None),
-        Ok(CliCommand::Cls) => run_cls(stdout, stderr),
-        Ok(CliCommand::Config(action)) => run_config(platform, stdout, stderr, action),
-        Ok(CliCommand::Help) => {
-            let _ = write_help(stdout);
-            0
-        }
-        Ok(CliCommand::Explain) => {
-            let _ = write_explain(stdout);
-            0
-        }
-        Ok(CliCommand::New) => run_new(platform, stdout, stderr),
-        Ok(CliCommand::Repl { .. }) => {
-            let _ = writeln!(stderr, "ERROR: repl cannot be started from inside repl");
-            2
-        }
-        Ok(CliCommand::Paths) => run_paths(platform, stdout, stderr),
-        Ok(CliCommand::Doctor) => run_doctor(platform, stdout, stderr, None),
-        Ok(CliCommand::TestFrost) => {
-            run_configured_animation_preview(platform, stderr, "frost", |color| {
-                shell::run_frost_animation_preview_with_color(stdout, color)
-            })
-        }
-        Ok(CliCommand::TestMatrix) => {
-            run_configured_animation_preview(platform, stderr, "Matrix", |color| {
-                shell::run_matrix_animation_preview_with_color(stdout, color)
-            })
-        }
-        Ok(CliCommand::Weathr) => {
-            routed_by_weathr = true;
-            run_weathr_managed(
-                platform,
-                stderr,
-                process_watchdog,
-                weathr_watchdog,
-                weathr_launcher,
-            )
-        }
-        Ok(CliCommand::UpdateProbe) => write_update_probe(stdout),
-        Ok(CliCommand::ApplyUpdate {
-            manifest,
-            parent_pid,
-            recover_only,
-        }) => run_update_helper(&manifest, parent_pid, recover_only, stderr),
-        Err(error) => {
-            let _ = writeln!(stderr, "ERROR: {error}");
-            let _ = write_help(stderr);
-            2
-        }
-    };
-    if !routed_by_weathr {
-        let _ = drain_watchdog_incidents(process_watchdog, stderr);
-    }
-    exit_code
+    dispatch(args, platform, stdout, stderr, None, None)
 }
 
 #[doc(hidden)]
@@ -247,38 +127,22 @@ where
     Stdout: Write,
     Stderr: Write,
 {
-    run_with_platform_and_weathr_launcher_and_asset_root(
-        args,
-        platform,
-        stdout,
-        stderr,
-        launch_weathr,
-        Some(asset_root),
-    )
+    dispatch(args, platform, stdout, stderr, Some(asset_root), None)
 }
 
-fn run_with_platform_and_weathr_launcher_and_asset_root<
-    I,
-    S,
-    Stdout,
-    Stderr,
-    Launcher,
-    LaunchError,
->(
+fn dispatch<I, S, Stdout, Stderr>(
     args: I,
     platform: &dyn Platform,
     stdout: &mut Stdout,
     stderr: &mut Stderr,
-    weathr_launcher: Launcher,
     asset_root: Option<&Path>,
+    managed: Option<(&ProcessWatchdog, &AppWatchdog)>,
 ) -> i32
 where
     I: IntoIterator<Item = S>,
     S: AsRef<str>,
     Stdout: Write,
     Stderr: Write,
-    Launcher: FnOnce(WeathrLaunchOptions) -> Result<(), LaunchError>,
-    LaunchError: fmt::Display,
 {
     match parse_args(args) {
         Ok(CliCommand::Asset(action)) => run_asset(stdout, stderr, action, asset_root),
@@ -309,7 +173,15 @@ where
                 shell::run_matrix_animation_preview_with_color(stdout, color)
             })
         }
-        Ok(CliCommand::Weathr) => run_weathr(platform, stderr, weathr_launcher),
+        Ok(CliCommand::DebugHelp) => {
+            let _ = write_debug_help(stdout);
+            0
+        }
+        Ok(
+            command @ (CliCommand::TestWatchdogError
+            | CliCommand::TestWatchdogCritical
+            | CliCommand::TestWatchdogPanic),
+        ) => run_watchdog_test(command, managed, stdout, stderr),
         Ok(CliCommand::UpdateProbe) => write_update_probe(stdout),
         Ok(CliCommand::ApplyUpdate {
             manifest,
@@ -354,52 +226,6 @@ fn run_update_helper(
             1
         }
     }
-}
-
-fn launch_weathr(options: WeathrLaunchOptions) -> Result<(), weathr::WeathrRunError> {
-    let watchdog = ProcessWatchdog::global()
-        .ok_or_else(|| {
-            weathr::WeathrRunError::Host(
-                "the process watchdog must be installed before launching Weathr".to_string(),
-            )
-        })?
-        .register_app(weathr_watchdog_descriptor())
-        .map_err(|error| weathr::WeathrRunError::Host(error.to_string()))?;
-    launch_weathr_managed(options, watchdog)
-}
-
-fn launch_weathr_managed(
-    options: WeathrLaunchOptions,
-    watchdog: AppWatchdog,
-) -> Result<(), weathr::WeathrRunError> {
-    let services_config = system_services::SystemServicesConfig {
-        weather_location: options.location_query,
-        timezone_id: options.timezone_id.unwrap_or_else(|| "UTC".to_string()),
-        timezone_location: options
-            .location_override
-            .map(|location| system_services::GeoLocation {
-                latitude: location.latitude,
-                longitude: location.longitude,
-                city: location.city,
-            }),
-        ..Default::default()
-    };
-
-    let (services, snapshots) =
-        system_services::SystemServicesRuntime::start(services_config, watchdog.clone());
-    let input = weathr::WeathrDisplayInput {
-        snapshots,
-        clock_format: weathr::ClockFormat::TwentyFourHour,
-        hide_hud: false,
-        palette: weathr::theme::catalogue::DEFAULT_PALETTE,
-        shutdown: Arc::new(AtomicBool::new(false)),
-        minimum_terminal_size: options.minimum_terminal_size,
-        exit_semantic: weathr::ExitSemantic::Quit,
-        first_frame_callback: None,
-    };
-    let result = weathr::run_display_blocking(input).map(|_| ());
-    let _ = services.shutdown();
-    result
 }
 
 fn run_cls<Stdout: Write, Stderr: Write>(stdout: &mut Stdout, stderr: &mut Stderr) -> i32 {

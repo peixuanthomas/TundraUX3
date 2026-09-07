@@ -5,7 +5,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use cli::{
     AssetAction, AssetOutput, CliCommand, CliError, ConfigAction, ConfigField, ConfigUpdate,
     parse_args, run, run_with_platform, run_with_platform_and_asset_root,
-    run_with_platform_and_managed_weathr_launcher, run_with_platform_and_weathr_launcher,
+    run_with_platform_and_watchdog,
 };
 use platform::mock::{MockCall, MockPlatform, UnsupportedPlatform};
 use platform::{Platform, PlatformKind, UserDirs, build_macos_app_paths, build_windows_app_paths};
@@ -18,11 +18,28 @@ use watchdog::{
 fn simple_commands_dispatch_from_a_table() {
     let cases: &[(&[&str], CliCommand)] = &[
         (&[], CliCommand::Help),
-        (&["doctor"], CliCommand::Doctor),
-        (&["paths"], CliCommand::Paths),
-        (&["explain"], CliCommand::Explain),
+        (&["debug", "doctor"], CliCommand::Doctor),
+        (&["debug", "paths"], CliCommand::Paths),
+        (&["debug", "explain"], CliCommand::Explain),
         (&["new"], CliCommand::New),
-        (&["weathr"], CliCommand::Weathr),
+        (&["debug"], CliCommand::DebugHelp),
+        (&["debug", "help"], CliCommand::DebugHelp),
+        (&["debug", "--help"], CliCommand::DebugHelp),
+        (&["debug", "-h"], CliCommand::DebugHelp),
+        (&["debug", "test-frost"], CliCommand::TestFrost),
+        (&["debug", "test-matrix"], CliCommand::TestMatrix),
+        (
+            &["debug", "test-watchdog-error"],
+            CliCommand::TestWatchdogError,
+        ),
+        (
+            &["debug", "test-watchdog-critical"],
+            CliCommand::TestWatchdogCritical,
+        ),
+        (
+            &["debug", "test-watchdog-panic"],
+            CliCommand::TestWatchdogPanic,
+        ),
     ];
 
     for (args, expected) in cases {
@@ -35,42 +52,206 @@ fn simple_commands_dispatch_from_a_table() {
 }
 
 #[test]
+fn debug_commands_reject_old_entries_unknown_names_and_extra_arguments() {
+    for name in [
+        "asset",
+        "doctor",
+        "paths",
+        "explain",
+        "test-frost",
+        "test-matrix",
+        "weathr",
+        "sudo",
+    ] {
+        assert_eq!(
+            parse_args([name]),
+            Err(CliError::UnknownCommand(name.to_string()))
+        );
+    }
+    for name in ["weathr", "unknown", "new"] {
+        assert_eq!(
+            parse_args(["debug", name]),
+            Err(CliError::UnknownDebugCommand(name.to_string()))
+        );
+    }
+    for name in [
+        "help",
+        "test-frost",
+        "test-matrix",
+        "doctor",
+        "paths",
+        "explain",
+        "test-watchdog-error",
+        "test-watchdog-critical",
+        "test-watchdog-panic",
+    ] {
+        assert_eq!(
+            parse_args(["debug", name, "extra"]),
+            Err(CliError::UnexpectedArgument("extra".to_string()))
+        );
+    }
+    let mut stdout = Vec::new();
+    let mut stderr = Vec::new();
+    assert_eq!(run(["weathr"], &mut stdout, &mut stderr), 2);
+    assert!(String::from_utf8_lossy(&stderr).contains("unknown command: weathr"));
+}
+
+#[test]
+fn debug_help_lists_diagnostics_and_report_tests() {
+    let mut stdout = Vec::new();
+    let mut stderr = Vec::new();
+    assert_eq!(run(["debug"], &mut stdout, &mut stderr), 0);
+    let help = String::from_utf8(stdout).unwrap();
+    for name in [
+        "asset",
+        "doctor",
+        "paths",
+        "explain",
+        "test-frost",
+        "test-matrix",
+        "test-watchdog-error",
+        "test-watchdog-critical",
+        "test-watchdog-panic",
+    ] {
+        assert!(help.contains(name), "missing {name}");
+    }
+    assert!(stderr.is_empty());
+    assert!(!help.contains("weathr"));
+}
+
+#[test]
+fn watchdog_tests_write_real_reports_and_allow_the_next_command() {
+    use watchdog::{IncidentKind, IncidentSeverity};
+    let tree = TempTree::new("debug-watchdog");
+    let platform = mock_windows_platform(tree.path());
+    let watchdog = test_cli_watchdog();
+    for (name, kind, severity) in [
+        (
+            "test-watchdog-error",
+            IncidentKind::Error,
+            IncidentSeverity::Error,
+        ),
+        (
+            "test-watchdog-critical",
+            IncidentKind::Error,
+            IncidentSeverity::Critical,
+        ),
+        (
+            "test-watchdog-panic",
+            IncidentKind::Panic,
+            IncidentSeverity::Critical,
+        ),
+    ] {
+        let mut stdout = Vec::new();
+        let mut stderr = Vec::new();
+        assert_eq!(
+            run_with_platform_and_watchdog(
+                ["debug", name],
+                &platform,
+                &mut stdout,
+                &mut stderr,
+                &watchdog.process,
+                watchdog.cli.clone(),
+            ),
+            0,
+            "{name}: {}",
+            String::from_utf8_lossy(&stderr)
+        );
+        let output = String::from_utf8(stdout).unwrap();
+        let catalog = watchdog.process.list_incident_reports();
+        let report = catalog
+            .reports
+            .iter()
+            .find(|report| output.contains(&report.incident_id))
+            .expect("persisted report");
+        assert_eq!(report.kind, kind);
+        assert_eq!(report.severity, severity);
+        assert_eq!(report.app.as_ref().unwrap().id.as_str(), "cli");
+        assert!(report.component.as_ref().unwrap().contains("debug"));
+        let json = fs::read_to_string(&report.json_report_path).unwrap();
+        let text = fs::read_to_string(report.text_report_path.as_ref().unwrap()).unwrap();
+        assert!(json.contains("Intentional"));
+        assert!(text.contains("Intentional"));
+        assert!(output.contains(&report.json_report_path.display().to_string()));
+        assert!(
+            output.contains(
+                &report
+                    .text_report_path
+                    .as_ref()
+                    .unwrap()
+                    .display()
+                    .to_string()
+            )
+        );
+        if kind == IncidentKind::Panic {
+            assert!(report.recovery.is_recovered());
+        }
+        assert!(output.contains("Command Line can continue"));
+        let mut next_output = Vec::new();
+        assert_eq!(
+            run_with_platform_and_watchdog(
+                ["cls"],
+                &platform,
+                &mut next_output,
+                &mut stderr,
+                &watchdog.process,
+                watchdog.cli.clone(),
+            ),
+            0
+        );
+        assert_eq!(next_output, b"\x1b[3J\x1b[2J\x1b[H");
+    }
+}
+
+#[test]
+fn watchdog_tests_without_a_runtime_fail_clearly() {
+    let mut stdout = Vec::new();
+    let mut stderr = Vec::new();
+    assert_eq!(
+        run(["debug", "test-watchdog-error"], &mut stdout, &mut stderr),
+        1
+    );
+    assert!(stdout.is_empty());
+    assert!(String::from_utf8_lossy(&stderr).contains("require the managed tundra-cli runtime"));
+}
+
+#[test]
 fn asset_args_select_help_rendered_source_and_named_item_output() {
     assert_eq!(
-        parse_args(["asset"]),
+        parse_args(["debug", "asset"]),
         Ok(CliCommand::Asset(AssetAction::Help))
     );
     assert_eq!(
-        parse_args(["asset", "--help"]),
+        parse_args(["debug", "asset", "--help"]),
         Ok(CliCommand::Asset(AssetAction::Help))
     );
     assert_eq!(
-        parse_args(["asset", "explorer_icons"]),
+        parse_args(["debug", "asset", "explorer_icons"]),
         Ok(CliCommand::Asset(AssetAction::Show {
             name: "explorer_icons".to_string(),
             output: AssetOutput::RenderAll,
         }))
     );
     assert_eq!(
-        parse_args(["asset", "explorer_icons", "-a"]),
+        parse_args(["debug", "asset", "explorer_icons", "-a"]),
         Ok(CliCommand::Asset(AssetAction::Show {
             name: "explorer_icons".to_string(),
             output: AssetOutput::Source,
         }))
     );
     assert_eq!(
-        parse_args(["asset", "home_icons", "--launcher"]),
+        parse_args(["debug", "asset", "home_icons", "--launcher"]),
         Ok(CliCommand::Asset(AssetAction::Show {
             name: "home_icons".to_string(),
             output: AssetOutput::Item("launcher".to_string()),
         }))
     );
     assert_eq!(
-        parse_args(["asset", "-a"]),
+        parse_args(["debug", "asset", "-a"]),
         Err(CliError::MissingArgument("asset name"))
     );
     assert_eq!(
-        parse_args(["asset", "banner", "unexpected"]),
+        parse_args(["debug", "asset", "banner", "unexpected"]),
         Err(CliError::UnexpectedArgument("unexpected".to_string()))
     );
 }
@@ -190,7 +371,7 @@ fn unknown_and_extra_arguments_are_errors() {
         Err(CliError::UnknownCommand("repair".to_string()))
     );
     assert_eq!(
-        parse_args(["doctor", "--json"]),
+        parse_args(["debug", "doctor", "--json"]),
         Err(CliError::UnexpectedArgument("--json".to_string()))
     );
 }
@@ -205,16 +386,12 @@ fn help_command_writes_usage_to_stdout() {
     assert_eq!(exit_code, 0, "{}", String::from_utf8_lossy(&stderr));
     assert!(stderr.is_empty());
     let stdout = String::from_utf8(stdout).expect("help output should be utf8");
-    assert!(stdout.contains("<asset|cls|config|doctor"));
-    assert!(stdout.contains("asset   Print test assets"));
+    assert!(stdout.contains("<cls|config|debug|new|repl|help>"));
     assert!(stdout.contains("cls     Clear terminal history and screen"));
-    assert!(stdout.contains("test-frost|test-matrix|weathr>"));
     assert!(stdout.contains("config  View or update user config"));
     assert!(stdout.contains("new     Clear saved TundraUX3 data"));
     assert!(!stdout.contains("Launch the shell directly"));
-    assert!(stdout.contains("test-frost  Play only the startup frost banner animation"));
-    assert!(stdout.contains("test-matrix Play only the first-run Matrix banner animation"));
-    assert!(stdout.contains("weathr  Launch the terminal weather scene"));
+    assert!(!stdout.contains("Launch the terminal weather scene"));
     assert!(!stdout.contains("Windows 11"));
     assert!(!stdout.contains("Windows Terminal"));
 }
@@ -224,7 +401,7 @@ fn asset_without_a_name_prints_asset_specific_help() {
     let mut stdout = Vec::new();
     let mut stderr = Vec::new();
 
-    let exit_code = run(["asset"], &mut stdout, &mut stderr);
+    let exit_code = run(["debug", "asset"], &mut stdout, &mut stderr);
 
     assert_eq!(exit_code, 0);
     assert!(stderr.is_empty());
@@ -245,7 +422,7 @@ fn asset_command_renders_art_sets_and_individual_items() {
     let mut stdout = Vec::new();
     let mut stderr = Vec::new();
     let exit_code = run_with_platform_and_asset_root(
-        ["asset", "banner"],
+        ["debug", "asset", "banner"],
         &platform,
         &mut stdout,
         &mut stderr,
@@ -261,7 +438,7 @@ fn asset_command_renders_art_sets_and_individual_items() {
     let mut stdout = Vec::new();
     let mut stderr = Vec::new();
     let exit_code = run_with_platform_and_asset_root(
-        ["asset", "explorer_icons"],
+        ["debug", "asset", "explorer_icons"],
         &platform,
         &mut stdout,
         &mut stderr,
@@ -276,7 +453,7 @@ fn asset_command_renders_art_sets_and_individual_items() {
     let mut stdout = Vec::new();
     let mut stderr = Vec::new();
     let exit_code = run_with_platform_and_asset_root(
-        ["asset", "home_icons", "--launcher"],
+        ["debug", "asset", "home_icons", "--launcher"],
         &platform,
         &mut stdout,
         &mut stderr,
@@ -292,7 +469,7 @@ fn asset_command_renders_art_sets_and_individual_items() {
     let mut stdout = Vec::new();
     let mut stderr = Vec::new();
     let exit_code = run_with_platform_and_asset_root(
-        ["asset", "launcher_icons", "--builtin.command-line"],
+        ["debug", "asset", "launcher_icons", "--builtin.command-line"],
         &platform,
         &mut stdout,
         &mut stderr,
@@ -308,7 +485,7 @@ fn asset_command_renders_art_sets_and_individual_items() {
     let mut stdout = Vec::new();
     let mut stderr = Vec::new();
     let exit_code = run_with_platform_and_asset_root(
-        ["asset", "clock_font", "--0"],
+        ["debug", "asset", "clock_font", "--0"],
         &platform,
         &mut stdout,
         &mut stderr,
@@ -332,7 +509,7 @@ fn asset_source_mode_prints_the_complete_original_file() {
     let mut stderr = Vec::new();
 
     let exit_code = run_with_platform_and_asset_root(
-        ["asset", "explorer_icons", "-a"],
+        ["debug", "asset", "explorer_icons", "-a"],
         &UnsupportedPlatform,
         &mut stdout,
         &mut stderr,
@@ -354,7 +531,7 @@ fn asset_command_supports_unique_file_names_and_reports_missing_values() {
     let mut stdout = Vec::new();
     let mut stderr = Vec::new();
     let exit_code = run_with_platform_and_asset_root(
-        ["asset", "house"],
+        ["debug", "asset", "house"],
         &UnsupportedPlatform,
         &mut stdout,
         &mut stderr,
@@ -367,7 +544,7 @@ fn asset_command_supports_unique_file_names_and_reports_missing_values() {
     let mut stdout = Vec::new();
     let mut stderr = Vec::new();
     let exit_code = run_with_platform_and_asset_root(
-        ["asset", "not_present"],
+        ["debug", "asset", "not_present"],
         &UnsupportedPlatform,
         &mut stdout,
         &mut stderr,
@@ -381,7 +558,7 @@ fn asset_command_supports_unique_file_names_and_reports_missing_values() {
     let mut stdout = Vec::new();
     let mut stderr = Vec::new();
     let exit_code = run_with_platform_and_asset_root(
-        ["asset", "home_icons", "--not_present"],
+        ["debug", "asset", "home_icons", "--not_present"],
         &UnsupportedPlatform,
         &mut stdout,
         &mut stderr,
@@ -400,7 +577,7 @@ fn asset_command_supports_unique_file_names_and_reports_missing_values() {
     let mut stdout = Vec::new();
     let mut stderr = Vec::new();
     let exit_code = run_with_platform_and_asset_root(
-        ["asset", "banner"],
+        ["debug", "asset", "banner"],
         &UnsupportedPlatform,
         &mut stdout,
         &mut stderr,
@@ -432,7 +609,7 @@ fn explain_command_prints_startup_and_boundary_notes() {
     let mut stdout = Vec::new();
     let mut stderr = Vec::new();
 
-    let exit_code = run(["explain"], &mut stdout, &mut stderr);
+    let exit_code = run(["debug", "explain"], &mut stdout, &mut stderr);
 
     assert_eq!(exit_code, 0);
     assert!(stderr.is_empty());
@@ -443,126 +620,20 @@ fn explain_command_prints_startup_and_boundary_notes() {
     assert!(stdout.contains("UI boundary"));
     assert!(stdout.contains("platform"));
     assert!(stdout.contains("tundra-shell"));
-    assert!(
-        stdout
-            .contains("doctor, paths, explain, new, repl, asset, test-frost, test-matrix, weathr")
-    );
+    assert!(stdout.contains("diagnostics and tests are under debug"));
     assert!(!stdout.contains("Windows 11"));
     assert!(!stdout.contains("Windows Terminal"));
 }
 
 #[test]
-fn weathr_command_launches_injected_runner() {
-    let mut stdout = Vec::new();
-    let mut stderr = Vec::new();
-    let tree = TempTree::new("weathr-launch");
-    let platform = mock_windows_platform(tree.path());
-
-    let exit_code = run_with_platform_and_weathr_launcher(
-        ["weathr"],
-        &platform,
-        &mut stdout,
-        &mut stderr,
-        |_options| Ok::<(), &'static str>(()),
-    );
-
-    assert_eq!(exit_code, 0);
-    assert!(stdout.is_empty());
-    assert!(stderr.is_empty());
-}
-
-#[test]
-fn weathr_command_reports_injected_runner_error() {
-    let mut stdout = Vec::new();
-    let mut stderr = Vec::new();
-    let tree = TempTree::new("weathr-launch-error");
-    let platform = mock_windows_platform(tree.path());
-
-    let exit_code = run_with_platform_and_weathr_launcher(
-        ["weathr"],
-        &platform,
-        &mut stdout,
-        &mut stderr,
-        |_options| Err::<(), &'static str>("terminal unavailable"),
-    );
-
-    assert_eq!(exit_code, 1);
-    assert!(stdout.is_empty());
-    let stderr = String::from_utf8(stderr).expect("weathr error output should be utf8");
-    assert!(stderr.contains("ERROR: could not launch weathr: terminal unavailable"));
-}
-
-#[test]
-fn managed_weathr_launcher_receives_the_explicit_app_watchdog() {
-    let mut stdout = Vec::new();
-    let mut stderr = Vec::new();
-    let tree = TempTree::new("managed-weathr-launch");
-    let platform = mock_windows_platform(tree.path());
-    let watchdog = test_weathr_watchdog();
-    let mut received_app_id = None;
-
-    let exit_code = run_with_platform_and_managed_weathr_launcher(
-        ["weathr"],
-        &platform,
-        &mut stdout,
-        &mut stderr,
-        &watchdog.process,
-        watchdog.weathr.clone(),
-        |_options, watchdog| {
-            received_app_id = Some(watchdog.descriptor().id.as_str().to_string());
-            Ok(())
-        },
-    );
-
-    assert_eq!(exit_code, 0);
-    assert_eq!(received_app_id.as_deref(), Some("weathr"));
-    assert!(stderr.is_empty());
-}
-
-#[test]
-fn unrecoverable_managed_weathr_panic_routes_to_stderr_and_critical_dialog() {
-    let mut stdout = Vec::new();
-    let mut stderr = Vec::new();
-    let tree = TempTree::new("managed-weathr-panic");
-    let platform = mock_windows_platform(tree.path());
-    let watchdog = test_weathr_watchdog();
-
-    let exit_code = run_with_platform_and_managed_weathr_launcher(
-        ["weathr"],
-        &platform,
-        &mut stdout,
-        &mut stderr,
-        &watchdog.process,
-        watchdog.weathr.clone(),
-        |_options, _watchdog| {
-            Err(weathr::WeathrRunError::Panic {
-                incident_id: "test-weathr-panic".to_string(),
-                reason: "render failed".to_string(),
-            })
-        },
-    );
-
-    assert_eq!(exit_code, 1);
-    let stderr = String::from_utf8(stderr).expect("managed Weathr error output is UTF-8");
-    assert!(stderr.contains("render failed"));
-    assert!(stderr.contains("test-weathr-panic"));
-    assert!(stderr.contains("report path unavailable"));
-    assert!(platform.calls().iter().any(|call| matches!(
-        call,
-        MockCall::ShowCriticalError { title, body }
-            if title.contains("Weathr") && body.contains("render failed")
-    )));
-}
-
-#[test]
-fn managed_cli_routes_pending_watchdog_incidents_for_non_weathr_commands() {
+fn managed_cli_routes_pending_watchdog_incidents_for_regular_commands() {
     let mut stdout = Vec::new();
     let mut stderr = Vec::new();
     let tree = TempTree::new("managed-watchdog-drain");
     let platform = mock_windows_platform(tree.path());
-    let watchdog = test_weathr_watchdog();
-    let weathr = watchdog.weathr.clone();
-    let caught = weathr
+    let watchdog = test_cli_watchdog();
+    let cli = watchdog.cli.clone();
+    let caught = cli
         .run_boundary(
             BoundarySpec::new("test.recovered", BoundaryKind::Worker),
             std::panic::AssertUnwindSafe(|| -> () { panic!("managed incident") }),
@@ -574,14 +645,13 @@ fn managed_cli_routes_pending_watchdog_incidents_for_non_weathr_commands() {
         ))
         .expect("test incident report finalizes");
 
-    let exit_code = run_with_platform_and_managed_weathr_launcher(
+    let exit_code = run_with_platform_and_watchdog(
         ["help"],
         &platform,
         &mut stdout,
         &mut stderr,
         &watchdog.process,
-        weathr,
-        |_options, _watchdog| Ok(()),
+        cli,
     );
 
     assert_eq!(exit_code, 0);
@@ -594,120 +664,6 @@ fn managed_cli_routes_pending_watchdog_incidents_for_non_weathr_commands() {
             .iter()
             .any(|call| matches!(call, MockCall::ShowCriticalError { .. }))
     );
-}
-
-#[test]
-fn weathr_command_passes_setup_timezone_location_to_launcher() {
-    let mut stdout = Vec::new();
-    let mut stderr = Vec::new();
-    let tree = TempTree::new("weathr-launch-timezone");
-    let platform = mock_windows_platform(tree.path());
-    let app_paths = platform.app_paths().expect("mock app paths");
-    let opened = StorageManager::open(app_paths).expect("storage initializes");
-    let config = StorageConfig {
-        timezone: "Asia/Shanghai".to_string(),
-        weather_location: Some("Pudong, Shanghai, China".to_string()),
-        ..StorageConfig::default()
-    };
-    opened.manager.save_config(&config).expect("config saves");
-
-    let mut captured = None;
-    let exit_code = run_with_platform_and_weathr_launcher(
-        ["weathr"],
-        &platform,
-        &mut stdout,
-        &mut stderr,
-        |options| {
-            captured = Some(options);
-            Ok::<(), &'static str>(())
-        },
-    );
-
-    assert_eq!(exit_code, 0);
-    assert!(stdout.is_empty());
-    assert!(stderr.is_empty());
-
-    let options = captured.expect("launcher receives options");
-    assert!(!options.load_config_file);
-    assert!(!options.prefer_config_location);
-    assert_eq!(options.timezone_id.as_deref(), Some("Asia/Shanghai"));
-    assert_eq!(
-        options.location_query.as_deref(),
-        Some("Pudong, Shanghai, China")
-    );
-    let location = options
-        .location_override
-        .expect("setup timezone should map to location");
-    assert_eq!(location.latitude, 31.2304);
-    assert_eq!(location.longitude, 121.4737);
-    assert_eq!(location.city.as_deref(), Some("Shanghai"));
-}
-
-#[test]
-fn weathr_command_uses_default_options_when_storage_config_is_missing() {
-    let mut stdout = Vec::new();
-    let mut stderr = Vec::new();
-    let tree = TempTree::new("weathr-launch-no-config");
-    let platform = mock_windows_platform(tree.path());
-
-    let mut captured = None;
-    let exit_code = run_with_platform_and_weathr_launcher(
-        ["weathr"],
-        &platform,
-        &mut stdout,
-        &mut stderr,
-        |options| {
-            captured = Some(options);
-            Ok::<(), &'static str>(())
-        },
-    );
-
-    assert_eq!(exit_code, 0);
-    assert!(stdout.is_empty());
-    assert!(stderr.is_empty());
-    let options = captured.expect("launcher receives options");
-    assert!(!options.load_config_file);
-    assert!(!options.prefer_config_location);
-    assert_eq!(options.location_override, None);
-    assert_eq!(options.location_query, None);
-    assert_eq!(options.timezone_id, None);
-}
-
-#[test]
-fn weathr_command_uses_default_options_when_storage_config_is_corrupt() {
-    let mut stdout = Vec::new();
-    let mut stderr = Vec::new();
-    let tree = TempTree::new("weathr-launch-corrupt-config");
-    let platform = mock_windows_platform(tree.path());
-    let app_paths = platform.app_paths().expect("mock app paths");
-    let config_parent = app_paths
-        .config_path()
-        .parent()
-        .expect("config path has parent");
-    fs::create_dir_all(config_parent).expect("config parent can be created");
-    fs::write(app_paths.config_path(), b"schema_version =\n").expect("corrupt config fixture");
-
-    let mut captured = None;
-    let exit_code = run_with_platform_and_weathr_launcher(
-        ["weathr"],
-        &platform,
-        &mut stdout,
-        &mut stderr,
-        |options| {
-            captured = Some(options);
-            Ok::<(), &'static str>(())
-        },
-    );
-
-    assert_eq!(exit_code, 0);
-    assert!(stdout.is_empty());
-    assert!(stderr.is_empty());
-    let options = captured.expect("launcher receives options");
-    assert!(!options.load_config_file);
-    assert!(!options.prefer_config_location);
-    assert_eq!(options.location_override, None);
-    assert_eq!(options.location_query, None);
-    assert_eq!(options.timezone_id, None);
 }
 
 #[test]
@@ -1178,7 +1134,7 @@ fn paths_command_prints_injected_windows_resolved_and_storage_paths() {
     let tree = TempTree::new("windows-paths");
     let platform = mock_windows_platform(tree.path());
 
-    let exit_code = run_with_platform(["paths"], &platform, &mut stdout, &mut stderr);
+    let exit_code = run_with_platform(["debug", "paths"], &platform, &mut stdout, &mut stderr);
 
     assert_eq!(exit_code, 0);
     assert!(stderr.is_empty());
@@ -1199,7 +1155,7 @@ fn paths_command_prints_injected_macos_resolved_and_storage_paths() {
     let tree = TempTree::new("macos-paths");
     let platform = mock_macos_platform(tree.path());
 
-    let exit_code = run_with_platform(["paths"], &platform, &mut stdout, &mut stderr);
+    let exit_code = run_with_platform(["debug", "paths"], &platform, &mut stdout, &mut stderr);
 
     assert_eq!(exit_code, 0);
     assert!(stderr.is_empty());
@@ -1219,7 +1175,7 @@ fn paths_command_reports_unsupported_platform_from_injected_platform() {
     let mut stderr = Vec::new();
     let platform = UnsupportedPlatform;
 
-    let exit_code = run_with_platform(["paths"], &platform, &mut stdout, &mut stderr);
+    let exit_code = run_with_platform(["debug", "paths"], &platform, &mut stdout, &mut stderr);
 
     assert_eq!(exit_code, 1);
     let stdout = String::from_utf8(stdout).expect("paths output should be utf8");
@@ -1238,7 +1194,7 @@ fn doctor_command_passes_and_bootstraps_storage_with_injected_macos_platform() {
     let asset_root = copy_complete_assets(&tree);
 
     let exit_code = run_with_platform_and_asset_root(
-        ["doctor"],
+        ["debug", "doctor"],
         &platform,
         &mut stdout,
         &mut stderr,
@@ -1290,7 +1246,7 @@ fn doctor_command_warns_for_missing_ascii_asset_without_failing() {
         .expect("missing asset fixture can be removed");
 
     let exit_code = run_with_platform_and_asset_root(
-        ["doctor"],
+        ["debug", "doctor"],
         &platform,
         &mut stdout,
         &mut stderr,
@@ -1316,7 +1272,7 @@ fn doctor_command_reports_checks_and_skips_storage_when_app_paths_fail() {
     let asset_root = copy_complete_assets(&tree);
 
     let exit_code = run_with_platform_and_asset_root(
-        ["doctor"],
+        ["debug", "doctor"],
         &platform,
         &mut stdout,
         &mut stderr,
@@ -1351,7 +1307,7 @@ fn unknown_command_exits_two_and_writes_error_to_stderr() {
     assert!(stdout.is_empty());
     let stderr = String::from_utf8(stderr).expect("error output should be utf8");
     assert!(stderr.contains("ERROR: unknown command: repair"));
-    assert!(stderr.contains("test-frost|test-matrix|weathr>"));
+    assert!(stderr.contains("<cls|config|debug|new|repl|help>"));
 }
 
 fn assert_path_labels(output: &str) {
@@ -1443,20 +1399,20 @@ fn user_dirs(base: &Path) -> UserDirs {
     .expect("absolute user directory roots should resolve")
 }
 
-struct TestWeathrWatchdog {
+struct TestCliWatchdog {
     _tree: TempTree,
     _runtime: WatchdogRuntime,
     process: ProcessWatchdog,
-    weathr: watchdog::AppWatchdog,
+    cli: watchdog::AppWatchdog,
 }
 
-fn test_weathr_watchdog() -> std::sync::MutexGuard<'static, TestWeathrWatchdog> {
-    static WATCHDOG: std::sync::OnceLock<std::sync::Mutex<TestWeathrWatchdog>> =
+fn test_cli_watchdog() -> std::sync::MutexGuard<'static, TestCliWatchdog> {
+    static WATCHDOG: std::sync::OnceLock<std::sync::Mutex<TestCliWatchdog>> =
         std::sync::OnceLock::new();
 
     WATCHDOG
         .get_or_init(|| {
-            let tree = TempTree::new("managed-weathr-watchdog");
+            let tree = TempTree::new("managed-cli-watchdog");
             let root = tree.path().join("watchdog");
             let config = WatchdogConfig::new(
                 root.join("crashes"),
@@ -1466,14 +1422,22 @@ fn test_weathr_watchdog() -> std::sync::MutexGuard<'static, TestWeathrWatchdog> 
                 env!("CARGO_PKG_VERSION"),
             );
             let (runtime, process) = WatchdogRuntime::start(config).expect("test watchdog starts");
-            let weathr = process
-                .register_app(cli::weathr_watchdog_descriptor())
-                .expect("test Weathr app registers");
-            std::sync::Mutex::new(TestWeathrWatchdog {
+            let process = process
+                .install_global()
+                .expect("test watchdog hook installs");
+            let cli = process
+                .register_app(watchdog::AppDescriptor::new(
+                    watchdog::AppId::from_static("cli"),
+                    "Tundra CLI test",
+                    env!("CARGO_PKG_VERSION"),
+                    watchdog::AppCriticality::ProcessCritical,
+                ))
+                .expect("test CLI app registers");
+            std::sync::Mutex::new(TestCliWatchdog {
                 _tree: tree,
                 _runtime: runtime,
                 process,
-                weathr,
+                cli,
             })
         })
         .lock()

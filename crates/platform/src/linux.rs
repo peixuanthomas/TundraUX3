@@ -56,7 +56,7 @@ impl Platform for LinuxPlatform {
 
     fn capabilities(&self) -> PlatformCapabilities {
         // Runtime services (D-Bus, data-control, xdg-utils) are diagnosed by
-        // `tundra-cli doctor`; their absence must not demote Linux itself to an
+        // `tundra-cli debug doctor`; their absence must not demote Linux itself to an
         // unsupported platform.
         PlatformCapabilities::native_supported()
     }

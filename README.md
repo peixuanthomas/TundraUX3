@@ -26,7 +26,7 @@ cargo run -p shell --bin tundra-shell
 
 ```console
 cargo run -p cli --bin tundra-cli -- --help
-cargo run -p cli --bin tundra-cli -- doctor
+cargo run -p cli --bin tundra-cli -- debug doctor
 ```
 
 ## 详细文档

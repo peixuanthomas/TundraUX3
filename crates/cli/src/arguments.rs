@@ -16,7 +16,10 @@ pub enum CliCommand {
     },
     TestFrost,
     TestMatrix,
-    Weathr,
+    DebugHelp,
+    TestWatchdogError,
+    TestWatchdogCritical,
+    TestWatchdogPanic,
     Help,
     #[doc(hidden)]
     UpdateProbe,
@@ -74,6 +77,7 @@ pub enum CliError {
     MissingArgument(&'static str),
     ReadOnlyConfigField(String),
     UnknownCommand(String),
+    UnknownDebugCommand(String),
     UnknownConfigCommand(String),
     UnsupportedConfigField(String),
     UnexpectedArgument(String),
@@ -96,6 +100,10 @@ impl fmt::Display for CliError {
                 "config field {field:?} is a read-only summary; set border-shape, border-color, or accent-color instead"
             ),
             Self::UnknownCommand(command) => write!(formatter, "unknown command: {command}"),
+            Self::UnknownDebugCommand(command) => write!(
+                formatter,
+                "unknown debug command: {command}; run debug help"
+            ),
             Self::UnknownConfigCommand(command) => {
                 write!(formatter, "unknown config command: {command}")
             }
@@ -130,23 +138,37 @@ where
     let command = args.remove(0);
 
     match command.as_str() {
-        "asset" => parse_asset_args(&args).map(CliCommand::Asset),
+        "debug" => parse_debug_args(&args),
         "cls" => parse_no_extra_args(&args, CliCommand::Cls),
         "config" => parse_config_args(&args).map(CliCommand::Config),
-        "doctor" => parse_no_extra_args(&args, CliCommand::Doctor),
-        "explain" => parse_no_extra_args(&args, CliCommand::Explain),
         "new" => parse_no_extra_args(&args, CliCommand::New),
-        "paths" => parse_no_extra_args(&args, CliCommand::Paths),
         "repl" => parse_repl_args(&args),
-        "test-frost" => parse_no_extra_args(&args, CliCommand::TestFrost),
-        "test-matrix" => parse_no_extra_args(&args, CliCommand::TestMatrix),
-        "weathr" => parse_no_extra_args(&args, CliCommand::Weathr),
         "__update-probe" => parse_no_extra_args(&args, CliCommand::UpdateProbe),
         "__apply-update" => parse_internal_update_args(&args, false),
         "__recover-update" => parse_internal_update_args(&args, true),
         "-h" | "--help" | "help" => Ok(CliCommand::Help),
         other => Err(CliError::UnknownCommand(other.to_string())),
     }
+}
+
+fn parse_debug_args(args: &[String]) -> Result<CliCommand, CliError> {
+    let Some((command, rest)) = args.split_first() else {
+        return Ok(CliCommand::DebugHelp);
+    };
+    let command = match command.as_str() {
+        "help" | "-h" | "--help" => CliCommand::DebugHelp,
+        "asset" => return parse_asset_args(rest).map(CliCommand::Asset),
+        "doctor" => CliCommand::Doctor,
+        "paths" => CliCommand::Paths,
+        "explain" => CliCommand::Explain,
+        "test-frost" => CliCommand::TestFrost,
+        "test-matrix" => CliCommand::TestMatrix,
+        "test-watchdog-error" => CliCommand::TestWatchdogError,
+        "test-watchdog-critical" => CliCommand::TestWatchdogCritical,
+        "test-watchdog-panic" => CliCommand::TestWatchdogPanic,
+        other => return Err(CliError::UnknownDebugCommand(other.to_string())),
+    };
+    parse_no_extra_args(rest, command)
 }
 
 fn parse_internal_update_args(args: &[String], recover_only: bool) -> Result<CliCommand, CliError> {

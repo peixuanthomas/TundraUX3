@@ -2,14 +2,7 @@ use std::io::Write;
 
 pub(crate) fn write_help(output: &mut impl Write) -> std::io::Result<()> {
     writeln!(output, "TundraUX3 CLI")?;
-    writeln!(
-        output,
-        "Usage: tundra-cli <asset|cls|config|doctor|explain|new|paths|repl|test-frost|test-matrix|weathr>"
-    )?;
-    writeln!(
-        output,
-        "  asset   Print test assets or their original source files"
-    )?;
+    writeln!(output, "Usage: tundra-cli <cls|config|debug|new|repl|help>")?;
     writeln!(
         output,
         "  cls     Clear terminal history and screen, then move the cursor home"
@@ -20,20 +13,33 @@ pub(crate) fn write_help(output: &mut impl Write) -> std::io::Result<()> {
     )?;
     writeln!(
         output,
-        "  doctor  Check Windows/macOS/Linux, terminal, and app path readiness"
-    )?;
-    writeln!(
-        output,
-        "  explain Show CLI startup flow and kernel/UI boundaries"
+        "  debug   Diagnostics and test commands; run debug help for details"
     )?;
     writeln!(
         output,
         "  new     Clear saved TundraUX3 data and recreate initial storage"
     )?;
-    writeln!(output, "  paths   Print configured and resolved app paths")?;
     writeln!(
         output,
         "  repl    Enter the interactive command loop; type exit to leave, or /<command> to run an operating-system command"
+    )?;
+    writeln!(output, "  help    Show command help")
+}
+
+pub(crate) fn write_debug_help(output: &mut impl Write) -> std::io::Result<()> {
+    writeln!(output, "Usage: tundra-cli debug <command>")?;
+    writeln!(
+        output,
+        "  asset   Print test assets or their original source files"
+    )?;
+    writeln!(
+        output,
+        "  doctor  Check Windows/macOS/Linux, terminal, and app path readiness"
+    )?;
+    writeln!(output, "  paths   Print configured and resolved app paths")?;
+    writeln!(
+        output,
+        "  explain Show CLI startup flow and kernel/UI boundaries"
     )?;
     writeln!(
         output,
@@ -43,7 +49,22 @@ pub(crate) fn write_help(output: &mut impl Write) -> std::io::Result<()> {
         output,
         "  test-matrix Play only the first-run Matrix banner animation"
     )?;
-    writeln!(output, "  weathr  Launch the terminal weather scene")
+    writeln!(
+        output,
+        "  test-watchdog-error    Write an intentional error report"
+    )?;
+    writeln!(
+        output,
+        "  test-watchdog-critical Write an intentional critical error report"
+    )?;
+    writeln!(
+        output,
+        "  test-watchdog-panic    Trigger and catch a panic, then write its recovery report"
+    )?;
+    writeln!(
+        output,
+        "Watchdog tests print JSON/text report paths and return to Command Line. Reports are marked as intentional tests."
+    )
 }
 
 pub(crate) fn write_explain(output: &mut impl Write) -> std::io::Result<()> {
@@ -56,7 +77,7 @@ pub(crate) fn write_explain(output: &mut impl Write) -> std::io::Result<()> {
     )?;
     writeln!(
         output,
-        "  2. tundra-cli handles diagnostics, operator commands, config, assets, and launchers: doctor, paths, explain, new, repl, asset, test-frost, test-matrix, weathr, cls."
+        "  2. tundra-cli handles operator commands and config: cls, config, debug, new, repl; diagnostics and tests are under debug."
     )?;
     writeln!(
         output,
@@ -95,9 +116,9 @@ pub(crate) fn write_explain(output: &mut impl Write) -> std::io::Result<()> {
 pub(crate) fn write_asset_help(output: &mut impl Write) -> std::io::Result<()> {
     writeln!(output, "TundraUX3 asset test command")?;
     writeln!(output, "Usage:")?;
-    writeln!(output, "  tundra-cli asset <name>")?;
-    writeln!(output, "  tundra-cli asset <name> -a")?;
-    writeln!(output, "  tundra-cli asset <name> --<item>")?;
+    writeln!(output, "  tundra-cli debug asset <name>")?;
+    writeln!(output, "  tundra-cli debug asset <name> -a")?;
+    writeln!(output, "  tundra-cli debug asset <name> --<item>")?;
     writeln!(output)?;
     writeln!(output, "Options:")?;
     writeln!(
@@ -110,13 +131,13 @@ pub(crate) fn write_asset_help(output: &mut impl Write) -> std::io::Result<()> {
     )?;
     writeln!(output)?;
     writeln!(output, "Examples:")?;
-    writeln!(output, "  tundra-cli asset banner")?;
-    writeln!(output, "  tundra-cli asset explorer_icons -a")?;
-    writeln!(output, "  tundra-cli asset explorer_icons --folder")?;
-    writeln!(output, "  tundra-cli asset home_icons --launcher")?;
+    writeln!(output, "  tundra-cli debug asset banner")?;
+    writeln!(output, "  tundra-cli debug asset explorer_icons -a")?;
+    writeln!(output, "  tundra-cli debug asset explorer_icons --folder")?;
+    writeln!(output, "  tundra-cli debug asset home_icons --launcher")?;
     writeln!(
         output,
-        "  tundra-cli asset launcher_icons --builtin.command-line"
+        "  tundra-cli debug asset launcher_icons --builtin.command-line"
     )?;
     writeln!(output)?;
     writeln!(output, "Available assets:")?;

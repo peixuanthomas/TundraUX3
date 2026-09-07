@@ -622,10 +622,8 @@ dependencies = [
  "shell",
  "shlex",
  "storage",
- "system-services",
  "toml 0.9.12+spec-1.1.0",
  "watchdog",
- "weathr",
  "zbus",
 ]
 

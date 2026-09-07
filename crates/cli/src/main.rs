@@ -25,7 +25,7 @@ fn main() {
         }
     };
     let _ =
-        process_watchdog.register_emergency_cleanup(Arc::new(weathr::restore_terminal_best_effort));
+        process_watchdog.register_emergency_cleanup(Arc::new(shell::restore_terminal_best_effort));
     let cli_watchdog = match process_watchdog.register_app(AppDescriptor::new(
         AppId::from_static("cli"),
         "Tundra CLI",
@@ -39,15 +39,6 @@ fn main() {
             std::process::exit(3);
         }
     };
-    let weathr_watchdog = match process_watchdog.register_app(cli::weathr_watchdog_descriptor()) {
-        Ok(watchdog) => watchdog,
-        Err(error) => {
-            eprintln!("tundra-cli Weathr watchdog registration failed: {error}");
-            let _ = watchdog_runtime.shutdown();
-            std::process::exit(3);
-        }
-    };
-
     let mut stdout = std::io::stdout();
     let mut stderr = std::io::stderr();
     let result = cli_watchdog.run_boundary(
@@ -56,7 +47,7 @@ fn main() {
             cli::run_managed(
                 args,
                 &process_watchdog,
-                weathr_watchdog,
+                cli_watchdog.clone(),
                 &mut stdout,
                 &mut stderr,
             )

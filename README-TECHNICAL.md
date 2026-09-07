@@ -70,13 +70,13 @@ cargo run -p shell --bin tundra-shell
 
 ~~~console
 cargo run -p cli --bin tundra-cli -- --help
-cargo run -p cli --bin tundra-cli -- asset
-cargo run -p cli --bin tundra-cli -- asset banner
-cargo run -p cli --bin tundra-cli -- asset home_icons --launcher
-cargo run -p cli --bin tundra-cli -- asset launcher_icons --builtin.command-line
+cargo run -p cli --bin tundra-cli -- debug asset
+cargo run -p cli --bin tundra-cli -- debug asset banner
+cargo run -p cli --bin tundra-cli -- debug asset home_icons --launcher
+cargo run -p cli --bin tundra-cli -- debug asset launcher_icons --builtin.command-line
 cargo run -p cli --bin tundra-cli -- cls
-cargo run -p cli --bin tundra-cli -- doctor
-cargo run -p cli --bin tundra-cli -- paths
+cargo run -p cli --bin tundra-cli -- debug doctor
+cargo run -p cli --bin tundra-cli -- debug paths
 cargo run -p cli --bin tundra-cli -- repl
 ~~~
 
@@ -155,14 +155,13 @@ flowchart TD
     CLI["cli<br/>运维入口"] --> SHELL["shell<br/>组合与运行时"]
     CLI --> STORAGE["storage"]
     CLI --> PLATFORM["platform"]
-    CLI --> WEATHR["weathr"]
 
     SHELL --> UI["ui<br/>布局、渲染、输入基础设施"]
     SHELL --> APP["app<br/>领域状态与工作流"]
     SHELL --> IDENTITY["identity"]
     SHELL --> STORAGE
     SHELL --> PLATFORM
-    SHELL --> WEATHR
+    SHELL --> WEATHR["weathr"]
     SHELL --> WATCHDOG["watchdog"]
 
     UI --> APP
@@ -196,7 +195,7 @@ flowchart TD
 | `time` | `NetworkClock`、`ClockDisplay`、`ClockSnapshot`、时间同步与 `TIME_SYNC_INTERVAL`；由 APP 和 Weathr 共用。 |
 | `ui` | 输入、焦点、命中测试、通用组件、主题、屏幕 ViewModel、布局和渲染；不拥有终端生命周期。 |
 | `watchdog` | 进程 panic 边界、受管理任务、恢复策略、运行 journal 与事故报告。 |
-| `weathr` | 天气提供方、缓存、定位、动画、ASCII 场景与锁屏运行时；可被 CLI 和 Shell 托管。 |
+| `weathr` | 天气提供方、缓存、定位、动画、ASCII 场景与锁屏运行时；由 Shell 托管。 |
 
 源码按相同边界组织：
 
@@ -276,7 +275,7 @@ System Status 的只读数据流为：`platform` 原生采集器 → `system-ser
 
 `WeatherProvider` 支持 Open-Meteo 与 Met Office；但 APP 和启动预取目前固定使用 Open-Meteo，尚未依据 `Config.provider` 选择 Met Office。坐标可来自地址搜索、配置位置或时区对应城市。显式 refresh 会绕过缓存；APP 内存天气缓存 TTL 为 300 秒，天气磁盘缓存为 300 秒，位置、地址和地理编码缓存为 24 小时。Shell 可以在启动时预取天气。
 
-天气标准化结果、昼夜、季节和动画共同决定 ASCII 房屋、树木、云、雨雪和月相等场景。锁屏支持 12/24 小时制、终端 resize、空格继续和 `Ctrl-C`；资源尺寸会抬高共同最小终端要求。独立 CLI 模式提示退出，Shell 锁屏模式提示进入系统；两者共享渲染和天气逻辑，但由各自宿主负责创建 watchdog 与恢复终端。锁屏 UI 发生 panic 时最多重建一次。
+天气标准化结果、昼夜、季节和动画共同决定 ASCII 房屋、树木、云、雨雪和月相等场景。锁屏支持 12/24 小时制、终端 resize、空格继续和 `Ctrl-C`；资源尺寸会抬高共同最小终端要求。Shell 锁屏模式提示进入系统，由 Shell 负责创建 watchdog 与恢复终端。锁屏 UI 发生 panic 时最多重建一次。
 
 ### Explorer
 
@@ -320,7 +319,7 @@ Settings 的时间设置可使用平台时钟、默认 HTTP(S) 时间服务器�
 | 日志 | `%LOCALAPPDATA%\TundraUX3\logs` | `~/Library/Logs/TundraUX3` | `$XDG_STATE_HOME/TundraUX3/logs`，默认 `~/.local/state/TundraUX3/logs` |
 | 临时文件 | `%TEMP%\TundraUX3` | 系统临时目录下的 `TundraUX3` | `$XDG_RUNTIME_DIR/TundraUX3`；缺失时为带 UID 的私有 `/tmp` 目录 |
 
-使用 `tundra-cli paths` 可同时查看路径模板和解析后的绝对路径。
+使用 `tundra-cli debug paths` 可同时查看路径模板和解析后的绝对路径。
 
 ### Linux 桌面集成
 
@@ -335,13 +334,13 @@ Linux 与 Windows 同级实现：使用 XDG Base Directory 与 `user-dirs.dirs`�
 | 关键错误 | 平台提示与日志 | 桌面通知、watchdog 文本报告和 stderr |
 | Power off | 平台授权 | systemd-logind + polkit；仅关机，不提供重启 |
 
-`tundra-cli doctor` 会报告缺失的 `xdg-open`、`gio`、session D-Bus、portal、polkit、logind 和剪贴板后端，并提供安装或会话建议。缺少桌面助手只降级相应功能；不会改用 shell 字符串执行、`sudo` 或永久删除作为兜底。
+`tundra-cli debug doctor` 会报告缺失的 `xdg-open`、`gio`、session D-Bus、portal、polkit、logind 和剪贴板后端，并提供安装或会话建议。缺少桌面助手只降级相应功能；不会改用 shell 字符串执行、`sudo` 或永久删除作为兜底。
 
 首发范围不包括 aarch64、重启、系统镜像、会话切换或 SteamOS 式产品化。
 
 ### 从 Windows 迁移到 Linux
 
-配置格式兼容，但不会自动导入或重写 Windows 绝对路径。关闭两端 TundraUX3 后，在 Windows 运行 `tundra-cli paths` 并备份 `%APPDATA%\TundraUX3\config.toml` 和 `%LOCALAPPDATA%\TundraUX3\state`；在 Linux 再运行 `tundra-cli paths`，分别复制到显示的 config 与 state 路径。保留原备份，不要合并两个 state 目录。
+配置格式兼容，但不会自动导入或重写 Windows 绝对路径。关闭两端 TundraUX3 后，在 Windows 运行 `tundra-cli debug paths` 并备份 `%APPDATA%\TundraUX3\config.toml` 和 `%LOCALAPPDATA%\TundraUX3\state`；在 Linux 再运行 `tundra-cli debug paths`，分别复制到显示的 config 与 state 路径。保留原备份，不要合并两个 state 目录。
 
 账户、主题、设置与时钟数据可复用。Windows Launcher 和最近文件中的绝对路径在 Linux 会安全显示为 Missing，不会猜测性转换；请重新选择或固定对应文件和应用。
 
@@ -404,36 +403,43 @@ tundra-shell
 `tundra-cli` 是独立的运维工具，可读取和修改公开配置，但不能向 Shell 传参或绕过 UI 打开 Editor：
 
 ```console
-tundra-cli <asset|cls|config|doctor|explain|new|paths|repl|test-frost|test-matrix|weathr|help>
+tundra-cli <cls|config|debug|new|repl|help>
 ```
 
 | 命令 | 作用 |
 | --- | --- |
-| `asset` / `asset <name>` | 显示资源帮助或渲染指定资源；TOML art set 会输出全部图案。 |
-| `asset <name> -a` | 原样输出完整资源文件，包括 TOML 元数据。 |
-| `asset <name> --<item>` | 只输出 TOML 资源中的项目，例如 `home_icons --launcher`。 |
+| `debug asset` / `debug asset <name>` | 显示资源帮助或渲染指定资源；TOML art set 会输出全部图案。 |
+| `debug asset <name> -a` | 原样输出完整资源文件，包括 TOML 元数据。 |
+| `debug asset <name> --<item>` | 只输出 TOML 资源中的项目，例如 `home_icons --launcher`。 |
 | `cls` | 清空终端历史和可见内容，并将光标移到左上角。 |
 | `config` | 查看全部公开配置。 |
 | `config get [field]` | 查看 `theme`、`border-shape`、`border-color`、`accent-color`、`language`、`timezone` 或 `address`。 |
 | `config set <field> <value>` | 设置边框形状/颜色、强调色、语言、时区或天气地址；`theme` 仅为只读摘要。 |
-| `doctor` | 检查系统、终端、权限、应用路径、存储和资源；实际探测 Kitty、Sixel、iTerm2 图形协议。 |
-| `explain` / `paths` | 输出启动/边界说明，或输出路径模板和解析路径。 |
+| `debug doctor` | 检查系统、终端、权限、应用路径、存储和资源；实际探测 Kitty、Sixel、iTerm2 图形协议。 |
+| `debug explain` / `debug paths` | 输出启动/边界说明，或输出路径模板和解析路径。 |
 | `repl` | 交互命令循环；`exit` 或 EOF 退出，普通输入复用 CLI 命令，`/<command>` 交给固定系统命令解释器并显示退出码。 |
-| `test-frost` / `test-matrix` | 仅播放启动 frost banner 或首次运行 Matrix banner。 |
-| `weathr` | 以独立 CLI 模式运行天气场景。 |
+| `debug test-frost` / `debug test-matrix` | 仅播放启动 frost banner 或首次运行 Matrix banner。 |
+| `debug` / `debug help` | 查看所有调试命令。 |
+| `debug test-watchdog-error` | 主动生成普通错误报告。 |
+| `debug test-watchdog-critical` | 主动生成严重错误报告。 |
+| `debug test-watchdog-panic` | 主动触发并捕获 panic，生成包含恢复结果的报告，然后返回命令行。 |
 | `help` | 输出公开命令帮助。 |
 | `new` | 清除已保存的 TundraUX3 数据，重新创建初始存储。 |
+
+调试命令统一使用 `debug` 前缀，不支持 `sudo` 前缀；原顶层调试命令和 `weathr` 命令已移除。Command Line 中可直接输入 `debug test-frost`；外部终端使用 `tundra-cli debug test-frost`。
+
+三个 watchdog 测试会在 CLI 进程中实际生成报告，内容明确标注为主动测试，并输出 JSON 和文本报告路径。报告生成成功返回 0；写入失败或等待超时返回非零状态。panic 测试只在专门的测试范围内触发并捕获，不会关闭 Command Line。这些命令测试 CLI 的报告与捕获功能，不触发 Shell 的故障弹窗。
 
 资源与配置示例：
 
 ```console
-tundra-cli asset banner
-tundra-cli asset explorer_icons
-tundra-cli asset explorer_icons -a
-tundra-cli asset explorer_icons --folder
-tundra-cli asset home_icons --launcher
-tundra-cli asset launcher_icons --builtin.command-line
-tundra-cli asset house
+tundra-cli debug asset banner
+tundra-cli debug asset explorer_icons
+tundra-cli debug asset explorer_icons -a
+tundra-cli debug asset explorer_icons --folder
+tundra-cli debug asset home_icons --launcher
+tundra-cli debug asset launcher_icons --builtin.command-line
+tundra-cli debug asset house
 
 tundra-cli config
 tundra-cli config get timezone
@@ -443,9 +449,9 @@ tundra-cli config set border-color light-cyan
 tundra-cli config set accent-color "#38bdf8"
 ```
 
-资源名可使用 `asset` 帮助列出的完整键，也可用唯一文件名，例如 `house`、`clock_font`。资源、文件或 TOML 条目不存在时会写入 stderr 并返回非零状态。
+资源名可使用 `debug asset` 帮助列出的完整键，也可用唯一文件名，例如 `house`、`clock_font`。资源、文件或 TOML 条目不存在时会写入 stderr 并返回非零状态。
 
-`config` 不暴露身份字段，`theme` 为只读摘要。`new` 会删除用户配置和状态，执行前应先运行 `tundra-cli paths` 并备份。执行 `new` 必须精确输入 `RESET`；`repl --embedded` 是仅供 Command Line 使用的内部入口。嵌入 CLI 不会自行删除正在使用的数据，而是以退出码 `75` 通知 Shell；Shell 统一恢复终端、释放子进程与后台任务、关闭 watchdog、重置存储并重启，再回到首次设置。
+`config` 不暴露身份字段，`theme` 为只读摘要。`new` 会删除用户配置和状态，执行前应先运行 `tundra-cli debug paths` 并备份。执行 `new` 必须精确输入 `RESET`；`repl --embedded` 是仅供 Command Line 使用的内部入口。嵌入 CLI 不会自行删除正在使用的数据，而是以退出码 `75` 通知 Shell；Shell 统一恢复终端、释放子进程与后台任务、关闭 watchdog、重置存储并重启，再回到首次设置。
 
 ### 常用交互
 
@@ -526,11 +532,11 @@ cargo test --workspace --locked
 cargo build --locked -p shell -p cli -p weathr
 ```
 
-`weathr` 是库 crate，最后一条构建命令确认其可独立构建；终端用户通过 `tundra-cli weathr` 或 Shell 锁屏使用它。
+`weathr` 是库 crate，最后一条构建命令确认其可独立构建；终端用户通过 Shell 锁屏使用它，CLI 不再提供天气场景启动命令。
 
 `scripts/package-linux.sh` 只允许在 Linux x86_64 主机运行，默认将产物写入 `dist/`；版本可由 `TUNDRAUX3_VERSION` 覆盖，否则读取 workspace 版本。脚本执行 `cargo build --release --locked -p shell -p cli`，并拒绝将 `/` 或仓库根目录作为输出目录。
 
-- 便携包 `tundraux3-<version>-linux-x86_64.tar.gz` 包含两个二进制、`assets/`、根许可证、Weathr 许可证和 Linux 说明。
+- 便携包 `tundraux3-<version>-linux-x86_64.tar.gz` 包含两个二进制、`debug assets/`、根许可证、Weathr 许可证和 Linux 说明。
 - Debian 包 `tundraux3_<version>_amd64.deb` 将二进制安装到 `/usr/bin`、资源安装到 `/usr/share/tundraux3/assets`，并附带 desktop entry 与许可证；`--tar-only` 跳过这一产物。
 - 所有产物在 `SHA256SUMS` 中记录校验和。`.deb` 依赖 `xdg-utils` 与 `libglib2.0-bin`，并推荐 D-Bus 用户会话、portal、polkit 与 XWayland。
 
@@ -551,15 +557,15 @@ workspace 通过 `[patch.crates-io]` 将 `vt100 0.15.2` 指向本地 `third_part
 ### 路径、权限或 Linux 桌面功能失败
 
 ```console
-tundra-cli doctor
-tundra-cli paths
+tundra-cli debug doctor
+tundra-cli debug paths
 ```
 
 macOS 的 Explorer Trash 可能需要 Full Disk Access，启动/诊断会提示系统设置。Linux 请安装 `xdg-utils` 与 `libglib2.0-bin`，确认图形会话具有 session D-Bus、portal 和 polkit；Wayland 剪贴板异常时检查 data-control，或启用 XWayland。关机授权被取消或拒绝时，应配置当前登录会话的 polkit，不能以 `sudo` 运行 TundraUX3 规避。
 
 ### 配置或状态损坏
 
-不要立刻运行 `tundra-cli new`。先备份 `tundra-cli paths` 报告的配置和状态目录，再查看 Shell 恢复提示和日志。Storage 会尽可能保留损坏原件并重建默认文档；`new` 只适用于明确需要彻底重置时。
+不要立刻运行 `tundra-cli new`。先备份 `tundra-cli debug paths` 报告的配置和状态目录，再查看 Shell 恢复提示和日志。Storage 会尽可能保留损坏原件并重建默认文档；`new` 只适用于明确需要彻底重置时。
 
 ## 架构约束
 

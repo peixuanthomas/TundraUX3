@@ -347,7 +347,7 @@ impl fmt::Display for AssetCommandError {
             Self::Resolve { source } => write!(formatter, "could not resolve asset root: {source}"),
             Self::UnknownAsset { name } => write!(
                 formatter,
-                "unknown asset {name:?}; run `tundra-cli asset` to list available assets"
+                "unknown asset {name:?}; run `tundra-cli debug asset` to list available assets"
             ),
             Self::AmbiguousAsset { name, matches } => {
                 write!(
