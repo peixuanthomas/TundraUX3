@@ -1,5 +1,17 @@
 use super::super::*;
 impl ShellSession {
+    fn explorer_user_dirs(
+        &self,
+        platform: &dyn Platform,
+    ) -> Result<platform::UserDirs, platform::PlatformError> {
+        match self.app.auth_session() {
+            Some(session) => platform.user_dirs_for_user(&session.username),
+            None => Err(platform::PlatformError::InvalidInput {
+                message: "Login required".into(),
+            }),
+        }
+    }
+
     pub(in crate::session) fn replace_explorer_state(
         &mut self,
         explorer_state: Option<ExplorerState>,
@@ -46,11 +58,20 @@ impl ShellSession {
             return;
         };
 
-        let user_dirs = platform.user_dirs().ok();
-        let start_path = user_dirs
-            .as_ref()
-            .map(|dirs| dirs.documents().to_path_buf())
-            .unwrap_or_else(|| storage.layout().data_path.clone());
+        let user_dirs = match self.explorer_user_dirs(platform) {
+            Ok(dirs) => dirs,
+            Err(error) => {
+                let message = error.to_string();
+                self.error_message = Some(message.clone());
+                self.notify_alert_with_key(
+                    EXPLORER_ALERT_KEY,
+                    message,
+                    ui::NotificationTone::Error,
+                );
+                return;
+            }
+        };
+        let start_path = user_dirs.documents().to_path_buf();
         let start_path = if start_path.exists() {
             start_path
         } else {
@@ -141,7 +162,7 @@ impl ShellSession {
             })
             .unwrap_or_default();
         let mut locations = Vec::new();
-        if let Ok(dirs) = platform.user_dirs() {
+        if let Ok(dirs) = self.explorer_user_dirs(platform) {
             locations.extend([
                 app::explorer::ExplorerQuickLocation::new(
                     "desktop",

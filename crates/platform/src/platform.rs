@@ -506,6 +506,12 @@ pub trait Platform: Send + Sync {
     }
 
     fn user_dirs(&self) -> Result<UserDirs, PlatformError>;
+    /// Personal folders for the authenticated application user. Linux resolves
+    /// the system account independently of the elevated process environment;
+    /// other platforms retain their process-user directory behavior.
+    fn user_dirs_for_user(&self, _username: &str) -> Result<UserDirs, PlatformError> {
+        self.user_dirs()
+    }
     fn app_paths(&self) -> Result<AppPaths, PlatformError>;
     /// Reads the current UTC-capable wall clock from the operating system.
     /// Platform-independent callers must use this boundary instead of reading

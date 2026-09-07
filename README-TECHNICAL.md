@@ -349,6 +349,10 @@ UID 形成 `linux-uid-<UID>` 标识。`users.v2.json` 中仅复用对应系统�
 仪表板和登录时间，时钟按该 UID 标识保存；旧 UX 账号保留但不参与系统登录。
 账号增删、密码和角色由 Linux 工具管理，UX 用户页面以只读方式展示系统账号。
 `sudo -H` 下存储通常位于 root 的 HOME/XDG 目录，桌面集成也使用 root 的环境。
+Explorer 的个人目录和内置命令行的初始文档目录则按当前登录用户名，通过 NSS
+查询真实主目录，并读取该用户的 `~/.config/user-dirs.dirs`，支持中文目录名及绝对路径。
+这一路径解析不继承 root 进程的 HOME/XDG 环境；账号无法解析时报告错误，
+不会将 root 的个人目录当作该用户的目录。切换用户后重新解析，不改变进程权限。
 完整依赖和手动验收步骤见 [Linux 运行说明](packaging/linux/README-LINUX.txt)。
 
 ### Linux 桌面集成

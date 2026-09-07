@@ -56,6 +56,7 @@ pub struct MockPlatform {
     kind: PlatformKind,
     capabilities: PlatformCapabilities,
     user_dirs: UserDirs,
+    account_user_dirs: BTreeMap<String, Result<UserDirs, PlatformError>>,
     app_paths: AppPaths,
     clipboard_text: Mutex<String>,
     startup_permission_status: Mutex<Result<StartupPermissionStatus, PlatformError>>,
@@ -86,6 +87,7 @@ impl MockPlatform {
             kind: PlatformKind::Unsupported,
             capabilities: PlatformCapabilities::native_supported(),
             user_dirs,
+            account_user_dirs: BTreeMap::new(),
             app_paths,
             clipboard_text: Mutex::new(String::new()),
             startup_permission_status: Mutex::new(Ok(StartupPermissionStatus::Ready)),
@@ -112,6 +114,15 @@ impl MockPlatform {
 
     pub fn with_kind(mut self, kind: PlatformKind) -> Self {
         self.kind = kind;
+        self
+    }
+
+    pub fn with_user_dirs_for_user(
+        mut self,
+        username: impl Into<String>,
+        dirs: Result<UserDirs, PlatformError>,
+    ) -> Self {
+        self.account_user_dirs.insert(username.into(), dirs);
         self
     }
 
@@ -340,6 +351,13 @@ impl Platform for MockPlatform {
 
     fn user_dirs(&self) -> Result<UserDirs, PlatformError> {
         Ok(self.user_dirs.clone())
+    }
+
+    fn user_dirs_for_user(&self, username: &str) -> Result<UserDirs, PlatformError> {
+        self.account_user_dirs
+            .get(username)
+            .cloned()
+            .unwrap_or_else(|| self.user_dirs())
     }
 
     fn app_paths(&self) -> Result<AppPaths, PlatformError> {

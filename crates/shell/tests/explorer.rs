@@ -23,6 +23,107 @@ fn default_config() -> ShellLaunchConfig {
 }
 
 #[test]
+fn explorer_uses_authenticated_account_directories_instead_of_process_directories() {
+    let fixture = FixtureRoot::new("account-directories");
+    let personal = fixture.path().join("personal");
+    let second = fixture.path().join("second");
+    fs::create_dir_all(second.join("Documents")).unwrap();
+    fs::create_dir_all(personal.join("Documents")).unwrap();
+    fs::create_dir_all(personal.join("Desktop")).unwrap();
+    fs::write(personal.join("Documents/own-file.txt"), "personal").unwrap();
+    let platform = mock_platform(fixture.path())
+        .with_user_dirs_for_user("AdminUser", Ok(user_dirs(&personal)))
+        .with_user_dirs_for_user("SecondUser", Ok(user_dirs(&second)));
+    bootstrap_with_shell(&platform);
+    let mut state = logged_in_state(&platform);
+    let manager = StorageManager::open(platform.app_paths().unwrap())
+        .unwrap()
+        .manager;
+    identity::UserService::new(manager)
+        .create_user(
+            state.auth_session().unwrap(),
+            "SecondUser",
+            "Second user",
+            identity::UserRole::Admin,
+            "AnotherPass123",
+        )
+        .unwrap();
+    state.apply_input_with_platform(InputEvent::from_key_label("e"), &platform);
+    let explorer = state.to_explorer_view_model();
+    assert_eq!(
+        explorer.current_path,
+        personal.join("Documents").to_string_lossy()
+    );
+    assert!(
+        explorer
+            .entries
+            .iter()
+            .any(|entry| entry.name == "own-file.txt")
+    );
+    for folder in [
+        "Desktop",
+        "Documents",
+        "Downloads",
+        "Pictures",
+        "Videos",
+        "Music",
+    ] {
+        assert!(
+            explorer
+                .quick_locations
+                .iter()
+                .any(|location| location.path == personal.join(folder).to_string_lossy()),
+            "{folder}"
+        );
+    }
+    state.apply_input_with_platform(InputEvent::from_key_label("Esc"), &platform);
+    state.apply_input_with_platform(InputEvent::from_key_label("Tab"), &platform);
+    assert_eq!(state.focused_component(), ShellComponent::HomeLogout);
+    state.apply_input_with_platform(InputEvent::from_key_label("Enter"), &platform);
+    select_login_user(&mut state, &platform, "SecondUser");
+    state.apply_input_with_platform(InputEvent::from_key_label("Tab"), &platform);
+    type_text(&mut state, &platform, "AnotherPass123");
+    state.apply_input_with_platform(InputEvent::from_key_label("Enter"), &platform);
+    state.apply_input_with_platform(InputEvent::from_key_label("e"), &platform);
+    let explorer = state.to_explorer_view_model();
+    assert_eq!(
+        explorer.current_path,
+        second.join("Documents").to_string_lossy()
+    );
+    assert!(
+        !explorer
+            .quick_locations
+            .iter()
+            .any(|location| Path::new(&location.path).starts_with(&personal))
+    );
+}
+
+#[test]
+fn explorer_reports_account_resolution_failure_without_opening_process_directories() {
+    let fixture = FixtureRoot::new("missing-account-directories");
+    let platform = mock_platform(fixture.path()).with_user_dirs_for_user(
+        "AdminUser",
+        Err(platform::PlatformError::Native {
+            operation: "resolve Linux user home",
+            message: "Account removed".into(),
+        }),
+    );
+    bootstrap_with_shell(&platform);
+    let mut state = logged_in_state(&platform);
+    state.apply_input_with_platform(InputEvent::from_key_label("e"), &platform);
+    assert_eq!(state.active_screen(), ShellScreen::Home);
+    assert!(state.app_state().explorer_state().is_none());
+    assert!(
+        state
+            .to_shell_chrome_view_model()
+            .status
+            .error
+            .unwrap()
+            .contains("Account removed")
+    );
+}
+
+#[test]
 fn login_can_open_explorer_and_search_current_directory() {
     let fixture = FixtureRoot::new("open-search");
     let platform = mock_platform(fixture.path());

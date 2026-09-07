@@ -68,20 +68,15 @@ impl Platform for LinuxPlatform {
     fn user_dirs(&self) -> Result<UserDirs, PlatformError> {
         let home = home_dir_from_env()?;
         let base_dirs = XdgBaseDirs::from_environment(&home);
-        let user_dirs = XdgUserDirs::from_file(&base_dirs.config.join("user-dirs.dirs"), &home);
+        resolve_user_dirs(&home, base_dirs)
+    }
 
-        UserDirs::new(
-            user_dirs.desktop.unwrap_or_else(|| home.join("Desktop")),
-            user_dirs
-                .documents
-                .unwrap_or_else(|| home.join("Documents")),
-            user_dirs.download.unwrap_or_else(|| home.join("Downloads")),
-            user_dirs.pictures.unwrap_or_else(|| home.join("Pictures")),
-            user_dirs.videos.unwrap_or_else(|| home.join("Videos")),
-            user_dirs.music.unwrap_or_else(|| home.join("Music")),
-            base_dirs.data,
-        )
-        .map_err(Into::into)
+    fn user_dirs_for_user(&self, username: &str) -> Result<UserDirs, PlatformError> {
+        let home = account_home(username)?;
+        // HOME and XDG_* belong to the root process, not necessarily to the
+        // authenticated user. Never use them to resolve another account's data.
+        let base_dirs = XdgBaseDirs::resolve(&home, None, None, None, None);
+        resolve_user_dirs(&home, base_dirs)
     }
 
     fn app_paths(&self) -> Result<AppPaths, PlatformError> {
@@ -531,6 +526,54 @@ fn start_logind_listener(
             operation: "start logind listener",
             message: error.to_string(),
         })
+}
+
+fn account_home(username: &str) -> Result<PathBuf, PlatformError> {
+    if username.is_empty()
+        || username.starts_with(['-', '+'])
+        || username.chars().any(|c| c.is_control() || c == ':')
+    {
+        return Err(PlatformError::InvalidInput {
+            message: "Invalid Linux account name".into(),
+        });
+    }
+    // Match the identity backend: getent resolves NSS accounts, including
+    // accounts whose home is outside /home or supplied by a directory service.
+    let output = Command::new("/usr/bin/getent")
+        .args(["passwd", "--", username])
+        .output()
+        .map_err(|error| PlatformError::Native {
+            operation: "resolve Linux user home",
+            message: error.to_string(),
+        })?;
+    if output.status.success() {
+        let line = output.stdout.strip_suffix(b"\n").unwrap_or(&output.stdout);
+        let fields: Vec<_> = line.split(|byte| *byte == b':').collect();
+        if fields.len() == 7 && fields[0] == username.as_bytes() {
+            let home = PathBuf::from(OsString::from_vec(fields[5].to_vec()));
+            return crate::paths::require_absolute("Linux user home", home).map_err(Into::into);
+        }
+    }
+    Err(PlatformError::Native {
+        operation: "resolve Linux user home",
+        message: format!("Cannot resolve the home directory for Linux user {username}"),
+    })
+}
+
+fn resolve_user_dirs(home: &Path, base_dirs: XdgBaseDirs) -> Result<UserDirs, PlatformError> {
+    let user_dirs = XdgUserDirs::from_file(&base_dirs.config.join("user-dirs.dirs"), home);
+    UserDirs::new(
+        user_dirs.desktop.unwrap_or_else(|| home.join("Desktop")),
+        user_dirs
+            .documents
+            .unwrap_or_else(|| home.join("Documents")),
+        user_dirs.download.unwrap_or_else(|| home.join("Downloads")),
+        user_dirs.pictures.unwrap_or_else(|| home.join("Pictures")),
+        user_dirs.videos.unwrap_or_else(|| home.join("Videos")),
+        user_dirs.music.unwrap_or_else(|| home.join("Music")),
+        base_dirs.data,
+    )
+    .map_err(Into::into)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -2292,15 +2335,15 @@ fn io_error(operation: &'static str, path: Option<PathBuf>, error: io::Error) ->
 #[cfg(test)]
 mod tests {
     use super::{
-        MountInfo, XdgBaseDirs, XdgUserDirs, ensure_private_dir, format_trash_timestamp,
-        is_local_block_mount_with_sysfs, linux_interface_kind_with_sysfs, list_trash_root,
-        logind_allows_power_action, mount_kind_from_sysfs_path, move_one_to_trash_root,
-        parse_mountinfo, parse_trash_timestamp, parse_trashinfo, percent_decode_path,
-        percent_encode_path, private_trash_root, private_trash_root_with_topdir,
-        restore_trash_item_from_root, restore_trash_item_from_root_with, spawn_detached_child,
-        validate_desktop_entry,
+        LinuxPlatform, MountInfo, XdgBaseDirs, XdgUserDirs, ensure_private_dir,
+        format_trash_timestamp, is_local_block_mount_with_sysfs, linux_interface_kind_with_sysfs,
+        list_trash_root, logind_allows_power_action, mount_kind_from_sysfs_path,
+        move_one_to_trash_root, parse_mountinfo, parse_trash_timestamp, parse_trashinfo,
+        percent_decode_path, percent_encode_path, private_trash_root,
+        private_trash_root_with_topdir, resolve_user_dirs, restore_trash_item_from_root,
+        restore_trash_item_from_root_with, spawn_detached_child, validate_desktop_entry,
     };
-    use crate::{NetworkInterfaceKind, PlatformError, TrashRestoreTarget, VolumeKind};
+    use crate::{NetworkInterfaceKind, Platform, PlatformError, TrashRestoreTarget, VolumeKind};
     use std::ffi::OsString;
     use std::fs::{self, OpenOptions};
     use std::io::Cursor;
@@ -2395,6 +2438,48 @@ mod tests {
         assert_eq!(dirs.desktop, Some(PathBuf::from("/home/tundra/Desk")));
         assert_eq!(dirs.download, None);
         let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn account_user_dirs_use_each_homes_localized_config_and_fallbacks() {
+        let root = test_path("account-user-dirs");
+        let first = root.join("first");
+        let second = root.join("second");
+        fs::create_dir_all(first.join(".config")).unwrap();
+        fs::create_dir_all(&second).unwrap();
+        fs::write(
+            first.join(".config/user-dirs.dirs"),
+            "XDG_DESKTOP_DIR=\"$HOME/桌面\"\nXDG_DOCUMENTS_DIR=\"$HOME/文档\"\n\
+             XDG_DOWNLOAD_DIR=\"/srv/shared/downloads\"\nXDG_PICTURES_DIR=\"$HOME/图片\"\n\
+             XDG_VIDEOS_DIR=\"$HOME/视频\"\nXDG_MUSIC_DIR=\"$HOME/音乐\"\n",
+        )
+        .unwrap();
+        let resolve = |home: &Path| {
+            resolve_user_dirs(home, XdgBaseDirs::resolve(home, None, None, None, None)).unwrap()
+        };
+        let dirs = resolve(&first);
+        assert_eq!(dirs.desktop(), first.join("桌面"));
+        assert_eq!(dirs.documents(), first.join("文档"));
+        assert_eq!(dirs.downloads(), Path::new("/srv/shared/downloads"));
+        assert_eq!(dirs.pictures(), first.join("图片"));
+        assert_eq!(dirs.videos(), first.join("视频"));
+        assert_eq!(dirs.music(), first.join("音乐"));
+        assert_eq!(dirs.app_data(), first.join(".local/share"));
+        let dirs = resolve(&second);
+        assert_eq!(dirs.desktop(), second.join("Desktop"));
+        assert_eq!(dirs.documents(), second.join("Documents"));
+        assert_eq!(dirs.app_data(), second.join(".local/share"));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn account_user_dirs_do_not_fall_back_to_process_user_for_unknown_accounts() {
+        for username in ["", "--help", "bad\nname", "tundra-missing-user-7f203f4a"] {
+            assert!(
+                LinuxPlatform.user_dirs_for_user(username).is_err(),
+                "{username:?}"
+            );
+        }
     }
     #[test]
     fn user_dirs_reject_unquoted_values_and_partial_home_expansion() {

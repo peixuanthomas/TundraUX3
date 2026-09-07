@@ -836,11 +836,12 @@ impl CommandLineHost {
 
         let result = resolve_tundra_cli_program().and_then(|program| {
             let mut config = CommandLinePtyConfig::tundra_cli(program).with_username(username);
-            if let Ok(directories) = platform.user_dirs() {
-                let documents = directories.documents();
-                if documents.is_dir() {
-                    config.cwd = Some(documents.to_path_buf());
-                }
+            let directories = platform
+                .user_dirs_for_user(username)
+                .map_err(io::Error::other)?;
+            let documents = directories.documents();
+            if documents.is_dir() {
+                config.cwd = Some(documents.to_path_buf());
             }
             CommandLinePty::spawn(config, &self.reader_tasks)
         });

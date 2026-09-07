@@ -61,6 +61,12 @@ existing user-home UX data is not automatically migrated. Root's desktop session
 may lack the calling user's clipboard, portals and D-Bus services. User selection
 changes UX preferences, not the OS home directory or desktop session.
 
+Explorer personal folders and the Command Line's initial Documents directory
+follow the selected Linux account: NSS supplies its home, and that home's
+.config/user-dirs.dirs supplies localized or custom folder paths. Root's HOME
+and XDG environment do not override these account directories. Switching users
+resolves the new account's folders without changing the process privileges.
+
 Validation: cargo test -p identity -p shell -p ui. For real-machine acceptance,
 start ./tundra-shell from a terminal, authenticate sudo, select an existing Linux
 account and enter its system password. Check wrong passwords, a locked/expired
