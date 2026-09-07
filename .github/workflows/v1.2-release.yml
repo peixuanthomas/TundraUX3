@@ -2,9 +2,16 @@ name: Publish v1.2 release
 
 on:
   workflow_dispatch:
+    inputs:
+      reuse_verified_build:
+        description: Reuse successful platform builds from run 34136224482
+        type: boolean
+        default: false
+
 
 permissions:
   contents: read
+  actions: read
 
 concurrency:
   group: publish-v1.2
@@ -17,6 +24,7 @@ env:
 
 jobs:
   windows-x64:
+    if: ${{ !inputs.reuse_verified_build }}
     name: Windows x64
     runs-on: windows-latest
     timeout-minutes: 60
@@ -75,6 +83,7 @@ jobs:
           compression-level: 0
 
   macos-universal:
+    if: ${{ !inputs.reuse_verified_build }}
     name: macOS Universal
     runs-on: macos-latest
     timeout-minutes: 60
@@ -143,6 +152,7 @@ jobs:
           compression-level: 0
 
   linux-x64:
+    if: ${{ !inputs.reuse_verified_build }}
     name: Linux x86_64
     runs-on: ubuntu-24.04
     timeout-minutes: 60
@@ -198,7 +208,9 @@ jobs:
           compression-level: 0
 
   publish:
+    if: ${{ !cancelled() && (inputs.reuse_verified_build || (needs.windows-x64.result == 'success' && needs.macos-universal.result == 'success' && needs.linux-x64.result == 'success')) }}
     permissions:
+      actions: read
       contents: write
     timeout-minutes: 15
     name: Publish GitHub Release
@@ -208,9 +220,25 @@ jobs:
       - linux-x64
     runs-on: ubuntu-24.04
     steps:
+      - name: Verify original successful platform builds
+        if: ${{ inputs.reuse_verified_build }}
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/34136224482" > build-run.json
+          jq -e '.head_sha == "9fea4ea28f760f1031e80a4914d4cea5996be250" and .path == ".github/workflows/v1.2-release.yml" and .event == "workflow_dispatch"' build-run.json
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/34136224482/jobs?per_page=100" > build-jobs.json
+          for name in "Windows x64" "macOS Universal" "Linux x86_64"; do
+            jq -e --arg name "$name" '[.jobs[] | select(.name == $name)] | length == 1 and all(.[]; .conclusion == "success")' build-jobs.json
+          done
+
       - name: Download untouched build assets
         uses: actions/download-artifact@v8
         with:
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.reuse_verified_build && '34136224482' || github.run_id }}
           pattern: release-*
           path: dist
           merge-multiple: true
@@ -278,7 +306,7 @@ jobs:
           - `TundraUX3-v1.2-linux-amd64.deb`：Debian/Ubuntu amd64 安装包，包含 PAM 配置。
           - 对应 `.sha256` 文件用于校验下载内容。
 
-          所有二进制产物均由本次 GitHub Actions 从上述固定提交编译、打包、校验并直接上传；发布前执行 Windows、macOS、Linux 工作区回归测试。未进行开发者签名或 Apple 公证。
+          所有二进制产物均由 [GitHub Actions 构建任务](https://github.com/peixuanthomas/TundraUX3/actions/runs/34136224482) 从上述固定提交编译、打包并直接上传；发布前执行 Windows、macOS、Linux 工作区回归测试，发布任务复用原始 Actions 产物并核对 SHA-256。未进行开发者签名或 Apple 公证。
 
           **完整代码对比**：[V1.1...v1.2](https://github.com/peixuanthomas/TundraUX3/compare/V1.1...v1.2)
           EOF
@@ -300,7 +328,7 @@ jobs:
           fi
           gh release upload "$RELEASE_TAG" dist/* \
             --repo "$GITHUB_REPOSITORY" --clobber
-          gh api "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG" \
+          gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json assets \
             --jq '.assets[] | [.name, .digest] | @tsv' > remote-digests.tsv
           test "$(wc -l < remote-digests.tsv)" -eq 7
           for asset in dist/*; do
@@ -330,7 +358,7 @@ jobs:
             gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$RELEASE_TAG" \
               --jq '.object.sha'
           )" = "$RELEASE_REF"
-          gh api "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG" \
+          gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json assets \
             --jq '.assets[] | [.name, .digest] | @tsv' \
             > remote-digests.tsv
           for asset in dist/*; do
