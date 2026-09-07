@@ -66,6 +66,11 @@ follow the selected Linux account: NSS supplies its home, and that home's
 .config/user-dirs.dirs supplies localized or custom folder paths. Root's HOME
 and XDG environment do not override these account directories. Switching users
 resolves the new account's folders without changing the process privileges.
+If a setting is missing or invalid, existing standard English, Simplified Chinese
+and Traditional Chinese folders in that account's home are checked before using
+the English default. Explicit paths, including $HOME to disable a folder, take
+precedence even if temporarily unavailable. Quoted values may include trailing
+comments and a leading ${HOME}; no shell commands are evaluated.
 
 Validation: cargo test -p identity -p shell -p ui. For real-machine acceptance,
 start ./tundra-shell from a terminal, authenticate sudo, select an existing Linux

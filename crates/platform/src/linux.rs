@@ -26,6 +26,10 @@ use watchdog::{
     TaskSpec,
 };
 
+mod user_dirs;
+
+use user_dirs::resolve_user_dirs;
+
 use crate::paths::home_dir_from_env;
 use crate::{
     AppPaths, ExecutableKind, FileAttributes, FileOpenPolicy, LocalVolume, NetworkInterface,
@@ -68,7 +72,7 @@ impl Platform for LinuxPlatform {
     fn user_dirs(&self) -> Result<UserDirs, PlatformError> {
         let home = home_dir_from_env()?;
         let base_dirs = XdgBaseDirs::from_environment(&home);
-        resolve_user_dirs(&home, base_dirs)
+        resolve_user_dirs(&home, &base_dirs.config, base_dirs.data)
     }
 
     fn user_dirs_for_user(&self, username: &str) -> Result<UserDirs, PlatformError> {
@@ -76,7 +80,7 @@ impl Platform for LinuxPlatform {
         // HOME and XDG_* belong to the root process, not necessarily to the
         // authenticated user. Never use them to resolve another account's data.
         let base_dirs = XdgBaseDirs::resolve(&home, None, None, None, None);
-        resolve_user_dirs(&home, base_dirs)
+        resolve_user_dirs(&home, &base_dirs.config, base_dirs.data)
     }
 
     fn app_paths(&self) -> Result<AppPaths, PlatformError> {
@@ -560,22 +564,6 @@ fn account_home(username: &str) -> Result<PathBuf, PlatformError> {
     })
 }
 
-fn resolve_user_dirs(home: &Path, base_dirs: XdgBaseDirs) -> Result<UserDirs, PlatformError> {
-    let user_dirs = XdgUserDirs::from_file(&base_dirs.config.join("user-dirs.dirs"), home);
-    UserDirs::new(
-        user_dirs.desktop.unwrap_or_else(|| home.join("Desktop")),
-        user_dirs
-            .documents
-            .unwrap_or_else(|| home.join("Documents")),
-        user_dirs.download.unwrap_or_else(|| home.join("Downloads")),
-        user_dirs.pictures.unwrap_or_else(|| home.join("Pictures")),
-        user_dirs.videos.unwrap_or_else(|| home.join("Videos")),
-        user_dirs.music.unwrap_or_else(|| home.join("Music")),
-        base_dirs.data,
-    )
-    .map_err(Into::into)
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct XdgBaseDirs {
     config: PathBuf,
@@ -609,79 +597,6 @@ impl XdgBaseDirs {
             state: absolute_or(state, || home.join(".local").join("state")),
         }
     }
-}
-
-#[derive(Default)]
-struct XdgUserDirs {
-    desktop: Option<PathBuf>,
-    documents: Option<PathBuf>,
-    download: Option<PathBuf>,
-    pictures: Option<PathBuf>,
-    videos: Option<PathBuf>,
-    music: Option<PathBuf>,
-}
-
-impl XdgUserDirs {
-    fn from_file(path: &Path, home: &Path) -> Self {
-        let Ok(contents) = fs::read_to_string(path) else {
-            return Self::default();
-        };
-        let mut result = Self::default();
-        for line in contents.lines() {
-            let line = line.trim();
-            if line.is_empty() || line.starts_with('#') {
-                continue;
-            }
-            let Some((key, raw_value)) = line.split_once('=') else {
-                continue;
-            };
-            let Some(value) = parse_user_dir_value(raw_value, home) else {
-                continue;
-            };
-            match key.trim() {
-                "XDG_DESKTOP_DIR" => result.desktop = Some(value),
-                "XDG_DOCUMENTS_DIR" => result.documents = Some(value),
-                "XDG_DOWNLOAD_DIR" => result.download = Some(value),
-                "XDG_PICTURES_DIR" => result.pictures = Some(value),
-                "XDG_VIDEOS_DIR" => result.videos = Some(value),
-                "XDG_MUSIC_DIR" => result.music = Some(value),
-                _ => {}
-            }
-        }
-        result
-    }
-}
-
-fn parse_user_dir_value(raw_value: &str, home: &Path) -> Option<PathBuf> {
-    let raw_value = raw_value.trim();
-    let encoded = raw_value.strip_prefix('"')?.strip_suffix('"')?;
-    let mut decoded = String::with_capacity(encoded.len());
-    let mut escaped = false;
-    for character in encoded.chars() {
-        if escaped {
-            match character {
-                '\\' | '"' | '$' | '`' => decoded.push(character),
-                _ => return None,
-            }
-            escaped = false;
-        } else if character == '\\' {
-            escaped = true;
-        } else {
-            decoded.push(character);
-        }
-    }
-    if escaped {
-        return None;
-    }
-
-    let value = if decoded == "$HOME" {
-        home.to_path_buf()
-    } else if let Some(relative) = decoded.strip_prefix("$HOME/") {
-        home.join(relative)
-    } else {
-        PathBuf::from(decoded)
-    };
-    value.is_absolute().then_some(value)
 }
 
 fn absolute_or(candidate: Option<PathBuf>, fallback: impl FnOnce() -> PathBuf) -> PathBuf {
@@ -2335,13 +2250,13 @@ fn io_error(operation: &'static str, path: Option<PathBuf>, error: io::Error) ->
 #[cfg(test)]
 mod tests {
     use super::{
-        LinuxPlatform, MountInfo, XdgBaseDirs, XdgUserDirs, ensure_private_dir,
-        format_trash_timestamp, is_local_block_mount_with_sysfs, linux_interface_kind_with_sysfs,
-        list_trash_root, logind_allows_power_action, mount_kind_from_sysfs_path,
-        move_one_to_trash_root, parse_mountinfo, parse_trash_timestamp, parse_trashinfo,
-        percent_decode_path, percent_encode_path, private_trash_root,
-        private_trash_root_with_topdir, resolve_user_dirs, restore_trash_item_from_root,
-        restore_trash_item_from_root_with, spawn_detached_child, validate_desktop_entry,
+        LinuxPlatform, MountInfo, XdgBaseDirs, ensure_private_dir, format_trash_timestamp,
+        is_local_block_mount_with_sysfs, linux_interface_kind_with_sysfs, list_trash_root,
+        logind_allows_power_action, mount_kind_from_sysfs_path, move_one_to_trash_root,
+        parse_mountinfo, parse_trash_timestamp, parse_trashinfo, percent_decode_path,
+        percent_encode_path, private_trash_root, private_trash_root_with_topdir,
+        restore_trash_item_from_root, restore_trash_item_from_root_with, spawn_detached_child,
+        validate_desktop_entry,
     };
     use crate::{NetworkInterfaceKind, Platform, PlatformError, TrashRestoreTarget, VolumeKind};
     use std::ffi::OsString;
@@ -2425,54 +2340,6 @@ mod tests {
         let _ = child.wait();
     }
     #[test]
-    fn user_dirs_expand_home_and_ignore_relative_values() {
-        let root = test_path("user-dirs");
-        let _ = std::fs::create_dir_all(&root);
-        let path = root.join("user-dirs.dirs");
-        std::fs::write(
-            &path,
-            "XDG_DESKTOP_DIR=\"$HOME/Desk\"\nXDG_DOWNLOAD_DIR=\"relative\"\n",
-        )
-        .unwrap();
-        let dirs = XdgUserDirs::from_file(&path, Path::new("/home/tundra"));
-        assert_eq!(dirs.desktop, Some(PathBuf::from("/home/tundra/Desk")));
-        assert_eq!(dirs.download, None);
-        let _ = std::fs::remove_dir_all(root);
-    }
-
-    #[test]
-    fn account_user_dirs_use_each_homes_localized_config_and_fallbacks() {
-        let root = test_path("account-user-dirs");
-        let first = root.join("first");
-        let second = root.join("second");
-        fs::create_dir_all(first.join(".config")).unwrap();
-        fs::create_dir_all(&second).unwrap();
-        fs::write(
-            first.join(".config/user-dirs.dirs"),
-            "XDG_DESKTOP_DIR=\"$HOME/桌面\"\nXDG_DOCUMENTS_DIR=\"$HOME/文档\"\n\
-             XDG_DOWNLOAD_DIR=\"/srv/shared/downloads\"\nXDG_PICTURES_DIR=\"$HOME/图片\"\n\
-             XDG_VIDEOS_DIR=\"$HOME/视频\"\nXDG_MUSIC_DIR=\"$HOME/音乐\"\n",
-        )
-        .unwrap();
-        let resolve = |home: &Path| {
-            resolve_user_dirs(home, XdgBaseDirs::resolve(home, None, None, None, None)).unwrap()
-        };
-        let dirs = resolve(&first);
-        assert_eq!(dirs.desktop(), first.join("桌面"));
-        assert_eq!(dirs.documents(), first.join("文档"));
-        assert_eq!(dirs.downloads(), Path::new("/srv/shared/downloads"));
-        assert_eq!(dirs.pictures(), first.join("图片"));
-        assert_eq!(dirs.videos(), first.join("视频"));
-        assert_eq!(dirs.music(), first.join("音乐"));
-        assert_eq!(dirs.app_data(), first.join(".local/share"));
-        let dirs = resolve(&second);
-        assert_eq!(dirs.desktop(), second.join("Desktop"));
-        assert_eq!(dirs.documents(), second.join("Documents"));
-        assert_eq!(dirs.app_data(), second.join(".local/share"));
-        fs::remove_dir_all(root).unwrap();
-    }
-
-    #[test]
     fn account_user_dirs_do_not_fall_back_to_process_user_for_unknown_accounts() {
         for username in ["", "--help", "bad\nname", "tundra-missing-user-7f203f4a"] {
             assert!(
@@ -2480,21 +2347,6 @@ mod tests {
                 "{username:?}"
             );
         }
-    }
-    #[test]
-    fn user_dirs_reject_unquoted_values_and_partial_home_expansion() {
-        let root = test_path("user-dirs-invalid");
-        fs::create_dir_all(&root).unwrap();
-        let path = root.join("user-dirs.dirs");
-        fs::write(
-            &path,
-            "XDG_DESKTOP_DIR=$HOME/Desktop\nXDG_DOWNLOAD_DIR=\"$HOMEevil/Downloads\"\n",
-        )
-        .unwrap();
-        let dirs = XdgUserDirs::from_file(&path, Path::new("/home/tundra"));
-        assert_eq!(dirs.desktop, None);
-        assert_eq!(dirs.download, None);
-        let _ = fs::remove_dir_all(root);
     }
     #[test]
     fn mountinfo_parser_unescapes_mount_points() {
