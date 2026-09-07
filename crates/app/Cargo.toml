@@ -22,7 +22,7 @@ watchdog = { path = "../watchdog" }
 unicode-segmentation = "1.12"
 unicode-width = "0.2"
 time = { version = "0.1.1", path = "../time" }
-system-services-model = { path = "../system-services-model" }
+system-services = { path = "../system-services", default-features = false }
 reqwest = { version = "0.13", default-features = false, features = ["blocking", "json", "rustls"] }
 semver = "1"
 toml = "0.8"

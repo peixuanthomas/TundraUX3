@@ -442,20 +442,20 @@ fn notification_modal_response_stays_in_the_app_domain_queue() {
 #[test]
 fn system_status_snapshot_is_copied_and_stored_as_read_only_app_state() {
     let observed_at = Utc::now();
-    let source = system_services_model::SystemSnapshot {
+    let source = system_services::SystemSnapshot {
         revision: 7,
         observed_at,
-        weather: system_services_model::WeatherState::Loading,
-        time: system_services_model::TimeState::Local {
+        weather: system_services::WeatherState::Loading,
+        time: system_services::TimeState::Local {
             local_time: observed_at.fixed_offset(),
         },
-        storage: system_services_model::StorageState::Unavailable {
+        storage: system_services::StorageState::Unavailable {
             reason: "storage offline".to_string(),
         },
-        network: system_services_model::NetworkState::Unavailable {
+        network: system_services::NetworkState::Unavailable {
             reason: "network offline".to_string(),
         },
-        metrics: system_services_model::SystemMetricsSnapshot::loading(),
+        metrics: system_services::SystemMetricsSnapshot::loading(),
     };
     let status = AppSystemStatusSnapshot::from(&source);
     let mut state = AppState::default();

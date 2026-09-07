@@ -31,7 +31,8 @@ jobs:
         shell: bash
         run: |
           cargo test --locked -p platform --test system_status
-          cargo test --locked -p system-services
+          cargo test --locked -p system-services --no-default-features
+          cargo test --locked -p system-services --features runtime
       - name: Check Weathr dependency boundary
         shell: bash
         run: bash scripts/check-weathr-dependency-boundary.sh

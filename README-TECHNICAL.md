@@ -163,25 +163,28 @@ flowchart TD
     SHELL --> PLATFORM
     SHELL --> WEATHR["weathr"]
     SHELL --> WATCHDOG["watchdog"]
+    SHELL --> SERVICES["system-services<br/>runtime 功能：后台服务"]
+    SERVICES --> PLATFORM
+    SERVICES --> TIME["time"]
+    SERVICES --> WATCHDOG
 
     UI --> APP
     APP --> IDENTITY
     APP --> STORAGE
     APP --> PLATFORM
-    APP --> TIME["time"]
+    APP --> TIME
     APP --> WATCHDOG
+    APP --> MODEL["system-services<br/>默认：共享数据类型"]
 
     IDENTITY --> STORAGE
     STORAGE --> PLATFORM
-    WEATHR --> TIME
-    WEATHR --> ASCII["ascii-assets"]
-    WEATHR --> WATCHDOG
-    UI --> ASCII
+    WEATHR --> MODEL
+    UI --> ASCII["ascii-assets"]
 ```
 
 关键边界是：`app` 不依赖 `ui`、Ratatui 或 crossterm。UI 可以读取应用领域类型，但应用命令不携带坐标、`Rect`、`UiId` 或终端按键。`shell` 是组合根，负责连接终端世界、领域状态、平台副作用与生命周期。
 
-### 11 个 workspace crate
+### 12 个 workspace crate
 
 | Crate | 主要职责 |
 | --- | --- |
@@ -192,10 +195,11 @@ flowchart TD
 | `platform` | Windows/macOS/Linux 的系统路径、终端能力、文件系统、启动外部程序、Trash、关机与系统诊断边界。 |
 | `shell` | `ShellSession`、控制器、presentation、终端事件转换、全屏会话、锁屏与应用组合，以及 `tundra-shell` 入口。 |
 | `storage` | TOML/版本化 JSON、原子写入、schema 校验、迁移、恢复与存储健康。 |
-| `time` | `NetworkClock`、`ClockDisplay`、`ClockSnapshot`、时间同步与 `TIME_SYNC_INTERVAL`；由 APP 和 Weathr 共用。 |
+| `system-services` | 共享天气、时间、存储、网络和系统指标数据；开启 `runtime` 功能后提供天气请求、定位、缓存、时间同步、系统采样及后台刷新。 |
+| `time` | `NetworkClock`、`ClockDisplay`、`ClockSnapshot`、HTTP 时间同步与 `TIME_SYNC_INTERVAL`；供 APP、Shell 和后台服务使用。 |
 | `ui` | 输入、焦点、命中测试、通用组件、主题、屏幕 ViewModel、布局和渲染；不拥有终端生命周期。 |
 | `watchdog` | 进程 panic 边界、受管理任务、恢复策略、运行 journal 与事故报告。 |
-| `weathr` | 天气提供方、缓存、定位、动画、ASCII 场景与锁屏运行时；由 Shell 托管。 |
+| `weathr` | 读取共享快照、绘制天气动画和 ASCII 锁屏场景；资源和显示输入由 Shell 提供。 |
 
 源码按相同边界组织：
 
@@ -207,7 +211,8 @@ crates/
 ├── identity/
 ├── storage/
 ├── platform/
-├── time/
+├── system-services/src/{model,runtime}/
+├── time/src/{clock.rs,network.rs,tests}/
 ├── weathr/
 ├── ascii-assets/
 ├── watchdog/
@@ -215,6 +220,10 @@ crates/
 ```
 
 `application` 承载跨应用全局状态；APP 领域模块不包含终端渲染。UI screens 按屏幕拆分 model、layout 和 render；Shell controller 处理工作流编排，presentation 转换状态为 ViewModel，runtime 只掌管生命周期、事件循环和外部副作用。
+
+`system-services-model` 已合并到 `system-services`。`model/` 按天气、时间、存储、网络和系统指标组织数据类型；`runtime/` 按配置、天气提供方、定位、缓存、系统采样和时间同步组织服务代码，`runtime/mod.rs` 负责启动、命令处理和刷新循环。crate 根部统一导出调用方使用的类型，`lib.rs` 只保留模块声明和导出。
+
+`system-services` 默认不开启后台服务。APP 和 Weathr 使用 `default-features = false`，Shell 使用 `features = ["runtime"]`。Cargo 会在同一次构建中合并各调用方开启的功能，因此整个 workspace 构建会包含后台服务；单独构建 Weathr 时则不引入 `reqwest`、`platform`、`watchdog` 或 `time`。`scripts/check-weathr-dependency-boundary.sh` 检查这一点。`time` 保留为独立 crate，因为时钟本身也被 APP 和 Shell 使用；内部将时钟推进与 HTTP 请求分别放在 `clock.rs` 和 `network.rs`。
 
 ## 状态、会话与渲染
 
@@ -488,6 +497,9 @@ cargo test -p shell
 cargo test -p storage
 cargo test -p identity
 cargo test -p platform
+cargo test --locked -p system-services --no-default-features
+cargo test --locked -p system-services --features runtime
+bash scripts/check-weathr-dependency-boundary.sh
 ```
 
 CI 覆盖如下：

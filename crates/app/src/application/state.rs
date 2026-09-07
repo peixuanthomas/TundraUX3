@@ -17,13 +17,13 @@ use time::{ClockDisplay, ClockSnapshot, NetworkClock, TimeSyncResult};
 pub struct AppSystemStatusSnapshot {
     pub revision: u64,
     pub observed_at: chrono::DateTime<chrono::Utc>,
-    pub storage: system_services_model::StorageState,
-    pub network: system_services_model::NetworkState,
-    pub metrics: system_services_model::SystemMetricsSnapshot,
+    pub storage: system_services::StorageState,
+    pub network: system_services::NetworkState,
+    pub metrics: system_services::SystemMetricsSnapshot,
 }
 
-impl From<&system_services_model::SystemSnapshot> for AppSystemStatusSnapshot {
-    fn from(snapshot: &system_services_model::SystemSnapshot) -> Self {
+impl From<&system_services::SystemSnapshot> for AppSystemStatusSnapshot {
+    fn from(snapshot: &system_services::SystemSnapshot) -> Self {
         Self {
             revision: snapshot.revision,
             observed_at: snapshot.observed_at,

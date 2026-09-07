@@ -3,20 +3,27 @@ name = "system-services"
 version.workspace = true
 edition.workspace = true
 
+[features]
+default = []
+runtime = [
+    "dep:async-trait", "dep:chrono-tz", "dep:dirs", "dep:platform",
+    "dep:reqwest", "dep:serde_json", "dep:thiserror", "dep:time",
+    "dep:tokio", "dep:watchdog",
+]
+
 [dependencies]
-async-trait = "0.1"
+async-trait = { version = "0.1", optional = true }
 chrono = { version = "0.4", features = ["serde"] }
-chrono-tz = "0.10"
-dirs = "6.0"
-reqwest = { version = "0.13", features = ["json"] }
+chrono-tz = { version = "0.10", optional = true }
+dirs = { version = "6.0", optional = true }
+reqwest = { optional = true, version = "0.13", features = ["json"] }
 serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
-thiserror = "2.0"
-tokio = { version = "1", features = ["rt-multi-thread", "sync", "time", "macros", "fs"] }
-time = { path = "../time" }
-watchdog = { path = "../watchdog", features = ["tokio"] }
-system-services-model = { path = "../system-services-model" }
-platform = { path = "../platform" }
+serde_json = { version = "1.0", optional = true }
+thiserror = { version = "2.0", optional = true }
+tokio = { optional = true, version = "1", features = ["rt-multi-thread", "sync", "time", "macros", "fs"] }
+time = { optional = true, path = "../time" }
+watchdog = { optional = true, path = "../watchdog", features = ["tokio"] }
+platform = { optional = true, path = "../platform" }
 
 [dev-dependencies]
 tempfile = "3.0"

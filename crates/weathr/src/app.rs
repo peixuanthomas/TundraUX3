@@ -14,7 +14,7 @@ use crossterm::event::{self, Event, KeyCode, KeyModifiers};
 use std::io;
 use std::sync::Arc;
 use std::time::Duration;
-use system_services_model::{SystemSnapshot, TimeState, WeatherLocation, WeatherState};
+use system_services::{SystemSnapshot, TimeState, WeatherLocation, WeatherState};
 
 const INPUT_POLL_FPS: u64 = 30;
 const FRAME_DURATION: Duration = Duration::from_millis(1000 / INPUT_POLL_FPS);
@@ -165,7 +165,7 @@ impl App {
             None,
             crate::app_state::LocationDisplay::Coordinates,
             hide_hud,
-            system_services_model::WeatherUnits::default(),
+            system_services::WeatherUnits::default(),
             bottom_hud_prompt,
         );
 

@@ -21,4 +21,4 @@ tokio = { version = "1", features = [
     "macros",
     "signal",
 ] }
-system-services-model = { path = "../system-services-model" }
+system-services = { path = "../system-services", default-features = false }

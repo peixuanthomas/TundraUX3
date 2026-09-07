@@ -20,7 +20,8 @@ jobs:
       - name: Test system metrics
         run: |
           cargo test --locked -p platform --test system_status
-          cargo test --locked -p system-services
+          cargo test --locked -p system-services --no-default-features
+          cargo test --locked -p system-services --features runtime
 
   fedora:
     name: Fedora 42 (x86_64)
@@ -43,4 +44,5 @@ jobs:
         run: |
           source "$HOME/.cargo/env"
           cargo test --locked -p platform --test system_status
-          cargo test --locked -p system-services
+          cargo test --locked -p system-services --no-default-features
+          cargo test --locked -p system-services --features runtime

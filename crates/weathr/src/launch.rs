@@ -8,7 +8,7 @@ use std::fmt;
 use std::io;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
-use system_services_model::SystemSnapshot;
+use system_services::SystemSnapshot;
 use tokio::sync::watch;
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
