@@ -1643,6 +1643,7 @@ impl ShellSession {
             )
         });
 
+        model.overlay_selection = self.explorer_overlay_selection;
         model.overlay = if let Some(conflict) = state.pending_restore.as_ref() {
             Some(ui::ExplorerOverlayViewModel::Conflict(
                 ui::ExplorerConflictViewModel {
@@ -1762,6 +1763,12 @@ impl ShellSession {
         } else {
             None
         };
+
+        if let Some(ui::ExplorerOverlayViewModel::Conflict(conflict)) = &mut model.overlay
+            && let Some(choice) = conflict.choices.get(self.explorer_overlay_selection)
+        {
+            conflict.selected_choice = *choice;
+        }
 
         model
     }

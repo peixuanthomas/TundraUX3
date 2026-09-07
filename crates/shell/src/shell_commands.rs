@@ -90,6 +90,7 @@ pub enum ShellCommand {
     LauncherRemove,
     LauncherReapprove,
     LauncherRefresh,
+    LauncherToggleConfirmationAction,
     LauncherConfirm,
     LauncherCancelConfirmation,
     LauncherPointer(CellPosition, ClickKind),

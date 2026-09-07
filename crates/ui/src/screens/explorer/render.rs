@@ -561,7 +561,14 @@ fn render_explorer_overlay(
             }
         }
         Some(ExplorerOverlayViewModel::Name(dialog)) => {
-            render_explorer_name_dialog(frame, overlay_layout, dialog, context, theme);
+            render_explorer_name_dialog(
+                frame,
+                overlay_layout,
+                dialog,
+                model.overlay_selection,
+                context,
+                theme,
+            );
         }
         Some(ExplorerOverlayViewModel::Options(options)) => {
             for control in &overlay_layout.controls {
@@ -587,7 +594,7 @@ fn render_explorer_overlay(
                         control.area,
                         "explorer.options.close",
                         format!("[{}]", options.close_label),
-                        true,
+                        model.overlay_selection == options.options.len(),
                         control.enabled,
                         theme,
                     ),
@@ -596,7 +603,13 @@ fn render_explorer_overlay(
             }
         }
         Some(ExplorerOverlayViewModel::Conflict(conflict)) => {
-            render_explorer_conflict_dialog(frame, overlay_layout, conflict, theme);
+            render_explorer_conflict_dialog(
+                frame,
+                overlay_layout,
+                conflict,
+                model.overlay_selection,
+                theme,
+            );
         }
         Some(ExplorerOverlayViewModel::Properties(properties)) => {
             for (index, property) in properties
@@ -634,7 +647,13 @@ fn render_explorer_overlay(
         }
         None => {
             if let Some(dialog) = &model.pending_dialog {
-                render_legacy_explorer_dialog(frame, overlay_layout, dialog, theme);
+                render_legacy_explorer_dialog(
+                    frame,
+                    overlay_layout,
+                    dialog,
+                    model.overlay_selection,
+                    theme,
+                );
             }
         }
     }
@@ -644,6 +663,7 @@ fn render_explorer_name_dialog(
     frame: &mut Frame<'_>,
     layout: &ExplorerOverlayLayout,
     dialog: &crate::ExplorerNameDialogViewModel,
+    selection: usize,
     context: &crate::RenderContext,
     theme: &TundraTheme,
 ) {
@@ -672,8 +692,8 @@ fn render_explorer_name_dialog(
 
                 let mut input = TextInput::new("explorer.name.input").with_cursor_symbol("_");
                 input.set_value(&dialog.value);
-                input.set_focused(true);
-                input.state.hovered = true;
+                input.set_focused(selection == 0);
+                input.state.hovered = selection == 0;
                 input.render_borderless_frame_with_prefix(frame, input_content, theme, "> ");
             }
             ExplorerOverlayControl::Confirm => render_explorer_button(
@@ -681,7 +701,7 @@ fn render_explorer_name_dialog(
                 control.area,
                 "explorer.name.confirm",
                 format!("[{}]", dialog.confirm_label),
-                true,
+                selection == 1,
                 control.enabled,
                 theme,
             ),
@@ -690,7 +710,7 @@ fn render_explorer_name_dialog(
                 control.area,
                 "explorer.name.cancel",
                 format!("[{}]", dialog.cancel_label),
-                false,
+                selection == 2,
                 control.enabled,
                 theme,
             ),
@@ -717,6 +737,7 @@ fn render_explorer_conflict_dialog(
     frame: &mut Frame<'_>,
     layout: &ExplorerOverlayLayout,
     conflict: &crate::ExplorerConflictViewModel,
+    selection: usize,
     theme: &TundraTheme,
 ) {
     let lines = vec![
@@ -734,7 +755,8 @@ fn render_explorer_conflict_dialog(
     for control in &layout.controls {
         match control.control {
             ExplorerOverlayControl::ConflictChoice(choice) => {
-                let selected = conflict.selected_choice == choice;
+                let selected =
+                    selection < conflict.choices.len() && conflict.selected_choice == choice;
                 render_explorer_button(
                     frame,
                     control.area,
@@ -758,7 +780,9 @@ fn render_explorer_conflict_dialog(
                     usize::from(control.area.width),
                 );
                 let mut button = Button::new("explorer.conflict.apply-to-remaining", label);
-                button.state.selected = conflict.apply_to_remaining;
+                button.set_focused(selection == conflict.choices.len());
+                button.state.hovered = selection == conflict.choices.len();
+                button.state.selected = selection == conflict.choices.len();
                 button.set_disabled(!control.enabled);
                 button.render_borderless_frame(frame, control.area, theme);
             }
@@ -771,6 +795,7 @@ fn render_legacy_explorer_dialog(
     frame: &mut Frame<'_>,
     layout: &ExplorerOverlayLayout,
     dialog: &ExplorerDialogViewModel,
+    selection: usize,
     theme: &TundraTheme,
 ) {
     frame.render_widget(
@@ -795,7 +820,7 @@ fn render_legacy_explorer_dialog(
                     _ => unreachable!("legacy Explorer dialog has only action controls"),
                 },
                 label,
-                true,
+                (selection == 0) == (control.control == ExplorerOverlayControl::Confirm),
                 control.enabled,
                 theme,
             );

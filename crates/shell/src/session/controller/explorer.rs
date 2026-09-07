@@ -1,3 +1,4 @@
+use super::super::queries::ResolvedExplorerOverlay;
 use super::super::*;
 impl ShellSession {
     fn explorer_user_dirs(
@@ -277,6 +278,18 @@ impl ShellSession {
         command: ExplorerCommand,
         platform: &dyn Platform,
     ) {
+        if matches!(
+            command,
+            ExplorerCommand::Paste
+                | ExplorerCommand::RestoreSelected
+                | ExplorerCommand::RestoreSelectedToDirectory(_)
+                | ExplorerCommand::ResolveRestoreConflict(_)
+                | ExplorerCommand::ResolveConflict { .. }
+                | ExplorerCommand::DeleteToTrash
+                | ExplorerCommand::DumpTrash
+        ) {
+            self.explorer_overlay_selection = 0;
+        }
         if self.try_handle_explorer_background_command(&command, platform) {
             return;
         }
@@ -446,6 +459,7 @@ impl ShellSession {
         }
     }
     pub(in crate::session) fn begin_explorer_input(&mut self, mode: ExplorerInputMode) {
+        self.explorer_overlay_selection = 0;
         self.explorer_input_mode = mode;
         self.explorer_input = match mode {
             ExplorerInputMode::Address => self
@@ -816,13 +830,31 @@ impl ShellSession {
                     _ => {}
                 }
             }
-            ExplorerOverlayControl::NameInput => {}
-            ExplorerOverlayControl::Confirm => self.submit_explorer_input(platform),
+            ExplorerOverlayControl::NameInput => self.explorer_overlay_selection = 0,
+            ExplorerOverlayControl::Confirm => {
+                let command = match self.resolved_explorer_overlay() {
+                    Some(ResolvedExplorerOverlay::PendingDialog(kind)) => Some(match kind {
+                        app::explorer::ExplorerDialogKind::DeleteToTrash => {
+                            ExplorerCommand::ConfirmDelete
+                        }
+                        app::explorer::ExplorerDialogKind::DumpTrash => {
+                            ExplorerCommand::ConfirmDumpTrash
+                        }
+                    }),
+                    _ => None,
+                };
+                if let Some(command) = command {
+                    self.apply_explorer_command(command, platform);
+                } else {
+                    self.submit_explorer_input(platform);
+                }
+            }
             ExplorerOverlayControl::Cancel => {
                 self.close_explorer_popup();
                 self.cancel_explorer_input();
             }
             ExplorerOverlayControl::Option(index) => {
+                self.explorer_overlay_selection = index;
                 let option = match self.to_explorer_view_model().overlay {
                     Some(ExplorerOverlayViewModel::Options(options)) => options
                         .options
@@ -881,6 +913,11 @@ impl ShellSession {
                 self.explorer_conflict_apply_to_remaining = false;
             }
             ExplorerOverlayControl::ApplyToRemaining => {
+                if let Some(ExplorerOverlayViewModel::Conflict(conflict)) =
+                    self.to_explorer_view_model().overlay
+                {
+                    self.explorer_overlay_selection = conflict.choices.len();
+                }
                 if self
                     .app
                     .explorer_state()
@@ -934,7 +971,18 @@ impl ShellSession {
     pub(in crate::session) fn move_explorer_overlay_selection(&mut self, delta: isize) {
         let count = match self.to_explorer_view_model().overlay {
             Some(ui::ExplorerOverlayViewModel::ContextMenu(menu)) => menu.items.len(),
-            Some(ui::ExplorerOverlayViewModel::Options(options)) => options.options.len(),
+            Some(ui::ExplorerOverlayViewModel::Options(options)) => options.options.len() + 1,
+            Some(ui::ExplorerOverlayViewModel::Name(_)) => 3,
+            Some(ui::ExplorerOverlayViewModel::Conflict(conflict)) => {
+                conflict.choices.len() + usize::from(conflict.allow_apply_to_remaining)
+            }
+            None if self
+                .app
+                .explorer_state()
+                .is_some_and(|state| state.pending_dialog.is_some()) =>
+            {
+                2
+            }
             Some(ui::ExplorerOverlayViewModel::Properties(_)) => 1,
             _ => 0,
         };
@@ -961,6 +1009,38 @@ impl ShellSession {
                 .get(self.explorer_overlay_selection)
                 .filter(|item| item.enabled)
                 .map(|_| ui::ExplorerOverlayControl::ContextItem(self.explorer_overlay_selection)),
+            Some(ui::ExplorerOverlayViewModel::Options(options))
+                if self.explorer_overlay_selection == options.options.len() =>
+            {
+                Some(ui::ExplorerOverlayControl::OptionsClose)
+            }
+            Some(ui::ExplorerOverlayViewModel::Name(_)) => {
+                Some(match self.explorer_overlay_selection {
+                    0 | 1 => ui::ExplorerOverlayControl::Confirm,
+                    _ => ui::ExplorerOverlayControl::Cancel,
+                })
+            }
+            Some(ui::ExplorerOverlayViewModel::Conflict(conflict)) => conflict
+                .choices
+                .get(self.explorer_overlay_selection)
+                .copied()
+                .map(ui::ExplorerOverlayControl::ConflictChoice)
+                .or_else(|| {
+                    conflict
+                        .allow_apply_to_remaining
+                        .then_some(ui::ExplorerOverlayControl::ApplyToRemaining)
+                }),
+            None if self
+                .app
+                .explorer_state()
+                .is_some_and(|state| state.pending_dialog.is_some()) =>
+            {
+                Some(if self.explorer_overlay_selection == 0 {
+                    ui::ExplorerOverlayControl::Confirm
+                } else {
+                    ui::ExplorerOverlayControl::Cancel
+                })
+            }
             Some(ui::ExplorerOverlayViewModel::Options(options)) => options
                 .options
                 .get(self.explorer_overlay_selection)

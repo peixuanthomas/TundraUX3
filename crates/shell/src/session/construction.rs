@@ -213,6 +213,7 @@ impl ShellSession {
             launcher_view_mode: app::launcher::LauncherViewMode::LargeIcons,
             launcher_viewport_offset: 0,
             launcher_pending_confirmation: None,
+            launcher_confirm_selected: true,
             launcher_drag: None,
             launcher_task_runtime: None,
             launcher_refresh_request: None,

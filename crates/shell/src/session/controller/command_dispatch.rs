@@ -655,6 +655,10 @@ impl ShellSession {
                 self.refresh_launcher(platform);
                 ShellAction::Redraw
             }
+            ShellCommand::LauncherToggleConfirmationAction => {
+                self.launcher_confirm_selected = !self.launcher_confirm_selected;
+                ShellAction::Redraw
+            }
             ShellCommand::LauncherConfirm => {
                 self.confirm_launcher_action(platform);
                 ShellAction::Redraw

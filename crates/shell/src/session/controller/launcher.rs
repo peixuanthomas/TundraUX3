@@ -261,6 +261,7 @@ impl ShellSession {
                 })
             }
             LauncherEffect::ConfirmationRequired { id, path, kind } => {
+                self.launcher_confirm_selected = true;
                 self.launcher_pending_confirmation =
                     Some(LauncherPendingConfirmation::Launch { id, path, kind });
             }
@@ -376,6 +377,7 @@ impl ShellSession {
             ids: vec![item.record.id.clone()],
             label: item.record.path.clone(),
         });
+        self.launcher_confirm_selected = true;
     }
 
     pub(in crate::session) fn reapprove_selected_launcher_item(&mut self, platform: &dyn Platform) {
@@ -617,7 +619,7 @@ impl ShellSession {
                             ),
                             confirm_label: "Launch".to_string(),
                             cancel_label: "Cancel".to_string(),
-                            confirm_selected: true,
+                            confirm_selected: self.launcher_confirm_selected,
                         }
                     }
                     LauncherPendingConfirmation::Remove { label, .. } => {
@@ -629,7 +631,7 @@ impl ShellSession {
                             ),
                             confirm_label: "Remove".to_string(),
                             cancel_label: "Cancel".to_string(),
-                            confirm_selected: true,
+                            confirm_selected: self.launcher_confirm_selected,
                         }
                     }
                 });

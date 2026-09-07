@@ -914,15 +914,22 @@ impl ShellSession {
             return (target, ShellCommand::CaptureOverlayInput);
         }
 
+        if self.resolved_explorer_overlay().is_some()
+            && let Some(command) = explorer_overlay_navigation_command(key)
+        {
+            return (target, command);
+        }
+
         match self.resolved_explorer_overlay() {
             Some(ResolvedExplorerOverlay::RestoreConflict) => {
                 if key.phase != InputPhase::Press || key.has_non_shift_modifier() {
                     return (target, ShellCommand::CaptureOverlayInput);
                 }
                 return match &key.key {
-                    InputKey::Enter | InputKey::Char('k' | 'K') => {
-                        (target, ShellCommand::ExplorerRestoreKeepBoth)
+                    InputKey::Enter | InputKey::Char(' ') if key.is_unmodified_action_key() => {
+                        (target, ShellCommand::ExplorerOverlayActivate)
                     }
+                    InputKey::Char('k' | 'K') => (target, ShellCommand::ExplorerRestoreKeepBoth),
                     InputKey::Char('r' | 'R') => (target, ShellCommand::ExplorerRestoreReplace),
                     InputKey::Escape | InputKey::Char('n' | 'N') => {
                         (target, ShellCommand::ExplorerRestoreCancel)
@@ -935,9 +942,10 @@ impl ShellSession {
                     return (target, ShellCommand::CaptureOverlayInput);
                 }
                 return match &key.key {
-                    InputKey::Enter | InputKey::Char('k' | 'K') => {
-                        (target, ShellCommand::ExplorerConflictKeepBoth)
+                    InputKey::Enter | InputKey::Char(' ') if key.is_unmodified_action_key() => {
+                        (target, ShellCommand::ExplorerOverlayActivate)
                     }
+                    InputKey::Char('k' | 'K') => (target, ShellCommand::ExplorerConflictKeepBoth),
                     InputKey::Char('r' | 'R') => (target, ShellCommand::ExplorerConflictReplace),
                     InputKey::Char('s' | 'S') => (target, ShellCommand::ExplorerConflictSkip),
                     InputKey::Char('a' | 'A') => {
@@ -952,11 +960,25 @@ impl ShellSession {
             Some(ResolvedExplorerOverlay::Input(_)) => {
                 return match &key.key {
                     InputKey::Escape => (target, ShellCommand::CancelExplorerInput),
-                    InputKey::Enter => (target, ShellCommand::SubmitExplorerInput),
-                    InputKey::Backspace | InputKey::Delete => {
+                    InputKey::Enter if self.explorer_overlay_selection == 0 => {
+                        (target, ShellCommand::SubmitExplorerInput)
+                    }
+                    InputKey::Enter | InputKey::Char(' ')
+                        if self.explorer_overlay_selection != 0
+                            && key.phase == InputPhase::Press
+                            && key.is_unmodified_action_key() =>
+                    {
+                        (target, ShellCommand::ExplorerOverlayActivate)
+                    }
+                    InputKey::Backspace | InputKey::Delete
+                        if self.explorer_overlay_selection == 0 =>
+                    {
                         (target, ShellCommand::ExplorerBackspace)
                     }
-                    InputKey::Char(character) if !key.has_non_shift_modifier() => {
+                    InputKey::Char(character)
+                        if self.explorer_overlay_selection == 0
+                            && !key.has_non_shift_modifier() =>
+                    {
                         (target, ShellCommand::AppendExplorerChar(*character))
                     }
                     _ => (target, ShellCommand::RecordInput),
@@ -978,7 +1000,14 @@ impl ShellSession {
                     return (target, ShellCommand::CaptureOverlayInput);
                 }
                 return match &key.key {
-                    InputKey::Enter if key.is_unmodified_action_key() => (target, confirm.clone()),
+                    InputKey::Enter | InputKey::Char(' ') if key.is_unmodified_action_key() => (
+                        target,
+                        if self.explorer_overlay_selection == 0 {
+                            confirm.clone()
+                        } else {
+                            ShellCommand::CancelExplorerInput
+                        },
+                    ),
                     InputKey::Escape if key.is_unmodified_action_key() => {
                         (target, ShellCommand::CancelExplorerInput)
                     }
@@ -1080,10 +1109,25 @@ impl ShellSession {
     ) -> (RoutedTarget, ShellCommand) {
         let target = RoutedTarget::Component(ShellComponent::Launcher);
         if self.launcher_pending_confirmation.is_some() {
+            if key.phase != InputPhase::Press || key.has_non_shift_modifier() {
+                return (target, ShellCommand::CaptureOverlayInput);
+            }
             return match key.key {
-                InputKey::Enter | InputKey::Char('y' | 'Y') => {
-                    (target, ShellCommand::LauncherConfirm)
-                }
+                InputKey::Tab
+                | InputKey::BackTab
+                | InputKey::Left
+                | InputKey::Right
+                | InputKey::Up
+                | InputKey::Down => (target, ShellCommand::LauncherToggleConfirmationAction),
+                InputKey::Enter | InputKey::Char(' ') if key.is_unmodified_action_key() => (
+                    target,
+                    if self.launcher_confirm_selected {
+                        ShellCommand::LauncherConfirm
+                    } else {
+                        ShellCommand::LauncherCancelConfirmation
+                    },
+                ),
+                InputKey::Char('y' | 'Y') => (target, ShellCommand::LauncherConfirm),
                 InputKey::Escape | InputKey::Char('n' | 'N') => {
                     (target, ShellCommand::LauncherCancelConfirmation)
                 }
@@ -1305,6 +1349,9 @@ impl ShellSession {
 
     fn route_explorer_overlay_key(&self, key: &KeyInput) -> (RoutedTarget, ShellCommand) {
         let target = RoutedTarget::Component(ShellComponent::Explorer);
+        if let Some(command) = explorer_overlay_navigation_command(key) {
+            return (target, command);
+        }
         if key.phase != InputPhase::Press || key.has_non_shift_modifier() {
             return (target, ShellCommand::CaptureOverlayInput);
         }
@@ -1317,8 +1364,6 @@ impl ShellSession {
         );
         match &key.key {
             InputKey::Escape => (target, ShellCommand::ClosePopup),
-            InputKey::Up | InputKey::BackTab => (target, ShellCommand::ExplorerOverlayPrevious),
-            InputKey::Down | InputKey::Tab => (target, ShellCommand::ExplorerOverlayNext),
             InputKey::Enter | InputKey::Char(' ') => {
                 (target, ShellCommand::ExplorerOverlayActivate)
             }
@@ -2555,5 +2600,24 @@ impl ShellSession {
             });
             ClickKind::Single
         }
+    }
+}
+
+// Share the overlay focus bindings so Shift+Tab and both arrow axes behave alike.
+fn explorer_overlay_navigation_command(key: &KeyInput) -> Option<ShellCommand> {
+    if key.phase == InputPhase::Release || key.has_non_shift_modifier() {
+        return None;
+    }
+    match key.key {
+        InputKey::BackTab => Some(ShellCommand::ExplorerOverlayPrevious),
+        InputKey::Tab if key.modifiers.shift => Some(ShellCommand::ExplorerOverlayPrevious),
+        InputKey::Tab => Some(ShellCommand::ExplorerOverlayNext),
+        InputKey::Left | InputKey::Up if key.is_unmodified_action_key() => {
+            Some(ShellCommand::ExplorerOverlayPrevious)
+        }
+        InputKey::Right | InputKey::Down if key.is_unmodified_action_key() => {
+            Some(ShellCommand::ExplorerOverlayNext)
+        }
+        _ => None,
     }
 }

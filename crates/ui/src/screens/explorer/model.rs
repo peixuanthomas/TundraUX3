@@ -533,6 +533,8 @@ pub struct ExplorerViewModel {
     pub listing_warning_count: usize,
     pub operation: Option<ExplorerOperationProgressViewModel>,
     pub overlay: Option<ExplorerOverlayViewModel>,
+    /// Focus position in the active overlay, including its input and action controls.
+    pub overlay_selection: usize,
 }
 
 impl ExplorerViewModel {
@@ -595,6 +597,7 @@ impl ExplorerViewModel {
             listing_warning_count: 0,
             operation: None,
             overlay: None,
+            overlay_selection: 0,
         }
     }
 

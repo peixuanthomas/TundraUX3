@@ -489,6 +489,7 @@ pub struct UiSessionState {
     pub(super) launcher_selected_index: usize,
     pub(super) launcher_view_mode: app::launcher::LauncherViewMode,
     pub(super) launcher_viewport_offset: usize,
+    pub(super) launcher_confirm_selected: bool,
     pub(super) launcher_pending_confirmation: Option<LauncherPendingConfirmation>,
     pub(super) launcher_drag: Option<LauncherDragState>,
     pub(super) launcher_task_runtime: Option<ShellLauncherTaskRuntime>,

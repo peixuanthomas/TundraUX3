@@ -1130,3 +1130,96 @@ fn unix_millis() -> u64 {
         .map(|duration| duration.as_millis() as u64)
         .unwrap_or(0)
 }
+
+#[test]
+fn conflict_buttons_execute_the_same_choice_with_keyboard_and_mouse() {
+    use ui::{
+        ExplorerConflictChoice as Choice, ExplorerOverlayControl as Control,
+        ExplorerOverlayViewModel,
+    };
+    for choice in [
+        Choice::KeepBoth,
+        Choice::Replace,
+        Choice::Skip,
+        Choice::Cancel,
+    ] {
+        for mouse in [false, true] {
+            let fixture = FixtureRoot::new(&format!("conflict-{choice:?}-{mouse}"));
+            let platform = mock_platform(fixture.path());
+            bootstrap_with_shell(&platform);
+            let target = fixture.path().join("Documents/alpha.txt");
+            fs::write(&target, "alpha").unwrap();
+            let mut state = logged_in_state(&platform);
+            for key in ["e", "c", "v"] {
+                state.apply_input_with_platform(InputEvent::from_key_label(key), &platform);
+            }
+            let model = state.to_explorer_view_model();
+            let Some(ExplorerOverlayViewModel::Conflict(conflict)) = &model.overlay else {
+                panic!("paste must show conflict");
+            };
+            let index = conflict
+                .choices
+                .iter()
+                .position(|item| *item == choice)
+                .unwrap();
+            if mouse {
+                let ui::ShellLayout::Full { main, .. } = ui::compute_shell_layout(Rect::new(
+                    0,
+                    0,
+                    state.terminal_size().0,
+                    state.terminal_size().1,
+                )) else {
+                    panic!("full layout");
+                };
+                let area = ui::explorer_layout(main, &model)
+                    .overlay
+                    .unwrap()
+                    .controls
+                    .into_iter()
+                    .find(|control| control.control == Control::ConflictChoice(choice))
+                    .unwrap()
+                    .area;
+                state.apply_input_with_platform(
+                    InputEvent::mouse_down(PointerButton::Left, (area.x, area.y)),
+                    &platform,
+                );
+            } else {
+                for _ in 0..index {
+                    state.apply_input_with_platform(InputEvent::from_key_label("Right"), &platform);
+                }
+                let Some(ExplorerOverlayViewModel::Conflict(selected)) =
+                    state.to_explorer_view_model().overlay
+                else {
+                    panic!("conflict");
+                };
+                assert_eq!(selected.selected_choice, choice);
+                state.apply_input_with_platform(InputEvent::from_key_label("Enter"), &platform);
+            }
+            assert!(
+                state
+                    .app_state()
+                    .explorer_state()
+                    .unwrap()
+                    .pending_conflict
+                    .is_none(),
+                "{choice:?}, mouse={mouse}"
+            );
+            match choice {
+                Choice::KeepBoth => assert_eq!(fs::read_dir(target.parent().unwrap()).unwrap().count(), 2),
+                Choice::Replace => assert!(platform.calls().iter().any(|call| matches!(call, MockCall::MoveToTrash(paths) if paths == &vec![target.clone()]))),
+                Choice::Skip | Choice::Cancel => {
+                    assert_eq!(fs::read_dir(target.parent().unwrap()).unwrap().count(), 1);
+                    assert_eq!(fs::read_to_string(&target).unwrap(), "alpha");
+                }
+            }
+            // Every new conflict starts on Keep both, even after a destructive choice.
+            state.apply_input_with_platform(InputEvent::from_key_label("v"), &platform);
+            let Some(ExplorerOverlayViewModel::Conflict(next)) =
+                state.to_explorer_view_model().overlay
+            else {
+                panic!("next conflict");
+            };
+            assert_eq!(next.selected_choice, Choice::KeepBoth);
+        }
+    }
+}

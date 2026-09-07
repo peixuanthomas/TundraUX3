@@ -660,7 +660,7 @@ fn explorer_advanced_options_conflict_and_properties_overlays_render() {
         "the bracketed toggle label must remain left aligned",
     );
     let apply_cell = &conflict_terminal.backend().buffer()[(apply_area.x, apply_area.y)];
-    assert_eq!(apply_cell.fg, TundraTheme::default_dark().accent_color);
+    assert_eq!(apply_cell.fg, TundraTheme::default_dark().foreground);
     assert_eq!(
         apply_cell.bg,
         TundraTheme::default_dark().background,
@@ -759,4 +759,51 @@ fn overlay_control_area(model: &ExplorerViewModel, target: &ExplorerOverlayContr
         .find(|control| &control.control == target)
         .expect("overlay control")
         .area
+}
+
+#[test]
+fn conflict_focus_highlights_exactly_one_control_even_when_apply_is_enabled() {
+    use ratatui::style::Modifier;
+    let mut model = sample_model();
+    let choices = vec![
+        ExplorerConflictChoice::KeepBoth,
+        ExplorerConflictChoice::Replace,
+        ExplorerConflictChoice::Skip,
+        ExplorerConflictChoice::Cancel,
+    ];
+    for selection in 0..=choices.len() {
+        model.overlay_selection = selection;
+        model.overlay = Some(ExplorerOverlayViewModel::Conflict(
+            ExplorerConflictViewModel {
+                title: "Name conflict".into(),
+                source: "/source".into(),
+                destination: "/destination".into(),
+                selected_choice: choices
+                    .get(selection)
+                    .copied()
+                    .unwrap_or(ExplorerConflictChoice::KeepBoth),
+                choices: choices.clone(),
+                apply_to_remaining: true,
+                allow_apply_to_remaining: true,
+            },
+        ));
+        let terminal = render_terminal(&model);
+        let controls = choices
+            .iter()
+            .copied()
+            .map(ExplorerOverlayControl::ConflictChoice)
+            .chain(std::iter::once(ExplorerOverlayControl::ApplyToRemaining));
+        for (index, control) in controls.enumerate() {
+            let area = overlay_control_area(&model, &control);
+            let cell = (area.x..area.right())
+                .map(|x| &terminal.backend().buffer()[(x, area.y)])
+                .find(|cell| !cell.symbol().trim().is_empty())
+                .unwrap();
+            assert_eq!(
+                cell.modifier.contains(Modifier::BOLD),
+                index == selection,
+                "{control:?}, focus={selection}"
+            );
+        }
+    }
 }

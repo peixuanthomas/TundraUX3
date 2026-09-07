@@ -464,6 +464,7 @@ impl ShellSession {
             .explorer_state()
             .is_some_and(|state| state.confirm_name_conflicts);
         if confirm_conflicts && !conflicts.is_empty() {
+            self.explorer_overlay_selection = 0;
             self.explorer_conflict_apply_to_remaining = false;
             let (source, target) = conflicts[0].clone();
             let _ = self.update_explorer_state(|state| {

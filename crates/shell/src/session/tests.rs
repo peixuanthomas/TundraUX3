@@ -3244,7 +3244,7 @@ fn explorer_dialog_and_transient_overlay_identities_are_semantic_and_stable() {
     );
     assert_eq!(
         state.route_key_input(&KeyInput::from_label("Enter")).1,
-        ShellCommand::ExplorerConflictKeepBoth
+        ShellCommand::ExplorerOverlayActivate
     );
     assert_eq!(
         state.route_key_input(&KeyInput::from_label("r")).1,
@@ -5365,5 +5365,191 @@ fn linux_account_actions_are_managed_by_linux_even_for_admin() {
             .as_deref()
             .unwrap()
             .contains("Linux")
+    );
+}
+
+#[test]
+fn explorer_conflict_arrows_select_the_action_instead_of_always_keeping_both() {
+    let mut state = explorer_routing_test_state();
+    state.update_explorer_state(|explorer| {
+        explorer.pending_conflict = Some(app::explorer::ExplorerConflict {
+            source: "/source".into(),
+            target: "/target".into(),
+            remaining: 1,
+        });
+    });
+    state.refresh_hit_map();
+    state.apply_input(InputEvent::from_key_label("Right"));
+    let Some(ui::ExplorerOverlayViewModel::Conflict(conflict)) =
+        state.to_explorer_view_model().overlay
+    else {
+        panic!("expected conflict dialog");
+    };
+    assert_eq!(
+        conflict.selected_choice,
+        ui::ExplorerConflictChoice::Replace
+    );
+    assert_eq!(
+        state.route_key_input(&KeyInput::from_label("Enter")).1,
+        ShellCommand::ExplorerOverlayActivate
+    );
+}
+
+#[test]
+fn explorer_dialog_navigation_wraps_and_preserves_input_focus() {
+    for mode in [
+        ExplorerInputMode::NewFolder,
+        ExplorerInputMode::NewTextFile,
+        ExplorerInputMode::Rename,
+        ExplorerInputMode::RestoreDestination,
+    ] {
+        let mut state = explorer_routing_test_state();
+        state.begin_explorer_input(mode);
+        state.refresh_hit_map();
+        for (key, selected) in [
+            ("Right", 1),
+            ("Down", 2),
+            ("Tab", 0),
+            ("Left", 2),
+            ("Up", 1),
+            ("Shift+Tab", 0),
+        ] {
+            state.apply_input(InputEvent::from_key_label(key));
+            assert_eq!(
+                state.to_explorer_view_model().overlay_selection,
+                selected,
+                "{mode:?}: {key}"
+            );
+        }
+        state.apply_input(InputEvent::from_key_label("Left"));
+        state.apply_input(InputEvent::from_key_label("x"));
+        assert!(state.explorer_input.is_empty());
+        state.apply_input(InputEvent::from_key_label("Enter"));
+        assert!(state.to_explorer_view_model().overlay.is_none());
+        assert_eq!(state.active_screen(), ShellScreen::Explorer);
+    }
+}
+
+#[test]
+fn explorer_conflict_navigation_reaches_apply_to_remaining_and_supports_reverse_tab() {
+    let mut state = explorer_routing_test_state();
+    state.update_explorer_state(|explorer| {
+        explorer.pending_conflict = Some(app::explorer::ExplorerConflict {
+            source: "/source".into(),
+            target: "/target".into(),
+            remaining: 2,
+        });
+    });
+    state.refresh_hit_map();
+    state.apply_input(InputEvent::from_key_label("Shift+Tab"));
+    assert_eq!(state.explorer_overlay_selection, 4);
+    state.apply_input(InputEvent::from_key_label(" "));
+    assert!(state.explorer_conflict_apply_to_remaining);
+    state.apply_input(InputEvent::from_key_label("Enter"));
+    assert!(!state.explorer_conflict_apply_to_remaining);
+    state.apply_input(InputEvent::from_key_label("Right"));
+    assert_eq!(state.explorer_overlay_selection, 0);
+    state.apply_input(InputEvent::from_key_label("Up"));
+    assert_eq!(state.explorer_overlay_selection, 4);
+}
+
+#[test]
+fn explorer_options_close_is_keyboard_reachable() {
+    let mut state = explorer_routing_test_state();
+    state.open_explorer_popup(ExplorerOverlayMode::Options, (0, 0));
+    state.apply_input(InputEvent::from_key_label("Shift+Tab"));
+    let Some(ui::ExplorerOverlayViewModel::Options(options)) =
+        state.to_explorer_view_model().overlay
+    else {
+        panic!("options");
+    };
+    assert_eq!(state.explorer_overlay_selection, options.options.len());
+    state.apply_input(InputEvent::from_key_label("Enter"));
+    assert!(state.to_explorer_view_model().overlay.is_none());
+}
+
+#[test]
+fn launcher_confirmation_buttons_support_keyboard_and_mouse_cancellation() {
+    for pending in [
+        LauncherPendingConfirmation::Launch {
+            id: "app".into(),
+            path: "/app".into(),
+            kind: LauncherExecutableKind::NativeBinary,
+        },
+        LauncherPendingConfirmation::Remove {
+            ids: vec!["app".into()],
+            label: "app".into(),
+        },
+    ] {
+        for key in ["Right", "Left", "Up", "Down", "Tab", "Shift+Tab"] {
+            let mut state = explorer_routing_test_state();
+            state.screen_stack = vec![ShellScreen::Launcher];
+            state.focused_component = ShellComponent::Launcher;
+            state.launcher_pending_confirmation = Some(pending.clone());
+            state.refresh_hit_map();
+            state.apply_input(InputEvent::from_key_label(key));
+            assert!(
+                !state
+                    .to_launcher_view_model()
+                    .confirmation
+                    .unwrap()
+                    .confirm_selected,
+                "{key}"
+            );
+            state.apply_input(InputEvent::from_key_label(" "));
+            assert!(state.launcher_pending_confirmation.is_none());
+            assert_eq!(
+                state.last_command(),
+                Some(&ShellCommand::LauncherCancelConfirmation)
+            );
+            state.launcher_pending_confirmation = Some(pending.clone());
+            state.refresh_hit_map();
+            let ui::ShellLayout::Full { main, .. } =
+                ui::compute_shell_layout(Rect::new(0, 0, 120, 40))
+            else {
+                panic!("full layout");
+            };
+            let cancel = ui::launcher_layout(main, &state.to_launcher_view_model())
+                .confirmation
+                .unwrap()
+                .cancel;
+            state.apply_input(InputEvent::mouse_down(
+                PointerButton::Left,
+                (cancel.x, cancel.y),
+            ));
+            assert!(state.launcher_pending_confirmation.is_none());
+        }
+    }
+}
+
+#[test]
+fn restore_conflict_cycles_only_its_visible_actions() {
+    let mut state = explorer_routing_test_state();
+    state.update_explorer_state(|explorer| {
+        explorer.pending_restore = Some(app::explorer::ExplorerPendingRestore {
+            id: platform::mock::MockPlatform::trash_entry_id("restoring"),
+            display_name: "alpha.txt".into(),
+            target: "/alpha.txt".into(),
+        });
+    });
+    state.refresh_hit_map();
+    for (key, choice) in [
+        ("Right", ui::ExplorerConflictChoice::Replace),
+        ("Down", ui::ExplorerConflictChoice::Cancel),
+        ("Tab", ui::ExplorerConflictChoice::KeepBoth),
+        ("Shift+Tab", ui::ExplorerConflictChoice::Cancel),
+    ] {
+        state.apply_input(InputEvent::from_key_label(key));
+        let Some(ui::ExplorerOverlayViewModel::Conflict(conflict)) =
+            state.to_explorer_view_model().overlay
+        else {
+            panic!("restore conflict");
+        };
+        assert_eq!(conflict.selected_choice, choice);
+        assert!(!conflict.allow_apply_to_remaining);
+    }
+    assert_eq!(
+        state.route_key_input(&KeyInput::from_label("Enter")).1,
+        ShellCommand::ExplorerOverlayActivate
     );
 }
