@@ -162,6 +162,7 @@ impl ShellSession {
             login_idle_deadline: created_at + LOGIN_IDLE_TIMEOUT,
             login_password_visible_until: None,
             setup_step: ui::SetupStep::Language,
+            pending_personalization_session: None,
             setup_selected_language_index: 0,
             setup_selected_timezone_index: 0,
             setup_admin_username: String::new(),

@@ -99,6 +99,7 @@ impl UserService {
             password_hash: hash_password(password)?,
             password_hint,
             appearance,
+            personalization_pending: false,
             system_status_dashboard: SystemStatusDashboardConfig::for_role(
                 UserRole::Admin.as_str(),
             ),
@@ -203,6 +204,7 @@ impl UserService {
             password_hash: hash_password(password)?,
             password_hint: None,
             appearance: AppearanceConfig::default(),
+            personalization_pending: false,
             system_status_dashboard: SystemStatusDashboardConfig::for_role(role.as_str()),
             enabled: true,
             failed_login_attempts: 0,
@@ -233,6 +235,36 @@ impl UserService {
         document.users[index].display_name = display_name;
         document.users[index].updated_at_epoch_ms = now;
         let account = UserAccount::from_record(&document.users[index]);
+        self.storage.save_users(&document)?;
+        Ok(account)
+    }
+
+    /// Save first-login preferences and their completion marker in one write.
+    /// The record was created by authentication; this does not create OS accounts.
+    pub fn complete_personalization(
+        &self,
+        actor: &AuthSession,
+        appearance: AppearanceConfig,
+    ) -> Result<UserAccount, CoreError> {
+        self.authorize_manage_own_user(actor, "complete_personalization")?;
+        let mut document = self.storage.load_users()?;
+        let record = document
+            .users
+            .iter_mut()
+            .find(|user| {
+                user.id == actor.user_id
+                    && self
+                        .backend
+                        .usernames_match(&user.username, &actor.username)
+            })
+            .ok_or(CoreError::UserNotFound)?;
+        if !record.enabled {
+            return Err(CoreError::AccountDisabled);
+        }
+        record.appearance = appearance;
+        record.personalization_pending = false;
+        record.updated_at_epoch_ms = unix_millis();
+        let account = UserAccount::from_record(record);
         self.storage.save_users(&document)?;
         Ok(account)
     }

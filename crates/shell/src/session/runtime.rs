@@ -3191,6 +3191,7 @@ mod runtime_preflight_tests {
             password_hash: String::new(),
             password_hint: None,
             appearance,
+            personalization_pending: false,
             system_status_dashboard: storage::SystemStatusDashboardConfig::for_role("Admin"),
             enabled: true,
             failed_login_attempts: 0,

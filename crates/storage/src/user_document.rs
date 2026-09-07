@@ -72,6 +72,7 @@ impl UsersDocument {
                     password_hash: String::new(),
                     password_hint: None,
                     appearance: AppearanceConfig::default(),
+                    personalization_pending: false,
                     system_status_dashboard: SystemStatusDashboardConfig::for_role("User"),
                     enabled: false,
                     failed_login_attempts: 0,
@@ -101,6 +102,10 @@ pub struct UserRecord {
     pub password_hint: Option<String>,
     #[serde(default)]
     pub appearance: AppearanceConfig,
+    /// New Linux accounts must finish personalization before entering Home.
+    /// Older profiles already have UX data and default to completed.
+    #[serde(default)]
+    pub personalization_pending: bool,
     #[serde(default)]
     pub system_status_dashboard: SystemStatusDashboardConfig,
     pub enabled: bool,
@@ -150,6 +155,7 @@ mod glacier_user_migration_tests {
             password_hash: String::new(),
             password_hint: None,
             appearance,
+            personalization_pending: false,
             system_status_dashboard: SystemStatusDashboardConfig::for_role("User"),
             enabled: true,
             failed_login_attempts: 0,
@@ -158,6 +164,27 @@ mod glacier_user_migration_tests {
             updated_at_epoch_ms: 0,
             last_login_at_epoch_ms: None,
         }
+    }
+
+    #[test]
+    fn personalization_marker_is_backward_compatible_and_survives_normalization() {
+        let mut value = serde_json::to_value(user(AppearanceConfig::default())).unwrap();
+        value
+            .as_object_mut()
+            .unwrap()
+            .remove("personalization_pending");
+        let record: UserRecord = serde_json::from_value(value).unwrap();
+        assert!(!record.personalization_pending);
+        let mut record = record;
+        record.personalization_pending = true;
+        let mut document = UsersDocument {
+            users: vec![record],
+            ..UsersDocument::default()
+        };
+        document.normalize();
+        let restored: UsersDocument =
+            serde_json::from_str(&serde_json::to_string(&document).unwrap()).unwrap();
+        assert!(restored.users[0].personalization_pending);
     }
 
     #[test]

@@ -91,6 +91,7 @@ fn parse_users(passwd: &str, range: (u32, u32)) -> Vec<UserRecord> {
             password_hash: String::new(),
             password_hint: None,
             appearance: Default::default(),
+            personalization_pending: true,
             system_status_dashboard: storage::SystemStatusDashboardConfig::for_role(
                 UserRole::Admin.as_str(),
             ),
@@ -113,6 +114,7 @@ fn attach_preferences(users: &mut [UserRecord], saved: &[UserRecord]) {
             .find(|profile| profile.id == user.id && profile.username == user.username)
         {
             user.appearance = profile.appearance.clone();
+            user.personalization_pending = profile.personalization_pending;
             user.system_status_dashboard = profile.system_status_dashboard.clone();
             user.created_at_epoch_ms = profile.created_at_epoch_ms;
             user.updated_at_epoch_ms = profile.updated_at_epoch_ms;
@@ -246,9 +248,33 @@ mod tests {
         assert_eq!(accepted.user_id, "linux-uid-1000");
         assert_eq!(accepted.role, UserRole::Admin);
         let record = storage.load_users().unwrap().users.remove(0);
+        assert!(record.personalization_pending);
         assert!(record.password_hash.is_empty());
         assert!(record.password_hint.is_none());
         assert!(record.last_login_at_epoch_ms.is_some());
+        std::fs::remove_dir_all(path).unwrap();
+    }
+
+    #[test]
+    fn linux_login_preserves_personalization_until_explicit_completion() {
+        let (path, storage) = fixture();
+        let enumerate = || {
+            let mut accounts =
+                parse_users("alice:x:1000:1000::/home/alice:/bin/bash", (1000, 60000));
+            attach_preferences(&mut accounts, &storage.load_users()?.users);
+            Ok(accounts)
+        };
+        let login = || login_with(&storage, "alice", "secret", enumerate, |_, _| Ok(()));
+        let session = login().unwrap();
+        assert!(storage.load_users().unwrap().users[0].personalization_pending);
+        login().unwrap();
+        assert!(storage.load_users().unwrap().users[0].personalization_pending);
+        crate::UserService::new(storage.clone())
+            .with_backend(crate::IdentityBackend::Linux)
+            .complete_personalization(&session, storage::AppearanceConfig::default())
+            .unwrap();
+        login().unwrap();
+        assert!(!storage.load_users().unwrap().users[0].personalization_pending);
         std::fs::remove_dir_all(path).unwrap();
     }
 

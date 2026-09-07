@@ -64,6 +64,7 @@ impl ShellSession {
             .dispatch_at(app::AppCommand::SetActiveAppearance(None), now);
         self.app
             .dispatch_at(app::AppCommand::SetActiveSystemStatusDashboard(None), now);
+        self.pending_personalization_session = None;
         self.time_sync_dialog_visible = false;
         self.time_sync_failure_message = None;
         self.clock_scheduler = None;

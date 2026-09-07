@@ -60,6 +60,9 @@ mod command_line_runtime;
 mod construction;
 mod controller;
 mod motion_effects;
+#[cfg(test)]
+#[path = "tests/personalization.rs"]
+mod personalization_tests;
 mod presentation;
 mod queries;
 mod redraw;

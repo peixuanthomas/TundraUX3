@@ -921,6 +921,20 @@ impl ShellSession {
         };
         let users = UserService::with_debug_policy(storage.clone(), self.debug_policy)
             .with_backend(self.identity_backend);
+        if let Some(session) = self.pending_personalization_session.clone() {
+            let mut appearance = appearance;
+            if !self.terminal_image_support {
+                appearance.icon_display_mode = storage::IconDisplayMode::Ascii;
+            }
+            match users.complete_personalization(&session, appearance) {
+                Ok(_) => self.complete_login(session),
+                Err(error) => {
+                    self.error_message = Some(format_core_error(&error));
+                    self.notify_status("Could not save personalization");
+                }
+            }
+            return;
+        }
         if let Err(error) = users.bootstrap_admin_with_hint_and_appearance(
             &username,
             &password,
@@ -944,24 +958,94 @@ impl ShellSession {
         }
     }
 
+    fn clear_auth_passwords(&mut self) {
+        self.login_password.clear();
+        self.login_password_visible_until = None;
+        self.bootstrap_password.clear();
+        self.setup_admin_password.clear();
+        self.setup_admin_password_confirm.clear();
+    }
+
+    fn begin_linux_personalization(
+        &mut self,
+        session: AuthSession,
+        appearance: storage::AppearanceConfig,
+    ) {
+        self.clear_auth_passwords();
+        self.login_username = session.username.clone();
+        self.setup_admin_username = session.username.clone();
+        self.setup_admin_password_hint.clear();
+        self.setup_border_shape = appearance.border_shape;
+        self.setup_theme_color = appearance.border_color;
+        self.setup_accent_color = appearance.accent_color;
+        self.ensure_setup_accent_differs();
+        self.setup_custom_color_target = None;
+        self.setup_custom_color_input.clear();
+        self.setup_custom_color_error = None;
+        self.pending_personalization_session = Some(session);
+        self.app
+            .dispatch_at(app::AppCommand::SetAuthSession(None), Instant::now());
+        self.app
+            .dispatch_at(app::AppCommand::SetActiveAppearance(None), Instant::now());
+        self.app.dispatch_at(
+            app::AppCommand::SetActiveSystemStatusDashboard(None),
+            Instant::now(),
+        );
+        self.setup_step = ui::SetupStep::Appearance;
+        self.setup_focused_field = ui::SetupField::AppearanceShape;
+        self.screen_stack = vec![ShellScreen::FirstRunSetup];
+        self.focused_component = ShellComponent::SetupAppearanceShape;
+        self.active_popup = None;
+        self.error_message = None;
+        self.notify_status("Choose your appearance to finish your first sign-in");
+        self.refresh_hit_map();
+    }
+
     pub(in crate::session) fn complete_login(&mut self, session: AuthSession) {
         self.reset_system_status_trackers();
-        let (mut active_appearance, active_dashboard) = self
+        let profile = self
             .storage_manager
             .as_ref()
-            .and_then(|storage| {
-                storage.load_users().ok().and_then(|users| {
-                    users
-                        .users
-                        .into_iter()
-                        .find(|user| user.id == session.user_id)
-                        .map(|user| (user.appearance, user.system_status_dashboard))
+            .map(|storage| storage.load_users())
+            .transpose();
+        let profile = match profile {
+            Ok(document) => document.and_then(|document| {
+                document.users.into_iter().find(|user| {
+                    user.id == session.user_id
+                        && self
+                            .identity_backend
+                            .usernames_match(&user.username, &session.username)
                 })
-            })
-            .map(|(appearance, dashboard)| (Some(appearance), Some(dashboard)))
+            }),
+            Err(error) if self.identity_backend == identity::IdentityBackend::Linux => {
+                self.clear_auth_passwords();
+                self.error_message = Some(format!("Could not load your UX profile: {error}"));
+                self.notify_status("Login incomplete");
+                return;
+            }
+            Err(_) => None,
+        };
+        if self.identity_backend == identity::IdentityBackend::Linux
+            && profile
+                .as_ref()
+                .is_none_or(|profile| profile.personalization_pending)
+        {
+            self.begin_linux_personalization(
+                session,
+                profile
+                    .map(|profile| profile.appearance)
+                    .unwrap_or_default(),
+            );
+            return;
+        }
+        let (mut active_appearance, active_dashboard) = profile
+            .map(|user| (Some(user.appearance), Some(user.system_status_dashboard)))
             .unwrap_or((None, None));
         let mut icon_fallback_error = None;
-        if std::mem::take(&mut self.pending_default_ascii_icon_fallback)
+        let needs_ascii = std::mem::take(&mut self.pending_default_ascii_icon_fallback)
+            || (self.identity_backend == identity::IdentityBackend::Linux
+                && !self.terminal_image_support);
+        if needs_ascii
             && self.ascii_assets.theme_id() == ui::DEFAULT_THEME_ID
             && active_appearance.as_ref().is_some_and(|appearance| {
                 appearance.icon_display_mode == storage::IconDisplayMode::Image
@@ -970,6 +1054,7 @@ impl ShellSession {
                 (self.storage_manager.clone(), active_appearance.clone())
         {
             appearance.icon_display_mode = storage::IconDisplayMode::Ascii;
+            active_appearance = Some(appearance.clone());
             match UserService::with_debug_policy(storage, self.debug_policy)
                 .with_backend(self.identity_backend)
                 .update_user_appearance(&session, &session.username, appearance)
@@ -994,11 +1079,7 @@ impl ShellSession {
             Instant::now(),
         );
         self.login_username = session.username.clone();
-        self.login_password.clear();
-        self.login_password_visible_until = None;
-        self.bootstrap_password.clear();
-        self.setup_admin_password.clear();
-        self.setup_admin_password_confirm.clear();
+        self.clear_auth_passwords();
         self.error_message = None;
         self.notify_status(format!("Signed in as {}", session.username));
         if let Some(error) = icon_fallback_error {
@@ -1022,6 +1103,7 @@ impl ShellSession {
             }
         }
 
+        self.pending_personalization_session = None;
         self.screen_stack = vec![ShellScreen::Home];
         self.focused_component = ShellComponent::Home;
         self.active_popup = None;

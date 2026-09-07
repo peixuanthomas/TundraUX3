@@ -737,3 +737,53 @@ fn system_backend_never_mutates_local_accounts_or_requires_bootstrap() {
             .unwrap()
     );
 }
+
+#[test]
+fn personalization_completion_only_updates_the_authenticated_profile() {
+    let fixture = FixtureRoot::new("personalization-completion");
+    let manager = storage(fixture.path());
+    let service = UserService::new(manager.clone());
+    service
+        .bootstrap_admin("AdminUser", "StrongPass123")
+        .unwrap();
+    let mut actor = SessionService::new(manager.clone())
+        .login("AdminUser", "StrongPass123")
+        .unwrap();
+    let mut document = manager.load_users().unwrap();
+    document.users[0].id = "linux-uid-1000".into();
+    document.users[0].personalization_pending = true;
+    actor.user_id = document.users[0].id.clone();
+    manager.save_users(&document).unwrap();
+    let service = service.with_backend(identity::IdentityBackend::Linux);
+    let appearance = AppearanceConfig {
+        icon_display_mode: IconDisplayMode::Ascii,
+        ..AppearanceConfig::default()
+    };
+    let mut wrong_name = actor.clone();
+    wrong_name.username = "adminuser".into();
+    assert!(matches!(
+        service.complete_personalization(&wrong_name, appearance.clone()),
+        Err(CoreError::UserNotFound)
+    ));
+    let mut wrong_uid = actor.clone();
+    wrong_uid.user_id = "linux-uid-1001".into();
+    assert!(matches!(
+        service.complete_personalization(&wrong_uid, appearance.clone()),
+        Err(CoreError::UserNotFound)
+    ));
+    assert_eq!(manager.load_users().unwrap(), document);
+    service
+        .complete_personalization(&actor, appearance.clone())
+        .unwrap();
+    let after = manager.load_users().unwrap();
+    assert!(!after.users[0].personalization_pending);
+    assert_eq!(after.users[0].appearance, appearance);
+    assert_eq!(
+        after.users[0].password_hash,
+        document.users[0].password_hash
+    );
+    assert_eq!(
+        after.users[0].system_status_dashboard,
+        document.users[0].system_status_dashboard
+    );
+}

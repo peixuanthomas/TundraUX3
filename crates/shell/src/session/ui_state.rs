@@ -439,6 +439,7 @@ pub struct UiSessionState {
     pub(super) login_idle_deadline: Instant,
     pub(super) login_password_visible_until: Option<Instant>,
     pub(super) setup_step: ui::SetupStep,
+    pub(super) pending_personalization_session: Option<AuthSession>,
     pub(super) setup_selected_language_index: usize,
     pub(super) setup_selected_timezone_index: usize,
     pub(super) setup_admin_username: String,

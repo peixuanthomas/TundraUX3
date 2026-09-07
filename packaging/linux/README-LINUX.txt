@@ -51,7 +51,12 @@ libpam.so.0 from the host distribution.
 UX skips local-account setup and never authenticates Linux users with saved UX
 passwords. Old UX records are retained, but are absent from the Linux login list.
 Only appearance, dashboard and login timestamps are attached to linux-uid-<UID>
-profiles; clocks also use this UID key. Linux names are case-sensitive. Account
+profiles; clocks also use this UID key. New profiles open the existing Appearance
+setup page after PAM authentication. Home remains unavailable until preferences
+and the completion marker are saved together. Interrupted or failed setup is
+resumed on the next login; older saved profiles keep their existing preferences.
+The initial icon mode is ASCII unless terminal image support is available.
+Default-theme image support is checked again for each Linux user login. Linux names are case-sensitive. Account
 creation, deletion, password and role changes belong to Linux tools; the UX user
 page lists system accounts and explains that these actions are managed by Linux.
 All authenticated Linux users have the same UX Admin role and root OS authority.

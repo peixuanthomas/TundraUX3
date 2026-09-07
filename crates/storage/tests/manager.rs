@@ -212,6 +212,7 @@ fn toml_and_json_documents_round_trip() {
             password_hash: "$argon2id$placeholder".to_string(),
             password_hint: Some("project password".to_string()),
             appearance: AppearanceConfig::default(),
+            personalization_pending: false,
             system_status_dashboard: storage::SystemStatusDashboardConfig::for_role("User"),
             enabled: true,
             failed_login_attempts: 0,
