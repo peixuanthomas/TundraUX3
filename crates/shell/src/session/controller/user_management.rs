@@ -10,6 +10,7 @@ impl ShellSession {
             return false;
         };
         let users = match UserService::with_debug_policy(storage, self.debug_policy)
+            .with_backend(self.identity_backend)
             .list_accessible_users(&session)
         {
             Ok(users) => users,
@@ -30,7 +31,10 @@ impl ShellSession {
                 .app
                 .managed_users()
                 .iter()
-                .position(|user| user.username.eq_ignore_ascii_case(&username))
+                .position(|user| {
+                    self.identity_backend
+                        .usernames_match(&user.username, &username)
+                })
                 .unwrap_or_else(|| {
                     self.user_management_selected
                         .min(self.app.managed_users().len() - 1)
@@ -203,7 +207,8 @@ impl ShellSession {
         let username = self
             .selected_managed_username()
             .unwrap_or_else(|| "user".to_string());
-        let service = UserService::with_debug_policy(storage, self.debug_policy);
+        let service = UserService::with_debug_policy(storage, self.debug_policy)
+            .with_backend(self.identity_backend);
         let succeeded = match operation(service, session) {
             Ok(()) => {
                 self.user_management_message = Some(format!("{success_prefix} {username}"));
@@ -227,7 +232,8 @@ impl ShellSession {
         let Some(session) = self.app.auth_session() else {
             return;
         };
-        let service = UserService::with_debug_policy(storage, self.debug_policy);
+        let service = UserService::with_debug_policy(storage, self.debug_policy)
+            .with_backend(self.identity_backend);
         match self.user_management_mode.clone() {
             UserManagementMode::Browse => {}
             UserManagementMode::Create(form) => {
@@ -298,7 +304,10 @@ impl ShellSession {
             .app
             .managed_users()
             .iter()
-            .find(|user| user.username.eq_ignore_ascii_case(&username))
+            .find(|user| {
+                self.identity_backend
+                    .usernames_match(&user.username, &username)
+            })
             .map(|user| user.id.clone());
         let Some(storage) = self.storage_manager.clone() else {
             return;
@@ -308,6 +317,7 @@ impl ShellSession {
         };
         let deleting_current_user = self.is_current_username(&username);
         let deleted = match UserService::with_debug_policy(storage.clone(), self.debug_policy)
+            .with_backend(self.identity_backend)
             .delete_user(session, &username)
         {
             Ok(()) => {
@@ -715,12 +725,10 @@ impl ShellSession {
     }
 
     pub(in crate::session) fn select_managed_username(&mut self, username: &str) {
-        if let Some(index) = self
-            .app
-            .managed_users()
-            .iter()
-            .position(|user| user.username.eq_ignore_ascii_case(username))
-        {
+        if let Some(index) = self.app.managed_users().iter().position(|user| {
+            self.identity_backend
+                .usernames_match(&user.username, username)
+        }) {
             self.user_management_selected = index;
         }
     }
@@ -728,7 +736,10 @@ impl ShellSession {
     pub(in crate::session) fn is_current_username(&self, username: &str) -> bool {
         self.app
             .auth_session()
-            .map(|session| session.username.eq_ignore_ascii_case(username))
+            .map(|session| {
+                self.identity_backend
+                    .usernames_match(&session.username, username)
+            })
             .unwrap_or(false)
     }
 
@@ -740,7 +751,10 @@ impl ShellSession {
             .app
             .managed_users()
             .iter()
-            .find(|user| user.username.eq_ignore_ascii_case(&session.username))
+            .find(|user| {
+                self.identity_backend
+                    .usernames_match(&user.username, &session.username)
+            })
             .map(|user| user.role)
         else {
             return;

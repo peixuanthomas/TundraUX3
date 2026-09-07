@@ -2112,3 +2112,17 @@ impl Drop for FixtureRoot {
         let _ = fs::remove_dir_all(&self.path);
     }
 }
+
+#[test]
+fn linux_login_skips_local_setup_even_when_no_accounts_are_available() {
+    let fixture = FixtureRoot::new("linux-empty-users");
+    let platform = mock_platform(fixture.path());
+    let mut startup = prepare_shell_startup(&platform).unwrap();
+    startup.identity_backend = identity::IdentityBackend::Linux;
+    startup.auth_bootstrap_required = false;
+    let state = ShellSession::new_with_startup(default_config(), (120, 40), startup);
+    assert_eq!(state.active_screen(), ShellScreen::Login);
+    assert!(state.to_login_view_model().system_users);
+    assert!(state.to_login_view_model().users.is_empty());
+    assert!(state.auth_session().is_none());
+}

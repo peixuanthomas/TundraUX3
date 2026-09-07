@@ -430,6 +430,7 @@ pub struct UiSessionState {
     /// This is internal session state and is not configurable by process args.
     pub(super) debug_home_after_login: bool,
     pub(super) debug_policy: DebugPolicy,
+    pub(super) identity_backend: identity::IdentityBackend,
     pub(super) login_users: Vec<ShellLoginUser>,
     pub(super) login_selected_user: usize,
     pub(super) login_user_window_start: usize,

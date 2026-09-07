@@ -401,6 +401,7 @@ impl ShellSession {
             return;
         };
         match UserService::with_debug_policy(storage, self.debug_policy)
+            .with_backend(self.identity_backend)
             .update_user_system_status_dashboard(&actor, &actor.username, dashboard)
         {
             Ok(account) => {

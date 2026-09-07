@@ -12,6 +12,7 @@ pub const LOCKOUT_DURATION_MS: u64 = 5 * 60 * 1000;
 #[derive(Debug, Clone)]
 pub struct SessionService {
     storage: StorageManager,
+    backend: crate::IdentityBackend,
     current_session: Option<AuthSession>,
 }
 
@@ -19,8 +20,14 @@ impl SessionService {
     pub fn new(storage: StorageManager) -> Self {
         Self {
             storage,
+            backend: crate::IdentityBackend::Local,
             current_session: None,
         }
+    }
+
+    pub fn with_backend(mut self, backend: crate::IdentityBackend) -> Self {
+        self.backend = backend;
+        self
     }
 
     pub fn current_session(&self) -> Option<&AuthSession> {
@@ -28,10 +35,22 @@ impl SessionService {
     }
 
     pub fn bootstrap_required(&self) -> Result<bool, CoreError> {
-        Ok(self.storage.load_users()?.users.is_empty())
+        Ok(self.backend == crate::IdentityBackend::Local
+            && self.storage.load_users()?.users.is_empty())
     }
 
     pub fn login(&mut self, username: &str, password: &str) -> Result<AuthSession, CoreError> {
+        if self.backend == crate::IdentityBackend::Linux {
+            self.current_session = None;
+            #[cfg(target_os = "linux")]
+            {
+                let session = crate::linux::login(&self.storage, username, password)?;
+                self.current_session = Some(session.clone());
+                return Ok(session);
+            }
+            #[cfg(not(target_os = "linux"))]
+            return Err(CoreError::SystemIdentity("Linux is unavailable".into()));
+        }
         let mut document = self.storage.load_users()?;
         if document.users.is_empty() {
             return Err(CoreError::BootstrapRequired);

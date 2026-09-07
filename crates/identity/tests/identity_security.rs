@@ -685,3 +685,55 @@ impl Drop for FixtureRoot {
         let _ = cleanup_temp_path(&self.path);
     }
 }
+
+#[test]
+fn system_backend_never_mutates_local_accounts_or_requires_bootstrap() {
+    let fixture = FixtureRoot::new("system-authority");
+    let manager = storage(fixture.path());
+    let local = UserService::new(manager.clone());
+    local
+        .bootstrap_admin("LocalAdmin", "StrongPass123")
+        .unwrap();
+    let actor = SessionService::new(manager.clone())
+        .login("LocalAdmin", "StrongPass123")
+        .unwrap();
+    let before = manager.load_users().unwrap();
+    let users = UserService::new(manager.clone()).with_backend(identity::IdentityBackend::Linux);
+    let errors = [
+        users
+            .bootstrap_admin("Another", "StrongPass123")
+            .map(|_| ()),
+        users.validate_bootstrap_admin("Another", "StrongPass123", None),
+        users
+            .create_user(
+                &actor,
+                "Another",
+                "Another",
+                UserRole::Admin,
+                "StrongPass123",
+            )
+            .map(|_| ()),
+        users
+            .update_user_info(&actor, "LocalAdmin", "New Name")
+            .map(|_| ()),
+        users.set_user_password(&actor, "LocalAdmin", "ChangedPass123"),
+        users.reset_password(&actor, "LocalAdmin", "ChangedPass123"),
+        users.disable_user(&actor, "LocalAdmin"),
+        users.enable_user(&actor, "LocalAdmin"),
+        users.unlock_user(&actor, "LocalAdmin"),
+        users.change_role(&actor, "LocalAdmin", UserRole::User),
+        users.delete_user(&actor, "LocalAdmin"),
+    ];
+    assert!(
+        errors
+            .into_iter()
+            .all(|error| matches!(error, Err(CoreError::SystemAccountManaged)))
+    );
+    assert_eq!(manager.load_users().unwrap(), before);
+    assert!(
+        !SessionService::new(manager)
+            .with_backend(identity::IdentityBackend::Linux)
+            .bootstrap_required()
+            .unwrap()
+    );
+}

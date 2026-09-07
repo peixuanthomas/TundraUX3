@@ -177,3 +177,17 @@ impl Drop for FixtureRoot {
         let _ = fs::remove_dir_all(&self.path);
     }
 }
+
+#[test]
+fn simulated_linux_does_not_read_host_accounts_or_request_root() {
+    let fixture = FixtureRoot::new("linux-mock");
+    let base = fixture.path();
+    let paths =
+        build_windows_app_paths(base.join("roaming"), base.join("local"), base.join("temp"))
+            .unwrap();
+    let platform = MockPlatform::new(user_dirs(base), paths).with_kind(PlatformKind::Linux);
+    let startup = prepare_shell_startup(&platform).unwrap();
+    assert_eq!(startup.identity_backend, identity::IdentityBackend::Local);
+    assert!(startup.auth_bootstrap_required);
+    assert!(startup.login_users.is_empty());
+}

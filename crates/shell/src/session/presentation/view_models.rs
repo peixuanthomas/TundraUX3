@@ -1268,7 +1268,7 @@ impl ShellSession {
     }
 
     pub fn to_login_view_model_at(&self, now: Instant) -> ui::LoginViewModel {
-        let model = ui::LoginViewModel::new(
+        let mut model = ui::LoginViewModel::new(
             self.login_users
                 .iter()
                 .map(|user| ui::LoginUserOptionViewModel {
@@ -1292,6 +1292,7 @@ impl ShellSession {
             },
             self.error_message.clone(),
         );
+        model.system_users = self.identity_backend == identity::IdentityBackend::Linux;
         if self.login_password_is_visible_at(now) {
             model.with_visible_password(self.login_password.clone())
         } else {
@@ -1368,6 +1369,11 @@ impl ShellSession {
             .auth_session()
             .map(|session| session.username.clone())
             .unwrap_or_else(|| "Unauthenticated".to_string());
+        let message = self.user_management_message.clone().or_else(|| {
+            (self.identity_backend == identity::IdentityBackend::Linux).then(|| {
+                "Linux manages accounts and passwords. All UX sessions run as root.".into()
+            })
+        });
         let mut model = ui::UserManagementViewModel::new(
             current_user.clone(),
             self.app
@@ -1382,11 +1388,13 @@ impl ShellSession {
                         .locked_until_epoch_ms
                         .map(|locked_until| locked_until > unix_millis())
                         .unwrap_or(false),
-                    is_current: user.username.eq_ignore_ascii_case(&current_user),
+                    is_current: self
+                        .identity_backend
+                        .usernames_match(&user.username, &current_user),
                 })
                 .collect(),
             self.user_management_selected,
-            self.user_management_message.clone(),
+            message,
             self.can_manage_all_users(),
             self.user_management_form_view_model(),
         );
@@ -1871,6 +1879,15 @@ impl ShellSession {
             None,
             false,
         ));
+        if self.identity_backend == identity::IdentityBackend::Linux {
+            for action in &mut actions {
+                if action.action != UserManagementAction::Back {
+                    action.enabled = false;
+                    action.disabled_reason =
+                        Some("Managed by Linux. Use Linux account tools.".into());
+                }
+            }
+        }
         actions
     }
 

@@ -5332,3 +5332,38 @@ fn system_status_picker_wheel_moves_selection_without_editing_or_scrolling_dashb
     assert_eq!(state.system_status_dashboard_draft, draft);
     assert_eq!(state.system_status_dashboard_scroll_row, scroll);
 }
+
+#[test]
+fn linux_account_actions_are_managed_by_linux_even_for_admin() {
+    let mut state = ShellSession::new_for_home_mode(
+        ShellLaunchConfig::default(),
+        (120, 40),
+        ShellHomeMode::User,
+    );
+    set_test_auth_role(&mut state, UserRole::Admin);
+    state.identity_backend = identity::IdentityBackend::Linux;
+    let actions = state.user_management_action_view_models();
+    assert!(
+        actions
+            .iter()
+            .any(|action| action.action == ui::UserManagementAction::NewUser)
+    );
+    for action in actions {
+        assert_eq!(
+            action.enabled,
+            action.action == ui::UserManagementAction::Back
+        );
+        if action.action != ui::UserManagementAction::Back {
+            assert!(action.disabled_reason.unwrap().contains("Linux"));
+        }
+    }
+    state.activate_user_management_action(ui::UserManagementAction::NewUser);
+    assert_eq!(state.user_management_mode, UserManagementMode::Browse);
+    assert!(
+        state
+            .user_management_message
+            .as_deref()
+            .unwrap()
+            .contains("Linux")
+    );
+}

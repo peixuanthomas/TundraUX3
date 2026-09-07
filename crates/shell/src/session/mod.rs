@@ -17,7 +17,7 @@ use identity::{
     AuthSession, CoreError, DebugPolicy, PASSWORD_MAX_LEN, PASSWORD_MIN_LEN, PermissionAction,
     PermissionService, SessionService, UserAccount, UserRole, UserService,
 };
-use storage::{ClockProfile, LauncherExecutableKind, StorageError, StorageManager};
+use storage::{ClockProfile, LauncherExecutableKind, StorageManager};
 
 use chrono::{DateTime, Timelike, Utc};
 use crossterm::event;

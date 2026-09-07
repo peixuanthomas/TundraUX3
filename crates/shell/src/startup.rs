@@ -253,6 +253,7 @@ pub struct ShellStartupState {
     pub platform_capabilities: PlatformCapabilities,
     pub restored_session: Option<ShellRestoredSession>,
     pub storage_manager: Option<StorageManager>,
+    pub identity_backend: identity::IdentityBackend,
     pub auth_bootstrap_required: bool,
     pub login_users: Vec<ShellLoginUser>,
     pub debug_policy: DebugPolicy,
@@ -267,6 +268,7 @@ impl ShellStartupState {
             platform_capabilities,
             restored_session: None,
             storage_manager: None,
+            identity_backend: identity::IdentityBackend::Local,
             auth_bootstrap_required: false,
             login_users: Vec::new(),
             debug_policy: DebugPolicy::default(),
@@ -283,11 +285,13 @@ impl ShellStartupState {
 pub enum ShellStartupError {
     Platform(PlatformError),
     Storage(StorageError),
+    Identity(String),
 }
 
 impl std::fmt::Display for ShellStartupError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Self::Identity(error) => write!(formatter, "startup identity error: {error}"),
             Self::Platform(error) => write!(formatter, "startup platform error: {error}"),
             Self::Storage(error) => write!(formatter, "startup storage error: {error}"),
         }
@@ -311,18 +315,37 @@ impl From<StorageError> for ShellStartupError {
 pub fn prepare_shell_startup(
     platform: &dyn Platform,
 ) -> Result<ShellStartupState, ShellStartupError> {
+    #[cfg(target_os = "linux")]
+    if platform.kind() == PlatformKind::Linux
+        && platform.is_native_backend()
+        && unsafe { libc::geteuid() } != 0
+    {
+        return Err(ShellStartupError::Identity(
+            "Linux mode requires root. Start tundra-shell with sudo.".into(),
+        ));
+    }
     ensure_startup_permissions(platform)?;
     let platform_kind = platform.kind();
     let platform_capabilities = platform.capabilities();
     let storage_open = StorageManager::open_from_platform(platform)?;
     let app_paths = app_paths_from_storage_layout(storage_open.manager.layout())?;
-    let users = storage_open.manager.load_users()?;
+    let identity_backend = if cfg!(target_os = "linux")
+        && platform_kind == PlatformKind::Linux
+        && platform.is_native_backend()
+    {
+        identity::IdentityBackend::Linux
+    } else {
+        identity::IdentityBackend::Local
+    };
+    let users = identity::UserService::new(storage_open.manager.clone())
+        .with_backend(identity_backend)
+        .login_records()
+        .map_err(|error| ShellStartupError::Identity(error.to_string()))?;
     let sessions = storage_open.manager.load_sessions()?;
     let storage_report =
         ShellStorageReport::from_storage_load_report(Some(app_paths), storage_open.report);
     let debug_policy = DebugPolicy::current_build();
     let login_users = users
-        .users
         .iter()
         .map(ShellLoginUser::from_record)
         .collect::<Vec<_>>();
@@ -334,7 +357,9 @@ pub fn prepare_shell_startup(
         platform_capabilities,
         restored_session: restored_session_from_storage(&sessions),
         storage_manager: Some(storage_open.manager),
-        auth_bootstrap_required: login_users.is_empty(),
+        identity_backend,
+        auth_bootstrap_required: identity_backend == identity::IdentityBackend::Local
+            && login_users.is_empty(),
         login_users,
         debug_policy,
     })

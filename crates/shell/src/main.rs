@@ -19,6 +19,12 @@ fn main() {
         std::process::exit(2);
     }
 
+    #[cfg(target_os = "linux")]
+    if let Err(error) = ensure_linux_root() {
+        eprintln!("tundra-shell requires root on Linux: {error}");
+        std::process::exit(1);
+    }
+
     if std::env::var_os(app::update::UPDATE_READY_FILE_ENV).is_none() {
         match app::update::recover_interrupted_update_from_current_exe(std::process::id()) {
             Ok(true) => return,
@@ -89,6 +95,27 @@ fn main() {
     if exit_code != 0 {
         std::process::exit(exit_code);
     }
+}
+
+#[cfg(target_os = "linux")]
+fn ensure_linux_root() -> std::io::Result<()> {
+    use std::os::unix::process::CommandExt;
+
+    // Elevate before threads, storage, update recovery or terminal raw mode.
+    // sudo owns the OS authentication prompt; UX never handles a sudo password.
+    if unsafe { libc::geteuid() } == 0 {
+        return Ok(());
+    }
+    eprintln!("TundraUX Linux mode runs as root. Requesting sudo authentication...");
+    let executable = std::env::current_exe()?;
+    let error = std::process::Command::new("/usr/bin/sudo")
+        .args(["-H", "--"])
+        .arg(executable)
+        .exec();
+    Err(std::io::Error::new(
+        error.kind(),
+        format!("could not start sudo: {error}. Run this program from a root terminal."),
+    ))
 }
 
 fn reset_storage_and_restart() -> Result<(), std::io::Error> {

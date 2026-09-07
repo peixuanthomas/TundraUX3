@@ -1262,3 +1262,34 @@ fn region_has_bg(terminal: &Terminal<TestBackend>, area: Rect, bg: Color) -> boo
         })
     })
 }
+
+#[test]
+fn linux_login_labels_system_identity_and_keeps_errors_visible() {
+    let chrome = chrome_for("Login");
+    let mut model = LoginViewModel::new(
+        vec![login_user("alice", "Alice", "Admin")],
+        0,
+        0,
+        6,
+        LoginField::Password,
+        Some("Invalid username or password".into()),
+    );
+    model.system_users = true;
+    let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
+    terminal
+        .draw(|frame| {
+            render_login(
+                frame,
+                frame.area(),
+                &chrome,
+                &model,
+                &TundraTheme::default_dark(),
+            )
+        })
+        .unwrap();
+    let output = terminal_output(&terminal);
+    assert!(output.contains("Linux Login"));
+    assert!(output.contains("Linux password"));
+    assert!(output.contains("Invalid username or password"));
+    assert!(output.contains("******"));
+}

@@ -7,6 +7,8 @@ use crate::authorization::PermissionAction;
 
 #[derive(Debug)]
 pub enum CoreError {
+    SystemIdentity(String),
+    SystemAccountManaged,
     Storage(StorageError),
     PasswordHash(String),
     InvalidUsername,
@@ -31,6 +33,10 @@ pub enum CoreError {
 impl fmt::Display for CoreError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::SystemIdentity(message) => formatter.write_str(message),
+            Self::SystemAccountManaged => formatter.write_str(
+                "Linux manages these accounts. Use Linux account tools to change users or passwords.",
+            ),
             Self::Storage(error) => write!(formatter, "{error}"),
             Self::PasswordHash(message) => formatter.write_str(message),
             Self::InvalidUsername => formatter.write_str("invalid username"),

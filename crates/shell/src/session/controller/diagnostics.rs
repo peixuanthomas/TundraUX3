@@ -264,10 +264,14 @@ impl ShellSession {
     fn selected_login_icon_display_mode(&self) -> storage::IconDisplayMode {
         self.storage_manager
             .as_ref()
-            .and_then(|storage| storage.load_users().ok())
+            .and_then(|storage| {
+                UserService::new(storage.clone())
+                    .with_backend(self.identity_backend)
+                    .login_records()
+                    .ok()
+            })
             .and_then(|users| {
                 users
-                    .users
                     .into_iter()
                     .find(|user| user.username == self.login_username)
             })

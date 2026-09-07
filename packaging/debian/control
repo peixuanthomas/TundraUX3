@@ -4,7 +4,7 @@ Section: utils
 Priority: optional
 Architecture: amd64
 Maintainer: TundraUX3 contributors <maintainers@tundraux3.invalid>
-Depends: xdg-utils, libglib2.0-bin
+Depends: xdg-utils, libglib2.0-bin, libpam0g, libpam-modules, libpam-runtime, libc-bin, sudo
 Recommends: dbus-user-session, xdg-desktop-portal, policykit-1, xwayland
 Description: Terminal desktop environment experiment
  TundraUX3 provides a full-screen terminal shell and its management CLI.

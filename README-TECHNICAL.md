@@ -330,6 +330,27 @@ Settings 的时间设置可使用平台时钟、默认 HTTP(S) 时间服务器�
 
 使用 `tundra-cli debug paths` 可同时查看路径模板和解析后的绝对路径。
 
+### Linux 系统用户与运行权限
+
+原生 Linux Shell 在创建线程、打开存储或进入终端 raw mode 前检查有效 UID。
+非 root 进程通过 `/usr/bin/sudo -H -- <当前程序>` 重新启动，授权失败则退出；
+root 直接启动。所有成功登录的 Linux 用户统一映射为 UX Admin，后续文件操作、
+终端和子进程继承 root 权限。选择用户不改变 UID、HOME 或系统桌面会话。
+
+`IdentityBackend::Linux` 使用 `getent passwd` 从 NSS 枚举 root 和
+`/etc/login.defs` 中 UID_MIN/UID_MAX 范围内的普通用户，排除非登录 shell。
+通过运行时加载的 `libpam.so.0` 调用 `pam_authenticate` 和 `pam_acct_mgmt`，
+并核对 PAM 返回的用户名。PAM 服务优先使用 `tundraux3`，便携运行时缺少该配置则
+使用系统 `login` 服务。Debian 包提供继承 common-auth/common-account 的配置。
+额外秘密提示（如 MFA）暂不支持，会明确拒绝；密码过期需先通过 Linux `passwd` 更新。
+
+Linux 不进入 UX 管理员创建流程，也不回退到 UX 密码验证。系统用户名区分大小写，
+UID 形成 `linux-uid-<UID>` 标识。`users.v2.json` 中仅复用对应系统用户的外观、
+仪表板和登录时间，时钟按该 UID 标识保存；旧 UX 账号保留但不参与系统登录。
+账号增删、密码和角色由 Linux 工具管理，UX 用户页面以只读方式展示系统账号。
+`sudo -H` 下存储通常位于 root 的 HOME/XDG 目录，桌面集成也使用 root 的环境。
+完整依赖和手动验收步骤见 [Linux 运行说明](packaging/linux/README-LINUX.txt)。
+
 ### Linux 桌面集成
 
 Linux 与 Windows 同级实现：使用 XDG Base Directory 与 `user-dirs.dirs`，应用自有配置、状态、恢复、日志和临时数据使用私有权限。Explorer 采用 Freedesktop Trash；卷入口只显示本地固定盘和可移动盘，过滤网络及伪文件系统。
@@ -359,7 +380,7 @@ Settings 中的 Update 在 Windows 和 Linux 上可用。确认后从 GitHub 下
 
 配置格式兼容，但不会自动导入或重写 Windows 绝对路径。关闭两端 TundraUX3 后，在 Windows 运行 `tundra-cli debug paths` 并备份 `%APPDATA%\TundraUX3\config.toml` 和 `%LOCALAPPDATA%\TundraUX3\state`；在 Linux 再运行 `tundra-cli debug paths`，分别复制到显示的 config 与 state 路径。保留原备份，不要合并两个 state 目录。
 
-账户、主题、设置与时钟数据可复用。Windows Launcher 和最近文件中的绝对路径在 Linux 会安全显示为 Missing，不会猜测性转换；请重新选择或固定对应文件和应用。
+全局主题和设置可复用。Linux 登录仅使用系统账号；旧 UX 账户不参与登录，按旧账户 ID 保存的外观和时钟不会自动绑定到系统 UID。Windows Launcher 和最近文件中的绝对路径在 Linux 会安全显示为 Missing，不会猜测性转换；请重新选择或固定对应文件和应用。
 
 ## 持久化与身份安全
 
@@ -384,6 +405,8 @@ Linux 应用目录为 `0700`；配置、用户、会话、恢复、日志和临�
 启动会先校验 schema：**未来 schema 一律拒绝**，以防旧程序覆盖新格式。当前或旧格式无法解析时，原文件会在原位置重命名为 `<文件名>.corrupt.<时间戳>`，随后生成默认文档，并在 Shell 显示恢复提示。旧 `users.v1.json` 会迁移到 `users.v2.json`。
 
 ### Identity 与账户保护
+
+以下本地账户规则用于 Windows、macOS 和测试后端；原生 Linux 的账号、密码、锁定与过期策略由上述 NSS/PAM 后端管理，所有登录用户使用最高权限。
 
 密码不以明文持久化，而使用随机 salt 的 Argon2 哈希。密码长度必须为 **10–256** 个字符，不能全为空白，也不能等于规范化后的用户名。认证会话只保存在内存中；用户名匹配不区分大小写，未知用户与错误密码统一返回无效凭据。连续 **5 次**认证失败会锁定账户 **5 分钟**；锁定与失败信息持久化，避免重启绕过。
 

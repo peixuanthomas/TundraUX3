@@ -24,6 +24,7 @@ pub struct LoginUserOptionViewModel {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LoginViewModel {
+    pub system_users: bool,
     pub users: Vec<LoginUserOptionViewModel>,
     pub selected_index: usize,
     pub user_window_start: usize,
@@ -50,6 +51,7 @@ impl LoginViewModel {
         let user_window_start = user_window_start.min(selected_index);
 
         Self {
+            system_users: false,
             users,
             selected_index,
             user_window_start,

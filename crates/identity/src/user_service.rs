@@ -16,6 +16,7 @@ use crate::time::unix_millis;
 pub struct UserService {
     storage: StorageManager,
     debug_policy: DebugPolicy,
+    backend: crate::IdentityBackend,
 }
 
 impl UserService {
@@ -23,6 +24,7 @@ impl UserService {
         Self {
             storage,
             debug_policy: DebugPolicy::default(),
+            backend: crate::IdentityBackend::Local,
         }
     }
 
@@ -30,7 +32,18 @@ impl UserService {
         Self {
             storage,
             debug_policy,
+            backend: crate::IdentityBackend::Local,
         }
+    }
+
+    pub fn with_backend(mut self, backend: crate::IdentityBackend) -> Self {
+        self.backend = backend;
+        self
+    }
+
+    /// Account records from the selected authority, with UX preferences attached.
+    pub fn login_records(&self) -> Result<Vec<UserRecord>, CoreError> {
+        self.backend.users(&self.storage)
     }
 
     pub fn bootstrap_admin(
@@ -61,6 +74,7 @@ impl UserService {
         password: &str,
         password_hint: Option<&str>,
     ) -> Result<(), CoreError> {
+        self.backend.require_local()?;
         let document = self.storage.load_users()?;
         validate_bootstrap_admin_input(&document, username, password, password_hint)
     }
@@ -72,6 +86,7 @@ impl UserService {
         password_hint: Option<&str>,
         appearance: AppearanceConfig,
     ) -> Result<UserAccount, CoreError> {
+        self.backend.require_local()?;
         let mut document = self.storage.load_users()?;
         validate_bootstrap_admin_input(&document, username, password, password_hint)?;
         let password_hint = normalize_password_hint(password_hint, password)?;
@@ -100,6 +115,17 @@ impl UserService {
     }
 
     pub fn list_users(&self, actor: &AuthSession) -> Result<Vec<UserAccount>, CoreError> {
+        if self.backend == crate::IdentityBackend::Linux {
+            let records = self.login_records()?;
+            if !records
+                .iter()
+                .any(|user| user.id == actor.user_id && user.username == actor.username)
+            {
+                return Err(CoreError::UserNotFound);
+            }
+            return Ok(records.iter().map(UserAccount::from_record).collect());
+        }
+
         self.authorize_manage_users(actor, "list_users")?;
         Ok(self
             .storage
@@ -114,6 +140,17 @@ impl UserService {
         &self,
         actor: &AuthSession,
     ) -> Result<Vec<UserAccount>, CoreError> {
+        if self.backend == crate::IdentityBackend::Linux {
+            let records = self.login_records()?;
+            if !records
+                .iter()
+                .any(|user| user.id == actor.user_id && user.username == actor.username)
+            {
+                return Err(CoreError::UserNotFound);
+            }
+            return Ok(records.iter().map(UserAccount::from_record).collect());
+        }
+
         let document = self.storage.load_users()?;
         if actor_can_manage_users(&document, actor) {
             return Ok(document
@@ -134,9 +171,7 @@ impl UserService {
 
     pub fn list_all_users_unchecked(&self) -> Result<Vec<UserAccount>, CoreError> {
         Ok(self
-            .storage
-            .load_users()?
-            .users
+            .login_records()?
             .iter()
             .map(UserAccount::from_record)
             .collect())
@@ -150,6 +185,7 @@ impl UserService {
         role: UserRole,
         password: &str,
     ) -> Result<UserAccount, CoreError> {
+        self.backend.require_local()?;
         self.authorize_manage_users(actor, "create_user")?;
         validate_username(username)?;
         validate_password(username, password)?;
@@ -186,6 +222,7 @@ impl UserService {
         username: &str,
         display_name: &str,
     ) -> Result<UserAccount, CoreError> {
+        self.backend.require_local()?;
         let mut document = self.storage.load_users()?;
         let Some(index) = find_user_index(&document, username) else {
             return Err(CoreError::UserNotFound);
@@ -206,6 +243,25 @@ impl UserService {
         username: &str,
         appearance: AppearanceConfig,
     ) -> Result<UserAccount, CoreError> {
+        if self.backend == crate::IdentityBackend::Linux {
+            let mut record = self
+                .login_records()?
+                .into_iter()
+                .find(|user| {
+                    user.username == username
+                        && user.id == actor.user_id
+                        && user.username == actor.username
+                })
+                .ok_or(CoreError::UserNotFound)?;
+            record.appearance = appearance;
+            record.updated_at_epoch_ms = unix_millis();
+            let mut document = self.storage.load_users()?;
+            document.users.retain(|user| user.id != record.id);
+            document.users.push(record.clone());
+            self.storage.save_users(&document)?;
+            return Ok(UserAccount::from_record(&record));
+        }
+
         let mut document = self.storage.load_users()?;
         let Some(index) = find_user_index(&document, username) else {
             return Err(CoreError::UserNotFound);
@@ -234,6 +290,26 @@ impl UserService {
         username: &str,
         mut dashboard: SystemStatusDashboardConfig,
     ) -> Result<UserAccount, CoreError> {
+        if self.backend == crate::IdentityBackend::Linux {
+            let mut record = self
+                .login_records()?
+                .into_iter()
+                .find(|user| {
+                    user.username == username
+                        && user.id == actor.user_id
+                        && user.username == actor.username
+                })
+                .ok_or(CoreError::UserNotFound)?;
+            dashboard.normalize();
+            record.system_status_dashboard = dashboard;
+            record.updated_at_epoch_ms = unix_millis();
+            let mut document = self.storage.load_users()?;
+            document.users.retain(|user| user.id != record.id);
+            document.users.push(record.clone());
+            self.storage.save_users(&document)?;
+            return Ok(UserAccount::from_record(&record));
+        }
+
         let mut document = self.storage.load_users()?;
         let Some(index) = find_user_index(&document, username) else {
             return Err(CoreError::UserNotFound);
@@ -263,6 +339,7 @@ impl UserService {
         username: &str,
         password: &str,
     ) -> Result<(), CoreError> {
+        self.backend.require_local()?;
         let mut document = self.storage.load_users()?;
         let Some(index) = find_user_index(&document, username) else {
             return Err(CoreError::UserNotFound);
@@ -315,6 +392,7 @@ impl UserService {
         username: &str,
         password: &str,
     ) -> Result<(), CoreError> {
+        self.backend.require_local()?;
         validate_password(username, password)?;
         self.update_user(actor, username, "reset_password", |document, index, now| {
             let record = &mut document.users[index];
@@ -344,6 +422,7 @@ impl UserService {
     }
 
     pub fn delete_user(&self, actor: &AuthSession, username: &str) -> Result<(), CoreError> {
+        self.backend.require_local()?;
         let mut document = self.storage.load_users()?;
         let Some(index) = find_user_index(&document, username) else {
             return Err(CoreError::UserNotFound);
@@ -362,6 +441,7 @@ impl UserService {
         operation: &'static str,
         update: impl FnOnce(&mut UsersDocument, usize, u64) -> Result<(), CoreError>,
     ) -> Result<(), CoreError> {
+        self.backend.require_local()?;
         self.authorize_manage_users(actor, operation)?;
         let mut document = self.storage.load_users()?;
         let Some(index) = find_user_index(&document, username) else {

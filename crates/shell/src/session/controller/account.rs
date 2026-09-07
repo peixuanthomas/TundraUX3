@@ -182,25 +182,22 @@ impl ShellSession {
         self.sync_login_selection();
     }
 
-    pub(in crate::session) fn refresh_login_users_from_storage(
-        &mut self,
-    ) -> Result<(), StorageError> {
+    pub(in crate::session) fn refresh_login_users_from_storage(&mut self) -> Result<(), CoreError> {
         let Some(storage) = self.storage_manager.clone() else {
             return Ok(());
         };
         let previous_username = self.selected_login_username().map(str::to_string);
-        let users = storage.load_users()?;
-        self.login_users = users
-            .users
-            .iter()
-            .map(ShellLoginUser::from_record)
-            .collect();
+        let users = UserService::new(storage)
+            .with_backend(self.identity_backend)
+            .login_records()?;
+        self.login_users = users.iter().map(ShellLoginUser::from_record).collect();
         self.login_selected_user = previous_username
             .as_deref()
             .and_then(|username| {
-                self.login_users
-                    .iter()
-                    .position(|user| user.username.eq_ignore_ascii_case(username))
+                self.login_users.iter().position(|user| {
+                    self.identity_backend
+                        .usernames_match(&user.username, username)
+                })
             })
             .unwrap_or_else(|| default_login_user_index(&self.login_users));
         self.sync_login_selection();
@@ -803,11 +800,12 @@ impl ShellSession {
             return;
         };
         let password_hint = self.selected_login_password_hint().map(str::to_string);
-        let mut sessions = SessionService::new(storage);
+        let mut sessions = SessionService::new(storage).with_backend(self.identity_backend);
         match sessions.login(&username, &self.login_password) {
             Ok(session) => self.complete_login(session),
             Err(error) => {
                 self.login_password_visible_until = None;
+                self.login_password.clear();
                 self.error_message = Some(login_error_message(&error, password_hint.as_deref()));
                 self.notify_status("Login failed");
                 let _ = self.refresh_login_users_from_storage();
@@ -820,12 +818,13 @@ impl ShellSession {
             self.error_message = Some("Storage unavailable".to_string());
             return;
         };
-        let users = UserService::with_debug_policy(storage.clone(), self.debug_policy);
+        let users = UserService::with_debug_policy(storage.clone(), self.debug_policy)
+            .with_backend(self.identity_backend);
         match users.bootstrap_admin(&self.bootstrap_username, &self.bootstrap_password) {
             Ok(_) => {
                 self.login_username = self.bootstrap_username.clone();
                 self.login_password = self.bootstrap_password.clone();
-                let mut sessions = SessionService::new(storage);
+                let mut sessions = SessionService::new(storage).with_backend(self.identity_backend);
                 match sessions.login(&self.login_username, &self.login_password) {
                     Ok(session) => self.complete_login(session),
                     Err(error) => {
@@ -877,7 +876,8 @@ impl ShellSession {
         }
         self.replace_storage_config(config);
 
-        let users = UserService::with_debug_policy(storage, self.debug_policy);
+        let users = UserService::with_debug_policy(storage, self.debug_policy)
+            .with_backend(self.identity_backend);
         match users.validate_bootstrap_admin(&username, &password, hint.as_deref()) {
             Ok(()) => {
                 self.setup_step = ui::SetupStep::Appearance;
@@ -919,7 +919,8 @@ impl ShellSession {
             icon_display_mode: storage::IconDisplayMode::Image,
             ..storage::AppearanceConfig::default()
         };
-        let users = UserService::with_debug_policy(storage.clone(), self.debug_policy);
+        let users = UserService::with_debug_policy(storage.clone(), self.debug_policy)
+            .with_backend(self.identity_backend);
         if let Err(error) = users.bootstrap_admin_with_hint_and_appearance(
             &username,
             &password,
@@ -931,7 +932,7 @@ impl ShellSession {
             return;
         }
 
-        let mut sessions = SessionService::new(storage);
+        let mut sessions = SessionService::new(storage).with_backend(self.identity_backend);
         match sessions.login(&username, &password) {
             Ok(session) => self.complete_login(session),
             Err(error) => {
@@ -969,11 +970,10 @@ impl ShellSession {
                 (self.storage_manager.clone(), active_appearance.clone())
         {
             appearance.icon_display_mode = storage::IconDisplayMode::Ascii;
-            match UserService::with_debug_policy(storage, self.debug_policy).update_user_appearance(
-                &session,
-                &session.username,
-                appearance,
-            ) {
+            match UserService::with_debug_policy(storage, self.debug_policy)
+                .with_backend(self.identity_backend)
+                .update_user_appearance(&session, &session.username, appearance)
+            {
                 Ok(account) => active_appearance = Some(account.appearance),
                 Err(error) => icon_fallback_error = Some(format_core_error(&error)),
             }

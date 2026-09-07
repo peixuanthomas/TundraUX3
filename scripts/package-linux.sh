@@ -72,7 +72,9 @@ if [[ "$build_deb" == true ]]; then
   install -Dm644 crates/weathr/LICENSE.weathr "$deb_root/usr/share/doc/tundraux3/LICENSE.weathr"
   install -Dm644 packaging/linux/README-LINUX.txt "$deb_root/usr/share/doc/tundraux3/README-LINUX.txt"
 
+  install -Dm644 packaging/linux/pam.d/tundraux3 "$deb_root/etc/pam.d/tundraux3"
   install -d "$deb_root/DEBIAN"
+  printf '%s\n' '/etc/pam.d/tundraux3' > "$deb_root/DEBIAN/conffiles"
   sed "s/@VERSION@/$version/g" packaging/debian/control > "$deb_root/DEBIAN/control"
   dpkg-deb --build --root-owner-group "$deb_root" "$out_dir/$package_name.deb"
   artifacts+=("$package_name.deb")

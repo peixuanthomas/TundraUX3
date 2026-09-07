@@ -1,10 +1,15 @@
 mod authorization;
+mod backend;
 mod credentials;
 mod error;
 mod identity;
+#[cfg(target_os = "linux")]
+mod linux;
 mod session_service;
 mod time;
 mod user_service;
+
+pub use backend::IdentityBackend;
 
 pub use authorization::{
     Authorization, DebugPolicy, PermissionAction, PermissionService, UserRole,

@@ -65,7 +65,11 @@ fn render_login_main(
 ) {
     let theme = &context.compatibility_theme();
     Surface::new()
-        .titled("Login")
+        .titled(if model.system_users {
+            "Linux Login"
+        } else {
+            "Login"
+        })
         .bordered(true)
         .render_frame(frame, main, context);
 
@@ -90,9 +94,21 @@ fn render_login_main(
             Line::from("Users: Up/Down/Home/End    Tab: password/show"),
             Line::from("Enter: activate    F2: show/hide    Esc: exit"),
         ];
+        if model.system_users {
+            lines.insert(0, Line::from("Linux password | Root session"));
+            if model.users.is_empty() {
+                lines.push(Line::from(
+                    "No Linux login accounts found. Create an account in Linux.",
+                ));
+            }
+        }
         if let Some(error) = &model.error {
-            lines.push(Line::from(""));
-            lines.push(Line::styled(error.clone(), theme.error_style()));
+            if model.system_users {
+                lines.insert(0, Line::styled(error.clone(), theme.error_style()));
+            } else {
+                lines.push(Line::from(""));
+                lines.push(Line::styled(error.clone(), theme.error_style()));
+            }
         }
         frame.render_widget(
             Paragraph::new(lines)

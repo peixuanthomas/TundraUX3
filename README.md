@@ -38,3 +38,11 @@ cargo run -p cli --bin tundra-cli -- debug doctor
 ## 许可证
 
 项目根目录代码采用 [MIT License](LICENSE)。Weathr 组件另带 [GNU GPL v3 许可文本](crates/weathr/LICENSE.weathr)；分发或再使用时请同时检查对应组件及第三方资源的许可要求。
+
+### Linux 系统用户登录
+
+Linux 端使用系统用户列表和 PAM 系统密码验证，跳过 UX 本地账号创建。
+程序启动时通过 `sudo` 获取 root 权限；所有登录用户统一拥有最高操作权限，
+用户选择用于身份和 UX 偏好，不切换进程的 UID 或 HOME。
+账号与密码通过 Linux 工具管理。依赖、数据目录及验证说明见
+[Linux 运行说明](packaging/linux/README-LINUX.txt)。

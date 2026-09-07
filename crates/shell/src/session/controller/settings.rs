@@ -83,7 +83,8 @@ impl ShellSession {
                 return;
             }
         };
-        let users = UserService::with_debug_policy(storage, self.debug_policy);
+        let users = UserService::with_debug_policy(storage, self.debug_policy)
+            .with_backend(self.identity_backend);
         let appearance = match users.list_accessible_users(&actor).and_then(|users| {
             users
                 .into_iter()
@@ -731,7 +732,8 @@ impl ShellSession {
             self.set_settings_error("Login required");
             return false;
         };
-        let users = UserService::with_debug_policy(storage, self.debug_policy);
+        let users = UserService::with_debug_policy(storage, self.debug_policy)
+            .with_backend(self.identity_backend);
         match users.update_user_appearance(&actor, &actor.username, appearance) {
             Ok(account) => {
                 self.app.dispatch_at(

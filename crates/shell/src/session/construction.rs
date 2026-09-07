@@ -153,6 +153,7 @@ impl ShellSession {
             time_sync_failure_message: None,
             debug_home_after_login: launch_config.home_mode_override == HomeModeOverride::Debug,
             debug_policy: startup.debug_policy,
+            identity_backend: startup.identity_backend,
             login_users,
             login_selected_user,
             login_user_window_start: 0,
