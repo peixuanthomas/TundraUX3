@@ -17,6 +17,25 @@ pub const UPDATE_TARGET_SHA_ENV: &str = "TUNDRAUX3_UPDATE_TARGET_SHA";
 pub const UPDATE_ROLLBACK_ENV: &str = "TUNDRAUX3_UPDATE_ROLLBACK";
 const API_ROOT: &str = "https://api.github.com";
 const USER_AGENT: &str = "TundraUX3-updater/1";
+const SHELL_FILE: &str = if cfg!(windows) {
+    "tundra-shell.exe"
+} else {
+    "tundra-shell"
+};
+const CLI_FILE: &str = if cfg!(windows) {
+    "tundra-cli.exe"
+} else {
+    "tundra-cli"
+};
+const HELPER_FILE: &str = if cfg!(windows) {
+    "update-helper.exe"
+} else {
+    "update-helper"
+};
+
+pub fn supports_updates(kind: PlatformKind) -> bool {
+    matches!(kind, PlatformKind::Windows | PlatformKind::Linux)
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BuildIdentity {
@@ -329,9 +348,9 @@ pub fn prepare_update(
     check: &UpdateCheckResult,
     progress: &mut dyn FnMut(UpdateProgress),
 ) -> Result<PreparedUpdate, UpdateError> {
-    if platform.kind() != PlatformKind::Windows {
+    if !supports_updates(platform.kind()) {
         return Err(UpdateError::new(
-            "automatic updates are supported only on Windows",
+            "automatic updates are supported only on Windows and Linux",
         ));
     }
     notify(
@@ -595,8 +614,8 @@ fn validate_product_paths(
     target: &Path,
     sha: &str,
 ) -> Result<PreparedUpdate, UpdateError> {
-    let shell_exe = target.join("release/tundra-shell.exe");
-    let cli_exe = target.join("release/tundra-cli.exe");
+    let shell_exe = target.join("release").join(SHELL_FILE);
+    let cli_exe = target.join("release").join(CLI_FILE);
     let default_assets = source_root.join("assets/themes/default");
     for (label, path, directory) in [
         ("shell executable", &shell_exe, false),
@@ -635,22 +654,22 @@ pub fn stage_update_for_apply(
     prepared: &PreparedUpdate,
     install_dir: &Path,
 ) -> Result<StagedUpdate, UpdateError> {
-    #[cfg(not(windows))]
+    #[cfg(not(any(windows, target_os = "linux")))]
     {
         let _ = (prepared, install_dir);
         return Err(UpdateError::new(
-            "automatic updates are supported only on Windows",
+            "automatic updates are supported only on Windows and Linux",
         ));
     }
 
-    #[cfg(windows)]
+    #[cfg(any(windows, target_os = "linux"))]
     {
         validate_update_probe(&prepared.cli_exe, &prepared.target_sha)?;
         let install_dir = fs::canonicalize(install_dir).map_err(|error| {
             UpdateError::new(format!("could not resolve installation directory: {error}"))
         })?;
-        let installed_shell = install_dir.join("tundra-shell.exe");
-        let installed_cli = install_dir.join("tundra-cli.exe");
+        let installed_shell = install_dir.join(SHELL_FILE);
+        let installed_cli = install_dir.join(CLI_FILE);
         let installed_assets = install_dir.join("assets/themes/default");
         for (label, path, directory) in [
             ("installed Shell", &installed_shell, false),
@@ -689,10 +708,10 @@ pub fn stage_update_for_apply(
         let backup_dir = transaction_dir.join("backup");
         fs::create_dir_all(&new_dir)?;
         fs::create_dir_all(&backup_dir)?;
-        fs::copy(&prepared.shell_exe, new_dir.join("tundra-shell.exe"))?;
-        fs::copy(&prepared.cli_exe, new_dir.join("tundra-cli.exe"))?;
+        fs::copy(&prepared.shell_exe, new_dir.join(SHELL_FILE))?;
+        fs::copy(&prepared.cli_exe, new_dir.join(CLI_FILE))?;
         copy_tree_checked(&prepared.default_assets, &new_dir.join("default-assets"))?;
-        fs::copy(&installed_cli, transaction_dir.join("update-helper.exe"))?;
+        fs::copy(&installed_cli, transaction_dir.join(HELPER_FILE))?;
 
         let manifest_path = transaction_dir.join("transaction.json");
         let manifest = TransactionManifest {
@@ -715,13 +734,13 @@ pub fn launch_update_helper(manifest_path: &Path, parent_pid: u32) -> Result<(),
 }
 
 pub fn recover_interrupted_update_from_current_exe(parent_pid: u32) -> Result<bool, UpdateError> {
-    #[cfg(not(windows))]
+    #[cfg(not(any(windows, target_os = "linux")))]
     {
         let _ = parent_pid;
         return Ok(false);
     }
 
-    #[cfg(windows)]
+    #[cfg(any(windows, target_os = "linux"))]
     {
         let executable = std::env::current_exe()
             .map_err(|error| UpdateError::new(format!("could not locate TundraUX: {error}")))?;
@@ -732,7 +751,7 @@ pub fn recover_interrupted_update_from_current_exe(parent_pid: u32) -> Result<bo
     }
 }
 
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux"))]
 fn scan_update_recovery(
     install_dir: &Path,
     parent_pid: u32,
@@ -809,30 +828,40 @@ pub fn apply_update_transaction(
     parent_pid: u32,
     recover_only: bool,
 ) -> Result<(), UpdateError> {
-    #[cfg(not(windows))]
+    #[cfg(not(any(windows, target_os = "linux")))]
     {
         let _ = (manifest_path, parent_pid, recover_only);
         return Err(UpdateError::new(
-            "automatic updates are supported only on Windows",
+            "automatic updates are supported only on Windows and Linux",
         ));
     }
 
-    #[cfg(windows)]
+    #[cfg(any(windows, target_os = "linux"))]
     {
-        wait_for_process_exit(parent_pid, Duration::from_secs(30))?;
+        // A terminal Ctrl-C also reaches the helper. Let Shell finish its own
+        // cleanup before the foreground job ends; exec resets these handlers.
+        #[cfg(target_os = "linux")]
+        let _terminal_control = platform::TerminalControlHandler::install();
+        // Linux execs the helper in place, preserving the foreground process group.
+        if !cfg!(target_os = "linux") || parent_pid != std::process::id() {
+            wait_for_process_exit(parent_pid, Duration::from_secs(30))?;
+        }
         let mut manifest = load_manifest(manifest_path)?;
         validate_running_helper(&manifest)?;
-        run_update_transaction(
-            manifest_path,
-            &mut manifest,
-            recover_only,
-            &WindowsTransactionOperations,
-        )
+        let operations = NativeTransactionOperations::default();
+        run_update_transaction(manifest_path, &mut manifest, recover_only, &operations)?;
+        // Keep the foreground job alive until the new (or restored) Shell exits.
+        #[cfg(target_os = "linux")]
+        if let Some(mut child) = operations.child.borrow_mut().take() {
+            child.wait()?;
+        }
+        Ok(())
     }
 }
 
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux"))]
 trait TransactionOperations {
+    fn stop_new_shell(&self) {}
     fn rename(&self, source: &Path, target: &Path) -> Result<(), UpdateError>;
     fn replace(&self, target: &Path, replacement: &Path, backup: &Path) -> Result<(), UpdateError>;
     fn launch_new_and_wait(
@@ -843,11 +872,22 @@ trait TransactionOperations {
     fn launch_restored(&self, shell: &Path, reason: &str) -> Result<(), UpdateError>;
 }
 
-#[cfg(windows)]
-struct WindowsTransactionOperations;
+#[cfg(any(windows, target_os = "linux"))]
+#[derive(Default)]
+struct NativeTransactionOperations {
+    #[cfg(target_os = "linux")]
+    child: std::cell::RefCell<Option<std::process::Child>>,
+}
 
-#[cfg(windows)]
-impl TransactionOperations for WindowsTransactionOperations {
+#[cfg(any(windows, target_os = "linux"))]
+impl TransactionOperations for NativeTransactionOperations {
+    fn stop_new_shell(&self) {
+        #[cfg(target_os = "linux")]
+        if let Some(mut child) = self.child.borrow_mut().take() {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+    }
     fn rename(&self, source: &Path, target: &Path) -> Result<(), UpdateError> {
         fs::rename(source, target).map_err(UpdateError::from)
     }
@@ -870,6 +910,10 @@ impl TransactionOperations for WindowsTransactionOperations {
         let deadline = std::time::Instant::now() + Duration::from_secs(60);
         while std::time::Instant::now() < deadline {
             if paths.ready.is_file() {
+                #[cfg(target_os = "linux")]
+                {
+                    *self.child.borrow_mut() = Some(child);
+                }
                 return Ok(());
             }
             if let Some(status) = child.try_wait().map_err(|error| {
@@ -889,15 +933,30 @@ impl TransactionOperations for WindowsTransactionOperations {
     }
 
     fn launch_restored(&self, shell: &Path, reason: &str) -> Result<(), UpdateError> {
-        std::process::Command::new(shell)
+        let child = std::process::Command::new(shell)
             .env(UPDATE_ROLLBACK_ENV, reason)
             .spawn()
-            .map(|_| ())
-            .map_err(|error| UpdateError::new(format!("could not restart restored Shell: {error}")))
+            .map_err(|error| {
+                UpdateError::new(format!("could not restart restored Shell: {error}"))
+            })?;
+        #[cfg(target_os = "linux")]
+        {
+            *self.child.borrow_mut() = Some(child);
+        }
+        #[cfg(not(target_os = "linux"))]
+        let _ = child;
+        Ok(())
     }
 }
 
-#[cfg(windows)]
+#[cfg(target_os = "linux")]
+impl Drop for NativeTransactionOperations {
+    fn drop(&mut self) {
+        self.stop_new_shell();
+    }
+}
+
+#[cfg(any(windows, target_os = "linux"))]
 fn run_update_transaction(
     manifest_path: &Path,
     manifest: &mut TransactionManifest,
@@ -943,7 +1002,7 @@ fn run_update_transaction(
     }
 }
 
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux"))]
 fn validate_running_helper(manifest: &TransactionManifest) -> Result<(), UpdateError> {
     let executable = std::env::current_exe()
         .and_then(fs::canonicalize)
@@ -954,7 +1013,7 @@ fn validate_running_helper(manifest: &TransactionManifest) -> Result<(), UpdateE
         ))
     })?;
     if executable.parent() != Some(transaction_dir.as_path())
-        || executable.file_name() != Some(std::ffi::OsStr::new("update-helper.exe"))
+        || executable.file_name() != Some(std::ffi::OsStr::new(HELPER_FILE))
     {
         return Err(UpdateError::new(
             "the update transaction must be applied by its saved helper copy",
@@ -963,15 +1022,19 @@ fn validate_running_helper(manifest: &TransactionManifest) -> Result<(), UpdateE
     Ok(())
 }
 
-#[cfg(all(windows, test))]
+#[cfg(all(any(windows, target_os = "linux"), test))]
 fn apply_prepared_files(
     manifest_path: &Path,
     manifest: &mut TransactionManifest,
 ) -> Result<(), UpdateError> {
-    apply_prepared_files_with_operations(manifest_path, manifest, &WindowsTransactionOperations)
+    apply_prepared_files_with_operations(
+        manifest_path,
+        manifest,
+        &NativeTransactionOperations::default(),
+    )
 }
 
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux"))]
 fn apply_prepared_files_with_operations(
     manifest_path: &Path,
     manifest: &mut TransactionManifest,
@@ -996,7 +1059,7 @@ fn apply_prepared_files_with_operations(
 
     operations
         .replace(&paths.installed_cli, &paths.new_cli, &paths.backup_cli)
-        .map_err(|error| UpdateError::new(format!("could not replace tundra-cli.exe: {error}")))?;
+        .map_err(|error| UpdateError::new(format!("could not replace TundraUX CLI: {error}")))?;
     manifest.cli_replaced = true;
     write_manifest(manifest_path, manifest)?;
 
@@ -1006,15 +1069,13 @@ fn apply_prepared_files_with_operations(
             &paths.new_shell,
             &paths.backup_shell,
         )
-        .map_err(|error| {
-            UpdateError::new(format!("could not replace tundra-shell.exe: {error}"))
-        })?;
+        .map_err(|error| UpdateError::new(format!("could not replace TundraUX Shell: {error}")))?;
     manifest.shell_replaced = true;
     manifest.state = TransactionState::AwaitingReady;
     write_manifest(manifest_path, manifest)
 }
 
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux"))]
 fn launch_and_verify_new_shell_with_operations(
     manifest_path: &Path,
     manifest: &mut TransactionManifest,
@@ -1028,7 +1089,7 @@ fn launch_and_verify_new_shell_with_operations(
     Ok(())
 }
 
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux"))]
 fn cleanup_committed_payload(manifest: &TransactionManifest) {
     let paths = transaction_paths(manifest);
     for file in [
@@ -1045,13 +1106,14 @@ fn cleanup_committed_payload(manifest: &TransactionManifest) {
     }
 }
 
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux"))]
 fn rollback_and_restart_with_operations(
     manifest_path: &Path,
     manifest: &mut TransactionManifest,
     reason: &str,
     operations: &dyn TransactionOperations,
 ) -> Result<(), UpdateError> {
+    operations.stop_new_shell();
     rollback_files_with_operations(manifest_path, manifest, operations)?;
     let paths = transaction_paths(manifest);
     if let Err(error) = operations.launch_restored(&paths.installed_shell, reason) {
@@ -1062,15 +1124,19 @@ fn rollback_and_restart_with_operations(
     Ok(())
 }
 
-#[cfg(all(windows, test))]
+#[cfg(all(any(windows, target_os = "linux"), test))]
 fn rollback_files(
     manifest_path: &Path,
     manifest: &mut TransactionManifest,
 ) -> Result<(), UpdateError> {
-    rollback_files_with_operations(manifest_path, manifest, &WindowsTransactionOperations)
+    rollback_files_with_operations(
+        manifest_path,
+        manifest,
+        &NativeTransactionOperations::default(),
+    )
 }
 
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux"))]
 fn rollback_files_with_operations(
     manifest_path: &Path,
     manifest: &mut TransactionManifest,
@@ -1089,7 +1155,7 @@ fn rollback_files_with_operations(
                 &paths.failed_shell,
             )
             .map_err(|error| {
-                UpdateError::new(format!("could not restore tundra-shell.exe: {error}"))
+                UpdateError::new(format!("could not restore TundraUX Shell: {error}"))
             })?;
         manifest.shell_replaced = false;
         write_manifest(manifest_path, manifest)?;
@@ -1106,7 +1172,7 @@ fn rollback_files_with_operations(
         operations
             .replace(&paths.installed_cli, &paths.backup_cli, &paths.failed_cli)
             .map_err(|error| {
-                UpdateError::new(format!("could not restore tundra-cli.exe: {error}"))
+                UpdateError::new(format!("could not restore TundraUX CLI: {error}"))
             })?;
         manifest.cli_replaced = false;
         write_manifest(manifest_path, manifest)?;
@@ -1148,7 +1214,7 @@ fn rollback_files_with_operations(
     write_manifest(manifest_path, manifest)
 }
 
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux"))]
 fn wait_for_process_exit(pid: u32, timeout: Duration) -> Result<(), UpdateError> {
     let platform = platform::native_platform();
     let deadline = std::time::Instant::now() + timeout;
@@ -1174,7 +1240,7 @@ fn launch_helper_mode(
     recover_only: bool,
 ) -> Result<(), UpdateError> {
     let manifest = load_manifest(manifest_path)?;
-    let helper = manifest.transaction_dir.join("update-helper.exe");
+    let helper = manifest.transaction_dir.join(HELPER_FILE);
     if !helper.is_file() {
         return Err(UpdateError::new(format!(
             "update helper is missing: {}",
@@ -1186,10 +1252,24 @@ fn launch_helper_mode(
     } else {
         "__apply-update"
     };
-    std::process::Command::new(helper)
+    let mut process = std::process::Command::new(helper);
+    process
         .arg(command)
         .arg(manifest_path)
         .arg(parent_pid.to_string())
+        .env_remove(UPDATE_READY_FILE_ENV)
+        .env_remove(UPDATE_TARGET_SHA_ENV)
+        .env_remove(UPDATE_ROLLBACK_ENV);
+    #[cfg(target_os = "linux")]
+    {
+        use std::os::unix::process::CommandExt;
+        Err(UpdateError::new(format!(
+            "could not launch update helper: {}",
+            process.exec()
+        )))
+    }
+    #[cfg(not(target_os = "linux"))]
+    process
         .spawn()
         .map(|_| ())
         .map_err(|error| UpdateError::new(format!("could not launch update helper: {error}")))
@@ -1309,7 +1389,7 @@ fn unix_millis() -> u128 {
         .unwrap_or_default()
 }
 
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux"))]
 struct TransactionPaths {
     installed_shell: PathBuf,
     installed_cli: PathBuf,
@@ -1326,23 +1406,23 @@ struct TransactionPaths {
     ready: PathBuf,
 }
 
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux"))]
 fn transaction_paths(manifest: &TransactionManifest) -> TransactionPaths {
     let new = manifest.transaction_dir.join("new");
     let backup = manifest.transaction_dir.join("backup");
     let failed = manifest.transaction_dir.join("failed");
     TransactionPaths {
-        installed_shell: manifest.install_dir.join("tundra-shell.exe"),
-        installed_cli: manifest.install_dir.join("tundra-cli.exe"),
+        installed_shell: manifest.install_dir.join(SHELL_FILE),
+        installed_cli: manifest.install_dir.join(CLI_FILE),
         installed_assets: manifest.install_dir.join("assets/themes/default"),
-        new_shell: new.join("tundra-shell.exe"),
-        new_cli: new.join("tundra-cli.exe"),
+        new_shell: new.join(SHELL_FILE),
+        new_cli: new.join(CLI_FILE),
         new_assets: new.join("default-assets"),
-        backup_shell: backup.join("tundra-shell.exe"),
-        backup_cli: backup.join("tundra-cli.exe"),
+        backup_shell: backup.join(SHELL_FILE),
+        backup_cli: backup.join(CLI_FILE),
         backup_assets: backup.join("default-assets"),
-        failed_shell: failed.join("tundra-shell.exe"),
-        failed_cli: failed.join("tundra-cli.exe"),
+        failed_shell: failed.join(SHELL_FILE),
+        failed_cli: failed.join(CLI_FILE),
         failed_assets: failed.join("default-assets"),
         ready: manifest.transaction_dir.join("ready"),
     }

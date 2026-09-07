@@ -69,11 +69,11 @@ fn update_product_validation_requires_all_outputs() {
     let root = std::env::temp_dir().join(format!("tundra-update-products-{}", std::process::id()));
     fs::create_dir_all(root.join("source/assets/themes/default")).unwrap();
     fs::create_dir_all(root.join("target/release")).unwrap();
-    fs::write(root.join("target/release/tundra-shell.exe"), b"shell").unwrap();
+    fs::write(root.join("target/release").join(SHELL_FILE), b"shell").unwrap();
     assert!(
         validate_product_paths(&root, &root.join("source"), &root.join("target"), "abc").is_err()
     );
-    fs::write(root.join("target/release/tundra-cli.exe"), b"cli").unwrap();
+    fs::write(root.join("target/release").join(CLI_FILE), b"cli").unwrap();
     assert!(
         validate_product_paths(&root, &root.join("source"), &root.join("target"), "abc").is_ok()
     );
@@ -136,9 +136,7 @@ impl PreparationOperations for FakePreparationOperations {
     }
 
     fn probe(&self, executable: &Path, _expected_sha: &str) -> Result<(), UpdateError> {
-        let cli = executable
-            .file_name()
-            .is_some_and(|name| name == "tundra-cli.exe");
+        let cli = executable.file_name().is_some_and(|name| name == CLI_FILE);
         if (cli && matches!(self.failure, PreparationFailure::CliProbe))
             || (!cli && matches!(self.failure, PreparationFailure::ShellProbe))
         {
@@ -180,8 +178,8 @@ fn update_preparation_failures_never_touch_installation() {
         .unwrap();
         fs::write(install.join("sentinel"), b"unchanged").unwrap();
         if !matches!(failure, PreparationFailure::MissingProduct) {
-            fs::write(target.join("tundra-shell.exe"), b"shell").unwrap();
-            fs::write(target.join("tundra-cli.exe"), b"cli").unwrap();
+            fs::write(target.join(SHELL_FILE), b"shell").unwrap();
+            fs::write(target.join(CLI_FILE), b"cli").unwrap();
         }
         let check = UpdateCheckResult {
             default_branch: "master".to_owned(),
@@ -311,7 +309,7 @@ fn update_network_failure_is_reported_clearly() {
     assert!(error.to_string().contains("GitHub request failed"));
 }
 
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux"))]
 #[test]
 fn update_rollback_restores_programs_and_default_assets_but_keeps_custom_themes() {
     let root = update_test_root("rollback");
@@ -322,8 +320,8 @@ fn update_rollback_restores_programs_and_default_assets_but_keeps_custom_themes(
     fs::create_dir_all(transaction_dir.join("backup")).unwrap();
     fs::create_dir_all(install.join("assets/themes/default")).unwrap();
     fs::create_dir_all(install.join("assets/themes/custom")).unwrap();
-    fs::write(install.join("tundra-shell.exe"), b"old shell").unwrap();
-    fs::write(install.join("tundra-cli.exe"), b"old cli").unwrap();
+    fs::write(install.join(SHELL_FILE), b"old shell").unwrap();
+    fs::write(install.join(CLI_FILE), b"old cli").unwrap();
     fs::write(
         install.join("assets/themes/default/theme.txt"),
         b"old theme",
@@ -334,8 +332,8 @@ fn update_rollback_restores_programs_and_default_assets_but_keeps_custom_themes(
         b"custom theme",
     )
     .unwrap();
-    fs::write(new.join("tundra-shell.exe"), b"new shell").unwrap();
-    fs::write(new.join("tundra-cli.exe"), b"new cli").unwrap();
+    fs::write(new.join(SHELL_FILE), b"new shell").unwrap();
+    fs::write(new.join(CLI_FILE), b"new cli").unwrap();
     fs::write(new.join("default-assets/theme.txt"), b"new theme").unwrap();
     let path = transaction_dir.join("transaction.json");
     let mut manifest = TransactionManifest {
@@ -350,28 +348,16 @@ fn update_rollback_restores_programs_and_default_assets_but_keeps_custom_themes(
     };
     write_manifest(&path, &manifest).unwrap();
     apply_prepared_files(&path, &mut manifest).unwrap();
-    assert_eq!(
-        fs::read(install.join("tundra-shell.exe")).unwrap(),
-        b"new shell"
-    );
-    assert_eq!(
-        fs::read(install.join("tundra-cli.exe")).unwrap(),
-        b"new cli"
-    );
+    assert_eq!(fs::read(install.join(SHELL_FILE)).unwrap(), b"new shell");
+    assert_eq!(fs::read(install.join(CLI_FILE)).unwrap(), b"new cli");
     assert_eq!(
         fs::read(install.join("assets/themes/default/theme.txt")).unwrap(),
         b"new theme"
     );
 
     rollback_files(&path, &mut manifest).unwrap();
-    assert_eq!(
-        fs::read(install.join("tundra-shell.exe")).unwrap(),
-        b"old shell"
-    );
-    assert_eq!(
-        fs::read(install.join("tundra-cli.exe")).unwrap(),
-        b"old cli"
-    );
+    assert_eq!(fs::read(install.join(SHELL_FILE)).unwrap(), b"old shell");
+    assert_eq!(fs::read(install.join(CLI_FILE)).unwrap(), b"old cli");
     assert_eq!(
         fs::read(install.join("assets/themes/default/theme.txt")).unwrap(),
         b"old theme"
@@ -383,7 +369,7 @@ fn update_rollback_restores_programs_and_default_assets_but_keeps_custom_themes(
     fs::remove_dir_all(root).unwrap();
 }
 
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux"))]
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum TransactionFailure {
     Assets,
@@ -395,13 +381,13 @@ enum TransactionFailure {
     None,
 }
 
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux"))]
 struct FakeTransactionOperations {
     failure: TransactionFailure,
     injected: Cell<bool>,
 }
 
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux"))]
 impl TransactionOperations for FakeTransactionOperations {
     fn rename(&self, source: &Path, target: &Path) -> Result<(), UpdateError> {
         if self.failure == TransactionFailure::Assets
@@ -415,17 +401,16 @@ impl TransactionOperations for FakeTransactionOperations {
     }
 
     fn replace(&self, target: &Path, replacement: &Path, backup: &Path) -> Result<(), UpdateError> {
-        let failure = if target
-            .file_name()
-            .is_some_and(|name| name == "tundra-cli.exe")
-        {
+        let failure = if target.file_name().is_some_and(|name| name == CLI_FILE) {
             TransactionFailure::Cli
         } else {
             TransactionFailure::Shell
         };
         if self.failure == failure
             && !self.injected.get()
-            && replacement.to_string_lossy().contains("\\new\\")
+            && replacement
+                .parent()
+                .is_some_and(|path| path.ends_with("new"))
         {
             self.injected.set(true);
             return Err(UpdateError::new("injected executable replacement failure"));
@@ -462,7 +447,7 @@ impl TransactionOperations for FakeTransactionOperations {
     }
 }
 
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux"))]
 fn transaction_fixture(name: &str) -> (PathBuf, PathBuf, TransactionManifest) {
     let root = update_test_root(name);
     let install = root.join("install");
@@ -472,8 +457,8 @@ fn transaction_fixture(name: &str) -> (PathBuf, PathBuf, TransactionManifest) {
     fs::create_dir_all(transaction_dir.join("backup")).unwrap();
     fs::create_dir_all(install.join("assets/themes/default")).unwrap();
     fs::create_dir_all(install.join("assets/themes/custom")).unwrap();
-    fs::write(install.join("tundra-shell.exe"), b"old shell").unwrap();
-    fs::write(install.join("tundra-cli.exe"), b"old cli").unwrap();
+    fs::write(install.join(SHELL_FILE), b"old shell").unwrap();
+    fs::write(install.join(CLI_FILE), b"old cli").unwrap();
     fs::write(
         install.join("assets/themes/default/theme.txt"),
         b"old theme",
@@ -484,8 +469,8 @@ fn transaction_fixture(name: &str) -> (PathBuf, PathBuf, TransactionManifest) {
         b"custom theme",
     )
     .unwrap();
-    fs::write(new.join("tundra-shell.exe"), b"new shell").unwrap();
-    fs::write(new.join("tundra-cli.exe"), b"new cli").unwrap();
+    fs::write(new.join(SHELL_FILE), b"new shell").unwrap();
+    fs::write(new.join(CLI_FILE), b"new cli").unwrap();
     fs::write(new.join("default-assets/theme.txt"), b"new theme").unwrap();
     let manifest_path = transaction_dir.join("transaction.json");
     let manifest = TransactionManifest {
@@ -502,14 +487,14 @@ fn transaction_fixture(name: &str) -> (PathBuf, PathBuf, TransactionManifest) {
     (root, manifest_path, manifest)
 }
 
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux"))]
 fn assert_old_install_preserved(manifest: &TransactionManifest) {
     assert_eq!(
-        fs::read(manifest.install_dir.join("tundra-shell.exe")).unwrap(),
+        fs::read(manifest.install_dir.join(SHELL_FILE)).unwrap(),
         b"old shell"
     );
     assert_eq!(
-        fs::read(manifest.install_dir.join("tundra-cli.exe")).unwrap(),
+        fs::read(manifest.install_dir.join(CLI_FILE)).unwrap(),
         b"old cli"
     );
     assert_eq!(
@@ -522,7 +507,7 @@ fn assert_old_install_preserved(manifest: &TransactionManifest) {
     );
 }
 
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux"))]
 #[test]
 fn update_injected_transaction_failures_restore_every_installed_file() {
     for failure in [
@@ -554,7 +539,7 @@ fn update_injected_transaction_failures_restore_every_installed_file() {
     }
 }
 
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux"))]
 #[test]
 fn update_interrupted_journal_recovers_old_installation() {
     let (root, path, mut manifest) = transaction_fixture("interrupted");
@@ -574,11 +559,11 @@ fn update_interrupted_journal_recovers_old_installation() {
     fs::remove_dir_all(root).unwrap();
 }
 
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux"))]
 fn recovery_scan_fixture(name: &str, state: TransactionState) -> (PathBuf, PathBuf, PathBuf) {
     let root = update_test_root(name);
-    let install = root.join("install");
-    fs::create_dir_all(&install).unwrap();
+    fs::create_dir_all(root.join("install")).unwrap();
+    let install = root.join("install/../install");
     let canonical_install = fs::canonicalize(&install).unwrap();
     assert_ne!(install, canonical_install);
     let transaction_dir = canonical_install.join(".tundra-update/tx");
@@ -598,7 +583,7 @@ fn recovery_scan_fixture(name: &str, state: TransactionState) -> (PathBuf, PathB
     (root, install, manifest_path)
 }
 
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux"))]
 #[test]
 fn update_recovery_scan_canonicalizes_install_path_for_cleanup_and_recovery() {
     let (root, install, manifest_path) =

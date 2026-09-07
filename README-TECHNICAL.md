@@ -95,7 +95,7 @@ cargo run -p cli --bin tundra-cli -- repl
 5. 用户列表为空时进入首次设置和管理员创建；否则进入 Weathr 锁屏，再转入登录。
 6. 构造同时持有 `AppState` 与 `UiSessionState` 的 `ShellSession`，并建立首屏、焦点和命中表。
 7. 进入事件循环：采集终端、时间与后台任务事件，分发命令，构造 ViewModel，再布局并绘制一帧。
-8. 主运行结果明确区分退出、重启和重置：退出恢复终端后结束；Unix 重启通过 `exec` 保持前台终端组；重置由 Shell 收尾后重新创建初始存储。注销则销毁本次 Shell UI 会话并返回锁屏。支持关机的平台会在终端恢复后调用平台接口。
+8. 主运行结果明确区分退出、重启和重置：退出恢复终端后结束；Unix 重启通过 `exec` 保持前台终端组；重置由 Shell 收尾后重新创建初始存储。注销则销毁本次 Shell UI 会话并返回锁屏。支持电脑重启或关机的平台会先保存编辑器恢复数据、恢复终端，再调用对应的系统接口；请求失败时返回退出菜单并显示错误。
 
 ```mermaid
 flowchart TD
@@ -109,7 +109,7 @@ flowchart TD
     G --> I["ShellSession: AppState + UiSessionState"]
     H --> I
     I --> J["事件循环、状态转换、ViewModel、Ratatui 帧"]
-    J --> K{"退出、重启、重置、注销或关机"}
+    J --> K{"退出、程序重启、重置、注销、电脑重启或关机"}
     K --> L["恢复终端；退出或回到锁屏"]
 ```
 
@@ -192,7 +192,7 @@ flowchart TD
 | `ascii-assets` | 主题清单、banner、图标、天气世界、时钟字体的加载、校验和尺寸统计。 |
 | `cli` | `tundra-cli` 参数解析、诊断、路径查看、公开配置读写、存储重置、资源/动画预览与 Weathr 启动；不依赖 UI。 |
 | `identity` | 用户、角色、会话、授权、密码验证与登录锁定；记录由 storage 持久化。 |
-| `platform` | Windows/macOS/Linux 的系统路径、终端能力、文件系统、启动外部程序、Trash、关机与系统诊断边界。 |
+| `platform` | Windows/macOS/Linux 的系统路径、终端能力、文件系统、启动外部程序、Trash、电脑重启、关机与系统诊断边界。 |
 | `shell` | `ShellSession`、控制器、presentation、终端事件转换、全屏会话、锁屏与应用组合，以及 `tundra-shell` 入口。 |
 | `storage` | TOML/版本化 JSON、原子写入、schema 校验、迁移、恢复与存储健康。 |
 | `system-services` | 共享天气、时间、存储、网络和系统指标数据；开启 `runtime` 功能后提供天气请求、定位、缓存、时间同步、系统采样及后台刷新。 |
@@ -236,7 +236,7 @@ AppState::dispatch_at(AppCommand, Instant) -> AppAction
 AppState::snapshot() -> AppSnapshot<'_>
 ```
 
-显式传入单调时钟 `Instant`，使通知超时、登录锁定等时间行为可确定地测试。`AppAction` **仅**表示 `Redraw`、`Exit` 或 `PowerOff`；终端恢复、进程结束与操作系统关机由 Shell 执行。`AppSnapshot` 以借用方式给出一致的只读视图，UI 不能经由快照修改 APP，所有更改都必须形成新的 `AppCommand`。
+显式传入单调时钟 `Instant`，使通知超时、登录锁定等时间行为可确定地测试。`AppAction` **仅**表示 `Redraw`、`Exit`、`Reboot` 或 `PowerOff`；终端恢复、进程结束与操作系统重启、关机由 Shell 执行。`AppSnapshot` 以借用方式给出一致的只读视图，UI 不能经由快照修改 APP，所有更改都必须形成新的 `AppCommand`。
 
 通知系统包括 4 秒 toast、有键告警、FIFO 模态和可抢占的 critical 模态；响应队列有上限，避免异常输入或后台结果无限积压。
 
@@ -341,11 +341,19 @@ Linux 与 Windows 同级实现：使用 XDG Base Directory 与 `user-dirs.dirs`�
 | 系统剪贴板 | 原生后端 | Wayland data-control 或 X11/XWayland；失败时重连，Editor 仍可用 bracketed-paste |
 | 本地卷与 Trash | 原生后端 | mountinfo/statvfs/sysfs 与 Freedesktop Trash，不退化为永久删除 |
 | 关键错误 | 平台提示与日志 | 桌面通知、watchdog 文本报告和 stderr |
-| Power off | 平台授权 | systemd-logind + polkit；仅关机，不提供重启 |
+| 电脑重启与关机 | Windows 原生 API 与系统权限 | systemd-logind + polkit；分别检查 CanReboot / CanPowerOff，允许系统要求授权 |
 
 `tundra-cli debug doctor` 会报告缺失的 `xdg-open`、`gio`、session D-Bus、portal、polkit、logind 和剪贴板后端，并提供安装或会话建议。缺少桌面助手只降级相应功能；不会改用 shell 字符串执行、`sudo` 或永久删除作为兜底。
 
-首发范围不包括 aarch64、重启、系统镜像、会话切换或 SteamOS 式产品化。
+首发范围不包括 aarch64、系统镜像、会话切换或 SteamOS 式产品化。
+
+### 程序自更新
+
+Settings 中的 Update 在 Windows 和 Linux 上可用。确认后从 GitHub 下载已检查的指定提交，在本机用已有 Rust 工具链编译，再替换安装目录中的 Shell、CLI 和默认主题；不会更新 Linux 软件包、自动安装 Rust 或使用 sudo。安装目录必须允许当前用户写入，Linux 还需要项目构建所需的编译器和开发库。
+
+更新助手保存旧程序和默认主题，等新 Shell 报告启动成功后才清理备份。替换失败、启动失败或启动超时会恢复旧版本；更新中断后，下次启动会按安装目录内的记录继续或恢复。自定义主题和用户数据不参与替换。Linux 使用无 `.exe` 后缀的程序名并保留执行权限；助手通过 exec 接替原进程，在新 Shell 退出前持续等待，使更新后的程序继续使用前台终端。
+
+主页的退出菜单将程序操作和电脑操作分别写明：Exit TundraUX、Restart TundraUX、Restart computer、Shut down computer，以及 Cancel。操作逐行等宽排列；窗口较矮时缩小行间空白。macOS 暂不提供程序自更新或电脑电源操作；Linux 缺少 logind 或授权时隐藏对应的电脑操作。
 
 ### 从 Windows 迁移到 Linux
 
@@ -472,7 +480,10 @@ tundra-cli config set accent-color "#38bdf8"
 | q 或 Esc（主页） | 打开退出确认。 |
 | L（主页） | 注销并回到 Weathr 锁屏。 |
 | F2（登录） | 临时切换密码可见性。 |
-| y / Enter（退出确认） | 确认退出。 |
+| y（退出菜单） | 退出 TundraUX，返回终端。 |
+| r（退出菜单） | 重启 TundraUX 程序。 |
+| b / p（退出菜单） | 重启电脑 / 关闭电脑；仅在系统支持且允许请求时显示。 |
+| 方向键 / Tab / Enter（退出菜单） | 选择 / 切换 / 执行当前操作。 |
 | n / Esc（退出确认） | 取消退出。 |
 
 Editor、Explorer、Settings 等屏幕还按其工具栏、列表、对话框和输入模式处理方向键、Home/End、PageUp/PageDown、Enter、Space、Backspace、鼠标双击、拖拽和滚动。

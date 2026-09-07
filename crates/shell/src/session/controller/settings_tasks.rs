@@ -117,7 +117,7 @@ impl ShellSettingsTaskRuntime {
         self.shared
             .platform
             .as_ref()
-            .is_some_and(|platform| platform.kind() == platform::PlatformKind::Windows)
+            .is_some_and(|platform| app::update::supports_updates(platform.kind()))
     }
 
     pub(in crate::session) fn update_busy(&self) -> bool {
@@ -137,7 +137,7 @@ impl ShellSettingsTaskRuntime {
             .clone()
             .ok_or_else(|| "Update worker is unavailable".to_string())?;
         if !self.update_supported() {
-            return Err("Automatic updates are supported only on Windows".to_string());
+            return Err("Automatic updates are supported only on Windows and Linux".to_string());
         }
         let mut worker_slot = self
             .shared
@@ -197,9 +197,9 @@ impl ShellSettingsTaskRuntime {
             .shared
             .platform
             .clone()
-            .ok_or_else(|| "Windows update platform is unavailable".to_string())?;
-        if platform.kind() != platform::PlatformKind::Windows {
-            return Err("Automatic updates are supported only on Windows".to_string());
+            .ok_or_else(|| "Update platform is unavailable".to_string())?;
+        if !app::update::supports_updates(platform.kind()) {
+            return Err("Automatic updates are supported only on Windows and Linux".to_string());
         }
         let mut worker_slot = self
             .shared

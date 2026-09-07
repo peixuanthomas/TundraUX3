@@ -1353,7 +1353,7 @@ impl ShellSession {
         self.settings_update_state.error = None;
         if !self.settings_task_runtime.update_supported() {
             self.settings_update_state.status =
-                "Automatic updates are supported only on Windows".to_string();
+                "Automatic updates are supported only on Windows and Linux".to_string();
             self.settings_update_state.phase = None;
             return;
         }
@@ -1377,7 +1377,7 @@ impl ShellSession {
 
     pub(in crate::session) fn open_update_confirmation(&mut self) {
         if !self.settings_task_runtime.update_supported() {
-            self.set_update_error("Automatic updates are supported only on Windows");
+            self.set_update_error("Automatic updates are supported only on Windows and Linux");
             return;
         }
         if !self.can_change_global_settings() {

@@ -921,7 +921,43 @@ pub fn replace_file_with_backup(
         return crate::windows::replace_file_with_backup(target, replacement, backup);
     }
 
-    #[cfg(not(windows))]
+    #[cfg(target_os = "linux")]
+    {
+        use std::os::unix::fs::MetadataExt;
+        for path in [target, replacement, backup] {
+            crate::validate_no_follow_path(path, path != backup)?;
+        }
+        let operation = || -> std::io::Result<()> {
+            // Preserve the old inode before atomically installing the new executable.
+            // A retry after interruption may already have created this exact backup.
+            if let Err(error) = std::fs::hard_link(target, backup) {
+                if error.kind() != std::io::ErrorKind::AlreadyExists {
+                    return Err(error);
+                }
+                let old = std::fs::metadata(target)?;
+                let saved = std::fs::metadata(backup)?;
+                if (old.dev(), old.ino()) != (saved.dev(), saved.ino()) {
+                    return Err(error);
+                }
+            }
+            std::fs::File::open(backup)?.sync_all()?;
+            if let Some(parent) = backup.parent() {
+                std::fs::File::open(parent)?.sync_all()?;
+            }
+            std::fs::File::open(replacement)?.sync_all()?;
+            std::fs::rename(replacement, target)?;
+            if let Some(parent) = target.parent() {
+                std::fs::File::open(parent)?.sync_all()?;
+            }
+            Ok(())
+        };
+        return operation().map_err(|error| PlatformError::Native {
+            operation: "replace update file",
+            message: error.to_string(),
+        });
+    }
+
+    #[cfg(not(any(windows, target_os = "linux")))]
     {
         let _ = (target, replacement, backup);
         Err(PlatformError::Unsupported {
