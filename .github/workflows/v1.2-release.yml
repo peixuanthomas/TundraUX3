@@ -97,6 +97,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          export TMPDIR="$(cd "$RUNNER_TEMP" && pwd -P)"
           cargo test --workspace --locked
           bash scripts/check-weathr-dependency-boundary.sh
 
@@ -163,6 +164,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          export TMPDIR="$(cd "$RUNNER_TEMP" && pwd -P)"
           cargo test --workspace --locked
           bash scripts/check-weathr-dependency-boundary.sh
 
