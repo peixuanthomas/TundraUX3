@@ -6,14 +6,19 @@ use ratatui::widgets::{Block, Paragraph};
 use unicode_width::UnicodeWidthStr;
 
 // Keep the crash screen usable even when the theme or asset files are broken.
-const DEAD_PROGRAM: &str = r"     .-----------------.
-     |                 |
-     |     X     X     |
-     |        _        |
-     |     R.I.P.      |
-     '--------+--------'
-          ___|___
-         /_______\";
+const DEAD_PROGRAM: &str = r"     .-----------------------------.
+     |                             |
+     |    \   /           \   /    |
+     |      X               X      |
+     |    /   \           /   \    |
+     |                             |
+     |           .----.            |
+     |         .'      '.          |
+     |        /          \         |
+     |                             |
+     '-----------------------------'
+    /       ________________        \
+   /_______/________________\________\";
 
 /// A standalone crash page with no dependency on assets or authentication.
 pub struct PanicScreen {
@@ -30,10 +35,7 @@ impl PanicScreen {
             .filter(|ch| *ch == '\n' || *ch == '\t' || !ch.is_control())
             .collect();
         Self {
-            text: format!(
-                "{DEAD_PROGRAM}\n\nTundraUX3 has stopped.\nRestart the program or exit.\n\nError:\n{}",
-                message.replace('\t', "    ")
-            ),
+            text: format!("{DEAD_PROGRAM}\n\n{}", message.replace('\t', "    ")),
             scroll: 0,
             max_scroll: 0,
             page_height: 1,
@@ -63,13 +65,13 @@ impl PanicScreen {
 
     pub fn render(&mut self, frame: &mut Frame<'_>) {
         let area = frame.area();
-        let style = Style::default().fg(Color::White).bg(Color::Blue);
+        let style = Style::default().fg(Color::White).bg(Color::Black);
         frame.render_widget(Block::default().style(style), area);
         if area.is_empty() {
             return;
         }
         let header = Rect::new(area.x, area.y, area.width, 1);
-        frame.render_widget(Paragraph::new("PANIC - TundraUX3").style(style), header);
+        frame.render_widget(Paragraph::new("PANIC").style(style), header);
         let body = Rect::new(
             area.x,
             area.y.saturating_add(1),
@@ -89,11 +91,12 @@ impl PanicScreen {
         frame.render_widget(Paragraph::new(visible).style(style), body);
         if area.height > 1 {
             let footer = Rect::new(area.x, area.bottom() - 1, area.width, 1);
-            frame.render_widget(
-                Paragraph::new("R: Restart | Q: Exit | Up/Down/PgUp/PgDn/Home/End: Scroll")
-                    .style(style),
-                footer,
-            );
+            let help = if self.max_scroll > 0 {
+                "R: Restart | Q: Exit | Up/Down: Scroll"
+            } else {
+                "R: Restart | Q: Exit"
+            };
+            frame.render_widget(Paragraph::new(help).style(style), footer);
         }
     }
 }
@@ -129,6 +132,15 @@ mod tests {
     fn draw(screen: &mut PanicScreen, width: u16, height: u16) -> String {
         let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
         terminal.draw(|frame| screen.render(frame)).unwrap();
+        // Wide characters own their trailing cell; TestBackend resets that
+        // placeholder instead of storing a separately painted background.
+        let mut cells = terminal.backend().buffer().content.iter();
+        while let Some(cell) = cells.next() {
+            assert_eq!(cell.bg, Color::Black);
+            for _ in 1..cell.symbol().width() {
+                cells.next();
+            }
+        }
         terminal
             .backend()
             .buffer()
@@ -142,12 +154,15 @@ mod tests {
     fn crash_page_shows_hardcoded_art_and_error_without_assets() {
         let mut screen = PanicScreen::new("Intentional panic: 文件读取失败");
         let rendered = draw(&mut screen, 100, 30);
-        assert!(rendered.contains("R.I.P."));
-        assert!(rendered.contains("X     X"));
+        assert!(rendered.contains("X               X"));
+        assert!(rendered.contains(".'      '."));
+        assert!(rendered.contains(r"/_______/________________\________\"));
         assert!(rendered.contains("Intentional panic:"));
         // The test backend includes the blank trailing cell of wide characters.
         assert!(rendered.replace(' ', "").contains("文件读取失败"));
         assert!(rendered.contains("R: Restart | Q: Exit"));
+        assert!(!rendered.contains("has stopped"));
+        assert!(!rendered.contains("Scroll"));
     }
 
     #[test]

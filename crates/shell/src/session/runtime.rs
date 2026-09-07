@@ -1887,18 +1887,11 @@ pub(super) fn trigger_command_line_panic() -> ! {
 
 pub(super) fn finalize_session_panic(caught: CaughtPanic, session_name: &str) -> String {
     let reason = caught.payload().to_string();
-    let id = caught.incident_id().to_string();
-    match caught.finalize(RecoveryOutcome::Unrecoverable(format!(
+    // Persist the full report, but keep the crash page focused on the error.
+    let _ = caught.finalize(RecoveryOutcome::Unrecoverable(format!(
         "the {session_name} stopped; waiting for the user to restart or exit"
-    ))) {
-        Ok(receipt) => format!(
-            "{session_name}: {reason}\n\n{}",
-            watchdog_incident_summary(&receipt)
-        ),
-        Err(error) => format!(
-            "{session_name}: {reason}\n\nIncident: {id}\nCould not finalize crash report: {error}"
-        ),
-    }
+    )));
+    format!("{session_name}: {reason}")
 }
 
 fn run_panic_screen(
@@ -2307,7 +2300,7 @@ pub(super) fn drain_watchdog_incidents(
     let mut panic_messages = Vec::new();
     for incident in watchdog.drain_incidents() {
         if incident.kind == IncidentKind::Panic {
-            panic_messages.push(watchdog_incident_summary(&incident));
+            panic_messages.push(incident.summary);
         } else {
             show_watchdog_incident(state, incident);
         }
