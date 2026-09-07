@@ -276,22 +276,19 @@ impl ShellSession {
             return;
         }
         if let Some(direction) = input.scroll_direction() {
+            let delta = match direction {
+                ScrollDirection::Up => -3,
+                ScrollDirection::Down => 3,
+                ScrollDirection::Left | ScrollDirection::Right => return,
+            };
             if self
                 .settings_state
                 .as_ref()
                 .is_some_and(|state| state.picker.is_some())
             {
-                self.select_settings_picker_delta(if direction == ScrollDirection::Up {
-                    -3
-                } else {
-                    3
-                });
+                self.select_settings_picker_delta(delta);
             } else {
-                self.scroll_settings(if direction == ScrollDirection::Up {
-                    -3
-                } else {
-                    3
-                });
+                self.scroll_settings(delta as i16);
             }
             self.refresh_hit_map();
             return;

@@ -402,48 +402,50 @@ fn system_status_add_scrolls_new_bottom_widget_fully_into_view() {
 }
 
 #[test]
-fn system_status_short_add_picker_double_click_uses_visible_absolute_index() {
-    let mut state = ShellSession::new_for_home_mode(
-        ShellLaunchConfig::default(),
-        (120, 12),
-        ShellHomeMode::User,
-    );
-    set_test_auth_role(&mut state, UserRole::Admin);
-    state.screen_stack.push(ShellScreen::SystemStatus);
-    state.focused_component = ShellComponent::SystemStatus;
-    state.begin_system_status_dashboard_edit();
-    state.open_system_status_add_picker();
-    state.select_system_status_picker_item(5);
-    let (model, layout) = state.system_status_layout().unwrap();
-    assert_eq!(
-        model.dashboard.picker.as_ref().unwrap().items[5].kind,
-        ui::SystemStatusWidgetKind::Temperature
-    );
-    let row = layout
-        .picker_items
-        .iter()
-        .find(|row| row.index == 5)
-        .unwrap()
-        .area;
-    state.apply_input(InputEvent::Mouse(ui::MouseEvent::new(
-        row.x,
-        row.y,
+fn system_status_short_add_picker_click_uses_visible_absolute_index() {
+    for kind in [
+        ui::MouseEventKind::Down(PointerButton::Left),
+        ui::MouseEventKind::Click(PointerButton::Left),
         ui::MouseEventKind::DoubleClick(PointerButton::Left),
-    )));
-    assert_eq!(
-        state.system_status_selected_widget,
-        Some(storage::SystemStatusWidgetKind::Temperature)
-    );
-    let draft = state.system_status_dashboard_draft.as_ref().unwrap();
-    assert_eq!(
-        draft
-            .widgets
+    ] {
+        let mut state = ShellSession::new_for_home_mode(
+            ShellLaunchConfig::default(),
+            (120, 12),
+            ShellHomeMode::User,
+        );
+        set_test_auth_role(&mut state, UserRole::Admin);
+        state.screen_stack.push(ShellScreen::SystemStatus);
+        state.focused_component = ShellComponent::SystemStatus;
+        state.begin_system_status_dashboard_edit();
+        state.open_system_status_add_picker();
+        state.select_system_status_picker_item(5);
+        let (model, layout) = state.system_status_layout().unwrap();
+        assert_eq!(
+            model.dashboard.picker.as_ref().unwrap().items[5].kind,
+            ui::SystemStatusWidgetKind::Temperature
+        );
+        let row = layout
+            .picker_items
             .iter()
-            .filter(|kind| **kind == storage::SystemStatusWidgetKind::Temperature)
-            .count(),
-        1
-    );
-    assert!(state.system_status_add_picker.is_none());
+            .find(|row| row.index == 5)
+            .unwrap()
+            .area;
+        state.apply_input(InputEvent::Mouse(ui::MouseEvent::new(row.x, row.y, kind)));
+        assert_eq!(
+            state.system_status_selected_widget,
+            Some(storage::SystemStatusWidgetKind::Temperature)
+        );
+        let draft = state.system_status_dashboard_draft.as_ref().unwrap();
+        assert_eq!(
+            draft
+                .widgets
+                .iter()
+                .filter(|kind| **kind == storage::SystemStatusWidgetKind::Temperature)
+                .count(),
+            1
+        );
+        assert!(state.system_status_add_picker.is_none());
+    }
 }
 
 #[test]
@@ -496,6 +498,10 @@ fn system_status_disabled_add_and_picker_rows_are_inert() {
         .unwrap();
     for kind in [
         ui::MouseEventKind::Down(PointerButton::Left),
+        ui::MouseEventKind::Click(PointerButton::Left),
+        ui::MouseEventKind::Up(PointerButton::Left),
+        ui::MouseEventKind::Down(PointerButton::Right),
+        ui::MouseEventKind::Down(PointerButton::Middle),
         ui::MouseEventKind::DoubleClick(PointerButton::Left),
     ] {
         state.apply_input(InputEvent::Mouse(ui::MouseEvent::new(
@@ -1036,7 +1042,23 @@ fn system_status_right_click_opens_contextual_edit_pickers() {
         widget_point.0 + 1
     );
 
-    state.close_system_status_size_picker();
+    let size_row = contextual_layout.size_picker_items[2].area;
+    let size_point = (size_row.x, size_row.y);
+    state.apply_input(InputEvent::mouse_down(PointerButton::Left, size_point));
+    state.apply_input(InputEvent::mouse_up(PointerButton::Left, size_point));
+    assert!(state.system_status_size_picker.is_none());
+    let draft = state.system_status_dashboard_draft.as_ref().unwrap();
+    assert_eq!(
+        draft
+            .wide
+            .placements
+            .iter()
+            .find(|p| p.kind == super::controller::system_status::storage_widget_kind(widget.kind))
+            .unwrap()
+            .size,
+        storage::SystemStatusWidgetSize::Large
+    );
+    assert!(state.system_status_widget_drag.is_none());
     state.finish_cancel_system_status_dashboard_edit();
     let layout = ui::system_status_layout(
         match ui::compute_shell_layout(Rect::new(0, 0, 120, 40)) {
@@ -1057,6 +1079,28 @@ fn system_status_right_click_opens_contextual_edit_pickers() {
         Some(blank_point)
     );
     assert!(state.system_status_size_picker.is_none());
+    let (model, layout) = state.system_status_layout().unwrap();
+    let picker = model.dashboard.picker.as_ref().unwrap();
+    let row = layout
+        .picker_items
+        .iter()
+        .find(|row| picker.items[row.index].kind == ui::SystemStatusWidgetKind::Activity)
+        .unwrap();
+    let point = (row.area.x, row.area.y);
+    state.apply_input(InputEvent::mouse_down(PointerButton::Left, point));
+    assert!(state.system_status_add_picker.is_none());
+    let draft = state.system_status_dashboard_draft.clone().unwrap();
+    state.apply_input(InputEvent::mouse_up(PointerButton::Left, point));
+    assert_eq!(state.system_status_dashboard_draft.as_ref(), Some(&draft));
+    assert_eq!(
+        draft
+            .widgets
+            .iter()
+            .filter(|kind| **kind == storage::SystemStatusWidgetKind::Activity)
+            .count(),
+        1
+    );
+    assert!(state.system_status_widget_drag.is_none());
 }
 
 #[test]
@@ -1265,48 +1309,50 @@ fn system_status_size_shortcut_cycles_and_picker_applies_active_profile_only() {
 }
 
 #[test]
-fn system_status_size_picker_double_clicks_exact_size_and_transitions_clear_it() {
-    let mut state = ShellSession::new_for_home_mode(
-        ShellLaunchConfig::default(),
-        (120, 40),
-        ShellHomeMode::User,
-    );
-    set_test_auth_role(&mut state, UserRole::Admin);
-    state.screen_stack.push(ShellScreen::SystemStatus);
-    state.focused_component = ShellComponent::SystemStatus;
-    state.begin_system_status_dashboard_edit();
-    state.system_status_selected_widget = Some(storage::SystemStatusWidgetKind::Cpu);
-    state.open_system_status_size_picker();
-    let model = state.to_system_status_view_model().unwrap();
-    let ui::ShellLayout::Full { main, .. } = ui::compute_shell_layout(Rect::new(0, 0, 120, 40))
-    else {
-        panic!()
-    };
-    let row = ui::system_status_layout(main, &model).size_picker_items[2].area;
-    state.apply_input(InputEvent::Mouse(ui::MouseEvent::new(
-        row.x,
-        row.y,
+fn system_status_size_picker_click_applies_exact_size_and_transitions_clear_it() {
+    for kind in [
+        ui::MouseEventKind::Down(PointerButton::Left),
+        ui::MouseEventKind::Click(PointerButton::Left),
         ui::MouseEventKind::DoubleClick(PointerButton::Left),
-    )));
-    let wide = state
-        .system_status_dashboard_draft
-        .as_ref()
-        .unwrap()
-        .wide
-        .placements
-        .iter()
-        .find(|p| p.kind == storage::SystemStatusWidgetKind::Cpu)
-        .unwrap();
-    assert_eq!(wide.size, storage::SystemStatusWidgetSize::Large);
-    assert!(state.system_status_size_picker.is_none());
+    ] {
+        let mut state = ShellSession::new_for_home_mode(
+            ShellLaunchConfig::default(),
+            (120, 40),
+            ShellHomeMode::User,
+        );
+        set_test_auth_role(&mut state, UserRole::Admin);
+        state.screen_stack.push(ShellScreen::SystemStatus);
+        state.focused_component = ShellComponent::SystemStatus;
+        state.begin_system_status_dashboard_edit();
+        state.system_status_selected_widget = Some(storage::SystemStatusWidgetKind::Cpu);
+        state.open_system_status_size_picker();
+        let model = state.to_system_status_view_model().unwrap();
+        let ui::ShellLayout::Full { main, .. } = ui::compute_shell_layout(Rect::new(0, 0, 120, 40))
+        else {
+            panic!()
+        };
+        let row = ui::system_status_layout(main, &model).size_picker_items[2].area;
+        state.apply_input(InputEvent::Mouse(ui::MouseEvent::new(row.x, row.y, kind)));
+        let wide = state
+            .system_status_dashboard_draft
+            .as_ref()
+            .unwrap()
+            .wide
+            .placements
+            .iter()
+            .find(|p| p.kind == storage::SystemStatusWidgetKind::Cpu)
+            .unwrap();
+        assert_eq!(wide.size, storage::SystemStatusWidgetSize::Large);
+        assert!(state.system_status_size_picker.is_none());
 
-    state.open_system_status_size_picker();
-    state.open_system_status_add_picker();
-    assert!(state.system_status_size_picker.is_none());
-    state.close_system_status_add_picker();
-    state.open_system_status_size_picker();
-    state.finish_cancel_system_status_dashboard_edit();
-    assert!(state.system_status_size_picker.is_none());
+        state.open_system_status_size_picker();
+        state.open_system_status_add_picker();
+        assert!(state.system_status_size_picker.is_none());
+        state.close_system_status_add_picker();
+        state.open_system_status_size_picker();
+        state.finish_cancel_system_status_dashboard_edit();
+        assert!(state.system_status_size_picker.is_none());
+    }
 }
 
 #[test]
@@ -5151,4 +5197,75 @@ fn hit_region_center(state: &ShellSession, component: ShellComponent) -> CellPos
         area.x.saturating_add(area.width / 2),
         area.y.saturating_add(area.height / 2),
     )
+}
+
+#[test]
+fn system_status_picker_wheel_moves_selection_without_editing_or_scrolling_dashboard() {
+    let mut state = ShellSession::new_for_home_mode(
+        ShellLaunchConfig::default(),
+        (120, 12),
+        ShellHomeMode::User,
+    );
+    set_test_auth_role(&mut state, UserRole::Admin);
+    state.screen_stack.push(ShellScreen::SystemStatus);
+    state.focused_component = ShellComponent::SystemStatus;
+    state.begin_system_status_dashboard_edit();
+    state.open_system_status_add_picker();
+    let draft = state.system_status_dashboard_draft.clone();
+    let scroll = state.system_status_dashboard_scroll_row;
+    let selected = state.system_status_add_picker.unwrap().selected;
+    let (_, layout) = state.system_status_layout().unwrap();
+    let area = layout.picker_items[0].area;
+    state.apply_input(InputEvent::mouse_scroll(
+        ScrollDirection::Down,
+        (area.x, area.y),
+    ));
+    let next = state.system_status_add_picker.unwrap().selected;
+    assert_ne!(next, selected);
+    let (model, layout) = state.system_status_layout().unwrap();
+    assert!(model.dashboard.picker.as_ref().unwrap().items[next].enabled);
+    let area = layout
+        .picker_items
+        .iter()
+        .find(|row| row.index == next)
+        .unwrap()
+        .area;
+    for kind in [
+        ui::MouseEventKind::Moved,
+        ui::MouseEventKind::Down(PointerButton::Right),
+        ui::MouseEventKind::Down(PointerButton::Middle),
+        ui::MouseEventKind::Scroll(ScrollDirection::Left),
+        ui::MouseEventKind::Scroll(ScrollDirection::Right),
+    ] {
+        state.apply_input(InputEvent::Mouse(ui::MouseEvent::new(area.x, area.y, kind)));
+        assert_eq!(state.system_status_add_picker.unwrap().selected, next);
+    }
+    state.apply_input(InputEvent::mouse_scroll(
+        ScrollDirection::Up,
+        (area.x, area.y),
+    ));
+    assert_eq!(state.system_status_add_picker.unwrap().selected, selected);
+    assert_eq!(state.system_status_dashboard_draft, draft);
+    assert_eq!(state.system_status_dashboard_scroll_row, scroll);
+
+    state.close_system_status_add_picker();
+    state.open_system_status_size_picker();
+    let selected = state.system_status_size_picker.unwrap().selected;
+    let (_, layout) = state.system_status_layout().unwrap();
+    let area = layout.size_picker_items[0].area;
+    state.apply_input(InputEvent::mouse_scroll(
+        ScrollDirection::Down,
+        (area.x, area.y),
+    ));
+    assert_eq!(
+        state.system_status_size_picker.unwrap().selected,
+        (selected + 1) % 3
+    );
+    state.apply_input(InputEvent::mouse_scroll(
+        ScrollDirection::Up,
+        (area.x, area.y),
+    ));
+    assert_eq!(state.system_status_size_picker.unwrap().selected, selected);
+    assert_eq!(state.system_status_dashboard_draft, draft);
+    assert_eq!(state.system_status_dashboard_scroll_row, scroll);
 }

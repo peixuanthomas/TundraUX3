@@ -194,10 +194,12 @@ impl List {
                         self.select_from_pointer(index)
                     }
                     MouseKind::DoubleClick(MouseButton::Left) => {
-                        self.select_from_pointer(index);
-                        self.selected_item()
-                            .map(|item| ComponentEvent::Activated(item.id.clone()))
-                            .unwrap_or(ComponentEvent::None)
+                        match self.select_from_pointer(index) {
+                            ComponentEvent::Selected(_, index) => {
+                                ComponentEvent::Activated(self.items[index].id.clone())
+                            }
+                            event => event,
+                        }
                     }
                     _ => ComponentEvent::None,
                 }

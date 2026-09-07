@@ -1588,7 +1588,7 @@ impl ShellSession {
                     },
                 )
             }
-            ui::MouseEventKind::Down(button) => {
+            ui::MouseEventKind::Down(button @ PointerButton::Left) => {
                 if let Some(target) = hit_target {
                     let click = self.register_click(hit_target, coordinates, button, received_at);
                     if target == ShellComponent::HomeLogout && button == PointerButton::Left {
@@ -2006,6 +2006,26 @@ impl ShellSession {
         let command = match mouse.kind {
             ui::MouseEventKind::Moved => ShellCommand::Hover(hit_target),
             ui::MouseEventKind::Scroll(ScrollDirection::Up)
+                if matches!(hit, Some(ui::SystemStatusHitTarget::PickerItem(_))) =>
+            {
+                ShellCommand::SystemStatusPickerPrevious
+            }
+            ui::MouseEventKind::Scroll(ScrollDirection::Down)
+                if matches!(hit, Some(ui::SystemStatusHitTarget::PickerItem(_))) =>
+            {
+                ShellCommand::SystemStatusPickerNext
+            }
+            ui::MouseEventKind::Scroll(ScrollDirection::Up)
+                if matches!(hit, Some(ui::SystemStatusHitTarget::SizePickerItem(_))) =>
+            {
+                ShellCommand::SystemStatusSizePickerPrevious
+            }
+            ui::MouseEventKind::Scroll(ScrollDirection::Down)
+                if matches!(hit, Some(ui::SystemStatusHitTarget::SizePickerItem(_))) =>
+            {
+                ShellCommand::SystemStatusSizePickerNext
+            }
+            ui::MouseEventKind::Scroll(ScrollDirection::Up)
                 if !modal_open && diagnostics_active =>
             {
                 ShellCommand::DiagnosticsPrevious
@@ -2033,18 +2053,14 @@ impl ShellSession {
             }
             ui::MouseEventKind::DoubleClick(PointerButton::Left) => activate_hit(hit),
             ui::MouseEventKind::Down(PointerButton::Left) => match hit {
-                Some(ui::SystemStatusHitTarget::DialogConfirm) => {
-                    ShellCommand::SystemStatusDiscardEdit
-                }
-                Some(ui::SystemStatusHitTarget::DialogCancel) => {
-                    ShellCommand::SystemStatusContinueEdit
-                }
-                Some(ui::SystemStatusHitTarget::PickerItem(index)) if picker_enabled(index) => {
-                    ShellCommand::SystemStatusPickerSelect(index)
-                }
-                Some(ui::SystemStatusHitTarget::SizePickerItem(index)) => {
-                    ShellCommand::SystemStatusSizePickerSelect(index)
-                }
+                // Menu choices execute on a single press, just like ContextMenu
+                // and the settings pickers. Only dashboard cards select first.
+                Some(
+                    ui::SystemStatusHitTarget::DialogConfirm
+                    | ui::SystemStatusHitTarget::DialogCancel
+                    | ui::SystemStatusHitTarget::PickerItem(_)
+                    | ui::SystemStatusHitTarget::SizePickerItem(_),
+                ) => activate_hit(hit),
                 Some(ui::SystemStatusHitTarget::Widget(kind)) if editing => {
                     ShellCommand::SystemStatusWidgetPointerDown(kind, coordinates)
                 }
@@ -2132,22 +2148,10 @@ impl ShellSession {
                 | None => ShellCommand::CaptureOverlayInput,
             },
             ui::MouseEventKind::Click(PointerButton::Left) => match hit {
-                Some(ui::SystemStatusHitTarget::DialogConfirm) => {
-                    ShellCommand::SystemStatusDiscardEdit
-                }
-                Some(ui::SystemStatusHitTarget::DialogCancel) => {
-                    ShellCommand::SystemStatusContinueEdit
-                }
-                Some(ui::SystemStatusHitTarget::PickerItem(index)) if picker_enabled(index) => {
-                    ShellCommand::SystemStatusPickerSelect(index)
-                }
-                Some(ui::SystemStatusHitTarget::SizePickerItem(index)) => {
-                    ShellCommand::SystemStatusSizePickerSelect(index)
-                }
                 Some(ui::SystemStatusHitTarget::Widget(kind)) if !editing => {
                     ShellCommand::SystemStatusSelectWidget(kind)
                 }
-                _ => ShellCommand::CaptureOverlayInput,
+                _ => activate_hit(hit),
             },
             _ => ShellCommand::CaptureOverlayInput,
         };

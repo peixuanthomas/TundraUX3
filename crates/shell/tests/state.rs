@@ -1434,3 +1434,15 @@ impl Drop for FixtureRoot {
         let _ = fs::remove_dir_all(&self.path);
     }
 }
+
+#[test]
+fn middle_click_does_not_select_or_activate_home_entries() {
+    let mut state =
+        ShellSession::new_for_home_mode(build_default_config(), (120, 40), ShellHomeMode::User);
+    let launcher = home_entry_coordinates(&state, 1);
+    let selected = state.selected_home_entry_index();
+    state.apply_input(InputEvent::mouse_down(PointerButton::Middle, launcher));
+    state.apply_input(InputEvent::mouse_up(PointerButton::Middle, launcher));
+    assert_eq!(state.selected_home_entry_index(), selected);
+    assert_eq!(state.active_screen(), ShellScreen::Home);
+}

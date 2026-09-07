@@ -100,6 +100,10 @@ impl Button {
                             ComponentEvent::None
                         }
                     }
+                    MouseKind::Drag(super::MouseButton::Left) if self.state.active => {
+                        self.state.active = false;
+                        ComponentEvent::Consumed
+                    }
                     MouseKind::Click(button) if inside && button == super::MouseButton::Left => {
                         self.state.focused = true;
                         self.state.active = false;

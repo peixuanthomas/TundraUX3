@@ -135,7 +135,12 @@ impl Dialog {
                 _ => ComponentEvent::Consumed,
             },
             InputEvent::Mouse(mouse) => {
-                if !contains_point(area, mouse.column(), mouse.row()) {
+                if !contains_point(area, mouse.column(), mouse.row())
+                    && !matches!(
+                        mouse.kind,
+                        MouseKind::Up(MouseButton::Left) | MouseKind::Drag(MouseButton::Left)
+                    )
+                {
                     return ComponentEvent::Consumed;
                 }
 

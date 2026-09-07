@@ -676,3 +676,124 @@ fn frame_render_entry_points_cover_bordered_and_borderless_components() {
         })
         .expect("draw reusable components");
 }
+
+#[test]
+fn list_double_click_only_activates_the_enabled_row_under_the_pointer() {
+    let area = Rect::new(1, 1, 20, 6);
+    let mut list = List::new(
+        "list",
+        vec![
+            ListItem::new("open", "Open"),
+            ListItem::new("disabled", "Disabled").disabled(true),
+        ],
+    );
+    for (x, y) in [(2, 3), (2, 4), (1, 1), (0, 0)] {
+        let event = list.handle_event(
+            InputEvent::mouse(MouseEvent::double_click(x, y, MouseButton::Left)),
+            area,
+        );
+        assert!(
+            !matches!(event, ComponentEvent::Activated(_)),
+            "unexpected activation at {x},{y}"
+        );
+        assert_eq!(list.selected_index(), Some(0));
+    }
+}
+
+#[test]
+fn context_menu_disabled_or_empty_double_click_does_not_activate_previous_selection() {
+    let area = Rect::new(1, 1, 20, 6);
+    let mut menu = ContextMenu::new(
+        "menu",
+        vec![
+            ContextMenuItem::new("open", "Open"),
+            ContextMenuItem::new("disabled", "Disabled").disabled(true),
+        ],
+    );
+    menu.open();
+    for (x, y) in [(2, 3), (2, 4), (1, 1)] {
+        let event = menu.handle_event(
+            InputEvent::mouse(MouseEvent::double_click(x, y, MouseButton::Left)),
+            area,
+        );
+        assert!(!matches!(event, ComponentEvent::Activated(_)));
+        assert!(menu.open);
+    }
+}
+
+#[test]
+fn dialog_cancels_button_capture_after_outside_release_or_drag() {
+    let area = Rect::new(1, 1, 20, 5);
+    let mut dialog = Dialog::new(
+        "confirm",
+        "Confirm",
+        "Apply?",
+        vec![DialogAction::new("ok", "OK")],
+    );
+    dialog.open();
+    let button = dialog.action_areas(area)[0].1;
+    let point = (button.x, button.y);
+    for kind in [
+        ui::MouseEventKind::Up(MouseButton::Left),
+        ui::MouseEventKind::Drag(MouseButton::Left),
+    ] {
+        dialog.handle_event(
+            InputEvent::mouse(MouseEvent::down(point.0, point.1, MouseButton::Left)),
+            area,
+        );
+        assert!(!matches!(
+            dialog.handle_event(InputEvent::mouse(MouseEvent::new(0, 0, kind)), area),
+            ComponentEvent::Activated(_)
+        ));
+        assert!(!matches!(
+            dialog.handle_event(
+                InputEvent::mouse(MouseEvent::up(point.0, point.1, MouseButton::Left)),
+                area
+            ),
+            ComponentEvent::Activated(_)
+        ));
+    }
+    dialog.handle_event(
+        InputEvent::mouse(MouseEvent::down(point.0, point.1, MouseButton::Left)),
+        area,
+    );
+    assert_eq!(
+        dialog.handle_event(
+            InputEvent::mouse(MouseEvent::up(point.0, point.1, MouseButton::Left)),
+            area
+        ),
+        ComponentEvent::Activated(ComponentId::new("ok"))
+    );
+}
+
+#[test]
+fn context_menu_single_click_activates_even_the_already_selected_item() {
+    for kind in [
+        ui::MouseEventKind::Down(MouseButton::Left),
+        ui::MouseEventKind::Click(MouseButton::Left),
+    ] {
+        for index in [0, 1] {
+            let mut menu = ContextMenu::new(
+                "menu",
+                vec![
+                    ContextMenuItem::new("open", "Open"),
+                    ContextMenuItem::new("rename", "Rename"),
+                ],
+            );
+            menu.open();
+            let event = menu.handle_event(
+                InputEvent::mouse(MouseEvent::new(2, 2 + index, kind)),
+                Rect::new(1, 1, 20, 4),
+            );
+            assert_eq!(
+                event,
+                ComponentEvent::Activated(ComponentId::new(if index == 0 {
+                    "open"
+                } else {
+                    "rename"
+                }))
+            );
+            assert!(!menu.open);
+        }
+    }
+}

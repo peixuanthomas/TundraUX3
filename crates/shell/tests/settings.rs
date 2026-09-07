@@ -123,6 +123,11 @@ fn mouse_wheel_scrolls_only_to_the_settings_content_boundary() {
     assert!(overflowing_layout.scrollbar.is_some());
     assert!(overflowing_layout.max_scroll_offset > 0);
 
+    for direction in [shell::ScrollDirection::Left, shell::ScrollDirection::Right] {
+        state.apply_input_with_platform(InputEvent::mouse_scroll(direction, (60, 6)), &platform);
+        assert_eq!(state.to_settings_view_model().unwrap().scroll_offset, 0);
+    }
+
     for _ in 0..100 {
         state.apply_input_with_platform(
             InputEvent::mouse_scroll(shell::ScrollDirection::Down, (60, 6)),
@@ -655,6 +660,19 @@ fn animation_speed_is_per_user_adjustable_and_has_a_default_button() {
     assert_eq!(picker.selected_index, 3);
     assert_eq!(picker.options.len(), 7);
     assert_eq!(normal_appearance().animation_speed_percent, 125);
+    for direction in [shell::ScrollDirection::Left, shell::ScrollDirection::Right] {
+        state.apply_input_with_platform(InputEvent::mouse_scroll(direction, (60, 10)), &platform);
+        assert_eq!(
+            state
+                .to_settings_view_model()
+                .unwrap()
+                .picker
+                .as_ref()
+                .unwrap()
+                .selected_index,
+            3
+        );
+    }
 
     let fastest = ui::settings_layout(main, &picker_model)
         .picker_options
