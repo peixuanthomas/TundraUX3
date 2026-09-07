@@ -140,9 +140,13 @@ impl ShellSession {
     pub(in crate::session) fn notification_active_modal_view_model(
         &self,
     ) -> Option<ui::NotificationViewModel> {
-        self.ui
+        let mut model = self
+            .ui
             .notification_bindings
-            .active_view_model(self.app.notification_center())
+            .active_view_model(self.app.notification_center())?;
+        model.stacked_actions =
+            self.notification_active_modal_component() == Some(ShellComponent::ExitDialog);
+        Some(model)
     }
 
     pub(in crate::session) fn notification_action_index_for_input(

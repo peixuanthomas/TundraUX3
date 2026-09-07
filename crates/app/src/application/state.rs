@@ -63,6 +63,7 @@ pub enum AppCommand {
     ConfirmExit,
     CancelExit,
     RequestPowerOff,
+    RequestReboot,
 }
 
 /// The runtime effect requested after a state transition.
@@ -71,6 +72,7 @@ pub enum AppAction {
     Redraw,
     Exit,
     PowerOff,
+    Reboot,
 }
 
 /// A read-only view of the global application state.
@@ -247,6 +249,10 @@ impl AppState {
             AppCommand::RequestPowerOff => {
                 self.exit_confirmation_requested = false;
                 AppAction::PowerOff
+            }
+            AppCommand::RequestReboot => {
+                self.exit_confirmation_requested = false;
+                AppAction::Reboot
             }
         }
     }

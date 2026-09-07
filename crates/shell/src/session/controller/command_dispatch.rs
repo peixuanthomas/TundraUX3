@@ -169,11 +169,18 @@ impl ShellSession {
                     | ShellCommand::ConfirmExit
                     | ShellCommand::Restart
                     | ShellCommand::PowerOff
+                    | ShellCommand::Reboot
             )
         {
             let status = "Wait for the Editor save to finish before exiting";
             self.editor_message = Some(status.to_string());
             self.notify_status(status);
+            if matches!(
+                routed.command,
+                ShellCommand::PowerOff | ShellCommand::Reboot
+            ) {
+                self.show_exit_confirmation_modal(platform);
+            }
             self.refresh_hit_map();
             return ShellAction::Redraw;
         }
@@ -280,14 +287,18 @@ impl ShellSession {
                 self.app
                     .dispatch_at(app::AppCommand::ConfirmExit, received_at)
             }
-            ShellCommand::PowerOff => {
+            ShellCommand::PowerOff | ShellCommand::Reboot => {
                 if !self.persist_editor_recovery_now(received_at) {
                     self.shutdown_requested = false;
                     self.show_exit_confirmation_modal(platform);
                     return ShellAction::Redraw;
                 }
-                self.app
-                    .dispatch_at(app::AppCommand::RequestPowerOff, received_at)
+                let command = if routed.command == ShellCommand::Reboot {
+                    app::AppCommand::RequestReboot
+                } else {
+                    app::AppCommand::RequestPowerOff
+                };
+                self.app.dispatch_at(command, received_at)
             }
             ShellCommand::CancelExit => {
                 self.notification_dismiss_modal_by_key(EXIT_CONFIRM_NOTIFICATION_KEY);
@@ -1817,16 +1828,23 @@ impl ShellSession {
         let poweroff_available = platform.capabilities().power == CapabilityStatus::Supported
             && platform.can_poweroff().unwrap_or(false);
         let mut actions = vec![
-            ShellNotificationAction::new("restore-terminal", "Restore terminal")
+            ShellNotificationAction::new("restore-terminal", "Exit TundraUX")
                 .with_shortcut(InputKey::Char('y'))
                 .with_follow_up(ShellCommand::ConfirmExit),
-            ShellNotificationAction::new("restart", "Restart")
+            ShellNotificationAction::new("restart", "Restart TundraUX")
                 .with_shortcut(InputKey::Char('r'))
                 .with_follow_up(ShellCommand::Restart),
         ];
+        if platform.can_reboot().unwrap_or(false) {
+            actions.push(
+                ShellNotificationAction::new("reboot", "Restart computer")
+                    .with_shortcut(InputKey::Char('b'))
+                    .with_follow_up(ShellCommand::Reboot),
+            );
+        }
         if poweroff_available {
             actions.push(
-                ShellNotificationAction::new("poweroff", "Poweroff")
+                ShellNotificationAction::new("poweroff", "Shut down computer")
                     .with_shortcut(InputKey::Char('p'))
                     .with_follow_up(ShellCommand::PowerOff),
             );
@@ -1838,14 +1856,10 @@ impl ShellSession {
                 .with_follow_up(ShellCommand::CancelExit),
         );
 
-        let message = if poweroff_available {
-            "Exit, restart TundraUX, power off this computer, or cancel?"
-        } else {
-            "Exit, restart TundraUX, or cancel?"
-        };
+        let message = "Choose an action. Esc returns to TundraUX.";
         self.notify_modal_with_options(
             ShellNotification::modal(
-                "Exit TundraUX 3",
+                "Exit & power",
                 message,
                 ui::NotificationTone::Warning,
                 actions,

@@ -686,6 +686,17 @@ pub trait Platform: Send + Sync {
             capability: "power.poweroff",
         })
     }
+
+    /// Whether this session can request an operating-system restart.
+    fn can_reboot(&self) -> Result<bool, PlatformError> {
+        Ok(false)
+    }
+
+    fn reboot(&self) -> Result<(), PlatformError> {
+        Err(PlatformError::Unsupported {
+            capability: "power.reboot",
+        })
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

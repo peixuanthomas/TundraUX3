@@ -678,6 +678,61 @@ fn time_sync_failure_dialog_renders_expected_content() {
 }
 
 #[test]
+fn exit_menu_actions_remain_separate_and_visible_after_resize() {
+    let labels = [
+        "Exit TundraUX",
+        "Restart TundraUX",
+        "Restart computer",
+        "Shut down computer",
+        "Cancel",
+    ];
+    let mut model = NotificationViewModel::new(
+        "exit",
+        NotificationLevel::Modal,
+        NotificationTone::Warning,
+        "Exit & power",
+        "Choose an action. Esc returns to TundraUX.",
+        labels
+            .iter()
+            .zip(["Y", "R", "B", "P", "N"])
+            .map(|(label, key)| NotificationActionViewModel::new(*label, *label).with_shortcut(key))
+            .collect(),
+    );
+    model.stacked_actions = true;
+    for (width, height) in [(120, 40), (80, 24), (50, 12)] {
+        let area = Rect::new(0, 0, width, height);
+        let NotificationLayout::Dialog(layout) = notification_layout(area, &model) else {
+            panic!("exit actions must fit {width}x{height}");
+        };
+        assert_eq!(layout.actions.len(), labels.len());
+        for pair in layout.actions.windows(2) {
+            assert_eq!(pair[0].area.x, pair[1].area.x);
+            assert_eq!(pair[0].area.width, pair[1].area.width);
+            assert!(pair[0].area.bottom() <= pair[1].area.y);
+            if height >= 24 {
+                assert!(pair[0].area.bottom() < pair[1].area.y);
+            }
+        }
+        assert!(
+            layout
+                .actions
+                .iter()
+                .all(|action| action.area.bottom() < layout.dialog.bottom())
+        );
+        let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+        terminal
+            .draw(|frame| {
+                render_notification_overlay(frame, area, &model, &TundraTheme::default_dark())
+            })
+            .unwrap();
+        let output = terminal_output(&terminal);
+        for label in labels {
+            assert!(output.contains(label), "{width}x{height}: {label}");
+        }
+    }
+}
+
+#[test]
 fn exit_confirmation_keeps_all_componentized_actions_visible() {
     let model = ExitConfirmViewModel::new();
     let mut terminal = Terminal::new(TestBackend::new(80, 24)).expect("test terminal");

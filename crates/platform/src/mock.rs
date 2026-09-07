@@ -318,6 +318,10 @@ impl Platform for MockPlatform {
         self.capabilities.clone()
     }
 
+    fn can_reboot(&self) -> Result<bool, PlatformError> {
+        Ok(self.capabilities.power == crate::CapabilityStatus::Supported)
+    }
+
     fn startup_permission_status(&self) -> Result<StartupPermissionStatus, PlatformError> {
         self.record(MockCall::StartupPermissionStatus);
         self.startup_permission_status

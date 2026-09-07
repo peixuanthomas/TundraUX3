@@ -37,6 +37,7 @@ pub struct NotificationViewModel {
     pub title: String,
     pub message: String,
     pub actions: Vec<NotificationActionViewModel>,
+    pub stacked_actions: bool,
 }
 
 impl NotificationViewModel {
@@ -55,6 +56,7 @@ impl NotificationViewModel {
             title: title.into(),
             message: message.into(),
             actions,
+            stacked_actions: false,
         }
     }
 }

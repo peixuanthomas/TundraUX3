@@ -12,6 +12,7 @@ pub enum ShellCommand {
     ConfirmExit,
     Restart,
     PowerOff,
+    Reboot,
     CancelExit,
     OpenLatestCrashReport,
     CopyLatestCrashSummary,

@@ -65,85 +65,25 @@ pub fn render_exit_confirmation_contextual(
     model: &ExitConfirmViewModel,
     context: &RenderContext,
 ) {
-    let theme = &context.compatibility_theme();
-    let dialog = centered_rect(area, area.width.min(54), area.height.min(8));
-    let surface = Surface::new()
-        .titled(model.title.clone())
-        .bordered(true)
-        .raised(true);
-    let inner = surface.inner(dialog);
-
-    frame.render_widget(Clear, dialog);
-    surface.render_frame(frame, dialog, context);
-
-    if inner.width == 0 || inner.height == 0 {
-        return;
-    }
-
-    frame.render_widget(
-        Paragraph::new(model.message.as_str())
-            .alignment(HorizontalAlignment::Center)
-            .wrap(Wrap { trim: true }),
-        Rect::new(inner.x, inner.y, inner.width, 1),
+    let mut notification = crate::NotificationViewModel::new(
+        "shell.exit",
+        crate::NotificationLevel::Modal,
+        crate::NotificationTone::Warning,
+        &model.title,
+        &model.message,
+        vec![
+            crate::NotificationActionViewModel::new("exit", &model.confirm_label),
+            crate::NotificationActionViewModel::new("restart", &model.restart_label),
+            crate::NotificationActionViewModel::new("cancel", &model.cancel_label),
+        ],
     );
-
-    if inner.height > 2 {
-        let action_row = Rect::new(inner.x, inner.y.saturating_add(2), inner.width, 1);
-        let confirm = Button::new("shell.exit.confirm", model.confirm_label.clone());
-        let restart = Button::new("shell.exit.restart", model.restart_label.clone());
-        let confirm_width = u16::try_from(confirm.rendered_label_width())
-            .unwrap_or(u16::MAX)
-            .min(action_row.width);
-        let restart_width = u16::try_from(restart.rendered_label_width())
-            .unwrap_or(u16::MAX)
-            .min(action_row.width);
-        let actions_width = confirm_width
-            .saturating_add(4)
-            .saturating_add(restart_width)
-            .min(action_row.width);
-        let actions_x = action_row
-            .x
-            .saturating_add(action_row.width.saturating_sub(actions_width) / 2);
-
-        confirm.render_borderless_frame(
-            frame,
-            Rect::new(actions_x, action_row.y, confirm_width, 1),
-            theme,
-        );
-        restart.render_borderless_frame(
-            frame,
-            Rect::new(
-                actions_x.saturating_add(confirm_width).saturating_add(4),
-                action_row.y,
-                restart_width.min(
-                    action_row
-                        .right()
-                        .saturating_sub(actions_x.saturating_add(confirm_width).saturating_add(4)),
-                ),
-                1,
-            ),
-            theme,
-        );
-    }
-
-    if inner.height > 3 {
-        let cancel = Button::new("shell.exit.cancel", model.cancel_label.clone());
-        let cancel_width = u16::try_from(cancel.rendered_label_width())
-            .unwrap_or(u16::MAX)
-            .min(inner.width);
-        cancel.render_borderless_frame(
-            frame,
-            Rect::new(
-                inner
-                    .x
-                    .saturating_add(inner.width.saturating_sub(cancel_width) / 2),
-                inner.y.saturating_add(3),
-                cancel_width,
-                1,
-            ),
-            theme,
-        );
-    }
+    notification.stacked_actions = true;
+    crate::screens::notifications::render_notification_overlay_context(
+        frame,
+        area,
+        &notification,
+        context,
+    );
 }
 
 pub fn render_time_sync_failure_dialog(

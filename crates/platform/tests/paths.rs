@@ -456,7 +456,7 @@ fn linux_native_backend_reports_desktop_capabilities() {
             .iter()
             .filter(|(_, status)| *status == CapabilityStatus::Supported)
             .count(),
-        15
+        checks.len()
     );
     assert_eq!(
         checks

@@ -306,7 +306,7 @@ impl Platform for LinuxPlatform {
     fn poweroff(&self) -> Result<(), PlatformError> {
         with_logind_proxy(|proxy| {
             let availability = logind_can_poweroff(proxy)?;
-            if !logind_allows_poweroff(&availability) {
+            if !logind_allows_power_action(&availability) {
                 return Err(PlatformError::Native {
                     operation: "query logind power-off availability",
                     message: format!("logind returned {availability:?}"),
@@ -319,7 +319,26 @@ impl Platform for LinuxPlatform {
     }
 
     fn can_poweroff(&self) -> Result<bool, PlatformError> {
-        with_logind_proxy(|proxy| Ok(logind_allows_poweroff(&logind_can_poweroff(proxy)?)))
+        with_logind_proxy(|proxy| Ok(logind_allows_power_action(&logind_can_poweroff(proxy)?)))
+    }
+
+    fn can_reboot(&self) -> Result<bool, PlatformError> {
+        with_logind_proxy(|proxy| Ok(logind_allows_power_action(&logind_can_reboot(proxy)?)))
+    }
+
+    fn reboot(&self) -> Result<(), PlatformError> {
+        with_logind_proxy(|proxy| {
+            let availability = logind_can_reboot(proxy)?;
+            if !logind_allows_power_action(&availability) {
+                return Err(PlatformError::Native {
+                    operation: "query logind restart availability",
+                    message: format!("logind returned {availability:?}"),
+                });
+            }
+            proxy
+                .call::<_, _, ()>("Reboot", &(true,))
+                .map_err(zbus_error("request interactive logind restart"))
+        })
     }
 
     fn poll_lifecycle_event(&self) -> Result<Option<PlatformLifecycleEvent>, PlatformError> {
@@ -406,8 +425,14 @@ fn logind_can_poweroff(proxy: &zbus::blocking::Proxy<'_>) -> Result<String, Plat
         .map_err(zbus_error("query logind power-off availability"))
 }
 
-fn logind_allows_poweroff(value: &str) -> bool {
+fn logind_allows_power_action(value: &str) -> bool {
     matches!(value, "yes" | "challenge")
+}
+
+fn logind_can_reboot(proxy: &zbus::blocking::Proxy<'_>) -> Result<String, PlatformError> {
+    proxy
+        .call("CanReboot", &())
+        .map_err(zbus_error("query logind restart availability"))
 }
 
 struct LifecycleEvents {
@@ -2269,7 +2294,7 @@ mod tests {
     use super::{
         MountInfo, XdgBaseDirs, XdgUserDirs, ensure_private_dir, format_trash_timestamp,
         is_local_block_mount_with_sysfs, linux_interface_kind_with_sysfs, list_trash_root,
-        logind_allows_poweroff, mount_kind_from_sysfs_path, move_one_to_trash_root,
+        logind_allows_power_action, mount_kind_from_sysfs_path, move_one_to_trash_root,
         parse_mountinfo, parse_trash_timestamp, parse_trashinfo, percent_decode_path,
         percent_encode_path, private_trash_root, private_trash_root_with_topdir,
         restore_trash_item_from_root, restore_trash_item_from_root_with, spawn_detached_child,
@@ -2715,11 +2740,11 @@ mod tests {
     }
 
     #[test]
-    fn logind_poweroff_accepts_yes_and_challenge_only() {
-        assert!(logind_allows_poweroff("yes"));
-        assert!(logind_allows_poweroff("challenge"));
-        assert!(!logind_allows_poweroff("no"));
-        assert!(!logind_allows_poweroff("na"));
-        assert!(!logind_allows_poweroff(""));
+    fn logind_power_actions_accept_yes_and_challenge_only() {
+        assert!(logind_allows_power_action("yes"));
+        assert!(logind_allows_power_action("challenge"));
+        assert!(!logind_allows_power_action("no"));
+        assert!(!logind_allows_power_action("na"));
+        assert!(!logind_allows_power_action(""));
     }
 }

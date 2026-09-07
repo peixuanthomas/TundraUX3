@@ -53,7 +53,8 @@ pub fn notification_layout(area: Rect, model: &NotificationViewModel) -> Notific
             height: notification_wrapped_line_count(text, inner_width).max(1),
         })
         .collect::<Vec<_>>();
-    let horizontal_actions = actions_fit_one_line(&action_metrics, inner_width);
+    let horizontal_actions =
+        !model.stacked_actions && actions_fit_one_line(&action_metrics, inner_width);
     let action_height = if action_metrics.is_empty() {
         0
     } else if horizontal_actions {
@@ -63,10 +64,15 @@ pub fn notification_layout(area: Rect, model: &NotificationViewModel) -> Notific
             .iter()
             .fold(0_u16, |height, metric| height.saturating_add(metric.height))
     };
-    let content_height = NOTIFICATION_DIALOG_BORDER_CELLS
+    let mut content_height = NOTIFICATION_DIALOG_BORDER_CELLS
         .saturating_add(message_height)
         .saturating_add(u16::from(!action_metrics.is_empty()))
         .saturating_add(action_height);
+    // Space menu actions apart when there is room; retain every action at 50x12.
+    let gaps = u16::try_from(action_metrics.len().saturating_sub(1)).unwrap_or(u16::MAX);
+    let action_gap =
+        u16::from(model.stacked_actions && area.height >= content_height.saturating_add(gaps));
+    content_height = content_height.saturating_add(action_gap.saturating_mul(gaps));
     let required_height = if action_metrics.is_empty() {
         content_height.max(NOTIFICATION_DIALOG_MIN_HEIGHT)
     } else {
@@ -96,7 +102,13 @@ pub fn notification_layout(area: Rect, model: &NotificationViewModel) -> Notific
     let actions = if horizontal_actions {
         horizontal_action_layouts(inner, action_y, &action_metrics)
     } else {
-        stacked_action_layouts(inner, action_y, &action_metrics)
+        stacked_action_layouts(
+            inner,
+            action_y,
+            &action_metrics,
+            action_gap,
+            model.stacked_actions,
+        )
     };
 
     NotificationLayout::Dialog(NotificationDialogLayout {
@@ -225,13 +237,22 @@ fn stacked_action_layouts(
     inner: Rect,
     y: u16,
     metrics: &[ActionMetric],
+    gap: u16,
+    uniform_width: bool,
 ) -> Vec<NotificationActionLayout> {
     let mut y = y;
+    let menu_width = metrics.iter().map(|metric| metric.width).max().unwrap_or(1);
     metrics
         .iter()
         .enumerate()
         .map(|(index, metric)| {
-            let width = metric.width.min(inner.width).max(1);
+            let width = if uniform_width {
+                menu_width
+            } else {
+                metric.width
+            }
+            .min(inner.width)
+            .max(1);
             let area = Rect::new(
                 inner
                     .x
@@ -240,7 +261,7 @@ fn stacked_action_layouts(
                 width,
                 metric.height,
             );
-            y = y.saturating_add(metric.height);
+            y = y.saturating_add(metric.height).saturating_add(gap);
             NotificationActionLayout { index, area }
         })
         .collect()

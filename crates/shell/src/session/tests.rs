@@ -3823,7 +3823,7 @@ fn explorer_semantic_replacements_gate_input_while_active_popup_is_present() {
 }
 
 #[test]
-fn exit_confirmation_names_the_physical_power_action_poweroff() {
+fn exit_confirmation_distinguishes_program_and_computer_actions() {
     let root = std::env::temp_dir().join(format!(
         "tundra-shell-poweroff-label-{}",
         std::process::id()
@@ -3857,7 +3857,76 @@ fn exit_confirmation_names_the_physical_power_action_poweroff() {
         .iter()
         .find(|action| action.id == "poweroff")
         .expect("poweroff action");
-    assert_eq!(poweroff.label, "Poweroff");
+    assert_eq!(poweroff.label, "Shut down computer");
+    assert!(modal.stacked_actions);
+    assert_eq!(
+        modal
+            .actions
+            .iter()
+            .map(|action| action.label.as_str())
+            .collect::<Vec<_>>(),
+        [
+            "Exit TundraUX",
+            "Restart TundraUX",
+            "Restart computer",
+            "Shut down computer",
+            "Cancel"
+        ]
+    );
+
+    for (key, expected, restart) in [
+        ("b", ShellAction::Reboot, false),
+        ("B", ShellAction::Reboot, false),
+        ("p", ShellAction::PowerOff, false),
+        ("r", ShellAction::Exit, true),
+        ("y", ShellAction::Exit, false),
+        ("Esc", ShellAction::Redraw, false),
+    ] {
+        let mut state = ShellSession::new(ShellLaunchConfig::default(), (120, 40));
+        state.apply_input_with_platform(InputEvent::from_key_label("q"), &platform);
+        assert_eq!(
+            state.apply_input_with_platform(InputEvent::from_key_label(key), &platform),
+            expected,
+            "{key}"
+        );
+        assert_eq!(state.restart_requested(), restart, "{key}");
+    }
+
+    state.editor_save_state = Some(EditorSaveState {
+        id: 5,
+        path: PathBuf::from("large.txt"),
+        document_generation: state.editor_document_generation,
+        revision: 1,
+        stage: EditorTaskStage::Writing,
+    });
+    assert_eq!(
+        state.apply_input_with_platform(InputEvent::from_key_label("b"), &platform),
+        ShellAction::Redraw
+    );
+    assert!(
+        state.to_notification_view_model().is_some(),
+        "keep the menu available while saving"
+    );
+    state.editor_save_state = None;
+    assert_eq!(
+        state.apply_input_with_platform(InputEvent::from_key_label("b"), &platform),
+        ShellAction::Reboot
+    );
+
+    let unsupported = platform.with_capabilities(platform::PlatformCapabilities::unsupported());
+    let mut state = ShellSession::new(ShellLaunchConfig::default(), (120, 40));
+    state.apply_input_with_platform(InputEvent::from_key_label("q"), &unsupported);
+    let modal = state.to_notification_view_model().unwrap();
+    assert!(
+        modal
+            .actions
+            .iter()
+            .all(|action| action.id != "reboot" && action.id != "poweroff")
+    );
+    assert_eq!(
+        state.apply_input_with_platform(InputEvent::from_key_label("b"), &unsupported),
+        ShellAction::Redraw
+    );
 }
 
 #[test]

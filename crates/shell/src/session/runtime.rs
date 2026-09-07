@@ -1527,13 +1527,19 @@ pub(super) fn run_fullscreen_shell_session<W: Write>(
         if action == Some(ShellAction::Exit) {
             break;
         }
-        if action == Some(ShellAction::PowerOff) {
+        if matches!(action, Some(ShellAction::PowerOff | ShellAction::Reboot)) {
             // Interactive authorization may temporarily take over the
             // terminal. Recovery has already been persisted by the command
             // handler, so restore the user's terminal before asking logind or
             // the native platform service to power off.
             guard.restore()?;
-            match platform.poweroff() {
+            let reboot = action == Some(ShellAction::Reboot);
+            let result = if reboot {
+                platform.reboot()
+            } else {
+                platform.poweroff()
+            };
+            match result {
                 Ok(()) => break,
                 Err(error) => {
                     guard.resume()?;
@@ -1545,7 +1551,14 @@ pub(super) fn run_fullscreen_shell_session<W: Write>(
                     }
                     state.show_exit_confirmation_modal(platform.as_ref());
                     state.notify_alert_with_tone(
-                        format!("Power off failed: {error}"),
+                        format!(
+                            "{} failed: {error}",
+                            if reboot {
+                                "Restart computer"
+                            } else {
+                                "Shut down computer"
+                            }
+                        ),
                         ui::NotificationTone::Error,
                     );
                 }

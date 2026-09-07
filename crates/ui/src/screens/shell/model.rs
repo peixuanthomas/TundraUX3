@@ -48,11 +48,11 @@ pub struct ExitConfirmViewModel {
 impl ExitConfirmViewModel {
     pub fn new() -> Self {
         Self {
-            title: "Exit TundraUX 3".to_string(),
-            message: "Leave the shell and restore the terminal?".to_string(),
-            confirm_label: "Y / Enter: exit".to_string(),
-            restart_label: "R: restart".to_string(),
-            cancel_label: "N / Esc: cancel".to_string(),
+            title: "Exit & power".to_string(),
+            message: "Choose an action. Esc returns to TundraUX.".to_string(),
+            confirm_label: "Y / Enter: Exit TundraUX".to_string(),
+            restart_label: "R: Restart TundraUX".to_string(),
+            cancel_label: "N / Esc: Cancel".to_string(),
         }
     }
 }

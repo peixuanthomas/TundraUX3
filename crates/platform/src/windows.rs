@@ -42,6 +42,7 @@ const TOKEN_QUERY: u32 = 0x0008;
 const TOKEN_ADJUST_PRIVILEGES: u32 = 0x0020;
 const SE_PRIVILEGE_ENABLED: u32 = 0x0000_0002;
 const EWX_POWEROFF: u32 = 0x0000_0008;
+const EWX_REBOOT: u32 = 0x0000_0002;
 const SHTDN_REASON_MAJOR_APPLICATION: u32 = 0x0004_0000;
 const SHTDN_REASON_FLAG_PLANNED: u32 = 0x8000_0000;
 const WAIT_OBJECT_0: u32 = 0x0000_0000;
@@ -247,7 +248,15 @@ impl Platform for WindowsPlatform {
     }
 
     fn poweroff(&self) -> Result<(), PlatformError> {
-        windows_poweroff()
+        windows_power_action(EWX_POWEROFF)
+    }
+
+    fn can_reboot(&self) -> Result<bool, PlatformError> {
+        Ok(true)
+    }
+
+    fn reboot(&self) -> Result<(), PlatformError> {
+        windows_power_action(EWX_REBOOT)
     }
 
     fn is_process_alive(&self, pid: u32) -> Result<bool, PlatformError> {
@@ -1356,11 +1365,11 @@ fn to_wide(value: &OsStr) -> Vec<u16> {
     value.encode_wide().chain(std::iter::once(0)).collect()
 }
 
-fn windows_poweroff() -> Result<(), PlatformError> {
+fn windows_power_action(flags: u32) -> Result<(), PlatformError> {
     let _privilege = ShutdownPrivilege::enable()?;
     let result = unsafe {
         ExitWindowsEx(
-            EWX_POWEROFF,
+            flags,
             SHTDN_REASON_MAJOR_APPLICATION | SHTDN_REASON_FLAG_PLANNED,
         )
     };
