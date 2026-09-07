@@ -11,6 +11,8 @@ pub const BANNER_EXIT_DURATION: Duration = Duration::from_millis(560);
 pub const BANNER_DISPLAY_DURATION: Duration = Duration::from_secs(2);
 pub const LOGIN_IDLE_TIMEOUT: Duration = Duration::from_secs(60);
 pub const PASSWORD_REVEAL_DURATION: Duration = Duration::from_secs(5);
+/// Internal CLI-to-Shell request to exercise the real fullscreen panic boundary.
+pub const COMMAND_LINE_PANIC_EXIT_CODE: u32 = 76;
 const BANNER_ASSET_KEY: &str = "tundraux3";
 
 // Public models and low-coupling services live in regular modules. Re-exports

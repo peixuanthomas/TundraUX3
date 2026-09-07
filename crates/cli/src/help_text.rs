@@ -59,11 +59,11 @@ pub(crate) fn write_debug_help(output: &mut impl Write) -> std::io::Result<()> {
     )?;
     writeln!(
         output,
-        "  test-watchdog-panic    Trigger and catch a panic, then write its recovery report"
+        "  test-watchdog-panic    Trigger a real panic; the current session is discarded"
     )?;
     writeln!(
         output,
-        "Watchdog tests print JSON/text report paths and return to Command Line. Reports are marked as intentional tests."
+        "Error tests print JSON/text report paths. Panic tests enter the normal critical-error flow; embedded tests panic the Shell session."
     )
 }
 

@@ -230,6 +230,7 @@ pub fn run_fullscreen_blocking_managed_with_outcome(
     let mut force_lockscreen = false;
     let mut show_terminal_graphics_notice = true;
     let mut session_recoveries = VecDeque::new();
+    let mut recovering_shell_panic = false;
     let mut explorer_task_runtime: Option<ShellExplorerTaskRuntime> = None;
     let mut diagnostics_task_runtime: Option<ShellDiagnosticsTaskRuntime> = None;
     // Linux installs its logind subscriptions lazily through this poll. Do it
@@ -263,7 +264,11 @@ pub fn run_fullscreen_blocking_managed_with_outcome(
                 diagnostics_watchdog.clone(),
             ));
         }
-        if force_lockscreen || should_show_startup_lockscreen(&startup) {
+        // A rebuilt Shell session must show its critical-error dialog immediately,
+        // rather than hiding the incident behind the weather lockscreen.
+        if !std::mem::take(&mut recovering_shell_panic)
+            && (force_lockscreen || should_show_startup_lockscreen(&startup))
+        {
             let lockscreen_input = weathr::WeathrDisplayInput {
                 snapshots: system_services.subscribe(),
                 clock_format: weathr::ClockFormat::TwentyFourHour,
@@ -354,7 +359,7 @@ pub fn run_fullscreen_blocking_managed_with_outcome(
                     &mut session_recoveries,
                     platform.as_ref(),
                 )?;
-                force_lockscreen = true;
+                recovering_shell_panic = true;
             }
         }
         if diagnostics_task_runtime
@@ -1000,6 +1005,7 @@ pub(super) fn run_fullscreen_shell_session<W: Write>(
                     }
                 }
                 CommandLineHostEvent::ExitToLauncher => state.close_command_line(),
+                CommandLineHostEvent::PanicRequested => trigger_command_line_panic(),
                 CommandLineHostEvent::ResetRequested => {
                     reset_requested = true;
                     break;
@@ -1443,6 +1449,7 @@ pub(super) fn run_fullscreen_shell_session<W: Write>(
                         ui::command_line_terminal_area(Rect::new(0, 0, width, height));
                     match command_line_host.handle_input(&input, terminal_area) {
                         CommandLineHostEvent::None => {}
+                        CommandLineHostEvent::PanicRequested => trigger_command_line_panic(),
                         CommandLineHostEvent::ExitToLauncher => {
                             command_line_host.terminate();
                             state.close_command_line();
@@ -1868,6 +1875,10 @@ fn refresh_session_after_resume(
     }
     let _ = state.apply_input_with_platform(InputEvent::FocusGained, platform);
     let _ = state.apply_input_with_platform(InputEvent::Tick, platform);
+}
+
+pub(super) fn trigger_command_line_panic() -> ! {
+    panic!("Intentional watchdog panic test requested from Command Line");
 }
 
 pub(super) const SESSION_RECOVERY_WINDOW: Duration = Duration::from_secs(60);

@@ -136,11 +136,6 @@ fn watchdog_tests_write_real_reports_and_allow_the_next_command() {
             IncidentKind::Error,
             IncidentSeverity::Critical,
         ),
-        (
-            "test-watchdog-panic",
-            IncidentKind::Panic,
-            IncidentSeverity::Critical,
-        ),
     ] {
         let mut stdout = Vec::new();
         let mut stderr = Vec::new();
@@ -213,6 +208,40 @@ fn watchdog_tests_without_a_runtime_fail_clearly() {
     );
     assert!(stdout.is_empty());
     assert!(String::from_utf8_lossy(&stderr).contains("require the managed tundra-cli runtime"));
+}
+
+#[test]
+fn watchdog_panic_test_unwinds_to_the_real_cli_boundary() {
+    let watchdog = test_cli_watchdog();
+    let mut stdout = Vec::new();
+    let mut stderr = Vec::new();
+    let caught = watchdog
+        .cli
+        .run_boundary(
+            BoundarySpec::new("cli.command", BoundaryKind::Process),
+            std::panic::AssertUnwindSafe(|| {
+                run_with_platform_and_watchdog(
+                    ["debug", "test-watchdog-panic"],
+                    &UnsupportedPlatform,
+                    &mut stdout,
+                    &mut stderr,
+                    &watchdog.process,
+                    watchdog.cli.clone(),
+                )
+            }),
+        )
+        .expect_err("panic must escape the command dispatcher");
+    assert!(caught.payload().contains("Intentional watchdog panic"));
+    let receipt = caught
+        .finalize(RecoveryOutcome::Unrecoverable(
+            "CLI commands are never replayed after panic".into(),
+        ))
+        .unwrap();
+    assert_eq!(receipt.kind, watchdog::IncidentKind::Panic);
+    assert!(!receipt.recovery.is_recovered());
+    assert!(receipt.text_report_path.unwrap().is_file());
+    assert!(!String::from_utf8_lossy(&stdout).contains("Command Line can continue"));
+    watchdog.process.drain_incidents();
 }
 
 #[test]

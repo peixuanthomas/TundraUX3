@@ -791,6 +791,7 @@ pub enum CommandLineHostEvent {
     None,
     ExitToLauncher,
     ResetRequested,
+    PanicRequested,
 }
 
 #[derive(Debug)]
@@ -914,6 +915,9 @@ impl CommandLineHost {
 
         if status.code == EMBEDDED_RESET_EXIT_CODE {
             return CommandLineHostEvent::ResetRequested;
+        }
+        if status.code == crate::COMMAND_LINE_PANIC_EXIT_CODE {
+            return CommandLineHostEvent::PanicRequested;
         }
         if status.success {
             self.install_blank_snapshot();
@@ -1355,6 +1359,104 @@ mod tests {
             "hello"
         );
         assert!(lock_io(&captured).expect("terminal response").is_empty());
+    }
+
+    #[cfg(any(windows, unix))]
+    #[test]
+    fn embedded_panic_exit_enters_real_shell_recovery_and_critical_dialog() {
+        use watchdog::{
+            AppCriticality, AppDescriptor, AppId, BoundaryKind, BoundarySpec, WatchdogConfig,
+            WatchdogRuntime,
+        };
+        let root = std::env::temp_dir().join(format!(
+            "tundra-command-line-panic-test-{}-{}",
+            std::process::id(),
+            NEXT_PTY_READER_TASK_ID.fetch_add(1, Ordering::Relaxed),
+        ));
+        let (runtime, process) = WatchdogRuntime::start_isolated(WatchdogConfig::new(
+            root.join("reports"),
+            root.join("fallback"),
+            root.join("data"),
+            "shell-panic-test",
+            "test",
+        ))
+        .unwrap();
+        let app = process
+            .register_app(AppDescriptor::new(
+                AppId::from_static("shell"),
+                "Shell",
+                "test",
+                AppCriticality::ProcessCritical,
+            ))
+            .unwrap();
+        let mut host = CommandLineHost::new(app.clone());
+        #[cfg(windows)]
+        let (program, args) = ("cmd.exe", vec!["/D", "/C", "exit", "76"]);
+        #[cfg(unix)]
+        let (program, args) = ("/bin/sh", vec!["-c", "exit 76"]);
+        let pty = CommandLinePty::spawn(
+            CommandLinePtyConfig {
+                program: program.into(),
+                args: args.into_iter().map(OsString::from).collect(),
+                env: Vec::new(),
+                cwd: Some(root.clone()),
+                columns: DEFAULT_COLUMNS,
+                rows: DEFAULT_ROWS,
+                scrollback_lines: 100,
+            },
+            &host.reader_tasks,
+        )
+        .unwrap();
+        host.state = CommandLineHostState::Running(pty);
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        loop {
+            match host.poll() {
+                CommandLineHostEvent::PanicRequested => break,
+                CommandLineHostEvent::None => {
+                    assert!(
+                        std::time::Instant::now() < deadline,
+                        "panic request never reached Shell"
+                    );
+                    std::thread::sleep(Duration::from_millis(10));
+                }
+                event => panic!("unexpected host event: {event:?}"),
+            }
+        }
+        assert!(matches!(host.state, CommandLineHostState::Inactive));
+        let caught = app
+            .run_boundary(
+                BoundarySpec::new("shell.fullscreen-session", BoundaryKind::UiSession),
+                crate::session::runtime::trigger_command_line_panic,
+            )
+            .expect_err("the Shell must really unwind");
+        let id = caught.incident_id().to_string();
+        let mut recoveries = std::collections::VecDeque::new();
+        crate::session::runtime::recover_session_panic(
+            caught,
+            "Shell UI",
+            &mut recoveries,
+            &platform::mock::UnsupportedPlatform,
+        )
+        .unwrap();
+        let mut state = crate::ShellSession::new(crate::ShellLaunchConfig::default(), (120, 40));
+        crate::session::runtime::drain_watchdog_incidents(&mut state, &process);
+        let dialog = state
+            .to_notification_view_model()
+            .expect("normal critical error dialog");
+        assert!(dialog.title.contains("critical error"));
+        let catalog = process.list_incident_reports();
+        let report = catalog
+            .reports
+            .iter()
+            .find(|report| report.incident_id == id)
+            .unwrap();
+        assert_eq!(report.kind, watchdog::IncidentKind::Panic);
+        assert_eq!(report.boundary, "shell.fullscreen-session");
+        assert!(report.summary.contains("Intentional watchdog panic"));
+        assert!(report.text_report_path.as_ref().unwrap().is_file());
+        drop(host);
+        runtime.shutdown().unwrap();
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[cfg(any(windows, unix))]

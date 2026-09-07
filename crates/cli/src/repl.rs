@@ -71,6 +71,10 @@ where
         }
 
         match parse_args(&arguments) {
+            Ok(CliCommand::TestWatchdogPanic) if embedded => {
+                println!("Triggering a real Shell panic; the current session will be discarded.");
+                return shell::COMMAND_LINE_PANIC_EXIT_CODE as i32;
+            }
             Ok(CliCommand::Repl { .. }) => {
                 eprintln!("ERROR: repl cannot be started from inside repl");
             }

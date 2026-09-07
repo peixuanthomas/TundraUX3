@@ -68,6 +68,10 @@ fn main() {
                 .map(|path| path.display().to_string())
                 .unwrap_or_else(|| "report path unavailable".to_string());
             eprintln!("tundra-cli panicked: {reason}\nCrash report: {report}");
+            let _ = platform::native_platform().show_critical_error(
+                "Tundra CLI encountered a critical error",
+                &format!("{reason}\n\nCrash report: {report}"),
+            );
             1
         }
     };

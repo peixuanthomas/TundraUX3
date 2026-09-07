@@ -422,13 +422,13 @@ tundra-cli <cls|config|debug|new|repl|help>
 | `debug` / `debug help` | 查看所有调试命令。 |
 | `debug test-watchdog-error` | 主动生成普通错误报告。 |
 | `debug test-watchdog-critical` | 主动生成严重错误报告。 |
-| `debug test-watchdog-panic` | 主动触发并捕获 panic，生成包含恢复结果的报告，然后返回命令行。 |
+| `debug test-watchdog-panic` | 触发真实 panic，进入正常故障处理流程；当前命令行会话终止。 |
 | `help` | 输出公开命令帮助。 |
 | `new` | 清除已保存的 TundraUX3 数据，重新创建初始存储。 |
 
 调试命令统一使用 `debug` 前缀，不支持 `sudo` 前缀；原顶层调试命令和 `weathr` 命令已移除。Command Line 中可直接输入 `debug test-frost`；外部终端使用 `tundra-cli debug test-frost`。
 
-三个 watchdog 测试会在 CLI 进程中实际生成报告，内容明确标注为主动测试，并输出 JSON 和文本报告路径。报告生成成功返回 0；写入失败或等待超时返回非零状态。panic 测试只在专门的测试范围内触发并捕获，不会关闭 Command Line。这些命令测试 CLI 的报告与捕获功能，不触发 Shell 的故障弹窗。
+两个错误报告测试在 CLI 进程中生成报告，内容明确标注为主动测试，并输出 JSON 和文本报告路径；成功返回 0，写入失败或等待超时返回非零状态。`debug test-watchdog-panic` 不在命令内部捕获：独立 CLI 由最外层 watchdog 捕获、显示严重错误提示并退出；嵌入 Command Line 则以内部退出码 76 请求 Shell 主循环真正触发 panic，执行正常的终端恢复和会话重建，直接显示严重错误界面，不先经过天气锁屏，之后需要重新登录。
 
 资源与配置示例：
 

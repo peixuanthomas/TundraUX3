@@ -2,8 +2,7 @@ use std::io::Write;
 use std::time::{Duration, Instant};
 
 use watchdog::{
-    AppWatchdog, BoundaryKind, BoundarySpec, ComponentId, ErrorContext, IncidentReceipt,
-    IncidentSeverity, ProcessWatchdog, RecoveryOutcome,
+    AppWatchdog, ComponentId, ErrorContext, IncidentReceipt, IncidentSeverity, ProcessWatchdog,
 };
 
 use crate::CliCommand;
@@ -22,26 +21,10 @@ pub(crate) fn run_watchdog_test(
         return 1;
     };
     let app = app.child_component(ComponentId::from_static("debug"));
-    let receipt = if command == CliCommand::TestWatchdogPanic {
-        let caught = app
-            .run_boundary(
-                BoundarySpec::new("cli.debug.test-watchdog-panic", BoundaryKind::Worker),
-                || panic!("Intentional watchdog panic test; no user operation was running"),
-            )
-            .expect_err("the watchdog test always panics");
-        match caught.finalize(RecoveryOutcome::Recovered(
-            "Intentional debug panic caught; command loop can continue".to_string(),
-        )) {
-            Ok(receipt) => receipt,
-            Err(error) => {
-                let _ = writeln!(
-                    stderr,
-                    "ERROR: watchdog panic test could not finalize: {error}"
-                );
-                return 1;
-            }
-        }
-    } else {
+    if command == CliCommand::TestWatchdogPanic {
+        panic!("Intentional watchdog panic test requested from Command Line");
+    }
+    let receipt = {
         let (boundary, severity) = if command == CliCommand::TestWatchdogCritical {
             (
                 "cli.debug.test-watchdog-critical",

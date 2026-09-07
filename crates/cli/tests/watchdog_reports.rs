@@ -58,7 +58,7 @@ fn watchdog_debug_reports_use_fallback_and_fail_when_both_directories_are_blocke
     // a file, so neither configured destination can accept the next report.
     fs::rename(&fallback, root.join("saved-reports")).unwrap();
     fs::write(&fallback, "a file cannot contain reports").unwrap();
-    for command in ["test-watchdog-error", "test-watchdog-panic"] {
+    for command in ["test-watchdog-error", "test-watchdog-critical"] {
         stdout.clear();
         stderr.clear();
         assert_eq!(
