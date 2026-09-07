@@ -323,9 +323,7 @@ impl ShellSession {
                         state.error = None;
                         state.message = Some("Checking Launcher items…".to_string());
                         for item in &mut state.items {
-                            item.status = if item.record.fingerprint.is_some()
-                                && item.record.executable_kind.is_some()
-                            {
+                            item.status = if item.record.executable_kind.is_some() {
                                 LauncherItemStatus::Checking
                             } else {
                                 LauncherItemStatus::NeedsApproval

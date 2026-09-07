@@ -33,7 +33,7 @@ impl Drop for ShellLauncherTaskShared {
     }
 }
 
-/// Cloneable handle for full Launcher integrity scans performed away from the
+/// Cloneable handle for Launcher target presence checks performed away from the
 /// terminal event/render thread.
 #[derive(Clone)]
 pub(in crate::session) struct ShellLauncherTaskRuntime {
@@ -74,7 +74,7 @@ impl ShellLauncherTaskRuntime {
         Self {
             shared: std::sync::Arc::new(ShellLauncherTaskShared {
                 platform,
-                task_group: watchdog.task_group(&format!("launcher-integrity-{runtime_id}")),
+                task_group: watchdog.task_group(&format!("launcher-presence-{runtime_id}")),
                 event_tx,
                 event_rx: std::sync::Mutex::new(event_rx),
                 workers: std::sync::Mutex::new(std::collections::BTreeMap::new()),
@@ -209,7 +209,7 @@ mod launcher_task_workflow_tests {
     use super::*;
 
     #[test]
-    fn managed_refresh_publishes_full_integrity_results() {
+    fn managed_refresh_publishes_presence_results() {
         let unique = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .expect("test clock")
@@ -268,13 +268,11 @@ mod launcher_task_workflow_tests {
                 "test policy",
             ),
         );
-        let fingerprint =
-            app::launcher::fingerprint_file(&executable).expect("approved fingerprint");
         let entry = storage::LauncherEntryRecord {
             id: "program".to_string(),
             path: executable.to_string_lossy().into_owned(),
             executable_kind: Some(storage::LauncherExecutableKind::NativeBinary),
-            fingerprint: Some(fingerprint),
+            fingerprint: None,
             added_by_user_id: "admin".to_string(),
             added_at_epoch_ms: 0,
         };
@@ -296,7 +294,7 @@ mod launcher_task_workflow_tests {
                     } => {
                         assert_eq!(event_request_id, request_id);
                         assert_eq!(id, "program");
-                        status = Some(result.expect("integrity result"));
+                        status = Some(result.expect("presence result"));
                     }
                     LauncherRefreshEvent::Finished {
                         request_id: event_request_id,

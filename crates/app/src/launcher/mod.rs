@@ -1,11 +1,11 @@
 //! Domain logic for the globally-managed Launcher application.
 //!
-//! The module never opens a file itself. After revalidating an approved entry,
+//! After checking that an approved entry still exists at its recorded path,
 //! it returns an effect for the shell to perform the platform operation.
 
 use std::fmt;
 use std::fs;
-use std::io::{self, Read};
+use std::io;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -13,8 +13,7 @@ use identity::{AuthSession, PermissionAction, PermissionService};
 use platform::{ExecutableKind as PlatformExecutableKind, FileOpenPolicy, Platform};
 use sha2::{Digest, Sha256};
 use storage::{
-    LauncherConfig, LauncherEntryRecord, LauncherExecutableKind, LauncherFingerprint, StorageError,
-    StorageManager,
+    LauncherConfig, LauncherEntryRecord, LauncherExecutableKind, StorageError, StorageManager,
 };
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -55,7 +54,7 @@ impl LauncherState {
                 .iter()
                 .cloned()
                 .map(|record| LauncherItem {
-                    status: if record.fingerprint.is_some() && record.executable_kind.is_some() {
+                    status: if record.executable_kind.is_some() {
                         LauncherItemStatus::Checking
                     } else {
                         LauncherItemStatus::NeedsApproval
@@ -350,7 +349,7 @@ impl LauncherController {
                 let target = validate(Path::new(&entry.path), platform)?;
                 entry.path = target.path.to_string_lossy().into_owned();
                 entry.executable_kind = Some(target.kind);
-                entry.fingerprint = Some(fingerprint(&target.path, target.kind)?);
+                entry.fingerprint = None;
                 count += 1;
             }
         }
@@ -417,12 +416,11 @@ impl LauncherController {
         {
             return Ok(None);
         }
-        let fingerprint = fingerprint(&target.path, target.kind)?;
         Ok(Some(LauncherEntryRecord {
-            id: new_id(&target.path, &fingerprint, config),
+            id: new_id(&target.path, config),
             path: target.path.to_string_lossy().into_owned(),
             executable_kind: Some(target.kind),
-            fingerprint: Some(fingerprint),
+            fingerprint: None,
             added_by_user_id: actor.user_id.clone(),
             added_at_epoch_ms: epoch_millis(),
         }))
@@ -495,34 +493,24 @@ fn validate(path: &Path, platform: &dyn Platform) -> Result<Target, LauncherErro
 
 fn verify(
     entry: &LauncherEntryRecord,
-    platform: &dyn Platform,
+    _platform: &dyn Platform,
 ) -> Result<LauncherItemStatus, LauncherError> {
-    let (Some(expected), Some(kind)) = (&entry.fingerprint, entry.executable_kind) else {
+    if entry.executable_kind.is_none() {
         return Ok(LauncherItemStatus::NeedsApproval);
-    };
-    let target = match validate(Path::new(&entry.path), platform) {
-        Ok(target) => target,
-        Err(LauncherError::Io { .. }) => return Ok(LauncherItemStatus::Missing),
-        Err(_) => return Ok(LauncherItemStatus::Unsupported),
-    };
-    if target.kind != kind {
-        return Ok(LauncherItemStatus::Changed);
     }
-    match fingerprint(&target.path, kind) {
-        Ok(actual) if actual == *expected => Ok(LauncherItemStatus::Ready),
-        Ok(_) => Ok(LauncherItemStatus::Changed),
-        Err(LauncherError::Io { .. }) => Ok(LauncherItemStatus::Missing),
-        Err(_) => Ok(LauncherItemStatus::Unsupported),
+    let path = Path::new(&entry.path);
+    match path.try_exists() {
+        Ok(true) => Ok(LauncherItemStatus::Ready),
+        Ok(false) => Ok(LauncherItemStatus::Missing),
+        Err(error) => Err(io_error(path, error)),
     }
 }
 
-/// Revalidates one persisted Launcher entry without mutating application state.
+/// Checks whether a persisted Launcher target still exists at its recorded path.
 ///
-/// Shell runtimes use this entry-level API to perform the full content digest on
-/// a worker thread and publish results back to the UI incrementally. Launch
-/// authorization still calls the same verifier immediately before opening a
-/// target, so moving list refreshes off the UI thread does not weaken integrity
-/// checks.
+/// Background refreshes and launch requests share this presence check. Stored
+/// fingerprints, content, modification times, and classification changes are
+/// deliberately not compared.
 pub fn verify_launcher_entry(
     entry: &LauncherEntryRecord,
     platform: &dyn Platform,
@@ -530,84 +518,6 @@ pub fn verify_launcher_entry(
     verify(entry, platform)
 }
 
-/// Full SHA-256 of a regular, non-link file. Modification time is informational;
-/// it is never used in place of the content digest during execution approval.
-pub fn fingerprint_file(path: &Path) -> Result<LauncherFingerprint, LauncherError> {
-    let metadata = fs::symlink_metadata(path).map_err(|error| io_error(path, error))?;
-    if !metadata.is_file() || metadata.file_type().is_symlink() {
-        return Err(invalid(path, "fingerprints require regular non-link files"));
-    }
-    let mut file = fs::File::open(path).map_err(|error| io_error(path, error))?;
-    let mut hash = Sha256::new();
-    let mut buffer = [0u8; 262_144];
-    loop {
-        let read = file
-            .read(&mut buffer)
-            .map_err(|error| io_error(path, error))?;
-        if read == 0 {
-            break;
-        }
-        hash.update(&buffer[..read]);
-    }
-    Ok(LauncherFingerprint {
-        sha256: hex(hash.finalize().as_slice()),
-        byte_len: metadata.len(),
-        modified_at_epoch_ms: metadata.modified().ok().map(time_millis),
-    })
-}
-
-/// Conservative bundle identity for macOS `.app` directories. It includes
-/// `Contents/Info.plist` and every direct regular child in `Contents/MacOS`.
-/// Nested bundle content is not covered by this v1 helper; bundle upgrades must
-/// therefore be re-approved before launch.
-pub fn fingerprint_application_bundle(path: &Path) -> Result<LauncherFingerprint, LauncherError> {
-    let root = fs::canonicalize(path).map_err(|error| io_error(path, error))?;
-    let macos = root.join("Contents").join("MacOS");
-    let mut inputs = vec![root.join("Contents").join("Info.plist")];
-    for item in fs::read_dir(&macos).map_err(|error| io_error(&macos, error))? {
-        let child = item.map_err(|error| io_error(&macos, error))?.path();
-        let metadata = fs::symlink_metadata(&child).map_err(|error| io_error(&child, error))?;
-        if metadata.file_type().is_symlink() {
-            return Err(invalid(&child, "bundle contains a symbolic link"));
-        }
-        if metadata.is_file() {
-            inputs.push(child);
-        }
-    }
-    inputs.sort();
-    let mut hash = Sha256::new();
-    let mut length = 0u64;
-    let mut modified = None;
-    for input in inputs {
-        let part = fingerprint_file(&input)?;
-        hash.update(
-            input
-                .strip_prefix(&root)
-                .unwrap_or(&input)
-                .to_string_lossy()
-                .as_bytes(),
-        );
-        hash.update(part.sha256.as_bytes());
-        length = length.saturating_add(part.byte_len);
-        modified = modified.max(part.modified_at_epoch_ms);
-    }
-    Ok(LauncherFingerprint {
-        sha256: hex(hash.finalize().as_slice()),
-        byte_len: length,
-        modified_at_epoch_ms: modified,
-    })
-}
-
-fn fingerprint(
-    path: &Path,
-    kind: LauncherExecutableKind,
-) -> Result<LauncherFingerprint, LauncherError> {
-    if kind == LauncherExecutableKind::ApplicationBundle {
-        fingerprint_application_bundle(path)
-    } else {
-        fingerprint_file(path)
-    }
-}
 fn convert_kind(kind: PlatformExecutableKind) -> LauncherExecutableKind {
     match kind {
         PlatformExecutableKind::NativeBinary => LauncherExecutableKind::NativeBinary,
@@ -675,10 +585,9 @@ fn hex(bytes: &[u8]) -> String {
     }
     out
 }
-fn new_id(path: &Path, fingerprint: &LauncherFingerprint, config: &LauncherConfig) -> String {
+fn new_id(path: &Path, config: &LauncherConfig) -> String {
     let mut hash = Sha256::new();
     hash.update(path.to_string_lossy().as_bytes());
-    hash.update(fingerprint.sha256.as_bytes());
     hash.update(epoch_millis().to_le_bytes());
     let base = format!("launcher-{}", hex(hash.finalize().as_slice()));
     if !config.entries.iter().any(|entry| entry.id == base) {

@@ -527,8 +527,8 @@ pub trait Platform: Send + Sync {
         Ok(None)
     }
     fn open_path(&self, path: &Path) -> Result<(), PlatformError>;
-    /// Launches a Launcher entry after application code has revalidated both
-    /// its persisted fingerprint and executable classification.
+    /// Launches an approved Launcher entry after application code has checked
+    /// that its recorded target path still exists.
     ///
     /// Windows and macOS keep their established default-open behavior. Linux
     /// overrides this boundary so native executables are started directly and

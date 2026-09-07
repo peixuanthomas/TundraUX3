@@ -4,7 +4,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use app::launcher::{
     LauncherAddOutcome, LauncherCommand, LauncherController, LauncherEffect, LauncherItemStatus,
-    LauncherState,
+    LauncherState, verify_launcher_entry,
 };
 use identity::{AuthSession, UserRole};
 use platform::mock::MockPlatform;
@@ -105,8 +105,8 @@ fn user_can_launch_ready_entry_but_guest_cannot_manage_it() {
 }
 
 #[test]
-fn content_changes_block_launch_and_scripts_require_fresh_confirmation() {
-    let fixture = Fixture::new("integrity");
+fn content_changes_allow_launch_and_scripts_require_fresh_confirmation() {
+    let fixture = Fixture::new("presence");
     let binary = fixture.file("program.exe", b"original");
     let script = fixture.file("script.cmd", b"echo hello");
     fixture.approve(&binary, ExecutableKind::NativeBinary);
@@ -140,7 +140,39 @@ fn content_changes_block_launch_and_scripts_require_fresh_confirmation() {
         .id
         .clone();
 
-    fs::write(&binary, b"replaced").expect("replace executable");
+    // Existing configs may still contain the old content digest. It must not
+    // affect either the refreshed status or launch after the target changes.
+    let mut config = storage.load_config().expect("config");
+    config.launcher.entries[0].fingerprint = Some(storage::LauncherFingerprint {
+        sha256: "obsolete digest".into(),
+        byte_len: 8,
+        modified_at_epoch_ms: Some(0),
+    });
+    storage.save_config(&config).expect("legacy fingerprint");
+    state = controller.load(&storage).expect("reload");
+    assert!(
+        state
+            .items
+            .iter()
+            .all(|item| item.status == LauncherItemStatus::Checking)
+    );
+    fs::write(&binary, b"updated program with a different length").expect("replace executable");
+    fixture
+        .platform
+        .set_file_open_policy(binary.clone(), FileOpenPolicy::system_default());
+    controller.apply(
+        &mut state,
+        LauncherCommand::Refresh,
+        Some(&user()),
+        &fixture.platform,
+        &storage,
+    );
+    assert!(
+        state
+            .items
+            .iter()
+            .all(|item| item.status == LauncherItemStatus::Ready)
+    );
     assert_eq!(
         controller.apply(
             &mut state,
@@ -149,7 +181,10 @@ fn content_changes_block_launch_and_scripts_require_fresh_confirmation() {
             &fixture.platform,
             &storage
         ),
-        LauncherEffect::None
+        LauncherEffect::OpenRequested {
+            path: PathBuf::from(&state.items[0].record.path),
+            kind: ExecutableKind::NativeBinary,
+        }
     );
     assert_eq!(
         state
@@ -158,7 +193,7 @@ fn content_changes_block_launch_and_scripts_require_fresh_confirmation() {
             .find(|item| item.record.id == binary_id)
             .expect("item")
             .status,
-        LauncherItemStatus::Changed
+        LauncherItemStatus::Ready
     );
     assert!(matches!(
         controller.apply(
@@ -191,6 +226,106 @@ fn content_changes_block_launch_and_scripts_require_fresh_confirmation() {
             ),
             kind: ExecutableKind::Script,
         }
+    );
+}
+
+#[test]
+fn moved_or_deleted_targets_are_missing_and_restored_targets_are_ready() {
+    let fixture = Fixture::new("missing-target");
+    let executable = fixture.file("program.exe", b"program");
+    fixture.approve(&executable, ExecutableKind::NativeBinary);
+    let storage = fixture.storage();
+    let controller = LauncherController::default();
+    let mut state = LauncherState::default();
+    controller.apply(
+        &mut state,
+        LauncherCommand::AddPaths(vec![executable.clone()]),
+        Some(&admin()),
+        &fixture.platform,
+        &storage,
+    );
+    let entry = state.items[0].record.clone();
+    let moved = executable.with_file_name("moved.exe");
+    fs::rename(&executable, &moved).expect("move target");
+    assert_eq!(
+        verify_launcher_entry(&entry, &fixture.platform).unwrap(),
+        LauncherItemStatus::Missing
+    );
+    for command in [
+        LauncherCommand::RequestLaunch(entry.id.clone()),
+        LauncherCommand::ConfirmLaunch(entry.id.clone()),
+    ] {
+        assert_eq!(
+            controller.apply(
+                &mut state,
+                command,
+                Some(&user()),
+                &fixture.platform,
+                &storage
+            ),
+            LauncherEffect::None
+        );
+        assert_eq!(state.items[0].status, LauncherItemStatus::Missing);
+    }
+    fs::rename(&moved, &executable).expect("restore target");
+    assert_eq!(
+        verify_launcher_entry(&entry, &fixture.platform).unwrap(),
+        LauncherItemStatus::Ready
+    );
+    fs::remove_file(&executable).expect("delete target");
+    assert_eq!(
+        verify_launcher_entry(&entry, &fixture.platform).unwrap(),
+        LauncherItemStatus::Missing
+    );
+}
+
+#[test]
+fn application_bundles_need_only_the_target_directory_without_content_fingerprints() {
+    let fixture = Fixture::new("bundle-presence");
+    let bundle = fixture.documents.join("Example.app");
+    fs::create_dir(&bundle).expect("bundle directory");
+    let bundle = fs::canonicalize(bundle).expect("canonical bundle path");
+    let mut bundle_attributes = attributes(&bundle);
+    bundle_attributes.is_file = false;
+    bundle_attributes.is_dir = true;
+    fixture
+        .platform
+        .set_file_attributes(bundle.clone(), bundle_attributes);
+    fixture.platform.set_file_open_policy(
+        bundle.clone(),
+        FileOpenPolicy::launcher_required(ExecutableKind::ApplicationBundle, "test bundle"),
+    );
+    let storage = fixture.storage();
+    let controller = LauncherController::default();
+    let mut state = LauncherState::default();
+    controller.apply(
+        &mut state,
+        LauncherCommand::AddPaths(vec![bundle.clone()]),
+        Some(&admin()),
+        &fixture.platform,
+        &storage,
+    );
+    assert_eq!(state.items.len(), 1, "{:?}", state.error);
+    let entry = state.items[0].record.clone();
+    assert_eq!(entry.fingerprint, None);
+    assert_eq!(state.items[0].status, LauncherItemStatus::Ready);
+    assert_eq!(
+        controller.apply(
+            &mut state,
+            LauncherCommand::RequestLaunch(entry.id.clone()),
+            Some(&user()),
+            &fixture.platform,
+            &storage
+        ),
+        LauncherEffect::OpenRequested {
+            path: PathBuf::from(&entry.path),
+            kind: ExecutableKind::ApplicationBundle,
+        }
+    );
+    fs::remove_dir(&bundle).expect("delete bundle");
+    assert_eq!(
+        verify_launcher_entry(&entry, &fixture.platform).unwrap(),
+        LauncherItemStatus::Missing
     );
 }
 
@@ -343,7 +478,7 @@ impl Fixture {
     fn file(&self, name: &str, bytes: &[u8]) -> PathBuf {
         let path = self.documents.join(name);
         fs::write(&path, bytes).expect("fixture file");
-        path
+        fs::canonicalize(path).expect("canonical fixture path")
     }
 
     fn approve(&self, path: &Path, kind: ExecutableKind) {

@@ -288,7 +288,7 @@ Windows、macOS 和 Linux 的 Trash 实现均封装在 `platform`，APP 不拼�
 
 ### Launcher 与内建应用
 
-Launcher 存储平台可执行项目及固定顺序，支持图标/列表视图。持久化记录绝对的非链接目标、目标类型、SHA-256 指纹、批准者和批准时间；启动前会复验完整性。脚本、安装包和快捷方式还需要二次确认。扫描和启动由平台适配器与 `LauncherController` 协作，结果回流 APP；`LauncherController` 目前仍会在 apply 路径完成一部分平台、文件系统或存储操作。旧配置中的目录固定项仍可读，但只有可执行条目会被当作可启动项目。
+Launcher 存储平台可执行项目及固定顺序，支持图标/列表视图。持久化记录绝对的非链接目标、目标类型、批准者和批准时间；刷新列表和启动前仅检查目标是否仍位于记录的路径，不计算或比较内容指纹、大小、修改时间或类型变化。旧配置中的指纹字段兼容保留但不再使用。脚本、安装包和快捷方式还需要二次确认。扫描和启动由平台适配器与 `LauncherController` 协作，结果回流 APP；`LauncherController` 目前仍会在 apply 路径完成一部分平台、文件系统或存储操作。旧配置中的目录固定项仍可读，但只有可执行条目会被当作可启动项目。
 
 Launcher 固定提供 **Editor**；管理员还会在第一项看到 **Command Line**。这些内建应用不写入 Launcher 配置，不能删除、重新审批或拖动排序。图标由 `launcher_icons.toml` 中的 built-in application ID 定义。
 

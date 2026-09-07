@@ -671,6 +671,7 @@ pub struct LauncherEntryRecord {
     /// Missing only for entries migrated from the obsolete `pinned_apps` setting; such entries
     /// require fresh admin approval before they can be launched.
     pub executable_kind: Option<LauncherExecutableKind>,
+    /// Legacy content identity, retained for config compatibility but ignored by Launcher.
     pub fingerprint: Option<LauncherFingerprint>,
     pub added_by_user_id: String,
     pub added_at_epoch_ms: i64,
