@@ -1,0 +1,338 @@
+name: Publish v1.2 release
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: publish-v1.2
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+  RELEASE_REF: ed30d64b559209ae57d08f5dd8a936726ba956f5
+  RELEASE_TAG: v1.2
+
+jobs:
+  windows-x64:
+    name: Windows x64
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - name: Check out the v1.2 source commit
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ env.RELEASE_REF }}
+          persist-credentials: false
+
+      - name: Install stable Rust
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+          rustup target add x86_64-pc-windows-msvc
+
+      - name: Run workspace regression tests
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          cargo test --workspace --locked
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Build release binaries
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          cargo build --locked --release --target x86_64-pc-windows-msvc -p shell -p cli
+
+      - name: Package and checksum
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          New-Item -ItemType Directory -Force -Path package | Out-Null
+          Copy-Item target/x86_64-pc-windows-msvc/release/tundra-shell.exe package/
+          Copy-Item target/x86_64-pc-windows-msvc/release/tundra-cli.exe package/
+          Copy-Item LICENSE package/
+          Copy-Item crates/weathr/LICENSE.weathr package/
+          Compress-Archive -Path package/* -DestinationPath TundraUX3-v1.2-windows-x64.zip
+          $hash = (Get-FileHash TundraUX3-v1.2-windows-x64.zip -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$hash  TundraUX3-v1.2-windows-x64.zip" |
+            Out-File TundraUX3-v1.2-windows-x64.sha256 -Encoding ascii
+          Get-Item package/* | Format-Table Name,Length
+
+      - name: Stage Windows release assets
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-windows-x64
+          path: |
+            TundraUX3-v1.2-windows-x64.zip
+            TundraUX3-v1.2-windows-x64.sha256
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
+
+  macos-universal:
+    name: macOS Universal
+    runs-on: macos-latest
+    timeout-minutes: 60
+    steps:
+      - name: Check out the v1.2 source commit
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ env.RELEASE_REF }}
+          persist-credentials: false
+
+      - name: Install stable Rust
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+          rustup target add aarch64-apple-darwin x86_64-apple-darwin
+
+      - name: Run workspace regression tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo test --workspace --locked
+          bash scripts/check-weathr-dependency-boundary.sh
+
+      - name: Build ARM64 and Intel release binaries
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo build --locked --release --target aarch64-apple-darwin -p shell -p cli
+          cargo build --locked --release --target x86_64-apple-darwin -p shell -p cli
+
+      - name: Create Universal binaries, package, and checksum
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p package
+          lipo -create \
+            target/aarch64-apple-darwin/release/tundra-shell \
+            target/x86_64-apple-darwin/release/tundra-shell \
+            -output package/tundra-shell
+          lipo -create \
+            target/aarch64-apple-darwin/release/tundra-cli \
+            target/x86_64-apple-darwin/release/tundra-cli \
+            -output package/tundra-cli
+          chmod 755 package/tundra-shell package/tundra-cli
+          cp LICENSE package/
+          cp crates/weathr/LICENSE.weathr package/
+          lipo -info package/tundra-shell
+          lipo -info package/tundra-cli
+          tar -C package -czf TundraUX3-v1.2-macos-universal.tar.gz \
+            tundra-shell tundra-cli LICENSE LICENSE.weathr
+          shasum -a 256 TundraUX3-v1.2-macos-universal.tar.gz \
+            > TundraUX3-v1.2-macos-universal.sha256
+
+      - name: Stage macOS release assets
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-macos-universal
+          path: |
+            TundraUX3-v1.2-macos-universal.tar.gz
+            TundraUX3-v1.2-macos-universal.sha256
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
+
+  linux-x64:
+    name: Linux x86_64
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - name: Check out the v1.2 source commit
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ env.RELEASE_REF }}
+          persist-credentials: false
+
+      - name: Install stable Rust
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+
+      - name: Run workspace regression tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo test --workspace --locked
+          bash scripts/check-weathr-dependency-boundary.sh
+
+      - name: Build Linux packages
+        shell: bash
+        env:
+          TUNDRAUX3_VERSION: 1.2.0
+        run: |
+          set -euo pipefail
+          bash scripts/package-linux.sh
+          mv dist/tundraux3-1.2.0-linux-x86_64.tar.gz \
+            dist/TundraUX3-v1.2-linux-x86_64.tar.gz
+          mv dist/tundraux3_1.2.0_amd64.deb \
+            dist/TundraUX3-v1.2-linux-amd64.deb
+          cd dist
+          sha256sum \
+            TundraUX3-v1.2-linux-x86_64.tar.gz \
+            TundraUX3-v1.2-linux-amd64.deb \
+            > TundraUX3-v1.2-linux-x86_64.sha256
+
+      - name: Stage Linux release assets
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-linux-x64
+          path: |
+            dist/TundraUX3-v1.2-linux-x86_64.tar.gz
+            dist/TundraUX3-v1.2-linux-amd64.deb
+            dist/TundraUX3-v1.2-linux-x86_64.sha256
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
+
+  publish:
+    permissions:
+      contents: write
+    timeout-minutes: 15
+    name: Publish GitHub Release
+    needs:
+      - windows-x64
+      - macos-universal
+      - linux-x64
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Download untouched build assets
+        uses: actions/download-artifact@v8
+        with:
+          pattern: release-*
+          path: dist
+          merge-multiple: true
+
+      - name: Verify staged checksums and asset set
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd dist
+          test -f TundraUX3-v1.2-windows-x64.zip
+          test -f TundraUX3-v1.2-windows-x64.sha256
+          test -f TundraUX3-v1.2-macos-universal.tar.gz
+          test -f TundraUX3-v1.2-macos-universal.sha256
+          test -f TundraUX3-v1.2-linux-x86_64.tar.gz
+          test -f TundraUX3-v1.2-linux-amd64.deb
+          test -f TundraUX3-v1.2-linux-x86_64.sha256
+          for checksum in *.sha256; do
+            sha256sum -c "$checksum"
+          done
+          test "$(find . -maxdepth 1 -type f | wc -l)" -eq 7
+          ls -lh
+
+      - name: Prepare release notes
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > release-notes.md <<'EOF'
+          TundraUX3 v1.2 基于 `master` 的代码提交 `@RELEASE_REF@` 发布。以下为相对上次正式版 **V1.1**（`41262cec4912218a21180c327b2787df4b8baf4a`）的功能变化。
+
+          ## 新增功能
+
+          - **系统状态中心与可定制仪表盘**：查看 CPU、内存、存储、网络及进程等系统指标；支持历史趋势、活动详情标签页、卡片尺寸选择、拖动布局、右键编辑与键盘焦点导航，并保存布局。诊断与日志入口整合到 System Status。
+          - **Windows / Linux 自更新**：设置页新增更新检查、提交历史与构建准备；从 GitHub 获取源码并通过 Rust 工具链编译，随后执行事务式替换、失败回滚和重启恢复。Linux 支持前台重启。
+          - **Linux 系统用户登录**：通过 NSS 枚举系统账户、使用 PAM 验证系统密码；个人偏好按 UID 保存。新用户首次登录后须完成外观个性化设置，中断后可继续。
+          - **界面与动效升级**：引入 Glacier UI 组件体系及 TachyonFX 动效，新增可配置动画速度，统一弹窗、菜单和通知的交互表现。
+          - **文件管理器快捷访问**：支持快捷位置列表滚动及 Tab 切换；个人目录随当前登录的 Linux 用户解析。
+          - **退出与故障处理**：退出菜单新增重启电脑；发生 panic 时显示全屏故障页，CLI 新增 watchdog 报告测试等诊断能力。
+
+          ## 修复与改进
+
+          - 修复文件管理器和启动器弹窗无法完整使用键盘导航的问题，完善输入框、覆盖层和焦点的事件路由。
+          - 修复卡片菜单单击不执行、双击识别、选择器命中位置及禁用按钮仍可触发等鼠标交互问题。
+          - 修复设置页、更新历史和仪表盘滚动范围，避免滚动时布局、拖动锚点或视口跳变。
+          - 修复内嵌命令行 UTF-8 输出，改善中文等多字节字符显示。
+          - 修复终端图形能力探测、原生字符单元尺寸识别和 WezTerm 图片图标渲染，保留不支持图形时的回退行为。
+          - 修复系统指标采样与服务等待冲突、慢速采样值丢失、过期历史数据及服务退出死锁；改进 macOS 卷分类并隐藏辅助卷。
+          - 修复天气数据源和位置处理，减少空闲时间同步轮询。
+          - 修复更新构建身份、就绪确认、恢复路径和失败回滚，改善更新可靠性。
+          - 修复 Linux 个人目录错误使用 root 路径的问题；识别用户配置和已有英文、简体中文、繁体中文文件夹。
+          - 修复边框颜色与面板背景耦合，以及页面切换焦点闪烁和弹窗动效生命周期问题。
+
+          ## 行为变化与使用说明
+
+          - 内建编辑器现在专注纯文本；Markdown 文件按原文编辑，不再进行富文本解析或预览。
+          - CLI 诊断命令统一归入 `debug`，例如 `tundra-cli debug doctor`；使用 `tundra-cli debug help` 查看子命令。
+          - Linux 启动通过 `sudo` 获取 root 权限；选中的登录用户决定身份、个人目录及 UX 偏好，但不会切换进程 UID/HOME。所有登录用户拥有 UX Admin 和 root 操作权限；账户与密码由 Linux 工具管理。依赖与数据目录说明见 [Linux 运行说明](https://github.com/peixuanthomas/TundraUX3/blob/@RELEASE_REF@/packaging/linux/README-LINUX.txt)。
+          - 自更新功能目前支持 Windows 和 Linux，需要可用的 Rust 编译工具链；macOS 请下载发布包更新。
+          - 发布标签为 `v1.2`，Linux 安装包版本为 `1.2.0`；源代码沿用该提交中的 Cargo 包版本 `0.1.1`，未为发布修改应用源码。
+
+          ## 下载
+
+          - `TundraUX3-v1.2-windows-x64.zip`：Windows x64。
+          - `TundraUX3-v1.2-macos-universal.tar.gz`：macOS Universal（Intel x86_64 + Apple Silicon arm64）。
+          - `TundraUX3-v1.2-linux-x86_64.tar.gz`：Linux x86_64 便携包，包含资源和 Linux 运行说明。
+          - `TundraUX3-v1.2-linux-amd64.deb`：Debian/Ubuntu amd64 安装包，包含 PAM 配置。
+          - 对应 `.sha256` 文件用于校验下载内容。
+
+          所有二进制产物均由本次 GitHub Actions 从上述固定提交编译、打包、校验并直接上传；发布前执行 Windows、macOS、Linux 工作区回归测试。未进行开发者签名或 Apple 公证。
+
+          **完整代码对比**：[V1.1...v1.2](https://github.com/peixuanthomas/TundraUX3/compare/V1.1...v1.2)
+          EOF
+          sed -i "s/@RELEASE_REF@/$RELEASE_REF/" release-notes.md
+
+      - name: Publish v1.2 from GitHub Actions
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          test "$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$RELEASE_TAG" --jq '.object.sha')" = "$RELEASE_REF"
+          if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            test "$(gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json isDraft --jq '.isDraft')" = true
+          else
+            gh release create "$RELEASE_TAG" --verify-tag --draft \
+              --repo "$GITHUB_REPOSITORY" --title "$RELEASE_TAG" \
+              --notes-file release-notes.md
+          fi
+          gh release upload "$RELEASE_TAG" dist/* \
+            --repo "$GITHUB_REPOSITORY" --clobber
+          gh api "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG" \
+            --jq '.assets[] | [.name, .digest] | @tsv' > remote-digests.tsv
+          test "$(wc -l < remote-digests.tsv)" -eq 7
+          for asset in dist/*; do
+            name="$(basename "$asset")"
+            digest="sha256:$(sha256sum "$asset" | cut -d' ' -f1)"
+            grep -Fqx "$(printf '%s\t%s' "$name" "$digest")" remote-digests.tsv
+          done
+          gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" \
+            --title "$RELEASE_TAG" --notes-file release-notes.md --draft=false --latest
+
+      - name: Verify published release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh release view "$RELEASE_TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --json tagName,name,isDraft,isPrerelease,publishedAt,url,assets
+          test "$(
+            gh release view "$RELEASE_TAG" \
+              --repo "$GITHUB_REPOSITORY" \
+              --json assets \
+              --jq '.assets | length'
+          )" -eq 7
+          test "$(
+            gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$RELEASE_TAG" \
+              --jq '.object.sha'
+          )" = "$RELEASE_REF"
+          gh api "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG" \
+            --jq '.assets[] | [.name, .digest] | @tsv' \
+            > remote-digests.tsv
+          for asset in dist/*; do
+            name="$(basename "$asset")"
+            digest="sha256:$(sha256sum "$asset" | cut -d' ' -f1)"
+            grep -Fqx "$name	$digest" remote-digests.tsv
+          done
