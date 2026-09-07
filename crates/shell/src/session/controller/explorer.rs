@@ -1272,6 +1272,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn quick_location_helpers_preserve_raw_non_utf8_paths() {
+        use super::{explorer_quick_location_command, explorer_quick_location_index};
         use std::ffi::OsString;
         use std::os::unix::ffi::OsStringExt;
 
