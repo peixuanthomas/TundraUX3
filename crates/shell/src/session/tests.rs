@@ -2428,27 +2428,6 @@ fn system_status_live_service_home_open_refresh_and_background_close() {
 }
 
 #[test]
-fn shell_and_lockscreen_share_the_same_session_recovery_budget() {
-    let now = Instant::now();
-    let mut recoveries = VecDeque::new();
-
-    assert!(reserve_session_recovery(&mut recoveries, now));
-    assert!(reserve_session_recovery(&mut recoveries, now));
-    assert!(!reserve_session_recovery(&mut recoveries, now));
-    assert_eq!(recoveries.len(), MAX_SESSION_RECOVERIES);
-}
-
-#[test]
-fn session_recovery_budget_resets_after_the_crash_loop_window() {
-    let now = Instant::now();
-    let mut recoveries = VecDeque::from([now, now]);
-    let after_window = now + SESSION_RECOVERY_WINDOW + Duration::from_millis(1);
-
-    assert!(reserve_session_recovery(&mut recoveries, after_window));
-    assert_eq!(recoveries, VecDeque::from([after_window]));
-}
-
-#[test]
 fn critical_modal_preempts_and_then_restores_the_previous_modal() {
     let mut center = NotificationCenter::new("Ready");
     center.push_modal(ShellNotification::modal(

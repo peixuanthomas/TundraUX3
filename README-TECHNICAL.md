@@ -144,7 +144,7 @@ flowchart LR
 
 `TerminalGuard` 负责 raw mode、备用屏幕、鼠标捕获、focus 事件和 bracketed paste；其 `Drop` 路径和紧急恢复路径都会还原终端。进入休眠前，Shell 保存编辑器恢复数据并退出全屏；恢复后重新建立终端、刷新平台会话、时间与终端尺寸。
 
-Shell UI 与锁屏 panic 共享恢复预算：60 秒内最多恢复 2 次。发生可恢复 panic 后会恢复终端并要求重新认证，而不是继续沿用之前的认证会话。`prepare_shell_startup` 虽收集存储恢复信息，但 `restored_session_from_storage` 目前固定为 `None`；它不会恢复先前保存的页面或 Shell UI 会话。
+Shell UI 或锁屏发生 panic 后，先恢复终端并保存事故报告，再直接显示独立的全屏 panic 页面，不重建登录界面或弹出 critical 提示框。Shell 收到后台任务的 panic 报告时也进入这个页面。页面使用代码中硬编码的死亡 ASCII 图，不读取主题或资源文件；未登录、普通用户和管理员都能看到报错文本。按 `R` 重启程序，按 `Q`、`Esc` 或 `Ctrl-C` 退出；方向键、PageUp/PageDown、Home/End 和鼠标滚轮用于查看长报错，缩小窗口也不会触发 Shell 的最小尺寸检查。`prepare_shell_startup` 虽收集存储恢复信息，但 `restored_session_from_storage` 目前固定为 `None`；它不会恢复先前保存的页面或 Shell UI 会话。
 
 ## 架构与 crate 分工
 
@@ -275,7 +275,7 @@ System Status 的只读数据流为：`platform` 原生采集器 → `system-ser
 
 `WeatherProvider` 支持 Open-Meteo 与 Met Office；但 APP 和启动预取目前固定使用 Open-Meteo，尚未依据 `Config.provider` 选择 Met Office。坐标可来自地址搜索、配置位置或时区对应城市。显式 refresh 会绕过缓存；APP 内存天气缓存 TTL 为 300 秒，天气磁盘缓存为 300 秒，位置、地址和地理编码缓存为 24 小时。Shell 可以在启动时预取天气。
 
-天气标准化结果、昼夜、季节和动画共同决定 ASCII 房屋、树木、云、雨雪和月相等场景。锁屏支持 12/24 小时制、终端 resize、空格继续和 `Ctrl-C`；资源尺寸会抬高共同最小终端要求。Shell 锁屏模式提示进入系统，由 Shell 负责创建 watchdog 与恢复终端。锁屏 UI 发生 panic 时最多重建一次。
+天气标准化结果、昼夜、季节和动画共同决定 ASCII 房屋、树木、云、雨雪和月相等场景。锁屏支持 12/24 小时制、终端 resize、空格继续和 `Ctrl-C`；资源尺寸会抬高共同最小终端要求。Shell 锁屏模式提示进入系统，由 Shell 负责创建 watchdog 与恢复终端。锁屏 UI 发生 panic 时直接进入全屏 panic 页面，等待用户重启或退出。
 
 ### Explorer
 
@@ -428,7 +428,7 @@ tundra-cli <cls|config|debug|new|repl|help>
 
 调试命令统一使用 `debug` 前缀，不支持 `sudo` 前缀；原顶层调试命令和 `weathr` 命令已移除。Command Line 中可直接输入 `debug test-frost`；外部终端使用 `tundra-cli debug test-frost`。
 
-两个错误报告测试在 CLI 进程中生成报告，内容明确标注为主动测试，并输出 JSON 和文本报告路径；成功返回 0，写入失败或等待超时返回非零状态。`debug test-watchdog-panic` 不在命令内部捕获：独立 CLI 由最外层 watchdog 捕获、显示严重错误提示并退出；嵌入 Command Line 则以内部退出码 76 请求 Shell 主循环真正触发 panic，执行正常的终端恢复和会话重建，直接显示严重错误界面，不先经过天气锁屏，之后需要重新登录。
+两个错误报告测试在 CLI 进程中生成报告，内容明确标注为主动测试，并输出 JSON 和文本报告路径；成功返回 0，写入失败或等待超时返回非零状态。`debug test-watchdog-panic` 不在命令内部捕获：独立 CLI 由最外层 watchdog 捕获、显示严重错误提示并退出；嵌入 Command Line 则以内部退出码 76 请求 Shell 主循环真正触发 panic，恢复终端后直接显示全屏 panic 页面，不经过天气锁屏或登录页面，也不弹出 critical 提示框。
 
 资源与配置示例：
 

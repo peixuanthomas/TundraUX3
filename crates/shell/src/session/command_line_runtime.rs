@@ -1363,7 +1363,7 @@ mod tests {
 
     #[cfg(any(windows, unix))]
     #[test]
-    fn embedded_panic_exit_enters_real_shell_recovery_and_critical_dialog() {
+    fn embedded_panic_exit_enters_fullscreen_panic_without_login_or_dialog() {
         use watchdog::{
             AppCriticality, AppDescriptor, AppId, BoundaryKind, BoundarySpec, WatchdogConfig,
             WatchdogRuntime,
@@ -1430,20 +1430,16 @@ mod tests {
             )
             .expect_err("the Shell must really unwind");
         let id = caught.incident_id().to_string();
-        let mut recoveries = std::collections::VecDeque::new();
-        crate::session::runtime::recover_session_panic(
-            caught,
-            "Shell UI",
-            &mut recoveries,
-            &platform::mock::UnsupportedPlatform,
-        )
-        .unwrap();
+        let message = crate::session::runtime::finalize_session_panic(caught, "Shell UI");
+        assert!(message.contains("Intentional watchdog panic"));
+        assert!(message.contains(&id));
         let mut state = crate::ShellSession::new(crate::ShellLaunchConfig::default(), (120, 40));
-        crate::session::runtime::drain_watchdog_incidents(&mut state, &process);
-        let dialog = state
-            .to_notification_view_model()
-            .expect("normal critical error dialog");
-        assert!(dialog.title.contains("critical error"));
+        let screen_before = state.active_screen();
+        let message = crate::session::runtime::drain_watchdog_incidents(&mut state, &process)
+            .expect("panic must request a standalone crash page even without login");
+        assert!(message.contains("Intentional watchdog panic"));
+        assert!(state.to_notification_view_model().is_none());
+        assert_eq!(state.active_screen(), screen_before);
         let catalog = process.list_incident_reports();
         let report = catalog
             .reports
@@ -1454,6 +1450,48 @@ mod tests {
         assert_eq!(report.boundary, "shell.fullscreen-session");
         assert!(report.summary.contains("Intentional watchdog panic"));
         assert!(report.text_report_path.as_ref().unwrap().is_file());
+        assert!(matches!(
+            report.recovery,
+            watchdog::RecoveryOutcome::Unrecoverable(_)
+        ));
+        // Background panic receipts must bypass account-gated notifications too.
+        for role in [
+            None,
+            Some(identity::UserRole::User),
+            Some(identity::UserRole::Admin),
+        ] {
+            let mut state =
+                crate::ShellSession::new(crate::ShellLaunchConfig::default(), (120, 40));
+            if let Some(role) = role {
+                state.app.dispatch_at(
+                    app::AppCommand::SetAuthSession(Some(identity::AuthSession {
+                        session_id: "panic-test-session".into(),
+                        user_id: "panic-test-user".into(),
+                        username: "panic-test".into(),
+                        role,
+                        started_at_epoch_ms: 1,
+                    })),
+                    std::time::Instant::now(),
+                );
+            }
+            let screen_before = state.active_screen();
+            let caught = app
+                .run_boundary(
+                    BoundarySpec::new("background-task", BoundaryKind::Worker),
+                    || panic!("background worker failed to read a file"),
+                )
+                .expect_err("background task panic");
+            caught
+                .finalize(watchdog::RecoveryOutcome::Recovered(
+                    "worker restarted".into(),
+                ))
+                .unwrap();
+            let message = crate::session::runtime::drain_watchdog_incidents(&mut state, &process)
+                .expect("every account must see background panic details");
+            assert!(message.contains("background worker failed to read a file"));
+            assert!(state.to_notification_view_model().is_none());
+            assert_eq!(state.active_screen(), screen_before);
+        }
         drop(host);
         runtime.shutdown().unwrap();
         std::fs::remove_dir_all(root).unwrap();

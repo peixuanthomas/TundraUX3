@@ -229,8 +229,6 @@ pub fn run_fullscreen_blocking_managed_with_outcome(
     let mut cached_time_sync = None;
     let mut force_lockscreen = false;
     let mut show_terminal_graphics_notice = true;
-    let mut session_recoveries = VecDeque::new();
-    let mut recovering_shell_panic = false;
     let mut explorer_task_runtime: Option<ShellExplorerTaskRuntime> = None;
     let mut diagnostics_task_runtime: Option<ShellDiagnosticsTaskRuntime> = None;
     // Linux installs its logind subscriptions lazily through this poll. Do it
@@ -264,11 +262,7 @@ pub fn run_fullscreen_blocking_managed_with_outcome(
                 diagnostics_watchdog.clone(),
             ));
         }
-        // A rebuilt Shell session must show its critical-error dialog immediately,
-        // rather than hiding the incident behind the weather lockscreen.
-        if !std::mem::take(&mut recovering_shell_panic)
-            && (force_lockscreen || should_show_startup_lockscreen(&startup))
-        {
+        if force_lockscreen || should_show_startup_lockscreen(&startup) {
             let lockscreen_input = weathr::WeathrDisplayInput {
                 snapshots: system_services.subscribe(),
                 clock_format: weathr::ClockFormat::TwentyFourHour,
@@ -294,14 +288,13 @@ pub fn run_fullscreen_blocking_managed_with_outcome(
                 }
                 Ok(Err(error)) => return Err(io::Error::other(error)),
                 Err(caught) => {
-                    recover_session_panic(
-                        caught,
-                        "Weathr lockscreen",
-                        &mut session_recoveries,
+                    let message = finalize_session_panic(caught, "Weathr lockscreen");
+                    return run_panic_screen(
+                        output,
+                        &message,
+                        &terminal_control,
                         platform.as_ref(),
-                    )?;
-                    force_lockscreen = true;
-                    continue;
+                    );
                 }
             }
             startup = prepare_shell_startup(platform.as_ref()).map_err(io::Error::other)?;
@@ -349,17 +342,20 @@ pub fn run_fullscreen_blocking_managed_with_outcome(
                     FullscreenShellSessionOutcome::UpdatePrepared(manifest) => {
                         return Ok(ShellRunOutcome::UpdatePrepared(manifest));
                     }
+                    FullscreenShellSessionOutcome::Panic(message) => {
+                        return run_panic_screen(
+                            output,
+                            &message,
+                            &terminal_control,
+                            platform.as_ref(),
+                        );
+                    }
                 }
             }
             Ok(Err(error)) => return Err(error),
             Err(caught) => {
-                recover_session_panic(
-                    caught,
-                    "Shell UI",
-                    &mut session_recoveries,
-                    platform.as_ref(),
-                )?;
-                recovering_shell_panic = true;
+                let message = finalize_session_panic(caught, "Shell UI");
+                return run_panic_screen(output, &message, &terminal_control, platform.as_ref());
             }
         }
         if diagnostics_task_runtime
@@ -378,6 +374,7 @@ pub(super) enum FullscreenShellSessionOutcome {
     ReturnToLockscreen,
     ResetRequested,
     UpdatePrepared(std::path::PathBuf),
+    Panic(String),
 }
 
 #[derive(Debug, Clone)]
@@ -1020,7 +1017,14 @@ pub(super) fn run_fullscreen_shell_session<W: Write>(
         }
 
         drain_time_sync_results(&mut state, time_sync_receiver, cached_time_sync);
-        drain_watchdog_incidents(&mut state, process_watchdog);
+        if let Some(message) = drain_watchdog_incidents(&mut state, process_watchdog) {
+            command_line_host.terminate();
+            guard.restore()?;
+            return Ok((
+                FullscreenShellSessionOutcome::Panic(message),
+                state.ascii_assets.clone(),
+            ));
+        }
         shell_watchdog.heartbeat(RuntimeSnapshot {
             screen: Some(format!("{:?}", state.active_screen())),
             terminal_size: Some(state.terminal_size()),
@@ -1881,54 +1885,85 @@ pub(super) fn trigger_command_line_panic() -> ! {
     panic!("Intentional watchdog panic test requested from Command Line");
 }
 
-pub(super) const SESSION_RECOVERY_WINDOW: Duration = Duration::from_secs(60);
-pub(super) const MAX_SESSION_RECOVERIES: usize = 2;
-
-pub(super) fn reserve_session_recovery(recoveries: &mut VecDeque<Instant>, now: Instant) -> bool {
-    while recoveries
-        .front()
-        .is_some_and(|at| now.saturating_duration_since(*at) > SESSION_RECOVERY_WINDOW)
-    {
-        recoveries.pop_front();
+pub(super) fn finalize_session_panic(caught: CaughtPanic, session_name: &str) -> String {
+    let reason = caught.payload().to_string();
+    let id = caught.incident_id().to_string();
+    match caught.finalize(RecoveryOutcome::Unrecoverable(format!(
+        "the {session_name} stopped; waiting for the user to restart or exit"
+    ))) {
+        Ok(receipt) => format!(
+            "{session_name}: {reason}\n\n{}",
+            watchdog_incident_summary(&receipt)
+        ),
+        Err(error) => format!(
+            "{session_name}: {reason}\n\nIncident: {id}\nCould not finalize crash report: {error}"
+        ),
     }
-    if recoveries.len() >= MAX_SESSION_RECOVERIES {
-        return false;
-    }
-    recoveries.push_back(now);
-    true
 }
 
-pub(super) fn recover_session_panic(
-    caught: CaughtPanic,
-    session_name: &str,
-    recoveries: &mut VecDeque<Instant>,
+fn run_panic_screen(
+    output: &mut impl Write,
+    message: &str,
+    terminal_control: &TerminalControlHandler,
     platform: &dyn Platform,
-) -> io::Result<()> {
-    let reason = caught.payload().to_string();
-    if reserve_session_recovery(recoveries, Instant::now()) {
-        let _ = caught.finalize(RecoveryOutcome::RecoveredWithWarnings(format!(
-            "the {session_name} state was discarded; reauthentication is required"
-        )));
-        return Ok(());
-    }
+) -> io::Result<ShellRunOutcome> {
+    // Use a fresh terminal and a fixed renderer, never the damaged Shell state.
+    let mut guard = TerminalGuard::enter(output)?;
+    let mut screen = ui::PanicScreen::new(message);
+    let mut redraw = true;
+    let outcome = loop {
+        let _ = platform.poll_lifecycle_event();
+        if terminal_control.shutdown_requested() {
+            break ShellRunOutcome::Exit;
+        }
+        if redraw {
+            guard.terminal_mut().draw(|frame| screen.render(frame))?;
+            redraw = false;
+        }
+        if event::poll(Duration::from_millis(250))? {
+            if let Some(outcome) = apply_panic_screen_event(&mut screen, event::read()?) {
+                break outcome;
+            }
+            redraw = true;
+        }
+    };
+    guard.restore()?;
+    Ok(outcome)
+}
 
-    let receipt = caught
-        .finalize(RecoveryOutcome::Unrecoverable(format!(
-            "automatic {session_name} recovery limit reached"
-        )))
-        .ok();
-    let report = receipt
-        .as_ref()
-        .and_then(|receipt| receipt.text_report_path.as_ref())
-        .map(|path| path.display().to_string())
-        .unwrap_or_else(|| "report path unavailable".to_string());
-    let _ = platform.show_critical_error(
-        "TundraUX3 could not recover",
-        &format!("{session_name}: {reason}\n\nCrash report: {report}"),
-    );
-    Err(io::Error::other(format!(
-        "{session_name} recovery limit reached after panic: {reason}"
-    )))
+fn apply_panic_screen_event(
+    screen: &mut ui::PanicScreen,
+    event: event::Event,
+) -> Option<ShellRunOutcome> {
+    use event::{Event, KeyCode, KeyEventKind, KeyModifiers, MouseEventKind};
+    match event {
+        Event::Key(key) if key.kind != KeyEventKind::Release => {
+            let control = key.modifiers.contains(KeyModifiers::CONTROL);
+            match key.code {
+                KeyCode::Char('c') if control => return Some(ShellRunOutcome::Exit),
+                KeyCode::Char('q' | 'Q') | KeyCode::Esc if key.kind == KeyEventKind::Press => {
+                    return Some(ShellRunOutcome::Exit);
+                }
+                KeyCode::Char('r' | 'R') if key.kind == KeyEventKind::Press => {
+                    return Some(ShellRunOutcome::RestartRequested);
+                }
+                KeyCode::Up => screen.scroll_up(false),
+                KeyCode::Down => screen.scroll_down(false),
+                KeyCode::PageUp => screen.scroll_up(true),
+                KeyCode::PageDown => screen.scroll_down(true),
+                KeyCode::Home => screen.scroll_to_start(),
+                KeyCode::End => screen.scroll_to_end(),
+                _ => {}
+            }
+        }
+        Event::Mouse(mouse) => match mouse.kind {
+            MouseEventKind::ScrollUp => screen.scroll_up(false),
+            MouseEventKind::ScrollDown => screen.scroll_down(false),
+            _ => {}
+        },
+        _ => {}
+    }
+    None
 }
 
 pub(super) fn load_validated_runtime_ascii_assets() -> io::Result<ui::RuntimeAsciiAssets> {
@@ -2265,27 +2300,37 @@ fn weathr_watchdog_descriptor() -> AppDescriptor {
     )
 }
 
-pub(super) fn drain_watchdog_incidents(state: &mut ShellSession, watchdog: &ProcessWatchdog) {
+pub(super) fn drain_watchdog_incidents(
+    state: &mut ShellSession,
+    watchdog: &ProcessWatchdog,
+) -> Option<String> {
+    let mut panic_messages = Vec::new();
     for incident in watchdog.drain_incidents() {
-        show_watchdog_incident(state, incident);
+        if incident.kind == IncidentKind::Panic {
+            panic_messages.push(watchdog_incident_summary(&incident));
+        } else {
+            show_watchdog_incident(state, incident);
+        }
     }
+    (!panic_messages.is_empty()).then(|| panic_messages.join("\n\n"))
 }
 
-pub(super) fn show_watchdog_incident(state: &mut ShellSession, incident: IncidentReceipt) {
-    let report_path = incident
+fn watchdog_incident_summary(incident: &IncidentReceipt) -> String {
+    let report = incident
         .text_report_path
         .as_ref()
         .or(incident.json_report_path.as_ref())
-        .cloned();
-    let report = report_path
-        .as_ref()
         .map(|path| path.display().to_string())
         .unwrap_or_else(|| "report path unavailable".to_string());
-    let full_summary = format!(
+    format!(
         "{}\n\nRecovery: {:?}\nIncident: {}\nReport: {}",
         incident.summary, incident.recovery, incident.incident_id, report
-    );
-    state.latest_watchdog_report = report_path;
+    )
+}
+
+pub(super) fn show_watchdog_incident(state: &mut ShellSession, incident: IncidentReceipt) {
+    let full_summary = watchdog_incident_summary(&incident);
+    state.latest_watchdog_report = incident.text_report_path.or(incident.json_report_path);
     state.latest_watchdog_summary = Some(full_summary.clone());
     if state.app.diagnostics_snapshot().is_some() && !state.diagnostics_restart_is_required() {
         if state
@@ -2400,6 +2445,50 @@ mod runtime_preflight_tests {
     };
     use std::cell::{Cell, RefCell};
     use std::rc::Rc;
+
+    #[test]
+    fn panic_screen_waits_for_explicit_restart_or_exit() {
+        let mut screen = ui::PanicScreen::new("test error");
+        for event in [
+            Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
+            Event::Resize(10, 4),
+            Event::Key(KeyEvent::new_with_kind(
+                KeyCode::Char('r'),
+                KeyModifiers::NONE,
+                event::KeyEventKind::Release,
+            )),
+            Event::Key(KeyEvent::new_with_kind(
+                KeyCode::Char('r'),
+                KeyModifiers::NONE,
+                event::KeyEventKind::Repeat,
+            )),
+        ] {
+            assert_eq!(apply_panic_screen_event(&mut screen, event), None);
+        }
+        for (code, modifiers, outcome) in [
+            (
+                KeyCode::Char('r'),
+                KeyModifiers::NONE,
+                ShellRunOutcome::RestartRequested,
+            ),
+            (
+                KeyCode::Char('q'),
+                KeyModifiers::NONE,
+                ShellRunOutcome::Exit,
+            ),
+            (KeyCode::Esc, KeyModifiers::NONE, ShellRunOutcome::Exit),
+            (
+                KeyCode::Char('c'),
+                KeyModifiers::CONTROL,
+                ShellRunOutcome::Exit,
+            ),
+        ] {
+            assert_eq!(
+                apply_panic_screen_event(&mut screen, Event::Key(KeyEvent::new(code, modifiers))),
+                Some(outcome)
+            );
+        }
+    }
 
     #[test]
     fn idle_has_no_background_poll_deadline_but_active_work_does() {
