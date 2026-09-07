@@ -1,11 +1,10 @@
 use super::{layout::*, model::*};
 use crate::components::{
     Button, ComponentState, DataTable, Dialog, DialogAction, EmptyState, List, ListItem,
-    MetricCard, Scrollbar, Surface, TabItem, Tabs, tone_color,
+    MetricCard, Scrollbar, Surface, tone_color,
 };
 use crate::screens::diagnostics::{
-    render_diagnostics_content, render_diagnostics_footer, render_diagnostics_header,
-    render_diagnostics_repair_dialog,
+    render_diagnostics_content, render_diagnostics_footer, render_diagnostics_repair_dialog,
 };
 use crate::screens::shell::{fit_cell, render_compact_home, render_status, render_top};
 use crate::{RenderContext, ShellChromeViewModel, ShellLayout, TundraTheme, compute_shell_layout};
@@ -53,6 +52,19 @@ fn render_main(
         .titled("System Status")
         .bordered(true)
         .render_frame(frame, l.panel, context);
+    if let Some(area) = l.module_tabs_area {
+        let mut tabs = system_status_module_tabs();
+        let selected = match model.route {
+            SystemStatusRoute::Detail(detail) => detail.diagnostics_tab().and_then(|tab| {
+                crate::DiagnosticsTab::ALL
+                    .iter()
+                    .position(|candidate| *candidate == tab)
+            }),
+            _ => None,
+        };
+        tabs.set_selected(selected);
+        tabs.render_borderless_frame(frame, area, &context.compatibility_theme());
+    }
     match model.route {
         SystemStatusRoute::Dashboard => render_dashboard(frame, &l, model, context),
         SystemStatusRoute::Detail(d) => render_detail(frame, &l, model, d, context),
@@ -118,7 +130,7 @@ fn render_dashboard(
         .unwrap_or(if model.dashboard.editing {
             "Arrows Move · Enter Select · Esc Cancel"
         } else {
-            "Right-click Quick Edit · E Edit · Enter Details · R Refresh · Esc Home"
+            "H Diagnostics · L Logs · I Incidents · E Edit · Esc Home"
         });
     let action_left = if model.dashboard.editing {
         l.add_button.x
@@ -318,25 +330,11 @@ fn render_detail(
     match d {
         SystemStatusDetail::Storage => render_storage(frame, l, model, context),
         SystemStatusDetail::Network => render_network(frame, l, model, context),
-        SystemStatusDetail::Diagnostics | SystemStatusDetail::Activity => {
+        SystemStatusDetail::Diagnostics
+        | SystemStatusDetail::Logs
+        | SystemStatusDetail::Incidents => {
             let mut diagnostics = model.diagnostics.clone();
-            if d == SystemStatusDetail::Activity {
-                diagnostics.tab = model.activity_tab();
-                if let Some(area) = l.activity_tabs_area {
-                    let mut tabs = Tabs::new(
-                        "system-status.activity.tabs",
-                        vec![
-                            TabItem::new("system-status.activity.logs", "Logs"),
-                            TabItem::new("system-status.activity.incidents", "Incidents"),
-                        ],
-                    );
-                    tabs.set_selected(Some(usize::from(
-                        diagnostics.tab == crate::DiagnosticsTab::Incidents,
-                    )));
-                    tabs.render_borderless_frame(frame, area, theme);
-                }
-            }
-            render_diagnostics_header(frame, l.header, &diagnostics, theme);
+            diagnostics.tab = d.diagnostics_tab().expect("diagnostics module route");
             if let Some(dl) = &l.diagnostics_content {
                 render_diagnostics_content(frame, dl, &diagnostics, theme, context)
             }
@@ -360,7 +358,7 @@ fn render_detail(
     }
     if !matches!(
         d,
-        SystemStatusDetail::Diagnostics | SystemStatusDetail::Activity
+        SystemStatusDetail::Diagnostics | SystemStatusDetail::Logs | SystemStatusDetail::Incidents
     ) {
         frame.render_widget(
             Paragraph::new("Esc Dashboard · R Refresh").style(theme.muted_style()),
@@ -452,7 +450,8 @@ fn detail_headers(kind: SystemStatusWidgetKind) -> Vec<&'static str> {
             vec!["Sort", "PID", "Process", "CPU", "Memory"]
         }
         SystemStatusWidgetKind::Diagnostics => vec!["Check", "Status"],
-        SystemStatusWidgetKind::Activity => vec!["When", "App", "Summary"],
+        SystemStatusWidgetKind::Logs => vec!["Log", "Size", "Modified"],
+        SystemStatusWidgetKind::Incidents => vec!["When", "App", "Summary"],
     }
 }
 fn render_storage(

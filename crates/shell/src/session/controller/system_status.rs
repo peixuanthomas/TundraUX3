@@ -1,7 +1,7 @@
 use super::super::*;
 use system_services::{MetricState, NetworkState, StoragePressure, StorageState};
 
-pub(in crate::session) const SYSTEM_STATUS_WIDGET_KINDS: [storage::SystemStatusWidgetKind; 11] = [
+pub(in crate::session) const SYSTEM_STATUS_WIDGET_KINDS: [storage::SystemStatusWidgetKind; 12] = [
     storage::SystemStatusWidgetKind::SystemOverview,
     storage::SystemStatusWidgetKind::Cpu,
     storage::SystemStatusWidgetKind::Memory,
@@ -12,7 +12,8 @@ pub(in crate::session) const SYSTEM_STATUS_WIDGET_KINDS: [storage::SystemStatusW
     storage::SystemStatusWidgetKind::UptimeLoad,
     storage::SystemStatusWidgetKind::TopProcesses,
     storage::SystemStatusWidgetKind::Diagnostics,
-    storage::SystemStatusWidgetKind::Activity,
+    storage::SystemStatusWidgetKind::Logs,
+    storage::SystemStatusWidgetKind::Incidents,
 ];
 
 impl ShellSession {
@@ -259,8 +260,11 @@ impl ShellSession {
             ui::SystemStatusTab::Health => {
                 ui::SystemStatusRoute::Detail(ui::SystemStatusDetail::Diagnostics)
             }
-            ui::SystemStatusTab::Logs | ui::SystemStatusTab::Incidents => {
-                ui::SystemStatusRoute::Detail(ui::SystemStatusDetail::Activity)
+            ui::SystemStatusTab::Logs => {
+                ui::SystemStatusRoute::Detail(ui::SystemStatusDetail::Logs)
+            }
+            ui::SystemStatusTab::Incidents => {
+                ui::SystemStatusRoute::Detail(ui::SystemStatusDetail::Incidents)
             }
         };
         self.system_status_selected_row = 0;
@@ -304,9 +308,13 @@ impl ShellSession {
                 self.system_status_tab = ui::SystemStatusTab::Health;
                 self.diagnostics_tab = ui::DiagnosticsTab::Health;
             }
-            storage::SystemStatusWidgetKind::Activity => {
+            storage::SystemStatusWidgetKind::Logs => {
                 self.system_status_tab = ui::SystemStatusTab::Logs;
                 self.diagnostics_tab = ui::DiagnosticsTab::Logs;
+            }
+            storage::SystemStatusWidgetKind::Incidents => {
+                self.system_status_tab = ui::SystemStatusTab::Incidents;
+                self.diagnostics_tab = ui::DiagnosticsTab::Incidents;
             }
             storage::SystemStatusWidgetKind::Storage => {
                 self.system_status_tab = ui::SystemStatusTab::Storage;
@@ -315,6 +323,12 @@ impl ShellSession {
                 self.system_status_tab = ui::SystemStatusTab::Network;
             }
             _ => self.system_status_tab = ui::SystemStatusTab::Overview,
+        }
+        if ui_widget_kind(kind).detail().diagnostics_tab().is_some() {
+            self.clear_diagnostics_scrollbar_drag();
+            self.diagnostics_list_window_start = 0;
+            self.diagnostics_list_window_is_explicit = false;
+            self.clamp_diagnostics_selection();
         }
     }
 
@@ -1416,7 +1430,8 @@ pub(in crate::session) const fn ui_widget_kind(
         storage::SystemStatusWidgetKind::UptimeLoad => ui::SystemStatusWidgetKind::UptimeLoad,
         storage::SystemStatusWidgetKind::TopProcesses => ui::SystemStatusWidgetKind::TopProcesses,
         storage::SystemStatusWidgetKind::Diagnostics => ui::SystemStatusWidgetKind::Diagnostics,
-        storage::SystemStatusWidgetKind::Activity => ui::SystemStatusWidgetKind::Activity,
+        storage::SystemStatusWidgetKind::Logs => ui::SystemStatusWidgetKind::Logs,
+        storage::SystemStatusWidgetKind::Incidents => ui::SystemStatusWidgetKind::Incidents,
     }
 }
 
@@ -1436,7 +1451,8 @@ pub(in crate::session) const fn storage_widget_kind(
         ui::SystemStatusWidgetKind::UptimeLoad => storage::SystemStatusWidgetKind::UptimeLoad,
         ui::SystemStatusWidgetKind::TopProcesses => storage::SystemStatusWidgetKind::TopProcesses,
         ui::SystemStatusWidgetKind::Diagnostics => storage::SystemStatusWidgetKind::Diagnostics,
-        ui::SystemStatusWidgetKind::Activity => storage::SystemStatusWidgetKind::Activity,
+        ui::SystemStatusWidgetKind::Logs => storage::SystemStatusWidgetKind::Logs,
+        ui::SystemStatusWidgetKind::Incidents => storage::SystemStatusWidgetKind::Incidents,
     }
 }
 

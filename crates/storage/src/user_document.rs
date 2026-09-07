@@ -189,7 +189,7 @@ mod glacier_user_migration_tests {
         let mut admin = user(AppearanceConfig::default());
         admin.role = "Admin".into();
         let mut ordinary = user(AppearanceConfig::default());
-        ordinary.system_status_dashboard.widgets = vec![crate::SystemStatusWidgetKind::Activity];
+        ordinary.system_status_dashboard.widgets = vec![crate::SystemStatusWidgetKind::Logs];
         let mut document = UsersDocument {
             schema_version: 3,
             users: vec![admin, ordinary],
@@ -211,7 +211,7 @@ mod glacier_user_migration_tests {
             !document.users[1]
                 .system_status_dashboard
                 .widgets
-                .contains(&crate::SystemStatusWidgetKind::Activity)
+                .contains(&crate::SystemStatusWidgetKind::Logs)
         );
     }
 

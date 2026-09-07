@@ -138,7 +138,7 @@ fn health_renderer_draws_two_columns_statuses_and_admin_details() {
     assert!(output.contains("Repair available"));
     assert!(output.contains("F Repair"));
     assert!(output.contains("A Repair all"));
-    assert!(output.contains("O Open logs"));
+    assert!(!output.contains("O Open logs"));
     assert!(output.contains("E Log folder"));
     assert!(region_has_fg(
         &terminal,

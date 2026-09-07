@@ -376,18 +376,18 @@ fn system_status_add_scrolls_new_bottom_widget_fully_into_view() {
     state.begin_system_status_dashboard_edit();
     let index = super::controller::system_status::SYSTEM_STATUS_WIDGET_KINDS
         .iter()
-        .position(|kind| *kind == storage::SystemStatusWidgetKind::Activity)
+        .position(|kind| *kind == storage::SystemStatusWidgetKind::Logs)
         .unwrap();
     state.open_system_status_add_picker();
     state.select_system_status_picker_item(index);
     state.add_selected_system_status_widget();
     assert_eq!(
         state.system_status_selected_widget,
-        Some(storage::SystemStatusWidgetKind::Activity)
+        Some(storage::SystemStatusWidgetKind::Logs)
     );
     assert_eq!(
         state.system_status_dashboard_focus,
-        ui::SystemStatusDashboardFocus::Widget(ui::SystemStatusWidgetKind::Activity)
+        ui::SystemStatusDashboardFocus::Widget(ui::SystemStatusWidgetKind::Logs)
     );
     assert!(state.system_status_dashboard_scroll_row > 0);
     let (model, layout) = state.system_status_layout().unwrap();
@@ -395,7 +395,7 @@ fn system_status_add_scrolls_new_bottom_widget_fully_into_view() {
         .dashboard
         .widgets(layout.profile)
         .iter()
-        .find(|widget| widget.kind == ui::SystemStatusWidgetKind::Activity)
+        .find(|widget| widget.kind == ui::SystemStatusWidgetKind::Logs)
         .unwrap();
     assert!(activity.row >= layout.visible_row_start);
     assert!(activity.row + activity.size.rows() <= layout.visible_row_end);
@@ -1084,7 +1084,7 @@ fn system_status_right_click_opens_contextual_edit_pickers() {
     let row = layout
         .picker_items
         .iter()
-        .find(|row| picker.items[row.index].kind == ui::SystemStatusWidgetKind::Activity)
+        .find(|row| picker.items[row.index].kind == ui::SystemStatusWidgetKind::Logs)
         .unwrap();
     let point = (row.area.x, row.area.y);
     state.apply_input(InputEvent::mouse_down(PointerButton::Left, point));
@@ -1096,7 +1096,7 @@ fn system_status_right_click_opens_contextual_edit_pickers() {
         draft
             .widgets
             .iter()
-            .filter(|kind| **kind == storage::SystemStatusWidgetKind::Activity)
+            .filter(|kind| **kind == storage::SystemStatusWidgetKind::Logs)
             .count(),
         1
     );
@@ -1104,7 +1104,7 @@ fn system_status_right_click_opens_contextual_edit_pickers() {
 }
 
 #[test]
-fn system_status_activity_local_tabs_route_mouse_without_leaving_page() {
+fn system_status_modules_open_directly_from_dashboard_by_mouse_and_keyboard() {
     let mut state = ShellSession::new_for_home_mode(
         ShellLaunchConfig::default(),
         (120, 40),
@@ -1113,47 +1113,62 @@ fn system_status_activity_local_tabs_route_mouse_without_leaving_page() {
     set_test_auth_role(&mut state, UserRole::Admin);
     state.screen_stack.push(ShellScreen::SystemStatus);
     state.focused_component = ShellComponent::SystemStatus;
-    state.set_system_status_tab(ui::SystemStatusTab::Logs);
-    let model = state.to_system_status_view_model().unwrap();
     let ui::ShellLayout::Full { main, .. } = ui::compute_shell_layout(Rect::new(0, 0, 120, 40))
     else {
         panic!()
     };
-    let layout = ui::system_status_layout(main, &model);
-    let incidents = layout
-        .activity_tabs
-        .iter()
-        .find(|tab| tab.tab == ui::DiagnosticsTab::Incidents)
-        .unwrap()
-        .area;
-    state.apply_input(InputEvent::Mouse(ui::MouseEvent::new(
-        incidents.x,
-        incidents.y,
-        ui::MouseEventKind::Down(PointerButton::Left),
-    )));
-    assert_eq!(state.diagnostics_tab, ui::DiagnosticsTab::Incidents);
+    for (tab, detail, key) in [
+        (
+            ui::DiagnosticsTab::Health,
+            ui::SystemStatusDetail::Diagnostics,
+            'h',
+        ),
+        (ui::DiagnosticsTab::Logs, ui::SystemStatusDetail::Logs, 'l'),
+        (
+            ui::DiagnosticsTab::Incidents,
+            ui::SystemStatusDetail::Incidents,
+            'i',
+        ),
+    ] {
+        state.set_system_status_tab(ui::SystemStatusTab::Overview);
+        let model = state.to_system_status_view_model().unwrap();
+        let layout = ui::system_status_layout(main, &model);
+        let area = layout
+            .module_tabs
+            .iter()
+            .find(|item| item.tab == tab)
+            .unwrap()
+            .area;
+        state.apply_input(InputEvent::Mouse(ui::MouseEvent::new(
+            area.x,
+            area.y,
+            ui::MouseEventKind::Down(PointerButton::Left),
+        )));
+        assert_eq!(
+            state.system_status_route,
+            ui::SystemStatusRoute::Detail(detail)
+        );
+        assert_eq!(state.diagnostics_tab, tab);
+        state.set_system_status_tab(ui::SystemStatusTab::Overview);
+        state.apply_input(InputEvent::key(InputKey::Char(key)));
+        assert_eq!(
+            state.system_status_route,
+            ui::SystemStatusRoute::Detail(detail)
+        );
+        assert_eq!(state.diagnostics_tab, tab);
+        state.set_diagnostics_tab(tab);
+        assert_eq!(
+            state.system_status_route,
+            ui::SystemStatusRoute::Detail(detail)
+        );
+    }
+    state.set_system_status_tab(ui::SystemStatusTab::Health);
+    state.apply_input(InputEvent::key(InputKey::Char('o')));
     assert_eq!(
         state.system_status_route,
-        ui::SystemStatusRoute::Detail(ui::SystemStatusDetail::Activity)
+        ui::SystemStatusRoute::Detail(ui::SystemStatusDetail::Diagnostics)
     );
-
-    let model = state.to_system_status_view_model().unwrap();
-    let layout = ui::system_status_layout(main, &model);
-    let logs = layout
-        .activity_tabs
-        .iter()
-        .find(|tab| tab.tab == ui::DiagnosticsTab::Logs)
-        .unwrap()
-        .area;
-    state.apply_input(InputEvent::Mouse(ui::MouseEvent::new(
-        logs.x,
-        logs.y,
-        ui::MouseEventKind::Down(PointerButton::Left),
-    )));
-    assert_eq!(state.diagnostics_tab, ui::DiagnosticsTab::Logs);
-    assert_eq!(state.active_screen(), ShellScreen::SystemStatus);
 }
-
 #[test]
 fn system_status_dashboard_focus_wraps_skips_disabled_and_activates() {
     let mut state = ShellSession::new_for_home_mode(

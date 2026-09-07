@@ -448,16 +448,16 @@ pub(crate) fn render_diagnostics_footer(
     } else if model.scanning {
         format!("Scanning... · {close_hint}")
     } else {
-        let mut actions = vec!["R Rescan", "Tab Switch", "C Copy", close_hint];
+        let mut actions = vec!["R Rescan", "C Copy", close_hint];
         if model.can_repair && model.tab == DiagnosticsTab::Health {
             actions.insert(1, "F Repair");
             actions.insert(2, "A Repair all");
         }
-        if model.tab == DiagnosticsTab::Health || model.can_view_details {
+        if model.tab != DiagnosticsTab::Health && model.can_view_details {
             actions.insert(
                 actions.len().saturating_sub(1),
                 match model.tab {
-                    DiagnosticsTab::Health => "O Open logs",
+                    DiagnosticsTab::Health => unreachable!(),
                     DiagnosticsTab::Logs => "O Open log",
                     DiagnosticsTab::Incidents => "O Open report",
                 },

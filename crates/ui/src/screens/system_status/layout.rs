@@ -26,7 +26,7 @@ pub struct SystemStatusRowLayout {
     pub area: Rect,
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct SystemStatusActivityTabLayout {
+pub struct SystemStatusModuleTabLayout {
     pub tab: crate::DiagnosticsTab,
     pub area: Rect,
 }
@@ -76,8 +76,8 @@ pub struct SystemStatusLayout {
     pub notice_area: Option<Rect>,
     pub detail_summary_area: Rect,
     pub detail_trend_area: Rect,
-    pub activity_tabs_area: Option<Rect>,
-    pub activity_tabs: Vec<SystemStatusActivityTabLayout>,
+    pub module_tabs_area: Option<Rect>,
+    pub module_tabs: Vec<SystemStatusModuleTabLayout>,
     pub rows_area: Rect,
     pub rows: Vec<SystemStatusRowLayout>,
     pub visible_start: usize,
@@ -121,7 +121,12 @@ pub(super) fn system_status_picker_area(
 pub fn system_status_layout(main: Rect, model: &SystemStatusViewModel) -> SystemStatusLayout {
     let panel = main;
     let inner = inset_rect(panel, 1);
-    let header = line_in_rect(inner, inner.y);
+    let mut header = line_in_rect(inner, inner.y);
+    let module_tabs_area = (!model.dashboard.editing && header.width >= 40).then(|| {
+        let area = Rect::new(header.right() - 40, header.y, 40, header.height);
+        header.width = header.width.saturating_sub(41);
+        area
+    });
     let footer = line_in_rect(inner, inner.bottom().saturating_sub(1));
     let content_panel = Rect::new(
         inner.x,
@@ -249,7 +254,8 @@ pub fn system_status_layout(main: Rect, model: &SystemStatusViewModel) -> System
             SystemStatusDetail::Storage
                 | SystemStatusDetail::Network
                 | SystemStatusDetail::Diagnostics
-                | SystemStatusDetail::Activity
+                | SystemStatusDetail::Logs
+                | SystemStatusDetail::Incidents
         )
     });
     let detail_summary_height = if formatted_detail {
@@ -306,7 +312,9 @@ pub fn system_status_layout(main: Rect, model: &SystemStatusViewModel) -> System
         && !matches!(
             model.route,
             SystemStatusRoute::Detail(
-                SystemStatusDetail::Diagnostics | SystemStatusDetail::Activity
+                SystemStatusDetail::Diagnostics
+                    | SystemStatusDetail::Logs
+                    | SystemStatusDetail::Incidents
             )
         );
     let rows_area = Rect::new(
@@ -428,57 +436,38 @@ pub fn system_status_layout(main: Rect, model: &SystemStatusViewModel) -> System
                 .collect()
         })
         .unwrap_or_default();
-    let activity_tabs_area = matches!(detail, Some(SystemStatusDetail::Activity))
-        .then(|| Rect::new(canvas.x, canvas.y, canvas.width, canvas.height.min(1)));
-    let activity_tabs = activity_tabs_area
+    let module_tabs = module_tabs_area
         .map(|area| {
-            let tabs = Tabs::new(
-                "system-status.activity.tabs.geometry",
-                vec![
-                    TabItem::new("system-status.activity.logs", "Logs"),
-                    TabItem::new("system-status.activity.incidents", "Incidents"),
-                ],
-            );
-            [
-                crate::DiagnosticsTab::Logs,
-                crate::DiagnosticsTab::Incidents,
-            ]
-            .into_iter()
-            .zip(tabs.borderless_item_areas(area))
-            .map(|(tab, area)| SystemStatusActivityTabLayout { tab, area })
-            .collect()
+            let tabs = system_status_module_tabs();
+            crate::DiagnosticsTab::ALL
+                .into_iter()
+                .zip(tabs.borderless_item_areas(area))
+                .map(|(tab, area)| SystemStatusModuleTabLayout { tab, area })
+                .collect()
         })
         .unwrap_or_default();
-    let diagnostics_area = activity_tabs_area.map_or(canvas, |tabs| {
-        Rect::new(
-            canvas.x,
-            tabs.bottom(),
-            canvas.width,
-            canvas.bottom().saturating_sub(tabs.bottom()),
-        )
-    });
-    let diagnostics_content = matches!(
-        detail,
-        Some(SystemStatusDetail::Diagnostics | SystemStatusDetail::Activity)
-    )
-    .then(|| {
-        let mut diagnostics = model.diagnostics.clone();
-        if matches!(detail, Some(SystemStatusDetail::Activity)) {
-            diagnostics.tab = model.activity_tab();
-        }
-        diagnostics_content_layout(diagnostics_area, &diagnostics)
-    });
-    let diagnostics_repair_dialog = diagnostics_content.as_ref().and_then(|_| {
-        model
-            .diagnostics
-            .repair_dialog
-            .as_ref()
-            .map(|d| diagnostics_repair_dialog_layout(main, d))
-    });
+    let diagnostics_content = detail
+        .and_then(SystemStatusDetail::diagnostics_tab)
+        .map(|tab| {
+            let mut diagnostics = model.diagnostics.clone();
+            diagnostics.tab = tab;
+            diagnostics_content_layout(canvas, &diagnostics)
+        });
+    let diagnostics_repair_dialog = (detail == Some(SystemStatusDetail::Diagnostics))
+        .then_some(())
+        .and_then(|_| {
+            model
+                .diagnostics
+                .repair_dialog
+                .as_ref()
+                .map(|d| diagnostics_repair_dialog_layout(main, d))
+        });
     let scrollbar = match model.route {
         SystemStatusRoute::Dashboard => dashboard_scrollbar,
         SystemStatusRoute::Detail(
-            SystemStatusDetail::Diagnostics | SystemStatusDetail::Activity,
+            SystemStatusDetail::Diagnostics
+            | SystemStatusDetail::Logs
+            | SystemStatusDetail::Incidents,
         ) => None,
         SystemStatusRoute::Detail(_) => detail_has_scroll.then(|| {
             Rect::new(
@@ -516,8 +505,8 @@ pub fn system_status_layout(main: Rect, model: &SystemStatusViewModel) -> System
         notice_area: None,
         detail_summary_area,
         detail_trend_area,
-        activity_tabs_area,
-        activity_tabs,
+        module_tabs_area,
+        module_tabs,
         rows_area,
         rows,
         visible_start,
@@ -560,7 +549,7 @@ pub fn system_status_hit_test(
         return diagnostics_repair_dialog_hit_test(d, p).map(SystemStatusHitTarget::Diagnostics);
     }
     if let Some(tab) = l
-        .activity_tabs
+        .module_tabs
         .iter()
         .find(|tab| rect_contains(tab.area, x, y))
     {
@@ -601,4 +590,15 @@ pub fn system_status_hit_test(
         .iter()
         .find(|r| rect_contains(r.area, x, y))
         .map(|r| SystemStatusHitTarget::Row(r.index))
+}
+
+pub(super) fn system_status_module_tabs() -> Tabs {
+    Tabs::new(
+        "system-status.modules",
+        vec![
+            TabItem::new("system-status.diagnostics", "Diagnostics"),
+            TabItem::new("system-status.logs", "Logs"),
+            TabItem::new("system-status.incidents", "Incidents"),
+        ],
+    )
 }

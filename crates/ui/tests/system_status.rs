@@ -46,7 +46,7 @@ fn three_sizes_have_expected_geometry_and_no_overlap() {
 fn logical_scroll_scrollbar_and_widget_hits() {
     let mut m = model();
     m.dashboard.wide_widgets.push(widget(
-        SystemStatusWidgetKind::Activity,
+        SystemStatusWidgetKind::Logs,
         SystemStatusWidgetSize::Wide,
         0,
         9,
@@ -231,49 +231,50 @@ fn storage_network_and_diagnostics_details_remain_integrated() {
     assert!(render(120, 28, &m).contains("Data path"))
 }
 #[test]
-fn activity_has_only_local_logs_and_incidents_tabs() {
-    let mut m = model();
-    m.route = SystemStatusRoute::Detail(SystemStatusDetail::Activity);
-    m.diagnostics.tab = DiagnosticsTab::Health;
-    let l = system_status_layout(full_main(120, 28), &m);
-    assert_eq!(
-        l.activity_tabs
-            .iter()
-            .map(|tab| tab.tab)
-            .collect::<Vec<_>>(),
-        vec![DiagnosticsTab::Logs, DiagnosticsTab::Incidents]
-    );
-    assert_eq!(
-        l.diagnostics_content.as_ref().unwrap().active_tab,
-        DiagnosticsTab::Logs
-    );
-    let tabs_area = l.activity_tabs_area.expect("activity tab bar");
-    assert!(l.diagnostics_content.as_ref().unwrap().list_panel.y >= tabs_area.bottom());
-    for tab in &l.activity_tabs {
+fn diagnostics_logs_and_incidents_are_independent_system_status_modules() {
+    for (detail, expected) in [
+        (SystemStatusDetail::Diagnostics, DiagnosticsTab::Health),
+        (SystemStatusDetail::Logs, DiagnosticsTab::Logs),
+        (SystemStatusDetail::Incidents, DiagnosticsTab::Incidents),
+    ] {
+        let mut m = model();
+        m.route = SystemStatusRoute::Detail(detail);
+        // A previous page must not decide the current page's content.
+        m.diagnostics.tab = DiagnosticsTab::Health;
+        let l = system_status_layout(full_main(120, 28), &m);
         assert_eq!(
-            system_status_hit_test(&l, (tab.area.x, tab.area.y)),
-            Some(SystemStatusHitTarget::Diagnostics(
-                DiagnosticsHitTarget::Tab(tab.tab)
-            ))
+            l.module_tabs.iter().map(|tab| tab.tab).collect::<Vec<_>>(),
+            DiagnosticsTab::ALL
         );
+        assert_eq!(l.diagnostics_content.as_ref().unwrap().active_tab, expected);
+        assert_eq!(
+            l.diagnostics_content.as_ref().unwrap().list_panel.y,
+            l.canvas.y
+        );
+        let out = render(120, 28, &m);
+        assert!(out.contains(detail.label()));
+        assert!(!out.contains("O Open logs"));
+        assert!(!out.contains("Tab Switch"));
     }
-    let out = render(120, 28, &m);
-    assert!(out.contains("Logs"));
-    assert!(out.contains("Incidents"));
-
-    m.route = SystemStatusRoute::Detail(SystemStatusDetail::Diagnostics);
-    let diagnostics = system_status_layout(full_main(120, 28), &m);
-    assert!(diagnostics.activity_tabs_area.is_none());
-    assert!(diagnostics.activity_tabs.is_empty());
-    assert_eq!(
-        diagnostics
-            .diagnostics_content
-            .as_ref()
-            .unwrap()
-            .list_panel
-            .y,
-        diagnostics.canvas.y
-    );
+    for (width, height) in [(108, 22), (120, 28)] {
+        let m = model();
+        let l = system_status_layout(full_main(width, height), &m);
+        assert_eq!(l.module_tabs.len(), 3);
+        for tab in &l.module_tabs {
+            assert!(tab.area.width > 0);
+            assert!(l.header.intersection(tab.area).is_empty());
+            assert_eq!(
+                system_status_hit_test(&l, (tab.area.x, tab.area.y)),
+                Some(SystemStatusHitTarget::Diagnostics(
+                    DiagnosticsHitTarget::Tab(tab.tab)
+                ))
+            );
+        }
+        let out = render(width, height, &m);
+        for label in ["Diagnostics", "Logs", "Incidents"] {
+            assert!(out.contains(label), "{width}: missing {label}");
+        }
+    }
 }
 #[test]
 fn size_picker_renders_exact_rows_and_captures_dashboard_hits() {

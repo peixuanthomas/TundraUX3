@@ -586,16 +586,12 @@ impl ShellSession {
     pub(in crate::session) fn set_diagnostics_tab(&mut self, tab: ui::DiagnosticsTab) {
         self.diagnostics_tab = tab;
         if self.active_screen() == ShellScreen::SystemStatus {
-            self.system_status_tab = match tab {
+            self.set_system_status_tab(match tab {
                 ui::DiagnosticsTab::Health => ui::SystemStatusTab::Health,
                 ui::DiagnosticsTab::Logs => ui::SystemStatusTab::Logs,
                 ui::DiagnosticsTab::Incidents => ui::SystemStatusTab::Incidents,
-            };
-            self.system_status_route = if tab == ui::DiagnosticsTab::Health {
-                ui::SystemStatusRoute::Detail(ui::SystemStatusDetail::Diagnostics)
-            } else {
-                ui::SystemStatusRoute::Detail(ui::SystemStatusDetail::Activity)
-            };
+            });
+            return;
         }
         self.diagnostics_list_window_start = 0;
         self.diagnostics_list_window_is_explicit = false;
@@ -911,8 +907,7 @@ impl ShellSession {
         _platform: &dyn Platform,
     ) {
         if self.diagnostics_tab == ui::DiagnosticsTab::Health {
-            self.set_diagnostics_tab(ui::DiagnosticsTab::Logs);
-            self.notify_status("Diagnostics logs");
+            self.notify_status("Open Logs from System Status");
             return;
         }
         if !self.diagnostics_can_view_details() {
@@ -1657,7 +1652,7 @@ mod diagnostics_shell_tests {
     }
 
     #[test]
-    fn diagnostics_three_tab_routing_and_health_open_logs_are_consistent() {
+    fn diagnostics_tab_routing_does_not_hide_logs_behind_health_open() {
         let mut state = state(UserRole::User);
         state.open_diagnostics();
         let target = RoutedTarget::Component(ShellComponent::Diagnostics);
@@ -1688,7 +1683,7 @@ mod diagnostics_shell_tests {
 
         state.set_diagnostics_tab(ui::DiagnosticsTab::Health);
         state.open_selected_diagnostics_report(&platform::mock::UnsupportedPlatform);
-        assert_eq!(state.diagnostics_tab, ui::DiagnosticsTab::Logs);
+        assert_eq!(state.diagnostics_tab, ui::DiagnosticsTab::Health);
         assert!(!state.notification_has_active_modal());
     }
 

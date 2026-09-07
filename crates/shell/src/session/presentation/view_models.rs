@@ -8,14 +8,10 @@ impl ShellSession {
             return None;
         }
         let mut diagnostics = self.to_diagnostics_view_model();
-        match self.system_status_route {
-            ui::SystemStatusRoute::Detail(ui::SystemStatusDetail::Diagnostics) => {
-                diagnostics.tab = ui::DiagnosticsTab::Health;
-            }
-            ui::SystemStatusRoute::Detail(ui::SystemStatusDetail::Activity) => {
-                diagnostics.tab = self.diagnostics_tab;
-            }
-            _ => {}
+        if let ui::SystemStatusRoute::Detail(detail) = self.system_status_route
+            && let Some(tab) = detail.diagnostics_tab()
+        {
+            diagnostics.tab = tab;
         }
         let snapshot = self.app.system_status_snapshot();
         let (storage_state, storage) = match snapshot.map(|s| &s.storage) {
@@ -948,32 +944,47 @@ impl ShellSession {
                     ComponentTone::Success
                 };
             }
-            storage::SystemStatusWidgetKind::Activity => {
-                model.state = if diagnostics.scanned_at.is_some() {
-                    ui::SystemStatusWidgetState::Ready
-                } else if diagnostics.scanning {
+            storage::SystemStatusWidgetKind::Logs => {
+                model.state = if diagnostics.scanning {
                     ui::SystemStatusWidgetState::Loading
                 } else {
                     ui::SystemStatusWidgetState::Ready
                 };
-                model.primary = format!(
-                    "{} logs · {} incidents",
-                    diagnostics.logs.len(),
-                    diagnostics.incidents.len()
-                );
+                model.primary = if diagnostics.can_view_details {
+                    format!("{} logs", diagnostics.logs.len())
+                } else {
+                    "Administrator access required".into()
+                };
                 model.secondary = diagnostics
                     .logs
                     .iter()
-                    .max_by_key(|log| &log.modified_at)
-                    .map(|log| log.path.clone())
-                    .into_iter()
-                    .chain(
-                        diagnostics
-                            .incidents
-                            .iter()
-                            .map(|incident| incident.summary.clone()),
-                    )
                     .take(3)
+                    .map(|log| log.relative_path.clone())
+                    .collect();
+                model.compact_rows = diagnostics
+                    .logs
+                    .iter()
+                    .map(|log| {
+                        vec![
+                            log.relative_path.clone(),
+                            format_bytes(log.size_bytes),
+                            log.modified_at.clone(),
+                        ]
+                    })
+                    .collect();
+            }
+            storage::SystemStatusWidgetKind::Incidents => {
+                model.state = if diagnostics.scanning {
+                    ui::SystemStatusWidgetState::Loading
+                } else {
+                    ui::SystemStatusWidgetState::Ready
+                };
+                model.primary = format!("{} incidents", diagnostics.incidents.len());
+                model.secondary = diagnostics
+                    .incidents
+                    .iter()
+                    .take(3)
+                    .map(|incident| incident.summary.clone())
                     .collect();
                 model.compact_rows = diagnostics
                     .incidents

@@ -595,7 +595,9 @@ impl ShellSession {
         let diagnostics_active = matches!(
             self.system_status_route,
             ui::SystemStatusRoute::Detail(
-                ui::SystemStatusDetail::Diagnostics | ui::SystemStatusDetail::Activity
+                ui::SystemStatusDetail::Diagnostics
+                    | ui::SystemStatusDetail::Logs
+                    | ui::SystemStatusDetail::Incidents
             )
         );
         let diagnostics_tab = diagnostics_active.then_some(self.diagnostics_tab);
@@ -610,27 +612,22 @@ impl ShellSession {
             };
         }
 
-        if let ui::SystemStatusRoute::Detail(detail) = self.system_status_route {
+        if self.system_status_dashboard_draft.is_none() {
+            let module = match key.key {
+                InputKey::Char('h' | 'H') => Some(ui::SystemStatusTab::Health),
+                InputKey::Char('l' | 'L') => Some(ui::SystemStatusTab::Logs),
+                InputKey::Char('i' | 'I') => Some(ui::SystemStatusTab::Incidents),
+                _ => None,
+            };
+            if let Some(tab) = module {
+                return (target, ShellCommand::SystemStatusTab(tab));
+            }
+        }
+        if let ui::SystemStatusRoute::Detail(_) = self.system_status_route {
             let command = match &key.key {
                 InputKey::Escape => ShellCommand::SystemStatusBack,
                 InputKey::Char('r' | 'R') if diagnostics_active => ShellCommand::DiagnosticsRescan,
                 InputKey::Char('r' | 'R') => ShellCommand::SystemStatusRefresh,
-                InputKey::Tab | InputKey::Right if detail == ui::SystemStatusDetail::Activity => {
-                    if self.diagnostics_tab == ui::DiagnosticsTab::Logs {
-                        ShellCommand::DiagnosticsIncidentsTab
-                    } else {
-                        ShellCommand::DiagnosticsLogsTab
-                    }
-                }
-                InputKey::BackTab | InputKey::Left
-                    if detail == ui::SystemStatusDetail::Activity =>
-                {
-                    if self.diagnostics_tab == ui::DiagnosticsTab::Incidents {
-                        ShellCommand::DiagnosticsLogsTab
-                    } else {
-                        ShellCommand::DiagnosticsIncidentsTab
-                    }
-                }
                 InputKey::Up if diagnostics_active => ShellCommand::DiagnosticsPrevious,
                 InputKey::Down if diagnostics_active => ShellCommand::DiagnosticsNext,
                 InputKey::PageUp if diagnostics_active => ShellCommand::DiagnosticsPageUp,
@@ -662,7 +659,12 @@ impl ShellSession {
                 InputKey::Char('e' | 'E') if diagnostics_active => {
                     ShellCommand::DiagnosticsOpenLogsInExplorer
                 }
-                InputKey::Char('o' | 'O') if diagnostics_active => {
+                InputKey::Char('o' | 'O')
+                    if matches!(
+                        diagnostics_tab,
+                        Some(ui::DiagnosticsTab::Logs | ui::DiagnosticsTab::Incidents)
+                    ) =>
+                {
                     ShellCommand::DiagnosticsOpenReport
                 }
                 InputKey::Enter
@@ -1966,7 +1968,9 @@ impl ShellSession {
         let diagnostics_active = matches!(
             self.system_status_route,
             ui::SystemStatusRoute::Detail(
-                ui::SystemStatusDetail::Diagnostics | ui::SystemStatusDetail::Activity
+                ui::SystemStatusDetail::Diagnostics
+                    | ui::SystemStatusDetail::Logs
+                    | ui::SystemStatusDetail::Incidents
             )
         );
         let editing = self.system_status_dashboard_draft.is_some();

@@ -2042,7 +2042,9 @@ impl ShellSession {
                 if matches!(
                     self.system_status_route,
                     ui::SystemStatusRoute::Detail(
-                        ui::SystemStatusDetail::Diagnostics | ui::SystemStatusDetail::Activity
+                        ui::SystemStatusDetail::Diagnostics
+                            | ui::SystemStatusDetail::Logs
+                            | ui::SystemStatusDetail::Incidents
                     )
                 ) =>
             {

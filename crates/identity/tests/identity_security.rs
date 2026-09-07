@@ -309,7 +309,7 @@ fn dashboard_updates_are_self_managed_and_require_an_enabled_authenticated_user(
         .login("NormalUser", "NormalPass123")
         .unwrap();
     let mut dashboard = SystemStatusDashboardConfig::for_role("User");
-    dashboard.add_widget(SystemStatusWidgetKind::Activity);
+    dashboard.add_widget(SystemStatusWidgetKind::Logs);
 
     let updated = users
         .update_user_system_status_dashboard(&normal, "NormalUser", dashboard.clone())

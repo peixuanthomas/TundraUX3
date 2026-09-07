@@ -14,10 +14,11 @@ pub enum SystemStatusWidgetKind {
     UptimeLoad,
     TopProcesses,
     Diagnostics,
-    Activity,
+    Logs,
+    Incidents,
 }
 impl SystemStatusWidgetKind {
-    pub const ALL: [Self; 11] = [
+    pub const ALL: [Self; 12] = [
         Self::SystemOverview,
         Self::Cpu,
         Self::Memory,
@@ -28,7 +29,8 @@ impl SystemStatusWidgetKind {
         Self::UptimeLoad,
         Self::TopProcesses,
         Self::Diagnostics,
-        Self::Activity,
+        Self::Logs,
+        Self::Incidents,
     ];
     pub const fn label(self) -> &'static str {
         match self {
@@ -42,7 +44,8 @@ impl SystemStatusWidgetKind {
             Self::UptimeLoad => "Uptime & Load",
             Self::TopProcesses => "Top Processes",
             Self::Diagnostics => "Diagnostics",
-            Self::Activity => "Activity",
+            Self::Logs => "Logs",
+            Self::Incidents => "Incidents",
         }
     }
     pub const fn detail(self) -> SystemStatusDetail {
@@ -57,7 +60,8 @@ impl SystemStatusWidgetKind {
             Self::UptimeLoad => SystemStatusDetail::UptimeLoad,
             Self::TopProcesses => SystemStatusDetail::Processes,
             Self::Diagnostics => SystemStatusDetail::Diagnostics,
-            Self::Activity => SystemStatusDetail::Activity,
+            Self::Logs => SystemStatusDetail::Logs,
+            Self::Incidents => SystemStatusDetail::Incidents,
         }
     }
 }
@@ -233,9 +237,18 @@ pub enum SystemStatusDetail {
     UptimeLoad,
     Processes,
     Diagnostics,
-    Activity,
+    Logs,
+    Incidents,
 }
 impl SystemStatusDetail {
+    pub const fn diagnostics_tab(self) -> Option<DiagnosticsTab> {
+        match self {
+            Self::Diagnostics => Some(DiagnosticsTab::Health),
+            Self::Logs => Some(DiagnosticsTab::Logs),
+            Self::Incidents => Some(DiagnosticsTab::Incidents),
+            _ => None,
+        }
+    }
     pub const fn label(self) -> &'static str {
         match self {
             Self::Overview => "Overview",
@@ -248,7 +261,8 @@ impl SystemStatusDetail {
             Self::UptimeLoad => "Uptime & Load",
             Self::Processes => "Processes",
             Self::Diagnostics => "Diagnostics",
-            Self::Activity => "Activity",
+            Self::Logs => "Logs",
+            Self::Incidents => "Incidents",
         }
     }
 }
@@ -373,12 +387,6 @@ pub struct SystemStatusViewModel {
     pub feedback: Option<String>,
 }
 impl SystemStatusViewModel {
-    pub const fn activity_tab(&self) -> DiagnosticsTab {
-        match self.diagnostics.tab {
-            DiagnosticsTab::Incidents => DiagnosticsTab::Incidents,
-            DiagnosticsTab::Health | DiagnosticsTab::Logs => DiagnosticsTab::Logs,
-        }
-    }
     pub fn detail_widget(&self, d: SystemStatusDetail) -> Option<&SystemStatusWidgetViewModel> {
         self.dashboard
             .wide_widgets
@@ -396,12 +404,19 @@ impl SystemStatusViewModel {
                 SystemStatusContentViewModel::Admin(a),
                 SystemStatusRoute::Detail(SystemStatusDetail::Network),
             ) => a.network_rows.len(),
-            (
-                _,
-                SystemStatusRoute::Detail(
-                    SystemStatusDetail::Diagnostics | SystemStatusDetail::Activity,
-                ),
-            ) => self.diagnostics.item_count(),
+            (_, SystemStatusRoute::Detail(SystemStatusDetail::Diagnostics)) => {
+                self.diagnostics.checks.len()
+            }
+            (_, SystemStatusRoute::Detail(SystemStatusDetail::Logs)) => {
+                if self.diagnostics.can_view_details {
+                    self.diagnostics.logs.len()
+                } else {
+                    0
+                }
+            }
+            (_, SystemStatusRoute::Detail(SystemStatusDetail::Incidents)) => {
+                self.diagnostics.incidents.len()
+            }
             (_, SystemStatusRoute::Detail(detail)) => self
                 .detail_widget(detail)
                 .map(|widget| widget.compact_rows.len())

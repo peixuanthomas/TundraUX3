@@ -15,7 +15,9 @@ pub enum SystemStatusWidgetKind {
     UptimeLoad,
     TopProcesses,
     Diagnostics,
-    Activity,
+    #[serde(alias = "activity")]
+    Logs,
+    Incidents,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -337,7 +339,7 @@ fn first_fit(
             0
         };
         for column in first_column..=max_column {
-            let candidate = placement(SystemStatusWidgetKind::Activity, column, row, size);
+            let candidate = placement(SystemStatusWidgetKind::Logs, column, row, size);
             if !overlaps_any(&candidate, placed) {
                 return (column, row);
             }
@@ -347,7 +349,7 @@ fn first_fit(
     // Wrap once so malformed persisted input still normalizes deterministically.
     for row in 0..start_row {
         for column in 0..=max_column {
-            let candidate = placement(SystemStatusWidgetKind::Activity, column, row, size);
+            let candidate = placement(SystemStatusWidgetKind::Logs, column, row, size);
             if !overlaps_any(&candidate, placed) {
                 return (column, row);
             }
@@ -566,23 +568,23 @@ mod tests {
         let narrow_before = config.narrow.clone();
         config.move_widget(DashboardProfile::Wide, SystemStatusWidgetKind::Cpu, 0, 20);
         assert_eq!(config.narrow, narrow_before);
-        assert!(config.add_widget(SystemStatusWidgetKind::Activity));
+        assert!(config.add_widget(SystemStatusWidgetKind::Logs));
         assert!(
             config
                 .wide
                 .placements
                 .iter()
-                .any(|p| p.kind == SystemStatusWidgetKind::Activity)
+                .any(|p| p.kind == SystemStatusWidgetKind::Logs)
         );
         assert!(
             config
                 .narrow
                 .placements
                 .iter()
-                .any(|p| p.kind == SystemStatusWidgetKind::Activity)
+                .any(|p| p.kind == SystemStatusWidgetKind::Logs)
         );
-        assert!(config.remove_widget(SystemStatusWidgetKind::Activity));
-        assert!(!config.widgets.contains(&SystemStatusWidgetKind::Activity));
+        assert!(config.remove_widget(SystemStatusWidgetKind::Logs));
+        assert!(!config.widgets.contains(&SystemStatusWidgetKind::Logs));
     }
 
     #[test]
