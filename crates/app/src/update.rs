@@ -607,7 +607,7 @@ fn prepare_extracted_with_operations(
         },
     });
     notify(progress, UpdatePhase::Staging, "Validating compiled files");
-    validate_products_with_operations(work_dir, source_root, &target, &check.head_sha, operations)
+    validate_products_with_operations(work_dir, &target, &check.head_sha, operations)
 }
 
 fn download_source(
@@ -816,12 +816,11 @@ fn extract_archive(bytes: &[u8], destination: &Path) -> Result<PathBuf, UpdateEr
 
 fn validate_products_with_operations(
     work_dir: &Path,
-    source_root: &Path,
     target: &Path,
     sha: &str,
     operations: &dyn PreparationOperations,
 ) -> Result<PreparedUpdate, UpdateError> {
-    let prepared = validate_product_paths(work_dir, source_root, target, sha)?;
+    let prepared = validate_product_paths(work_dir, target, sha)?;
     operations.probe(&prepared.cli_exe, sha)?;
     operations.probe(&prepared.shell_exe, sha)?;
     Ok(prepared)
@@ -829,13 +828,12 @@ fn validate_products_with_operations(
 
 fn validate_product_paths(
     work_dir: &Path,
-    source_root: &Path,
     target: &Path,
     sha: &str,
 ) -> Result<PreparedUpdate, UpdateError> {
     let shell_exe = target.join("release").join(SHELL_FILE);
     let cli_exe = target.join("release").join(CLI_FILE);
-    let default_assets = source_root.join("assets/themes/default");
+    let default_assets = target.join("release/assets/themes/default");
     for (label, path, directory) in [
         ("shell executable", &shell_exe, false),
         ("CLI executable", &cli_exe, false),

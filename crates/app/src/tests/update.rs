@@ -67,15 +67,16 @@ fn update_zip_rejects_parent_traversal() {
 #[test]
 fn update_product_validation_requires_all_outputs() {
     let root = std::env::temp_dir().join(format!("tundra-update-products-{}", std::process::id()));
-    fs::create_dir_all(root.join("source/assets/themes/default")).unwrap();
     fs::create_dir_all(root.join("target/release")).unwrap();
     fs::write(root.join("target/release").join(SHELL_FILE), b"shell").unwrap();
-    assert!(
-        validate_product_paths(&root, &root.join("source"), &root.join("target"), "abc").is_err()
-    );
+    assert!(validate_product_paths(&root, &root.join("target"), "abc").is_err());
     fs::write(root.join("target/release").join(CLI_FILE), b"cli").unwrap();
-    assert!(
-        validate_product_paths(&root, &root.join("source"), &root.join("target"), "abc").is_ok()
+    assert!(validate_product_paths(&root, &root.join("target"), "abc").is_err());
+    fs::create_dir_all(root.join("target/release/assets/themes/default")).unwrap();
+    let prepared = validate_product_paths(&root, &root.join("target"), "abc").unwrap();
+    assert_eq!(
+        prepared.default_assets,
+        root.join("target/release/assets/themes/default")
     );
     fs::remove_dir_all(root).unwrap();
 }
@@ -168,7 +169,8 @@ fn update_preparation_failures_never_touch_installation() {
         let source = root.join("source");
         let target = root.join("target/release");
         let install = root.join("unrelated-install");
-        fs::create_dir_all(source.join("assets/themes/default")).unwrap();
+        fs::create_dir_all(source.clone()).unwrap();
+        fs::create_dir_all(target.join("assets/themes/default")).unwrap();
         fs::create_dir_all(&target).unwrap();
         fs::create_dir_all(&install).unwrap();
         fs::write(
