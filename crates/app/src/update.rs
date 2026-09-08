@@ -17,6 +17,8 @@ pub const UPDATE_TARGET_SHA_ENV: &str = "TUNDRAUX3_UPDATE_TARGET_SHA";
 pub const UPDATE_ROLLBACK_ENV: &str = "TUNDRAUX3_UPDATE_ROLLBACK";
 const API_ROOT: &str = "https://api.github.com";
 const USER_AGENT: &str = "TundraUX3-updater/1";
+#[path = "update_git.rs"]
+mod git;
 const SHELL_FILE: &str = if cfg!(windows) {
     "tundra-shell.exe"
 } else {
@@ -195,6 +197,25 @@ struct Compare {
 }
 
 pub fn check_for_updates(identity: &BuildIdentity) -> Result<UpdateCheckResult, UpdateError> {
+    check_with_fallback(identity, API_ROOT, || git::check(identity))
+}
+
+fn check_with_fallback(
+    identity: &BuildIdentity,
+    api_root: &str,
+    fallback: impl FnOnce() -> Result<UpdateCheckResult, UpdateError>,
+) -> Result<UpdateCheckResult, UpdateError> {
+    check_using_api(identity, api_root).or_else(|api_error| {
+        fallback().map_err(|git_error| {
+            UpdateError::new(format!("{api_error}; Git fallback failed: {git_error}"))
+        })
+    })
+}
+
+fn check_using_api(
+    identity: &BuildIdentity,
+    api_root: &str,
+) -> Result<UpdateCheckResult, UpdateError> {
     let client = Client::builder()
         .user_agent(USER_AGENT)
         .timeout(Duration::from_secs(20))
@@ -202,28 +223,28 @@ pub fn check_for_updates(identity: &BuildIdentity) -> Result<UpdateCheckResult, 
         .map_err(|e| UpdateError::new(format!("could not create GitHub client: {e}")))?;
     let repository: Repository = get_json(
         &client,
-        &format!("{API_ROOT}/repos/{GITHUB_OWNER}/{GITHUB_REPO}"),
+        &format!("{api_root}/repos/{GITHUB_OWNER}/{GITHUB_REPO}"),
     )?;
     let branch: Branch = get_json(
         &client,
         &format!(
-            "{API_ROOT}/repos/{GITHUB_OWNER}/{GITHUB_REPO}/branches/{}",
+            "{api_root}/repos/{GITHUB_OWNER}/{GITHUB_REPO}/branches/{}",
             repository.default_branch
         ),
     )?;
     let (relation, commits) = if let Some(local) = identity.commit_sha.as_deref() {
-        match fetch_comparison(&client, local, &branch.commit.sha) {
+        match fetch_comparison_from(&client, api_root, local, &branch.commit.sha) {
             Ok(result) => result,
             Err(error) if error.http_status == Some(404) => (
                 UpdateRelation::Unknown,
-                fetch_recent_commits(&client, &repository.default_branch)?,
+                fetch_recent_commits(&client, api_root, &branch.commit.sha)?,
             ),
             Err(error) => return Err(error),
         }
     } else {
         (
             UpdateRelation::Unknown,
-            fetch_recent_commits(&client, &repository.default_branch)?,
+            fetch_recent_commits(&client, api_root, &branch.commit.sha)?,
         )
     };
     Ok(UpdateCheckResult {
@@ -234,20 +255,16 @@ pub fn check_for_updates(identity: &BuildIdentity) -> Result<UpdateCheckResult, 
     })
 }
 
-fn fetch_recent_commits(client: &Client, branch: &str) -> Result<Vec<UpdateCommit>, UpdateError> {
+fn fetch_recent_commits(
+    client: &Client,
+    api_root: &str,
+    head: &str,
+) -> Result<Vec<UpdateCommit>, UpdateError> {
     let values: Vec<ApiCommit> = get_json(
         client,
-        &format!("{API_ROOT}/repos/{GITHUB_OWNER}/{GITHUB_REPO}/commits?sha={branch}&per_page=20"),
+        &format!("{api_root}/repos/{GITHUB_OWNER}/{GITHUB_REPO}/commits?sha={head}&per_page=20"),
     )?;
     Ok(map_commits(values))
-}
-
-fn fetch_comparison(
-    client: &Client,
-    base: &str,
-    head: &str,
-) -> Result<(UpdateRelation, Vec<UpdateCommit>), UpdateError> {
-    fetch_comparison_from(client, API_ROOT, base, head)
 }
 
 fn fetch_comparison_from(
@@ -343,6 +360,15 @@ fn checked(response: Response) -> Result<Response, UpdateError> {
     }
 }
 
+fn source_archive_url(sha: &str) -> Result<String, UpdateError> {
+    if !git::is_commit_sha(sha) {
+        return Err(UpdateError::new("invalid source commit SHA"));
+    }
+    Ok(format!(
+        "https://codeload.github.com/{GITHUB_OWNER}/{GITHUB_REPO}/zip/{sha}"
+    ))
+}
+
 pub fn prepare_update(
     platform: &dyn Platform,
     check: &UpdateCheckResult,
@@ -380,10 +406,7 @@ fn prepare_in(
         .timeout(Duration::from_secs(120))
         .build()
         .map_err(|e| UpdateError::new(e.to_string()))?;
-    let url = format!(
-        "{API_ROOT}/repos/{GITHUB_OWNER}/{GITHUB_REPO}/zipball/{}",
-        check.head_sha
-    );
+    let url = source_archive_url(&check.head_sha)?;
     let bytes = checked(
         client
             .get(url)

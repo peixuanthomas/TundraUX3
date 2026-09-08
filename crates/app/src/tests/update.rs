@@ -201,7 +201,7 @@ fn update_preparation_failures_never_touch_installation() {
     }
 }
 
-fn update_test_root(name: &str) -> PathBuf {
+pub(super) fn update_test_root(name: &str) -> PathBuf {
     std::env::temp_dir().join(format!(
         "tundra-update-{name}-{}-{}",
         std::process::id(),
@@ -307,6 +307,88 @@ fn update_network_failure_is_reported_clearly() {
     let error =
         get_json::<Repository>(&client, &format!("http://{address}/repository")).unwrap_err();
     assert!(error.to_string().contains("GitHub request failed"));
+}
+
+#[test]
+fn update_api_rate_limit_at_any_step_uses_git_fallback() {
+    use std::io::Read;
+    for failed_step in 0..3 {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = std::thread::spawn(move || {
+            for step in 0..=failed_step {
+                let (mut stream, _) = listener.accept().unwrap();
+                stream.read(&mut [0; 2048]).unwrap();
+                let (status, headers, body) = if step == failed_step {
+                    (
+                        "403 Forbidden",
+                        "x-ratelimit-remaining: 0\r\n",
+                        "{}".to_owned(),
+                    )
+                } else if step == 0 {
+                    ("200 OK", "", r#"{"default_branch":"master"}"#.to_owned())
+                } else {
+                    (
+                        "200 OK",
+                        "",
+                        format!(r#"{{"commit":{{"sha":"{}"}}}}"#, "a".repeat(40)),
+                    )
+                };
+                write!(stream, "HTTP/1.1 {status}\r\n{headers}Content-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).unwrap();
+            }
+        });
+        let identity = BuildIdentity {
+            package_version: "0.1.1".into(),
+            commit_sha: Some("b".repeat(40)),
+            dirty: false,
+        };
+        let expected = UpdateCheckResult {
+            default_branch: "master".into(),
+            head_sha: "a".repeat(40),
+            relation: UpdateRelation::Behind { remote_ahead: 1 },
+            commits: Vec::new(),
+        };
+        let called = Cell::new(false);
+        let actual = check_with_fallback(&identity, &format!("http://{address}"), || {
+            called.set(true);
+            Ok(expected.clone())
+        })
+        .unwrap();
+        server.join().unwrap();
+        assert!(called.get());
+        assert_eq!(actual, expected);
+    }
+}
+
+#[test]
+fn update_failed_fallback_preserves_both_errors() {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    drop(listener);
+    let error = check_with_fallback(
+        &current_build_identity(),
+        &format!("http://{address}"),
+        || Err(UpdateError::new("git missing")),
+    )
+    .unwrap_err();
+    assert!(error.to_string().contains("GitHub request failed"));
+    assert!(
+        error
+            .to_string()
+            .contains("Git fallback failed: git missing")
+    );
+}
+
+#[test]
+fn update_source_download_uses_codeload_pinned_to_a_full_sha() {
+    let sha = "a".repeat(40);
+    assert_eq!(
+        source_archive_url(&sha).unwrap(),
+        format!("https://codeload.github.com/peixuanthomas/TundraUX3/zip/{sha}")
+    );
+    for invalid in ["master", "../master", "short", ""] {
+        assert!(source_archive_url(invalid).is_err());
+    }
 }
 
 #[cfg(any(windows, target_os = "linux"))]
