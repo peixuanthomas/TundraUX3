@@ -422,6 +422,48 @@ fn update_download_reports_known_unknown_and_truncated_lengths() {
 }
 
 #[test]
+fn update_preparation_uses_disk_cache_and_cleans_failed_work() {
+    let root = update_test_root("disk-cache");
+    let paths = platform::build_linux_app_paths(
+        root.join("config"),
+        root.join("data"),
+        root.join("disk-cache"),
+        root.join("state"),
+        root.join("runtime-tmpfs"),
+    )
+    .unwrap();
+    let dirs = platform::UserDirs::new(
+        root.join("desktop"),
+        root.join("documents"),
+        root.join("downloads"),
+        root.join("pictures"),
+        root.join("videos"),
+        root.join("music"),
+        root.join("data"),
+    )
+    .unwrap();
+    let platform =
+        platform::mock::MockPlatform::new(dirs, paths.clone()).with_kind(PlatformKind::Linux);
+    let check = UpdateCheckResult {
+        default_branch: "master".into(),
+        head_sha: "invalid-sha".into(),
+        relation: UpdateRelation::Unknown,
+        commits: Vec::new(),
+    };
+    assert!(
+        prepare_update(&platform, &check, &mut |_| {})
+            .unwrap_err()
+            .to_string()
+            .contains("invalid source commit")
+    );
+    assert!(!root.join("runtime-tmpfs").exists());
+    let updates = paths.cache_path().join("updates");
+    assert!(updates.is_dir());
+    assert_eq!(fs::read_dir(updates).unwrap().count(), 0);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn update_cargo_progress_uses_real_counts_and_strips_terminal_controls() {
     let line = clean_output("\u{1b}[2K    Building [===> ] 42/100: shell, cli\r");
     assert_eq!(cargo_progress(&line), Some((42, 100)));

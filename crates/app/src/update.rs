@@ -403,8 +403,12 @@ pub fn prepare_update(
         UpdatePhase::Downloading,
         "Downloading source archive",
     );
-    let work_dir = platform
-        .create_temp_dir("update")
+    // Linux runtime directories are small tmpfs mounts. A release build needs
+    // disk-backed space for source, dependencies and compiler artifacts.
+    let cache = platform
+        .app_paths()
+        .map_err(|error| UpdateError::new(format!("could not resolve update cache: {error}")))?;
+    let work_dir = platform::create_temp_dir(&cache.cache_path().join("updates"), "update")
         .map_err(|e| UpdateError::new(format!("could not create private update directory: {e}")))?;
     let result = prepare_in(platform, check, progress, &work_dir);
     if let Err(error) = &result {
