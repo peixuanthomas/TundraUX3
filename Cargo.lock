@@ -40,7 +40,7 @@ checksum = "330a5ed07fa54e4702c9d6c4174f74427fc0ef6e214bbd677ae50a5099946470"
 
 [[package]]
 name = "app"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "ascii-assets",
  "chrono",
@@ -55,7 +55,7 @@ dependencies = [
  "sha2",
  "storage",
  "system-services",
- "time 0.1.1",
+ "time 0.1.2",
  "toml 0.8.23",
  "unicode-segmentation",
  "unicode-width 0.2.0",
@@ -137,7 +137,7 @@ dependencies = [
 
 [[package]]
 name = "ascii-assets"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "serde",
  "thiserror 2.0.18",
@@ -612,7 +612,7 @@ dependencies = [
 
 [[package]]
 name = "cli"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "app",
  "arboard",
@@ -1874,7 +1874,7 @@ checksum = "b9e0384b61958566e926dc50660321d12159025e767c18e043daf26b70104c39"
 
 [[package]]
 name = "identity"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "argon2",
  "hex",
@@ -2892,7 +2892,7 @@ checksum = "19f132c84eca552bf34cab8ec81f1c1dcc229b811638f9d283dceabe58c5569e"
 
 [[package]]
 name = "platform"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "arboard",
  "battery",
@@ -3910,7 +3910,7 @@ dependencies = [
 
 [[package]]
 name = "shell"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "app",
  "ascii-assets",
@@ -3925,7 +3925,7 @@ dependencies = [
  "storage",
  "system-services",
  "tachyonfx",
- "time 0.1.1",
+ "time 0.1.2",
  "tokio",
  "ui",
  "vt100",
@@ -4068,7 +4068,7 @@ checksum = "a2eb9349b6444b326872e140eb1cf5e7c522154d69e7a0ffb0fb81c06b37543f"
 
 [[package]]
 name = "storage"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "libc",
  "platform",
@@ -4226,7 +4226,7 @@ dependencies = [
 
 [[package]]
 name = "system-services"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "async-trait",
  "chrono",
@@ -4238,7 +4238,7 @@ dependencies = [
  "serde_json",
  "tempfile",
  "thiserror 2.0.18",
- "time 0.1.1",
+ "time 0.1.2",
  "tokio",
  "watchdog",
 ]
@@ -4400,7 +4400,7 @@ dependencies = [
 
 [[package]]
 name = "time"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "chrono",
  "chrono-tz",
@@ -4764,7 +4764,7 @@ dependencies = [
 
 [[package]]
 name = "ui"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "app",
  "ascii-assets",
@@ -5086,7 +5086,7 @@ dependencies = [
 
 [[package]]
 name = "watchdog"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "chrono",
  "futures-util",
@@ -5168,7 +5168,7 @@ dependencies = [
 
 [[package]]
 name = "weathr"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "chrono",
  "crossterm",
