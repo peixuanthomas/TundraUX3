@@ -529,6 +529,7 @@ fn update_commits_wrap_complete_messages_and_follow_detail_scroll() {
     model.appearance_preview = None;
     model.cards.clear();
     model.update = Some(SettingsUpdateViewModel {
+        activity: None,
         commits: vec![SettingsUpdateCommitViewModel {
             sha: "1234567890abcdef".to_string(),
             message: format!(
@@ -592,6 +593,7 @@ fn update_commits_wrap_complete_messages_and_follow_detail_scroll() {
 fn update_confirmation_draws_buttons_and_blocks_underlying_hits() {
     let mut model = sample_model();
     model.update = Some(SettingsUpdateViewModel {
+        activity: None,
         commits: Vec::new(),
         empty_message: "Up to date".to_string(),
         confirmation: Some(SettingsUpdateConfirmationViewModel {
@@ -638,6 +640,71 @@ fn update_confirmation_draws_buttons_and_blocks_underlying_hits() {
     assert!(output.contains("The app will restart immediately."));
     assert!(output.contains("[Start update]"));
     assert!(output.contains("[Cancel]"));
+}
+
+#[test]
+fn update_activity_shows_both_meters_and_latest_output_with_page_scrolling() {
+    use ui::components::{UpdateActivityViewModel, UpdateMeterViewModel};
+    let mut model = sample_model();
+    model.selected_category = SettingsCategory::Update;
+    model.appearance_preview = None;
+    model.cards.clear();
+    model.status = "Compiling release executables".into();
+    model.update = Some(SettingsUpdateViewModel {
+        activity: Some(UpdateActivityViewModel {
+            download: UpdateMeterViewModel {
+                percent: Some(100),
+                label: "Download: 100%".into(),
+            },
+            compilation: UpdateMeterViewModel {
+                percent: Some(42),
+                label: "Compilation: 42%".into(),
+            },
+            output: (0..200).map(|n| format!("Compiling crate-{n}")).collect(),
+        }),
+        commits: Vec::new(),
+        empty_message: "No new commits".into(),
+        confirmation: None,
+    });
+    for theme in [
+        TundraTheme::default_dark(),
+        TundraTheme {
+            accent_color: Color::Yellow,
+            ..TundraTheme::default_dark()
+        },
+    ] {
+        let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
+        terminal
+            .draw(|frame| {
+                render_settings(frame, frame.area(), &chrome(), &model, &theme);
+            })
+            .unwrap();
+        let output = terminal_output(&terminal);
+        for text in [
+            "Download: 100%",
+            "Compilation: 42%",
+            "Live output",
+            "Compiling crate-199",
+        ] {
+            assert!(output.contains(text), "missing {text}");
+        }
+        assert!(!output.contains("Compiling crate-0"));
+        let main = match ui::compute_shell_layout(Rect::new(0, 0, 108, 20)) {
+            ui::ShellLayout::Full { main, .. } => main,
+            ui::ShellLayout::Compact(main) => main,
+        };
+        let layout = settings_layout(main, &model);
+        assert!(layout.max_scroll_offset > 0);
+        let mut small = Terminal::new(TestBackend::new(108, 20)).unwrap();
+        model.scroll_offset = layout.max_scroll_offset;
+        small
+            .draw(|frame| {
+                render_settings(frame, frame.area(), &chrome(), &model, &theme);
+            })
+            .unwrap();
+        assert!(terminal_output(&small).contains("Compiling crate-199"));
+        model.scroll_offset = 0;
+    }
 }
 
 fn chrome() -> ShellChromeViewModel {

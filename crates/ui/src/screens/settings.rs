@@ -6,7 +6,8 @@ use ratatui::widgets::{Clear, Paragraph, Wrap};
 
 use crate::components::{
     Button, ComponentTone, DataTable, List as ComponentList, ListItem as ComponentListItem,
-    Scrollbar, Surface, TextInput, terminal_width, truncate_to_terminal_width,
+    Scrollbar, Surface, TextInput, UpdateActivity, terminal_width, truncate_to_terminal_width,
+    visible_scrolled_rect,
 };
 use crate::screens::shell::{render_status, render_top};
 use crate::{
@@ -298,6 +299,7 @@ pub struct SettingsUpdateConfirmationViewModel {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SettingsUpdateViewModel {
+    pub activity: Option<crate::components::UpdateActivityViewModel>,
     pub commits: Vec<SettingsUpdateCommitViewModel>,
     pub empty_message: String,
     pub confirmation: Option<SettingsUpdateConfirmationViewModel>,
@@ -808,6 +810,10 @@ fn render_cards(
     if model.selected_category == SettingsCategory::Update
         && let Some(update) = &model.update
     {
+        if let Some(activity) = &update.activity {
+            UpdateActivity::new(activity).render_scrolled(frame, detail_area, y, context);
+            y += i32::from(UpdateActivity::HEIGHT) + 1;
+        }
         render_update_commits(frame, detail_area, y, update, context);
     }
 }
@@ -833,6 +839,9 @@ fn settings_content_height(detail_width: u16, model: &SettingsViewModel) -> usiz
     if model.selected_category == SettingsCategory::Update
         && let Some(update) = &model.update
     {
+        if update.activity.is_some() {
+            next_y += usize::from(UpdateActivity::HEIGHT) + 1;
+        }
         let lines = update_commit_lines(update);
         content_height = content_height
             .max(next_y.saturating_add(usize::from(update_commits_height(detail_width, &lines))));
@@ -973,11 +982,11 @@ fn render_settings_footer(
         .map(|item| item.description.as_str())
         .unwrap_or("Choose a setting.");
     let lock = model.locked_message.as_deref().unwrap_or("");
-    let text = if lock.is_empty() {
-        format!("{}  |  {}", model.status, description)
-    } else {
-        format!("{}  |  {}  |  {}", model.status, lock, description)
-    };
+    let text = [model.status.as_str(), lock, description]
+        .into_iter()
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>()
+        .join("  |  ");
     let area = Rect::new(detail.x, detail.bottom().saturating_sub(1), detail.width, 1);
     frame.render_widget(
         Paragraph::new(Line::styled(
@@ -1437,25 +1446,6 @@ fn rect_intersection(first: Rect, second: Rect) -> Option<Rect> {
     let right = first.right().min(second.right());
     let bottom = first.bottom().min(second.bottom());
     (right > x && bottom > y).then(|| Rect::new(x, y, right - x, bottom - y))
-}
-
-fn visible_scrolled_rect(
-    x: u16,
-    y: i32,
-    width: u16,
-    height: u16,
-    clip: Rect,
-) -> Option<(Rect, u16)> {
-    let top = y.max(i32::from(clip.y));
-    let bottom = (y + i32::from(height)).min(i32::from(clip.bottom()));
-    if width == 0 || bottom <= top {
-        return None;
-    }
-    let skipped = u16::try_from(top.saturating_sub(y)).unwrap_or(u16::MAX);
-    Some((
-        Rect::new(x, top as u16, width, (bottom - top) as u16),
-        skipped,
-    ))
 }
 
 fn contains(area: Rect, point: (u16, u16)) -> bool {

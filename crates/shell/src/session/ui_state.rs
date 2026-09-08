@@ -171,6 +171,7 @@ pub(super) struct SystemStatusAddPickerState {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct SettingsUpdateState {
+    pub(super) activity: Option<ui::components::UpdateActivityViewModel>,
     pub(super) check_result: Option<app::update::UpdateCheckResult>,
     pub(super) checked_at: Option<chrono::DateTime<chrono::Utc>>,
     pub(super) phase: Option<app::update::UpdatePhase>,
@@ -185,6 +186,7 @@ pub(super) struct SettingsUpdateState {
 impl Default for SettingsUpdateState {
     fn default() -> Self {
         Self {
+            activity: None,
             check_result: None,
             checked_at: None,
             phase: None,
@@ -195,6 +197,138 @@ impl Default for SettingsUpdateState {
             busy: false,
             checked_once: false,
         }
+    }
+}
+
+impl SettingsUpdateState {
+    pub(super) fn append_output(&mut self, text: &str) {
+        let activity = self.activity.get_or_insert_with(Default::default);
+        for line in text.lines() {
+            activity.output.push(
+                line.chars()
+                    .filter(|ch| !ch.is_control() || *ch == '\t')
+                    .take(4096)
+                    .collect(),
+            );
+        }
+        let excess = activity.output.len().saturating_sub(200);
+        activity.output.drain(..excess);
+    }
+
+    pub(super) fn apply_progress(&mut self, progress: app::update::UpdateProgress) {
+        use app::update::UpdateProgressDetail as Detail;
+        use ui::components::UpdateMeterViewModel as Meter;
+        let percent = |done: u64, total: Option<u64>, finished: bool| {
+            if finished {
+                Some(100)
+            } else {
+                total
+                    .filter(|total| *total > 0)
+                    .map(|total| ((u128::from(done) * 100 / u128::from(total)).min(99)) as u16)
+            }
+        };
+        match progress.detail {
+            Detail::Output => {
+                self.append_output(&progress.message);
+                return;
+            }
+            Detail::Download {
+                received,
+                total,
+                finished,
+            } => {
+                let percent = percent(received, total, finished);
+                let size = format!("{:.2} MiB", received as f64 / 1048576.0);
+                let label = match percent {
+                    Some(value) => format!("Download: {value}% · {size}"),
+                    None => format!("Download: {size} · total unknown"),
+                };
+                self.activity.get_or_insert_with(Default::default).download =
+                    Meter { percent, label };
+            }
+            Detail::Compilation {
+                completed,
+                total,
+                finished,
+            } => {
+                let percent = percent(completed, total, finished);
+                let label = if finished {
+                    "Compilation: 100% · complete".into()
+                } else if let Some(total) = total {
+                    format!(
+                        "Compilation: {}% · {completed}/{total} units",
+                        percent.unwrap_or(0)
+                    )
+                } else {
+                    "Compilation: preparing build · total unknown".into()
+                };
+                self.activity
+                    .get_or_insert_with(Default::default)
+                    .compilation = Meter { percent, label };
+            }
+            Detail::Status => {
+                if self.activity.is_some() {
+                    self.append_output(&progress.message);
+                }
+            }
+        }
+        self.phase = Some(progress.phase);
+        self.status = progress.message;
+    }
+}
+
+#[cfg(test)]
+mod update_progress_tests {
+    use super::*;
+    use app::update::{UpdatePhase, UpdateProgress, UpdateProgressDetail};
+
+    #[test]
+    fn update_progress_retains_meters_and_bounds_live_output() {
+        let mut state = SettingsUpdateState::default();
+        state.apply_progress(UpdateProgress {
+            phase: UpdatePhase::Compiling,
+            message: "Compiling".into(),
+            detail: UpdateProgressDetail::Compilation {
+                completed: 10,
+                total: Some(10),
+                finished: false,
+            },
+        });
+        assert_eq!(
+            state.activity.as_ref().unwrap().compilation.percent,
+            Some(99)
+        );
+        for n in 0..250 {
+            state.apply_progress(UpdateProgress {
+                phase: UpdatePhase::Compiling,
+                message: format!("output {n}"),
+                detail: UpdateProgressDetail::Output,
+            });
+        }
+        assert_eq!(state.status, "Compiling");
+        assert_eq!(state.activity.as_ref().unwrap().output.len(), 200);
+        assert_eq!(
+            state.activity.as_ref().unwrap().output.last().unwrap(),
+            "output 249"
+        );
+        state.append_output("ERROR: compiler failed");
+        assert_eq!(
+            state.activity.as_ref().unwrap().compilation.percent,
+            Some(99)
+        );
+        state.apply_progress(UpdateProgress {
+            phase: UpdatePhase::Compiling,
+            message: "Complete".into(),
+            detail: UpdateProgressDetail::Compilation {
+                completed: 1,
+                total: Some(1),
+                finished: true,
+            },
+        });
+        assert_eq!(
+            state.activity.as_ref().unwrap().compilation.percent,
+            Some(100)
+        );
     }
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]

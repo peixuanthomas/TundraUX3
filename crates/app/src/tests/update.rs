@@ -391,6 +391,46 @@ fn update_source_download_uses_codeload_pinned_to_a_full_sha() {
     }
 }
 
+#[test]
+fn update_download_reports_known_unknown_and_truncated_lengths() {
+    for total in [Some(6), None] {
+        let mut events = Vec::new();
+        let bytes = download_source(Cursor::new(b"source"), total, &mut |event| {
+            events.push(event)
+        })
+        .unwrap();
+        assert_eq!(bytes, b"source");
+        assert_eq!(
+            events.last().unwrap().detail,
+            UpdateProgressDetail::Download {
+                received: 6,
+                total,
+                finished: true
+            }
+        );
+    }
+    let mut events = Vec::new();
+    assert!(
+        download_source(Cursor::new(b"short"), Some(9), &mut |event| events
+            .push(event))
+        .is_err()
+    );
+    assert!(!events.iter().any(|event| matches!(
+        event.detail,
+        UpdateProgressDetail::Download { finished: true, .. }
+    )));
+}
+
+#[test]
+fn update_cargo_progress_uses_real_counts_and_strips_terminal_controls() {
+    let line = clean_output("\u{1b}[2K    Building [===> ] 42/100: shell, cli\r");
+    assert_eq!(cargo_progress(&line), Some((42, 100)));
+    for line in ["error: 1/2", "Building [ ] 1/0:", "Building [ ] 10/2:"] {
+        assert_eq!(cargo_progress(line), None);
+    }
+    assert_eq!(clean_output("编译 \u{1b}[31merror\u{1b}[0m"), "编译 error");
+}
+
 #[cfg(any(windows, target_os = "linux"))]
 #[test]
 fn update_rollback_restores_programs_and_default_assets_but_keeps_custom_themes() {

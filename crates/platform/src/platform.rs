@@ -546,6 +546,22 @@ pub trait Platform: Send + Sync {
     fn open_uri(&self, uri: &str) -> Result<(), PlatformError>;
     fn spawn_detached(&self, spec: &ProcessSpec) -> Result<(), PlatformError>;
     fn spawn_wait(&self, spec: &ProcessSpec) -> Result<ProcessExit, PlatformError>;
+    fn spawn_streaming(
+        &self,
+        spec: &ProcessSpec,
+        report: &mut dyn FnMut(crate::ProcessOutput),
+    ) -> Result<ProcessExit, PlatformError> {
+        let exit = self.spawn_wait(spec)?;
+        for (stderr, output) in [(false, &exit.stdout), (true, &exit.stderr)] {
+            for text in output.utf8_lossy().lines() {
+                report(crate::ProcessOutput {
+                    stderr,
+                    text: text.to_owned(),
+                });
+            }
+        }
+        Ok(exit)
+    }
     fn read_clipboard_text(&self) -> Result<String, PlatformError>;
     fn write_clipboard_text(&self, text: &str) -> Result<(), PlatformError>;
 

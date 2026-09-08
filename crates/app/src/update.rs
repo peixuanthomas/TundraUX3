@@ -1,6 +1,6 @@
 use std::fmt;
 use std::fs::{self, File};
-use std::io::{self, Cursor};
+use std::io::{self, Cursor, Read};
 use std::path::{Component, Path, PathBuf};
 use std::time::Duration;
 
@@ -19,6 +19,8 @@ const API_ROOT: &str = "https://api.github.com";
 const USER_AGENT: &str = "TundraUX3-updater/1";
 #[path = "update_git.rs"]
 mod git;
+#[path = "update_toolchain.rs"]
+mod toolchain;
 const SHELL_FILE: &str = if cfg!(windows) {
     "tundra-shell.exe"
 } else {
@@ -94,6 +96,23 @@ pub enum UpdatePhase {
 pub struct UpdateProgress {
     pub phase: UpdatePhase,
     pub message: String,
+    pub detail: UpdateProgressDetail,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum UpdateProgressDetail {
+    Status,
+    Download {
+        received: u64,
+        total: Option<u64>,
+        finished: bool,
+    },
+    Compilation {
+        completed: u64,
+        total: Option<u64>,
+        finished: bool,
+    },
+    Output,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -407,14 +426,14 @@ fn prepare_in(
         .build()
         .map_err(|e| UpdateError::new(e.to_string()))?;
     let url = source_archive_url(&check.head_sha)?;
-    let bytes = checked(
+    let response = checked(
         client
             .get(url)
             .send()
             .map_err(|e| UpdateError::new(format!("source download failed: {e}")))?,
-    )?
-    .bytes()
-    .map_err(|e| UpdateError::new(format!("source download failed: {e}")))?;
+    )?;
+    let total = response.content_length();
+    let bytes = download_source(response, total, progress)?;
     let source_root = extract_archive(bytes.as_ref(), &work_dir.join("source"))?;
     prepare_extracted(platform, check, progress, work_dir, &source_root)
 }
@@ -422,17 +441,67 @@ fn prepare_in(
 trait PreparationOperations {
     fn run(&self, spec: &ProcessSpec, name: &str) -> Result<ProcessExit, UpdateError>;
     fn probe(&self, executable: &Path, expected_sha: &str) -> Result<(), UpdateError>;
+    fn tool(&self, name: &str) -> ProcessSpec {
+        ProcessSpec::new(name)
+    }
+    fn run_live(
+        &self,
+        spec: &ProcessSpec,
+        name: &str,
+        _progress: &mut dyn FnMut(UpdateProgress),
+    ) -> Result<ProcessExit, UpdateError> {
+        self.run(spec, name)
+    }
 }
 
-struct PlatformPreparationOperations<'a>(&'a dyn Platform);
+struct PlatformPreparationOperations<'a> {
+    platform: &'a dyn Platform,
+    toolchain: toolchain::Toolchain,
+}
 
 impl PreparationOperations for PlatformPreparationOperations<'_> {
     fn run(&self, spec: &ProcessSpec, name: &str) -> Result<ProcessExit, UpdateError> {
-        run_checked(self.0, spec.clone(), name)
+        run_checked(self.platform, spec.clone(), name)
     }
 
     fn probe(&self, executable: &Path, expected_sha: &str) -> Result<(), UpdateError> {
         validate_update_probe(executable, expected_sha)
+    }
+
+    fn tool(&self, name: &str) -> ProcessSpec {
+        self.toolchain.spec(name)
+    }
+
+    fn run_live(
+        &self,
+        spec: &ProcessSpec,
+        name: &str,
+        progress: &mut dyn FnMut(UpdateProgress),
+    ) -> Result<ProcessExit, UpdateError> {
+        let exit = self
+            .platform
+            .spawn_streaming(spec, &mut |output| {
+                let line = clean_output(&output.text);
+                if let Some((completed, total)) = cargo_progress(&line) {
+                    progress(UpdateProgress {
+                        phase: UpdatePhase::Compiling,
+                        message: format!("Compiling: {completed}/{total} units"),
+                        detail: UpdateProgressDetail::Compilation {
+                            completed,
+                            total: Some(total),
+                            finished: false,
+                        },
+                    });
+                } else if !line.trim().is_empty() {
+                    progress(UpdateProgress {
+                        phase: UpdatePhase::Compiling,
+                        message: line,
+                        detail: UpdateProgressDetail::Output,
+                    });
+                }
+            })
+            .map_err(|error| UpdateError::new(format!("could not run {name}: {error}")))?;
+        checked_exit(exit, name)
     }
 }
 
@@ -448,7 +517,10 @@ fn prepare_extracted(
         progress,
         work_dir,
         source_root,
-        &PlatformPreparationOperations(platform),
+        &PlatformPreparationOperations {
+            platform,
+            toolchain: toolchain::Toolchain::discover()?,
+        },
     )
 }
 
@@ -465,7 +537,19 @@ fn prepare_extracted_with_operations(
         "Checking Rust toolchain",
     );
     let required = required_rust_version(&source_root.join("Cargo.toml"))?;
-    let rustc = operations.run(&ProcessSpec::new("rustc").arg("-Vv"), "rustc")?;
+    let rustc_spec = operations.tool("rustc").arg("-Vv");
+    let cargo_spec = operations.tool("cargo");
+    notify_output(
+        progress,
+        UpdatePhase::CheckingToolchain,
+        &format!("Rust compiler: {}", rustc_spec.program().display()),
+    );
+    notify_output(
+        progress,
+        UpdatePhase::CheckingToolchain,
+        &format!("Cargo: {}", cargo_spec.program().display()),
+    );
+    let rustc = operations.run(&rustc_spec, "rustc")?;
     if let Some(required) = required {
         let installed = parse_rustc_version(&rustc.stdout.utf8_lossy())?;
         if installed < required {
@@ -474,14 +558,14 @@ fn prepare_extracted_with_operations(
             )));
         }
     }
-    operations.run(&ProcessSpec::new("cargo").arg("-V"), "cargo")?;
+    operations.run(&cargo_spec.clone().arg("-V"), "cargo")?;
     notify(
         progress,
         UpdatePhase::Compiling,
         "Compiling release executables",
     );
     let target = work_dir.join("target");
-    let build = ProcessSpec::new("cargo")
+    let build = cargo_spec
         .args([
             "build",
             "--release",
@@ -494,16 +578,120 @@ fn prepare_extracted_with_operations(
         ])
         .arg(target.to_string_lossy())
         .current_dir(&source_root)
-        .env("TUNDRAUX3_BUILD_COMMIT", &check.head_sha);
-    operations.run(&build, "cargo build")?;
+        .env("TUNDRAUX3_BUILD_COMMIT", &check.head_sha)
+        .env("CARGO_TERM_COLOR", "never")
+        .env("CARGO_TERM_PROGRESS_WHEN", "always")
+        .env("CARGO_TERM_PROGRESS_WIDTH", "80")
+        .env("CARGO_TERM_PROGRESS_TERM_INTEGRATION", "false");
+    progress(UpdateProgress {
+        phase: UpdatePhase::Compiling,
+        message: "Compiling release executables".into(),
+        detail: UpdateProgressDetail::Compilation {
+            completed: 0,
+            total: None,
+            finished: false,
+        },
+    });
+    operations.run_live(&build, "cargo build", progress)?;
+    progress(UpdateProgress {
+        phase: UpdatePhase::Compiling,
+        message: "Compilation complete".into(),
+        detail: UpdateProgressDetail::Compilation {
+            completed: 1,
+            total: Some(1),
+            finished: true,
+        },
+    });
     notify(progress, UpdatePhase::Staging, "Validating compiled files");
     validate_products_with_operations(work_dir, source_root, &target, &check.head_sha, operations)
+}
+
+fn download_source(
+    mut reader: impl Read,
+    total: Option<u64>,
+    progress: &mut dyn FnMut(UpdateProgress),
+) -> Result<Vec<u8>, UpdateError> {
+    let mut bytes = Vec::new();
+    let mut buffer = [0u8; 65536];
+    let mut last = std::time::Instant::now();
+    loop {
+        let count = reader
+            .read(&mut buffer)
+            .map_err(|error| UpdateError::new(format!("source download failed: {error}")))?;
+        bytes.extend_from_slice(&buffer[..count]);
+        if count == 0 || last.elapsed() >= Duration::from_millis(100) {
+            let received = bytes.len() as u64;
+            if count == 0 && total.is_some_and(|total| total != received) {
+                return Err(UpdateError::new(
+                    "source download ended before the expected content length",
+                ));
+            }
+            progress(UpdateProgress {
+                phase: UpdatePhase::Downloading,
+                message: if count == 0 {
+                    "Download complete".into()
+                } else {
+                    format!("Downloading source: {received} bytes")
+                },
+                detail: UpdateProgressDetail::Download {
+                    received,
+                    total,
+                    finished: count == 0,
+                },
+            });
+            last = std::time::Instant::now();
+        }
+        if count == 0 {
+            return Ok(bytes);
+        }
+    }
+}
+
+fn clean_output(text: &str) -> String {
+    let mut chars = text.chars().peekable();
+    let mut output = String::new();
+    while let Some(ch) = chars.next() {
+        if ch == '\u{1b}' && chars.peek() == Some(&'[') {
+            chars.next();
+            for ch in chars.by_ref() {
+                if ('@'..='~').contains(&ch) {
+                    break;
+                }
+            }
+        } else if !ch.is_control() || ch == '\t' {
+            output.push(ch);
+        }
+    }
+    output
+}
+
+fn cargo_progress(line: &str) -> Option<(u64, u64)> {
+    let line = line.trim().strip_prefix("Building")?;
+    let count = line
+        .split_once(']')?
+        .1
+        .split_whitespace()
+        .next()?
+        .trim_end_matches(':');
+    let (completed, total) = count.split_once('/')?;
+    let completed = completed.parse().ok()?;
+    let total = total.parse().ok()?;
+    (total > 0 && completed <= total).then_some((completed, total))
+}
+
+fn notify_output(progress: &mut dyn FnMut(UpdateProgress), phase: UpdatePhase, message: &str) {
+    progress(UpdateProgress {
+        phase,
+        message: message.to_owned(),
+        detail: UpdateProgressDetail::Output,
+    });
 }
 
 fn notify(progress: &mut dyn FnMut(UpdateProgress), phase: UpdatePhase, message: &str) {
     progress(UpdateProgress {
         phase,
         message: message.to_owned(),
+        detail: UpdateProgressDetail::Status,
     });
 }
 
@@ -515,6 +703,10 @@ fn run_checked(
     let exit = platform
         .spawn_wait(&spec)
         .map_err(|e| UpdateError::new(format!("could not run {name}: {e}")))?;
+    checked_exit(exit, name)
+}
+
+fn checked_exit(exit: ProcessExit, name: &str) -> Result<ProcessExit, UpdateError> {
     if exit.code == Some(0) {
         Ok(exit)
     } else {

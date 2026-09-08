@@ -261,3 +261,22 @@ mod tests {
         assert_eq!(truncate_to_terminal_width("A🙂B", 3), "A🙂");
     }
 }
+
+pub(crate) fn visible_scrolled_rect(
+    x: u16,
+    y: i32,
+    width: u16,
+    height: u16,
+    clip: Rect,
+) -> Option<(Rect, u16)> {
+    let top = y.max(i32::from(clip.y));
+    let bottom = (y + i32::from(height)).min(i32::from(clip.bottom()));
+    if width == 0 || bottom <= top {
+        return None;
+    }
+    let skipped = u16::try_from(top.saturating_sub(y)).unwrap_or(u16::MAX);
+    Some((
+        Rect::new(x, top as u16, width, (bottom - top) as u16),
+        skipped,
+    ))
+}

@@ -1439,6 +1439,8 @@ impl ShellSession {
             Ok(()) => {
                 self.settings_update_state.busy = true;
                 self.settings_update_state.error = None;
+                self.settings_update_state.activity =
+                    Some(ui::components::UpdateActivityViewModel::default());
                 self.settings_update_state.phase = Some(app::update::UpdatePhase::Downloading);
                 self.settings_update_state.status =
                     "Downloading the selected GitHub source snapshot…".to_string();
@@ -1454,6 +1456,8 @@ impl ShellSession {
         self.settings_update_state.phase = Some(app::update::UpdatePhase::Failed);
         self.settings_update_state.status = format!("Update failed: {message}");
         self.settings_update_state.error = Some(message.clone());
+        self.settings_update_state
+            .append_output(&format!("ERROR: {message}"));
         self.notify_status(format!("Update failed: {message}"));
     }
 
@@ -1500,8 +1504,7 @@ impl ShellSession {
         for event in self.settings_task_runtime.drain_update_events() {
             match event {
                 SettingsUpdateTaskEvent::Progress(progress) => {
-                    self.settings_update_state.phase = Some(progress.phase);
-                    self.settings_update_state.status = progress.message;
+                    self.settings_update_state.apply_progress(progress);
                 }
                 SettingsUpdateTaskEvent::CheckCompleted(Ok(result)) => {
                     self.settings_update_state.busy = false;
@@ -2015,6 +2018,7 @@ impl ShellSession {
                     !matches!(result.relation, app::update::UpdateRelation::Behind { .. })
                 });
             ui::SettingsUpdateViewModel {
+                activity: self.settings_update_state.activity.clone(),
                 commits: check
                     .map(|result| {
                         result
@@ -2184,7 +2188,11 @@ fn update_settings_cards(
                 Item::new(
                     Field::CheckUpdates,
                     "Check again",
-                    if update.busy { "Working…" } else { "Check GitHub" },
+                    if update.busy {
+                        "Working…"
+                    } else {
+                        "Check GitHub"
+                    },
                     "Refresh the default branch, commit relation, and commit messages.",
                     Kind::Action,
                 )
@@ -2192,8 +2200,12 @@ fn update_settings_cards(
                 Item::new(
                     Field::StartUpdate,
                     start_label,
-                    if admin { "Confirm once" } else { "Administrator only" },
-                    "Download, compile, replace, and restart automatically. Rust is never installed automatically.",
+                    if admin {
+                        "Confirm once"
+                    } else {
+                        "Administrator only"
+                    },
+                    "",
                     Kind::Action,
                 )
                 .enabled(can_start),
@@ -2900,6 +2912,7 @@ mod update_tests {
 
     fn checked_update_state(relation: app::update::UpdateRelation) -> SettingsUpdateState {
         SettingsUpdateState {
+            activity: None,
             check_result: Some(app::update::UpdateCheckResult {
                 default_branch: "master".to_string(),
                 head_sha: "abcdef1234567890".to_string(),

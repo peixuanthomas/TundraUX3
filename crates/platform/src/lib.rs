@@ -40,7 +40,9 @@ pub use platform::{
     default_file_open_policy, default_read_directory, default_rename_path, native_platform,
     replace_file_with_backup,
 };
-pub use process::{ProcessExit, ProcessSpec, ProcessStream, validate_process_spec};
+pub use process::{
+    ProcessExit, ProcessOutput, ProcessSpec, ProcessStream, sudo_user_home, validate_process_spec,
+};
 pub use system_monitor::{
     BatterySample, BatterySampleState, CpuSample, FastSystemSample, LoadSample, MemorySample,
     NativeSystemMonitor, NetworkIoInterfaceSample, ProcessMetricSample, SlowSystemSample,

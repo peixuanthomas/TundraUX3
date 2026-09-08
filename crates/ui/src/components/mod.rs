@@ -24,6 +24,7 @@ mod surface;
 mod tabs;
 mod text_input;
 mod toast;
+mod update_activity;
 
 pub use button::Button;
 pub use command_palette::{CommandPalette, CommandPaletteCommand};
@@ -44,6 +45,7 @@ pub use skeleton::Skeleton;
 pub use surface::{Panel, Surface};
 pub use tabs::{TabItem, Tabs};
 pub use text_input::TextInput;
+pub use update_activity::{UpdateActivity, UpdateActivityViewModel, UpdateMeterViewModel};
 /// Glacier name for the established editable text component.
 pub type TextField = TextInput;
 pub use toast::{Toast, ToastTone};
@@ -51,5 +53,5 @@ pub use toast::{Toast, ToastTone};
 pub(crate) use big_text::{BigText, heading_size_ratio};
 pub(crate) use foundation::{
     byte_index_for_char, char_count, clamp_index, inner_area, interactive_style, item_style,
-    terminal_width, tone_color, truncate_to_terminal_width,
+    terminal_width, tone_color, truncate_to_terminal_width, visible_scrolled_rect,
 };

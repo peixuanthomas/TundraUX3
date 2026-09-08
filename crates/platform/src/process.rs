@@ -4,6 +4,54 @@ use std::process::{Command, Stdio};
 
 use crate::PlatformError;
 
+/// One stdout/stderr record, delivered while the child is still running.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProcessOutput {
+    pub stderr: bool,
+    pub text: String,
+}
+
+/// Resolve the account that invoked sudo without assuming a /home layout.
+pub fn sudo_user_home() -> Option<PathBuf> {
+    #[cfg(target_os = "linux")]
+    {
+        use std::os::unix::ffi::OsStrExt;
+        if unsafe { libc::geteuid() } != 0 {
+            return None;
+        }
+        let uid = std::env::var("SUDO_UID")
+            .ok()?
+            .parse::<libc::uid_t>()
+            .ok()?;
+        let mut entry = std::mem::MaybeUninit::<libc::passwd>::uninit();
+        let mut buffer = vec![0u8; 65536];
+        let mut result = std::ptr::null_mut();
+        let status = unsafe {
+            libc::getpwuid_r(
+                uid,
+                entry.as_mut_ptr(),
+                buffer.as_mut_ptr().cast(),
+                buffer.len(),
+                &mut result,
+            )
+        };
+        if status != 0 || result.is_null() {
+            return None;
+        }
+        let entry = unsafe { entry.assume_init() };
+        if entry.pw_dir.is_null() {
+            return None;
+        }
+        let bytes = unsafe { std::ffi::CStr::from_ptr(entry.pw_dir) }.to_bytes();
+        let home = PathBuf::from(std::ffi::OsStr::from_bytes(bytes));
+        home.is_absolute().then_some(home)
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        None
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProcessSpec {
     program: PathBuf,
@@ -166,6 +214,109 @@ fn command_from_spec(spec: &ProcessSpec) -> Command {
     command
 }
 
+pub(crate) fn spawn_streaming_impl(
+    spec: &ProcessSpec,
+    reject_windows_scripts: bool,
+    report: &mut dyn FnMut(ProcessOutput),
+) -> Result<ProcessExit, PlatformError> {
+    use std::io::Read;
+    validate_process_spec(spec, reject_windows_scripts)?;
+    let error = |error: std::io::Error| PlatformError::Io {
+        operation: "stream process output",
+        path: Some(spec.program.clone()),
+        message: error.to_string(),
+    };
+    let mut child = command_from_spec(spec)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(error)?;
+    let stdout = child.stdout.take().expect("piped stdout");
+    let stderr = child.stderr.take().expect("piped stderr");
+    let (tx, rx) = std::sync::mpsc::sync_channel(128);
+    let read_stream =
+        |mut stream: Box<dyn Read + Send>,
+         is_stderr,
+         tx: std::sync::mpsc::SyncSender<Result<ProcessOutput, std::io::Error>>| {
+            let mut pending = Vec::new();
+            let mut buffer = [0u8; 4096];
+            loop {
+                match stream.read(&mut buffer) {
+                    Ok(0) => break,
+                    Ok(count) => {
+                        for byte in &buffer[..count] {
+                            if matches!(*byte, b'\r' | b'\n') || pending.len() >= 8192 {
+                                if !pending.is_empty() {
+                                    let event = ProcessOutput {
+                                        stderr: is_stderr,
+                                        text: String::from_utf8_lossy(&pending).into_owned(),
+                                    };
+                                    if tx.send(Ok(event)).is_err() {
+                                        return;
+                                    }
+                                    pending.clear();
+                                }
+                                if matches!(*byte, b'\r' | b'\n') {
+                                    continue;
+                                }
+                            }
+                            pending.push(*byte);
+                        }
+                    }
+                    Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
+                    Err(error) => {
+                        let _ = tx.send(Err(error));
+                        break;
+                    }
+                }
+            }
+            if !pending.is_empty() {
+                let _ = tx.send(Ok(ProcessOutput {
+                    stderr: is_stderr,
+                    text: String::from_utf8_lossy(&pending).into_owned(),
+                }));
+            }
+        };
+    let result = std::thread::scope(|scope| {
+        let out_tx = tx.clone();
+        let err_tx = tx.clone();
+        scope.spawn(move || read_stream(Box::new(stdout), false, out_tx));
+        scope.spawn(move || read_stream(Box::new(stderr), true, err_tx));
+        drop(tx);
+        let mut out = Vec::new();
+        let mut err = Vec::new();
+        let mut read_error = None;
+        for event in rx {
+            match event {
+                Ok(event) => {
+                    let tail = if event.stderr { &mut err } else { &mut out };
+                    tail.extend_from_slice(event.text.as_bytes());
+                    tail.push(b'\n');
+                    if tail.len() > 65536 {
+                        tail.drain(..tail.len() - 65536);
+                    }
+                    report(event);
+                }
+                Err(error) => {
+                    read_error = Some(error);
+                    let _ = child.kill();
+                }
+            }
+        }
+        (out, err, read_error)
+    });
+    let status = child.wait().map_err(error)?;
+    if let Some(read_error) = result.2 {
+        return Err(error(read_error));
+    }
+    Ok(ProcessExit {
+        code: status.code(),
+        stdout: ProcessStream::from_bytes(result.0),
+        stderr: ProcessStream::from_bytes(result.1),
+    })
+}
+
 fn is_blocked_windows_script(program: &Path) -> bool {
     program
         .extension()
@@ -177,4 +328,38 @@ fn is_blocked_windows_script(program: &Path) -> bool {
             )
         })
         .unwrap_or(false)
+}
+
+#[cfg(all(test, unix))]
+mod streaming_tests {
+    use super::*;
+
+    #[test]
+    fn streaming_delivers_stdout_before_exit_and_drains_stderr() {
+        let root = std::env::temp_dir().join(format!("tundra-stream-{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        let ready = root.join("ready");
+        let spec = ProcessSpec::new("/bin/sh").args(["-c", "printf 'first\\r'; i=0; while [ ! -f \"$1\" ] && [ $i -lt 100 ]; do sleep 0.02; i=$((i+1)); done; test -f \"$1\" || exit 7; printf 'warning\\n' >&2; printf 'last'; exit 3", "stream-test"]).arg(ready.to_string_lossy());
+        let mut events = Vec::new();
+        let result = spawn_streaming_impl(&spec, false, &mut |event| {
+            if event.text == "first" {
+                std::fs::write(&ready, "ready").unwrap();
+            }
+            events.push(event);
+        })
+        .unwrap();
+        assert_eq!(result.code, Some(3));
+        assert!(
+            events
+                .iter()
+                .any(|event| event.stderr && event.text == "warning")
+        );
+        assert!(
+            events
+                .iter()
+                .any(|event| !event.stderr && event.text == "last")
+        );
+        assert!(result.stdout.utf8_lossy().contains("last"));
+        std::fs::remove_dir_all(root).unwrap();
+    }
 }

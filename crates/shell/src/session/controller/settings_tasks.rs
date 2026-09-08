@@ -159,6 +159,7 @@ impl ShellSettingsTaskRuntime {
             .spawn_thread(TaskSpec::one_shot(task_id), move || {
                 let _ = events.send(SettingsUpdateTaskEvent::Progress(
                     app::update::UpdateProgress {
+                        detail: app::update::UpdateProgressDetail::Status,
                         phase: app::update::UpdatePhase::Checking,
                         message: "Checking GitHub default branch".to_string(),
                     },
@@ -227,6 +228,7 @@ impl ShellSettingsTaskRuntime {
                         app::update::prepare_update(platform.as_ref(), &check, &mut report)?;
                     let work_dir = prepared.work_dir.clone();
                     report(app::update::UpdateProgress {
+                        detail: app::update::UpdateProgressDetail::Status,
                         phase: app::update::UpdatePhase::PreparingReplacement,
                         message: "Preparing rollback files and restart helper".to_string(),
                     });
