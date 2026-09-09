@@ -30,19 +30,20 @@ fn linux_update_helper_replaces_or_restores_and_waits_for_shell() {
         let prepared_dir = root.join("prepared");
         fs::create_dir_all(install.join("assets/themes/default")).unwrap();
         fs::create_dir_all(install.join("assets/themes/custom")).unwrap();
-        fs::create_dir_all(prepared_dir.join("default")).unwrap();
+        fs::create_dir_all(&prepared_dir).unwrap();
         fs::write(install.join("assets/themes/default/version"), "old").unwrap();
         fs::write(install.join("assets/themes/custom/version"), "custom").unwrap();
-        fs::write(prepared_dir.join("default/version"), "new").unwrap();
         fs::copy(env!("CARGO_BIN_EXE_tundra-cli"), install.join("tundra-cli")).unwrap();
         executable(
             &install.join("tundra-shell"),
             "#!/bin/sh\nprintf 'restored\\n'\nread answer\n",
         );
-        executable(
-            &prepared_dir.join("tundra-cli"),
-            "#!/bin/sh\nprintf 'protocol=1\\ncommit=abc\\n'\n",
-        );
+        fs::copy(
+            env!("CARGO_BIN_EXE_tundra-cli"),
+            prepared_dir.join("tundra-cli"),
+        )
+        .unwrap();
+        let identity = app::update::current_build_identity();
         executable(
             &prepared_dir.join("tundra-shell"),
             if fail_start {
@@ -54,10 +55,9 @@ fn linux_update_helper_replaces_or_restores_and_waits_for_shell() {
         let staged = app::update::stage_update_for_apply(
             &app::update::PreparedUpdate {
                 work_dir: prepared_dir.clone(),
-                target_sha: "abc".into(),
+                target_sha: identity.commit_sha.unwrap_or_else(|| "unknown".into()),
                 shell_exe: prepared_dir.join("tundra-shell"),
                 cli_exe: prepared_dir.join("tundra-cli"),
-                default_assets: prepared_dir.join("default"),
             },
             &install,
         )
@@ -109,7 +109,7 @@ fn linux_update_helper_replaces_or_restores_and_waits_for_shell() {
         );
         assert_eq!(
             fs::read_to_string(install.join("assets/themes/default/version")).unwrap(),
-            if fail_start { "old" } else { "new" }
+            "old"
         );
         assert_eq!(
             fs::read_to_string(install.join("assets/themes/custom/version")).unwrap(),

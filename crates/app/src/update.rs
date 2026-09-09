@@ -9,7 +9,7 @@ use reqwest::blocking::{Client, Response};
 use semver::Version;
 use serde::{Deserialize, Serialize};
 
-pub const UPDATE_PROTOCOL_VERSION: u32 = 1;
+pub const UPDATE_PROTOCOL_VERSION: u32 = 2;
 pub const GITHUB_OWNER: &str = "peixuanthomas";
 pub const GITHUB_REPO: &str = "TundraUX3";
 pub const UPDATE_READY_FILE_ENV: &str = "TUNDRAUX3_UPDATE_READY_FILE";
@@ -121,7 +121,6 @@ pub struct PreparedUpdate {
     pub target_sha: String,
     pub shell_exe: PathBuf,
     pub cli_exe: PathBuf,
-    pub default_assets: PathBuf,
 }
 
 #[derive(Debug)]
@@ -181,7 +180,6 @@ struct TransactionManifest {
     install_dir: PathBuf,
     transaction_dir: PathBuf,
     state: TransactionState,
-    assets_replaced: bool,
     cli_replaced: bool,
     shell_replaced: bool,
 }
@@ -833,13 +831,11 @@ fn validate_product_paths(
 ) -> Result<PreparedUpdate, UpdateError> {
     let shell_exe = target.join("release").join(SHELL_FILE);
     let cli_exe = target.join("release").join(CLI_FILE);
-    let default_assets = target.join("release/assets/themes/default");
-    for (label, path, directory) in [
-        ("shell executable", &shell_exe, false),
-        ("CLI executable", &cli_exe, false),
-        ("default theme assets", &default_assets, true),
+    for (label, path) in [
+        ("shell executable", &shell_exe),
+        ("CLI executable", &cli_exe),
     ] {
-        if (directory && !path.is_dir()) || (!directory && !path.is_file()) {
+        if !path.is_file() {
             return Err(UpdateError::new(format!(
                 "compiled {label} is missing: {}",
                 path.display()
@@ -851,7 +847,6 @@ fn validate_product_paths(
         target_sha: sha.to_owned(),
         shell_exe,
         cli_exe,
-        default_assets,
     })
 }
 
@@ -887,13 +882,11 @@ pub fn stage_update_for_apply(
         })?;
         let installed_shell = install_dir.join(SHELL_FILE);
         let installed_cli = install_dir.join(CLI_FILE);
-        let installed_assets = install_dir.join("assets/themes/default");
-        for (label, path, directory) in [
-            ("installed Shell", &installed_shell, false),
-            ("installed CLI", &installed_cli, false),
-            ("installed default assets", &installed_assets, true),
+        for (label, path) in [
+            ("installed Shell", &installed_shell),
+            ("installed CLI", &installed_cli),
         ] {
-            if (directory && !path.is_dir()) || (!directory && !path.is_file()) {
+            if !path.is_file() {
                 return Err(UpdateError::new(format!(
                     "{label} is missing: {}",
                     path.display()
@@ -927,8 +920,8 @@ pub fn stage_update_for_apply(
         fs::create_dir_all(&backup_dir)?;
         fs::copy(&prepared.shell_exe, new_dir.join(SHELL_FILE))?;
         fs::copy(&prepared.cli_exe, new_dir.join(CLI_FILE))?;
-        copy_tree_checked(&prepared.default_assets, &new_dir.join("default-assets"))?;
-        fs::copy(&installed_cli, transaction_dir.join(HELPER_FILE))?;
+        // Run the validated new helper: an installed older CLI may still expect assets.
+        fs::copy(&prepared.cli_exe, transaction_dir.join(HELPER_FILE))?;
 
         let manifest_path = transaction_dir.join("transaction.json");
         let manifest = TransactionManifest {
@@ -937,7 +930,6 @@ pub fn stage_update_for_apply(
             install_dir,
             transaction_dir,
             state: TransactionState::Prepared,
-            assets_replaced: false,
             cli_replaced: false,
             shell_replaced: false,
         };
@@ -1079,7 +1071,6 @@ pub fn apply_update_transaction(
 #[cfg(any(windows, target_os = "linux"))]
 trait TransactionOperations {
     fn stop_new_shell(&self) {}
-    fn rename(&self, source: &Path, target: &Path) -> Result<(), UpdateError>;
     fn replace(&self, target: &Path, replacement: &Path, backup: &Path) -> Result<(), UpdateError>;
     fn launch_new_and_wait(
         &self,
@@ -1105,10 +1096,6 @@ impl TransactionOperations for NativeTransactionOperations {
             let _ = child.wait();
         }
     }
-    fn rename(&self, source: &Path, target: &Path) -> Result<(), UpdateError> {
-        fs::rename(source, target).map_err(UpdateError::from)
-    }
-
     fn replace(&self, target: &Path, replacement: &Path, backup: &Path) -> Result<(), UpdateError> {
         platform::replace_file_with_backup(target, replacement, backup)
             .map_err(|error| UpdateError::new(error.to_string()))
@@ -1263,18 +1250,6 @@ fn apply_prepared_files_with_operations(
     }
 
     operations
-        .rename(&paths.installed_assets, &paths.backup_assets)
-        .map_err(|error| UpdateError::new(format!("could not back up default assets: {error}")))?;
-    operations
-        .rename(&paths.new_assets, &paths.installed_assets)
-        .map_err(|error| {
-            let _ = operations.rename(&paths.backup_assets, &paths.installed_assets);
-            UpdateError::new(format!("could not install default assets: {error}"))
-        })?;
-    manifest.assets_replaced = true;
-    write_manifest(manifest_path, manifest)?;
-
-    operations
         .replace(&paths.installed_cli, &paths.new_cli, &paths.backup_cli)
         .map_err(|error| UpdateError::new(format!("could not replace TundraUX CLI: {error}")))?;
     manifest.cli_replaced = true;
@@ -1317,9 +1292,6 @@ fn cleanup_committed_payload(manifest: &TransactionManifest) {
         paths.ready,
     ] {
         let _ = fs::remove_file(file);
-    }
-    for directory in [paths.backup_assets, paths.new_assets] {
-        let _ = fs::remove_dir_all(directory);
     }
 }
 
@@ -1402,31 +1374,6 @@ fn rollback_files_with_operations(
         manifest.cli_replaced = false;
         write_manifest(manifest_path, manifest)?;
     }
-    if paths.backup_assets.is_dir() {
-        if paths.installed_assets.exists() {
-            operations
-                .rename(&paths.installed_assets, &paths.failed_assets)
-                .map_err(|error| {
-                    UpdateError::new(format!("could not move failed default assets: {error}"))
-                })?;
-        }
-        operations
-            .rename(&paths.backup_assets, &paths.installed_assets)
-            .map_err(|error| {
-                UpdateError::new(format!("could not restore default assets: {error}"))
-            })?;
-        manifest.assets_replaced = false;
-        write_manifest(manifest_path, manifest)?;
-    } else if manifest.assets_replaced {
-        if !paths.failed_assets.is_dir() {
-            return Err(UpdateError::new(
-                "the asset rollback backup is missing; transaction files were retained",
-            ));
-        }
-        manifest.assets_replaced = false;
-        write_manifest(manifest_path, manifest)?;
-    }
-
     manifest.state = TransactionState::RolledBack;
     write_manifest(manifest_path, manifest)
 }
@@ -1555,50 +1502,6 @@ fn write_manifest(path: &Path, manifest: &TransactionManifest) -> Result<(), Upd
         .map_err(|error| UpdateError::new(format!("could not save update transaction: {error}")))
 }
 
-fn copy_tree_checked(source: &Path, destination: &Path) -> Result<(), UpdateError> {
-    let metadata = fs::symlink_metadata(source)?;
-    if !metadata.is_dir() || metadata.file_type().is_symlink() || metadata_is_reparse(&metadata) {
-        return Err(UpdateError::new(format!(
-            "update asset path is not a regular directory: {}",
-            source.display()
-        )));
-    }
-    fs::create_dir_all(destination)?;
-    for entry in fs::read_dir(source)? {
-        let entry = entry?;
-        let metadata = fs::symlink_metadata(entry.path())?;
-        if metadata.file_type().is_symlink() || metadata_is_reparse(&metadata) {
-            return Err(UpdateError::new(format!(
-                "links are not allowed in update assets: {}",
-                entry.path().display()
-            )));
-        }
-        let target = destination.join(entry.file_name());
-        if metadata.is_dir() {
-            copy_tree_checked(&entry.path(), &target)?;
-        } else if metadata.is_file() {
-            fs::copy(entry.path(), target)?;
-        } else {
-            return Err(UpdateError::new(format!(
-                "unsupported update asset: {}",
-                entry.path().display()
-            )));
-        }
-    }
-    Ok(())
-}
-
-#[cfg(windows)]
-fn metadata_is_reparse(metadata: &fs::Metadata) -> bool {
-    use std::os::windows::fs::MetadataExt;
-    metadata.file_attributes() & 0x0400 != 0
-}
-
-#[cfg(not(windows))]
-fn metadata_is_reparse(_metadata: &fs::Metadata) -> bool {
-    false
-}
-
 fn unix_millis() -> u128 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -1610,16 +1513,12 @@ fn unix_millis() -> u128 {
 struct TransactionPaths {
     installed_shell: PathBuf,
     installed_cli: PathBuf,
-    installed_assets: PathBuf,
     new_shell: PathBuf,
     new_cli: PathBuf,
-    new_assets: PathBuf,
     backup_shell: PathBuf,
     backup_cli: PathBuf,
-    backup_assets: PathBuf,
     failed_shell: PathBuf,
     failed_cli: PathBuf,
-    failed_assets: PathBuf,
     ready: PathBuf,
 }
 
@@ -1631,16 +1530,12 @@ fn transaction_paths(manifest: &TransactionManifest) -> TransactionPaths {
     TransactionPaths {
         installed_shell: manifest.install_dir.join(SHELL_FILE),
         installed_cli: manifest.install_dir.join(CLI_FILE),
-        installed_assets: manifest.install_dir.join("assets/themes/default"),
         new_shell: new.join(SHELL_FILE),
         new_cli: new.join(CLI_FILE),
-        new_assets: new.join("default-assets"),
         backup_shell: backup.join(SHELL_FILE),
         backup_cli: backup.join(CLI_FILE),
-        backup_assets: backup.join("default-assets"),
         failed_shell: failed.join(SHELL_FILE),
         failed_cli: failed.join(CLI_FILE),
-        failed_assets: failed.join("default-assets"),
         ready: manifest.transaction_dir.join("ready"),
     }
 }

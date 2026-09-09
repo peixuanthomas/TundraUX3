@@ -542,6 +542,8 @@ pub struct EditorViewModel {
     /// Optional viewport-only Source data. When present it is authoritative
     /// for layout and avoids materializing the full document in the UI model.
     pub source_window: Option<EditorSourceWindow>,
+    /// C-only token ranges in canonical source bytes, shared across frames.
+    pub c_highlights: Arc<[app::editor::c_syntax::CToken]>,
     pub scroll_line: usize,
     pub horizontal_scroll: usize,
     /// Source-mode horizontal extent in terminal cells: the widest line plus
@@ -603,6 +605,7 @@ impl EditorViewModel {
             source_lines: vec![String::new()],
             source_line_ranges: Vec::new(),
             source_window: None,
+            c_highlights: Arc::from([]),
             scroll_line: 0,
             horizontal_scroll: 0,
             horizontal_content_width: 1,
@@ -631,6 +634,9 @@ impl EditorViewModel {
         let mut model = Self::new(file_name, Vec::new());
         model.mode = EditorMode::Source;
         model.source = Some(source.to_owned());
+        if app::editor::c_syntax::is_c_file(&model.file_name) {
+            model.c_highlights = app::editor::c_syntax::highlight(source);
+        }
         model.source_line_ranges = source_display_line_ranges(source);
         model.horizontal_content_width =
             source_horizontal_content_width(source, &model.source_line_ranges);

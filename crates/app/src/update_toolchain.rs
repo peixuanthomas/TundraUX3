@@ -114,9 +114,8 @@ mod tests {
             Some(bin.as_path())
         );
         assert_eq!(
-            toolchain.spec("cargo").env_map().get("RUSTC").unwrap(),
-            &bin.join(format!("rustc{}", std::env::consts::EXE_SUFFIX))
-                .to_string_lossy()
+            Path::new(toolchain.spec("cargo").env_map().get("RUSTC").unwrap()),
+            bin.join(format!("rustc{}", std::env::consts::EXE_SUFFIX))
         );
         assert!(Toolchain::from_locations(std::iter::empty(), &[]).is_err());
         std::fs::remove_dir_all(root).unwrap();

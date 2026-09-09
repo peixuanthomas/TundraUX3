@@ -652,6 +652,7 @@ fn styled_line(
                 break;
             }
             let position = EditorTextPosition::new(document_line, start);
+            let base_style = c_syntax_style(base_style, grapheme_source, model, theme);
             let selected = match model.mode {
                 EditorMode::Rich => model.rich_selection.map_or_else(
                     || {
@@ -694,6 +695,40 @@ fn styled_line(
         }
     }
     Line::from(output)
+}
+
+fn c_syntax_style(
+    style: Style,
+    source: DisplaySource,
+    model: &EditorViewModel,
+    theme: &TundraTheme,
+) -> Style {
+    use app::editor::c_syntax::{CTokenKind, is_c_file};
+
+    if model.mode != EditorMode::Source || !is_c_file(&model.file_name) {
+        return style;
+    }
+    let DisplaySource::Range(range) = source else {
+        return style;
+    };
+    let index = model
+        .c_highlights
+        .partition_point(|token| token.range.end <= range.start);
+    let Some(token) = model
+        .c_highlights
+        .get(index)
+        .filter(|token| token.range.start <= range.start)
+    else {
+        return style;
+    };
+    let color = match token.kind {
+        CTokenKind::Keyword => theme.accent_color,
+        CTokenKind::String => ratatui::style::Color::Green,
+        CTokenKind::Number => ratatui::style::Color::Yellow,
+        CTokenKind::Comment => theme.muted,
+        CTokenKind::Preprocessor => ratatui::style::Color::LightMagenta,
+    };
+    style.fg(color)
 }
 
 fn effective_cursor(layout: &EditorLayout, model: &EditorViewModel) -> Option<EditorTextPosition> {

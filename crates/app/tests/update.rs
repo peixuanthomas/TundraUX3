@@ -6,5 +6,5 @@ fn update_public_identity_and_repository_contract_is_stable() {
     assert_eq!(identity.package_version, env!("CARGO_PKG_VERSION"));
     assert_eq!(GITHUB_OWNER, "peixuanthomas");
     assert_eq!(GITHUB_REPO, "TundraUX3");
-    assert_eq!(UPDATE_PROTOCOL_VERSION, 1);
+    assert_eq!(UPDATE_PROTOCOL_VERSION, 2);
 }

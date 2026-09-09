@@ -16,6 +16,81 @@ use ui::{
 };
 
 #[test]
+fn c_source_colours_tokens_and_preserves_selection_and_text() {
+    let source =
+        "#include <stdio.h>\nint main(void) {\n  // 中文注释\n  puts(\"hello\"); return 42;\n}";
+    let theme = TundraTheme::default_dark();
+    let mut model = EditorViewModel::source("main.c", source);
+    model.cursor = None;
+    let terminal = render(&model, 80, 18);
+    for (text, color) in [
+        ("#include", Color::LightMagenta),
+        ("<stdio.h>", Color::Green),
+        ("int main", theme.accent_color),
+        ("// ", theme.muted),
+        ("\"hello\"", Color::Green),
+        ("42", Color::Yellow),
+    ] {
+        let position = find_text(&terminal, text);
+        assert_eq!(terminal.backend().buffer()[position].fg, color, "{text}");
+    }
+    let (x, y) = find_text(&terminal, "// ");
+    let chinese = &terminal.backend().buffer()[(x + 3, y)];
+    assert_eq!(chinese.symbol(), "中");
+    assert_eq!(chinese.fg, theme.muted);
+    let start = source.find("return").unwrap();
+    model.selection_offsets = Some(EditorSourceSelection::new(start, start + 6));
+    let terminal = render(&model, 80, 18);
+    let position = find_text(&terminal, "return");
+    let cell = &terminal.backend().buffer()[position];
+    assert_eq!(cell.bg, theme.accent_color);
+    assert_eq!(cell.fg, Color::Black);
+    assert_eq!(model.source.as_deref(), Some(source));
+    for name in ["main.cpp", "main.rs", "data.json", "Cargo.toml", "note.txt"] {
+        let model = EditorViewModel::source(name, "int x = 42;");
+        assert!(model.c_highlights.is_empty());
+        let terminal = render(&model, 80, 18);
+        let position = find_text(&terminal, "int x");
+        assert_eq!(terminal.backend().buffer()[position].fg, theme.foreground);
+    }
+}
+
+#[test]
+fn clipped_c_viewport_retains_comment_colours_and_source_hit_positions() {
+    let source = "/* comment starts outside viewport\n0123456789 comment continues here\n*/ int x;";
+    let start = source.find("comment continues").unwrap();
+    let text = "comment continues here";
+    let mut model = EditorViewModel::source_viewport(
+        "api.h",
+        1,
+        3,
+        vec![EditorSourceWindowLine::new(
+            EditorSourceRange::new(start, start + text.len()),
+            11,
+            text,
+        )],
+    );
+    model.c_highlights = app::editor::c_syntax::highlight(source);
+    model.horizontal_content_width = 100;
+    model.horizontal_scroll = 11;
+    model.cursor = None;
+    let layout = editor_layout(Rect::new(0, 0, 50, 8), &model);
+    let terminal = render(&model, 50, 8);
+    let position = find_text(&terminal, text);
+    assert_eq!(
+        terminal.backend().buffer()[position].fg,
+        TundraTheme::default_dark().muted
+    );
+    assert_eq!(
+        layout
+            .hit_test_document(position.0, position.1)
+            .unwrap()
+            .position,
+        EditorDocumentPosition::Source(start)
+    );
+}
+
+#[test]
 fn minimum_editor_layout_keeps_plain_text_controls_canvas_and_status_available() {
     let model = sample_model();
     let layout = editor_layout(Rect::new(0, 0, 50, 12), &model);
@@ -527,7 +602,7 @@ fn wide_source_line_exposes_and_renders_a_proportional_horizontal_scrollbar() {
     );
     assert_eq!(
         terminal.backend().buffer()[(scrollbar.thumb.x, scrollbar.thumb.y)].symbol(),
-        "━"
+        "█"
     );
 }
 
@@ -561,7 +636,7 @@ fn wide_rich_no_wrap_line_exposes_and_renders_a_horizontal_scrollbar() {
     );
     assert_eq!(
         terminal.backend().buffer()[(scrollbar.thumb.x, scrollbar.thumb.y)].symbol(),
-        "━"
+        "█"
     );
 }
 
@@ -1344,7 +1419,7 @@ fn overflowing_document_exposes_proportional_scrollbar_and_scrolled_hits() {
     );
     assert_eq!(
         terminal.backend().buffer()[(scrollbar.thumb.x, scrollbar.thumb.y)].symbol(),
-        "┃"
+        "█"
     );
 }
 

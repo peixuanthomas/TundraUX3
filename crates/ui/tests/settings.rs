@@ -83,8 +83,8 @@ fn settings_scrollbar_only_appears_when_content_overflows() {
                 .symbol()
         })
         .collect::<Vec<_>>();
-    assert!(symbols.iter().all(|symbol| matches!(*symbol, "│" | "┃")));
-    assert!(symbols.contains(&"┃"));
+    assert!(symbols.iter().all(|symbol| matches!(*symbol, "│" | "█")));
+    assert!(symbols.contains(&"█"));
 }
 
 #[test]
@@ -590,56 +590,76 @@ fn update_commits_wrap_complete_messages_and_follow_detail_scroll() {
 }
 
 #[test]
-fn update_confirmation_draws_buttons_and_blocks_underlying_hits() {
-    let mut model = sample_model();
-    model.update = Some(SettingsUpdateViewModel {
-        activity: None,
-        commits: Vec::new(),
-        empty_message: "Up to date".to_string(),
-        confirmation: Some(SettingsUpdateConfirmationViewModel {
-            title: "Install update?".to_string(),
-            body: "The source will be downloaded and compiled.\nThe app will restart immediately."
-                .to_string(),
-            confirm_label: "Start update".to_string(),
-            confirm_selected: true,
-        }),
-    });
-    let layout = settings_layout(Rect::new(0, 0, 120, 32), &model);
-    let confirm = layout.update_confirm_button.expect("confirm button");
-    let cancel = layout.update_cancel_button.expect("cancel button");
-    assert_eq!(
-        settings_hit_test(&layout, (confirm.x, confirm.y)),
-        Some(SettingsHitTarget::UpdateConfirm)
-    );
-    assert_eq!(
-        settings_hit_test(&layout, (cancel.x, cancel.y)),
-        Some(SettingsHitTarget::UpdateCancel)
-    );
-    let field = layout.fields.first().expect("underlying field");
-    assert_eq!(
-        settings_hit_test(&layout, (field.area.x, field.area.y)),
-        None
-    );
-    assert_eq!(settings_hit_test(&layout, (0, 0)), None);
-
-    let mut terminal = Terminal::new(TestBackend::new(120, 32)).expect("test terminal");
-    terminal
-        .draw(|frame| {
-            render_settings(
-                frame,
-                frame.area(),
-                &chrome(),
-                &model,
-                &TundraTheme::default_dark(),
+fn update_confirmation_draws_complete_buttons_and_blocks_underlying_hits() {
+    for confirm_label in ["Update and restart", "Replace and restart"] {
+        for (width, height) in [(50, 12), (80, 24), (120, 32)] {
+            let mut model = sample_model();
+            model.update = Some(SettingsUpdateViewModel {
+                activity: None,
+                commits: Vec::new(),
+                empty_message: "Up to date".to_string(),
+                confirmation: Some(SettingsUpdateConfirmationViewModel {
+                    title: "Install update?".to_string(),
+                    body: "The source will be downloaded and compiled.\nThe app will restart immediately.".to_string(),
+                    confirm_label: confirm_label.to_string(),
+                    confirm_selected: true,
+                }),
+            });
+            let ui::ShellLayout::Full { main, .. } =
+                ui::compute_shell_layout(Rect::new(0, 0, width, height))
+            else {
+                panic!("supported terminal size")
+            };
+            let layout = settings_layout(main, &model);
+            let dialog = layout.update_confirmation.expect("dialog");
+            let confirm = layout.update_confirm_button.expect("confirm button");
+            let cancel = layout.update_cancel_button.expect("cancel button");
+            assert!(confirm.intersection(cancel).is_empty());
+            assert_eq!(confirm.intersection(dialog), confirm);
+            assert_eq!(cancel.intersection(dialog), cancel);
+            for (button, target) in [
+                (confirm, SettingsHitTarget::UpdateConfirm),
+                (cancel, SettingsHitTarget::UpdateCancel),
+            ] {
+                for x in button.x..button.right() {
+                    assert_eq!(settings_hit_test(&layout, (x, button.y)), Some(target));
+                }
+            }
+            assert_eq!(
+                settings_hit_test(&layout, (confirm.right(), confirm.y)),
+                None
             );
-        })
-        .expect("render update confirmation");
-    let output = terminal_output(&terminal);
-    assert!(output.contains("Install update?"));
-    assert!(output.contains("The source will be downloaded and compiled."));
-    assert!(output.contains("The app will restart immediately."));
-    assert!(output.contains("[Start update]"));
-    assert!(output.contains("[Cancel]"));
+            assert_eq!(settings_hit_test(&layout, (0, 0)), None);
+
+            let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+            terminal
+                .draw(|frame| {
+                    render_settings(
+                        frame,
+                        frame.area(),
+                        &chrome(),
+                        &model,
+                        &TundraTheme::default_dark(),
+                    );
+                })
+                .unwrap();
+            for (button, label) in [
+                (confirm, format!("[{confirm_label}]")),
+                (cancel, "[Cancel]".into()),
+            ] {
+                let rendered: String = (button.x..button.right())
+                    .map(|x| terminal.backend().buffer()[(x, button.y)].symbol())
+                    .collect();
+                assert_eq!(rendered.trim(), label, "button clipped at {width}x{height}");
+            }
+            let output = terminal_output(&terminal);
+            assert!(output.contains("Install update?"));
+            if height >= 24 {
+                assert!(output.contains("The source will be downloaded and compiled."));
+                assert!(output.contains("The app will restart immediately."));
+            }
+        }
+    }
 }
 
 #[test]

@@ -52,19 +52,6 @@ fn render_main(
         .titled("System Status")
         .bordered(true)
         .render_frame(frame, l.panel, context);
-    if let Some(area) = l.module_tabs_area {
-        let mut tabs = system_status_module_tabs();
-        let selected = match model.route {
-            SystemStatusRoute::Detail(detail) => detail.diagnostics_tab().and_then(|tab| {
-                crate::DiagnosticsTab::ALL
-                    .iter()
-                    .position(|candidate| *candidate == tab)
-            }),
-            _ => None,
-        };
-        tabs.set_selected(selected);
-        tabs.render_borderless_frame(frame, area, &context.compatibility_theme());
-    }
     match model.route {
         SystemStatusRoute::Dashboard => render_dashboard(frame, &l, model, context),
         SystemStatusRoute::Detail(d) => render_detail(frame, &l, model, d, context),
@@ -83,7 +70,11 @@ fn render_dashboard(
         format!("Updated {}", model.dashboard.updated)
     };
     let width = usize::from(l.header.width);
-    let left = "Dashboard";
+    let left = if model.dashboard.editing {
+        "EDIT MODE · Save to keep changes · Esc Cancel"
+    } else {
+        "Dashboard"
+    };
     let gap = width.saturating_sub(left.len() + updated.len());
     frame.render_widget(
         Paragraph::new(format!("{left}{}{updated}", " ".repeat(gap))).style(theme.title_style()),
@@ -101,6 +92,7 @@ fn render_dashboard(
         for g in &l.widgets {
             if let Some(vm) = widgets.iter().find(|w| w.kind == g.kind) {
                 let mut card = MetricCard::new(vm);
+                card.editing = model.dashboard.editing;
                 card.state = ComponentState::default()
                     .selected(model.dashboard.selected == Some(g.kind))
                     .focused(model.dashboard.focus == SystemStatusDashboardFocus::Widget(g.kind));
@@ -328,6 +320,7 @@ fn render_detail(
         .bordered(true)
         .render_frame(frame, l.content_panel, context);
     match d {
+        SystemStatusDetail::Overview => super::overview::render_overview(frame, l, model, context),
         SystemStatusDetail::Storage => render_storage(frame, l, model, context),
         SystemStatusDetail::Network => render_network(frame, l, model, context),
         SystemStatusDetail::Diagnostics

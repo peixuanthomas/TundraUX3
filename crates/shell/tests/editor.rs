@@ -63,6 +63,40 @@ fn terminal_text_sizing_capability_reaches_the_editor_view_model() {
 }
 
 #[test]
+fn explorer_opens_c_with_cached_highlights_that_update_after_typing() {
+    let fixture = FixtureRoot::new("c-highlights");
+    let platform = mock_platform(fixture.path());
+    bootstrap_with_shell(&platform);
+    fs::write(fixture.path().join("Documents/main.c"), "int x = 42;").unwrap();
+    let mut state = logged_in_state(&platform);
+    open_only_document_in_editor(&mut state, &platform);
+    let model = state.to_editor_view_model();
+    assert!(
+        model.source.is_none(),
+        "the shell still sends only a viewport"
+    );
+    assert_eq!(
+        model.c_highlights[0].kind,
+        app::editor::c_syntax::CTokenKind::Keyword
+    );
+    assert!(std::sync::Arc::ptr_eq(
+        &model.c_highlights,
+        &state.to_editor_view_model().c_highlights
+    ));
+    type_text(&mut state, &platform, "/*");
+    let edited = state.to_editor_view_model();
+    assert_eq!(edited.c_highlights.len(), 1);
+    assert_eq!(
+        edited.c_highlights[0].kind,
+        app::editor::c_syntax::CTokenKind::Comment
+    );
+    assert_eq!(
+        fs::read_to_string(fixture.path().join("Documents/main.c")).unwrap(),
+        "int x = 42;"
+    );
+}
+
+#[test]
 fn editor_accepts_unicode_and_inserts_spaces_for_tab() {
     let fixture = FixtureRoot::new("unicode-tab");
     let platform = mock_platform(fixture.path());

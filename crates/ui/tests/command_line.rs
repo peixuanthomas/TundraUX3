@@ -190,7 +190,7 @@ fn command_line_history_renders_the_glacier_scrollbar_style() {
     // The inner panel spans x=1..106 and y=4..17. At the live bottom, the
     // upper track remains visible while the thumb occupies its lower half.
     assert_eq!(buffer.cell((106, 4)).unwrap().symbol(), "│");
-    assert_eq!(buffer.cell((106, 17)).unwrap().symbol(), "┃");
+    assert_eq!(buffer.cell((106, 17)).unwrap().symbol(), "█");
 }
 
 #[test]

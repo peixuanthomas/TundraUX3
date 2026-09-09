@@ -1073,7 +1073,19 @@ fn system_status_right_click_opens_contextual_edit_pickers() {
         .expect("dashboard has blank canvas space");
     state.apply_input(InputEvent::mouse_down(PointerButton::Right, blank_point));
 
-    assert!(state.system_status_dashboard_draft.is_some());
+    assert!(state.system_status_dashboard_draft.is_none());
+    let baseline = state.system_status_dashboard_config();
+    let focus = state.system_status_dashboard_focus;
+    state.apply_input(InputEvent::key(InputKey::Escape));
+    assert!(state.system_status_add_picker.is_none());
+    assert!(state.system_status_dashboard_draft.is_none());
+    assert_eq!(state.system_status_dashboard_config(), baseline);
+    assert_eq!(state.system_status_dashboard_focus, focus);
+    state.apply_input(InputEvent::mouse_down(PointerButton::Right, blank_point));
+    assert!(state.system_status_dashboard_draft.is_none());
+    // Activating an already-added item must not enter edit mode.
+    state.activate_system_status_picker_item(0);
+    assert!(state.system_status_dashboard_draft.is_none());
     assert_eq!(
         state.system_status_add_picker.unwrap().anchor,
         Some(blank_point)
@@ -1104,7 +1116,7 @@ fn system_status_right_click_opens_contextual_edit_pickers() {
 }
 
 #[test]
-fn system_status_modules_open_directly_from_dashboard_by_mouse_and_keyboard() {
+fn system_status_modules_open_directly_from_dashboard_by_keyboard() {
     let mut state = ShellSession::new_for_home_mode(
         ShellLaunchConfig::default(),
         (120, 40),
@@ -1113,10 +1125,6 @@ fn system_status_modules_open_directly_from_dashboard_by_mouse_and_keyboard() {
     set_test_auth_role(&mut state, UserRole::Admin);
     state.screen_stack.push(ShellScreen::SystemStatus);
     state.focused_component = ShellComponent::SystemStatus;
-    let ui::ShellLayout::Full { main, .. } = ui::compute_shell_layout(Rect::new(0, 0, 120, 40))
-    else {
-        panic!()
-    };
     for (tab, detail, key) in [
         (
             ui::DiagnosticsTab::Health,
@@ -1130,25 +1138,6 @@ fn system_status_modules_open_directly_from_dashboard_by_mouse_and_keyboard() {
             'i',
         ),
     ] {
-        state.set_system_status_tab(ui::SystemStatusTab::Overview);
-        let model = state.to_system_status_view_model().unwrap();
-        let layout = ui::system_status_layout(main, &model);
-        let area = layout
-            .module_tabs
-            .iter()
-            .find(|item| item.tab == tab)
-            .unwrap()
-            .area;
-        state.apply_input(InputEvent::Mouse(ui::MouseEvent::new(
-            area.x,
-            area.y,
-            ui::MouseEventKind::Down(PointerButton::Left),
-        )));
-        assert_eq!(
-            state.system_status_route,
-            ui::SystemStatusRoute::Detail(detail)
-        );
-        assert_eq!(state.diagnostics_tab, tab);
         state.set_system_status_tab(ui::SystemStatusTab::Overview);
         state.apply_input(InputEvent::key(InputKey::Char(key)));
         assert_eq!(
@@ -5551,5 +5540,44 @@ fn restore_conflict_cycles_only_its_visible_actions() {
     assert_eq!(
         state.route_key_input(&KeyInput::from_label("Enter")).1,
         ShellCommand::ExplorerOverlayActivate
+    );
+}
+
+#[test]
+fn system_overview_metrics_do_not_depend_on_dashboard_placements() {
+    let mut state = ShellSession::new_for_home_mode(
+        ShellLaunchConfig::default(),
+        (120, 40),
+        ShellHomeMode::User,
+    );
+    set_test_auth_role(&mut state, UserRole::User);
+    state.apply_system_status_snapshot(system_status_metric_snapshot(10));
+    let mut config = state.system_status_dashboard_config();
+    let kinds = config.widgets.clone();
+    for kind in kinds {
+        if kind != storage::SystemStatusWidgetKind::SystemOverview {
+            config.remove_widget(kind);
+        }
+    }
+    state.app.dispatch_at(
+        app::AppCommand::SetActiveSystemStatusDashboard(Some(config)),
+        Instant::now(),
+    );
+    state.system_status_route = ui::SystemStatusRoute::Detail(ui::SystemStatusDetail::Overview);
+    let model = state.to_system_status_view_model().unwrap();
+    assert_eq!(model.dashboard.wide_widgets.len(), 1);
+    assert_eq!(model.dashboard.overview_metrics.len(), 8);
+    let cpu = &model.dashboard.overview_metrics[0];
+    assert_eq!(cpu.kind, ui::SystemStatusWidgetKind::Cpu);
+    assert!(cpu.progress_percent.is_some());
+    assert!(!cpu.trend.as_ref().unwrap().is_empty());
+    assert_eq!(
+        model.dashboard.overview_metrics[1].kind,
+        ui::SystemStatusWidgetKind::Memory
+    );
+    assert!(
+        model.dashboard.overview_metrics[1]
+            .progress_percent
+            .is_some()
     );
 }

@@ -370,7 +370,7 @@ fn setup_renderer_uses_glacier_timezone_scrollbar_when_window_is_partial() {
     let list_area = setup_timezone_list_area(setup_main_rect(70, 19));
 
     assert!(!output.contains("more timezones"));
-    assert!(region_has_symbol(&terminal, list_area, "┃"));
+    assert!(region_has_symbol(&terminal, list_area, "█"));
 }
 
 #[test]

@@ -78,7 +78,7 @@ impl Scrollbar {
                 let x = area.x.saturating_add(area.width.saturating_sub(1));
                 for offset in 0..area.height {
                     let thumb = offset >= start && offset < start.saturating_add(len);
-                    Paragraph::new(if thumb { "┃" } else { "│" })
+                    Paragraph::new(if thumb { "█" } else { "│" })
                         .alignment(HorizontalAlignment::Left)
                         .style(
                             Style::default()
@@ -96,7 +96,7 @@ impl Scrollbar {
                 let y = area.y.saturating_add(area.height.saturating_sub(1));
                 for offset in 0..area.width {
                     let thumb = offset >= start && offset < start.saturating_add(len);
-                    Paragraph::new(if thumb { "━" } else { "─" })
+                    Paragraph::new(if thumb { "█" } else { "─" })
                         .alignment(HorizontalAlignment::Left)
                         .style(
                             Style::default()

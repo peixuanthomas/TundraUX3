@@ -310,11 +310,15 @@ Launcher 固定提供 **Editor**；管理员还会在第一项看到 **Command L
 
 Settings 的 Editor 分类可配置 Explorer 交给内置编辑器打开的后缀；匹配不区分大小写，支持 `.d.ts` 等复合后缀。清空列表会把所有文件交回系统默认应用。
 
+默认列表包含 Markdown、`.txt`、`.log`、`.json`、`.jsonl`、`.toml`、`.yaml`、`.yml`、`.ini`、`.cfg`、`.conf`、`.xml`、`.csv`、`.tsv`、`.c` 和 `.h`。已有配置中保存的自定义列表继续生效，不会自动追加后缀。
+
+Editor 仅对 `.c`、`.h` 文件启用 C 语法高亮，区分关键字、字符串和字符常量、数字、注释及预处理指令。高亮只改变显示颜色，不改动文件内容；选区颜色优先。程序从完整文本计算并缓存标记的字节范围，滚动时复用，因此跨行注释和横向滚动中的字符串仍能正确着色；编辑、撤销和重做后重新计算。其他后缀保持普通文本显示。
+
 ### 时钟、Settings 与 Diagnostics
 
 `time` crate 每 5 分钟按顺序请求 Google、Cloudflare、Microsoft 的 HTTP `Date` 响应头；这不是 NTP。每次连接超时和总超时均为 5 秒。同步成功后，以 UTC 锚点加 `Instant` 推进当前时间，再通过 `chrono-tz` 投影到配置 IANA 时区，避免将 DST 写死为固定偏移。同步失败时保留可信的既有锚点；没有可信锚点才回退系统时间。时钟项目持久化于 `clock.v1.json`。
 
-Settings 的时间设置可使用平台时钟、默认 HTTP(S) 时间服务器或自定义地址。自定义地址仅在返回有效 `Date` 响应头并确认可同步后保存。全局选项写入 `StorageConfig` 并同步 AppState；外观选项写入当前用户账户并即时应用主题。System Status 顶部提供 Diagnostics、Logs、Incidents 三个独立入口，分别显示健康检查、日志和事故报告；也可用 H/L/I 直接进入。三个模块可分别加入仪表板，已有仪表板无需重置也能使用顶部入口。Diagnostics 不再通过 O 隐藏跳转到日志页面；Logs 和 Incidents 中的 O/Enter 打开选中的文件。`DiagnosticsTaskRuntime` 是由 watchdog 管理的单 worker，汇总平台能力、存储文档健康、watchdog 报告与日志，修复操作先给出预览再由用户确认。修复存储后会锁存“需要重启”的状态，必须重启才能继续使用已修复的存储。
+Settings 的时间设置可使用平台时钟、默认 HTTP(S) 时间服务器或自定义地址。自定义地址仅在返回有效 `Date` 响应头并确认可同步后保存。全局选项写入 `StorageConfig` 并同步 AppState；外观选项写入当前用户账户并即时应用主题。System Status 的 Diagnostics、Logs、Incidents 分别显示健康检查、日志和事故报告，可用 H/L/I 进入，也可分别加入仪表板；右上角不再显示入口按钮。空白处右键先打开添加菜单，确认添加新组件后才进入编辑模式。选中组件通过强调色边框提示，编辑时其余组件边框每两秒切换一次明暗，并显示固定的编辑提示；减少动画时保持静态强调边框。System Overview 详情独立展示 CPU、内存、存储、电池用量条、网络和温度趋势，以及运行时间和主要进程，不受已添加组件影响。Diagnostics 不再通过 O 隐藏跳转到日志页面；Logs 和 Incidents 中的 O/Enter 打开选中的文件。`DiagnosticsTaskRuntime` 是由 watchdog 管理的单 worker，汇总平台能力、存储文档健康、watchdog 报告与日志，修复操作先给出预览再由用户确认。修复存储后会锁存“需要重启”的状态，必须重启才能继续使用已修复的存储。
 
 ## 平台适配
 
@@ -384,9 +388,9 @@ Linux 与 Windows 同级实现：使用 XDG Base Directory 与 `user-dirs.dirs`�
 
 ### 程序自更新
 
-Settings 中的 Update 在 Windows 和 Linux 上可用。确认后从 GitHub 下载已检查的指定提交，在本机用已有 Rust 工具链编译，再替换安装目录中的 Shell、CLI 和默认主题；不会更新 Linux 软件包、自动安装 Rust 或使用 sudo。安装目录必须允许当前用户写入，Linux 还需要项目构建所需的编译器和开发库。
+Settings 中的 Update 在 Windows 和 Linux 上可用。确认后从 GitHub 下载已检查的指定提交，在本机用已有 Rust 工具链编译，再替换安装目录中的 Shell 和 CLI；不会更新 Linux 软件包、自动安装 Rust 或使用 sudo。安装目录必须允许当前用户写入，Linux 还需要项目构建所需的编译器和开发库。
 
-更新助手保存旧程序和默认主题，等新 Shell 报告启动成功后才清理备份。替换失败、启动失败或启动超时会恢复旧版本；更新中断后，下次启动会按安装目录内的记录继续或恢复。自定义主题和用户数据不参与替换。Linux 使用无 `.exe` 后缀的程序名并保留执行权限；助手通过 exec 接替原进程，在新 Shell 退出前持续等待，使更新后的程序继续使用前台终端。
+更新助手保存旧程序，等新 Shell 报告启动成功后才清理备份。替换失败、启动失败或启动超时会恢复旧版本；更新中断后，下次启动会按安装目录内的记录继续或恢复。更新阶段只校验两个程序及其提交和更新协议，不要求源码目录或安装目录下存在 assets；默认主题、自定义主题和用户数据均不参与复制、替换或回滚。启动时仍按原有方式加载本地资源。更新记录使用协议 v2，助手取自已校验的新 CLI，避免旧助手继续要求替换资源；旧协议记录会明确拒绝，保留原文件。Linux 使用无 `.exe` 后缀的程序名并保留执行权限；助手通过 exec 接替原进程，在新 Shell 退出前持续等待，使更新后的程序继续使用前台终端。
 
 主页的退出菜单将程序操作和电脑操作分别写明：Exit TundraUX、Restart TundraUX、Restart computer、Shut down computer，以及 Cancel。操作逐行等宽排列；窗口较矮时缩小行间空白。macOS 暂不提供程序自更新或电脑电源操作；Linux 缺少 logind 或授权时隐藏对应的电脑操作。
 

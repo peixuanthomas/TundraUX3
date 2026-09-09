@@ -65,19 +65,13 @@ fn update_zip_rejects_parent_traversal() {
 }
 
 #[test]
-fn update_product_validation_requires_all_outputs() {
+fn update_product_validation_requires_both_programs_without_assets() {
     let root = std::env::temp_dir().join(format!("tundra-update-products-{}", std::process::id()));
     fs::create_dir_all(root.join("target/release")).unwrap();
     fs::write(root.join("target/release").join(SHELL_FILE), b"shell").unwrap();
     assert!(validate_product_paths(&root, &root.join("target"), "abc").is_err());
     fs::write(root.join("target/release").join(CLI_FILE), b"cli").unwrap();
-    assert!(validate_product_paths(&root, &root.join("target"), "abc").is_err());
-    fs::create_dir_all(root.join("target/release/assets/themes/default")).unwrap();
-    let prepared = validate_product_paths(&root, &root.join("target"), "abc").unwrap();
-    assert_eq!(
-        prepared.default_assets,
-        root.join("target/release/assets/themes/default")
-    );
+    assert!(validate_product_paths(&root, &root.join("target"), "abc").is_ok());
     fs::remove_dir_all(root).unwrap();
 }
 
@@ -169,8 +163,7 @@ fn update_preparation_failures_never_touch_installation() {
         let source = root.join("source");
         let target = root.join("target/release");
         let install = root.join("unrelated-install");
-        fs::create_dir_all(source.clone()).unwrap();
-        fs::create_dir_all(target.join("assets/themes/default")).unwrap();
+        fs::create_dir_all(&source).unwrap();
         fs::create_dir_all(&target).unwrap();
         fs::create_dir_all(&install).unwrap();
         fs::write(
@@ -224,7 +217,6 @@ fn update_manifest_must_stay_below_the_install_update_directory() {
         install_dir: install.clone(),
         transaction_dir: transaction_dir.clone(),
         state: TransactionState::Prepared,
-        assets_replaced: false,
         cli_replaced: false,
         shell_replaced: false,
     };
@@ -477,12 +469,12 @@ fn update_cargo_progress_uses_real_counts_and_strips_terminal_controls() {
 
 #[cfg(any(windows, target_os = "linux"))]
 #[test]
-fn update_rollback_restores_programs_and_default_assets_but_keeps_custom_themes() {
+fn update_replacement_and_rollback_preserve_default_and_custom_assets() {
     let root = update_test_root("rollback");
     let install = root.join("install");
     let transaction_dir = install.join(".tundra-update/tx");
     let new = transaction_dir.join("new");
-    fs::create_dir_all(new.join("default-assets")).unwrap();
+    fs::create_dir_all(&new).unwrap();
     fs::create_dir_all(transaction_dir.join("backup")).unwrap();
     fs::create_dir_all(install.join("assets/themes/default")).unwrap();
     fs::create_dir_all(install.join("assets/themes/custom")).unwrap();
@@ -500,7 +492,6 @@ fn update_rollback_restores_programs_and_default_assets_but_keeps_custom_themes(
     .unwrap();
     fs::write(new.join(SHELL_FILE), b"new shell").unwrap();
     fs::write(new.join(CLI_FILE), b"new cli").unwrap();
-    fs::write(new.join("default-assets/theme.txt"), b"new theme").unwrap();
     let path = transaction_dir.join("transaction.json");
     let mut manifest = TransactionManifest {
         protocol: UPDATE_PROTOCOL_VERSION,
@@ -508,7 +499,6 @@ fn update_rollback_restores_programs_and_default_assets_but_keeps_custom_themes(
         install_dir: install.clone(),
         transaction_dir,
         state: TransactionState::Prepared,
-        assets_replaced: false,
         cli_replaced: false,
         shell_replaced: false,
     };
@@ -518,7 +508,7 @@ fn update_rollback_restores_programs_and_default_assets_but_keeps_custom_themes(
     assert_eq!(fs::read(install.join(CLI_FILE)).unwrap(), b"new cli");
     assert_eq!(
         fs::read(install.join("assets/themes/default/theme.txt")).unwrap(),
-        b"new theme"
+        b"old theme"
     );
 
     rollback_files(&path, &mut manifest).unwrap();
@@ -538,7 +528,6 @@ fn update_rollback_restores_programs_and_default_assets_but_keeps_custom_themes(
 #[cfg(any(windows, target_os = "linux"))]
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum TransactionFailure {
-    Assets,
     Cli,
     Shell,
     NewLaunch,
@@ -555,17 +544,6 @@ struct FakeTransactionOperations {
 
 #[cfg(any(windows, target_os = "linux"))]
 impl TransactionOperations for FakeTransactionOperations {
-    fn rename(&self, source: &Path, target: &Path) -> Result<(), UpdateError> {
-        if self.failure == TransactionFailure::Assets
-            && !self.injected.get()
-            && source.ends_with("new/default-assets")
-        {
-            self.injected.set(true);
-            return Err(UpdateError::new("injected asset replacement failure"));
-        }
-        fs::rename(source, target).map_err(UpdateError::from)
-    }
-
     fn replace(&self, target: &Path, replacement: &Path, backup: &Path) -> Result<(), UpdateError> {
         let failure = if target.file_name().is_some_and(|name| name == CLI_FILE) {
             TransactionFailure::Cli
@@ -619,7 +597,7 @@ fn transaction_fixture(name: &str) -> (PathBuf, PathBuf, TransactionManifest) {
     let install = root.join("install");
     let transaction_dir = install.join(".tundra-update/tx");
     let new = transaction_dir.join("new");
-    fs::create_dir_all(new.join("default-assets")).unwrap();
+    fs::create_dir_all(&new).unwrap();
     fs::create_dir_all(transaction_dir.join("backup")).unwrap();
     fs::create_dir_all(install.join("assets/themes/default")).unwrap();
     fs::create_dir_all(install.join("assets/themes/custom")).unwrap();
@@ -637,7 +615,6 @@ fn transaction_fixture(name: &str) -> (PathBuf, PathBuf, TransactionManifest) {
     .unwrap();
     fs::write(new.join(SHELL_FILE), b"new shell").unwrap();
     fs::write(new.join(CLI_FILE), b"new cli").unwrap();
-    fs::write(new.join("default-assets/theme.txt"), b"new theme").unwrap();
     let manifest_path = transaction_dir.join("transaction.json");
     let manifest = TransactionManifest {
         protocol: UPDATE_PROTOCOL_VERSION,
@@ -645,7 +622,6 @@ fn transaction_fixture(name: &str) -> (PathBuf, PathBuf, TransactionManifest) {
         install_dir: install,
         transaction_dir,
         state: TransactionState::Prepared,
-        assets_replaced: false,
         cli_replaced: false,
         shell_replaced: false,
     };
@@ -677,7 +653,6 @@ fn assert_old_install_preserved(manifest: &TransactionManifest) {
 #[test]
 fn update_injected_transaction_failures_restore_every_installed_file() {
     for failure in [
-        TransactionFailure::Assets,
         TransactionFailure::Cli,
         TransactionFailure::Shell,
         TransactionFailure::NewLaunch,
@@ -741,7 +716,6 @@ fn recovery_scan_fixture(name: &str, state: TransactionState) -> (PathBuf, PathB
         install_dir: canonical_install,
         transaction_dir,
         state,
-        assets_replaced: false,
         cli_replaced: false,
         shell_replaced: false,
     };
@@ -785,4 +759,54 @@ fn update_recovery_scan_canonicalizes_install_path_for_cleanup_and_recovery() {
         assert_eq!(*launches.lock().unwrap(), vec![(manifest_path, 42, true)]);
         fs::remove_dir_all(root).unwrap();
     }
+}
+
+#[cfg(any(windows, target_os = "linux"))]
+#[test]
+fn update_transaction_succeeds_without_an_assets_directory() {
+    let (root, path, mut manifest) = transaction_fixture("programs-only");
+    // Remove only the assets created by this fixture to model external resources.
+    fs::remove_dir_all(manifest.install_dir.join("assets")).unwrap();
+    let operations = FakeTransactionOperations {
+        failure: TransactionFailure::None,
+        injected: Cell::new(false),
+    };
+    run_update_transaction(&path, &mut manifest, false, &operations).unwrap();
+    assert_eq!(manifest.state, TransactionState::Committed);
+    assert_eq!(
+        fs::read(manifest.install_dir.join(SHELL_FILE)).unwrap(),
+        b"new shell"
+    );
+    assert_eq!(
+        fs::read(manifest.install_dir.join(CLI_FILE)).unwrap(),
+        b"new cli"
+    );
+    assert!(!manifest.install_dir.join("assets").exists());
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn update_rejects_old_transactions_before_replacing_programs() {
+    let root = update_test_root("old-protocol");
+    let install = root.join("install");
+    let transaction_dir = install.join(".tundra-update/tx");
+    fs::create_dir_all(&transaction_dir).unwrap();
+    let path = transaction_dir.join("transaction.json");
+    let manifest = TransactionManifest {
+        protocol: 1,
+        target_sha: "abc".into(),
+        install_dir: install,
+        transaction_dir,
+        state: TransactionState::Prepared,
+        cli_replaced: false,
+        shell_replaced: false,
+    };
+    write_manifest(&path, &manifest).unwrap();
+    assert!(
+        load_manifest(&path)
+            .unwrap_err()
+            .to_string()
+            .contains("unsupported update protocol 1")
+    );
+    fs::remove_dir_all(root).unwrap();
 }

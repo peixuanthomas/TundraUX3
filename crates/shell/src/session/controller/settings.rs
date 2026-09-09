@@ -2040,9 +2040,9 @@ impl ShellSession {
                             "Install update".to_string()
                         },
                         body: if replacement {
-                            "This is a non-standard, dirty, ahead, diverged, or unknown build. TundraUX will download the exact checked GitHub commit, compile it locally, replace both programs and the Default theme, then restart immediately. If startup fails, the previous local version will be restored.".to_string()
+                            "This is a non-standard, dirty, ahead, diverged, or unknown build. TundraUX will download the exact checked GitHub commit, compile it locally, replace only the Shell and CLI programs, then restart immediately. Local assets will be kept unchanged. If startup fails, the previous local version will be restored.".to_string()
                         } else {
-                            "TundraUX will download the exact checked GitHub commit, compile it locally, replace both programs and the Default theme, then restart immediately. If startup fails, the previous local version will be restored.".to_string()
+                            "TundraUX will download the exact checked GitHub commit, compile it locally, replace only the Shell and CLI programs, then restart immediately. Local assets will be kept unchanged. If startup fails, the previous local version will be restored.".to_string()
                         },
                         confirm_label: if replacement {
                             "Replace and restart".to_string()
