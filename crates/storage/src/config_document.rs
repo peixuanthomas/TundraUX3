@@ -327,8 +327,10 @@ impl Default for ExplorerConfig {
     }
 }
 
-pub const DEFAULT_EDITOR_EXPLORER_OPEN_EXTENSIONS: &[&str] =
-    &["md", "markdown", "mdown", "mkd", "txt", "log"];
+pub const DEFAULT_EDITOR_EXPLORER_OPEN_EXTENSIONS: &[&str] = &[
+    "md", "markdown", "mdown", "mkd", "txt", "log", "json", "jsonl", "toml", "yaml", "yml", "ini",
+    "cfg", "conf", "xml", "csv", "tsv", "c", "h",
+];
 pub const MAX_EDITOR_EXPLORER_OPEN_EXTENSIONS: usize = 64;
 pub const MAX_EDITOR_EXPLORER_OPEN_EXTENSION_LEN: usize = 64;
 

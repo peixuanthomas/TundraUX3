@@ -60,6 +60,71 @@ fn new_documents_default_to_plain_text_while_explicit_markdown_remains_supported
 }
 
 #[test]
+fn c_highlight_cache_follows_edits_undo_redo_and_file_names() {
+    use app::editor::c_syntax::CTokenKind;
+    use std::sync::Arc;
+
+    let mut editor = EditorState::from_document(EditorDocument::from_text(
+        Some(PathBuf::from("main.c")),
+        DocumentKind::PlainText,
+        "/* comment\nint x;",
+    ));
+    let before = editor.clone();
+    let initial = editor.source_c_highlights();
+    assert_eq!(
+        editor, before,
+        "derived colours do not change document identity"
+    );
+    assert_eq!(initial.len(), 1);
+    assert_eq!(initial[0].kind, CTokenKind::Comment);
+    assert!(Arc::ptr_eq(&initial, &editor.source_c_highlights()));
+    assert!(editor.replace_source_range(SourceRange::new(10, 10), "*/"));
+    let edited = editor.source_c_highlights();
+    assert_eq!(edited[1].kind, CTokenKind::Keyword);
+    assert!(!Arc::ptr_eq(&initial, &edited));
+    editor.apply(EditorCommand::Undo);
+    assert_eq!(editor.source_c_highlights(), initial);
+    editor.apply(EditorCommand::Redo);
+    assert_eq!(editor.source_c_highlights(), edited);
+    editor.document.path = Some(PathBuf::from("main.json"));
+    assert!(editor.source_c_highlights().is_empty());
+    editor.document.path = Some(PathBuf::from("main.h"));
+    assert_eq!(editor.source_c_highlights(), edited);
+}
+
+#[test]
+fn default_editor_routes_common_text_files() {
+    use app::explorer::is_editor_document_path;
+
+    for name in [
+        "data.json",
+        "events.jsonl",
+        "Cargo.toml",
+        "config.yaml",
+        "config.yml",
+        "config.ini",
+        "app.cfg",
+        "app.conf",
+        "data.xml",
+        "data.csv",
+        "data.tsv",
+        "main.c",
+        "API.H",
+    ] {
+        assert!(
+            is_editor_document_path(std::path::Path::new(name)),
+            "{name}"
+        );
+    }
+    for name in ["image.png", "archive.zip", "app.exe", "document.pdf"] {
+        assert!(
+            !is_editor_document_path(std::path::Path::new(name)),
+            "{name}"
+        );
+    }
+}
+
+#[test]
 fn markdown_file_paths_open_as_plain_text_and_cannot_enter_rich_mode() {
     let mut editor = EditorState::open("README.md", b"# raw **markdown**").expect("UTF-8 text");
 
@@ -2292,7 +2357,14 @@ fn explorer_editor_resolver_uses_normalized_custom_compound_extensions() {
             ExplorerOpenTarget::Editor
         );
     }
-    for name in ["README.md", "types.ts", "app.log.1"] {
+    for name in [
+        "README.md",
+        "types.ts",
+        "app.log.1",
+        "main.c",
+        "data.json",
+        "Cargo.toml",
+    ] {
         assert_eq!(
             resolver.route(PathBuf::from(name).as_path(), &attributes),
             ExplorerOpenTarget::SystemDefault

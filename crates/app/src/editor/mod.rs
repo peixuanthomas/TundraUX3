@@ -3,6 +3,7 @@
 //! The built-in editor edits the canonical document as plain text. Markdown
 //! files use the same text buffer as every other supported file.
 
+pub mod c_syntax;
 pub mod markdown_codec;
 pub mod recovery;
 pub mod rich_document;
@@ -767,6 +768,7 @@ pub struct SourceBuffer {
     line_endings: LineEndingStats,
     non_ascii_bytes: usize,
     display_widths: SourceDisplayWidthCache,
+    c_highlights: c_syntax::Cache,
 }
 
 /// Derived Source-line metrics. The histogram makes the global maximum an
@@ -929,6 +931,7 @@ impl SourceBuffer {
             line_endings: LineEndingStats::from_text(text),
             non_ascii_bytes: non_ascii_byte_count(text),
             display_widths: SourceDisplayWidthCache::default(),
+            c_highlights: c_syntax::Cache::default(),
         };
         buffer.rebuild_display_width_cache();
         buffer
@@ -941,6 +944,7 @@ impl SourceBuffer {
             line_endings,
             non_ascii_bytes: text.chunks().map(non_ascii_byte_count).sum(),
             display_widths: SourceDisplayWidthCache::default(),
+            c_highlights: c_syntax::Cache::default(),
         };
         buffer.rebuild_display_width_cache();
         buffer
@@ -1282,6 +1286,7 @@ impl SourceBuffer {
         let removed = self.text.byte_slice(range.clone()).to_string();
         self.text.remove(start_char..end_char);
         self.text.insert(start_char, replacement);
+        self.c_highlights.0.take();
         let new_end = range.start + replacement.len();
         let new_context_end = new_end
             .saturating_add(suffix_context_len)
@@ -1929,6 +1934,23 @@ impl EditorState {
         match &self.buffer {
             EditorBuffer::Source(buffer) => buffer.viewport_lines(line_range, left_column, width),
             EditorBuffer::Rich(_) => Vec::new(),
+        }
+    }
+
+    /// C token ranges are shared across viewport snapshots. Non-C documents
+    /// never build this cache, even if their content resembles C source.
+    pub fn source_c_highlights(&self) -> Arc<[c_syntax::CToken]> {
+        if !self.document.path.as_ref().is_some_and(c_syntax::is_c_file) {
+            return Arc::from([]);
+        }
+        match &self.buffer {
+            EditorBuffer::Source(buffer) => Arc::clone(
+                buffer
+                    .c_highlights
+                    .0
+                    .get_or_init(|| c_syntax::highlight_chars(buffer.text.chars())),
+            ),
+            EditorBuffer::Rich(_) => Arc::from([]),
         }
     }
 
