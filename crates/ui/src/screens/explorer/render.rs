@@ -6,7 +6,7 @@ use ratatui::widgets::{Clear, Paragraph, Wrap};
 use super::{
     ExplorerDialogViewModel, ExplorerEntryViewModel, ExplorerLayout, ExplorerOverlayControl,
     ExplorerOverlayLayout, ExplorerOverlayViewModel, ExplorerSearchViewModel, ExplorerSortColumn,
-    ExplorerToolbarAction, ExplorerViewModel, explorer_layout,
+    ExplorerViewModel, explorer_layout,
 };
 use crate::components::{
     Button, ComponentTone, DataTable, List, ListItem, Panel, Scrollbar, Surface, TextInput,
@@ -18,7 +18,7 @@ use crate::screens::shell::{
 };
 use crate::{RuntimeAsciiAssets, TundraTheme};
 
-const EXPLORER_HELP_LINE: &str = "Enter: open    Backspace: parent    N: folder    T: text file    R: rename    X/Delete: delete    C: copy    V: paste    /: search    H: hidden    Tab/Shift+Tab: quick access    Esc: back";
+const EXPLORER_HELP_LINE: &str = "Enter: open    Left/Right: back/forward    Backspace: parent    N: folder    T: text file    F2: rename    Del: delete    X: cut    C: copy    V: paste    F5: refresh    S: sort    O: options    /: search    H: hidden    Tab/Shift+Tab: quick access    Esc: back";
 
 pub fn render_explorer(
     frame: &mut Frame<'_>,
@@ -70,7 +70,7 @@ fn render_explorer_main(
         return;
     };
 
-    render_explorer_toolbar(frame, &layout, model, assets, theme);
+    render_explorer_toolbar(frame, &layout, model, theme);
     render_explorer_path_bar(frame, &layout, model, theme);
     render_explorer_sidebar(frame, &layout, model, assets, context, theme);
     render_explorer_table(frame, &layout, model, assets, context);
@@ -81,7 +81,6 @@ fn render_explorer_toolbar(
     frame: &mut Frame<'_>,
     layout: &ExplorerLayout,
     model: &ExplorerViewModel,
-    assets: &RuntimeAsciiAssets,
     theme: &TundraTheme,
 ) {
     for button_layout in &layout.toolbar_buttons {
@@ -93,16 +92,11 @@ fn render_explorer_toolbar(
         else {
             continue;
         };
-        let icon_key = if button.action == ExplorerToolbarAction::Sort {
-            super::explorer_sort_direction_icon_key(model.sort_direction)
-        } else {
-            button.icon_key.as_str()
-        };
-        let icon = explorer_icon_line(assets, icon_key);
+        let shortcut = button.action.shortcut_label();
         let text = if button_layout.show_label {
-            format!("{icon} {}", button.label)
+            format!("{shortcut} {}", button.label)
         } else {
-            icon
+            shortcut.to_string()
         };
         render_explorer_button(
             frame,

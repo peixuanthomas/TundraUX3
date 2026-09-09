@@ -124,6 +124,67 @@ fn explorer_reports_account_resolution_failure_without_opening_process_directori
 }
 
 #[test]
+fn explorer_arrow_history_and_toolbar_keys_perform_actions() {
+    let fixture = FixtureRoot::new("toolbar-keys");
+    let platform = mock_platform(fixture.path());
+    bootstrap_with_shell(&platform);
+    let documents = fixture.path().join("Documents");
+    let folder = documents.join("folder");
+    fs::create_dir(&folder).unwrap();
+    let mut state = logged_in_state(&platform);
+    for key in ["e", "Enter"] {
+        state.apply_input_with_platform(InputEvent::from_key_label(key), &platform);
+    }
+    assert_eq!(
+        state.to_explorer_view_model().current_path,
+        folder.to_string_lossy()
+    );
+    state.apply_input_with_platform(InputEvent::from_key_label("Left"), &platform);
+    assert_eq!(
+        state.to_explorer_view_model().current_path,
+        documents.to_string_lossy()
+    );
+    state.apply_input_with_platform(InputEvent::from_key_label("Right"), &platform);
+    assert_eq!(
+        state.to_explorer_view_model().current_path,
+        folder.to_string_lossy()
+    );
+
+    fs::write(folder.join("selected.txt"), "text").unwrap();
+    state.apply_input_with_platform(InputEvent::from_key_label("F5"), &platform);
+    assert_eq!(
+        state.to_explorer_view_model().entries[0].name,
+        "selected.txt"
+    );
+    for key in ["F2", "N"] {
+        state.apply_input_with_platform(InputEvent::from_key_label(key), &platform);
+        assert!(matches!(
+            state.to_explorer_view_model().overlay,
+            Some(ui::ExplorerOverlayViewModel::Name(_))
+        ));
+        state.apply_input_with_platform(InputEvent::from_key_label("Esc"), &platform);
+    }
+    state.apply_input_with_platform(InputEvent::from_key_label("s"), &platform);
+    assert!(matches!(
+        state.to_explorer_view_model().overlay,
+        Some(ui::ExplorerOverlayViewModel::ContextMenu(_))
+    ));
+    state.apply_input_with_platform(InputEvent::from_key_label("Esc"), &platform);
+    state.apply_input_with_platform(InputEvent::from_key_label("o"), &platform);
+    assert!(matches!(
+        state.to_explorer_view_model().overlay,
+        Some(ui::ExplorerOverlayViewModel::Options(_))
+    ));
+    state.apply_input_with_platform(InputEvent::from_key_label("Esc"), &platform);
+    state.apply_input_with_platform(InputEvent::from_key_label("Delete"), &platform);
+    assert!(state.to_explorer_view_model().pending_dialog.is_some());
+    assert!(
+        folder.join("selected.txt").exists(),
+        "delete still requires confirmation"
+    );
+}
+
+#[test]
 fn login_can_open_explorer_and_search_current_directory() {
     let fixture = FixtureRoot::new("open-search");
     let platform = mock_platform(fixture.path());

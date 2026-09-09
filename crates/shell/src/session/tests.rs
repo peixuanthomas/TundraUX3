@@ -5197,6 +5197,85 @@ fn previous_unclean_exit_does_not_interrupt_the_login_screen() {
     );
 }
 
+#[test]
+fn explorer_toolbar_shortcuts_route_without_shifted_symbols() {
+    use ui::ExplorerToolbarAction as Action;
+    let mut state = explorer_routing_test_state();
+    for (action, command) in [
+        (Action::Back, ShellCommand::ExplorerOpenBack),
+        (Action::Forward, ShellCommand::ExplorerOpenForward),
+        (Action::Up, ShellCommand::ExplorerOpenParent),
+        (Action::New, ShellCommand::BeginExplorerNewFolder),
+        (Action::Cut, ShellCommand::ExplorerCut),
+        (Action::Copy, ShellCommand::ExplorerCopy),
+        (Action::Paste, ShellCommand::ExplorerPaste),
+        (Action::Rename, ShellCommand::BeginExplorerRename),
+        (Action::Delete, ShellCommand::ExplorerDelete),
+        (
+            Action::Refresh,
+            ShellCommand::ExplorerToolbarShortcut(Action::Refresh),
+        ),
+        (
+            Action::Sort,
+            ShellCommand::ExplorerToolbarShortcut(Action::Sort),
+        ),
+        (
+            Action::Options,
+            ShellCommand::ExplorerToolbarShortcut(Action::Options),
+        ),
+    ] {
+        let label = action.shortcut_label();
+        let key = if label == "Del" {
+            KeyInput::new(InputKey::Delete)
+        } else {
+            KeyInput::from_label(label)
+        };
+        assert_eq!(state.route_key_input(&key).1, command, "{action:?}");
+        if let InputKey::Char(character) = key.key {
+            for (character, modifiers) in [
+                (character.to_ascii_lowercase(), InputModifiers::NONE),
+                (character, InputModifiers::SHIFT),
+            ] {
+                assert_eq!(
+                    state
+                        .route_key_input(&KeyInput::with_modifiers(
+                            InputKey::Char(character),
+                            modifiers
+                        ))
+                        .1,
+                    command,
+                    "{action:?}: {modifiers:?}"
+                );
+            }
+        }
+    }
+    for (key, command) in [
+        (InputKey::Left, ShellCommand::ExplorerOpenBack),
+        (InputKey::Right, ShellCommand::ExplorerOpenForward),
+    ] {
+        assert_eq!(
+            state
+                .route_key_input(&KeyInput::with_modifiers(key, InputModifiers::ALT))
+                .1,
+            command
+        );
+    }
+
+    state.explorer_input_mode = ExplorerInputMode::NewFolder;
+    assert_eq!(
+        state.route_key_input(&KeyInput::from_label("N")).1,
+        ShellCommand::AppendExplorerChar('N')
+    );
+    assert_ne!(
+        state.route_key_input(&KeyInput::from_label("Left")).1,
+        ShellCommand::ExplorerOpenBack
+    );
+    assert_ne!(
+        state.route_key_input(&KeyInput::from_label("Delete")).1,
+        ShellCommand::ExplorerDelete
+    );
+}
+
 fn explorer_routing_test_state() -> ShellSession {
     let mut state = ShellSession::new_for_home_mode(
         ShellLaunchConfig::default(),

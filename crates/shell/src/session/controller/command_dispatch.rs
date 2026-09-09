@@ -861,6 +861,23 @@ impl ShellSession {
                 self.apply_explorer_command(ExplorerCommand::OpenParent, platform);
                 ShellAction::Redraw
             }
+            ShellCommand::ExplorerToolbarShortcut(action) => {
+                let area = Rect::new(0, 0, self.terminal_size.0, self.terminal_size.1);
+                let anchor = match ui::compute_shell_layout(area) {
+                    ui::ShellLayout::Full { main, .. } => {
+                        let layout = ui::explorer_layout(main, &self.to_explorer_view_model());
+                        layout
+                            .toolbar_buttons
+                            .iter()
+                            .find(|button| button.action == action)
+                            .map(|button| (button.area.x, button.area.y))
+                            .unwrap_or((main.x, main.y))
+                    }
+                    _ => (0, 0),
+                };
+                self.activate_explorer_toolbar(action, anchor, platform);
+                ShellAction::Redraw
+            }
             ShellCommand::ExplorerOpenBack => {
                 self.apply_explorer_command(ExplorerCommand::OpenBack, platform);
                 ShellAction::Redraw

@@ -131,6 +131,25 @@ impl ExplorerToolbarAction {
             Self::Options => "options",
         }
     }
+
+    pub const fn shortcut_label(self) -> &'static str {
+        match self {
+            Self::Back => "Left",
+            Self::Forward => "Right",
+            Self::Up => "Backspace",
+            Self::Refresh => "F5",
+            Self::New => "N",
+            Self::Cut => "X",
+            Self::Copy => "C",
+            Self::Paste => "V",
+            Self::Rename => "F2",
+            Self::Delete => "Del",
+            Self::Restore => "R",
+            Self::DumpTrash => "Del",
+            Self::Sort => "S",
+            Self::Options => "O",
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

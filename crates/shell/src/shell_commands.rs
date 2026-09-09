@@ -127,6 +127,7 @@ pub enum ShellCommand {
     ExplorerOpenSelected,
     ExplorerOpenParent,
     ExplorerOpenBack,
+    ExplorerToolbarShortcut(ui::ExplorerToolbarAction),
     ExplorerOpenForward,
     ExplorerToggleHidden,
     ExplorerToggleSystem,

@@ -481,10 +481,16 @@ fn explorer_toolbar_button_layouts(
         .toolbar
         .buttons
         .iter()
-        .map(|button| button.label.cell_width().saturating_add(4))
+        .map(|button| {
+            button
+                .label
+                .cell_width()
+                .saturating_add(button.action.shortcut_label().cell_width())
+                .saturating_add(3)
+        })
         .fold(0u16, u16::saturating_add)
         .saturating_add(model.toolbar.buttons.len().saturating_sub(1) as u16);
-    // Either label every action or collapse every action to its asset icon.  A greedy mix made
+    // Either label every action or collapse every action to its shortcut. A greedy mix made
     // the important trailing Rename/Delete/Sort/Options controls disappear at common widths.
     let show_labels = !compact && labelled_width <= area.width;
     let mut x = area.x;
@@ -494,12 +500,21 @@ fn explorer_toolbar_button_layouts(
         .iter()
         .filter_map(|button| {
             let remaining = area.x.saturating_add(area.width).saturating_sub(x);
-            if remaining < 3 || area.height == 0 {
+            let shortcut_width = button
+                .action
+                .shortcut_label()
+                .cell_width()
+                .saturating_add(2);
+            if remaining < shortcut_width || area.height == 0 {
                 return None;
             }
-            let labelled_width = button.label.cell_width().saturating_add(4);
+            let labelled_width = button.label.cell_width().saturating_add(shortcut_width + 1);
             let show_label = show_labels;
-            let width = if show_label { labelled_width } else { 3 }.min(remaining);
+            let width = if show_label {
+                labelled_width
+            } else {
+                shortcut_width
+            };
             let layout = ExplorerToolbarButtonLayout {
                 action: button.action,
                 area: Rect::new(x, area.y, width, 1),

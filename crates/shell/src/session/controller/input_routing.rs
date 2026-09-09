@@ -1065,8 +1065,12 @@ impl ShellSession {
             InputKey::Char('l' | 'L') if key.modifiers.control || key.modifiers.super_key => {
                 (target, ShellCommand::BeginExplorerAddress)
             }
-            InputKey::Left if key.modifiers.alt => (target, ShellCommand::ExplorerOpenBack),
-            InputKey::Right if key.modifiers.alt => (target, ShellCommand::ExplorerOpenForward),
+            InputKey::Left if key.is_unmodified_action_key() || key.modifiers.alt => {
+                (target, ShellCommand::ExplorerOpenBack)
+            }
+            InputKey::Right if key.is_unmodified_action_key() || key.modifiers.alt => {
+                (target, ShellCommand::ExplorerOpenForward)
+            }
             InputKey::Up if key.modifiers.shift => (target, ShellCommand::ExplorerPreviousExtend),
             InputKey::Down if key.modifiers.shift => (target, ShellCommand::ExplorerNextExtend),
             InputKey::Up => (target, ShellCommand::ExplorerPrevious),
@@ -1075,6 +1079,22 @@ impl ShellSession {
             InputKey::Backspace => (target, ShellCommand::ExplorerOpenParent),
             InputKey::Delete if !is_trash => (target, ShellCommand::ExplorerDelete),
             InputKey::F(2) if !is_trash => (target, ShellCommand::BeginExplorerRename),
+            InputKey::F(5) if key.is_unmodified_action_key() => (
+                target,
+                ShellCommand::ExplorerToolbarShortcut(ui::ExplorerToolbarAction::Refresh),
+            ),
+            InputKey::Delete if is_trash && key.is_unmodified_action_key() => (
+                target,
+                ShellCommand::ExplorerToolbarShortcut(ui::ExplorerToolbarAction::DumpTrash),
+            ),
+            InputKey::Char('s' | 'S') if !key.has_non_shift_modifier() => (
+                target,
+                ShellCommand::ExplorerToolbarShortcut(ui::ExplorerToolbarAction::Sort),
+            ),
+            InputKey::Char('o' | 'O') if !key.has_non_shift_modifier() => (
+                target,
+                ShellCommand::ExplorerToolbarShortcut(ui::ExplorerToolbarAction::Options),
+            ),
             InputKey::Char('a' | 'A') if key.modifiers.control || key.modifiers.super_key => {
                 (target, ShellCommand::ExplorerSelectAll)
             }

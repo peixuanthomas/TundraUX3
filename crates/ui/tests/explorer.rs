@@ -387,6 +387,60 @@ fn explorer_toolbar_keeps_every_action_at_supported_widths() {
 }
 
 #[test]
+fn explorer_toolbar_renders_actual_shortcuts_at_narrow_and_wide_widths() {
+    let model = sample_model();
+    for width in [72, 110, 200] {
+        let mut terminal = Terminal::new(TestBackend::new(width, 32)).unwrap();
+        terminal
+            .draw(|frame| {
+                render_explorer(
+                    frame,
+                    frame.area(),
+                    &chrome_for("Explorer"),
+                    &model,
+                    &TundraTheme::default_dark(),
+                );
+            })
+            .unwrap();
+        let ShellLayout::Full { main, .. } = compute_shell_layout(Rect::new(0, 0, width, 32))
+        else {
+            panic!("full shell layout");
+        };
+        let layout = explorer_layout(main, &model);
+        assert_eq!(
+            layout.toolbar_buttons.len(),
+            ExplorerToolbarAction::REGULAR.len()
+        );
+        for button in &layout.toolbar_buttons {
+            let text: String = (button.area.x..button.area.right())
+                .map(|x| {
+                    terminal
+                        .backend()
+                        .buffer()
+                        .cell((x, button.area.y))
+                        .unwrap()
+                        .symbol()
+                })
+                .collect();
+            assert!(
+                text.contains(button.action.shortcut_label()),
+                "width {width}: {text}"
+            );
+            if width == 200 {
+                assert!(button.show_label);
+                assert!(text.contains(button.action.label()), "{text}");
+            }
+            assert_eq!(
+                layout.hit_test(button.area.x, button.area.y),
+                button
+                    .enabled
+                    .then_some(ExplorerHitTarget::Toolbar(button.action))
+            );
+        }
+    }
+}
+
+#[test]
 fn explorer_toolbar_buttons_have_one_outer_bracket_pair() {
     let model = sample_model();
     let terminal = render_terminal(&model);
@@ -397,6 +451,10 @@ fn explorer_toolbar_buttons_have_one_outer_bracket_pair() {
     let buffer = terminal.backend().buffer();
 
     for button in layout.toolbar_buttons {
+        let text: String = (button.area.x..button.area.right())
+            .map(|x| buffer.cell((x, button.area.y)).unwrap().symbol())
+            .collect();
+        assert!(text.contains(button.action.shortcut_label()), "{text}");
         assert_eq!(
             buffer
                 .cell((button.area.x, button.area.y))
