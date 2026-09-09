@@ -484,27 +484,34 @@ pub fn settings_layout(area: Rect, model: &SettingsViewModel) -> SettingsLayout 
         }));
     }
 
-    let update_confirmation = model
+    let confirmation = model
         .update
         .as_ref()
-        .and_then(|update| update.confirmation.as_ref())
-        .map(|_| centered(area, area.width.min(72), area.height.min(14)));
-    let update_confirm_button = update_confirmation.map(|dialog| {
-        Rect::new(
-            dialog.x.saturating_add(dialog.width / 2).saturating_sub(18),
-            dialog.bottom().saturating_sub(3),
-            17,
-            1,
-        )
-    });
-    let update_cancel_button = update_confirmation.map(|dialog| {
-        Rect::new(
-            dialog.x.saturating_add(dialog.width / 2).saturating_add(1),
-            dialog.bottom().saturating_sub(3),
-            12,
-            1,
-        )
-    });
+        .and_then(|update| update.confirmation.as_ref());
+    let update_confirmation =
+        confirmation.map(|_| centered(area, area.width.min(72), area.height.min(14)));
+    let (update_confirm_button, update_cancel_button) = confirmation
+        .zip(update_confirmation)
+        .map(|(confirmation, dialog)| {
+            let confirm_width =
+                u16::try_from(terminal_width(&format!("[{}]", confirmation.confirm_label)))
+                    .unwrap_or(u16::MAX);
+            let [_, confirm, _, cancel, _] = Layout::horizontal([
+                Constraint::Fill(1),
+                Constraint::Length(confirm_width),
+                Constraint::Length(2),
+                Constraint::Length(8), // [Cancel]
+                Constraint::Fill(1),
+            ])
+            .areas(Rect::new(
+                dialog.x.saturating_add(2),
+                dialog.bottom().saturating_sub(3),
+                dialog.width.saturating_sub(4),
+                1,
+            ));
+            (Some(confirm), Some(cancel))
+        })
+        .unwrap_or_default();
 
     SettingsLayout {
         main: area,
