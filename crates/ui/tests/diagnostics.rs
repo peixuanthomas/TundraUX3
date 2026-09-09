@@ -83,7 +83,7 @@ fn overflowing_checks_show_a_proportional_scrollbar_at_the_current_window() {
     let thumb_y = scrollbar.track.y.saturating_add(thumb_start);
     for y in scrollbar.track.y..scrollbar.track.bottom() {
         let expected = if y >= thumb_y && y < thumb_y.saturating_add(thumb_len) {
-            "┃"
+            "█"
         } else {
             "│"
         };

@@ -527,7 +527,7 @@ fn wide_source_line_exposes_and_renders_a_proportional_horizontal_scrollbar() {
     );
     assert_eq!(
         terminal.backend().buffer()[(scrollbar.thumb.x, scrollbar.thumb.y)].symbol(),
-        "━"
+        "█"
     );
 }
 
@@ -561,7 +561,7 @@ fn wide_rich_no_wrap_line_exposes_and_renders_a_horizontal_scrollbar() {
     );
     assert_eq!(
         terminal.backend().buffer()[(scrollbar.thumb.x, scrollbar.thumb.y)].symbol(),
-        "━"
+        "█"
     );
 }
 
@@ -1344,7 +1344,7 @@ fn overflowing_document_exposes_proportional_scrollbar_and_scrolled_hits() {
     );
     assert_eq!(
         terminal.backend().buffer()[(scrollbar.thumb.x, scrollbar.thumb.y)].symbol(),
-        "┃"
+        "█"
     );
 }
 

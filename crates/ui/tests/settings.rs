@@ -83,8 +83,8 @@ fn settings_scrollbar_only_appears_when_content_overflows() {
                 .symbol()
         })
         .collect::<Vec<_>>();
-    assert!(symbols.iter().all(|symbol| matches!(*symbol, "│" | "┃")));
-    assert!(symbols.contains(&"┃"));
+    assert!(symbols.iter().all(|symbol| matches!(*symbol, "│" | "█")));
+    assert!(symbols.contains(&"█"));
 }
 
 #[test]
