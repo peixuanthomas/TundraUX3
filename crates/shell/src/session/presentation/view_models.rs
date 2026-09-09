@@ -254,7 +254,50 @@ impl ShellSession {
             }
         });
         let dirty = self.system_status_dashboard_is_dirty();
+        let overview_metrics = if self.system_status_route
+            == ui::SystemStatusRoute::Detail(ui::SystemStatusDetail::Overview)
+        {
+            use storage::SystemStatusWidgetKind as Kind;
+            [
+                Kind::Cpu,
+                Kind::Memory,
+                Kind::Storage,
+                Kind::Network,
+                Kind::Temperature,
+                Kind::Battery,
+                Kind::UptimeLoad,
+                Kind::TopProcesses,
+            ]
+            .into_iter()
+            .map(|kind| {
+                let mut metric = self.to_system_status_widget_view_model(
+                    role,
+                    &storage::WidgetPlacement {
+                        kind,
+                        size: storage::SystemStatusWidgetSize::Small,
+                        column: 0,
+                        row: 0,
+                    },
+                    snapshot,
+                    storage_snapshot,
+                    diagnostics,
+                    refreshed,
+                );
+                if kind == Kind::Network {
+                    metric.secondary = metric
+                        .secondary
+                        .iter()
+                        .flat_map(|line| line.split(" · ").map(str::to_string))
+                        .collect();
+                }
+                metric
+            })
+            .collect()
+        } else {
+            Vec::new()
+        };
         ui::SystemStatusDashboardViewModel {
+            overview_metrics,
             wide_widgets: widgets_for(storage::DashboardProfile::Wide),
             narrow_widgets: widgets_for(storage::DashboardProfile::Narrow),
             selected: self

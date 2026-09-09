@@ -436,11 +436,14 @@ impl ShellSession {
     }
 
     fn open_system_status_add_picker_at(&mut self, anchor: Option<CellPosition>) {
-        if self.system_status_dashboard_draft.is_none() || !self.system_status_has_addable_widget()
+        if !matches!(self.system_status_route, ui::SystemStatusRoute::Dashboard)
+            || !self.system_status_has_addable_widget()
         {
             return;
         }
-        self.system_status_dashboard_focus = ui::SystemStatusDashboardFocus::Add;
+        if self.system_status_dashboard_draft.is_some() {
+            self.system_status_dashboard_focus = ui::SystemStatusDashboardFocus::Add;
+        }
         self.system_status_size_picker = None;
         let selected = SYSTEM_STATUS_WIDGET_KINDS
             .iter()
@@ -454,9 +457,6 @@ impl ShellSession {
             || !self.system_status_has_addable_widget()
         {
             return;
-        }
-        if self.system_status_dashboard_draft.is_none() {
-            self.begin_system_status_dashboard_edit();
         }
         self.open_system_status_add_picker_at(Some(anchor));
     }
@@ -524,6 +524,9 @@ impl ShellSession {
         };
         if !self.system_status_picker_kind_enabled(kind) {
             return;
+        }
+        if self.system_status_dashboard_draft.is_none() {
+            self.begin_system_status_dashboard_edit();
         }
         if self
             .system_status_dashboard_draft

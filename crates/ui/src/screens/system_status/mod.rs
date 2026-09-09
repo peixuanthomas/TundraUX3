@@ -1,11 +1,11 @@
 mod layout;
 mod model;
+mod overview;
 mod render;
 
 pub use layout::{
     LOGICAL_ROW_GAP, LOGICAL_ROW_HEIGHT, SystemStatusHitTarget, SystemStatusLayout,
-    SystemStatusModuleTabLayout, SystemStatusRowLayout, SystemStatusWidgetLayout,
-    system_status_hit_test, system_status_layout,
+    SystemStatusRowLayout, SystemStatusWidgetLayout, system_status_hit_test, system_status_layout,
 };
 pub use model::{
     AdminSystemStatusViewModel, NetworkInterfaceRowViewModel, StorageVolumeRowViewModel,

@@ -242,10 +242,7 @@ fn diagnostics_logs_and_incidents_are_independent_system_status_modules() {
         // A previous page must not decide the current page's content.
         m.diagnostics.tab = DiagnosticsTab::Health;
         let l = system_status_layout(full_main(120, 28), &m);
-        assert_eq!(
-            l.module_tabs.iter().map(|tab| tab.tab).collect::<Vec<_>>(),
-            DiagnosticsTab::ALL
-        );
+
         assert_eq!(l.diagnostics_content.as_ref().unwrap().active_tab, expected);
         assert_eq!(
             l.diagnostics_content.as_ref().unwrap().list_panel.y,
@@ -259,20 +256,19 @@ fn diagnostics_logs_and_incidents_are_independent_system_status_modules() {
     for (width, height) in [(108, 22), (120, 28)] {
         let m = model();
         let l = system_status_layout(full_main(width, height), &m);
-        assert_eq!(l.module_tabs.len(), 3);
-        for tab in &l.module_tabs {
-            assert!(tab.area.width > 0);
-            assert!(l.header.intersection(tab.area).is_empty());
-            assert_eq!(
-                system_status_hit_test(&l, (tab.area.x, tab.area.y)),
-                Some(SystemStatusHitTarget::Diagnostics(
-                    DiagnosticsHitTarget::Tab(tab.tab)
-                ))
-            );
-        }
+        assert_eq!(l.header.width, l.panel.width - 2);
+        assert_eq!(
+            system_status_hit_test(&l, (l.header.right() - 1, l.header.y)),
+            None
+        );
         let out = render(width, height, &m);
         for label in ["Diagnostics", "Logs", "Incidents"] {
-            assert!(out.contains(label), "{width}: missing {label}");
+            let header: String = out
+                .chars()
+                .skip(l.header.y as usize * width as usize)
+                .take(width as usize)
+                .collect();
+            assert!(!header.contains(label), "{width}: unexpected {label}");
         }
     }
 }
@@ -518,5 +514,99 @@ fn full_main(w: u16, h: u16) -> Rect {
     match compute_shell_layout(Rect::new(0, 0, w, h)) {
         ShellLayout::Full { main, .. } => main,
         _ => panic!(),
+    }
+}
+
+#[test]
+fn selection_only_accents_borders_and_edit_mode_blinks_slowly() {
+    use std::time::Duration;
+    let metric = widget(
+        SystemStatusWidgetKind::Cpu,
+        SystemStatusWidgetSize::Small,
+        0,
+        0,
+    );
+    let context = RenderContext::from_theme(
+        &TundraTheme::default_dark(),
+        Default::default(),
+        Default::default(),
+    );
+    let draw = |selected, editing, seconds, reduced_motion| {
+        let mut terminal = Terminal::new(TestBackend::new(24, 5)).unwrap();
+        let mut context = context;
+        context.motion.now = Duration::from_secs(seconds);
+        context.motion.reduced_motion = reduced_motion;
+        terminal
+            .draw(|frame| {
+                let mut card = ui::components::MetricCard::new(&metric);
+                card.state.selected = selected;
+                card.editing = editing;
+                card.render_frame(frame, frame.area(), &context);
+            })
+            .unwrap();
+        terminal.backend().buffer().clone()
+    };
+    let normal = draw(false, false, 0, false);
+    let selected = draw(true, false, 0, false);
+    assert_eq!(selected[(0, 2)].fg, context.theme.accent);
+    assert_ne!(normal[(0, 2)].fg, selected[(0, 2)].fg);
+    for y in 1..4 {
+        for x in 1..23 {
+            assert_eq!(normal[(x, y)].bg, selected[(x, y)].bg);
+        }
+    }
+    assert_eq!(draw(false, true, 0, false)[(0, 2)].fg, context.theme.accent);
+    assert_eq!(draw(false, true, 1, false)[(0, 2)].fg, context.theme.accent);
+    assert_eq!(draw(false, true, 2, false)[(0, 2)].fg, context.theme.border);
+    assert_eq!(draw(false, true, 4, false)[(0, 2)].fg, context.theme.accent);
+    assert_eq!(draw(true, true, 2, false)[(0, 2)].fg, context.theme.accent);
+    assert_eq!(draw(false, true, 0, true), draw(false, true, 2, true));
+    let mut m = model();
+    m.dashboard.editing = true;
+    m.dashboard.feedback = Some("Added CPU".into());
+    assert!(render(100, 24, &m).contains("EDIT MODE"));
+}
+
+#[test]
+fn overview_shows_usage_graphs_and_preserves_missing_and_stale_states() {
+    let mut m = model();
+    m.route = SystemStatusRoute::Detail(SystemStatusDetail::Overview);
+    let kinds = [
+        SystemStatusWidgetKind::Cpu,
+        SystemStatusWidgetKind::Memory,
+        SystemStatusWidgetKind::Storage,
+        SystemStatusWidgetKind::Network,
+        SystemStatusWidgetKind::Temperature,
+        SystemStatusWidgetKind::Battery,
+        SystemStatusWidgetKind::UptimeLoad,
+        SystemStatusWidgetKind::TopProcesses,
+    ];
+    m.dashboard.overview_metrics = kinds
+        .into_iter()
+        .map(|kind| widget(kind, SystemStatusWidgetSize::Small, 0, 0))
+        .collect();
+    m.dashboard.overview_metrics[1].state = SystemStatusWidgetState::Stale {
+        message: "Old sample".into(),
+    };
+    m.dashboard.overview_metrics[4].state = SystemStatusWidgetState::Unavailable {
+        message: "No sensor".into(),
+    };
+    m.dashboard.overview_metrics[5].state = SystemStatusWidgetState::Loading;
+    for (w, h) in [(80, 24), (100, 24), (120, 40)] {
+        let output = render(w, h, &m);
+        for kind in kinds {
+            assert!(output.contains(kind.label()), "missing {kind:?} at {w}x{h}");
+        }
+        assert!(output.contains("Stale"));
+        assert!(output.contains("Unavailable"));
+        assert!(output.contains("Loading..."));
+        assert!(output.contains('█'), "missing usage graph at {w}x{h}");
+        let layout = system_status_layout(full_main(w, h), &m);
+        assert!(layout.widgets.is_empty());
+        assert!(layout.rows.is_empty());
+        assert_eq!(
+            system_status_hit_test(&layout, (layout.canvas.x, layout.canvas.y)),
+            None
+        );
     }
 }

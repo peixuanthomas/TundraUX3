@@ -199,6 +199,8 @@ pub struct SystemStatusDragPreview {
 }
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct SystemStatusDashboardViewModel {
+    /// Overview detail metrics are independent of the user's dashboard layout.
+    pub overview_metrics: Vec<SystemStatusWidgetViewModel>,
     pub wide_widgets: Vec<SystemStatusWidgetViewModel>,
     pub narrow_widgets: Vec<SystemStatusWidgetViewModel>,
     pub selected: Option<SystemStatusWidgetKind>,
@@ -396,6 +398,7 @@ impl SystemStatusViewModel {
     }
     pub fn item_count(&self) -> usize {
         match (&self.content, self.route) {
+            (_, SystemStatusRoute::Detail(SystemStatusDetail::Overview)) => 0,
             (
                 SystemStatusContentViewModel::Admin(a),
                 SystemStatusRoute::Detail(SystemStatusDetail::Storage),

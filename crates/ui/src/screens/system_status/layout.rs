@@ -1,5 +1,5 @@
 use super::model::*;
-use crate::components::{Dialog, DialogAction, TabItem, Tabs};
+use crate::components::{Dialog, DialogAction};
 use crate::screens::shell::{inset_rect, line_in_rect, rect_contains, usize_to_u16};
 use crate::{
     DiagnosticsContentLayout, DiagnosticsHitTarget, DiagnosticsRepairDialogLayout,
@@ -23,11 +23,6 @@ pub struct SystemStatusWidgetLayout {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SystemStatusRowLayout {
     pub index: usize,
-    pub area: Rect,
-}
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct SystemStatusModuleTabLayout {
-    pub tab: crate::DiagnosticsTab,
     pub area: Rect,
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -76,8 +71,6 @@ pub struct SystemStatusLayout {
     pub notice_area: Option<Rect>,
     pub detail_summary_area: Rect,
     pub detail_trend_area: Rect,
-    pub module_tabs_area: Option<Rect>,
-    pub module_tabs: Vec<SystemStatusModuleTabLayout>,
     pub rows_area: Rect,
     pub rows: Vec<SystemStatusRowLayout>,
     pub visible_start: usize,
@@ -121,12 +114,7 @@ pub(super) fn system_status_picker_area(
 pub fn system_status_layout(main: Rect, model: &SystemStatusViewModel) -> SystemStatusLayout {
     let panel = main;
     let inner = inset_rect(panel, 1);
-    let mut header = line_in_rect(inner, inner.y);
-    let module_tabs_area = (!model.dashboard.editing && header.width >= 40).then(|| {
-        let area = Rect::new(header.right() - 40, header.y, 40, header.height);
-        header.width = header.width.saturating_sub(41);
-        area
-    });
+    let header = line_in_rect(inner, inner.y);
     let footer = line_in_rect(inner, inner.bottom().saturating_sub(1));
     let content_panel = Rect::new(
         inner.x,
@@ -247,6 +235,10 @@ pub fn system_status_layout(main: Rect, model: &SystemStatusViewModel) -> System
         SystemStatusRoute::Detail(d) => Some(d),
         _ => None,
     };
+    if detail.is_some() {
+        widgets.clear();
+        edit_button = Rect::default();
+    }
     let item_count = model.item_count();
     let formatted_detail = detail.is_some_and(|detail| {
         !matches!(
@@ -436,16 +428,6 @@ pub fn system_status_layout(main: Rect, model: &SystemStatusViewModel) -> System
                 .collect()
         })
         .unwrap_or_default();
-    let module_tabs = module_tabs_area
-        .map(|area| {
-            let tabs = system_status_module_tabs();
-            crate::DiagnosticsTab::ALL
-                .into_iter()
-                .zip(tabs.borderless_item_areas(area))
-                .map(|(tab, area)| SystemStatusModuleTabLayout { tab, area })
-                .collect()
-        })
-        .unwrap_or_default();
     let diagnostics_content = detail
         .and_then(SystemStatusDetail::diagnostics_tab)
         .map(|tab| {
@@ -505,8 +487,6 @@ pub fn system_status_layout(main: Rect, model: &SystemStatusViewModel) -> System
         notice_area: None,
         detail_summary_area,
         detail_trend_area,
-        module_tabs_area,
-        module_tabs,
         rows_area,
         rows,
         visible_start,
@@ -548,15 +528,6 @@ pub fn system_status_hit_test(
     if let Some(d) = &l.diagnostics_repair_dialog {
         return diagnostics_repair_dialog_hit_test(d, p).map(SystemStatusHitTarget::Diagnostics);
     }
-    if let Some(tab) = l
-        .module_tabs
-        .iter()
-        .find(|tab| rect_contains(tab.area, x, y))
-    {
-        return Some(SystemStatusHitTarget::Diagnostics(
-            DiagnosticsHitTarget::Tab(tab.tab),
-        ));
-    }
     if let Some(d) = &l.diagnostics_content {
         if let Some(t) = diagnostics_content_hit_test(d, p) {
             return Some(SystemStatusHitTarget::Diagnostics(t));
@@ -590,15 +561,4 @@ pub fn system_status_hit_test(
         .iter()
         .find(|r| rect_contains(r.area, x, y))
         .map(|r| SystemStatusHitTarget::Row(r.index))
-}
-
-pub(super) fn system_status_module_tabs() -> Tabs {
-    Tabs::new(
-        "system-status.modules",
-        vec![
-            TabItem::new("system-status.diagnostics", "Diagnostics"),
-            TabItem::new("system-status.logs", "Logs"),
-            TabItem::new("system-status.incidents", "Incidents"),
-        ],
-    )
 }

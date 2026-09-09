@@ -13,11 +13,13 @@ use crate::{
 pub struct MetricCard<'a> {
     pub model: &'a SystemStatusWidgetViewModel,
     pub state: ComponentState,
+    pub editing: bool,
 }
 impl<'a> MetricCard<'a> {
     pub const fn new(model: &'a SystemStatusWidgetViewModel) -> Self {
         Self {
             model,
+            editing: false,
             state: ComponentState {
                 focused: false,
                 hovered: false,
@@ -32,21 +34,20 @@ impl<'a> MetricCard<'a> {
             return;
         }
         let theme = &context.compatibility_theme();
-        let mut surface = Surface::new()
+        let surface = Surface::new()
             .titled(self.model.kind.label())
             .bordered(true)
             .raised(true);
-        if self.state.focused || self.state.selected {
-            surface = surface.border_shape(context.theme.border_shape);
-        }
         let inner = surface.inner(area);
-        surface.render_frame(frame, area, context);
-        if self.state.selected {
-            frame.render_widget(
-                Paragraph::new("").style(Style::default().bg(context.theme.accent_soft)),
-                inner,
-            );
+        let mut card_context = *context;
+        // The state clock redraws once a second: a four-second cycle stays slow
+        // without requesting continuous animation frames or dimming the data.
+        let edit_highlight =
+            self.editing && (context.motion.reduced_motion || context.motion.now.as_secs() % 4 < 2);
+        if self.state.focused || self.state.selected || edit_highlight {
+            card_context.theme.border = context.theme.accent;
         }
+        surface.render_frame(frame, area, &card_context);
         match &self.model.state {
             SystemStatusWidgetState::Loading => {
                 EmptyState::new("Loading...").render_frame(frame, inner, context);
