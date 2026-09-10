@@ -696,7 +696,6 @@ fn admin_batch_adds_launcher_targets_and_high_risk_launch_requires_confirmation(
             .collect::<Vec<_>>(),
         vec![
             ui::LauncherToolbarAction::Remove,
-            ui::LauncherToolbarAction::Reapprove,
             ui::LauncherToolbarAction::Refresh,
             ui::LauncherToolbarAction::ToggleView,
         ]

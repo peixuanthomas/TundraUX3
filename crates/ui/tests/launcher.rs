@@ -261,12 +261,11 @@ fn toolbar_management_actions_are_admin_only() {
             .collect::<Vec<_>>(),
         vec![
             LauncherToolbarAction::Remove,
-            LauncherToolbarAction::Reapprove,
             LauncherToolbarAction::Refresh,
             LauncherToolbarAction::ToggleView,
         ]
     );
-    assert!(admin.toolbar[1].enabled);
+    assert!(admin.toolbar[0].enabled);
     assert_eq!(
         user.toolbar
             .iter()
@@ -292,7 +291,6 @@ fn built_in_command_line_is_fixed_and_has_no_management_toolbar_actions() {
     assert!(command_line.is_builtin());
     assert_eq!(command_line.id, app::COMMAND_LINE_APPLICATION.id);
     assert!(!command_line.capabilities.removable);
-    assert!(!command_line.capabilities.reapprovable);
     let asset_icon = model
         .item_icon(&command_line)
         .expect("Command Line ASCII Launcher asset");
@@ -305,10 +303,12 @@ fn built_in_command_line_is_fixed_and_has_no_management_toolbar_actions() {
         .decode()
         .expect("decode generated Command Line icon");
     assert_eq!((graphic.width(), graphic.height()), (256, 256));
-    assert!(model.toolbar.iter().all(|button| !matches!(
-        button.action,
-        LauncherToolbarAction::Remove | LauncherToolbarAction::Reapprove
-    )));
+    assert!(
+        model
+            .toolbar
+            .iter()
+            .all(|button| button.action != LauncherToolbarAction::Remove)
+    );
 
     let output = render(&model, 100, 30);
     assert!(output.contains("|cmd>  |"));

@@ -1168,9 +1168,6 @@ impl ShellSession {
             InputKey::Enter => (target, ShellCommand::LauncherActivate),
             InputKey::Delete => (target, ShellCommand::LauncherRemove),
             InputKey::Char('v' | 'V') => (target, ShellCommand::LauncherToggleView),
-            InputKey::Char('r' | 'R') if key.modifiers.control || key.modifiers.super_key => {
-                (target, ShellCommand::LauncherReapprove)
-            }
             InputKey::Char('r' | 'R') => (target, ShellCommand::LauncherRefresh),
             _ => (target, ShellCommand::RecordInput),
         }

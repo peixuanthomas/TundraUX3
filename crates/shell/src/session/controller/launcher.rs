@@ -380,12 +380,6 @@ impl ShellSession {
         self.launcher_confirm_selected = true;
     }
 
-    pub(in crate::session) fn reapprove_selected_launcher_item(&mut self, platform: &dyn Platform) {
-        if let Some(id) = self.selected_launcher_id() {
-            self.apply_launcher_command(LauncherCommand::Reapprove(vec![id]), platform);
-        }
-    }
-
     pub(in crate::session) fn confirm_launcher_action(&mut self, platform: &dyn Platform) {
         let Some(pending) = self.launcher_pending_confirmation.take() else {
             return;
@@ -471,9 +465,6 @@ impl ShellSession {
             }
             Some(ui::LauncherHitTarget::Toolbar(action)) => match action {
                 ui::LauncherToolbarAction::Remove => self.request_launcher_remove(),
-                ui::LauncherToolbarAction::Reapprove => {
-                    self.reapprove_selected_launcher_item(platform)
-                }
                 ui::LauncherToolbarAction::Refresh => self.refresh_launcher(platform),
                 ui::LauncherToolbarAction::ToggleView => self.toggle_launcher_view(),
             },

@@ -36,20 +36,17 @@ pub enum LauncherItemSource {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct LauncherItemCapabilities {
     pub removable: bool,
-    pub reapprovable: bool,
     pub reorderable: bool,
 }
 
 impl LauncherItemCapabilities {
     pub const EXTERNAL: Self = Self {
         removable: true,
-        reapprovable: true,
         reorderable: true,
     };
 
     pub const BUILT_IN: Self = Self {
         removable: false,
-        reapprovable: false,
         reorderable: false,
     };
 }
@@ -112,7 +109,6 @@ impl LauncherItemViewModel {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LauncherToolbarAction {
     Remove,
-    Reapprove,
     Refresh,
     ToggleView,
 }
@@ -121,7 +117,6 @@ impl LauncherToolbarAction {
     pub const fn label(self) -> &'static str {
         match self {
             Self::Remove => "Remove",
-            Self::Reapprove => "Reapprove",
             Self::Refresh => "Refresh",
             Self::ToggleView => "View",
         }
@@ -130,7 +125,6 @@ impl LauncherToolbarAction {
     pub const fn shortcut(self) -> &'static str {
         match self {
             Self::Remove => "Del",
-            Self::Reapprove => "Ctrl+R",
             Self::Refresh => "R",
             Self::ToggleView => "V",
         }
@@ -244,20 +238,11 @@ impl LauncherViewModel {
             .or_else(|| (!items.is_empty()).then_some(0));
         let selected_item = selected_index.and_then(|index| items.get(index));
         let can_remove = selected_item.is_some_and(|item| item.capabilities.removable);
-        let can_reapprove = selected_item.is_some_and(|item| {
-            item.capabilities.reapprovable && launcher_status_requires_approval(item.status)
-        });
         let mut toolbar = Vec::new();
         if can_manage && can_remove {
             toolbar.push(LauncherToolbarButtonViewModel::new(
                 LauncherToolbarAction::Remove,
                 true,
-            ));
-        }
-        if can_manage && selected_item.is_some_and(|item| item.capabilities.reapprovable) {
-            toolbar.push(LauncherToolbarButtonViewModel::new(
-                LauncherToolbarAction::Reapprove,
-                can_reapprove,
             ));
         }
         toolbar.push(LauncherToolbarButtonViewModel::new(
@@ -1114,13 +1099,6 @@ fn launcher_status_label(status: LauncherItemStatus) -> &'static str {
         LauncherItemStatus::NeedsApproval => "Needs approval",
         LauncherItemStatus::Unsupported => "Unsupported",
     }
-}
-
-fn launcher_status_requires_approval(status: LauncherItemStatus) -> bool {
-    matches!(
-        status,
-        LauncherItemStatus::Changed | LauncherItemStatus::NeedsApproval
-    )
 }
 
 fn fit_text(value: &str, width: u16) -> String {

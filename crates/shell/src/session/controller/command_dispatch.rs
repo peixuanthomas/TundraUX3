@@ -647,10 +647,6 @@ impl ShellSession {
                 self.request_launcher_remove();
                 ShellAction::Redraw
             }
-            ShellCommand::LauncherReapprove => {
-                self.reapprove_selected_launcher_item(platform);
-                ShellAction::Redraw
-            }
             ShellCommand::LauncherRefresh => {
                 self.refresh_launcher(platform);
                 ShellAction::Redraw

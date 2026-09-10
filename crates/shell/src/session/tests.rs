@@ -3928,11 +3928,12 @@ fn fixed_launcher_items_include_editor_and_keep_command_line_admin_only() {
     assert_eq!(launcher.items[0].id, app::COMMAND_LINE_APPLICATION.id);
     assert_eq!(launcher.items[1].id, app::EDITOR_APPLICATION.id);
     assert!(launcher.items.iter().all(|item| item.is_builtin()));
-    assert!(launcher.items.iter().all(|item| {
-        !item.capabilities.removable
-            && !item.capabilities.reapprovable
-            && !item.capabilities.reorderable
-    }));
+    assert!(
+        launcher
+            .items
+            .iter()
+            .all(|item| { !item.capabilities.removable && !item.capabilities.reorderable })
+    );
 
     let mut user = ShellSession::new(ShellLaunchConfig::default(), (120, 40));
     set_test_auth_role(&mut user, UserRole::User);

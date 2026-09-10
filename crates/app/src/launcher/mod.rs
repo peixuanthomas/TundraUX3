@@ -112,7 +112,6 @@ pub enum LauncherCommand {
     AddPaths(Vec<PathBuf>),
     Reorder { id: String, insertion_index: usize },
     Remove(Vec<String>),
-    Reapprove(Vec<String>),
     RequestLaunch(String),
     ConfirmLaunch(String),
 }
@@ -186,9 +185,6 @@ impl LauncherController {
                 insertion_index,
             } => self.reorder(state, &id, insertion_index, session, storage),
             LauncherCommand::Remove(ids) => self.remove(state, &ids, session, storage),
-            LauncherCommand::Reapprove(ids) => {
-                self.reapprove(state, &ids, session, platform, storage)
-            }
             LauncherCommand::RequestLaunch(id) => {
                 self.launch(state, &id, session, platform, storage, false)
             }
@@ -330,35 +326,6 @@ impl LauncherController {
             state.reset(&config.launcher);
         }
         state.message = Some(format!("{removed} Launcher item(s) removed"));
-        Ok(LauncherEffect::None)
-    }
-
-    fn reapprove(
-        &self,
-        state: &mut LauncherState,
-        ids: &[String],
-        session: Option<&AuthSession>,
-        platform: &dyn Platform,
-        storage: &StorageManager,
-    ) -> Result<LauncherEffect, LauncherError> {
-        self.authorize(session, PermissionAction::ManageLauncher)?;
-        let mut config = storage.load_config()?;
-        let mut count = 0usize;
-        for entry in &mut config.launcher.entries {
-            if ids.iter().any(|id| id == &entry.id) {
-                let target = validate(Path::new(&entry.path), platform)?;
-                entry.path = target.path.to_string_lossy().into_owned();
-                entry.executable_kind = Some(target.kind);
-                entry.fingerprint = None;
-                count += 1;
-            }
-        }
-        if count > 0 {
-            storage.save_config(&config)?;
-            state.reset(&config.launcher);
-            self.refresh(state, platform)?;
-        }
-        state.message = Some(format!("{count} Launcher item(s) re-approved"));
         Ok(LauncherEffect::None)
     }
 
