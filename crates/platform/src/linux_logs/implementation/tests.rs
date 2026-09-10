@@ -134,15 +134,19 @@ fn unavailable_journal_falls_back_with_explicit_service_gap() {
     assert_eq!(result.state, LogSourceState::Partial);
     assert_eq!(result.events[0].context.module, "linux.kernel");
     assert_eq!(result.events[0].level, LogLevel::Warning);
-    assert!(result.events[0]
-        .timestamp_note
-        .as_deref()
-        .unwrap()
-        .contains("12.345 seconds since boot"));
-    assert!(result
-        .notices
-        .iter()
-        .any(|n| n.contains("not external services")));
+    assert!(
+        result.events[0]
+            .timestamp_note
+            .as_deref()
+            .unwrap()
+            .contains("12.345 seconds since boot")
+    );
+    assert!(
+        result
+            .notices
+            .iter()
+            .any(|n| n.contains("not external services"))
+    );
 }
 
 #[test]

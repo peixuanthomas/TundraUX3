@@ -223,13 +223,9 @@ impl Platform for MacosPlatform {
     }
 
     fn read_clipboard_text(&self) -> Result<String, PlatformError> {
-        let output = Command::new(PBPASTE)
-            .output()
-            .map_err(|error| PlatformError::Io {
-                operation: "read clipboard",
-                path: Some(PathBuf::from(PBPASTE)),
-                message: error.to_string(),
-            })?;
+        let output = Command::new(PBPASTE).output().map_err(|error| {
+            PlatformError::from_io("read clipboard", Some(PathBuf::from(PBPASTE)), &error)
+        })?;
 
         if !output.status.success() {
             return Err(PlatformError::CommandFailed {
@@ -247,10 +243,8 @@ impl Platform for MacosPlatform {
             .stdin(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()
-            .map_err(|error| PlatformError::Io {
-                operation: "write clipboard",
-                path: Some(PathBuf::from(PBCOPY)),
-                message: error.to_string(),
+            .map_err(|error| {
+                PlatformError::from_io("write clipboard", Some(PathBuf::from(PBCOPY)), &error)
             })?;
 
         child
@@ -261,19 +255,13 @@ impl Platform for MacosPlatform {
                 message: "pbcopy stdin is unavailable".to_string(),
             })?
             .write_all(text.as_bytes())
-            .map_err(|error| PlatformError::Io {
-                operation: "write clipboard",
-                path: Some(PathBuf::from(PBCOPY)),
-                message: error.to_string(),
+            .map_err(|error| {
+                PlatformError::from_io("write clipboard", Some(PathBuf::from(PBCOPY)), &error)
             })?;
 
-        let output = child
-            .wait_with_output()
-            .map_err(|error| PlatformError::Io {
-                operation: "write clipboard",
-                path: Some(PathBuf::from(PBCOPY)),
-                message: error.to_string(),
-            })?;
+        let output = child.wait_with_output().map_err(|error| {
+            PlatformError::from_io("write clipboard", Some(PathBuf::from(PBCOPY)), &error)
+        })?;
 
         if output.status.success() {
             Ok(())
@@ -414,10 +402,12 @@ end run"#;
         .arg(title)
         .arg(body)
         .output()
-        .map_err(|error| PlatformError::Io {
-            operation: "show critical error dialog",
-            path: Some(PathBuf::from(OSASCRIPT)),
-            message: error.to_string(),
+        .map_err(|error| {
+            PlatformError::from_io(
+                "show critical error dialog",
+                Some(PathBuf::from(OSASCRIPT)),
+                &error,
+            )
         })?;
 
     if output.status.success() {
@@ -1777,10 +1767,8 @@ fn apply_macos_file_flags(
     use std::os::macos::fs::MetadataExt;
 
     const UF_HIDDEN: u32 = 0x0000_8000;
-    let metadata = fs::symlink_metadata(path).map_err(|error| PlatformError::Io {
-        operation: "read macOS file flags",
-        path: Some(path.to_path_buf()),
-        message: error.to_string(),
+    let metadata = fs::symlink_metadata(path).map_err(|error| {
+        PlatformError::from_io("read macOS file flags", Some(path.to_path_buf()), &error)
     })?;
     attributes.hidden = attributes.hidden || metadata.st_flags() & UF_HIDDEN != 0;
     Ok(())
@@ -2104,14 +2092,9 @@ where
     I: IntoIterator<Item = S>,
     S: AsRef<OsStr>,
 {
-    let output = Command::new(OPEN)
-        .args(args)
-        .output()
-        .map_err(|error| PlatformError::Io {
-            operation: "open with macOS open",
-            path: Some(PathBuf::from(OPEN)),
-            message: error.to_string(),
-        })?;
+    let output = Command::new(OPEN).args(args).output().map_err(|error| {
+        PlatformError::from_io("open with macOS open", Some(PathBuf::from(OPEN)), &error)
+    })?;
 
     if output.status.success() {
         Ok(())

@@ -102,14 +102,18 @@ fn unresolved_alert_flush_does_not_invent_recovery() {
     runtime.shutdown();
     let results = query_logs(dir.path(), &LogQuery::default());
     assert_eq!(results.events.len(), 2);
-    assert!(results
-        .events
-        .iter()
-        .any(|e| e.phase == LogPhase::Repeated && e.repeat_count == 3));
-    assert!(!results
-        .events
-        .iter()
-        .any(|e| e.phase == LogPhase::Recovered));
+    assert!(
+        results
+            .events
+            .iter()
+            .any(|e| e.phase == LogPhase::Repeated && e.repeat_count == 3)
+    );
+    assert!(
+        !results
+            .events
+            .iter()
+            .any(|e| e.phase == LogPhase::Recovered)
+    );
 }
 #[test]
 fn secret_metadata_is_redacted_and_sizes_bounded() {
@@ -172,12 +176,16 @@ fn export_is_private_sanitized_and_never_overwrites() {
         ..Default::default()
     };
     export_logs(&output, &result, &LogWriterHealth::default()).unwrap();
-    assert!(!fs::read_to_string(output.join("events.jsonl"))
-        .unwrap()
-        .contains("extremely-secret"));
-    assert!(!fs::read_to_string(output.join("manifest.json"))
-        .unwrap()
-        .contains("huntersecret"));
+    assert!(
+        !fs::read_to_string(output.join("events.jsonl"))
+            .unwrap()
+            .contains("extremely-secret")
+    );
+    assert!(
+        !fs::read_to_string(output.join("manifest.json"))
+            .unwrap()
+            .contains("huntersecret")
+    );
     assert!(export_logs(&output, &result, &LogWriterHealth::default()).is_err());
     #[cfg(unix)]
     {
@@ -298,9 +306,11 @@ fn write_failure_reports_health_without_blocking_or_recursive_events() {
     fs::rename(&logs, dir.path().join("previous-logs")).unwrap();
     fs::write(&logs, "not a directory").unwrap();
     let start = Instant::now();
-    assert!(runtime
-        .handle()
-        .record(event("alice", LogPhase::Failed, "failed copy")));
+    assert!(
+        runtime
+            .handle()
+            .record(event("alice", LogPhase::Failed, "failed copy"))
+    );
     assert!(start.elapsed() < Duration::from_secs(1));
     let health = runtime.shutdown();
     assert_eq!(health.dropped_events, 1);
@@ -356,4 +366,44 @@ fn alert_counts_do_not_cross_owners_or_resources() {
             .count(),
         4
     );
+}
+
+#[test]
+fn cancelled_query_is_cancelled_even_for_empty_storage() {
+    let dir = tempfile::tempdir().unwrap();
+    let result = query_logs_cancellable(
+        dir.path(),
+        &LogQuery::default(),
+        &std::sync::atomic::AtomicBool::new(true),
+    );
+    assert_eq!(result.state, LogSourceState::Cancelled);
+    assert!(result.events.is_empty());
+}
+
+#[test]
+fn snapshots_and_records_share_configured_capacity() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut config = RuntimeLogConfig::new(dir.path().into(), "small-quota".into());
+    config.max_total_bytes = 4096;
+    let runtime = RuntimeLogRuntime::start(config).unwrap();
+    runtime
+        .handle()
+        .record(event("alice", LogPhase::Succeeded, "done"));
+    runtime.shutdown();
+    assert_eq!(storage_limit(dir.path()).unwrap(), 4096);
+    let snapshots = dir.path().join("snapshots");
+    fs::create_dir(&snapshots).unwrap();
+    let guard = reserve_storage_capacity(dir.path(), 4096).unwrap();
+    fs::write(snapshots.join("snapshot-first.jsonl"), vec![b' '; 4096]).unwrap();
+    drop(guard);
+    assert!(
+        query_logs(dir.path(), &LogQuery::default())
+            .events
+            .is_empty()
+    );
+    let guard = reserve_storage_capacity(dir.path(), 1024).unwrap();
+    assert!(!snapshots.join("snapshot-first.jsonl").exists());
+    fs::write(snapshots.join("snapshot-next.jsonl"), vec![b' '; 1024]).unwrap();
+    drop(guard);
+    assert!(reserve_storage_capacity(dir.path(), 4097).is_err());
 }

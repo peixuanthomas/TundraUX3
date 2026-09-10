@@ -45,7 +45,7 @@ fn write_events(root: &Path, events: &[RuntimeLogEvent]) -> PathBuf {
     path
 }
 fn report(root: &Path, id: &str, owner: Option<&str>) {
-    let record = serde_json::json!({"schema_version":1,"incident_id":id,"kind":"error","severity":"error","occurred_at":"2026-09-10T10:00:00Z","owner_id":owner,"run_id":"run-one","boundary":"file.copy","component":"ux.explorer","app":null,"error":{"message":"failure","source_chain":["permission denied","password=secret-value"],"backtrace":"private state"},"recovery":{"status":"recovered","detail":"retry completed"},"runtime":{"password":"hidden-runtime"},"breadcrumbs":[{"message":"copy started","event_id":"event-1","clipboard":"private-clipboard"}]});
+    let record = serde_json::json!({"schema_version":1,"incident_id":id,"kind":"error","severity":"error","occurred_at":"2026-09-10T10:00:00Z","owner_id":owner,"run_id":"run-one","boundary":"file.copy","component":"ux.explorer","app":null,"error":{"message":"failure","os_error_code":13,"source_chain":["permission denied","password=secret-value"],"backtrace":"private state"},"recovery":{"status":"recovered","detail":"retry completed"},"runtime":{"password":"hidden-runtime"},"breadcrumbs":[{"message":"copy started","event_id":"event-1","clipboard":"private-clipboard"}]});
     fs::write(
         root.join("crashes").join(format!("{id}.json")),
         serde_json::to_vec(&record).unwrap(),
@@ -216,6 +216,8 @@ fn runtime_logs_incident_document_uses_catalog_and_whitelist() {
     )
     .unwrap();
     let text = fs::read_to_string(path).unwrap();
+    let report: serde_json::Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(report["error"]["os_error_code"], 13);
     assert!(text.contains("permission denied"));
     assert!(text.contains("copy started"));
     for secret in [

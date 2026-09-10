@@ -604,7 +604,10 @@ mod implementation {
                 pri,
             );
             entry.native_source = Some("dmesg; kernel ring buffer".into());
-            entry.timestamp_note = Some(format!("Observed at timestamp; event occurred {} seconds since boot; wall-clock event time unavailable", clean(&monotonic)));
+            entry.timestamp_note = Some(format!(
+                "Observed at timestamp; event occurred {} seconds since boot; wall-clock event time unavailable",
+                clean(&monotonic)
+            ));
             if !time_filtered && accepts(&entry, query) {
                 result.events.push(entry);
             }

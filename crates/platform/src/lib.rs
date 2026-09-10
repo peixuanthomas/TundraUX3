@@ -2,6 +2,8 @@ mod diagnostics;
 pub mod linux_logs;
 pub use linux_logs::query_linux_logs;
 mod document;
+mod error_details;
+pub use error_details::CapturedIoError;
 #[cfg(target_os = "linux")]
 pub mod linux;
 pub mod macos;

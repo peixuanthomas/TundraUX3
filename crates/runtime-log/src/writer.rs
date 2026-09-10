@@ -1,6 +1,6 @@
 use crate::{
-    sanitize_event, sanitize_text, unique_id, LogContext, LogLevel, LogPhase, LogWriterHealth,
-    RuntimeLogEvent,
+    LogContext, LogLevel, LogPhase, LogWriterHealth, RuntimeLogEvent, sanitize_event,
+    sanitize_text, unique_id,
 };
 use chrono::Utc;
 use fs2::FileExt;
@@ -11,13 +11,20 @@ use std::{
     io::{self, Write},
     path::{Path, PathBuf},
     sync::{
+        Arc, Mutex, OnceLock, Weak,
         atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
         mpsc::{self, Receiver, SyncSender, TrySendError},
-        Arc, Mutex, OnceLock, Weak,
     },
     thread,
     time::{Duration, Instant, SystemTime},
 };
+
+thread_local! { static WRITER_THREAD: std::cell::Cell<bool> = const { std::cell::Cell::new(false) }; }
+/// The infrastructure writer contains its own panic and reports health. Hosts
+/// must not restore the terminal or print a panic for this caught boundary.
+pub fn is_writer_thread() -> bool {
+    WRITER_THREAD.with(std::cell::Cell::get)
+}
 
 #[derive(Debug, Clone)]
 pub struct RuntimeLogConfig {
@@ -160,6 +167,22 @@ impl RuntimeLogRuntime {
         }
         config.run_id = sanitize_text(&config.run_id);
         ensure_directory(&config.directory)?;
+        {
+            let guard = retention_lock(&config.directory)?;
+            guard.lock_exclusive()?;
+            let mut options = OpenOptions::new();
+            options.write(true).create(true).truncate(true);
+            nofollow(&mut options);
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::OpenOptionsExt;
+                options.mode(0o600);
+            }
+            let mut policy = options.open(config.directory.join(".retention.limit"))?;
+            policy.write_all(config.max_total_bytes.to_string().as_bytes())?;
+            policy.sync_data()?;
+        }
+
         // Verify write access during startup without retaining an unmanaged file.
         let probe = config.directory.join(format!(".probe-{}", unique_id()));
         let file = private_create(&probe)?;
@@ -179,6 +202,7 @@ impl RuntimeLogRuntime {
         thread::Builder::new()
             .name("runtime-log".into())
             .spawn(move || {
+                WRITER_THREAD.with(|flag| flag.set(true));
                 let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                     Worker::new(config, stats.clone()).run(receiver);
                 }));
@@ -342,6 +366,8 @@ impl Worker {
     fn alert_fingerprint(event: &RuntimeLogEvent) -> Option<u64> {
         event.alert_key.as_ref().map(|key| {
             hash((
+                std::mem::discriminant(&event.source),
+                &event.context.run_id,
                 &event.context.owner_id,
                 &event.context.module,
                 &event.context.operation,
@@ -665,10 +691,39 @@ fn cleanup_reserved(config: &RuntimeLogConfig, reserve: u64) -> io::Result<bool>
             entry.path(),
         ));
     }
+    // Viewer snapshots share the same quota as runtime records. Never follow
+    // a substituted snapshot directory or include caller-owned export bundles.
+    let snapshots = config.directory.join("snapshots");
+    if fs::symlink_metadata(&snapshots).is_ok_and(|m| m.is_dir() && !m.file_type().is_symlink()) {
+        for entry in fs::read_dir(&snapshots)? {
+            let entry = entry?;
+            if !entry.file_name().to_string_lossy().starts_with("snapshot-") {
+                continue;
+            }
+            let meta = fs::symlink_metadata(entry.path())?;
+            if !meta.is_file() || meta.file_type().is_symlink() {
+                continue;
+            }
+            total = total.saturating_add(meta.len());
+            files.push((
+                meta.modified().unwrap_or(SystemTime::UNIX_EPOCH),
+                meta.len(),
+                entry.path(),
+            ));
+        }
+    }
+    let max_total_bytes = config
+        .max_total_bytes
+        .min(storage_limit(&config.directory)?);
     files.sort_by_key(|(time, _, _)| *time);
     let age = Duration::from_secs(config.max_age_days.saturating_mul(86400));
     for (modified, length, path) in files {
-        if total.saturating_add(reserve) <= config.max_total_bytes
+        let age = if path.parent() == Some(snapshots.as_path()) {
+            Duration::from_secs(30 * 60)
+        } else {
+            age
+        };
+        if total.saturating_add(reserve) <= max_total_bytes
             && modified.elapsed().unwrap_or_default() < age
         {
             continue;
@@ -688,5 +743,46 @@ fn cleanup_reserved(config: &RuntimeLogConfig, reserve: u64) -> io::Result<bool>
             Err(e) => return Err(e),
         }
     }
-    Ok(total.saturating_add(reserve) <= config.max_total_bytes)
+    Ok(total.saturating_add(reserve) <= max_total_bytes)
+}
+
+/// Hold this reservation until snapshot bytes have been persisted. The writer
+/// takes the same lock, keeping viewer snapshots inside the configured quota.
+pub fn reserve_storage_capacity(directory: &Path, additional: u64) -> io::Result<File> {
+    ensure_directory(directory)?;
+    let guard = retention_lock(directory)?;
+    guard.lock_exclusive()?;
+    let mut config = RuntimeLogConfig::new(directory.to_path_buf(), String::new());
+    config.max_total_bytes = storage_limit(directory)?;
+    if !cleanup_reserved(&config, additional)? {
+        return Err(io::Error::new(
+            io::ErrorKind::StorageFull,
+            "Runtime log capacity has no space for a snapshot",
+        ));
+    }
+    Ok(guard)
+}
+
+pub fn storage_limit(directory: &Path) -> io::Result<u64> {
+    use std::io::Read;
+    let mut options = OpenOptions::new();
+    options.read(true);
+    nofollow(&mut options);
+    match options.open(directory.join(".retention.limit")) {
+        Ok(file) => {
+            let mut text = String::new();
+            file.take(32).read_to_string(&mut text)?;
+            text.parse::<u64>()
+                .ok()
+                .filter(|value| *value > 0)
+                .ok_or_else(|| {
+                    io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        "Invalid runtime log capacity policy",
+                    )
+                })
+        }
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(200 * 1024 * 1024),
+        Err(error) => Err(error),
+    }
 }

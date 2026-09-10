@@ -179,6 +179,31 @@ pub struct ManagedLocalTaskHandle<T> {
 }
 
 impl ManagedTaskGroup {
+    /// Bind submission identity while preserving the existing group registry.
+    pub fn with_log_context(
+        mut self,
+        owner_id: Option<String>,
+        operation_id: Option<String>,
+    ) -> Self {
+        self.app = self
+            .app
+            .with_log_owner(owner_id)
+            .with_log_operation_id(operation_id);
+        self
+    }
+    pub fn new_log_context(
+        &self,
+        module: &str,
+        operation: &str,
+        owner_id: Option<String>,
+    ) -> runtime_log::LogContext {
+        let mut context = self.app.log_context(operation);
+        context.module = module.into();
+        context.owner_id = owner_id;
+        context.operation_id = Some(self.app.process.new_log_operation_id());
+        context
+    }
+
     pub(crate) fn new(app: AppWatchdog, name: &str) -> Self {
         let key = format!("{}/{name}", app.component_path());
         let state = {

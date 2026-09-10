@@ -1,6 +1,6 @@
 use crate::{
-    sanitize_event, sanitize_text, LogQuery, LogQueryResult, LogSourceState, LogWriterHealth,
-    RuntimeLogEvent,
+    LogQuery, LogQueryResult, LogSourceState, LogWriterHealth, RuntimeLogEvent, sanitize_event,
+    sanitize_text,
 };
 use std::{
     fs::{self, OpenOptions},
@@ -47,7 +47,19 @@ fn matches(event: &RuntimeLogEvent, query: &LogQuery) -> bool {
 /// Query newest matching records with bounded per-record and result memory.
 /// Call from a CLI or background task, never from a terminal drawing callback.
 pub fn query_logs(directory: &Path, query: &LogQuery) -> LogQueryResult {
+    query_logs_cancellable(directory, query, &std::sync::atomic::AtomicBool::new(false))
+}
+
+pub fn query_logs_cancellable(
+    directory: &Path,
+    query: &LogQuery,
+    cancelled: &std::sync::atomic::AtomicBool,
+) -> LogQueryResult {
     let mut result = LogQueryResult::default();
+    if cancelled.load(std::sync::atomic::Ordering::Relaxed) {
+        result.state = LogSourceState::Cancelled;
+        return result;
+    }
     if query.limit == 0 {
         return result;
     }
@@ -76,6 +88,11 @@ pub fn query_logs(directory: &Path, query: &LogQuery) -> LogQueryResult {
     }
     let mut scanned_bytes = 0_u64;
     for entry in entries {
+        if cancelled.load(std::sync::atomic::Ordering::Relaxed) {
+            result.events.clear();
+            result.state = LogSourceState::Cancelled;
+            return result;
+        }
         let entry = match entry {
             Ok(entry) => entry,
             Err(e) => {
@@ -117,6 +134,11 @@ pub fn query_logs(directory: &Path, query: &LogQuery) -> LogQueryResult {
         let mut line = Vec::new();
         let mut oversized = false;
         loop {
+            if cancelled.load(std::sync::atomic::Ordering::Relaxed) {
+                result.events.clear();
+                result.state = LogSourceState::Cancelled;
+                return result;
+            }
             let available = match reader.fill_buf() {
                 Ok(data) => data,
                 Err(error) => {

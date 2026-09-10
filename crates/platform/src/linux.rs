@@ -2309,11 +2309,7 @@ fn decode_svg_icon(path: &Path, preferred_size: u32) -> Result<PlatformIcon, Pla
 }
 
 fn io_error(operation: &'static str, path: Option<PathBuf>, error: io::Error) -> PlatformError {
-    PlatformError::Io {
-        operation,
-        path,
-        message: error.to_string(),
-    }
+    PlatformError::from_io(operation, path, &error)
 }
 
 #[cfg(test)]

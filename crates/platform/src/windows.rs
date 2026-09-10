@@ -304,10 +304,8 @@ impl Platform for WindowsPlatform {
     }
 
     fn file_attributes(&self, path: &Path) -> Result<FileAttributes, PlatformError> {
-        let metadata = fs::symlink_metadata(path).map_err(|error| PlatformError::Io {
-            operation: "read file attributes",
-            path: Some(path.to_path_buf()),
-            message: error.to_string(),
+        let metadata = fs::symlink_metadata(path).map_err(|error| {
+            PlatformError::from_io("read file attributes", Some(path.to_path_buf()), &error)
         })?;
         let file_attributes = metadata.file_attributes();
         let reparse_tag = reparse_tag(path);
@@ -724,10 +722,12 @@ fn validate_recycle_source(path: &Path) -> Result<(), PlatformError> {
             ),
         });
     }
-    fs::symlink_metadata(path).map_err(|error| PlatformError::Io {
-        operation: "locate item to move to Recycle Bin",
-        path: Some(path.to_path_buf()),
-        message: error.to_string(),
+    fs::symlink_metadata(path).map_err(|error| {
+        PlatformError::from_io(
+            "locate item to move to Recycle Bin",
+            Some(path.to_path_buf()),
+            &error,
+        )
     })?;
     Ok(())
 }
@@ -749,11 +749,11 @@ fn validate_restore_destination(destination: &Path) -> Result<(), PlatformError>
         }
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
         Err(error) => {
-            return Err(PlatformError::Io {
-                operation: "check restore destination",
-                path: Some(destination.to_path_buf()),
-                message: error.to_string(),
-            });
+            return Err(PlatformError::from_io(
+                "check restore destination",
+                Some(destination.to_path_buf()),
+                &error,
+            ));
         }
     }
     let parent = destination

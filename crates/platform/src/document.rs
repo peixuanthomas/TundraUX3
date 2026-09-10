@@ -72,7 +72,14 @@ impl fmt::Display for DocumentWriteError {
     }
 }
 
-impl std::error::Error for DocumentWriteError {}
+impl std::error::Error for DocumentWriteError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Platform(error) => Some(error),
+            _ => None,
+        }
+    }
+}
 
 impl From<PlatformError> for DocumentWriteError {
     fn from(value: PlatformError) -> Self {
@@ -204,15 +211,11 @@ where
     F: FnMut(u64, u64) -> bool,
 {
     validate_no_follow_path(path, true)?;
-    let file = File::open(path).map_err(|error| PlatformError::Io {
-        operation: "open document",
-        path: Some(path.to_path_buf()),
-        message: error.to_string(),
+    let file = File::open(path).map_err(|error| {
+        PlatformError::from_io("open document", Some(path.to_path_buf()), &error)
     })?;
-    let initial_metadata = file.metadata().map_err(|error| PlatformError::Io {
-        operation: "read document metadata",
-        path: Some(path.to_path_buf()),
-        message: error.to_string(),
+    let initial_metadata = file.metadata().map_err(|error| {
+        PlatformError::from_io("read document metadata", Some(path.to_path_buf()), &error)
     })?;
     if !initial_metadata.is_file() {
         return Err(PlatformError::InvalidInput {
@@ -297,13 +300,9 @@ where
     let mut chunk = [0_u8; DOCUMENT_READ_CHUNK_BYTES];
     while remaining > 0 {
         let requested = remaining.min(DOCUMENT_READ_CHUNK_BYTES as u64) as usize;
-        let read = file
-            .read(&mut chunk[..requested])
-            .map_err(|error| PlatformError::Io {
-                operation: "read document",
-                path: Some(path.to_path_buf()),
-                message: error.to_string(),
-            })?;
+        let read = file.read(&mut chunk[..requested]).map_err(|error| {
+            PlatformError::from_io("read document", Some(path.to_path_buf()), &error)
+        })?;
         if read == 0 {
             let actual_len = file.metadata().ok().map(|metadata| metadata.len());
             return Err(document_changed_while_reading(
@@ -325,18 +324,14 @@ where
 
     let has_extra_byte = if consistency == DocumentReadConsistency::Stable {
         let mut extra = [0_u8; 1];
-        file.read(&mut extra).map_err(|error| PlatformError::Io {
-            operation: "verify document length",
-            path: Some(path.to_path_buf()),
-            message: error.to_string(),
+        file.read(&mut extra).map_err(|error| {
+            PlatformError::from_io("verify document length", Some(path.to_path_buf()), &error)
         })? != 0
     } else {
         false
     };
-    let final_metadata = file.metadata().map_err(|error| PlatformError::Io {
-        operation: "verify document metadata",
-        path: Some(path.to_path_buf()),
-        message: error.to_string(),
+    let final_metadata = file.metadata().map_err(|error| {
+        PlatformError::from_io("verify document metadata", Some(path.to_path_buf()), &error)
     })?;
     let final_len = final_metadata.len();
     match consistency {
@@ -373,10 +368,12 @@ where
         }
     }
     validate_no_follow_path(path, true)?;
-    let path_metadata = fs::symlink_metadata(path).map_err(|error| PlatformError::Io {
-        operation: "verify document path metadata",
-        path: Some(path.to_path_buf()),
-        message: error.to_string(),
+    let path_metadata = fs::symlink_metadata(path).map_err(|error| {
+        PlatformError::from_io(
+            "verify document path metadata",
+            Some(path.to_path_buf()),
+            &error,
+        )
     })?;
     match consistency {
         DocumentReadConsistency::Stable => {
@@ -393,10 +390,12 @@ where
         }
         DocumentReadConsistency::AppendablePrefix => {
             if !path_metadata.is_file()
-                || !open_file_refers_to_path(&file, path).map_err(|error| PlatformError::Io {
-                    operation: "verify document identity",
-                    path: Some(path.to_path_buf()),
-                    message: error.to_string(),
+                || !open_file_refers_to_path(&file, path).map_err(|error| {
+                    PlatformError::from_io(
+                        "verify document identity",
+                        Some(path.to_path_buf()),
+                        &error,
+                    )
                 })?
             {
                 return Err(document_replaced_while_reading(path));
@@ -518,19 +517,13 @@ fn verify_document_prefix_sample(
     len: usize,
     path: &Path,
 ) -> Result<(), PlatformError> {
-    file.seek(SeekFrom::Start(start as u64))
-        .map_err(|error| PlatformError::Io {
-            operation: "verify document snapshot",
-            path: Some(path.to_path_buf()),
-            message: error.to_string(),
-        })?;
+    file.seek(SeekFrom::Start(start as u64)).map_err(|error| {
+        PlatformError::from_io("verify document snapshot", Some(path.to_path_buf()), &error)
+    })?;
     let mut actual = vec![0_u8; len];
-    file.read_exact(&mut actual)
-        .map_err(|error| PlatformError::Io {
-            operation: "verify document snapshot",
-            path: Some(path.to_path_buf()),
-            message: error.to_string(),
-        })?;
+    file.read_exact(&mut actual).map_err(|error| {
+        PlatformError::from_io("verify document snapshot", Some(path.to_path_buf()), &error)
+    })?;
     if actual != expected[start..start + len] {
         return Err(PlatformError::Io {
             operation: "read document snapshot",
@@ -561,15 +554,15 @@ pub fn read_document_tail_bytes(
     max_bytes: usize,
 ) -> Result<DocumentReadWindow, PlatformError> {
     validate_no_follow_path(path, true)?;
-    let mut file = File::open(path).map_err(|error| PlatformError::Io {
-        operation: "open document tail",
-        path: Some(path.to_path_buf()),
-        message: error.to_string(),
+    let mut file = File::open(path).map_err(|error| {
+        PlatformError::from_io("open document tail", Some(path.to_path_buf()), &error)
     })?;
-    let metadata = file.metadata().map_err(|error| PlatformError::Io {
-        operation: "read document tail metadata",
-        path: Some(path.to_path_buf()),
-        message: error.to_string(),
+    let metadata = file.metadata().map_err(|error| {
+        PlatformError::from_io(
+            "read document tail metadata",
+            Some(path.to_path_buf()),
+            &error,
+        )
     })?;
     if !metadata.is_file() {
         return Err(PlatformError::InvalidInput {
@@ -586,20 +579,15 @@ pub fn read_document_tail_bytes(
     let capacity = usize::try_from(read_len).map_err(|_| PlatformError::InvalidInput {
         message: format!("document tail is too large to read: {}", path.display()),
     })?;
-    file.seek(SeekFrom::Start(read_start))
-        .map_err(|error| PlatformError::Io {
-            operation: "seek document tail",
-            path: Some(path.to_path_buf()),
-            message: error.to_string(),
-        })?;
+    file.seek(SeekFrom::Start(read_start)).map_err(|error| {
+        PlatformError::from_io("seek document tail", Some(path.to_path_buf()), &error)
+    })?;
     let mut bytes = Vec::with_capacity(capacity);
     Read::by_ref(&mut file)
         .take(read_len)
         .read_to_end(&mut bytes)
-        .map_err(|error| PlatformError::Io {
-            operation: "read document tail",
-            path: Some(path.to_path_buf()),
-            message: error.to_string(),
+        .map_err(|error| {
+            PlatformError::from_io("read document tail", Some(path.to_path_buf()), &error)
         })?;
 
     let utf8_start = utf8_tail_start(&bytes, prefix_len, path)?;
@@ -615,10 +603,12 @@ pub fn read_document_tail_bytes(
         start_byte += discarded as u64;
     }
 
-    let final_metadata = file.metadata().map_err(|error| PlatformError::Io {
-        operation: "verify document tail metadata",
-        path: Some(path.to_path_buf()),
-        message: error.to_string(),
+    let final_metadata = file.metadata().map_err(|error| {
+        PlatformError::from_io(
+            "verify document tail metadata",
+            Some(path.to_path_buf()),
+            &error,
+        )
     })?;
     if final_metadata.len() != total_bytes || final_metadata.modified().ok() != initial_modified {
         return Err(PlatformError::Io {
@@ -675,10 +665,12 @@ fn starts_after_line_ending(
             file.read_exact(&mut previous)
                 .map(|_| matches!(previous[0], b'\n' | b'\r'))
         })
-        .map_err(|error| PlatformError::Io {
-            operation: "inspect document tail line boundary",
-            path: Some(path.to_path_buf()),
-            message: error.to_string(),
+        .map_err(|error| {
+            PlatformError::from_io(
+                "inspect document tail line boundary",
+                Some(path.to_path_buf()),
+                &error,
+            )
         })
 }
 
@@ -771,10 +763,12 @@ where
     let parent = path.parent().ok_or_else(|| PlatformError::InvalidInput {
         message: format!("document path has no parent: {}", path.display()),
     })?;
-    fs::create_dir_all(parent).map_err(|error| PlatformError::Io {
-        operation: "create document parent directory",
-        path: Some(parent.to_path_buf()),
-        message: error.to_string(),
+    fs::create_dir_all(parent).map_err(|error| {
+        PlatformError::from_io(
+            "create document parent directory",
+            Some(parent.to_path_buf()),
+            &error,
+        )
     })?;
     validate_no_follow_path(parent, true)?;
     verify_write_expectation(path, expectation)?;
@@ -790,11 +784,11 @@ where
             Ok(file) => file,
             Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
             Err(error) => {
-                return Err(PlatformError::Io {
-                    operation: "create temporary document",
-                    path: Some(temporary),
-                    message: error.to_string(),
-                }
+                return Err(PlatformError::from_io(
+                    "create temporary document",
+                    Some(temporary),
+                    &error,
+                )
                 .into());
             }
         };
@@ -814,11 +808,11 @@ where
             temporary_document.file_mut().sync_all()
         });
         if let Err(error) = write_result {
-            return Err(PlatformError::Io {
-                operation: "write temporary document",
-                path: Some(temporary),
-                message: error.to_string(),
-            }
+            return Err(PlatformError::from_io(
+                "write temporary document",
+                Some(temporary),
+                &error,
+            )
             .into());
         }
         temporary_document.close();
@@ -837,17 +831,19 @@ where
             {
                 return Err(conflict);
             }
-            return Err(PlatformError::Io {
-                operation: "replace document",
-                path: Some(path.to_path_buf()),
-                message: error.to_string(),
-            }
+            return Err(PlatformError::from_io(
+                "replace document",
+                Some(path.to_path_buf()),
+                &error,
+            )
             .into());
         }
-        sync_parent_directory(parent).map_err(|error| PlatformError::Io {
-            operation: "sync document parent directory",
-            path: Some(parent.to_path_buf()),
-            message: error.to_string(),
+        sync_parent_directory(parent).map_err(|error| {
+            PlatformError::from_io(
+                "sync document parent directory",
+                Some(parent.to_path_buf()),
+                &error,
+            )
         })?;
         return fingerprint_installed_document(path, written_len, content_hash)
             .map_err(DocumentWriteError::Platform);
@@ -886,11 +882,11 @@ fn optional_document_fingerprint(
     match fs::symlink_metadata(path) {
         Ok(_) => document_fingerprint(path).map(Some),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
-        Err(error) => Err(PlatformError::Io {
-            operation: "inspect document before save",
-            path: Some(path.to_path_buf()),
-            message: error.to_string(),
-        }),
+        Err(error) => Err(PlatformError::from_io(
+            "inspect document before save",
+            Some(path.to_path_buf()),
+            &error,
+        )),
     }
 }
 
@@ -898,11 +894,11 @@ fn existing_permissions(path: &Path) -> Result<Option<fs::Permissions>, Platform
     match fs::symlink_metadata(path) {
         Ok(metadata) => Ok(Some(metadata.permissions())),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
-        Err(error) => Err(PlatformError::Io {
-            operation: "read document permissions",
-            path: Some(path.to_path_buf()),
-            message: error.to_string(),
-        }),
+        Err(error) => Err(PlatformError::from_io(
+            "read document permissions",
+            Some(path.to_path_buf()),
+            &error,
+        )),
     }
 }
 
@@ -925,11 +921,11 @@ pub fn validate_no_follow_path(path: &Path, must_exist: bool) -> Result<(), Plat
                 if error.kind() == std::io::ErrorKind::NotFound
                     && (!checked_target || !must_exist) => {}
             Err(error) => {
-                return Err(PlatformError::Io {
-                    operation: "inspect document path",
-                    path: Some(candidate.to_path_buf()),
-                    message: error.to_string(),
-                });
+                return Err(PlatformError::from_io(
+                    "inspect document path",
+                    Some(candidate.to_path_buf()),
+                    &error,
+                ));
             }
         }
         checked_target = true;
@@ -1025,10 +1021,12 @@ fn fingerprint_installed_document(
     content_hash: u64,
 ) -> Result<DocumentFingerprint, PlatformError> {
     validate_no_follow_path(path, true)?;
-    let metadata = fs::symlink_metadata(path).map_err(|error| PlatformError::Io {
-        operation: "verify saved document metadata",
-        path: Some(path.to_path_buf()),
-        message: error.to_string(),
+    let metadata = fs::symlink_metadata(path).map_err(|error| {
+        PlatformError::from_io(
+            "verify saved document metadata",
+            Some(path.to_path_buf()),
+            &error,
+        )
     })?;
     if !metadata.is_file() {
         return Err(PlatformError::InvalidInput {
@@ -1767,7 +1765,7 @@ mod tests {
 
         assert!(matches!(
             error,
-            PlatformError::Io {
+            PlatformError::DetailedIo {
                 operation: "write temporary document",
                 ..
             }

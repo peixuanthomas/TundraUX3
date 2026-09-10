@@ -8,11 +8,11 @@ default = []
 runtime = [
     "dep:async-trait", "dep:chrono-tz", "dep:dirs", "dep:platform",
     "dep:reqwest", "dep:serde_json", "dep:thiserror", "dep:time",
-    "dep:tokio", "dep:watchdog",
+    "dep:tokio", "dep:watchdog", "dep:runtime-log",
 ]
 
 [dependencies]
-runtime-log = { path = "../runtime-log" }
+runtime-log = { path = "../runtime-log", optional = true }
 async-trait = { version = "0.1", optional = true }
 chrono = { version = "0.4", features = ["serde"] }
 chrono-tz = { version = "0.10", optional = true }

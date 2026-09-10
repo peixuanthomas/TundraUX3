@@ -46,9 +46,11 @@ fn resolve_theme_bindings(
     let scene_missing = scenes.get(scene_id).is_none();
     if scene_missing {
         if theme_id != DEFAULT_THEME_ID {
-            eprintln!(
-                "Warning: theme '{}' references missing scene '{}'. Falling back to '{}'.",
-                theme_id, scene_id, DEFAULT_THEME_ID
+            system_services::record_render_fallback(
+                "scene_fallback",
+                &format!(
+                    "Theme '{theme_id}' references missing scene '{scene_id}'; using '{DEFAULT_THEME_ID}'"
+                ),
             );
             let fallback_theme = themes
                 .get(DEFAULT_THEME_ID)
@@ -72,9 +74,9 @@ fn resolve_theme_bindings(
         if overlays.get(id).is_some() {
             Some(id)
         } else {
-            eprintln!(
-                "Warning: theme '{}' references missing overlay '{}'. Overlay disabled.",
-                theme_id, id
+            system_services::record_render_fallback(
+                "overlay_disabled",
+                &format!("Theme '{theme_id}' references missing overlay '{id}'; overlay disabled"),
             );
             None
         }

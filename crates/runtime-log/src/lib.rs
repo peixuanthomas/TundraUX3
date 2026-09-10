@@ -5,9 +5,10 @@ mod reader;
 mod writer;
 pub use model::*;
 pub use privacy::{sanitize_event, sanitize_text};
-pub use reader::{export_logs, query_logs};
+pub use reader::{export_logs, query_logs, query_logs_cancellable};
 pub use writer::{
-    global, install_global, record, RuntimeLogConfig, RuntimeLogHandle, RuntimeLogRuntime,
+    RuntimeLogConfig, RuntimeLogHandle, RuntimeLogRuntime, global, install_global,
+    is_writer_thread, record, reserve_storage_capacity, storage_limit,
 };
 
 use chrono::Utc;

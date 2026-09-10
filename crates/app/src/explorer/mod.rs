@@ -886,7 +886,74 @@ impl ExplorerController {
         storage: &StorageManager,
     ) -> ExplorerEffect {
         state.error = None;
-        match self.try_apply(state, command, session, platform, storage) {
+        let operation = match &command {
+            ExplorerCommand::Refresh => Some("refresh"),
+            ExplorerCommand::Navigate(_)
+            | ExplorerCommand::NavigateTrash
+            | ExplorerCommand::OpenParent
+            | ExplorerCommand::OpenBack
+            | ExplorerCommand::OpenForward => Some("navigate"),
+            ExplorerCommand::OpenSelected => Some("open"),
+            ExplorerCommand::NewFolder(_) => Some("create_directory"),
+            ExplorerCommand::NewTextFile(_) => Some("create_file"),
+            ExplorerCommand::Rename(_) => Some("rename"),
+            _ => None,
+        };
+        let log = operation.map(|operation| {
+            let mut context = watchdog::AppWatchdog::current()
+                .map(|app| app.log_context(operation))
+                .unwrap_or_default();
+            context.module = "ux.explorer".into();
+            context.app = "explorer".into();
+            context.operation = operation.into();
+            context.owner_id = session.map(|session| session.user_id.clone());
+            context.operation_id =
+                watchdog::ProcessWatchdog::global().map(|process| process.new_log_operation_id());
+            let mut event = runtime_log::RuntimeLogEvent::new(
+                context,
+                runtime_log::LogLevel::Info,
+                runtime_log::LogPhase::Started,
+                "Explorer operation started",
+            );
+            event.source_path = Some(state.current_path.clone());
+            event.target_path = match &command {
+                ExplorerCommand::Navigate(path) => Some(path.clone()),
+                ExplorerCommand::NewFolder(name)
+                | ExplorerCommand::NewTextFile(name)
+                | ExplorerCommand::Rename(name) => Some(state.current_path.join(name)),
+                _ => None,
+            };
+            emit_explorer_event(event.clone());
+            event
+        });
+        let result = self.try_apply(state, command, session, platform, storage);
+        if let Some(started) = log {
+            let mut event = runtime_log::RuntimeLogEvent::new(
+                started.context,
+                if result.is_ok() {
+                    runtime_log::LogLevel::Info
+                } else {
+                    runtime_log::LogLevel::Error
+                },
+                if result.is_ok() {
+                    runtime_log::LogPhase::Succeeded
+                } else {
+                    runtime_log::LogPhase::Failed
+                },
+                "Explorer operation result",
+            );
+            event.source_path = started.source_path;
+            event.target_path = started.target_path;
+            if let Err(error) = &result {
+                watchdog::capture_error(&mut event, error);
+                if let ExplorerError::Platform(error) = error {
+                    event.os_error_code = error.raw_os_error().map(i64::from);
+                }
+                event.error_code = Some("UX_EXPLORER_OPERATION_FAILED".into());
+            }
+            emit_explorer_event(event);
+        }
+        match result {
             Ok(effect) => {
                 state.clamp_selection();
                 effect
@@ -2880,6 +2947,14 @@ fn log_secondary_explorer(
         event.os_error_code = error.raw_os_error().map(i64::from);
     }
     if let Some(app) = app {
+        app.record_log(event);
+    } else {
+        runtime_log::record(event);
+    }
+}
+
+fn emit_explorer_event(event: runtime_log::RuntimeLogEvent) {
+    if let Some(app) = watchdog::AppWatchdog::current() {
         app.record_log(event);
     } else {
         runtime_log::record(event);

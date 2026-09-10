@@ -99,6 +99,7 @@ pub struct AppWatchdog {
     pub(crate) component: String,
     pub(crate) owner_id: Option<String>,
     log_task_id: Option<TaskId>,
+    log_operation_id: Option<String>,
 }
 
 pub struct CaughtPanic {
@@ -390,6 +391,11 @@ impl ProcessWatchdog {
         let previous = panic::take_hook();
         let process = self.clone();
         panic::set_hook(Box::new(move |panic_info| {
+            // runtime-log catches its infrastructure panic and exposes health;
+            // logging infrastructure must never tear down the active TUI.
+            if runtime_log::is_writer_thread() {
+                return;
+            }
             let context = current_execution_context().unwrap_or_else(|| {
                 ExecutionContext::process(process.next_incident_id(), process.clone())
             });
@@ -454,6 +460,7 @@ impl ProcessWatchdog {
             component: descriptor.id.to_string(),
             owner_id: None,
             log_task_id: None,
+            log_operation_id: None,
             descriptor,
         })
     }
@@ -661,6 +668,11 @@ impl ProcessWatchdog {
         format!("{}-{sequence}", self.shared.run_id)
     }
 
+    /// Allocate correlation identity without creating a recovery journal.
+    pub fn new_log_operation_id(&self) -> String {
+        self.next_operation_id()
+    }
+
     pub(crate) fn next_operation_id(&self) -> String {
         let sequence = self.shared.next_operation.fetch_add(1, Ordering::Relaxed);
         format!("{}-op-{sequence}", self.shared.run_id)
@@ -829,6 +841,11 @@ impl AppWatchdog {
         self
     }
 
+    pub fn with_log_operation_id(mut self, operation_id: Option<String>) -> Self {
+        self.log_operation_id = operation_id;
+        self
+    }
+
     pub fn with_log_task_id(mut self, task_id: TaskId) -> Self {
         self.log_task_id = Some(task_id);
         self
@@ -845,6 +862,7 @@ impl AppWatchdog {
             .map(ToString::to_string)
             .or(context.task_id);
         context.owner_id = self.owner_id.clone().or(context.owner_id);
+        context.operation_id = self.log_operation_id.clone().or(context.operation_id);
         context
     }
 
@@ -871,6 +889,7 @@ impl AppWatchdog {
             component: format!("{}/{}", self.component, id),
             owner_id: self.owner_id.clone(),
             log_task_id: self.log_task_id.clone(),
+            log_operation_id: self.log_operation_id.clone(),
         }
     }
 
@@ -891,11 +910,15 @@ impl AppWatchdog {
             context.task_kind = parent.task_kind;
             context.replay_safety = parent.replay_safety;
             context.operation_kind = parent.operation_kind;
-            context.operation_id = parent.operation_id.or_else(|| {
-                self.process
-                    .log_context("ux.watchdog", "boundary")
-                    .operation_id
-            });
+            context.operation_id = self
+                .log_operation_id
+                .clone()
+                .or(parent.operation_id)
+                .or_else(|| {
+                    self.process
+                        .log_context("ux.watchdog", "boundary")
+                        .operation_id
+                });
             context.recovery_handler_version = parent.recovery_handler_version;
             context.panic_action = parent.panic_action;
             context.restart_policy = parent.restart_policy;
@@ -1163,6 +1186,7 @@ impl AppWatchdog {
             component: context.component.unwrap_or_else(|| "app".to_string()),
             owner_id: context.owner_id,
             log_task_id: context.task_id,
+            log_operation_id: context.operation_id,
         })
     }
 
@@ -1218,7 +1242,7 @@ impl AppWatchdog {
             task_kind,
             replay_safety: None,
             operation_kind,
-            operation_id: inherited.operation_id,
+            operation_id: self.log_operation_id.clone().or(inherited.operation_id),
             recovery_handler_version: None,
             panic_action: None,
             restart_policy: None,

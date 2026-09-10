@@ -654,27 +654,29 @@ pub trait Platform: Send + Sync {
 
     fn create_temp_file(&self, prefix: &str) -> Result<PathBuf, PlatformError> {
         let app_paths = self.app_paths()?;
-        create_temp_file(app_paths.temp_path(), prefix).map_err(|error| PlatformError::Io {
-            operation: "create temporary file",
-            path: Some(app_paths.temp_path().to_path_buf()),
-            message: error.to_string(),
+        create_temp_file(app_paths.temp_path(), prefix).map_err(|error| {
+            PlatformError::from_io(
+                "create temporary file",
+                Some(app_paths.temp_path().to_path_buf()),
+                &error,
+            )
         })
     }
 
     fn create_temp_dir(&self, prefix: &str) -> Result<PathBuf, PlatformError> {
         let app_paths = self.app_paths()?;
-        create_temp_dir(app_paths.temp_path(), prefix).map_err(|error| PlatformError::Io {
-            operation: "create temporary directory",
-            path: Some(app_paths.temp_path().to_path_buf()),
-            message: error.to_string(),
+        create_temp_dir(app_paths.temp_path(), prefix).map_err(|error| {
+            PlatformError::from_io(
+                "create temporary directory",
+                Some(app_paths.temp_path().to_path_buf()),
+                &error,
+            )
         })
     }
 
     fn cleanup_temp_path(&self, path: &Path) -> Result<(), PlatformError> {
-        cleanup_temp_path(path).map_err(|error| PlatformError::Io {
-            operation: "cleanup temporary path",
-            path: Some(path.to_path_buf()),
-            message: error.to_string(),
+        cleanup_temp_path(path).map_err(|error| {
+            PlatformError::from_io("cleanup temporary path", Some(path.to_path_buf()), &error)
         })
     }
 
@@ -738,6 +740,11 @@ pub trait Platform: Send + Sync {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PlatformError {
+    DetailedIo {
+        operation: &'static str,
+        path: Option<PathBuf>,
+        error: crate::CapturedIoError,
+    },
     Unsupported {
         capability: &'static str,
     },
@@ -777,6 +784,18 @@ pub enum PlatformError {
 impl fmt::Display for PlatformError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::DetailedIo {
+                operation,
+                path,
+                error,
+            } => match path {
+                Some(path) => write!(
+                    formatter,
+                    "{operation} failed for {}: {error}",
+                    path.display()
+                ),
+                None => write!(formatter, "{operation} failed: {error}"),
+            },
             Self::Unsupported { capability } => {
                 write!(
                     formatter,
@@ -831,7 +850,30 @@ impl fmt::Display for PlatformError {
     }
 }
 
-impl std::error::Error for PlatformError {}
+impl PlatformError {
+    pub fn from_io(operation: &'static str, path: Option<PathBuf>, error: &std::io::Error) -> Self {
+        Self::DetailedIo {
+            operation,
+            path,
+            error: crate::CapturedIoError::capture(error),
+        }
+    }
+    pub fn raw_os_error(&self) -> Option<i32> {
+        match self {
+            Self::DetailedIo { error, .. } => error.os_error_code,
+            _ => None,
+        }
+    }
+}
+impl std::error::Error for PlatformError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::DetailedIo { error, .. } => Some(error),
+            Self::PathResolution(error) => Some(error),
+            _ => None,
+        }
+    }
+}
 
 impl From<PathResolutionError> for PlatformError {
     fn from(value: PathResolutionError) -> Self {
@@ -840,15 +882,11 @@ impl From<PathResolutionError> for PlatformError {
 }
 
 pub fn default_file_attributes(path: &Path) -> Result<FileAttributes, PlatformError> {
-    let metadata = fs::metadata(path).map_err(|error| PlatformError::Io {
-        operation: "read file attributes",
-        path: Some(path.to_path_buf()),
-        message: error.to_string(),
+    let metadata = fs::metadata(path).map_err(|error| {
+        PlatformError::from_io("read file attributes", Some(path.to_path_buf()), &error)
     })?;
-    let link_metadata = fs::symlink_metadata(path).map_err(|error| PlatformError::Io {
-        operation: "read file attributes",
-        path: Some(path.to_path_buf()),
-        message: error.to_string(),
+    let link_metadata = fs::symlink_metadata(path).map_err(|error| {
+        PlatformError::from_io("read file attributes", Some(path.to_path_buf()), &error)
     })?;
 
     Ok(FileAttributes {
@@ -872,10 +910,8 @@ pub fn default_read_directory<P: Platform + ?Sized>(
     platform: &P,
     path: &Path,
 ) -> Result<DirectoryListing, PlatformError> {
-    let directory = fs::read_dir(path).map_err(|error| PlatformError::Io {
-        operation: "read directory",
-        path: Some(path.to_path_buf()),
-        message: error.to_string(),
+    let directory = fs::read_dir(path).map_err(|error| {
+        PlatformError::from_io("read directory", Some(path.to_path_buf()), &error)
     })?;
     let mut entries = Vec::new();
     let mut warnings = Vec::new();
@@ -936,11 +972,7 @@ pub fn default_rename_path(source: &Path, target: &Path) -> Result<(), PlatformE
                 message: error.to_string(),
             }
         } else {
-            PlatformError::Io {
-                operation: "rename path",
-                path: Some(source.to_path_buf()),
-                message: error.to_string(),
-            }
+            PlatformError::from_io("rename path", Some(source.to_path_buf()), &error)
         }
     })
 }

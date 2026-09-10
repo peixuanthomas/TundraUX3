@@ -113,7 +113,8 @@ fn matches_query(record: &Value, summary: &IncidentReportSummary, query: &LogQue
             .as_deref()
             .is_none_or(|id| summary.incident_id == id)
         && query.module.as_deref().is_none_or(|module| {
-            record.get("module").and_then(Value::as_str) == Some(module)
+            module == "ux.watchdog"
+                || record.get("module").and_then(Value::as_str) == Some(module)
                 || summary.component.as_deref() == Some(module)
         })
         && [
@@ -203,7 +204,7 @@ fn safe_report(record: &Value) -> Value {
         result["recovery"] = pick(recovery, &["status", "detail"]);
     }
     if let Some(error) = record.get("error") {
-        result["error"] = pick(error, &["message"]);
+        result["error"] = pick(error, &["message", "os_error_code"]);
         if let Some(chain) = error.get("source_chain").and_then(Value::as_array) {
             result["error"]["source_chain"] = Value::Array(
                 chain
@@ -248,6 +249,16 @@ fn safe_report(record: &Value) -> Value {
                         ],
                     )
                 })
+                .collect(),
+        );
+    }
+    if let Some(errors) = record.get("secondary_errors").and_then(Value::as_array) {
+        result["secondary_errors"] = Value::Array(
+            errors
+                .iter()
+                .filter_map(Value::as_str)
+                .take(32)
+                .map(|s| Value::String(runtime_log::sanitize_text(s)))
                 .collect(),
         );
     }

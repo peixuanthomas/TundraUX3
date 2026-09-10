@@ -576,7 +576,7 @@ fn runtime_log_shares_owner_run_task_operation_and_incident_ids() {
         .with_log_owner(Some("alice".into()))
         .with_log_task_id(TaskId::from_static("copy-17"));
     let result = app.run_boundary(BoundarySpec::new("copy", BoundaryKind::Worker), || {
-        let mut operation = app
+        let operation = app
             .begin_operation(OperationDescriptor::new(
                 OperationKind::from_static("test.copy"),
                 "copy file",
@@ -663,4 +663,30 @@ fn runtime_log_failure_does_not_prevent_watchdog_start() {
     runtime.shutdown().unwrap();
     assert!(process.runtime_log_health().write_failures > 0);
     fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn submitted_task_owner_and_operation_are_preserved_in_panic_report() {
+    let (runtime, process, root) = test_runtime("submitted-context");
+    let group = test_app(&process).task_group("io");
+    let context = group.new_log_context("ux.editor", "load", Some("alice".into()));
+    let operation = context.operation_id.clone().unwrap();
+    assert!(operation.starts_with(process.run_id()));
+    let submitted = group.with_log_context(context.owner_id.clone(), context.operation_id.clone());
+    let task = submitted
+        .spawn_thread(TaskSpec::one_shot(TaskId::from_static("load")), move || {
+            let current = AppWatchdog::current().unwrap().log_context("load");
+            assert_eq!(current.owner_id.as_deref(), Some("alice"));
+            assert_eq!(current.operation_id, context.operation_id);
+            panic!("reader failed");
+        })
+        .unwrap();
+    let _ = task.join();
+    let receipt = receive_incident(&runtime);
+    let report: serde_json::Value =
+        serde_json::from_slice(&fs::read(receipt.json_report_path.unwrap()).unwrap()).unwrap();
+    assert_eq!(report["owner_id"], "alice");
+    assert_eq!(report["operation_id"], operation);
+    assert_eq!(report["task_id"], "load");
+    cleanup(runtime, &root);
 }
