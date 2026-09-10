@@ -371,7 +371,9 @@ Explorer 的个人目录和内置命令行的初始文档目录则按当前登�
 
 ### Linux 桌面集成
 
-Linux 与 Windows 同级实现：使用 XDG Base Directory 与 `user-dirs.dirs`，应用自有配置、状态、恢复、日志和临时数据使用私有权限。Explorer 采用 Freedesktop Trash；卷入口只显示本地固定盘和可移动盘，过滤网络及伪文件系统。
+Linux 与 Windows 同级实现：使用 XDG Base Directory 与 `user-dirs.dirs`，应用自有配置、状态、恢复、日志和临时数据使用私有权限。Explorer 采用 Freedesktop Trash；卷入口显示本地固定盘和可移动盘上已挂载的文件系统，过滤网络及伪文件系统。Linux 从 mountinfo 读取挂载点与来源设备；Btrfs 的匿名设备号会回溯到实际块设备，因此根目录、home 和其他子卷都可作为独立入口访问，标签同时显示分区设备名与挂载路径。未挂载分区、交换空间和无文件系统的物理盘不会作为目录入口。
+
+Linux root 会话可以将普通用户拥有的文件和目录移入当前进程的私有回收站，列出、恢复和清空时使用相同的所有者规则；移动及跨文件系统恢复保留内容原来的 UID/GID。回收站目录和 `.trashinfo` 仍要求属于当前进程用户，并保留私有权限及禁止符号链接的检查。文件操作失败时，Explorer 显示首个失败文件与具体原因。
 
 | 功能 | Windows | Linux x86_64 |
 | --- | --- | --- |

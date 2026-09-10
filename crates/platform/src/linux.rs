@@ -11,7 +11,7 @@ use std::fs::{self, File, OpenOptions};
 use std::io::{self, BufRead, BufReader, ErrorKind, Read, Write};
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
 use std::os::unix::ffi::{OsStrExt, OsStringExt};
-use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
+use std::os::unix::fs::{FileTypeExt, MetadataExt, OpenOptionsExt, PermissionsExt};
 use std::path::{Component, Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -709,6 +709,7 @@ fn spawn_detached_child(
 #[derive(Debug, Clone)]
 struct MountInfo {
     mount_point: PathBuf,
+    source: PathBuf,
     fs_type: String,
     major_minor: String,
     read_only: bool,
@@ -722,11 +723,12 @@ fn parse_mountinfo(reader: impl BufRead) -> Vec<MountInfo> {
             let (before, after) = line.split_once(" - ")?;
             let before: Vec<_> = before.split_whitespace().collect();
             let after: Vec<_> = after.split_whitespace().collect();
-            if before.len() < 5 || after.is_empty() {
+            if before.len() < 6 || after.len() < 2 {
                 return None;
             }
             Some(MountInfo {
                 mount_point: unescape_mount_field(before[4]),
+                source: unescape_mount_field(after[1]),
                 fs_type: after[0].to_string(),
                 major_minor: before[2].to_string(),
                 read_only: before[5].split(',').any(|option| option == "ro"),
@@ -770,10 +772,12 @@ fn local_volumes() -> Result<Vec<LocalVolume>, PlatformError> {
     let mut roots = BTreeSet::new();
     let mut result = Vec::new();
     for mount in parse_mountinfo(BufReader::new(file)) {
-        if !is_local_block_mount(&mount)
-            || !mount.mount_point.is_dir()
-            || !roots.insert(mount.mount_point.clone())
-        {
+        let Some(device) =
+            block_mount_device(&mount, Path::new("/sys/dev/block"), source_block_device_id)
+        else {
+            continue;
+        };
+        if !mount.mount_point.is_dir() || !roots.insert(mount.mount_point.clone()) {
             continue;
         }
         let capacity = statvfs_bytes(&mount.mount_point);
@@ -782,11 +786,11 @@ fn local_volumes() -> Result<Vec<LocalVolume>, PlatformError> {
         let is_system = mount.mount_point == Path::new("/");
         result.push(LocalVolume {
             label: mount
-                .mount_point
+                .source
                 .file_name()
                 .map(|part| part.to_string_lossy().into_owned())
                 .filter(|label| !label.is_empty()),
-            kind: mount_kind(&mount.major_minor),
+            kind: mount_kind_from_sysfs_path(&device),
             root: mount.mount_point,
             total_bytes,
             available_bytes,
@@ -917,15 +921,27 @@ fn linux_link_state(name: &str, flags: u32) -> NetworkLinkState {
     }
 }
 
-fn mount_kind(major_minor: &str) -> VolumeKind {
-    mount_kind_from_sysfs_path(&PathBuf::from("/sys/dev/block").join(major_minor))
+fn source_block_device_id(source: &Path) -> Option<String> {
+    let metadata = fs::metadata(source).ok()?;
+    metadata.file_type().is_block_device().then(|| {
+        format!(
+            "{}:{}",
+            libc::major(metadata.rdev()),
+            libc::minor(metadata.rdev())
+        )
+    })
 }
 
-fn is_local_block_mount(mount: &MountInfo) -> bool {
-    is_local_block_mount_with_sysfs(mount, Path::new("/sys/dev/block"))
-}
-
+#[cfg(test)]
 fn is_local_block_mount_with_sysfs(mount: &MountInfo, sys_dev_block: &Path) -> bool {
+    block_mount_device(mount, sys_dev_block, source_block_device_id).is_some()
+}
+
+fn block_mount_device(
+    mount: &MountInfo,
+    sys_dev_block: &Path,
+    source_device_id: impl FnOnce(&Path) -> Option<String>,
+) -> Option<PathBuf> {
     const PSEUDO_OR_NETWORK: &[&str] = &[
         "9p",
         "afs",
@@ -960,8 +976,17 @@ fn is_local_block_mount_with_sysfs(mount: &MountInfo, sys_dev_block: &Path) -> b
         "tmpfs",
         "tracefs",
     ];
-    !PSEUDO_OR_NETWORK.contains(&mount.fs_type.as_str())
-        && sys_dev_block.join(&mount.major_minor).exists()
+    if PSEUDO_OR_NETWORK.contains(&mount.fs_type.as_str()) {
+        return None;
+    }
+    let direct = sys_dev_block.join(&mount.major_minor);
+    if direct.exists() {
+        return Some(direct);
+    }
+    // Btrfs subvolumes expose anonymous 0:* mount IDs, not the underlying
+    // physical device ID. Resolve mountinfo's source block device instead.
+    let backing = sys_dev_block.join(source_device_id(&mount.source)?);
+    backing.exists().then_some(backing)
 }
 
 fn mount_kind_from_sysfs_path(device_link: &Path) -> VolumeKind {
@@ -2471,6 +2496,7 @@ mod tests {
         fs::create_dir_all(sysfs.join("8:1")).unwrap();
         let local = MountInfo {
             mount_point: PathBuf::from("/media/local"),
+            source: PathBuf::from("/dev/tundra-test-missing"),
             fs_type: "ext4".to_string(),
             major_minor: "8:1".to_string(),
             read_only: false,
@@ -2733,3 +2759,7 @@ mod tests {
 #[cfg(test)]
 #[path = "linux/tests/root_trash.rs"]
 mod root_trash_tests;
+
+#[cfg(test)]
+#[path = "linux/tests/mounts.rs"]
+mod mount_tests;

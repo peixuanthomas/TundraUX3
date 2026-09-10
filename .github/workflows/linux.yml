@@ -30,9 +30,9 @@ jobs:
           cargo test --locked -p system-services --features runtime
 
   fedora:
-    name: Fedora 42 (x86_64)
+    name: Fedora 43 (x86_64)
     runs-on: ubuntu-24.04
-    container: fedora:42
+    container: fedora:43
     steps:
       - name: Install checkout and build requirements
         run: |
