@@ -1,0 +1,369 @@
+name: Publish V1.3 release
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: publish-v1.3
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+  RELEASE_REF: ${{ github.sha }}
+  RELEASE_TAG: v1.3
+
+jobs:
+  validate:
+    name: Validate release source and version
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ env.RELEASE_REF }}
+          persist-credentials: false
+      - name: Require master and consistent package versions
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF" = refs/heads/master
+          cargo metadata --locked --no-deps --format-version 1 > metadata.json
+          jq -e '[.packages[] | select(.manifest_path | contains("/crates/"))] | length == 12 and all(.[]; .version == "1.3.0")' metadata.json
+          test -s packaging/releases/v1.3.md
+          bash -n scripts/package-linux.sh
+
+  windows-x64:
+    needs: validate
+    name: Windows x64
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - name: Check out the v1.3 source commit
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ env.RELEASE_REF }}
+          persist-credentials: false
+
+      - name: Install stable Rust
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+          rustup target add x86_64-pc-windows-msvc
+
+      - name: Run workspace regression tests
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          cargo test --workspace --locked
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Build release binaries
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          cargo build --locked --release --target x86_64-pc-windows-msvc -p shell -p cli
+
+      - name: Package and checksum
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          New-Item -ItemType Directory -Force -Path package | Out-Null
+          Copy-Item target/x86_64-pc-windows-msvc/release/tundra-shell.exe package/
+          Copy-Item target/x86_64-pc-windows-msvc/release/tundra-cli.exe package/
+          Copy-Item LICENSE package/
+          Copy-Item crates/weathr/LICENSE.weathr package/
+          Compress-Archive -Path package/* -DestinationPath TundraUX3-v1.3-windows-x64.zip
+          $hash = (Get-FileHash TundraUX3-v1.3-windows-x64.zip -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$hash  TundraUX3-v1.3-windows-x64.zip" |
+            Out-File TundraUX3-v1.3-windows-x64.sha256 -Encoding ascii
+          Get-Item package/* | Format-Table Name,Length
+
+      - name: Stage Windows release assets
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-windows-x64
+          path: |
+            TundraUX3-v1.3-windows-x64.zip
+            TundraUX3-v1.3-windows-x64.sha256
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
+
+  macos-universal:
+    needs: validate
+    name: macOS Universal
+    runs-on: macos-latest
+    timeout-minutes: 60
+    steps:
+      - name: Check out the v1.3 source commit
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ env.RELEASE_REF }}
+          persist-credentials: false
+
+      - name: Install stable Rust
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+          rustup target add aarch64-apple-darwin x86_64-apple-darwin
+
+      - name: Run workspace regression tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          export TMPDIR="$(cd "$RUNNER_TEMP" && pwd -P)"
+          cargo test --workspace --locked
+          bash scripts/check-weathr-dependency-boundary.sh
+
+      - name: Build ARM64 and Intel release binaries
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo build --locked --release --target aarch64-apple-darwin -p shell -p cli
+          cargo build --locked --release --target x86_64-apple-darwin -p shell -p cli
+
+      - name: Create Universal binaries, package, and checksum
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p package
+          lipo -create \
+            target/aarch64-apple-darwin/release/tundra-shell \
+            target/x86_64-apple-darwin/release/tundra-shell \
+            -output package/tundra-shell
+          lipo -create \
+            target/aarch64-apple-darwin/release/tundra-cli \
+            target/x86_64-apple-darwin/release/tundra-cli \
+            -output package/tundra-cli
+          chmod 755 package/tundra-shell package/tundra-cli
+          cp LICENSE package/
+          cp crates/weathr/LICENSE.weathr package/
+          lipo -info package/tundra-shell
+          lipo -info package/tundra-cli
+          tar -C package -czf TundraUX3-v1.3-macos-universal.tar.gz \
+            tundra-shell tundra-cli LICENSE LICENSE.weathr
+          shasum -a 256 TundraUX3-v1.3-macos-universal.tar.gz \
+            > TundraUX3-v1.3-macos-universal.sha256
+
+      - name: Stage macOS release assets
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-macos-universal
+          path: |
+            TundraUX3-v1.3-macos-universal.tar.gz
+            TundraUX3-v1.3-macos-universal.sha256
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
+
+  linux-x64:
+    needs: validate
+    name: Linux x86_64
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - name: Check out the v1.3 source commit
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ env.RELEASE_REF }}
+          persist-credentials: false
+
+      - name: Install stable Rust
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+
+      - name: Run workspace regression tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          export TMPDIR="$(cd "$RUNNER_TEMP" && pwd -P)"
+          cargo test --workspace --locked
+          bash scripts/check-weathr-dependency-boundary.sh
+
+      - name: Build Linux packages
+        shell: bash
+        env:
+          TUNDRAUX3_VERSION: 1.3.0
+        run: |
+          set -euo pipefail
+          bash scripts/package-linux.sh
+          mv dist/tundraux3-1.3.0-linux-x86_64.tar.gz \
+            dist/TundraUX3-v1.3-linux-x86_64.tar.gz
+          mv dist/tundraux3_1.3.0_amd64.deb \
+            dist/TundraUX3-v1.3-linux-amd64.deb
+          cd dist
+          sha256sum \
+            TundraUX3-v1.3-linux-x86_64.tar.gz \
+            TundraUX3-v1.3-linux-amd64.deb \
+            > TundraUX3-v1.3-linux-x86_64.sha256
+
+      - name: Verify Debian package installation
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y ./dist/TundraUX3-v1.3-linux-amd64.deb
+          test "$(dpkg-query -W -f='${Version}' tundraux3)" = 1.3.0
+          test -x /usr/bin/tundra-shell
+          test -d /usr/share/tundraux3/assets
+          cmp packaging/linux/pam.d/tundraux3 /etc/pam.d/tundraux3
+          /usr/bin/tundra-cli help
+
+      - name: Stage Linux release assets
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-linux-x64
+          path: |
+            dist/TundraUX3-v1.3-linux-x86_64.tar.gz
+            dist/TundraUX3-v1.3-linux-amd64.deb
+            dist/TundraUX3-v1.3-linux-x86_64.sha256
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
+
+  fedora-x64:
+    needs: validate
+    name: Fedora 43 RPM (x86_64)
+    runs-on: ubuntu-24.04
+    container: fedora:43
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Install build and packaging requirements
+        run: |
+          dnf install -y cmake curl gcc gcc-c++ git make openssl-devel perl pkgconf-pkg-config rpm-build tar gzip diffutils findutils
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ env.RELEASE_REF }}
+          persist-credentials: false
+      - name: Install stable Rust
+        run: |
+          set -euo pipefail
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+      - name: Run workspace regression tests
+        run: |
+          set -euo pipefail
+          export TMPDIR="$(cd "$RUNNER_TEMP" && pwd -P)"
+          cargo test --workspace --locked
+          bash scripts/check-weathr-dependency-boundary.sh
+      - name: Build Fedora RPM
+        run: |
+          set -euo pipefail
+          bash scripts/package-linux.sh --rpm
+          mv dist/tundraux3-1.3.0-1.x86_64.rpm dist/TundraUX3-v1.3-fedora-x86_64.rpm
+          cd dist
+          sha256sum TundraUX3-v1.3-fedora-x86_64.rpm > TundraUX3-v1.3-fedora-x86_64.sha256
+      - name: Verify RPM metadata and installation
+        run: |
+          set -euo pipefail
+          rpm -qpi dist/TundraUX3-v1.3-fedora-x86_64.rpm
+          rpm -qpR dist/TundraUX3-v1.3-fedora-x86_64.rpm
+          test "$(rpm -qp --qf '%{VERSION}-%{RELEASE}.%{ARCH}' dist/TundraUX3-v1.3-fedora-x86_64.rpm)" = 1.3.0-1.x86_64
+          dnf install -y ./dist/TundraUX3-v1.3-fedora-x86_64.rpm
+          rpm -V tundraux3
+          test -x /usr/bin/tundra-shell
+          test -d /usr/share/tundraux3/assets
+          test -f /usr/share/applications/tundraux3.desktop
+          cmp packaging/rpm/tundraux3.pam /etc/pam.d/tundraux3
+          /usr/bin/tundra-cli help
+      - name: Stage Fedora release assets
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-fedora-x64
+          path: |
+            dist/TundraUX3-v1.3-fedora-x86_64.rpm
+            dist/TundraUX3-v1.3-fedora-x86_64.sha256
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
+
+  publish:
+    name: Publish GitHub Release
+    needs: [windows-x64, macos-universal, linux-x64, fedora-x64]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ env.RELEASE_REF }}
+          persist-credentials: false
+      - name: Download verified build assets
+        uses: actions/download-artifact@v8
+        with:
+          pattern: release-*
+          path: dist
+          merge-multiple: true
+      - name: Verify staged checksums and exact asset set
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd dist
+          for asset in \
+            windows-x64.zip windows-x64.sha256 \
+            macos-universal.tar.gz macos-universal.sha256 \
+            linux-x86_64.tar.gz linux-amd64.deb linux-x86_64.sha256 \
+            fedora-x86_64.rpm fedora-x86_64.sha256; do
+            test -s "TundraUX3-v1.3-$asset"
+          done
+          test "$(find . -maxdepth 1 -type f | wc -l)" -eq 9
+          for checksum in *.sha256; do
+            sha256sum -c "$checksum"
+          done
+      - name: Prepare release notes
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp packaging/releases/v1.3.md release-notes.md
+          printf '\n构建提交：`%s`。\n' "$RELEASE_REF" >> release-notes.md
+      - name: Upload and verify draft before publication
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            test "$(gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json isDraft --jq '.isDraft')" = true
+          else
+            gh release create "$RELEASE_TAG" --target "$RELEASE_REF" --draft \
+              --repo "$GITHUB_REPOSITORY" --title V1.3 --notes-file release-notes.md
+          fi
+          # A published tag must never be moved or replaced on a rerun.
+          if gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$RELEASE_TAG" > tag.json 2>/dev/null; then
+            test "$(jq -r '.object.sha' tag.json)" = "$RELEASE_REF"
+          fi
+          gh release upload "$RELEASE_TAG" dist/* --repo "$GITHUB_REPOSITORY" --clobber
+          gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json assets \
+            --jq '.assets[] | [.name, .digest] | @tsv' > remote-digests.tsv
+          test "$(wc -l < remote-digests.tsv)" -eq 9
+          for asset in dist/*; do
+            name="$(basename "$asset")"
+            digest="sha256:$(sha256sum "$asset" | cut -d' ' -f1)"
+            grep -Fqx "$(printf '%s\t%s' "$name" "$digest")" remote-digests.tsv
+          done
+          gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" \
+            --target "$RELEASE_REF" --title V1.3 --notes-file release-notes.md --draft=false --latest
+      - name: Verify published release and tag
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" \
+            --json tagName,name,isDraft,isPrerelease,publishedAt,url,assets > release.json
+          jq -e '.tagName == "v1.3" and .name == "V1.3" and .isDraft == false and .isPrerelease == false and (.assets | length == 9)' release.json
+          test "$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$RELEASE_TAG" --jq '.object.sha')" = "$RELEASE_REF"
+          cat release.json

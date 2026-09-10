@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Produce the portable x86_64 tarball and Debian package from a locked release
-# build.  Fedora users consume the tarball; Debian/Ubuntu users consume the deb.
+# Produce the portable x86_64 tarball and a Debian or Fedora RPM package
+# from the same locked release build.
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repo_root"
 
@@ -12,26 +12,37 @@ if [[ "$(uname -s)" != "Linux" || "$(uname -m)" != "x86_64" ]]; then
 fi
 
 build_deb=true
+build_rpm=false
 case "${1:-}" in
   "")
+    ;;
+  --rpm)
+    build_deb=false
+    build_rpm=true
     ;;
   --tar-only)
     build_deb=false
     ;;
   *)
-    echo "Usage: $0 [--tar-only]" >&2
+    echo "Usage: $0 [--tar-only|--rpm]" >&2
     exit 2
     ;;
 esac
 if [[ $# -gt 1 ]]; then
-  echo "Usage: $0 [--tar-only]" >&2
+  echo "Usage: $0 [--tar-only|--rpm]" >&2
   exit 2
 fi
 
 version="${TUNDRAUX3_VERSION:-$(sed -n 's/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -n 1)}"
-if [[ -z "$version" ]]; then
-  echo "Could not determine TundraUX3 version" >&2
+if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+  echo "Expected a numeric major.minor.patch package version: $version" >&2
   exit 1
+fi
+
+if [[ "$build_deb" == true ]]; then
+  command -v dpkg-deb >/dev/null
+elif [[ "$build_rpm" == true ]]; then
+  command -v rpmbuild >/dev/null
 fi
 
 out_dir="${TUNDRAUX3_DIST_DIR:-$repo_root/dist}"
@@ -78,6 +89,19 @@ if [[ "$build_deb" == true ]]; then
   sed "s/@VERSION@/$version/g" packaging/debian/control > "$deb_root/DEBIAN/control"
   dpkg-deb --build --root-owner-group "$deb_root" "$out_dir/$package_name.deb"
   artifacts+=("$package_name.deb")
+fi
+
+if [[ "$build_rpm" == true ]]; then
+  rpm_root="$stage_root/rpmbuild"
+  mkdir -p "$rpm_root"/{BUILD,BUILDROOT,RPMS,SOURCES,SPECS,SRPMS}
+  cp "$out_dir/$portable_name.tar.gz" "$rpm_root/SOURCES/"
+  cp packaging/debian/tundraux3.desktop "$rpm_root/SOURCES/"
+  cp packaging/rpm/tundraux3.pam "$rpm_root/SOURCES/"
+  rpmbuild -bb --define "_topdir $rpm_root" --define "tundra_version $version" \
+    packaging/rpm/tundraux3.spec
+  rpm_name="tundraux3-${version}-1.x86_64.rpm"
+  cp "$rpm_root/RPMS/x86_64/$rpm_name" "$out_dir/$rpm_name"
+  artifacts+=("$rpm_name")
 fi
 
 (

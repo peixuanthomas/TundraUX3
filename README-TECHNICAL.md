@@ -595,11 +595,12 @@ PTY smoke 使用隔离的 XDG 目录和 140 × 40 的真实 PTY 进入 Shell。�
 
 ## Linux 打包
 
-Linux 发行物面向 x86_64。Ubuntu/Debian 可生成 tarball 与 `.deb`；Fedora 或其他 Linux 可仅生成 tarball：
+Linux 发行物面向 x86_64。Ubuntu/Debian 可生成 tarball 与 `.deb`；Fedora 可生成 tarball 与 `.rpm`，其他 Linux 可仅生成 tarball：
 
 ```console
 bash scripts/package-linux.sh            # Ubuntu/Debian: tar.gz + .deb
-bash scripts/package-linux.sh --tar-only # Fedora/其他 Linux: tar.gz
+bash scripts/package-linux.sh --rpm      # Fedora: tar.gz + .rpm（需要 rpm-build）
+bash scripts/package-linux.sh --tar-only # 其他 Linux: tar.gz
 ```
 
 打包前可先执行：
@@ -616,7 +617,8 @@ cargo build --locked -p shell -p cli -p weathr
 `scripts/package-linux.sh` 只允许在 Linux x86_64 主机运行，默认将产物写入 `dist/`；版本可由 `TUNDRAUX3_VERSION` 覆盖，否则读取 workspace 版本。脚本执行 `cargo build --release --locked -p shell -p cli`，并拒绝将 `/` 或仓库根目录作为输出目录。
 
 - 便携包 `tundraux3-<version>-linux-x86_64.tar.gz` 包含两个二进制、`debug assets/`、根许可证、Weathr 许可证和 Linux 说明。
-- Debian 包 `tundraux3_<version>_amd64.deb` 将二进制安装到 `/usr/bin`、资源安装到 `/usr/share/tundraux3/assets`，并附带 desktop entry 与许可证；`--tar-only` 跳过这一产物。
+- Debian 包 `tundraux3_<version>_amd64.deb` 将二进制安装到 `/usr/bin`、资源安装到 `/usr/share/tundraux3/assets`，并附带 desktop entry 与许可证；`--tar-only` 和 `--rpm` 跳过这一产物。
+- RPM 包 `tundraux3-<version>-1.x86_64.rpm` 复用相同程序、资源和 desktop entry，使用 Fedora `system-auth` PAM 配置，以 `%config(noreplace)` 保留本地修改；依赖 `xdg-utils`、`glib2`、`pam`、`glibc`、`sudo`，并由 RPM 自动扫描共享库依赖。正式包在 Fedora 43 x86_64 构建并验证安装，其他衍生发行版必须满足其依赖，不承诺旧版 RHEL 系兼容。
 - 所有产物在 `SHA256SUMS` 中记录校验和。`.deb` 依赖 `xdg-utils` 与 `libglib2.0-bin`，并推荐 D-Bus 用户会话、portal、polkit 与 XWayland。
 
 ## third_party

@@ -1,0 +1,4 @@
+#%PAM-1.0
+# Fedora policy: even the root UX process must verify the selected password.
+auth       include      system-auth
+account    include      system-auth

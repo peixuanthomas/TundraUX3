@@ -5,20 +5,33 @@ Supported desktop sessions are regular systemd/Freedesktop sessions on GNOME or
 KDE, under Wayland or X11.  Run the two binaries from a real terminal:
 
   ./tundra-shell
-  ./tundra-cli doctor
+  ./tundra-cli debug doctor
 
 The portable archive keeps `assets` next to the binaries.  Do not move the
 binaries without moving that directory too.  It includes the root MIT license
-and the Weathr component license.  The Debian package installs assets under
+and the Weathr component license.  The Debian and RPM packages install assets under
 /usr/share/tundraux3/assets automatically.
 
-Required: xdg-open (xdg-utils) and gio (libglib2.0-bin).  Recommended for full
+Required: xdg-open (xdg-utils) and gio (libglib2.0-bin on Debian/Ubuntu,
+glib2 on Fedora).  Recommended for full
 desktop integration: a session D-Bus bus, xdg-desktop-portal, polkit, and
 XWayland when the Wayland compositor does not expose a data-control clipboard.
 
-Use `tundra-cli doctor` after installation.  It reports missing optional desktop
+Use `tundra-cli debug doctor` after installation.  It reports missing optional desktop
 services and gives the relevant package/service hint; a missing desktop helper
 degrades only the affected integration, never stored data.
+
+Package installation
+--------------------
+Debian/Ubuntu: sudo apt install ./TundraUX3-v1.3-linux-amd64.deb
+Fedora: sudo dnf install ./TundraUX3-v1.3-fedora-x86_64.rpm
+
+The release RPM is built and installation-tested on Fedora 43 x86_64. Other
+Fedora derivatives must satisfy its generated library dependencies; compatibility
+with RHEL/CentOS/Rocky/AlmaLinux is not assumed. Build on the target distribution
+with `bash scripts/package-linux.sh --rpm` (requires rpm-build) when necessary.
+The application updater replaces binaries only; package-manager version records
+are updated by installing a newer package through apt/dnf.
 
 Linux system login
 ------------------
@@ -37,7 +50,9 @@ passwords and cannot predict whether PAM will allow a login. NSS providers that
 disable account enumeration will not expose their users in this list.
 
 The Debian package installs /etc/pam.d/tundraux3 using the distribution's
-common-auth and common-account stacks. Portable installs use the existing PAM
+common-auth and common-account stacks. The Fedora RPM uses system-auth and
+marks this configuration as noreplace so upgrades preserve local changes.
+Portable installs use the existing PAM
 login service if tundraux3 is absent. A missing/broken PAM service fails login;
 there is no fallback to UX passwords. Password-only PAM conversations are
 supported; additional secret prompts (such as MFA) fail with an explicit error.

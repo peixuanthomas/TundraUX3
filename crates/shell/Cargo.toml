@@ -27,7 +27,7 @@ ui = { path = "../ui" }
 watchdog = { path = "../watchdog", features = ["tokio"] }
 weathr = { path = "../weathr" }
 system-services = { path = "../system-services", features = ["runtime"] }
-time = { version = "0.1.1", path = "../time" }
+time = { version = "1.3.0", path = "../time" }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
