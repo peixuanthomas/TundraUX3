@@ -128,8 +128,8 @@ fn health_renderer_draws_two_columns_statuses_and_admin_details() {
     assert!(output.contains("System Status / Diagnostics"));
     assert!(output.contains("Esc System Status"));
     assert!(output.contains("[Health]"));
-    assert!(output.contains("[Logs]"));
-    assert!(output.contains("[Incidents]"));
+    assert!(!output.contains("[Logs]"));
+    assert!(!output.contains("[Incidents]"));
     assert!(output.contains("Checks"));
     assert!(output.contains("Details"));
     assert!(output.contains("System needs attention"));
@@ -139,7 +139,7 @@ fn health_renderer_draws_two_columns_statuses_and_admin_details() {
     assert!(output.contains("F Repair"));
     assert!(output.contains("A Repair all"));
     assert!(!output.contains("O Open logs"));
-    assert!(output.contains("E Log folder"));
+    assert!(!output.contains("E Log folder"));
     assert!(region_has_fg(
         &terminal,
         layout.rows[0].area,
@@ -188,15 +188,9 @@ fn logs_tab_lists_metadata_scrolls_and_exposes_log_hit_targets() {
 
     assert_eq!(layout.visible_start, 4);
     assert_eq!(layout.rows.last().map(|row| row.index), Some(10));
-    let logs_tab = layout
-        .tabs
-        .iter()
-        .find(|tab| tab.tab == DiagnosticsTab::Logs)
-        .expect("logs tab");
-    assert_eq!(
-        diagnostics_hit_test(&layout, (logs_tab.area.x, logs_tab.area.y)),
-        Some(DiagnosticsHitTarget::Tab(DiagnosticsTab::Logs))
-    );
+    // Logs remains a reusable content view; System Status navigation is Health-only.
+    assert_eq!(layout.tabs.len(), 1);
+    assert_eq!(layout.tabs[0].tab, DiagnosticsTab::Health);
     let selected = layout.rows.last().expect("selected log row");
     assert_eq!(
         diagnostics_hit_test(&layout, (selected.area.x, selected.area.y)),

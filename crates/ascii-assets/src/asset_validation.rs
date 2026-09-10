@@ -1,7 +1,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use crate::artwork::{load_art_set, load_explorer_icons, load_text_art};
+use crate::artwork::{load_art_set, load_explorer_icons, load_home_icon_catalog, load_text_art};
 use crate::asset_manifest::{AssetKind, required_assets};
 use crate::asset_resolver::AssetResolver;
 use crate::clock_font::load_clock_font;
@@ -186,6 +186,8 @@ pub fn check_required_assets(root: &Path, theme_id: &str) -> AssetCheckReport {
             AssetKind::ArtSet => {
                 if asset.key == "explorer_icons" {
                     load_explorer_icons(&resolver, theme_id).map(|_| ())
+                } else if asset.key == "home_icons" {
+                    load_home_icon_catalog(&resolver, theme_id).map(|_| ())
                 } else {
                     load_art_set(&resolver, theme_id, asset.key, asset.relative_path).map(|_| ())
                 }

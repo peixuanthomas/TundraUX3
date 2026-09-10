@@ -16,5 +16,6 @@ pub use model::{
 };
 pub use render::{render_diagnostics, render_diagnostics_contextual};
 pub(crate) use render::{
-    render_diagnostics_content, render_diagnostics_footer, render_diagnostics_repair_dialog,
+    render_diagnostics_content, render_diagnostics_content_titled, render_diagnostics_footer,
+    render_diagnostics_repair_dialog,
 };

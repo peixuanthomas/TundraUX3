@@ -154,18 +154,49 @@ pub(crate) fn render_diagnostics_content(
     theme: &TundraTheme,
     context: &RenderContext,
 ) {
+    let title = match model.tab {
+        DiagnosticsTab::Health => "Checks",
+        DiagnosticsTab::Logs => "Logs",
+        DiagnosticsTab::Incidents => "Incidents",
+    };
+    render_diagnostics_content_titled(frame, layout, model, theme, context, title, None);
+}
+
+/// Shares the diagnostics list, details and scrollbar with other application hosts.
+pub(crate) fn render_diagnostics_content_titled(
+    frame: &mut Frame<'_>,
+    layout: &DiagnosticsContentLayout,
+    model: &DiagnosticsViewModel,
+    theme: &TundraTheme,
+    context: &RenderContext,
+    title: &str,
+    empty_content: Option<(&str, &str)>,
+) {
     Surface::new()
-        .titled(match model.tab {
-            DiagnosticsTab::Health => "Checks",
-            DiagnosticsTab::Logs => "Logs",
-            DiagnosticsTab::Incidents => "Incidents",
-        })
+        .titled(title)
         .bordered(true)
         .render_frame(frame, layout.list_panel, context);
     Surface::new()
         .titled("Details")
         .bordered(true)
         .render_frame(frame, layout.detail_panel, context);
+    if model.item_count() == 0 {
+        if let Some((list_message, detail_message)) = empty_content {
+            frame.render_widget(
+                Paragraph::new(list_message)
+                    .style(theme.muted_style())
+                    .wrap(Wrap { trim: true }),
+                layout.list_rows_area,
+            );
+            frame.render_widget(
+                Paragraph::new(detail_message)
+                    .style(theme.muted_style())
+                    .wrap(Wrap { trim: true }),
+                Surface::new().bordered(true).inner(layout.detail_panel),
+            );
+            return;
+        }
+    }
     render_diagnostics_rows(frame, layout, model, theme, context);
     render_diagnostics_detail(frame, layout, model, theme);
 }
@@ -173,10 +204,10 @@ pub(crate) fn render_diagnostics_content(
 fn render_diagnostics_tabs(
     frame: &mut Frame<'_>,
     layout: &DiagnosticsLayout,
-    model: &DiagnosticsViewModel,
+    _model: &DiagnosticsViewModel,
     context: &RenderContext,
 ) {
-    let items = DiagnosticsTab::ALL
+    let items = [DiagnosticsTab::Health]
         .into_iter()
         .map(|tab| {
             TabItem::new(
@@ -186,7 +217,7 @@ fn render_diagnostics_tabs(
         })
         .collect();
     let mut tabs = Tabs::new("diagnostics.tabs", items);
-    tabs.set_selected(DiagnosticsTab::ALL.iter().position(|tab| *tab == model.tab));
+    tabs.set_selected(Some(0));
 
     tabs.render_borderless_frame(frame, layout.tabs_area, &context.compatibility_theme());
 }
@@ -463,7 +494,7 @@ pub(crate) fn render_diagnostics_footer(
                 },
             );
         }
-        if model.can_view_details {
+        if model.can_view_details && model.tab != DiagnosticsTab::Health {
             actions.insert(actions.len().saturating_sub(1), "E Log folder");
         }
         actions.insert(actions.len().saturating_sub(1), "X Restart");

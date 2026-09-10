@@ -24,8 +24,19 @@ pub fn restore_default_theme_file(
         .join("themes")
         .join(DEFAULT_THEME_ID)
         .join(file.relative_path);
+    // A valid pre-Logs catalog needs only its new entry. Preserve user labels,
+    // artwork, comments and extra items rather than resetting the entire catalog.
+    let upgraded = if file_key == "home_icons" {
+        upgraded_home_icons(&path, file.contents)
+    } else {
+        None
+    };
+    let contents = upgraded
+        .as_deref()
+        .map(str::as_bytes)
+        .unwrap_or(file.contents);
     let changed = fs::read(&path)
-        .map(|contents| contents != file.contents)
+        .map(|existing| existing != contents)
         .unwrap_or(true);
 
     if changed {
@@ -37,7 +48,7 @@ pub fn restore_default_theme_file(
             path: path.clone(),
             source,
         })?;
-        fs::write(&path, file.contents).map_err(|source| AssetError::RestoreAsset {
+        fs::write(&path, contents).map_err(|source| AssetError::RestoreAsset {
             asset: file_key.to_string(),
             path: path.clone(),
             source,
@@ -45,6 +56,36 @@ pub fn restore_default_theme_file(
     }
 
     Ok(AssetRestoreReport { path, changed })
+}
+
+fn upgraded_home_icons(path: &Path, embedded: &[u8]) -> Option<String> {
+    let existing = fs::read_to_string(path).ok()?;
+    let parsed: toml::Value = toml::from_str(&existing).ok()?;
+    let items = parsed.get("items")?.as_table()?;
+    if items.contains_key("logs")
+        || [
+            "explorer",
+            "launcher",
+            "settings",
+            "diagnostics",
+            "system_status",
+            "user_management",
+            "user_profile",
+            "default",
+        ]
+        .iter()
+        .any(|key| !items.contains_key(*key))
+    {
+        return None;
+    }
+    // Only upgrade catalogs whose existing artwork parses correctly.
+    let root = path.parent()?.parent()?.parent()?;
+    let resolver = crate::AssetResolver::from_unchecked_root(root.to_path_buf());
+    crate::artwork::load_art_set(&resolver, DEFAULT_THEME_ID, "home_icons", "home_icons.toml")
+        .ok()?;
+    let defaults = std::str::from_utf8(embedded).ok()?;
+    let entry = defaults.split_once("[items.logs]")?.1;
+    Some(format!("{existing}\n[items.logs]{entry}"))
 }
 
 /// Restores every missing, unreadable, or invalid file in the default theme,

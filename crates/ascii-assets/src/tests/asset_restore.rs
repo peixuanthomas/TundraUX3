@@ -113,3 +113,63 @@ impl Drop for TempDir {
         let _ = fs::remove_dir_all(&self.path);
     }
 }
+
+#[test]
+fn restores_missing_or_damaged_logs_image_and_keeps_healthy_files() {
+    let root = TempDir::new("logs-image");
+    restore_default_theme(root.path()).unwrap();
+    let image = root.path().join("themes/default/home_icons/logs.png");
+    fs::remove_file(&image).unwrap();
+    let restored = restore_default_theme(root.path()).unwrap();
+    assert_eq!(restored.len(), 1);
+    assert_eq!(restored[0].path, image);
+    fs::write(&image, b"broken png").unwrap();
+    assert_eq!(restore_default_theme(root.path()).unwrap().len(), 1);
+    assert!(restore_default_theme(root.path()).unwrap().is_empty());
+    assert!(check_default_theme(root.path()).is_ok());
+    let bytes = fs::read(image).unwrap();
+    assert_eq!(&bytes[0..8], b"\x89PNG\r\n\x1a\n");
+    assert_eq!(u32::from_be_bytes(bytes[16..20].try_into().unwrap()), 256);
+    assert_eq!(u32::from_be_bytes(bytes[20..24].try_into().unwrap()), 256);
+}
+
+#[test]
+fn upgrades_old_home_catalog_without_replacing_customized_items() {
+    let root = TempDir::new("logs-upgrade");
+    restore_default_theme(root.path()).unwrap();
+    let catalog = root.path().join("themes/default/home_icons.toml");
+    let original = fs::read_to_string(&catalog).unwrap();
+    let old = original
+        .split("[items.logs]")
+        .next()
+        .unwrap()
+        .replace("label = \"Explorer\"", "label = \"My Explorer\"");
+    fs::write(&catalog, &old).unwrap();
+    assert!(
+        check_default_theme(root.path())
+            .warning_checks()
+            .iter()
+            .any(|check| check.key == "home_icons")
+    );
+    let restored = restore_default_theme(root.path()).unwrap();
+    assert_eq!(restored.len(), 1);
+    let updated = fs::read_to_string(&catalog).unwrap();
+    assert!(updated.starts_with(&old));
+    assert!(updated.contains("[items.logs]"));
+    assert!(updated.contains("label = \"My Explorer\""));
+    assert!(check_default_theme(root.path()).is_ok());
+    assert!(restore_default_theme(root.path()).unwrap().is_empty());
+}
+
+#[test]
+fn logs_restore_preserves_unrelated_custom_theme_files() {
+    let root = TempDir::new("logs-custom-theme");
+    let custom = root.path().join("themes/custom");
+    fs::create_dir_all(&custom).unwrap();
+    fs::write(custom.join("home_icons.toml"), b"custom theme").unwrap();
+    restore_default_theme(root.path()).unwrap();
+    assert_eq!(
+        fs::read(custom.join("home_icons.toml")).unwrap(),
+        b"custom theme"
+    );
+}

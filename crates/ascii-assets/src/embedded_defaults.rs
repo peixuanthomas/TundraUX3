@@ -30,6 +30,7 @@ pub(crate) const EMBEDDED_DEFAULT_THEME_FILES: &[EmbeddedDefaultThemeFile] = &[
     embedded_default_theme_file!("home_icons/diagnostics.png", "home_icons/diagnostics.png"),
     embedded_default_theme_file!("home_icons/explorer.png", "home_icons/explorer.png"),
     embedded_default_theme_file!("home_icons/launcher.png", "home_icons/launcher.png"),
+    embedded_default_theme_file!("home_icons/logs.png", "home_icons/logs.png"),
     embedded_default_theme_file!("home_icons/settings.png", "home_icons/settings.png"),
     embedded_default_theme_file!(
         "home_icons/system_status.png",
@@ -129,7 +130,7 @@ mod tests {
         assert_eq!(embedded.len(), EMBEDDED_DEFAULT_THEME_FILES.len());
         assert!(required.is_subset(&embedded));
         assert!(embedded.contains(&("launcher_icons/editor.png", "launcher_icons/editor.png")));
-        assert_eq!(embedded.len(), required.len() + 10);
+        assert_eq!(embedded.len(), required.len() + 11);
         assert_eq!(
             EMBEDDED_DEFAULT_THEME_FILES
                 .iter()
@@ -137,7 +138,7 @@ mod tests {
                     .extension()
                     .is_some_and(|extension| extension.eq_ignore_ascii_case("png")))
                 .count(),
-            10
+            11
         );
         assert!(
             EMBEDDED_DEFAULT_THEME_FILES

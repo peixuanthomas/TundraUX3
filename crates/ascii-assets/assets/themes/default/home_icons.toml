@@ -80,3 +80,13 @@ lines = [
   '|  ?  |',
   '|_____|',
 ]
+
+[items.logs]
+label = "Logs"
+image = "home_icons/logs.png"
+lines = [
+  ' ____  ',
+  '| =  | ',
+  '| == | ',
+  '|____| ',
+]

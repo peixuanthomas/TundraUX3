@@ -220,6 +220,23 @@ pub(crate) fn load_home_icon_catalog(
         }
     }
 
+    // Older custom themes remain usable without modifying their files. The default
+    // theme is upgraded by the asset repair path before it is loaded.
+    if theme_id == crate::DEFAULT_THEME_ID && !icons.contains_key("logs") {
+        return Err(AssetError::InvalidAsset {
+            asset: "home_icons".to_string(),
+            message: "missing required home icon logs".to_string(),
+        });
+    }
+    if let Some(logs) = icons.get("logs") {
+        if logs.width != 7 || logs.height != 4 {
+            return Err(AssetError::InvalidAsset {
+                asset: "home_icons".to_string(),
+                message: "home icon logs must be exactly 7x4".to_string(),
+            });
+        }
+    }
+
     Ok(HomeIconCatalog { icons, labels })
 }
 

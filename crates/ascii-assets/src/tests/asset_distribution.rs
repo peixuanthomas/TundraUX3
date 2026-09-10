@@ -47,6 +47,7 @@ fn runtime_asset_copy_includes_valid_icon_assets() {
         "settings",
         "diagnostics",
         "system_status",
+        "logs",
         "user_management",
         "user_profile",
         "default",

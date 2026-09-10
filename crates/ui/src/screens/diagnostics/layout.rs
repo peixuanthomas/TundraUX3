@@ -172,7 +172,7 @@ pub fn diagnostics_layout(main: Rect, model: &DiagnosticsViewModel) -> Diagnosti
     let content_layout = diagnostics_content_layout(content, model);
 
     let mut tab_x = tabs_area.x;
-    let tabs = DiagnosticsTab::ALL
+    let tabs = [DiagnosticsTab::Health]
         .into_iter()
         .map(|tab| {
             let desired = usize_to_u16(tab.label().chars().count()).saturating_add(4);
