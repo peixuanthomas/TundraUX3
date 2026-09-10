@@ -54,7 +54,7 @@ fn render_user_management_main(
     let layout = user_management_layout(main, model);
     Surface::new()
         .titled("User Management")
-        .bordered(true)
+        .bordered(false)
         .render_frame(frame, layout.panel, context);
 
     render_clock_line(

@@ -67,6 +67,7 @@ mod presentation;
 mod queries;
 mod redraw;
 mod runtime;
+mod spring_progress;
 #[cfg(test)]
 mod tests;
 mod ui_state;

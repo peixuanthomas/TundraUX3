@@ -148,7 +148,7 @@ fn actively_pressed_button_changes_border_and_text_without_reversing_background(
 }
 
 #[test]
-fn rich_button_surface_keeps_theme_background_and_selected_border() {
+fn rich_button_surface_uses_spring_card_background_and_selected_border() {
     let area = Rect::new(0, 0, 16, 4);
     let theme = TundraTheme::default()
         .with_border_color(Color::LightGreen)
@@ -160,7 +160,7 @@ fn rich_button_surface_keeps_theme_background_and_selected_border() {
     button.render_surface(area, &mut buffer, &theme);
 
     assert_eq!(buffer.cell((0, 0)).unwrap().fg, Color::LightMagenta);
-    assert_eq!(buffer.cell((1, 1)).unwrap().bg, theme.background);
+    assert_eq!(buffer.cell((1, 1)).unwrap().bg, theme.tokens().raised);
 }
 
 #[test]

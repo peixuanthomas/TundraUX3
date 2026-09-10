@@ -81,7 +81,7 @@ fn render_clock_face(
     let theme = &context.compatibility_theme();
     Surface::new()
         .titled("Clock")
-        .bordered(true)
+        .bordered(false)
         .render_frame(frame, layout.clock, context);
 
     if let Some(analog) = layout

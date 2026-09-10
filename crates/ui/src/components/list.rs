@@ -329,7 +329,7 @@ impl List {
             .and_then(|index| self.items.get(index))
             .is_some_and(|item| item.disabled);
         let widget = RatatuiList::new(items)
-            .style(theme.body_style())
+            .style(theme.raised_style())
             .highlight_symbol(self.highlight_symbol.as_deref().unwrap_or(""))
             .highlight_spacing(if self.highlight_symbol.is_some() {
                 HighlightSpacing::Always
@@ -355,16 +355,16 @@ impl List {
                 .title_style(if self.state.focused {
                     theme.title_style()
                 } else {
-                    theme.body_style()
+                    theme.raised_style()
                 })
                 .borders(Borders::ALL)
                 .border_style(theme.selectable_border_style(self.state.focused))
-                .style(theme.body_style()),
+                .style(theme.raised_style()),
             None => theme
                 .block()
                 .borders(Borders::ALL)
                 .border_style(theme.selectable_border_style(self.state.focused))
-                .style(theme.body_style()),
+                .style(theme.raised_style()),
         };
         widget.block(block)
     }

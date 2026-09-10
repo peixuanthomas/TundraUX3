@@ -5,7 +5,9 @@ pub(crate) use assets::home_icons;
 pub(crate) use foundation::input;
 pub use screens::timezone_map;
 mod editor_media;
+mod spring;
 mod theme;
+pub use spring::SpringValue;
 
 pub mod components;
 pub mod style_preview;
@@ -27,6 +29,6 @@ pub use theme::{
     BorderShape, ColorCapability, ComponentVisualState, FrostMotion, MotionDirection, MotionFrame,
     MotionIdentity, MotionOverlayIdentity, MotionOverlayKind, MotionSchedule, MotionTimings,
     MotionTransition, MotionTransitionKind, MotionTransitions, RenderCapabilities, RenderContext,
-    ThemeTokens, TundraTheme, ease_in_cubic, ease_out_cubic, schedule_motion,
+    SpringStyle, ThemeTokens, TundraTheme, ease_in_cubic, ease_out_cubic, schedule_motion,
     schedule_motion_range,
 };

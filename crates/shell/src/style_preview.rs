@@ -139,16 +139,7 @@ fn reveal_effect(
             (260, Interpolation::QuadOut),
         ),
         UiStyleVersion::Tea => fx::fade_from_fg(context.theme.muted, (180, Interpolation::QuadOut)),
-        UiStyleVersion::Spring => fx::parallel(&[
-            fx::sweep_in(
-                Motion::UpToDown,
-                4,
-                0,
-                context.theme.surface,
-                (320, Interpolation::QuadOut),
-            ),
-            fx::fade_from_fg(context.theme.accent_soft, (320, Interpolation::QuadOut)),
-        ]),
+        UiStyleVersion::Spring => crate::spring_style::spring_reveal(area, context.theme, 320),
     };
     effect.with_area(area).with_filter(CellFilter::Text)
 }
@@ -219,8 +210,8 @@ impl PreviewModel {
             replay: &self.replay,
             inspect: &self.inspect,
             dialog: &self.dialog,
-            displayed: self.progress.value.clamp(0.0, 1.0),
-            target: self.progress.target,
+            displayed: self.progress.motion.value().clamp(0.0, 1.0),
+            target: self.progress.motion.target(),
             running: self.auto || self.progress.active(),
         }
     }
@@ -255,11 +246,11 @@ impl PreviewModel {
                     self.stage_elapsed += delta;
                     if self.stage_elapsed >= STAGE {
                         self.stage_elapsed -= STAGE;
-                        if self.progress.target >= 1.0 {
+                        if self.progress.motion.target() >= 1.0 {
                             self.auto = false;
                         } else {
                             self.progress
-                                .retarget((self.progress.target + 0.25).min(1.0));
+                                .retarget((self.progress.motion.target() + 0.25).min(1.0));
                         }
                     }
                 }
@@ -416,54 +407,33 @@ impl PreviewModel {
 
 #[derive(Default)]
 struct AnimatedProgress {
-    value: f64,
-    velocity: f64,
-    target: f64,
+    motion: ui::SpringValue,
     start: f64,
     elapsed: f64,
 }
 
 impl AnimatedProgress {
     fn retarget(&mut self, target: f64) {
-        self.start = self.value;
-        self.target = target;
+        self.start = self.motion.value();
+        self.motion.retarget(target);
         self.elapsed = 0.0;
-        // Preserve spring velocity when a second selection arrives mid-flight.
     }
 
     fn active(&self) -> bool {
-        (self.value - self.target).abs() > 0.0001 || self.velocity.abs() > 0.001
+        self.motion.is_running()
     }
 
     fn advance(&mut self, delta: f64, version: UiStyleVersion, reduced: bool) {
         if reduced || version == UiStyleVersion::Glacier {
-            self.value = self.target;
-            self.velocity = 0.0;
+            self.motion.set_value(self.motion.target());
         } else if version == UiStyleVersion::Tea {
             self.elapsed += delta;
             let t = (self.elapsed / 0.45).clamp(0.0, 1.0);
-            self.value = self.start + (self.target - self.start) * (1.0 - (1.0 - t).powi(3));
-            self.velocity = 0.0;
+            self.motion.set_value(
+                self.start + (self.motion.target() - self.start) * (1.0 - (1.0 - t).powi(3)),
+            );
         } else {
-            // Exact underdamped oscillator solution, rather than frame-dependent Euler steps.
-            let omega: f64 = 12.0;
-            let damping: f64 = 0.65;
-            let decay = omega * damping;
-            let frequency = omega * (1.0 - damping * damping).sqrt();
-            let displacement = self.value - self.target;
-            let (sin, cos) = (frequency * delta).sin_cos();
-            let envelope = (-decay * delta).exp();
-            self.value = self.target
-                + envelope
-                    * (displacement * cos
-                        + (self.velocity + decay * displacement) / frequency * sin);
-            self.velocity = envelope
-                * (self.velocity * cos
-                    - (decay * self.velocity + omega * omega * displacement) / frequency * sin);
-        }
-        if !self.active() {
-            self.value = self.target;
-            self.velocity = 0.0;
+            self.motion.advance(Duration::from_secs_f64(delta), false);
         }
     }
 }

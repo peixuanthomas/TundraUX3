@@ -373,6 +373,7 @@ impl ShellSession {
             secondary: Vec::new(),
             trend: None,
             progress_percent: None,
+            display_basis_points: None,
             bars: Vec::new(),
             compact_rows: Vec::new(),
             openable: self.system_status_widget_detail_allowed(placement.kind),

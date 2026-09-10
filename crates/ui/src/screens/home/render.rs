@@ -15,7 +15,7 @@ const HOME_SUMMARY_HEIGHT: u16 = 1;
 const HOME_CONTROLS_HEIGHT: u16 = 2;
 const HOME_TILE_MAX_HEIGHT: u16 = 8;
 const HOME_TILE_MIN_HEIGHT: u16 = 3;
-const HOME_TILE_GAP: u16 = 1;
+const HOME_TILE_GAP: u16 = crate::SpringStyle::CARD_GAP;
 
 pub trait HomeIconRenderer {
     /// Returns true when a terminal image was rendered for `entry_label`.
@@ -88,7 +88,7 @@ fn render_user_main(
     let theme = &context.compatibility_theme();
     Surface::new()
         .titled("Home")
-        .bordered(true)
+        .bordered(false)
         .render_frame(frame, area, context);
 
     let content = home_content_area(area);
@@ -111,7 +111,8 @@ fn render_user_main(
             theme.title_style()
         } else {
             theme.body_style()
-        };
+        }
+        .bg(context.theme.raised);
         let content_width = usize::from(tile.width.saturating_sub(2));
         let mut surface = Button::new(format!("home.entry.{index}"), "");
         surface.state.selected = selected;

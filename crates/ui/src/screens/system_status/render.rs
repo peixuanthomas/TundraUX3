@@ -50,7 +50,7 @@ fn render_main(
     let l = system_status_layout(main, model);
     Surface::new()
         .titled("System Status")
-        .bordered(true)
+        .bordered(false)
         .render_frame(frame, l.panel, context);
     match model.route {
         SystemStatusRoute::Dashboard => render_dashboard(frame, &l, model, context),
@@ -80,9 +80,7 @@ fn render_dashboard(
         Paragraph::new(format!("{left}{}{updated}", " ".repeat(gap))).style(theme.title_style()),
         l.header,
     );
-    Surface::new()
-        .bordered(true)
-        .render_frame(frame, l.content_panel, context);
+    Surface::new().render_frame(frame, l.content_panel, context);
     if l.empty_canvas {
         EmptyState::new("Dashboard needs more room")
             .detail("Increase the terminal height to show metric cards.")

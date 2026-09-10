@@ -921,6 +921,7 @@ pub(super) fn run_fullscreen_shell_session<W: Write>(
         reduced_motion_enabled(&state),
     );
     let mut motion_effects = ShellMotionEffects::default();
+    let mut spring_progress = super::spring_progress::SpringProgress::default();
     let mut shell_toast: Option<ui::components::Toast> = None;
     let mut terminal_size_error = None;
     let mut terminal_suspended = false;
@@ -1137,14 +1138,16 @@ pub(super) fn run_fullscreen_shell_session<W: Write>(
             }
             let editor =
                 (content_screen == ShellScreen::Editor).then(|| state.to_editor_view_model());
-            let settings = (content_screen == ShellScreen::Settings)
+            let mut settings = (content_screen == ShellScreen::Settings)
                 .then(|| state.to_settings_view_model())
                 .flatten();
             let diagnostics = (content_screen == ShellScreen::Diagnostics)
                 .then(|| state.to_diagnostics_view_model());
-            let system_status = (content_screen == ShellScreen::SystemStatus)
+            let mut system_status = (content_screen == ShellScreen::SystemStatus)
                 .then(|| state.to_system_status_view_model())
                 .flatten();
+            let progress_requests_redraw =
+                spring_progress.update(settings.as_mut(), system_status.as_mut(), motion_frame);
             let notification = (content_screen != ShellScreen::CommandLine
                 || state.active_screen() == ShellScreen::ExitConfirm)
                 .then(|| state.to_notification_view_model())
@@ -1167,6 +1170,7 @@ pub(super) fn run_fullscreen_shell_session<W: Write>(
             guard.terminal_mut().draw(|frame| {
                 let area = frame.area();
                 let page_area = render_context.page_area(area);
+                ui::components::Surface::new().render_frame(frame, area, &render_context);
                 match content_screen {
                     ShellScreen::FirstRunSetup => {
                         ui::render_setup_with_context(
@@ -1376,7 +1380,7 @@ pub(super) fn run_fullscreen_shell_session<W: Write>(
                 .as_ref()
                 .is_some_and(|toast| toast.requests_redraw(motion_frame));
             redraw.did_draw(frame_now);
-            if toast_requests_redraw {
+            if toast_requests_redraw || progress_requests_redraw {
                 redraw.request_animation_frame(frame_now);
             }
             if motion_effects.is_running() {

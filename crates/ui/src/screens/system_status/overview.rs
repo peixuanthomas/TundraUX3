@@ -150,7 +150,15 @@ fn render_metric(
         // A fixed 0–100 scale makes CPU, RAM, disk and battery comparable.
         frame.render_widget(
             Gauge::default()
-                .percent(percent.min(100))
+                .ratio(
+                    f64::from(
+                        metric
+                            .display_basis_points
+                            .unwrap_or(percent.min(100) * 100)
+                            .min(10_000),
+                    ) / 10_000.0,
+                )
+                .use_unicode(true)
                 .label(metric.primary.as_str())
                 .gauge_style(style),
             Rect::new(graph.x, graph.y, graph.width, u16::from(graph.height > 0)),

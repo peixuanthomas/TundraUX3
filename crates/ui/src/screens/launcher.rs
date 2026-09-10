@@ -568,8 +568,14 @@ fn launcher_grid_layout(
         let area = Rect::new(
             x,
             y,
-            width,
-            GRID_TILE_HEIGHT.min(content.bottom().saturating_sub(y)),
+            width.saturating_sub(if columns > 1 {
+                crate::SpringStyle::CARD_GAP
+            } else {
+                0
+            }),
+            GRID_TILE_HEIGHT
+                .saturating_sub(1)
+                .min(content.bottom().saturating_sub(y)),
         );
         let inner = inset(area, 1);
         let icon_area = Rect::new(inner.x, inner.y, inner.width, inner.height.min(4));
@@ -757,7 +763,7 @@ fn render_launcher_main(
             "Launcher · {}",
             launcher_view_mode_label(model.view_mode)
         ))
-        .bordered(true)
+        .bordered(false)
         .render_frame(frame, layout.panel, context);
     render_launcher_toolbar(frame, &layout, model, context);
     match model.view_mode {
@@ -834,7 +840,7 @@ fn render_launcher_grid(
         };
         let focused = model.selected_index == Some(item_layout.index);
         let selected = focused || item.selected;
-        let style = item_style(item.status, selected, theme);
+        let style = item_style(item.status, selected, theme).bg(theme.tokens().raised);
         let mut surface = Button::new(format!("launcher.item.{}", item.id), "");
         surface.set_focused(focused);
         surface.state.selected = selected;
@@ -852,7 +858,11 @@ fn render_launcher_grid(
             .min(inner.bottom().saturating_sub(2));
         frame.render_widget(
             Paragraph::new(fit_text(&item.name, inner.width))
-                .style(if focused { theme.title_style() } else { style })
+                .style(if focused {
+                    theme.title_style().bg(theme.tokens().raised)
+                } else {
+                    style
+                })
                 .alignment(HorizontalAlignment::Center),
             Rect::new(inner.x, name_y, inner.width, u16::from(inner.height > 0)),
         );

@@ -216,7 +216,7 @@ impl Button {
     fn surface_widget(&self, theme: &TundraTheme) -> Paragraph<'static> {
         let mut surface_state = self.state;
         surface_state.selected = false;
-        let style = Self::style_for_state(surface_state, theme);
+        let style = Self::style_for_state(surface_state, theme).bg(theme.tokens().raised);
         Paragraph::new("")
             .alignment(HorizontalAlignment::Left)
             .style(style)

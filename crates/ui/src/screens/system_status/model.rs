@@ -129,6 +129,8 @@ pub struct SystemStatusWidgetViewModel {
     pub secondary: Vec<String>,
     pub trend: Option<Vec<u64>>,
     pub progress_percent: Option<u16>,
+    /// Animated fill in basis points; real values and labels remain authoritative.
+    pub display_basis_points: Option<u16>,
     pub bars: Vec<SystemStatusBarItem>,
     pub compact_rows: Vec<Vec<String>>,
     pub openable: bool,

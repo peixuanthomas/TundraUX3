@@ -54,7 +54,7 @@ fn render_diagnostics_main(
     let layout = diagnostics_layout(main, model);
     Surface::new()
         .titled("System Status / Diagnostics")
-        .bordered(true)
+        .bordered(false)
         .render_frame(frame, layout.panel, context);
 
     render_diagnostics_header(frame, layout.header, model, theme);

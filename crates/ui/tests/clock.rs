@@ -109,7 +109,8 @@ fn wide_renderer_draws_ascii_hands_digital_time_and_grouped_entries() {
 #[test]
 fn analog_clock_falls_back_to_small_numerals_below_either_large_face_threshold() {
     let model = clock_model();
-    for (width, height) in [(99, 30), (100, 29), (80, 24)] {
+    // Include the Spring shell's one-cell inset on each edge.
+    for (width, height) in [(101, 32), (102, 31), (82, 26)] {
         let (terminal, main) = render(width, height, &model);
         let layout = clock_page_layout(main, &model);
         let face = region_text(
@@ -136,7 +137,7 @@ fn upward_pointing_hands_do_not_overwrite_the_large_twelve() {
         })
         .collect::<Vec<_>>();
     let model = ClockViewModel::at("2026-07-10", "00:00:00", 0, 0, 0).with_ascii_assets(assets);
-    let (terminal, main) = render(100, 32, &model);
+    let (terminal, main) = render(102, 34, &model);
     let layout = clock_page_layout(main, &model);
     let face = region_text(
         &terminal,

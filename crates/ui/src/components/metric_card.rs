@@ -140,7 +140,16 @@ impl<'a> MetricCard<'a> {
             let value = self.model.progress_percent.unwrap_or_default().min(100);
             frame.render_widget(
                 Gauge::default()
-                    .percent(value)
+                    .ratio(
+                        f64::from(
+                            self.model
+                                .display_basis_points
+                                .unwrap_or(value * 100)
+                                .min(10_000),
+                        ) / 10_000.0,
+                    )
+                    .use_unicode(true)
+                    .label(format!("{value}%"))
                     .gauge_style(Style::default().fg(tone_color(self.model.tone, theme)))
                     .style(theme.surface_style()),
                 gauge_area,

@@ -401,7 +401,7 @@ fn normal_terminal_splits_top_main_status() {
         compute_shell_layout(Rect::new(0, 0, 100, 30)),
         ShellLayout::Full {
             top: Rect::new(0, 0, 100, 3),
-            main: Rect::new(0, 3, 100, 24),
+            main: Rect::new(1, 4, 98, 22),
             status: Rect::new(0, 27, 100, 3),
         }
     );

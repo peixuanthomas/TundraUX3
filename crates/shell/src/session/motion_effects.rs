@@ -10,7 +10,7 @@ use tachyonfx::{
     pattern::{DiagonalPattern, InstancedPattern, Pattern, RadialPattern, SweepPattern},
 };
 
-const PAGE_MS: u32 = 220;
+const PAGE_MS: u32 = 320;
 const DIALOG_MS: u32 = 180;
 const POPOVER_MS: u32 = 160;
 const FOCUS_MS: u32 = 120;
@@ -645,38 +645,12 @@ fn page_effect(screen: ShellScreen, area: Rect, theme: ui::ThemeTokens) -> Effec
                 ),
         ]);
     }
-    fx::parallel(&[
-        fx::coalesce_from(
-            Style::default().fg(theme.accent_soft),
-            (PAGE_MS, Interpolation::QuadOut),
-        )
-        .with_area(area)
-        .with_filter(CellFilter::Text)
-        .with_pattern(DiagonalPattern::top_left_to_bottom_right().with_transition_width(6.0))
-        .with_rng(SimpleRng::new(EFFECT_SEED)),
-        fx::fade_from_fg(theme.accent_soft, (PAGE_MS, Interpolation::QuadOut))
-            .with_area(area)
-            .with_filter(surface_animation_filter())
-            .with_pattern(DiagonalPattern::top_left_to_bottom_right().with_transition_width(6.0)),
-    ])
+    crate::spring_style::spring_reveal(area, theme, PAGE_MS)
 }
 
 fn overlay_enter_effect(kind: ui::MotionOverlayKind, area: Rect, theme: ui::ThemeTokens) -> Effect {
     match kind {
-        ui::MotionOverlayKind::Dialog => fx::parallel(&[
-            fx::coalesce_from(
-                Style::default().fg(theme.accent_soft),
-                (DIALOG_MS, Interpolation::QuadOut),
-            )
-            .with_area(area)
-            .with_filter(CellFilter::Text)
-            .with_pattern(RadialPattern::center().with_transition_width(4.0))
-            .with_rng(SimpleRng::new(EFFECT_SEED)),
-            fx::fade_from_fg(theme.accent_soft, (DIALOG_MS, Interpolation::QuadOut))
-                .with_area(area)
-                .with_filter(surface_animation_filter()),
-        ])
-        .with_area(area),
+        ui::MotionOverlayKind::Dialog => crate::spring_style::spring_reveal(area, theme, DIALOG_MS),
         ui::MotionOverlayKind::Popover => fx::parallel(&[
             fx::sweep_in(
                 Motion::UpToDown,

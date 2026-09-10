@@ -16,7 +16,10 @@ pub fn compute_shell_layout(area: Rect) -> ShellLayout {
 
     let top = Rect::new(area.x, area.y, area.width, 3);
     let main_height = area.height.saturating_sub(6);
-    let main = Rect::new(area.x, area.y.saturating_add(3), area.width, main_height);
+    let mut main = Rect::new(area.x, area.y.saturating_add(3), area.width, main_height);
+    if area.width >= 80 && area.height >= 24 {
+        main = inset_rect(main, crate::SpringStyle::PAGE_INSET);
+    }
     let status = Rect::new(
         area.x,
         area.y.saturating_add(area.height.saturating_sub(3)),

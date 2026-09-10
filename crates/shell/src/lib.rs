@@ -25,6 +25,7 @@ mod notification_center;
 mod shell_commands;
 mod shell_components;
 mod shortcuts;
+mod spring_style;
 mod startup;
 mod startup_banner;
 mod style_preview;

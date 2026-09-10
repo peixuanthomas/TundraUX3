@@ -612,7 +612,7 @@ fn render_settings_content(
     let theme = &context.compatibility_theme();
     Surface::new()
         .titled(" Settings ")
-        .bordered(true)
+        .bordered(false)
         .render_frame(frame, layout.main, context);
 
     let mut categories = ComponentList::new(
@@ -1326,7 +1326,7 @@ fn settings_category_area(layout: &SettingsLayout) -> Rect {
 fn settings_content_areas(area: Rect) -> (Rect, Rect) {
     let inner = inset(area, 1, 1);
     let sidebar_width = 18.min(inner.width.saturating_sub(1));
-    let gap = u16::from(inner.width > sidebar_width);
+    let gap = crate::SpringStyle::CARD_GAP.min(inner.width.saturating_sub(sidebar_width));
     let [category, _, detail] = Layout::horizontal([
         Constraint::Length(sidebar_width),
         Constraint::Length(gap),

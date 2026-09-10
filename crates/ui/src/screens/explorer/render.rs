@@ -57,7 +57,9 @@ fn render_explorer_main(
     context: &crate::RenderContext,
     theme: &TundraTheme,
 ) {
-    Panel::new("Explorer").render_frame(frame, area, context);
+    Surface::new()
+        .titled("Explorer")
+        .render_frame(frame, area, context);
 
     let layout = explorer_layout(area, model);
     let Some(assets) = model.ascii_assets.as_ref() else {

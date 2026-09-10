@@ -7,6 +7,14 @@ use std::time::Duration;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::widgets::{Block, BorderType};
 
+/// Spacing for the selected Spring card composition. Small terminals retain
+/// compact geometry rather than spending their content area on decoration.
+pub struct SpringStyle;
+impl SpringStyle {
+    pub const CARD_GAP: u16 = 2;
+    pub const PAGE_INSET: u16 = 1;
+}
+
 /// Terminal colour fidelity detected by the shell.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum ColorCapability {

@@ -5,6 +5,8 @@ use ratatui::{Frame, layout::Rect, style::Style, widgets::Gauge};
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UpdateMeterViewModel {
     pub percent: Option<u16>,
+    /// Animated fill in basis points; real values and labels remain authoritative.
+    pub display_basis_points: Option<u16>,
     pub label: String,
 }
 
@@ -20,10 +22,12 @@ impl Default for UpdateActivityViewModel {
         Self {
             download: UpdateMeterViewModel {
                 percent: None,
+                display_basis_points: None,
                 label: "Download: waiting".into(),
             },
             compilation: UpdateMeterViewModel {
                 percent: None,
+                display_basis_points: None,
                 label: "Compilation: waiting".into(),
             },
             output: Vec::new(),
@@ -69,7 +73,15 @@ impl<'a> UpdateActivity<'a> {
             ) {
                 frame.render_widget(
                     Gauge::default()
-                        .percent(meter.percent.unwrap_or(0).min(100))
+                        .ratio(
+                            f64::from(
+                                meter
+                                    .display_basis_points
+                                    .unwrap_or(meter.percent.unwrap_or(0).min(100) * 100)
+                                    .min(10_000),
+                            ) / 10_000.0,
+                        )
+                        .use_unicode(true)
                         .label(meter.label.as_str())
                         .gauge_style(Style::default().fg(context.theme.accent))
                         .style(theme.surface_style()),

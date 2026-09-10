@@ -214,7 +214,7 @@ impl Dialog {
         frame.render_widget(
             Paragraph::new(self.body.join("\n"))
                 .alignment(HorizontalAlignment::Left)
-                .style(theme.body_style()),
+                .style(theme.raised_style()),
             Rect::new(inner.x, inner.y, inner.width, body_height),
         );
 
@@ -356,7 +356,7 @@ impl Dialog {
         let body_height = inner.height.saturating_sub(1);
         Paragraph::new(self.body.join("\n"))
             .alignment(HorizontalAlignment::Left)
-            .style(theme.body_style())
+            .style(theme.raised_style())
             .render(
                 Rect::new(inner.x, inner.y, inner.width, body_height),
                 buffer,
@@ -368,6 +368,6 @@ impl Dialog {
             .block()
             .title(self.title.clone())
             .borders(Borders::ALL)
-            .style(theme.body_style())
+            .style(theme.raised_style())
     }
 }

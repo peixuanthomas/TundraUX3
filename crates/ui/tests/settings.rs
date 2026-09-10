@@ -26,7 +26,7 @@ fn full_layout_keeps_categories_and_fields_visible_at_supported_sizes() {
             assert_eq!(category.category, SettingsCategory::ALL[index]);
             assert_eq!(category.area, Rect::new(2, 2 + index as u16, 16, 1));
         }
-        assert!(layout.fields.iter().all(|field| field.area.x == 21));
+        assert!(layout.fields.iter().all(|field| field.area.x == 22));
         for expected in [SettingsField::BorderColor, SettingsField::ShowHidden] {
             assert!(layout.fields.iter().any(|field| field.field == expected));
         }
@@ -674,10 +674,12 @@ fn update_activity_shows_both_meters_and_latest_output_with_page_scrolling() {
         activity: Some(UpdateActivityViewModel {
             download: UpdateMeterViewModel {
                 percent: Some(100),
+                display_basis_points: None,
                 label: "Download: 100%".into(),
             },
             compilation: UpdateMeterViewModel {
                 percent: Some(42),
+                display_basis_points: Some(1200),
                 label: "Compilation: 42%".into(),
             },
             output: (0..200).map(|n| format!("Compiling crate-{n}")).collect(),

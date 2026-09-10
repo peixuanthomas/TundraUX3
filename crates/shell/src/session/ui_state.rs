@@ -243,8 +243,11 @@ impl SettingsUpdateState {
                     Some(value) => format!("Download: {value}% · {size}"),
                     None => format!("Download: {size} · total unknown"),
                 };
-                self.activity.get_or_insert_with(Default::default).download =
-                    Meter { percent, label };
+                self.activity.get_or_insert_with(Default::default).download = Meter {
+                    percent,
+                    label,
+                    display_basis_points: None,
+                };
             }
             Detail::Compilation {
                 completed,
@@ -264,7 +267,11 @@ impl SettingsUpdateState {
                 };
                 self.activity
                     .get_or_insert_with(Default::default)
-                    .compilation = Meter { percent, label };
+                    .compilation = Meter {
+                    percent,
+                    label,
+                    display_basis_points: None,
+                };
             }
             Detail::Status => {
                 if self.activity.is_some() {

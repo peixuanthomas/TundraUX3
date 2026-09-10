@@ -17,7 +17,8 @@ fn breakpoint_is_exact() {
 #[test]
 fn three_sizes_have_expected_geometry_and_no_overlap() {
     let m = model();
-    let l = system_status_layout(full_main(100, 24), &m);
+    // Keep the original content height after the Spring shell's outer inset.
+    let l = system_status_layout(full_main(102, 26), &m);
     let small = l
         .widgets
         .iter()
@@ -365,6 +366,7 @@ fn widget(
         secondary: vec!["secondary".into()],
         trend: Some(vec![1, 3, 2, 5]),
         progress_percent: Some(42),
+        display_basis_points: None,
         bars: vec![SystemStatusBarItem {
             label: "A".into(),
             value: 42,
