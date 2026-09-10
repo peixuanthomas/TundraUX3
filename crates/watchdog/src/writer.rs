@@ -4,6 +4,7 @@ use crate::report::IncidentRecord;
 use crate::sanitize;
 use crate::{IncidentReceipt, RecoveryOutcome, RuntimeSnapshot, WatchdogError};
 use chrono::Utc;
+use runtime_log::{LogContext, LogLevel, LogPhase, RuntimeLogEvent, RuntimeLogHandle};
 use serde::Serialize;
 use std::collections::HashMap;
 use std::fmt::Write as _;
@@ -56,6 +57,7 @@ pub(crate) fn writer_loop(
     command_rx: mpsc::Receiver<WriterCommand>,
     incident_tx: mpsc::Sender<IncidentReceipt>,
     ready: mpsc::Sender<Result<(), String>>,
+    runtime_log: Option<RuntimeLogHandle>,
 ) {
     let marker_path = run_marker_path(&config, &run_id);
     let started_at = Utc::now().to_rfc3339();
@@ -79,9 +81,10 @@ pub(crate) fn writer_loop(
 
     while let Ok(command) = command_rx.recv() {
         match command {
-            WriterCommand::Record { incident, emit } => {
+            WriterCommand::Record { mut incident, emit } => {
+                log_incident(&mut incident, false, runtime_log.as_ref());
                 let id = incident.incident_id.clone();
-                let outcome = persist_incident(&config, &incident);
+                let outcome = persist_incident(&config, &incident, runtime_log.as_ref());
                 if !emit {
                     incidents.insert(id, incident);
                 }
@@ -90,11 +93,12 @@ pub(crate) fn writer_loop(
                 }
             }
             WriterCommand::RecordAndWait {
-                incident,
+                mut incident,
                 emit,
                 response,
             } => {
-                let outcome = persist_incident(&config, &incident);
+                log_incident(&mut incident, false, runtime_log.as_ref());
+                let outcome = persist_incident(&config, &incident, runtime_log.as_ref());
                 if emit {
                     let _ = incident_tx.send(outcome.receipt.clone());
                 }
@@ -114,9 +118,17 @@ pub(crate) fn writer_loop(
                 fallback,
                 response,
             } => {
-                let mut incident = incidents.remove(&incident_id).unwrap_or(fallback);
+                let mut incident = match incidents.remove(&incident_id) {
+                    Some(incident) => incident,
+                    None => {
+                        let mut incident = fallback;
+                        log_incident(&mut incident, false, runtime_log.as_ref());
+                        incident
+                    }
+                };
                 incident.recovery = recovery;
-                let outcome = persist_incident(&config, &incident);
+                log_incident(&mut incident, true, runtime_log.as_ref());
+                let outcome = persist_incident(&config, &incident, runtime_log.as_ref());
                 let _ = incident_tx.send(outcome.receipt.clone());
                 let result = if outcome.durable {
                     Ok(outcome.receipt)
@@ -149,7 +161,83 @@ pub(crate) fn writer_loop(
     }
 }
 
-fn persist_incident(config: &WatchdogConfig, incident: &IncidentRecord) -> PersistOutcome {
+fn log_incident(incident: &mut IncidentRecord, finalized: bool, handle: Option<&RuntimeLogHandle>) {
+    let Some(handle) = handle else {
+        return;
+    };
+    let phase = if finalized {
+        if incident.recovery.is_recovered() {
+            if incident.panic_action == Some(crate::PanicAction::RestartTask) {
+                LogPhase::Retry
+            } else {
+                LogPhase::Recovered
+            }
+        } else {
+            LogPhase::Failed
+        }
+    } else {
+        LogPhase::Incident
+    };
+    let mut event = RuntimeLogEvent::new(
+        LogContext {
+            run_id: Some(incident.run_id.clone()),
+            app: incident
+                .app
+                .as_ref()
+                .map(|app| app.id.to_string())
+                .unwrap_or_else(|| incident.process_name.clone()),
+            module: "ux.watchdog".into(),
+            operation: incident.boundary.clone(),
+            task_id: incident.task_id.as_ref().map(ToString::to_string),
+            operation_id: incident.operation_id.clone(),
+            owner_id: incident.owner_id.clone(),
+        },
+        if phase == LogPhase::Recovered {
+            LogLevel::Info
+        } else {
+            match incident.severity {
+                crate::IncidentSeverity::Critical => LogLevel::Critical,
+                _ => LogLevel::Error,
+            }
+        },
+        phase,
+        if finalized {
+            format!("recovery result: {:?}", incident.recovery)
+        } else {
+            incident.summary()
+        },
+    );
+    event.incident_id = Some(incident.incident_id.clone());
+    event.error_code = Some(format!("WATCHDOG_{:?}", incident.kind).to_ascii_uppercase());
+    event.retry_count = incident.restart_attempt as u64;
+    if !finalized {
+        if let Some(error) = &incident.error {
+            event.os_error_code = error.os_error_code;
+            event.error_chain = std::iter::once(error.message.clone())
+                .chain(error.source_chain.iter().take(16).cloned())
+                .collect();
+        }
+        incident.log_event_id = Some(event.event_id.clone());
+    }
+    incident.breadcrumbs.push(crate::Breadcrumb::new(
+        "runtime-log",
+        format!(
+            "event={} run={} operation={} task={} phase={:?}",
+            event.event_id,
+            incident.run_id,
+            incident.operation_id.as_deref().unwrap_or(""),
+            event.context.task_id.as_deref().unwrap_or(""),
+            phase
+        ),
+    ));
+    handle.record(event);
+}
+
+fn persist_incident(
+    config: &WatchdogConfig,
+    incident: &IncidentRecord,
+    runtime_log: Option<&RuntimeLogHandle>,
+) -> PersistOutcome {
     let mut record = sanitize_incident(incident.clone());
     match write_report_pair(&config.report_dir, &record) {
         Ok((json, text)) => {
@@ -174,7 +262,28 @@ fn persist_incident(config: &WatchdogConfig, incident: &IncidentRecord) -> Persi
                         "watchdog could not persist incident {}: {primary_error}; fallback: {fallback_error}",
                         record.incident_id
                     );
-                    let _ = writeln!(std::io::stderr(), "{message}");
+                    append_emergency(config, &message);
+                    if let Some(handle) = runtime_log {
+                        let mut event = RuntimeLogEvent::new(
+                            LogContext {
+                                run_id: Some(record.run_id.clone()),
+                                app: record.process_name.clone(),
+                                module: "ux.watchdog".into(),
+                                operation: "report_persist".into(),
+                                owner_id: record.owner_id.clone(),
+                                task_id: record.task_id.as_ref().map(ToString::to_string),
+                                operation_id: record.operation_id.clone(),
+                            },
+                            LogLevel::Error,
+                            LogPhase::Failed,
+                            "incident report could not be persisted",
+                        );
+                        event.incident_id = Some(record.incident_id.clone());
+                        event.error_code = Some("WATCHDOG_REPORT_WRITE".into());
+                        crate::capture_error(&mut event, &primary_error);
+                        crate::capture_error(&mut event, &fallback_error);
+                        handle.record(event);
+                    }
                     PersistOutcome {
                         receipt: record.receipt(None, None),
                         durable: false,

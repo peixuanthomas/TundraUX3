@@ -12,6 +12,7 @@ pub(crate) const REPORT_SCHEMA_VERSION: u32 = 1;
 #[derive(Clone)]
 pub(crate) struct ExecutionContext {
     pub process: Option<crate::ProcessWatchdog>,
+    pub owner_id: Option<String>,
     pub incident_id: String,
     pub app: Option<AppDescriptor>,
     pub component: Option<String>,
@@ -35,6 +36,7 @@ impl ExecutionContext {
     pub(crate) fn process(incident_id: String, process: crate::ProcessWatchdog) -> Self {
         Self {
             process: Some(process),
+            owner_id: None,
             incident_id,
             app: None,
             component: None,
@@ -67,6 +69,8 @@ pub(crate) struct PanicDetails {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct ErrorDetails {
+    #[serde(default)]
+    pub os_error_code: Option<i64>,
     pub message: String,
     pub source_chain: Vec<String>,
     pub backtrace: String,
@@ -75,6 +79,10 @@ pub(crate) struct ErrorDetails {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct IncidentRecord {
     pub schema_version: u32,
+    #[serde(default)]
+    pub owner_id: Option<String>,
+    #[serde(default)]
+    pub log_event_id: Option<String>,
     pub incident_id: String,
     pub report_stem: String,
     pub kind: IncidentKind,

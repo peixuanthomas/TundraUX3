@@ -567,3 +567,100 @@ fn global_install_child() {
     let _ = fs::remove_dir_all(root);
     let _ = fs::remove_dir_all(second_root);
 }
+
+#[test]
+fn runtime_log_shares_owner_run_task_operation_and_incident_ids() {
+    use runtime_log::{LogLevel, LogPhase, LogQuery, RuntimeLogEvent};
+    let (runtime, process, root) = test_runtime("runtime-log-linkage");
+    let app = test_app(&process)
+        .with_log_owner(Some("alice".into()))
+        .with_log_task_id(TaskId::from_static("copy-17"));
+    let result = app.run_boundary(BoundarySpec::new("copy", BoundaryKind::Worker), || {
+        let mut operation = app
+            .begin_operation(OperationDescriptor::new(
+                OperationKind::from_static("test.copy"),
+                "copy file",
+                json!({}),
+            ))
+            .unwrap();
+        let context = app.log_context("copy");
+        assert_eq!(
+            context.operation_id.as_deref(),
+            Some(operation.operation_id())
+        );
+        let mut event =
+            RuntimeLogEvent::new(context, LogLevel::Error, LogPhase::Failed, "copy failed");
+        capture_error(&mut event, &std::io::Error::from_raw_os_error(13));
+        app.record_log(event);
+        let ticket = app.report_error(
+            ErrorContext::new("copy", IncidentSeverity::Error),
+            &std::io::Error::from_raw_os_error(13),
+        );
+        operation.commit("test completed").unwrap();
+        ticket
+    });
+    let ticket = result.ok().unwrap();
+    let receipt = receive_incident(&runtime);
+    assert_eq!(ticket.incident_id, receipt.incident_id);
+    let report: serde_json::Value =
+        serde_json::from_slice(&fs::read(receipt.json_report_path.unwrap()).unwrap()).unwrap();
+    assert_eq!(report["owner_id"], "alice");
+    assert_eq!(report["task_id"], "copy-17");
+    assert!(report["log_event_id"].is_string());
+    runtime.shutdown().unwrap();
+    let logs = runtime_log::query_logs(
+        &root.join("runtime"),
+        &LogQuery {
+            owner_id: Some("alice".into()),
+            ..LogQuery::default()
+        },
+    );
+    assert_eq!(logs.events.len(), 2);
+    assert!(
+        logs.events.iter().all(
+            |event| event.context.run_id.as_deref() == Some(process.run_id())
+                && event.context.task_id.as_deref() == Some("copy-17")
+                && event.os_error_code == Some(13)
+        )
+    );
+    assert_eq!(
+        logs.events[0].context.operation_id,
+        logs.events[1].context.operation_id
+    );
+    let linked = logs
+        .events
+        .iter()
+        .find(|event| event.incident_id.as_deref() == Some(ticket.incident_id.as_str()))
+        .unwrap();
+    assert_eq!(report["log_event_id"], linked.event_id);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn runtime_log_failure_does_not_prevent_watchdog_start() {
+    let root = std::env::temp_dir().join(format!(
+        "watchdog-log-failure-{}-{}",
+        std::process::id(),
+        NEXT_TEST_DIRECTORY.fetch_add(1, Ordering::Relaxed)
+    ));
+    fs::create_dir_all(&root).unwrap();
+    fs::write(root.join("runtime"), "occupied").unwrap();
+    let config = WatchdogConfig::new(
+        root.join("reports"),
+        root.join("fallback"),
+        root.join("data"),
+        "test",
+        "1",
+    );
+    let (runtime, process) = WatchdogRuntime::start_isolated(config).unwrap();
+    // The asynchronous writer may discover an unavailable directory after start.
+    test_app(&process).record_log(runtime_log::RuntimeLogEvent::new(
+        process.log_context("ux.test", "test"),
+        runtime_log::LogLevel::Info,
+        runtime_log::LogPhase::Observed,
+        "test",
+    ));
+    runtime.shutdown().unwrap();
+    assert!(process.runtime_log_health().write_failures > 0);
+    fs::remove_dir_all(root).unwrap();
+}

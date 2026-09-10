@@ -39,6 +39,8 @@ fn test_runtime(
 fn incident(incident_id: &str, occurred_at: DateTime<Utc>, message: &str) -> IncidentRecord {
     IncidentRecord {
         schema_version: REPORT_SCHEMA_VERSION,
+        owner_id: None,
+        log_event_id: None,
         incident_id: incident_id.to_string(),
         report_stem: incident_id.to_string(),
         kind: IncidentKind::Error,
@@ -71,6 +73,7 @@ fn incident(incident_id: &str, occurred_at: DateTime<Utc>, message: &str) -> Inc
         thread_id: "ThreadId(42)".to_string(),
         panic: None,
         error: Some(ErrorDetails {
+            os_error_code: None,
             message: message.to_string(),
             source_chain: vec!["private source detail".to_string()],
             backtrace: "private backtrace".to_string(),

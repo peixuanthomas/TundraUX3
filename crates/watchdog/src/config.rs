@@ -35,6 +35,9 @@ pub struct WatchdogConfig {
     pub heartbeat_flush_interval: Duration,
     pub task_shutdown_timeout: Duration,
     pub retention: RetentionPolicy,
+    pub runtime_log_max_age_days: u64,
+    pub runtime_log_max_total_bytes: u64,
+    pub runtime_log_segment_bytes: u64,
 }
 
 impl WatchdogConfig {
@@ -56,6 +59,9 @@ impl WatchdogConfig {
             heartbeat_flush_interval: Duration::from_secs(5),
             task_shutdown_timeout: Duration::from_secs(2),
             retention: RetentionPolicy::default(),
+            runtime_log_max_age_days: 30,
+            runtime_log_max_total_bytes: 200 * 1024 * 1024,
+            runtime_log_segment_bytes: 10 * 1024 * 1024,
         }
     }
 

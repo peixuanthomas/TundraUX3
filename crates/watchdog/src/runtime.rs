@@ -13,6 +13,10 @@ use crate::{
 };
 use crate::{durable, report_catalog, sanitize};
 use chrono::Utc;
+use runtime_log::{
+    LogContext, LogWriterHealth, RuntimeLogConfig, RuntimeLogEvent, RuntimeLogHandle,
+    RuntimeLogRuntime,
+};
 use serde::Deserialize;
 use std::backtrace::Backtrace;
 use std::cell::RefCell;
@@ -49,6 +53,8 @@ tokio::task_local! {
 pub(crate) struct Shared {
     pub(crate) config: WatchdogConfig,
     pub(crate) run_id: String,
+    runtime_log: Option<RuntimeLogHandle>,
+    runtime_log_start_error: Option<String>,
     command_tx: mpsc::Sender<WriterCommand>,
     incident_rx: Mutex<mpsc::Receiver<IncidentReceipt>>,
     apps: Mutex<HashMap<AppId, AppDescriptor>>,
@@ -78,6 +84,7 @@ pub struct WatchdogRuntime {
     process: ProcessWatchdog,
     writer: Option<JoinHandle<()>>,
     stopped: bool,
+    runtime_log: Option<RuntimeLogRuntime>,
 }
 
 #[derive(Clone)]
@@ -90,6 +97,8 @@ pub struct AppWatchdog {
     pub(crate) process: ProcessWatchdog,
     pub(crate) descriptor: AppDescriptor,
     pub(crate) component: String,
+    pub(crate) owner_id: Option<String>,
+    log_task_id: Option<TaskId>,
 }
 
 pub struct CaughtPanic {
@@ -160,9 +169,27 @@ impl WatchdogRuntime {
                 .map(|duration| duration.as_nanos())
                 .unwrap_or(0)
         );
+        let mut log_config = RuntimeLogConfig::new(
+            config
+                .report_dir
+                .parent()
+                .unwrap_or(&config.report_dir)
+                .join("runtime"),
+            run_id.clone(),
+        );
+        log_config.max_age_days = config.runtime_log_max_age_days;
+        log_config.max_total_bytes = config.runtime_log_max_total_bytes;
+        log_config.segment_bytes = config.runtime_log_segment_bytes;
+        let (runtime_log, runtime_log_start_error) = match RuntimeLogRuntime::start(log_config) {
+            Ok(runtime) => (Some(runtime), None),
+            Err(error) => (None, Some(runtime_log::sanitize_text(&error.to_string()))),
+        };
+        let log_handle = runtime_log.as_ref().map(RuntimeLogRuntime::handle);
         let shared = Arc::new(Shared {
             config: config.clone(),
             run_id: run_id.clone(),
+            runtime_log: log_handle.clone(),
+            runtime_log_start_error,
             command_tx,
             incident_rx: Mutex::new(incident_rx),
             apps: Mutex::new(HashMap::new()),
@@ -183,7 +210,16 @@ impl WatchdogRuntime {
         });
         let writer = thread::Builder::new()
             .name("tundra-watchdog-writer".to_string())
-            .spawn(move || writer::writer_loop(config, run_id, command_rx, incident_tx, ready_tx))
+            .spawn(move || {
+                writer::writer_loop(
+                    config,
+                    run_id,
+                    command_rx,
+                    incident_tx,
+                    ready_tx,
+                    log_handle,
+                )
+            })
             .map_err(WatchdogError::ThreadSpawn)?;
         match ready_rx.recv_timeout(Duration::from_secs(2)) {
             Ok(Ok(())) => {}
@@ -202,6 +238,7 @@ impl WatchdogRuntime {
                 process: process.clone(),
                 writer: Some(writer),
                 stopped: false,
+                runtime_log,
             },
             process,
         ))
@@ -271,6 +308,9 @@ impl WatchdogRuntime {
         if let Some(writer) = self.writer.take() {
             let _ = writer.join();
         }
+        if let Some(runtime) = self.runtime_log.take() {
+            runtime.shutdown();
+        }
         shutdown_result
     }
 }
@@ -282,10 +322,71 @@ impl Drop for WatchdogRuntime {
 }
 
 impl ProcessWatchdog {
+    pub fn run_id(&self) -> &str {
+        &self.shared.run_id
+    }
+
+    pub fn runtime_log_health(&self) -> LogWriterHealth {
+        self.shared
+            .runtime_log
+            .as_ref()
+            .map(RuntimeLogHandle::health)
+            .unwrap_or_else(|| LogWriterHealth {
+                write_failures: u64::from(self.shared.runtime_log_start_error.is_some()),
+                last_error: self.shared.runtime_log_start_error.clone(),
+                ..LogWriterHealth::default()
+            })
+    }
+
+    pub fn log_context(&self, module: &str, operation: &str) -> LogContext {
+        let current = current_execution_context().filter(|context| {
+            context
+                .process
+                .as_ref()
+                .is_some_and(|process| process.run_id() == self.run_id())
+        });
+        let operation_context = current.as_ref().and_then(|context| {
+            self.shared
+                .operation_contexts
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .get(&context.incident_id)
+                .and_then(|items| items.last())
+                .cloned()
+        });
+        LogContext {
+            run_id: Some(self.shared.run_id.clone()),
+            app: current
+                .as_ref()
+                .and_then(|context| context.app.as_ref())
+                .map(|app| app.id.to_string())
+                .unwrap_or_else(|| self.shared.config.process_name.clone()),
+            module: module.to_string(),
+            operation: operation.to_string(),
+            task_id: current
+                .as_ref()
+                .and_then(|context| context.task_id.as_ref().map(ToString::to_string)),
+            operation_id: current
+                .as_ref()
+                .and_then(|context| context.operation_id.clone())
+                .or_else(|| operation_context.map(|context| context.operation_id)),
+            owner_id: current.and_then(|context| context.owner_id),
+        }
+    }
+
+    pub fn record_log(&self, event: RuntimeLogEvent) {
+        if let Some(handle) = &self.shared.runtime_log {
+            handle.record(event);
+        }
+    }
+
     pub fn install_global(self) -> Result<Self, WatchdogError> {
         GLOBAL_WATCHDOG
             .set(self.clone())
             .map_err(|_| WatchdogError::AlreadyInstalled)?;
+        if let Some(handle) = &self.shared.runtime_log {
+            let _ = runtime_log::install_global(handle.clone());
+        }
         let previous = panic::take_hook();
         let process = self.clone();
         panic::set_hook(Box::new(move |panic_info| {
@@ -351,6 +452,8 @@ impl ProcessWatchdog {
         Ok(AppWatchdog {
             process: self.clone(),
             component: descriptor.id.to_string(),
+            owner_id: None,
+            log_task_id: None,
             descriptor,
         })
     }
@@ -456,6 +559,7 @@ impl ProcessWatchdog {
                 IncidentSeverity::Critical,
                 None,
                 Some(ErrorDetails {
+                os_error_code: None,
                     message: format!(
                         "previous run {} ended without a clean watchdog shutdown",
                         marker.run_id
@@ -528,6 +632,7 @@ impl ProcessWatchdog {
             IncidentSeverity::Critical,
             None,
             Some(ErrorDetails {
+                os_error_code: None,
                 message: format!("watchdog run marker {file_name} is unreadable or corrupt"),
                 source_chain: vec![sanitize::text(detail)],
                 backtrace: "unavailable for a corrupt run marker".to_string(),
@@ -577,6 +682,7 @@ impl ProcessWatchdog {
             IncidentSeverity::Critical,
             None,
             Some(ErrorDetails {
+                os_error_code: None,
                 message: sanitize::text(format!(
                     "managed task group {group} did not stop before watchdog shutdown"
                 )),
@@ -662,6 +768,8 @@ impl ProcessWatchdog {
             });
         IncidentRecord {
             schema_version: REPORT_SCHEMA_VERSION,
+            owner_id: context.owner_id.clone(),
+            log_event_id: None,
             incident_id: context.incident_id.clone(),
             report_stem,
             kind,
@@ -716,11 +824,53 @@ impl ProcessWatchdog {
 }
 
 impl AppWatchdog {
+    pub fn with_log_owner(mut self, owner_id: Option<String>) -> Self {
+        self.owner_id = owner_id;
+        self
+    }
+
+    pub fn with_log_task_id(mut self, task_id: TaskId) -> Self {
+        self.log_task_id = Some(task_id);
+        self
+    }
+
+    pub fn log_context(&self, operation: &str) -> LogContext {
+        let mut context = self
+            .process
+            .log_context(&format!("ux.{}", self.descriptor.id), operation);
+        context.app = self.descriptor.id.to_string();
+        context.task_id = self
+            .log_task_id
+            .as_ref()
+            .map(ToString::to_string)
+            .or(context.task_id);
+        context.owner_id = self.owner_id.clone().or(context.owner_id);
+        context
+    }
+
+    /// Submit metadata without blocking the caller and retain the event ID as a breadcrumb.
+    pub fn record_log(&self, event: RuntimeLogEvent) {
+        self.breadcrumb(Breadcrumb::new(
+            "runtime-log",
+            format!(
+                "event={} run={} operation={} task={} phase={:?}",
+                event.event_id,
+                event.context.run_id.as_deref().unwrap_or(""),
+                event.context.operation_id.as_deref().unwrap_or(""),
+                event.context.task_id.as_deref().unwrap_or(""),
+                event.phase
+            ),
+        ));
+        self.process.record_log(event);
+    }
+
     pub fn child_component(&self, id: ComponentId) -> AppWatchdog {
         Self {
             process: self.process.clone(),
             descriptor: self.descriptor.clone(),
             component: format!("{}/{}", self.component, id),
+            owner_id: self.owner_id.clone(),
+            log_task_id: self.log_task_id.clone(),
         }
     }
 
@@ -735,12 +885,17 @@ impl AppWatchdog {
         let mut context =
             self.execution_context(spec.id, spec.kind, spec.owns_terminal, None, None, None, 0);
         if let Some(parent) = current_execution_context() {
-            context.task_id = parent.task_id;
+            context.owner_id = self.owner_id.clone().or(parent.owner_id);
+            context.task_id = self.log_task_id.clone().or(parent.task_id);
             context.task_group = parent.task_group;
             context.task_kind = parent.task_kind;
             context.replay_safety = parent.replay_safety;
             context.operation_kind = parent.operation_kind;
-            context.operation_id = parent.operation_id;
+            context.operation_id = parent.operation_id.or_else(|| {
+                self.process
+                    .log_context("ux.watchdog", "boundary")
+                    .operation_id
+            });
             context.recovery_handler_version = parent.recovery_handler_version;
             context.panic_action = parent.panic_action;
             context.restart_policy = parent.restart_policy;
@@ -809,7 +964,11 @@ impl AppWatchdog {
         }
     }
 
-    pub fn report_error(&self, context: ErrorContext, error: &dyn Error) -> IncidentTicket {
+    pub fn report_error(
+        &self,
+        context: ErrorContext,
+        error: &(dyn Error + 'static),
+    ) -> IncidentTicket {
         let execution = self.execution_context(
             context.boundary,
             BoundaryKind::Worker,
@@ -819,9 +978,16 @@ impl AppWatchdog {
             None,
             0,
         );
+        let mut captured = RuntimeLogEvent::new(
+            self.log_context(&execution.boundary),
+            runtime_log::LogLevel::Error,
+            runtime_log::LogPhase::Failed,
+            "reported error",
+        );
+        crate::capture_error(&mut captured, error);
         let mut source_chain = Vec::new();
         let mut source = error.source();
-        while let Some(current) = source {
+        while let Some(current) = source.filter(|_| source_chain.len() < 16) {
             source_chain.push(sanitize::text(current.to_string()));
             source = current.source();
         }
@@ -831,6 +997,7 @@ impl AppWatchdog {
             context.severity,
             None,
             Some(ErrorDetails {
+                os_error_code: captured.os_error_code,
                 message: sanitize::text(error.to_string()),
                 source_chain,
                 backtrace: Backtrace::force_capture().to_string(),
@@ -968,6 +1135,7 @@ impl AppWatchdog {
             severity,
             None,
             Some(ErrorDetails {
+                os_error_code: None,
                 message: sanitize::text(format!(
                     "operation recovery completed with outcome {outcome:?}"
                 )),
@@ -993,6 +1161,8 @@ impl AppWatchdog {
             process,
             descriptor: app,
             component: context.component.unwrap_or_else(|| "app".to_string()),
+            owner_id: context.owner_id,
+            log_task_id: context.task_id,
         })
     }
 
@@ -1031,12 +1201,16 @@ impl AppWatchdog {
         operation_kind: Option<OperationKind>,
         restart_attempt: usize,
     ) -> ExecutionContext {
+        let inherited = self.process.log_context("ux.watchdog", &boundary);
         ExecutionContext {
             process: Some(self.process.clone()),
+            owner_id: self.owner_id.clone().or(inherited.owner_id),
             incident_id: self.process.next_incident_id(),
             app: Some(self.descriptor.clone()),
             component: Some(self.component.clone()),
-            task_id,
+            task_id: task_id
+                .or_else(|| self.log_task_id.clone())
+                .or_else(|| inherited.task_id.and_then(|id| TaskId::new(id).ok())),
             task_group: None,
             boundary,
             boundary_kind,
@@ -1044,7 +1218,7 @@ impl AppWatchdog {
             task_kind,
             replay_safety: None,
             operation_kind,
-            operation_id: None,
+            operation_id: inherited.operation_id,
             recovery_handler_version: None,
             panic_action: None,
             restart_policy: None,

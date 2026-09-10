@@ -228,6 +228,11 @@ impl ManagedTaskGroup {
                     let context = task_context(&app, &thread_spec, &task_name, attempt);
                     match runtime::catch_factory(context.clone(), &mut factory) {
                         Ok(value) => {
+                            log_restarted_completion(
+                                &app,
+                                &context,
+                                worker_control.cancelled.load(Ordering::Acquire),
+                            );
                             return (!worker_control.cancelled.load(Ordering::Acquire))
                                 .then_some(value);
                         }
@@ -350,6 +355,11 @@ impl ManagedTaskGroup {
                 .await;
                 match result {
                     Ok(value) => {
+                        log_restarted_completion(
+                            &app,
+                            &context,
+                            manager_control.cancelled.load(Ordering::Acquire),
+                        );
                         return (!manager_control.cancelled.load(Ordering::Acquire))
                             .then_some(value);
                     }
@@ -555,6 +565,10 @@ impl ManagedTaskGroup {
 }
 
 impl<T> ManagedThreadHandle<T> {
+    pub fn is_finished(&self) -> bool {
+        self.control.completed.load(Ordering::Acquire)
+    }
+
     pub fn cancel(&self) {
         self.control.cancel();
     }
@@ -722,4 +736,30 @@ fn payload_to_string(payload: &(dyn std::any::Any + Send)) -> String {
     } else {
         "panic payload was not a string".to_string()
     }
+}
+
+fn log_restarted_completion(app: &AppWatchdog, context: &ExecutionContext, cancelled: bool) {
+    if context.restart_attempt == 0 {
+        return;
+    }
+    let mut log_context = app.log_context(&context.boundary);
+    log_context.module = "ux.watchdog".into();
+    log_context.task_id = context.task_id.as_ref().map(ToString::to_string);
+    log_context.operation_id = context.operation_id.clone();
+    let mut event = runtime_log::RuntimeLogEvent::new(
+        log_context,
+        runtime_log::LogLevel::Info,
+        if cancelled {
+            runtime_log::LogPhase::Cancelled
+        } else {
+            runtime_log::LogPhase::Recovered
+        },
+        if cancelled {
+            "restarted task cancelled"
+        } else {
+            "restarted task completed successfully"
+        },
+    );
+    event.retry_count = context.restart_attempt as u64;
+    app.record_log(event);
 }
