@@ -65,6 +65,16 @@ pub struct ThemeTokens {
 }
 
 impl ThemeTokens {
+    /// Text over a solid fill uses whichever of black and white has the higher
+    /// sRGB contrast ratio. ANSI colours use the conventional xterm palette;
+    /// terminals can override that palette. `Reset` has no known RGB value, so
+    /// retain the theme's ordinary text colour for the terminal default.
+    pub fn filled_style(&self, background: Color) -> Style {
+        Style::default()
+            .fg(contrast_text(background).unwrap_or(self.text))
+            .bg(background)
+    }
+
     /// The fixed Glacier Night base palette.
     pub const fn glacier_night() -> Self {
         Self {
@@ -807,6 +817,78 @@ impl Default for TundraTheme {
     fn default() -> Self {
         Self::default_dark()
     }
+}
+
+fn contrast_text(background: Color) -> Option<Color> {
+    let (red, green, blue) = color_rgb(background)?;
+    let linear = |channel: u8| {
+        let channel = f64::from(channel) / 255.0;
+        if channel <= 0.04045 {
+            channel / 12.92
+        } else {
+            ((channel + 0.055) / 1.055).powf(2.4)
+        }
+    };
+    let luminance = 0.2126 * linear(red) + 0.7152 * linear(green) + 0.0722 * linear(blue);
+    let black_contrast = (luminance + 0.05) / 0.05;
+    let white_contrast = 1.05 / (luminance + 0.05);
+    Some(if black_contrast >= white_contrast {
+        Color::Black
+    } else {
+        Color::White
+    })
+}
+
+fn color_rgb(color: Color) -> Option<(u8, u8, u8)> {
+    const ANSI: [(u8, u8, u8); 16] = [
+        (0, 0, 0),
+        (128, 0, 0),
+        (0, 128, 0),
+        (128, 128, 0),
+        (0, 0, 128),
+        (128, 0, 128),
+        (0, 128, 128),
+        (192, 192, 192),
+        (128, 128, 128),
+        (255, 0, 0),
+        (0, 255, 0),
+        (255, 255, 0),
+        (0, 0, 255),
+        (255, 0, 255),
+        (0, 255, 255),
+        (255, 255, 255),
+    ];
+    let index = match color {
+        Color::Reset => return None,
+        Color::Rgb(red, green, blue) => return Some((red, green, blue)),
+        Color::Indexed(index @ 16..=231) => {
+            const LEVELS: [u8; 6] = [0, 95, 135, 175, 215, 255];
+            let index = usize::from(index - 16);
+            return Some((LEVELS[index / 36], LEVELS[index / 6 % 6], LEVELS[index % 6]));
+        }
+        Color::Indexed(index @ 232..=255) => {
+            let gray = 8 + (index - 232) * 10;
+            return Some((gray, gray, gray));
+        }
+        Color::Indexed(index) => usize::from(index),
+        Color::Black => 0,
+        Color::Red => 1,
+        Color::Green => 2,
+        Color::Yellow => 3,
+        Color::Blue => 4,
+        Color::Magenta => 5,
+        Color::Cyan => 6,
+        Color::Gray => 7,
+        Color::DarkGray => 8,
+        Color::LightRed => 9,
+        Color::LightGreen => 10,
+        Color::LightYellow => 11,
+        Color::LightBlue => 12,
+        Color::LightMagenta => 13,
+        Color::LightCyan => 14,
+        Color::White => 15,
+    };
+    Some(ANSI[index])
 }
 
 fn mix(foreground: Color, background: Color, foreground_percent: u8) -> Color {

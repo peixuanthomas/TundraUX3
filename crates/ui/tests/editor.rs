@@ -16,6 +16,38 @@ use ui::{
 };
 
 #[test]
+fn filled_editor_selection_and_status_follow_light_and_dark_accents() {
+    for (accent, foreground) in [(Color::Yellow, Color::Black), (Color::Blue, Color::White)] {
+        let theme = TundraTheme::default().with_accent_color(accent);
+        let mut model = EditorViewModel::source("note.txt", "Selected text");
+        model.cursor = None;
+        model.selection_offsets = Some(EditorSourceSelection::new(0, 8));
+        for focus in [EditorFocus::Canvas, EditorFocus::StatusBar] {
+            model.focus = focus;
+            let mut terminal = Terminal::new(TestBackend::new(80, 18)).unwrap();
+            terminal
+                .draw(|frame| {
+                    render_editor(frame, frame.area(), &model, &theme);
+                })
+                .unwrap();
+            let selected = find_text(&terminal, "Selected");
+            let cell = &terminal.backend().buffer()[selected];
+            assert_eq!(cell.bg, accent);
+            assert_eq!(cell.fg, foreground);
+            let status = editor_layout(Rect::new(0, 0, 80, 18), &model).status_bar;
+            let cell = &terminal.backend().buffer()[(status.x, status.y)];
+            let background = if focus == EditorFocus::StatusBar {
+                accent
+            } else {
+                theme.muted
+            };
+            assert_eq!(cell.bg, background);
+            assert_eq!(cell.fg, theme.tokens().filled_style(background).fg.unwrap());
+        }
+    }
+}
+
+#[test]
 fn c_source_colours_tokens_and_preserves_selection_and_text() {
     let source =
         "#include <stdio.h>\nint main(void) {\n  // 中文注释\n  puts(\"hello\"); return 42;\n}";

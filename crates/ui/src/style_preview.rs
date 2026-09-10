@@ -5,12 +5,12 @@ use ratatui::{
     Frame,
     layout::{Constraint, Flex, Layout, Rect},
     style::{Modifier, Style},
-    widgets::{Gauge, Paragraph, Wrap},
+    widgets::{Paragraph, Wrap},
 };
 
 use crate::{
     RenderContext,
-    components::{Button, Dialog, List, Surface, TextInput},
+    components::{Button, Dialog, List, ProgressGauge, Surface, TextInput},
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -251,16 +251,17 @@ pub fn render_preview(frame: &mut Frame<'_>, view: &PreviewView<'_>, context: &R
         meter.inner(layout.progress)
     };
     frame.render_widget(
-        Gauge::default()
-            .ratio(view.displayed.clamp(0.0, 1.0))
-            .use_unicode(true)
-            .label(format!(
+        ProgressGauge::new(
+            format!(
                 "{status}  {:.0}%  / target {:.0}%",
                 view.displayed * 100.0,
                 view.target * 100.0
-            ))
-            .gauge_style(Style::default().fg(tokens.accent).bg(tokens.raised))
-            .style(theme.body_style()),
+            ),
+            view.displayed,
+            tokens.accent,
+            tokens.raised,
+            &tokens,
+        ),
         progress_area,
     );
 

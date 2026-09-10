@@ -294,9 +294,9 @@ fn render_settings(
         let style = if !settings.editable {
             theme.muted_style()
         } else if settings.selected == field {
-            Style::default()
-                .fg(theme.background)
-                .bg(theme.accent_color)
+            theme
+                .tokens()
+                .filled_style(theme.accent_color)
                 .add_modifier(Modifier::BOLD)
         } else {
             theme.body_style()
@@ -595,9 +595,9 @@ fn render_status_bar(
     };
     let text = terminal_safe_text(&text).into_owned();
     let style = if model.focus == EditorFocus::StatusBar {
-        Style::default().fg(theme.background).bg(theme.accent_color)
+        theme.tokens().filled_style(theme.accent_color)
     } else {
-        Style::default().fg(theme.foreground).bg(theme.muted)
+        theme.tokens().filled_style(theme.muted)
     };
     frame.render_widget(
         Paragraph::new(text)
@@ -681,8 +681,7 @@ fn styled_line(
             };
             let style = if selected {
                 base_style
-                    .fg(theme.background)
-                    .bg(theme.accent_color)
+                    .patch(theme.tokens().filled_style(theme.accent_color))
                     .add_modifier(Modifier::BOLD)
             } else {
                 base_style

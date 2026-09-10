@@ -2,9 +2,9 @@ use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::Line;
-use ratatui::widgets::{Bar, BarChart, BarGroup, Gauge, Paragraph, Sparkline};
+use ratatui::widgets::{Bar, BarChart, BarGroup, Paragraph, Sparkline};
 
-use super::{ComponentState, EmptyState, Surface, tone_color};
+use super::{ComponentState, EmptyState, ProgressGauge, Surface, tone_color};
 use crate::{
     RenderContext, SystemStatusWidgetSize, SystemStatusWidgetState, SystemStatusWidgetViewModel,
 };
@@ -139,19 +139,18 @@ impl<'a> MetricCard<'a> {
         if gauge_h > 0 {
             let value = self.model.progress_percent.unwrap_or_default().min(100);
             frame.render_widget(
-                Gauge::default()
-                    .ratio(
-                        f64::from(
-                            self.model
-                                .display_basis_points
-                                .unwrap_or(value * 100)
-                                .min(10_000),
-                        ) / 10_000.0,
-                    )
-                    .use_unicode(true)
-                    .label(format!("{value}%"))
-                    .gauge_style(Style::default().fg(tone_color(self.model.tone, theme)))
-                    .style(theme.surface_style()),
+                ProgressGauge::new(
+                    format!("{value}%"),
+                    f64::from(
+                        self.model
+                            .display_basis_points
+                            .unwrap_or(value * 100)
+                            .min(10_000),
+                    ) / 10_000.0,
+                    tone_color(self.model.tone, theme),
+                    context.theme.surface,
+                    &context.theme,
+                ),
                 gauge_area,
             );
         }
@@ -171,7 +170,11 @@ impl<'a> MetricCard<'a> {
                 BarChart::default()
                     .data(BarGroup::default().bars(&bars))
                     .bar_style(Style::default().fg(tone_color(self.model.tone, theme)))
-                    .value_style(theme.muted_style())
+                    .value_style(
+                        context
+                            .theme
+                            .filled_style(tone_color(self.model.tone, theme)),
+                    )
                     .max(100),
                 bars_area,
             );

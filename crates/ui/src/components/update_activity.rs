@@ -1,6 +1,6 @@
-use super::{DataTable, Surface, visible_scrolled_rect};
+use super::{DataTable, ProgressGauge, Surface, visible_scrolled_rect};
 use crate::RenderContext;
-use ratatui::{Frame, layout::Rect, style::Style, widgets::Gauge};
+use ratatui::{Frame, layout::Rect};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UpdateMeterViewModel {
@@ -52,7 +52,6 @@ impl<'a> UpdateActivity<'a> {
         y: i32,
         context: &RenderContext,
     ) {
-        let theme = context.compatibility_theme();
         if let Some((area, _)) = visible_scrolled_rect(clip.x, y, clip.width, 4, clip) {
             Surface::new()
                 .titled(" Progress ")
@@ -72,19 +71,18 @@ impl<'a> UpdateActivity<'a> {
                 clip,
             ) {
                 frame.render_widget(
-                    Gauge::default()
-                        .ratio(
-                            f64::from(
-                                meter
-                                    .display_basis_points
-                                    .unwrap_or(meter.percent.unwrap_or(0).min(100) * 100)
-                                    .min(10_000),
-                            ) / 10_000.0,
-                        )
-                        .use_unicode(true)
-                        .label(meter.label.as_str())
-                        .gauge_style(Style::default().fg(context.theme.accent))
-                        .style(theme.surface_style()),
+                    ProgressGauge::new(
+                        meter.label.as_str(),
+                        f64::from(
+                            meter
+                                .display_basis_points
+                                .unwrap_or(meter.percent.unwrap_or(0).min(100) * 100)
+                                .min(10_000),
+                        ) / 10_000.0,
+                        context.theme.accent,
+                        context.theme.surface,
+                        &context.theme,
+                    ),
                     area,
                 );
             }

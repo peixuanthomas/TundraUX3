@@ -1,11 +1,11 @@
 use super::{layout::SystemStatusLayout, model::*};
 use crate::RenderContext;
-use crate::components::{EmptyState, Surface, tone_color};
+use crate::components::{EmptyState, ProgressGauge, Surface, tone_color};
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::Line;
-use ratatui::widgets::{Gauge, Paragraph, Sparkline};
+use ratatui::widgets::{Paragraph, Sparkline};
 
 pub(super) fn render_overview(
     frame: &mut Frame<'_>,
@@ -149,18 +149,18 @@ fn render_metric(
     if let Some(percent) = metric.progress_percent {
         // A fixed 0–100 scale makes CPU, RAM, disk and battery comparable.
         frame.render_widget(
-            Gauge::default()
-                .ratio(
-                    f64::from(
-                        metric
-                            .display_basis_points
-                            .unwrap_or(percent.min(100) * 100)
-                            .min(10_000),
-                    ) / 10_000.0,
-                )
-                .use_unicode(true)
-                .label(metric.primary.as_str())
-                .gauge_style(style),
+            ProgressGauge::new(
+                metric.primary.as_str(),
+                f64::from(
+                    metric
+                        .display_basis_points
+                        .unwrap_or(percent.min(100) * 100)
+                        .min(10_000),
+                ) / 10_000.0,
+                color,
+                context.theme.raised,
+                &context.theme,
+            ),
             Rect::new(graph.x, graph.y, graph.width, u16::from(graph.height > 0)),
         );
         if graph.height > 1 {
