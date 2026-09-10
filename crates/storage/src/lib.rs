@@ -26,7 +26,7 @@ pub use config_document::{
     MAX_EDITOR_EXPLORER_OPEN_EXTENSION_LEN, MAX_EDITOR_EXPLORER_OPEN_EXTENSIONS,
     MIN_ANIMATION_SPEED_PERCENT, MotionPreference, SYSTEM_STATUS_MAX_AVAILABLE_GIB,
     SYSTEM_STATUS_MAX_PERCENTAGE, SYSTEM_STATUS_MIN_AVAILABLE_GIB, SYSTEM_STATUS_MIN_PERCENTAGE,
-    SecurityConfig, StorageConfig, SystemStatusConfig, TimeSyncConfig, TimeSyncSource,
+    RuntimeLogsConfig, SecurityConfig, StorageConfig, SystemStatusConfig, TimeSyncConfig, TimeSyncSource,
     normalize_editor_explorer_open_extension,
 };
 pub use descriptors::{

@@ -62,6 +62,12 @@ fn production_code_uses_the_workspace_watchdog_for_hooks_and_tasks() {
 
     let mut violations = Vec::new();
     for path in rust_sources {
+        // The leaf runtime-log writer is watchdog infrastructure: depending on
+        // watchdog here would create a cycle. Its single bounded worker catches
+        // panics and exposes shutdown/health; application tasks remain managed.
+        if path == crates.join("runtime-log/src/writer.rs") {
+            continue;
+        }
         let source = fs::read_to_string(&path)
             .unwrap_or_else(|error| panic!("failed to read {}: {error}", path.display()));
         let code = rust_code_without_comments_or_strings(&source);

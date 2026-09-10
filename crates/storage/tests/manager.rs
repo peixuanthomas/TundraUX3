@@ -175,6 +175,7 @@ fn toml_and_json_documents_round_trip() {
             allow_release_debug: true,
         },
         system_status: storage::SystemStatusConfig::default(),
+        runtime_logs: storage::RuntimeLogsConfig::default(),
     };
     manager
         .save_config(&config)

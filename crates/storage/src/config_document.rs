@@ -41,6 +41,8 @@ pub struct StorageConfig {
     pub security: SecurityConfig,
     #[serde(default)]
     pub system_status: SystemStatusConfig,
+    #[serde(default)]
+    pub runtime_logs: RuntimeLogsConfig,
 }
 
 impl StorageConfig {
@@ -56,6 +58,7 @@ impl StorageConfig {
         changed |= self.editor.normalize();
         changed |= self.time_sync.normalize();
         changed |= self.system_status.normalize();
+        changed |= self.runtime_logs.normalize();
         if self.language != SUPPORTED_LANGUAGE {
             self.language = SUPPORTED_LANGUAGE.to_string();
             changed = true;
@@ -80,11 +83,40 @@ impl Default for StorageConfig {
             launcher: LauncherConfig::default(),
             security: SecurityConfig::default(),
             system_status: SystemStatusConfig::default(),
+            runtime_logs: RuntimeLogsConfig::default(),
         }
     }
 }
 
 pub const SYSTEM_STATUS_MIN_AVAILABLE_GIB: u16 = 1;
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(default)]
+pub struct RuntimeLogsConfig {
+    pub max_age_days: u64,
+    pub max_total_mib: u64,
+    pub segment_mib: u64,
+}
+
+impl RuntimeLogsConfig {
+    fn normalize(&mut self) -> bool {
+        let before = self.clone();
+        self.max_age_days = self.max_age_days.max(1);
+        self.max_total_mib = self.max_total_mib.max(1);
+        self.segment_mib = self.segment_mib.max(1).min(self.max_total_mib);
+        *self != before
+    }
+}
+
+impl Default for RuntimeLogsConfig {
+    fn default() -> Self {
+        Self {
+            max_age_days: 30,
+            max_total_mib: 200,
+            segment_mib: 10,
+        }
+    }
+}
 pub const SYSTEM_STATUS_MAX_AVAILABLE_GIB: u16 = 1024;
 pub const SYSTEM_STATUS_MIN_PERCENTAGE: u8 = 1;
 pub const SYSTEM_STATUS_MAX_PERCENTAGE: u8 = 100;
@@ -856,5 +888,22 @@ mod glacier_migration_tests {
         assert_eq!(inverted.critical_available_gib, 20);
         assert_eq!(inverted.critical_percentage, 30);
         assert!(!inverted.normalize());
+    }
+}
+
+#[cfg(test)]
+mod runtime_log_config_tests {
+    use super::*;
+    #[test]
+    fn old_configs_receive_log_retention_defaults_and_invalid_sizes_normalize() {
+        let mut value = serde_json::to_value(StorageConfig::default()).unwrap();
+        value.as_object_mut().unwrap().remove("runtime_logs");
+        let mut config: StorageConfig = serde_json::from_value(value).unwrap();
+        assert_eq!(config.runtime_logs, RuntimeLogsConfig::default());
+        config.runtime_logs.max_total_mib = 0;
+        config.runtime_logs.segment_mib = 10;
+        assert!(config.normalize());
+        assert_eq!(config.runtime_logs.max_total_mib, 1);
+        assert_eq!(config.runtime_logs.segment_mib, 1);
     }
 }

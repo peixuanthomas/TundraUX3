@@ -165,7 +165,13 @@ impl SystemStatusDashboardConfig {
 
     pub fn normalize(&mut self) {
         let mut seen = HashSet::new();
-        self.widgets.retain(|kind| seen.insert(*kind));
+        // Keep legacy variants deserializable while migrating only their placements.
+        self.widgets.retain(|kind| {
+            !matches!(
+                kind,
+                SystemStatusWidgetKind::Logs | SystemStatusWidgetKind::Incidents
+            ) && seen.insert(*kind)
+        });
         normalize_layout(
             &mut self.wide,
             &self.widgets,
@@ -607,5 +613,28 @@ mod tests {
             first_fit(&occupied, SystemStatusWidgetSize::Small, 4, 0, u16::MAX),
             (0, 0)
         );
+    }
+}
+
+#[cfg(test)]
+mod logs_migration_tests {
+    use super::*;
+    #[test]
+    fn legacy_logs_and_incidents_are_removed_without_repositioning_other_widgets() {
+        let mut config: SystemStatusDashboardConfig = serde_json::from_str(r#"{"widgets":["cpu","activity","incidents"],"wide":{"placements":[{"kind":"cpu","column":4,"row":6,"size":"small"},{"kind":"logs","column":0,"row":0,"size":"small"}]},"narrow":{"placements":[]}}"#).unwrap();
+        config.normalize();
+        assert_eq!(config.widgets, vec![SystemStatusWidgetKind::Cpu]);
+        assert_eq!(config.wide.placements.len(), 1);
+        assert_eq!(
+            (
+                config.wide.placements[0].column,
+                config.wide.placements[0].row
+            ),
+            (4, 6)
+        );
+        assert_eq!(config.narrow.placements.len(), 1);
+        let encoded = serde_json::to_string(&config).unwrap();
+        assert!(!encoded.contains("logs"));
+        assert!(!encoded.contains("incidents"));
     }
 }
