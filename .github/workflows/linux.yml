@@ -25,6 +25,11 @@ jobs:
           sudo "$test_binary" --ignored --exact linux::root_trash_tests::root_trash_handles_other_users_and_preserves_private_metadata
       - name: Test system metrics
         run: |
+          cargo test --locked -p platform --test linux_logs
+          cargo test --locked -p runtime-log
+          cargo test --locked -p app runtime_logs
+          cargo test --locked -p cli --test logs
+          cargo test --locked -p ui --test logs
           cargo test --locked -p platform --test system_status
           cargo test --locked -p system-services --no-default-features
           cargo test --locked -p system-services --features runtime
@@ -54,6 +59,11 @@ jobs:
       - name: Test system metrics
         run: |
           source "$HOME/.cargo/env"
+          cargo test --locked -p platform --test linux_logs
+          cargo test --locked -p runtime-log
+          cargo test --locked -p app runtime_logs
+          cargo test --locked -p cli --test logs
+          cargo test --locked -p ui --test logs
           cargo test --locked -p platform --test system_status
           cargo test --locked -p system-services --no-default-features
           cargo test --locked -p system-services --features runtime

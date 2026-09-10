@@ -47,3 +47,5 @@ Linux 端使用系统用户列表和 PAM 系统密码验证，跳过 UX 本地�
 用户选择用于身份和 UX 偏好，不切换进程的 UID 或 HOME。
 账号与密码通过 Linux 工具管理。依赖、数据目录及验证说明见
 [Linux 运行说明](packaging/linux/README-LINUX.txt)。
+
+运行日志与诊断导出请参阅 [Logs APP 使用与存储说明](LOGS.md)。
