@@ -49,6 +49,7 @@ dependencies = [
  "platform",
  "reqwest",
  "ropey",
+ "runtime-log",
  "semver",
  "serde",
  "serde_json",
@@ -617,8 +618,11 @@ dependencies = [
  "app",
  "arboard",
  "ascii-assets",
+ "chrono",
  "platform",
+ "runtime-log",
  "rustyline",
+ "serde_json",
  "shell",
  "shlex",
  "storage",
@@ -1286,6 +1290,16 @@ dependencies = [
  "thiserror 2.0.18",
  "unicase",
  "xdg",
+]
+
+[[package]]
+name = "fs2"
+version = "0.4.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9564fc758e15025b46aa6643b1b77d047d1a56a1aea6e01002ac0c7026876213"
+dependencies = [
+ "libc",
+ "winapi",
 ]
 
 [[package]]
@@ -2896,12 +2910,15 @@ version = "1.3.0"
 dependencies = [
  "arboard",
  "battery",
+ "chrono",
  "freedesktop-desktop-entry",
  "image",
  "libc",
  "ratatui-image",
  "resvg",
+ "runtime-log",
  "same-file",
+ "serde_json",
  "signal-hook",
  "sysinfo",
  "watchdog",
@@ -3569,6 +3586,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "runtime-log"
+version = "1.3.0"
+dependencies = [
+ "chrono",
+ "fs2",
+ "serde",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
 name = "rustc-hash"
 version = "2.1.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3922,6 +3950,7 @@ dependencies = [
  "platform",
  "portable-pty",
  "ratatui",
+ "runtime-log",
  "storage",
  "system-services",
  "tachyonfx",
@@ -4234,6 +4263,7 @@ dependencies = [
  "dirs",
  "platform",
  "reqwest",
+ "runtime-log",
  "serde",
  "serde_json",
  "tempfile",
@@ -5090,6 +5120,7 @@ version = "1.3.0"
 dependencies = [
  "chrono",
  "futures-util",
+ "runtime-log",
  "serde",
  "serde_json",
  "tokio",

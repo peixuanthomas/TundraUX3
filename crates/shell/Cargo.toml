@@ -11,6 +11,7 @@ name = "tundra-shell"
 path = "src/main.rs"
 
 [dependencies]
+runtime-log = { path = "../runtime-log" }
 chrono = { version = "0.4", features = ["serde"] }
 chrono-tz = "0.10"
 crossterm.workspace = true

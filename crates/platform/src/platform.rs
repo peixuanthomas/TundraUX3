@@ -481,6 +481,21 @@ impl PlatformIcon {
 }
 
 pub trait Platform: Send + Sync {
+    fn query_linux_logs(
+        &self,
+        query: &runtime_log::LogQuery,
+        cancelled: &std::sync::atomic::AtomicBool,
+    ) -> runtime_log::LogQueryResult {
+        if self.is_native_backend() {
+            crate::query_linux_logs(query, cancelled)
+        } else {
+            runtime_log::LogQueryResult {
+                state: runtime_log::LogSourceState::Unsupported,
+                notices: vec!["Linux log provider is unavailable".into()],
+                ..Default::default()
+            }
+        }
+    }
     fn kind(&self) -> PlatformKind;
     fn capabilities(&self) -> PlatformCapabilities;
 

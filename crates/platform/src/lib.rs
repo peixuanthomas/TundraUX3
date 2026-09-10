@@ -1,4 +1,6 @@
 mod diagnostics;
+pub mod linux_logs;
+pub use linux_logs::query_linux_logs;
 mod document;
 #[cfg(target_os = "linux")]
 pub mod linux;

@@ -1,5 +1,6 @@
 [workspace]
 members = [
+    "crates/runtime-log",
     "crates/app",
     "crates/ascii-assets",
     "crates/cli",

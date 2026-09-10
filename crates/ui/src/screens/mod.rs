@@ -7,6 +7,8 @@ pub(crate) mod editor;
 pub(crate) mod explorer;
 pub(crate) mod home;
 pub(crate) mod launcher;
+pub(crate) mod logs;
+pub use logs::*;
 pub(crate) mod notifications;
 mod panic;
 pub(crate) mod settings;

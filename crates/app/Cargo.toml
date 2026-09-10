@@ -8,6 +8,7 @@ build = "build.rs"
 path = "src/lib.rs"
 
 [dependencies]
+runtime-log = { path = "../runtime-log" }
 chrono = "0.4"
 comrak = { version = "0.54", default-features = false }
 ropey = { version = "1.6", default-features = false, features = ["cr_lines", "simd"] }

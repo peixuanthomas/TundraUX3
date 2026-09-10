@@ -12,6 +12,7 @@ runtime = [
 ]
 
 [dependencies]
+runtime-log = { path = "../runtime-log" }
 async-trait = { version = "0.1", optional = true }
 chrono = { version = "0.4", features = ["serde"] }
 chrono-tz = { version = "0.10", optional = true }
