@@ -413,6 +413,30 @@ impl ShellSession {
                     snapshot,
                     restart_required,
                 } => {
+                    if let Some(context) = self.diagnostics_repair_log_context.take() {
+                        for result in &results {
+                            let mut event = runtime_log::RuntimeLogEvent::new(
+                                context.clone(),
+                                if result.success {
+                                    runtime_log::LogLevel::Info
+                                } else {
+                                    runtime_log::LogLevel::Error
+                                },
+                                if result.success {
+                                    runtime_log::LogPhase::Recovered
+                                } else {
+                                    runtime_log::LogPhase::Failed
+                                },
+                                result.action.label(),
+                            );
+                            if matches!(result.action, app::diagnostics::DiagnosticsRepairAction::RestoreDefaultThemeFile { .. }) { event.context.module = "ux.assets".into(); }
+                            if !result.success {
+                                event.error_code = Some("UX_DIAGNOSTICS_REPAIR_FAILED".into());
+                                event.error_chain.push(result.message.clone());
+                            }
+                            record_shell_runtime_event(event);
+                        }
+                    }
                     self.diagnostics_scanning = false;
                     self.diagnostics_repair_preview.clear();
                     self.diagnostics_repair_selected = 0;
@@ -761,6 +785,15 @@ impl ShellSession {
         if actions.is_empty() {
             return;
         }
+        let mut context = self.operation_log_context("ux.diagnostics", "repair");
+        context.task_id = Some("event-loop".into());
+        self.diagnostics_repair_log_context = Some(context.clone());
+        record_shell_runtime_event(runtime_log::RuntimeLogEvent::new(
+            context.clone(),
+            runtime_log::LogLevel::Info,
+            runtime_log::LogPhase::Started,
+            "Starting diagnostic repair",
+        ));
         let result = self
             .diagnostics_task_runtime
             .as_ref()
@@ -773,6 +806,16 @@ impl ShellSession {
                     Some(format!("Starting {} repair action(s)…", actions.len()));
             }
             Err(error) => {
+                self.diagnostics_repair_log_context = None;
+                let mut event = runtime_log::RuntimeLogEvent::new(
+                    context,
+                    runtime_log::LogLevel::Error,
+                    runtime_log::LogPhase::Failed,
+                    "Diagnostic repair could not start",
+                );
+                event.error_code = Some("UX_DIAGNOSTICS_SUBMIT_FAILED".into());
+                event.error_chain.push(error.clone());
+                record_shell_runtime_event(event);
                 self.diagnostics_repair_preview = actions;
                 self.notify_alert_with_tone(error, ui::NotificationTone::Critical);
             }
@@ -1374,8 +1417,8 @@ mod diagnostics_shell_tests {
         assert!(!state.app.editor_state().unwrap().is_dirty());
 
         state.request_editor_close(&platform);
-        assert_eq!(state.active_screen(), ShellScreen::SystemStatus);
-        assert_eq!(state.system_status_tab, ui::SystemStatusTab::Logs);
+        assert_eq!(state.active_screen(), ShellScreen::Logs);
+        assert_eq!(state.to_logs_view_model().category, ui::LogsCategory::Ux);
         assert_eq!(state.diagnostics_tab, ui::DiagnosticsTab::Logs);
         assert!(state.app.editor_state().is_none());
         std::fs::remove_dir_all(directory).unwrap();
@@ -1555,7 +1598,7 @@ mod diagnostics_shell_tests {
 
         state.open_selected_diagnostics_report(&platform::mock::UnsupportedPlatform);
 
-        assert_eq!(state.active_screen(), ShellScreen::SystemStatus);
+        assert_eq!(state.active_screen(), ShellScreen::Logs);
         let editor = state.app.editor_state().unwrap();
         assert!(editor.is_dirty());
         assert_eq!(editor.export_text(), "unsaved");
@@ -1656,39 +1699,22 @@ mod diagnostics_shell_tests {
     }
 
     #[test]
-    fn diagnostics_tab_routing_does_not_hide_logs_behind_health_open() {
+    fn diagnostics_navigation_only_exposes_health() {
         let mut state = state(UserRole::User);
         state.open_diagnostics();
-        let target = RoutedTarget::Component(ShellComponent::Diagnostics);
-
-        assert_eq!(
-            state.route_diagnostics_key(&KeyInput::from_label("Tab")),
-            (target, ShellCommand::DiagnosticsLogsTab)
-        );
-        state.set_diagnostics_tab(ui::DiagnosticsTab::Logs);
-        assert_eq!(
-            state.route_diagnostics_key(&KeyInput::from_label("Tab")),
-            (target, ShellCommand::DiagnosticsIncidentsTab)
-        );
-        assert_eq!(
-            state.route_diagnostics_key(&KeyInput::from_label("f")).1,
-            ShellCommand::RecordInput
-        );
-        assert_eq!(
-            state
-                .route_diagnostics_key(&KeyInput::from_label("Enter"))
-                .1,
-            ShellCommand::DiagnosticsOpenReport
-        );
+        for key in ["Tab", "Right", "Left"] {
+            assert_eq!(
+                state.route_diagnostics_key(&KeyInput::from_label(key)).1,
+                ShellCommand::Noop
+            );
+        }
         assert_eq!(
             state.route_diagnostics_key(&KeyInput::from_label("e")).1,
-            ShellCommand::DiagnosticsOpenLogsInExplorer
+            ShellCommand::RecordInput
         );
-
-        state.set_diagnostics_tab(ui::DiagnosticsTab::Health);
-        state.open_selected_diagnostics_report(&platform::mock::UnsupportedPlatform);
-        assert_eq!(state.diagnostics_tab, ui::DiagnosticsTab::Health);
-        assert!(!state.notification_has_active_modal());
+        state.set_diagnostics_tab(ui::DiagnosticsTab::Logs);
+        assert_eq!(state.active_screen(), ShellScreen::Logs);
+        assert_eq!(state.to_logs_view_model().category, ui::LogsCategory::Ux);
     }
 
     #[test]
@@ -1761,7 +1787,12 @@ mod diagnostics_shell_tests {
         state.cancel_diagnostics_repair_preview();
         state.set_diagnostics_tab(ui::DiagnosticsTab::Incidents);
         assert_eq!(state.diagnostics_tab, ui::DiagnosticsTab::Incidents);
-        assert_eq!(state.system_status_tab, ui::SystemStatusTab::Incidents);
+        assert_eq!(state.active_screen(), ShellScreen::Logs);
+        assert_eq!(
+            state.to_logs_view_model().section,
+            ui::LogsSection::Incidents
+        );
+        state.handle_logs_key(&KeyInput::from_label("Esc"));
         state.close_diagnostics();
         assert_eq!(state.active_screen(), ShellScreen::SystemStatus);
         assert_eq!(state.system_status_tab, ui::SystemStatusTab::Overview);

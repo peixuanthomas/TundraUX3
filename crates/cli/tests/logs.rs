@@ -146,6 +146,7 @@ fn logs_invalid_flags_roles_ranges_and_formats_exit_two() {
         vec!["logs", "query", "--limit", "0"],
         vec!["logs", "query", "--limit", "10001"],
         vec!["logs", "query", "--source", "windows"],
+        vec!["logs", "incidents", "--source", "linux"],
         vec!["logs", "query", "--format", "yaml"],
         vec!["logs", "query", "--since", "bad"],
         vec![

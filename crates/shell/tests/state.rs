@@ -935,7 +935,7 @@ fn user_state_builds_user_home_view_model() {
 
     assert_eq!(home.display_mode(), HomeDisplayMode::User);
     assert_eq!(home.diagnostics(), None);
-    assert_eq!(home.entries().len(), 4);
+    assert_eq!(home.entries().len(), 5);
     assert!(
         home.entries()
             .iter()
@@ -1072,7 +1072,7 @@ fn explicit_user_mode_shows_product_entries_without_diagnostics() {
         .collect();
     assert_eq!(
         labels,
-        vec!["Explorer", "Launcher", "Settings", "System Status",]
+        vec!["Explorer", "Launcher", "Settings", "System Status", "Logs"]
     );
 }
 
@@ -1087,7 +1087,7 @@ fn home_arrow_keys_update_selected_entry() {
     assert_eq!(state.selected_home_entry_index(), 1);
 
     state.apply_input(InputEvent::from_key_label("End"));
-    assert_eq!(state.selected_home_entry_index(), 3);
+    assert_eq!(state.selected_home_entry_index(), 4);
 }
 
 #[test]

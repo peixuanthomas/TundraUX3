@@ -167,7 +167,7 @@ impl ShellExplorerTaskRuntime {
         &self,
         plan: ExplorerTaskPlan,
         kind: ShellExplorerTaskKind,
-        _actor: String,
+        actor: String,
     ) -> Result<ExplorerTaskId, ExplorerTaskSubmitError> {
         let mut context = self
             .shared
@@ -203,7 +203,7 @@ impl ShellExplorerTaskRuntime {
         let engine = engine
             .as_ref()
             .expect("Explorer engine was initialized in the preceding branch");
-        let handle = engine.submit(plan)?;
+        let handle = engine.submit_with_owner(plan, Some(actor))?;
         *context = Some(ShellExplorerTaskContext {
             id: handle.id,
             kind,
@@ -635,7 +635,7 @@ impl ShellSession {
         let actor = self
             .app
             .auth_session()
-            .map(|session| session.username.clone())
+            .map(|session| session.user_id.clone())
             .unwrap_or_else(|| "Guest".to_string());
         match runtime.submit(plan, kind, actor) {
             Ok(_) => {

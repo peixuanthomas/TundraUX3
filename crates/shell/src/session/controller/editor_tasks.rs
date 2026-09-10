@@ -35,6 +35,8 @@ pub(in crate::session) struct EditorLoadTaskRequest {
     pub(in crate::session) id: u64,
     pub(in crate::session) path: PathBuf,
     pub(in crate::session) access: EditorTaskAccess,
+    log_context: runtime_log::LogContext,
+    failure: StdMutex<Option<EditorFailureMetadata>>,
 }
 
 #[derive(Debug)]
@@ -51,6 +53,8 @@ pub(in crate::session) struct EditorSaveTaskRequest {
     pub(in crate::session) path: PathBuf,
     pub(in crate::session) snapshot: app::editor::SaveSnapshot,
     pub(in crate::session) expected: Option<DocumentFingerprint>,
+    log_context: runtime_log::LogContext,
+    failure: StdMutex<Option<EditorFailureMetadata>>,
 }
 
 #[derive(Debug)]
@@ -157,18 +161,38 @@ impl ShellEditorTaskRuntime {
         }
     }
 
+    #[cfg(test)]
     pub(in crate::session) fn submit_load(
         &self,
         id: u64,
         path: PathBuf,
         access: EditorTaskAccess,
     ) -> Result<(), String> {
+        self.submit_load_with_owner(id, path, access, None)
+    }
+    pub(in crate::session) fn submit_load_with_owner(
+        &self,
+        id: u64,
+        path: PathBuf,
+        access: EditorTaskAccess,
+        owner_id: Option<String>,
+    ) -> Result<(), String> {
         let task_group = self
             .shared
             .task_group
             .clone()
             .ok_or_else(|| "Editor loader worker is unavailable".to_string())?;
-        let request = EditorLoadTaskRequest { id, path, access };
+        let request = EditorLoadTaskRequest {
+            id,
+            path,
+            access,
+            log_context: editor_log_context(&task_group, id, "load", owner_id),
+            failure: StdMutex::new(None),
+        };
+        let task_group = task_group.with_log_context(
+            request.log_context.owner_id.clone(),
+            request.log_context.operation_id.clone(),
+        );
         let events = self.shared.event_tx.clone();
         let cancelled = StdArc::clone(&self.shared.cancelled);
         let active_load_bytes = StdArc::clone(&self.shared.active_load_bytes);
@@ -193,6 +217,13 @@ impl ShellEditorTaskRuntime {
         };
         let active_loads = StdArc::clone(&self.shared.active_loads);
         let worker = match task_group.spawn_thread(TaskSpec::one_shot(task_id), move || {
+            record_editor_task(
+                &request.log_context,
+                &request.path,
+                runtime_log::LogPhase::Started,
+                None,
+                None,
+            );
             let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 load_editor_document_task(&request, &events, &cancelled, &active_load_bytes)
             }));
@@ -202,6 +233,25 @@ impl ShellEditorTaskRuntime {
             }
             match result {
                 Ok(result) => {
+                    let phase = match &result {
+                        Ok(_) => runtime_log::LogPhase::Succeeded,
+                        Err(error) if error == "Editor load cancelled" => {
+                            runtime_log::LogPhase::Cancelled
+                        }
+                        Err(_) => runtime_log::LogPhase::Failed,
+                    };
+                    record_editor_task(
+                        &request.log_context,
+                        &request.path,
+                        phase,
+                        result.as_ref().err().map(String::as_str),
+                        request
+                            .failure
+                            .lock()
+                            .ok()
+                            .as_deref()
+                            .and_then(|value| value.as_ref()),
+                    );
                     let _ = events.send(EditorTaskEvent::LoadFinished {
                         id: request.id,
                         result: Box::new(result),
@@ -238,12 +288,13 @@ impl ShellEditorTaskRuntime {
         // cancellation set cooperatively and parsing checks it at boundaries.
     }
 
-    pub(in crate::session) fn submit_save(
+    pub(in crate::session) fn submit_save_with_owner(
         &self,
         id: u64,
         path: PathBuf,
         snapshot: app::editor::SaveSnapshot,
         expected: Option<DocumentFingerprint>,
+        owner_id: Option<String>,
     ) -> Result<(), String> {
         let task_group = self
             .shared
@@ -255,7 +306,13 @@ impl ShellEditorTaskRuntime {
             path,
             snapshot,
             expected,
+            log_context: editor_log_context(&task_group, id, "save", owner_id),
+            failure: StdMutex::new(None),
         };
+        let task_group = task_group.with_log_context(
+            request.log_context.owner_id.clone(),
+            request.log_context.operation_id.clone(),
+        );
         let events = self.shared.event_tx.clone();
         let task_id = TaskId::new("document-save")
             .map_err(|error| format!("invalid Editor save task: {error}"))?;
@@ -266,6 +323,13 @@ impl ShellEditorTaskRuntime {
             .map_err(|_| "Editor task registry is unavailable".to_string())?;
         let worker = task_group
             .spawn_thread(TaskSpec::one_shot(task_id), move || {
+                record_editor_task(
+                    &request.log_context,
+                    &request.path,
+                    runtime_log::LogPhase::Started,
+                    None,
+                    None,
+                );
                 let _ = events.send(EditorTaskEvent::Progress {
                     id: request.id,
                     stage: EditorTaskStage::Writing,
@@ -278,15 +342,42 @@ impl ShellEditorTaskRuntime {
                         request.expected,
                         |writer| request.snapshot.write_to(writer),
                     )
-                    .map_err(|error| match error {
-                        platform::DocumentWriteError::ExternalModification { .. } => {
-                            EditorSaveTaskError::ExternalModification
+                    .map_err(|error| {
+                        if let Ok(mut failure) = request.failure.lock() {
+                            *failure = Some(EditorFailureMetadata::capture(&error));
                         }
-                        error => EditorSaveTaskError::Write(error.to_string()),
+                        match error {
+                            platform::DocumentWriteError::ExternalModification { .. } => {
+                                EditorSaveTaskError::ExternalModification
+                            }
+                            error => EditorSaveTaskError::Write(error.to_string()),
+                        }
                     })
                 }));
                 match result {
                     Ok(result) => {
+                        let reason = result.as_ref().err().map(|error| match error {
+                            EditorSaveTaskError::ExternalModification => {
+                                "File changed outside Editor".to_string()
+                            }
+                            EditorSaveTaskError::Write(message) => message.clone(),
+                        });
+                        record_editor_task(
+                            &request.log_context,
+                            &request.path,
+                            if result.is_ok() {
+                                runtime_log::LogPhase::Succeeded
+                            } else {
+                                runtime_log::LogPhase::Failed
+                            },
+                            reason.as_deref(),
+                            request
+                                .failure
+                                .lock()
+                                .ok()
+                                .as_deref()
+                                .and_then(|value| value.as_ref()),
+                        );
                         let _ = events.send(EditorTaskEvent::SaveFinished {
                             id: request.id,
                             result,
@@ -441,8 +532,12 @@ pub(in crate::session) fn load_editor_document_task(
         completed_bytes: 0,
         total_bytes: None,
     });
-    let metadata = std::fs::symlink_metadata(&request.path)
-        .map_err(|error| format!("Could not inspect {}: {error}", request.path.display()))?;
+    let metadata = std::fs::symlink_metadata(&request.path).map_err(|error| {
+        if let Ok(mut failure) = request.failure.lock() {
+            *failure = Some(EditorFailureMetadata::capture(&error));
+        }
+        format!("Could not inspect {}: {error}", request.path.display())
+    })?;
     let total_bytes = metadata.len();
     if total_bytes > platform::MAX_DOCUMENT_BYTES {
         return Err(format!(
@@ -505,6 +600,9 @@ pub(in crate::session) fn load_editor_document_task(
         } else if matches!(error, platform::PlatformError::Interrupted { .. }) && is_cancelled() {
             "Editor load cancelled".to_string()
         } else {
+            if let Ok(mut failure) = request.failure.lock() {
+                *failure = Some(EditorFailureMetadata::capture(&error));
+            }
             error.to_string()
         }
     })?;
@@ -558,4 +656,91 @@ pub(in crate::session) static NEXT_EDITOR_TASK_ID: AtomicU64 = AtomicU64::new(1)
 
 pub(in crate::session) fn next_editor_task_id() -> u64 {
     NEXT_EDITOR_TASK_ID.fetch_add(1, Ordering::Relaxed).max(1)
+}
+
+#[derive(Debug)]
+struct EditorFailureMetadata {
+    code: Option<i64>,
+    chain: Vec<String>,
+}
+impl EditorFailureMetadata {
+    fn capture(error: &(dyn std::error::Error + 'static)) -> Self {
+        let mut chain = Vec::new();
+        let mut code = None;
+        let mut next = Some(error);
+        while let Some(error) = next {
+            code = code.or_else(|| {
+                error
+                    .downcast_ref::<std::io::Error>()
+                    .and_then(std::io::Error::raw_os_error)
+                    .map(i64::from)
+            });
+            code = code.or_else(|| {
+                error
+                    .downcast_ref::<platform::CapturedIoError>()
+                    .and_then(|e| e.os_error_code)
+                    .map(i64::from)
+            });
+            chain.push(error.to_string());
+            if chain.len() >= 16 {
+                break;
+            }
+            next = error.source();
+        }
+        Self { code, chain }
+    }
+}
+fn editor_log_context(
+    group: &ManagedTaskGroup,
+    id: u64,
+    operation: &str,
+    owner_id: Option<String>,
+) -> runtime_log::LogContext {
+    let mut context = group.new_log_context("ux.editor", operation, owner_id.clone());
+    context.app = "editor".into();
+    context.module = "ux.editor".into();
+    context.operation = operation.into();
+    context.owner_id = owner_id;
+    context.task_id = Some(if operation == "load" {
+        format!("document-load-{}", id % EDITOR_WATCHDOG_LOAD_SLOTS)
+    } else {
+        "document-save".into()
+    });
+    context
+}
+fn record_editor_task(
+    context: &runtime_log::LogContext,
+    path: &std::path::Path,
+    phase: runtime_log::LogPhase,
+    reason: Option<&str>,
+    failure: Option<&EditorFailureMetadata>,
+) {
+    let mut event = runtime_log::RuntimeLogEvent::new(
+        context.clone(),
+        if phase == runtime_log::LogPhase::Failed {
+            runtime_log::LogLevel::Error
+        } else {
+            runtime_log::LogLevel::Info
+        },
+        phase,
+        format!("Editor {} {:?}", context.operation, phase),
+    );
+    if context.operation == "save" {
+        event.target_path = Some(path.to_path_buf());
+    } else {
+        event.source_path = Some(path.to_path_buf());
+    }
+    if let Some(failure) = failure {
+        event.os_error_code = failure.code;
+        event.error_chain = failure.chain.clone();
+    } else if let Some(reason) = reason {
+        event.error_chain.push(reason.to_string());
+    }
+    if phase == runtime_log::LogPhase::Failed {
+        event.error_code = Some(format!(
+            "UX_EDITOR_{}_FAILED",
+            context.operation.to_ascii_uppercase()
+        ));
+    }
+    record_shell_runtime_event(event);
 }

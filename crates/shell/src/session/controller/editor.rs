@@ -2054,8 +2054,12 @@ impl ShellSession {
             _ => EditorLoadNavigation::Editor,
         };
         let id = next_editor_task_id();
-        self.editor_task_runtime
-            .submit_load(id, path.clone(), access)?;
+        self.editor_task_runtime.submit_load_with_owner(
+            id,
+            path.clone(),
+            access,
+            self.app.auth_session().map(|s| s.user_id.clone()),
+        )?;
 
         if navigation == EditorLoadNavigation::EditorPicker
             && self.active_screen() == ShellScreen::Explorer
@@ -2091,6 +2095,12 @@ impl ShellSession {
     }
 
     pub(in crate::session) fn reload_log_editor(&mut self) {
+        if self.refresh_logs_editor_snapshot() {
+            return;
+        }
+        self.reload_log_editor_file();
+    }
+    pub(in crate::session) fn reload_log_editor_file(&mut self) {
         let Some(session) = self.editor_read_session.clone() else {
             return;
         };
@@ -2115,10 +2125,12 @@ impl ShellSession {
             .map(|state| (state.viewport.left_column, state.cursor.byte_offset))
             .unwrap_or_default();
         let id = next_editor_task_id();
-        if let Err(error) =
-            self.editor_task_runtime
-                .submit_load(id, path.clone(), EditorTaskAccess::ReadOnly)
-        {
+        if let Err(error) = self.editor_task_runtime.submit_load_with_owner(
+            id,
+            path.clone(),
+            EditorTaskAccess::ReadOnly,
+            self.app.auth_session().map(|s| s.user_id.clone()),
+        ) {
             self.report_editor_error(format!("Could not reload {}: {error}", path.display()));
             return;
         }
@@ -2626,10 +2638,13 @@ impl ShellSession {
         let expected = is_current_path.then_some(self.editor_fingerprint).flatten();
         let id = next_editor_task_id();
         let revision = snapshot.revision;
-        if let Err(error) =
-            self.editor_task_runtime
-                .submit_save(id, path.clone(), snapshot, expected)
-        {
+        if let Err(error) = self.editor_task_runtime.submit_save_with_owner(
+            id,
+            path.clone(),
+            snapshot,
+            expected,
+            self.app.auth_session().map(|s| s.user_id.clone()),
+        ) {
             self.editor_close_after_save = false;
             self.editor_open_after_save = false;
             self.report_editor_error(format!("Could not save {}: {error}", path.display()));
@@ -2883,6 +2898,10 @@ impl ShellSession {
         {
             self.focused_component = ShellComponent::Launcher;
             self.notify_status("Launcher");
+            self.refresh_hit_map();
+        } else if self.active_screen() == ShellScreen::Logs {
+            self.focused_component = ShellComponent::Logs;
+            self.notify_status("Logs");
             self.refresh_hit_map();
         } else if self.active_screen() == ShellScreen::Diagnostics {
             self.focused_component = ShellComponent::Diagnostics;

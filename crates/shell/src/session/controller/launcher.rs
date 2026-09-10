@@ -249,7 +249,38 @@ impl ShellSession {
         match effect {
             LauncherEffect::None => {}
             LauncherEffect::OpenRequested { path, kind } => {
-                self.update_launcher_state(|state| match platform.launch_approved(&path, kind) {
+                let mut started = runtime_log::RuntimeLogEvent::new(
+                    self.operation_log_context("ux.launcher", "launch_application"),
+                    runtime_log::LogLevel::Info,
+                    runtime_log::LogPhase::Started,
+                    "Launching application",
+                );
+                started.source_path = Some(path.clone());
+                let context = started.context.clone();
+                record_shell_runtime_event(started);
+                let result = platform.launch_approved(&path, kind);
+                let mut completed = runtime_log::RuntimeLogEvent::new(
+                    context,
+                    if result.is_ok() {
+                        runtime_log::LogLevel::Info
+                    } else {
+                        runtime_log::LogLevel::Error
+                    },
+                    if result.is_ok() {
+                        runtime_log::LogPhase::Succeeded
+                    } else {
+                        runtime_log::LogPhase::Failed
+                    },
+                    "Application launch result",
+                );
+                completed.source_path = Some(path.clone());
+                if let Err(error) = &result {
+                    completed.error_code = Some("UX_LAUNCH_FAILED".into());
+                    completed.os_error_code = error.raw_os_error().map(i64::from);
+                    watchdog::capture_error(&mut completed, error);
+                }
+                record_shell_runtime_event(completed);
+                self.update_launcher_state(|state| match result {
                     Ok(()) => {
                         state.message = Some(format!("Opened {}", path.display()));
                         state.error = None;

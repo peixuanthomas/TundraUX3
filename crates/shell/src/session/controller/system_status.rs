@@ -1,7 +1,7 @@
 use super::super::*;
 use system_services::{MetricState, NetworkState, StoragePressure, StorageState};
 
-pub(in crate::session) const SYSTEM_STATUS_WIDGET_KINDS: [storage::SystemStatusWidgetKind; 12] = [
+pub(in crate::session) const SYSTEM_STATUS_WIDGET_KINDS: [storage::SystemStatusWidgetKind; 10] = [
     storage::SystemStatusWidgetKind::SystemOverview,
     storage::SystemStatusWidgetKind::Cpu,
     storage::SystemStatusWidgetKind::Memory,
@@ -12,8 +12,6 @@ pub(in crate::session) const SYSTEM_STATUS_WIDGET_KINDS: [storage::SystemStatusW
     storage::SystemStatusWidgetKind::UptimeLoad,
     storage::SystemStatusWidgetKind::TopProcesses,
     storage::SystemStatusWidgetKind::Diagnostics,
-    storage::SystemStatusWidgetKind::Logs,
-    storage::SystemStatusWidgetKind::Incidents,
 ];
 
 impl ShellSession {
@@ -248,6 +246,14 @@ impl ShellSession {
     }
 
     pub(in crate::session) fn set_system_status_tab(&mut self, tab: ui::SystemStatusTab) {
+        if matches!(
+            tab,
+            ui::SystemStatusTab::Logs | ui::SystemStatusTab::Incidents
+        ) {
+            self.open_logs();
+            self.logs_select_legacy_section(tab == ui::SystemStatusTab::Incidents);
+            return;
+        }
         self.system_status_tab = tab;
         self.system_status_route = match tab {
             ui::SystemStatusTab::Overview => ui::SystemStatusRoute::Dashboard,
@@ -283,6 +289,14 @@ impl ShellSession {
         &mut self,
         kind: storage::SystemStatusWidgetKind,
     ) {
+        if matches!(
+            kind,
+            storage::SystemStatusWidgetKind::Logs | storage::SystemStatusWidgetKind::Incidents
+        ) {
+            self.open_logs();
+            self.logs_select_legacy_section(kind == storage::SystemStatusWidgetKind::Incidents);
+            return;
+        }
         if !self.system_status_widget_detail_allowed(kind) {
             self.system_status_dashboard_feedback = Some(
                 if matches!(

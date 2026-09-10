@@ -24,10 +24,10 @@ pub use config_document::{
     ExplorerSizeFormat, ExplorerSortDirection, ExplorerSortField, IconDisplayMode, LauncherConfig,
     LauncherEntryRecord, LauncherExecutableKind, LauncherFingerprint, MAX_ANIMATION_SPEED_PERCENT,
     MAX_EDITOR_EXPLORER_OPEN_EXTENSION_LEN, MAX_EDITOR_EXPLORER_OPEN_EXTENSIONS,
-    MIN_ANIMATION_SPEED_PERCENT, MotionPreference, SYSTEM_STATUS_MAX_AVAILABLE_GIB,
-    SYSTEM_STATUS_MAX_PERCENTAGE, SYSTEM_STATUS_MIN_AVAILABLE_GIB, SYSTEM_STATUS_MIN_PERCENTAGE,
-    RuntimeLogsConfig, SecurityConfig, StorageConfig, SystemStatusConfig, TimeSyncConfig, TimeSyncSource,
-    normalize_editor_explorer_open_extension,
+    MIN_ANIMATION_SPEED_PERCENT, MotionPreference, RuntimeLogsConfig,
+    SYSTEM_STATUS_MAX_AVAILABLE_GIB, SYSTEM_STATUS_MAX_PERCENTAGE, SYSTEM_STATUS_MIN_AVAILABLE_GIB,
+    SYSTEM_STATUS_MIN_PERCENTAGE, SecurityConfig, StorageConfig, SystemStatusConfig,
+    TimeSyncConfig, TimeSyncSource, normalize_editor_explorer_open_extension,
 };
 pub use descriptors::{
     CLOCK_DESCRIPTOR, CONFIG_DESCRIPTOR, StorageDescriptor, VERSIONED_JSON_DESCRIPTORS,

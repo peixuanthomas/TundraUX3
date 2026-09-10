@@ -29,6 +29,7 @@ pub(in crate::session) fn clock_button_active_for_screen(screen: ShellScreen) ->
             | ShellScreen::Settings
             | ShellScreen::SystemStatus
             | ShellScreen::UserManagement
+            | ShellScreen::Logs
             | ShellScreen::Diagnostics
             | ShellScreen::Clock
     )
@@ -602,6 +603,7 @@ pub(in crate::session) fn user_home_entries() -> Vec<ui::ShellEntry> {
         ui::ShellEntry::new("Launcher", "Open apps and commands"),
         ui::ShellEntry::new("Settings", "Adjust TundraUX"),
         ui::ShellEntry::new("System Status", "View storage and network health"),
+        ui::ShellEntry::new("Logs", "View runtime logs and incidents"),
     ]
 }
 

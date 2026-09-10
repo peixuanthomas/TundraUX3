@@ -454,7 +454,7 @@ fn help_command_writes_usage_to_stdout() {
     assert_eq!(exit_code, 0, "{}", String::from_utf8_lossy(&stderr));
     assert!(stderr.is_empty());
     let stdout = String::from_utf8(stdout).expect("help output should be utf8");
-    assert!(stdout.contains("<cls|config|debug|new|repl|help>"));
+    assert!(stdout.contains("<cls|config|debug|logs|new|repl|help>"));
     assert!(stdout.contains("cls     Clear terminal history and screen"));
     assert!(stdout.contains("config  View or update user config"));
     assert!(stdout.contains("new     Clear saved TundraUX3 data"));
@@ -1375,7 +1375,7 @@ fn unknown_command_exits_two_and_writes_error_to_stderr() {
     assert!(stdout.is_empty());
     let stderr = String::from_utf8(stderr).expect("error output should be utf8");
     assert!(stderr.contains("ERROR: unknown command: repair"));
-    assert!(stderr.contains("<cls|config|debug|new|repl|help>"));
+    assert!(stderr.contains("<cls|config|debug|logs|new|repl|help>"));
 }
 
 fn assert_path_labels(output: &str) {

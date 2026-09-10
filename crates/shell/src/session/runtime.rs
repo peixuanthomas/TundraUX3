@@ -1141,6 +1141,7 @@ pub(super) fn run_fullscreen_shell_session<W: Write>(
             let mut settings = (content_screen == ShellScreen::Settings)
                 .then(|| state.to_settings_view_model())
                 .flatten();
+            let logs = (content_screen == ShellScreen::Logs).then(|| state.to_logs_view_model());
             let diagnostics = (content_screen == ShellScreen::Diagnostics)
                 .then(|| state.to_diagnostics_view_model());
             let mut system_status = (content_screen == ShellScreen::SystemStatus)
@@ -1278,6 +1279,15 @@ pub(super) fn run_fullscreen_shell_session<W: Write>(
                             settings
                                 .as_ref()
                                 .expect("Settings content requires its view model"),
+                            &render_context,
+                        );
+                    }
+                    ShellScreen::Logs => {
+                        ui::render_logs_with_context(
+                            frame,
+                            page_area,
+                            &chrome,
+                            logs.as_ref().expect("Logs view model"),
                             &render_context,
                         );
                     }
@@ -2026,10 +2036,44 @@ fn resolve_startup_runtime_ascii_assets_at(
 
         match choose(&report, last_error.as_deref())? {
             StartupAssetRecoveryChoice::AutoRestore => {
-                last_error = match ui::restore_default_theme(root) {
-                    Ok(_) => None,
-                    Err(error) => Some(error.to_string()),
-                };
+                let context = ProcessWatchdog::global()
+                    .map(|process| process.log_context("ux.assets", "restore_default_theme"))
+                    .unwrap_or_else(|| runtime_log::LogContext {
+                        module: "ux.assets".into(),
+                        operation: "restore_default_theme".into(),
+                        ..Default::default()
+                    });
+                let mut started = runtime_log::RuntimeLogEvent::new(
+                    context,
+                    runtime_log::LogLevel::Info,
+                    runtime_log::LogPhase::Started,
+                    "Restoring default theme assets",
+                );
+                started.context.operation_id =
+                    ProcessWatchdog::global().map(|p| p.new_log_operation_id());
+                let context = started.context.clone();
+                record_shell_runtime_event(started);
+                let result = ui::restore_default_theme(root);
+                let mut event = runtime_log::RuntimeLogEvent::new(
+                    context,
+                    if result.is_ok() {
+                        runtime_log::LogLevel::Info
+                    } else {
+                        runtime_log::LogLevel::Error
+                    },
+                    if result.is_ok() {
+                        runtime_log::LogPhase::Recovered
+                    } else {
+                        runtime_log::LogPhase::Failed
+                    },
+                    "Default theme restoration result",
+                );
+                if let Err(error) = &result {
+                    event.error_code = Some("UX_ASSET_RESTORE_FAILED".into());
+                    event.error_chain.push(error.to_string());
+                }
+                record_shell_runtime_event(event);
+                last_error = result.err().map(|error| error.to_string());
             }
             StartupAssetRecoveryChoice::Download => match open_download() {
                 Ok(()) => return Ok(StartupAssetLoadOutcome::Exit),

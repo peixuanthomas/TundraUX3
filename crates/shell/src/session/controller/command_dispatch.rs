@@ -200,6 +200,7 @@ impl ShellSession {
                 | ShellCommand::OpenUserManagement
                 | ShellCommand::OpenClock
                 | ShellCommand::OpenDiagnostics
+                | ShellCommand::OpenLogs
         );
         if editor_task_busy && changes_screen {
             let status = if self.editor_save_state.is_some() {
@@ -229,6 +230,7 @@ impl ShellSession {
                 self.poll_launcher_background_tasks();
                 self.poll_settings_background_tasks();
                 self.drain_diagnostics_events();
+                self.poll_logs_tasks();
                 self.poll_editor_background_tasks(platform);
                 self.persist_editor_recovery_if_due(received_at);
                 ShellAction::Redraw
@@ -1157,6 +1159,18 @@ impl ShellSession {
             }
             ShellCommand::CloseClock => {
                 self.close_clock();
+                ShellAction::Redraw
+            }
+            ShellCommand::OpenLogs => {
+                self.open_logs();
+                ShellAction::Redraw
+            }
+            ShellCommand::LogsKey(key) => {
+                self.handle_logs_key(&key);
+                ShellAction::Redraw
+            }
+            ShellCommand::LogsPointer(mouse) => {
+                self.handle_logs_pointer(mouse);
                 ShellAction::Redraw
             }
             ShellCommand::OpenDiagnostics => {

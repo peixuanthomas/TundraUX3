@@ -166,6 +166,13 @@ pub(in crate::session) fn build_shell_hit_map(
                         });
                     }
                 }
+                ShellScreen::Logs => {
+                    regions.push(ShellHitRegion {
+                        component: ShellComponent::Logs,
+                        area: main,
+                        layer: ShellHitLayer::AppContent,
+                    });
+                }
                 ShellScreen::Diagnostics => {
                     regions.push(ShellHitRegion {
                         component: ShellComponent::Diagnostics,

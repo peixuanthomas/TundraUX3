@@ -18,7 +18,7 @@ pub enum SystemStatusWidgetKind {
     Incidents,
 }
 impl SystemStatusWidgetKind {
-    pub const ALL: [Self; 12] = [
+    pub const ALL: [Self; 10] = [
         Self::SystemOverview,
         Self::Cpu,
         Self::Memory,
@@ -29,8 +29,6 @@ impl SystemStatusWidgetKind {
         Self::UptimeLoad,
         Self::TopProcesses,
         Self::Diagnostics,
-        Self::Logs,
-        Self::Incidents,
     ];
     pub const fn label(self) -> &'static str {
         match self {
@@ -288,15 +286,8 @@ pub enum SystemStatusTab {
     Incidents,
 }
 impl SystemStatusTab {
-    pub const ALL: [Self; 6] = [
-        Self::Overview,
-        Self::Storage,
-        Self::Network,
-        Self::Health,
-        Self::Logs,
-        Self::Incidents,
-    ];
-    pub const USER: [Self; 6] = Self::ALL;
+    pub const ALL: [Self; 4] = [Self::Overview, Self::Storage, Self::Network, Self::Health];
+    pub const USER: [Self; 4] = Self::ALL;
     pub const fn label(self) -> &'static str {
         match self {
             Self::Overview => "Overview",

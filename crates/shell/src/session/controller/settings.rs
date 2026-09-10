@@ -704,7 +704,7 @@ impl ShellSession {
         }
         config.editor = normalized_editor_config(config.editor);
         config.system_status.normalize();
-        if let Err(error) = storage.save_config(&config) {
+        if let Err(error) = self.save_settings_config_logged(&storage, &config) {
             self.set_settings_error(format!("Could not save Settings: {error}"));
             return;
         }
@@ -1123,7 +1123,7 @@ impl ShellSession {
         if let Some(timezone) = timezone.clone() {
             config.timezone = timezone;
         }
-        if let Err(error) = storage.save_config(&config) {
+        if let Err(error) = self.save_settings_config_logged(&storage, &config) {
             self.set_settings_error(format!("Could not save Settings: {error}"));
             return;
         }
@@ -1548,7 +1548,7 @@ impl ShellSession {
             }
         };
         config.time_sync = time_sync;
-        if let Err(error) = storage.save_config(&config) {
+        if let Err(error) = self.save_settings_config_logged(&storage, &config) {
             self.set_settings_error(format!("Could not save Settings: {error}"));
             return;
         }
@@ -1647,7 +1647,7 @@ impl ShellSession {
             }
         };
         config.editor.explorer_open_extensions = extensions;
-        if let Err(error) = storage.save_config(&config) {
+        if let Err(error) = self.save_settings_config_logged(&storage, &config) {
             self.set_settings_error(format!("Could not save Settings: {error}"));
             return;
         }
@@ -1762,7 +1762,7 @@ impl ShellSession {
             }
         };
         config.weather_location = (!value.is_empty()).then_some(value);
-        if let Err(error) = storage.save_config(&config) {
+        if let Err(error) = self.save_settings_config_logged(&storage, &config) {
             self.set_settings_error(format!("Could not save Settings: {error}"));
             return;
         }
@@ -1916,7 +1916,7 @@ impl ShellSession {
             ui::SettingsCategory::Appearance => unreachable!(),
             ui::SettingsCategory::Update => return,
         }
-        if let Err(error) = storage.save_config(&config) {
+        if let Err(error) = self.save_settings_config_logged(&storage, &config) {
             self.set_settings_error(format!("Could not restore defaults: {error}"));
             return;
         }

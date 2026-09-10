@@ -187,6 +187,9 @@ impl ShellSession {
         if self.active_screen() == ShellScreen::Settings {
             return vec![ShellComponent::Settings];
         }
+        if self.active_screen() == ShellScreen::Logs {
+            return vec![ShellComponent::Logs];
+        }
         if self.active_screen() == ShellScreen::Diagnostics {
             if self.overlay_interaction_ready && !self.diagnostics_repair_preview.is_empty() {
                 return vec![ShellComponent::DiagnosticsRepairDialog];

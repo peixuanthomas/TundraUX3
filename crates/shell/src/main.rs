@@ -163,7 +163,9 @@ fn restart_error(executable: &std::path::Path, error: std::io::Error) -> std::io
 fn start_watchdog() -> Result<(WatchdogRuntime, ProcessWatchdog), watchdog::WatchdogError> {
     let fallback = std::env::temp_dir().join("TundraUX3").join("watchdog");
     let platform = platform::native_platform();
-    let config = match platform.app_paths() {
+    let paths_result = platform.app_paths();
+    let path_failure = paths_result.as_ref().err().map(ToString::to_string);
+    let mut config = match paths_result {
         Ok(paths) => WatchdogConfig::new(
             paths.logs_path().join("crashes"),
             fallback.join("crashes"),
@@ -179,8 +181,66 @@ fn start_watchdog() -> Result<(WatchdogRuntime, ProcessWatchdog), watchdog::Watc
             env!("CARGO_PKG_VERSION"),
         ),
     };
+    let retention_result = platform.app_paths().ok().map(|paths| {
+        storage::StorageManager::from_layout(storage::StorageLayout::from_app_paths(&paths))
+            .load_config()
+    });
+    if let Some(Ok(stored)) = &retention_result {
+        config.runtime_log_max_age_days = stored.runtime_logs.max_age_days;
+        config.runtime_log_max_total_bytes = stored
+            .runtime_logs
+            .max_total_mib
+            .saturating_mul(1024 * 1024);
+        config.runtime_log_segment_bytes =
+            stored.runtime_logs.segment_mib.saturating_mul(1024 * 1024);
+    }
     let (runtime, process) = WatchdogRuntime::start(config)?;
+    if let Some(Err(error)) = retention_result {
+        let mut event = runtime_log::RuntimeLogEvent::new(
+            process.log_context("ux.storage", "load_log_configuration"),
+            runtime_log::LogLevel::Warning,
+            runtime_log::LogPhase::Degraded,
+            "Using default log retention configuration",
+        );
+        event.error_chain.push(error.to_string());
+        event.error_code = Some("UX_LOG_CONFIG_DEFAULTS".into());
+        process.record_log(event);
+    }
+    if let Some(error) = path_failure {
+        let mut event = runtime_log::RuntimeLogEvent::new(
+            process.log_context("ux.storage", "resolve_log_directory"),
+            runtime_log::LogLevel::Warning,
+            runtime_log::LogPhase::Degraded,
+            "Using temporary log storage",
+        );
+        event.error_chain.push(error);
+        event.error_code = Some("UX_LOG_STORAGE_FALLBACK".into());
+        process.record_log(event);
+    }
     let process = process.install_global()?;
-    let _ = process.report_stale_runs(|pid| platform.is_process_alive(pid).unwrap_or(true));
+    if let Err(error) = process.report_stale_runs(|pid| match platform.is_process_alive(pid) {
+        Ok(alive) => alive,
+        Err(error) => {
+            let mut event = runtime_log::RuntimeLogEvent::new(
+                process.log_context("ux.watchdog", "inspect_previous_process"),
+                runtime_log::LogLevel::Warning,
+                runtime_log::LogPhase::Degraded,
+                "Previous process state unavailable; retaining run marker",
+            );
+            watchdog::capture_error(&mut event, &error);
+            event.alert_key = Some("previous-process-inspection".into());
+            process.record_log(event);
+            true
+        }
+    }) {
+        let mut event = runtime_log::RuntimeLogEvent::new(
+            process.log_context("ux.watchdog", "inspect_previous_runs"),
+            runtime_log::LogLevel::Warning,
+            runtime_log::LogPhase::Failed,
+            "Could not inspect previous runs",
+        );
+        watchdog::capture_error(&mut event, &error);
+        process.record_log(event);
+    }
     Ok((runtime, process))
 }

@@ -28,3 +28,6 @@ pub(super) use explorer_tasks::*;
 pub(super) use hit_testing::*;
 pub(super) use launcher_tasks::*;
 pub(super) use settings_tasks::*;
+
+mod logs;
+pub(super) use logs::*;

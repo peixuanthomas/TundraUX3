@@ -103,8 +103,43 @@ impl ShellSession {
         command: app::NotificationCommand,
         at: Instant,
     ) {
+        // Record alert lifecycle metadata only. The producing operation owns the
+        // failure record; notification text may contain user content.
+        let transition = match &command {
+            app::NotificationCommand::ShowAlert { key, message, .. }
+                if self.app.notification_center().alert_message_for_key(key)
+                    != Some(message.as_str()) =>
+            {
+                Some((key.clone(), "alert_shown"))
+            }
+            app::NotificationCommand::ResolveAlert(key)
+                if self
+                    .app
+                    .notification_center()
+                    .alert_message_for_key(key)
+                    .is_some() =>
+            {
+                Some((key.clone(), "alert_resolved"))
+            }
+            app::NotificationCommand::ClearAlerts
+                if self.app.notification_center().alert_count() > 0 =>
+            {
+                Some((String::new(), "alerts_cleared"))
+            }
+            _ => None,
+        };
         self.app
             .dispatch_at(app::AppCommand::Notification(command), at);
+        if let Some((key, operation)) = transition {
+            let mut event = runtime_log::RuntimeLogEvent::new(
+                self.operation_log_context("ux.notifications", operation),
+                runtime_log::LogLevel::Info,
+                runtime_log::LogPhase::Observed,
+                "Notification state changed",
+            );
+            event.alert_key = (!key.is_empty()).then_some(key);
+            record_shell_runtime_event(event);
+        }
     }
 
     pub(in crate::session) fn notification_expire(&mut self, now: Instant) {

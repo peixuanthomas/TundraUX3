@@ -120,7 +120,7 @@ fn render_dashboard(
         .unwrap_or(if model.dashboard.editing {
             "Arrows Move · Enter Select · Esc Cancel"
         } else {
-            "H Diagnostics · L Logs · I Incidents · E Edit · Esc Home"
+            "H Diagnostics · E Edit · Esc Home"
         });
     let action_left = if model.dashboard.editing {
         l.add_button.x

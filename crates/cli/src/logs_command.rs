@@ -116,6 +116,11 @@ pub(crate) fn parse_logs(args: &[String]) -> Result<LogsAction, CliError> {
             }
         }
     }
+    if verb == LogsVerb::Incidents && query.source != LogSource::Ux {
+        return Err(CliError::InvalidLogsArgument(
+            "Incidents belong to the UX source".into(),
+        ));
+    }
     if query
         .since
         .zip(query.until)

@@ -86,6 +86,7 @@ impl ShellSession {
         self.settings_state = None;
         let _ = self.settings_task_runtime.set_system_status_active(false);
         self.reset_system_status_trackers();
+        self.logs_state = LogsUiState::default();
         self.launcher_drag = None;
         self.replace_explorer_state(None);
         self.explorer_input_mode = ExplorerInputMode::Browse;
@@ -239,6 +240,7 @@ impl ShellSession {
             "Launcher" => self.open_launcher(platform),
             "Settings" => self.open_settings(),
             "System Status" => self.open_system_status(),
+            "Logs" => self.open_logs(),
             "User Management" | "User Profile" => self.open_user_management(),
             label => {
                 self.error_message = None;

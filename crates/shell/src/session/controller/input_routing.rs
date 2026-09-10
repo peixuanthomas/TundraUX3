@@ -71,6 +71,12 @@ impl ShellSession {
             return self.route_clock_key(key);
         }
 
+        if self.active_screen() == ShellScreen::Logs {
+            return (
+                RoutedTarget::Component(ShellComponent::Logs),
+                ShellCommand::LogsKey(key.clone()),
+            );
+        }
         if self.active_screen() == ShellScreen::Diagnostics {
             return self.route_diagnostics_key(key);
         }
@@ -462,16 +468,9 @@ impl ShellSession {
         }
         match &key.key {
             InputKey::Escape => (RoutedTarget::Global, ShellCommand::CloseDiagnostics),
-            InputKey::Tab | InputKey::Right => match self.diagnostics_tab {
-                ui::DiagnosticsTab::Health => (target, ShellCommand::DiagnosticsLogsTab),
-                ui::DiagnosticsTab::Logs => (target, ShellCommand::DiagnosticsIncidentsTab),
-                ui::DiagnosticsTab::Incidents => (target, ShellCommand::DiagnosticsHealthTab),
-            },
-            InputKey::BackTab | InputKey::Left => match self.diagnostics_tab {
-                ui::DiagnosticsTab::Health => (target, ShellCommand::DiagnosticsIncidentsTab),
-                ui::DiagnosticsTab::Logs => (target, ShellCommand::DiagnosticsHealthTab),
-                ui::DiagnosticsTab::Incidents => (target, ShellCommand::DiagnosticsLogsTab),
-            },
+            InputKey::Tab | InputKey::BackTab | InputKey::Left | InputKey::Right => {
+                (target, ShellCommand::Noop)
+            }
             InputKey::Up => (target, ShellCommand::DiagnosticsPrevious),
             InputKey::Down => (target, ShellCommand::DiagnosticsNext),
             InputKey::PageUp => (target, ShellCommand::DiagnosticsPageUp),
@@ -489,7 +488,7 @@ impl ShellSession {
                 (target, ShellCommand::DiagnosticsPreviewAllRepairs)
             }
             InputKey::Char('c' | 'C') => (target, ShellCommand::DiagnosticsCopySummary),
-            InputKey::Char('e' | 'E') => (target, ShellCommand::DiagnosticsOpenLogsInExplorer),
+
             InputKey::Char('o' | 'O') => (target, ShellCommand::DiagnosticsOpenReport),
             InputKey::Enter
                 if matches!(
@@ -615,8 +614,6 @@ impl ShellSession {
         if self.system_status_dashboard_draft.is_none() {
             let module = match key.key {
                 InputKey::Char('h' | 'H') => Some(ui::SystemStatusTab::Health),
-                InputKey::Char('l' | 'L') => Some(ui::SystemStatusTab::Logs),
-                InputKey::Char('i' | 'I') => Some(ui::SystemStatusTab::Incidents),
                 _ => None,
             };
             if let Some(tab) = module {
@@ -655,9 +652,6 @@ impl ShellSession {
                 }
                 InputKey::Char('c' | 'C') if diagnostics_active => {
                     ShellCommand::DiagnosticsCopySummary
-                }
-                InputKey::Char('e' | 'E') if diagnostics_active => {
-                    ShellCommand::DiagnosticsOpenLogsInExplorer
                 }
                 InputKey::Char('o' | 'O')
                     if matches!(
@@ -1635,6 +1629,15 @@ impl ShellSession {
             return (
                 RoutedTarget::Component(ShellComponent::Settings),
                 ShellCommand::SettingsPointer(mouse),
+            );
+        }
+        if self.active_screen() == ShellScreen::Logs
+            && (hit_target == Some(ShellComponent::Logs)
+                || self.logs_state.scrollbar_grab.is_some())
+        {
+            return (
+                RoutedTarget::Component(ShellComponent::Logs),
+                ShellCommand::LogsPointer(mouse),
             );
         }
 

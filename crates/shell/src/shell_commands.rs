@@ -5,6 +5,9 @@ use crate::{
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ShellCommand {
+    OpenLogs,
+    LogsKey(KeyInput),
+    LogsPointer(MouseInput),
     Noop,
     Tick,
     Shutdown,
