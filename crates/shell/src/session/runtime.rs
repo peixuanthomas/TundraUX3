@@ -1768,23 +1768,12 @@ fn background_poll_timeout(outstanding: bool, elapsed: Duration) -> Duration {
 fn shell_render_capabilities(
     terminal_graphics_probe: &ui::TerminalGraphicsProbe,
 ) -> ui::RenderCapabilities {
-    let true_color = std::env::var("COLORTERM").is_ok_and(|value| {
-        value.eq_ignore_ascii_case("truecolor") || value.eq_ignore_ascii_case("24bit")
-    }) || std::env::var("TERM").is_ok_and(|value| {
-        let value = value.to_ascii_lowercase();
-        value.contains("truecolor") || value.contains("direct")
-    }) || std::env::var_os("WT_SESSION").is_some();
-    ui::RenderCapabilities {
-        color: if true_color {
-            ui::ColorCapability::TrueColor
-        } else {
-            ui::ColorCapability::Ansi
-        },
-        image_protocol: matches!(
-            terminal_graphics_probe.status(),
-            ui::TerminalGraphicsProbeStatus::Verified(_)
-        ),
-    }
+    let mut capabilities = crate::terminal_session::text_render_capabilities();
+    capabilities.image_protocol = matches!(
+        terminal_graphics_probe.status(),
+        ui::TerminalGraphicsProbeStatus::Verified(_)
+    );
+    capabilities
 }
 
 fn command_line_captures_input(state: &ShellSession, input: &InputEvent) -> bool {

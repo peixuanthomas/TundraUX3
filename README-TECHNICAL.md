@@ -477,6 +477,7 @@ tundra-cli <cls|config|debug|new|repl|help>
 | `debug explain` / `debug paths` | 输出启动/边界说明，或输出路径模板和解析路径。 |
 | `repl` | 交互命令循环；`exit` 或 EOF 退出，普通输入复用 CLI 命令，`/<command>` 交给固定系统命令解释器并显示退出码。 |
 | `debug test-frost` / `debug test-matrix` | 仅播放启动 frost banner 或首次运行 Matrix banner。 |
+| `debug view-ui-style [1\|2\|3]` | 不带数字时列出样式；带数字时进入交互 UI / 动画对比预览，不保存设置。 |
 | `debug` / `debug help` | 查看所有调试命令。 |
 | `debug test-watchdog-error` | 主动生成普通错误报告。 |
 | `debug test-watchdog-critical` | 主动生成严重错误报告。 |
@@ -485,6 +486,16 @@ tundra-cli <cls|config|debug|new|repl|help>
 | `new` | 清除已保存的 TundraUX3 数据，重新创建初始存储。 |
 
 调试命令统一使用 `debug` 前缀，不支持 `sudo` 前缀；原顶层调试命令和 `weathr` 命令已移除。Command Line 中可直接输入 `debug test-frost`；外部终端使用 `tundra-cli debug test-frost`。
+
+UI 样式预览可在 Command Line 中运行 `debug view-ui-style 2`，或在外部终端运行 `tundra-cli debug view-ui-style 2`。源码运行方式为 `cargo run -p cli --bin tundra-cli -- debug view-ui-style 2`。预览至少需要 60 × 24 个字符，建议使用 100 × 35 或更大的窗口。
+
+- `1` Glacier：现有带边框组件、直接更新的进度条、tachyonfx 扫入效果。
+- `2` Tea：无边框列表与表单、较集中的留白布局、450 ms cubic 缓动进度。借鉴 Bubble Tea 的 Model / Message / Update / View 方式，使用 Rust 和现有 Ratatui 组件实现，没有链接 Go 库。
+- `3` Spring：卡片布局、保留速度的阻尼弹簧进度、柔和进入效果。连续选择列表项时，动画从当前值和速度追随新目标。
+
+`F1`–`F3` 切换版本；`F4` 切换减少动态效果；`F5` 或 Replay 按钮重播；`Tab` / `Shift-Tab` 切换焦点；方向键、鼠标和滚轮操作列表；输入框支持文字与粘贴；Open dialog 展示弹窗。`Esc` 先关闭弹窗，再退出预览，`Ctrl-C` 直接退出。不同版本共用列表、输入框、按钮、Dialog 和原生 Gauge，渲染与命中使用同一份布局；低于最小尺寸时暂停组件交互并提示放大窗口。
+
+进度任务为本地模拟；进入时读取全局外观配置中的强调色、边框、动画速度与减少动态效果偏好，预览中的切换仅对本次会话生效。关闭预览会还原终端。实现入口为 `crates/shell/src/style_preview.rs`，页面组合为 `crates/ui/src/style_preview.rs`；常规页面和业务状态不依赖预览模块。
 
 两个错误报告测试在 CLI 进程中生成报告，内容明确标注为主动测试，并输出 JSON 和文本报告路径；成功返回 0，写入失败或等待超时返回非零状态。`debug test-watchdog-panic` 不在命令内部捕获：独立 CLI 由最外层 watchdog 捕获、显示严重错误提示并退出；嵌入 Command Line 则以内部退出码 76 请求 Shell 主循环真正触发 panic，恢复终端后直接显示全屏 panic 页面，不经过天气锁屏或登录页面，也不弹出 critical 提示框。
 

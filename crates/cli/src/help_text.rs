@@ -30,6 +30,10 @@ pub(crate) fn write_debug_help(output: &mut impl Write) -> std::io::Result<()> {
     writeln!(output, "Usage: tundra-cli debug <command>")?;
     writeln!(
         output,
+        "  view-ui-style [1|2|3]  Compare interactive UI styles and animations"
+    )?;
+    writeln!(
+        output,
         "  asset   Print test assets or their original source files"
     )?;
     writeln!(
@@ -64,6 +68,31 @@ pub(crate) fn write_debug_help(output: &mut impl Write) -> std::io::Result<()> {
     writeln!(
         output,
         "Error tests print JSON/text report paths. Panic tests enter the normal critical-error flow; embedded tests panic the Shell session."
+    )
+}
+
+pub(crate) fn write_ui_style_help(output: &mut impl Write) -> std::io::Result<()> {
+    writeln!(output, "Usage: tundra-cli debug view-ui-style <1|2|3>")?;
+    for style in shell::UiStyleVersion::ALL {
+        writeln!(
+            output,
+            "  {}  {}: {}",
+            style.number(),
+            style.title(),
+            style.description()
+        )?;
+    }
+    writeln!(
+        output,
+        "All versions use Rust/Ratatui and existing Tundra components; Tea is inspired by Bubble Tea, not a Go integration."
+    )?;
+    writeln!(
+        output,
+        "F1-F3 switch styles; F4 toggles motion; F5 replays; Tab moves focus; Esc closes the dialog or exits; Ctrl-C exits."
+    )?;
+    writeln!(
+        output,
+        "Use arrows or mouse to select, type in the text field, and activate the buttons. Demo progress is simulated; preferences are not saved."
     )
 }
 

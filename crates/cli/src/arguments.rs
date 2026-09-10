@@ -16,6 +16,8 @@ pub enum CliCommand {
     },
     TestFrost,
     TestMatrix,
+    ViewUiStyle(shell::UiStyleVersion),
+    UiStyleHelp,
     DebugHelp,
     TestWatchdogError,
     TestWatchdogCritical,
@@ -83,6 +85,7 @@ pub enum CliError {
     UnexpectedArgument(String),
     InvalidReplArgument(String),
     InvalidProcessId(String),
+    InvalidUiStyle(String),
 }
 
 impl fmt::Display for CliError {
@@ -117,6 +120,10 @@ impl fmt::Display for CliError {
                 write!(formatter, "unsupported repl argument: {argument}")
             }
             Self::InvalidProcessId(value) => write!(formatter, "invalid process id: {value}"),
+            Self::InvalidUiStyle(value) => write!(
+                formatter,
+                "unknown UI style: {value}; use 1, 2, or 3 (debug view-ui-style for details)"
+            ),
         }
     }
 }
@@ -163,12 +170,26 @@ fn parse_debug_args(args: &[String]) -> Result<CliCommand, CliError> {
         "explain" => CliCommand::Explain,
         "test-frost" => CliCommand::TestFrost,
         "test-matrix" => CliCommand::TestMatrix,
+        "view-ui-style" => return parse_ui_style_args(rest),
         "test-watchdog-error" => CliCommand::TestWatchdogError,
         "test-watchdog-critical" => CliCommand::TestWatchdogCritical,
         "test-watchdog-panic" => CliCommand::TestWatchdogPanic,
         other => return Err(CliError::UnknownDebugCommand(other.to_string())),
     };
     parse_no_extra_args(rest, command)
+}
+
+fn parse_ui_style_args(args: &[String]) -> Result<CliCommand, CliError> {
+    match args {
+        [] => Ok(CliCommand::UiStyleHelp),
+        [help] if matches!(help.as_str(), "help" | "-h" | "--help") => Ok(CliCommand::UiStyleHelp),
+        [version] => shell::UiStyleVersion::ALL
+            .into_iter()
+            .find(|style| style.number().to_string() == *version)
+            .map(CliCommand::ViewUiStyle)
+            .ok_or_else(|| CliError::InvalidUiStyle(version.clone())),
+        [_, extra, ..] => Err(CliError::UnexpectedArgument(extra.clone())),
+    }
 }
 
 fn parse_internal_update_args(args: &[String], recover_only: bool) -> Result<CliCommand, CliError> {

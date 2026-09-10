@@ -8,6 +8,7 @@ mod editor_media;
 mod theme;
 
 pub mod components;
+pub mod style_preview;
 
 pub use assets::*;
 pub use editor_media::{

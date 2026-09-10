@@ -27,9 +27,13 @@ mod shell_components;
 mod shortcuts;
 mod startup;
 mod startup_banner;
+mod style_preview;
 mod terminal_events;
 mod terminal_session;
 mod terminal_size;
+
+pub use style_preview::run_ui_style_preview;
+pub use ui::style_preview::UiStyleVersion;
 
 pub use banner::*;
 pub use first_run_banner::*;

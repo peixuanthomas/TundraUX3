@@ -11,7 +11,7 @@ use crate::asset_command::run_asset;
 use crate::config_command::run_config;
 use crate::debug_command::{drain_watchdog_incidents, run_watchdog_test};
 use crate::doctor::run_doctor;
-use crate::help_text::{write_debug_help, write_explain, write_help};
+use crate::help_text::{write_debug_help, write_explain, write_help, write_ui_style_help};
 use crate::path_report::run_paths;
 use crate::storage_reset::run_new;
 
@@ -173,6 +173,26 @@ where
                 shell::run_matrix_animation_preview_with_color(stdout, color)
             })
         }
+        Ok(CliCommand::UiStyleHelp) => match write_ui_style_help(stdout) {
+            Ok(()) => 0,
+            Err(error) => {
+                let _ = writeln!(stderr, "ERROR: could not print UI style catalogue: {error}");
+                1
+            }
+        },
+        Ok(CliCommand::ViewUiStyle(version)) => run_animation_preview(stderr, "UI style", || {
+            let paths = platform.app_paths().map_err(std::io::Error::other)?;
+            let storage = StorageManager::from_layout(StorageLayout::from_app_paths(&paths));
+            let appearance = if storage.layout().config_path.exists() {
+                storage
+                    .load_config()
+                    .map_err(std::io::Error::other)?
+                    .appearance
+            } else {
+                StorageConfig::default().appearance
+            };
+            shell::run_ui_style_preview(stdout, version, &appearance)
+        }),
         Ok(CliCommand::DebugHelp) => {
             let _ = write_debug_help(stdout);
             0

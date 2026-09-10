@@ -12,6 +12,24 @@ use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
 use std::io::{self, Write};
 
+/// Shared text-only capability detection; image protocol probing is opt-in.
+pub(crate) fn text_render_capabilities() -> ui::RenderCapabilities {
+    let true_color = std::env::var("COLORTERM").is_ok_and(|value| {
+        value.eq_ignore_ascii_case("truecolor") || value.eq_ignore_ascii_case("24bit")
+    }) || std::env::var("TERM").is_ok_and(|value| {
+        let value = value.to_ascii_lowercase();
+        value.contains("truecolor") || value.contains("direct")
+    }) || std::env::var_os("WT_SESSION").is_some();
+    ui::RenderCapabilities {
+        color: if true_color {
+            ui::ColorCapability::TrueColor
+        } else {
+            ui::ColorCapability::Ansi
+        },
+        image_protocol: false,
+    }
+}
+
 pub struct TerminalGuard<W: Write> {
     terminal: Terminal<CrosstermBackend<W>>,
     restored: bool,

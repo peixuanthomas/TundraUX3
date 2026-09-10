@@ -97,6 +97,45 @@ fn debug_commands_reject_old_entries_unknown_names_and_extra_arguments() {
 }
 
 #[test]
+fn ui_style_command_selects_versions_and_rejects_invalid_arguments() {
+    for style in shell::UiStyleVersion::ALL {
+        assert_eq!(
+            parse_args(["debug", "view-ui-style", &style.number().to_string()]),
+            Ok(CliCommand::ViewUiStyle(style))
+        );
+    }
+    assert_eq!(
+        parse_args(["debug", "view-ui-style"]),
+        Ok(CliCommand::UiStyleHelp)
+    );
+    for help in ["help", "--help", "-h"] {
+        assert_eq!(
+            parse_args(["debug", "view-ui-style", help]),
+            Ok(CliCommand::UiStyleHelp)
+        );
+    }
+    for invalid in ["0", "4", "-1", "1/2/3", "tea", "999", "1.0"] {
+        assert_eq!(
+            parse_args(["debug", "view-ui-style", invalid]),
+            Err(CliError::InvalidUiStyle(invalid.into()))
+        );
+    }
+    assert_eq!(
+        parse_args(["debug", "view-ui-style", "1", "extra"]),
+        Err(CliError::UnexpectedArgument("extra".into()))
+    );
+    let mut stdout = Vec::new();
+    let mut stderr = Vec::new();
+    assert_eq!(run(["debug", "view-ui-style"], &mut stdout, &mut stderr), 0);
+    let output = String::from_utf8(stdout).unwrap();
+    for style in shell::UiStyleVersion::ALL {
+        assert!(output.contains(style.title()));
+    }
+    assert!(output.contains("F1-F3"));
+    assert!(stderr.is_empty());
+}
+
+#[test]
 fn debug_help_lists_diagnostics_and_report_tests() {
     let mut stdout = Vec::new();
     let mut stderr = Vec::new();
