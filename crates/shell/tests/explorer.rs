@@ -906,7 +906,8 @@ fn failed_system_trash_delete_reports_a_stable_operation_error() {
         .to_explorer_view_model()
         .error
         .expect("failed background delete should report an Explorer error");
-    assert!(reported_error.contains("failed") || reported_error.contains("error"));
+    assert!(reported_error.contains("injected system Trash failure"));
+    assert!(target.exists(), "a failed delete must preserve the source");
     assert!(state.to_notification_view_model().is_none());
     while state.take_notification_response().is_some() {}
 

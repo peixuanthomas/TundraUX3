@@ -1234,6 +1234,14 @@ fn directory_stat(directory: &OwnedFd) -> io::Result<libc::stat> {
     Ok(unsafe { stat.assume_init() })
 }
 
+// Linux UX deliberately runs as root while browsing the selected user's files.
+// Content keeps its original owner across rename; only private Trash directories
+// and .trashinfo files must belong to the process user.
+fn trash_content_owner_allowed(metadata: &fs::Metadata) -> bool {
+    let uid = unsafe { libc::geteuid() };
+    uid == 0 || metadata.uid() == uid
+}
+
 fn list_trash_root(root: &TrashRoot) -> Result<Vec<TrashEntry>, PlatformError> {
     let mut entries = Vec::new();
     let directory = fs::read_dir(&root.info)
@@ -1264,7 +1272,7 @@ fn list_trash_root(root: &TrashRoot) -> Result<Vec<TrashEntry>, PlatformError> {
         let Ok(metadata) = fs::symlink_metadata(&content_path) else {
             continue;
         };
-        if metadata.file_type().is_symlink() || metadata.uid() != unsafe { libc::geteuid() } {
+        if metadata.file_type().is_symlink() || !trash_content_owner_allowed(&metadata) {
             continue;
         }
         let info = match parse_trashinfo(&info_path, root.topdir.as_deref()) {
@@ -1301,9 +1309,11 @@ fn move_one_to_trash(path: &Path) -> Result<(), PlatformError> {
             message: "symbolic links are not accepted by the Linux Trash backend".to_string(),
         });
     }
-    if metadata.uid() != unsafe { libc::geteuid() } {
+    if !trash_content_owner_allowed(&metadata) {
         return Err(PlatformError::InvalidInput {
-            message: "Linux Trash only accepts items owned by the current user".to_string(),
+            message:
+                "Linux Trash only accepts items owned by the current user unless running as root"
+                    .to_string(),
         });
     }
     let mount = mount_for_path(path)?;
@@ -1355,7 +1365,7 @@ fn empty_trash_root(root: &TrashRoot) -> Result<(), PlatformError> {
             continue;
         };
         if content_metadata.file_type().is_symlink()
-            || content_metadata.uid() != unsafe { libc::geteuid() }
+            || !trash_content_owner_allowed(&content_metadata)
         {
             continue;
         }
@@ -1413,7 +1423,7 @@ fn restore_trash_item_from_root_with(
     let info_path = root.info.join(format!("{name}{TRASH_INFO_SUFFIX}"));
     let metadata = fs::symlink_metadata(&source)
         .map_err(|error| io_error("inspect Linux Trash item", Some(source.clone()), error))?;
-    if metadata.file_type().is_symlink() || metadata.uid() != unsafe { libc::geteuid() } {
+    if metadata.file_type().is_symlink() || !trash_content_owner_allowed(&metadata) {
         return Err(PlatformError::InvalidInput {
             message: "refusing to restore an unsafe or foreign-owned item from Trash".to_string(),
         });
@@ -1987,6 +1997,14 @@ fn copy_no_follow(source: &Path, destination: &Path) -> Result<(), PlatformError
             })?;
             copy_no_follow(&entry.path(), &destination.join(entry.file_name()))?;
         }
+        let directory = open_directory_tree(destination, false).map_err(|error| {
+            io_error(
+                "open restored Trash directory",
+                Some(destination.to_path_buf()),
+                error,
+            )
+        })?;
+        preserve_trash_content_owner(&directory, &metadata, destination)?;
     } else {
         let mut input = OpenOptions::new()
             .read(true)
@@ -2012,6 +2030,7 @@ fn copy_no_follow(source: &Path, destination: &Path) -> Result<(), PlatformError
                     error,
                 )
             })?;
+        preserve_trash_content_owner(&output, &metadata, destination)?;
         io::copy(&mut input, &mut output)
             .and_then(|_| output.sync_all())
             .map_err(|error| {
@@ -2021,6 +2040,23 @@ fn copy_no_follow(source: &Path, destination: &Path) -> Result<(), PlatformError
                     error,
                 )
             })?;
+    }
+    Ok(())
+}
+
+fn preserve_trash_content_owner(
+    file: &impl AsRawFd,
+    metadata: &fs::Metadata,
+    destination: &Path,
+) -> Result<(), PlatformError> {
+    if unsafe { libc::geteuid() } == 0
+        && unsafe { libc::fchown(file.as_raw_fd(), metadata.uid(), metadata.gid()) } != 0
+    {
+        return Err(io_error(
+            "preserve restored Linux Trash ownership",
+            Some(destination.to_path_buf()),
+            io::Error::last_os_error(),
+        ));
     }
     Ok(())
 }
@@ -2693,3 +2729,7 @@ mod tests {
         assert!(!logind_allows_power_action(""));
     }
 }
+
+#[cfg(test)]
+#[path = "linux/tests/root_trash.rs"]
+mod root_trash_tests;

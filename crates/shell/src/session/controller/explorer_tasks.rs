@@ -827,16 +827,8 @@ impl ShellSession {
                 }
 
                 self.apply_explorer_command(ExplorerCommand::Refresh, platform);
-                let fatal = summary
-                    .fatal_error
-                    .as_ref()
-                    .map(ToString::to_string)
-                    .unwrap_or_default();
-                let detail = [(!summary.cancelled && !fatal.is_empty()).then_some(fatal)]
-                    .into_iter()
-                    .flatten()
-                    .collect::<Vec<_>>()
-                    .join("; ");
+                let detail =
+                    explorer_task_error_detail(summary.fatal_error.as_ref(), &summary.failures);
                 let message = if summary.cancelled {
                     format!(
                         "Operation cancelled: {} succeeded, {} failed{}",
@@ -934,6 +926,20 @@ impl ShellSession {
     }
 }
 
+fn explorer_task_error_detail(
+    fatal_error: Option<&app::explorer_tasks::ExplorerTaskError>,
+    failures: &[app::explorer_tasks::ExplorerItemFailure],
+) -> String {
+    fatal_error
+        .map(ToString::to_string)
+        .or_else(|| {
+            failures
+                .first()
+                .map(|failure| format!("{}: {}", failure.source.display(), failure.error))
+        })
+        .unwrap_or_default()
+}
+
 pub(in crate::session) fn waiting_for_conflict_progress() -> ExplorerOperationProgress {
     ExplorerOperationProgress {
         phase: ExplorerOperationPhase::WaitingForConflict,
@@ -960,6 +966,29 @@ pub(in crate::session) fn collision_resolution(
 #[cfg(test)]
 mod explorer_task_workflow_tests {
     use super::*;
+
+    #[test]
+    fn explorer_task_error_detail_reports_the_failed_file_and_cause() {
+        use app::explorer_tasks::{ExplorerItemFailure, ExplorerTaskError};
+        let failures = [ExplorerItemFailure {
+            source: PathBuf::from("/home/user/Documents/alpha.txt"),
+            target: None,
+            error: ExplorerTaskError::Platform(platform::PlatformError::InvalidInput {
+                message: "Linux Trash ownership mismatch".into(),
+            }),
+        }];
+        let detail = explorer_task_error_detail(None, &failures);
+        assert!(detail.contains("/home/user/Documents/alpha.txt"));
+        assert!(detail.contains("Linux Trash ownership mismatch"));
+        let fatal = ExplorerTaskError::Journal {
+            message: "journal unavailable".into(),
+        };
+        assert_eq!(
+            explorer_task_error_detail(Some(&fatal), &failures),
+            fatal.to_string()
+        );
+        assert!(explorer_task_error_detail(None, &[]).is_empty());
+    }
 
     fn test_explorer_watchdog() -> watchdog::AppWatchdog {
         static WATCHDOG: std::sync::OnceLock<watchdog::AppWatchdog> = std::sync::OnceLock::new();
