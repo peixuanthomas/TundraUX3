@@ -92,7 +92,8 @@ fn start_watchdog(
 ) -> Result<(WatchdogRuntime, ProcessWatchdog), watchdog::WatchdogError> {
     let fallback = std::env::temp_dir().join("TundraUX3").join("watchdog");
     let platform = platform::native_platform();
-    let config = match platform.app_paths() {
+    let mut fallback_reason = None;
+    let mut config = match platform.app_paths() {
         Ok(paths) => WatchdogConfig::new(
             paths.logs_path().join("crashes"),
             fallback.join("crashes"),
@@ -100,16 +101,49 @@ fn start_watchdog(
             "tundra-cli",
             env!("CARGO_PKG_VERSION"),
         ),
-        Err(_) => WatchdogConfig::new(
-            fallback.join("crashes"),
-            fallback.join("fallback"),
-            fallback.join("state"),
-            "tundra-cli",
-            env!("CARGO_PKG_VERSION"),
-        ),
+        Err(error) => {
+            fallback_reason = Some(error.to_string());
+            WatchdogConfig::new(
+                fallback.join("crashes"),
+                fallback.join("fallback"),
+                fallback.join("state"),
+                "tundra-cli",
+                env!("CARGO_PKG_VERSION"),
+            )
+        }
     }
     .with_unclean_exit_tracking(!parent_managed);
+    if let Ok(paths) = platform.app_paths() {
+        let storage =
+            storage::StorageManager::from_layout(storage::StorageLayout::from_app_paths(&paths));
+        match storage.load_config() {
+            Ok(saved) => {
+                config.runtime_log_max_age_days = saved.runtime_logs.max_age_days;
+                config.runtime_log_max_total_bytes =
+                    saved.runtime_logs.max_total_mib.saturating_mul(1024 * 1024);
+                config.runtime_log_segment_bytes =
+                    saved.runtime_logs.segment_mib.saturating_mul(1024 * 1024);
+            }
+            Err(error) => fallback_reason = Some(error.to_string()),
+        }
+    }
     let (runtime, process) = WatchdogRuntime::start(config)?;
+    if let Some(reason) = fallback_reason {
+        let mut event = runtime_log::RuntimeLogEvent::new(
+            runtime_log::LogContext {
+                app: "cli".into(),
+                module: "ux.config".into(),
+                operation: "load_log_retention".into(),
+                ..Default::default()
+            },
+            runtime_log::LogLevel::Warning,
+            runtime_log::LogPhase::Degraded,
+            "Log configuration unavailable; default retention or fallback paths selected",
+        );
+        event.error_code = Some("LOG_CONFIG_FALLBACK".into());
+        event.error_chain.push(runtime_log::sanitize_text(&reason));
+        runtime_log::record(event);
+    }
     let process = process.install_global()?;
     let _ = process.report_stale_runs(|pid| platform.is_process_alive(pid).unwrap_or(true));
     Ok((runtime, process))

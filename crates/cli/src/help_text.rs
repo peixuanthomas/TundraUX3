@@ -2,7 +2,10 @@ use std::io::Write;
 
 pub(crate) fn write_help(output: &mut impl Write) -> std::io::Result<()> {
     writeln!(output, "TundraUX3 CLI")?;
-    writeln!(output, "Usage: tundra-cli <cls|config|debug|new|repl|help>")?;
+    writeln!(
+        output,
+        "Usage: tundra-cli <cls|config|debug|logs|new|repl|help>"
+    )?;
     writeln!(
         output,
         "  cls     Clear terminal history and screen, then move the cursor home"
@@ -22,6 +25,10 @@ pub(crate) fn write_help(output: &mut impl Write) -> std::io::Result<()> {
     writeln!(
         output,
         "  repl    Enter the interactive command loop; type exit to leave, or /<command> to run an operating-system command"
+    )?;
+    writeln!(
+        output,
+        "  logs    Query runtime logs and incidents, or export diagnostics; run logs help"
     )?;
     writeln!(output, "  help    Show command help")
 }

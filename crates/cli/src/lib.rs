@@ -1,3 +1,5 @@
+mod logs_command;
+pub use logs_command::{LogsAction, LogsFormat, LogsVerb};
 mod arguments;
 mod asset_command;
 mod config_command;

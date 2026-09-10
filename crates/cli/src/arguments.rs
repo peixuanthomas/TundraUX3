@@ -2,6 +2,7 @@ use std::fmt;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CliCommand {
+    Logs(crate::logs_command::LogsAction),
     Asset(AssetAction),
     Cls,
     Config(ConfigAction),
@@ -75,6 +76,7 @@ pub enum ConfigUpdate {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CliError {
+    InvalidLogsArgument(String),
     ForbiddenConfigField(String),
     MissingArgument(&'static str),
     ReadOnlyConfigField(String),
@@ -91,6 +93,9 @@ pub enum CliError {
 impl fmt::Display for CliError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::InvalidLogsArgument(message) => {
+                write!(formatter, "invalid logs arguments: {message}")
+            }
             Self::ForbiddenConfigField(field) => {
                 write!(
                     formatter,
@@ -145,6 +150,7 @@ where
     let command = args.remove(0);
 
     match command.as_str() {
+        "logs" => crate::logs_command::parse_logs(&args).map(CliCommand::Logs),
         "debug" => parse_debug_args(&args),
         "cls" => parse_no_extra_args(&args, CliCommand::Cls),
         "config" => parse_config_args(&args).map(CliCommand::Config),
