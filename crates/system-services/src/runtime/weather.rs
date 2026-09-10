@@ -60,13 +60,13 @@ impl WeatherProvider for OpenMeteoProvider {
             .timeout(Duration::from_secs(10))
             .send()
             .await
-            .map_err(|error| error.to_string())?
+            .map_err(|error| super::telemetry::capture("weather", "request", &error))?
             .error_for_status()
-            .map_err(|error| error.to_string())?;
+            .map_err(|error| super::telemetry::capture("weather", "request", &error))?;
         let current = response
             .json::<OpenMeteoResponse>()
             .await
-            .map_err(|error| error.to_string())?
+            .map_err(|error| super::telemetry::capture("weather", "request", &error))?
             .current;
         Ok(WeatherData {
             condition: normalize_open_meteo_code(current.weather_code),
@@ -94,14 +94,15 @@ impl MetOfficeProvider {
         if api_key.is_empty() {
             return Err("Met Office API key is empty".to_string());
         }
-        let mut value = HeaderValue::from_str(api_key).map_err(|error| error.to_string())?;
+        let mut value = HeaderValue::from_str(api_key)
+            .map_err(|error| super::telemetry::capture("weather", "request", &error))?;
         value.set_sensitive(true);
         let mut headers = HeaderMap::new();
         headers.insert("apikey", value);
         let client = reqwest::Client::builder()
             .default_headers(headers)
             .build()
-            .map_err(|error| error.to_string())?;
+            .map_err(|error| super::telemetry::capture("weather", "request", &error))?;
         Ok(Self {
             client,
             data_source: data_source
@@ -154,12 +155,12 @@ impl WeatherProvider for MetOfficeProvider {
             .get(url)
             .send()
             .await
-            .map_err(|error| error.to_string())?
+            .map_err(|error| super::telemetry::capture("weather", "request", &error))?
             .error_for_status()
-            .map_err(|error| error.to_string())?
+            .map_err(|error| super::telemetry::capture("weather", "request", &error))?
             .json::<MetOfficeResponse>()
             .await
-            .map_err(|error| error.to_string())?;
+            .map_err(|error| super::telemetry::capture("weather", "request", &error))?;
         let current = response
             .features
             .into_iter()

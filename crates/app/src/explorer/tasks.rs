@@ -4,6 +4,7 @@
 //! immutable plan, polls the event receiver, and folds those events into whichever view model it
 //! owns.  All filesystem mutations happen on one dedicated worker thread.
 
+use runtime_log::{LogContext, LogLevel, LogPhase, RuntimeLogEvent};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::fs::{self, File, OpenOptions};
@@ -230,6 +231,13 @@ pub enum ExplorerTaskError {
         path: PathBuf,
         message: String,
     },
+    DetailedIo {
+        operation: &'static str,
+        path: PathBuf,
+        message: String,
+        os_error_code: Option<i32>,
+        error_chain: Vec<String>,
+    },
     Platform(PlatformError),
     UnsafeLink {
         path: PathBuf,
@@ -251,6 +259,11 @@ pub enum ExplorerTaskError {
     Journal {
         message: String,
     },
+    DetailedJournal {
+        message: String,
+        os_error_code: Option<i32>,
+        error_chain: Vec<String>,
+    },
     RecoveryRequired {
         message: String,
     },
@@ -264,6 +277,12 @@ impl fmt::Display for ExplorerTaskError {
                 operation,
                 path,
                 message,
+            }
+            | Self::DetailedIo {
+                operation,
+                path,
+                message,
+                ..
             } => write!(
                 formatter,
                 "{operation} failed for {}: {message}",
@@ -299,7 +318,7 @@ impl fmt::Display for ExplorerTaskError {
             ),
             Self::Cancelled => formatter.write_str("the task was cancelled"),
             Self::WorkerStopped => formatter.write_str("the Explorer task worker has stopped"),
-            Self::Journal { message } => {
+            Self::Journal { message } | Self::DetailedJournal { message, .. } => {
                 write!(formatter, "Explorer recovery journal failed: {message}")
             }
             Self::RecoveryRequired { message } => {
@@ -312,7 +331,25 @@ impl fmt::Display for ExplorerTaskError {
     }
 }
 
-impl std::error::Error for ExplorerTaskError {}
+impl ExplorerTaskError {
+    pub fn raw_os_error(&self) -> Option<i32> {
+        match self {
+            Self::DetailedIo { os_error_code, .. }
+            | Self::DetailedJournal { os_error_code, .. } => *os_error_code,
+            Self::Platform(error) => error.raw_os_error(),
+            _ => None,
+        }
+    }
+}
+
+impl std::error::Error for ExplorerTaskError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Platform(error) => Some(error),
+            _ => None,
+        }
+    }
+}
 
 impl From<PlatformError> for ExplorerTaskError {
     fn from(value: PlatformError) -> Self {
@@ -434,6 +471,7 @@ enum WorkerCommand {
         id: ExplorerTaskId,
         plan: ExplorerTaskPlan,
         cancellation: ExplorerCancellationToken,
+        owner_id: Option<String>,
     },
     Shutdown,
 }
@@ -542,6 +580,14 @@ impl ExplorerTaskEngine {
         &self,
         plan: ExplorerTaskPlan,
     ) -> Result<ExplorerTaskHandle, ExplorerTaskSubmitError> {
+        self.submit_with_owner(plan, None)
+    }
+
+    pub fn submit_with_owner(
+        &self,
+        plan: ExplorerTaskPlan,
+        owner_id: Option<String>,
+    ) -> Result<ExplorerTaskHandle, ExplorerTaskSubmitError> {
         if self.mutations_blocked.load(Ordering::Acquire) {
             return Err(ExplorerTaskSubmitError::RecoveryRequired);
         }
@@ -575,6 +621,7 @@ impl ExplorerTaskEngine {
                 id,
                 plan,
                 cancellation: cancellation.clone(),
+                owner_id,
             })
             .is_err()
         {
@@ -652,21 +699,43 @@ fn worker_loop(context: WorkerContext) {
                 id,
                 plan,
                 cancellation,
+                owner_id,
             } => {
+                let watchdog = watchdog.clone().with_log_owner(owner_id).with_log_task_id(
+                    TaskId::new(format!("explorer-{}", id.0))
+                        .expect("generated Explorer task ID is valid"),
+                );
                 send_event(&event_tx, ExplorerTaskEvent::Accepted { id });
                 let operation_descriptor = operation_descriptor(id, &plan);
                 let mut journal = match watchdog.begin_operation(operation_descriptor) {
                     Ok(journal) => journal,
                     Err(error) => {
                         let mut summary = ExplorerTaskSummary::empty();
-                        summary.fatal_error = Some(ExplorerTaskError::Journal {
-                            message: error.to_string(),
-                        });
+                        let mut event = RuntimeLogEvent::new(
+                            watchdog.log_context("begin_operation"),
+                            LogLevel::Error,
+                            LogPhase::Failed,
+                            "Explorer journal could not start",
+                        );
+                        event.context.task_id = Some(format!("explorer-{}", id.0));
+                        event.error_code = Some("EXPLORER_JOURNAL".into());
+                        watchdog::capture_error(&mut event, &error);
+                        watchdog.record_log(event);
+                        summary.fatal_error = Some(journal_error(error));
                         clear_active_task(&active, &busy);
                         send_event(&event_tx, ExplorerTaskEvent::Finished { id, summary });
                         continue;
                     }
                 };
+                let mut log_context = watchdog.log_context("filesystem_mutation");
+                log_context.task_id = Some(format!("explorer-{}", id.0));
+                log_context.operation_id = Some(journal.record().operation_id.clone());
+                watchdog.record_log(RuntimeLogEvent::new(
+                    log_context.clone(),
+                    LogLevel::Info,
+                    LogPhase::Started,
+                    "Explorer mutation started",
+                ));
                 let result = watchdog.run_boundary(
                     BoundarySpec::new(format!("explorer.operation.{}", id.0), BoundaryKind::Worker),
                     AssertUnwindSafe(|| {
@@ -694,11 +763,7 @@ fn worker_loop(context: WorkerContext) {
                                     journal.commit("Explorer incomplete operation reconciled")
                                 {
                                     mutations_blocked.store(true, Ordering::Release);
-                                    summary
-                                        .fatal_error
-                                        .get_or_insert(ExplorerTaskError::Journal {
-                                            message: error.to_string(),
-                                        });
+                                    summary.fatal_error.get_or_insert(journal_error(error));
                                 }
                             } else {
                                 let recovery_error = ExplorerTaskError::RecoveryRequired {
@@ -715,9 +780,7 @@ fn worker_loop(context: WorkerContext) {
                             }
                         } else if let Err(error) = journal.commit("Explorer operation finished") {
                             mutations_blocked.store(true, Ordering::Release);
-                            summary.fatal_error = Some(ExplorerTaskError::Journal {
-                                message: error.to_string(),
-                            });
+                            summary.fatal_error = Some(journal_error(error));
                         }
                         Some(summary)
                     }
@@ -726,9 +789,30 @@ fn worker_loop(context: WorkerContext) {
                         let message = caught.payload().to_string();
                         let recovery = ExplorerRecoveryHandler.recover(journal.record());
                         mutations_blocked.store(!recovery.is_recovered(), Ordering::Release);
-                        let _ = caught.finalize(recovery.clone());
+                        if let Err(error) = caught.finalize(recovery.clone()) {
+                            log_metadata_error(
+                                &watchdog,
+                                &log_context,
+                                "incident_finalize",
+                                &error,
+                                None,
+                                None,
+                            );
+                        }
                         if recovery.is_recovered() {
-                            let _ = journal.commit("Explorer panic checkpoint reconciled");
+                            if let Err(error) =
+                                journal.commit("Explorer panic checkpoint reconciled")
+                            {
+                                mutations_blocked.store(true, Ordering::Release);
+                                log_metadata_error(
+                                    &watchdog,
+                                    &log_context,
+                                    "panic_checkpoint_commit",
+                                    &error,
+                                    None,
+                                    None,
+                                );
+                            }
                         }
                         send_event(
                             &event_tx,
@@ -744,6 +828,35 @@ fn worker_loop(context: WorkerContext) {
                 };
                 clear_active_task(&active, &busy);
                 if let Some(summary) = summary {
+                    let phase = if summary.cancelled {
+                        LogPhase::Cancelled
+                    } else if summary.failed_items > 0 || summary.fatal_error.is_some() {
+                        LogPhase::Failed
+                    } else {
+                        LogPhase::Succeeded
+                    };
+                    // Per-item errors are owned by record_failure; this summary carries only counts.
+                    let mut event = RuntimeLogEvent::new(
+                        log_context,
+                        if phase == LogPhase::Failed {
+                            LogLevel::Error
+                        } else {
+                            LogLevel::Info
+                        },
+                        phase,
+                        format!(
+                            "Explorer mutation completed: succeeded={} failed={} skipped={}",
+                            summary.succeeded_items, summary.failed_items, summary.skipped_items
+                        ),
+                    );
+                    if let Some(error) = &summary.fatal_error {
+                        if !summary.cancelled
+                            && !matches!(error, ExplorerTaskError::RecoveryRequired { .. })
+                        {
+                            fill_task_error(&mut event, error);
+                        }
+                    }
+                    watchdog.record_log(event);
                     send_event(&event_tx, ExplorerTaskEvent::Finished { id, summary });
                 }
             }
@@ -1053,10 +1166,12 @@ fn execute_task(
     event_tx: &mpsc::Sender<ExplorerTaskEvent>,
     journal: &mut OperationGuard,
 ) -> ExplorerTaskSummary {
-    let _ = journal.checkpoint(OperationCheckpoint::new(
+    if let Err(error) = journal.checkpoint(OperationCheckpoint::new(
         "planning",
         serde_json::json!({ "task_id": id.0 }),
-    ));
+    )) {
+        return fatal_summary(journal_error(error));
+    }
     send_event(
         event_tx,
         ExplorerTaskEvent::PhaseChanged {
@@ -1141,10 +1256,14 @@ fn execute_task(
                 }
                 match platform.move_to_trash(std::slice::from_ref(&path)) {
                     Ok(()) => {
-                        let _ = context.checkpoint(
+                        if let Err(error) = context.checkpoint(
                             "delete_committed",
                             serde_json::json!({ "source": path.display().to_string() }),
-                        );
+                        ) {
+                            context.record_failure(&path, None, error);
+                            context.summary.failed_sources.push(path);
+                            break;
+                        }
                         context.progress.processed_bytes = context
                             .progress
                             .processed_bytes
@@ -1606,6 +1725,7 @@ struct ExecutionContext<'a> {
     chunk_size: usize,
     staging_sequence: u64,
     journal: &'a mut OperationGuard,
+    log_context: LogContext,
 }
 
 impl<'a> ExecutionContext<'a> {
@@ -1624,6 +1744,16 @@ impl<'a> ExecutionContext<'a> {
         let mut summary = ExplorerTaskSummary::empty();
         summary.total_items = total_items;
         summary.total_bytes = total_bytes;
+        let mut log_context = AppWatchdog::current()
+            .map(|app| app.log_context("filesystem_mutation"))
+            .unwrap_or_else(|| LogContext {
+                app: "explorer".into(),
+                module: "ux.explorer".into(),
+                operation: "filesystem_mutation".into(),
+                ..LogContext::default()
+            });
+        log_context.task_id = Some(format!("explorer-{}", id.0));
+        log_context.operation_id = Some(journal.record().operation_id.clone());
         Self {
             id,
             platform,
@@ -1641,6 +1771,7 @@ impl<'a> ExecutionContext<'a> {
             summary,
             chunk_size,
             staging_sequence: 0,
+            log_context,
             journal,
         }
     }
@@ -1652,9 +1783,7 @@ impl<'a> ExecutionContext<'a> {
     ) -> Result<(), ExplorerTaskError> {
         self.journal
             .checkpoint(OperationCheckpoint::new(phase, payload))
-            .map_err(|error| ExplorerTaskError::Journal {
-                message: error.to_string(),
-            })
+            .map_err(|error| journal_error(error))
     }
 
     fn phase(&mut self, phase: ExplorerTaskPhase) {
@@ -1685,6 +1814,7 @@ impl<'a> ExecutionContext<'a> {
     }
 
     fn record_success(&mut self, source: &Path, target: Option<&Path>) {
+        self.log_item(source, target, LogPhase::Succeeded, None);
         self.progress.processed_items = self.progress.processed_items.saturating_add(1);
         self.progress.current_path = Some(source.to_path_buf());
         self.summary.succeeded_items = self.summary.succeeded_items.saturating_add(1);
@@ -1715,6 +1845,19 @@ impl<'a> ExecutionContext<'a> {
     }
 
     fn record_failure(&mut self, source: &Path, target: Option<&Path>, error: ExplorerTaskError) {
+        self.log_item(
+            source,
+            target,
+            if matches!(
+                error,
+                ExplorerTaskError::Cancelled | ExplorerTaskError::CollisionCancelled { .. }
+            ) {
+                LogPhase::Cancelled
+            } else {
+                LogPhase::Failed
+            },
+            Some(&error),
+        );
         self.progress.processed_items = self.progress.processed_items.saturating_add(1);
         self.progress.current_path = Some(source.to_path_buf());
         self.summary.failed_items = self.summary.failed_items.saturating_add(1);
@@ -1734,7 +1877,64 @@ impl<'a> ExecutionContext<'a> {
         self.emit_progress();
     }
 
+    fn log_item(
+        &self,
+        source: &Path,
+        target: Option<&Path>,
+        phase: LogPhase,
+        error: Option<&ExplorerTaskError>,
+    ) {
+        let mut event = RuntimeLogEvent::new(
+            self.log_context.clone(),
+            if phase == LogPhase::Failed {
+                LogLevel::Error
+            } else {
+                LogLevel::Info
+            },
+            phase,
+            "Explorer file operation",
+        );
+        event.source_path = Some(source.to_path_buf());
+        event.target_path = target.map(Path::to_path_buf);
+        if let Some(error) = error {
+            if phase != LogPhase::Cancelled {
+                fill_task_error(&mut event, error);
+            }
+        }
+        if let Some(app) = AppWatchdog::current() {
+            app.record_log(event);
+        } else {
+            runtime_log::record(event);
+        }
+    }
+
+    fn record_secondary(
+        &self,
+        operation: &str,
+        source: &Path,
+        target: Option<&Path>,
+        error: &(dyn std::error::Error + 'static),
+    ) {
+        if let Some(app) = AppWatchdog::current() {
+            log_metadata_error(
+                &app,
+                &self.log_context,
+                operation,
+                error,
+                Some(source),
+                target,
+            );
+        }
+    }
+
+    fn rollback_rename(&self, source: &Path, target: &Path) {
+        if let Err(error) = self.platform.rename_path(source, target) {
+            self.record_secondary("rollback_rename", source, Some(target), &error);
+        }
+    }
+
     fn run_node(&mut self, node: &PreparedNode, operation: ExplorerTransferOperation) -> bool {
+        self.log_item(&node.source, Some(&node.target), LogPhase::Started, None);
         if self.check_cancel().is_err() {
             self.summary.cancelled = true;
             return false;
@@ -1809,7 +2009,7 @@ impl<'a> ExecutionContext<'a> {
                         if self.trash.has_rollback_path()
                             && let Some(trashed) = trashed
                         {
-                            let _ = self.platform.rename_path(&trashed, &node.target);
+                            self.rollback_rename(&trashed, &node.target);
                         }
                         return Err(ExplorerTaskError::DestinationChanged {
                             path: node.target.clone(),
@@ -1825,7 +2025,7 @@ impl<'a> ExecutionContext<'a> {
                     )?;
                     if let Err(error) = fs::create_dir(&node.target) {
                         if let Some(trashed) = trashed {
-                            let _ = self.platform.rename_path(&trashed, &node.target);
+                            self.rollback_rename(&trashed, &node.target);
                         }
                         return Err(io_error(
                             "create destination directory",
@@ -1851,8 +2051,25 @@ impl<'a> ExecutionContext<'a> {
                         return Err(ExplorerTaskError::Cancelled);
                     }
                 }
-                if let Ok(metadata) = fs::metadata(&node.source) {
-                    let _ = fs::set_permissions(&node.target, metadata.permissions());
+                match fs::metadata(&node.source) {
+                    Ok(metadata) => {
+                        if let Err(error) =
+                            fs::set_permissions(&node.target, metadata.permissions())
+                        {
+                            self.record_secondary(
+                                "copy_directory_permissions",
+                                &node.source,
+                                Some(&node.target),
+                                &error,
+                            );
+                        }
+                    }
+                    Err(error) => self.record_secondary(
+                        "copy_directory_permissions",
+                        &node.source,
+                        Some(&node.target),
+                        &error,
+                    ),
                 }
                 if mark_self {
                     self.record_success(&node.source, Some(&node.target));
@@ -1987,7 +2204,7 @@ impl<'a> ExecutionContext<'a> {
         let trashed = match self.trash.move_to_trash(self.platform, &node.target) {
             Ok(path) => path,
             Err(error) => {
-                let _ = self.platform.rename_path(&staging, &node.source);
+                self.rollback_rename(&staging, &node.source);
                 return Err(error);
             }
         };
@@ -2000,9 +2217,9 @@ impl<'a> ExecutionContext<'a> {
             }),
         )?;
         if let Err(error) = self.platform.rename_path(&staging, &node.target) {
-            let _ = self.platform.rename_path(&staging, &node.source);
+            self.rollback_rename(&staging, &node.source);
             if self.trash.has_rollback_path() {
-                let _ = self.platform.rename_path(&trashed, &node.target);
+                self.rollback_rename(&trashed, &node.target);
             }
             return Err(error.into());
         }
@@ -2094,7 +2311,7 @@ impl<'a> ExecutionContext<'a> {
             if self.trash.has_rollback_path()
                 && let Some(trashed) = trashed
             {
-                let _ = self.platform.rename_path(&trashed, target);
+                self.rollback_rename(&trashed, target);
             }
             return Err(error.into());
         }
@@ -2144,10 +2361,10 @@ impl<'a> ExecutionContext<'a> {
         output
             .sync_all()
             .map_err(|error| io_error("sync staged copy", staging, error))?;
-        if let Ok(metadata) = fs::metadata(source) {
-            fs::set_permissions(staging, metadata.permissions())
-                .map_err(|error| io_error("copy file permissions", staging, error))?;
-        }
+        let metadata = fs::metadata(source)
+            .map_err(|error| io_error("inspect source permissions", source, error))?;
+        fs::set_permissions(staging, metadata.permissions())
+            .map_err(|error| io_error("copy file permissions", staging, error))?;
         Ok(())
     }
 
@@ -2162,14 +2379,21 @@ impl<'a> ExecutionContext<'a> {
             let mut permissions = metadata.permissions();
             if permissions.readonly() {
                 permissions.set_readonly(false);
-                let _ = fs::set_permissions(staging, permissions);
+                if let Err(error) = fs::set_permissions(staging, permissions) {
+                    self.record_secondary("cleanup_permissions", staging, None, &error);
+                }
             }
         }
-        let _ = if staging.is_dir() {
+        let cleanup = if staging.is_dir() {
             fs::remove_dir_all(staging)
         } else {
             fs::remove_file(staging)
         };
+        if let Err(error) = cleanup {
+            if error.kind() != std::io::ErrorKind::NotFound {
+                self.record_secondary("cleanup_staging", staging, None, &error);
+            }
+        }
         self.progress.phase = old_phase;
     }
 
@@ -2338,11 +2562,98 @@ fn remove_path_no_follow(platform: &dyn Platform, path: &Path) -> Result<(), Exp
 }
 
 fn io_error(operation: &'static str, path: &Path, error: std::io::Error) -> ExplorerTaskError {
-    ExplorerTaskError::Io {
+    ExplorerTaskError::DetailedIo {
         operation,
         path: path.to_path_buf(),
         message: error.to_string(),
+        os_error_code: error.raw_os_error(),
+        error_chain: vec![runtime_log::sanitize_text(&error.to_string())],
     }
+}
+
+fn journal_error(error: WatchdogError) -> ExplorerTaskError {
+    let mut captured = RuntimeLogEvent::new(
+        LogContext::default(),
+        LogLevel::Error,
+        LogPhase::Failed,
+        "journal failed",
+    );
+    watchdog::capture_error(&mut captured, &error);
+    ExplorerTaskError::DetailedJournal {
+        message: error.to_string(),
+        os_error_code: captured
+            .os_error_code
+            .and_then(|code| i32::try_from(code).ok()),
+        error_chain: captured.error_chain,
+    }
+}
+
+fn fill_task_error(event: &mut RuntimeLogEvent, error: &ExplorerTaskError) {
+    event.error_code = Some(
+        match error {
+            ExplorerTaskError::Io { .. } | ExplorerTaskError::DetailedIo { .. } => "EXPLORER_IO",
+            ExplorerTaskError::Platform(_) => "EXPLORER_SYSTEM",
+            ExplorerTaskError::Journal { .. } | ExplorerTaskError::DetailedJournal { .. } => {
+                "EXPLORER_JOURNAL"
+            }
+            ExplorerTaskError::RecoveryRequired { .. } => "EXPLORER_RECOVERY",
+            _ => "EXPLORER_OPERATION",
+        }
+        .into(),
+    );
+    watchdog::capture_error(event, error);
+    if let ExplorerTaskError::Platform(error) = error {
+        event.os_error_code = error.raw_os_error().map(i64::from);
+    }
+    if let ExplorerTaskError::DetailedIo {
+        os_error_code,
+        error_chain,
+        ..
+    }
+    | ExplorerTaskError::DetailedJournal {
+        os_error_code,
+        error_chain,
+        ..
+    } = error
+    {
+        event.os_error_code = os_error_code.map(i64::from);
+        event.error_chain.extend(error_chain.iter().cloned());
+    }
+}
+
+fn log_metadata_error(
+    app: &AppWatchdog,
+    context: &LogContext,
+    operation: &str,
+    error: &(dyn std::error::Error + 'static),
+    source: Option<&Path>,
+    target: Option<&Path>,
+) {
+    let mut context = context.clone();
+    context.operation = operation.into();
+    let degraded = operation.contains("permissions");
+    let mut event = RuntimeLogEvent::new(
+        context,
+        if degraded {
+            LogLevel::Warning
+        } else {
+            LogLevel::Error
+        },
+        if degraded {
+            LogPhase::Degraded
+        } else {
+            LogPhase::Failed
+        },
+        "Explorer secondary operation failed",
+    );
+    event.error_code = Some(format!("EXPLORER_{}", operation.to_ascii_uppercase()));
+    event.source_path = source.map(Path::to_path_buf);
+    event.target_path = target.map(Path::to_path_buf);
+    watchdog::capture_error(&mut event, error);
+    if let Some(platform) = error.downcast_ref::<PlatformError>() {
+        event.os_error_code = platform.raw_os_error().map(i64::from);
+    }
+    app.record_log(event);
 }
 
 fn send_event(sender: &mpsc::Sender<ExplorerTaskEvent>, event: ExplorerTaskEvent) {
@@ -2390,6 +2701,26 @@ mod recovery_tests {
             "updated_at": "2026-07-12T00:00:01Z"
         }))
         .unwrap()
+    }
+
+    #[test]
+    fn explorer_io_metadata_retains_native_code_and_sanitizes_causes() {
+        let error = io_error(
+            "copy",
+            Path::new("/source"),
+            std::io::Error::from_raw_os_error(13),
+        );
+        let mut event = RuntimeLogEvent::new(
+            LogContext::default(),
+            LogLevel::Error,
+            LogPhase::Failed,
+            "copy failed",
+        );
+        fill_task_error(&mut event, &error);
+        assert_eq!(event.os_error_code, Some(13));
+        assert_eq!(event.error_code.as_deref(), Some("EXPLORER_IO"));
+        assert!(!event.error_chain.is_empty());
+        assert_eq!(error.raw_os_error(), Some(13));
     }
 
     #[test]

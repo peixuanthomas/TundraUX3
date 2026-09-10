@@ -1,6 +1,6 @@
 //! Platform sampling and preservation of the last successful samples.
 
-use super::{SystemServicesConfig, snapshot};
+use super::{SystemServicesConfig, snapshot, telemetry};
 use crate::model::*;
 use chrono::Utc;
 use std::time::{Duration, Instant};
@@ -25,6 +25,16 @@ pub(super) fn refresh_due_system_sources(
         *system_status_due = now + system_status_refresh_interval(config, active);
     }
     if now >= *system_fast_due {
+        if monitor.is_err() && !matches!(monitor, Err(platform::PlatformError::Unsupported { .. }))
+        {
+            *monitor = platform.create_system_monitor();
+            match monitor {
+                Ok(_) => telemetry::recovered("system_status", "monitor_create"),
+                Err(error) => {
+                    telemetry::typed_failure("system_status", "monitor_create", error, false)
+                }
+            }
+        }
         refresh_fast_metrics(sender, monitor);
         *system_fast_due = now
             + if active {
@@ -67,7 +77,20 @@ pub(super) fn refresh_system_status(
     thresholds: StorageThresholds,
 ) {
     let previous = sender.borrow().clone();
-    let storage = match platform.local_volumes() {
+    let storage_result = platform.local_volumes();
+    match &storage_result {
+        Ok(_) => telemetry::recovered("system_status", "storage_sample"),
+        Err(error) => telemetry::typed_failure(
+            "system_status",
+            "storage_sample",
+            error,
+            matches!(
+                previous.storage,
+                StorageState::Ready(_) | StorageState::Stale { .. }
+            ),
+        ),
+    }
+    let storage = match storage_result {
         Ok(volumes) => StorageState::Ready(map_storage(volumes, thresholds)),
         Err(error) => match previous.storage {
             StorageState::Ready(last_good) | StorageState::Stale { last_good, .. } => {
@@ -81,7 +104,20 @@ pub(super) fn refresh_system_status(
             },
         },
     };
-    let network = match platform.network_status() {
+    let network_result = platform.network_status();
+    match &network_result {
+        Ok(_) => telemetry::recovered("system_status", "network_sample"),
+        Err(error) => telemetry::typed_failure(
+            "system_status",
+            "network_sample",
+            error,
+            matches!(
+                previous.network,
+                NetworkState::Ready(_) | NetworkState::Stale { .. }
+            ),
+        ),
+    }
+    let network = match network_result {
         Ok(status) => NetworkState::Ready(map_network(status)),
         Err(error) => match previous.network {
             NetworkState::Ready(last_good) | NetworkState::Stale { last_good, .. } => {
@@ -105,6 +141,21 @@ pub(super) fn refresh_system_status(
     ));
 }
 
+fn metric_result<T, U>(operation: &str, result: &Result<T, String>, previous: &MetricState<U>) {
+    match result {
+        Ok(_) => telemetry::recovered("system_status", operation),
+        Err(reason) if !reason.contains("unsupported") && !reason.contains("not supported") => {
+            telemetry::failure(
+                "system_status",
+                operation,
+                reason,
+                matches!(previous, MetricState::Ready(_) | MetricState::Stale { .. }),
+            )
+        }
+        Err(_) => {}
+    }
+}
+
 fn unavailable_or_stale<T: Clone>(previous: &MetricState<T>, error: String) -> MetricState<T> {
     match previous {
         MetricState::Ready(last_good) | MetricState::Stale { last_good, .. } => {
@@ -126,8 +177,19 @@ pub(super) fn refresh_fast_metrics(
     let previous = sender.borrow().clone();
     let mut metrics = previous.metrics.clone();
     match monitor {
-        Ok(monitor) => match monitor.sample_fast() {
+        Ok(monitor) => match monitor.sample_fast().inspect_err(|error| {
+            telemetry::typed_failure(
+                "system_status",
+                "fast_sample",
+                error,
+                matches!(
+                    metrics.cpu,
+                    MetricState::Ready(_) | MetricState::Stale { .. }
+                ),
+            )
+        }) {
             Ok(sample) => {
+                telemetry::recovered("system_status", "fast_sample");
                 metrics.cpu = MetricState::Ready(CpuSnapshot {
                     usage_percent: sample.cpu.usage_percent,
                     per_core_percent: sample.cpu.per_core_percent,
@@ -220,8 +282,22 @@ pub(super) fn refresh_slow_metrics(
     let previous = sender.borrow().clone();
     let mut metrics = previous.metrics.clone();
     match monitor {
-        Ok(monitor) => match monitor.sample_slow() {
+        Ok(monitor) => match monitor.sample_slow().inspect_err(|error| {
+            telemetry::typed_failure(
+                "system_status",
+                "slow_sample",
+                error,
+                matches!(
+                    metrics.identity,
+                    MetricState::Ready(_) | MetricState::Stale { .. }
+                ),
+            )
+        }) {
             Ok(sample) => {
+                telemetry::recovered("system_status", "slow_sample");
+                metric_result("identity_sample", &sample.identity, &metrics.identity);
+                metric_result("thermal_sample", &sample.thermal, &metrics.thermal);
+                metric_result("battery_sample", &sample.batteries, &metrics.batteries);
                 metrics.identity = match sample.identity {
                     Ok(value) => MetricState::Ready(SystemIdentitySnapshot {
                         host_name: value.host_name,

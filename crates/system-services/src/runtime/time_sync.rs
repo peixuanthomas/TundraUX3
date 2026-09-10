@@ -75,7 +75,7 @@ pub(super) async fn synchronize_time(
                         ),
                     )
                 })
-                .map_err(|error| error.to_string())
+                .map_err(|error| super::telemetry::capture("time_sync", "request", &error))
         }
     }
 }

@@ -34,10 +34,17 @@ impl SystemLocationDetector for IpLocationDetector {
             )
             .send()
             .await
+            .map_err(|error| super::telemetry::typed_failure("location", "detect", &error, true))
             .ok()?
             .error_for_status()
+            .map_err(|error| super::telemetry::typed_failure("location", "detect", &error, true))
             .ok()?;
-        let location = response.json::<IpLocationResponse>().await.ok()?;
+        let location = response
+            .json::<IpLocationResponse>()
+            .await
+            .map_err(|error| super::telemetry::typed_failure("location", "detect", &error, true))
+            .ok()?;
+        super::telemetry::recovered("location", "detect");
         Some(GeoLocation {
             latitude: location.latitude,
             longitude: location.longitude,
@@ -62,7 +69,12 @@ pub(super) async fn resolve_location(
             return cached;
         }
         if should_refresh_location && let Some(resolved) = geocode(query).await {
-            let _ = save_location_cache(config, query, &resolved);
+            match save_location_cache(config, query, &resolved) {
+                Ok(()) => super::telemetry::recovered("location", "cache_write"),
+                Err(error) => {
+                    super::telemetry::typed_failure("location", "cache_write", &error, true)
+                }
+            }
             return resolved;
         }
     }
@@ -77,6 +89,7 @@ pub(super) async fn resolve_location(
             detector.detect(),
         )
         .await
+        .map_err(|error| super::telemetry::typed_failure("location", "detect", &error, true))
         .ok()
         .flatten()
     {
@@ -118,18 +131,45 @@ async fn geocode(query: &str) -> Option<GeoLocation> {
         .timeout(Duration::from_secs(10))
         .send()
         .await
+        .map_err(|error| super::telemetry::typed_failure("location", "geocode", &error, true))
         .ok()?
         .error_for_status()
+        .map_err(|error| super::telemetry::typed_failure("location", "geocode", &error, true))
         .ok()?;
     let item = response
         .json::<Vec<GeocodeResponse>>()
         .await
+        .map_err(|error| super::telemetry::typed_failure("location", "geocode", &error, true))
         .ok()?
         .into_iter()
-        .next()?;
+        .next()
+        .or_else(|| {
+            super::telemetry::failure(
+                "location",
+                "geocode",
+                "geocoding returned no matching location",
+                true,
+            );
+            None
+        })?;
+    let latitude = item
+        .lat
+        .parse()
+        .map_err(|error: std::num::ParseFloatError| {
+            super::telemetry::typed_failure("location", "geocode", &error, true)
+        })
+        .ok()?;
+    let longitude = item
+        .lon
+        .parse()
+        .map_err(|error: std::num::ParseFloatError| {
+            super::telemetry::typed_failure("location", "geocode", &error, true)
+        })
+        .ok()?;
+    super::telemetry::recovered("location", "geocode");
     Some(GeoLocation {
-        latitude: item.lat.parse().ok()?,
-        longitude: item.lon.parse().ok()?,
+        latitude,
+        longitude,
         city: item
             .address
             .and_then(|address| {

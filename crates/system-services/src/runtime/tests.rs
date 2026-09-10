@@ -641,8 +641,12 @@ fn network_time_failure_publishes_degraded_state_and_shutdown_completes() {
                 outcomes: Mutex::new(vec![Err("weather unavailable".to_string())]),
                 calls: AtomicUsize::new(0),
             });
-            let (handle, mut receiver) =
-                SystemServicesRuntime::start_with_provider(runtime_config, watchdog(), provider);
+            let (handle, mut receiver) = SystemServicesRuntime::start_with_platform_and_provider(
+                runtime_config,
+                watchdog(),
+                Arc::new(mock_platform()),
+                provider,
+            );
             let wait_runtime = tokio::runtime::Builder::new_current_thread()
                 .enable_time()
                 .build()
@@ -1515,9 +1519,10 @@ fn shutdown_and_reconfigure_cancel_pending_provider_wait() {
     let mut initial = config();
     initial.timezone_location = Some(initial.fallback_location.clone());
     let (entered_tx, entered_rx) = std_mpsc::channel();
-    let (handle, _) = SystemServicesRuntime::start_with_provider(
+    let (handle, _) = SystemServicesRuntime::start_with_platform_and_provider(
         initial.clone(),
         watchdog(),
+        Arc::new(mock_platform()),
         Arc::new(PendingProvider {
             entered: Mutex::new(Some(entered_tx)),
         }),

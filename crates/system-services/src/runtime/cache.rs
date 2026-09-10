@@ -20,24 +20,34 @@ fn cache_root(config: &SystemServicesConfig) -> Option<PathBuf> {
 }
 pub(super) fn load_weather_cache(
     config: &SystemServicesConfig,
-) -> Result<Option<WeatherSnapshot>, ()> {
-    let path = cache_root(config).ok_or(())?.join("weather.json");
-    let contents = fs::read_to_string(path).map_err(|_| ())?;
-    let cached: CachedWeather = serde_json::from_str(&contents).map_err(|_| ())?;
+) -> std::io::Result<Option<WeatherSnapshot>> {
+    let path = cache_root(config)
+        .ok_or_else(|| {
+            std::io::Error::new(std::io::ErrorKind::NotFound, "cache directory unavailable")
+        })?
+        .join("weather.json");
+    let contents = match fs::read_to_string(path) {
+        Ok(contents) => contents,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error),
+    };
+    let cached: CachedWeather = serde_json::from_str(&contents).map_err(std::io::Error::other)?;
     Ok(Some(cached.snapshot))
 }
 pub(super) fn save_weather_cache(
     config: &SystemServicesConfig,
     snapshot: &WeatherSnapshot,
-) -> Result<(), ()> {
-    let root = cache_root(config).ok_or(())?;
-    fs::create_dir_all(&root).map_err(|_| ())?;
+) -> std::io::Result<()> {
+    let root = cache_root(config).ok_or_else(|| {
+        std::io::Error::new(std::io::ErrorKind::NotFound, "cache directory unavailable")
+    })?;
+    fs::create_dir_all(&root)?;
     let body = serde_json::to_string(&CachedWeather {
         saved_at: Utc::now(),
         snapshot: snapshot.clone(),
     })
-    .map_err(|_| ())?;
-    fs::write(root.join("weather.json"), body).map_err(|_| ())
+    .map_err(std::io::Error::other)?;
+    fs::write(root.join("weather.json"), body)
 }
 #[derive(Serialize, Deserialize)]
 struct CachedLocation {
@@ -63,8 +73,16 @@ pub(super) fn load_location_cache(
     let contents = fs::read_to_string(
         cache_root(config)?.join(format!("location-{}.json", location_key(query))),
     )
+    .map_err(|error| {
+        if error.kind() != std::io::ErrorKind::NotFound {
+            super::telemetry::typed_failure("location", "cache_read", &error, true);
+        }
+    })
     .ok()?;
-    let cache: CachedLocation = serde_json::from_str(&contents).ok()?;
+    let cache: CachedLocation = serde_json::from_str(&contents)
+        .map_err(|error| super::telemetry::typed_failure("location", "cache_read", &error, true))
+        .ok()?;
+    super::telemetry::recovered("location", "cache_read");
     (Utc::now() - cache.saved_at)
         .to_std()
         .ok()?
@@ -75,17 +93,18 @@ pub(super) fn save_location_cache(
     config: &SystemServicesConfig,
     query: &str,
     location: &GeoLocation,
-) -> Result<(), ()> {
-    let root = cache_root(config).ok_or(())?;
-    fs::create_dir_all(&root).map_err(|_| ())?;
+) -> std::io::Result<()> {
+    let root = cache_root(config).ok_or_else(|| {
+        std::io::Error::new(std::io::ErrorKind::NotFound, "cache directory unavailable")
+    })?;
+    fs::create_dir_all(&root)?;
     let body = serde_json::to_string(&CachedLocation {
         saved_at: Utc::now(),
         location: location.clone(),
     })
-    .map_err(|_| ())?;
+    .map_err(std::io::Error::other)?;
     fs::write(
         root.join(format!("location-{}.json", location_key(query))),
         body,
     )
-    .map_err(|_| ())
 }

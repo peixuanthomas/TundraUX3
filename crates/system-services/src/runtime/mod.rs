@@ -4,6 +4,7 @@ mod cache;
 mod config;
 mod location;
 mod system_status;
+mod telemetry;
 mod time_sync;
 mod weather;
 
@@ -198,8 +199,17 @@ impl SystemServicesRuntime {
                     let runtime = tokio::runtime::Builder::new_current_thread()
                         .enable_all()
                         .build();
-                    if let Ok(runtime) = runtime {
-                        runtime.block_on(run(config, platform, provider, snapshot_tx, command_rx));
+                    match runtime {
+                        Ok(runtime) => runtime.block_on(run(
+                            config,
+                            platform,
+                            provider,
+                            snapshot_tx,
+                            command_rx,
+                        )),
+                        Err(error) => {
+                            telemetry::typed_failure("runtime", "create_runtime", &error, false)
+                        }
                     }
                 },
             )
@@ -223,6 +233,7 @@ async fn run(
     snapshot_tx: watch::Sender<SystemSnapshot>,
     mut commands: mpsc::UnboundedReceiver<Command>,
 ) {
+    telemetry::lifecycle(runtime_log::LogPhase::Started);
     let mut weather_due = Instant::now();
     let mut time_due = Instant::now();
     let mut location_due = Instant::now();
@@ -231,7 +242,13 @@ async fn run(
     let mut system_slow_due = Instant::now();
     let mut system_status_active = false;
     let mut system_location = None;
-    let mut last_good: Option<WeatherSnapshot> = load_weather_cache(&config).ok().flatten();
+    let mut last_good: Option<WeatherSnapshot> = match load_weather_cache(&config) {
+        Ok(cache) => cache,
+        Err(error) => {
+            telemetry::typed_failure("weather", "cache_read", &error, true);
+            None
+        }
+    };
     if let Some(cached) = last_good.clone() {
         publish(
             &snapshot_tx,
@@ -310,6 +327,7 @@ async fn run(
             &mut system_slow_due,
         );
         if now >= weather_due {
+            telemetry::begin("weather", "request");
             let should_refresh_location = location_due <= now;
             let operation_config = config.clone();
             let operation = tokio::time::timeout(operation_config.request_timeout, async {
@@ -360,7 +378,13 @@ async fn run(
                         units: config.weather_units,
                         sampled_at: Utc::now(),
                     };
-                    let _ = save_weather_cache(&config, &good);
+                    match save_weather_cache(&config, &good) {
+                        Ok(()) => telemetry::recovered("weather", "cache_write"),
+                        Err(error) => {
+                            telemetry::typed_failure("weather", "cache_write", &error, true)
+                        }
+                    }
+                    telemetry::recovered("weather", "request");
                     last_good = Some(good.clone());
                     weather_failures = 0;
                     publish(
@@ -376,6 +400,7 @@ async fn run(
                     weather_due = now + config.weather_refresh_interval;
                 }
                 Err(error) => {
+                    telemetry::failure("weather", "request", &error, last_good.is_some());
                     weather_failures += 1;
                     let state = last_good
                         .clone()
@@ -400,6 +425,7 @@ async fn run(
             }
         }
         if now >= time_due {
+            telemetry::begin("time_sync", "request");
             let operation_config = config.clone();
             let operation = tokio::time::timeout(
                 operation_config.request_timeout,
@@ -432,6 +458,7 @@ async fn run(
             };
             match result {
                 Ok((utc, source)) => {
+                    telemetry::recovered("time_sync", "request");
                     anchor = Some(TimeAnchor {
                         utc,
                         sampled_at: utc,
@@ -443,6 +470,7 @@ async fn run(
                     time_due = now + config.time_sync_interval;
                 }
                 Err(error) => {
+                    telemetry::failure("time_sync", "request", &error, true);
                     time_error = Some(error);
                     time_failures += 1;
                     time_due = now + retry_delay(time_failures, config.time_sync_interval);
@@ -472,6 +500,7 @@ async fn run(
             ),
         );
     }
+    telemetry::lifecycle(runtime_log::LogPhase::Succeeded);
 }
 
 type ValidationRequest = (

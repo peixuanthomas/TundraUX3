@@ -1156,7 +1156,16 @@ impl ExplorerController {
                     // Emptying may be partially completed by the native shell. Never leave a
                     // confirmation that can replay against a now-different Trash snapshot.
                     state.pending_dialog = None;
-                    let _ = self.file_service.refresh(state, session, platform, storage);
+                    if let Err(refresh_error) =
+                        self.file_service.refresh(state, session, platform, storage)
+                    {
+                        log_secondary_explorer(
+                            "refresh_after_trash_failure",
+                            session,
+                            &refresh_error,
+                            None,
+                        );
+                    }
                     return Err(error.into());
                 }
                 state.pending_dialog = None;
@@ -1496,10 +1505,12 @@ impl ExplorerFileService {
     ) -> Result<(), ExplorerError> {
         let path = child_path(&state.current_path, name)?;
         self.authorize(session, PermissionAction::WriteFile, &path)?;
-        fs::create_dir(&path).map_err(|error| ExplorerError::Io {
-            operation: "create folder",
-            path: path.clone(),
-            message: error.to_string(),
+        fs::create_dir(&path).map_err(|error| {
+            ExplorerError::Platform(PlatformError::from_io(
+                "create folder",
+                Some(path.clone()),
+                &error,
+            ))
         })?;
         state.set_success(format!("Created folder {}", path.display()));
         self.refresh(state, session, platform, storage)
@@ -1520,10 +1531,12 @@ impl ExplorerFileService {
             .create_new(true)
             .open(&path)
             .and_then(|file| file.sync_all())
-            .map_err(|error| ExplorerError::Io {
-                operation: "create text file",
-                path: path.clone(),
-                message: error.to_string(),
+            .map_err(|error| {
+                ExplorerError::Platform(PlatformError::from_io(
+                    "create text file",
+                    Some(path.clone()),
+                    &error,
+                ))
             })?;
         state.set_success(format!("Created file {}", path.display()));
         self.refresh(state, session, platform, storage)
@@ -1579,7 +1592,14 @@ impl ExplorerFileService {
             {
                 state.pending_dialog = None;
             }
-            let _ = self.refresh(state, session, platform, storage);
+            if let Err(refresh_error) = self.refresh(state, session, platform, storage) {
+                log_secondary_explorer(
+                    "refresh_after_trash_failure",
+                    session,
+                    &refresh_error,
+                    None,
+                );
+            }
             return Err(error.into());
         }
 
@@ -1701,7 +1721,14 @@ impl ExplorerFileService {
                 .ok_or_else(|| ExplorerError::InvalidOperation("target has no name".into()))?,
         );
         if let Err(error) = platform.rename_path(&pending.target, &backup) {
-            let _ = fs::remove_dir(&backup_dir);
+            if let Err(cleanup_error) = fs::remove_dir(&backup_dir) {
+                log_secondary_explorer(
+                    "restore_cleanup",
+                    session,
+                    &cleanup_error,
+                    Some(&backup_dir),
+                );
+            }
             return Err(error.into());
         }
         let restored = match platform.restore_trash_item(
@@ -1712,7 +1739,14 @@ impl ExplorerFileService {
             Err(error) => {
                 return match platform.rename_path(&backup, &pending.target) {
                     Ok(()) => {
-                        let _ = fs::remove_dir(&backup_dir);
+                        if let Err(cleanup_error) = fs::remove_dir(&backup_dir) {
+                            log_secondary_explorer(
+                                "restore_cleanup",
+                                session,
+                                &cleanup_error,
+                                Some(&backup_dir),
+                            );
+                        }
                         Err(error.into())
                     }
                     Err(rollback_error) => Err(ExplorerError::InvalidOperation(format!(
@@ -1738,6 +1772,14 @@ impl ExplorerFileService {
             }
             if let Err(rollback_error) = platform.rename_path(&backup, &pending.target) {
                 let rescue_rollback = platform.rename_path(&rescued, &pending.target);
+                if let Err(rescue_error) = &rescue_rollback {
+                    log_secondary_explorer(
+                        "restore_rescue_rollback",
+                        session,
+                        rescue_error,
+                        Some(&rescued),
+                    );
+                }
                 return Err(ExplorerError::InvalidOperation(format!(
                     "Could not move the previous item to system Trash ({error}) or roll it back from {} to {} ({rollback_error}); the restored item is preserved at {}{}",
                     backup.display(),
@@ -1757,10 +1799,24 @@ impl ExplorerFileService {
                     rescued.display()
                 )));
             }
-            let _ = fs::remove_dir(&backup_dir);
+            if let Err(cleanup_error) = fs::remove_dir(&backup_dir) {
+                log_secondary_explorer(
+                    "restore_cleanup",
+                    session,
+                    &cleanup_error,
+                    Some(&backup_dir),
+                );
+            }
             return Err(error.into());
         }
-        let _ = fs::remove_dir(&backup_dir);
+        if let Err(cleanup_error) = fs::remove_dir(&backup_dir) {
+            log_secondary_explorer(
+                "restore_cleanup",
+                session,
+                &cleanup_error,
+                Some(&backup_dir),
+            );
+        }
         self.finish_restore_commit(state, session, platform, storage, restored)
     }
 
@@ -2117,7 +2173,15 @@ impl fmt::Display for ExplorerError {
     }
 }
 
-impl std::error::Error for ExplorerError {}
+impl std::error::Error for ExplorerError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Platform(error) => Some(error),
+            Self::Storage(error) => Some(error),
+            _ => None,
+        }
+    }
+}
 
 impl From<PlatformError> for ExplorerError {
     fn from(value: PlatformError) -> Self {
@@ -2461,10 +2525,12 @@ fn validate_transfer_destination(source: &Path, target: &Path) -> Result<(), Exp
             "source and destination are the same".into(),
         ));
     }
-    let metadata = fs::symlink_metadata(source).map_err(|error| ExplorerError::Io {
-        operation: "inspect transfer source",
-        path: source.to_path_buf(),
-        message: error.to_string(),
+    let metadata = fs::symlink_metadata(source).map_err(|error| {
+        ExplorerError::Platform(PlatformError::from_io(
+            "inspect transfer source",
+            Some(source.to_path_buf()),
+            &error,
+        ))
     })?;
     if metadata.file_type().is_symlink() {
         return Err(ExplorerError::BlockedPath(
@@ -2511,11 +2577,11 @@ fn path_exists_no_follow(path: &Path) -> Result<bool, ExplorerError> {
     match fs::symlink_metadata(path) {
         Ok(_) => Ok(true),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
-        Err(error) => Err(ExplorerError::Io {
-            operation: "inspect destination",
-            path: path.to_path_buf(),
-            message: error.to_string(),
-        }),
+        Err(error) => Err(ExplorerError::Platform(PlatformError::from_io(
+            "inspect destination",
+            Some(path.to_path_buf()),
+            &error,
+        ))),
     }
 }
 
@@ -2537,87 +2603,108 @@ fn copy_path_staged(source: &Path, target: &Path) -> Result<(), ExplorerError> {
         copy_file_chunked(source, &temporary)
     }
     .and_then(|()| {
-        fs::rename(&temporary, target).map_err(|error| ExplorerError::Io {
-            operation: "commit staged copy",
-            path: target.to_path_buf(),
-            message: error.to_string(),
+        fs::rename(&temporary, target).map_err(|error| {
+            ExplorerError::Platform(PlatformError::from_io(
+                "commit staged copy",
+                Some(target.to_path_buf()),
+                &error,
+            ))
         })
     });
     if result.is_err() {
-        let _ = if temporary.is_dir() {
+        let cleanup = if temporary.is_dir() {
             fs::remove_dir_all(&temporary)
         } else {
             fs::remove_file(&temporary)
         };
+        if let Err(error) = cleanup {
+            if error.kind() != std::io::ErrorKind::NotFound {
+                log_secondary_explorer("copy_cleanup", None, &error, Some(&temporary));
+            }
+        }
     }
     result
 }
 
 fn copy_file_chunked(source: &Path, target: &Path) -> Result<(), ExplorerError> {
-    let metadata = fs::symlink_metadata(source).map_err(|error| ExplorerError::Io {
-        operation: "inspect copy source",
-        path: source.to_path_buf(),
-        message: error.to_string(),
+    let metadata = fs::symlink_metadata(source).map_err(|error| {
+        ExplorerError::Platform(PlatformError::from_io(
+            "inspect copy source",
+            Some(source.to_path_buf()),
+            &error,
+        ))
     })?;
     if metadata.file_type().is_symlink() {
         return Err(ExplorerError::BlockedPath(
             "copying symbolic links is blocked".into(),
         ));
     }
-    let mut input = fs::File::open(source).map_err(|error| ExplorerError::Io {
-        operation: "open copy source",
-        path: source.to_path_buf(),
-        message: error.to_string(),
+    let mut input = fs::File::open(source).map_err(|error| {
+        ExplorerError::Platform(PlatformError::from_io(
+            "open copy source",
+            Some(source.to_path_buf()),
+            &error,
+        ))
     })?;
     let mut output = OpenOptions::new()
         .write(true)
         .create_new(true)
         .open(target)
-        .map_err(|error| ExplorerError::Io {
-            operation: "create staged copy",
-            path: target.to_path_buf(),
-            message: error.to_string(),
+        .map_err(|error| {
+            ExplorerError::Platform(PlatformError::from_io(
+                "create staged copy",
+                Some(target.to_path_buf()),
+                &error,
+            ))
         })?;
     let mut buffer = vec![0u8; 256 * 1024];
     loop {
-        let read = input.read(&mut buffer).map_err(|error| ExplorerError::Io {
-            operation: "read copy source",
-            path: source.to_path_buf(),
-            message: error.to_string(),
+        let read = input.read(&mut buffer).map_err(|error| {
+            ExplorerError::Platform(PlatformError::from_io(
+                "read copy source",
+                Some(source.to_path_buf()),
+                &error,
+            ))
         })?;
         if read == 0 {
             break;
         }
-        output
-            .write_all(&buffer[..read])
-            .map_err(|error| ExplorerError::Io {
-                operation: "write staged copy",
-                path: target.to_path_buf(),
-                message: error.to_string(),
-            })?;
+        output.write_all(&buffer[..read]).map_err(|error| {
+            ExplorerError::Platform(PlatformError::from_io(
+                "write staged copy",
+                Some(target.to_path_buf()),
+                &error,
+            ))
+        })?;
     }
-    output.sync_all().map_err(|error| ExplorerError::Io {
-        operation: "sync staged copy",
-        path: target.to_path_buf(),
-        message: error.to_string(),
+    output.sync_all().map_err(|error| {
+        ExplorerError::Platform(PlatformError::from_io(
+            "sync staged copy",
+            Some(target.to_path_buf()),
+            &error,
+        ))
     })
 }
 
 fn remove_source_path(path: &Path) -> Result<(), ExplorerError> {
-    let metadata = fs::symlink_metadata(path).map_err(|error| ExplorerError::Io {
-        operation: "inspect move source",
-        path: path.to_path_buf(),
-        message: error.to_string(),
+    let metadata = fs::symlink_metadata(path).map_err(|error| {
+        ExplorerError::Platform(PlatformError::from_io(
+            "inspect move source",
+            Some(path.to_path_buf()),
+            &error,
+        ))
     })?;
     let result = if metadata.is_dir() {
         fs::remove_dir_all(path)
     } else {
         fs::remove_file(path)
     };
-    result.map_err(|error| ExplorerError::Io {
-        operation: "remove committed move source",
-        path: path.to_path_buf(),
-        message: error.to_string(),
+    result.map_err(|error| {
+        ExplorerError::Platform(PlatformError::from_io(
+            "remove committed move source",
+            Some(path.to_path_buf()),
+            &error,
+        ))
     })
 }
 
@@ -2640,11 +2727,11 @@ fn create_restore_rollback_directory(parent: &Path) -> Result<PathBuf, ExplorerE
             Ok(()) => return Ok(candidate),
             Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
             Err(error) => {
-                return Err(ExplorerError::Io {
-                    operation: "create restore rollback directory",
-                    path: candidate,
-                    message: error.to_string(),
-                });
+                return Err(ExplorerError::Platform(PlatformError::from_io(
+                    "create restore rollback directory",
+                    Some(candidate),
+                    &error,
+                )));
             }
         }
     }
@@ -2673,10 +2760,12 @@ fn validate_child_name(name: &str) -> Result<(), ExplorerError> {
 }
 
 fn copy_path(source: &Path, target: &Path) -> Result<(), ExplorerError> {
-    let metadata = fs::symlink_metadata(source).map_err(|error| ExplorerError::Io {
-        operation: "read copy source",
-        path: source.to_path_buf(),
-        message: error.to_string(),
+    let metadata = fs::symlink_metadata(source).map_err(|error| {
+        ExplorerError::Platform(PlatformError::from_io(
+            "read copy source",
+            Some(source.to_path_buf()),
+            &error,
+        ))
     })?;
 
     if metadata.file_type().is_symlink() {
@@ -2693,21 +2782,27 @@ fn copy_path(source: &Path, target: &Path) -> Result<(), ExplorerError> {
 }
 
 fn copy_directory(source: &Path, target: &Path) -> Result<(), ExplorerError> {
-    fs::create_dir(target).map_err(|error| ExplorerError::Io {
-        operation: "copy directory",
-        path: target.to_path_buf(),
-        message: error.to_string(),
+    fs::create_dir(target).map_err(|error| {
+        ExplorerError::Platform(PlatformError::from_io(
+            "copy directory",
+            Some(target.to_path_buf()),
+            &error,
+        ))
     })?;
 
-    for entry in fs::read_dir(source).map_err(|error| ExplorerError::Io {
-        operation: "read copy directory",
-        path: source.to_path_buf(),
-        message: error.to_string(),
+    for entry in fs::read_dir(source).map_err(|error| {
+        ExplorerError::Platform(PlatformError::from_io(
+            "read copy directory",
+            Some(source.to_path_buf()),
+            &error,
+        ))
     })? {
-        let entry = entry.map_err(|error| ExplorerError::Io {
-            operation: "read copy directory entry",
-            path: source.to_path_buf(),
-            message: error.to_string(),
+        let entry = entry.map_err(|error| {
+            ExplorerError::Platform(PlatformError::from_io(
+                "read copy directory entry",
+                Some(source.to_path_buf()),
+                &error,
+            ))
         })?;
         let source_child = entry.path();
         let target_child = target.join(entry.file_name());
@@ -2750,5 +2845,43 @@ mod natural_sort_tests {
             natural_name_compare("Ä2.txt", "ä10.txt", false),
             Ordering::Less
         );
+    }
+}
+
+fn log_secondary_explorer(
+    operation: &str,
+    session: Option<&AuthSession>,
+    error: &(dyn std::error::Error + 'static),
+    path: Option<&Path>,
+) {
+    let app = watchdog::AppWatchdog::current();
+    let mut context = app
+        .as_ref()
+        .map(|app| app.log_context(operation))
+        .unwrap_or_else(|| runtime_log::LogContext {
+            app: "explorer".into(),
+            operation: operation.into(),
+            ..runtime_log::LogContext::default()
+        });
+    context.module = "ux.explorer".into();
+    context.owner_id = session
+        .map(|session| session.user_id.clone())
+        .or(context.owner_id);
+    let mut event = runtime_log::RuntimeLogEvent::new(
+        context,
+        runtime_log::LogLevel::Warning,
+        runtime_log::LogPhase::Degraded,
+        "Explorer secondary operation failed",
+    );
+    event.source_path = path.map(Path::to_path_buf);
+    event.error_code = Some(format!("EXPLORER_{}", operation.to_ascii_uppercase()));
+    watchdog::capture_error(&mut event, error);
+    if let Some(error) = error.downcast_ref::<PlatformError>() {
+        event.os_error_code = error.raw_os_error().map(i64::from);
+    }
+    if let Some(app) = app {
+        app.record_log(event);
+    } else {
+        runtime_log::record(event);
     }
 }
