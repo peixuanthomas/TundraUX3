@@ -100,8 +100,8 @@ impl ThemeTokens {
 
     /// Uses the explicitly limited ANSI palette when true colour is not
     /// available. The mapping intentionally stays stable across terminals:
-    /// black surfaces, white/gray text, cyan/light-cyan focus,
-    /// green success, yellow warning, and light-red danger.
+    /// black surfaces, white/gray text, the user's named ANSI accent with a
+    /// brighter focus, green success, yellow warning, and light-red danger.
     pub fn for_capability(self, capability: ColorCapability) -> Self {
         if capability == ColorCapability::TrueColor {
             return self;
@@ -123,7 +123,7 @@ impl ThemeTokens {
             accent,
             accent_soft: Color::DarkGray,
             accent_strong: accent,
-            focus: ansi_focus(accent),
+            focus: lighten(accent, 42),
             success: Color::Green,
             warning: Color::Yellow,
             danger: Color::LightRed,
@@ -846,9 +846,6 @@ fn lighten(color: Color, amount: u8) -> Color {
 
 fn ansi_accent(color: Color) -> Color {
     match color {
-        Color::Green | Color::LightGreen => Color::Green,
-        Color::Yellow | Color::LightYellow => Color::Yellow,
-        Color::Red | Color::LightRed => Color::LightRed,
         Color::Rgb(red, green, blue) if red > green.saturating_add(32) && red > blue => {
             Color::LightRed
         }
@@ -860,16 +857,9 @@ fn ansi_accent(color: Color) -> Color {
         Color::Rgb(red, green, blue) if red.saturating_add(green) > blue.saturating_add(90) => {
             Color::Yellow
         }
-        _ => Color::Cyan,
-    }
-}
-
-fn ansi_focus(accent: Color) -> Color {
-    match accent {
-        Color::Cyan => Color::LightCyan,
-        Color::Green => Color::LightGreen,
-        Color::Yellow => Color::LightYellow,
-        Color::LightRed => Color::LightRed,
-        other => other,
+        Color::Rgb(..) | Color::Indexed(_) => Color::Cyan,
+        // Named colors already belong to the terminal's ANSI palette. Passing
+        // them through preserves the user's hue and normal/bright selection.
+        color => color,
     }
 }
