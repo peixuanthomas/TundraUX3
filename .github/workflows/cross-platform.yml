@@ -27,6 +27,11 @@ jobs:
       - name: Compile workspace
         shell: bash
         run: cargo build --workspace --locked
+      - name: Test portable session contracts and ordinary UX boundaries
+        shell: bash
+        run: |
+          cargo test --locked -p session-protocol -p tundra-sessiond -p tundra-greeter -p tundra-privileged -p system-maintenance
+          cargo test --locked -p platform --test workspace_watchdog_constraints
       - name: Test localization and resource recovery
         shell: bash
         run: |

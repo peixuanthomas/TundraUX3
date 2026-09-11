@@ -17,6 +17,12 @@ jobs:
         run: rustup toolchain install stable --profile minimal && rustup default stable
       - name: Locked build
         run: cargo build --workspace --locked
+      - name: Test user sessions and authorization boundaries
+        run: |
+          cargo test --locked -p session-protocol -p tundra-sessiond -p tundra-greeter -p tundra-privileged -p system-maintenance
+          cargo test --locked -p platform --test linux_user_dirs --test workspace_watchdog_constraints
+          python3 -m unittest discover -s scripts/tests -p test_stage_linux_system.py
+          bash -n packaging/linux/build-kmscon.sh scripts/package-linux.sh
       - name: Test Linux Trash ownership and root lifecycle
         run: |
           cargo test --locked -p platform --lib
@@ -57,6 +63,13 @@ jobs:
         run: |
           source "$HOME/.cargo/env"
           cargo build --workspace --locked
+      - name: Test user sessions and authorization boundaries
+        run: |
+          source "$HOME/.cargo/env"
+          cargo test --locked -p session-protocol -p tundra-sessiond -p tundra-greeter -p tundra-privileged -p system-maintenance
+          cargo test --locked -p platform --test linux_user_dirs --test workspace_watchdog_constraints
+          python3 -m unittest discover -s scripts/tests -p test_stage_linux_system.py
+          bash -n packaging/linux/build-kmscon.sh scripts/package-linux.sh
       - name: Test Linux Trash ownership and root lifecycle
         run: |
           source "$HOME/.cargo/env"
