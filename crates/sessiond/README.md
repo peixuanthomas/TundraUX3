@@ -56,7 +56,9 @@ automatic unlock in a destructor. An orderly SIGTERM/SIGINT shutdown instead
 drains both desktop and greeter PAM workers, then explicitly restores the original
 VT recorded before startup. Socket reads poll the stop flag while preserving
 partial frames; writes and shutdown/reaping have bounded deadlines. `dev.tty.legacy_tiocsti=0` is required; users with raw
-input/tty group membership are rejected.
+input/tty/video group membership are rejected. Persistent raw framebuffer or
+card-device access cannot be revoked by a logind seat handover; the render group
+alone does not grant the same display-control permissions.
 
 Actual kmscon device release, evdev revocation, DRM master handover, keyboard,
 mouse, Chinese rendering and crash recovery require physical integration tests.
@@ -124,7 +126,7 @@ tty1 and stopped the task's temporary seat, input and privileged services.
 
 Earlier PAM lifecycle probes independently passed valid/invalid authentication,
 full session open/environment registration and close cleanup for ordinary/admin
-accounts. Latest native sessiond unit tests passed all nine cases, including failed-worker
+accounts. Latest native sessiond unit tests passed all ten cases, including persistent-video access policy, failed-worker
 reaping and the one-time transition out of maintenance after marker removal. A packaged
 installation and fresh final-runtime consent check remain separate deployment
 validation steps; the tests above used protected task-installed helper binaries.

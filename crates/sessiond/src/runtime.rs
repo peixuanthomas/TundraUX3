@@ -14,6 +14,8 @@ use std::{
     time::{Duration, Instant},
 };
 use zbus::blocking::{Connection, Proxy};
+const UNREVOCABLE_DEVICE_GROUPS: &[&str] = &["input", "tty", "video"];
+
 pub struct Worker {
     child: Child,
     reader: BufReader<UnixStream>,
@@ -413,10 +415,10 @@ impl Runtime {
                     if user.uid == 0 || user.username == "tundra-greeter" {
                         return Err(io::Error::other("account cannot start desktop"));
                     }
-                    for group in ["input", "tty"] {
+                    for group in UNREVOCABLE_DEVICE_GROUPS {
                         if session_protocol::linux::account_in_group(&user, group)? {
                             return Err(io::Error::other(
-                                "account has raw input/terminal group access",
+                                "account has raw input/terminal/display group access",
                             ));
                         }
                     }
@@ -483,6 +485,11 @@ fn leave_maintenance(maintenance: &mut bool, marker_present: bool, has_session: 
 #[cfg(test)]
 mod worker_tests {
     use super::*;
+    #[test]
+    fn persistent_video_access_is_rejected_but_render_access_is_not() {
+        assert!(UNREVOCABLE_DEVICE_GROUPS.contains(&"video"));
+        assert!(!UNREVOCABLE_DEVICE_GROUPS.contains(&"render"));
+    }
     #[test]
     fn maintenance_removal_resumes_login_once_after_sessions_close() {
         let mut maintenance = true;
