@@ -247,20 +247,24 @@ fn zero_day_retention_does_not_delete_another_active_writer() {
         .unwrap()
         .map(Result::unwrap)
         .filter(|entry| entry.file_name().to_string_lossy().starts_with("runtime-"))
-        .map(|entry| (entry.path(), entry.metadata().unwrap().len()))
+        .map(|entry| entry.path())
         .collect();
     assert_eq!(active_segments.len(), 1);
-    assert!(active_segments[0].1 > 0);
     let mut config = RuntimeLogConfig::new(dir.path().to_path_buf(), "b".into());
     config.max_age_days = 0;
     let b = RuntimeLogRuntime::start(config).unwrap();
     b.shutdown();
-    // Windows enforces the active segment's exclusive lock on reads as well.
-    // Check retention while the writer is live, then read after it releases the lock.
-    for (path, length) in active_segments {
-        assert_eq!(fs::metadata(path).unwrap().len(), length);
+    // Windows locks prevent reading active segments, and directory metadata may
+    // retain their initial length until close. Verify existence while locked,
+    // then verify the complete contents after the writer releases its handle.
+    for path in active_segments {
+        assert!(
+            path.is_file(),
+            "active segment was deleted: {}",
+            path.display()
+        );
     }
-    a.shutdown();
+    assert_eq!(a.shutdown().written_events, 1);
     let result = query_logs(dir.path(), &LogQuery::default());
     assert_eq!(result.events.len(), 1, "{result:?}");
     assert_eq!(result.events[0].message, "active");

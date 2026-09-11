@@ -61,6 +61,13 @@ jobs:
           rustup default stable
           rustup target add x86_64-pc-windows-msvc
 
+      - name: Verify Windows log retention and locking
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          cargo test --locked -p runtime-log --test runtime
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
       - name: Run workspace regression tests
         shell: pwsh
         run: |
