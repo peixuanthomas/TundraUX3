@@ -2253,6 +2253,11 @@ fn system_status_live_service_home_open_refresh_and_background_close() {
     .unwrap();
     let opened_storage = StorageManager::open(app_paths.clone()).unwrap();
     let manager = opened_storage.manager.clone();
+    // This exercises local status refresh, not network time or geolocation.
+    // Keep startup and later settings reconfiguration on the same offline fixture.
+    let mut storage_config = manager.load_config().unwrap();
+    storage_config.time_sync.source = storage::TimeSyncSource::OperatingSystem;
+    manager.save_config(&storage_config).unwrap();
     UserService::new(manager.clone())
         .bootstrap_admin("StatusAdmin", "StrongPass123")
         .unwrap();
@@ -2272,7 +2277,10 @@ fn system_status_live_service_home_open_refresh_and_background_close() {
     let watchdog = default_editor_watchdog()
         .expect("watchdog")
         .child_component(watchdog::ComponentId::new("system-status-live-test").unwrap());
-    let config = system_services::SystemServicesConfig::default();
+    let config = system_services_config_for_storage_config(
+        &system_services::SystemServicesConfig::default(),
+        &storage_config,
+    );
     let (handle, mut receiver) =
         system_services::SystemServicesRuntime::start_with_platform_and_provider(
             config.clone(),
