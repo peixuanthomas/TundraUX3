@@ -27,7 +27,7 @@ TundraUX3 是一个以 Rust 编写的终端桌面环境实验项目。它在一�
 
 | 项目元数据 | 值 |
 | --- | --- |
-| workspace 版本 | `1.3.0` |
+| workspace 版本 | `1.4.0` |
 | Rust edition | `2024` |
 | Cargo resolver | `3` |
 | release panic 策略 | `unwind` |

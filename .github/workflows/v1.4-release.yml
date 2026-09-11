@@ -1,0 +1,265 @@
+name: Publish V1.4 Linux release
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: publish-v1.4
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+  RELEASE_REF: ${{ github.sha }}
+  RELEASE_TAG: v1.4
+
+jobs:
+  validate:
+    name: Validate release source and version
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ env.RELEASE_REF }}
+          persist-credentials: false
+      - name: Require master and consistent package versions
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF" = refs/heads/master
+          cargo metadata --locked --no-deps --format-version 1 > metadata.json
+          jq -e '[.packages[] | select(.manifest_path | contains("/crates/"))] | all(.[]; .version == "1.4.0") and ([.[].name] | index("tundra-sessiond") != null and index("tundra-greeter") != null and index("tundra-privileged") != null and index("system-maintenance") != null and index("session-protocol") != null)' metadata.json
+          test -s packaging/releases/v1.4.md
+          bash -n scripts/package-linux.sh
+          python3 -m unittest discover -s scripts/tests -p test_stage_linux_system.py
+          python3 scripts/check-localization.py
+
+  linux-x64:
+    needs: validate
+    name: Linux x86_64
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - name: Check out the v1.4 source commit
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ env.RELEASE_REF }}
+          persist-credentials: false
+
+      - name: Install stable Rust
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+
+      - name: Install Linux build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libpam0g-dev libsystemd-dev libdbus-1-dev pkg-config meson ninja-build binutils libseat-dev libdrm-dev libudev-dev libxkbcommon-dev libpango1.0-dev zlib1g-dev
+          gh attestation trusted-root --verify-only
+          gh attestation verify --help | grep -- --source-ref
+
+      - name: Run workspace regression tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          export TMPDIR="$(cd "$RUNNER_TEMP" && pwd -P)"
+          cargo test --workspace --locked
+          bash scripts/check-weathr-dependency-boundary.sh
+
+      - name: Build Linux packages
+        shell: bash
+        env:
+          TUNDRAUX3_VERSION: 1.4.0
+        run: |
+          set -euo pipefail
+          bash scripts/package-linux.sh
+          mv dist/tundraux3_1.4.0_amd64.deb \
+            dist/TundraUX3-v1.4-linux-amd64.deb
+          cd dist
+          sha256sum \
+            TundraUX3-v1.4-linux-amd64.deb \
+            > TundraUX3-v1.4-linux-x86_64.sha256
+
+      - name: Verify Debian package installation
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y ./dist/TundraUX3-v1.4-linux-amd64.deb
+          test "$(dpkg-query -W -f='${Version}' tundraux3)" = 1.4.0
+          test -x /usr/bin/tundra-shell
+          test -d /var/lib/tundra/runtime/versions/v1.4.0/share/tundraux3/assets
+          test "$(readlink /var/lib/tundra/runtime/current)" = versions/v1.4.0
+          test -x /usr/libexec/tundra/tundra-system-maintenance
+          test ! -L /usr/libexec/tundra/tundra-system-maintenance
+          cmp packaging/linux/pam.d/tundra-session /etc/pam.d/tundra-session
+          test -s /etc/tundra/update-trusted-root.jsonl
+          test "$(systemctl is-enabled tundra-sessiond.service || true)" = disabled
+          test "$(systemctl is-enabled tundra-privileged.service || true)" = disabled
+          /usr/bin/tundra-cli help
+          test -x /usr/libexec/tundra/kmscon
+          test -f /usr/libexec/tundra/modules/kmscon/mod-pango.so
+          readelf -d /usr/libexec/tundra/kmscon | grep -E 'NEEDED.*libseat\.so\.'
+          # Package installation checks private terminal linkage and inactive
+          # service payload. It is not a physical seat/input isolation test.
+
+      - name: Stage Linux release assets
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-linux-x64
+          path: |
+            dist/TundraUX3-v1.4-linux-amd64.deb
+            dist/TundraUX3-v1.4-linux-x86_64.sha256
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
+
+  fedora-x64:
+    needs: validate
+    name: Fedora 43 RPM (x86_64)
+    runs-on: ubuntu-24.04
+    container: fedora:43
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Install build and packaging requirements
+        run: |
+          dnf install -y cmake curl gcc gcc-c++ git make openssl-devel perl pkgconf-pkg-config rpm-build tar gzip diffutils findutils python3 pam-devel systemd-devel dbus-devel gh meson ninja-build binutils libseat-devel libdrm-devel libxkbcommon-devel pango-devel zlib-devel
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ env.RELEASE_REF }}
+          persist-credentials: false
+      - name: Install stable Rust
+        run: |
+          set -euo pipefail
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+      - name: Run workspace regression tests
+        run: |
+          set -euo pipefail
+          export TMPDIR="$(cd "$RUNNER_TEMP" && pwd -P)"
+          cargo test --workspace --locked
+          bash scripts/check-weathr-dependency-boundary.sh
+      - name: Build Fedora RPM
+        run: |
+          set -euo pipefail
+          bash scripts/package-linux.sh --rpm
+          mv dist/tundraux3-1.4.0-1.x86_64.rpm dist/TundraUX3-v1.4-fedora-x86_64.rpm
+          cd dist
+          sha256sum TundraUX3-v1.4-fedora-x86_64.rpm > TundraUX3-v1.4-fedora-x86_64.sha256
+      - name: Verify RPM metadata and installation
+        run: |
+          set -euo pipefail
+          rpm -qpi dist/TundraUX3-v1.4-fedora-x86_64.rpm
+          rpm -qpR dist/TundraUX3-v1.4-fedora-x86_64.rpm
+          test "$(rpm -qp --qf '%{VERSION}-%{RELEASE}.%{ARCH}' dist/TundraUX3-v1.4-fedora-x86_64.rpm)" = 1.4.0-1.x86_64
+          dnf install -y ./dist/TundraUX3-v1.4-fedora-x86_64.rpm
+          rpm -V tundraux3
+          test -x /usr/bin/tundra-shell
+          test -d /var/lib/tundra/runtime/versions/v1.4.0/share/tundraux3/assets
+          test "$(readlink /var/lib/tundra/runtime/current)" = versions/v1.4.0
+          test -f /usr/share/applications/tundraux3.desktop
+          test -x /usr/libexec/tundra/tundra-system-maintenance
+          cmp packaging/linux/pam.d/tundra-session.fedora /etc/pam.d/tundra-session
+          test -s /etc/tundra/update-trusted-root.jsonl
+          test -x /usr/libexec/tundra/kmscon
+          test -f /usr/libexec/tundra/modules/kmscon/mod-pango.so
+          readelf -d /usr/libexec/tundra/kmscon | grep -E 'NEEDED.*libseat\.so\.'
+          getent passwd tundra-greeter
+          getent group tundra-admin
+          test ! -e /etc/systemd/system/multi-user.target.wants/tundra-sessiond.service
+          # Containers do not have a login seat. Do not invoke root UX as an install test.
+          runuser -u nobody -- /usr/bin/tundra-cli __update-probe
+      - name: Stage Fedora release assets
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-fedora-x64
+          path: |
+            dist/TundraUX3-v1.4-fedora-x86_64.rpm
+            dist/TundraUX3-v1.4-fedora-x86_64.sha256
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
+
+  publish:
+    name: Publish GitHub Release
+    needs: [linux-x64, fedora-x64]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ env.RELEASE_REF }}
+          persist-credentials: false
+      - name: Download verified build assets
+        uses: actions/download-artifact@v8
+        with:
+          pattern: release-*
+          path: dist
+          merge-multiple: true
+      - name: Verify staged checksums and exact asset set
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd dist
+          for asset in \
+            linux-amd64.deb linux-x86_64.sha256 \
+            fedora-x86_64.rpm fedora-x86_64.sha256; do
+            test -s "TundraUX3-v1.4-$asset"
+          done
+          test "$(find . -maxdepth 1 -type f | wc -l)" -eq 4
+          for checksum in *.sha256; do
+            sha256sum -c "$checksum"
+          done
+      - name: Prepare release notes
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp packaging/releases/v1.4.md release-notes.md
+          printf '\n构建提交：`%s`。\n' "$RELEASE_REF" >> release-notes.md
+      - name: Upload and verify draft before publication
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            test "$(gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json isDraft --jq '.isDraft')" = true
+          else
+            gh release create "$RELEASE_TAG" --target "$RELEASE_REF" --draft \
+              --repo "$GITHUB_REPOSITORY" --title V1.4 --notes-file release-notes.md
+          fi
+          # A published tag must never be moved or replaced on a rerun.
+          if gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$RELEASE_TAG" > tag.json 2>/dev/null; then
+            test "$(jq -r '.object.sha' tag.json)" = "$RELEASE_REF"
+          fi
+          gh release upload "$RELEASE_TAG" dist/* --repo "$GITHUB_REPOSITORY" --clobber
+          gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json assets \
+            --jq '.assets[] | [.name, .digest] | @tsv' > remote-digests.tsv
+          test "$(wc -l < remote-digests.tsv)" -eq 4
+          for asset in dist/*; do
+            name="$(basename "$asset")"
+            digest="sha256:$(sha256sum "$asset" | cut -d' ' -f1)"
+            grep -Fqx "$(printf '%s\t%s' "$name" "$digest")" remote-digests.tsv
+          done
+          gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" \
+            --target "$RELEASE_REF" --title V1.4 --notes-file release-notes.md --draft=false --latest
+      - name: Verify published release and tag
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" \
+            --json tagName,name,isDraft,isPrerelease,publishedAt,url,assets > release.json
+          jq -e '.tagName == "v1.4" and .name == "V1.4" and .isDraft == false and .isPrerelease == false and (.assets | length == 4)' release.json
+          test "$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$RELEASE_TAG" --jq '.object.sha')" = "$RELEASE_REF"
+          cat release.json
