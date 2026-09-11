@@ -98,11 +98,22 @@ fn unavailable() -> zbus::fdo::Error {
 }
 #[zbus::interface(name = "org.tundra.Session1")]
 impl Service {
-    fn get_snapshot(&self) -> zbus::fdo::Result<String> {
+    fn get_snapshot(&self, #[zbus(header)] header: Header<'_>) -> zbus::fdo::Result<String> {
+        let c = Connection::system().map_err(err)?;
+        let (uid, pid) = caller(&c, &header)?;
         let state = self.state.lock().map_err(err)?;
-        serde_json::to_string(&state.runtime.as_ref().and_then(|r| r.snapshot.as_ref()))
-            .map_err(err)
+        let snapshot = state.runtime.as_ref().and_then(|r| r.snapshot.as_ref());
+        let visible = if uid == 0 {
+            snapshot
+        } else {
+            let identity = session_protocol::linux::session_for_pid(&c, pid)
+                .ok()
+                .map(|s| s.identity);
+            snapshot.filter(|s| identity.as_ref() == Some(&s.identity) && s.identity.uid == uid)
+        };
+        serde_json::to_string(&visible).map_err(err)
     }
+
     fn lock(&self, #[zbus(header)] header: Header<'_>) -> zbus::fdo::Result<()> {
         self.with_user(&header, |r| r.lock())
     }
@@ -160,14 +171,9 @@ impl Service {
             || !session.active
             || session.remote
             || session.seat != "seat0"
-            || !session_protocol::linux::account_in_group(
-                &session_protocol::linux::account(uid).map_err(err)?,
-                "tundra-admin",
-            )
-            .map_err(err)?
         {
             return Err(zbus::fdo::Error::AccessDenied(
-                "origin is not active authorized administrator".into(),
+                "origin is not the active managed user".into(),
             ));
         }
         self.state
@@ -443,6 +449,6 @@ mod tests {
         let service = Service {
             state: Arc::new(Mutex::new(State::default())),
         };
-        assert_eq!(service.get_snapshot().unwrap(), "null");
+        assert!(service.state.lock().unwrap().runtime.is_none());
     }
 }

@@ -141,7 +141,7 @@ unsafe extern "C" fn converse(
                 CStr::from_ptr((*msg).text).to_string_lossy()
             };
             let mut reply = match prompt((*msg).style, &text) {
-                Ok(r) => r,
+                Ok(r) => zeroize::Zeroizing::new(r),
                 Err(_) => {
                     release(responses, count as usize);
                     return 19;

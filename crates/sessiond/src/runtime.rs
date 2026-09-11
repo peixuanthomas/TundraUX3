@@ -1,11 +1,11 @@
 use crate::{
-    display::{Kmscon, SessionDisplayBackend, TRUSTED_VT, VtGate},
+    display::{Kmscon, SessionDisplayBackend, VtGate, TRUSTED_VT},
     linux::{read, write},
     process,
 };
 use session_protocol::{
-    SessionIdentity, SessionSnapshot, SessionState, SystemAction, SystemUser,
     greeter::{ClientMessage, ServerMessage},
+    SessionIdentity, SessionSnapshot, SessionState, SystemAction, SystemUser,
 };
 use std::{
     io::{self, BufReader},
@@ -144,6 +144,7 @@ pub struct Runtime {
 }
 impl Runtime {
     pub fn start() -> io::Result<Self> {
+        crate::display::ensure_reserved_vts_available()?;
         if std::fs::read_to_string("/proc/sys/dev/tty/legacy_tiocsti")?.trim() != "0" {
             return Err(io::Error::other(
                 "legacy TIOCSTI must be disabled before starting trusted seat",
@@ -342,6 +343,15 @@ impl Runtime {
     }
     pub fn poll(&mut self) -> io::Result<()> {
         self.healthy()?;
+        if self
+            .snapshot
+            .as_ref()
+            .is_some_and(|s| s.state == SessionState::Active)
+            && self.gate.active()? == TRUSTED_VT
+        {
+            // The physical trusted-VT shortcut is a secure attention path.
+            self.lock()?;
+        }
         if self.desktop.as_mut().is_some_and(|w| !w.alive()) {
             self.logout()?;
         }

@@ -29,9 +29,10 @@ PAM worker, then closes PAM. User switching performs logout first. CloseSession
 is root-only and writes the maintenance marker only after successful cleanup.
 
 System-operation consent is root-only, requires a real D-Bus sender in the
-managed active logind session and tundra-admin membership, binds the action and
+managed active logind session, binds the action and
 request ID, and restores the source session before returning. The privileged
-service must revalidate sender identity and policy after consent returns.
+service enforces its configured administrator groups before the request and
+revalidates sender identity and policy after consent returns.
 
 ## Trusted display requirements
 
@@ -41,7 +42,8 @@ Both terminal renderers run without root. The greeter runs as a separate
 private channel. Immutable frontend executable/resources must be installed by
 root. The backend uses these fixed executable locations:
 
-- `/usr/bin/kmscon`
+- `/usr/libexec/tundra/kmscon` (pinned libseat build with a matching sibling
+  `kmscon-capabilities.json` digest declaration)
 - `/usr/libexec/tundra/tundra-greeter`
 - `/usr/bin/tundra-shell`
 
@@ -57,8 +59,8 @@ Actual kmscon device release, evdev revocation, DRM master handover, keyboard,
 mouse, Chinese rendering and crash recovery require physical integration tests.
 A successful compile or PAM probe alone does not establish those guarantees.
 Do not enable the installed service as a display-manager replacement until that
-machine's end-to-end tests have passed. The systemd unit intentionally starts the
-discovery-only mode.
+machine's end-to-end tests have passed. The systemd unit starts `--seat`, but packaging does not start or enable it;
+explicit service activation expresses the decision to enter an independent seat.
 
 ## Native PAM probe
 
@@ -81,3 +83,28 @@ installed as `/etc/pam.d/tundra-session`; Debian/Ubuntu uses `tundra-session`.
 The worker protocol adds root-private `Authenticated {uid}` and
 `SessionOpened {identity, environment}` lifecycle messages around shared greeter
 PAM prompts. Those messages are never accepted from UX or exposed on system D-Bus.
+
+## Native hardware evidence (x240s-test, Fedora 43)
+
+The root-injected keyboard completed a real distribution PAM login into UID 1002,
+logind session 345, with the ordinary shell's real/effective/saved UID and GID all
+1002, empty permitted/effective/ambient capabilities and NoNewPrivs enabled.
+HOME, personal XDG directories, runtime directory and user D-Bus matched that UID.
+The final pinned static-libtsm backend recipe rendered the dedicated greeter and
+accepted input through libseat without raw input ACL or group exceptions.
+
+`tests/device_revocation.py PID` duplicated five existing user-renderer evdev FDs
+and its DRM FD with pidfd_getfd before switching to the trusted VT. After handover,
+every retained evdev FD returned ENODEV and the retained DRM FD ceased to be DRM
+master. The snapshot preserved UID/session identity and entered Locked. The
+`tests/vt_gate.py` probe additionally confirmed even root VT_ACTIVATE could not
+leave the gated VT, while an unprivileged child could neither unlock the gate,
+use TIOCSTI, nor open raw input/uinput devices.
+
+This run exposed an upstream libseat input-resume defect: revoked input nodes can
+be deleted before the pause callback, leaving the returning greeter without input.
+Full unlock and pointer-consent acceptance remain required while that fix is being
+validated. Earlier PAM lifecycle probes independently passed valid/invalid auth,
+full session open/environment registration and close cleanup for ordinary/admin
+accounts. These are real PAM/seat tests with root-generated test input, not human
+mouse-click evidence.

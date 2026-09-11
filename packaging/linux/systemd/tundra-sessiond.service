@@ -1,19 +1,18 @@
 [Unit]
 Description=Tundra Linux session lifecycle service
-After=dbus.service systemd-logind.service
-Requires=dbus.service systemd-logind.service
+After=dbus.service systemd-logind.service tundra-update-recover.service
+Requires=dbus.service systemd-logind.service tundra-update-recover.service
 
 [Service]
 Type=dbus
 BusName=org.tundra.Session1
-ExecStart=/usr/libexec/tundra/tundra-sessiond
+ExecStart=/usr/libexec/tundra/tundra-sessiond --seat
 User=root
 UMask=0077
 Restart=on-failure
 RestartSec=2
-ProtectSystem=strict
-ProtectHome=read-only
-PrivateTmp=yes
+# Filesystem restrictions here would be inherited by the desktop and prevent
+# normal personal file writes. Apply restrictions only to individual helpers.
 # pam_systemd must move a dedicated PAM worker into its session scope.
 # Do not enable PrivateUsers or NoNewPrivileges on the authentication worker.
 
