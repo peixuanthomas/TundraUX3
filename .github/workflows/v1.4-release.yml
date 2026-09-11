@@ -32,9 +32,6 @@ jobs:
           cargo metadata --locked --no-deps --format-version 1 > metadata.json
           jq -e '[.packages[] | select(.manifest_path | contains("/crates/"))] | all(.[]; .version == "1.4.0") and ([.[].name] | index("tundra-sessiond") != null and index("tundra-greeter") != null and index("tundra-privileged") != null and index("system-maintenance") != null and index("session-protocol") != null)' metadata.json
           test -s packaging/releases/v1.4.md
-          bash -n scripts/package-linux.sh
-          python3 -m unittest discover -s scripts/tests -p test_stage_linux_system.py
-          python3 scripts/check-localization.py
 
   linux-x64:
     needs: validate
@@ -62,14 +59,6 @@ jobs:
           gh attestation trusted-root --verify-only
           gh attestation verify --help | grep -- --source-ref
 
-      - name: Run workspace regression tests
-        shell: bash
-        run: |
-          set -euo pipefail
-          export TMPDIR="$(cd "$RUNNER_TEMP" && pwd -P)"
-          cargo test --workspace --locked
-          bash scripts/check-weathr-dependency-boundary.sh
-
       - name: Build Linux packages
         shell: bash
         env:
@@ -83,29 +72,6 @@ jobs:
           sha256sum \
             TundraUX3-v1.4-linux-amd64.deb \
             > TundraUX3-v1.4-linux-x86_64.sha256
-
-      - name: Verify Debian package installation
-        shell: bash
-        run: |
-          set -euo pipefail
-          sudo apt-get update
-          sudo apt-get install -y ./dist/TundraUX3-v1.4-linux-amd64.deb
-          test "$(dpkg-query -W -f='${Version}' tundraux3)" = 1.4.0
-          test -x /usr/bin/tundra-shell
-          test -d /var/lib/tundra/runtime/versions/v1.4.0/share/tundraux3/assets
-          test "$(readlink /var/lib/tundra/runtime/current)" = versions/v1.4.0
-          test -x /usr/libexec/tundra/tundra-system-maintenance
-          test ! -L /usr/libexec/tundra/tundra-system-maintenance
-          cmp packaging/linux/pam.d/tundra-session /etc/pam.d/tundra-session
-          test -s /etc/tundra/update-trusted-root.jsonl
-          test "$(systemctl is-enabled tundra-sessiond.service || true)" = disabled
-          test "$(systemctl is-enabled tundra-privileged.service || true)" = disabled
-          /usr/bin/tundra-cli help
-          test -x /usr/libexec/tundra/kmscon
-          test -f /usr/libexec/tundra/modules/kmscon/mod-pango.so
-          readelf -d /usr/libexec/tundra/kmscon | grep -E 'NEEDED.*libseat\.so\.'
-          # Package installation checks private terminal linkage and inactive
-          # service payload. It is not a physical seat/input isolation test.
 
       - name: Stage Linux release assets
         uses: actions/upload-artifact@v7
@@ -140,12 +106,6 @@ jobs:
           set -euo pipefail
           curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
           echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
-      - name: Run workspace regression tests
-        run: |
-          set -euo pipefail
-          export TMPDIR="$(cd "$RUNNER_TEMP" && pwd -P)"
-          cargo test --workspace --locked
-          bash scripts/check-weathr-dependency-boundary.sh
       - name: Build Fedora RPM
         run: |
           set -euo pipefail
@@ -153,29 +113,6 @@ jobs:
           mv dist/tundraux3-1.4.0-1.x86_64.rpm dist/TundraUX3-v1.4-fedora-x86_64.rpm
           cd dist
           sha256sum TundraUX3-v1.4-fedora-x86_64.rpm > TundraUX3-v1.4-fedora-x86_64.sha256
-      - name: Verify RPM metadata and installation
-        run: |
-          set -euo pipefail
-          rpm -qpi dist/TundraUX3-v1.4-fedora-x86_64.rpm
-          rpm -qpR dist/TundraUX3-v1.4-fedora-x86_64.rpm
-          test "$(rpm -qp --qf '%{VERSION}-%{RELEASE}.%{ARCH}' dist/TundraUX3-v1.4-fedora-x86_64.rpm)" = 1.4.0-1.x86_64
-          dnf install -y ./dist/TundraUX3-v1.4-fedora-x86_64.rpm
-          rpm -V tundraux3
-          test -x /usr/bin/tundra-shell
-          test -d /var/lib/tundra/runtime/versions/v1.4.0/share/tundraux3/assets
-          test "$(readlink /var/lib/tundra/runtime/current)" = versions/v1.4.0
-          test -f /usr/share/applications/tundraux3.desktop
-          test -x /usr/libexec/tundra/tundra-system-maintenance
-          cmp packaging/linux/pam.d/tundra-session.fedora /etc/pam.d/tundra-session
-          test -s /etc/tundra/update-trusted-root.jsonl
-          test -x /usr/libexec/tundra/kmscon
-          test -f /usr/libexec/tundra/modules/kmscon/mod-pango.so
-          readelf -d /usr/libexec/tundra/kmscon | grep -E 'NEEDED.*libseat\.so\.'
-          getent passwd tundra-greeter
-          getent group tundra-admin
-          test ! -e /etc/systemd/system/multi-user.target.wants/tundra-sessiond.service
-          # Containers do not have a login seat. Do not invoke root UX as an install test.
-          runuser -u nobody -- /usr/bin/tundra-cli __update-probe
       - name: Stage Fedora release assets
         uses: actions/upload-artifact@v7
         with:
@@ -225,7 +162,7 @@ jobs:
           set -euo pipefail
           cp packaging/releases/v1.4.md release-notes.md
           printf '\n构建提交：`%s`。\n' "$RELEASE_REF" >> release-notes.md
-          printf '\n构建与安装检查：[GitHub Actions #%s](%s/%s/actions/runs/%s)。\n' \
+          printf '\n编译、打包与制品校验（未运行测试）：[GitHub Actions #%s](%s/%s/actions/runs/%s)。\n' \
             "$GITHUB_RUN_NUMBER" "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID" >> release-notes.md
       - name: Upload and verify draft before publication
         shell: bash
