@@ -322,6 +322,10 @@ pub enum ShellCommand {
     },
     ClosePopup,
     CloseTimeSyncDialog,
+    NotificationScrollMessage {
+        delta: isize,
+        page: bool,
+    },
     NotificationNextAction,
     NotificationPreviousAction,
     NotificationActivateSelected,

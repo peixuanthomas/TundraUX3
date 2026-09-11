@@ -25,6 +25,7 @@ impl ShellSession {
         platform: &dyn Platform,
         received_at: Instant,
     ) -> ShellAction {
+        let _language = i18n::enter_snapshot(self.language.clone());
         if let Some(action) = self.apply_input_preamble_at(&input, received_at) {
             return action;
         }
@@ -67,6 +68,7 @@ impl ShellSession {
     }
 
     pub fn route_input_at(&mut self, input: InputEvent, received_at: Instant) -> RoutedEvent {
+        let _language = i18n::enter_snapshot(self.language.clone());
         let (target, command) = match &input {
             InputEvent::Shutdown => (RoutedTarget::Global, ShellCommand::Shutdown),
             InputEvent::Tick => (RoutedTarget::Global, ShellCommand::Tick),
@@ -111,6 +113,7 @@ impl ShellSession {
         platform: &dyn Platform,
         received_at: Instant,
     ) -> ShellAction {
+        let _language = i18n::enter_snapshot(self.language.clone());
         self.pending_notification_commands.clear();
         let follow_up_input = routed.input.clone();
         let follow_up_target = routed.target;
@@ -1877,6 +1880,9 @@ impl ShellSession {
             ShellCommand::CloseTimeSyncDialog => {
                 self.close_time_sync_dialog();
                 ShellAction::Redraw
+            }
+            ShellCommand::NotificationScrollMessage { delta, page } => {
+                self.scroll_notification_message(delta, page)
             }
             ShellCommand::NotificationNextAction => {
                 self.notification_select_next_action();
