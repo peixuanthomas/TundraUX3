@@ -225,6 +225,8 @@ jobs:
           set -euo pipefail
           cp packaging/releases/v1.4.md release-notes.md
           printf '\n构建提交：`%s`。\n' "$RELEASE_REF" >> release-notes.md
+          printf '\n构建与安装检查：[GitHub Actions #%s](%s/%s/actions/runs/%s)。\n' \
+            "$GITHUB_RUN_NUMBER" "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID" >> release-notes.md
       - name: Upload and verify draft before publication
         shell: bash
         env:
