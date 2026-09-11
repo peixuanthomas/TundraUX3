@@ -525,6 +525,16 @@ pub fn prepare_update(
                 .ok_or_else(|| UpdateError::new("executable has no installation directory"))?,
         )?;
     }
+    prepare_update_work(platform, check, progress)
+}
+
+// Installation authorization is deliberately outside this helper so cache and
+// cleanup tests need no installed shell/CLI beside the Rust test executable.
+fn prepare_update_work(
+    platform: &dyn Platform,
+    check: &UpdateCheckResult,
+    progress: &mut dyn FnMut(UpdateProgress),
+) -> Result<PreparedUpdate, UpdateError> {
     if !supports_updates(platform.kind()) {
         return Err(UpdateError::new(
             "automatic updates are supported only on Windows and Linux",

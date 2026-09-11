@@ -468,7 +468,7 @@ fn update_preparation_uses_disk_cache_and_cleans_failed_work() {
         commits: Vec::new(),
     };
     assert!(
-        prepare_update(&platform, &check, &mut |_| {})
+        prepare_update_work(&platform, &check, &mut |_| {})
             .unwrap_err()
             .to_string()
             .contains("invalid source commit")
@@ -858,4 +858,36 @@ fn system_update_metadata_rejects_unstable_or_missing_runtime() {
     release.draft = false;
     release.assets.clear();
     assert!(system_release_version(&release).is_err());
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn source_update_guard_requires_user_owned_private_installation() {
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
+    let root = update_test_root("installation-guard");
+    fs::create_dir_all(&root).unwrap();
+    for path in [&root, &root.join(SHELL_FILE), &root.join(CLI_FILE)] {
+        if path != &root {
+            fs::write(path, b"installation guard fixture").unwrap();
+        }
+        fs::set_permissions(path, fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    if fs::metadata(&root).unwrap().uid() == 0 {
+        assert!(
+            require_user_owned_installation(&root)
+                .unwrap_err()
+                .to_string()
+                .contains("ordinary user")
+        );
+    } else {
+        require_user_owned_installation(&root).unwrap();
+        fs::set_permissions(root.join(CLI_FILE), fs::Permissions::from_mode(0o775)).unwrap();
+        assert!(
+            require_user_owned_installation(&root)
+                .unwrap_err()
+                .to_string()
+                .contains("managed by the system")
+        );
+    }
+    fs::remove_dir_all(root).unwrap();
 }
