@@ -8,6 +8,7 @@ third-party test harness.
 
 from __future__ import annotations
 
+import argparse
 import fcntl
 import os
 import pty
@@ -16,7 +17,6 @@ import shutil
 import signal
 import struct
 import subprocess
-import sys
 import tempfile
 import termios
 import time
@@ -24,14 +24,13 @@ from pathlib import Path
 from typing import Iterable, Optional
 
 MOUSE_CAPTURE_SEQUENCE = b"\x1b[?1003h"
-# The startup animation never renders the final boxed Status panel. Matching
-# its UTF-8 border/title survives Ratatui's debug/release diff differences.
-SHELL_READY_SEQUENCE = "╭Status".encode()
+# The startup animation never renders the final Status panel. The title and
+# border have separate ANSI style runs, so match the title itself.
+SHELL_READY_SEQUENCE = b"Status"
 KEYBOARD_SENTINEL = b" "
-# Space safely advances the isolated first-run setup from Language to
-# Timezone. It follows the same ordinary character path as Editor typing and,
-# unlike debug-only input diagnostics, is visible in release builds too.
-KEYBOARD_SENTINEL_SEQUENCE = b"Timezone"
+# Linux already has a system identity. Its first-run screen only configures
+# appearance; Space on the custom-theme control opens the existing dialog.
+KEYBOARD_SENTINEL_SEQUENCE = b"Custom theme color"
 MOUSE_FLOOD_EVENT_COUNT = int(os.environ.get("TUNDRA_PTY_MOUSE_EVENT_COUNT", "64"))
 MOUSE_FLOOD_WRITE_TIMEOUT = 8.0
 KEYBOARD_SENTINEL_TIMEOUT = float(
@@ -169,9 +168,15 @@ def signal_process_group(child: subprocess.Popen, signal_number: int) -> None:
 
 
 def main() -> int:
-    binary = Path(sys.argv[1] if len(sys.argv) == 2 else "target/debug/tundra-shell")
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("binary", nargs="?", type=Path, default=Path("target/debug/tundra-shell"))
+    parser.add_argument("--assets", type=Path, help="copy a matching asset tree into the isolated profile")
+    args = parser.parse_args()
+    binary = args.binary
     if not binary.is_file() or not os.access(binary, os.X_OK):
         raise SystemExit(f"shell binary is not executable: {binary}")
+    if os.getuid() == 0:
+        raise SystemExit("run the shell smoke as an ordinary Linux user")
 
     isolated = Path(tempfile.mkdtemp(prefix="tundraux3-pty-"))
     env = os.environ.copy()
@@ -179,6 +184,12 @@ def main() -> int:
         directory = isolated / name.lower()
         directory.mkdir(mode=0o700)
         env[name] = str(directory)
+    if args.assets:
+        if not args.assets.is_dir():
+            shutil.rmtree(isolated)
+            raise SystemExit(f"asset tree is not a directory: {args.assets}")
+        shutil.copytree(args.assets, isolated / "assets")
+        env["TUNDRA_ASCII_ASSETS_DIR"] = str(isolated / "assets")
 
     master, slave = pty.openpty()
     # The real shell enforces its minimum terminal size before entering the
@@ -190,6 +201,7 @@ def main() -> int:
     child: Optional[subprocess.Popen] = None
     flood_duration = 0.0
     sentinel_latency = 0.0
+    profile_files = 0
     try:
         child = subprocess.Popen(
             [str(binary.resolve())],
@@ -199,6 +211,13 @@ def main() -> int:
             env=env,
             start_new_session=True,
         )
+
+        # This PTY deliberately implements no graphics protocol. Complete the
+        # real capability handshake as a text terminal before mouse capture
+        # starts, avoiding a missing-terminal-emulator warning modal.
+        if not wait_for_output(master, output, b"\x1b[5n", child, timeout=10.0):
+            raise SystemExit("shell did not send its terminal status query")
+        os.write(master, b"\x1b[0n")
 
         if not wait_for_output(
             master,
@@ -232,6 +251,32 @@ def main() -> int:
                 "tundra-shell output did not become idle after the ready frame; "
                 f"output:\n{output_diagnostic(output)}"
             )
+
+        # Text-only terminals receive the expected ASCII-icon fallback notice.
+        # Acknowledge this specific notice through its ordinary Continue button.
+        if b"Terminal graphics unsupported" in output:
+            os.write(master, b"\r")
+            read_available(master, output, 0.1)
+            if not wait_for_output_quiet(master, output, child):
+                raise SystemExit("shell did not settle after graphics fallback notice")
+
+        # /proc exposes all four real/effective/saved/filesystem credentials;
+        # this catches an elevated shell even if its visible username is right.
+        status = Path(f"/proc/{child.pid}/status").read_text()
+        for field, expected in (("Uid", os.getuid()), ("Gid", os.getgid())):
+            line = next(line for line in status.splitlines() if line.startswith(f"{field}:"))
+            if [int(value) for value in line.split()[1:]] != [expected] * 4:
+                raise SystemExit(f"shell credentials differ from invoking user: {line}")
+        groups = next(line for line in status.splitlines() if line.startswith("Groups:"))
+        if sorted(int(value) for value in groups.split()[1:]) != sorted(os.getgroups()):
+            raise SystemExit(f"shell supplementary groups differ from invoking user: {groups}")
+
+        # Shape -> theme color -> custom theme color. These are ordinary
+        # keyboard focus transitions, not an internal test-only shell command.
+        os.write(master, b"\t\t")
+        read_available(master, output, 0.1)
+        if not wait_for_output_quiet(master, output, child):
+            raise SystemExit("shell did not settle after moving setup focus")
 
         sentinel_offset = len(output)
         flood_duration = write_events_while_draining_output(
@@ -302,6 +347,16 @@ def main() -> int:
                     f"missing terminal restore sequence ({label}); "
                     f"output:\n{output_diagnostic(output)}"
                 )
+
+        for path in isolated.rglob("*"):
+            if path.stat().st_uid != os.getuid():
+                raise SystemExit(f"isolated profile contains a file owned by another user: {path}")
+            if path.is_file() and "assets" not in path.relative_to(isolated).parts:
+                profile_files += 1
+                if path.suffix in (".toml", ".json") and b"/root/" in path.read_bytes():
+                    raise SystemExit(f"user configuration contains a root home path: {path}")
+        if profile_files == 0:
+            raise SystemExit("shell did not create any files in its isolated XDG profile")
     finally:
         if child is not None and child.poll() is None:
             signal_process_group(child, signal.SIGKILL)
@@ -318,7 +373,8 @@ def main() -> int:
         "Linux PTY mouse/keyboard priority smoke passed "
         f"({MOUSE_FLOOD_EVENT_COUNT} queued mouse events before the keyboard sentinel; "
         f"input accepted in {flood_duration:.3f}s; "
-        f"sentinel visible in {sentinel_latency:.3f}s)"
+        f"sentinel visible in {sentinel_latency:.3f}s; "
+        f"UID/GID {os.getuid()}/{os.getgid()}; {profile_files} user-owned profile files)"
     )
     return 0
 
