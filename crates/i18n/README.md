@@ -59,8 +59,16 @@ or logging. Snapshots implement `Send + Sync`, `Debug`, and content-aware equali
 English defaults are embedded from the canonical
 `../ascii-assets/assets/locales/en-US` tree. The build script watches directories
 and files recursively and validates the embedded manifest and Fluent reference
-graph. Before canonical files exist, an internal recovery fixture bootstraps the
-crate. Minimal recovery messages are also always available as the last tier.
+graph. Missing manifests, missing resource trees, and packs without any messages
+fail the build. Minimal recovery messages remain available as the last runtime tier.
+
+The same build step generates public constants such as
+`i18n::ids::RESOURCES_RECOVERY_TITLE`, the sorted `MESSAGE_IDS` list, and
+`MESSAGE_CONTRACTS`. `message_contract(id)` returns a `MessageContract` containing
+`id` and sorted required `args`, including arguments inherited through Fluent
+references. Hyphens and attribute separators become underscores in constant names;
+case and separator collisions fail the build. These APIs describe bundled English
+and do not change when users customize disk translations.
 
 Loading repairs missing or corrupt default English files via a same-directory
 temporary file and atomic rename. Healthy files retain their bytes; missing

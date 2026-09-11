@@ -374,10 +374,6 @@ fn message_serialization_and_error_chain_preserve_machine_identity() {
 #[test]
 fn canonical_english_and_chinese_resources_validate() {
     let root = Path::new(ascii_assets::CANONICAL_ASSETS_DIR);
-    if !root.join("locales/en-US").is_dir() {
-        // The crate bootstraps independently while canonical assets are being created.
-        return;
-    }
     let english = crate::resource::read_sources(&root.join("locales/en-US")).unwrap();
     crate::resource::validate(&english, None, true).unwrap();
     let chinese = crate::resource::read_sources(&root.join("locales/zh-CN")).unwrap();
@@ -695,4 +691,58 @@ fn strict_failed_candidate_retains_completed_english_repair_diagnostics() {
             .diagnostics
             .is_empty()
     );
+}
+
+#[test]
+fn generated_catalog_exposes_canonical_ids_and_argument_contracts() {
+    assert_eq!(ids::RESOURCES_RECOVERY_TITLE, "resources-recovery-title");
+    assert_eq!(ids::LANGUAGE_RELOAD_FAILED, "language-reload-failed");
+    assert_eq!(
+        render_diagnostic(&msg!(ids::RESOURCES_RECOVERY_TITLE)),
+        "Resource recovery"
+    );
+    assert_eq!(
+        message_contract(ids::RESOURCES_RECOVERY_TITLE)
+            .unwrap()
+            .args,
+        &[] as &[&str]
+    );
+    assert_eq!(
+        message_contract(ids::LANGUAGE_RELOAD_FAILED).unwrap().args,
+        &["reason"]
+    );
+    assert_eq!(
+        message_contract(ids::APP_LAUNCHER_IO).unwrap().args,
+        &["detail", "path"]
+    );
+    assert!(message_contract("test-not-a-canonical-message").is_none());
+    assert!(MESSAGE_IDS.windows(2).all(|pair| pair[0] < pair[1]));
+    assert_eq!(MESSAGE_IDS.len(), MESSAGE_CONTRACTS.len());
+    assert!(MESSAGE_IDS.binary_search(&ids::APP_LAUNCHER_IO).is_ok());
+}
+
+#[test]
+fn generated_catalog_rejects_empty_packs_and_colliding_constant_names() {
+    use std::collections::{BTreeMap, BTreeSet};
+    let empty = BTreeMap::new();
+    assert!(
+        crate::build_support::generate_catalog(&empty)
+            .unwrap_err()
+            .contains("at least one message")
+    );
+    let terms_only = BTreeMap::from([("-brand".to_owned(), BTreeSet::new())]);
+    assert!(crate::build_support::generate_catalog(&terms_only).is_err());
+    for ids in [
+        ["test-message", "test_message"],
+        ["test.title", "test-title"],
+        ["test-item", "Test-item"],
+    ] {
+        let contracts = ids
+            .into_iter()
+            .map(|id| (id.to_owned(), BTreeSet::new()))
+            .collect();
+        let error = crate::build_support::generate_catalog(&contracts).unwrap_err();
+        assert!(error.contains("collide"));
+        assert!(error.contains(ids[0]) && error.contains(ids[1]));
+    }
 }

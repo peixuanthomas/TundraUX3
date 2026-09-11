@@ -1,4 +1,5 @@
 use std::{env, fs, path::Path};
+mod build_support;
 #[allow(dead_code)]
 #[path = "src/error.rs"]
 mod error;
@@ -9,9 +10,6 @@ mod resource;
 
 fn walk(root: &Path, path: &Path, files: &mut Vec<String>) {
     println!("cargo:rerun-if-changed={}", path.display());
-    if !path.is_dir() {
-        return;
-    }
     let mut entries: Vec<_> = fs::read_dir(path)
         .expect("read canonical English locale directory")
         .map(|entry| entry.expect("read canonical locale entry").path())
@@ -37,7 +35,7 @@ fn walk(root: &Path, path: &Path, files: &mut Vec<String>) {
 fn main() {
     let root = Path::new(&env::var("CARGO_MANIFEST_DIR").unwrap())
         .join("../ascii-assets/assets/locales/en-US");
-    // Track the parent as well, including while the locale directory does not exist.
+    // Track additions/removals as well as edits to existing resources.
     println!(
         "cargo:rerun-if-changed={}",
         root.parent().unwrap().display()
@@ -46,12 +44,8 @@ fn main() {
     walk(&root, &root, &mut files);
     let manifest = root.join("manifest.toml");
     println!("cargo:rerun-if-changed={}", manifest.display());
-    let fallback_manifest = "format_version = 1\ncode = \"en-US\"\nnative_name = \"English\"\n";
-    let manifest_source = if manifest.is_file() {
-        fs::read_to_string(&manifest).expect("read embedded English manifest")
-    } else {
-        fallback_manifest.to_owned()
-    };
+    let manifest_source = fs::read_to_string(&manifest)
+        .expect("canonical English manifest must exist and be readable");
     let parsed: toml::Value =
         toml::from_str(&manifest_source).expect("embedded English manifest must be valid TOML");
     assert_eq!(
@@ -73,12 +67,12 @@ fn main() {
             .is_some_and(|name| !name.trim().is_empty()),
         "embedded English manifest requires native_name"
     );
-    if !files.is_empty() {
-        let sources = resource::read_sources(&root).expect("read embedded English resources");
-        resource::validate(&sources, None, true).expect(
-            "embedded English resources must have valid syntax, unique IDs, and valid references",
-        );
-    }
+    let sources = resource::read_sources(&root).expect("read canonical English resources");
+    let contracts = resource::validate(&sources, None, true).expect(
+        "embedded English resources must have valid syntax, unique IDs, and valid references",
+    );
+    let public_catalog = build_support::generate_catalog(&contracts)
+        .expect("canonical English message constants and contracts must be valid");
     let emergency = resource::Source {
         path: "src/emergency.ftl".into(),
         text: include_str!("src/emergency.ftl").to_owned(),
@@ -87,24 +81,10 @@ fn main() {
     println!("cargo:rerun-if-changed=src/emergency.ftl");
     println!("cargo:rerun-if-changed=src/resource.rs");
     println!("cargo:rerun-if-changed=src/error.rs");
-    let manifest_expr = if manifest.is_file() {
-        format!("include_str!({:?})", manifest.to_str().unwrap())
-    } else {
-        format!(
-            "{:?}",
-            "format_version = 1\ncode = \"en-US\"\nnative_name = \"English\"\n"
-        )
-    };
-    // Bootstrap only: the canonical resources replace this fixture as soon as present.
-    if files.is_empty() {
-        files.push(format!(
-            "({:?}, {:?})",
-            "common/i18n.ftl",
-            include_str!("src/emergency.ftl")
-        ));
-    }
+    println!("cargo:rerun-if-changed=build_support.rs");
+    let manifest_expr = format!("include_str!({:?})", manifest.to_str().unwrap());
     let output = format!(
-        "pub(crate) const EMBEDDED_MANIFEST: &str = {manifest_expr};\npub(crate) const EMBEDDED_FILES: &[(&str, &str)] = &[{}];\n",
+        "pub(crate) const EMBEDDED_MANIFEST: &str = {manifest_expr};\npub(crate) const EMBEDDED_FILES: &[(&str, &str)] = &[{}];\n{public_catalog}",
         files.join(",\n")
     );
     fs::write(

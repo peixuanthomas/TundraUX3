@@ -1,5 +1,6 @@
 //! Immutable Fluent localization with a shared asset root and embedded recovery.
 mod catalog;
+mod contract;
 mod error;
 mod message;
 mod resource;
@@ -10,6 +11,7 @@ pub use catalog::canonical_language_code as canonicalize_locale;
 pub use catalog::{
     DEFAULT_LANGUAGE, LanguageCatalog, LanguageOption, canonical_language_code, default_asset_root,
 };
+pub use contract::{MessageContract, message_contract};
 pub use error::{LanguageError, LanguageErrorKind, RepairDiagnostic, RepairKind};
 pub use message::{LocalizedError, LocalizedMessage, LocalizedText, MessageArg};
 pub use scope::{SnapshotGuard, enter_snapshot, render_current, render_diagnostic, with_snapshot};
@@ -35,3 +37,7 @@ macro_rules! tr {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+#[path = "../build_support.rs"]
+mod build_support;
