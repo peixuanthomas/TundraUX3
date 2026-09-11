@@ -4939,9 +4939,11 @@ dependencies = [
  "serde",
  "serde_json",
  "session-protocol",
+ "tempfile",
  "textwrap",
  "ui",
  "unicode-width 0.2.0",
+ "watchdog",
  "zeroize",
 ]
 

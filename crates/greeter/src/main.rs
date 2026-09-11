@@ -23,17 +23,12 @@ mod linux {
         execute,
         terminal::{self, EnterAlternateScreen, LeaveAlternateScreen},
     };
-    use std::{
-        io::{self, BufReader},
-        os::unix::fs::MetadataExt,
-        path::Path,
-        sync::{Arc, mpsc},
-        time::Duration,
-    };
+    use std::{io, os::unix::fs::MetadataExt, path::Path, sync::Arc, time::Duration};
     use tundra_greeter::{
-        channel::{self, ClientMessage, ServerMessage},
+        channel::{self, ClientMessage},
         input,
         model::Greeter,
+        reader::ChannelReader,
     };
     use zeroize::Zeroize;
 
@@ -96,18 +91,32 @@ mod linux {
                 .snapshot
         };
         let _locale_guard = i18n::enter_snapshot(Arc::new(locale_snapshot));
-        let reader = channel.try_clone()?;
-        let (sender, messages) = mpsc::sync_channel(8);
-        std::thread::spawn(move || {
-            let mut reader = BufReader::new(reader);
-            loop {
-                let message = channel::read_frame::<ServerMessage>(&mut reader);
-                let failed = message.is_err();
-                if sender.send(message).is_err() || failed {
-                    break;
-                }
-            }
-        });
+        // sessiond owns lifecycle. Keep diagnostics private and ephemeral; do
+        // not inherit user-selected paths or record conversation breadcrumbs.
+        let diagnostics = tempfile::Builder::new()
+            .prefix("tundra-greeter-")
+            .tempdir_in("/tmp")?;
+        let root = diagnostics.path();
+        let config = watchdog::WatchdogConfig::new(
+            root.join("reports"),
+            root.join("fallback"),
+            root.join("state"),
+            "tundra-greeter",
+            env!("CARGO_PKG_VERSION"),
+        )
+        .with_unclean_exit_tracking(false);
+        let (_runtime, process) =
+            watchdog::WatchdogRuntime::start(config).map_err(io::Error::other)?;
+        let app = process
+            .register_app(watchdog::AppDescriptor::new(
+                watchdog::AppId::from_static("greeter"),
+                "Trusted greeter",
+                env!("CARGO_PKG_VERSION"),
+                watchdog::AppCriticality::SessionCritical,
+            ))
+            .map_err(io::Error::other)?;
+        let reader =
+            ChannelReader::new(channel.try_clone()?, &app.task_group("protected-channel"))?;
         let mut guard = TerminalGuard(false);
         terminal::enable_raw_mode()?;
         guard.0 = true;
@@ -123,13 +132,15 @@ mod linux {
         terminal.draw(|f| greeter.render(f))?;
         channel::write_frame(&mut channel, &ClientMessage::Ready {})?;
         loop {
-            while let Ok(message) = messages.try_recv() {
-                let message = message?;
+            while let Some(message) = reader.try_message()? {
                 // Remove terminal input queued before each new authentication/consent view.
                 while event::poll(Duration::ZERO)? {
                     let _ = event::read()?;
                 }
                 greeter.receive(message);
+                if greeter.is_complete() {
+                    return Ok(());
+                }
             }
             terminal.draw(|f| greeter.render(f))?;
             if greeter.is_complete() {

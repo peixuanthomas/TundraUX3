@@ -2,3 +2,5 @@
 pub mod channel;
 pub mod input;
 pub mod model;
+#[cfg(unix)]
+pub mod reader;

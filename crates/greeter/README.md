@@ -31,6 +31,14 @@ empty `PamResponse`; echo-on and echo-off prompts receive independent responses.
 `Complete` exits the frontend. A disconnected or malformed channel causes a
 failure exit, never a successful login/unlock/authorization.
 
+The channel reader is a watchdog-managed one-shot task with replay disabled.
+Reader panic disconnects the UI immediately, before incident reporting finishes;
+all exit paths shut down the private socket and join the reader. Sessiond owns
+restart/lifecycle decisions. Watchdog diagnostics use an ephemeral private
+directory created directly under `/tmp`, without environment-controlled paths,
+unclean-exit recovery, or conversation breadcrumbs. The directory is removed
+after watchdog shutdown.
+
 All page controls reuse the project's Dialog, Button, and TextInput components.
 Echo-off TextInput mode masks rendering, redacts Debug output, and erases its
 storage when replaced or dropped; the frontend transfers response ownership and
