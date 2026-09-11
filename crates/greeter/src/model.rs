@@ -221,7 +221,10 @@ impl Greeter {
                     self.sync_focus();
                     return None;
                 }
-                Key::Char(_) | Key::Space if self.input.value().len() >= MAX_RESPONSE_BYTES => {
+                Key::Char(_) | Key::Space
+                    if self.input.state.focused
+                        && self.input.value().len() >= MAX_RESPONSE_BYTES =>
+                {
                     return None;
                 }
                 _ => {}

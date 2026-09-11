@@ -41,8 +41,10 @@ entire consent title/body cannot fit, confirmation is unavailable. A response
 moves the frontend to a waiting state, preventing duplicate submissions.
 
 Default English and the theme are compiled into the installed binary. Chinese
-loads only `/usr/share/tundra/greeter/locales`, after checking all ancestors and
-tree entries are root-owned, not group/other-writable, and not symlinks. Install
+loads the matching installed runtime version’s `share/tundra/greeter/locales`
+when the resolved executable is under `/var/lib/tundra/runtime/versions`, with
+`/usr/share/tundra/greeter/locales` as the manual-install fallback. Every ancestor
+and tree entry must be root-owned, not group/other-writable, and not a symlink. Install
 both bundled locale trees there; no HOME/XDG configuration or user asset lookup
 is performed. PAM and service text must still originate in the protected service
 and is filtered for terminal control and bidirectional override characters.

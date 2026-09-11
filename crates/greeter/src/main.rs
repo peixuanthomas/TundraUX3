@@ -88,8 +88,10 @@ mod linux {
         let locale_snapshot = if locale == "en-US" {
             i18n::LanguageSnapshot::embedded(0)
         } else {
-            validate_trusted_tree(Path::new(TRUSTED_LOCALES))?;
-            i18n::LanguageSnapshot::load(TRUSTED_LOCALES, &locale, 0)
+            let executable = std::env::current_exe()?.canonicalize()?;
+            let locales = locale_root(&executable);
+            validate_trusted_tree(&locales)?;
+            i18n::LanguageSnapshot::load(&locales, &locale, 0)
                 .map_err(io::Error::other)?
                 .snapshot
         };
@@ -161,6 +163,50 @@ mod linux {
                     LeaveAlternateScreen
                 );
                 let _ = terminal::disable_raw_mode();
+            }
+        }
+    }
+
+    fn locale_root(executable: &Path) -> std::path::PathBuf {
+        let versions = Path::new("/var/lib/tundra/runtime/versions");
+        if let Ok(relative) = executable.strip_prefix(versions) {
+            let parts: Vec<_> = relative.components().collect();
+            if let [
+                std::path::Component::Normal(version),
+                std::path::Component::Normal(bin),
+                std::path::Component::Normal(binary),
+            ] = parts.as_slice()
+            {
+                if *bin == "bin" && *binary == "tundra-greeter" {
+                    return versions.join(version).join("share/tundra/greeter/locales");
+                }
+            }
+        }
+        Path::new(TRUSTED_LOCALES).to_path_buf()
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+        #[test]
+        fn locale_source_tracks_exact_installed_version_without_user_paths() {
+            assert_eq!(
+                locale_root(Path::new(
+                    "/var/lib/tundra/runtime/versions/v1.3.0/bin/tundra-greeter"
+                )),
+                Path::new("/var/lib/tundra/runtime/versions/v1.3.0/share/tundra/greeter/locales")
+            );
+            for executable in [
+                "/usr/libexec/tundra/tundra-greeter",
+                "/tmp/version/bin/tundra-greeter",
+                "/var/lib/tundra/runtime/versions/../user/bin/tundra-greeter",
+                "/var/lib/tundra/runtime/versions/v1.3.0/bin/other",
+                "/var/lib/tundra/runtime/versions/v1.3.0/nested/bin/tundra-greeter",
+            ] {
+                assert_eq!(
+                    locale_root(Path::new(executable)),
+                    Path::new(TRUSTED_LOCALES)
+                );
             }
         }
     }

@@ -110,6 +110,64 @@ pub fn inherited_root_channel(
 mod tests {
     use super::*;
     use std::io::{BufReader, Cursor};
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn linux_rejects_terminal_nonsocket_and_nonroot_peer_channels() {
+        use std::os::fd::AsRawFd;
+        assert!(inherited_root_channel(0).is_err());
+        let file = std::fs::File::open("/dev/null").unwrap();
+        assert!(inherited_root_channel(file.as_raw_fd()).is_err());
+        if unsafe { libc::geteuid() } != 0 {
+            let (untrusted, _peer) = std::os::unix::net::UnixStream::pair().unwrap();
+            let error = inherited_root_channel(untrusted.as_raw_fd()).unwrap_err();
+            assert_eq!(error.kind(), io::ErrorKind::PermissionDenied);
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn private_socket_transports_independent_pam_rounds() {
+        let (mut service, mut frontend) = std::os::unix::net::UnixStream::pair().unwrap();
+        let service_thread = std::thread::spawn(move || {
+            let mut input = BufReader::new(service.try_clone().unwrap());
+            for (id, style, text, expected) in [
+                (1, PamStyle::EchoOn, "Username:", "alice"),
+                (2, PamStyle::EchoOff, "Password:", "secret"),
+                (3, PamStyle::Error, "Password expired", ""),
+                (4, PamStyle::EchoOff, "New password:", "new-secret"),
+            ] {
+                write_frame(
+                    &mut service,
+                    &ServerMessage::PamPrompt {
+                        id,
+                        style,
+                        text: text.into(),
+                    },
+                )
+                .unwrap();
+                let answer: ClientMessage = read_frame(&mut input).unwrap();
+                assert!(
+                    matches!(answer, ClientMessage::PamResponse { id: answer_id, response } if answer_id == id && response == expected)
+                );
+            }
+        });
+        let mut reader = BufReader::new(frontend.try_clone().unwrap());
+        for response in ["alice", "secret", "", "new-secret"] {
+            let ServerMessage::PamPrompt { id, .. } = read_frame(&mut reader).unwrap() else {
+                panic!("expected PAM prompt")
+            };
+            write_frame(
+                &mut frontend,
+                &ClientMessage::PamResponse {
+                    id,
+                    response: response.into(),
+                },
+            )
+            .unwrap();
+        }
+        service_thread.join().unwrap();
+    }
+
     #[test]
     fn frame_boundary_preserves_next_message_and_embedded_newlines() {
         let mut bytes = Vec::new();
