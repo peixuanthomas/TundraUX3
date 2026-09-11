@@ -47,6 +47,29 @@ if text.count(old) != 1:
 replacement='\tif (drmIsMaster(vdrm->fd)) {\n\t\tvdrm->master = true;\n\t\treturn 0;\n\t}\n\n'+old
 path.write_text(text.replace(old,replacement,1))
 PY_DRM
+# logind revocation may deliver HUP/ENODEV before libseat's disable callback.
+# Retain brokered input nodes for resume (udev removal still frees real removals)
+# and acknowledge the completed pause so the broker can activate the other seat.
+python3 - "$work/source" <<'PY_INPUT'
+from pathlib import Path
+import sys
+root=Path(sys.argv[1])
+def replace_once(path, old, new):
+    text=path.read_text()
+    if text.count(old) != 1:
+        raise SystemExit('Unexpected pinned libseat input implementation: '+str(path))
+    path.write_text(text.replace(old,new,1))
+path=root/'src/input/input.c'
+replace_once(path, 'static void input_free_dev(struct input_dev *dev);',
+             'static void input_free_dev(struct input_dev *dev);\nstatic void input_sleep_dev(struct input_dev *dev);')
+replace_once(path, 'log_debug("EOF on %s", dev->node);\n\t\tinput_free_dev(dev);',
+             'log_debug("EOF on %s", dev->node);\n\t\tif (dev->input->open_cb)\n\t\t\tinput_sleep_dev(dev);\n\t\telse\n\t\t\tinput_free_dev(dev);')
+replace_once(path, 'log_warn("reading from %s failed (%d): %m", dev->node, errno);\n\t\t\tinput_free_dev(dev);',
+             'log_warn("reading from %s failed (%d): %m", dev->node, errno);\n\t\t\tif (dev->input->open_cb && errno == ENODEV)\n\t\t\t\tinput_sleep_dev(dev);\n\t\t\telse\n\t\t\t\tinput_free_dev(dev);\n\t\t\treturn;')
+path=root/'src/uterm/vt_libseat.c'
+old='\tvt_cb_deactivate(&vt->base, false);\n\ttty_deactivate(vt);'
+replace_once(path, old, old+'\n\tlibseat_disable_seat(libseat);')
+PY_INPUT
 export SOURCE_DATE_EPOCH
 SOURCE_DATE_EPOCH="$(git -C "$work/source" show -s --format=%ct HEAD)"
 meson setup "$work/build" "$work/source" --buildtype=release \

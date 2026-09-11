@@ -32,6 +32,9 @@ from shared_library to library with default_library=static. This removes the old
 Ubuntu system libtsm ABI constraint. A second exact source patch recognizes an
 already-master DRM descriptor supplied by logind before calling drmSetMaster;
 without it the ordinary UID fails with EPERM despite holding the brokered device.
+A third patch retains brokered input nodes when logind revocation races with
+HUP/ENODEV, and acknowledges libseat disable after pause; udev still removes
+physically removed devices. This permits input to resume after lock/unlock.
 The capability digest binds the resulting patched binary. Pango is shipped at
 /usr/libexec/tundra/modules/kmscon/mod-pango.so, resolving into the active runtime.
 Both upstream licenses are included. Run packaging/linux/build-kmscon.sh only in
