@@ -23,21 +23,21 @@ TundraUX3 是一个以 Rust 编写的终端桌面环境实验项目。它在一�
 
 ## 项目定位、平台与环境
 
-项目以 `crossterm` 适配终端输入输出，以 Ratatui 处理布局和绘制；应用状态、UI 基础设施、平台能力、持久化、身份认证及进程监督被拆分为独立 crate。它不是图形桌面环境或窗口管理器，而是运行于真实终端中的统一 Shell 体验。
+项目以 `crossterm` 适配终端输入输出，以 Ratatui 处理布局和绘制；应用状态、UI 基础设施、平台能力、持久化、身份认证及进程监督被拆分为独立 crate。普通应用模式运行于真实终端；Linux 独立会话模式使用 kmscon 承载 Ratatui，目前不提供图形窗口管理器或 Wayland compositor。
 
 | 项目元数据 | 值 |
 | --- | --- |
-| workspace 版本 | `0.1.1` |
+| workspace 版本 | `1.3.0` |
 | Rust edition | `2024` |
 | Cargo resolver | `3` |
 | release panic 策略 | `unwind` |
 | 主要终端 UI | Ratatui + crossterm |
 
-支持 Windows 11、macOS 与 Linux。Linux 首发目标为 x86_64 上的 systemd/Freedesktop 普通桌面会话，包括 Ubuntu LTS、Fedora、GNOME/KDE 与 Wayland/X11；无需 root。Windows 平台要求 Windows 11 build 22000 或更高。
+Linux 面向 x86_64 上的真实 systemd/logind 用户会话，可作为普通用户应用运行，也可显式启用独立终端桌面。UX 始终以普通用户运行，root 只保留在会话与系统操作服务中。Windows 11 和 macOS 保留 UX 与普通应用能力，不参与系统登录、授权或深层系统管理。Windows 平台要求 Windows 11 build 22000 或更高。
 
 运行时应使用兼容 crossterm 的真实终端，例如 Windows Terminal、iTerm2 或其他兼容实现。默认资源集至少需要 **108 × 20** 个终端单元格；内建 Command Line 在 Tundra 顶栏和状态栏之外需要 108 × 22。程序会综合实际加载的 ASCII 资源、Shell 布局与 Weathr 资源计算下限，因此自定义较大资源会相应提高要求。
 
-Linux 还需要 `xdg-utils` 与 `libglib2.0-bin`；推荐有 session D-Bus、xdg-desktop-portal、polkit 和 XWayland。Wayland data-control 不可用时，XWayland 可作为剪贴板兼容层。
+Linux 普通图形桌面中的应用集成可使用 `xdg-utils`、`gio`、用户 D-Bus 与 portal；Wayland/X11 剪贴板仅在实际显示服务可用时启用。独立终端会话不伪造 `DISPLAY` 或 `WAYLAND_DISPLAY`。独立模式要求完整 PAM/systemd/logind/system D-Bus 和 kmscon 10.0.3+；Ubuntu 24.04 自带 kmscon 9.0.0 不满足要求，发行版差异见 [Linux 运行说明](packaging/linux/README-LINUX.txt)。
 
 ## 快速构建与运行
 
@@ -64,7 +64,7 @@ cargo build --release -p shell -p cli
 cargo run -p shell --bin tundra-shell
 ~~~
 
-首次启动会创建存储并进入设置向导，完成首个管理员账户创建后，后续启动依次显示 Weathr 锁屏与登录界面。
+Linux 首次启动在当前真实系统身份下创建个人存储，必要时完成外观个性化；不会在 UX 中创建系统管理员。独立会话的登录已由 greeter/PAM 完成。Windows、macOS 和测试后端保留本地 UX 账户向导，其角色不代表操作系统权限。
 
 常用 CLI 探查命令：
 
@@ -88,14 +88,14 @@ cargo run -p cli --bin tundra-cli -- repl
 
 `tundra-shell` 的正常启动分为以下阶段：
 
-1. `main` 创建进程级 `WatchdogRuntime`，安装 `ProcessWatchdog`、终端紧急恢复函数，并检查上次未正常关闭的运行标记。
+1. Linux 在创建存储和线程前校验真实/有效身份，拒绝 root 或不一致的 UID/GID，并从 NSS 建立当前用户环境。随后 `main` 创建进程级 `WatchdogRuntime`，安装 `ProcessWatchdog`、终端紧急恢复函数，并检查上次未正常关闭的运行标记。
 2. 加载 `ascii-assets` 默认主题，计算共同最小终端尺寸；尺寸不够时在进入全屏前给出可操作错误。
 3. `prepare_shell_startup` 收集平台权限、存储状态和迁移/恢复结果；`storage` 创建目录、校验 schema、迁移旧用户文件，并恢复可重建的损坏文档。
 4. 播放启动 banner，并可在受监督任务中预取天气。
-5. 用户列表为空时进入首次设置和管理员创建；否则进入 Weathr 锁屏，再转入登录。
+5. Linux 绑定当前系统 UID；受管理桌面还绑定 logind session ID，必要时进入个人外观设置。其他平台保留本地 UX 首次设置、账户创建和展示登录流程。
 6. 构造同时持有 `AppState` 与 `UiSessionState` 的 `ShellSession`，并建立首屏、焦点和命中表。
 7. 进入事件循环：采集终端、时间与后台任务事件，分发命令，构造 ViewModel，再布局并绘制一帧。
-8. 主运行结果明确区分退出、重启和重置：退出恢复终端后结束；Unix 重启通过 `exec` 保持前台终端组；重置由 Shell 收尾后重新创建初始存储。注销则销毁本次 Shell UI 会话并返回锁屏。支持电脑重启或关机的平台会先保存编辑器恢复数据、恢复终端，再调用对应的系统接口；请求失败时返回退出菜单并显示错误。
+8. 程序退出、程序重启、重置与系统会话操作分开处理。受管理 Linux 会话的锁屏、解锁、注销和切换交由 sessiond；注销必须清理进程并关闭 PAM，不能只回到应用锁屏。系统重启、关机经 privileged 服务和可信确认，失败向 UX 返回错误。普通应用模式退出只结束当前 UX。
 
 ```mermaid
 flowchart TD
@@ -103,14 +103,14 @@ flowchart TD
     B --> C["加载 ASCII 资源并校验终端尺寸"]
     C --> D["Platform 能力、路径与 Storage schema"]
     D --> E["启动 Banner / 预取天气"]
-    E --> F{"是否已有用户？"}
-    F -- "否" --> G["首次设置 / 创建管理员"]
-    F -- "是" --> H["Weathr 锁屏 / 登录"]
+    E --> F{"运行身份后端"}
+    F -- "Linux" --> G["绑定真实 UID / 可选外观设置"]
+    F -- "其他平台" --> H["本地 UX 设置 / 展示登录"]
     G --> I["ShellSession: AppState + UiSessionState"]
     H --> I
     I --> J["事件循环、状态转换、ViewModel、Ratatui 帧"]
     J --> K{"退出、程序重启、重置、注销、电脑重启或关机"}
-    K --> L["恢复终端；退出或回到锁屏"]
+    K --> L["程序退出恢复终端；Linux 会话操作交给系统服务"]
 ```
 
 ### 输入、路由与绘制
@@ -184,7 +184,7 @@ flowchart TD
 
 关键边界是：`app` 不依赖 `ui`、Ratatui 或 crossterm。UI 可以读取应用领域类型，但应用命令不携带坐标、`Rect`、`UiId` 或终端按键。`shell` 是组合根，负责连接终端世界、领域状态、平台副作用与生命周期。
 
-### 14 个 workspace crate
+### workspace crate 分工
 
 | Crate | 主要职责 |
 | --- | --- |
@@ -193,8 +193,13 @@ flowchart TD
 | `cli` | `tundra-cli` 参数解析、诊断、路径查看、公开配置读写、存储重置、资源/动画预览与 Weathr 启动；不依赖 UI。 |
 | `i18n` | Fluent 语言目录、资源校验、默认英文修复、稳定消息与参数契约、不可变内存快照。 |
 | `runtime-log` | 固定语言事件日志、稳定事件代码、可选消息 ID 与结构化参数、历史日志兼容。 |
-| `identity` | 用户、角色、会话、授权、密码验证与登录锁定；记录由 storage 持久化。 |
-| `platform` | Windows/macOS/Linux 的系统路径、终端能力、文件系统、启动外部程序、Trash、电脑重启、关机与系统诊断边界。 |
+| `identity` | Linux 当前系统身份与个人偏好映射，以及其他平台/测试的本地 UX 用户与角色；本地记录不构成 Linux 系统授权。 |
+| `platform` | 跨平台个人路径、终端、普通文件/应用/Trash 集成与能力报告；Linux 系统操作通过受保护服务，其他平台不提供深层系统控制。 |
+| `session-protocol` | 版本化会话身份、状态与动作类型，Linux system D-Bus 客户端、真实凭据和 root 服务身份检查。 |
+| `tundra-sessiond` | root 会话生命周期、独立 PAM worker、logind 注册、降权启动、可信 VT 与维护状态。 |
+| `tundra-greeter` | 专用服务账户下的可信登录、解锁和操作确认界面，复用现有 UI 组件。 |
+| `tundra-privileged` | root 策略与调用者校验，执行列明的系统动作，记录授权结果。 |
+| `system-maintenance` | 官方构建证明验证、版本化安装与恢复、显式离线旧数据迁移。 |
 | `shell` | `ShellSession`、控制器、presentation、终端事件转换、全屏会话、锁屏与应用组合，以及 `tundra-shell` 入口。 |
 | `storage` | TOML/版本化 JSON、原子写入、schema 校验、迁移、恢复与存储健康。 |
 | `system-services` | 共享天气、时间、存储、网络和系统指标数据；开启 `runtime` 功能后提供天气请求、定位、缓存、时间同步、系统采样及后台刷新。 |
@@ -340,44 +345,23 @@ Settings 的时间设置可使用平台时钟、默认 HTTP(S) 时间服务器�
 
 ### Linux 系统用户与运行权限
 
-原生 Linux Shell 在创建线程、打开存储或进入终端 raw mode 前检查有效 UID。
-非 root 进程通过 `/usr/bin/sudo -H -- <当前程序>` 重新启动，授权失败则退出；
-root 直接启动。所有成功登录的 Linux 用户统一映射为 UX Admin，后续文件操作、
-终端和子进程继承 root 权限。选择用户不改变 UID、HOME 或系统桌面会话。
+`tundra-shell` 拒绝 root 桌面，在创建线程和个人存储前从当前 UID 的 NSS 账户统一 UID/GID、补充组、HOME、USER、LOGNAME、SHELL 与个人目录。直接从已有终端启动时，它是该用户的普通应用；不会在进程内切换用户名、调用 sudo 或运行应用内 PAM 登录。
 
-`IdentityBackend::Linux` 使用 `getent passwd` 从 NSS 枚举 root 和
-`/etc/login.defs` 中 UID_MIN/UID_MAX 范围内的普通用户，排除非登录 shell。
-通过运行时加载的 `libpam.so.0` 调用 `pam_authenticate` 和 `pam_acct_mgmt`，
-并核对 PAM 返回的用户名。PAM 服务优先使用 `tundraux3`，便携运行时缺少该配置则
-使用系统 `login` 服务。Debian 包提供继承 common-auth/common-account 的配置。
-额外秘密提示（如 MFA）暂不支持，会明确拒绝；密码过期需先通过 Linux `passwd` 更新。
+独立模式由显式启用的 root `tundra-sessiond` 管理。每次登录使用独立 PAM worker，完成 `pam_authenticate`、`pam_acct_mgmt`、`pam_setcred(PAM_ESTABLISH_CRED)` 和 `pam_open_session`；发行版 session stack 通过 `pam_systemd` 注册真实 logind 会话。用户桌面随后降权运行，使用该用户的 XDG 路径、runtime 目录与用户 D-Bus。root worker 保留 PAM handle，直到注销完成关闭会话、删除凭据和结束事务。greeter 使用专用服务账户，支持多轮 PAM 提示；认证失败不会回退到 UX 密码库。
 
-Linux 不进入 UX 管理员创建流程，也不回退到 UX 密码验证。系统用户名区分大小写，
-UID 形成 `linux-uid-<UID>` 标识。`users.v2.json` 中仅复用对应系统用户的外观、
-仪表板和登录时间，时钟按该 UID 标识保存；旧 UX 账号保留但不参与系统登录。
-没有对应 UX 档案的 Linux 用户在认证成功后进入已有的 Appearance 个性化页面，
-跳过语言、时区和本地管理员创建步骤。新档案的 `personalization_pending` 标记
-与登录记录一起保存，只有外观与完成状态保存成功后才进入主桌面；中途退出或
-保存失败后会继续要求完成个性化。旧档案缺少此字段时按已完成处理，不重置偏好。
-首次个性化仅在当前终端支持图片时选择 Image，否则保存 ASCII；Linux 每次登录
-也会重新检查默认主题的图片能力，避免切换用户后丢失 ASCII 回退。
-账号增删、密码和角色由 Linux 工具管理，UX 用户页面以只读方式展示系统账号。
-`sudo -H` 下存储通常位于 root 的 HOME/XDG 目录，桌面集成也使用 root 的环境。
-Explorer 的个人目录和内置命令行的初始文档目录则按当前登录用户名，通过 NSS
-查询真实主目录，并读取该用户的 `~/.config/user-dirs.dirs`，支持中文目录名及绝对路径。
-这一路径解析不继承 root 进程的 HOME/XDG 环境；账号无法解析时报告错误，
-不会将 root 的个人目录当作该用户的目录。切换用户后重新解析，不改变进程权限。
-当配置缺失或某项无效时，先检查该用户主目录中已有的英文、简体中文和繁体中文
-标准目录；找不到时保留英文默认路径。显式配置的自定义路径及 `$HOME` 禁用设置
-始终优先，不因路径暂时不可用而改指向其他目录。配置解析支持行尾注释和 `${HOME}`，
-不执行 shell 命令或任意变量展开。
-完整依赖和手动验收步骤见 [Linux 运行说明](packaging/linux/README-LINUX.txt)。
+所有已建立的桌面状态绑定 `(UID, logind session ID)`。锁屏保留用户进程和原会话；解锁重新认证原 UID，不重新建立 PAM session。注销完成进程清理和 PAM 关闭；切换用户先完整注销。独立登录、锁屏、解锁和提权确认通过受保护的可信界面完成，普通应用模式不提供这些系统会话控制。
+
+UX、终端与普通应用使用用户权限。`tundra-privileged` 只接收关机、重启、受限日志和官方验证更新等类型化动作；默认只有 root 策略中 `tundra-admin` 组的成员可请求，且每次仍须经过可信确认。旧 UX Admin 字段、用户名、客户端提供的 UID/session ID 或 sudo/wheel 身份均不能替代服务端授权。普通文件操作权限不足时返回错误，不自动升级为 root 文件操作。
+
+`users.v2.json` 可以保存当前 UID 对应的外观、仪表板等个人偏好；旧账户密码、角色和模拟登录状态不参与 Linux 系统认证。个人目录从当前 NSS HOME 和该用户的 `user-dirs.dirs` 解析，支持中文目录名、显式绝对路径及 `$HOME`，不继承 root 的 XDG 环境，不执行 shell 展开。系统账户、密码与管理员组仍由 Linux 管理工具维护。
+
+完整状态转换、可信通道、授权约束和验收边界见 [Linux 会话架构](docs/linux/session-architecture.md)。依赖、软件包和显式启用步骤见 [Linux 运行说明](packaging/linux/README-LINUX.txt)。
 
 ### Linux 桌面集成
 
-Linux 与 Windows 同级实现：使用 XDG Base Directory 与 `user-dirs.dirs`，应用自有配置、状态、恢复、日志和临时数据使用私有权限。Explorer 采用 Freedesktop Trash；卷入口显示本地固定盘和可移动盘上已挂载的文件系统，过滤网络及伪文件系统。Linux 从 mountinfo 读取挂载点与来源设备；Btrfs 的匿名设备号会回溯到实际块设备，因此根目录、home 和其他子卷都可作为独立入口访问，标签同时显示分区设备名与挂载路径。未挂载分区、交换空间和无文件系统的物理盘不会作为目录入口。
+Linux 使用 XDG Base Directory 与 `user-dirs.dirs`，应用自有配置、状态、恢复、日志和临时数据使用私有权限。Explorer 采用 Freedesktop Trash；卷入口显示本地固定盘和可移动盘上已挂载的文件系统，过滤网络及伪文件系统。Linux 从 mountinfo 读取挂载点与来源设备；Btrfs 的匿名设备号会回溯到实际块设备，因此根目录、home 和其他子卷都可作为独立入口访问，标签同时显示分区设备名与挂载路径。未挂载分区、交换空间和无文件系统的物理盘不会作为目录入口。
 
-Linux root 会话可以将普通用户拥有的文件和目录移入当前进程的私有回收站，列出、恢复和清空时使用相同的所有者规则；移动及跨文件系统恢复保留内容原来的 UID/GID。回收站目录和 `.trashinfo` 仍要求属于当前进程用户，并保留私有权限及禁止符号链接的检查。文件操作失败时，Explorer 显示首个失败文件与具体原因。
+Explorer 的回收站操作受当前系统用户的文件权限约束；回收站目录与 `.trashinfo` 必须属于该用户，并保留私有权限和禁止符号链接的检查。无权操作其他用户文件时显示具体失败原因；不会调用提权服务绕过文件权限或退化为永久删除。
 
 | 功能 | Windows | Linux x86_64 |
 | --- | --- | --- |
@@ -386,19 +370,21 @@ Linux root 会话可以将普通用户拥有的文件和目录移入当前进程
 | 系统剪贴板 | 原生后端 | Wayland data-control 或 X11/XWayland；失败时重连，Editor 仍可用 bracketed-paste |
 | 本地卷与 Trash | 原生后端 | mountinfo/statvfs/sysfs 与 Freedesktop Trash，不退化为永久删除 |
 | 关键错误 | 平台提示与日志 | 桌面通知、watchdog 文本报告和 stderr |
-| 电脑重启与关机 | Windows 原生 API 与系统权限 | systemd-logind + polkit；分别检查 CanReboot / CanPowerOff，允许系统要求授权 |
+| 电脑重启与关机 | 不提供深层系统控制 | 受管理会话经 privileged 策略与可信确认后调用 logind；缺少资格时拒绝 |
 
-`tundra-cli debug doctor` 会报告缺失的 `xdg-open`、`gio`、session D-Bus、portal、polkit、logind 和剪贴板后端，并提供安装或会话建议。缺少桌面助手只降级相应功能；不会改用 shell 字符串执行、`sudo` 或永久删除作为兜底。
+`tundra-cli debug doctor` 检查实际用户身份、目录所有权、用户与系统 D-Bus、会话服务及平台能力。`xdg-open`、`gio`、portal 与剪贴板等普通集成依赖缺失时只降级对应功能；系统会话、可信确认或更新信任条件不满足时拒绝相应系统操作，不使用 sudo 或普通弹窗兜底。
 
-首发范围不包括 aarch64、系统镜像、会话切换或 SteamOS 式产品化。
+初始独立会话面向 x86_64、seat0 和一个 Tundra 用户桌面；切换用户采用先注销再登录。暂不包括 aarch64、图形窗口管理器、系统镜像或多 seat 产品化。
 
-### 程序自更新
+### 程序与系统更新
 
-Settings 中的 Update 在 Windows 和 Linux 上可用。确认后从 GitHub 下载已检查的指定提交，在本机用已有 Rust 工具链编译，再替换安装目录中的 Shell 和 CLI；不会更新 Linux 软件包、自动安装 Rust 或使用 sudo。安装目录必须允许当前用户写入，Linux 还需要项目构建所需的编译器和开发库。
+Windows 和 Linux 用户拥有的便携安装可保留普通应用自更新：从已检查的指定提交下载源码，使用现有 Rust 工具链编译，再替换该用户可写安装中的 Shell/CLI。Linux 会核对真实进程凭据及安装所有权，拒绝 root、混合身份或系统拥有的安装。它不安装 Rust，也不调用 sudo；失败或中断按本地更新事务恢复旧程序。macOS 暂不提供此自更新功能。
 
-更新助手保存旧程序，等新 Shell 报告启动成功后才清理备份。替换失败、启动失败或启动超时会恢复旧版本；更新中断后，下次启动会按安装目录内的记录继续或恢复。更新阶段只校验两个程序及其提交和更新协议，不要求源码目录或安装目录下存在 assets；默认主题、自定义主题和用户数据均不参与复制、替换或回滚。启动时仍按原有方式加载本地资源。更新记录使用协议 v2，助手取自已校验的新 CLI，避免旧助手继续要求替换资源；旧协议记录会明确拒绝，保留原文件。Linux 使用无 `.exe` 后缀的程序名并保留执行权限；助手通过 exec 接替原进程，在新 Shell 退出前持续等待，使更新后的程序继续使用前台终端。
+Linux 系统安装使用另一条受保护的发布路径。UX 查询官方稳定版本并向 system D-Bus 提交 release ID；显示元数据本身不能授权安装。维护服务以非特权下载器取得固定官方地址的包，复制到私有暂存区，再使用系统提供的 GitHub CLI 和受保护信任根验证构建证明，绑定官方仓库、工作流、master、源码摘要、平台、协议和版本。包内经过证明的清单须与外部元数据一致。
 
-主页的退出菜单将程序操作和电脑操作分别写明：Exit TundraUX、Restart TundraUX、Restart computer、Shut down computer，以及 Cancel。操作逐行等宽排列；窗口较矮时缩小行间空白。macOS 暂不提供程序自更新或电脑电源操作；Linux 缺少 logind 或授权时隐藏对应的电脑操作。
+只有验证完成并经过可信确认后，sessiond 才注销用户并进入维护状态。独立 worker 将程序和资源安装到 root 管理的版本目录，原子切换 `current`，检查服务并在失败时恢复上一版。未提交事务在启动服务前恢复；不执行用户编译的 root 更新助手，也不覆盖软件包拥有的稳定维护程序。实现与信任根配置见 [系统维护说明](docs/linux/system-maintenance.md)。
+
+退出 UX、重启 UX、锁屏、注销和系统电源操作分别处理。Windows/macOS 不提供系统会话或电源控制；Linux 普通应用模式不能模拟系统注销或可信锁屏，系统操作必须满足受管理会话与授权条件。
 
 ### 从 Windows 迁移到 Linux
 
@@ -430,7 +416,7 @@ Linux 应用目录为 `0700`；配置、用户、会话、恢复、日志和临�
 
 ### Identity 与账户保护
 
-以下本地账户规则用于 Windows、macOS 和测试后端；原生 Linux 的账号、密码、锁定与过期策略由上述 NSS/PAM 后端管理，所有登录用户使用最高权限。
+以下本地账户规则用于 Windows、macOS 和测试后端的 UX 行为，不授予操作系统权限。Linux 的账户、密码、锁定与过期策略由系统 NSS/PAM 管理；桌面始终保留普通用户权限，系统授权由独立服务实时校验。
 
 密码不以明文持久化，而使用随机 salt 的 Argon2 哈希。密码长度必须为 **10–256** 个字符，不能全为空白，也不能等于规范化后的用户名。认证会话只保存在内存中；用户名匹配不区分大小写，未知用户与错误密码统一返回无效凭据。连续 **5 次**认证失败会锁定账户 **5 分钟**；锁定与失败信息持久化，避免重启绕过。
 
@@ -620,12 +606,12 @@ cargo build --locked -p shell -p cli -p weathr
 
 `weathr` 是库 crate，最后一条构建命令确认其可独立构建；终端用户通过 Shell 锁屏使用它，CLI 不再提供天气场景启动命令。
 
-`scripts/package-linux.sh` 只允许在 Linux x86_64 主机运行，默认将产物写入 `dist/`；版本可由 `TUNDRAUX3_VERSION` 覆盖，否则读取 workspace 版本。脚本执行 `cargo build --release --locked -p shell -p cli`，并拒绝将 `/` 或仓库根目录作为输出目录。
+`scripts/package-linux.sh` 只允许在 Linux x86_64 主机运行，默认输出到 `dist/`。普通便携包包含 Shell、CLI 和资源；系统包额外构建 sessiond、greeter、privileged 与稳定维护程序，统一通过 `scripts/stage-linux-system.py` 生成安装树。所有发布构建使用 Cargo.lock，产物附带 SHA256SUMS；校验和不能替代系统更新所需的构建证明。
 
-- 便携包 `tundraux3-<version>-linux-x86_64.tar.gz` 包含两个二进制、`assets/`（包含主题和语言包）、根许可证、Weathr 许可证和 Linux 说明。
-- Debian 包 `tundraux3_<version>_amd64.deb` 将二进制安装到 `/usr/bin`、资源安装到 `/usr/share/tundraux3/assets`，并附带 desktop entry 与许可证；`--tar-only` 和 `--rpm` 跳过这一产物。
-- RPM 包 `tundraux3-<version>-1.x86_64.rpm` 复用相同程序、资源和 desktop entry，使用 Fedora `system-auth` PAM 配置，以 `%config(noreplace)` 保留本地修改；依赖 `xdg-utils`、`glib2`、`pam`、`glibc`、`sudo`，并由 RPM 自动扫描共享库依赖。正式包在 Fedora 43 x86_64 构建并验证安装，其他衍生发行版必须满足其依赖，不承诺旧版 RHEL 系兼容。
-- 所有产物在 `SHA256SUMS` 中记录校验和。`.deb` 依赖 `xdg-utils` 与 `libglib2.0-bin`，并推荐 D-Bus 用户会话、portal、polkit 与 XWayland。
+- deb/RPM 将初始运行时安装到 `/var/lib/tundra/runtime/versions/vVERSION`，公开命令与 libexec 入口经 `current` 选择版本。稳定维护程序由软件包管理；现有在线版本指针不会在普通安装时被覆盖。
+- 包含发行版 PAM session stack、system D-Bus 策略、root 授权配置、systemd units、sysusers/tmpfiles 和构建阶段取得的信任根。安装不联网下载信任、不增加管理员组成员、不启动或启用 seat，也不替换显示管理器。
+- Fedora 包要求 kmscon 10.0.3+、gh 2.87.3+、PAM、systemd、D-Bus 和 CJK 字体。Ubuntu 24.04 的默认 kmscon 不满足独立会话要求；deb 保留普通 UX 安装能力，并推荐管理员另行提供合格版本。
+- `--tar-only` 只生成普通便携 UX；deb/RPM 对应的 tar 包可含仅供打包使用的 `system-root` 目录。具体构建、依赖和恢复步骤见 [Linux 运行说明](packaging/linux/README-LINUX.txt)。
 
 ## third_party
 
@@ -648,7 +634,7 @@ tundra-cli debug doctor
 tundra-cli debug paths
 ```
 
-macOS 的 Explorer Trash 可能需要 Full Disk Access，启动/诊断会提示系统设置。Linux 请安装 `xdg-utils` 与 `libglib2.0-bin`，确认图形会话具有 session D-Bus、portal 和 polkit；Wayland 剪贴板异常时检查 data-control，或启用 XWayland。关机授权被取消或拒绝时，应配置当前登录会话的 polkit，不能以 `sudo` 运行 TundraUX3 规避。
+macOS 启动不要求或引导开启 Full Disk Access；普通文件或 Trash 操作受现有系统权限约束，失败时报告具体错误。Windows/macOS 不提供深层系统服务。Linux 先检查实际 UID、NSS HOME、用户 runtime 目录、服务状态和能力报告；图形剪贴板只在真实显示服务可用时启用。独立会话检查 PAM/logind、kmscon 和可信输入条件；系统操作被取消或拒绝时检查 root 策略、组成员资格及当前会话，不能通过 sudo 启动 UX 绕过。
 
 ### 配置或状态损坏
 
