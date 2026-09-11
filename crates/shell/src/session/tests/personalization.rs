@@ -29,6 +29,7 @@ fn fixture(pending: bool) -> (PersonalizationTempGuard, StorageManager, AuthSess
     .unwrap();
     let manager = StorageManager::open(paths).unwrap().manager;
     let session = AuthSession {
+        system_user: None,
         session_id: "linux-session".into(),
         user_id: "linux-uid-1000".into(),
         username: "peixuan".into(),

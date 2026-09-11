@@ -529,6 +529,7 @@ fn user() -> AuthSession {
 }
 fn session(role: UserRole) -> AuthSession {
     AuthSession {
+        system_user: None,
         session_id: "session".into(),
         user_id: "user".into(),
         username: "tester".into(),

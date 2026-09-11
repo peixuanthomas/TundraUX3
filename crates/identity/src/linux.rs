@@ -1,9 +1,7 @@
 //! NSS supplies identity, PAM supplies authentication and account policy.
 //! UX records are preferences only: their credentials and roles are never trusted.
 
-mod pam;
-
-use crate::time::{unix_millis, unix_nanos};
+use crate::time::unix_millis;
 use crate::{AuthSession, CoreError, UserRole};
 use std::process::Command;
 use storage::{StorageManager, UserRecord};
@@ -48,7 +46,7 @@ fn parse_users(passwd: &str, range: (u32, u32)) -> Vec<UserRecord> {
         let Ok(uid) = fields[2].parse::<u32>() else {
             continue;
         };
-        if uid != 0 && !(range.0..=range.1).contains(&uid) {
+        if uid == 0 || !(range.0..=range.1).contains(&uid) {
             continue;
         }
         let username = fields[0];
@@ -86,14 +84,14 @@ fn parse_users(passwd: &str, range: (u32, u32)) -> Vec<UserRecord> {
             } else {
                 display_name
             },
-            // The Linux shell deliberately runs as root for every authenticated user.
-            role: UserRole::Admin.as_str().into(),
+            // Application presentation only; privileged service rechecks authorization.
+            role: UserRole::User.as_str().into(),
             password_hash: String::new(),
             password_hint: None,
             appearance: Default::default(),
             personalization_pending: true,
             system_status_dashboard: storage::SystemStatusDashboardConfig::for_role(
-                UserRole::Admin.as_str(),
+                UserRole::User.as_str(),
             ),
             enabled: true,
             failed_login_attempts: 0,
@@ -141,59 +139,43 @@ pub(super) fn users(storage: &StorageManager) -> Result<Vec<UserRecord>, CoreErr
     Ok(users)
 }
 
-pub(super) fn login(
-    storage: &StorageManager,
-    username: &str,
-    password: &str,
-) -> Result<AuthSession, CoreError> {
-    // Check real process authority; a UX Admin label is not OS elevation.
-    if unsafe { libc::geteuid() } != 0 {
-        return Err(system_error(
-            "Linux mode requires root. Start tundra-shell with sudo.",
-        ));
+pub(super) fn attach(storage: &StorageManager) -> Result<AuthSession, CoreError> {
+    let user = session_protocol::linux::current_user().map_err(|e| system_error(e.to_string()))?;
+    let records = users(storage)?;
+    let mut record = records
+        .into_iter()
+        .find(|r| r.id == format!("linux-uid-{}", user.uid) && r.username == user.username)
+        .ok_or(CoreError::UserNotFound)?;
+    // No fabricated logind identity when running as an ordinary standalone application.
+    let system_session = session_protocol::linux::current_session().ok();
+    let session_id = system_session
+        .map(|s| s.identity.logind_session_id)
+        .unwrap_or_default();
+    record.role = if session_protocol::linux::account_in_group(&user, "tundra-admin")
+        .map_err(|e| system_error(e.to_string()))?
+    {
+        "Admin"
+    } else {
+        "User"
     }
-    login_with(
-        storage,
-        username,
-        password,
-        || users(storage),
-        pam::authenticate,
-    )
-}
-
-fn login_with(
-    storage: &StorageManager,
-    username: &str,
-    password: &str,
-    mut enumerate: impl FnMut() -> Result<Vec<UserRecord>, CoreError>,
-    authenticate: impl FnOnce(&str, &str) -> Result<(), CoreError>,
-) -> Result<AuthSession, CoreError> {
-    let record = enumerate()?
-        .into_iter()
-        .find(|user| user.username == username)
-        .ok_or(CoreError::InvalidCredentials)?;
-    authenticate(username, password)?;
-    // Re-read after PAM to reject accounts removed/renamed during authentication.
-    let mut current = enumerate()?
-        .into_iter()
-        .find(|user| user.id == record.id && user.username == username)
-        .ok_or(CoreError::InvalidCredentials)?;
+    .into();
     let now = unix_millis();
-    if current.created_at_epoch_ms == 0 {
-        current.created_at_epoch_ms = now;
+    if record.created_at_epoch_ms == 0 {
+        record.created_at_epoch_ms = now;
     }
-    current.updated_at_epoch_ms = now;
-    current.last_login_at_epoch_ms = Some(now);
+    record.updated_at_epoch_ms = now;
+    record.last_login_at_epoch_ms = Some(now);
     let session = AuthSession {
-        session_id: format!("session-{}-{}", current.id, unix_nanos()),
-        user_id: current.id.clone(),
-        username: current.username.clone(),
-        role: UserRole::Admin,
+        system_user: Some(user),
+        session_id,
+        user_id: record.id.clone(),
+        username: record.username.clone(),
+        role: UserRole::from_storage(&record.role),
         started_at_epoch_ms: now,
     };
     let mut document = storage.load_users()?;
-    document.users.retain(|user| user.id != current.id);
-    document.users.push(current);
+    document.users.retain(|r| r.id != record.id);
+    document.users.push(record);
     storage.save_users(&document)?;
     Ok(session)
 }
@@ -201,174 +183,34 @@ fn login_with(
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn fixture() -> (std::path::PathBuf, StorageManager) {
-        let path = std::env::temp_dir().join(format!(
-            "tundra-linux-auth-{}-{}",
-            std::process::id(),
-            unix_nanos()
-        ));
-        let paths = platform::AppPaths::from_parts(
-            path.join("config.toml"),
-            path.join("data"),
-            path.join("cache"),
-            path.join("logs"),
-            path.join("tmp"),
-        )
-        .unwrap();
-        let storage = StorageManager::open(paths).unwrap().manager;
-        (path, storage)
-    }
-
     #[test]
-    fn authentication_controls_session_creation_and_never_stores_credentials() {
-        let (path, storage) = fixture();
-        let accounts = parse_users("alice:x:1000:1000::/home/alice:/bin/bash", (1000, 60000));
-        let denied = login_with(
-            &storage,
-            "alice",
-            "wrong",
-            || Ok(accounts.clone()),
-            |_, _| Err(CoreError::InvalidCredentials),
+    fn system_accounts_exclude_root_and_never_infer_admin() {
+        let records = parse_users(
+            "root:x:0:0:root:/root:/bin/bash\nalice:x:1000:1000:Alice:/home/alice:/bin/bash\nservice:x:1001:1001::/:/usr/sbin/nologin",
+            (1000, 60000),
         );
-        assert!(matches!(denied, Err(CoreError::InvalidCredentials)));
-        assert!(storage.load_users().unwrap().users.is_empty());
-        let accepted = login_with(
-            &storage,
-            "alice",
-            "system-secret",
-            || Ok(accounts.clone()),
-            |name, password| {
-                assert_eq!(name, "alice");
-                assert_eq!(password, "system-secret");
-                Ok(())
-            },
-        )
-        .unwrap();
-        assert_eq!(accepted.user_id, "linux-uid-1000");
-        assert_eq!(accepted.role, UserRole::Admin);
-        let record = storage.load_users().unwrap().users.remove(0);
-        assert!(record.personalization_pending);
-        assert!(record.password_hash.is_empty());
-        assert!(record.password_hint.is_none());
-        assert!(record.last_login_at_epoch_ms.is_some());
-        std::fs::remove_dir_all(path).unwrap();
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].id, "linux-uid-1000");
+        assert_eq!(records[0].role, "User");
+        assert!(records[0].password_hash.is_empty());
     }
-
     #[test]
-    fn linux_login_preserves_personalization_until_explicit_completion() {
-        let (path, storage) = fixture();
-        let enumerate = || {
-            let mut accounts =
-                parse_users("alice:x:1000:1000::/home/alice:/bin/bash", (1000, 60000));
-            attach_preferences(&mut accounts, &storage.load_users()?.users);
-            Ok(accounts)
-        };
-        let login = || login_with(&storage, "alice", "secret", enumerate, |_, _| Ok(()));
-        let session = login().unwrap();
-        assert!(storage.load_users().unwrap().users[0].personalization_pending);
-        login().unwrap();
-        assert!(storage.load_users().unwrap().users[0].personalization_pending);
-        crate::UserService::new(storage.clone())
-            .with_backend(crate::IdentityBackend::Linux)
-            .complete_personalization(&session, storage::AppearanceConfig::default())
-            .unwrap();
-        login().unwrap();
-        assert!(!storage.load_users().unwrap().users[0].personalization_pending);
-        std::fs::remove_dir_all(path).unwrap();
-    }
-
-    #[test]
-    fn renamed_or_removed_account_during_pam_cannot_create_session() {
-        let (path, storage) = fixture();
-        let mut calls = 0;
-        let result = login_with(
-            &storage,
-            "alice",
-            "password",
-            || {
-                calls += 1;
-                Ok(parse_users(
-                    if calls == 1 {
-                        "alice:x:1000:1000::/:/bin/bash"
-                    } else {
-                        "bob:x:1000:1000::/:/bin/bash"
-                    },
-                    (1000, 60000),
-                ))
-            },
-            |_, _| Ok(()),
-        );
-        assert!(matches!(result, Err(CoreError::InvalidCredentials)));
-        assert!(storage.load_users().unwrap().users.is_empty());
-        std::fs::remove_dir_all(path).unwrap();
-    }
-
-    #[test]
-    fn enumerates_login_accounts_and_honors_uid_range() {
-        let passwd = "root:x:0:0:root:/root:/bin/bash\ndaemon:x:1:1:daemon:/:/bin/bash\nAlice:x:1500:1500:Alice Smith,Room:/home/alice:/bin/bash\nservice:x:1501:1501::/:/usr/sbin/nologin\nlocked:x:1502:1502::/:/bin/false\nold:x:999:999::/:/bin/bash\nhigh:x:60001:60001::/:/bin/bash\nempty:x:1503:1503::/home/empty:\ninvalid\n";
-        let users = parse_users(passwd, (1000, 60000));
-        assert_eq!(
-            users
-                .iter()
-                .map(|u| u.username.as_str())
-                .collect::<Vec<_>>(),
-            ["Alice", "empty", "root"]
-        );
-        assert_eq!(users[0].id, "linux-uid-1500");
-        assert_eq!(users[0].display_name, "Alice Smith");
-        assert!(
-            users.iter().all(|u| u.role == "Admin"
-                && u.password_hash.is_empty()
-                && u.password_hint.is_none())
-        );
-        assert_eq!(
-            uid_range(" UID_MIN 500 # comment\nUID_MAX 10000\nSYS_UID_MIN 100"),
-            (500, 10000)
-        );
-        assert_eq!(uid_range("UID_MIN 90000"), (1000, 60000));
-    }
-
-    #[test]
-    fn preferences_cannot_override_system_identity_or_credentials() {
+    fn stored_preferences_cannot_change_system_authority() {
         let mut users = parse_users(
             "alice:x:1000:1000:Alice:/home/alice:/bin/bash",
             (1000, 60000),
         );
         let mut forged = users[0].clone();
-        forged.role = "Guest".into();
-        forged.password_hash = "fake hash".into();
-        forged.password_hint = Some("legacy secret".into());
+        forged.role = "Admin".into();
+        forged.password_hash = "secret".into();
         forged.enabled = false;
-        forged.display_name = "Forged name".into();
-        forged.failed_login_attempts = 10;
-        forged.locked_until_epoch_ms = Some(u64::MAX);
-        forged.last_login_at_epoch_ms = Some(42);
+        forged.display_name = "forged".into();
+        forged.personalization_pending = false;
         attach_preferences(&mut users, &[forged]);
-        assert_eq!(users[0].role, "Admin");
-        assert!(users[0].enabled);
+        assert_eq!(users[0].role, "User");
         assert!(users[0].password_hash.is_empty());
-        assert_eq!(users[0].password_hint, None);
+        assert!(users[0].enabled);
         assert_eq!(users[0].display_name, "Alice");
-        assert_eq!(users[0].locked_until_epoch_ms, None);
-        assert_eq!(users[0].last_login_at_epoch_ms, Some(42));
-    }
-
-    #[test]
-    fn username_case_and_uid_are_identity_boundaries() {
-        let mut users = parse_users(
-            "Alice:x:1000:1000::/:/bin/sh\nalice:x:1001:1001::/:/bin/sh",
-            (1000, 60000),
-        );
-        let mut stale = users[0].clone();
-        stale.username = "previous-owner".into();
-        stale.last_login_at_epoch_ms = Some(42);
-        attach_preferences(&mut users, &[stale]);
-        assert_eq!(users.len(), 2);
-        assert!(
-            users
-                .iter()
-                .all(|user| user.last_login_at_epoch_ms.is_none())
-        );
+        assert!(!users[0].personalization_pending);
     }
 }

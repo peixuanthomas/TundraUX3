@@ -1945,6 +1945,7 @@ dependencies = [
  "platform",
  "rand_core 0.6.4",
  "serde",
+ "session-protocol",
  "storage",
 ]
 
@@ -2987,6 +2988,7 @@ dependencies = [
  "runtime-log",
  "same-file",
  "serde_json",
+ "session-protocol",
  "signal-hook",
  "sysinfo",
  "watchdog",
@@ -4030,6 +4032,7 @@ dependencies = [
  "portable-pty",
  "ratatui",
  "runtime-log",
+ "session-protocol",
  "storage",
  "system-services",
  "tachyonfx",

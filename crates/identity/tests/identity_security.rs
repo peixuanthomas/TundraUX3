@@ -627,6 +627,7 @@ fn delete_user_removes_accounts_but_preserves_last_enabled_admin() {
 
 fn session(username: &str, role: UserRole) -> identity::AuthSession {
     identity::AuthSession {
+        system_user: None,
         session_id: format!("session-{username}"),
         user_id: format!("id-{username}"),
         username: username.to_string(),

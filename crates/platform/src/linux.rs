@@ -76,11 +76,14 @@ impl Platform for LinuxPlatform {
     }
 
     fn user_dirs_for_user(&self, username: &str) -> Result<UserDirs, PlatformError> {
-        let home = account_home(username)?;
-        // HOME and XDG_* belong to the root process, not necessarily to the
-        // authenticated user. Never use them to resolve another account's data.
-        let base_dirs = XdgBaseDirs::resolve(&home, None, None, None, None);
-        resolve_user_dirs(&home, &base_dirs.config, base_dirs.data)
+        let user = session_protocol::linux::current_user()
+            .map_err(|error| io_error("resolve process user", None, error))?;
+        if user.username != username {
+            return Err(PlatformError::InvalidInput {
+                message: "UX cannot access another user's directory context".into(),
+            });
+        }
+        self.user_dirs()
     }
 
     fn app_paths(&self) -> Result<AppPaths, PlatformError> {

@@ -8,6 +8,7 @@ path = "src/lib.rs"
 
 [dependencies]
 storage = { path = "../storage" }
+session-protocol = { path = "../session-protocol" }
 
 argon2 = "0.5"
 hex = "0.4"

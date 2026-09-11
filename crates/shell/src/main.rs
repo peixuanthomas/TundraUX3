@@ -26,10 +26,10 @@ fn main() {
     }
 
     #[cfg(target_os = "linux")]
-    if let Err(error) = ensure_linux_root() {
+    if let Err(error) = prepare_linux_user() {
         eprintln!(
             "{}",
-            i18n::tr!("shell-entry-root-required", error = error.to_string())
+            i18n::tr!("shell-entry-user-required", error = error.to_string())
         );
         std::process::exit(1);
     }
@@ -142,27 +142,19 @@ fn main() {
 }
 
 #[cfg(target_os = "linux")]
-fn ensure_linux_root() -> std::io::Result<()> {
-    use std::os::unix::process::CommandExt;
-
-    // Elevate before threads, storage, update recovery or terminal raw mode.
-    // sudo owns the OS authentication prompt; UX never handles a sudo password.
-    if unsafe { libc::geteuid() } == 0 {
-        return Ok(());
+fn prepare_linux_user() -> std::io::Result<()> {
+    let user = session_protocol::linux::current_user()?;
+    // This entrypoint runs before any threads, storage or terminal initialization.
+    unsafe {
+        std::env::set_var("HOME", &user.home);
+        std::env::set_var("USER", &user.username);
+        std::env::set_var("LOGNAME", &user.username);
+        std::env::set_var("SHELL", &user.shell);
+        for name in ["SUDO_USER", "SUDO_UID", "SUDO_GID", "SUDO_COMMAND"] {
+            std::env::remove_var(name);
+        }
     }
-    eprintln!("{}", i18n::tr!("shell-entry-sudo-request"));
-    let executable = std::env::current_exe()?;
-    let error = std::process::Command::new("/usr/bin/sudo")
-        .args(["-H", "--"])
-        .arg(executable)
-        .exec();
-    Err(std::io::Error::new(
-        error.kind(),
-        i18n::render_diagnostic(&i18n::msg!(
-            "shell-entry-sudo-start-failed",
-            error = error.to_string()
-        )),
-    ))
+    Ok(())
 }
 
 fn reset_storage_and_restart() -> Result<(), std::io::Error> {

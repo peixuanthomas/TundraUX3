@@ -1471,6 +1471,7 @@ mod tests {
             if let Some(role) = role {
                 state.app.dispatch_at(
                     app::AppCommand::SetAuthSession(Some(identity::AuthSession {
+                        system_user: None,
                         session_id: "panic-test-session".into(),
                         user_id: "panic-test-user".into(),
                         username: "panic-test".into(),

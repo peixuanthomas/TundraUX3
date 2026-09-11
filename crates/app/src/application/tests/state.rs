@@ -4,6 +4,7 @@ use super::*;
 
 fn session(id: &str, username: &str) -> AuthSession {
     AuthSession {
+        system_user: None,
         session_id: format!("session-{id}"),
         user_id: format!("user-{id}"),
         username: username.to_string(),

@@ -139,6 +139,18 @@ impl PermissionService {
         action: PermissionAction,
         _resource: Option<&str>,
     ) -> Authorization {
+        // Personal application capabilities follow the OS user; this never authorizes
+        // a system operation (those are checked by the privileged D-Bus service).
+        if session.is_some_and(|s| s.system_user.is_some())
+            && matches!(
+                action,
+                PermissionAction::ExecuteCommandLine
+                    | PermissionAction::ManageLauncher
+                    | PermissionAction::ChangeSettings
+            )
+        {
+            return Authorization::allow();
+        }
         let role = session
             .map(|session| session.role)
             .unwrap_or(UserRole::Guest);

@@ -6,6 +6,8 @@ use crate::error::CoreError;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AuthSession {
+    /// Real process account for Linux; UI roles never grant OS authority.
+    pub system_user: Option<session_protocol::SystemUser>,
     pub session_id: String,
     pub user_id: String,
     pub username: String,

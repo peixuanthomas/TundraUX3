@@ -11,6 +11,7 @@ name = "tundra-shell"
 path = "src/main.rs"
 
 [dependencies]
+session-protocol = { path = "../session-protocol" }
 ascii-assets = { path = "../ascii-assets" }
 i18n = { path = "../i18n" }
 runtime-log = { path = "../runtime-log" }

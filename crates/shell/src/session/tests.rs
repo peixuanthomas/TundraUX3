@@ -45,6 +45,7 @@ impl Drop for SystemStatusTempGuard {
 fn set_test_auth_role(state: &mut ShellSession, role: UserRole) {
     state.app.dispatch_at(
         app::AppCommand::SetAuthSession(Some(AuthSession {
+            system_user: None,
             session_id: format!("{}-session", role.as_str()),
             user_id: format!("{}-id", role.as_str()),
             username: role.as_str().to_ascii_lowercase(),
@@ -1916,6 +1917,7 @@ fn system_status_alert_dedupe_upgrade_recovery_and_network_baseline() {
         Instant::now(),
     );
     state.complete_login(AuthSession {
+        system_user: None,
         session_id: "next-admin-session".into(),
         user_id: "next-admin".into(),
         username: "next-admin".into(),
@@ -1927,6 +1929,7 @@ fn system_status_alert_dedupe_upgrade_recovery_and_network_baseline() {
     assert_eq!(state.app.notification_center().alert_count(), 0);
 
     state.complete_login(AuthSession {
+        system_user: None,
         session_id: "user-session".into(),
         user_id: "user-id".into(),
         username: "user".into(),
@@ -5095,6 +5098,7 @@ fn watchdog_incident_shows_details_and_view_actions_to_standard_users() {
     );
     state.app.dispatch_at(
         app::AppCommand::SetAuthSession(Some(AuthSession {
+            system_user: None,
             session_id: "user-session".to_string(),
             user_id: "user-id".to_string(),
             username: "user".to_string(),

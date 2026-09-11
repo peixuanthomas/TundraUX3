@@ -255,6 +255,7 @@ pub struct ShellStartupState {
     pub restored_session: Option<ShellRestoredSession>,
     pub storage_manager: Option<StorageManager>,
     pub identity_backend: identity::IdentityBackend,
+    pub system_auth_session: Option<identity::AuthSession>,
     pub auth_bootstrap_required: bool,
     pub login_users: Vec<ShellLoginUser>,
     pub debug_policy: DebugPolicy,
@@ -270,6 +271,7 @@ impl ShellStartupState {
             restored_session: None,
             storage_manager: None,
             identity_backend: identity::IdentityBackend::Local,
+            system_auth_session: None,
             auth_bootstrap_required: false,
             login_users: Vec::new(),
             debug_policy: DebugPolicy::default(),
@@ -319,10 +321,10 @@ pub fn prepare_shell_startup(
     #[cfg(target_os = "linux")]
     if platform.kind() == PlatformKind::Linux
         && platform.is_native_backend()
-        && unsafe { libc::geteuid() } != 0
+        && unsafe { libc::geteuid() } == 0
     {
         return Err(ShellStartupError::Identity(i18n::render_diagnostic(
-            &i18n::msg!("early-linux-root-required"),
+            &i18n::msg!("early-linux-user-required"),
         )));
     }
     ensure_startup_permissions(platform)?;
@@ -337,6 +339,18 @@ pub fn prepare_shell_startup(
         identity::IdentityBackend::Linux
     } else {
         identity::IdentityBackend::Local
+    };
+    let system_auth_session = None;
+    #[cfg(target_os = "linux")]
+    let system_auth_session = if identity_backend == identity::IdentityBackend::Linux {
+        Some(
+            identity::SessionService::new(storage_open.manager.clone())
+                .with_backend(identity_backend)
+                .attach_system_user()
+                .map_err(|error| ShellStartupError::Identity(error.to_string()))?,
+        )
+    } else {
+        system_auth_session
     };
     let users = identity::UserService::new(storage_open.manager.clone())
         .with_backend(identity_backend)
@@ -359,6 +373,7 @@ pub fn prepare_shell_startup(
         restored_session: restored_session_from_storage(&sessions),
         storage_manager: Some(storage_open.manager),
         identity_backend,
+        system_auth_session,
         auth_bootstrap_required: identity_backend == identity::IdentityBackend::Local
             && login_users.is_empty(),
         login_users,

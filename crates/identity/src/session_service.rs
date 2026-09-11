@@ -42,14 +42,9 @@ impl SessionService {
     pub fn login(&mut self, username: &str, password: &str) -> Result<AuthSession, CoreError> {
         if self.backend == crate::IdentityBackend::Linux {
             self.current_session = None;
-            #[cfg(target_os = "linux")]
-            {
-                let session = crate::linux::login(&self.storage, username, password)?;
-                self.current_session = Some(session.clone());
-                return Ok(session);
-            }
-            #[cfg(not(target_os = "linux"))]
-            return Err(CoreError::SystemIdentity("Linux is unavailable".into()));
+            return Err(CoreError::SystemIdentity(
+                "System login belongs to tundra-sessiond; UX cannot change process identity".into(),
+            ));
         }
         let mut document = self.storage.load_users()?;
         if document.users.is_empty() {
@@ -102,6 +97,7 @@ impl SessionService {
         record.last_login_at_epoch_ms = Some(now);
         record.updated_at_epoch_ms = now;
         let session = AuthSession {
+            system_user: None,
             session_id: format!("session-{}-{}", record.id, unix_nanos()),
             user_id: record.id.clone(),
             username: record.username.clone(),
@@ -109,6 +105,19 @@ impl SessionService {
             started_at_epoch_ms: now,
         };
         self.storage.save_users(&document)?;
+        self.current_session = Some(session.clone());
+        Ok(session)
+    }
+
+    /// Attach an already authenticated OS process; never verifies a second UX password.
+    #[cfg(target_os = "linux")]
+    pub fn attach_system_user(&mut self) -> Result<AuthSession, CoreError> {
+        if self.backend != crate::IdentityBackend::Linux {
+            return Err(CoreError::SystemIdentity(
+                "Not a Linux identity backend".into(),
+            ));
+        }
+        let session = crate::linux::attach(&self.storage)?;
         self.current_session = Some(session.clone());
         Ok(session)
     }

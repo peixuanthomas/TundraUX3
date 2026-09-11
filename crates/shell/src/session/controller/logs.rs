@@ -834,6 +834,7 @@ mod tests {
         );
         state.app.dispatch_at(
             app::AppCommand::SetAuthSession(Some(AuthSession {
+                system_user: None,
                 session_id: "logs-session".into(),
                 user_id: "alice".into(),
                 username: "alice".into(),

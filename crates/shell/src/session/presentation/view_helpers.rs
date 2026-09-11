@@ -765,7 +765,8 @@ pub(in crate::session) fn resolved_home_mode(
 }
 
 pub(in crate::session) fn should_show_startup_lockscreen(startup: &ShellStartupState) -> bool {
-    startup.storage_manager.is_some()
+    startup.system_auth_session.is_none()
+        && startup.storage_manager.is_some()
         && !startup.auth_bootstrap_required
         && !startup.login_users.is_empty()
 }

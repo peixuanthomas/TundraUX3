@@ -339,6 +339,9 @@ impl ShellSession {
                 ui::NotificationTone::Error,
             );
         }
+        if let Some(session) = startup.system_auth_session {
+            state.complete_login(session);
+        }
         state.refresh_hit_map();
         if !auth_gate_enabled && let Some(restored_session) = startup.restored_session.as_ref() {
             state.apply_restored_session(restored_session);
