@@ -3,11 +3,15 @@ use session_protocol::linux::{account, account_in_group, session_for_pid};
 use session_protocol::{OperationStatus, SessionSnapshot, SessionState, SystemAction};
 use std::collections::HashMap;
 use std::io::{self, Read};
-use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
+use std::os::unix::fs::{DirBuilderExt, MetadataExt, OpenOptionsExt};
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
+use watchdog::{
+    AppCriticality, AppDescriptor, AppId, ManagedTaskGroup, TaskId, TaskSpec, WatchdogConfig,
+    WatchdogRuntime,
+};
 use zbus::blocking::{Connection, Proxy, connection::Builder};
 use zbus::{fdo, message::Header};
 
@@ -136,11 +140,36 @@ fn denied(error: impl std::fmt::Display) -> fdo::Error {
     fdo::Error::AccessDenied(error.to_string())
 }
 
-#[derive(Clone, Default)]
+#[derive(Clone)]
 struct Service {
     operations: Arc<Mutex<HashMap<String, Operation>>>,
     in_flight: Arc<AtomicBool>,
     connection: Arc<OnceLock<Connection>>,
+    workers: ManagedTaskGroup,
+}
+
+// A one-shot operation is never replayed after panic. Leave a terminal result
+// for the caller even when unwinding interrupts the normal completion path.
+struct Reservation {
+    service: Service,
+    id: String,
+}
+
+impl Drop for Reservation {
+    fn drop(&mut self) {
+        if let Ok(mut ops) = self.service.operations.lock()
+            && let Some(op) = ops.get_mut(&self.id)
+            && matches!(
+                op.status,
+                OperationStatus::AwaitingConfirmation | OperationStatus::Running
+            )
+        {
+            op.status = OperationStatus::Failed("authorized worker stopped".into());
+            self.service
+                .notify(&self.id, &op.principal.sender, &op.status);
+        }
+        self.service.in_flight.store(false, Ordering::Release);
+    }
 }
 
 #[zbus::interface(name = "org.tundra.Privileged1")]
@@ -209,42 +238,41 @@ impl Service {
         drop(ops);
         let service = self.clone();
         let work_id = id.clone();
-        std::thread::Builder::new()
-            .name("authorized-operation".into())
-            .spawn(move || {
-                // The reservation outlives cancellation and is released even on unwind.
-                struct Release(Arc<AtomicBool>);
-                impl Drop for Release {
-                    fn drop(&mut self) {
-                        self.0.store(false, Ordering::Release);
-                    }
-                }
-                let _release = Release(service.in_flight.clone());
-                let outcome = service.perform(&work_id, &who, &action);
-                if let Ok(mut ops) = service.operations.lock()
-                    && let Some(op) = ops.get_mut(&work_id)
-                {
-                    match outcome {
-                        Ok(result) => {
-                            op.result = result;
-                            op.status = OperationStatus::Completed;
+        self.workers
+            .spawn_thread(
+                TaskSpec::one_shot(TaskId::from_static("authorized-operation")),
+                move || {
+                    // The reservation outlives cancellation and is released even on unwind.
+                    let _release = Reservation {
+                        service: service.clone(),
+                        id: work_id.clone(),
+                    };
+                    let outcome = service.perform(&work_id, &who, &action);
+                    if let Ok(mut ops) = service.operations.lock()
+                        && let Some(op) = ops.get_mut(&work_id)
+                    {
+                        match outcome {
+                            Ok(result) => {
+                                op.result = result;
+                                op.status = OperationStatus::Completed;
+                            }
+                            Err(error) if op.status != OperationStatus::Cancelled => {
+                                op.status = OperationStatus::Failed(error.to_string());
+                            }
+                            Err(_) => {}
                         }
-                        Err(error) if op.status != OperationStatus::Cancelled => {
-                            op.status = OperationStatus::Failed(error.to_string());
-                        }
-                        Err(_) => {}
+                        service.notify(&work_id, &who.sender, &op.status);
+                        // Auditing contains identity/action/outcome only, never PAM material or log contents.
+                        eprintln!(
+                            "request={work_id} uid={} session={} action={} status={:?}",
+                            who.session.uid,
+                            who.session.logind_session_id,
+                            action.policy_id(),
+                            op.status
+                        );
                     }
-                    service.notify(&work_id, &who.sender, &op.status);
-                    // Auditing contains identity/action/outcome only, never PAM material or log contents.
-                    eprintln!(
-                        "request={work_id} uid={} session={} action={} status={:?}",
-                        who.session.uid,
-                        who.session.logind_session_id,
-                        action.policy_id(),
-                        op.status
-                    );
-                }
-            })
+                },
+            )
             .map_err(|e| {
                 self.in_flight.store(false, Ordering::Release);
                 if let Ok(mut ops) = self.operations.lock() {
@@ -491,7 +519,45 @@ pub fn run() -> Result<(), Error> {
         return Err("system service requires root".into());
     }
     policy()?;
-    let service = Service::default();
+    // Never use HOME, TMPDIR, or a desktop-supplied path for root diagnostics.
+    for ancestor in ["/", "/var", "/var/lib", "/var/lib/tundra"] {
+        let metadata = std::fs::symlink_metadata(ancestor)?;
+        if !metadata.is_dir() || metadata.uid() != 0 || metadata.mode() & 0o022 != 0 {
+            return Err("unsafe privileged diagnostic directory".into());
+        }
+    }
+    let root = std::path::Path::new("/var/lib/tundra/privileged-watchdog");
+    match std::fs::DirBuilder::new().mode(0o700).create(root) {
+        Ok(()) => {}
+        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}
+        Err(error) => return Err(error.into()),
+    }
+    let metadata = std::fs::symlink_metadata(root)?;
+    if !metadata.is_dir() || metadata.uid() != 0 || metadata.mode() & 0o077 != 0 {
+        return Err("unsafe privileged diagnostic permissions".into());
+    }
+    let (_runtime, process) = WatchdogRuntime::start(
+        WatchdogConfig::new(
+            root.join("reports"),
+            root.join("fallback"),
+            root.join("state"),
+            "tundra-privileged",
+            env!("CARGO_PKG_VERSION"),
+        )
+        .with_unclean_exit_tracking(false),
+    )?;
+    let app = process.register_app(AppDescriptor::new(
+        AppId::from_static("privileged"),
+        "Tundra privileged service",
+        env!("CARGO_PKG_VERSION"),
+        AppCriticality::ProcessCritical,
+    ))?;
+    let service = Service {
+        operations: Arc::default(),
+        in_flight: Arc::default(),
+        connection: Arc::default(),
+        workers: app.task_group("authorization"),
+    };
     let connection_slot = service.connection.clone();
     let connection = Builder::system()?
         .name(session_protocol::PRIVILEGED_BUS)?
