@@ -1,0 +1,17 @@
+[package]
+name = "i18n"
+version.workspace = true
+edition.workspace = true
+build = "build.rs"
+
+[dependencies]
+ascii-assets = { path = "../ascii-assets" }
+fluent-bundle = "0.16"
+fluent-syntax = "0.12"
+unic-langid = "0.9"
+serde = { version = "1", features = ["derive"] }
+toml = "0.9"
+
+[build-dependencies]
+fluent-syntax = "0.12"
+toml = "0.9"
