@@ -166,3 +166,139 @@ pub fn current_session() -> io::Result<LogindSession> {
     }
     Ok(session)
 }
+
+fn trusted_connection(name: &str) -> io::Result<(Connection, String)> {
+    let connection = zbus::blocking::connection::Builder::system()
+        .map_err(io::Error::other)?
+        .method_timeout(std::time::Duration::from_secs(5))
+        .build()
+        .map_err(io::Error::other)?;
+    let dbus = Proxy::new(
+        &connection,
+        "org.freedesktop.DBus",
+        "/org/freedesktop/DBus",
+        "org.freedesktop.DBus",
+    )
+    .map_err(io::Error::other)?;
+    let owner: String = dbus
+        .call("GetNameOwner", &(name,))
+        .map_err(io::Error::other)?;
+    let uid: u32 = dbus
+        .call("GetConnectionUnixUser", &(&owner,))
+        .map_err(io::Error::other)?;
+    if uid != 0 {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "system service must be root-owned",
+        ));
+    }
+    Ok((connection, owner))
+}
+
+pub fn managed_snapshot() -> io::Result<Option<crate::SessionSnapshot>> {
+    let (connection, owner) = trusted_connection(crate::SESSION_BUS)?;
+    let proxy = Proxy::new(
+        &connection,
+        owner.as_str(),
+        crate::SESSION_PATH,
+        crate::SESSION_BUS,
+    )
+    .map_err(io::Error::other)?;
+    let json: String = proxy.call("GetSnapshot", &()).map_err(io::Error::other)?;
+    let snapshot: Option<crate::SessionSnapshot> =
+        serde_json::from_str(&json).map_err(io::Error::other)?;
+    if let Some(snapshot) = &snapshot {
+        if snapshot.identity != current_session()?.identity {
+            return Err(io::Error::other(
+                "session service returned a different user session",
+            ));
+        }
+    }
+    Ok(snapshot)
+}
+
+pub fn session_action(method: &str) -> io::Result<()> {
+    if !matches!(method, "Lock" | "Logout" | "SwitchUser") {
+        return Err(io::Error::other("unknown session action"));
+    }
+    managed_snapshot()?.ok_or_else(|| io::Error::other("not a managed Tundra session"))?;
+    let (connection, owner) = trusted_connection(crate::SESSION_BUS)?;
+    Proxy::new(
+        &connection,
+        owner.as_str(),
+        crate::SESSION_PATH,
+        crate::SESSION_BUS,
+    )
+    .map_err(io::Error::other)?
+    .call::<_, _, ()>(method, &())
+    .map_err(io::Error::other)
+}
+
+pub fn can_request_system_action() -> bool {
+    let Ok((connection, owner)) = trusted_connection(crate::PRIVILEGED_BUS) else {
+        return false;
+    };
+    let Ok(proxy) = Proxy::new(
+        &connection,
+        owner.as_str(),
+        crate::PRIVILEGED_PATH,
+        crate::PRIVILEGED_BUS,
+    ) else {
+        return false;
+    };
+    proxy.call::<_, _, bool>("CanRequest", &()).unwrap_or(false)
+}
+
+/// Keeps one unique bus sender alive through request, confirmation and result retrieval.
+/// Call on a worker; disconnect/cancellation invalidates any unconsumed grant.
+pub fn request_system_action(
+    action: &crate::SystemAction,
+    cancelled: &std::sync::atomic::AtomicBool,
+) -> io::Result<String> {
+    use std::sync::atomic::Ordering;
+    action.validate().map_err(io::Error::other)?;
+    let (connection, owner) = trusted_connection(crate::PRIVILEGED_BUS)?;
+    let proxy = Proxy::new(
+        &connection,
+        owner.as_str(),
+        crate::PRIVILEGED_PATH,
+        crate::PRIVILEGED_BUS,
+    )
+    .map_err(io::Error::other)?;
+    let version: u32 = proxy
+        .call("ProtocolVersion", &())
+        .map_err(io::Error::other)?;
+    if version != crate::VERSION {
+        return Err(io::Error::other("incompatible privileged service"));
+    }
+    let id: String = proxy
+        .call(
+            "Request",
+            &(serde_json::to_string(action).map_err(io::Error::other)?,),
+        )
+        .map_err(io::Error::other)?;
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(900);
+    loop {
+        if cancelled.load(Ordering::Relaxed) || std::time::Instant::now() >= deadline {
+            let _ = proxy.call::<_, _, ()>("Cancel", &(&id,));
+            return Err(io::Error::new(
+                io::ErrorKind::Interrupted,
+                "system operation cancelled",
+            ));
+        }
+        let json: String = proxy.call("GetResult", &(&id,)).map_err(io::Error::other)?;
+        let (status, result): (crate::OperationStatus, String) =
+            serde_json::from_str(&json).map_err(io::Error::other)?;
+        match status {
+            crate::OperationStatus::Completed => return Ok(result),
+            crate::OperationStatus::Cancelled => {
+                return Err(io::Error::new(
+                    io::ErrorKind::Interrupted,
+                    "authorization cancelled",
+                ));
+            }
+            crate::OperationStatus::Failed(error) => return Err(io::Error::other(error)),
+            _ => std::thread::sleep(std::time::Duration::from_millis(100)),
+        }
+    }
+}

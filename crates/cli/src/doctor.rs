@@ -303,7 +303,7 @@ fn linux_environment_checks(
         portal_check(probe),
         clipboard_check(probe),
         notification_check(probe),
-        polkit_check(probe),
+        tundra_system_stack_check(probe),
     ]
 }
 
@@ -411,7 +411,7 @@ fn logind_check(probe: &dyn LinuxDoctorProbe) -> EnvironmentCheck {
                 label: "systemd-logind".to_string(),
                 status: CheckStatus::Pass,
                 message: format!(
-                    "live CanPowerOff returned {state}; interactive Power off is available through logind"
+                    "logind is reachable (CanPowerOff={state}); Tundra authorization is checked separately by tundra-privileged"
                 ),
             },
             Ok(state) => EnvironmentCheck {
@@ -419,7 +419,7 @@ fn logind_check(probe: &dyn LinuxDoctorProbe) -> EnvironmentCheck {
                 label: "systemd-logind".to_string(),
                 status: CheckStatus::Warning,
                 message: format!(
-                    "live CanPowerOff returned {state}; check the active logind session and polkit policy"
+                    "logind is reachable (CanPowerOff={state}); this does not grant Tundra system authorization"
                 ),
             },
             Err(error) => EnvironmentCheck {
@@ -444,7 +444,7 @@ fn logind_check(probe: &dyn LinuxDoctorProbe) -> EnvironmentCheck {
             id: "logind",
             label: "systemd-logind".to_string(),
             status: CheckStatus::Warning,
-            message: "systemd-logind or its system D-Bus socket was not detected; run inside a systemd user session to enable Power off".to_string(),
+            message: "systemd-logind or its system D-Bus socket was not detected; a managed Tundra system session requires systemd-logind".to_string(),
         }
     }
 }
@@ -549,45 +549,34 @@ fn notification_check(probe: &dyn LinuxDoctorProbe) -> EnvironmentCheck {
     }
 }
 
-fn polkit_check(probe: &dyn LinuxDoctorProbe) -> EnvironmentCheck {
-    if !probe.command_exists("pkcheck") {
-        return EnvironmentCheck {
-            id: "polkit",
-            label: "polkit".to_string(),
-            status: CheckStatus::Warning,
-            message: "pkcheck was not found; install and enable polkit to authorize interactive Power off requests".to_string(),
-        };
-    }
-    match probe.logind_poweroff_state() {
-        Some(Ok(state)) if matches!(state.as_str(), "yes" | "challenge") => EnvironmentCheck {
-            id: "polkit",
-            label: "polkit".to_string(),
-            status: CheckStatus::Pass,
-            message: format!(
-                "pkcheck is executable and logind CanPowerOff returned {state}; no sudo path is used"
-            ),
+fn tundra_system_stack_check(probe: &dyn LinuxDoctorProbe) -> EnvironmentCheck {
+    let required = [
+        "/usr/libexec/tundra/tundra-sessiond",
+        "/usr/libexec/tundra/tundra-greeter",
+        "/usr/libexec/tundra/tundra-privileged",
+        "/etc/tundra/privileged.toml",
+        "/etc/pam.d/tundra-session",
+        "/usr/bin/kmscon",
+    ];
+    let missing: Vec<_> = required
+        .into_iter()
+        .filter(|p| !probe.path_exists(p))
+        .collect();
+    EnvironmentCheck {
+        id: "tundra-system-stack",
+        label: "Tundra system session".into(),
+        status: if missing.is_empty() {
+            CheckStatus::Pass
+        } else {
+            CheckStatus::Warning
         },
-        Some(Ok(state)) => EnvironmentCheck {
-            id: "polkit",
-            label: "polkit".to_string(),
-            status: CheckStatus::Warning,
-            message: format!(
-                "pkcheck is executable, but logind CanPowerOff returned {state}; check the desktop polkit agent and policy"
-            ),
-        },
-        Some(Err(error)) => EnvironmentCheck {
-            id: "polkit",
-            label: "polkit".to_string(),
-            status: CheckStatus::Warning,
-            message: format!(
-                "pkcheck is executable, but logind authorization could not be queried: {error}"
-            ),
-        },
-        None => EnvironmentCheck {
-            id: "polkit",
-            label: "polkit".to_string(),
-            status: CheckStatus::Warning,
-            message: "pkcheck is executable, but this build could not verify the live desktop authorization agent".to_string(),
+        message: if missing.is_empty() {
+            "System session files are installed; use `tundra-cli session status` to inspect UID/logind binding. System actions require a managed active seat0 session, administrator membership and protected confirmation.".into()
+        } else {
+            format!(
+                "Standalone UX is available; system session installation is incomplete: {}",
+                missing.join(", ")
+            )
         },
     }
 }

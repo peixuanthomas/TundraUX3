@@ -30,7 +30,6 @@ mod user_dirs;
 
 use user_dirs::resolve_user_dirs;
 
-use crate::paths::home_dir_from_env;
 use crate::{
     AppPaths, ExecutableKind, FileAttributes, FileOpenPolicy, LocalVolume, NetworkInterface,
     NetworkInterfaceKind, NetworkLinkState, NetworkStatus, Platform, PlatformCapabilities,
@@ -70,7 +69,9 @@ impl Platform for LinuxPlatform {
     }
 
     fn user_dirs(&self) -> Result<UserDirs, PlatformError> {
-        let home = home_dir_from_env()?;
+        let home = session_protocol::linux::account(unsafe { libc::geteuid() })
+            .map_err(|e| io_error("resolve account HOME", None, e))?
+            .home;
         let base_dirs = XdgBaseDirs::from_environment(&home);
         resolve_user_dirs(&home, &base_dirs.config, base_dirs.data)
     }
@@ -87,7 +88,9 @@ impl Platform for LinuxPlatform {
     }
 
     fn app_paths(&self) -> Result<AppPaths, PlatformError> {
-        let home = home_dir_from_env()?;
+        let home = session_protocol::linux::account(unsafe { libc::geteuid() })
+            .map_err(|e| io_error("resolve account HOME", None, e))?
+            .home;
         let base_dirs = XdgBaseDirs::from_environment(&home);
         build_linux_app_paths(
             base_dirs.config,
@@ -314,41 +317,29 @@ impl Platform for LinuxPlatform {
     }
 
     fn poweroff(&self) -> Result<(), PlatformError> {
-        with_logind_proxy(|proxy| {
-            let availability = logind_can_poweroff(proxy)?;
-            if !logind_allows_power_action(&availability) {
-                return Err(PlatformError::Native {
-                    operation: "query logind power-off availability",
-                    message: format!("logind returned {availability:?}"),
-                });
-            }
-            proxy
-                .call::<_, _, ()>("PowerOff", &(true,))
-                .map_err(zbus_error("request interactive logind power-off"))
-        })
+        session_protocol::linux::request_system_action(
+            &session_protocol::SystemAction::PowerOff,
+            &std::sync::atomic::AtomicBool::new(false),
+        )
+        .map(|_| ())
+        .map_err(|e| io_error("authorize power-off", None, e))
     }
 
     fn can_poweroff(&self) -> Result<bool, PlatformError> {
-        with_logind_proxy(|proxy| Ok(logind_allows_power_action(&logind_can_poweroff(proxy)?)))
+        Ok(session_protocol::linux::can_request_system_action())
     }
 
     fn can_reboot(&self) -> Result<bool, PlatformError> {
-        with_logind_proxy(|proxy| Ok(logind_allows_power_action(&logind_can_reboot(proxy)?)))
+        self.can_poweroff()
     }
 
     fn reboot(&self) -> Result<(), PlatformError> {
-        with_logind_proxy(|proxy| {
-            let availability = logind_can_reboot(proxy)?;
-            if !logind_allows_power_action(&availability) {
-                return Err(PlatformError::Native {
-                    operation: "query logind restart availability",
-                    message: format!("logind returned {availability:?}"),
-                });
-            }
-            proxy
-                .call::<_, _, ()>("Reboot", &(true,))
-                .map_err(zbus_error("request interactive logind restart"))
-        })
+        session_protocol::linux::request_system_action(
+            &session_protocol::SystemAction::Reboot,
+            &std::sync::atomic::AtomicBool::new(false),
+        )
+        .map(|_| ())
+        .map_err(|e| io_error("authorize restart", None, e))
     }
 
     fn poll_lifecycle_event(&self) -> Result<Option<PlatformLifecycleEvent>, PlatformError> {
@@ -412,37 +403,6 @@ fn zbus_error(operation: &'static str) -> impl FnOnce(zbus::Error) -> PlatformEr
         operation,
         message: error.to_string(),
     }
-}
-
-fn with_logind_proxy<T>(
-    operation: impl FnOnce(&zbus::blocking::Proxy<'_>) -> Result<T, PlatformError>,
-) -> Result<T, PlatformError> {
-    let connection =
-        zbus::blocking::Connection::system().map_err(zbus_error("connect to system D-Bus"))?;
-    let proxy = zbus::blocking::Proxy::new(
-        &connection,
-        "org.freedesktop.login1",
-        "/org/freedesktop/login1",
-        "org.freedesktop.login1.Manager",
-    )
-    .map_err(zbus_error("create logind proxy"))?;
-    operation(&proxy)
-}
-
-fn logind_can_poweroff(proxy: &zbus::blocking::Proxy<'_>) -> Result<String, PlatformError> {
-    proxy
-        .call("CanPowerOff", &())
-        .map_err(zbus_error("query logind power-off availability"))
-}
-
-fn logind_allows_power_action(value: &str) -> bool {
-    matches!(value, "yes" | "challenge")
-}
-
-fn logind_can_reboot(proxy: &zbus::blocking::Proxy<'_>) -> Result<String, PlatformError> {
-    proxy
-        .call("CanReboot", &())
-        .map_err(zbus_error("query logind restart availability"))
 }
 
 struct LifecycleEvents {
@@ -541,38 +501,6 @@ fn start_logind_listener(
             operation: "start logind listener",
             message: error.to_string(),
         })
-}
-
-fn account_home(username: &str) -> Result<PathBuf, PlatformError> {
-    if username.is_empty()
-        || username.starts_with(['-', '+'])
-        || username.chars().any(|c| c.is_control() || c == ':')
-    {
-        return Err(PlatformError::InvalidInput {
-            message: "Invalid Linux account name".into(),
-        });
-    }
-    // Match the identity backend: getent resolves NSS accounts, including
-    // accounts whose home is outside /home or supplied by a directory service.
-    let output = Command::new("/usr/bin/getent")
-        .args(["passwd", "--", username])
-        .output()
-        .map_err(|error| PlatformError::Native {
-            operation: "resolve Linux user home",
-            message: error.to_string(),
-        })?;
-    if output.status.success() {
-        let line = output.stdout.strip_suffix(b"\n").unwrap_or(&output.stdout);
-        let fields: Vec<_> = line.split(|byte| *byte == b':').collect();
-        if fields.len() == 7 && fields[0] == username.as_bytes() {
-            let home = PathBuf::from(OsString::from_vec(fields[5].to_vec()));
-            return crate::paths::require_absolute("Linux user home", home).map_err(Into::into);
-        }
-    }
-    Err(PlatformError::Native {
-        operation: "resolve Linux user home",
-        message: format!("Cannot resolve the home directory for Linux user {username}"),
-    })
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1053,7 +981,9 @@ fn trash_roots() -> Result<Vec<TrashRoot>, PlatformError> {
 }
 
 fn home_trash_root() -> Result<TrashRoot, PlatformError> {
-    let home = home_dir_from_env()?;
+    let home = session_protocol::linux::account(unsafe { libc::geteuid() })
+        .map_err(|e| io_error("resolve account HOME", None, e))?
+        .home;
     let base = XdgBaseDirs::from_environment(&home);
     private_trash_root(base.data.join("Trash"))
 }
@@ -2190,7 +2120,7 @@ fn resolve_icon(icon: &str, preferred_size: u32) -> Option<PathBuf> {
     if direct.is_absolute() && direct.is_file() {
         return Some(direct);
     }
-    let home = home_dir_from_env().ok()?;
+    let home = session_protocol::linux::current_user().ok()?.home;
     let base = XdgBaseDirs::from_environment(&home);
     let mut roots = vec![
         home.join(".local/share/icons"),
@@ -2320,7 +2250,7 @@ mod tests {
     use super::{
         LinuxPlatform, MountInfo, XdgBaseDirs, ensure_private_dir, format_trash_timestamp,
         is_local_block_mount_with_sysfs, linux_interface_kind_with_sysfs, list_trash_root,
-        logind_allows_power_action, mount_kind_from_sysfs_path, move_one_to_trash_root,
+        mount_kind_from_sysfs_path, move_one_to_trash_root,
         parse_mountinfo, parse_trash_timestamp, parse_trashinfo, percent_decode_path,
         percent_encode_path, private_trash_root, private_trash_root_with_topdir,
         restore_trash_item_from_root, restore_trash_item_from_root_with, spawn_detached_child,
@@ -2745,14 +2675,7 @@ mod tests {
         let _ = fs::remove_dir_all(fixture);
     }
 
-    #[test]
-    fn logind_power_actions_accept_yes_and_challenge_only() {
-        assert!(logind_allows_power_action("yes"));
-        assert!(logind_allows_power_action("challenge"));
-        assert!(!logind_allows_power_action("no"));
-        assert!(!logind_allows_power_action("na"));
-        assert!(!logind_allows_power_action(""));
-    }
+
 }
 
 #[cfg(test)]

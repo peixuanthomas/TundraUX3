@@ -1,0 +1,4 @@
+# Only these NSS groups may request the listed operations. Every operation also
+# requires an active managed local session and a protected greeter confirmation.
+# Group membership is never added automatically by the installer.
+admin_groups = ["tundra-admin"]

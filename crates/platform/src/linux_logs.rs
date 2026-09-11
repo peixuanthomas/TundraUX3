@@ -1,7 +1,8 @@
 //! Bounded, on-demand Linux journal and kernel log access.
 //!
 //! Call this on a worker: the subprocess deadline is five seconds. No shell,
-//! elevation, pager, persistent collector, or traditional log-file scan is used.
+//! pager, persistent collector, or traditional log-file scan is used. Restricted
+//! queries use the typed privileged service after protected confirmation.
 use runtime_log::{LogQuery, LogQueryResult, LogSourceState};
 use std::sync::atomic::AtomicBool;
 
@@ -9,9 +10,29 @@ pub fn query_linux_logs(query: &LogQuery, cancelled: &AtomicBool) -> LogQueryRes
     #[cfg(target_os = "linux")]
     {
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
-        implementation::query_with(query, cancelled, |program, args| {
+        let result = implementation::query_with(query, cancelled, |program, args| {
             implementation::capture(program, args, cancelled, deadline, 8 * 1024 * 1024)
-        })
+        });
+        if result.state != LogSourceState::PermissionDenied
+            || cancelled.load(std::sync::atomic::Ordering::Relaxed)
+            || !session_protocol::linux::can_request_system_action()
+        {
+            return result;
+        }
+        let action = session_protocol::SystemAction::ReadSystemLogs {
+            max_records: 10_000,
+            since_epoch_seconds: query
+                .since
+                .map(|t| t.timestamp().max(0) as u64)
+                .unwrap_or(0),
+        };
+        match session_protocol::linux::request_system_action(&action, cancelled) {
+            Ok(json) => implementation::parse_journal(json.as_bytes(), query),
+            Err(error) => LogQueryResult {
+                notices: vec![error.to_string()],
+                ..result
+            },
+        }
     }
     #[cfg(not(target_os = "linux"))]
     {
@@ -467,7 +488,7 @@ mod implementation {
         }
     }
 
-    fn parse_journal(bytes: &[u8], query: &LogQuery) -> LogQueryResult {
+    pub(super) fn parse_journal(bytes: &[u8], query: &LogQuery) -> LogQueryResult {
         let mut result = LogQueryResult::default();
         for (index, line) in bytes
             .split(|byte| *byte == b'\n')

@@ -54,7 +54,8 @@ pub fn query_snapshot(
     }
     let query = authorized_query(query, access);
     if query.source == LogSource::Linux {
-        snapshot.result = if matches!(access, LogAccess::User(_)) {
+        snapshot.result = if matches!(access, LogAccess::User(_))
+            && !(platform.kind() == platform::PlatformKind::Linux && platform.is_native_backend()) {
             LogQueryResult {
                 state: LogSourceState::PermissionDenied,
                 notices: vec!["Linux logs require administrator diagnostics access".into()],

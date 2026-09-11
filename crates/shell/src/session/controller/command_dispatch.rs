@@ -600,10 +600,54 @@ impl ShellSession {
                 ShellAction::Redraw
             }
             ShellCommand::Logout => {
+                #[cfg(target_os = "linux")]
+                if self
+                    .app
+                    .auth_session()
+                    .is_some_and(|s| s.system_user.is_some())
+                {
+                    if !self.persist_editor_recovery_now(received_at) {
+                        return ShellAction::Redraw;
+                    }
+                    if session_protocol::linux::managed_snapshot()
+                        .ok()
+                        .flatten()
+                        .is_some()
+                    {
+                        if let Err(error) = session_protocol::linux::session_action("Logout") {
+                            self.notify_alert_with_tone(
+                                i18n::msg!(
+                                    "shell-system-session-action-failed",
+                                    error = error.to_string()
+                                ),
+                                ui::NotificationTone::Error,
+                            );
+                            return ShellAction::Redraw;
+                        }
+                    }
+                    return ShellAction::Exit;
+                }
                 self.logout_at(received_at);
                 ShellAction::Redraw
             }
             ShellCommand::LogoutToLockscreen => {
+                #[cfg(target_os = "linux")]
+                if self
+                    .app
+                    .auth_session()
+                    .is_some_and(|s| s.system_user.is_some())
+                {
+                    if let Err(error) = session_protocol::linux::session_action("Lock") {
+                        self.notify_alert_with_tone(
+                            i18n::msg!(
+                                "shell-system-session-action-failed",
+                                error = error.to_string()
+                            ),
+                            ui::NotificationTone::Error,
+                        );
+                    }
+                    return ShellAction::Redraw;
+                }
                 if self.logout_to_lockscreen_at(received_at) {
                     ShellAction::Exit
                 } else {

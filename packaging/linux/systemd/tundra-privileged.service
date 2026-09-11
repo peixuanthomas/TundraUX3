@@ -1,0 +1,34 @@
+[Unit]
+Description=Tundra authorized system operations
+After=dbus.service systemd-logind.service
+Requires=dbus.service
+
+[Service]
+Type=dbus
+BusName=org.tundra.Privileged1
+ExecStart=/usr/libexec/tundra/tundra-privileged
+User=root
+Group=root
+Restart=on-failure
+UMask=0077
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+RestrictRealtime=yes
+LockPersonality=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+CapabilityBoundingSet=CAP_DAC_READ_SEARCH CAP_SETUID CAP_SETGID
+RuntimeDirectory=tundra
+RuntimeDirectoryMode=0755
+RuntimeDirectoryPreserve=yes
+StateDirectory=tundra
+ReadWritePaths=/var/lib/tundra /run/tundra
+
+[Install]
+WantedBy=multi-user.target

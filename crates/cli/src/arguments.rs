@@ -2,6 +2,9 @@ use std::fmt;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CliCommand {
+    System(Vec<String>),
+    Session(String),
+    MigrateLegacy(Vec<String>),
     Logs(crate::logs_command::LogsAction),
     Asset(AssetAction),
     Cls,
@@ -150,6 +153,12 @@ where
     let command = args.remove(0);
 
     match command.as_str() {
+        "system" => Ok(CliCommand::System(args)),
+        "migrate-legacy" => Ok(CliCommand::MigrateLegacy(args)),
+        "session" => match args.as_slice() {
+            [action] if matches!(action.as_str(), "status" | "lock" | "logout" | "switch") => Ok(CliCommand::Session(action.clone())),
+            _ => Err(CliError::MissingArgument("session <status|lock|logout|switch>")),
+        },
         "logs" => crate::logs_command::parse_logs(&args).map(CliCommand::Logs),
         "debug" => parse_debug_args(&args),
         "cls" => parse_no_extra_args(&args, CliCommand::Cls),

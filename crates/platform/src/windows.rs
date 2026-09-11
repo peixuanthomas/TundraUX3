@@ -35,16 +35,8 @@ const ERROR_ACCESS_DENIED: u32 = 5;
 const ERROR_NO_MORE_FILES: u32 = 18;
 const ERROR_INVALID_PARAMETER: u32 = 87;
 const ERROR_SUCCESS: u32 = 0;
-const ERROR_NOT_ALL_ASSIGNED: u32 = 1300;
 const PROCESS_QUERY_LIMITED_INFORMATION: u32 = 0x1000;
 const SYNCHRONIZE: u32 = 0x0010_0000;
-const TOKEN_QUERY: u32 = 0x0008;
-const TOKEN_ADJUST_PRIVILEGES: u32 = 0x0020;
-const SE_PRIVILEGE_ENABLED: u32 = 0x0000_0002;
-const EWX_POWEROFF: u32 = 0x0000_0008;
-const EWX_REBOOT: u32 = 0x0000_0002;
-const SHTDN_REASON_MAJOR_APPLICATION: u32 = 0x0004_0000;
-const SHTDN_REASON_FLAG_PLANNED: u32 = 0x8000_0000;
 const WAIT_OBJECT_0: u32 = 0x0000_0000;
 const WAIT_TIMEOUT: u32 = 0x0000_0102;
 const WAIT_FAILED: u32 = 0xffff_ffff;
@@ -87,7 +79,9 @@ impl Platform for WindowsPlatform {
     }
 
     fn capabilities(&self) -> PlatformCapabilities {
-        PlatformCapabilities::native_supported()
+        let mut capabilities = PlatformCapabilities::native_supported();
+        capabilities.power = crate::CapabilityStatus::Unsupported;
+        capabilities
     }
 
     fn is_native_backend(&self) -> bool {
@@ -256,15 +250,19 @@ impl Platform for WindowsPlatform {
     }
 
     fn poweroff(&self) -> Result<(), PlatformError> {
-        windows_power_action(EWX_POWEROFF)
+        Err(PlatformError::Unsupported {
+            capability: "power.poweroff",
+        })
     }
 
     fn can_reboot(&self) -> Result<bool, PlatformError> {
-        Ok(true)
+        Ok(false)
     }
 
     fn reboot(&self) -> Result<(), PlatformError> {
-        windows_power_action(EWX_REBOOT)
+        Err(PlatformError::Unsupported {
+            capability: "power.reboot",
+        })
     }
 
     fn is_process_alive(&self, pid: u32) -> Result<bool, PlatformError> {
@@ -1373,21 +1371,6 @@ fn to_wide(value: &OsStr) -> Vec<u16> {
     value.encode_wide().chain(std::iter::once(0)).collect()
 }
 
-fn windows_power_action(flags: u32) -> Result<(), PlatformError> {
-    let _privilege = ShutdownPrivilege::enable()?;
-    let result = unsafe {
-        ExitWindowsEx(
-            flags,
-            SHTDN_REASON_MAJOR_APPLICATION | SHTDN_REASON_FLAG_PLANNED,
-        )
-    };
-    if result == 0 {
-        Err(last_windows_error("ExitWindowsEx", None))
-    } else {
-        Ok(())
-    }
-}
-
 fn shell_parsing_name_wide(path: &Path) -> Result<Vec<u16>, PlatformError> {
     const BACKSLASH: u16 = b'\\' as u16;
     const VERBATIM_PREFIX: [u16; 4] = [BACKSLASH, BACKSLASH, b'?' as u16, BACKSLASH];
@@ -1489,109 +1472,6 @@ impl Drop for ClipboardGuard {
             CloseClipboard();
         }
     }
-}
-
-struct ShutdownPrivilege {
-    token: *mut c_void,
-    previous: TokenPrivileges,
-}
-
-impl ShutdownPrivilege {
-    fn enable() -> Result<Self, PlatformError> {
-        let mut token = ptr::null_mut();
-        if unsafe {
-            OpenProcessToken(
-                GetCurrentProcess(),
-                TOKEN_ADJUST_PRIVILEGES | TOKEN_QUERY,
-                &mut token,
-            )
-        } == 0
-        {
-            return Err(last_windows_error("OpenProcessToken", None));
-        }
-
-        let mut luid = Luid::default();
-        let privilege_name = to_wide(OsStr::new("SeShutdownPrivilege"));
-        if unsafe { LookupPrivilegeValueW(ptr::null(), privilege_name.as_ptr(), &mut luid) } == 0 {
-            let error = unsafe { GetLastError() };
-            unsafe {
-                CloseHandle(token);
-            }
-            return Err(windows_error_from_code("LookupPrivilegeValueW", error));
-        }
-
-        let requested = TokenPrivileges {
-            privilege_count: 1,
-            privileges: [LuidAndAttributes {
-                luid,
-                attributes: SE_PRIVILEGE_ENABLED,
-            }],
-        };
-        let mut previous: TokenPrivileges = unsafe { std::mem::zeroed() };
-        let mut previous_len = 0_u32;
-        unsafe {
-            SetLastError(ERROR_SUCCESS);
-        }
-        let adjusted = unsafe {
-            AdjustTokenPrivileges(
-                token,
-                0,
-                &requested,
-                std::mem::size_of::<TokenPrivileges>() as u32,
-                &mut previous,
-                &mut previous_len,
-            )
-        };
-        let adjust_error = unsafe { GetLastError() };
-        if adjusted == 0 || adjust_error == ERROR_NOT_ALL_ASSIGNED {
-            unsafe {
-                CloseHandle(token);
-            }
-            return Err(windows_error_from_code(
-                "AdjustTokenPrivileges",
-                adjust_error,
-            ));
-        }
-
-        Ok(Self { token, previous })
-    }
-}
-
-impl Drop for ShutdownPrivilege {
-    fn drop(&mut self) {
-        unsafe {
-            AdjustTokenPrivileges(
-                self.token,
-                0,
-                &self.previous,
-                0,
-                ptr::null_mut(),
-                ptr::null_mut(),
-            );
-            CloseHandle(self.token);
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, Default)]
-#[repr(C)]
-struct Luid {
-    low_part: u32,
-    high_part: i32,
-}
-
-#[derive(Debug, Clone, Copy)]
-#[repr(C)]
-struct LuidAndAttributes {
-    luid: Luid,
-    attributes: u32,
-}
-
-#[derive(Debug, Clone, Copy)]
-#[repr(C)]
-struct TokenPrivileges {
-    privilege_count: u32,
-    privileges: [LuidAndAttributes; 1],
 }
 
 #[repr(C)]
@@ -2006,7 +1886,6 @@ unsafe extern "system" {
     fn EmptyClipboard() -> i32;
     fn GetClipboardData(u_format: u32) -> *mut c_void;
     fn SetClipboardData(u_format: u32, h_mem: *mut c_void) -> *mut c_void;
-    fn ExitWindowsEx(u_flags: u32, dw_reason: u32) -> i32;
     fn DestroyIcon(icon: *mut c_void) -> i32;
     fn DrawIconEx(
         dc: *mut c_void,
@@ -2035,24 +1914,6 @@ unsafe extern "system" {
     ) -> *mut c_void;
     fn SelectObject(dc: *mut c_void, object: *mut c_void) -> *mut c_void;
     fn DeleteObject(object: *mut c_void) -> i32;
-}
-
-#[link(name = "advapi32")]
-unsafe extern "system" {
-    fn OpenProcessToken(
-        process_handle: *mut c_void,
-        desired_access: u32,
-        token_handle: *mut *mut c_void,
-    ) -> i32;
-    fn LookupPrivilegeValueW(system_name: *const u16, name: *const u16, luid: *mut Luid) -> i32;
-    fn AdjustTokenPrivileges(
-        token_handle: *mut c_void,
-        disable_all_privileges: i32,
-        new_state: *const TokenPrivileges,
-        buffer_length: u32,
-        previous_state: *mut TokenPrivileges,
-        return_length: *mut u32,
-    ) -> i32;
 }
 
 #[repr(C)]
@@ -2138,7 +1999,6 @@ unsafe extern "system" {
 
 #[link(name = "kernel32")]
 unsafe extern "system" {
-    fn GetCurrentProcess() -> *mut c_void;
     fn OpenProcess(desired_access: u32, inherit_handle: i32, process_id: u32) -> *mut c_void;
     fn WaitForSingleObject(handle: *mut c_void, milliseconds: u32) -> u32;
     fn CloseHandle(object: *mut c_void) -> i32;
@@ -2168,7 +2028,6 @@ unsafe extern "system" {
     fn FindNextFileW(h_find_file: *mut c_void, lp_find_file_data: *mut Win32FindDataW) -> i32;
     fn FindClose(h_find_file: *mut c_void) -> i32;
     fn GetLastError() -> u32;
-    fn SetLastError(error_code: u32);
     fn GlobalAlloc(u_flags: u32, dw_bytes: usize) -> *mut c_void;
     fn GlobalLock(h_mem: *mut c_void) -> *mut c_void;
     fn GlobalUnlock(h_mem: *mut c_void) -> i32;

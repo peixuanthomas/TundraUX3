@@ -27,8 +27,6 @@ const PBCOPY: &str = "/usr/bin/pbcopy";
 const PBPASTE: &str = "/usr/bin/pbpaste";
 #[cfg(target_os = "macos")]
 const OSASCRIPT: &str = "/usr/bin/osascript";
-const FULL_DISK_ACCESS_SETTINGS_URI: &str =
-    "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles";
 #[cfg(target_os = "macos")]
 const MNT_REMOVABLE: u32 = 0x0000_0200;
 #[cfg(target_os = "macos")]
@@ -124,33 +122,13 @@ impl Platform for MacosPlatform {
     }
 
     fn startup_permission_status(&self) -> Result<StartupPermissionStatus, PlatformError> {
-        if macos_full_disk_access_ready()? {
-            Ok(StartupPermissionStatus::Ready)
-        } else {
-            Ok(StartupPermissionStatus::action_required(
-                "Full Disk Access",
-                "TundraUX3 Explorer needs access to the system Trash. Enable TundraUX3 in System Settings > Privacy & Security > Full Disk Access, then quit and reopen the application.",
-            ))
-        }
+        Ok(StartupPermissionStatus::Ready)
     }
 
     fn request_startup_permissions(&self) -> Result<(), PlatformError> {
-        let dialog_error = macos_show_critical_error(
-            "TundraUX3 needs Full Disk Access",
-            "Explorer needs Full Disk Access to list, restore, and empty the macOS Trash. Add and enable TundraUX3 in System Settings, then quit and reopen the application.",
-        )
-        .err();
-        let settings_result = run_open([OsString::from(FULL_DISK_ACCESS_SETTINGS_URI)]);
-        match (settings_result, dialog_error) {
-            (Ok(()), _) => Ok(()),
-            (Err(settings_error), None) => Err(settings_error),
-            (Err(settings_error), Some(dialog_error)) => Err(PlatformError::Native {
-                operation: "request Full Disk Access",
-                message: format!(
-                    "could not show the permission prompt ({dialog_error}) or open System Settings ({settings_error})"
-                ),
-            }),
-        }
+        Err(PlatformError::Unsupported {
+            capability: "system_permissions",
+        })
     }
 
     fn user_dirs(&self) -> Result<UserDirs, PlatformError> {
@@ -333,50 +311,6 @@ impl Platform for MacosPlatform {
     fn file_open_policy(&self, path: &Path, attributes: &FileAttributes) -> FileOpenPolicy {
         crate::default_file_open_policy(PlatformKind::Macos, path, attributes)
     }
-}
-
-#[cfg(target_os = "macos")]
-fn macos_full_disk_access_ready() -> Result<bool, PlatformError> {
-    let home = home_dir_from_env()?;
-    let trash = home.join(".Trash");
-    match std::fs::read_dir(&trash) {
-        Ok(_) => return Ok(true),
-        Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => return Ok(false),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-        Err(error) => {
-            return Err(macos_io(
-                "check Full Disk Access using the system Trash",
-                Some(&trash),
-                error,
-            ));
-        }
-    }
-
-    // A new account may not have created ~/.Trash yet. The per-user TCC
-    // database is always protected by Full Disk Access, so it is a reliable
-    // non-mutating fallback probe when present.
-    let tcc_database = home
-        .join("Library")
-        .join("Application Support")
-        .join("com.apple.TCC")
-        .join("TCC.db");
-    match std::fs::File::open(&tcc_database) {
-        Ok(_) => Ok(true),
-        Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => Ok(false),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
-        Err(error) => Err(macos_io(
-            "check Full Disk Access using the TCC database",
-            Some(&tcc_database),
-            error,
-        )),
-    }
-}
-
-#[cfg(not(target_os = "macos"))]
-fn macos_full_disk_access_ready() -> Result<bool, PlatformError> {
-    Err(PlatformError::Unsupported {
-        capability: "full_disk_access.macos",
-    })
 }
 
 #[cfg(target_os = "macos")]

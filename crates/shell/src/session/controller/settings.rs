@@ -1612,7 +1612,7 @@ impl ShellSession {
                         Some(app::update::UpdatePhase::WaitingForRestart);
                     self.settings_update_state.status =
                         i18n::msg!("settings-update-restarting").into();
-                    self.update_apply_manifest = Some(manifest_path);
+                    self.update_apply_manifest = manifest_path;
                     self.shutdown_requested = true;
                 }
             }
@@ -3259,6 +3259,7 @@ mod update_tests {
         SettingsUpdateState {
             activity: None,
             check_result: Some(app::update::UpdateCheckResult {
+                system_release: None,
                 default_branch: "master".to_string(),
                 head_sha: "abcdef1234567890".to_string(),
                 relation,

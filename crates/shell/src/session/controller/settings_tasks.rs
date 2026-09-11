@@ -11,7 +11,7 @@ pub(in crate::session) struct SettingsTimeSyncValidationEvent {
 pub(in crate::session) enum SettingsUpdateTaskEvent {
     Progress(app::update::UpdateProgress),
     CheckCompleted(Result<app::update::UpdateCheckResult, i18n::LocalizedText>),
-    PrepareCompleted(Result<std::path::PathBuf, i18n::LocalizedText>),
+    PrepareCompleted(Result<Option<std::path::PathBuf>, i18n::LocalizedText>),
 }
 
 pub(in crate::session) struct ShellSettingsTaskShared {
@@ -165,7 +165,9 @@ impl ShellSettingsTaskRuntime {
                     },
                 ));
                 let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                    app::update::check_for_updates(&identity)
+                    (if app::update::is_system_managed_install() {
+                        app::update::check_for_system_updates(&identity)
+                    } else { app::update::check_for_updates(&identity) })
                         .map_err(|error| i18n::LocalizedText::from(error.to_string()))
                 }));
                 match result {
@@ -230,6 +232,14 @@ impl ShellSettingsTaskRuntime {
                     let mut report = |progress: app::update::UpdateProgress| {
                         let _ = events.send(SettingsUpdateTaskEvent::Progress(progress));
                     };
+                    #[cfg(target_os = "linux")]
+                    if let Some(release_id) = check.system_release.as_ref() {
+                        session_protocol::linux::request_system_action(
+                            &session_protocol::SystemAction::InstallUpdate { release_id: release_id.clone() },
+                            &std::sync::atomic::AtomicBool::new(false),
+                        ).map_err(app::update::UpdateError::from)?;
+                        return Ok(None);
+                    }
                     let prepared =
                         app::update::prepare_update(platform.as_ref(), &check, &mut report)?;
                     let work_dir = prepared.work_dir.clone();
@@ -240,7 +250,7 @@ impl ShellSettingsTaskRuntime {
                     });
                     let staged = app::update::stage_update_for_apply(&prepared, &install_dir);
                     let _ = platform.cleanup_temp_path(&work_dir);
-                    staged.map(|staged| staged.manifest_path)
+                    staged.map(|staged| Some(staged.manifest_path))
                 }));
                 match result {
                     Ok(result) => {

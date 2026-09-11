@@ -1,3 +1,4 @@
+mod system_command;
 mod logs_command;
 pub use logs_command::{LogsAction, LogsFormat, LogsVerb};
 mod arguments;

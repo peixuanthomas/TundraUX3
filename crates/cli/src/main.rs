@@ -10,6 +10,8 @@ fn main() {
     if matches!(
         cli::parse_args(&args),
         Ok(cli::CliCommand::UpdateProbe) | Ok(cli::CliCommand::ApplyUpdate { .. })
+            | Ok(cli::CliCommand::MigrateLegacy(_)) | Ok(cli::CliCommand::Session(_))
+            | Ok(cli::CliCommand::System(_))
     ) {
         let mut stdout = std::io::stdout();
         let mut stderr = std::io::stderr();

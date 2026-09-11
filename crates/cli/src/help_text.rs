@@ -30,6 +30,9 @@ pub(crate) fn write_help(output: &mut impl Write) -> std::io::Result<()> {
         output,
         "  logs    Query runtime logs and incidents, or export diagnostics; run logs help"
     )?;
+    writeln!(output, "  session status|lock|logout|switch  Manage the current Linux Tundra session")?;
+    writeln!(output, "  system poweroff|reboot|logs|update <vX.Y.Z>  Request a protected Linux system operation")?;
+    writeln!(output, "  migrate-legacy --source PATH --uid UID [--apply]  Preview or apply an explicit offline migration")?;
     writeln!(output, "  help    Show command help")
 }
 

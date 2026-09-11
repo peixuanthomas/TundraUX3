@@ -1,12 +1,16 @@
 [package]
-name = "session-protocol"
+name = "tundra-privileged"
 version.workspace = true
 edition.workspace = true
 
 [dependencies]
+session-protocol = { path = "../session-protocol" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 libc = "0.2"
+system-maintenance = { path = "../system-maintenance" }
 zbus = { version = "5.18", features = ["blocking-api"] }
+toml = "0.9"
+

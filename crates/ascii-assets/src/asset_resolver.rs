@@ -114,6 +114,14 @@ fn asset_root_candidates(exe: &Path) -> Result<Vec<PathBuf>, AssetError> {
         candidates.push(profile_dir.join("assets"));
     }
 
+    // A versioned Linux runtime carries assets with the exact executable version.
+    #[cfg(target_os = "linux")]
+    if parent.file_name().is_some_and(|name| name == "bin")
+        && let Some(runtime) = parent.parent()
+    {
+        candidates.insert(0, runtime.join("share/tundraux3/assets"));
+    }
+
     // The Debian package installs shared immutable assets here.  Keeping this
     // fallback Linux-only avoids surprising non-Linux development runs while
     // still allowing /usr/bin/tundra-* to work without an environment variable.

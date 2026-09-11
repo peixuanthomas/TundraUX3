@@ -1,6 +1,8 @@
 //! Shared wire contracts. Client-supplied identity is never authorization.
 use serde::{Deserialize, Serialize};
 
+pub mod greeter;
+
 pub const VERSION: u32 = 1;
 pub const SESSION_BUS: &str = "org.tundra.Session1";
 pub const SESSION_PATH: &str = "/org/tundra/Session1";
