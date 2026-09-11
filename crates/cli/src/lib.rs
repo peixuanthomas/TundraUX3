@@ -1,5 +1,5 @@
-mod system_command;
 mod logs_command;
+mod system_command;
 pub use logs_command::{LogsAction, LogsFormat, LogsVerb};
 mod arguments;
 mod asset_command;

@@ -167,8 +167,10 @@ impl ShellSettingsTaskRuntime {
                 let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                     (if app::update::is_system_managed_install() {
                         app::update::check_for_system_updates(&identity)
-                    } else { app::update::check_for_updates(&identity) })
-                        .map_err(|error| i18n::LocalizedText::from(error.to_string()))
+                    } else {
+                        app::update::check_for_updates(&identity)
+                    })
+                    .map_err(|error| i18n::LocalizedText::from(error.to_string()))
                 }));
                 match result {
                     Ok(result) => {
@@ -235,9 +237,12 @@ impl ShellSettingsTaskRuntime {
                     #[cfg(target_os = "linux")]
                     if let Some(release_id) = check.system_release.as_ref() {
                         session_protocol::linux::request_system_action(
-                            &session_protocol::SystemAction::InstallUpdate { release_id: release_id.clone() },
+                            &session_protocol::SystemAction::InstallUpdate {
+                                release_id: release_id.clone(),
+                            },
                             &std::sync::atomic::AtomicBool::new(false),
-                        ).map_err(app::update::UpdateError::from)?;
+                        )
+                        .map_err(app::update::UpdateError::from)?;
                         return Ok(None);
                     }
                     let prepared =

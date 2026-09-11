@@ -156,8 +156,12 @@ where
         "system" => Ok(CliCommand::System(args)),
         "migrate-legacy" => Ok(CliCommand::MigrateLegacy(args)),
         "session" => match args.as_slice() {
-            [action] if matches!(action.as_str(), "status" | "lock" | "logout" | "switch") => Ok(CliCommand::Session(action.clone())),
-            _ => Err(CliError::MissingArgument("session <status|lock|logout|switch>")),
+            [action] if matches!(action.as_str(), "status" | "lock" | "logout" | "switch") => {
+                Ok(CliCommand::Session(action.clone()))
+            }
+            _ => Err(CliError::MissingArgument(
+                "session <status|lock|logout|switch>",
+            )),
         },
         "logs" => crate::logs_command::parse_logs(&args).map(CliCommand::Logs),
         "debug" => parse_debug_args(&args),

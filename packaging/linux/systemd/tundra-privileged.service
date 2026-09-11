@@ -1,7 +1,7 @@
 [Unit]
 Description=Tundra authorized system operations
-After=dbus.service systemd-logind.service
-Requires=dbus.service
+After=dbus.service systemd-logind.service tundra-update-recover.service
+Requires=dbus.service tundra-update-recover.service
 
 [Service]
 Type=dbus

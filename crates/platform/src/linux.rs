@@ -2250,11 +2250,10 @@ mod tests {
     use super::{
         LinuxPlatform, MountInfo, XdgBaseDirs, ensure_private_dir, format_trash_timestamp,
         is_local_block_mount_with_sysfs, linux_interface_kind_with_sysfs, list_trash_root,
-        mount_kind_from_sysfs_path, move_one_to_trash_root,
-        parse_mountinfo, parse_trash_timestamp, parse_trashinfo, percent_decode_path,
-        percent_encode_path, private_trash_root, private_trash_root_with_topdir,
-        restore_trash_item_from_root, restore_trash_item_from_root_with, spawn_detached_child,
-        validate_desktop_entry,
+        mount_kind_from_sysfs_path, move_one_to_trash_root, parse_mountinfo, parse_trash_timestamp,
+        parse_trashinfo, percent_decode_path, percent_encode_path, private_trash_root,
+        private_trash_root_with_topdir, restore_trash_item_from_root,
+        restore_trash_item_from_root_with, spawn_detached_child, validate_desktop_entry,
     };
     use crate::{NetworkInterfaceKind, Platform, PlatformError, TrashRestoreTarget, VolumeKind};
     use std::ffi::OsString;
@@ -2674,8 +2673,6 @@ mod tests {
         assert!(validate_desktop_entry(&linked).is_err());
         let _ = fs::remove_dir_all(fixture);
     }
-
-
 }
 
 #[cfg(test)]
