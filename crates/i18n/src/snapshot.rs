@@ -73,28 +73,51 @@ impl LanguageSnapshot {
         code: &str,
         generation: u64,
     ) -> Result<LanguageLoad, LanguageError> {
-        Self::load_inner(root.as_ref(), code, generation, false)
+        let mut diagnostics = Vec::new();
+        let snapshot = Self::load_inner(root.as_ref(), code, generation, false, &mut diagnostics)?;
+        Ok(LanguageLoad {
+            snapshot,
+            diagnostics,
+        })
     }
 
     /// Startup keeps valid translation files and always returns an in-memory English fallback.
     pub fn load_startup(root: impl AsRef<Path>, code: &str, generation: u64) -> LanguageLoad {
         let root = root.as_ref();
-        match Self::load_inner(root, code, generation, true) {
-            Ok(load) => load,
+        // The startup operation owns diagnostics so a failed locale candidate cannot
+        // discard repairs already persisted while preparing its English fallback.
+        let mut diagnostics = Vec::new();
+        let snapshot = match Self::load_inner(root, code, generation, true, &mut diagnostics) {
+            Ok(snapshot) => snapshot,
             Err(error) => {
-                let mut load = Self::load_inner(root, DEFAULT_LANGUAGE, generation, true)
-                    .unwrap_or_else(|_| LanguageLoad {
-                        snapshot: Self::embedded(generation),
-                        diagnostics: Vec::new(),
-                    });
-                load.diagnostics.push(RepairDiagnostic {
+                let mut fallback_diagnostics = Vec::new();
+                let snapshot = Self::load_inner(
+                    root,
+                    DEFAULT_LANGUAGE,
+                    generation,
+                    true,
+                    &mut fallback_diagnostics,
+                )
+                .unwrap_or_else(|_| Self::embedded(generation));
+                // A read-only root can produce the same failure on both attempts.
+                // Preserve distinct outcomes while reporting identical issues once.
+                for diagnostic in fallback_diagnostics {
+                    if !diagnostics.contains(&diagnostic) {
+                        diagnostics.push(diagnostic);
+                    }
+                }
+                diagnostics.push(RepairDiagnostic {
                     kind: RepairKind::StartupFallback,
                     path: error.path.clone().unwrap_or_else(|| root.to_owned()),
                     message: error.to_string(),
                     repaired: false,
                 });
-                load
+                snapshot
             }
+        };
+        LanguageLoad {
+            snapshot,
+            diagnostics,
         }
     }
 
@@ -130,7 +153,8 @@ impl LanguageSnapshot {
         code: &str,
         generation: u64,
         lenient: bool,
-    ) -> Result<LanguageLoad, LanguageError> {
+        diagnostics: &mut Vec<RepairDiagnostic>,
+    ) -> Result<Self, LanguageError> {
         let code = canonical_language_code(code)?;
         let embedded = embedded_sources();
         parse_manifest(
@@ -139,8 +163,7 @@ impl LanguageSnapshot {
             Path::new("<embedded>/manifest.toml"),
         )?;
         resource::validate(&embedded, None, true)?;
-        let mut diagnostics = Vec::new();
-        let english = repair_english(root, &embedded, &mut diagnostics);
+        let english = repair_english(root, &embedded, diagnostics);
         let mut current = Vec::new();
         if code != DEFAULT_LANGUAGE {
             let directory = root.join("locales").join(&code);
@@ -211,11 +234,7 @@ impl LanguageSnapshot {
                 });
             }
         }
-        let snapshot = Self::from_sources(code, generation, current, english, embedded)?;
-        Ok(LanguageLoad {
-            snapshot,
-            diagnostics,
-        })
+        Self::from_sources(code, generation, current, english, embedded)
     }
 
     fn from_sources(

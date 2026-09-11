@@ -520,3 +520,88 @@ fn deeply_nested_messages_stop_at_emergency_depth_limit() {
     }
     assert_eq!(message.render(&snapshot), "Translation unavailable");
 }
+
+#[test]
+fn startup_fallback_preserves_english_repairs_before_selected_manifest_failure() {
+    for missing_manifest in [true, false] {
+        let fixture = Fixture::new();
+        fixture.write("locales/en-US/manifest.toml", "invalid manifest");
+        if !missing_manifest {
+            fixture.write(
+                "locales/zh-CN/manifest.toml",
+                "format_version = 2\ncode = 'zh-CN'\nnative_name = '简体中文'\n",
+            );
+        }
+        let load = LanguageSnapshot::load_startup(&fixture.0, "zh-CN", 23);
+        assert_eq!(load.snapshot.code(), "en-US");
+        assert_eq!(load.snapshot.generation(), 23);
+        let manifest_path = fixture.0.join("locales/en-US/manifest.toml");
+        assert!(
+            load.diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.path == manifest_path
+                    && diagnostic.kind == RepairKind::InvalidManifest
+                    && diagnostic.repaired),
+            "manifest repair must survive selected-locale fallback: {:?}",
+            load.diagnostics
+        );
+        for (relative, _) in EMBEDDED_FILES {
+            let path = fixture.0.join("locales/en-US").join(relative);
+            assert!(path.is_file());
+            assert_eq!(
+                load.diagnostics
+                    .iter()
+                    .filter(|diagnostic| diagnostic.path == path
+                        && diagnostic.kind == RepairKind::MissingFile
+                        && diagnostic.repaired)
+                    .count(),
+                1,
+                "report every repaired English file exactly once: {}",
+                path.display()
+            );
+        }
+        assert!(
+            load.diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.kind == RepairKind::StartupFallback
+                    && diagnostic.path == fixture.0.join("locales/zh-CN/manifest.toml"))
+        );
+        assert_eq!(
+            msg!("resources-recovery-title").render(&load.snapshot),
+            "Resource recovery"
+        );
+        assert!(
+            !LanguageSnapshot::load(&fixture.0, "en-US", 24)
+                .unwrap()
+                .diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.repaired)
+        );
+    }
+}
+
+#[test]
+fn startup_fallback_reports_repeated_write_failures_once() {
+    let fixture = Fixture::new();
+    let root = fixture.0.join("blocked-assets");
+    fs::write(&root, "keep this file").unwrap();
+    let load = LanguageSnapshot::load_startup(&root, "zh-CN", 25);
+    assert_eq!(load.snapshot.code(), "en-US");
+    assert!(
+        load.diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.kind == RepairKind::WriteFailed)
+    );
+    assert!(
+        load.diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.kind == RepairKind::StartupFallback)
+    );
+    for (index, diagnostic) in load.diagnostics.iter().enumerate() {
+        assert!(
+            !load.diagnostics[..index].contains(diagnostic),
+            "duplicate startup diagnostic: {diagnostic:?}"
+        );
+    }
+    assert_eq!(fs::read_to_string(root).unwrap(), "keep this file");
+}
