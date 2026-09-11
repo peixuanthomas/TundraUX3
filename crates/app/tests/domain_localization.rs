@@ -30,7 +30,7 @@ impl LocaleFixture {
             "format_version = 1\ncode = \"zh-CN\"\nnative_name = \"简体中文\"\n",
         )
         .unwrap();
-        for module in ["explorer", "launcher", "tasks"] {
+        for module in ["explorer", "launcher", "tasks", "catalog"] {
             let source = Path::new(env!("CARGO_MANIFEST_DIR")).join(format!(
                 "../ascii-assets/assets/locales/zh-CN/modules/app-{module}.ftl"
             ));
@@ -142,4 +142,165 @@ fn structured_task_errors_keep_identity_across_languages() {
     assert_eq!(chinese.render(&plan.message), "传输至少需要一个源项目");
     let submit = ExplorerTaskSubmitError::RecoveryRequired.localized();
     assert!(chinese.render(&submit.message).contains("中断的操作"));
+}
+
+#[test]
+fn catalog_localizes_presentation_without_changing_application_or_timezone_ids() {
+    let fixture = LocaleFixture::new();
+    let english = LanguageSnapshot::embedded(1);
+    let chinese = fixture.chinese();
+    for application in app::BUILT_IN_LAUNCHER_APPLICATIONS {
+        let original = *application;
+        assert_eq!(
+            english.render_text(&application.localized_name()),
+            application.name
+        );
+        assert_eq!(
+            english.render_text(&application.localized_description()),
+            application.description
+        );
+        assert_eq!(
+            english.render_text(&application.localized_type_label()),
+            application.type_label
+        );
+        assert_ne!(
+            chinese.render_text(&application.localized_name()),
+            application.name
+        );
+        assert_eq!(
+            chinese.render_text(&application.localized_type_label()),
+            "内置应用"
+        );
+        assert_eq!(*application, original);
+    }
+    let timezones = app::setup_timezone_options();
+    for timezone in &timezones {
+        assert_eq!(
+            english.render_text(&timezone.localized_name()),
+            timezone.label
+        );
+        assert_eq!(
+            english.render_text(&timezone.localized_description()),
+            timezone.description
+        );
+        assert!(
+            !chinese
+                .render_text(&timezone.localized_description())
+                .starts_with('[')
+        );
+    }
+    let shanghai = timezones
+        .iter()
+        .find(|zone| zone.id == "Asia/Shanghai")
+        .unwrap();
+    assert_eq!(chinese.render_text(&shanghai.localized_name()), "上海");
+    assert_eq!(shanghai.id, "Asia/Shanghai");
+    assert_eq!(timezones, app::setup_timezone_options());
+}
+
+#[test]
+fn quick_location_labels_preserve_ids_custom_names_and_volume_names() {
+    use app::explorer::ExplorerQuickLocation;
+    let fixture = LocaleFixture::new();
+    let english = LanguageSnapshot::embedded(1);
+    let chinese = fixture.chinese();
+    let documents = ExplorerQuickLocation::new("documents", "Documents", "/documents", "documents");
+    assert_eq!(
+        english.render_text(&documents.localized_label()),
+        "Documents"
+    );
+    assert_eq!(chinese.render_text(&documents.localized_label()), "文档");
+    assert_eq!(documents.id, "documents");
+    assert_eq!(documents.path, Path::new("/documents"));
+    for custom in [
+        ExplorerQuickLocation::new("custom", "My {raw} folder", "/custom", "folder"),
+        ExplorerQuickLocation::volume("documents", "My {raw} folder", "/drive"),
+    ] {
+        assert_eq!(
+            chinese.render_text(&custom.localized_label()),
+            "My {raw} folder"
+        );
+    }
+    assert_eq!(
+        chinese.render_text(&ExplorerQuickLocation::trash().localized_label()),
+        "废纸篓"
+    );
+}
+
+#[test]
+fn localized_file_types_do_not_change_type_sort_keys_or_selection() {
+    use app::explorer::{
+        ExplorerEntry, ExplorerEntryKind, ExplorerFileType, ExplorerSortField, ExplorerState,
+    };
+    use std::sync::Arc;
+    let fixture = LocaleFixture::new();
+    let english = Arc::new(LanguageSnapshot::embedded(1));
+    let chinese = Arc::new(fixture.chinese());
+    let mut state = ExplorerState::new(&fixture.0, true);
+    for (name, sort_key) in [
+        ("b.txt", "TXT file"),
+        ("a.rs", "RS file"),
+        ("c.txt", "TXT file"),
+    ] {
+        let path = fixture.0.join(name);
+        fs::write(&path, b"fixture").unwrap();
+        let attributes = platform::default_file_attributes(&path).unwrap();
+        state.all_entries.push(ExplorerEntry {
+            name: name.into(),
+            path: path.clone(),
+            trash_id: None,
+            original_path: None,
+            kind: ExplorerEntryKind::File,
+            size: attributes.len,
+            modified: attributes.modified,
+            attributes,
+            open_policy: platform::FileOpenPolicy::SystemDefault,
+            type_label: sort_key.into(),
+            icon_key: "file".into(),
+            metadata_warning: None,
+        });
+    }
+    state.sort_field = ExplorerSortField::Type;
+    state.selected_paths.insert(fixture.0.join("b.txt"));
+    let mut orders = Vec::new();
+    for snapshot in [&english, &chinese] {
+        i18n::with_snapshot(snapshot, || {
+            state.apply_projection();
+            orders.push(
+                state
+                    .entries
+                    .iter()
+                    .map(|entry| entry.path.clone())
+                    .collect::<Vec<_>>(),
+            );
+            let txt = state
+                .entries
+                .iter()
+                .find(|entry| entry.name == "b.txt")
+                .unwrap();
+            assert_eq!(
+                txt.file_type(),
+                ExplorerFileType::File {
+                    extension: Some("TXT".into())
+                }
+            );
+            assert_eq!(txt.type_label, "TXT file");
+            let display = txt.localized_type_label().render_current();
+            assert!(display.contains(if snapshot.code() == "zh-CN" {
+                "文件"
+            } else {
+                "file"
+            }));
+        });
+    }
+    assert_eq!(orders[0], orders[1]);
+    assert_eq!(
+        state
+            .entries
+            .iter()
+            .map(|entry| entry.name.as_str())
+            .collect::<Vec<_>>(),
+        ["a.rs", "b.txt", "c.txt"]
+    );
+    assert!(state.selected_paths.contains(&fixture.0.join("b.txt")));
 }

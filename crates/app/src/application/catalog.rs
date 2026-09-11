@@ -1,3 +1,5 @@
+use i18n::{LocalizedText, msg};
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SetupLanguageOption {
     pub code: String,
@@ -13,6 +15,58 @@ pub struct SetupTimezoneOption {
     pub latitude: f64,
 }
 
+impl SetupTimezoneOption {
+    pub fn localized_name(&self) -> LocalizedText {
+        match self.id.as_str() {
+            "UTC" => msg!("app-catalog-timezone-utc-name").into(),
+            "America/Los_Angeles" => msg!("app-catalog-timezone-america-los-angeles-name").into(),
+            "America/Denver" => msg!("app-catalog-timezone-america-denver-name").into(),
+            "America/Chicago" => msg!("app-catalog-timezone-america-chicago-name").into(),
+            "America/New_York" => msg!("app-catalog-timezone-america-new-york-name").into(),
+            "America/Sao_Paulo" => msg!("app-catalog-timezone-america-sao-paulo-name").into(),
+            "Europe/London" => msg!("app-catalog-timezone-europe-london-name").into(),
+            "Europe/Berlin" => msg!("app-catalog-timezone-europe-berlin-name").into(),
+            "Africa/Johannesburg" => msg!("app-catalog-timezone-africa-johannesburg-name").into(),
+            "Asia/Dubai" => msg!("app-catalog-timezone-asia-dubai-name").into(),
+            "Asia/Kolkata" => msg!("app-catalog-timezone-asia-kolkata-name").into(),
+            "Asia/Shanghai" => msg!("app-catalog-timezone-asia-shanghai-name").into(),
+            "Asia/Tokyo" => msg!("app-catalog-timezone-asia-tokyo-name").into(),
+            "Australia/Sydney" => msg!("app-catalog-timezone-australia-sydney-name").into(),
+            "Pacific/Auckland" => msg!("app-catalog-timezone-pacific-auckland-name").into(),
+            _ => LocalizedText::Raw(self.label.clone()),
+        }
+    }
+    pub fn localized_description(&self) -> LocalizedText {
+        match self.id.as_str() {
+            "UTC" => msg!("app-catalog-timezone-utc-description").into(),
+            "America/Los_Angeles" => {
+                msg!("app-catalog-timezone-america-los-angeles-description").into()
+            }
+            "America/Denver" => msg!("app-catalog-timezone-america-denver-description").into(),
+            "America/Chicago" => msg!("app-catalog-timezone-america-chicago-description").into(),
+            "America/New_York" => msg!("app-catalog-timezone-america-new-york-description").into(),
+            "America/Sao_Paulo" => {
+                msg!("app-catalog-timezone-america-sao-paulo-description").into()
+            }
+            "Europe/London" => msg!("app-catalog-timezone-europe-london-description").into(),
+            "Europe/Berlin" => msg!("app-catalog-timezone-europe-berlin-description").into(),
+            "Africa/Johannesburg" => {
+                msg!("app-catalog-timezone-africa-johannesburg-description").into()
+            }
+            "Asia/Dubai" => msg!("app-catalog-timezone-asia-dubai-description").into(),
+            "Asia/Kolkata" => msg!("app-catalog-timezone-asia-kolkata-description").into(),
+            "Asia/Shanghai" => msg!("app-catalog-timezone-asia-shanghai-description").into(),
+            "Asia/Tokyo" => msg!("app-catalog-timezone-asia-tokyo-description").into(),
+            "Australia/Sydney" => msg!("app-catalog-timezone-australia-sydney-description").into(),
+            "Pacific/Auckland" => msg!("app-catalog-timezone-pacific-auckland-description").into(),
+            _ => LocalizedText::Raw(self.description.clone()),
+        }
+    }
+    pub fn localized_label(&self) -> LocalizedText {
+        self.localized_name()
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct BuiltInApplicationDescriptor {
     pub id: &'static str,
@@ -21,6 +75,29 @@ pub struct BuiltInApplicationDescriptor {
     pub type_label: &'static str,
     pub admin_only: bool,
     pub fixed_in_launcher: bool,
+}
+
+impl BuiltInApplicationDescriptor {
+    pub fn localized_name(&self) -> LocalizedText {
+        match self.id {
+            "builtin.command-line" => msg!("app-catalog-command-line-name").into(),
+            "builtin.editor" => msg!("app-catalog-editor-name").into(),
+            _ => LocalizedText::Raw(self.name.to_string()),
+        }
+    }
+    pub fn localized_description(&self) -> LocalizedText {
+        match self.id {
+            "builtin.command-line" => msg!("app-catalog-command-line-description").into(),
+            "builtin.editor" => msg!("app-catalog-editor-description").into(),
+            _ => LocalizedText::Raw(self.description.to_string()),
+        }
+    }
+    pub fn localized_type_label(&self) -> LocalizedText {
+        match self.id {
+            "builtin.command-line" | "builtin.editor" => msg!("app-catalog-builtin-type").into(),
+            _ => LocalizedText::Raw(self.type_label.to_string()),
+        }
+    }
 }
 
 pub const COMMAND_LINE_APPLICATION: BuiltInApplicationDescriptor = BuiltInApplicationDescriptor {
@@ -45,10 +122,14 @@ pub const BUILT_IN_LAUNCHER_APPLICATIONS: &[BuiltInApplicationDescriptor] =
     &[COMMAND_LINE_APPLICATION, EDITOR_APPLICATION];
 
 pub fn setup_language_options() -> Vec<SetupLanguageOption> {
-    i18n::LanguageCatalog::built_in().options().iter().map(|option| SetupLanguageOption {
-        code: option.code.clone(),
-        label: option.native_name.clone(),
-    }).collect()
+    i18n::LanguageCatalog::built_in()
+        .options()
+        .iter()
+        .map(|option| SetupLanguageOption {
+            code: option.code.clone(),
+            label: option.native_name.clone(),
+        })
+        .collect()
 }
 
 pub fn setup_timezone_options() -> Vec<SetupTimezoneOption> {

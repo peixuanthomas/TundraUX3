@@ -332,7 +332,7 @@ pub struct ExplorerEntry {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ExplorerQuickLocation {
     pub id: String,
-    pub label: String,
+    pub label: LocalizedText,
     pub path: PathBuf,
     pub icon_key: String,
     pub kind: ExplorerQuickLocationKind,
@@ -350,7 +350,7 @@ pub enum ExplorerQuickLocationKind {
 impl ExplorerQuickLocation {
     pub fn new(
         id: impl Into<String>,
-        label: impl Into<String>,
+        label: impl Into<LocalizedText>,
         path: impl Into<PathBuf>,
         icon_key: impl Into<String>,
     ) -> Self {
@@ -366,7 +366,7 @@ impl ExplorerQuickLocation {
 
     pub fn volume(
         id: impl Into<String>,
-        label: impl Into<String>,
+        label: impl Into<LocalizedText>,
         path: impl Into<PathBuf>,
     ) -> Self {
         Self {
@@ -382,7 +382,7 @@ impl ExplorerQuickLocation {
     pub fn trash() -> Self {
         Self {
             id: "trash".to_string(),
-            label: "Trash".to_string(),
+            label: msg!("app-explorer-quick-trash").into(),
             path: PathBuf::new(),
             icon_key: "trash".to_string(),
             kind: ExplorerQuickLocationKind::Trash,
@@ -393,9 +393,58 @@ impl ExplorerQuickLocation {
     pub const fn is_trash(&self) -> bool {
         matches!(self.kind, ExplorerQuickLocationKind::Trash)
     }
+
+    pub fn localized_label(&self) -> LocalizedText {
+        // Explicit caller translations and raw volume names retain their identity.
+        if matches!(self.label, LocalizedText::Message(_))
+            || self.kind == ExplorerQuickLocationKind::Volume
+        {
+            return self.label.clone();
+        }
+        match self.id.as_str() {
+            "desktop" => msg!("app-explorer-quick-desktop").into(),
+            "documents" => msg!("app-explorer-quick-documents").into(),
+            "downloads" => msg!("app-explorer-quick-downloads").into(),
+            "pictures" => msg!("app-explorer-quick-pictures").into(),
+            "music" => msg!("app-explorer-quick-music").into(),
+            "videos" => msg!("app-explorer-quick-videos").into(),
+            "trash" => msg!("app-explorer-quick-trash").into(),
+            _ => self.label.clone(),
+        }
+    }
 }
 
 impl ExplorerEntry {
+    pub fn file_type(&self) -> ExplorerFileType {
+        if self.trash_id.is_some() {
+            return if self.kind == ExplorerEntryKind::Directory {
+                ExplorerFileType::TrashedDirectory
+            } else {
+                ExplorerFileType::TrashedFile
+            };
+        }
+        if let FileOpenPolicy::LauncherRequired { kind, .. } = &self.open_policy {
+            return ExplorerFileType::Executable(*kind);
+        }
+        match self.kind {
+            ExplorerEntryKind::Directory => ExplorerFileType::Directory,
+            ExplorerEntryKind::Other => ExplorerFileType::Other,
+            ExplorerEntryKind::File => ExplorerFileType::File {
+                extension: self
+                    .path
+                    .extension()
+                    .and_then(OsStr::to_str)
+                    .filter(|extension| !extension.is_empty())
+                    .map(str::to_ascii_uppercase),
+            },
+        }
+    }
+
+    /// Display text is independent of the retained, locale-stable `type_label` sort key.
+    pub fn localized_type_label(&self) -> LocalizedText {
+        self.file_type().localized_label()
+    }
+
     fn from_metadata(
         path: PathBuf,
         name: String,
@@ -544,6 +593,39 @@ pub enum ExplorerEntryKind {
     Directory,
     File,
     Other,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ExplorerFileType {
+    Directory,
+    File { extension: Option<String> },
+    Other,
+    Executable(ExecutableKind),
+    TrashedDirectory,
+    TrashedFile,
+}
+
+impl ExplorerFileType {
+    pub fn localized_label(&self) -> LocalizedText {
+        match self {
+            Self::Directory => msg!("app-explorer-type-folder"),
+            Self::File {
+                extension: Some(extension),
+            } => msg!("app-explorer-type-extension", extension = extension.clone()),
+            Self::File { extension: None } => msg!("app-explorer-type-file"),
+            Self::Other => msg!("app-explorer-type-other"),
+            Self::Executable(kind) => match kind {
+                ExecutableKind::NativeBinary => msg!("app-explorer-type-executable"),
+                ExecutableKind::Installer => msg!("app-explorer-type-installer"),
+                ExecutableKind::Script => msg!("app-explorer-type-script"),
+                ExecutableKind::Shortcut => msg!("app-explorer-type-shortcut"),
+                ExecutableKind::ApplicationBundle => msg!("app-explorer-type-application"),
+            },
+            Self::TrashedDirectory => msg!("app-explorer-type-trashed-folder"),
+            Self::TrashedFile => msg!("app-explorer-type-trashed-file"),
+        }
+        .into()
+    }
 }
 
 impl ExplorerEntryKind {
