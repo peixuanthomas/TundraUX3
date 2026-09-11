@@ -700,6 +700,12 @@ mod tests {
 
         let before_reconfigure = receiver.borrow_and_update().revision;
         let storage_config = storage::StorageConfig {
+            // Keep this threshold test offline after reconfiguration as well as startup.
+            // The storage default would re-enable network time and DNS during shutdown.
+            time_sync: storage::TimeSyncConfig {
+                source: storage::TimeSyncSource::OperatingSystem,
+                server_url: None,
+            },
             system_status: storage::SystemStatusConfig {
                 low_available_gib: 7,
                 low_percentage: 1,
@@ -709,6 +715,15 @@ mod tests {
             ..storage::StorageConfig::default()
         };
         runtime.reconfigure_system_services(&storage_config);
+        assert_eq!(
+            runtime
+                .shared
+                .system_services_config
+                .lock()
+                .unwrap()
+                .time_sync_mode,
+            system_services::TimeSyncMode::OperatingSystem
+        );
         wait_for_system_status_snapshot(&mut receiver, |snapshot| {
             snapshot.revision > before_reconfigure
                 && matches!(

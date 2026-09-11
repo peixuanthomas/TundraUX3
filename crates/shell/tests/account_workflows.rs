@@ -492,8 +492,26 @@ fn first_run_setup_routes_keys_focus_and_mouse_before_home_shortcuts() {
     state.apply_input(InputEvent::mouse_down(PointerButton::Right, (4, 4)));
     assert_eq!(state.active_popup(), None);
 
+    // Language navigation follows the discovered catalog, which now includes Chinese.
+    let languages = state.to_setup_view_model();
+    assert!(
+        languages
+            .languages
+            .iter()
+            .any(|language| language.code == "en-US")
+    );
+    assert!(
+        languages
+            .languages
+            .iter()
+            .any(|language| language.code == "zh-CN")
+    );
+    let next_language = (languages.selected_language_index + 1) % languages.languages.len();
     state.apply_input(InputEvent::from_key_label("Right"));
-    assert_eq!(state.to_setup_view_model().selected_language_index, 0);
+    assert_eq!(
+        state.to_setup_view_model().selected_language_index,
+        next_language
+    );
     state.apply_input(InputEvent::mouse_down(
         PointerButton::Left,
         setup_hit_map_row_coordinates(&state, ShellComponent::SetupLanguage, 0),

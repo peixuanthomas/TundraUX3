@@ -434,9 +434,19 @@ fn failed_time_server_validation_shows_error_and_does_not_save() {
     let fixture = FixtureRoot::new("invalid-time-server");
     let platform = mock_platform(fixture.path());
     let manager = initialize_users(&platform, false, false);
-    let listener = TcpListener::bind("127.0.0.1:0").expect("reserve unused port");
-    let address = listener.local_addr().expect("unused address");
-    drop(listener);
+    // Keep the endpoint under the test's control and return an explicit HTTP failure.
+    // Releasing a port does not guarantee a prompt connection-refused result on every host.
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind failing time server");
+    let address = listener.local_addr().expect("time server address");
+    let server = std::thread::spawn(move || {
+        let (mut stream, _) = listener.accept().expect("accept time request");
+        stream
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
+        let mut request = [0_u8; 2048];
+        stream.read(&mut request).expect("read time request");
+        stream.write_all(b"HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").expect("write failing response");
+    });
     let mut state = logged_in_state(&platform, "AdminUser", "StrongPass123");
 
     open_time_server_editor(&mut state, &platform);
@@ -448,6 +458,7 @@ fn failed_time_server_validation_shows_error_and_does_not_save() {
         state.time_sync_failure_dialog_visible()
     });
 
+    server.join().expect("failing time server thread");
     assert_eq!(manager.load_config().unwrap().time_sync.server_url, None);
     assert!(
         state
