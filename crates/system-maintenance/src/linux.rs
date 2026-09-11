@@ -97,6 +97,8 @@ fn state_lock() -> Result<File> {
     Ok(file)
 }
 fn sync_tree(path: &Path) -> Result<()> {
+    // Root services use umask 077; published directories must remain traversable by users.
+    fs::set_permissions(path, fs::Permissions::from_mode(0o755))?;
     for entry in fs::read_dir(path)? {
         let entry = entry?;
         if entry.file_type()?.is_dir() {
@@ -537,5 +539,22 @@ mod tests {
     #[test]
     fn public_writable_ancestors_are_not_trusted_root_paths() {
         assert!(trusted_path(Path::new("/tmp"), true).is_err());
+    }
+    #[test]
+    fn published_directories_override_private_service_umask() {
+        let root =
+            std::env::temp_dir().join(format!("tundra-runtime-modes-test-{}", std::process::id()));
+        fs::create_dir_all(root.join("share/locales")).unwrap();
+        fs::set_permissions(root.join("share"), fs::Permissions::from_mode(0o700)).unwrap();
+        fs::set_permissions(
+            root.join("share/locales"),
+            fs::Permissions::from_mode(0o700),
+        )
+        .unwrap();
+        sync_tree(&root).unwrap();
+        for path in [&root, &root.join("share"), &root.join("share/locales")] {
+            assert_eq!(fs::metadata(path).unwrap().mode() & 0o777, 0o755);
+        }
+        fs::remove_dir_all(root).unwrap();
     }
 }
