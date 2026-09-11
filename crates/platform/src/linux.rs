@@ -2380,7 +2380,7 @@ mod tests {
         .expect_err("a missing helper must be reported synchronously");
         assert!(matches!(
             error,
-            PlatformError::Io {
+            PlatformError::DetailedIo {
                 operation: "open with Linux helper",
                 path: Some(path),
                 ..

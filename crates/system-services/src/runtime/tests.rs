@@ -752,22 +752,12 @@ fn start_with_zero_status_intervals() -> (
 }
 
 #[test]
-fn zero_background_interval_is_bounded_and_commands_remain_responsive() {
+fn zero_status_intervals_keep_commands_responsive() {
     let (handle, mut receiver, platform) = start_with_zero_status_intervals();
     wait_until(&mut receiver, |snapshot| {
         matches!(snapshot.storage, StorageState::Ready(_))
     });
-    std::thread::sleep(Duration::from_millis(75));
     let storage_calls = status_call_count(&platform);
-    let network_calls = network_status_call_count(&platform);
-    assert!(
-        (1..=16).contains(&storage_calls),
-        "storage calls: {storage_calls}"
-    );
-    assert!(
-        (1..=16).contains(&network_calls),
-        "network calls: {network_calls}"
-    );
 
     handle.refresh_system_status().unwrap();
     wait_until(&mut receiver, |_| {
@@ -795,26 +785,49 @@ fn zero_background_interval_is_bounded_and_commands_remain_responsive() {
 }
 
 #[test]
-fn zero_active_interval_is_bounded() {
-    let (handle, mut receiver, platform) = start_with_zero_status_intervals();
-    wait_until(&mut receiver, |snapshot| {
-        matches!(snapshot.network, NetworkState::Ready(_))
-    });
-    handle.set_system_status_active(true).unwrap();
-    let storage_baseline = status_call_count(&platform);
-    let network_baseline = network_status_call_count(&platform);
-    std::thread::sleep(Duration::from_millis(75));
-    let storage_calls = status_call_count(&platform) - storage_baseline;
-    let network_calls = network_status_call_count(&platform) - network_baseline;
-    assert!(
-        (1..=16).contains(&storage_calls),
-        "storage calls: {storage_calls}"
-    );
-    assert!(
-        (1..=16).contains(&network_calls),
-        "network calls: {network_calls}"
-    );
-    handle.shutdown().unwrap();
+fn zero_status_intervals_are_bounded_in_background_and_active_modes() {
+    for active in [false, true] {
+        let platform = mock_platform();
+        let (sender, _receiver) = metrics_channel();
+        let mut config = config();
+        config.system_status_background_refresh_interval = Duration::ZERO;
+        config.system_status_active_refresh_interval = Duration::ZERO;
+        config.system_status_active_slow_refresh_interval = Duration::ZERO;
+        let start = Instant::now();
+        let mut status_due = start;
+        let mut fast_due = start;
+        let mut slow_due = start;
+        let mut monitor: Result<Box<dyn platform::SystemMonitor>, _> =
+            Err(platform::PlatformError::Unsupported {
+                capability: "test.system_monitor",
+            });
+        // Drive the production scheduler with explicit instants. OS scheduling
+        // delays must not change the number of samples expected in this window.
+        for millis in 0..=75 {
+            super::system_status::refresh_due_system_sources(
+                start + Duration::from_millis(millis),
+                &config,
+                active,
+                &sender,
+                &platform,
+                &mut monitor,
+                &mut status_due,
+                &mut fast_due,
+                &mut slow_due,
+            );
+            let expected = (millis / 10 + 1) as usize;
+            assert_eq!(status_call_count(&platform), expected, "active={active}");
+            assert_eq!(
+                network_status_call_count(&platform),
+                expected,
+                "active={active}"
+            );
+        }
+        let next_due = start + Duration::from_millis(80);
+        assert_eq!(status_due, next_due);
+        assert_eq!(fast_due, next_due);
+        assert_eq!(slow_due, next_due);
+    }
 }
 
 #[test]

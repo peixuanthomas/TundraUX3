@@ -65,7 +65,7 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
-          cargo test --workspace --locked
+          cargo test --workspace --locked --no-fail-fast
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Build release binaries
@@ -131,7 +131,7 @@ jobs:
         run: |
           set -euo pipefail
           export TMPDIR="$(cd "$RUNNER_TEMP" && pwd -P)"
-          cargo test --workspace --locked
+          cargo test --workspace --locked --no-fail-fast
           bash scripts/check-weathr-dependency-boundary.sh
 
       - name: Build ARM64 and Intel release binaries
@@ -203,7 +203,7 @@ jobs:
         run: |
           set -euo pipefail
           export TMPDIR="$(cd "$RUNNER_TEMP" && pwd -P)"
-          cargo test --workspace --locked
+          cargo test --workspace --locked --no-fail-fast
           bash scripts/check-weathr-dependency-boundary.sh
 
       - name: Build Linux packages
@@ -273,7 +273,7 @@ jobs:
         run: |
           set -euo pipefail
           export TMPDIR="$(cd "$RUNNER_TEMP" && pwd -P)"
-          cargo test --workspace --locked
+          cargo test --workspace --locked --no-fail-fast
           bash scripts/check-weathr-dependency-boundary.sh
       - name: Build Fedora RPM
         run: |

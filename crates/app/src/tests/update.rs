@@ -724,7 +724,13 @@ fn update_interrupted_journal_recovers_old_installation() {
 fn recovery_scan_fixture(name: &str, state: TransactionState) -> (PathBuf, PathBuf, PathBuf) {
     let root = update_test_root(name);
     fs::create_dir_all(root.join("install")).unwrap();
-    let install = root.join("install/../install");
+    // File URL conversion removes Windows verbatim prefixes, so joining `..`
+    // preserves the noncanonical spelling and Windows can resolve it normally.
+    let non_verbatim_root = reqwest::Url::from_directory_path(&root)
+        .unwrap()
+        .to_file_path()
+        .unwrap();
+    let install = non_verbatim_root.join("install/../install");
     let canonical_install = fs::canonicalize(&install).unwrap();
     assert_ne!(install, canonical_install);
     let transaction_dir = canonical_install.join(".tundra-update/tx");

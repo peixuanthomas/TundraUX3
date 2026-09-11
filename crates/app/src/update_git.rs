@@ -229,7 +229,8 @@ mod tests {
         let third = commit("third", Some(&second));
         git.repo(&["update-ref", "refs/heads/master", &third])
             .unwrap();
-        let remote = format!("file://{}", root.join("history").display());
+        let remote = reqwest::Url::from_directory_path(root.join("history"))
+            .expect("absolute repository path must convert to a file URL");
         for (index, (local, expected, count)) in [
             (Some(first), UpdateRelation::Behind { remote_ahead: 2 }, 2),
             (Some(third.clone()), UpdateRelation::Identical, 0),
@@ -248,7 +249,7 @@ mod tests {
                     commit_sha: local,
                     dirty: false,
                 },
-                &remote,
+                remote.as_str(),
                 &work,
             )
             .unwrap();

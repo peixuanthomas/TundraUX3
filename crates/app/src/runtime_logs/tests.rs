@@ -107,21 +107,29 @@ fn runtime_logs_user_file_open_is_sanitized_filtered_snapshot() {
 fn runtime_logs_file_selection_rejects_outside_and_traversal() {
     let root = Temp::new();
     let original = write_events(&root.0, &[event("alice")]);
-    for path in [
-        root.0.join("crashes/../runtime/runtime-test.jsonl"),
-        root.0.join("../runtime-test.jsonl"),
-        root.0.join("crashes/test.json"),
+    for relative in [
+        "crashes/../runtime/runtime-test.jsonl",
+        "../runtime-test.jsonl",
+        "crashes/test.json",
     ] {
+        // PathBuf::join normalizes parent components on Windows verbatim paths.
+        // Preserve the untrusted spelling so the test actually submits traversal.
+        let mut raw = root.0.as_os_str().to_os_string();
+        raw.push(std::path::MAIN_SEPARATOR_STR);
+        raw.push(relative.replace('/', std::path::MAIN_SEPARATOR_STR));
+        let path = PathBuf::from(raw);
         assert!(
             prepare_log_document(
                 &root.0,
                 &LogQuery::default(),
                 &LogAccess::Admin,
-                &LogDocumentSelection::File(path),
+                &LogDocumentSelection::File(path.clone()),
                 &UnsupportedPlatform,
                 &AtomicBool::new(false)
             )
-            .is_err()
+            .is_err(),
+            "accepted invalid log selection: {}",
+            path.display()
         );
     }
     assert!(original.exists());
