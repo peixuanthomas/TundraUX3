@@ -1505,7 +1505,7 @@ impl ShellSession {
             .or_else(|| {
                 (self.identity_backend == identity::IdentityBackend::Linux).then(|| {
                     i18n::tr!(
-                        "shell-linux-manages-accounts-and-passwords-all-ux-sessions-run-as-root"
+                        "shell-linux-system-user-session-permissions"
                     )
                 })
             });
