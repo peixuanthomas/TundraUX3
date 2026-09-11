@@ -1509,7 +1509,8 @@ impl ShellSession {
         let message = message.into();
         self.settings_update_state.busy = false;
         self.settings_update_state.phase = Some(app::update::UpdatePhase::Failed);
-        self.settings_update_state.status = message.clone();
+        self.settings_update_state.status =
+            i18n::msg!("settings-update-failed", reason = message.clone()).into();
         self.settings_update_state.error = Some(message.clone());
         // Diagnostic output uses raw external text or stable message identity, never translated UI text.
         let diagnostic = match &message {
@@ -1518,7 +1519,7 @@ impl ShellSession {
         };
         self.settings_update_state
             .append_output(&format!("ERROR: {diagnostic}"));
-        self.notify_status(message);
+        self.notify_status(i18n::msg!("settings-update-failed", reason = message));
     }
 
     pub(in crate::session) fn poll_settings_background_tasks(&mut self) {
@@ -2041,9 +2042,9 @@ impl ShellSession {
     ) {
         let message = message.into();
         if let Some(state) = self.settings_state.as_mut() {
-            state.status = message.clone();
+            state.status = i18n::msg!("settings-error", reason = message.clone()).into();
         }
-        self.notify_status(message);
+        self.notify_status(i18n::msg!("settings-status-error", reason = message));
     }
 
     pub fn to_settings_view_model(&self) -> Option<ui::SettingsViewModel> {
@@ -3128,6 +3129,11 @@ mod update_tests {
             remote_ahead: 2,
             local_ahead: 3,
         });
+        let error: i18n::LocalizedText = i18n::msg!(
+            "settings-update-failed",
+            reason = i18n::msg!("settings-admin-required")
+        )
+        .into();
         let retained = (
             saved.clone(),
             category.clone(),
@@ -3155,6 +3161,11 @@ mod update_tests {
                     (snapshot, saved, category, invalid, relation)
                 })
         {
+            let expected_error = if snapshot.code() == "en-US" {
+                "Update failed: Administrator permission is required"
+            } else {
+                "更新失败：需要管理员权限"
+            };
             let _language = i18n::enter_snapshot(snapshot);
             assert_eq!(saved.render_current(), expected_saved);
             assert_eq!(category.render_current(), expected_category);
@@ -3164,6 +3175,7 @@ mod update_tests {
             assert!(rendered_relation.starts_with(expected_relation));
             assert!(rendered_relation.contains('2'));
             assert!(rendered_relation.contains('3'));
+            assert_eq!(error.render_current(), expected_error);
             assert_eq!(
                 (&saved, &category, &invalid, &relation),
                 (&retained.0, &retained.1, &retained.2, &retained.3)
