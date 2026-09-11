@@ -93,6 +93,7 @@ fn check_in(
         Vec::new()
     };
     Ok(UpdateCheckResult {
+        system_release: None,
         default_branch,
         head_sha,
         relation,

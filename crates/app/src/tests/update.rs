@@ -177,6 +177,7 @@ fn update_preparation_failures_never_touch_installation() {
             fs::write(target.join(CLI_FILE), b"cli").unwrap();
         }
         let check = UpdateCheckResult {
+            system_release: None,
             default_branch: "master".to_owned(),
             head_sha: "target-sha".to_owned(),
             relation: UpdateRelation::Behind { remote_ahead: 1 },
@@ -343,6 +344,7 @@ fn update_api_rate_limit_at_any_step_uses_git_fallback() {
             dirty: false,
         };
         let expected = UpdateCheckResult {
+            system_release: None,
             default_branch: "master".into(),
             head_sha: "a".repeat(40),
             relation: UpdateRelation::Behind { remote_ahead: 1 },
@@ -459,6 +461,7 @@ fn update_preparation_uses_disk_cache_and_cleans_failed_work() {
     let platform =
         platform::mock::MockPlatform::new(dirs, paths.clone()).with_kind(PlatformKind::Linux);
     let check = UpdateCheckResult {
+        system_release: None,
         default_branch: "master".into(),
         head_sha: "invalid-sha".into(),
         relation: UpdateRelation::Unknown,
@@ -829,4 +832,30 @@ fn update_rejects_old_transactions_before_replacing_programs() {
             .contains("unsupported update protocol 1")
     );
     fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn system_update_metadata_rejects_unstable_or_missing_runtime() {
+    let mut release = SystemRelease {
+        tag_name: "v2.0.0".into(),
+        draft: false,
+        prerelease: false,
+        assets: vec![SystemReleaseAsset {
+            name: "tundra-linux-x86_64.zip".into(),
+        }],
+    };
+    assert_eq!(
+        system_release_version(&release).unwrap(),
+        Version::new(2, 0, 0)
+    );
+    for tag in ["../../escape", "v2.0.0-beta", "v2.0.0+extra", "2.0.0"] {
+        release.tag_name = tag.into();
+        assert!(system_release_version(&release).is_err());
+    }
+    release.tag_name = "v2.0.0".into();
+    release.draft = true;
+    assert!(system_release_version(&release).is_err());
+    release.draft = false;
+    release.assets.clear();
+    assert!(system_release_version(&release).is_err());
 }

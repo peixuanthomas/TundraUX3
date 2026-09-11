@@ -74,6 +74,8 @@ pub struct UpdateCommit {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UpdateCheckResult {
+    /// Release tag for system D-Bus installation. Display metadata is not authorization.
+    pub system_release: Option<String>,
     pub default_branch: String,
     pub head_sha: String,
     pub relation: UpdateRelation,
@@ -213,6 +215,93 @@ struct Compare {
     commits: Vec<ApiCommit>,
 }
 
+/// Detect installations whose runtime can only be changed by the system service.
+pub fn is_system_managed_install() -> bool {
+    #[cfg(target_os = "linux")]
+    {
+        use std::os::unix::fs::MetadataExt;
+        std::env::current_exe()
+            .ok()
+            .and_then(|path| fs::metadata(path).ok())
+            .is_some_and(|m| m.uid() == 0)
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        false
+    }
+}
+
+#[derive(Deserialize)]
+struct SystemRelease {
+    tag_name: String,
+    draft: bool,
+    prerelease: bool,
+    assets: Vec<SystemReleaseAsset>,
+}
+#[derive(Deserialize)]
+struct SystemReleaseAsset {
+    name: String,
+}
+
+fn system_release_version(release: &SystemRelease) -> Result<Version, UpdateError> {
+    let version = release
+        .tag_name
+        .strip_prefix('v')
+        .and_then(|v| Version::parse(v).ok())
+        .filter(|v| v.pre.is_empty() && v.build.is_empty() && format!("v{v}") == release.tag_name)
+        .ok_or_else(|| UpdateError::new("official release has no canonical stable version"))?;
+    if release.draft
+        || release.prerelease
+        || !release
+            .assets
+            .iter()
+            .any(|a| a.name == "tundra-linux-x86_64.zip")
+    {
+        return Err(UpdateError::new(
+            "the official release does not provide a verified Linux runtime",
+        ));
+    }
+    Ok(version)
+}
+
+/// Fetch display metadata only; privileged maintenance independently verifies the signed runtime.
+pub fn check_for_system_updates(
+    identity: &BuildIdentity,
+) -> Result<UpdateCheckResult, UpdateError> {
+    let client = Client::builder()
+        .user_agent(USER_AGENT)
+        .timeout(Duration::from_secs(20))
+        .build()
+        .map_err(|e| UpdateError::new(e.to_string()))?;
+    let base = format!("{API_ROOT}/repos/{GITHUB_OWNER}/{GITHUB_REPO}");
+    let release: SystemRelease = get_json(&client, &format!("{base}/releases/latest"))?;
+    let version = system_release_version(&release)?;
+    let installed = Version::parse(identity.package_version.trim_start_matches('v'))
+        .map_err(|e| UpdateError::new(format!("invalid installed version: {e}")))?;
+    let relation = match version.cmp(&installed) {
+        std::cmp::Ordering::Greater => UpdateRelation::Behind { remote_ahead: 1 },
+        std::cmp::Ordering::Equal => UpdateRelation::Identical,
+        std::cmp::Ordering::Less => UpdateRelation::Ahead { local_ahead: 1 },
+    };
+    let commit: ApiCommitRef = get_json(&client, &format!("{base}/commits/{}", release.tag_name))?;
+    if !git::is_commit_sha(&commit.sha) {
+        return Err(UpdateError::new("release tag has an invalid commit"));
+    }
+    Ok(UpdateCheckResult {
+        system_release: Some(release.tag_name.clone()),
+        default_branch: "master".into(),
+        head_sha: commit.sha.clone(),
+        relation,
+        commits: vec![UpdateCommit {
+            sha: commit.sha,
+            message: format!(
+                "Linux runtime {} (signature verification required before trusted confirmation)",
+                release.tag_name
+            ),
+        }],
+    })
+}
+
 pub fn check_for_updates(identity: &BuildIdentity) -> Result<UpdateCheckResult, UpdateError> {
     check_with_fallback(identity, API_ROOT, || git::check(identity))
 }
@@ -265,6 +354,7 @@ fn check_using_api(
         )
     };
     Ok(UpdateCheckResult {
+        system_release: None,
         default_branch: repository.default_branch,
         head_sha: branch.commit.sha,
         relation,
@@ -386,11 +476,55 @@ fn source_archive_url(sha: &str) -> Result<String, UpdateError> {
     ))
 }
 
+#[cfg(target_os = "linux")]
+fn require_user_owned_installation(install_dir: &Path) -> Result<(), UpdateError> {
+    use std::os::unix::fs::MetadataExt;
+    // procfs is kernel-owned; unlike environment variables these IDs cannot be forged.
+    let status = fs::read_to_string("/proc/self/status")?;
+    let ids = status
+        .lines()
+        .find_map(|line| line.strip_prefix("Uid:"))
+        .ok_or_else(|| UpdateError::new("could not read actual process credentials"))?
+        .split_whitespace()
+        .map(str::parse::<u32>)
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|_| UpdateError::new("invalid kernel process credentials"))?;
+    if ids.len() != 4 || ids[0] == 0 || ids.iter().any(|id| *id != ids[0]) {
+        return Err(UpdateError::new(
+            "source self-updates require an ordinary user; system installations use trusted system maintenance",
+        ));
+    }
+    for path in [
+        install_dir.to_path_buf(),
+        install_dir.join(SHELL_FILE),
+        install_dir.join(CLI_FILE),
+    ] {
+        platform::validate_no_follow_path(&path, true)
+            .map_err(|e| UpdateError::new(e.to_string()))?;
+        let metadata = fs::metadata(&path)?;
+        if metadata.uid() != ids[0] || metadata.mode() & 0o022 != 0 {
+            return Err(UpdateError::new(
+                "this installation is managed by the system; request a verified release through the privileged service",
+            ));
+        }
+    }
+    Ok(())
+}
+
 pub fn prepare_update(
     platform: &dyn Platform,
     check: &UpdateCheckResult,
     progress: &mut dyn FnMut(UpdateProgress),
 ) -> Result<PreparedUpdate, UpdateError> {
+    #[cfg(target_os = "linux")]
+    {
+        let executable = std::env::current_exe()?;
+        require_user_owned_installation(
+            executable
+                .parent()
+                .ok_or_else(|| UpdateError::new("executable has no installation directory"))?,
+        )?;
+    }
     if !supports_updates(platform.kind()) {
         return Err(UpdateError::new(
             "automatic updates are supported only on Windows and Linux",
@@ -876,6 +1010,8 @@ pub fn stage_update_for_apply(
 
     #[cfg(any(windows, target_os = "linux"))]
     {
+        #[cfg(target_os = "linux")]
+        require_user_owned_installation(install_dir)?;
         validate_update_probe(&prepared.cli_exe, &prepared.target_sha)?;
         let install_dir = fs::canonicalize(install_dir).map_err(|error| {
             UpdateError::new(format!("could not resolve installation directory: {error}"))
@@ -956,6 +1092,10 @@ pub fn recover_interrupted_update_from_current_exe(parent_pid: u32) -> Result<bo
         let install_dir = executable
             .parent()
             .ok_or_else(|| UpdateError::new("TundraUX executable has no parent directory"))?;
+        #[cfg(target_os = "linux")]
+        if require_user_owned_installation(install_dir).is_err() {
+            return Ok(false);
+        }
         scan_update_recovery(install_dir, parent_pid, &launch_helper_mode)
     }
 }
@@ -1056,6 +1196,8 @@ pub fn apply_update_transaction(
             wait_for_process_exit(parent_pid, Duration::from_secs(30))?;
         }
         let mut manifest = load_manifest(manifest_path)?;
+        #[cfg(target_os = "linux")]
+        require_user_owned_installation(&manifest.install_dir)?;
         validate_running_helper(&manifest)?;
         let operations = NativeTransactionOperations::default();
         run_update_transaction(manifest_path, &mut manifest, recover_only, &operations)?;
@@ -1404,6 +1546,8 @@ fn launch_helper_mode(
     recover_only: bool,
 ) -> Result<(), UpdateError> {
     let manifest = load_manifest(manifest_path)?;
+    #[cfg(target_os = "linux")]
+    require_user_owned_installation(&manifest.install_dir)?;
     let helper = manifest.transaction_dir.join(HELPER_FILE);
     if !helper.is_file() {
         return Err(UpdateError::new(format!(

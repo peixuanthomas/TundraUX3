@@ -1,0 +1,77 @@
+name: Verified Linux system release
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: linux-system-release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    if: github.repository == 'peixuanthomas/TundraUX3' && github.ref == 'refs/heads/master'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - name: Build the reviewed master commit
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libpam0g-dev libdbus-1-dev pkg-config
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+          cargo build --release --workspace --locked
+          cargo test --locked -p system-maintenance -p session-protocol
+      - name: Assemble fixed-format runtime
+        id: release
+        env:
+          SOURCE_SHA: ${{ github.sha }}
+        run: |
+          python3 - <<'PY'
+          import hashlib, json, os, pathlib, tomllib, zipfile
+          root = pathlib.Path('.')
+          version = 'v' + tomllib.loads((root/'Cargo.toml').read_text())['workspace']['package']['version']
+          release = dict(version=version, source_sha=os.environ['SOURCE_SHA'], architecture='x86_64-unknown-linux-gnu', protocol=1, runtime_sha256='0'*64)
+          out = root/'system-release'
+          out.mkdir()
+          runtime = out/'runtime.zip'
+          with zipfile.ZipFile(runtime, 'w', zipfile.ZIP_DEFLATED) as archive:
+              for name in ['tundra-shell', 'tundra-cli', 'tundra-sessiond', 'tundra-greeter', 'tundra-privileged']:
+                  archive.write(root/'target/release'/name, 'bin/'+name)
+              archive.writestr('share/tundra/release.json', json.dumps(release))
+          release['runtime_sha256'] = hashlib.sha256(runtime.read_bytes()).hexdigest()
+          (out/'release.json').write_text(json.dumps(release))
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              output.write('version='+version+'\n')
+          PY
+      - name: Attest exact runtime bytes
+        id: attest
+        uses: actions/attest-build-provenance@v3
+        with:
+          subject-path: system-release/runtime.zip
+      - name: Publish envelope without replacing existing release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.release.outputs.version }}
+          ATTESTATION: ${{ steps.attest.outputs.bundle-path }}
+        run: |
+          python3 - <<'PY'
+          import os, pathlib, zipfile
+          out = pathlib.Path('system-release')
+          with zipfile.ZipFile(out/'tundra-linux-x86_64.zip', 'w', zipfile.ZIP_STORED) as archive:
+              archive.write(out/'runtime.zip', 'runtime.zip')
+              archive.write(out/'release.json', 'release.json')
+              archive.write(os.environ['ATTESTATION'], 'attestation.jsonl')
+          PY
+          if ! gh release view "$VERSION" --repo peixuanthomas/TundraUX3 >/dev/null 2>&1; then
+            gh release create "$VERSION" --repo peixuanthomas/TundraUX3 --target "$GITHUB_SHA" --title "$VERSION" --notes 'Verified Linux system runtime. Requires the matching packaged bootstrap services.'
+          fi
+          gh release upload "$VERSION" system-release/tundra-linux-x86_64.zip --repo peixuanthomas/TundraUX3

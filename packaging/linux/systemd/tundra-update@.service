@@ -1,0 +1,20 @@
+[Unit]
+Description=Install verified Tundra release %i
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/libexec/tundra/tundra-system-maintenance apply-prepared %i
+User=root
+Group=root
+UMask=0077
+TimeoutStartSec=240
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectHome=yes
+ProtectSystem=strict
+ReadWritePaths=/var/lib/tundra/runtime /run/tundra
+RestrictAddressFamilies=AF_UNIX
+RestrictSUIDSGID=yes
+LockPersonality=yes

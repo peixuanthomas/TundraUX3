@@ -1,0 +1,18 @@
+[Unit]
+Description=Recover interrupted Tundra system update
+Before=tundra-sessiond.service tundra-privileged.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/libexec/tundra/tundra-system-maintenance recover
+User=root
+Group=root
+UMask=0077
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectHome=yes
+ProtectSystem=strict
+ReadWritePaths=/var/lib/tundra/runtime /run/tundra
+
+[Install]
+WantedBy=multi-user.target
