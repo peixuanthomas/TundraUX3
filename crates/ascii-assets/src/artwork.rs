@@ -1,5 +1,4 @@
 use std::collections::BTreeMap;
-use std::fs;
 use std::path::{Component, Path};
 
 use serde::Deserialize;
@@ -402,16 +401,11 @@ pub(crate) fn read_asset_to_string(
     relative_path: &str,
 ) -> Result<String, AssetError> {
     let path = resolver.asset_path(theme_id, relative_path);
-    if !path.exists() {
-        return Err(AssetError::MissingAsset {
-            asset: key.to_string(),
-            path,
-        });
-    }
-    fs::read_to_string(&path).map_err(|source| AssetError::ReadAsset {
+    let bytes = resolver.read_asset(theme_id, key, relative_path)?;
+    String::from_utf8(bytes).map_err(|source| AssetError::ReadAsset {
         asset: key.to_string(),
         path,
-        source,
+        source: std::io::Error::new(std::io::ErrorKind::InvalidData, source),
     })
 }
 

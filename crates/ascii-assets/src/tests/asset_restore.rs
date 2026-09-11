@@ -173,3 +173,236 @@ fn logs_restore_preserves_unrelated_custom_theme_files() {
         b"custom theme"
     );
 }
+
+#[test]
+fn automatic_recovery_creates_a_missing_root_and_is_idempotent() {
+    let parent = TempDir::new("automatic-missing-root");
+    let root = parent.path().join("missing/assets");
+    let (store, report) = AsciiAssetStore::load_default_with_root_and_recovery(&root).unwrap();
+    assert_eq!(store.root(), root);
+    assert_eq!(report.root, root);
+    assert_eq!(report.repaired.len(), crate::default_theme_files().len());
+    assert!(report.fallback.is_empty());
+    assert!(
+        report
+            .repaired
+            .iter()
+            .all(|file| !file.issue.is_empty() && file.repair_error.is_none())
+    );
+    assert!(check_default_theme(&root).is_ok());
+    let (_, second) = AsciiAssetStore::load_default_with_root_and_recovery(&root).unwrap();
+    assert!(second.repaired.is_empty());
+    assert!(second.fallback.is_empty());
+}
+
+#[test]
+fn automatic_recovery_repairs_corrupt_defaults_and_preserves_custom_content() {
+    let root = TempDir::new("automatic-custom-content");
+    restore_default_theme(root.path()).unwrap();
+    let theme = root.path().join("themes/default");
+    let home_path = theme.join("home_icons.toml");
+    let custom_home = fs::read_to_string(&home_path)
+        .unwrap()
+        .replace("label = \"Explorer\"", "label = \"My Explorer\"")
+        .replace("home_icons/explorer.png", "home_icons/custom.png");
+    fs::write(&home_path, &custom_home).unwrap();
+    let custom_image = fs::read(theme.join("home_icons/settings.png")).unwrap();
+    fs::write(theme.join("home_icons/custom.png"), &custom_image).unwrap();
+    let custom_banner = "schema_version = 1\n[items.tundraux3]\nlines = [\"CUSTOM\"]\n";
+    fs::write(theme.join("banner.toml"), custom_banner).unwrap();
+    fs::write(theme.join("weathr/world/house.txt"), "CUSTOM HOUSE\n").unwrap();
+
+    let corrupt = [
+        ("explorer_icons", "explorer_icons.toml"),
+        ("launcher_icons", "launcher_icons.toml"),
+        ("weathr/render/clock_font", "weathr/render/clock_font.toml"),
+        ("weathr/animation/cloud_0", "weathr/animation/cloud_0.txt"),
+        ("home_icons/logs.png", "home_icons/logs.png"),
+    ];
+    for (_, relative_path) in corrupt {
+        fs::write(theme.join(relative_path), b"\xff\x00broken").unwrap();
+    }
+    let (store, report) =
+        AsciiAssetStore::load_default_with_root_and_recovery(root.path()).unwrap();
+    assert_eq!(report.repaired.len(), corrupt.len());
+    assert!(report.fallback.is_empty());
+    for (key, _) in corrupt {
+        assert!(report.repaired.iter().any(|file| file.key == key));
+    }
+    assert_eq!(fs::read_to_string(home_path).unwrap(), custom_home);
+    assert_eq!(
+        fs::read_to_string(theme.join("banner.toml")).unwrap(),
+        custom_banner
+    );
+    assert_eq!(store.banner_lines("tundraux3").unwrap(), &["CUSTOM"]);
+    assert_eq!(
+        store.text_art("weathr/world/house").unwrap().lines(),
+        &["CUSTOM HOUSE"]
+    );
+    assert_eq!(
+        store.home_icon_image_bytes("explorer"),
+        Some(custom_image.as_slice())
+    );
+    assert_eq!(
+        store.home_icon_catalog().icon("explorer").unwrap().label(),
+        Some("My Explorer")
+    );
+}
+
+#[test]
+fn automatic_recovery_uses_memory_when_root_is_a_file_without_creating_asset_directories() {
+    let parent = TempDir::new("automatic-blocked-root");
+    let root = parent.path().join("assets");
+    fs::write(&root, b"keep root obstruction").unwrap();
+    let (mut store, report) = AsciiAssetStore::load_default_with_root_and_recovery(&root).unwrap();
+    assert!(report.repaired.is_empty());
+    assert_eq!(report.fallback.len(), crate::default_theme_files().len());
+    assert!(
+        report
+            .fallback
+            .iter()
+            .all(|file| !file.issue.is_empty() && file.repair_error.is_some())
+    );
+    assert_eq!(store.root(), root);
+    assert_eq!(store.theme_id(), DEFAULT_THEME_ID);
+    assert_eq!(fs::read(&root).unwrap(), b"keep root obstruction");
+    assert_eq!(fs::read_dir(parent.path()).unwrap().count(), 1);
+
+    let expected =
+        AsciiAssetStore::load_with_root(crate::CANONICAL_ASSETS_DIR, DEFAULT_THEME_ID).unwrap();
+    assert_eq!(
+        store.banner_lines("tundraux3").unwrap(),
+        expected.banner_lines("tundraux3").unwrap()
+    );
+    assert_eq!(store.home_icon_catalog(), expected.home_icon_catalog());
+    assert_eq!(store.clock_font(), expected.clock_font());
+    assert_eq!(
+        store.max_asset_dimensions(),
+        expected.max_asset_dimensions()
+    );
+    for (key, _) in crate::asset_manifest::REQUIRED_TEXT_ARTS {
+        assert_eq!(
+            store.text_art(key).unwrap(),
+            expected.text_art(key).unwrap()
+        );
+    }
+    for icon in expected.explorer_icons() {
+        assert_eq!(store.explorer_icon(icon.key()).unwrap(), icon);
+    }
+    for icon in expected.home_icon_catalog().icons() {
+        assert_eq!(
+            store.home_icon_image_bytes(icon.key()),
+            expected.home_icon_image_bytes(icon.key())
+        );
+        assert_eq!(
+            store.home_icon_image_path(icon.key()),
+            icon.image_path()
+                .map(|path| root.join("themes/default").join(path))
+        );
+    }
+    for key in ["builtin.command-line", "builtin.editor"] {
+        assert_eq!(store.launcher_icon(key), expected.launcher_icon(key));
+        assert_eq!(
+            store.launcher_icon_image_bytes(key),
+            expected.launcher_icon_image_bytes(key)
+        );
+        assert_eq!(
+            store.launcher_icon_image_path(key),
+            expected
+                .launcher_icon(key)
+                .unwrap()
+                .image_path()
+                .map(|path| root.join("themes/default").join(path))
+        );
+    }
+    store
+        .reload()
+        .expect("reload retains embedded fallback bytes");
+    assert_eq!(store.clock_font(), expected.clock_font());
+}
+
+#[test]
+fn automatic_recovery_continues_after_individual_failures_and_cleans_staging_files() {
+    let root = TempDir::new("automatic-mixed-recovery");
+    restore_default_theme(root.path()).unwrap();
+    let theme = root.path().join("themes/default");
+    for relative in ["banner.toml", "home_icons/explorer.png"] {
+        let path = theme.join(relative);
+        fs::remove_file(&path).unwrap();
+        fs::create_dir(&path).unwrap();
+        fs::write(path.join("keep"), b"leave obstruction intact").unwrap();
+    }
+    fs::remove_file(theme.join("weathr/world/tree.txt")).unwrap();
+    let (store, report) =
+        AsciiAssetStore::load_default_with_root_and_recovery(root.path()).unwrap();
+    assert_eq!(report.fallback.len(), 2);
+    assert_eq!(report.repaired.len(), 1);
+    assert_eq!(report.repaired[0].key, "weathr/world/tree");
+    assert_eq!(
+        store.home_icon_image_bytes("explorer"),
+        Some(
+            embedded_default_theme_file("home_icons/explorer.png")
+                .unwrap()
+                .contents
+        )
+    );
+    assert!(store.banner_lines("tundraux3").is_ok());
+    for directory in [&theme, &theme.join("home_icons")] {
+        for entry in fs::read_dir(directory).unwrap() {
+            assert!(
+                !entry
+                    .unwrap()
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with(".ascii-assets-restore-")
+            );
+        }
+    }
+    for relative in ["banner.toml", "home_icons/explorer.png"] {
+        assert_eq!(
+            fs::read(theme.join(relative).join("keep")).unwrap(),
+            b"leave obstruction intact"
+        );
+    }
+}
+
+#[test]
+fn automatic_recovery_validates_required_launcher_entries() {
+    let root = TempDir::new("automatic-invalid-launcher");
+    restore_default_theme(root.path()).unwrap();
+    fs::write(
+        root.path().join("themes/default/launcher_icons.toml"),
+        "schema_version = 1\n[items]\n",
+    )
+    .unwrap();
+    let (store, report) =
+        AsciiAssetStore::load_default_with_root_and_recovery(root.path()).unwrap();
+    assert_eq!(report.repaired.len(), 1);
+    assert_eq!(report.repaired[0].key, "launcher_icons");
+    assert!(
+        report.repaired[0]
+            .issue
+            .contains("missing required built-in application icon")
+    );
+    assert!(store.launcher_icon("builtin.editor").is_some());
+}
+
+#[test]
+fn restore_atomically_replaces_the_destination_instead_of_truncating_it() {
+    let root = TempDir::new("atomic-replacement");
+    let theme = root.path().join("themes/default");
+    fs::create_dir_all(&theme).unwrap();
+    let path = theme.join("banner.toml");
+    fs::write(&path, b"corrupt original").unwrap();
+    let original = root.path().join("original-hard-link");
+    fs::hard_link(&path, &original).unwrap();
+
+    restore_default_theme_file(root.path(), "banner").unwrap();
+
+    assert_eq!(fs::read(&original).unwrap(), b"corrupt original");
+    assert_eq!(
+        fs::read(&path).unwrap(),
+        embedded_default_theme_file("banner").unwrap().contents
+    );
+    assert_eq!(fs::read_dir(&theme).unwrap().count(), 1);
+}

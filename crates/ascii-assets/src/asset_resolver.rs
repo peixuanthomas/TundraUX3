@@ -1,5 +1,6 @@
-use std::env;
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
+use std::{env, fs};
 
 use crate::asset_error::AssetError;
 use crate::asset_manifest::{CANONICAL_ASSETS_DIR, ENV_ASSETS_DIR};
@@ -7,6 +8,7 @@ use crate::asset_manifest::{CANONICAL_ASSETS_DIR, ENV_ASSETS_DIR};
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AssetResolver {
     root: PathBuf,
+    embedded: BTreeMap<PathBuf, &'static [u8]>,
 }
 
 impl AssetResolver {
@@ -41,11 +43,47 @@ impl AssetResolver {
         if !root.is_dir() {
             return Err(AssetError::RootNotDirectory { path: root });
         }
-        Ok(Self { root })
+        Ok(Self::from_unchecked_root(root))
     }
 
     pub(crate) fn from_unchecked_root(root: PathBuf) -> Self {
-        Self { root }
+        Self {
+            root,
+            embedded: BTreeMap::new(),
+        }
+    }
+
+    pub(crate) fn use_embedded_default(&mut self, relative_path: &str, contents: &'static [u8]) {
+        self.embedded.insert(
+            self.asset_path(crate::DEFAULT_THEME_ID, relative_path),
+            contents,
+        );
+    }
+
+    pub(crate) fn read_asset(
+        &self,
+        theme_id: &str,
+        key: &str,
+        relative_path: &str,
+    ) -> Result<Vec<u8>, AssetError> {
+        let path = self.asset_path(theme_id, relative_path);
+        if let Some(contents) = self.embedded.get(&path) {
+            return Ok(contents.to_vec());
+        }
+        fs::read(&path).map_err(|source| {
+            if source.kind() == std::io::ErrorKind::NotFound {
+                AssetError::MissingAsset {
+                    asset: key.to_string(),
+                    path,
+                }
+            } else {
+                AssetError::ReadAsset {
+                    asset: key.to_string(),
+                    path,
+                    source,
+                }
+            }
+        })
     }
 
     pub fn root(&self) -> &Path {

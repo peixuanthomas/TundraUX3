@@ -1,5 +1,4 @@
 use std::collections::{BTreeMap, BTreeSet};
-use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::artwork::{
@@ -38,6 +37,29 @@ pub struct AsciiAssetStore {
 }
 
 impl AsciiAssetStore {
+    /// Repairs damaged default files and loads them, using embedded bytes in memory
+    /// for files that cannot be restored. Strict loading APIs remain available.
+    pub fn load_default_with_recovery()
+    -> Result<(Self, crate::DefaultThemeRecoveryReport), AssetError> {
+        let root = crate::asset_root_for_recovery_from_env_or_current_exe()?;
+        Self::load_default_with_root_and_recovery(root)
+    }
+
+    /// Like `load_default_with_recovery`, with an explicit root that may be absent
+    /// or unwritable. The returned store retains this root, including image paths.
+    /// A fallback image path need not exist on disk; use the image-bytes APIs to
+    /// access its content. `reload` retains the store's memory fallbacks.
+    ///
+    /// Default PNGs use the existing exact embedded-content integrity checks.
+    /// Valid custom text/catalog files and separately referenced custom images are
+    /// preserved. Failures loading those non-embedded image paths still return an
+    /// error, since they have no built-in replacement.
+    pub fn load_default_with_root_and_recovery(
+        root: impl Into<PathBuf>,
+    ) -> Result<(Self, crate::DefaultThemeRecoveryReport), AssetError> {
+        crate::asset_restore::recover_default_theme(&root.into())
+    }
+
     pub fn load_default() -> Result<Self, AssetError> {
         Self::load_theme(DEFAULT_THEME_ID)
     }
@@ -193,23 +215,7 @@ fn load_image_assets(
     let mut images = BTreeMap::new();
 
     for relative_path in relative_paths {
-        let path = resolver.asset_path(theme_id, &relative_path);
-        let bytes = match fs::read(&path) {
-            Ok(bytes) => bytes,
-            Err(source) if source.kind() == std::io::ErrorKind::NotFound => {
-                return Err(AssetError::MissingAsset {
-                    asset: relative_path,
-                    path,
-                });
-            }
-            Err(source) => {
-                return Err(AssetError::ReadAsset {
-                    asset: relative_path,
-                    path,
-                    source,
-                });
-            }
-        };
+        let bytes = resolver.read_asset(theme_id, &relative_path, &relative_path)?;
         images.insert(relative_path, bytes);
     }
 

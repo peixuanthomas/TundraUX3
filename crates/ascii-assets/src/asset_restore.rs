@@ -1,10 +1,13 @@
 use std::fs;
+use std::io::{self, Write};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::asset_error::AssetError;
 use crate::asset_manifest::DEFAULT_THEME_ID;
-use crate::asset_validation::{AssetCheckStatus, check_default_theme};
-use crate::embedded_defaults::embedded_default_theme_file;
+use crate::asset_validation::{AssetCheckStatus, check_default_theme, validate_default_theme_file};
+use crate::embedded_defaults::{EMBEDDED_DEFAULT_THEME_FILES, embedded_default_theme_file};
+use crate::{AsciiAssetStore, AssetResolver};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AssetRestoreReport {
@@ -12,7 +15,62 @@ pub struct AssetRestoreReport {
     pub changed: bool,
 }
 
+/// A damaged file encountered during automatic default-theme loading.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AssetRecoveryFile {
+    pub key: String,
+    pub path: PathBuf,
+    /// The original validation/read failure that triggered recovery.
+    pub issue: String,
+    /// Restore or post-write validation failure; present only for memory fallbacks.
+    pub repair_error: Option<String>,
+}
+
+/// Only files requiring recovery are listed; healthy custom catalogs/art remain intact.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DefaultThemeRecoveryReport {
+    pub root: PathBuf,
+    pub repaired: Vec<AssetRecoveryFile>,
+    pub fallback: Vec<AssetRecoveryFile>,
+}
+
+pub(crate) fn recover_default_theme(
+    root: &Path,
+) -> Result<(AsciiAssetStore, DefaultThemeRecoveryReport), AssetError> {
+    let mut resolver = AssetResolver::from_unchecked_root(root.to_path_buf());
+    let mut report = DefaultThemeRecoveryReport {
+        root: root.to_path_buf(),
+        repaired: Vec::new(),
+        fallback: Vec::new(),
+    };
+    // Continue after individual restore failures so writable siblings still heal.
+    for file in EMBEDDED_DEFAULT_THEME_FILES {
+        let Err(issue) = validate_default_theme_file(&resolver, file) else {
+            continue;
+        };
+        let mut recovery = AssetRecoveryFile {
+            key: file.key.to_string(),
+            path: resolver.asset_path(DEFAULT_THEME_ID, file.relative_path),
+            issue: issue.to_string(),
+            repair_error: None,
+        };
+        match restore_default_theme_file(root, file.key) {
+            Ok(_) => report.repaired.push(recovery),
+            Err(error) => {
+                recovery.repair_error = Some(error.to_string());
+                resolver.use_embedded_default(file.relative_path, file.contents);
+                // Use the very same parser and semantic checks as disk-backed files.
+                validate_default_theme_file(&resolver, file)?;
+                report.fallback.push(recovery);
+            }
+        }
+    }
+    let store = AsciiAssetStore::load_with_resolver(resolver, DEFAULT_THEME_ID)?;
+    Ok((store, report))
+}
+
 /// Restores one default-theme file from the contents embedded in the binary.
+/// Writes atomically within the destination directory, then revalidates the file.
 pub fn restore_default_theme_file(
     root: &Path,
     file_key: &str,
@@ -48,14 +106,60 @@ pub fn restore_default_theme_file(
             path: path.clone(),
             source,
         })?;
-        fs::write(&path, contents).map_err(|source| AssetError::RestoreAsset {
+        atomic_write(&path, contents).map_err(|source| AssetError::RestoreAsset {
             asset: file_key.to_string(),
             path: path.clone(),
             source,
         })?;
     }
 
+    validate_default_theme_file(
+        &AssetResolver::from_unchecked_root(root.to_path_buf()),
+        file,
+    )?;
     Ok(AssetRestoreReport { path, changed })
+}
+
+static NEXT_RESTORE_ID: AtomicU64 = AtomicU64::new(0);
+
+fn atomic_write(path: &Path, contents: &[u8]) -> io::Result<()> {
+    let parent = path.parent().expect("asset path has a parent");
+    // create_new prevents clobbering another concurrent restore's staging file.
+    for _ in 0..64 {
+        let id = NEXT_RESTORE_ID.fetch_add(1, Ordering::Relaxed);
+        let temporary = parent.join(format!(
+            ".ascii-assets-restore-{}-{id}.tmp",
+            std::process::id()
+        ));
+        let mut output = match fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temporary)
+        {
+            Ok(output) => output,
+            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
+            Err(error) => return Err(error),
+        };
+        let staged = StagedAsset(temporary);
+        let written = output.write_all(contents).and_then(|()| output.sync_all());
+        drop(output);
+        written?;
+        // Never remove the destination first: a failed rename leaves it intact.
+        fs::rename(&staged.0, path)?;
+        return Ok(());
+    }
+    Err(io::Error::new(
+        io::ErrorKind::AlreadyExists,
+        "could not allocate an asset staging file",
+    ))
+}
+
+struct StagedAsset(PathBuf);
+
+impl Drop for StagedAsset {
+    fn drop(&mut self) {
+        let _ = fs::remove_file(&self.0);
+    }
 }
 
 fn upgraded_home_icons(path: &Path, embedded: &[u8]) -> Option<String> {

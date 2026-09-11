@@ -24,7 +24,10 @@ pub use asset_resolver::{
     AssetResolver, asset_root_for_recovery_from_env_or_current_exe,
     asset_root_from_env_or_current_exe,
 };
-pub use asset_restore::{AssetRestoreReport, restore_default_theme, restore_default_theme_file};
+pub use asset_restore::{
+    AssetRecoveryFile, AssetRestoreReport, DefaultThemeRecoveryReport, restore_default_theme,
+    restore_default_theme_file,
+};
 pub use asset_store::{AsciiAssetStore, AssetDimensions};
 pub use asset_validation::{
     AssetCheck, AssetCheckReport, AssetCheckStatus, DefaultThemeCheck, DefaultThemeCheckReport,

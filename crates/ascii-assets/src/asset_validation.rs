@@ -1,11 +1,13 @@
-use std::fs;
 use std::path::{Path, PathBuf};
 
-use crate::artwork::{load_art_set, load_explorer_icons, load_home_icon_catalog, load_text_art};
-use crate::asset_manifest::{AssetKind, required_assets};
+use crate::artwork::{
+    load_art_set, load_explorer_icons, load_home_icon_catalog, load_launcher_icons, load_text_art,
+};
+use crate::asset_error::AssetError;
+use crate::asset_manifest::{AssetKind, RequiredAsset, required_assets};
 use crate::asset_resolver::AssetResolver;
 use crate::clock_font::load_clock_font;
-use crate::embedded_defaults::EMBEDDED_DEFAULT_THEME_FILES;
+use crate::embedded_defaults::{EMBEDDED_DEFAULT_THEME_FILES, EmbeddedDefaultThemeFile};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AssetCheck {
@@ -137,20 +139,7 @@ pub fn check_default_theme(root: &Path) -> DefaultThemeCheckReport {
             .is_some_and(|extension| extension.eq_ignore_ascii_case("png"))
     }) {
         let path = resolver.asset_path(crate::DEFAULT_THEME_ID, file.relative_path);
-        let result = match fs::read(&path) {
-            Ok(contents) if contents == file.contents => Ok(()),
-            Ok(_) => Err(format!(
-                "default theme image {} does not match the built-in default",
-                file.key
-            )),
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                Err(format!("missing default theme image {}", file.key))
-            }
-            Err(error) => Err(format!(
-                "failed to read default theme image {}: {error}",
-                file.key
-            )),
-        };
+        let result = validate_default_theme_file(&resolver, file);
         checks.push(match result {
             Ok(()) => DefaultThemeCheck {
                 key: file.key.to_string(),
@@ -158,11 +147,11 @@ pub fn check_default_theme(root: &Path) -> DefaultThemeCheckReport {
                 status: AssetCheckStatus::Pass,
                 message: "theme file present and valid".to_string(),
             },
-            Err(message) => DefaultThemeCheck {
+            Err(error) => DefaultThemeCheck {
                 key: file.key.to_string(),
                 path,
                 status: AssetCheckStatus::Warning,
-                message,
+                message: error.to_string(),
             },
         });
     }
@@ -179,21 +168,7 @@ pub fn check_required_assets(root: &Path, theme_id: &str) -> AssetCheckReport {
 
     for asset in required_assets() {
         let path = resolver.asset_path(theme_id, asset.relative_path);
-        let result = match asset.kind {
-            AssetKind::Text => {
-                load_text_art(&resolver, theme_id, asset.key, asset.relative_path).map(|_| ())
-            }
-            AssetKind::ArtSet => {
-                if asset.key == "explorer_icons" {
-                    load_explorer_icons(&resolver, theme_id).map(|_| ())
-                } else if asset.key == "home_icons" {
-                    load_home_icon_catalog(&resolver, theme_id).map(|_| ())
-                } else {
-                    load_art_set(&resolver, theme_id, asset.key, asset.relative_path).map(|_| ())
-                }
-            }
-            AssetKind::Font => load_clock_font(&resolver, theme_id).map(|_| ()),
-        };
+        let result = validate_required_asset(&resolver, theme_id, &asset);
 
         checks.push(match result {
             Ok(()) => AssetCheck {
@@ -217,6 +192,44 @@ pub fn check_required_assets(root: &Path, theme_id: &str) -> AssetCheckReport {
         root: root.to_path_buf(),
         theme_id: theme_id.to_string(),
         checks,
+    }
+}
+
+pub(crate) fn validate_default_theme_file(
+    resolver: &AssetResolver,
+    file: &EmbeddedDefaultThemeFile,
+) -> Result<(), AssetError> {
+    if let Some(asset) = required_assets().iter().find(|asset| asset.key == file.key) {
+        return validate_required_asset(resolver, crate::DEFAULT_THEME_ID, asset);
+    }
+    let contents = resolver.read_asset(crate::DEFAULT_THEME_ID, file.key, file.relative_path)?;
+    // Canonical raster files have always used exact embedded-content validation.
+    // Custom image paths referenced by a healthy catalog are loaded separately.
+    if contents != file.contents {
+        return Err(AssetError::InvalidAsset {
+            asset: file.key.to_string(),
+            message: "default theme image does not match the built-in default".to_string(),
+        });
+    }
+    Ok(())
+}
+
+fn validate_required_asset(
+    resolver: &AssetResolver,
+    theme_id: &str,
+    asset: &RequiredAsset,
+) -> Result<(), AssetError> {
+    match asset.kind {
+        AssetKind::Text => {
+            load_text_art(resolver, theme_id, asset.key, asset.relative_path).map(|_| ())
+        }
+        AssetKind::ArtSet => match asset.key {
+            "explorer_icons" => load_explorer_icons(resolver, theme_id).map(|_| ()),
+            "home_icons" => load_home_icon_catalog(resolver, theme_id).map(|_| ()),
+            "launcher_icons" => load_launcher_icons(resolver, theme_id).map(|_| ()),
+            _ => load_art_set(resolver, theme_id, asset.key, asset.relative_path).map(|_| ()),
+        },
+        AssetKind::Font => load_clock_font(resolver, theme_id).map(|_| ()),
     }
 }
 
