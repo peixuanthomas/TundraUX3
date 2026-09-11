@@ -56,6 +56,7 @@ class StageLinuxSystemTests(unittest.TestCase):
         self.assertTrue((root / 'etc/tundra/update-trusted-root.jsonl').is_file())
         self.assertFalse((root / 'etc/pam.d/tundraux3').exists())
         self.assertTrue((root / 'usr/lib/tmpfiles.d/tundra.conf').is_file())
+        self.assertTrue((root / 'usr/share/selinux/packages/tundra-runtime.cil').is_file())
         self.assertFalse((root / 'etc/systemd/system/multi-user.target.wants').exists())
 
     def test_distribution_pam_policies(self):

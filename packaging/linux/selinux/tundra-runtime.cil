@@ -1,0 +1,4 @@
+; Only root-verified runtime executables and the private font module gain code labels.
+; No allow rules, domain changes, broad /var relabeling, or policy disablement.
+(filecon "/var/lib/tundra/runtime/versions/v[0-9]+[.][0-9]+[.][0-9]+/bin/(tundra-shell|tundra-cli|tundra-sessiond|tundra-greeter|tundra-privileged|kmscon)" file (system_u object_r bin_t ((s0)(s0))))
+(filecon "/var/lib/tundra/runtime/versions/v[0-9]+[.][0-9]+[.][0-9]+/share/tundra/kmscon-modules/mod-pango[.]so" file (system_u object_r lib_t ((s0)(s0))))

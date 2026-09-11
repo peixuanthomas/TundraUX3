@@ -18,6 +18,12 @@ case "${1:-}" in
       ln -s "versions/$release" "$pending"
       mv -T "$pending" "$current"
     fi
+    if [ -e /sys/fs/selinux/enforce ]; then
+      semodule -X 100 -i /usr/share/selinux/packages/tundra-runtime.cil
+      restorecon -RF /var/lib/tundra/runtime/versions
+    elif semodule -l >/dev/null 2>&1; then
+      semodule -n -X 100 -i /usr/share/selinux/packages/tundra-runtime.cil
+    fi
     if [ -d /run/systemd/system ]; then systemctl daemon-reload; fi
     if [ -S /run/dbus/system_bus_socket ]; then
       busctl --system call org.freedesktop.DBus /org/freedesktop/DBus org.freedesktop.DBus ReloadConfig

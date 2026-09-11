@@ -4,7 +4,7 @@ Section: utils
 Priority: optional
 Architecture: amd64
 Maintainer: TundraUX3 contributors <maintainers@tundraux3.invalid>
-Depends: xdg-utils, libglib2.0-bin, libpam0g, libpam-modules, libpam-runtime, libpam-systemd, libc-bin, systemd, dbus, dbus-user-session, curl, libseat1, libdrm2, libudev1, libxkbcommon0, zlib1g, libpango-1.0-0, libpangoft2-1.0-0, libfontconfig1, libfreetype6
+Depends: xdg-utils, libglib2.0-bin, libpam0g, libpam-modules, libpam-runtime, libpam-systemd, libc-bin, systemd, dbus, dbus-user-session, curl, policycoreutils, libseat1, libdrm2, libudev1, libxkbcommon0, zlib1g, libpango-1.0-0, libpangoft2-1.0-0, libfontconfig1, libfreetype6
 Recommends: gh (>= 2.87.3), fonts-noto-cjk, xdg-desktop-portal
 Description: User desktop with opt-in Linux PAM sessions and authorized system services
  TundraUX3 runs its UX with ordinary user credentials. Independent seat mode

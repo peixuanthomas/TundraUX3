@@ -46,11 +46,19 @@ the private terminal, without depending on its old kmscon package. System update
 need a gh CLI supporting --source-ref, --source-digest, --signer-digest and
 --custom-trusted-root; a qualified gh version is recommended separately.
 
-SELinux must remain Enforcing. Do not relabel broad filesystem trees, disable
-SELinux, or use permissive mode to conceal a denied operation. A successful build
-or package install is not evidence that independent sessions or input isolation
-work; verify those on the actual seat and verify versioned executable SELinux
-labels before enabling services.
+SELinux remains Enforcing. The packaged tundra-runtime.cil contains only two
+narrow file-context rules: the six named binaries under version directories use
+bin_t, and the private Pango module uses lib_t. It grants no new allow rules and
+leaves runtime metadata/data types unchanged. RPM installs the policy in the
+persistent store even when building an offline image; active SELinux installs
+also restore the version paths. Debian does this when SELinux is configured.
+The updater restores and checks these exact types before publishing prepared
+metadata (including reused versions) and again before apply. This works with the
+privileged service's existing capability and filesystem restrictions. Root may
+repair an installed version with tundra-system-maintenance restore-labels vX.Y.Z.
+Do not relabel broad filesystem trees or disable policy to conceal a failure.
+A package build alone is not proof of physical seat/input isolation; verify it
+on the actual machine before enabling services.
 
 Official package references:
 https://packages.ubuntu.com/noble/amd64/utils/kmscon

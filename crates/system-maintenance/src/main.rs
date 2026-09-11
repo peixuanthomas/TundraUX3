@@ -25,6 +25,7 @@ fn run() -> system_maintenance::Result<()> {
         [command, id] if command == "apply" || command == "apply-prepared" => {
             linux::apply_prepared(id)
         }
+        [command, id] if command == "restore-labels" => linux::restore_labels(id),
         [command] if command == "recover" => linux::recover(),
         [command] if command == "__import" => migration::import_stdin(),
         [command, tail @ ..] if command == "migrate-legacy" => {
@@ -55,7 +56,7 @@ fn run() -> system_maintenance::Result<()> {
             Ok(())
         }
         _ => Err(invalid(
-            "usage: tundra-system-maintenance prepare RELEASE | apply RELEASE | recover | migrate-legacy --source PATH --uid UID [--apply]",
+            "usage: tundra-system-maintenance prepare RELEASE | apply RELEASE | recover | restore-labels RELEASE | migrate-legacy --source PATH --uid UID [--apply]",
         )),
     }
 }

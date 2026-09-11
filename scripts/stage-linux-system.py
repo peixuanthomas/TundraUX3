@@ -103,6 +103,7 @@ def stage(root, binaries, version, source_sha, trusted_root, flavor, kmscon):
     locales = root / 'usr/share/tundra/greeter/locales'
     locales.parent.mkdir(parents=True, exist_ok=True)
     locales.symlink_to('/' + str(RUNTIME / 'current/share/tundra/greeter/locales'))
+    copy(REPO / 'packaging/linux/selinux/tundra-runtime.cil', root / 'usr/share/selinux/packages/tundra-runtime.cil')
     for unit in (REPO / 'packaging/linux/systemd').glob('*.service'):
         copy(unit, root / 'usr/lib/systemd/system' / unit.name)
     for policy in (REPO / 'packaging/linux/dbus-1').rglob('*.conf'):

@@ -29,6 +29,8 @@ Provides:       bundled(libtsm) = 4.7.0
 Provides:       bundled(kmscon) = 10.0.3
 Requires:       font(notosansmonocjksc)
 Requires(post): systemd
+Requires:       policycoreutils
+Requires:       selinux-policy-targeted
 Recommends:     xdg-desktop-portal
 
 %description
@@ -47,6 +49,7 @@ mkdir -p %{buildroot}
 cp -a system-root/. %{buildroot}/
 
 %post
+set -eu
 systemd-sysusers /usr/lib/sysusers.d/tundra.conf
 systemd-tmpfiles --create /usr/lib/tmpfiles.d/tundra.conf
 release=$(cat /usr/share/tundra/bootstrap-release)
@@ -62,6 +65,13 @@ elif [ -L "$current" ] && [ ! -e "$current" ]; then
   pending="/var/lib/tundra/runtime/bootstrap-current.$$"
   ln -s "versions/$release" "$pending"
   mv -T "$pending" "$current"
+fi
+if [ -e /sys/fs/selinux/enforce ]; then
+  semodule -X 100 -i /usr/share/selinux/packages/tundra-runtime.cil
+  restorecon -RF /var/lib/tundra/runtime/versions
+else
+  # Image builds prepare the persistent policy store without a running kernel.
+  semodule -n -X 100 -i /usr/share/selinux/packages/tundra-runtime.cil
 fi
 if [ -d /run/systemd/system ]; then systemctl daemon-reload; fi
 if [ -S /run/dbus/system_bus_socket ]; then
@@ -85,6 +95,7 @@ fi
 %{_datadir}/dbus-1/system.d/org.tundra.*.conf
 %{_datadir}/tundra/
 %{_datadir}/tundraux3/
+%{_datadir}/selinux/packages/tundra-runtime.cil
 %{_datadir}/applications/tundraux3.desktop
 %{_datadir}/doc/tundraux3/
 %dir /var/lib/tundra

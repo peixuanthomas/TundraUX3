@@ -7,6 +7,7 @@ use std::{
     os::{
         fd::AsRawFd,
         unix::{
+            ffi::OsStrExt,
             fs::{MetadataExt, OpenOptionsExt, PermissionsExt},
             process::CommandExt,
         },
@@ -149,6 +150,82 @@ fn clean_command(executable: &str) -> Result<Command> {
         .env("LANG", "C.UTF-8")
         .stdin(Stdio::null());
     Ok(command)
+}
+fn restore_runtime_labels(version: &Path) -> Result<()> {
+    // SELinux is absent on the normal Ubuntu/AppArmor path. When present, even
+    // permissive deployments must receive labels suitable for later enforcing.
+    if !Path::new("/sys/fs/selinux/enforce").exists() {
+        return Ok(());
+    }
+    trusted_path(version, true)?;
+    let mut files: Vec<(PathBuf, &str)> = crate::RUNTIME_BINARIES
+        .iter()
+        .map(|name| (version.join("bin").join(name), "bin_t"))
+        .collect();
+    files.push((
+        version.join("share/tundra/kmscon-modules/mod-pango.so"),
+        "lib_t",
+    ));
+    for (path, _) in &files {
+        trusted_path(path, false)?;
+    }
+    let tool = ["/usr/bin/restorecon", "/usr/sbin/restorecon"]
+        .into_iter()
+        .map(Path::new)
+        .find(|path| path.exists())
+        .ok_or_else(|| invalid("SELinux runtime labeling requires packaged restorecon"))?;
+    trusted_path(tool.parent().unwrap(), true)?;
+    // Fedora restorecon is a root-protected symlink to setfiles. Validate the
+    // resolved executable and set its fixed invocation name; never trust PATH.
+    let executable = fs::canonicalize(tool)?;
+    trusted_path(&executable, false)?;
+    let mut command = clean_command(
+        executable
+            .to_str()
+            .ok_or_else(|| invalid("invalid restorecon path"))?,
+    )?;
+    command
+        .arg0("restorecon")
+        .args(["-R", "-F", "--"])
+        .arg(version);
+    run_bounded(&mut command, 60)?;
+    for (path, expected) in files {
+        let name = std::ffi::CString::new(path.as_os_str().as_bytes())?;
+        let mut context = vec![0u8; 4096];
+        let length = unsafe {
+            libc::getxattr(
+                name.as_ptr(),
+                c"security.selinux".as_ptr(),
+                context.as_mut_ptr().cast(),
+                context.len(),
+            )
+        };
+        if length < 0 {
+            return Err(std::io::Error::last_os_error().into());
+        }
+        if !selinux_type_matches(&context[..length as usize], expected) {
+            return Err(invalid(format!(
+                "unexpected SELinux label for {}; install the packaged runtime policy",
+                path.display()
+            )));
+        }
+        File::open(path)?.sync_all()?;
+    }
+    Ok(())
+}
+fn selinux_type_matches(context: &[u8], expected: &str) -> bool {
+    std::str::from_utf8(context)
+        .ok()
+        .and_then(|text| text.trim_end_matches('\0').split(':').nth(2))
+        == Some(expected)
+}
+/// Root administrator repair hook, restricted to an existing version ID.
+pub fn restore_labels(release_id: &str) -> Result<()> {
+    let _lock = state_lock()?;
+    release_version(release_id)?;
+    let version = Path::new(ROOT).join("versions").join(release_id);
+    trusted_path(&version, true)?;
+    restore_runtime_labels(&version)
 }
 fn run_bounded(command: &mut Command, seconds: u64) -> Result<()> {
     let mut child = command
@@ -397,6 +474,8 @@ fn prepare_locked(release_id: &str, file: File) -> Result<ReleaseManifest> {
         sync_tree(&extracted)?;
         fs::rename(extracted, &target)?;
     }
+    // Label new and reused targets before exposing prepared metadata to consent.
+    restore_runtime_labels(&target)?;
     sync_dir(&versions)?;
     atomic_json(&Path::new(ROOT).join("prepared.json"), &manifest)?;
     Ok(manifest)
@@ -475,6 +554,7 @@ pub fn apply_prepared(release_id: &str) -> Result<()> {
     next.validate(release_id, Some(&current.version))?;
     let version = Path::new(ROOT).join("versions").join(release_id);
     trusted_path(&version, true)?;
+    restore_runtime_labels(&version)?;
     let txn_path = Path::new(ROOT).join("transaction.json");
     let mut txn = Transaction {
         previous: current.version,
@@ -543,6 +623,20 @@ fn recover_in(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn selinux_label_type_check_rejects_data_and_malformed_labels() {
+        assert!(selinux_type_matches(
+            b"system_u:object_r:bin_t:s0\0",
+            "bin_t"
+        ));
+        assert!(selinux_type_matches(b"system_u:object_r:lib_t:s0", "lib_t"));
+        assert!(!selinux_type_matches(
+            b"system_u:object_r:var_lib_t:s0",
+            "bin_t"
+        ));
+        assert!(!selinux_type_matches(b"bin_t", "bin_t"));
+        assert!(!selinux_type_matches(&[255], "bin_t"));
+    }
     #[test]
     fn recovery_clears_pre_journal_marker_and_rolls_back_before_resuming() {
         let root =

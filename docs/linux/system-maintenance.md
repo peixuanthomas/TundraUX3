@@ -55,6 +55,17 @@ shell scripts or source-built update helpers.
   the protected maintenance marker when a crash occurred after logout but before
   the transaction journal was created. It never starts services itself.
 
+SELinux deployments install the package's narrow CIL file-context policy. New
+and reused verified version directories are relabeled before `prepared.json` is
+published, and apply checks them again before switching `current`. Only the six
+named executables require `bin_t`; the private Pango module requires `lib_t`.
+Metadata remains data. A missing policy/tool or unexpected final label rejects
+preparation/application. Root-only `restore-labels RELEASE` repairs an existing
+version with the same protected-path and actual-label checks. The restorecon
+executable is resolved from fixed OS paths, validated as root protected, and runs
+with a clean environment and deadline. The policy contains no allow rules; see
+[SELinux CIL file labeling](https://github.com/SELinuxProject/selinux/blob/main/secilc/docs/cil_file_labeling_statements.md).
+
 The package must integrate the maintenance-ready handshake with sessiond so no
 new login is accepted between logout and update completion. A root marker alone
 is not a substitute for that lifecycle state. Service liveness is the automated
