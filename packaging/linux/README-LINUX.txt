@@ -23,8 +23,8 @@ degrades only the affected integration, never stored data.
 
 Package installation
 --------------------
-Debian/Ubuntu: sudo apt install ./TundraUX3-v1.3-linux-amd64.deb
-Fedora: sudo dnf install ./TundraUX3-v1.3-fedora-x86_64.rpm
+Debian/Ubuntu: sudo apt install ./TundraUX3-v1.3.1-linux-amd64.deb
+Fedora: sudo dnf install ./TundraUX3-v1.3.1-fedora-x86_64.rpm
 
 The release RPM is built and installation-tested on Fedora 43 x86_64. Other
 Fedora derivatives must satisfy its generated library dependencies; compatibility
