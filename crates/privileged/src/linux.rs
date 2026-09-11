@@ -568,3 +568,104 @@ pub fn run() -> Result<(), Error> {
         std::thread::park();
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn interrupted_worker_releases_slot_and_cannot_leave_pending_consent() {
+        let directory = std::env::temp_dir().join(format!(
+            "tundra-privileged-watchdog-test-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos(),
+        ));
+        std::fs::DirBuilder::new()
+            .mode(0o700)
+            .create(&directory)
+            .unwrap();
+        let (runtime, process) = WatchdogRuntime::start(
+            WatchdogConfig::new(
+                directory.join("reports"),
+                directory.join("fallback"),
+                directory.join("state"),
+                "privileged-test",
+                "test",
+            )
+            .with_unclean_exit_tracking(false),
+        )
+        .unwrap();
+        let app = process
+            .register_app(AppDescriptor::new(
+                AppId::from_static("privileged-test"),
+                "test",
+                "test",
+                AppCriticality::Optional,
+            ))
+            .unwrap();
+        let service = Service {
+            operations: Arc::default(),
+            in_flight: Arc::default(),
+            connection: Arc::default(),
+            workers: app.task_group("test"),
+        };
+        for initial in [
+            OperationStatus::AwaitingConfirmation,
+            OperationStatus::Running,
+            OperationStatus::Cancelled,
+        ] {
+            service.in_flight.store(true, Ordering::Release);
+            service.operations.lock().unwrap().insert(
+                "test".into(),
+                Operation {
+                    principal: Principal {
+                        sender: ":1.2".into(),
+                        pid: 123,
+                        birth: 99,
+                        session: session_protocol::SessionIdentity {
+                            uid: 1001,
+                            logind_session_id: "test".into(),
+                        },
+                    },
+                    action: SystemAction::ReadSystemLogs {
+                        max_records: 5,
+                        since_epoch_seconds: 0,
+                    },
+                    status: initial.clone(),
+                    created: Instant::now(),
+                    result: String::new(),
+                },
+            );
+            let worker = service.clone();
+            let handle = service
+                .workers
+                .spawn_thread(
+                    TaskSpec::one_shot(TaskId::from_static("interrupted")),
+                    move || {
+                        let _reservation = Reservation {
+                            service: worker.clone(),
+                            id: "test".into(),
+                        };
+                        panic!("injected worker interruption");
+                    },
+                )
+                .unwrap();
+            assert!(handle.join().unwrap().is_none());
+            assert!(!service.in_flight.load(Ordering::Acquire));
+            let ops = service.operations.lock().unwrap();
+            if initial == OperationStatus::Cancelled {
+                assert_eq!(ops["test"].status, OperationStatus::Cancelled);
+            } else {
+                assert!(matches!(ops["test"].status, OperationStatus::Failed(_)));
+            }
+        }
+        drop(service);
+        drop(app);
+        drop(process);
+        runtime.shutdown().unwrap();
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+}
