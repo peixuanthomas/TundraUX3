@@ -25,6 +25,7 @@ pub(in crate::session) fn build_shell_hit_map(
     exit_confirmation_visible: bool,
     active_popup: Option<ShellPopup>,
     setup_step: ui::SetupStep,
+    language_count: usize,
     setup_custom_color_dialog_visible: bool,
     generation: u64,
     time_button_label: Option<&str>,
@@ -69,7 +70,7 @@ pub(in crate::session) fn build_shell_hit_map(
             });
             match content_screen {
                 ShellScreen::FirstRunSetup => {
-                    regions.extend(setup_hit_regions(main, setup_step));
+                    regions.extend(setup_hit_regions(main, setup_step, language_count));
                     if setup_custom_color_dialog_visible {
                         regions.push(ShellHitRegion {
                             component: ShellComponent::SetupCustomColorDialog,
@@ -456,11 +457,12 @@ pub(in crate::session) fn auth_field_rects(main: Rect) -> (Rect, Rect) {
 pub(in crate::session) fn setup_hit_regions(
     main: Rect,
     setup_step: ui::SetupStep,
+    language_count: usize,
 ) -> impl IntoIterator<Item = ShellHitRegion> {
     match setup_step {
         ui::SetupStep::Language => vec![ShellHitRegion {
             component: ShellComponent::SetupLanguage,
-            area: setup_language_list_rect(main),
+            area: setup_language_list_rect(main, language_count),
             layer: ShellHitLayer::AppContent,
         }],
         ui::SetupStep::Timezone => vec![ShellHitRegion {
@@ -532,10 +534,11 @@ pub(in crate::session) fn setup_hit_regions(
 
 pub(in crate::session) fn setup_language_list_row_at(
     terminal_size: CellPosition,
+    language_count: usize,
     coordinates: CellPosition,
 ) -> Option<usize> {
     let main = setup_main_rect(terminal_size)?;
-    setup_row_at(setup_language_list_rect(main), coordinates)
+    setup_row_at(setup_language_list_rect(main, language_count), coordinates)
 }
 
 pub(in crate::session) fn setup_timezone_list_row_at(
@@ -567,8 +570,8 @@ pub(in crate::session) fn setup_main_rect(terminal_size: CellPosition) -> Option
     Some(main)
 }
 
-pub(in crate::session) fn setup_language_list_rect(main: Rect) -> Rect {
-    ui::setup_language_list_area(main, app::setup_language_options().len())
+pub(in crate::session) fn setup_language_list_rect(main: Rect, language_count: usize) -> Rect {
+    ui::setup_language_list_area(main, language_count)
 }
 
 pub(in crate::session) fn setup_row_at(rect: Rect, coordinates: CellPosition) -> Option<usize> {

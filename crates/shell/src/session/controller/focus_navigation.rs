@@ -70,6 +70,7 @@ impl ShellSession {
             active_screen == ShellScreen::ExitConfirm,
             self.active_popup,
             self.setup_step,
+            self.language_catalog.options().len(),
             self.setup_custom_color_target.is_some(),
             self.hit_map_generation,
             time_button_label.as_deref(),

@@ -618,10 +618,25 @@ fn undersized_notification_rejects_keyboard_and_mouse_activation() {
         let large_layout = notification_dialog_layout(&state, large_area);
         let required_area = Rect::new(0, 0, large_layout.dialog.width, large_layout.dialog.height);
         let action_coordinates = notification_action_coordinates_in(&state, required_area, 0);
-        let too_small_size = if shrink_width {
-            (39, required_area.height)
+        // Text can scroll and short dialogs can shrink. Measure the mandatory
+        // title/action geometry instead of treating the preferred size as a minimum.
+        let model = state.to_notification_view_model().unwrap();
+        let probe = if shrink_width {
+            Rect::new(0, 0, 0, required_area.height)
         } else {
-            (required_area.width, required_area.height.saturating_sub(1))
+            Rect::new(0, 0, required_area.width, 0)
+        };
+        let NotificationLayout::TooSmall {
+            required_width,
+            required_height,
+        } = ui::notification_layout(probe, &model)
+        else {
+            panic!("zero-sized dialog must expose its required geometry");
+        };
+        let too_small_size = if shrink_width {
+            (required_width.saturating_sub(1), required_area.height)
+        } else {
+            (required_area.width, required_height.saturating_sub(1))
         };
 
         state.apply_input(InputEvent::Resize {

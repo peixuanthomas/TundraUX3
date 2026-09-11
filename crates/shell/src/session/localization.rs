@@ -568,4 +568,39 @@ mod tests {
         assert!(Arc::ptr_eq(&before, &f.state.language));
         assert_eq!(f.storage.load_config().unwrap(), config);
     }
+    #[test]
+    fn discovered_language_rows_share_setup_render_and_mouse_geometry() {
+        let mut f = fixture();
+        let directory = f.root.join("assets/locales/fr-FR");
+        std::fs::create_dir_all(&directory).unwrap();
+        std::fs::write(
+            directory.join("manifest.toml"),
+            "format_version = 1\ncode = \"fr-FR\"\nnative_name = \"Français\"\n",
+        )
+        .unwrap();
+        std::fs::write(
+            directory.join("messages.ftl"),
+            "resources-recovery-ok = Oui\n",
+        )
+        .unwrap();
+        f.state.save_region_picker_value(Some("en-US".into()), None);
+        f.state.screen_stack = vec![ShellScreen::FirstRunSetup];
+        f.state.setup_step = ui::SetupStep::Language;
+        f.state.focused_component = ShellComponent::SetupLanguage;
+        f.state.refresh_hit_map();
+        let count = f.state.language_options().len();
+        assert_eq!(count, 3);
+        let main = setup_main_rect(f.state.terminal_size).unwrap();
+        let rendered = ui::setup_language_list_area(main, count);
+        let region = f
+            .state
+            .hit_map
+            .regions()
+            .iter()
+            .find(|region| region.component == ShellComponent::SetupLanguage)
+            .unwrap();
+        assert_eq!(region.area, rendered);
+        let last_row = (rendered.x, rendered.y + 2);
+        assert_eq!(f.state.setup_language_index_at(last_row), Some(2));
+    }
 }

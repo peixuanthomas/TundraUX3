@@ -745,7 +745,11 @@ impl ShellSession {
         &self,
         coordinates: CellPosition,
     ) -> Option<usize> {
-        let row = setup_language_list_row_at(self.terminal_size, coordinates)?;
+        let row = setup_language_list_row_at(
+            self.terminal_size,
+            self.language_catalog.options().len(),
+            coordinates,
+        )?;
         (row < self.language_options().len()).then_some(row)
     }
 
