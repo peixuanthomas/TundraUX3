@@ -1,0 +1,14 @@
+greeter-title = Tundra 系统登录
+greeter-login = 登录
+greeter-username = 系统用户名
+greeter-continue = 继续
+greeter-cancel = 取消
+greeter-confirm = 确认
+greeter-unlock = 解锁
+greeter-logout = 注销
+greeter-waiting = 正在等待系统会话服务…
+greeter-authentication = 系统身份验证
+greeter-locked = 会话已锁定：{ $username }
+greeter-trusted = 受保护的系统界面 · Tab 切换焦点 · Esc 取消
+greeter-resize = 请扩大终端，完整阅读请求后再确认。
+greeter-complete = 系统请求已完成。

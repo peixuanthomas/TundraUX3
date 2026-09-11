@@ -1,0 +1,14 @@
+greeter-title = Tundra system sign-in
+greeter-login = Sign in
+greeter-username = System username
+greeter-continue = Continue
+greeter-cancel = Cancel
+greeter-confirm = Confirm
+greeter-unlock = Unlock
+greeter-logout = Sign out
+greeter-waiting = Waiting for the system session service…
+greeter-authentication = System authentication
+greeter-locked = Session locked: { $username }
+greeter-trusted = Protected system interface · Tab to change focus · Esc to cancel
+greeter-resize = Enlarge the terminal to read the entire request before confirming.
+greeter-complete = System request completed.

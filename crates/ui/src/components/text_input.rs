@@ -2,6 +2,7 @@ use ratatui::Frame;
 use ratatui::buffer::Buffer;
 use ratatui::layout::{HorizontalAlignment, Rect};
 use ratatui::widgets::{Borders, Paragraph, Widget};
+use zeroize::Zeroize;
 
 use crate::TundraTheme;
 
@@ -13,12 +14,13 @@ use super::{
     byte_index_for_char, char_count, contains_point, inner_area, interactive_style,
 };
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct TextInput {
     pub id: ComponentId,
     pub placeholder: String,
     pub state: ComponentState,
     text: String,
+    secret: bool,
     cursor: usize,
     cursor_symbol: String,
     placeholder_when_focused: bool,
@@ -40,6 +42,7 @@ impl TextInput {
             placeholder: String::new(),
             state: ComponentState::default(),
             text: String::new(),
+            secret: false,
             cursor: 0,
             cursor_symbol: "|".to_string(),
             placeholder_when_focused: false,
@@ -75,8 +78,26 @@ impl TextInput {
     }
 
     pub fn set_value(&mut self, value: impl Into<String>) {
+        self.text.zeroize();
         self.text = value.into();
         self.cursor = char_count(&self.text);
+    }
+
+    /// Masks rendered characters and redacts Debug output. The caller must also
+    /// protect the value returned by `take_value` or `value` from logs.
+    pub fn set_secret(&mut self, secret: bool) {
+        self.secret = secret;
+        if secret && self.text.capacity() < 4100 {
+            // Avoid reallocating the normal bounded PAM response while typing.
+            self.text
+                .reserve(4100_usize.saturating_sub(self.text.len()));
+        }
+    }
+
+    /// Transfer the response without copying it. The recipient owns erasure.
+    pub fn take_value(&mut self) -> String {
+        self.cursor = 0;
+        std::mem::take(&mut self.text)
     }
 
     pub fn set_focused(&mut self, focused: bool) {
@@ -224,6 +245,8 @@ impl TextInput {
         let placeholder_visible = self.placeholder_is_visible();
         let mut display = if placeholder_visible {
             self.placeholder.clone()
+        } else if self.secret {
+            "*".repeat(char_count(&self.text))
         } else {
             self.text.clone()
         };
@@ -309,6 +332,9 @@ impl TextInput {
             return 0;
         }
 
+        if self.secret {
+            return usize::from(column.saturating_sub(inner.x)).min(char_count(&self.text));
+        }
         char_index_for_terminal_column(&self.text, usize::from(column.saturating_sub(inner.x)))
     }
 
@@ -316,5 +342,55 @@ impl TextInput {
         self.text.is_empty()
             && !self.placeholder.is_empty()
             && (!self.state.focused || self.placeholder_when_focused)
+    }
+}
+
+impl std::fmt::Debug for TextInput {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TextInput")
+            .field("id", &self.id)
+            .field("state", &self.state)
+            .field(
+                "text",
+                &if self.secret {
+                    "[REDACTED]"
+                } else {
+                    &self.text
+                },
+            )
+            .field("cursor", &self.cursor)
+            .finish_non_exhaustive()
+    }
+}
+
+impl Drop for TextInput {
+    fn drop(&mut self) {
+        self.text.zeroize();
+    }
+}
+
+#[cfg(test)]
+mod secret_tests {
+    use super::*;
+
+    #[test]
+    fn secret_render_and_debug_never_contain_password() {
+        let mut input = TextInput::new("secret");
+        input.set_secret(true);
+        input.set_focused(true);
+        input.set_value("密码abc");
+        assert!(!format!("{input:?}").contains("密码abc"));
+        assert_eq!(input.display_text(40), "*****|");
+        assert_eq!(input.take_value(), "密码abc");
+        assert_eq!(input.value(), "");
+        assert_eq!(input.cursor(), 0);
+    }
+
+    #[test]
+    fn secret_mouse_cursor_uses_mask_width_not_original_glyph_width() {
+        let mut input = TextInput::new("secret");
+        input.set_secret(true);
+        input.set_value("中文abc");
+        assert_eq!(input.cursor_for_column(Rect::new(0, 0, 20, 3), 4, true), 3);
     }
 }
