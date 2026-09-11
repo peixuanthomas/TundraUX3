@@ -14,6 +14,9 @@ env:
   CARGO_TERM_COLOR: always
   RELEASE_REF: ${{ github.sha }}
   RELEASE_TAG: v1.4
+  # The container checkout may belong to the host runner's UID. Bind package
+  # provenance to the dispatched commit without asking Git to trust that path.
+  TUNDRAUX3_SOURCE_SHA: ${{ github.sha }}
 
 jobs:
   validate:
