@@ -10,6 +10,9 @@ description = "TundraUX-integrated terminal ASCII weather scene renderer"
 path = "src/lib.rs"
 
 [dependencies]
+ratatui-core = "=0.1.2"
+ratatui-crossterm = { version = "=0.1.2", default-features = false, features = ["crossterm_0_29"] }
+unicode-width = "0.2"
 chrono = { version = "0.4", features = ["serde"] }
 crossterm.workspace = true
 rand = "0.10"

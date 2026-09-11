@@ -53,3 +53,49 @@ impl TerminalError {
         }
     }
 }
+
+impl TerminalError {
+    pub fn localized_message(&self, localize: &crate::LocalizationProvider) -> String {
+        match self {
+            Self::TooSmall {
+                width,
+                height,
+                min_width,
+                min_height,
+            } => crate::localization::localize!(
+                localize,
+                "weathr-terminal-too-small",
+                width = width.to_string(),
+                height = height.to_string(),
+                min_width = min_width.to_string(),
+                min_height = min_height.to_string()
+            ),
+            Self::RequirementTooLarge {
+                min_width,
+                min_height,
+                max_width,
+                max_height,
+            } => crate::localization::localize!(
+                localize,
+                "weathr-assets-too-large",
+                min_width = min_width.to_string(),
+                min_height = min_height.to_string(),
+                max_width = max_width.to_string(),
+                max_height = max_height.to_string()
+            ),
+            Self::NotATty => crate::localization::localize!(localize, "weathr-terminal-required"),
+            Self::RawModeError(_) => {
+                crate::localization::localize!(localize, "weathr-raw-mode-failed")
+            }
+            Self::SizeError(_) => {
+                crate::localization::localize!(localize, "weathr-terminal-size-failed")
+            }
+            Self::InitError(_) => {
+                crate::localization::localize!(localize, "weathr-terminal-init-failed")
+            }
+            Self::IoError(_) => {
+                crate::localization::localize!(localize, "weathr-terminal-io-failed")
+            }
+        }
+    }
+}

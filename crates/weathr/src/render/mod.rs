@@ -8,7 +8,14 @@ use crossterm::{
     style::{Color, Print, ResetColor, SetForegroundColor},
     terminal::{self, Clear, ClearType, EnterAlternateScreen, LeaveAlternateScreen},
 };
+use ratatui_core::{
+    buffer::Buffer,
+    layout::Rect,
+    style::{Color as BufferColor, Style},
+};
+use ratatui_crossterm::{FromCrossterm, IntoCrossterm};
 use std::io::{self, BufWriter, IsTerminal, Stdout, Write};
+use unicode_width::UnicodeWidthStr;
 
 pub const MIN_TERMINAL_WIDTH: u16 = 70;
 pub const MIN_TERMINAL_HEIGHT: u16 = 20;
@@ -55,27 +62,16 @@ pub fn validate_terminal_size_with_minimum(
     Ok(())
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-struct Cell {
-    character: char,
-    color: Color,
-}
-
-impl Default for Cell {
-    fn default() -> Self {
-        Self {
-            character: ' ',
-            color: Color::Reset,
-        }
-    }
+pub(crate) fn centered_column(width: u16, text_width: usize) -> u16 {
+    (usize::from(width).saturating_sub(text_width) / 2) as u16
 }
 
 pub struct TerminalRenderer {
     stdout: BufWriter<Stdout>,
     width: u16,
     height: u16,
-    buffer: Vec<Cell>,
-    last_buffer: Vec<Cell>,
+    buffer: Buffer,
+    last_buffer: Buffer,
     last_buffer_valid: bool,
     capabilities: TerminalCapabilities,
     min_width: u16,
@@ -101,15 +97,15 @@ impl TerminalRenderer {
         let (width, height) = clamp_terminal_size(width, height);
 
         let stdout = BufWriter::new(io::stdout());
-        let buffer_size = (width as usize) * (height as usize);
+        let area = Rect::new(0, 0, width, height);
         let capabilities = TerminalCapabilities::detect();
 
         Ok(Self {
             stdout,
             width,
             height,
-            buffer: vec![Cell::default(); buffer_size],
-            last_buffer: vec![Cell::default(); buffer_size],
+            buffer: Buffer::empty(area),
+            last_buffer: Buffer::empty(area),
             last_buffer_valid: true,
             capabilities,
             min_width,
@@ -137,9 +133,9 @@ impl TerminalRenderer {
         if width != self.width || height != self.height {
             self.width = width;
             self.height = height;
-            let buffer_size = (width as usize) * (height as usize);
-            self.buffer = vec![Cell::default(); buffer_size];
-            self.last_buffer = vec![Cell::default(); buffer_size];
+            let area = Rect::new(0, 0, width, height);
+            self.buffer = Buffer::empty(area);
+            self.last_buffer = Buffer::empty(area);
             self.last_buffer_valid = false;
             execute!(self.stdout, Clear(ClearType::All))?;
             self.last_buffer_valid = true;
@@ -152,7 +148,7 @@ impl TerminalRenderer {
     }
 
     pub fn clear(&mut self) -> io::Result<()> {
-        self.buffer.fill(Cell::default());
+        self.buffer.reset();
         Ok(())
     }
 
@@ -162,32 +158,15 @@ impl TerminalRenderer {
         start_row: u16,
         color: Color,
     ) -> io::Result<()> {
-        let max_width = lines.iter().map(|l| l.len()).max().unwrap_or(0);
-        let start_col = if self.width as usize > max_width {
-            (self.width as usize - max_width) / 2
-        } else {
-            0
-        };
-        let adjusted_color = self.capabilities.adjust_color(color);
-
+        let max_width = lines.iter().map(|line| line.width()).max().unwrap_or(0);
+        let start_col = centered_column(self.width, max_width);
         for (idx, line) in lines.iter().enumerate() {
-            let row = start_row + idx as u16;
-            if row < self.height {
-                for (char_idx, ch) in line.chars().enumerate() {
-                    let col = start_col as u16 + char_idx as u16;
-                    if col < self.width {
-                        let buffer_idx = (row as usize) * (self.width as usize) + (col as usize);
-                        if buffer_idx < self.buffer.len() {
-                            self.buffer[buffer_idx] = Cell {
-                                character: ch,
-                                color: adjusted_color,
-                            };
-                        }
-                    }
-                }
+            let row = usize::from(start_row).saturating_add(idx);
+            if row >= usize::from(self.height) {
+                break;
             }
+            self.render_line_colored(start_col, row as u16, line, color)?;
         }
-
         Ok(())
     }
 
@@ -198,43 +177,20 @@ impl TerminalRenderer {
         text: &str,
         color: Color,
     ) -> io::Result<()> {
-        if y >= self.height {
-            return Ok(());
-        }
-        let adjusted_color = self.capabilities.adjust_color(color);
-
-        for (idx, ch) in text.chars().enumerate() {
-            let col = x + idx as u16;
-            if col < self.width {
-                let buffer_idx = (y as usize) * (self.width as usize) + (col as usize);
-                if buffer_idx < self.buffer.len() {
-                    self.buffer[buffer_idx] = Cell {
-                        character: ch,
-                        color: adjusted_color,
-                    };
-                }
-            }
-        }
+        let color = self.capabilities.adjust_color(color);
+        write_line(&mut self.buffer, x, y, text, color);
         Ok(())
     }
 
     pub fn render_char(&mut self, x: u16, y: u16, ch: char, color: Color) -> io::Result<()> {
-        if x < self.width && y < self.height {
-            let buffer_idx = (y as usize) * (self.width as usize) + (x as usize);
-            if buffer_idx < self.buffer.len() {
-                self.buffer[buffer_idx] = Cell {
-                    character: ch,
-                    color: self.capabilities.adjust_color(color),
-                };
-            }
-        }
-        Ok(())
+        let mut encoded = [0; 4];
+        self.render_line_colored(x, y, ch.encode_utf8(&mut encoded), color)
     }
 
     pub fn flash_screen(&mut self) -> io::Result<()> {
         let flash_color = self.capabilities.adjust_color(Color::White);
-        for cell in &mut self.buffer {
-            cell.color = flash_color;
+        for cell in &mut self.buffer.content {
+            cell.fg = BufferColor::from_crossterm(flash_color);
         }
         Ok(())
     }
@@ -246,50 +202,54 @@ impl TerminalRenderer {
     }
 
     fn flush_changed_cells(&mut self) -> io::Result<()> {
-        let mut current_color = Color::Reset;
-        let mut last_pos: Option<(u16, u16)> = None;
-        let width = usize::from(self.width);
-        let redraw_all = !self.last_buffer_valid;
-
-        if redraw_all {
-            queue!(self.stdout, ResetColor)?;
+        if !self.last_buffer_valid {
+            queue!(self.stdout, ResetColor, Clear(ClearType::All))?;
+            self.last_buffer.reset();
         }
-
-        debug_assert_eq!(self.buffer.len(), self.last_buffer.len());
-        for (y, (row, last_row)) in self
-            .buffer
-            .chunks_exact(width)
-            .zip(self.last_buffer.chunks_exact_mut(width))
-            .enumerate()
-        {
-            for (x, (&cell, last_cell)) in row.iter().zip(last_row).enumerate() {
-                if redraw_all || cell != *last_cell {
-                    let x = x as u16;
-                    let y = y as u16;
-                    let expected_pos = last_pos.map(|(lx, ly)| (lx + 1, ly));
-                    if expected_pos != Some((x, y)) {
-                        queue!(self.stdout, cursor::MoveTo(x, y))?;
-                    }
-
-                    if cell.color != current_color {
-                        queue!(self.stdout, SetForegroundColor(cell.color))?;
-                        current_color = cell.color;
-                    }
-
-                    queue!(self.stdout, Print(cell.character))?;
-                    last_pos = Some((x, y));
-                    *last_cell = cell;
-                }
-            }
-        }
-
-        if current_color != Color::Reset {
-            queue!(self.stdout, ResetColor)?;
-        }
-
-        self.stdout.flush()?;
+        write_changed_cells(&mut self.stdout, &self.last_buffer, &self.buffer)?;
+        self.last_buffer.clone_from(&self.buffer);
         Ok(())
     }
+}
+
+fn write_line(buffer: &mut Buffer, x: u16, y: u16, text: &str, color: Color) {
+    if !buffer.area.contains((x, y).into()) {
+        return;
+    }
+    // Ratatui handles grapheme boundaries, display widths, and clipping. Reuse its
+    // buffer rather than splitting translated text into one cell per Unicode scalar.
+    buffer.set_stringn(
+        x,
+        y,
+        text,
+        usize::from(buffer.area.right().saturating_sub(x)),
+        Style::default().fg(BufferColor::from_crossterm(color)),
+    );
+}
+
+fn write_changed_cells(
+    output: &mut impl Write,
+    previous: &Buffer,
+    next: &Buffer,
+) -> io::Result<()> {
+    let mut current_color = Color::Reset;
+    let mut expected_pos = None;
+    for (x, y, cell) in previous.diff_iter(next) {
+        if expected_pos != Some((x, y)) {
+            queue!(output, cursor::MoveTo(x, y))?;
+        }
+        let color = cell.fg.into_crossterm();
+        if color != current_color {
+            queue!(output, SetForegroundColor(color))?;
+            current_color = color;
+        }
+        queue!(output, Print(cell.symbol()))?;
+        expected_pos = Some((x.saturating_add(cell.symbol().width() as u16), y));
+    }
+    if current_color != Color::Reset {
+        queue!(output, ResetColor)?;
+    }
+    output.flush()
 }
 
 impl Drop for TerminalRenderer {
@@ -301,6 +261,54 @@ impl Drop for TerminalRenderer {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn centered_text_uses_display_cells_instead_of_bytes_or_scalars() {
+        assert_eq!(centered_column(20, "按空格键开始".width()), 4);
+        assert_eq!(centered_column(20, "e\u{301}".width()), 9);
+        assert_eq!(centered_column(4, "按空格键开始".width()), 0);
+    }
+
+    #[test]
+    fn translated_lines_keep_graphemes_and_clip_whole_wide_characters() {
+        let mut buffer = Buffer::empty(Rect::new(0, 0, 7, 1));
+        write_line(&mut buffer, 0, 0, "中e\u{301}文AB", Color::Cyan);
+        assert_eq!(buffer[(0, 0)].symbol(), "中");
+        assert_eq!(buffer[(2, 0)].symbol(), "e\u{301}");
+        assert_eq!(buffer[(3, 0)].symbol(), "文");
+        assert_eq!(buffer[(5, 0)].symbol(), "A");
+        assert_eq!(buffer[(6, 0)].symbol(), "B");
+
+        buffer.reset();
+        write_line(&mut buffer, 0, 0, "中文中文", Color::Cyan);
+        assert_eq!(buffer[(4, 0)].symbol(), "中");
+        assert_eq!(buffer[(6, 0)].symbol(), " ");
+        write_line(&mut buffer, u16::MAX, u16::MAX, "outside", Color::Red);
+    }
+
+    #[test]
+    fn differential_output_skips_wide_tails_and_clears_old_text() {
+        let empty = Buffer::empty(Rect::new(0, 0, 8, 1));
+        let mut chinese = empty.clone();
+        write_line(&mut chinese, 0, 0, "中文A", Color::Cyan);
+        let mut output = Vec::new();
+        write_changed_cells(&mut output, &empty, &chinese).unwrap();
+        let output = String::from_utf8(output).unwrap();
+        assert!(output.contains("中文A"));
+        assert_eq!(output.matches("\x1b[1;1H").count(), 1);
+
+        let mut english = empty.clone();
+        write_line(&mut english, 0, 0, "OK", Color::Cyan);
+        let updates = chinese.diff(&english);
+        assert!(
+            updates
+                .iter()
+                .any(|(x, _, cell)| *x == 4 && cell.symbol() == " ")
+        );
+        let mut output = Vec::new();
+        write_changed_cells(&mut output, &english, &english).unwrap();
+        assert!(output.is_empty());
+    }
 
     #[test]
     fn terminal_size_validation_accepts_the_boundary_and_larger_sizes() {

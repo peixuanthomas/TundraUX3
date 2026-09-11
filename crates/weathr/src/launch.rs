@@ -22,6 +22,7 @@ pub enum ClockFormat {
 /// It intentionally has no network client, cache path or service handle.
 #[derive(Clone)]
 pub struct WeathrDisplayInput {
+    pub localize: crate::LocalizationProvider,
     pub snapshots: watch::Receiver<SystemSnapshot>,
     pub clock_format: ClockFormat,
     pub hide_hud: bool,
@@ -141,6 +142,8 @@ pub fn run_display_blocking(
         .enable_all()
         .build()
         .map_err(WeathrRunError::Runtime)?;
+    // No draw task is spawned. The explicit provider also keeps formatting bound
+    // to the host snapshot if a caller runs this session on a dedicated thread.
     runtime.block_on(run_display(input))
 }
 
@@ -163,6 +166,7 @@ async fn run_display_inner(
     let mut renderer = TerminalRenderer::new_with_minimum(minimum)?;
     let (width, height) = renderer.get_size();
     let mut app = App::new_with_bottom_hud_prompt_and_assets(AppInput {
+        localize: input.localize,
         term_width: width,
         term_height: height,
         themes: registry,

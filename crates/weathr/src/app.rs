@@ -3,7 +3,8 @@ use crate::animation_manager::AnimationManager;
 use crate::app_state::{AppState, BottomHudPrompt};
 use crate::assets::WeatherAsciiAssets;
 use crate::error::WeatherAssetError;
-use crate::render::{TerminalRenderer, clock};
+use crate::localization::localize;
+use crate::render::{TerminalRenderer, centered_column, clock};
 use crate::scene::lockscreen::LockscreenScene;
 use crate::scene::overlay::OverlayRegistry;
 use crate::scene::world::WorldScene;
@@ -15,6 +16,7 @@ use std::io;
 use std::sync::Arc;
 use std::time::Duration;
 use system_services::{SystemSnapshot, TimeState, WeatherLocation, WeatherState};
+use unicode_width::UnicodeWidthStr;
 
 const INPUT_POLL_FPS: u64 = 30;
 const FRAME_DURATION: Duration = Duration::from_millis(1000 / INPUT_POLL_FPS);
@@ -122,6 +124,7 @@ pub struct App {
 }
 
 pub(crate) struct AppInput {
+    pub localize: crate::LocalizationProvider,
     pub term_width: u16,
     pub term_height: u16,
     pub themes: ThemeRegistry,
@@ -139,8 +142,7 @@ fn render_centered_line(
     text: &str,
     color: crossterm::style::Color,
 ) -> io::Result<()> {
-    let text_width = text.chars().count() as u16;
-    let col = width.saturating_sub(text_width) / 2;
+    let col = centered_column(width, text.width());
     renderer.render_line_colored(col, row, text, color)
 }
 
@@ -149,6 +151,7 @@ impl App {
         input: AppInput,
     ) -> Result<Self, WeatherAssetError> {
         let AppInput {
+            localize,
             term_width,
             term_height,
             themes,
@@ -169,6 +172,7 @@ impl App {
             hide_hud,
             system_services::WeatherUnits::default(),
             bottom_hud_prompt,
+            localize,
         );
 
         let requested_theme_id = themes.active().id;
@@ -276,15 +280,16 @@ impl App {
                     self.animations.update_fog_intensity(fog_intensity);
                     self.animations
                         .update_wind(wind_speed as f32, wind_direction as f32);
-                    attribution = format!("Weather data is stale: {error}");
+                    attribution = localize!(self.state.localize, "weathr-stale", error = error);
                 }
                 WeatherState::Loading => {
                     self.state.clear_weather_for_offline();
-                    attribution = "Awaiting weather data".to_string();
+                    attribution = localize!(self.state.localize, "weathr-awaiting-data");
                 }
                 WeatherState::Unavailable { reason } => {
                     self.state.clear_weather_for_offline();
-                    attribution = format!("Weather unavailable: {reason}");
+                    attribution =
+                        localize!(self.state.localize, "weathr-unavailable", reason = reason);
                 }
             }
             let (date, time, warning) = match snapshot.time {

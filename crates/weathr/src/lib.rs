@@ -5,9 +5,11 @@ pub mod app_state;
 mod assets;
 pub mod error;
 mod launch;
+mod localization;
 pub mod render;
 pub mod scene;
 pub mod theme;
+pub use localization::LocalizationProvider;
 
 pub use launch::{
     ClockFormat, ExitSemantic, ShellLockscreenResult, WeathrDisplayInput, WeathrRunError,

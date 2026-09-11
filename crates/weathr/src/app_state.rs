@@ -1,11 +1,9 @@
+use crate::localization::{LocalizationProvider, localize};
 use std::time::Instant;
 use system_services::{
     WeatherCondition, WeatherConditions, WeatherData, WeatherLocation, WeatherUnits,
     format_temperature,
 };
-
-pub const BOTTOM_HUD_QUIT_PROMPT: &str = "Press Space to quit";
-pub const BOTTOM_HUD_START_PROMPT: &str = "Press Space to start";
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub enum LocationDisplay {
@@ -22,15 +20,16 @@ pub(crate) enum BottomHudPrompt {
 }
 
 impl BottomHudPrompt {
-    fn text(self) -> &'static str {
+    fn text(self, localize: &LocalizationProvider) -> String {
         match self {
-            Self::Quit => BOTTOM_HUD_QUIT_PROMPT,
-            Self::Start => BOTTOM_HUD_START_PROMPT,
+            Self::Quit => localize!(localize, "weathr-quit-prompt"),
+            Self::Start => localize!(localize, "weathr-start-prompt"),
         }
     }
 }
 
 pub struct AppState {
+    pub(crate) localize: LocalizationProvider,
     pub current_weather: Option<WeatherData>,
     pub is_offline: bool,
     pub weather_conditions: WeatherConditions,
@@ -52,6 +51,7 @@ impl AppState {
         location_display: LocationDisplay,
         hide_location: bool,
         units: WeatherUnits,
+        localize: LocalizationProvider,
     ) -> Self {
         Self::new_with_bottom_hud_prompt(
             location,
@@ -60,6 +60,7 @@ impl AppState {
             hide_location,
             units,
             BottomHudPrompt::Quit,
+            localize,
         )
     }
 
@@ -70,8 +71,10 @@ impl AppState {
         hide_location: bool,
         units: WeatherUnits,
         bottom_hud_prompt: BottomHudPrompt,
+        localize: LocalizationProvider,
     ) -> Self {
         Self {
+            localize,
             current_weather: None,
             is_offline: false,
             weather_conditions: WeatherConditions::default(),
@@ -133,44 +136,66 @@ impl AppState {
         }
     }
 
-    pub fn get_condition_text(&self) -> &str {
+    pub fn get_condition_text(&self) -> String {
         if let Some(ref weather) = self.current_weather {
-            match weather.condition {
-                WeatherCondition::Clear => "Clear",
-                WeatherCondition::Cloudy => "Cloudy",
-                WeatherCondition::PartlyCloudy => "Partly Cloudy",
-                WeatherCondition::Overcast => "Overcast",
-                WeatherCondition::Fog => "Fog",
-                WeatherCondition::Drizzle => "Drizzle",
-                WeatherCondition::FreezingRain => "Freezing Rain",
-                WeatherCondition::Rain => "Rain",
-                WeatherCondition::Snow => "Snow",
-                WeatherCondition::SnowGrains => "Snow Grains",
-                WeatherCondition::RainShowers => "Rain Showers",
-                WeatherCondition::SnowShowers => "Snow Showers",
-                WeatherCondition::Thunderstorm => "Thunderstorm",
-                WeatherCondition::ThunderstormHail => "Thunderstorm with Hail",
-            }
+            localize!(
+                self.localize,
+                match weather.condition {
+                    WeatherCondition::Clear => "weathr-condition-clear",
+                    WeatherCondition::Cloudy => "weathr-condition-cloudy",
+                    WeatherCondition::PartlyCloudy => "weathr-condition-partly-cloudy",
+                    WeatherCondition::Overcast => "weathr-condition-overcast",
+                    WeatherCondition::Fog => "weathr-condition-fog",
+                    WeatherCondition::Drizzle => "weathr-condition-drizzle",
+                    WeatherCondition::FreezingRain => "weathr-condition-freezing-rain",
+                    WeatherCondition::Rain => "weathr-condition-rain",
+                    WeatherCondition::Snow => "weathr-condition-snow",
+                    WeatherCondition::SnowGrains => "weathr-condition-snow-grains",
+                    WeatherCondition::RainShowers => "weathr-condition-rain-showers",
+                    WeatherCondition::SnowShowers => "weathr-condition-snow-showers",
+                    WeatherCondition::Thunderstorm => "weathr-condition-thunderstorm",
+                    WeatherCondition::ThunderstormHail => "weathr-condition-thunderstorm-hail",
+                }
+            )
         } else {
-            "Loading"
+            localize!(self.localize, "weathr-loading")
         }
     }
 
-    fn location_hud_suffix(&self) -> String {
+    fn location_hud_text(&self) -> String {
         if self.hide_location {
             String::new()
         } else {
             let (lat_value, lat_dir) = if self.location.latitude >= 0.0 {
-                (self.location.latitude, "N")
+                (
+                    self.location.latitude,
+                    localize!(self.localize, "weathr-north"),
+                )
             } else {
-                (-self.location.latitude, "S")
+                (
+                    -self.location.latitude,
+                    localize!(self.localize, "weathr-south"),
+                )
             };
             let (lon_value, lon_dir) = if self.location.longitude >= 0.0 {
-                (self.location.longitude, "E")
+                (
+                    self.location.longitude,
+                    localize!(self.localize, "weathr-east"),
+                )
             } else {
-                (-self.location.longitude, "W")
+                (
+                    -self.location.longitude,
+                    localize!(self.localize, "weathr-west"),
+                )
             };
-            let coords = format!("{:.2}°{}, {:.2}°{}", lat_value, lat_dir, lon_value, lon_dir);
+            let coords = localize!(
+                self.localize,
+                "weathr-coordinates",
+                latitude = format!("{lat_value:.2}"),
+                latitude_direction = lat_dir,
+                longitude = format!("{lon_value:.2}"),
+                longitude_direction = lon_dir
+            );
             let label = match self.location_display {
                 LocationDisplay::Coordinates => coords,
                 LocationDisplay::City => match &self.city_name {
@@ -178,47 +203,54 @@ impl AppState {
                     None => coords,
                 },
                 LocationDisplay::Mixed => match &self.city_name {
-                    Some(city) => format!("{} ({})", city, coords),
+                    Some(city) => localize!(
+                        self.localize,
+                        "weathr-city-coordinates",
+                        city = city,
+                        coordinates = coords
+                    ),
                     None => coords,
                 },
             };
-            format!(" | Location: {}", label)
+            localize!(self.localize, "weathr-location", location = label)
         }
     }
 
     pub fn bottom_hud_text(&self) -> String {
-        let location_str = self.location_hud_suffix();
-
-        let offline_indicator = if self.is_offline { "OFFLINE | " } else { "" };
-
-        if location_str.is_empty() {
-            format!("{}{}", offline_indicator, self.bottom_hud_prompt.text())
+        let location = self.location_hud_text();
+        let prompt = self.bottom_hud_prompt.text(&self.localize);
+        let content = if location.is_empty() {
+            prompt
         } else {
-            format!(
-                "{}{} | {}",
-                offline_indicator,
-                location_str.trim_start_matches(" | "),
-                self.bottom_hud_prompt.text()
+            localize!(
+                self.localize,
+                "weathr-hud-location",
+                location = location,
+                prompt = prompt
             )
+        };
+        if self.is_offline {
+            localize!(self.localize, "weathr-hud-offline", content = content)
+        } else {
+            content
         }
     }
 
     pub fn weather_summary_text(&self) -> Option<String> {
         let weather = self.current_weather.as_ref()?;
         let (temp, temp_unit) = format_temperature(weather.temperature, self.units.temperature);
-        Some(format!(
-            "{}  {:.1}{}",
-            self.get_condition_text(),
-            temp,
-            temp_unit
+        Some(localize!(
+            self.localize,
+            "weathr-summary",
+            condition = self.get_condition_text(),
+            temperature = format!("{temp:.1}"),
+            unit = temp_unit
         ))
     }
 
     pub fn update_cached_info(&mut self) {
-        if !self.weather_info_needs_update {
-            return;
-        }
-
+        // This is presentation text: refresh it under the active locale even when
+        // the weather snapshot itself has not changed.
         self.cached_weather_info = self.bottom_hud_text();
 
         self.weather_info_needs_update = false;
@@ -332,8 +364,15 @@ mod tests {
             wind_speed: WindSpeedUnit::Kmh,
             precipitation: PrecipitationUnit::Mm,
         };
-        let mut app =
-            AppState::new_with_bottom_hud_prompt(location, city, display, false, units, prompt);
+        let mut app = AppState::new_with_bottom_hud_prompt(
+            location,
+            city,
+            display,
+            false,
+            units,
+            prompt,
+            crate::localization::tests::english(),
+        );
 
         let weather = WeatherData {
             condition: WeatherCondition::Clear,
@@ -451,7 +490,7 @@ mod tests {
         let hud = app.bottom_hud_text();
 
         assert!(hud.contains("Location: Alpharetta (34.08°N, 84.29°W)"));
-        assert!(hud.contains(BOTTOM_HUD_QUIT_PROMPT));
+        assert!(hud.contains("Press Space to quit"));
         assert!(!hud.contains("Weather: Clear"));
         assert!(!hud.contains("Temp: 20.0°C"));
         assert!(!hud.contains("Wind:"));
@@ -472,8 +511,8 @@ mod tests {
         let hud = app.bottom_hud_text();
 
         assert!(hud.contains("Location: Alpharetta (34.08°N, 84.29°W)"));
-        assert!(hud.contains(BOTTOM_HUD_START_PROMPT));
-        assert!(!hud.contains(BOTTOM_HUD_QUIT_PROMPT));
+        assert!(hud.contains("Press Space to start"));
+        assert!(!hud.contains("Press Space to quit"));
     }
 
     #[test]
@@ -507,5 +546,42 @@ mod tests {
         assert!(!app.weather_conditions.is_raining);
         assert!(!app.weather_conditions.is_snowing);
         assert!(!app.weather_conditions.is_thunderstorm);
+    }
+
+    #[test]
+    fn host_localization_updates_hud_without_changing_weather_or_raw_city_data() {
+        let mut app = create_app_state_full_with_prompt(
+            31.23,
+            121.47,
+            Some("上海 / Shanghai".into()),
+            LocationDisplay::Mixed,
+            BottomHudPrompt::Start,
+        );
+        app.update_cached_info();
+        assert!(app.cached_weather_info.contains("Press Space to start"));
+        assert!(!app.weather_info_needs_update);
+        app.localize = crate::localization::tests::chinese();
+        app.update_cached_info();
+        assert_eq!(
+            app.cached_weather_info,
+            "位置：上海 / Shanghai（北纬31.23°，东经121.47°） | 按空格键开始"
+        );
+        assert_eq!(app.weather_summary_text().as_deref(), Some("晴  20.0°C"));
+        assert_eq!(app.current_weather.as_ref().unwrap().temperature, 20.0);
+        app.clear_weather_for_offline();
+        app.hide_location = true;
+        assert_eq!(app.bottom_hud_text(), "离线 | 按空格键开始");
+        assert_eq!(app.get_condition_text(), "加载中");
+    }
+
+    #[test]
+    fn host_provider_remains_bound_when_display_state_moves_to_another_thread() {
+        let mut app = create_app_state(0.0, 0.0);
+        app.hide_location = true;
+        app.localize = crate::localization::tests::chinese();
+        let rendered = std::thread::spawn(move || app.bottom_hud_text())
+            .join()
+            .unwrap();
+        assert_eq!(rendered, "按空格键退出");
     }
 }

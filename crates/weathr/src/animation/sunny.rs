@@ -229,7 +229,14 @@ mod tests {
             elevation: None,
         };
         let units = WeatherUnits::metric();
-        let mut state = AppState::new(location, None, LocationDisplay::Coordinates, false, units);
+        let mut state = AppState::new(
+            location,
+            None,
+            LocationDisplay::Coordinates,
+            false,
+            units,
+            crate::localization::tests::english(),
+        );
         state.current_weather = Some(WeatherData {
             condition: WeatherCondition::Clear,
             temperature: 20.0,
@@ -271,7 +278,14 @@ mod tests {
             elevation: None,
         };
         let units = WeatherUnits::metric();
-        let mut state = AppState::new(location, None, LocationDisplay::Coordinates, false, units);
+        let mut state = AppState::new(
+            location,
+            None,
+            LocationDisplay::Coordinates,
+            false,
+            units,
+            crate::localization::tests::english(),
+        );
         state.current_weather = Some(WeatherData {
             condition: WeatherCondition::Clear,
             temperature: 20.0,
