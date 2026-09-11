@@ -270,10 +270,12 @@ mod tests {
     fn protected_distribution_symlink_resolves_to_fixed_executable() {
         let resolved = trusted_executable(Path::new("/bin/sh")).unwrap();
         assert!(resolved.is_absolute() && resolved.is_file());
-        assert!(!std::fs::symlink_metadata(resolved)
-            .unwrap()
-            .file_type()
-            .is_symlink());
+        assert!(
+            !std::fs::symlink_metadata(resolved)
+                .unwrap()
+                .file_type()
+                .is_symlink()
+        );
     }
     #[test]
     fn world_writable_path_is_not_a_trusted_launcher() {

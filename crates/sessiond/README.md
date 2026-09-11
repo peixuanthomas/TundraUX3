@@ -101,10 +101,26 @@ master. The snapshot preserved UID/session identity and entered Locked. The
 leave the gated VT, while an unprivileged child could neither unlock the gate,
 use TIOCSTI, nor open raw input/uinput devices.
 
-This run exposed an upstream libseat input-resume defect: revoked input nodes can
-be deleted before the pause callback, leaving the returning greeter without input.
-Full unlock and pointer-consent acceptance remain required while that fix is being
-validated. Earlier PAM lifecycle probes independently passed valid/invalid auth,
+The run exposed and verified a repair for an upstream libseat input-resume defect:
+revoked input nodes could be deleted before the pause callback. The private build
+recipe now preserves brokered input nodes on revoke and acknowledges seat disable.
+With that repair, session 406 remained Locked after a wrong password, then returned
+to Active with the same UID/session after successful PAM authentication. Logout
+removed session 406 and its user processes before a new admin login created 426.
+Admin SwitchUser likewise closed session 426 and returned to the login greeter.
+
+A root-only uinput mouse delivered real libseat/kmscon pointer events to the trusted
+buttons. Cancel produced operation status Cancelled; Confirm produced
+AwaitingConfirmation → Running → Completed for a bounded five-record system-log
+request, without another password. The ordinary managed account's CanRequest was
+false; the separately configured admin account's was true. Independent SSH and
+root D-Bus senders both received AccessDenied when reading or cancelling the admin's
+existing operation. These are actual PAM/seat and pointer-path tests using
+root-generated test input, not human mouse-click evidence. The final test restored
+tty1 and stopped the task's temporary seat, input and privileged services.
+
+Earlier PAM lifecycle probes independently passed valid/invalid authentication,
 full session open/environment registration and close cleanup for ordinary/admin
-accounts. These are real PAM/seat tests with root-generated test input, not human
-mouse-click evidence.
+accounts. Latest native sessiond unit tests passed all seven cases. A packaged
+installation and fresh final-runtime consent check remain separate deployment
+validation steps; the tests above used protected task-installed helper binaries.

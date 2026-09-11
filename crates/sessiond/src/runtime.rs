@@ -1,11 +1,11 @@
 use crate::{
-    display::{Kmscon, SessionDisplayBackend, VtGate, TRUSTED_VT},
+    display::{Kmscon, SessionDisplayBackend, TRUSTED_VT, VtGate},
     linux::{read, write},
     process,
 };
 use session_protocol::{
-    greeter::{ClientMessage, ServerMessage},
     SessionIdentity, SessionSnapshot, SessionState, SystemAction, SystemUser,
+    greeter::{ClientMessage, ServerMessage},
 };
 use std::{
     io::{self, BufReader},
