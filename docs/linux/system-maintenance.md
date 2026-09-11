@@ -73,6 +73,57 @@ health gate; physical greeter/input rendering is also part of release acceptance
 The release workflow is manually dispatched on reviewed `master`; preparing it
 does not publish anything. Release asset replacement is intentionally refused.
 
+## Installed development RPM verification
+
+On 2026-09-12 (Asia/Shanghai), the development RPM built from source commit
+`38f28fe45c7d4478e1118870023fbee0469a9c72` was installed on `x240s-test`
+(Fedora 43, SELinux Enforcing). This is an unsigned development artifact, not an
+official attested release. Its filename is `tundraux3-1.3.0-1.x86_64.rpm` and its
+SHA-256 is:
+
+```text
+61f3b75bd799148f1a181bded10c399abc7bbe071bbaef98b1d3c36e8aa4afd6
+```
+
+The task's manually installed `tundra-runtime` policy module was removed before
+reinstalling this RPM. The package's postinstall independently installed the CIL
+policy at priority 100 and restored all six versioned executables to `bin_t` and
+the private Pango module to `lib_t`. SELinux remained Enforcing throughout. Payload
+ownership was root:root without group/world write or set-ID permissions. Both
+terminal/module digests matched the capability record after RPM installation.
+The legacy public assets path remained a directory.
+
+The installed stable maintenance executable, SHA-256
+`fb5a26a5e22e7f0c8b9af94a0644a4d2194521311c61c7f4c63a54c0c213d26f`,
+then ran `restore-labels v999.0.0` in a transient service with the privileged
+service's sandbox settings, including `ProtectSystem=strict`, `PrivateDevices`,
+`NoNewPrivileges`, and only `CAP_DAC_READ_SEARCH CAP_SETUID CAP_SETGID`. Seven
+root-owned code fixtures started with actual `var_lib_t` labels. The helper
+completed successfully in 371 ms, verified six `bin_t` labels and one `lib_t`, and
+left the metadata file as `var_lib_t`. The disposable version was removed after
+verification. The machine-readable local receipt is
+`/tmp/tundra-linux-session-artifacts/installed-label-result.json`.
+
+A root-owned 0600 maintenance marker with no transaction journal was removed by
+the installed recovery unit. Recovery reached `active (exited)` with success;
+the formal privileged service subsequently reached `active (running)` using its
+versioned package executable. Both daemon units require recovery to succeed.
+The session unit used the packaged `--seat` invocation, `KillMode=mixed`, and a
+45-second stop timeout. The greeter account's NSS HOME was `/nonexistent`.
+
+The final physical test used the formal installed session service and private
+terminal under SELinux Enforcing. PAM authenticated the disposable administrator
+UID 1003 into logind session 592 with state `Active`. Clicking Confirm with actual
+mouse input advanced a bounded five-log-line operation from
+`AwaitingConfirmation` through `Running` to `Completed`. An orderly
+`systemctl stop` removed session 592 and restored the original foreground VT 1.
+Both Tundra daemons finished inactive and disabled; SDDM remained active and
+enabled. The screenshot receipt is `/tmp/tundra-package-consent.png`.
+
+These checks cover the installed bootstrap, future-version label repair and
+pre-journal recovery. They do not claim that an official release was published,
+downloaded, attested or applied on this machine.
+
 ## Offline migration
 
 Example (the ordinary UID comes from NSS; do not substitute an application user ID):
