@@ -89,3 +89,44 @@ the source is preserved, and nothing recursively chowns HOME. Actual writes run
 in a permanently unprivileged target-UID child using directory file descriptors
 and `O_NOFOLLOW|O_EXCL`, avoiding symlink races and overwrite. A failure is reported;
 already imported files remain and a retry skips them.
+
+### Installed migration hardware verification
+
+On 2026-09-11 at approximately 16:18 UTC, the installed stable executable was
+tested on `x240s-test` (Fedora 43, SELinux Enforcing), using a new disposable
+non-login account `tundra-it-migrate`, UID/GID 1004. Its account and HOME were
+confirmed absent before creation. The root-owned fixture was
+`/var/lib/tundra-test-fixtures/greeter-migration-live/source`; no existing user's
+data, PAM test accounts, package files or seat state was changed.
+
+The tested `/usr/libexec/tundra/tundra-system-maintenance` SHA-256 was:
+
+```text
+8c0e434e64adf04587c7bf0de0c4843d662b5a0e5550e60dd736210bbcb91b75
+```
+
+All 22 assertions passed across these real command invocations:
+
+```sh
+sudo /usr/libexec/tundra/tundra-system-maintenance migrate-legacy \
+  --source /var/lib/tundra-test-fixtures/greeter-migration-live/source --uid 1004
+sudo /usr/libexec/tundra/tundra-system-maintenance migrate-legacy \
+  --source /var/lib/tundra-test-fixtures/greeter-migration-live/source --uid 1004 --apply
+```
+
+| Scenario | Observed result |
+| --- | --- |
+| Default dry-run | Exit 0, `applied=false`; complete HOME entry/content/ownership snapshot and source snapshot unchanged. |
+| Explicit apply | Exit 0; imported typed `dark`, `zh-CN`, `Asia/Shanghai` preferences and two content files, including a nested file. |
+| Target ownership | All eight new files/directories belonged to UID/GID 1004; files were 0600 and directories 0700. Inherited root HOME/XDG settings did not redirect the destination. |
+| Legacy authority exclusion | Mock password hashes, user roles, nested appearance authority and launcher commands were absent from generated configuration; an unlisted top-level credentials file was not imported. |
+| Existing/conflicting targets | After editing the imported config and one content file, a second apply skipped all three existing files and preserved the entire target snapshot and original source. |
+| Source symlink | A content symlink caused exit 1 with `untrusted root path`; the outside sentinel remained unchanged. |
+| Target directory symlink | A new content directory mapped onto a target symlink caused exit 1 with `Not a directory (os error 20)` and `unprivileged import worker failed`; no file appeared in the outside directory. |
+
+The source and imported content were synthetic. After verification, `userdel
+--remove` exited 0, and a separate readback confirmed that the account, its HOME
+and the task-owned fixture were absent. The local machine-readable receipt is
+`/tmp/tundra-migration-live-result.json`. These checks exercise the installed
+helper and its actual demoted worker; they do not validate online update download,
+attestation or rollback.
