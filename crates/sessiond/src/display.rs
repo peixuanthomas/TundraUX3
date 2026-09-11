@@ -129,6 +129,7 @@ impl SessionDisplayBackend for Kmscon {
 pub struct VtGate {
     console: std::fs::File,
     held: bool,
+    original_vt: u32,
 }
 impl VtGate {
     pub fn new() -> io::Result<Self> {
@@ -138,10 +139,13 @@ impl VtGate {
             .write(true)
             .custom_flags(libc::O_NOCTTY | libc::O_CLOEXEC)
             .open("/dev/tty0")?;
-        Ok(Self {
+        let mut gate = Self {
             console,
             held: false,
-        })
+            original_vt: 0,
+        };
+        gate.original_vt = gate.active()?;
+        Ok(gate)
     }
     pub fn secure(&mut self) -> io::Result<()> {
         const VT_ACTIVATE: libc::c_ulong = 0x5606;
@@ -209,6 +213,31 @@ impl VtGate {
             return Err(io::Error::last_os_error());
         }
         self.held = false;
+        Ok(())
+    }
+    /// Only orderly, verified PAM teardown may release the secure gate.
+    pub fn restore_original(&mut self) -> io::Result<()> {
+        if self.original_vt == 0 || [TRUSTED_VT, USER_VT].contains(&self.original_vt) {
+            return Err(io::Error::other("no safe original VT recorded"));
+        }
+        self.unlock()?;
+        if unsafe {
+            libc::ioctl(
+                self.console.as_raw_fd(),
+                0x5606 as libc::c_ulong,
+                self.original_vt,
+            )
+        } < 0
+        {
+            return Err(io::Error::last_os_error());
+        }
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while self.active()? != self.original_vt {
+            if std::time::Instant::now() >= deadline {
+                return Err(io::Error::other("original VT restoration timed out"));
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
         Ok(())
     }
     pub fn restore(&mut self) -> io::Result<()> {

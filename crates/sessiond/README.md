@@ -51,8 +51,11 @@ Root switches to tty8, issues kernel VT_LOCKSWITCH, and checks VT_GETSTATE befor
 claiming a protected handover. CAP_SYS_TTY_CONFIG is required to unlock, so user
 VT_ACTIVATE and physical VT hotkeys cannot return to the old desktop during the
 lock. A failure or process crash deliberately leaves the kernel gate locked;
-recovery must happen through the preserved root SSH channel, not by an automatic
-unlock in a destructor. `dev.tty.legacy_tiocsti=0` is required; users with raw
+crash recovery must happen through the preserved root SSH channel, not by an
+automatic unlock in a destructor. An orderly SIGTERM/SIGINT shutdown instead
+drains both desktop and greeter PAM workers, then explicitly restores the original
+VT recorded before startup. Socket reads poll the stop flag while preserving
+partial frames; writes and shutdown/reaping have bounded deadlines. `dev.tty.legacy_tiocsti=0` is required; users with raw
 input/tty group membership are rejected.
 
 Actual kmscon device release, evdev revocation, DRM master handover, keyboard,
@@ -121,6 +124,18 @@ tty1 and stopped the task's temporary seat, input and privileged services.
 
 Earlier PAM lifecycle probes independently passed valid/invalid authentication,
 full session open/environment registration and close cleanup for ordinary/admin
-accounts. Latest native sessiond unit tests passed all seven cases. A packaged
+accounts. Latest native sessiond unit tests passed all nine cases, including failed-worker
+reaping and the one-time transition out of maintenance after marker removal. A packaged
 installation and fresh final-runtime consent check remain separate deployment
 validation steps; the tests above used protected task-installed helper binaries.
+
+The final lifecycle run started with the maintenance marker present, removed it
+as root, and then completed an admin login into session 518. A deliberately wrong
+password left only the supervisor and greeter worker, with no zombie child.
+Managed logout removed 518 while an independently created same-UID PAM/logind
+session 498 and its sleep process remained active. That independent fixture was
+then stopped explicitly. Orderly systemctl stop restored tty1 and completed
+successfully; a subsequent start reacquired tty8. Stopping again while a PAM
+password prompt was pending completed PAM cancellation and restored tty1 within
+three seconds. SDDM remained running throughout. The final tested backend used the
+patched pinned recipe with static libtsm, matching the package artifact inputs.

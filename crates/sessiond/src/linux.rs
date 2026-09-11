@@ -20,17 +20,65 @@ use zbus::{
 fn err(e: impl std::fmt::Display) -> zbus::fdo::Error {
     zbus::fdo::Error::Failed(e.to_string())
 }
+static STOP_REQUESTED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+pub(crate) fn stopping() -> bool {
+    STOP_REQUESTED.load(std::sync::atomic::Ordering::Relaxed)
+}
+extern "C" fn request_stop(_: libc::c_int) {
+    STOP_REQUESTED.store(true, std::sync::atomic::Ordering::Relaxed);
+}
+fn install_stop_handler() -> io::Result<()> {
+    for signal in [libc::SIGTERM, libc::SIGINT] {
+        let mut action: libc::sigaction = unsafe { std::mem::zeroed() };
+        action.sa_sigaction = request_stop as *const () as usize;
+        unsafe {
+            libc::sigemptyset(&mut action.sa_mask);
+        }
+        if unsafe { libc::sigaction(signal, &action, std::ptr::null_mut()) } < 0 {
+            return Err(io::Error::last_os_error());
+        }
+    }
+    Ok(())
+}
 pub(crate) fn read<T: serde::de::DeserializeOwned>(reader: &mut impl BufRead) -> io::Result<T> {
     let mut b = zeroize::Zeroizing::new(Vec::new());
-    let n = (&mut *reader).take(65537).read_until(b'\n', &mut b)?;
-    if n == 0 || n > 65536 || b.last() != Some(&b'\n') {
-        return Err(io::Error::other("invalid private channel frame"));
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(120);
+    loop {
+        if stopping() {
+            return Err(io::Error::new(
+                io::ErrorKind::Interrupted,
+                "sessiond stopping",
+            ));
+        }
+        if std::time::Instant::now() >= deadline {
+            return Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                "private channel timed out",
+            ));
+        }
+        let remaining = 65537usize.saturating_sub(b.len());
+        let result = (&mut *reader)
+            .take(remaining as u64)
+            .read_until(b'\n', &mut b);
+        match result {
+            Err(e)
+                if matches!(
+                    e.kind(),
+                    io::ErrorKind::WouldBlock
+                        | io::ErrorKind::TimedOut
+                        | io::ErrorKind::Interrupted
+                ) =>
+            {
+                continue;
+            }
+            Err(e) => return Err(e),
+            Ok(_) if b.len() > 65536 || b.last() != Some(&b'\n') => {
+                return Err(io::Error::other("invalid private channel frame"));
+            }
+            Ok(_) => break,
+        }
     }
-    let parsed = serde_json::from_slice(b.as_slice()).map_err(io::Error::other);
-    for byte in b.iter_mut() {
-        unsafe { std::ptr::write_volatile(byte, 0) }
-    }
-    parsed
+    serde_json::from_slice(b.as_slice()).map_err(io::Error::other)
 }
 pub(crate) fn write(writer: &mut impl Write, value: &impl serde::Serialize) -> io::Result<()> {
     let mut bytes = zeroize::Zeroizing::new(serde_json::to_vec(value).map_err(io::Error::other)?);
@@ -210,7 +258,7 @@ impl Service {
 fn pam_worker(username: &str, fd: i32, mode: &str, frontend_fd: Option<i32>) -> io::Result<()> {
     peer_root(fd)?;
     let socket = unsafe { UnixStream::from_raw_fd(fd) };
-    socket.set_read_timeout(Some(std::time::Duration::from_secs(120)))?;
+    socket.set_read_timeout(Some(std::time::Duration::from_millis(250)))?;
     socket.set_write_timeout(Some(std::time::Duration::from_secs(2)))?;
     unsafe {
         libc::fcntl(fd, libc::F_SETFD, libc::FD_CLOEXEC);
@@ -391,6 +439,7 @@ pub fn run() -> io::Result<()> {
     if args.len() > 2 || (args.len() == 2 && args[1] != "--seat") {
         return Err(io::Error::other("unsupported sessiond arguments"));
     }
+    install_stop_handler()?;
     let state = Arc::new(Mutex::new(State {
         runtime: if args.len() == 2 {
             Some(crate::runtime::Runtime::start()?)
@@ -415,13 +464,23 @@ pub fn run() -> io::Result<()> {
         "sessiond ready; --seat enables managed VT sessions, default mode exposes discovery only"
     );
     loop {
-        if let Some(runtime) = &mut state
-            .lock()
-            .map_err(|e| io::Error::other(e.to_string()))?
-            .runtime
-        {
-            runtime.poll()?;
+        let mut state = state.lock().map_err(|e| io::Error::other(e.to_string()))?;
+        if let Some(runtime) = &mut state.runtime {
+            if stopping() {
+                runtime.shutdown()?;
+                return Ok(());
+            }
+            if let Err(e) = runtime.poll() {
+                if stopping() {
+                    runtime.shutdown()?;
+                    return Ok(());
+                }
+                return Err(e);
+            }
+        } else if stopping() {
+            return Ok(());
         }
+        drop(state);
         std::thread::sleep(std::time::Duration::from_millis(20));
     }
 }

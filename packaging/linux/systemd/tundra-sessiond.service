@@ -11,6 +11,8 @@ User=root
 UMask=0077
 Restart=on-failure
 RestartSec=2
+KillMode=mixed
+TimeoutStopSec=45s
 # Filesystem restrictions here would be inherited by the desktop and prevent
 # normal personal file writes. Apply restrictions only to individual helpers.
 # pam_systemd must move a dedicated PAM worker into its session scope.

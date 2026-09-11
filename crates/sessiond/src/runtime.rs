@@ -56,7 +56,7 @@ impl Worker {
                 Ok(())
             });
         }
-        parent.set_read_timeout(Some(Duration::from_secs(120)))?;
+        parent.set_read_timeout(Some(Duration::from_millis(250)))?;
         parent.set_write_timeout(Some(Duration::from_secs(2)))?;
         let reader = BufReader::with_capacity(1, parent.try_clone()?);
         let process = cmd.spawn()?;
@@ -167,15 +167,15 @@ impl Runtime {
                 "legacy TIOCSTI must be disabled before starting trusted seat",
             ));
         }
+        let mut gate = VtGate::new()?;
         let user = process::account_by_name("tundra-greeter")?;
         let (front, client) = UnixStream::pair()?;
         let greeter = Worker::start(&user, "greeter", Some(&client), |_| {
             Err(io::Error::other("greeter PAM must not ask credentials"))
         })?;
         drop(client);
-        front.set_read_timeout(Some(Duration::from_secs(120)))?;
+        front.set_read_timeout(Some(Duration::from_millis(250)))?;
         front.set_write_timeout(Some(Duration::from_secs(2)))?;
-        let mut gate = VtGate::new()?;
         Kmscon.activate(TRUSTED_VT)?;
         gate.secure()?;
         let mut runtime = Self {
@@ -189,10 +189,15 @@ impl Runtime {
             maintenance: std::path::Path::new("/run/tundra/maintenance-ready").exists(),
             next_id: 0,
         };
-        if !matches!(
-            read::<ClientMessage>(&mut runtime.reader)?,
-            ClientMessage::Ready {}
-        ) {
+        let ready = read::<ClientMessage>(&mut runtime.reader);
+        if crate::linux::stopping() {
+            runtime.shutdown()?;
+            return Err(io::Error::new(
+                io::ErrorKind::Interrupted,
+                "sessiond stopping",
+            ));
+        }
+        if !matches!(ready?, ClientMessage::Ready {}) {
             return Err(io::Error::other(
                 "trusted frontend did not acknowledge initial rendering",
             ));
@@ -303,6 +308,12 @@ impl Runtime {
         }
         Ok(())
     }
+    pub fn shutdown(&mut self) -> io::Result<()> {
+        self.maintenance = true;
+        self.logout()?;
+        self.greeter.close()?;
+        self.gate.restore_original()
+    }
     pub fn close_for_update(&mut self, identity: &SessionIdentity) -> io::Result<()> {
         if self.identity()? != identity {
             return Err(io::Error::other("session changed"));
@@ -356,11 +367,24 @@ impl Runtime {
         let approved =
             matches!(response,Ok(ClientMessage::Consent{id:actual,approved:true}) if actual==id);
         self.healthy()?;
+        if crate::linux::stopping() {
+            return Err(io::Error::new(
+                io::ErrorKind::Interrupted,
+                "sessiond stopping",
+            ));
+        }
         self.resume()?;
         Ok(approved)
     }
     pub fn poll(&mut self) -> io::Result<()> {
         self.healthy()?;
+        if leave_maintenance(
+            &mut self.maintenance,
+            std::path::Path::new("/run/tundra/maintenance-ready").exists(),
+            self.snapshot.is_some(),
+        ) {
+            write(&mut self.writer, &ServerMessage::Login { message: None })?;
+        }
         if self
             .snapshot
             .as_ref()
@@ -447,9 +471,28 @@ impl Runtime {
     }
 }
 
+fn leave_maintenance(maintenance: &mut bool, marker_present: bool, has_session: bool) -> bool {
+    if *maintenance && !marker_present && !has_session {
+        *maintenance = false;
+        true
+    } else {
+        false
+    }
+}
+
 #[cfg(test)]
 mod worker_tests {
     use super::*;
+    #[test]
+    fn maintenance_removal_resumes_login_once_after_sessions_close() {
+        let mut maintenance = true;
+        assert!(!leave_maintenance(&mut maintenance, true, false));
+        assert!(!leave_maintenance(&mut maintenance, false, true));
+        assert!(maintenance);
+        assert!(leave_maintenance(&mut maintenance, false, false));
+        assert!(!maintenance);
+        assert!(!leave_maintenance(&mut maintenance, false, false));
+    }
     #[test]
     fn dropping_a_failed_worker_reaps_the_child() {
         let (parent, peer) = UnixStream::pair().unwrap();
