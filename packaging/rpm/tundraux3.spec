@@ -27,7 +27,7 @@ Requires:       libdrm
 Requires:       pango
 Provides:       bundled(libtsm) = 4.7.0
 Provides:       bundled(kmscon) = 10.0.3
-Requires:       google-noto-sans-cjk-fonts
+Requires:       font(notosansmonocjksc)
 Requires(post): systemd
 Recommends:     xdg-desktop-portal
 
