@@ -605,7 +605,8 @@ impl ShellSession {
         field: ui::SetupField,
         index: usize,
     ) {
-        let Some(option) = ui::setup_standard_color_options().get(index) else {
+        let options = ui::setup_standard_color_options();
+        let Some(option) = options.get(index) else {
             return;
         };
         let Ok(color) = option.value.parse::<storage::BorderColor>() else {
