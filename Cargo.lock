@@ -3985,6 +3985,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "session-protocol"
+version = "1.3.0"
+dependencies = [
+ "libc",
+ "serde",
+ "zbus",
+]
+
+[[package]]
 name = "sha2"
 version = "0.10.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"

@@ -6,6 +6,7 @@ members = [
     "crates/ascii-assets",
     "crates/cli",
     "crates/identity",
+    "crates/session-protocol",
     "crates/platform",
     "crates/shell",
     "crates/storage",
