@@ -1,3 +1,4 @@
+use i18n::LocalizedText;
 use std::collections::VecDeque;
 use std::time::{Duration, Instant};
 
@@ -26,13 +27,13 @@ pub enum NotificationTone {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NotificationAction {
     pub id: String,
-    pub label: String,
+    pub label: LocalizedText,
     pub cancel: bool,
     pub selected: bool,
 }
 
 impl NotificationAction {
-    pub fn new(id: impl Into<String>, label: impl Into<String>) -> Self {
+    pub fn new(id: impl Into<String>, label: impl Into<LocalizedText>) -> Self {
         Self {
             id: id.into(),
             label: label.into(),
@@ -58,15 +59,15 @@ pub struct Notification {
     pub key: Option<String>,
     pub level: NotificationLevel,
     pub tone: NotificationTone,
-    pub title: String,
-    pub message: String,
+    pub title: LocalizedText,
+    pub message: LocalizedText,
     pub actions: Vec<NotificationAction>,
 }
 
 impl Notification {
     pub fn modal(
-        title: impl Into<String>,
-        message: impl Into<String>,
+        title: impl Into<LocalizedText>,
+        message: impl Into<LocalizedText>,
         tone: NotificationTone,
         actions: Vec<NotificationAction>,
     ) -> Self {
@@ -101,13 +102,13 @@ impl Notification {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum NotificationCommand {
-    Reset(String),
-    SetStatus(String),
-    ShowToast(String),
+    Reset(LocalizedText),
+    SetStatus(LocalizedText),
+    ShowToast(LocalizedText),
     ClearToast,
     ShowAlert {
         key: String,
-        message: String,
+        message: LocalizedText,
         tone: NotificationTone,
     },
     ResolveAlert(String),
@@ -127,15 +128,15 @@ pub struct NotificationResponse {
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct AlertState {
     key: String,
-    message: String,
+    message: LocalizedText,
     tone: NotificationTone,
     sequence: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NotificationCenter {
-    status: String,
-    toast: Option<String>,
+    status: LocalizedText,
+    toast: Option<LocalizedText>,
     toast_expires_at: Option<Instant>,
     alerts: VecDeque<AlertState>,
     active_modal: Option<Notification>,
@@ -146,7 +147,7 @@ pub struct NotificationCenter {
 }
 
 impl NotificationCenter {
-    pub fn new(status: impl Into<String>) -> Self {
+    pub fn new(status: impl Into<LocalizedText>) -> Self {
         Self {
             status: status.into(),
             toast: None,
@@ -160,15 +161,15 @@ impl NotificationCenter {
         }
     }
 
-    pub fn notify_status(&mut self, message: impl Into<String>) {
+    pub fn notify_status(&mut self, message: impl Into<LocalizedText>) {
         self.status = message.into();
     }
 
-    pub fn notify_toast(&mut self, message: impl Into<String>) {
+    pub fn notify_toast(&mut self, message: impl Into<LocalizedText>) {
         self.notify_toast_at(message, Instant::now());
     }
 
-    pub fn notify_toast_at(&mut self, message: impl Into<String>, now: Instant) {
+    pub fn notify_toast_at(&mut self, message: impl Into<LocalizedText>, now: Instant) {
         self.toast = Some(message.into());
         self.toast_expires_at = toast_deadline(now);
     }
@@ -178,14 +179,14 @@ impl NotificationCenter {
         self.toast_expires_at = None;
     }
 
-    pub fn notify_alert(&mut self, message: impl Into<String>, tone: NotificationTone) {
+    pub fn notify_alert(&mut self, message: impl Into<LocalizedText>, tone: NotificationTone) {
         self.notify_alert_with_key(DEFAULT_ALERT_KEY, message, tone);
     }
 
     pub fn notify_alert_with_key(
         &mut self,
         key: impl Into<String>,
-        message: impl Into<String>,
+        message: impl Into<LocalizedText>,
         tone: NotificationTone,
     ) {
         let key = key.into();
@@ -411,20 +412,21 @@ impl NotificationCenter {
         self.responses.pop_front()
     }
 
-    pub fn status(&self) -> &str {
+    /// Retained text; render against the presentation's locale snapshot when displayed.
+    pub fn status(&self) -> &LocalizedText {
         &self.status
     }
 
-    pub fn toast(&self) -> Option<&str> {
-        self.toast.as_deref()
+    pub fn toast(&self) -> Option<&LocalizedText> {
+        self.toast.as_ref()
     }
 
     pub fn toast_expires_at(&self) -> Option<Instant> {
         self.toast_expires_at
     }
 
-    pub fn alert(&self) -> Option<&str> {
-        self.active_alert().map(|alert| alert.message.as_str())
+    pub fn alert(&self) -> Option<&LocalizedText> {
+        self.active_alert().map(|alert| &alert.message)
     }
 
     pub fn alert_key(&self) -> Option<&str> {
@@ -435,11 +437,11 @@ impl NotificationCenter {
         self.active_alert().map(|alert| alert.tone)
     }
 
-    pub fn alert_message_for_key(&self, key: &str) -> Option<&str> {
+    pub fn alert_message_for_key(&self, key: &str) -> Option<&LocalizedText> {
         self.alerts
             .iter()
             .find(|alert| alert.key == key)
-            .map(|alert| alert.message.as_str())
+            .map(|alert| &alert.message)
     }
 
     pub fn alert_count(&self) -> usize {
@@ -529,7 +531,7 @@ fn toast_deadline(now: Instant) -> Option<Instant> {
 
 fn normalized_actions(mut actions: Vec<NotificationAction>) -> Vec<NotificationAction> {
     if actions.is_empty() {
-        actions.push(NotificationAction::new("ok", "OK").cancel());
+        actions.push(NotificationAction::new("ok", i18n::msg!("notifications-action-ok")).cancel());
     }
     let selected = actions
         .iter()
@@ -547,6 +549,130 @@ fn select_action_in(actions: &mut [NotificationAction], selected: usize) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn language_snapshots() -> Vec<(std::sync::Arc<i18n::LanguageSnapshot>, &'static str)> {
+        let root = std::env::temp_dir().join(format!(
+            "tux3-app-notifications-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let chinese = root.join("locales/zh-CN");
+        std::fs::create_dir_all(chinese.join("common")).unwrap();
+        std::fs::write(
+            chinese.join("manifest.toml"),
+            include_str!("../../../ascii-assets/assets/locales/zh-CN/manifest.toml"),
+        )
+        .unwrap();
+        std::fs::write(
+            chinese.join("common/notifications.ftl"),
+            include_str!("../../../ascii-assets/assets/locales/zh-CN/common/notifications.ftl"),
+        )
+        .unwrap();
+        let snapshots = [("en-US", "OK"), ("zh-CN", "确定")]
+            .into_iter()
+            .map(|(code, label)| {
+                let loaded = i18n::LanguageSnapshot::load(&root, code, 1).unwrap();
+                (std::sync::Arc::new(loaded.snapshot), label)
+            })
+            .collect();
+        std::fs::remove_dir_all(root).unwrap();
+        snapshots
+    }
+
+    #[test]
+    fn locale_snapshots_rerender_retained_notifications_without_changing_lifecycle() {
+        let started_at = Instant::now();
+        let mut center = NotificationCenter::new(i18n::msg!("notifications-action-ok"));
+        center.notify_toast_at(i18n::msg!("notifications-action-ok"), started_at);
+        center.notify_alert_with_key(
+            "stable-alert",
+            i18n::msg!("notifications-action-ok"),
+            NotificationTone::Warning,
+        );
+        let active_id = center.push_modal(
+            Notification::modal(
+                i18n::msg!("notifications-action-ok"),
+                i18n::msg!("notifications-action-ok"),
+                NotificationTone::Info,
+                vec![
+                    NotificationAction::new("accept", i18n::msg!("notifications-action-ok")),
+                    NotificationAction::new("cancel", "Raw cancel").cancel(),
+                ],
+            )
+            .with_key("stable-modal")
+            .with_selected_action(1),
+        );
+        let queued_id = center.push_modal(Notification::modal(
+            i18n::msg!("notifications-action-ok"),
+            "Raw queued body",
+            NotificationTone::Info,
+            Vec::new(),
+        ));
+        let retained = center.clone();
+
+        for (snapshot, expected) in language_snapshots() {
+            let _language = i18n::enter_snapshot(snapshot);
+            assert_eq!(center.status().render_current(), expected);
+            assert_eq!(center.toast().unwrap().render_current(), expected);
+            assert_eq!(center.alert().unwrap().render_current(), expected);
+            let modal = center.active_modal().unwrap();
+            assert_eq!(modal.title.render_current(), expected);
+            assert_eq!(modal.message.render_current(), expected);
+            assert_eq!(modal.actions[0].label.render_current(), expected);
+            assert_eq!(modal.actions[1].label.render_current(), "Raw cancel");
+            assert_eq!(center.modal_queue[0].title.render_current(), expected);
+            assert_eq!(
+                center.modal_queue[0].actions[0].label.render_current(),
+                expected
+            );
+            // Equality includes deadlines, IDs, selection, alert sequences and both queues.
+            assert_eq!(center, retained);
+        }
+
+        assert_eq!(center.active_modal_id(), Some(active_id));
+        assert_eq!(center.queued_modal_count(), 1);
+        let response = center.activate_selected_action().unwrap();
+        assert_eq!(response.notification_id, active_id);
+        assert_eq!(response.action_id, "cancel");
+        assert_eq!(center.active_modal_id(), Some(queued_id));
+        assert_eq!(center.take_response(), Some(response));
+        let resolved_at = started_at + Duration::from_secs(20);
+        center.expire(resolved_at);
+        assert!(center.toast().is_some());
+        center.resolve_alert_at("stable-alert", resolved_at);
+        assert_eq!(
+            center.poll_deadline(),
+            Some(resolved_at + DEFAULT_TOAST_DURATION)
+        );
+        center.expire(resolved_at + DEFAULT_TOAST_DURATION);
+        assert!(center.toast().is_none());
+    }
+
+    #[test]
+    fn raw_callers_preserve_literal_text_without_message_lookup() {
+        let literal = "notifications-action-ok";
+        let mut center = NotificationCenter::new(literal.to_string());
+        center.notify_toast(literal);
+        center.notify_alert(literal.to_string(), NotificationTone::Warning);
+        center.push_modal(Notification::modal(
+            literal,
+            literal.to_string(),
+            NotificationTone::Info,
+            vec![NotificationAction::new("literal", literal)],
+        ));
+
+        let raw = LocalizedText::Raw(literal.to_string());
+        assert_eq!(center.status(), &raw);
+        assert_eq!(center.toast(), Some(&raw));
+        assert_eq!(center.alert(), Some(&raw));
+        let modal = center.active_modal().unwrap();
+        assert_eq!(modal.title, raw);
+        assert_eq!(modal.message, raw);
+        assert_eq!(modal.actions[0].label, raw);
+    }
 
     fn modal(title: &str) -> Notification {
         Notification::modal(
@@ -575,7 +701,10 @@ mod tests {
             Duration::from_millis(100)
         );
         center.expire(started_at + DEFAULT_TOAST_DURATION - Duration::from_millis(1));
-        assert_eq!(center.toast(), Some("Saved"));
+        assert_eq!(
+            center.toast().map(LocalizedText::render_current).as_deref(),
+            Some("Saved")
+        );
         center.expire(started_at + DEFAULT_TOAST_DURATION);
         assert_eq!(center.toast(), None);
     }
@@ -590,7 +719,10 @@ mod tests {
         center.notify_toast_at("Saved", started_at);
 
         center.expire(started_at + DEFAULT_TOAST_DURATION + Duration::from_secs(1));
-        assert_eq!(center.toast(), Some("Saved"));
+        assert_eq!(
+            center.toast().map(LocalizedText::render_current).as_deref(),
+            Some("Saved")
+        );
         assert_eq!(center.poll_deadline(), None);
 
         center.resolve_alert_at("storage", resolved_at);
@@ -601,7 +733,10 @@ mod tests {
             resolved_at.checked_add(DEFAULT_TOAST_DURATION)
         );
         center.expire(resolved_at + DEFAULT_TOAST_DURATION - Duration::from_millis(1));
-        assert_eq!(center.toast(), Some("Saved"));
+        assert_eq!(
+            center.toast().map(LocalizedText::render_current).as_deref(),
+            Some("Saved")
+        );
         center.expire(resolved_at + DEFAULT_TOAST_DURATION);
         assert_eq!(center.toast(), None);
     }
@@ -617,7 +752,10 @@ mod tests {
 
         assert_eq!(center.alert_count(), 2);
         assert_eq!(center.alert_key(), Some("first"));
-        assert_eq!(center.alert(), Some("First updated"));
+        assert_eq!(
+            center.alert().map(LocalizedText::render_current).as_deref(),
+            Some("First updated")
+        );
     }
 
     #[test]
@@ -644,9 +782,21 @@ mod tests {
         center.notify_alert_with_key("overflow", "latest", NotificationTone::Info);
 
         assert_eq!(center.alert_count(), MAX_ACTIVE_ALERTS);
-        assert_eq!(center.alert_message_for_key("key-0"), Some("refreshed"));
+        assert_eq!(
+            center
+                .alert_message_for_key("key-0")
+                .map(LocalizedText::render_current)
+                .as_deref(),
+            Some("refreshed")
+        );
         assert_eq!(center.alert_message_for_key("key-1"), None);
-        assert_eq!(center.alert_message_for_key("overflow"), Some("latest"));
+        assert_eq!(
+            center
+                .alert_message_for_key("overflow")
+                .map(LocalizedText::render_current)
+                .as_deref(),
+            Some("latest")
+        );
     }
 
     #[test]
@@ -657,17 +807,26 @@ mod tests {
         center.push_modal(modal("Third"));
 
         assert_eq!(
-            center.active_modal().map(|item| item.title.as_str()),
+            center
+                .active_modal()
+                .map(|item| item.title.render_current())
+                .as_deref(),
             Some("First")
         );
         center.activate_selected_action();
         assert_eq!(
-            center.active_modal().map(|item| item.title.as_str()),
+            center
+                .active_modal()
+                .map(|item| item.title.render_current())
+                .as_deref(),
             Some("Second")
         );
         center.activate_selected_action();
         assert_eq!(
-            center.active_modal().map(|item| item.title.as_str()),
+            center
+                .active_modal()
+                .map(|item| item.title.render_current())
+                .as_deref(),
             Some("Third")
         );
     }
@@ -685,17 +844,26 @@ mod tests {
         ));
 
         assert_eq!(
-            center.active_modal().map(|item| item.title.as_str()),
+            center
+                .active_modal()
+                .map(|item| item.title.render_current())
+                .as_deref(),
             Some("Critical")
         );
         center.activate_selected_action();
         assert_eq!(
-            center.active_modal().map(|item| item.title.as_str()),
+            center
+                .active_modal()
+                .map(|item| item.title.render_current())
+                .as_deref(),
             Some("Active")
         );
         center.activate_selected_action();
         assert_eq!(
-            center.active_modal().map(|item| item.title.as_str()),
+            center
+                .active_modal()
+                .map(|item| item.title.render_current())
+                .as_deref(),
             Some("Queued")
         );
     }
@@ -715,12 +883,18 @@ mod tests {
             queued_id
         );
         assert_eq!(
-            center.active_modal().map(|item| item.title.as_str()),
+            center
+                .active_modal()
+                .map(|item| item.title.render_current())
+                .as_deref(),
             Some("Active updated")
         );
         center.activate_selected_action();
         assert_eq!(
-            center.active_modal().map(|item| item.title.as_str()),
+            center
+                .active_modal()
+                .map(|item| item.title.render_current())
+                .as_deref(),
             Some("Queued updated")
         );
     }
@@ -809,7 +983,10 @@ mod tests {
         assert_eq!(center.active_modal_id(), Some(first_id));
         assert!(center.dismiss_active_modal_without_response());
         assert_eq!(
-            center.active_modal().map(|item| item.title.as_str()),
+            center
+                .active_modal()
+                .map(|item| item.title.render_current())
+                .as_deref(),
             Some("Second")
         );
         assert_eq!(center.response_count(), 0);

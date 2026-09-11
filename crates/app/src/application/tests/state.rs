@@ -412,13 +412,23 @@ fn replacing_timezone_updates_config_and_clock_together() {
 fn notifications_are_owned_dispatched_and_snapshotted_by_app_state() {
     let started_at = Instant::now();
     let mut state = AppState::default();
-    assert_eq!(state.snapshot().notifications.status(), "Ready");
+    assert_eq!(
+        state.snapshot().notifications.status().render_current(),
+        "Ready"
+    );
 
     state.dispatch_at(
-        AppCommand::Notification(NotificationCommand::ShowToast("Saved".to_string())),
+        AppCommand::Notification(NotificationCommand::ShowToast("Saved".into())),
         started_at,
     );
-    assert_eq!(state.notification_center().toast(), Some("Saved"));
+    assert_eq!(
+        state
+            .notification_center()
+            .toast()
+            .map(i18n::LocalizedText::render_current)
+            .as_deref(),
+        Some("Saved")
+    );
 
     state.dispatch_at(AppCommand::Tick, started_at + crate::DEFAULT_TOAST_DURATION);
     assert_eq!(state.notification_center().toast(), None);

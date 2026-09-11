@@ -1,30 +1,36 @@
 use super::super::*;
+use i18n::LocalizedText;
 impl ShellSession {
-    pub fn status(&self) -> &str {
+    pub fn status_text(&self) -> &LocalizedText {
         self.app.notification_center().status()
     }
 
-    pub fn notify_status(&mut self, message: impl Into<String>) {
+    /// Render on demand using the current presentation's scoped locale snapshot.
+    pub fn status(&self) -> String {
+        self.status_text().render_current()
+    }
+
+    pub fn notify_status(&mut self, message: impl Into<LocalizedText>) {
         self.dispatch_notification(
             app::NotificationCommand::SetStatus(message.into()),
             Instant::now(),
         );
     }
 
-    pub fn notify_toast(&mut self, message: impl Into<String>) {
+    pub fn notify_toast(&mut self, message: impl Into<LocalizedText>) {
         self.dispatch_notification(
             app::NotificationCommand::ShowToast(message.into()),
             Instant::now(),
         );
     }
 
-    pub fn notify_alert(&mut self, message: impl Into<String>) {
+    pub fn notify_alert(&mut self, message: impl Into<LocalizedText>) {
         self.notify_alert_with_tone(message, ui::NotificationTone::Warning);
     }
 
     pub fn notify_alert_with_tone(
         &mut self,
-        message: impl Into<String>,
+        message: impl Into<LocalizedText>,
         tone: ui::NotificationTone,
     ) {
         self.notify_alert_with_key(DEFAULT_ALERT_KEY, message, tone);
@@ -33,7 +39,7 @@ impl ShellSession {
     pub fn notify_alert_with_key(
         &mut self,
         key: impl Into<String>,
-        message: impl Into<String>,
+        message: impl Into<LocalizedText>,
         tone: ui::NotificationTone,
     ) {
         self.dispatch_notification(
@@ -56,8 +62,8 @@ impl ShellSession {
 
     pub fn notify_modal(
         &mut self,
-        title: impl Into<String>,
-        message: impl Into<String>,
+        title: impl Into<LocalizedText>,
+        message: impl Into<LocalizedText>,
         tone: ui::NotificationTone,
         actions: Vec<ShellNotificationAction>,
     ) -> u64 {
@@ -69,8 +75,8 @@ impl ShellSession {
 
     pub fn notify_critical_modal(
         &mut self,
-        title: impl Into<String>,
-        message: impl Into<String>,
+        title: impl Into<LocalizedText>,
+        message: impl Into<LocalizedText>,
         actions: Vec<ShellNotificationAction>,
     ) -> u64 {
         self.capture_modal_focus_context();
@@ -107,8 +113,7 @@ impl ShellSession {
         // failure record; notification text may contain user content.
         let transition = match &command {
             app::NotificationCommand::ShowAlert { key, message, .. }
-                if self.app.notification_center().alert_message_for_key(key)
-                    != Some(message.as_str()) =>
+                if self.app.notification_center().alert_message_for_key(key) != Some(message) =>
             {
                 Some((key.clone(), "alert_shown"))
             }
@@ -246,7 +251,10 @@ impl ShellSession {
         self.dispatch_notification(app::NotificationCommand::ResolveAlert(key.to_string()), now);
     }
 
-    pub(in crate::session) fn notification_alert_message_for_key(&self, key: &str) -> Option<&str> {
+    pub(in crate::session) fn notification_alert_message_for_key(
+        &self,
+        key: &str,
+    ) -> Option<&LocalizedText> {
         self.app.notification_center().alert_message_for_key(key)
     }
 

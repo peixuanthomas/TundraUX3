@@ -129,7 +129,7 @@ impl AppState {
             network_clock: NetworkClock::new(clock_timezone_id.clone()),
             clock_timezone_id,
             exit_confirmation_requested: false,
-            notifications: NotificationCenter::new("Ready"),
+            notifications: NotificationCenter::new(i18n::msg!("notifications-status-ready")),
             auth_session: None,
             managed_users: Vec::new(),
             storage_config,
