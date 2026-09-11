@@ -1,3 +1,5 @@
+mod localization;
+
 use std::collections::HashSet;
 use std::fmt;
 use std::fs;
@@ -89,7 +91,7 @@ impl DiagnosticsRepairAction {
             Self::RestoreDefaultThemeFile { root, file_key } => {
                 (1, format!("{}/{}", root.display(), file_key))
             }
-            Self::RepairStorageDocument(kind) => (2, storage_document_label(*kind).to_string()),
+            Self::RepairStorageDocument(kind) => (2, storage_document_id(*kind).to_string()),
         }
     }
 
@@ -197,7 +199,7 @@ pub enum DiagnosticsTaskEvent {
     RepairProgress {
         completed: usize,
         total: usize,
-        label: String,
+        label: i18n::LocalizedText,
     },
     RepairCompleted {
         results: Vec<DiagnosticsRepairResult>,
@@ -382,6 +384,19 @@ pub fn diagnostics_watchdog_descriptor() -> AppDescriptor {
     )
 }
 
+fn environment_diagnostic(check: platform::EnvironmentCheck) -> DiagnosticCheck {
+    DiagnosticCheck {
+        id: format!("environment.{}", check.id),
+        category: DiagnosticCategory::Environment,
+        label: check.label,
+        status: check.status.into(),
+        summary: check.message.clone(),
+        detail: check.message,
+        remediation: remediation_for_environment(check.status),
+        repair: None,
+    }
+}
+
 pub fn scan_diagnostics(
     platform: &dyn Platform,
     storage: &StorageManager,
@@ -399,16 +414,7 @@ pub fn scan_diagnostics(
     let mut checks = doctor
         .environment_checks
         .into_iter()
-        .map(|check| DiagnosticCheck {
-            id: stable_id("environment", &check.label),
-            category: DiagnosticCategory::Environment,
-            label: check.label,
-            status: check.status.into(),
-            summary: check.message.clone(),
-            detail: check.message,
-            remediation: remediation_for_environment(check.status),
-            repair: None,
-        })
+        .map(environment_diagnostic)
         .collect::<Vec<_>>();
 
     checks.extend(doctor.path_checks.into_iter().map(|check| {
@@ -430,7 +436,7 @@ pub fn scan_diagnostics(
             check.message.clone()
         };
         DiagnosticCheck {
-            id: stable_id("path", &check.label),
+            id: format!("path.{}", check.id),
             category: DiagnosticCategory::Paths,
             label: check.label,
             status,
@@ -709,7 +715,7 @@ fn diagnostic_asset_checks(root: &Path) -> Vec<DiagnosticCheck> {
                 }
             });
             DiagnosticCheck {
-                id: stable_id("asset", &check.key),
+                id: format!("asset.{}", check.key),
                 category: DiagnosticCategory::Assets,
                 label: check.key,
                 status,
@@ -742,7 +748,7 @@ fn diagnostics_worker_loop(
                 let mut task_restart_required = false;
                 let mut results = Vec::with_capacity(total);
                 for (index, action) in actions.into_iter().enumerate() {
-                    let label = action.label();
+                    let label = action.localized_label();
                     let _ = event_tx.send(DiagnosticsTaskEvent::RepairProgress {
                         completed: index,
                         total,
@@ -889,22 +895,6 @@ fn remediation_for_environment(status: CheckStatus) -> Option<String> {
             Some("Use a supported platform and terminal configuration".to_string())
         }
     }
-}
-
-fn stable_id(prefix: &str, label: &str) -> String {
-    let normalized = label
-        .chars()
-        .map(|character| {
-            if character.is_ascii_alphanumeric() {
-                character.to_ascii_lowercase()
-            } else {
-                '-'
-            }
-        })
-        .collect::<String>()
-        .trim_matches('-')
-        .to_string();
-    format!("{prefix}.{normalized}")
 }
 
 pub const fn storage_document_label(kind: StorageDocumentKind) -> &'static str {
