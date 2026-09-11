@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Opt-in negative tests against the installed Linux system-bus service.
 
-No shutdown, reboot, valid update, or generic command is ever requested. The
-only valid action is a one-record ReadSystemLogs request, which must be denied
-for each supplied negative-test subject. Requires distro python3-dbus.
+No shutdown, reboot, or valid update is ever requested. The only valid action
+is a one-record ReadSystemLogs request, which must be denied for each negative
+subject. An unknown generic command method is probed and must return
+UnknownMethod. Requires distro python3-dbus.
 """
 import argparse
 import json
