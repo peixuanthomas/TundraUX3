@@ -452,6 +452,7 @@ fn localization_metadata_survives_persistence_with_readable_fallback() {
 #[test]
 fn localization_metadata_obeys_metadata_privacy_limits() {
     let mut original = event("alice", LogPhase::Failed, "Failed");
+    original.message_id = Some("app-explorer-clipboard-empty".into());
     original
         .message_args
         .insert("password".into(), serde_json::json!("opaque-secret"));
@@ -472,4 +473,11 @@ fn localization_metadata_obeys_metadata_privacy_limits() {
     }
     assert!(encoded.len() < 4096);
     assert_eq!(original.message_args["details"]["count"], 3);
+    assert_eq!(
+        original.message_id.as_deref(),
+        Some("app-explorer-clipboard-empty")
+    );
+    original.message_id = Some("password=opaque-secret".into());
+    sanitize_event(&mut original);
+    assert!(original.message_id.is_none());
 }

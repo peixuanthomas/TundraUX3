@@ -133,7 +133,18 @@ fn sanitize_argument(value: &mut serde_json::Value) {
 pub fn sanitize_event(event: &mut RuntimeLogEvent) {
     event.event_id = sanitize_text(&event.event_id);
     event.message = sanitize_text(&event.message);
-    opt(&mut event.message_id);
+    // IDs are identifiers, not prose: words such as "clipboard" or "token" may
+    // legitimately occur in a translation key. Reject malformed identifiers
+    // instead of redacting pieces of otherwise valid keys.
+    if event.message_id.as_ref().is_some_and(|id| {
+        id.is_empty()
+            || id.len() > MAX_TEXT_BYTES
+            || !id
+                .chars()
+                .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.'))
+    }) {
+        event.message_id = None;
+    }
     event.message_args = std::mem::take(&mut event.message_args)
         .into_iter()
         .take(16)
