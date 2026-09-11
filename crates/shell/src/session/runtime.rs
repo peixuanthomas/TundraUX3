@@ -1,6 +1,5 @@
 use super::*;
 use std::panic::AssertUnwindSafe;
-use std::path::Path;
 use watchdog::{
     AppCriticality, AppDescriptor, AppId, AppWatchdog, BoundaryKind, BoundarySpec, CaughtPanic,
     ComponentId, IncidentKind, IncidentReceipt, ManagedThreadHandle, PanicAction, ProcessWatchdog,
@@ -175,11 +174,8 @@ pub fn run_fullscreen_blocking_managed_with_outcome(
 ) -> io::Result<ShellRunOutcome> {
     let config = ShellLaunchConfig::default();
     let platform: std::sync::Arc<dyn Platform> = std::sync::Arc::from(platform::native_platform());
-    let mut ascii_assets = match load_startup_runtime_ascii_assets(output, platform.as_ref())? {
-        StartupAssetLoadOutcome::Loaded(assets) => assets,
-        StartupAssetLoadOutcome::Restart => return Ok(ShellRunOutcome::RestartRequested),
-        StartupAssetLoadOutcome::Exit => return Ok(ShellRunOutcome::Exit),
-    };
+    let (mut ascii_assets, recovery_report) = load_startup_runtime_ascii_assets()?;
+    let mut startup_resource_report = Some(recovery_report);
     let terminal_size_requirement = ShellTerminalSizeRequirement::from_assets(&ascii_assets);
     checked_current_terminal_size(terminal_size_requirement)?;
     let terminal_control = TerminalControlHandler::install();
@@ -193,6 +189,15 @@ pub fn run_fullscreen_blocking_managed_with_outcome(
         .register_app(app::diagnostics::diagnostics_watchdog_descriptor())
         .map_err(io::Error::other)?;
     let initial_startup = prepare_shell_startup(platform.as_ref()).map_err(io::Error::other)?;
+    let configured_language = initial_startup
+        .storage_manager
+        .as_ref()
+        .and_then(|storage| storage.load_config().ok())
+        .map(|config| config.language)
+        .unwrap_or_else(|| "en-US".into());
+    let mut language_runtime =
+        PreparedLanguage::load(ascii_assets.store().root(), &configured_language);
+    let _startup_language = i18n::enter_snapshot(language_runtime.snapshot.clone());
     // Storage is initialized at this point, but login has not opened yet.
     // Keep this single service runtime alive across lockscreen/session cycles.
     let (system_services, _system_snapshots) = system_services::SystemServicesRuntime::start(
@@ -237,6 +242,7 @@ pub fn run_fullscreen_blocking_managed_with_outcome(
     let _ = platform.poll_lifecycle_event();
 
     loop {
+        let _language = i18n::enter_snapshot(language_runtime.snapshot.clone());
         let mut startup = match initial_startup.take() {
             Some(startup) => startup,
             None => prepare_shell_startup(platform.as_ref()).map_err(io::Error::other)?,
@@ -263,7 +269,15 @@ pub fn run_fullscreen_blocking_managed_with_outcome(
             ));
         }
         if force_lockscreen || should_show_startup_lockscreen(&startup) {
+            let language = language_runtime.snapshot.clone();
             let lockscreen_input = weathr::WeathrDisplayInput {
+                localize: Arc::new(move |id, args| {
+                    let mut message = i18n::LocalizedMessage::new(id);
+                    for (name, value) in args {
+                        message = message.with_arg(*name, value.clone());
+                    }
+                    language.render(&message)
+                }),
                 snapshots: system_services.subscribe(),
                 clock_format: weathr::ClockFormat::TwentyFourHour,
                 hide_hud: false,
@@ -319,6 +333,8 @@ pub fn run_fullscreen_blocking_managed_with_outcome(
                     explorer_task_runtime: explorer_task_runtime.clone(),
                     diagnostics_task_runtime: diagnostics_task_runtime.clone(),
                     terminal_graphics_probe: &terminal_graphics_probe,
+                    language_runtime: &mut language_runtime,
+                    startup_resource_report: startup_resource_report.take(),
                     show_terminal_graphics_notice: std::mem::take(
                         &mut show_terminal_graphics_notice,
                     ),
@@ -343,6 +359,7 @@ pub fn run_fullscreen_blocking_managed_with_outcome(
                         return Ok(ShellRunOutcome::UpdatePrepared(manifest));
                     }
                     FullscreenShellSessionOutcome::Panic(message) => {
+                        let _language = i18n::enter_snapshot(language_runtime.snapshot.clone());
                         return run_panic_screen(
                             output,
                             &message,
@@ -354,6 +371,7 @@ pub fn run_fullscreen_blocking_managed_with_outcome(
             }
             Ok(Err(error)) => return Err(error),
             Err(caught) => {
+                let _language = i18n::enter_snapshot(language_runtime.snapshot.clone());
                 let message = finalize_session_panic(caught, "Shell UI");
                 return run_panic_screen(output, &message, &terminal_control, platform.as_ref());
             }
@@ -574,7 +592,7 @@ impl LauncherIconRuntime {
         let labels = model
             .entries()
             .iter()
-            .map(|entry| entry.label.as_str())
+            .map(|entry| entry.icon_identity())
             .collect::<HashSet<_>>();
         self.home_unavailable
             .retain(|label| labels.contains(label.as_str()));
@@ -592,15 +610,15 @@ impl LauncherIconRuntime {
             }
             let needs_prepare = self
                 .home_prepared
-                .get(&entry.label)
+                .get(entry.icon_identity())
                 .is_none_or(|cached| cached.area != icon_area);
-            if !needs_prepare || self.home_unavailable.contains(&entry.label) {
+            if !needs_prepare || self.home_unavailable.contains(entry.icon_identity()) {
                 continue;
             }
 
-            self.home_prepared.remove(&entry.label);
+            self.home_prepared.remove(entry.icon_identity());
             let prepared = model
-                .home_icon_image_bytes_for_label(&entry.label)
+                .home_icon_image_bytes_for_label(entry.icon_identity())
                 .ok_or_else(|| "Home icon asset is not cached".to_string())
                 .and_then(|bytes| {
                     self.picker
@@ -610,7 +628,7 @@ impl LauncherIconRuntime {
             match prepared {
                 Ok(image) => {
                     self.home_prepared.insert(
-                        entry.label.clone(),
+                        entry.icon_identity().to_string(),
                         CachedLauncherIcon {
                             area: icon_area,
                             image,
@@ -618,7 +636,8 @@ impl LauncherIconRuntime {
                     );
                 }
                 Err(_) => {
-                    self.home_unavailable.insert(entry.label.clone());
+                    self.home_unavailable
+                        .insert(entry.icon_identity().to_string());
                 }
             }
         }
@@ -753,13 +772,11 @@ impl UserThemeReloader {
             }
             Err(error) => {
                 let notification = ShellNotification::modal(
-                    "Theme reload failed",
-                    format!(
-                        "Could not reload the active user's theme: {error}. The last valid theme is still active."
-                    ),
+                    i18n::msg!("startup-theme-reload-title"),
+                    i18n::msg!("startup-theme-reload-failed", reason = error.to_string()),
                     ui::NotificationTone::Error,
                     vec![
-                        ShellNotificationAction::new("ok", "OK")
+                        ShellNotificationAction::new("ok", i18n::msg!("resources-recovery-ok"))
                             .with_shortcut(InputKey::Escape)
                             .cancel(),
                     ],
@@ -832,6 +849,8 @@ pub(super) struct FullscreenShellSessionInput<'a, W> {
     diagnostics_task_runtime: Option<ShellDiagnosticsTaskRuntime>,
     terminal_graphics_probe: &'a ui::TerminalGraphicsProbe,
     show_terminal_graphics_notice: bool,
+    startup_resource_report: Option<ascii_assets::DefaultThemeRecoveryReport>,
+    language_runtime: &'a mut PreparedLanguage,
 }
 
 pub(super) fn run_fullscreen_shell_session<W: Write>(
@@ -854,6 +873,8 @@ pub(super) fn run_fullscreen_shell_session<W: Write>(
         diagnostics_task_runtime,
         terminal_graphics_probe,
         show_terminal_graphics_notice,
+        startup_resource_report,
+        language_runtime,
     } = input;
     let terminal_size_requirement = ShellTerminalSizeRequirement::from_assets(&ascii_assets);
     let initial_size = checked_current_terminal_size(terminal_size_requirement)?;
@@ -884,6 +905,7 @@ pub(super) fn run_fullscreen_shell_session<W: Write>(
         startup,
         ascii_assets,
         ShellRuntimeServices {
+            language: Some(language_runtime.clone()),
             explorer: explorer_task_runtime,
             diagnostics: diagnostics_task_runtime,
             editor: ShellEditorTaskRuntime::new_managed(shell_watchdog.clone()),
@@ -895,6 +917,19 @@ pub(super) fn run_fullscreen_shell_session<W: Write>(
             ),
         },
     );
+    if let Some(report) = startup_resource_report {
+        state.report_graphical_resource_recovery(&report);
+    } else {
+        // The startup report is process-scoped, not a login-session notification.
+        state.app.dispatch_at(
+            app::AppCommand::Notification(app::NotificationCommand::DismissModalByKey(
+                "shell.resource-recovery".into(),
+            )),
+            Instant::now(),
+        );
+        state.repaired_resource_paths.clear();
+        state.fallback_resource_paths.clear();
+    }
     let mut system_status_snapshots = system_services.subscribe();
     state.apply_system_status_snapshot(app::AppSystemStatusSnapshot::from(
         &*system_status_snapshots.borrow_and_update(),
@@ -929,6 +964,8 @@ pub(super) fn run_fullscreen_shell_session<W: Write>(
     let mut update_ready_marked = false;
 
     loop {
+        language_runtime.update_from(&state);
+        let _language = i18n::enter_snapshot(state.language.clone());
         let state_before_polling = state.clone();
         let theme_before_polling = theme;
         drain_system_status_snapshot(&mut system_status_snapshots, &mut state);
@@ -939,7 +976,7 @@ pub(super) fn run_fullscreen_shell_session<W: Write>(
                 Ok(event) => event,
                 Err(error) => {
                     state.notify_alert_with_tone(
-                        format!("Desktop lifecycle monitoring failed: {error}"),
+                        i18n::msg!("startup-lifecycle-failed", reason = error.to_string()),
                         ui::NotificationTone::Error,
                     );
                     break;
@@ -1052,6 +1089,7 @@ pub(super) fn run_fullscreen_shell_session<W: Write>(
             reduced_motion_enabled(&state),
         );
         if redraw.is_due(frame_now) {
+            let _language = i18n::enter_snapshot(state.language.clone());
             let content_screen = state.content_screen();
             let chrome = state.to_shell_chrome_view_model();
             // Construct only the model that can be rendered this frame. Explorer,
@@ -1565,14 +1603,11 @@ pub(super) fn run_fullscreen_shell_session<W: Write>(
                     }
                     state.show_exit_confirmation_modal(platform.as_ref());
                     state.notify_alert_with_tone(
-                        format!(
-                            "{} failed: {error}",
-                            if reboot {
-                                "Restart computer"
-                            } else {
-                                "Shut down computer"
-                            }
-                        ),
+                        if reboot {
+                            i18n::msg!("startup-reboot-failed", reason = error.to_string())
+                        } else {
+                            i18n::msg!("startup-shutdown-failed", reason = error.to_string())
+                        },
                         ui::NotificationTone::Error,
                     );
                 }
@@ -1599,6 +1634,7 @@ pub(super) fn run_fullscreen_shell_session<W: Write>(
     } else {
         FullscreenShellSessionOutcome::Exit
     };
+    language_runtime.update_from(&state);
     Ok((outcome, state.ascii_assets.clone()))
 }
 
@@ -1885,7 +1921,7 @@ fn refresh_session_after_resume(
 ) {
     if let Err(error) = platform.refresh_session() {
         state.notify_alert_with_tone(
-            format!("Desktop session refresh failed: {error}"),
+            i18n::msg!("startup-session-refresh-failed", reason = error.to_string()),
             ui::NotificationTone::Error,
         );
     }
@@ -1981,160 +2017,13 @@ pub(super) fn load_validated_runtime_ascii_assets() -> io::Result<ui::RuntimeAsc
     Ok(ascii_assets)
 }
 
-const DEFAULT_THEME_DOWNLOAD_URL: &str =
-    "https://github.com/peixuanthomas/TundraUX3/releases/latest";
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum StartupAssetRecoveryChoice {
-    AutoRestore,
-    Download,
-    Restart,
-    Exit,
-}
-
-#[derive(Debug)]
-enum StartupAssetLoadOutcome {
-    Loaded(ui::RuntimeAsciiAssets),
-    Restart,
-    Exit,
-}
-
-fn load_startup_runtime_ascii_assets(
-    output: &mut impl Write,
-    platform: &dyn Platform,
-) -> io::Result<StartupAssetLoadOutcome> {
-    let root = ui::asset_root_for_recovery_from_env_or_current_exe().map_err(asset_io_error)?;
-    resolve_startup_runtime_ascii_assets_at(
-        &root,
-        |report, last_error| prompt_startup_asset_recovery(output, report, last_error),
-        || {
-            platform
-                .open_uri(DEFAULT_THEME_DOWNLOAD_URL)
-                .map_err(|error| error.to_string())
-        },
-    )
-}
-
-fn resolve_startup_runtime_ascii_assets_at(
-    root: &Path,
-    mut choose: impl FnMut(
-        &ui::DefaultThemeCheckReport,
-        Option<&str>,
-    ) -> io::Result<StartupAssetRecoveryChoice>,
-    mut open_download: impl FnMut() -> Result<(), String>,
-) -> io::Result<StartupAssetLoadOutcome> {
-    let mut last_error = None;
-    loop {
-        let report = ui::check_default_theme(root);
-        if report.is_ok() {
-            let store = ui::AsciiAssetStore::load_with_root(root, ui::DEFAULT_THEME_ID)
-                .map_err(asset_io_error)?;
-            return Ok(StartupAssetLoadOutcome::Loaded(
-                ui::RuntimeAsciiAssets::from_store(store),
-            ));
-        }
-
-        match choose(&report, last_error.as_deref())? {
-            StartupAssetRecoveryChoice::AutoRestore => {
-                let context = ProcessWatchdog::global()
-                    .map(|process| process.log_context("ux.assets", "restore_default_theme"))
-                    .unwrap_or_else(|| runtime_log::LogContext {
-                        module: "ux.assets".into(),
-                        operation: "restore_default_theme".into(),
-                        ..Default::default()
-                    });
-                let mut started = runtime_log::RuntimeLogEvent::new(
-                    context,
-                    runtime_log::LogLevel::Info,
-                    runtime_log::LogPhase::Started,
-                    "Restoring default theme assets",
-                );
-                started.context.operation_id =
-                    ProcessWatchdog::global().map(|p| p.new_log_operation_id());
-                let context = started.context.clone();
-                record_shell_runtime_event(started);
-                let result = ui::restore_default_theme(root);
-                let mut event = runtime_log::RuntimeLogEvent::new(
-                    context,
-                    if result.is_ok() {
-                        runtime_log::LogLevel::Info
-                    } else {
-                        runtime_log::LogLevel::Error
-                    },
-                    if result.is_ok() {
-                        runtime_log::LogPhase::Recovered
-                    } else {
-                        runtime_log::LogPhase::Failed
-                    },
-                    "Default theme restoration result",
-                );
-                if let Err(error) = &result {
-                    event.error_code = Some("UX_ASSET_RESTORE_FAILED".into());
-                    event.error_chain.push(error.to_string());
-                }
-                record_shell_runtime_event(event);
-                last_error = result.err().map(|error| error.to_string());
-            }
-            StartupAssetRecoveryChoice::Download => match open_download() {
-                Ok(()) => return Ok(StartupAssetLoadOutcome::Exit),
-                Err(error) => last_error = Some(format!("Could not open download page: {error}")),
-            },
-            StartupAssetRecoveryChoice::Restart => {
-                return Ok(StartupAssetLoadOutcome::Restart);
-            }
-            StartupAssetRecoveryChoice::Exit => return Ok(StartupAssetLoadOutcome::Exit),
-        }
-    }
-}
-
-fn prompt_startup_asset_recovery(
-    output: &mut impl Write,
-    report: &ui::DefaultThemeCheckReport,
-    last_error: Option<&str>,
-) -> io::Result<StartupAssetRecoveryChoice> {
-    let warnings = report.warning_checks();
-    writeln!(output)?;
-    writeln!(output, "TundraUX3 asset recovery mode")?;
-    writeln!(
-        output,
-        "The default theme is incomplete or invalid ({} file{} affected).",
-        warnings.len(),
-        if warnings.len() == 1 { "" } else { "s" }
-    )?;
-    writeln!(output, "Asset root: {}", report.root.display())?;
-    for check in warnings.iter().take(8) {
-        writeln!(output, "  - {}: {}", check.key, check.message)?;
-    }
-    if warnings.len() > 8 {
-        writeln!(output, "  - ... and {} more", warnings.len() - 8)?;
-    }
-    if let Some(error) = last_error {
-        writeln!(output, "Previous recovery action failed: {error}")?;
-    }
-    writeln!(output)?;
-    writeln!(
-        output,
-        "  [1] Automatically restore the built-in default theme"
-    )?;
-    writeln!(output, "  [2] Open the latest release download page")?;
-    writeln!(output, "  [3] Restart TundraUX3")?;
-    writeln!(output, "  [4] Close TundraUX3")?;
-
-    loop {
-        write!(output, "Choose 1, 2, 3, or 4: ")?;
-        output.flush()?;
-        let mut input = String::new();
-        if std::io::stdin().read_line(&mut input)? == 0 {
-            return Ok(StartupAssetRecoveryChoice::Exit);
-        }
-        match input.trim().to_ascii_lowercase().as_str() {
-            "1" | "a" | "auto" => return Ok(StartupAssetRecoveryChoice::AutoRestore),
-            "2" | "d" | "download" => return Ok(StartupAssetRecoveryChoice::Download),
-            "3" | "r" | "restart" => return Ok(StartupAssetRecoveryChoice::Restart),
-            "4" | "q" | "quit" | "exit" => return Ok(StartupAssetRecoveryChoice::Exit),
-            _ => writeln!(output, "Invalid choice.")?,
-        }
-    }
+fn load_startup_runtime_ascii_assets() -> io::Result<(
+    ui::RuntimeAsciiAssets,
+    ascii_assets::DefaultThemeRecoveryReport,
+)> {
+    let (store, report) =
+        ui::AsciiAssetStore::load_default_with_recovery().map_err(asset_io_error)?;
+    Ok((ui::RuntimeAsciiAssets::from_store(store), report))
 }
 
 pub(super) fn spawn_time_sync_worker(
@@ -2396,30 +2285,43 @@ pub(super) fn show_watchdog_incident(state: &mut ShellSession, incident: Inciden
     }
 
     let can_view_details = state.diagnostics_can_view_details();
-    let public_summary = format!(
-        "A TundraUX component reported a critical error.\n\nRecovery: {}\nDetailed incident data is restricted to administrators.",
-        diagnostics_recovery_label(&incident.recovery)
+    let public_summary = i18n::msg!(
+        "startup-critical-public",
+        recovery = format!("{:?}", incident.recovery)
     );
-    let mut actions = vec![ShellNotificationAction::new("continue", "Continue").cancel()];
+    let display_summary = i18n::msg!(
+        "startup-critical-detail",
+        summary = incident.summary.clone(),
+        recovery = format!("{:?}", incident.recovery),
+        incident = incident.incident_id.to_string(),
+        report = state
+            .latest_watchdog_report
+            .as_ref()
+            .map(|path| path.display().to_string())
+            .unwrap_or_default()
+    );
+    let mut actions =
+        vec![ShellNotificationAction::new("continue", i18n::msg!("startup-continue")).cancel()];
     if can_view_details {
         actions.extend([
-            ShellNotificationAction::new("open-report", "Open report")
+            ShellNotificationAction::new("open-report", i18n::msg!("startup-open-report"))
                 .with_follow_up(ShellCommand::OpenLatestCrashReport),
-            ShellNotificationAction::new("copy-summary", "Copy summary")
+            ShellNotificationAction::new("copy-summary", i18n::msg!("startup-copy-summary"))
                 .with_follow_up(ShellCommand::CopyLatestCrashSummary),
         ]);
     }
     actions.push(
-        ShellNotificationAction::new("exit", "Exit").with_follow_up(ShellCommand::RequestExit),
+        ShellNotificationAction::new("exit", i18n::msg!("startup-exit"))
+            .with_follow_up(ShellCommand::RequestExit),
     );
     state.notify_critical_modal(
         if incident.recovery.is_recovered() {
-            "Program recovered from a critical error"
+            i18n::msg!("startup-critical-recovered")
         } else {
-            "Program encountered a critical error"
+            i18n::msg!("startup-critical-failed")
         },
         if can_view_details {
-            full_summary
+            display_summary
         } else {
             public_summary
         },
@@ -2724,97 +2626,27 @@ mod runtime_preflight_tests {
     }
 
     #[test]
-    fn startup_auto_restore_recreates_the_complete_default_theme() {
+    fn startup_automatically_repairs_without_interactive_input() {
         let root = recovery_asset_root("auto");
-        let _ = std::fs::remove_dir_all(&root);
-        let choices = Cell::new(0_usize);
-
-        let outcome = resolve_startup_runtime_ascii_assets_at(
-            &root,
-            |report, last_error| {
-                choices.set(choices.get() + 1);
-                assert!(last_error.is_none());
-                assert_eq!(report.checks.len(), ui::default_theme_files().len());
-                assert!(
-                    report
-                        .warning_checks()
-                        .iter()
-                        .any(|check| check.key == "home_icons/explorer.png")
-                );
-                Ok(StartupAssetRecoveryChoice::AutoRestore)
-            },
-            || panic!("automatic recovery must not open the download page"),
-        )
-        .expect("startup recovery should succeed");
-        let StartupAssetLoadOutcome::Loaded(assets) = outcome else {
-            panic!("automatic recovery should continue startup");
-        };
-
-        assert_eq!(choices.get(), 1);
+        let (store, report) = ui::AsciiAssetStore::load_default_with_root_and_recovery(&root)
+            .expect("automatic startup recovery");
+        assert!(!report.repaired.is_empty());
+        assert!(report.fallback.is_empty());
         assert!(ui::check_default_theme(&root).is_ok());
-        assert!(
-            assets
-                .home_icon_image_bytes("explorer")
-                .is_some_and(|bytes| bytes.starts_with(b"\x89PNG\r\n\x1a\n"))
-        );
-
-        std::fs::remove_dir_all(root).expect("clean startup recovery fixture");
+        assert!(store.home_icon_image_bytes("explorer").is_some());
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
-    fn startup_download_choice_opens_the_release_page_and_closes_cleanly() {
-        let root = recovery_asset_root("download");
-        let _ = std::fs::remove_dir_all(&root);
-        let opened = Cell::new(false);
-
-        let outcome = resolve_startup_runtime_ascii_assets_at(
-            &root,
-            |report, _| {
-                assert!(report.has_warnings());
-                Ok(StartupAssetRecoveryChoice::Download)
-            },
-            || {
-                opened.set(true);
-                Ok(())
-            },
-        )
-        .expect("download choice should close without an asset error");
-
-        assert!(matches!(outcome, StartupAssetLoadOutcome::Exit));
-        assert!(opened.get());
-        assert!(!root.exists());
-    }
-
-    #[test]
-    fn startup_restart_choice_requests_a_real_process_restart() {
-        let root = recovery_asset_root("restart");
-        let _ = std::fs::remove_dir_all(&root);
-
-        let outcome = resolve_startup_runtime_ascii_assets_at(
-            &root,
-            |_, _| Ok(StartupAssetRecoveryChoice::Restart),
-            || panic!("restart choice must not open the download page"),
-        )
-        .expect("restart choice should return a restart outcome");
-
-        assert!(matches!(outcome, StartupAssetLoadOutcome::Restart));
-        assert!(!root.exists());
-    }
-
-    #[test]
-    fn startup_close_choice_exits_without_touching_the_asset_root() {
-        let root = recovery_asset_root("close");
-        let _ = std::fs::remove_dir_all(&root);
-
-        let outcome = resolve_startup_runtime_ascii_assets_at(
-            &root,
-            |_, _| Ok(StartupAssetRecoveryChoice::Exit),
-            || panic!("close choice must not open the download page"),
-        )
-        .expect("close choice should be a clean exit");
-
-        assert!(matches!(outcome, StartupAssetLoadOutcome::Exit));
-        assert!(!root.exists());
+    fn startup_uses_memory_when_asset_root_is_not_writable() {
+        let root = recovery_asset_root("blocked");
+        std::fs::write(&root, b"not a directory").unwrap();
+        let (store, report) = ui::AsciiAssetStore::load_default_with_root_and_recovery(&root)
+            .expect("embedded recovery");
+        assert!(!report.fallback.is_empty());
+        assert!(store.home_icon_image_bytes("explorer").is_some());
+        assert_eq!(std::fs::read(&root).unwrap(), b"not a directory");
+        std::fs::remove_file(root).unwrap();
     }
 
     fn mouse_event(kind: MouseEventKind, column: u16, row: u16, modifiers: KeyModifiers) -> Event {

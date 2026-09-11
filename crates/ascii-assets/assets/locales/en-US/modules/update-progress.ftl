@@ -1,0 +1,13 @@
+progress-download-known = Download: { $percent }% · { $size }
+progress-download-unknown = Download: { $size } · total unknown
+progress-compile-complete = Compilation: 100% · complete
+progress-compile-known = Compilation: { $percent }% · { $completed }/{ $total } units
+progress-compile-preparing = Compilation: preparing build · total unknown
+progress-phase-checking = Checking for updates
+progress-phase-downloading = Downloading update
+progress-phase-toolchain = Checking build tools
+progress-phase-compiling = Compiling
+progress-phase-staging = Staging update
+progress-phase-replacing = Preparing replacement
+progress-phase-restart = Waiting for restart
+progress-phase-failed = Update failed

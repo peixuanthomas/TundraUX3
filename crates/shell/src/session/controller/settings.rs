@@ -1133,6 +1133,21 @@ impl ShellSession {
         language: Option<String>,
         timezone: Option<String>,
     ) {
+        self.save_region_picker_value_with(language, timezone, |session, storage, config| {
+            session.save_settings_config_logged(storage, config)
+        });
+    }
+
+    pub(in crate::session) fn save_region_picker_value_with(
+        &mut self,
+        language: Option<String>,
+        timezone: Option<String>,
+        persist: impl FnOnce(
+            &Self,
+            &StorageManager,
+            &storage::StorageConfig,
+        ) -> Result<(), storage::StorageError>,
+    ) {
         if !self.can_change_global_settings() {
             self.set_settings_error(i18n::msg!("settings-admin-required"));
             return;
@@ -1151,6 +1166,7 @@ impl ShellSession {
                 return;
             }
         };
+        let previous_config = config.clone();
         let candidate = if let Some(code) = language {
             match self.prepare_language(&code) {
                 Ok((catalog, loaded)) => {
@@ -1168,7 +1184,15 @@ impl ShellSession {
         if let Some(timezone) = timezone.clone() {
             config.timezone = timezone;
         }
-        if let Err(error) = self.save_settings_config_logged(&storage, &config) {
+        if let Err(error) = persist(self, &storage, &config) {
+            if candidate.is_some() {
+                self.rollback_failed_language_config(&storage, &previous_config, &config);
+            }
+            if let Some((_, loaded)) = &candidate {
+                self.repaired_resource_paths.clear();
+                self.fallback_resource_paths.clear();
+                self.report_language_diagnostics(&loaded.diagnostics);
+            }
             self.set_settings_error(i18n::msg!(
                 "settings-save-failed",
                 reason = error.to_string()
@@ -1184,6 +1208,7 @@ impl ShellSession {
             state.status = i18n::msg!("settings-saved-region").into();
         }
         self.notify_status(i18n::msg!("settings-saved-region"));
+        self.refresh_hit_map();
     }
 
     pub(in crate::session) fn open_settings_weather_location(&mut self) {
@@ -1987,6 +2012,7 @@ impl ShellSession {
                 return;
             }
         };
+        let previous_config = config.clone();
         let defaults = storage::StorageConfig::default();
         match category {
             ui::SettingsCategory::RegionTime => {
@@ -2013,6 +2039,14 @@ impl ShellSession {
             None
         };
         if let Err(error) = self.save_settings_config_logged(&storage, &config) {
+            if candidate.is_some() {
+                self.rollback_failed_language_config(&storage, &previous_config, &config);
+            }
+            if let Some((_, loaded)) = &candidate {
+                self.repaired_resource_paths.clear();
+                self.fallback_resource_paths.clear();
+                self.report_language_diagnostics(&loaded.diagnostics);
+            }
             self.set_settings_error(i18n::msg!(
                 "settings-restore-failed",
                 reason = error.to_string()

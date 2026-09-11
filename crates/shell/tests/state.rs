@@ -1024,7 +1024,10 @@ fn time_sync_failure_helper_shows_and_closes_dialog() {
     state.apply_time_sync_failure_for_test("联网校准时间失败");
 
     assert!(state.time_sync_failure_dialog_visible());
-    assert_eq!(state.time_sync_failure_message(), Some("联网校准时间失败"));
+    assert_eq!(
+        state.time_sync_failure_message().as_deref(),
+        Some("联网校准时间失败")
+    );
     assert_eq!(state.status(), "联网校准时间失败");
     assert_eq!(state.focused_component(), ShellComponent::TimeSyncDialog);
     assert!(state.to_time_sync_dialog_view_model().is_some());

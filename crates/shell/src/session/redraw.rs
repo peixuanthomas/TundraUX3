@@ -5,6 +5,7 @@ const STATE_CLOCK_INTERVAL: Duration = Duration::from_secs(1);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct RedrawIdentity {
+    language_generation: u64,
     screen: String,
     focus: String,
     overlay: Option<RedrawOverlayIdentity>,
@@ -25,6 +26,7 @@ impl RedrawIdentity {
                 id: overlay.id,
             });
         Self {
+            language_generation: state.language.generation(),
             screen: format!("{:?}", state.active_screen()),
             focus: format!("{:?}", state.focused_component()),
             overlay,
@@ -153,6 +155,7 @@ mod tests {
 
     fn id(screen: &str, focus: &str, overlay: Option<&str>) -> RedrawIdentity {
         RedrawIdentity {
+            language_generation: 1,
             screen: screen.into(),
             focus: focus.into(),
             overlay: overlay.map(|id| RedrawOverlayIdentity {

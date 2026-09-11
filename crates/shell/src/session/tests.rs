@@ -1420,7 +1420,8 @@ fn system_status_draft_profiles_catalog_cancel_and_save_failure_are_isolated() {
     assert!(
         state
             .system_status_dashboard_feedback
-            .as_deref()
+            .as_ref()
+            .map(i18n::LocalizedText::render_current)
             .unwrap_or_default()
             .contains("Storage unavailable")
     );
@@ -1827,6 +1828,7 @@ fn system_status_alert_dedupe_upgrade_recovery_and_network_baseline() {
             .notification_center()
             .alert()
             .unwrap()
+            .render_current()
             .contains("/sensitive/mount")
     );
     assert!(
@@ -1835,6 +1837,7 @@ fn system_status_alert_dedupe_upgrade_recovery_and_network_baseline() {
             .notification_center()
             .alert()
             .unwrap()
+            .render_current()
             .contains("100 B")
     );
     assert_eq!(
@@ -1853,14 +1856,14 @@ fn system_status_alert_dedupe_upgrade_recovery_and_network_baseline() {
             .alert_message_for_key("system-status.storage:/sensitive/mount")
             .is_some()
     );
-    let repeated = state.app.notification_center().alert().map(str::to_string);
+    let repeated = state.app.notification_center().alert().cloned();
     state.apply_system_status_snapshot(system_status_test_snapshot(
         2,
         system_services::StoragePressure::Low,
         true,
         system_services::SystemVolumeSource::Detected,
     ));
-    assert_eq!(state.app.notification_center().alert(), repeated.as_deref());
+    assert_eq!(state.app.notification_center().alert(), repeated.as_ref());
     assert_eq!(state.app.notification_center().alert_count(), 1);
     assert_eq!(
         state.system_status_storage_alerts.get("/sensitive/mount"),
@@ -1941,7 +1944,8 @@ fn system_status_alert_dedupe_upgrade_recovery_and_network_baseline() {
         .app
         .notification_center()
         .alert_message_for_key(storage_key)
-        .unwrap();
+        .unwrap()
+        .render_current();
     assert!(storage_message.contains("/sensitive/mount"));
     for unrelated_detail in [
         "secret-label",
@@ -1967,7 +1971,8 @@ fn system_status_alert_dedupe_upgrade_recovery_and_network_baseline() {
         .app
         .notification_center()
         .alert_message_for_key("system-status.network")
-        .unwrap();
+        .unwrap()
+        .render_current();
     assert_eq!(network_message, "Network connection was lost");
     for secret in [
         "/sensitive/mount",
@@ -2287,6 +2292,7 @@ fn system_status_live_service_home_open_refresh_and_background_close() {
         startup,
         ui::RuntimeAsciiAssets::load_default().unwrap(),
         ShellRuntimeServices {
+            language: None,
             explorer: None,
             diagnostics: None,
             editor: ShellEditorTaskRuntime::unavailable(),
@@ -3399,7 +3405,7 @@ fn settings_editor_identities_distinguish_variants_without_mutable_content() {
     state.settings_state = Some(SettingsState {
         category: ui::SettingsCategory::Appearance,
         selected_field: ui::SettingsField::Theme,
-        status: String::new(),
+        status: String::new().into(),
         scroll_offset: 0,
         picker: None,
         color_editor: None,
@@ -4232,7 +4238,7 @@ fn platform_capability_summary_counts_native_supported_capabilities() {
     );
 
     assert_eq!(
-        summary,
+        summary.render_current(),
         "Windows: 16 supported, 0 best-effort, 0 unsupported"
     );
 }
@@ -4857,7 +4863,8 @@ fn editor_load_blocks_clock_navigation_and_restores_its_origin() {
     assert!(
         state
             .editor_message
-            .as_deref()
+            .as_ref()
+            .map(i18n::LocalizedText::render_current)
             .is_some_and(|message| message.contains("Press Esc"))
     );
 
@@ -5411,7 +5418,8 @@ fn linux_account_actions_are_managed_by_linux_even_for_admin() {
     assert!(
         state
             .user_management_message
-            .as_deref()
+            .as_ref()
+            .map(i18n::LocalizedText::render_current)
             .unwrap()
             .contains("Linux")
     );

@@ -129,7 +129,7 @@ fn ui_style_command_selects_versions_and_rejects_invalid_arguments() {
     assert_eq!(run(["debug", "view-ui-style"], &mut stdout, &mut stderr), 0);
     let output = String::from_utf8(stdout).unwrap();
     for style in shell::UiStyleVersion::ALL {
-        assert!(output.contains(style.title()));
+        assert!(output.contains(&style.title()));
     }
     assert!(output.contains("F1-F3"));
     assert!(stderr.is_empty());

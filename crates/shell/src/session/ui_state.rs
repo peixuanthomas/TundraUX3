@@ -106,25 +106,25 @@ pub(super) struct SettingsPickerState {
 pub(super) struct SettingsColorEditorState {
     pub(super) kind: ui::SettingsPickerKind,
     pub(super) value: String,
-    pub(super) error: Option<String>,
+    pub(super) error: Option<i18n::LocalizedText>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct SettingsWeatherLocationEditorState {
     pub(super) value: String,
-    pub(super) error: Option<String>,
+    pub(super) error: Option<i18n::LocalizedText>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct SettingsFileExtensionsEditorState {
     pub(super) value: String,
-    pub(super) error: Option<String>,
+    pub(super) error: Option<i18n::LocalizedText>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct SettingsTimeSyncServerEditorState {
     pub(super) value: String,
-    pub(super) error: Option<String>,
+    pub(super) error: Option<i18n::LocalizedText>,
     pub(super) validating: bool,
 }
 
@@ -132,7 +132,7 @@ pub(super) struct SettingsTimeSyncServerEditorState {
 pub(super) struct SettingsState {
     pub(super) category: ui::SettingsCategory,
     pub(super) selected_field: ui::SettingsField,
-    pub(super) status: String,
+    pub(super) status: i18n::LocalizedText,
     pub(super) scroll_offset: u16,
     pub(super) picker: Option<SettingsPickerState>,
     pub(super) color_editor: Option<SettingsColorEditorState>,
@@ -175,8 +175,8 @@ pub(super) struct SettingsUpdateState {
     pub(super) check_result: Option<app::update::UpdateCheckResult>,
     pub(super) checked_at: Option<chrono::DateTime<chrono::Utc>>,
     pub(super) phase: Option<app::update::UpdatePhase>,
-    pub(super) status: String,
-    pub(super) error: Option<String>,
+    pub(super) status: i18n::LocalizedText,
+    pub(super) error: Option<i18n::LocalizedText>,
     pub(super) confirmation_open: bool,
     pub(super) confirm_selected: bool,
     pub(super) busy: bool,
@@ -190,7 +190,7 @@ impl Default for SettingsUpdateState {
             check_result: None,
             checked_at: None,
             phase: None,
-            status: "Not checked".to_string(),
+            status: i18n::msg!("startup-update-unchecked").into(),
             error: None,
             confirmation_open: false,
             confirm_selected: true,
@@ -240,8 +240,10 @@ impl SettingsUpdateState {
                 let percent = percent(received, total, finished);
                 let size = format!("{:.2} MiB", received as f64 / 1048576.0);
                 let label = match percent {
-                    Some(value) => format!("Download: {value}% · {size}"),
-                    None => format!("Download: {size} · total unknown"),
+                    Some(value) => {
+                        i18n::msg!("progress-download-known", percent = value, size = size).into()
+                    }
+                    None => i18n::msg!("progress-download-unknown", size = size).into(),
                 };
                 self.activity.get_or_insert_with(Default::default).download = Meter {
                     percent,
@@ -256,14 +258,17 @@ impl SettingsUpdateState {
             } => {
                 let percent = percent(completed, total, finished);
                 let label = if finished {
-                    "Compilation: 100% · complete".into()
+                    i18n::msg!("progress-compile-complete").into()
                 } else if let Some(total) = total {
-                    format!(
-                        "Compilation: {}% · {completed}/{total} units",
-                        percent.unwrap_or(0)
+                    i18n::msg!(
+                        "progress-compile-known",
+                        percent = percent.unwrap_or(0),
+                        completed = completed,
+                        total = total
                     )
+                    .into()
                 } else {
-                    "Compilation: preparing build · total unknown".into()
+                    i18n::msg!("progress-compile-preparing").into()
                 };
                 self.activity
                     .get_or_insert_with(Default::default)
@@ -279,8 +284,18 @@ impl SettingsUpdateState {
                 }
             }
         }
-        self.phase = Some(progress.phase);
-        self.status = progress.message;
+        self.phase = Some(progress.phase.clone());
+        self.status = i18n::msg!(match progress.phase {
+            app::update::UpdatePhase::Checking => "progress-phase-checking",
+            app::update::UpdatePhase::Downloading => "progress-phase-downloading",
+            app::update::UpdatePhase::CheckingToolchain => "progress-phase-toolchain",
+            app::update::UpdatePhase::Compiling => "progress-phase-compiling",
+            app::update::UpdatePhase::Staging => "progress-phase-staging",
+            app::update::UpdatePhase::PreparingReplacement => "progress-phase-replacing",
+            app::update::UpdatePhase::WaitingForRestart => "progress-phase-restart",
+            app::update::UpdatePhase::Failed => "progress-phase-failed",
+        })
+        .into();
     }
 }
 
@@ -312,7 +327,7 @@ mod update_progress_tests {
                 detail: UpdateProgressDetail::Output,
             });
         }
-        assert_eq!(state.status, "Compiling");
+        assert_eq!(state.status.render_current(), "Compiling");
         assert_eq!(state.activity.as_ref().unwrap().output.len(), 200);
         assert_eq!(
             state.activity.as_ref().unwrap().output.last().unwrap(),
@@ -529,7 +544,7 @@ pub(super) struct LauncherDragState {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct ClockCreateState {
     pub(super) input: String,
-    pub(super) error: Option<String>,
+    pub(super) error: Option<i18n::LocalizedText>,
     pub(super) focus: ui::ClockCreateDialogFocus,
 }
 
@@ -552,6 +567,10 @@ pub(super) struct TimedClick {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UiSessionState {
+    pub(super) language: Arc<i18n::LanguageSnapshot>,
+    pub(super) language_catalog: i18n::LanguageCatalog,
+    pub(super) repaired_resource_paths: Vec<String>,
+    pub(super) fallback_resource_paths: Vec<String>,
     pub(super) home_mode: ShellHomeMode,
     pub(super) ascii_assets: ui::RuntimeAsciiAssets,
     pub(super) screen_stack: Vec<ShellScreen>,
@@ -562,11 +581,11 @@ pub struct UiSessionState {
     pub(super) clock_entry_window_start: usize,
     pub(super) clock_create_state: Option<ClockCreateState>,
     pub(super) clock_persist_pending: bool,
-    pub(super) clock_pending_due_summary: Option<String>,
+    pub(super) clock_pending_due_summary: Option<i18n::LocalizedText>,
     pub(super) clock_profile_pending_sync: Option<ClockProfile>,
     pub(super) time_sync_attempted: bool,
     pub(super) time_sync_dialog_visible: bool,
-    pub(super) time_sync_failure_message: Option<String>,
+    pub(super) time_sync_failure_message: Option<i18n::LocalizedText>,
     /// Retains the build-policy-selected debug home across authentication.
     /// This is internal session state and is not configurable by process args.
     pub(super) debug_home_after_login: bool,
@@ -594,13 +613,13 @@ pub struct UiSessionState {
     pub(super) setup_accent_color: storage::AccentColor,
     pub(super) setup_custom_color_target: Option<ui::SetupCustomColorTarget>,
     pub(super) setup_custom_color_input: String,
-    pub(super) setup_custom_color_error: Option<String>,
+    pub(super) setup_custom_color_error: Option<i18n::LocalizedText>,
     pub(super) bootstrap_username: String,
     pub(super) bootstrap_password: String,
     pub(super) user_management_selected: usize,
     pub(super) user_management_window_start: usize,
     pub(super) user_management_focus: UserManagementPageFocus,
-    pub(super) user_management_message: Option<String>,
+    pub(super) user_management_message: Option<i18n::LocalizedText>,
     pub(super) user_management_feedback_tone: UserManagementFeedbackTone,
     pub(super) user_management_mode: UserManagementMode,
     pub(super) selected_home_entry_index: usize,
@@ -618,7 +637,7 @@ pub struct UiSessionState {
     pub(super) system_status_size_picker: Option<SystemStatusSizePickerState>,
     pub(super) system_status_discard_dialog: bool,
     pub(super) system_status_discard_confirm_selected: bool,
-    pub(super) system_status_dashboard_feedback: Option<String>,
+    pub(super) system_status_dashboard_feedback: Option<i18n::LocalizedText>,
     pub(super) system_status_widget_drag: Option<SystemStatusWidgetDragState>,
     pub(super) system_status_history: SystemStatusMetricHistory,
     pub(super) system_status_selected_row: usize,
@@ -661,7 +680,7 @@ pub struct UiSessionState {
     pub(super) editor_close_after_save: bool,
     pub(super) editor_open_after_save: bool,
     pub(super) editor_discard_for_open: bool,
-    pub(super) editor_message: Option<String>,
+    pub(super) editor_message: Option<i18n::LocalizedText>,
     pub(super) editor_recovery_dirty_since: Option<Instant>,
     pub(super) editor_last_recovery_write: Option<Instant>,
     pub(super) editor_read_session: Option<EditorReadSession>,
@@ -680,7 +699,7 @@ pub struct UiSessionState {
     pub(super) diagnostics_repair_log_context: Option<runtime_log::LogContext>,
     pub(super) diagnostics_repair_scroll_offset: usize,
     pub(super) diagnostics_repair_confirm_selected: bool,
-    pub(super) diagnostics_feedback: Option<String>,
+    pub(super) diagnostics_feedback: Option<i18n::LocalizedText>,
     pub(super) diagnostics_restart_required: bool,
     pub(super) terminal_size: (u16, u16),
     pub(super) terminal_flags: ShellTerminalFlags,
@@ -698,8 +717,9 @@ pub struct UiSessionState {
     pub(super) modal_focus_context: Option<ModalFocusContext>,
     pub(super) modal_focus_prepared_for_follow_up: bool,
     pub(super) notification_pointer_capture: Option<NotificationPointerCapture>,
+    pub(super) notification_message_scroll: usize,
     pub(super) pending_notification_commands: VecDeque<ShellCommand>,
-    pub(super) error_message: Option<String>,
+    pub(super) error_message: Option<i18n::LocalizedText>,
     pub(super) latest_watchdog_report: Option<std::path::PathBuf>,
     pub(super) latest_watchdog_summary: Option<String>,
     pub(super) shutdown_requested: bool,
@@ -713,7 +733,7 @@ pub struct UiSessionState {
     pub(super) mouse_coordinates: Option<(u16, u16)>,
     pub(super) mouse_scroll_direction: Option<String>,
     pub(super) mouse_drag_direction: Option<String>,
-    pub(super) platform_capability_summary: String,
+    pub(super) platform_capability_summary: i18n::LocalizedText,
     pub(super) last_click: Option<TimedClick>,
     pub(super) drag_tracker: Option<DragTracker>,
     pub(super) scrollbar_drag: Option<ScrollbarDragState>,

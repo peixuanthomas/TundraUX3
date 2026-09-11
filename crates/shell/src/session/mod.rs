@@ -59,6 +59,7 @@ const CLOCK_DUE_NOTIFICATION_KEY_PREFIX: &str = "clock.due";
 mod command_line_runtime;
 mod construction;
 mod controller;
+mod localization;
 mod motion_effects;
 #[cfg(test)]
 #[path = "tests/personalization.rs"]
@@ -74,6 +75,7 @@ mod ui_state;
 
 use command_line_runtime::*;
 use controller::*;
+use localization::PreparedLanguage;
 use motion_effects::*;
 use presentation::*;
 use redraw::*;
@@ -83,6 +85,7 @@ use ui_state::*;
 pub use ui_state::{ShellSession, UiSessionState};
 
 pub(in crate::session) struct ShellRuntimeServices {
+    language: Option<PreparedLanguage>,
     explorer: Option<ShellExplorerTaskRuntime>,
     diagnostics: Option<ShellDiagnosticsTaskRuntime>,
     editor: ShellEditorTaskRuntime,

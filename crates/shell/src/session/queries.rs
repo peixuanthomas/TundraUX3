@@ -197,8 +197,10 @@ impl ShellSession {
         self.mouse_drag_direction.as_deref()
     }
 
-    pub fn platform_capability_summary(&self) -> &str {
-        &self.platform_capability_summary
+    pub fn platform_capability_summary(&self) -> String {
+        i18n::with_snapshot(&self.language, || {
+            self.platform_capability_summary.render_current()
+        })
     }
 
     pub fn focused_component(&self) -> ShellComponent {

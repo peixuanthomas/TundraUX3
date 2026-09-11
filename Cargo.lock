@@ -5304,9 +5304,12 @@ dependencies = [
  "chrono",
  "crossterm",
  "rand 0.10.2",
+ "ratatui-core",
+ "ratatui-crossterm",
  "system-services",
  "thiserror 2.0.18",
  "tokio",
+ "unicode-width 0.2.0",
 ]
 
 [[package]]

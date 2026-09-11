@@ -348,7 +348,7 @@ fn reduced_cleanup_invalidates_completed_exit_before_same_id_reopens() {
     state.settings_state = Some(SettingsState {
         category: ui::SettingsCategory::Appearance,
         selected_field: ui::SettingsField::Theme,
-        status: String::new(),
+        status: String::new().into(),
         scroll_offset: 0,
         picker: None,
         color_editor: None,
@@ -1093,7 +1093,7 @@ fn post_mutation_outgoing_blocks_second_escape_only_for_old_phase() {
     state.settings_state = Some(SettingsState {
         category: ui::SettingsCategory::Appearance,
         selected_field: ui::SettingsField::Theme,
-        status: String::new(),
+        status: String::new().into(),
         scroll_offset: 0,
         picker: Some(SettingsPickerState {
             kind: ui::SettingsPickerKind::Theme,

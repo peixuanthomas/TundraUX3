@@ -72,6 +72,7 @@ impl ShellSession {
             startup,
             ascii_assets,
             ShellRuntimeServices {
+                language: None,
                 explorer: explorer_task_runtime,
                 diagnostics: diagnostics_task_runtime,
                 editor: editor_task_runtime,
@@ -123,11 +124,17 @@ impl ShellSession {
             .as_ref()
             .and_then(|storage| storage.load_config().ok())
             .unwrap_or_default();
+        let prepared_language = runtime_services.language.unwrap_or_else(|| {
+            PreparedLanguage::load(ascii_assets.store().root(), &storage_config.language)
+        });
+        let language_catalog = prepared_language.catalog;
+        let language = prepared_language.snapshot;
+        let _language = i18n::enter_snapshot(language.clone());
         let mut app = app::AppState::with_storage_config(storage_config);
         if startup.storage_report.has_recovery_warnings() {
             app.dispatch_at(
                 app::AppCommand::Notification(app::NotificationCommand::ShowToast(
-                    "Storage recovered defaults".to_string(),
+                    i18n::msg!("startup-storage-recovered").into(),
                 )),
                 Instant::now(),
             );
@@ -136,6 +143,10 @@ impl ShellSession {
         let created_at = Instant::now();
         let setup_appearance = storage::AppearanceConfig::default();
         let ui = UiSessionState {
+            language,
+            language_catalog,
+            repaired_resource_paths: Vec::new(),
+            fallback_resource_paths: Vec::new(),
             home_mode,
             ascii_assets,
             screen_stack: vec![initial_screen],
@@ -280,6 +291,7 @@ impl ShellSession {
             modal_focus_context: None,
             modal_focus_prepared_for_follow_up: false,
             notification_pointer_capture: None,
+            notification_message_scroll: 0,
             pending_notification_commands: VecDeque::new(),
             error_message: None,
             latest_watchdog_report: None,
@@ -304,18 +316,25 @@ impl ShellSession {
             scrollbar_drag: None,
         };
         let mut state = Self { app, ui };
+        state.setup_selected_language_index = state
+            .language_catalog
+            .options()
+            .iter()
+            .position(|option| option.code == state.language.code())
+            .unwrap_or(0);
+        state.report_language_diagnostics(&prepared_language.diagnostics);
         if let Some(target) = std::env::var_os(app::update::UPDATE_TARGET_SHA_ENV) {
             let target = target.to_string_lossy();
-            state.notify_toast(format!(
-                "Updated TundraUX to {}",
-                target.chars().take(7).collect::<String>()
+            state.notify_toast(i18n::msg!(
+                "startup-updated",
+                revision = target.chars().take(7).collect::<String>()
             ));
         }
         if let Some(reason) = std::env::var_os(app::update::UPDATE_ROLLBACK_ENV) {
             state.notify_alert_with_tone(
-                format!(
-                    "Update failed and the previous version was restored: {}",
-                    reason.to_string_lossy()
+                i18n::msg!(
+                    "startup-update-restored",
+                    reason = reason.to_string_lossy().to_string()
                 ),
                 ui::NotificationTone::Error,
             );
