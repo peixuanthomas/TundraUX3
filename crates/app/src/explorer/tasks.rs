@@ -4,6 +4,7 @@
 //! immutable plan, polls the event receiver, and folds those events into whichever view model it
 //! owns.  All filesystem mutations happen on one dedicated worker thread.
 
+use i18n::{LocalizedError, LocalizedText, msg};
 use runtime_log::{LogContext, LogLevel, LogPhase, RuntimeLogEvent};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
@@ -33,6 +34,34 @@ pub struct ExplorerTaskId(pub u64);
 pub enum ExplorerTransferOperation {
     Copy,
     Move,
+}
+
+/// Stable task identity shared with presentation; never infer it from translated labels.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExplorerTaskOperation {
+    Copy,
+    Move,
+    DeleteToTrash,
+}
+
+impl ExplorerTaskOperation {
+    pub fn localized_label(self) -> LocalizedText {
+        match self {
+            Self::Copy => msg!("app-explorer-copying"),
+            Self::Move => msg!("app-explorer-moving"),
+            Self::DeleteToTrash => msg!("app-explorer-trashing"),
+        }
+        .into()
+    }
+}
+
+impl From<ExplorerTransferOperation> for ExplorerTaskOperation {
+    fn from(operation: ExplorerTransferOperation) -> Self {
+        match operation {
+            ExplorerTransferOperation::Copy => Self::Copy,
+            ExplorerTransferOperation::Move => Self::Move,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -116,6 +145,15 @@ impl ExplorerDeletePlan {
 pub enum ExplorerTaskPlan {
     Transfer(ExplorerTransferPlan),
     DeleteToTrash(ExplorerDeletePlan),
+}
+
+impl ExplorerTaskPlan {
+    pub fn operation(&self) -> ExplorerTaskOperation {
+        match self {
+            Self::Transfer(plan) => plan.operation.into(),
+            Self::DeleteToTrash(_) => ExplorerTaskOperation::DeleteToTrash,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -224,7 +262,7 @@ pub enum ExplorerTaskEvent {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ExplorerTaskError {
     InvalidPlan {
-        message: String,
+        message: LocalizedText,
     },
     Io {
         operation: &'static str,
@@ -272,7 +310,7 @@ pub enum ExplorerTaskError {
 impl fmt::Display for ExplorerTaskError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::InvalidPlan { message } => formatter.write_str(message),
+            Self::InvalidPlan { message } => formatter.write_str(&message.render_current()),
             Self::Io {
                 operation,
                 path,
@@ -332,6 +370,84 @@ impl fmt::Display for ExplorerTaskError {
 }
 
 impl ExplorerTaskError {
+    /// Structured presentation alongside the existing diagnostic Display contract.
+    pub fn localized(&self) -> LocalizedError {
+        let (code, message) = match self {
+            Self::InvalidPlan { message } => (
+                "EXPLORER_INVALID_PLAN",
+                match message {
+                    LocalizedText::Message(message) => message.clone(),
+                    LocalizedText::Raw(detail) => {
+                        msg!("app-tasks-invalid-plan", detail = detail.clone())
+                    }
+                },
+            ),
+            Self::Io {
+                operation,
+                path,
+                message,
+            }
+            | Self::DetailedIo {
+                operation,
+                path,
+                message,
+                ..
+            } => (
+                "EXPLORER_IO",
+                msg!(
+                    "app-tasks-io",
+                    operation = *operation,
+                    path = path.display().to_string(),
+                    detail = message.clone()
+                ),
+            ),
+            Self::Platform(error) => (
+                "EXPLORER_PLATFORM",
+                msg!("app-tasks-platform", detail = error.to_string()),
+            ),
+            Self::UnsafeLink { path } => (
+                "EXPLORER_UNSAFE_LINK",
+                msg!("app-tasks-unsafe-link", path = path.display().to_string()),
+            ),
+            Self::TrashUnavailable { path } => (
+                "EXPLORER_TRASH_UNAVAILABLE",
+                msg!(
+                    "app-tasks-trash-unavailable",
+                    path = path.display().to_string()
+                ),
+            ),
+            Self::CollisionCancelled { path } => (
+                "EXPLORER_COLLISION_CANCELLED",
+                msg!(
+                    "app-tasks-collision-cancelled",
+                    path = path.display().to_string()
+                ),
+            ),
+            Self::DestinationChanged { path } => (
+                "EXPLORER_DESTINATION_CHANGED",
+                msg!(
+                    "app-tasks-destination-changed",
+                    path = path.display().to_string()
+                ),
+            ),
+            Self::PartialMove { path } => (
+                "EXPLORER_PARTIAL_MOVE",
+                msg!("app-tasks-partial-move", path = path.display().to_string()),
+            ),
+            Self::Cancelled => ("EXPLORER_CANCELLED", msg!("app-tasks-cancelled")),
+            Self::WorkerStopped => ("EXPLORER_WORKER_STOPPED", msg!("app-tasks-worker-stopped")),
+            Self::Journal { message } | Self::DetailedJournal { message, .. } => (
+                "EXPLORER_JOURNAL",
+                msg!("app-tasks-journal", detail = message.clone()),
+            ),
+            Self::RecoveryRequired { message } => (
+                "EXPLORER_RECOVERY",
+                msg!("app-tasks-recovery", detail = message.clone()),
+            ),
+        };
+        LocalizedError::new(code, message)
+    }
+
     pub fn raw_os_error(&self) -> Option<i32> {
         match self {
             Self::DetailedIo { os_error_code, .. }
@@ -362,6 +478,23 @@ pub enum ExplorerTaskSubmitError {
     Busy { active: ExplorerTaskId },
     WorkerStopped,
     RecoveryRequired,
+}
+
+impl ExplorerTaskSubmitError {
+    pub fn localized(&self) -> LocalizedError {
+        let (code, message) = match self {
+            Self::Busy { active } => (
+                "EXPLORER_BUSY",
+                msg!("app-tasks-busy", task = active.0.to_string()),
+            ),
+            Self::WorkerStopped => ("EXPLORER_WORKER_STOPPED", msg!("app-tasks-worker-stopped")),
+            Self::RecoveryRequired => (
+                "EXPLORER_RECOVERY_REQUIRED",
+                msg!("app-tasks-recovery-required"),
+            ),
+        };
+        LocalizedError::new(code, message)
+    }
 }
 
 impl fmt::Display for ExplorerTaskSubmitError {
@@ -1380,12 +1513,12 @@ fn prepare_transfer(
 ) -> Result<PreparedTransfer, ExplorerTaskError> {
     if plan.sources.is_empty() {
         return Err(ExplorerTaskError::InvalidPlan {
-            message: "a transfer requires at least one source".to_string(),
+            message: msg!("app-tasks-source-required").into(),
         });
     }
     if plan.chunk_size == 0 {
         return Err(ExplorerTaskError::InvalidPlan {
-            message: "the transfer chunk size must be greater than zero".to_string(),
+            message: msg!("app-tasks-invalid-chunk-size").into(),
         });
     }
 
@@ -1394,18 +1527,20 @@ fn prepare_transfer(
     let destination_attributes = platform.file_attributes(&destination)?;
     if !destination_attributes.is_dir || is_unsafe_link(&destination_attributes) {
         return Err(ExplorerTaskError::InvalidPlan {
-            message: format!(
-                "the transfer destination {} is not a safe directory",
-                destination.display()
-            ),
+            message: msg!(
+                "app-tasks-unsafe-destination",
+                path = destination.display().to_string()
+            )
+            .into(),
         });
     }
     if destination_attributes.readonly {
         return Err(ExplorerTaskError::InvalidPlan {
-            message: format!(
-                "the transfer destination {} is read-only",
-                destination.display()
-            ),
+            message: msg!(
+                "app-tasks-read-only-destination",
+                path = destination.display().to_string()
+            )
+            .into(),
         });
     }
 
@@ -1437,14 +1572,22 @@ fn prepare_transfer(
         let name = source
             .file_name()
             .ok_or_else(|| ExplorerTaskError::InvalidPlan {
-                message: format!("{} has no transferable file name", source.display()),
+                message: msg!(
+                    "app-tasks-no-file-name",
+                    path = source.display().to_string()
+                )
+                .into(),
             })?;
         let target = destination.join(name);
         if plan.operation == ExplorerTransferOperation::Move
             && paths_equal(&source, &target, windows_paths)
         {
             return Err(ExplorerTaskError::InvalidPlan {
-                message: format!("{} is already in the destination", source.display()),
+                message: msg!(
+                    "app-tasks-already-in-destination",
+                    path = source.display().to_string()
+                )
+                .into(),
             });
         }
         let node = planning.prepare_node(source, target, attributes, false)?;
@@ -1533,15 +1676,20 @@ impl PlanningContext<'_> {
                 ),
                 ExplorerCollisionResolution::Replace if self_target => {
                     return Err(ExplorerTaskError::InvalidPlan {
-                        message: format!("{} cannot replace itself", source.display()),
+                        message: msg!(
+                            "app-tasks-cannot-replace-self",
+                            path = source.display().to_string()
+                        )
+                        .into(),
                     });
                 }
                 ExplorerCollisionResolution::Replace if already_reserved => {
                     return Err(ExplorerTaskError::InvalidPlan {
-                        message: format!(
-                            "multiple sources would replace the same target {}",
-                            requested_target.display()
-                        ),
+                        message: msg!(
+                            "app-tasks-duplicate-target",
+                            path = requested_target.display().to_string()
+                        )
+                        .into(),
                     });
                 }
                 ExplorerCollisionResolution::Replace => (requested_target.clone(), true, false),
@@ -1575,11 +1723,12 @@ impl PlanningContext<'_> {
             let listing = self.platform.read_directory(&source)?;
             if !listing.warnings.is_empty() {
                 return Err(ExplorerTaskError::InvalidPlan {
-                    message: format!(
-                        "{} could not be completely scanned: {}",
-                        source.display(),
-                        listing.warnings[0].message
-                    ),
+                    message: msg!(
+                        "app-tasks-incomplete-scan",
+                        path = source.display().to_string(),
+                        detail = listing.warnings[0].message.clone()
+                    )
+                    .into(),
                 });
             }
             let mut entries = listing.entries;
@@ -1590,10 +1739,11 @@ impl PlanningContext<'_> {
                     entry
                         .attributes
                         .ok_or_else(|| ExplorerTaskError::InvalidPlan {
-                            message: format!(
-                                "metadata is unavailable for {}",
-                                entry.path.display()
-                            ),
+                            message: msg!(
+                                "app-tasks-metadata-unavailable",
+                                path = entry.path.display().to_string()
+                            )
+                            .into(),
                         })?;
                 let child_target = target.join(&entry.name);
                 children.push(self.prepare_node(
@@ -1633,7 +1783,7 @@ fn prepare_delete(
 ) -> Result<Vec<(PathBuf, FileAttributes)>, ExplorerTaskError> {
     if plan.paths.is_empty() {
         return Err(ExplorerTaskError::InvalidPlan {
-            message: "a delete task requires at least one path".to_string(),
+            message: msg!("app-tasks-delete-path-required").into(),
         });
     }
     let windows_paths = platform.kind() == PlatformKind::Windows;
@@ -1667,7 +1817,7 @@ fn prepare_delete(
                 || path_is_within(&paths[right].0, &paths[left].0, windows_paths)
             {
                 return Err(ExplorerTaskError::InvalidPlan {
-                    message: "delete paths must not duplicate or contain one another".to_string(),
+                    message: msg!("app-tasks-overlapping-delete-paths").into(),
                 });
             }
         }
@@ -1683,7 +1833,11 @@ fn validate_source_set(
     for (source, attributes) in sources {
         if paths_equal(source, destination, windows_paths) {
             return Err(ExplorerTaskError::InvalidPlan {
-                message: format!("{} cannot be transferred into itself", source.display()),
+                message: msg!(
+                    "app-tasks-cannot-transfer-self",
+                    path = source.display().to_string()
+                )
+                .into(),
             });
         }
         if attributes.is_dir
@@ -1691,11 +1845,12 @@ fn validate_source_set(
             && path_is_within(destination, source, windows_paths)
         {
             return Err(ExplorerTaskError::InvalidPlan {
-                message: format!(
-                    "{} cannot be transferred into its own descendant {}",
-                    source.display(),
-                    destination.display()
-                ),
+                message: msg!(
+                    "app-tasks-cannot-transfer-descendant",
+                    source = source.display().to_string(),
+                    destination = destination.display().to_string()
+                )
+                .into(),
             });
         }
     }
@@ -1705,8 +1860,7 @@ fn validate_source_set(
                 || path_is_within(&sources[right].0, &sources[left].0, windows_paths)
             {
                 return Err(ExplorerTaskError::InvalidPlan {
-                    message: "transfer sources must not duplicate or contain one another"
-                        .to_string(),
+                    message: msg!("app-tasks-overlapping-sources").into(),
                 });
             }
         }
@@ -2401,7 +2555,11 @@ impl<'a> ExecutionContext<'a> {
         let parent = target
             .parent()
             .ok_or_else(|| ExplorerTaskError::InvalidPlan {
-                message: format!("{} has no destination parent", target.display()),
+                message: msg!(
+                    "app-tasks-no-destination-parent",
+                    path = target.display().to_string()
+                )
+                .into(),
             })?;
         let name = target
             .file_name()

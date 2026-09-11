@@ -3,6 +3,8 @@
 //! After checking that an approved entry still exists at its recorded path,
 //! it returns an effect for the shell to perform the platform operation.
 
+use i18n::{LocalizedError, LocalizedText, msg};
+
 use std::fmt;
 use std::fs;
 use std::io;
@@ -33,6 +35,20 @@ pub enum LauncherItemStatus {
     Unsupported,
 }
 
+impl LauncherItemStatus {
+    pub fn localized_label(self) -> LocalizedText {
+        match self {
+            Self::Ready => msg!("app-launcher-ready"),
+            Self::Checking => msg!("app-launcher-checking"),
+            Self::Changed => msg!("app-launcher-changed"),
+            Self::Missing => msg!("app-launcher-missing"),
+            Self::NeedsApproval => msg!("app-launcher-needs-approval"),
+            Self::Unsupported => msg!("app-launcher-unsupported"),
+        }
+        .into()
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LauncherItem {
     pub record: LauncherEntryRecord,
@@ -42,8 +58,8 @@ pub struct LauncherItem {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct LauncherState {
     pub items: Vec<LauncherItem>,
-    pub message: Option<String>,
-    pub error: Option<String>,
+    pub message: Option<LocalizedText>,
+    pub error: Option<LocalizedText>,
 }
 
 impl LauncherState {
@@ -82,7 +98,7 @@ impl LauncherState {
 pub enum LauncherAddOutcome {
     Added { id: String },
     Duplicate,
-    Rejected { reason: String },
+    Rejected { reason: LocalizedText },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -118,6 +134,7 @@ pub enum LauncherCommand {
 
 #[derive(Debug)]
 pub enum LauncherError {
+    Localized(LocalizedError),
     PermissionDenied(String),
     InvalidPath { path: PathBuf, reason: String },
     Io { path: PathBuf, message: String },
@@ -129,6 +146,7 @@ pub enum LauncherError {
 impl fmt::Display for LauncherError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::Localized(error) => formatter.write_str(&i18n::render_current(&error.message)),
             Self::PermissionDenied(reason) => write!(formatter, "permission denied: {reason}"),
             Self::InvalidPath { path, reason } => write!(
                 formatter,
@@ -141,6 +159,46 @@ impl fmt::Display for LauncherError {
             Self::Platform(message) => formatter.write_str(message),
             Self::Storage(error) => error.fmt(formatter),
             Self::MissingEntry(id) => write!(formatter, "Launcher entry is missing: {id}"),
+        }
+    }
+}
+
+impl LauncherError {
+    pub fn localized(&self) -> LocalizedError {
+        match self {
+            Self::Localized(error) => error.clone(),
+            Self::PermissionDenied(reason) => LocalizedError::new(
+                "LAUNCHER_PERMISSION_DENIED",
+                msg!("app-launcher-permission-denied", reason = reason.clone()),
+            ),
+            Self::InvalidPath { path, reason } => LocalizedError::new(
+                "LAUNCHER_INVALID_PATH",
+                msg!(
+                    "app-launcher-invalid-path",
+                    path = path.display().to_string(),
+                    reason = reason.clone()
+                ),
+            ),
+            Self::Io { path, message } => LocalizedError::new(
+                "LAUNCHER_IO",
+                msg!(
+                    "app-launcher-io",
+                    path = path.display().to_string(),
+                    detail = message.clone()
+                ),
+            ),
+            Self::Platform(detail) => LocalizedError::new(
+                "LAUNCHER_PLATFORM",
+                msg!("app-launcher-platform-error", detail = detail.clone()),
+            ),
+            Self::Storage(error) => LocalizedError::new(
+                "LAUNCHER_STORAGE",
+                msg!("app-launcher-storage-error", detail = error.to_string()),
+            ),
+            Self::MissingEntry(id) => LocalizedError::new(
+                "LAUNCHER_MISSING_ENTRY",
+                msg!("app-launcher-missing-entry", id = id.clone()),
+            ),
         }
     }
 }
@@ -195,7 +253,7 @@ impl LauncherController {
         match result {
             Ok(effect) => effect,
             Err(error) => {
-                state.error = Some(error.to_string());
+                state.error = Some(error.localized().message.into());
                 LauncherEffect::None
             }
         }
@@ -243,7 +301,7 @@ impl LauncherController {
                 Err(error) => results.push(LauncherAddResult {
                     path: supplied,
                     outcome: LauncherAddOutcome::Rejected {
-                        reason: error.to_string(),
+                        reason: error.localized().message.into(),
                     },
                 }),
             }
@@ -257,7 +315,7 @@ impl LauncherController {
             .iter()
             .filter(|result| matches!(result.outcome, LauncherAddOutcome::Added { .. }))
             .count();
-        state.message = Some(format!("{count} Launcher item(s) added"));
+        state.message = Some(msg!("app-launcher-added", count = count as i64).into());
         Ok(LauncherEffect::Added(results))
     }
 
@@ -286,7 +344,7 @@ impl LauncherController {
         .min(config.launcher.entries.len().saturating_sub(1));
 
         if destination_index == source_index {
-            state.message = Some("Launcher item order unchanged".to_string());
+            state.message = Some(msg!("app-launcher-order-unchanged").into());
             return Ok(LauncherEffect::None);
         }
 
@@ -302,7 +360,7 @@ impl LauncherController {
         } else {
             state.reset(&config.launcher);
         }
-        state.message = Some("Launcher item moved".to_string());
+        state.message = Some(msg!("app-launcher-moved").into());
         Ok(LauncherEffect::None)
     }
 
@@ -325,7 +383,7 @@ impl LauncherController {
             storage.save_config(&config)?;
             state.reset(&config.launcher);
         }
-        state.message = Some(format!("{removed} Launcher item(s) removed"));
+        state.message = Some(msg!("app-launcher-removed", count = removed as i64).into());
         Ok(LauncherEffect::None)
     }
 
@@ -418,39 +476,60 @@ struct Target {
 
 fn validate(path: &Path, platform: &dyn Platform) -> Result<Target, LauncherError> {
     if !path.is_absolute() {
-        return Err(invalid(path, "Launcher paths must be absolute"));
+        return Err(LauncherError::Localized(LocalizedError::new(
+            "LAUNCHER_INVALID_PATH",
+            msg!(
+                "app-launcher-absolute-path-required",
+                path = path.display().to_string()
+            ),
+        )));
     }
     let link = fs::symlink_metadata(path).map_err(|error| io_error(path, error))?;
     if link.file_type().is_symlink() {
-        return Err(invalid(path, "symbolic links are not allowed"));
+        return Err(LauncherError::Localized(LocalizedError::new(
+            "LAUNCHER_INVALID_PATH",
+            msg!(
+                "app-launcher-symlink-blocked",
+                path = path.display().to_string()
+            ),
+        )));
     }
     let canonical = fs::canonicalize(path).map_err(|error| io_error(path, error))?;
     let attributes = platform
         .file_attributes(&canonical)
         .map_err(|error| LauncherError::Platform(error.to_string()))?;
     if attributes.symlink || attributes.junction || attributes.reparse_point {
-        return Err(invalid(
-            path,
-            "symbolic links, junctions, and reparse points are not allowed",
-        ));
+        return Err(LauncherError::Localized(LocalizedError::new(
+            "LAUNCHER_INVALID_PATH",
+            msg!(
+                "app-launcher-unsafe-link-blocked",
+                path = path.display().to_string()
+            ),
+        )));
     }
     let kind = match platform.file_open_policy(&canonical, &attributes) {
         FileOpenPolicy::LauncherRequired { kind, .. } => convert_kind(kind),
         FileOpenPolicy::SystemDefault => {
-            return Err(invalid(
-                path,
-                "only files requiring Launcher approval can be added",
-            ));
+            return Err(LauncherError::Localized(LocalizedError::new(
+                "LAUNCHER_INVALID_PATH",
+                msg!(
+                    "app-launcher-approval-required",
+                    path = path.display().to_string()
+                ),
+            )));
         }
         FileOpenPolicy::Blocked { reason } => return Err(invalid(path, reason)),
     };
     if !(attributes.is_file
         || attributes.is_dir && kind == LauncherExecutableKind::ApplicationBundle)
     {
-        return Err(invalid(
-            path,
-            "entries must be files or application bundles",
-        ));
+        return Err(LauncherError::Localized(LocalizedError::new(
+            "LAUNCHER_INVALID_PATH",
+            msg!(
+                "app-launcher-file-required",
+                path = path.display().to_string()
+            ),
+        )));
     }
     Ok(Target {
         path: canonical,

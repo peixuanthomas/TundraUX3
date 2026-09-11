@@ -196,7 +196,8 @@ fn guest_permissions_are_denied_without_mutating_files() {
     assert!(
         state
             .error
-            .as_deref()
+            .as_ref()
+            .map(i18n::LocalizedText::render_current)
             .unwrap_or_default()
             .contains("not_authenticated")
     );
@@ -233,7 +234,8 @@ fn lnk_files_are_blocked_before_platform_open() {
     assert!(
         state
             .error
-            .as_deref()
+            .as_ref()
+            .map(i18n::LocalizedText::render_current)
             .unwrap_or_default()
             .contains("blocked")
     );
@@ -274,7 +276,8 @@ fn windows_executables_are_blocked_by_platform_open_policy() {
     assert!(
         state
             .error
-            .as_deref()
+            .as_ref()
+            .map(i18n::LocalizedText::render_current)
             .unwrap_or_default()
             .contains("Windows")
     );
@@ -540,7 +543,8 @@ fn unreadable_directory_refresh_clears_stale_actionable_rows() {
     assert!(
         state
             .error
-            .as_deref()
+            .as_ref()
+            .map(i18n::LocalizedText::render_current)
             .is_some_and(|error| error.contains("access denied"))
     );
     assert!(state.entries.is_empty());

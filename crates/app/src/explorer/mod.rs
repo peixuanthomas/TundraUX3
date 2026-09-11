@@ -1,4 +1,7 @@
 pub mod tasks;
+pub use tasks::ExplorerTaskOperation;
+
+use i18n::{LocalizedError, LocalizedText, msg};
 
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet};
@@ -82,8 +85,8 @@ pub struct ExplorerState {
     pub pending_transfer: Option<ExplorerPendingTransfer>,
     pub drag: Option<ExplorerDragState>,
     pub operation: Option<ExplorerOperationProgress>,
-    pub message: Option<String>,
-    pub error: Option<String>,
+    pub message: Option<LocalizedText>,
+    pub error: Option<LocalizedText>,
 }
 
 impl ExplorerState {
@@ -299,13 +302,13 @@ impl ExplorerState {
         }
     }
 
-    fn set_success(&mut self, message: impl Into<String>) {
+    fn set_success(&mut self, message: impl Into<LocalizedText>) {
         self.message = Some(message.into());
         self.error = None;
     }
 
     fn set_error(&mut self, error: ExplorerError) {
-        self.error = Some(error.to_string());
+        self.error = Some(error.localized().message.into());
         self.message = None;
     }
 }
@@ -571,11 +574,20 @@ pub enum ExplorerClipboardMode {
     Cut,
 }
 
+impl From<ExplorerClipboardMode> for ExplorerTaskOperation {
+    fn from(mode: ExplorerClipboardMode) -> Self {
+        match mode {
+            ExplorerClipboardMode::Copy => Self::Copy,
+            ExplorerClipboardMode::Cut => Self::Move,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ExplorerDialog {
     pub kind: ExplorerDialogKind,
-    pub title: String,
-    pub message: String,
+    pub title: LocalizedText,
+    pub message: LocalizedText,
     /// Immutable snapshot of the paths covered by a delete confirmation.
     ///
     /// Confirming must never re-read the live selection: keyboard navigation or a delayed shell
@@ -593,8 +605,12 @@ impl ExplorerDialog {
     pub fn delete(path: &Path) -> Self {
         Self {
             kind: ExplorerDialogKind::DeleteToTrash,
-            title: "Delete to trash".to_string(),
-            message: format!("Move {} to the system Trash?", path.display()),
+            title: msg!("app-explorer-delete-title").into(),
+            message: msg!(
+                "app-explorer-delete-confirm",
+                path = path.display().to_string()
+            )
+            .into(),
             targets: vec![path.to_path_buf()],
         }
     }
@@ -605,8 +621,12 @@ impl ExplorerDialog {
         }
         Self {
             kind: ExplorerDialogKind::DeleteToTrash,
-            title: "Delete to trash".to_string(),
-            message: format!("Move {} selected items to the system Trash?", paths.len()),
+            title: msg!("app-explorer-delete-title").into(),
+            message: msg!(
+                "app-explorer-delete-many-confirm",
+                count = paths.len() as i64
+            )
+            .into(),
             targets: paths.to_vec(),
         }
     }
@@ -614,10 +634,8 @@ impl ExplorerDialog {
     pub fn dump_trash(item_count: usize) -> Self {
         Self {
             kind: ExplorerDialogKind::DumpTrash,
-            title: "Dump Trash".to_string(),
-            message: format!(
-                "Permanently delete all {item_count} item(s) from the system Trash? This cannot be undone."
-            ),
+            title: msg!("app-explorer-dump-title").into(),
+            message: msg!("app-explorer-dump-confirm", count = item_count as i64).into(),
             targets: Vec::new(),
         }
     }
@@ -689,8 +707,9 @@ pub enum ExplorerOperationPhase {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ExplorerOperationProgress {
+    pub operation: ExplorerTaskOperation,
     pub phase: ExplorerOperationPhase,
-    pub label: String,
+    pub label: LocalizedText,
     pub completed_items: usize,
     pub total_items: Option<usize>,
     pub completed_bytes: u64,
@@ -1017,9 +1036,9 @@ impl ExplorerController {
                 state.show_hidden = !state.show_hidden;
                 state.apply_projection();
                 state.set_success(if state.show_hidden {
-                    "Hidden files visible"
+                    msg!("app-explorer-hidden-visible")
                 } else {
-                    "Hidden files hidden"
+                    msg!("app-explorer-hidden-hidden")
                 });
                 ExplorerEffect::PersistConfig(state.to_config())
             }
@@ -1090,18 +1109,24 @@ impl ExplorerController {
                 let parent = state
                     .current_path
                     .parent()
-                    .ok_or_else(|| ExplorerError::InvalidOperation("no parent directory".into()))?
+                    .ok_or_else(|| {
+                        ExplorerError::Localized(LocalizedError::new(
+                            "EXPLORER_INVALID_OPERATION",
+                            msg!("app-explorer-no-parent"),
+                        ))
+                    })?
                     .to_path_buf();
                 self.file_service
                     .navigate_directory(state, session, platform, storage, parent, true)?;
                 ExplorerEffect::None
             }
             ExplorerCommand::OpenBack => {
-                let target = state
-                    .back_history
-                    .last()
-                    .cloned()
-                    .ok_or_else(|| ExplorerError::InvalidOperation("no back history".into()))?;
+                let target = state.back_history.last().cloned().ok_or_else(|| {
+                    ExplorerError::Localized(LocalizedError::new(
+                        "EXPLORER_INVALID_OPERATION",
+                        msg!("app-explorer-no-back-history"),
+                    ))
+                })?;
                 let previous = state.current_location.clone();
                 self.file_service
                     .navigate_location(state, session, platform, storage, target, false)?;
@@ -1110,10 +1135,12 @@ impl ExplorerController {
                 ExplorerEffect::None
             }
             ExplorerCommand::OpenForward => {
-                let target =
-                    state.forward_history.last().cloned().ok_or_else(|| {
-                        ExplorerError::InvalidOperation("no forward history".into())
-                    })?;
+                let target = state.forward_history.last().cloned().ok_or_else(|| {
+                    ExplorerError::Localized(LocalizedError::new(
+                        "EXPLORER_INVALID_OPERATION",
+                        msg!("app-explorer-no-forward-history"),
+                    ))
+                })?;
                 let previous = state.current_location.clone();
                 self.file_service
                     .navigate_location(state, session, platform, storage, target, false)?;
@@ -1166,9 +1193,10 @@ impl ExplorerController {
                 ensure_filesystem_location(state)?;
                 let paths = state.effective_selected_paths();
                 if paths.len() != 1 {
-                    return Err(ExplorerError::InvalidOperation(
-                        "rename requires exactly one selected item".into(),
-                    ));
+                    return Err(ExplorerError::Localized(LocalizedError::new(
+                        "EXPLORER_INVALID_OPERATION",
+                        msg!("app-explorer-rename-selection"),
+                    )));
                 }
                 self.file_service
                     .rename(state, session, platform, storage, &paths[0], &name)?;
@@ -1188,12 +1216,16 @@ impl ExplorerController {
             ExplorerCommand::ConfirmDelete => {
                 ensure_filesystem_location(state)?;
                 let dialog = state.pending_dialog.clone().ok_or_else(|| {
-                    ExplorerError::InvalidOperation("no delete confirmation is pending".into())
+                    ExplorerError::Localized(LocalizedError::new(
+                        "EXPLORER_INVALID_OPERATION",
+                        msg!("app-explorer-no-delete-confirmation"),
+                    ))
                 })?;
                 if dialog.kind != ExplorerDialogKind::DeleteToTrash || dialog.targets.is_empty() {
-                    return Err(ExplorerError::InvalidOperation(
-                        "the pending dialog is not a delete confirmation".into(),
-                    ));
+                    return Err(ExplorerError::Localized(LocalizedError::new(
+                        "EXPLORER_INVALID_OPERATION",
+                        msg!("app-explorer-wrong-delete-confirmation"),
+                    )));
                 }
                 self.file_service.delete_many_to_trash(
                     state,
@@ -1212,12 +1244,16 @@ impl ExplorerController {
             ExplorerCommand::ConfirmDumpTrash => {
                 ensure_trash_location(state)?;
                 let dialog = state.pending_dialog.as_ref().ok_or_else(|| {
-                    ExplorerError::InvalidOperation("no Dump Trash confirmation is pending".into())
+                    ExplorerError::Localized(LocalizedError::new(
+                        "EXPLORER_INVALID_OPERATION",
+                        msg!("app-explorer-no-dump-confirmation"),
+                    ))
                 })?;
                 if dialog.kind != ExplorerDialogKind::DumpTrash {
-                    return Err(ExplorerError::InvalidOperation(
-                        "the pending dialog is not a Dump Trash confirmation".into(),
-                    ));
+                    return Err(ExplorerError::Localized(LocalizedError::new(
+                        "EXPLORER_INVALID_OPERATION",
+                        msg!("app-explorer-wrong-dump-confirmation"),
+                    )));
                 }
                 if let Err(error) = platform.empty_trash() {
                     // Emptying may be partially completed by the native shell. Never leave a
@@ -1237,12 +1273,16 @@ impl ExplorerController {
                 }
                 state.pending_dialog = None;
                 match self.file_service.refresh(state, session, platform, storage) {
-                    Ok(()) => state.set_success("System Trash emptied"),
+                    Ok(()) => state.set_success(msg!("app-explorer-trash-emptied")),
                     Err(error) => {
                         state.message = None;
-                        state.error = Some(format!(
-                            "System Trash was emptied, but Explorer could not refresh: {error}"
-                        ));
+                        state.error = Some(
+                            msg!(
+                                "app-explorer-dump-refresh-failed",
+                                error = error.to_string()
+                            )
+                            .into(),
+                        );
                     }
                 }
                 ExplorerEffect::None
@@ -1251,10 +1291,10 @@ impl ExplorerController {
                 ensure_trash_location(state)?;
                 let entry = selected_trash_entry(state)?;
                 let target = entry.original_path.clone().ok_or_else(|| {
-                    ExplorerError::InvalidOperation(
-                        "This Trash item has no recorded original path; choose a destination"
-                            .into(),
-                    )
+                    ExplorerError::Localized(LocalizedError::new(
+                        "EXPLORER_INVALID_OPERATION",
+                        msg!("app-explorer-no-original-path"),
+                    ))
                 })?;
                 self.file_service
                     .prepare_restore(state, session, platform, storage, &entry, target)?;
@@ -1281,7 +1321,7 @@ impl ExplorerController {
                     paths,
                     mode: ExplorerClipboardMode::Copy,
                 });
-                state.set_success("Copied selection");
+                state.set_success(msg!("app-explorer-copied-selection"));
                 ExplorerEffect::None
             }
             ExplorerCommand::Cut => {
@@ -1291,15 +1331,17 @@ impl ExplorerController {
                     paths,
                     mode: ExplorerClipboardMode::Cut,
                 });
-                state.set_success("Cut selection");
+                state.set_success(msg!("app-explorer-cut-selection"));
                 ExplorerEffect::None
             }
             ExplorerCommand::Paste => {
                 ensure_filesystem_location(state)?;
-                let clipboard = state
-                    .clipboard
-                    .clone()
-                    .ok_or_else(|| ExplorerError::InvalidOperation("clipboard is empty".into()))?;
+                let clipboard = state.clipboard.clone().ok_or_else(|| {
+                    ExplorerError::Localized(LocalizedError::new(
+                        "EXPLORER_INVALID_OPERATION",
+                        msg!("app-explorer-clipboard-empty"),
+                    ))
+                })?;
                 self.file_service
                     .paste(state, session, platform, storage, clipboard)?;
                 ExplorerEffect::None
@@ -1331,7 +1373,10 @@ impl ExplorerController {
                 };
                 if drag.active {
                     let destination = drag.target.ok_or_else(|| {
-                        ExplorerError::InvalidOperation("drag has no valid destination".into())
+                        ExplorerError::Localized(LocalizedError::new(
+                            "EXPLORER_INVALID_OPERATION",
+                            msg!("app-explorer-drag-no-destination"),
+                        ))
                     })?;
                     self.file_service.start_transfer(
                         state,
@@ -1431,15 +1476,19 @@ impl ExplorerFileService {
         push_history: bool,
     ) -> Result<(), ExplorerError> {
         if !target.is_absolute() {
-            return Err(ExplorerError::InvalidOperation(
-                "path must be absolute".to_string(),
-            ));
+            return Err(ExplorerError::Localized(LocalizedError::new(
+                "EXPLORER_INVALID_OPERATION",
+                msg!("app-explorer-absolute-path-required"),
+            )));
         }
         let attributes = platform.file_attributes(&target)?;
         if !attributes.is_dir {
-            return Err(ExplorerError::InvalidOperation(format!(
-                "{} is not a directory",
-                target.display()
+            return Err(ExplorerError::Localized(LocalizedError::new(
+                "EXPLORER_INVALID_OPERATION",
+                msg!(
+                    "app-explorer-not-directory",
+                    path = target.display().to_string()
+                ),
             )));
         }
         self.navigate_location(
@@ -1522,19 +1571,24 @@ impl ExplorerFileService {
         resolver: &dyn ExplorerOpenRouteResolver,
     ) -> Result<ExplorerEffect, ExplorerError> {
         if state.current_location.is_trash() {
-            return Err(ExplorerError::InvalidOperation(
-                "Restore Trash items before opening them".to_string(),
-            ));
+            return Err(ExplorerError::Localized(LocalizedError::new(
+                "EXPLORER_INVALID_OPERATION",
+                msg!("app-explorer-restore-before-open"),
+            )));
         }
         match &entry.open_policy {
             FileOpenPolicy::Blocked { reason } => {
                 return Err(ExplorerError::BlockedPath(reason.clone()));
             }
             FileOpenPolicy::LauncherRequired { kind, reason } => {
-                state.error = Some(format!(
-                    "blocked: {reason}; open with Launcher ({})",
-                    kind.label()
-                ));
+                state.error = Some(
+                    msg!(
+                        "app-explorer-launcher-required",
+                        reason = reason.clone(),
+                        kind = kind.label()
+                    )
+                    .into(),
+                );
                 state.message = None;
                 return Ok(ExplorerEffect::OpenRequested(ExplorerOpenRequest {
                     path: entry.path.clone(),
@@ -1579,7 +1633,10 @@ impl ExplorerFileService {
                 &error,
             ))
         })?;
-        state.set_success(format!("Created folder {}", path.display()));
+        state.set_success(msg!(
+            "app-explorer-created-folder",
+            path = path.display().to_string()
+        ));
         self.refresh(state, session, platform, storage)
     }
 
@@ -1605,7 +1662,10 @@ impl ExplorerFileService {
                     &error,
                 ))
             })?;
-        state.set_success(format!("Created file {}", path.display()));
+        state.set_success(msg!(
+            "app-explorer-created-file",
+            path = path.display().to_string()
+        ));
         self.refresh(state, session, platform, storage)
     }
 
@@ -1618,13 +1678,19 @@ impl ExplorerFileService {
         path: &Path,
         name: &str,
     ) -> Result<(), ExplorerError> {
-        let parent = path
-            .parent()
-            .ok_or_else(|| ExplorerError::InvalidOperation("selected item has no parent".into()))?;
+        let parent = path.parent().ok_or_else(|| {
+            ExplorerError::Localized(LocalizedError::new(
+                "EXPLORER_INVALID_OPERATION",
+                msg!("app-explorer-selected-no-parent"),
+            ))
+        })?;
         let target = child_path(parent, name)?;
         self.authorize(session, PermissionAction::WriteFile, path)?;
         platform.rename_path(path, &target)?;
-        state.set_success(format!("Renamed to {}", target.display()));
+        state.set_success(msg!(
+            "app-explorer-renamed",
+            path = target.display().to_string()
+        ));
         self.refresh(state, session, platform, storage)
     }
 
@@ -1640,8 +1706,9 @@ impl ExplorerFileService {
             self.authorize(session, PermissionAction::DeleteFile, path)?;
         }
         state.operation = Some(ExplorerOperationProgress {
+            operation: ExplorerTaskOperation::DeleteToTrash,
             phase: ExplorerOperationPhase::Executing,
-            label: "Moving items to system Trash".to_string(),
+            label: msg!("app-explorer-trashing").into(),
             completed_items: 0,
             total_items: Some(paths.len()),
             completed_bytes: 0,
@@ -1675,12 +1742,16 @@ impl ExplorerFileService {
         state.clear_selection();
         if let Err(error) = self.refresh(state, session, platform, storage) {
             state.message = None;
-            state.error = Some(format!(
-                "Moved {} item(s) to system Trash, but could not refresh Explorer: {error}",
-                paths.len()
-            ));
+            state.error = Some(
+                msg!(
+                    "app-explorer-trash-refresh-failed",
+                    count = paths.len() as i64,
+                    error = error.to_string()
+                )
+                .into(),
+            );
         } else {
-            state.set_success(format!("Moved {} item(s) to system Trash", paths.len()));
+            state.set_success(msg!("app-explorer-trashed", count = paths.len() as i64));
         }
         Ok(())
     }
@@ -1695,25 +1766,34 @@ impl ExplorerFileService {
         target: PathBuf,
     ) -> Result<(), ExplorerError> {
         if !target.is_absolute() {
-            return Err(ExplorerError::InvalidOperation(
-                "restore target must be absolute".into(),
-            ));
+            return Err(ExplorerError::Localized(LocalizedError::new(
+                "EXPLORER_INVALID_OPERATION",
+                msg!("app-explorer-restore-absolute-required"),
+            )));
         }
         let parent = target.parent().ok_or_else(|| {
-            ExplorerError::InvalidOperation("restore target has no parent directory".into())
+            ExplorerError::Localized(LocalizedError::new(
+                "EXPLORER_INVALID_OPERATION",
+                msg!("app-explorer-restore-no-parent-directory"),
+            ))
         })?;
         let parent_attributes = platform.file_attributes(parent)?;
         if !parent_attributes.is_dir {
-            return Err(ExplorerError::InvalidOperation(format!(
-                "restore parent {} is not a directory",
-                parent.display()
+            return Err(ExplorerError::Localized(LocalizedError::new(
+                "EXPLORER_INVALID_OPERATION",
+                msg!(
+                    "app-explorer-restore-parent-not-directory",
+                    path = parent.display().to_string()
+                ),
             )));
         }
         self.authorize(session, PermissionAction::WriteFile, &target)?;
-        let id = entry
-            .trash_id
-            .clone()
-            .ok_or_else(|| ExplorerError::InvalidOperation("Trash item has no identity".into()))?;
+        let id = entry.trash_id.clone().ok_or_else(|| {
+            ExplorerError::Localized(LocalizedError::new(
+                "EXPLORER_INVALID_OPERATION",
+                msg!("app-explorer-trash-no-identity"),
+            ))
+        })?;
         if path_exists_no_follow(&target)? {
             state.pending_restore = Some(ExplorerPendingRestore {
                 id,
@@ -1739,12 +1819,15 @@ impl ExplorerFileService {
         action: ExplorerConflictAction,
     ) -> Result<(), ExplorerError> {
         let pending = state.pending_restore.clone().ok_or_else(|| {
-            ExplorerError::InvalidOperation("no Restore conflict is pending".into())
+            ExplorerError::Localized(LocalizedError::new(
+                "EXPLORER_INVALID_OPERATION",
+                msg!("app-explorer-no-restore-conflict"),
+            ))
         })?;
         match action {
             ExplorerConflictAction::Cancel | ExplorerConflictAction::Skip => {
                 state.pending_restore = None;
-                state.set_success("Restore cancelled");
+                state.set_success(msg!("app-explorer-restore-cancelled"));
                 Ok(())
             }
             ExplorerConflictAction::KeepBoth => {
@@ -1778,15 +1861,18 @@ impl ExplorerFileService {
         pending: &ExplorerPendingRestore,
     ) -> Result<(), ExplorerError> {
         let parent = pending.target.parent().ok_or_else(|| {
-            ExplorerError::InvalidOperation("restore target has no parent".into())
+            ExplorerError::Localized(LocalizedError::new(
+                "EXPLORER_INVALID_OPERATION",
+                msg!("app-explorer-restore-no-parent"),
+            ))
         })?;
         let backup_dir = create_restore_rollback_directory(parent)?;
-        let backup = backup_dir.join(
-            pending
-                .target
-                .file_name()
-                .ok_or_else(|| ExplorerError::InvalidOperation("target has no name".into()))?,
-        );
+        let backup = backup_dir.join(pending.target.file_name().ok_or_else(|| {
+            ExplorerError::Localized(LocalizedError::new(
+                "EXPLORER_INVALID_OPERATION",
+                msg!("app-explorer-target-no-name"),
+            ))
+        })?);
         if let Err(error) = platform.rename_path(&pending.target, &backup) {
             if let Err(cleanup_error) = fs::remove_dir(&backup_dir) {
                 log_secondary_explorer(
@@ -1816,10 +1902,15 @@ impl ExplorerFileService {
                         }
                         Err(error.into())
                     }
-                    Err(rollback_error) => Err(ExplorerError::InvalidOperation(format!(
-                        "Restore failed ({error}); the previous item is preserved at {}, but could not be returned to {} ({rollback_error})",
-                        backup.display(),
-                        pending.target.display()
+                    Err(rollback_error) => Err(ExplorerError::Localized(LocalizedError::new(
+                        "EXPLORER_RESTORE_ROLLBACK",
+                        msg!(
+                            "app-explorer-restore-rollback-failed",
+                            error = error.to_string(),
+                            backup = backup.display().to_string(),
+                            target = pending.target.display().to_string(),
+                            rollback = rollback_error.to_string()
+                        ),
                     ))),
                 };
             }
@@ -1830,11 +1921,15 @@ impl ExplorerFileService {
             // Trash or rename operation fails midway through recovery.
             let rescued = backup_dir.join("restored-item");
             if let Err(park_error) = platform.rename_path(&restored, &rescued) {
-                return Err(ExplorerError::InvalidOperation(format!(
-                    "Restored {}, but could not move the previous item to system Trash ({error}). Both versions are preserved at {} and {} (could not park the restored item: {park_error})",
-                    restored.display(),
-                    restored.display(),
-                    backup.display()
+                return Err(ExplorerError::Localized(LocalizedError::new(
+                    "EXPLORER_RESTORE_PARK",
+                    msg!(
+                        "app-explorer-restore-park-failed",
+                        restored = restored.display().to_string(),
+                        backup = backup.display().to_string(),
+                        error = error.to_string(),
+                        park = park_error.to_string()
+                    ),
                 )));
             }
             if let Err(rollback_error) = platform.rename_path(&backup, &pending.target) {
@@ -1847,23 +1942,32 @@ impl ExplorerFileService {
                         Some(&rescued),
                     );
                 }
-                return Err(ExplorerError::InvalidOperation(format!(
-                    "Could not move the previous item to system Trash ({error}) or roll it back from {} to {} ({rollback_error}); the restored item is preserved at {}{}",
-                    backup.display(),
-                    pending.target.display(),
-                    rescued.display(),
-                    if rescue_rollback.is_ok() {
-                        " (and was returned to its requested path)"
-                    } else {
-                        ""
-                    }
+                let preserved = if rescue_rollback.is_ok() {
+                    &pending.target
+                } else {
+                    &rescued
+                };
+                return Err(ExplorerError::Localized(LocalizedError::new(
+                    "EXPLORER_RESTORE_RESCUE",
+                    msg!(
+                        "app-explorer-restore-rescue-failed",
+                        error = error.to_string(),
+                        backup = backup.display().to_string(),
+                        target = pending.target.display().to_string(),
+                        rollback = rollback_error.to_string(),
+                        preserved = preserved.display().to_string()
+                    ),
                 )));
             }
             if let Err(retrash_error) = platform.move_to_trash(std::slice::from_ref(&rescued)) {
-                return Err(ExplorerError::InvalidOperation(format!(
-                    "The previous item was returned to {}, but the restored item could not be returned to system Trash ({retrash_error}); it is preserved at {}",
-                    pending.target.display(),
-                    rescued.display()
+                return Err(ExplorerError::Localized(LocalizedError::new(
+                    "EXPLORER_RESTORE_RETRASH",
+                    msg!(
+                        "app-explorer-restore-retrash-failed",
+                        target = pending.target.display().to_string(),
+                        error = retrash_error.to_string(),
+                        preserved = rescued.display().to_string()
+                    ),
                 )));
             }
             if let Err(cleanup_error) = fs::remove_dir(&backup_dir) {
@@ -1912,12 +2016,19 @@ impl ExplorerFileService {
     ) -> Result<(), ExplorerError> {
         if let Err(error) = self.refresh(state, session, platform, storage) {
             state.message = None;
-            state.error = Some(format!(
-                "Restored {}, but could not refresh Explorer: {error}",
-                restored.display(),
-            ));
+            state.error = Some(
+                msg!(
+                    "app-explorer-restore-refresh-failed",
+                    path = restored.display().to_string(),
+                    error = error.to_string()
+                )
+                .into(),
+            );
         } else {
-            state.set_success(format!("Restored {}", restored.display()));
+            state.set_success(msg!(
+                "app-explorer-restored",
+                path = restored.display().to_string()
+            ));
         }
         Ok(())
     }
@@ -1945,12 +2056,18 @@ impl ExplorerFileService {
         destination: PathBuf,
     ) -> Result<(), ExplorerError> {
         if clipboard.paths.is_empty() {
-            return Err(ExplorerError::InvalidOperation("clipboard is empty".into()));
+            return Err(ExplorerError::Localized(LocalizedError::new(
+                "EXPLORER_INVALID_OPERATION",
+                msg!("app-explorer-clipboard-empty"),
+            )));
         }
         let mut conflicts = Vec::new();
         for source in &clipboard.paths {
             let file_name = source.file_name().ok_or_else(|| {
-                ExplorerError::InvalidOperation("clipboard path has no name".into())
+                ExplorerError::Localized(LocalizedError::new(
+                    "EXPLORER_INVALID_OPERATION",
+                    msg!("app-explorer-clipboard-no-name"),
+                ))
             })?;
             let target = destination.join(file_name);
             if !(clipboard.mode == ExplorerClipboardMode::Copy
@@ -1975,6 +2092,7 @@ impl ExplorerFileService {
                 target,
                 remaining: conflicts.len(),
             });
+            let operation = clipboard.mode.into();
             state.pending_transfer = Some(ExplorerPendingTransfer {
                 clipboard,
                 destination,
@@ -1983,8 +2101,9 @@ impl ExplorerFileService {
                 resolutions: BTreeMap::new(),
             });
             state.operation = Some(ExplorerOperationProgress {
+                operation,
                 phase: ExplorerOperationPhase::WaitingForConflict,
-                label: "Waiting for conflict resolution".to_string(),
+                label: msg!("app-explorer-waiting-conflict").into(),
                 completed_items: 0,
                 total_items: None,
                 completed_bytes: 0,
@@ -2022,20 +2141,26 @@ impl ExplorerFileService {
             state.pending_conflict = None;
             state.pending_transfer = None;
             state.operation = None;
-            state.set_success("Transfer cancelled");
+            state.set_success(msg!("app-explorer-transfer-cancelled"));
             return Ok(());
         }
 
         let Some(pending) = state.pending_transfer.as_mut() else {
-            return Err(ExplorerError::InvalidOperation(
-                "no transfer conflict is pending".into(),
-            ));
+            return Err(ExplorerError::Localized(LocalizedError::new(
+                "EXPLORER_INVALID_OPERATION",
+                msg!("app-explorer-no-transfer-conflict"),
+            )));
         };
         let (_, target) = pending
             .conflicts
             .get(pending.current_conflict)
             .cloned()
-            .ok_or_else(|| ExplorerError::InvalidOperation("invalid conflict state".into()))?;
+            .ok_or_else(|| {
+                ExplorerError::Localized(LocalizedError::new(
+                    "EXPLORER_INVALID_OPERATION",
+                    msg!("app-explorer-invalid-conflict"),
+                ))
+            })?;
         pending.resolutions.insert(target, action);
         if apply_to_all {
             for (_, target) in pending.conflicts.iter().skip(pending.current_conflict + 1) {
@@ -2083,10 +2208,11 @@ impl ExplorerFileService {
         resolutions: BTreeMap<PathBuf, ExplorerConflictAction>,
     ) -> Result<(), ExplorerError> {
         state.operation = Some(ExplorerOperationProgress {
+            operation: clipboard.mode.into(),
             phase: ExplorerOperationPhase::Executing,
             label: match clipboard.mode {
-                ExplorerClipboardMode::Copy => "Copying items".to_string(),
-                ExplorerClipboardMode::Cut => "Moving items".to_string(),
+                ExplorerClipboardMode::Copy => msg!("app-explorer-copying").into(),
+                ExplorerClipboardMode::Cut => msg!("app-explorer-moving").into(),
             },
             completed_items: 0,
             total_items: Some(clipboard.paths.len()),
@@ -2099,7 +2225,10 @@ impl ExplorerFileService {
         let mut skipped = 0usize;
         for (index, source) in clipboard.paths.iter().enumerate() {
             let file_name = source.file_name().ok_or_else(|| {
-                ExplorerError::InvalidOperation("clipboard path has no name".into())
+                ExplorerError::Localized(LocalizedError::new(
+                    "EXPLORER_INVALID_OPERATION",
+                    msg!("app-explorer-clipboard-no-name"),
+                ))
             })?;
             let original_target = destination.join(file_name);
             let resolution = resolutions
@@ -2147,14 +2276,10 @@ impl ExplorerFileService {
         }
         state.operation = None;
         state.selected_paths = succeeded.into_iter().collect();
-        state.set_success(format!(
-            "Transferred {} item(s){}",
-            state.selected_paths.len(),
-            if skipped > 0 {
-                format!(", skipped {skipped}")
-            } else {
-                String::new()
-            }
+        state.set_success(msg!(
+            "app-explorer-transferred",
+            count = state.selected_paths.len() as i64,
+            skipped = skipped as i64
         ));
 
         self.refresh(state, session, platform, storage)
@@ -2193,6 +2318,7 @@ impl Default for ExplorerFileService {
 
 #[derive(Debug)]
 pub enum ExplorerError {
+    Localized(LocalizedError),
     PermissionDenied {
         action: PermissionAction,
         reason: String,
@@ -2213,6 +2339,7 @@ pub enum ExplorerError {
 impl fmt::Display for ExplorerError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::Localized(error) => formatter.write_str(&i18n::render_current(&error.message)),
             Self::PermissionDenied {
                 action,
                 reason,
@@ -2240,9 +2367,59 @@ impl fmt::Display for ExplorerError {
     }
 }
 
+impl ExplorerError {
+    /// Retain message identity until the presentation boundary renders it.
+    pub fn localized(&self) -> LocalizedError {
+        match self {
+            Self::Localized(error) => error.clone(),
+            Self::PermissionDenied {
+                action,
+                reason,
+                path,
+            } => LocalizedError::new(
+                "EXPLORER_PERMISSION_DENIED",
+                msg!(
+                    "app-explorer-permission-denied",
+                    action = action.to_string(),
+                    reason = reason.clone(),
+                    path = path.display().to_string()
+                ),
+            ),
+            Self::BlockedPath(message)
+            | Self::InvalidName(message)
+            | Self::InvalidOperation(message) => LocalizedError::new(
+                "EXPLORER_INVALID_OPERATION",
+                msg!("app-explorer-detail", detail = message.clone()),
+            ),
+            Self::Io {
+                operation,
+                path,
+                message,
+            } => LocalizedError::new(
+                "EXPLORER_IO",
+                msg!(
+                    "app-explorer-io",
+                    operation = *operation,
+                    path = path.display().to_string(),
+                    detail = message.clone()
+                ),
+            ),
+            Self::Platform(error) => LocalizedError::new(
+                "EXPLORER_PLATFORM",
+                msg!("app-explorer-platform-error", detail = error.to_string()),
+            ),
+            Self::Storage(error) => LocalizedError::new(
+                "EXPLORER_STORAGE",
+                msg!("app-explorer-storage-error", detail = error.to_string()),
+            ),
+        }
+    }
+}
+
 impl std::error::Error for ExplorerError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
+            Self::Localized(error) => Some(error),
             Self::Platform(error) => Some(error),
             Self::Storage(error) => Some(error),
             _ => None,
@@ -2265,7 +2442,10 @@ impl From<StorageError> for ExplorerError {
 fn selected_paths_or_error(state: &ExplorerState) -> Result<Vec<PathBuf>, ExplorerError> {
     let paths = state.effective_selected_paths();
     if paths.is_empty() {
-        Err(ExplorerError::InvalidOperation("nothing selected".into()))
+        Err(ExplorerError::Localized(LocalizedError::new(
+            "EXPLORER_INVALID_OPERATION",
+            msg!("app-explorer-nothing-selected"),
+        )))
     } else {
         Ok(paths)
     }
@@ -2274,29 +2454,37 @@ fn selected_paths_or_error(state: &ExplorerState) -> Result<Vec<PathBuf>, Explor
 fn selected_trash_entry(state: &ExplorerState) -> Result<ExplorerEntry, ExplorerError> {
     let selected = state.effective_selected_paths();
     if selected.len() != 1 {
-        return Err(ExplorerError::InvalidOperation(
-            "restore requires exactly one selected Trash item".into(),
-        ));
+        return Err(ExplorerError::Localized(LocalizedError::new(
+            "EXPLORER_INVALID_OPERATION",
+            msg!("app-explorer-restore-selection"),
+        )));
     }
     let entry = state
         .entries
         .iter()
         .find(|entry| entry.path == selected[0])
         .cloned()
-        .ok_or_else(|| ExplorerError::InvalidOperation("selected Trash item is missing".into()))?;
+        .ok_or_else(|| {
+            ExplorerError::Localized(LocalizedError::new(
+                "EXPLORER_INVALID_OPERATION",
+                msg!("app-explorer-trash-item-missing"),
+            ))
+        })?;
     if entry.trash_id.is_none() {
-        return Err(ExplorerError::InvalidOperation(
-            "selected item is not a system Trash entry".into(),
-        ));
+        return Err(ExplorerError::Localized(LocalizedError::new(
+            "EXPLORER_INVALID_OPERATION",
+            msg!("app-explorer-not-trash-item"),
+        )));
     }
     Ok(entry)
 }
 
 fn ensure_filesystem_location(state: &ExplorerState) -> Result<(), ExplorerError> {
     if state.current_location.is_trash() {
-        Err(ExplorerError::InvalidOperation(
-            "This operation is unavailable in Trash".into(),
-        ))
+        Err(ExplorerError::Localized(LocalizedError::new(
+            "EXPLORER_INVALID_OPERATION",
+            msg!("app-explorer-unavailable-in-trash"),
+        )))
     } else {
         Ok(())
     }
@@ -2306,20 +2494,26 @@ fn ensure_trash_location(state: &ExplorerState) -> Result<(), ExplorerError> {
     if state.current_location.is_trash() {
         Ok(())
     } else {
-        Err(ExplorerError::InvalidOperation(
-            "This operation is only available in Trash".into(),
-        ))
+        Err(ExplorerError::Localized(LocalizedError::new(
+            "EXPLORER_INVALID_OPERATION",
+            msg!("app-explorer-trash-only"),
+        )))
     }
 }
 
 fn restore_target_in_directory(directory: &Path, name: &str) -> Result<PathBuf, ExplorerError> {
     if !directory.is_absolute() {
-        return Err(ExplorerError::InvalidOperation(
-            "restore destination must be an absolute directory".into(),
-        ));
+        return Err(ExplorerError::Localized(LocalizedError::new(
+            "EXPLORER_INVALID_OPERATION",
+            msg!("app-explorer-restore-directory-required"),
+        )));
     }
-    validate_child_name(name)
-        .map_err(|_| ExplorerError::InvalidOperation("Trash item has an invalid name".into()))?;
+    validate_child_name(name).map_err(|_| {
+        ExplorerError::Localized(LocalizedError::new(
+            "EXPLORER_INVALID_OPERATION",
+            msg!("app-explorer-trash-invalid-name"),
+        ))
+    })?;
     Ok(directory.join(name))
 }
 
@@ -2343,7 +2537,13 @@ fn commit_location_listing(
     state.viewport_follows_focus = true;
     state.apply_projection();
     if warning_count > 0 {
-        state.message = Some(format!("{warning_count} entries have incomplete metadata"));
+        state.message = Some(
+            msg!(
+                "app-explorer-incomplete-metadata",
+                count = warning_count as i64
+            )
+            .into(),
+        );
     }
 }
 
@@ -2588,9 +2788,10 @@ fn child_path(parent: &Path, name: &str) -> Result<PathBuf, ExplorerError> {
 
 fn validate_transfer_destination(source: &Path, target: &Path) -> Result<(), ExplorerError> {
     if source == target {
-        return Err(ExplorerError::InvalidOperation(
-            "source and destination are the same".into(),
-        ));
+        return Err(ExplorerError::Localized(LocalizedError::new(
+            "EXPLORER_INVALID_OPERATION",
+            msg!("app-explorer-same-path"),
+        )));
     }
     let metadata = fs::symlink_metadata(source).map_err(|error| {
         ExplorerError::Platform(PlatformError::from_io(
@@ -2600,23 +2801,26 @@ fn validate_transfer_destination(source: &Path, target: &Path) -> Result<(), Exp
         ))
     })?;
     if metadata.file_type().is_symlink() {
-        return Err(ExplorerError::BlockedPath(
-            "copying or cross-filesystem moving symbolic links is blocked".into(),
-        ));
+        return Err(ExplorerError::Localized(LocalizedError::new(
+            "EXPLORER_BLOCKED_PATH",
+            msg!("app-explorer-blocked-link-transfer"),
+        )));
     }
     if metadata.is_dir() && target.starts_with(source) {
-        return Err(ExplorerError::InvalidOperation(
-            "a directory cannot be transferred into itself or its descendant".into(),
-        ));
+        return Err(ExplorerError::Localized(LocalizedError::new(
+            "EXPLORER_INVALID_OPERATION",
+            msg!("app-explorer-descendant-transfer"),
+        )));
     }
     if target
         .parent()
         .and_then(|parent| fs::metadata(parent).ok())
         .is_some_and(|metadata| metadata.permissions().readonly())
     {
-        return Err(ExplorerError::InvalidOperation(
-            "destination directory is read-only".into(),
-        ));
+        return Err(ExplorerError::Localized(LocalizedError::new(
+            "EXPLORER_INVALID_OPERATION",
+            msg!("app-explorer-destination-read-only"),
+        )));
     }
     Ok(())
 }
@@ -2654,7 +2858,10 @@ fn path_exists_no_follow(path: &Path) -> Result<bool, ExplorerError> {
 
 fn copy_path_staged(source: &Path, target: &Path) -> Result<(), ExplorerError> {
     let parent = target.parent().ok_or_else(|| {
-        ExplorerError::InvalidOperation("transfer target has no parent directory".into())
+        ExplorerError::Localized(LocalizedError::new(
+            "EXPLORER_INVALID_OPERATION",
+            msg!("app-explorer-transfer-no-parent"),
+        ))
     })?;
     let temporary = parent.join(format!(
         ".tundra-part-{}-{}",
@@ -2702,9 +2909,10 @@ fn copy_file_chunked(source: &Path, target: &Path) -> Result<(), ExplorerError> 
         ))
     })?;
     if metadata.file_type().is_symlink() {
-        return Err(ExplorerError::BlockedPath(
-            "copying symbolic links is blocked".into(),
-        ));
+        return Err(ExplorerError::Localized(LocalizedError::new(
+            "EXPLORER_BLOCKED_PATH",
+            msg!("app-explorer-blocked-link-copy"),
+        )));
     }
     let mut input = fs::File::open(source).map_err(|error| {
         ExplorerError::Platform(PlatformError::from_io(
@@ -2819,8 +3027,9 @@ fn validate_child_name(name: &str) -> Result<(), ExplorerError> {
         || trimmed.contains('\\')
         || !is_single_normal_component
     {
-        return Err(ExplorerError::InvalidName(format!(
-            "invalid file name: {name}"
+        return Err(ExplorerError::Localized(LocalizedError::new(
+            "EXPLORER_INVALID_OPERATION",
+            msg!("app-explorer-invalid-name", name = name),
         )));
     }
     Ok(())
@@ -2836,9 +3045,10 @@ fn copy_path(source: &Path, target: &Path) -> Result<(), ExplorerError> {
     })?;
 
     if metadata.file_type().is_symlink() {
-        return Err(ExplorerError::BlockedPath(
-            "copying symbolic links is blocked".into(),
-        ));
+        return Err(ExplorerError::Localized(LocalizedError::new(
+            "EXPLORER_BLOCKED_PATH",
+            msg!("app-explorer-blocked-link-copy"),
+        )));
     }
 
     if metadata.is_dir() {

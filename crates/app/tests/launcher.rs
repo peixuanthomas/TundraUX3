@@ -99,7 +99,8 @@ fn user_can_launch_ready_entry_but_guest_cannot_manage_it() {
     assert!(
         state
             .error
-            .as_deref()
+            .as_ref()
+            .map(i18n::LocalizedText::render_current)
             .is_some_and(|error| error.contains("not_authenticated"))
     );
 }
