@@ -127,9 +127,8 @@ tty1 and stopped the task's temporary seat, input and privileged services.
 Earlier PAM lifecycle probes independently passed valid/invalid authentication,
 full session open/environment registration and close cleanup for ordinary/admin
 accounts. Latest native sessiond unit tests passed all ten cases, including persistent-video access policy, failed-worker
-reaping and the one-time transition out of maintenance after marker removal. A packaged
-installation and fresh final-runtime consent check remain separate deployment
-validation steps; the tests above used protected task-installed helper binaries.
+reaping and the one-time transition out of maintenance after marker removal. The tests above used protected task-installed helper binaries; the installed-RPM
+validation below separately verifies the final versioned runtime and service units.
 
 The final lifecycle run started with the maintenance marker present, removed it
 as root, and then completed an admin login into session 518. A deliberately wrong
@@ -141,3 +140,25 @@ successfully; a subsequent start reacquired tty8. Stopping again while a PAM
 password prompt was pending completed PAM cancellation and restored tty1 within
 three seconds. SDDM remained running throughout. The final tested backend used the
 patched pinned recipe with static libtsm, matching the package artifact inputs.
+
+## Installed RPM verification and cleanup
+
+The corrected RPM was tested with SELinux Enforcing, using the formal systemd
+units and `/var/lib/tundra/runtime/versions/v1.3.0/bin/tundra-sessiond`. The packaged
+greeter's NSS HOME was `/nonexistent`. A real PAM login created admin UID 1003
+session 592. A root-injected mouse click on the trusted Confirm button completed
+a bounded five-record log operation through the freshly packaged privileged
+worker: AwaitingConfirmation → Running → Completed. The source session resumed
+with its original identity. Screenshot evidence is available in the task's
+`/tmp/tundra-package-consent.png` artifact.
+
+Orderly stopping the production sessiond removed session 592 and restored tty1.
+Both Tundra daemons were left inactive and disabled; SDDM remained active and
+enabled. All temporary keyboard/mouse, seat, independent-session and recovery
+watchdog units were stopped. After confirming no disposable-account logind
+sessions remained, the task's `tundra-it-user` UID 1002 and `tundra-it-admin` UID
+1003 accounts and their HOME directories were removed. The root-only credential
+JSON and all `/run/tundra-integration` fixtures were removed. Real users 1000 and
+1001, the installed RPM, the production greeter account and `tundra-admin` group
+were preserved. Independent readback confirmed this cleanup and the final service
+states; no Tundra display-manager service was enabled automatically.
