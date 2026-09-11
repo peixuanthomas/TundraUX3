@@ -1,6 +1,7 @@
 """Structural packaging checks; fixture binaries/roots are deliberately not executable releases."""
 import importlib.util
 import json
+import hashlib
 from pathlib import Path
 import tempfile
 import unittest
@@ -20,12 +21,18 @@ class StageLinuxSystemTests(unittest.TestCase):
         self.binaries.mkdir()
         for name in (*staging.BINARIES, 'tundra-system-maintenance'):
             (self.binaries / name).write_bytes(b'not-an-executable: packaging layout fixture\n')
+        self.kmscon = self.base / 'kmscon-build'
+        self.kmscon.mkdir()
+        for name in ('kmscon', 'mod-pango.so', 'LICENSE.kmscon', 'LICENSE.libtsm'):
+            (self.kmscon / name).write_bytes(b'private-terminal-packaging-fixture')
+        digest = hashlib.sha256(b'private-terminal-packaging-fixture').hexdigest()
+        (self.kmscon / 'kmscon-capabilities.json').write_text(json.dumps(dict(sha256=digest, pango_sha256=digest, libseat=True, source_commit=staging.KMSCON_COMMIT)))
         self.roots = self.base / 'roots.jsonl'
         self.roots.write_text(json.dumps({'mediaType': 'test-fixture-only', 'certificateAuthorities': [{}]}) + '\n')
 
     def stage(self, flavor='deb'):
         root = self.base / flavor
-        staging.stage(root, self.binaries, '1.3.0', 'a' * 40, self.roots, flavor)
+        staging.stage(root, self.binaries, '1.3.0', 'a' * 40, self.roots, flavor, self.kmscon)
         return root
 
     def test_versioned_runtime_and_stable_entrypoints(self):
@@ -35,6 +42,10 @@ class StageLinuxSystemTests(unittest.TestCase):
             self.assertEqual((version / 'bin' / name).stat().st_mode & 0o777, 0o755)
         self.assertEqual((root / 'usr/bin/tundra-shell').readlink(), Path('/var/lib/tundra/runtime/current/bin/tundra-shell'))
         self.assertFalse((root / 'usr/libexec/tundra/tundra-system-maintenance').is_symlink())
+        self.assertEqual((root / 'usr/libexec/tundra/kmscon').readlink(),Path('/var/lib/tundra/runtime/current/bin/kmscon'))
+        self.assertEqual((root / 'usr/libexec/tundra/modules/kmscon').readlink(),Path('/var/lib/tundra/runtime/current/share/tundra/kmscon-modules'))
+        self.assertTrue((version / 'bin/kmscon-capabilities.json').is_file())
+        self.assertTrue((version / 'share/tundra/licenses/LICENSE.kmscon').is_file())
         self.assertFalse((root / staging.RUNTIME / 'current').exists(), 'current must remain post-install runtime state')
         self.assertEqual((root / 'usr/share/tundra/bootstrap-release').read_text().strip(), 'v1.3.0')
         for locale in ('en-US', 'zh-CN'):
@@ -72,7 +83,13 @@ class StageLinuxSystemTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.stage()
         with self.assertRaises(ValueError):
-            staging.stage(self.base / 'invalid', self.binaries, '../../escape', 'a' * 40, self.roots, 'deb')
+            staging.stage(self.base / 'invalid', self.binaries, '../../escape', 'a' * 40, self.roots, 'deb', self.kmscon)
+
+
+    def test_refuses_unbound_private_terminal(self):
+        (self.kmscon / 'kmscon').write_bytes(b'replaced executable')
+        with self.assertRaises(ValueError):
+            self.stage()
 
 
 if __name__ == '__main__':

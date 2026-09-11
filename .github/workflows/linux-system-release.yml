@@ -25,11 +25,13 @@ jobs:
       - name: Build the reviewed master commit
         run: |
           sudo apt-get update
-          sudo apt-get install -y libpam0g-dev libdbus-1-dev pkg-config
+          sudo apt-get install -y libpam0g-dev libsystemd-dev libdbus-1-dev pkg-config meson ninja-build binutils libseat-dev libdrm-dev libudev-dev libxkbcommon-dev libpango1.0-dev zlib1g-dev
           rustup toolchain install stable --profile minimal
           rustup default stable
           cargo build --release --workspace --locked
           cargo test --locked -p system-maintenance -p session-protocol
+      - name: Build pinned private terminal with libseat
+        run: bash packaging/linux/build-kmscon.sh --output target/kmscon-private
       - name: Assemble fixed-format runtime
         id: release
         env:
@@ -46,6 +48,12 @@ jobs:
           with zipfile.ZipFile(runtime, 'w', zipfile.ZIP_DEFLATED) as archive:
               for name in ['tundra-shell', 'tundra-cli', 'tundra-sessiond', 'tundra-greeter', 'tundra-privileged']:
                   archive.write(root/'target/release'/name, 'bin/'+name)
+              terminal = root/'target/kmscon-private'
+              archive.write(terminal/'kmscon', 'bin/kmscon')
+              archive.write(terminal/'kmscon-capabilities.json', 'bin/kmscon-capabilities.json')
+              archive.write(terminal/'mod-pango.so', 'share/tundra/kmscon-modules/mod-pango.so')
+              for name in ['LICENSE.kmscon', 'LICENSE.libtsm']:
+                  archive.write(terminal/name, 'share/tundra/licenses/'+name)
               asset_root = root/'crates/ascii-assets/assets'
               for source in sorted(asset_root.rglob('*')):
                   if source.is_symlink():

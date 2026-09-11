@@ -18,7 +18,11 @@ Requires:       systemd
 Requires:       dbus
 Requires:       curl
 Requires:       gh >= 2.87.3
-Requires:       kmscon >= 10.0.3
+Requires:       libseat
+Requires:       libdrm
+Requires:       pango
+Provides:       bundled(libtsm) = 4.7.0
+Provides:       bundled(kmscon) = 10.0.3
 Requires:       google-noto-sans-cjk-fonts
 Requires(post): systemd
 Recommends:     xdg-desktop-portal

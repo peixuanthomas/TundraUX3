@@ -16,13 +16,21 @@ shell scripts or source-built update helpers.
   release envelope or the user's environment. Missing/expired roots fail closed;
   refresh roots through the trusted OS package distribution path.
 * Seed `/var/lib/tundra/runtime/versions/v1.3.0` from the original package, including
-  `bin/` and `release.json`. The latter has `version`, `source_sha`, `architecture`,
+  `bin/` and `release.json`. Runtime binaries include the private libseat-enabled
+  `kmscon`, its sibling `kmscon-capabilities.json`, and the Pango module in
+  `share/tundra/kmscon-modules`. The fixed module path resolves through
+  `/usr/libexec/tundra/modules/kmscon`. The latter manifest has `version`, `source_sha`, `architecture`,
   `protocol`, and `runtime_sha256` fields. Bootstrap `current` is a relative
   symlink `versions/v1.3.0`. These directories are root-owned mode 0755 so ordinary
   users can execute the runtime. Staging is 0700 and control files are 0600.
 * Stable launchers resolve `/var/lib/tundra/runtime/current/bin/<fixed-binary>`.
   Never replace package-owned executables during online installation. The
   maintenance executable itself is updated through OS packages, not this runtime.
+  The private terminal and module are part of each attested runtime; the build
+  recipe pins upstream kmscon and libtsm, verifies libseat linkage and emits the
+  digest-bound capability record used by sessiond. Its explicit DRM patch accepts
+  an already-master logind descriptor without privileged drmSetMaster. Distro kmscon is never used as
+  an implicit fallback.
 * After server-side authorization eligibility checks, call
   `linux::prepare_official_release("vX.Y.Z")`. Download uses a fixed official
   GitHub release URL with an unprivileged `nobody` child, no credentials or inherited

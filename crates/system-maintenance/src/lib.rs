@@ -8,6 +8,14 @@ pub type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + S
 pub const REPOSITORY: &str = "peixuanthomas/TundraUX3";
 pub const WORKFLOW: &str = "peixuanthomas/TundraUX3/.github/workflows/linux-system-release.yml";
 pub const PROTOCOL: u32 = 1;
+pub const RUNTIME_BINARIES: [&str; 6] = [
+    "tundra-shell",
+    "tundra-cli",
+    "tundra-sessiond",
+    "tundra-greeter",
+    "tundra-privileged",
+    "kmscon",
+];
 pub const MAX_BUNDLE: u64 = 512 * 1024 * 1024;
 pub const MAX_EXPANDED: u64 = 1024 * 1024 * 1024;
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -132,7 +140,12 @@ pub fn extract_runtime<R: io::Read + io::Seek>(reader: R, destination: &Path) ->
         {
             use std::os::unix::fs::PermissionsExt;
             file.set_permissions(std::fs::Permissions::from_mode(
-                if path.starts_with("bin") {
+                if path.parent() == Some(Path::new("bin"))
+                    && path
+                        .file_name()
+                        .and_then(|name| name.to_str())
+                        .is_some_and(|name| RUNTIME_BINARIES.contains(&name))
+                {
                     0o755
                 } else {
                     0o644
@@ -140,15 +153,21 @@ pub fn extract_runtime<R: io::Read + io::Seek>(reader: R, destination: &Path) ->
             ))?;
         }
     }
-    for name in [
-        "tundra-shell",
-        "tundra-cli",
-        "tundra-sessiond",
-        "tundra-greeter",
-        "tundra-privileged",
-    ] {
+    for name in RUNTIME_BINARIES {
         if !destination.join("bin").join(name).is_file() {
             return Err(invalid(format!("missing runtime binary {name}")));
+        }
+    }
+    for required in [
+        "bin/kmscon-capabilities.json",
+        "share/tundra/kmscon-modules/mod-pango.so",
+        "share/tundra/licenses/LICENSE.kmscon",
+        "share/tundra/licenses/LICENSE.libtsm",
+    ] {
+        if !destination.join(required).is_file() {
+            return Err(invalid(format!(
+                "missing private terminal resource {required}"
+            )));
         }
     }
     Ok(())
@@ -221,6 +240,54 @@ mod tests {
             )
             .is_err()
         );
+    }
+    #[test]
+    fn complete_private_runtime_extracts_with_limited_execute_modes() {
+        use std::io::{Cursor, Write};
+        let destination =
+            std::env::temp_dir().join(format!("tundra-runtime-extract-{}", std::process::id()));
+        std::fs::create_dir(&destination).unwrap();
+        let mut out = zip::ZipWriter::new(Cursor::new(Vec::new()));
+        for name in RUNTIME_BINARIES {
+            out.start_file(
+                format!("bin/{name}"),
+                zip::write::SimpleFileOptions::default(),
+            )
+            .unwrap();
+            out.write_all(b"fixture").unwrap();
+        }
+        for name in [
+            "bin/kmscon-capabilities.json",
+            "share/tundra/kmscon-modules/mod-pango.so",
+            "share/tundra/licenses/LICENSE.kmscon",
+            "share/tundra/licenses/LICENSE.libtsm",
+        ] {
+            out.start_file(name, zip::write::SimpleFileOptions::default())
+                .unwrap();
+            out.write_all(b"fixture").unwrap();
+        }
+        extract_runtime(out.finish().unwrap(), &destination).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(
+                std::fs::metadata(destination.join("bin/kmscon"))
+                    .unwrap()
+                    .permissions()
+                    .mode()
+                    & 0o777,
+                0o755
+            );
+            assert_eq!(
+                std::fs::metadata(destination.join("bin/kmscon-capabilities.json"))
+                    .unwrap()
+                    .permissions()
+                    .mode()
+                    & 0o777,
+                0o644
+            );
+        }
+        std::fs::remove_dir_all(destination).unwrap();
     }
     #[test]
     fn unsigned_envelope_cannot_replace_attested_release_metadata() {

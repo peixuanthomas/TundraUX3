@@ -11,6 +11,7 @@ import stat
 REPO = Path(__file__).resolve().parents[1]
 RUNTIME = Path('var/lib/tundra/runtime')
 BINARIES = ('tundra-shell', 'tundra-cli', 'tundra-sessiond', 'tundra-greeter', 'tundra-privileged')
+KMSCON_COMMIT = 'ad9c77bc04f718d0f0d6dfc51291b7d652336429'
 
 
 def regular(source):
@@ -45,12 +46,20 @@ def validate_roots(path):
         raise ValueError('Expected nonempty gh attestation trusted-root JSONL output')
 
 
-def stage(root, binaries, version, source_sha, trusted_root, flavor):
+def stage(root, binaries, version, source_sha, trusted_root, flavor, kmscon):
     if not re.fullmatch(r'(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)', version):
         raise ValueError('Version must be canonical MAJOR.MINOR.PATCH')
     if not re.fullmatch(r'[0-9a-f]{40}', source_sha):
         raise ValueError('Expected exact source commit SHA')
     validate_roots(trusted_root)
+    import hashlib
+    for name in ('kmscon', 'mod-pango.so', 'kmscon-capabilities.json', 'LICENSE.kmscon', 'LICENSE.libtsm'):
+        regular(kmscon / name)
+    capabilities = json.loads((kmscon / 'kmscon-capabilities.json').read_text())
+    if capabilities.get('libseat') is not True or capabilities.get('source_commit') != KMSCON_COMMIT:
+        raise ValueError('Private kmscon does not identify the vetted libseat-enabled build')
+    if capabilities.get('sha256') != hashlib.sha256((kmscon / 'kmscon').read_bytes()).hexdigest() or capabilities.get('pango_sha256') != hashlib.sha256((kmscon / 'mod-pango.so').read_bytes()).hexdigest():
+        raise ValueError('Private terminal or font module digest mismatch')
     if root.is_symlink():
         raise ValueError('Staging destination must not be a symlink')
     root = root.resolve()
@@ -63,6 +72,11 @@ def stage(root, binaries, version, source_sha, trusted_root, flavor):
     installed = root / RUNTIME / 'versions' / release
     for name in BINARIES:
         copy(binaries / name, installed / 'bin' / name, 0o755)
+    copy(kmscon / 'kmscon', installed / 'bin/kmscon', 0o755)
+    copy(kmscon / 'kmscon-capabilities.json', installed / 'bin/kmscon-capabilities.json')
+    copy(kmscon / 'mod-pango.so', installed / 'share/tundra/kmscon-modules/mod-pango.so')
+    for license_name in ('LICENSE.kmscon', 'LICENSE.libtsm'):
+        copy(kmscon / license_name, installed / 'share/tundra/licenses' / license_name)
     assets = REPO / 'crates/ascii-assets/assets'
     tree(assets, installed / 'share/tundraux3/assets')
     for locale in ('en-US', 'zh-CN'):
@@ -74,11 +88,14 @@ def stage(root, binaries, version, source_sha, trusted_root, flavor):
     (installed / 'release.json').write_text(json.dumps(manifest) + '\n')
     (installed / 'share/tundra/release.json').write_text(json.dumps(manifest) + '\n')
     copy(binaries / 'tundra-system-maintenance', root / 'usr/libexec/tundra/tundra-system-maintenance', 0o755)
-    for name in BINARIES:
+    for name in (*BINARIES, 'kmscon'):
         location = Path('usr/bin') if name in ('tundra-shell', 'tundra-cli') else Path('usr/libexec/tundra')
         link = root / location / name
         link.parent.mkdir(parents=True, exist_ok=True)
         link.symlink_to('/' + str(RUNTIME / 'current/bin' / name))
+    modules = root / 'usr/libexec/tundra/modules/kmscon'
+    modules.parent.mkdir(parents=True, exist_ok=True)
+    modules.symlink_to('/' + str(RUNTIME / 'current/share/tundra/kmscon-modules'))
     for name, relative in [('assets', 'usr/share/tundraux3/assets'), ('locales', 'usr/share/tundra/greeter/locales')]:
         link = root / relative
         link.parent.mkdir(parents=True, exist_ok=True)
@@ -121,9 +138,10 @@ def main():
     parser.add_argument('--version', required=True)
     parser.add_argument('--source-sha', required=True)
     parser.add_argument('--trusted-root', type=Path, required=True)
+    parser.add_argument('--kmscon', type=Path, required=True, help='Output of packaging/linux/build-kmscon.sh')
     parser.add_argument('--flavor', choices=('deb', 'rpm'), required=True)
     args = parser.parse_args()
-    stage(args.root, args.binaries, args.version, args.source_sha, args.trusted_root, args.flavor)
+    stage(args.root, args.binaries, args.version, args.source_sha, args.trusted_root, args.flavor, args.kmscon)
 
 
 if __name__ == '__main__':

@@ -37,7 +37,7 @@ Linux 面向 x86_64 上的真实 systemd/logind 用户会话，可作为普通�
 
 运行时应使用兼容 crossterm 的真实终端，例如 Windows Terminal、iTerm2 或其他兼容实现。默认资源集至少需要 **108 × 20** 个终端单元格；内建 Command Line 在 Tundra 顶栏和状态栏之外需要 108 × 22。程序会综合实际加载的 ASCII 资源、Shell 布局与 Weathr 资源计算下限，因此自定义较大资源会相应提高要求。
 
-Linux 普通图形桌面中的应用集成可使用 `xdg-utils`、`gio`、用户 D-Bus 与 portal；Wayland/X11 剪贴板仅在实际显示服务可用时启用。独立终端会话不伪造 `DISPLAY` 或 `WAYLAND_DISPLAY`。独立模式要求完整 PAM/systemd/logind/system D-Bus 和 kmscon 10.0.3+；Ubuntu 24.04 自带 kmscon 9.0.0 不满足要求，发行版差异见 [Linux 运行说明](packaging/linux/README-LINUX.txt)。
+Linux 普通图形桌面中的应用集成可使用 `xdg-utils`、`gio`、用户 D-Bus 与 portal；Wayland/X11 剪贴板仅在实际显示服务可用时启用。独立终端会话不伪造 `DISPLAY` 或 `WAYLAND_DISPLAY`。独立模式要求完整 PAM/systemd/logind/system D-Bus，并使用随包构建、启用 libseat 的固定源码版本 kmscon；不能以系统 kmscon 的版本号或命令行选项代替后端验证。发行版依赖与实际验收要求见 [Linux 运行说明](packaging/linux/README-LINUX.txt)。
 
 ## 快速构建与运行
 
@@ -610,7 +610,7 @@ cargo build --locked -p shell -p cli -p weathr
 
 - deb/RPM 将初始运行时安装到 `/var/lib/tundra/runtime/versions/vVERSION`，公开命令与 libexec 入口经 `current` 选择版本。稳定维护程序由软件包管理；现有在线版本指针不会在普通安装时被覆盖。
 - 包含发行版 PAM session stack、system D-Bus 策略、root 授权配置、systemd units、sysusers/tmpfiles 和构建阶段取得的信任根。安装不联网下载信任、不增加管理员组成员、不启动或启用 seat，也不替换显示管理器。
-- Fedora 包要求 kmscon 10.0.3+、gh 2.87.3+、PAM、systemd、D-Bus 和 CJK 字体。Ubuntu 24.04 的默认 kmscon 不满足独立会话要求；deb 保留普通 UX 安装能力，并推荐管理员另行提供合格版本。
+- 包内私有 kmscon 固定源码提交并显式启用 libseat，携带经过摘要绑定的能力记录、Pango 字体模块与许可证；libtsm 采用固定版本静态链接，系统 kmscon 不作为后备。Fedora/Ubuntu 使用发行版提供的 libseat、PAM、systemd、D-Bus、Pango 与 CJK 字体；系统更新另需支持所要求证明参数的 GitHub CLI。
 - `--tar-only` 只生成普通便携 UX；deb/RPM 对应的 tar 包可含仅供打包使用的 `system-root` 目录。具体构建、依赖和恢复步骤见 [Linux 运行说明](packaging/linux/README-LINUX.txt)。
 
 ## third_party

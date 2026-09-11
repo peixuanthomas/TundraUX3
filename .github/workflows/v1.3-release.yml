@@ -196,7 +196,7 @@ jobs:
       - name: Install Linux build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y libpam0g-dev libsystemd-dev libdbus-1-dev pkg-config
+          sudo apt-get install -y libpam0g-dev libsystemd-dev libdbus-1-dev pkg-config meson ninja-build binutils libseat-dev libdrm-dev libudev-dev libxkbcommon-dev libpango1.0-dev zlib1g-dev
           gh attestation trusted-root --verify-only
           gh attestation verify --help | grep -- --source-ref
 
@@ -242,8 +242,11 @@ jobs:
           test "$(systemctl is-enabled tundra-sessiond.service || true)" = disabled
           test "$(systemctl is-enabled tundra-privileged.service || true)" = disabled
           /usr/bin/tundra-cli help
-          # Ubuntu archive kmscon 9.0 is insufficient; package installation tests
-          # ordinary UX and inactive service payload, not independent-seat support.
+          test -x /usr/libexec/tundra/kmscon
+          test -f /usr/libexec/tundra/modules/kmscon/mod-pango.so
+          readelf -d /usr/libexec/tundra/kmscon | grep -E 'NEEDED.*libseat\.so\.'
+          # Package installation checks private terminal linkage and inactive
+          # service payload. It is not a physical seat/input isolation test.
 
       - name: Stage Linux release assets
         uses: actions/upload-artifact@v7
@@ -269,7 +272,7 @@ jobs:
     steps:
       - name: Install build and packaging requirements
         run: |
-          dnf install -y cmake curl gcc gcc-c++ git make openssl-devel perl pkgconf-pkg-config rpm-build tar gzip diffutils findutils python3 pam-devel systemd-devel dbus-devel gh
+          dnf install -y cmake curl gcc gcc-c++ git make openssl-devel perl pkgconf-pkg-config rpm-build tar gzip diffutils findutils python3 pam-devel systemd-devel dbus-devel gh meson ninja-build binutils libseat-devel libdrm-devel libxkbcommon-devel pango-devel zlib-devel
       - uses: actions/checkout@v7
         with:
           ref: ${{ env.RELEASE_REF }}
@@ -307,6 +310,9 @@ jobs:
           test -x /usr/libexec/tundra/tundra-system-maintenance
           cmp packaging/linux/pam.d/tundra-session.fedora /etc/pam.d/tundra-session
           test -s /etc/tundra/update-trusted-root.jsonl
+          test -x /usr/libexec/tundra/kmscon
+          test -f /usr/libexec/tundra/modules/kmscon/mod-pango.so
+          readelf -d /usr/libexec/tundra/kmscon | grep -E 'NEEDED.*libseat\.so\.'
           getent passwd tundra-greeter
           getent group tundra-admin
           test ! -e /etc/systemd/system/multi-user.target.wants/tundra-sessiond.service

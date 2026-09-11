@@ -55,9 +55,14 @@ if [[ "$flavor" != portable ]]; then
     gh attestation trusted-root > "$roots"
   fi
   test -s "$roots"
+  kmscon_dir="${TUNDRAUX3_KMSCON_BUILD_DIR:-$stage_root/kmscon-private}"
+  if [[ -z "${TUNDRAUX3_KMSCON_BUILD_DIR:-}" ]]; then
+    bash packaging/linux/build-kmscon.sh --output "$kmscon_dir"
+  fi
+  source_sha="${TUNDRAUX3_SOURCE_SHA:-$(git rev-parse HEAD)}"
   python3 scripts/stage-linux-system.py --root "$portable/system-root" \
-    --binaries "$release_dir" --version "$version" --source-sha "$(git rev-parse HEAD)" \
-    --trusted-root "$roots" --flavor "$flavor"
+    --binaries "$release_dir" --version "$version" --source-sha "$source_sha" \
+    --trusted-root "$roots" --flavor "$flavor" --kmscon "$kmscon_dir"
 fi
 
 tar -C "$stage_root" -czf "$out_dir/$portable_name.tar.gz" "$portable_name"

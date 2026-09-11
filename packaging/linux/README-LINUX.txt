@@ -15,22 +15,39 @@ copy it into / manually. A --tar-only build contains ordinary UX only.
 Prerequisites
 -------------
 Independent seat mode requires systemd/logind, complete PAM session stacks,
-system D-Bus, a working DRM device, and kmscon 10.0.3 or newer with libseat
-support and a CJK-capable font. The initial backend supports seat0.
+system D-Bus, a working DRM device, libseat with the logind backend and a CJK font.
+The initial backend supports seat0. Packages build and carry a PRIVATE kmscon
+from pinned upstream commit ad9c77bc04f718d0f0d6dfc51291b7d652336429 (v10.0.3),
+with libseat explicitly enabled. The old distro executable is never a fallback.
 
-Fedora 43: the RPM requires kmscon >= 10.0.3, gh >= 2.87.3, systemd, PAM, D-Bus,
-curl and Noto CJK fonts. If an enabled repository does not yet carry the required
-kmscon, installation must wait for that qualified dependency; do not force it.
+Version or --libseat appearing in --help does not prove backend support: the
+Fedora 43 kmscon 10.0.3 package accepted that option without a compiled libseat
+backend and fell back to direct input access. Tundra checks the private binary's
+root-owned capability record and digest, including its Pango font module. The
+build recipe verifies actual DT_NEEDED linkage to libseat; physical device handoff
+still requires native testing. Do not repair failures using raw input ACLs.
+
+The build pins libtsm 4.7.0 and embeds it using a small build-description change
+from shared_library to library with default_library=static. This removes the old
+Ubuntu system libtsm ABI constraint. A second exact source patch recognizes an
+already-master DRM descriptor supplied by logind before calling drmSetMaster;
+without it the ordinary UID fails with EPERM despite holding the brokered device.
+The capability digest binds the resulting patched binary. Pango is shipped at
+/usr/libexec/tundra/modules/kmscon/mod-pango.so, resolving into the active runtime.
+Both upstream licenses are included. Run packaging/linux/build-kmscon.sh only in
+the trusted build environment; it never installs files onto the host.
+
+Fedora 43: the RPM requires libseat, systemd, PAM, D-Bus, curl, Pango, Noto CJK fonts
+and gh >= 2.87.3. Ubuntu 24.04: the deb uses its libseat/DRM/Pango libraries with
+the private terminal, without depending on its old kmscon package. System updates
+need a gh CLI supporting --source-ref, --source-digest, --signer-digest and
+--custom-trusted-root; a qualified gh version is recommended separately.
+
 SELinux must remain Enforcing. Do not relabel broad filesystem trees, disable
-SELinux, or use permissive mode to conceal a denied operation.
-
-Ubuntu 24.04: the standard archive kmscon is 9.0.0 and is insufficient for this
-independent-session backend. The deb therefore recommends newer kmscon/gh while
-preserving ordinary UX installation. Independent sessions require a separately
-qualified administrator-installed kmscon >= 10.0.3; system updates require gh
-supporting --source-ref, --source-digest, --signer-digest and
---custom-trusted-root. An Ubuntu build or package install alone is NOT evidence
-that independent session or trusted input isolation works.
+SELinux, or use permissive mode to conceal a denied operation. A successful build
+or package install is not evidence that independent sessions or input isolation
+work; verify those on the actual seat and verify versioned executable SELinux
+labels before enabling services.
 
 Official package references:
 https://packages.ubuntu.com/noble/amd64/utils/kmscon
@@ -63,7 +80,8 @@ Updates and legacy data
 -----------------------
 Stable public and libexec symlinks resolve through
 /var/lib/tundra/runtime/current/bin. The initial package installs
-versions/vVERSION/{bin,share,release.json}; post-install creates current only if
+versions/vVERSION/{bin,share,release.json}, including the private kmscon, its
+digest-bound capability record and Pango module; post-install creates current only if
 absent. The current pointer and downloaded versions are runtime state, not
 package-owned files, so an ordinary package upgrade does not overwrite a newer
 online runtime. If an OS package upgrade removed the previous bootstrap version,
@@ -93,5 +111,7 @@ Build/testing notes
 --tar-only builds only ordinary UX. All release builds use Cargo.lock.
 TUNDRAUX3_PREBUILT_BIN_DIR permits an explicit developer packaging smoke test
 without rebuilding; do not use arbitrary prebuilt binaries for a trusted release.
+TUNDRAUX3_KMSCON_BUILD_DIR can explicitly reuse the complete vetted private-terminal
+build output; staging verifies binary/module hashes and the pinned source commit.
 `scripts/stage-linux-system.py` only writes an empty, explicitly selected staging
 directory and accepts reviewed trust roots; it never installs on the host.

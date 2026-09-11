@@ -46,6 +46,6 @@ cargo run -p cli --bin tundra-cli -- debug doctor
 
 独立桌面由显式启用的 `tundra-sessiond` 管理：完整 PAM 登录注册 logind 会话，随后降权启动用户桌面。锁屏与解锁保留原会话；注销关闭 PAM 并清理该会话，切换用户先注销。系统操作交给 root `tundra-privileged`，只有 root 策略允许的管理员组成员，经过独立可信界面的确认，才可执行列明的操作。
 
-安装软件包不会替换或启动显示管理器，也不会自动授予管理员组成员资格。Fedora 独立会话要求 kmscon 10.0.3+；Ubuntu 24.04 自带的旧版 kmscon 不满足该要求，仍可运行普通 UX。架构与实际验收边界见 [Linux 会话架构](docs/linux/session-architecture.md)，依赖和启用说明见 [Linux 运行说明](packaging/linux/README-LINUX.txt)。
+安装软件包不会替换或启动显示管理器，也不会自动授予管理员组成员资格。独立会话使用随包构建、固定源码提交且启用 libseat 的私有 kmscon；系统自带的 kmscon 不作为可信后端。架构与实际验收边界见 [Linux 会话架构](docs/linux/session-architecture.md)，依赖和启用说明见 [Linux 运行说明](packaging/linux/README-LINUX.txt)。
 
 运行日志与诊断导出请参阅 [Logs APP 使用与存储说明](LOGS.md)。
