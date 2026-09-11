@@ -1,6 +1,10 @@
 # Binaries are built with Cargo.lock by scripts/package-linux.sh.
 %global debug_package %{nil}
 %global _build_id_links none
+# Payload hashes bind prebuilt executables/modules. RPM brp stripping or note
+# rewriting after the capability record is emitted would invalidate sessiond
+# verification. The trusted build produces final bytes before staging.
+%global __os_install_post %{nil}
 
 Name:           tundraux3
 Version:        %{tundra_version}
