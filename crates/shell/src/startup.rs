@@ -321,8 +321,8 @@ pub fn prepare_shell_startup(
         && platform.is_native_backend()
         && unsafe { libc::geteuid() } != 0
     {
-        return Err(ShellStartupError::Identity(i18n::tr!(
-            "early-linux-root-required"
+        return Err(ShellStartupError::Identity(i18n::render_diagnostic(
+            &i18n::msg!("early-linux-root-required"),
         )));
     }
     ensure_startup_permissions(platform)?;
@@ -378,21 +378,21 @@ fn ensure_startup_permissions(platform: &dyn Platform) -> Result<(), ShellStartu
         .map(|error| {
             format!(
                 " {}",
-                i18n::tr!(
+                i18n::render_diagnostic(&i18n::msg!(
                     "early-permission-screen-unavailable",
                     error = error.to_string()
-                )
+                ))
             )
         })
         .unwrap_or_default();
     Err(ShellStartupError::Platform(PlatformError::Native {
         operation: "startup permission check",
-        message: i18n::tr!(
+        message: i18n::render_diagnostic(&i18n::msg!(
             "early-permission-required",
             name = name,
             message = message,
             detail = request_detail
-        ),
+        )),
     }))
 }
 

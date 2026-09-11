@@ -121,7 +121,7 @@ fn checked_terminal_size_does_not_replace_detection_failures_with_a_fallback() {
 }
 
 #[test]
-fn terminal_size_recovery_text_follows_the_locale_and_preserves_raw_detection_errors() {
+fn terminal_size_ui_localizes_while_diagnostics_and_raw_causes_stay_stable() {
     use std::{
         fs,
         path::PathBuf,
@@ -157,6 +157,11 @@ fn terminal_size_recovery_text_follows_the_locale_and_preserves_raw_detection_er
             format!("format_version = 1\ncode = \"{code}\"\nnative_name = \"{code}\"\n"),
         )
         .unwrap();
+        let contents = if code == "en-US" {
+            contents.replace("terminal is too small", "CUSTOM terminal is too small")
+        } else {
+            contents.to_string()
+        };
         fs::write(locale.join("recovery/early.ftl"), contents).unwrap();
     }
     let requirement = ShellTerminalSizeRequirement {
@@ -168,6 +173,12 @@ fn terminal_size_recovery_text_follows_the_locale_and_preserves_raw_detection_er
         .unwrap()
         .snapshot;
     let _english = i18n::enter_snapshot(Arc::new(english));
+    assert!(
+        error
+            .localized_message()
+            .render_current()
+            .starts_with("CUSTOM terminal")
+    );
     assert_eq!(
         error.to_string(),
         "terminal is too small (80x18); resize it to at least 108x20 and try again"
@@ -178,8 +189,12 @@ fn terminal_size_recovery_text_follows_the_locale_and_preserves_raw_detection_er
             .snapshot;
         let _chinese = i18n::enter_snapshot(Arc::new(chinese));
         assert_eq!(
-            error.to_string(),
+            error.localized_message().render_current(),
             "终端尺寸过小（80x18）；请将终端调整为至少 108x20 后重试"
+        );
+        assert_eq!(
+            error.to_string(),
+            "terminal is too small (80x18); resize it to at least 108x20 and try again"
         );
         let detected = checked_terminal_size_with(requirement, || {
             Err(io::Error::new(
@@ -191,7 +206,21 @@ fn terminal_size_recovery_text_follows_the_locale_and_preserves_raw_detection_er
         assert_eq!(detected.kind(), io::ErrorKind::NotConnected);
         assert_eq!(
             detected.to_string(),
+            "could not determine terminal size: raw OS detail /dev/tty"
+        );
+        let structured = detected
+            .get_ref()
+            .unwrap()
+            .downcast_ref::<TerminalSizeDetectionError>()
+            .unwrap();
+        assert_eq!(
+            structured.localized_message().render_current(),
             "无法确定终端尺寸：raw OS detail /dev/tty"
+        );
+        assert_eq!(structured.source.kind(), io::ErrorKind::NotConnected);
+        assert_eq!(
+            std::error::Error::source(structured).unwrap().to_string(),
+            "raw OS detail /dev/tty"
         );
     }
     assert!(error.to_string().contains("resize"));

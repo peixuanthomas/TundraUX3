@@ -52,19 +52,52 @@ pub struct ShellTerminalSizeError {
     pub required: ShellTerminalSizeRequirement,
 }
 
-impl fmt::Display for ShellTerminalSizeError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(&i18n::tr!(
+impl ShellTerminalSizeError {
+    /// Retain the message identifier and arguments until an explicit UI render.
+    pub fn localized_message(&self) -> i18n::LocalizedMessage {
+        i18n::msg!(
             "early-terminal-too-small",
             width = self.width.to_string(),
             height = self.height.to_string(),
             required_width = self.required.width.to_string(),
             required_height = self.required.height.to_string(),
-        ))
+        )
+    }
+}
+
+impl fmt::Display for ShellTerminalSizeError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(&i18n::render_diagnostic(&self.localized_message()))
     }
 }
 
 impl std::error::Error for ShellTerminalSizeError {}
+
+#[derive(Debug)]
+struct TerminalSizeDetectionError {
+    source: io::Error,
+}
+
+impl TerminalSizeDetectionError {
+    fn localized_message(&self) -> i18n::LocalizedMessage {
+        i18n::msg!(
+            "early-terminal-size-unavailable",
+            error = self.source.to_string()
+        )
+    }
+}
+
+impl fmt::Display for TerminalSizeDetectionError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(&i18n::render_diagnostic(&self.localized_message()))
+    }
+}
+
+impl std::error::Error for TerminalSizeDetectionError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(&self.source)
+    }
+}
 
 pub(crate) fn checked_current_terminal_size(
     requirement: ShellTerminalSizeRequirement,
@@ -76,12 +109,8 @@ fn checked_terminal_size_with(
     requirement: ShellTerminalSizeRequirement,
     detect_size: impl FnOnce() -> io::Result<(u16, u16)>,
 ) -> io::Result<(u16, u16)> {
-    let size = detect_size().map_err(|error| {
-        io::Error::new(
-            error.kind(),
-            i18n::tr!("early-terminal-size-unavailable", error = error.to_string()),
-        )
-    })?;
+    let size = detect_size()
+        .map_err(|source| io::Error::new(source.kind(), TerminalSizeDetectionError { source }))?;
     requirement.validate(size).map_err(io::Error::other)?;
     Ok(size)
 }
