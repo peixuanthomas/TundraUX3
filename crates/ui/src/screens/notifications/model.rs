@@ -38,6 +38,8 @@ pub struct NotificationViewModel {
     pub message: String,
     pub actions: Vec<NotificationActionViewModel>,
     pub stacked_actions: bool,
+    /// First wrapped message line to show; layout clamps it to the visible range.
+    pub scroll_offset: usize,
 }
 
 impl NotificationViewModel {
@@ -57,6 +59,21 @@ impl NotificationViewModel {
             message: message.into(),
             actions,
             stacked_actions: false,
+            scroll_offset: 0,
         }
+    }
+}
+
+pub(crate) fn notification_title(model: &NotificationViewModel) -> String {
+    format!("{} {}", notification_tone_prefix(model.tone), model.title)
+}
+
+pub(crate) fn notification_tone_prefix(tone: NotificationTone) -> String {
+    match tone {
+        NotificationTone::Info => i18n::tr!("ui-notifications-info-button"),
+        NotificationTone::Success => i18n::tr!("ui-notifications-success-button"),
+        NotificationTone::Warning => i18n::tr!("ui-notifications-warn-button"),
+        NotificationTone::Error => i18n::tr!("ui-notifications-error-button"),
+        NotificationTone::Critical => i18n::tr!("ui-notifications-critical-button"),
     }
 }

@@ -6,3 +6,5 @@ ui-notifications-success-button = { "[" }SUCCESS]
 ui-notifications-warn-button = { "[" }WARN]
 ui-notifications-error-button = { "[" }ERROR]
 ui-notifications-critical-button = { "[" }CRITICAL]
+
+ui-notifications-scroll-help = PgUp/PgDn · Mouse wheel: scroll

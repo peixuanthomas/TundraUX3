@@ -6,3 +6,5 @@ ui-notifications-success-button = { "[" }成功]
 ui-notifications-warn-button = { "[" }警告]
 ui-notifications-error-button = { "[" }错误]
 ui-notifications-critical-button = { "[" }严重]
+
+ui-notifications-scroll-help = PgUp/PgDn · 鼠标滚轮：滚动内容

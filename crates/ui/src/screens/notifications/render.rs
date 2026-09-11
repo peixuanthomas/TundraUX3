@@ -6,8 +6,10 @@ use ratatui::widgets::{Clear, Paragraph};
 use super::layout::{
     NotificationLayout, notification_action_text, notification_layout, wrap_notification_text,
 };
-use super::model::{NotificationLevel, NotificationTone, NotificationViewModel};
-use crate::components::{Button, Surface};
+use super::model::{
+    NotificationLevel, NotificationTone, NotificationViewModel, notification_title,
+};
+use crate::components::{Button, Scrollbar, Surface};
 use crate::{RenderContext, TundraTheme};
 pub fn render_notification_overlay(
     frame: &mut Frame<'_>,
@@ -52,17 +54,15 @@ pub(crate) fn render_notification_overlay_context(
         ..*context
     };
     Surface::new()
-        .titled(format!(
-            "{} {}",
-            notification_tone_prefix(model.tone),
-            model.title
-        ))
+        .titled(notification_title(model))
         .bordered(true)
         .raised(true)
         .render_frame(frame, layout.dialog, &dialog_context);
 
     let message_lines = wrap_notification_text(&model.message, layout.message.width)
         .into_iter()
+        .skip(layout.scroll_offset)
+        .take(usize::from(layout.message.height))
         .map(Line::from)
         .collect::<Vec<_>>();
     frame.render_widget(
@@ -72,6 +72,22 @@ pub(crate) fn render_notification_overlay_context(
         layout.message,
     );
 
+    if let Some(area) = layout.scrollbar {
+        Scrollbar::new(
+            layout.message_line_count,
+            usize::from(layout.message.height),
+            layout.scroll_offset,
+        )
+        .render_frame(frame, area, context);
+    }
+    if let Some(area) = layout.scroll_hint {
+        frame.render_widget(
+            Paragraph::new(i18n::tr!("ui-notifications-scroll-help"))
+                .alignment(HorizontalAlignment::Center)
+                .style(theme.muted_style()),
+            area,
+        );
+    }
     for action_layout in layout.actions {
         let Some(action) = model.actions.get(action_layout.index) else {
             continue;
@@ -121,16 +137,6 @@ fn centered_rect(area: Rect, width: u16, height: u16) -> Rect {
         height,
     )
 }
-pub(crate) fn notification_tone_prefix(tone: NotificationTone) -> String {
-    match tone {
-        NotificationTone::Info => i18n::tr!("ui-notifications-info-button"),
-        NotificationTone::Success => i18n::tr!("ui-notifications-success-button"),
-        NotificationTone::Warning => i18n::tr!("ui-notifications-warn-button"),
-        NotificationTone::Error => i18n::tr!("ui-notifications-error-button"),
-        NotificationTone::Critical => i18n::tr!("ui-notifications-critical-button"),
-    }
-}
-
 pub(crate) fn notification_tone_style(
     tone: NotificationTone,
     theme: &TundraTheme,

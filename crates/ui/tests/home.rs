@@ -784,7 +784,7 @@ fn notification_overlay_renders_modal_actions_and_replaces_too_small_terminal_co
     assert!(output.contains("Y: Move"));
     assert!(output.contains("N: Cancel"));
 
-    let mut narrow = Terminal::new(TestBackend::new(28, 10)).expect("test terminal");
+    let mut narrow = Terminal::new(TestBackend::new(18, 10)).expect("test terminal");
     narrow
         .draw(|frame| {
             frame.render_widget(
@@ -876,20 +876,19 @@ fn notification_layout_uses_nominal_size_and_adapts_to_full_shell_widths() {
     assert_eq!(narrow.dialog.width, 50);
     assert_eq!(narrow.actions.len(), 2);
     assert!(narrow.actions.iter().all(|action| action.area.width > 0));
-    assert_eq!(
-        notification_layout(Rect::new(0, 0, 39, 9), &model),
-        NotificationLayout::TooSmall {
-            required_width: 40,
-            required_height: 9,
-        }
-    );
-    assert_eq!(
-        notification_layout(Rect::new(0, 0, 64, 8), &model),
-        NotificationLayout::TooSmall {
-            required_width: 40,
-            required_height: 9,
-        }
-    );
+    for area in [Rect::new(0, 0, 39, 9), Rect::new(0, 0, 64, 8)] {
+        assert!(
+            matches!(
+                notification_layout(area, &model),
+                NotificationLayout::Dialog(_)
+            ),
+            "nominal padding must not prevent a usable notification"
+        );
+    }
+    assert!(matches!(
+        notification_layout(Rect::new(0, 0, 64, 4), &model),
+        NotificationLayout::TooSmall { .. }
+    ));
 }
 
 #[test]
@@ -935,12 +934,17 @@ fn notification_layout_and_renderer_share_wrapped_message_and_stacked_action_rec
     assert_eq!(layout.actions.len(), 2);
     assert_eq!(layout.actions[0].area, Rect::new(12, 15, 62, 2));
     assert_eq!(layout.actions[1].area, Rect::new(22, 17, 42, 1));
-    assert_eq!(
-        notification_layout(Rect::new(0, 0, 64, 9), &model),
-        NotificationLayout::TooSmall {
-            required_width: 40,
-            required_height: 10,
-        }
+    let NotificationLayout::Dialog(scrolled) = notification_layout(Rect::new(0, 0, 64, 9), &model)
+    else {
+        panic!("long messages should scroll while their actions remain visible");
+    };
+    assert_eq!(scrolled.message.height, 3);
+    assert_eq!(scrolled.max_scroll_offset, 1);
+    assert!(
+        scrolled
+            .actions
+            .iter()
+            .all(|action| action.area.bottom() < scrolled.dialog.bottom())
     );
 
     let mut terminal = Terminal::new(TestBackend::new(86, 28)).expect("test terminal");

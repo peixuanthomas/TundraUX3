@@ -28,6 +28,11 @@ pub struct NotificationDialogLayout {
     pub dialog: Rect,
     pub message: Rect,
     pub actions: Vec<NotificationActionLayout>,
+    pub message_line_count: usize,
+    pub scroll_offset: usize,
+    pub max_scroll_offset: usize,
+    pub scrollbar: Option<Rect>,
+    pub scroll_hint: Option<Rect>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -37,11 +42,17 @@ pub struct NotificationActionLayout {
 }
 
 pub fn notification_layout(area: Rect, model: &NotificationViewModel) -> NotificationLayout {
+    let required_width = notification_text_width(&super::model::notification_title(model))
+        .saturating_add(NOTIFICATION_DIALOG_BORDER_CELLS)
+        .clamp(3, NOTIFICATION_DIALOG_MIN_WIDTH);
     let dialog_width = area
         .width
-        .clamp(NOTIFICATION_DIALOG_MIN_WIDTH, NOTIFICATION_DIALOG_WIDTH);
+        .max(required_width)
+        .min(NOTIFICATION_DIALOG_WIDTH);
     let inner_width = dialog_width.saturating_sub(NOTIFICATION_DIALOG_BORDER_CELLS);
-    let message_height = notification_wrapped_line_count(&model.message, inner_width).max(1);
+    let unscrolled_line_count = wrap_notification_text(&model.message, inner_width)
+        .len()
+        .max(1);
     let action_texts = model
         .actions
         .iter()
@@ -65,29 +76,56 @@ pub fn notification_layout(area: Rect, model: &NotificationViewModel) -> Notific
             .iter()
             .fold(0_u16, |height, metric| height.saturating_add(metric.height))
     };
-    let mut content_height = NOTIFICATION_DIALOG_BORDER_CELLS
-        .saturating_add(message_height)
-        .saturating_add(u16::from(!action_metrics.is_empty()))
+    let separator_height = u16::from(!action_metrics.is_empty());
+    // Only the title/borders, at least one message line, and all actions are mandatory.
+    // Message length must never hide the recovery actions behind TooSmall.
+    let required_height = NOTIFICATION_DIALOG_BORDER_CELLS
+        .saturating_add(1)
+        .saturating_add(separator_height)
         .saturating_add(action_height);
-    // Space menu actions apart when there is room; retain every action at 50x12.
-    let gaps = u16::try_from(action_metrics.len().saturating_sub(1)).unwrap_or(u16::MAX);
-    let action_gap =
-        u16::from(model.stacked_actions && area.height >= content_height.saturating_add(gaps));
-    content_height = content_height.saturating_add(action_gap.saturating_mul(gaps));
-    let required_height = if action_metrics.is_empty() {
-        content_height.max(NOTIFICATION_DIALOG_MIN_HEIGHT)
-    } else {
-        content_height.max(NOTIFICATION_DIALOG_WITH_ACTIONS_MIN_HEIGHT)
-    };
-
-    if area.width < NOTIFICATION_DIALOG_MIN_WIDTH || area.height < required_height {
+    if area.width < required_width || area.height < required_height {
         return NotificationLayout::TooSmall {
-            required_width: NOTIFICATION_DIALOG_MIN_WIDTH,
+            required_width,
             required_height,
         };
     }
-
-    let dialog = centered_rect(area, dialog_width, required_height);
+    let gaps = u16::try_from(action_metrics.len().saturating_sub(1)).unwrap_or(u16::MAX);
+    let full_height =
+        usize::from(required_height.saturating_sub(1)).saturating_add(unscrolled_line_count);
+    // Preserve spacious menu actions when the entire message fits without scrolling.
+    let action_gap = u16::from(
+        model.stacked_actions
+            && usize::from(area.height) >= full_height.saturating_add(usize::from(gaps)),
+    );
+    let fixed_height = required_height
+        .saturating_sub(1)
+        .saturating_add(action_gap.saturating_mul(gaps));
+    let message_capacity = area.height.saturating_sub(fixed_height);
+    let overflowing = unscrolled_line_count > usize::from(message_capacity);
+    // Reserve the existing scrollbar's terminal column before wrapping the message.
+    let message_width = inner_width.saturating_sub(u16::from(overflowing));
+    let message_line_count = if overflowing {
+        wrap_notification_text(&model.message, message_width)
+            .len()
+            .max(1)
+    } else {
+        unscrolled_line_count
+    };
+    let message_height = u16::try_from(message_line_count)
+        .unwrap_or(u16::MAX)
+        .min(message_capacity);
+    let max_scroll_offset = message_line_count.saturating_sub(usize::from(message_height));
+    let scroll_offset = model.scroll_offset.min(max_scroll_offset);
+    let nominal_height = if action_metrics.is_empty() {
+        NOTIFICATION_DIALOG_MIN_HEIGHT
+    } else {
+        NOTIFICATION_DIALOG_WITH_ACTIONS_MIN_HEIGHT
+    };
+    let dialog_height = fixed_height
+        .saturating_add(message_height)
+        .max(nominal_height)
+        .min(area.height);
+    let dialog = centered_rect(area, dialog_width, dialog_height);
     let inner = Rect::new(
         dialog.x.saturating_add(1),
         dialog.y.saturating_add(1),
@@ -98,7 +136,17 @@ pub fn notification_layout(area: Rect, model: &NotificationViewModel) -> Notific
             .height
             .saturating_sub(NOTIFICATION_DIALOG_BORDER_CELLS),
     );
-    let message = Rect::new(inner.x, inner.y, inner.width, message_height);
+    let message = Rect::new(inner.x, inner.y, message_width, message_height);
+    let scrollbar = overflowing.then(|| {
+        Rect::new(
+            inner.right().saturating_sub(1),
+            message.y,
+            1,
+            message.height,
+        )
+    });
+    let scroll_hint = (overflowing && separator_height > 0)
+        .then(|| Rect::new(inner.x, message.bottom(), inner.width, 1));
     let action_y = message.y.saturating_add(message.height).saturating_add(1);
     let actions = if horizontal_actions {
         horizontal_action_layouts(inner, action_y, &action_metrics)
@@ -116,6 +164,11 @@ pub fn notification_layout(area: Rect, model: &NotificationViewModel) -> Notific
         dialog,
         message,
         actions,
+        message_line_count,
+        scroll_offset,
+        max_scroll_offset,
+        scrollbar,
+        scroll_hint,
     })
 }
 
