@@ -1,0 +1,12 @@
+shell-entry-failed = tundra-shell 运行失败：{ $error }
+shell-entry-root-required = tundra-shell 在 Linux 上需要 root 权限：{ $error }
+shell-entry-update-recovery-title = TundraUX 更新恢复失败
+shell-entry-update-recovery-failed = tundra-shell 更新恢复失败：{ $error }
+shell-entry-watchdog-start-failed = tundra-shell 看门狗启动失败：{ $error }
+shell-entry-restart-failed = tundra-shell 重启失败：{ $error }
+shell-entry-reset-failed = tundra-shell 重置失败：{ $error }
+shell-entry-update-helper-failed = tundra-shell 更新助手启动失败：{ $error }
+shell-entry-watchdog-shutdown-failed = tundra-shell 看门狗关闭失败：{ $error }
+shell-entry-sudo-request = TundraUX 的 Linux 模式以 root 身份运行。正在请求 sudo 身份验证……
+shell-entry-sudo-start-failed = 无法启动 sudo：{ $error }。请从 root 终端运行此程序。
+shell-entry-restart-cause = 无法重启 { $executable }：{ $error }

@@ -2,6 +2,9 @@ use std::sync::Arc;
 use watchdog::{ProcessWatchdog, WatchdogConfig, WatchdogRuntime};
 
 fn main() {
+    // Entry and post-run failures remain renderable without loading or repairing assets.
+    // Runtime language scopes override this fallback while the shell is running.
+    let _language = i18n::enter_snapshot(Arc::new(i18n::LanguageSnapshot::embedded(0)));
     let args = std::env::args().skip(1).collect::<Vec<_>>();
     if args.as_slice() == ["__update-probe"] {
         let identity = app::update::current_build_identity();
@@ -15,13 +18,19 @@ fn main() {
         return;
     }
     if let Err(error) = shell::parse_shell_args(args) {
-        eprintln!("tundra-shell failed: {error}");
+        eprintln!(
+            "{}",
+            i18n::tr!("shell-entry-failed", error = error.to_string())
+        );
         std::process::exit(2);
     }
 
     #[cfg(target_os = "linux")]
     if let Err(error) = ensure_linux_root() {
-        eprintln!("tundra-shell requires root on Linux: {error}");
+        eprintln!(
+            "{}",
+            i18n::tr!("shell-entry-root-required", error = error.to_string())
+        );
         std::process::exit(1);
     }
 
@@ -31,9 +40,17 @@ fn main() {
             Ok(false) => {}
             Err(error) => {
                 let platform = platform::native_platform();
-                let _ = platform
-                    .show_critical_error("TundraUX update recovery failed", &error.to_string());
-                eprintln!("tundra-shell update recovery failed: {error}");
+                let _ = platform.show_critical_error(
+                    &i18n::tr!("shell-entry-update-recovery-title"),
+                    &error.to_string(),
+                );
+                eprintln!(
+                    "{}",
+                    i18n::tr!(
+                        "shell-entry-update-recovery-failed",
+                        error = error.to_string()
+                    )
+                );
                 std::process::exit(5);
             }
         }
@@ -42,7 +59,13 @@ fn main() {
     let (watchdog_runtime, process_watchdog) = match start_watchdog() {
         Ok(value) => value,
         Err(error) => {
-            eprintln!("tundra-shell watchdog failed to start: {error}");
+            eprintln!(
+                "{}",
+                i18n::tr!(
+                    "shell-entry-watchdog-start-failed",
+                    error = error.to_string()
+                )
+            );
             std::process::exit(3);
         }
     };
@@ -61,7 +84,10 @@ fn main() {
             match restart_current_executable() {
                 Ok(()) => 0,
                 Err(error) => {
-                    eprintln!("tundra-shell restart failed: {error}");
+                    eprintln!(
+                        "{}",
+                        i18n::tr!("shell-entry-restart-failed", error = error.to_string())
+                    );
                     4
                 }
             }
@@ -69,7 +95,10 @@ fn main() {
         (Ok(shell::ShellRunOutcome::ResetRequested), Ok(())) => match reset_storage_and_restart() {
             Ok(()) => 0,
             Err(error) => {
-                eprintln!("tundra-shell reset failed: {error}");
+                eprintln!(
+                    "{}",
+                    i18n::tr!("shell-entry-reset-failed", error = error.to_string())
+                );
                 4
             }
         },
@@ -77,17 +106,32 @@ fn main() {
             match app::update::launch_update_helper(&manifest, std::process::id()) {
                 Ok(()) => 0,
                 Err(error) => {
-                    eprintln!("tundra-shell update helper failed to start: {error}");
+                    eprintln!(
+                        "{}",
+                        i18n::tr!(
+                            "shell-entry-update-helper-failed",
+                            error = error.to_string()
+                        )
+                    );
                     4
                 }
             }
         }
         (_, Err(error)) => {
-            eprintln!("tundra-shell watchdog shutdown failed: {error}");
+            eprintln!(
+                "{}",
+                i18n::tr!(
+                    "shell-entry-watchdog-shutdown-failed",
+                    error = error.to_string()
+                )
+            );
             3
         }
         (Err(error), Ok(())) => {
-            eprintln!("tundra-shell failed: {error}");
+            eprintln!(
+                "{}",
+                i18n::tr!("shell-entry-failed", error = error.to_string())
+            );
             1
         }
     };
@@ -106,7 +150,7 @@ fn ensure_linux_root() -> std::io::Result<()> {
     if unsafe { libc::geteuid() } == 0 {
         return Ok(());
     }
-    eprintln!("TundraUX Linux mode runs as root. Requesting sudo authentication...");
+    eprintln!("{}", i18n::tr!("shell-entry-sudo-request"));
     let executable = std::env::current_exe()?;
     let error = std::process::Command::new("/usr/bin/sudo")
         .args(["-H", "--"])
@@ -114,7 +158,10 @@ fn ensure_linux_root() -> std::io::Result<()> {
         .exec();
     Err(std::io::Error::new(
         error.kind(),
-        format!("could not start sudo: {error}. Run this program from a root terminal."),
+        i18n::render_diagnostic(&i18n::msg!(
+            "shell-entry-sudo-start-failed",
+            error = error.to_string()
+        )),
     ))
 }
 
@@ -156,7 +203,11 @@ fn restart_current_executable() -> Result<(), std::io::Error> {
 fn restart_error(executable: &std::path::Path, error: std::io::Error) -> std::io::Error {
     std::io::Error::new(
         error.kind(),
-        format!("could not restart {}: {error}", executable.display()),
+        i18n::render_diagnostic(&i18n::msg!(
+            "shell-entry-restart-cause",
+            executable = executable.display().to_string(),
+            error = error.to_string()
+        )),
     )
 }
 

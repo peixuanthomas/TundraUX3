@@ -1,0 +1,12 @@
+shell-entry-failed = tundra-shell failed: { $error }
+shell-entry-root-required = tundra-shell requires root on Linux: { $error }
+shell-entry-update-recovery-title = TundraUX update recovery failed
+shell-entry-update-recovery-failed = tundra-shell update recovery failed: { $error }
+shell-entry-watchdog-start-failed = tundra-shell watchdog failed to start: { $error }
+shell-entry-restart-failed = tundra-shell restart failed: { $error }
+shell-entry-reset-failed = tundra-shell reset failed: { $error }
+shell-entry-update-helper-failed = tundra-shell update helper failed to start: { $error }
+shell-entry-watchdog-shutdown-failed = tundra-shell watchdog shutdown failed: { $error }
+shell-entry-sudo-request = TundraUX Linux mode runs as root. Requesting sudo authentication...
+shell-entry-sudo-start-failed = could not start sudo: { $error }. Run this program from a root terminal.
+shell-entry-restart-cause = could not restart { $executable }: { $error }
