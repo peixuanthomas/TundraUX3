@@ -64,9 +64,15 @@ elif [ -L "$current" ] && [ ! -e "$current" ]; then
   mv -T "$pending" "$current"
 fi
 if [ -d /run/systemd/system ]; then systemctl daemon-reload; fi
+if [ -S /run/dbus/system_bus_socket ]; then
+  busctl --system call org.freedesktop.DBus /org/freedesktop/DBus org.freedesktop.DBus ReloadConfig
+fi
 
 %postun
 if [ -d /run/systemd/system ]; then systemctl daemon-reload; fi
+if [ -S /run/dbus/system_bus_socket ]; then
+  busctl --system call org.freedesktop.DBus /org/freedesktop/DBus org.freedesktop.DBus ReloadConfig
+fi
 
 %files
 %defattr(-,root,root,-)

@@ -19,6 +19,9 @@ case "${1:-}" in
       mv -T "$pending" "$current"
     fi
     if [ -d /run/systemd/system ]; then systemctl daemon-reload; fi
+    if [ -S /run/dbus/system_bus_socket ]; then
+      busctl --system call org.freedesktop.DBus /org/freedesktop/DBus org.freedesktop.DBus ReloadConfig
+    fi
     # Installation never starts/enables a seat service or modifies display-manager.service.
     ;;
 esac

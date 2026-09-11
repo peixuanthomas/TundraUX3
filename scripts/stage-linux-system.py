@@ -96,11 +96,13 @@ def stage(root, binaries, version, source_sha, trusted_root, flavor, kmscon):
     modules = root / 'usr/libexec/tundra/modules/kmscon'
     modules.parent.mkdir(parents=True, exist_ok=True)
     modules.symlink_to('/' + str(RUNTIME / 'current/share/tundra/kmscon-modules'))
-    for name, relative in [('assets', 'usr/share/tundraux3/assets'), ('locales', 'usr/share/tundra/greeter/locales')]:
-        link = root / relative
-        link.parent.mkdir(parents=True, exist_ok=True)
-        target = 'share/tundraux3/assets' if name == 'assets' else 'share/tundra/greeter/locales'
-        link.symlink_to('/' + str(RUNTIME / 'current' / target))
+    # Keep the legacy public assets path a directory: replacing it by a symlink
+    # during an OS package upgrade could delete/conflict with local custom files.
+    # Installed executables resolve their canonical version's assets first.
+    tree(assets, root / 'usr/share/tundraux3/assets')
+    locales = root / 'usr/share/tundra/greeter/locales'
+    locales.parent.mkdir(parents=True, exist_ok=True)
+    locales.symlink_to('/' + str(RUNTIME / 'current/share/tundra/greeter/locales'))
     for unit in (REPO / 'packaging/linux/systemd').glob('*.service'):
         copy(unit, root / 'usr/lib/systemd/system' / unit.name)
     for policy in (REPO / 'packaging/linux/dbus-1').rglob('*.conf'):

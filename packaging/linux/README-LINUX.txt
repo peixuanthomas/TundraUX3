@@ -86,7 +86,11 @@ absent. The current pointer and downloaded versions are runtime state, not
 package-owned files, so an ordinary package upgrade does not overwrite a newer
 online runtime. If an OS package upgrade removed the previous bootstrap version,
 post-install repairs only that dangling version pointer to the new bootstrap.
-Schedule OS package upgrades outside active desktop sessions. The maintenance
+The legacy public /usr/share/tundraux3/assets stays a directory with packaged
+defaults; local untracked custom files are not deleted to replace it with a link.
+Versioned executables resolve their own version resources before this fallback.
+Installing policies reloads the live system D-Bus configuration without restarting
+the bus. Schedule OS package upgrades outside active desktop sessions. The maintenance
 executable remains a regular package-managed
 file at /usr/libexec/tundra/tundra-system-maintenance.
 

@@ -51,6 +51,8 @@ class StageLinuxSystemTests(unittest.TestCase):
         for locale in ('en-US', 'zh-CN'):
             self.assertTrue((version / f'share/tundraux3/assets/locales/{locale}/manifest.toml').is_file())
             self.assertTrue((version / f'share/tundra/greeter/locales/{locale}/greeter.ftl').is_file())
+        self.assertTrue((root / 'usr/share/tundraux3/assets').is_dir())
+        self.assertFalse((root / 'usr/share/tundraux3/assets').is_symlink())
         self.assertTrue((root / 'etc/tundra/update-trusted-root.jsonl').is_file())
         self.assertFalse((root / 'etc/pam.d/tundraux3').exists())
         self.assertTrue((root / 'usr/lib/tmpfiles.d/tundra.conf').is_file())
