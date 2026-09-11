@@ -8,8 +8,10 @@ impl ShellSession {
         self.time_sync_dialog_visible
     }
 
-    pub fn time_sync_failure_message(&self) -> Option<&str> {
-        self.time_sync_failure_message.as_deref()
+    pub fn time_sync_failure_message(&self) -> Option<String> {
+        self.time_sync_failure_message
+            .as_ref()
+            .map(i18n::LocalizedText::render_current)
     }
 
     pub fn apply_time_sync_result(&mut self, result: TimeSyncResult) {
@@ -19,7 +21,7 @@ impl ShellSession {
             Err(error) => {
                 self.app
                     .dispatch_at(app::AppCommand::ApplyTimeSync(Err(error)), Instant::now());
-                self.show_time_sync_failure_dialog("联网校准时间失败".to_string());
+                self.show_time_sync_failure_dialog(i18n::msg!("time-sync-network-failed"));
             }
         }
         self.restore_clock_profile_after_initial_sync();
@@ -41,7 +43,10 @@ impl ShellSession {
         self.apply_time_sync_failure_message(message);
     }
 
-    pub(in crate::session) fn apply_time_sync_failure_message(&mut self, message: &str) {
+    pub(in crate::session) fn apply_time_sync_failure_message(
+        &mut self,
+        message: impl Into<i18n::LocalizedText>,
+    ) {
         self.time_sync_attempted = true;
         self.last_time_sync_utc = None;
         let app_snapshot = self.app.snapshot();
@@ -53,7 +58,7 @@ impl ShellSession {
             },
             Instant::now(),
         );
-        self.show_time_sync_failure_dialog(message.to_string());
+        self.show_time_sync_failure_dialog(message);
         self.restore_clock_profile_after_initial_sync();
     }
 
@@ -81,7 +86,7 @@ impl ShellSession {
             self.time_sync_dialog_visible = false;
             self.time_sync_failure_message = None;
             self.notification_dismiss_modal_by_key(TIME_SYNC_NOTIFICATION_KEY);
-            self.notify_status("Ready");
+            self.notify_status(i18n::msg!("time-sync-ready"));
         }
 
         self.finish_modal_focus_transition();
@@ -90,18 +95,22 @@ impl ShellSession {
         }
     }
 
-    pub(in crate::session) fn show_time_sync_failure_dialog(&mut self, message: String) {
+    pub(in crate::session) fn show_time_sync_failure_dialog(
+        &mut self,
+        message: impl Into<i18n::LocalizedText>,
+    ) {
+        let message = message.into();
         self.time_sync_dialog_visible = true;
         self.time_sync_failure_message = Some(message.clone());
         self.active_popup = None;
         self.notify_status(message.clone());
         self.notify_modal_with_options(
             ShellNotification::modal(
-                "Time Sync",
+                i18n::msg!("time-sync-title"),
                 message,
                 ui::NotificationTone::Error,
                 vec![
-                    ShellNotificationAction::new("ok", "OK")
+                    ShellNotificationAction::new("ok", i18n::msg!("time-sync-ok"))
                         .with_shortcut(InputKey::Escape)
                         .cancel()
                         .with_follow_up(ShellCommand::CloseTimeSyncDialog),
@@ -117,7 +126,7 @@ impl ShellSession {
         self.time_sync_dialog_visible = false;
         self.time_sync_failure_message = None;
         self.notification_dismiss_modal_by_key(TIME_SYNC_NOTIFICATION_KEY);
-        self.notify_status("Ready");
+        self.notify_status(i18n::msg!("time-sync-ready"));
         self.refresh_hit_map();
     }
 

@@ -205,7 +205,7 @@ impl ShellSession {
     }
 
     pub(in crate::session) fn setup_next_language(&mut self) {
-        let count = app::setup_language_options().len();
+        let count = self.language_options().len();
         if count == 0 {
             return;
         }
@@ -214,7 +214,7 @@ impl ShellSession {
     }
 
     pub(in crate::session) fn setup_previous_language(&mut self) {
-        let count = app::setup_language_options().len();
+        let count = self.language_options().len();
         if count == 0 {
             return;
         }
@@ -289,6 +289,14 @@ impl ShellSession {
     pub(in crate::session) fn setup_continue(&mut self) {
         match self.setup_step {
             ui::SetupStep::Language => {
+                let code = self.selected_setup_language_value();
+                match self.prepare_language(&code) {
+                    Ok((catalog, loaded)) => self.publish_language(catalog, loaded),
+                    Err(error) => {
+                        self.report_language_failure(&error);
+                        return;
+                    }
+                }
                 self.setup_step = ui::SetupStep::Timezone;
                 self.setup_focused_field = ui::SetupField::TimezoneList;
                 self.focused_component = ShellComponent::SetupTimezone;
@@ -683,8 +691,7 @@ impl ShellSession {
         {
             Ok(color) => color,
             Err(_) => {
-                self.setup_custom_color_error =
-                    Some("Invalid color. Use #RRGGBB or a supported color name.".to_string());
+                self.setup_custom_color_error = Some(i18n::msg!("account-invalid-color").into());
                 return;
             }
         };
@@ -695,7 +702,7 @@ impl ShellSession {
             }
             ui::SetupCustomColorTarget::Accent if color == self.setup_theme_color => {
                 self.setup_custom_color_error =
-                    Some("Accent color must be different from the theme color.".to_string());
+                    Some(i18n::msg!("account-accent-must-differ").into());
                 return;
             }
             ui::SetupCustomColorTarget::Accent => self.setup_accent_color = color,
@@ -738,7 +745,7 @@ impl ShellSession {
         coordinates: CellPosition,
     ) -> Option<usize> {
         let row = setup_language_list_row_at(self.terminal_size, coordinates)?;
-        (row < app::setup_language_options().len()).then_some(row)
+        (row < self.language_options().len()).then_some(row)
     }
 
     pub(in crate::session) fn setup_timezone_index_at(
@@ -778,7 +785,7 @@ impl ShellSession {
     }
 
     pub(in crate::session) fn selected_setup_language_value(&self) -> String {
-        let options = app::setup_language_options();
+        let options = self.language_options();
         setup_language_code_at(&options, self.setup_selected_language_index)
             .unwrap_or_else(|| "en-US".to_string())
     }
@@ -791,12 +798,12 @@ impl ShellSession {
 
     pub(in crate::session) fn submit_login(&mut self) {
         let Some(storage) = self.storage_manager.clone() else {
-            self.error_message = Some("Storage unavailable".to_string());
+            self.error_message = Some(i18n::msg!("account-storage-unavailable").into());
             return;
         };
         let Some(username) = self.selected_login_username().map(str::to_string) else {
-            self.error_message = Some("No user selected".to_string());
-            self.notify_status("Login failed");
+            self.error_message = Some(i18n::msg!("account-no-user-selected").into());
+            self.notify_status(i18n::msg!("account-login-failed"));
             return;
         };
         let password_hint = self.selected_login_password_hint().map(str::to_string);
@@ -807,7 +814,7 @@ impl ShellSession {
                 self.login_password_visible_until = None;
                 self.login_password.clear();
                 self.error_message = Some(login_error_message(&error, password_hint.as_deref()));
-                self.notify_status("Login failed");
+                self.notify_status(i18n::msg!("account-login-failed"));
                 let _ = self.refresh_login_users_from_storage();
             }
         }
@@ -815,7 +822,7 @@ impl ShellSession {
 
     pub(in crate::session) fn submit_bootstrap_admin(&mut self) {
         let Some(storage) = self.storage_manager.clone() else {
-            self.error_message = Some("Storage unavailable".to_string());
+            self.error_message = Some(i18n::msg!("account-storage-unavailable").into());
             return;
         };
         let users = UserService::with_debug_policy(storage.clone(), self.debug_policy)
@@ -829,20 +836,20 @@ impl ShellSession {
                     Ok(session) => self.complete_login(session),
                     Err(error) => {
                         self.error_message = Some(format_core_error(&error));
-                        self.notify_status("Login failed");
+                        self.notify_status(i18n::msg!("account-login-failed"));
                     }
                 }
             }
             Err(error) => {
                 self.error_message = Some(format_core_error(&error));
-                self.notify_status("Admin bootstrap failed");
+                self.notify_status(i18n::msg!("account-admin-bootstrap-failed"));
             }
         }
     }
 
     pub(in crate::session) fn submit_first_run_setup(&mut self) {
         let Some(storage) = self.storage_manager.clone() else {
-            self.error_message = Some("Storage unavailable".to_string());
+            self.error_message = Some(i18n::msg!("account-storage-unavailable").into());
             return;
         };
 
@@ -851,8 +858,8 @@ impl ShellSession {
         if password != self.setup_admin_password_confirm {
             self.setup_focused_field = ui::SetupField::AdminPasswordConfirm;
             self.focused_component = ShellComponent::SetupAdminPasswordConfirm;
-            self.error_message = Some("Passwords do not match".to_string());
-            self.notify_status("Setup incomplete");
+            self.error_message = Some(i18n::msg!("account-passwords-do-not-match").into());
+            self.notify_status(i18n::msg!("account-setup-incomplete"));
             return;
         }
 
@@ -862,16 +869,16 @@ impl ShellSession {
         let mut config = match storage.load_config() {
             Ok(config) => config,
             Err(error) => {
-                self.error_message = Some(error.to_string());
-                self.notify_status("Setup failed");
+                self.error_message = Some(i18n::LocalizedText::Raw(error.to_string()));
+                self.notify_status(i18n::msg!("account-setup-failed"));
                 return;
             }
         };
         config.language = self.selected_setup_language_value();
         config.timezone = self.selected_setup_timezone_value();
         if let Err(error) = storage.save_config(&config) {
-            self.error_message = Some(error.to_string());
-            self.notify_status("Setup failed");
+            self.error_message = Some(i18n::LocalizedText::Raw(error.to_string()));
+            self.notify_status(i18n::msg!("account-setup-failed"));
             return;
         }
         self.replace_storage_config(config);
@@ -884,19 +891,19 @@ impl ShellSession {
                 self.setup_focused_field = ui::SetupField::AppearanceShape;
                 self.focused_component = ShellComponent::SetupAppearanceShape;
                 self.error_message = None;
-                self.notify_status("Choose appearance");
+                self.notify_status(i18n::msg!("account-choose-appearance"));
                 self.refresh_hit_map();
             }
             Err(error) => {
                 self.error_message = Some(format_core_error(&error));
-                self.notify_status("Setup failed");
+                self.notify_status(i18n::msg!("account-setup-failed"));
             }
         }
     }
 
     pub(in crate::session) fn finish_first_run_setup(&mut self) {
         let Some(storage) = self.storage_manager.clone() else {
-            self.error_message = Some("Storage unavailable".to_string());
+            self.error_message = Some(i18n::msg!("account-storage-unavailable").into());
             return;
         };
 
@@ -905,9 +912,8 @@ impl ShellSession {
         if self.setup_theme_color == self.setup_accent_color {
             self.setup_focused_field = ui::SetupField::AppearanceAccentColor;
             self.focused_component = ShellComponent::SetupAppearanceAccentColor;
-            self.error_message =
-                Some("Accent color must be different from the theme color.".to_string());
-            self.notify_status("Setup incomplete");
+            self.error_message = Some(i18n::msg!("account-accent-must-differ").into());
+            self.notify_status(i18n::msg!("account-setup-incomplete"));
             return;
         }
         let hint = self.setup_admin_password_hint.trim().to_string();
@@ -930,7 +936,7 @@ impl ShellSession {
                 Ok(_) => self.complete_login(session),
                 Err(error) => {
                     self.error_message = Some(format_core_error(&error));
-                    self.notify_status("Could not save personalization");
+                    self.notify_status(i18n::msg!("account-personalization-save-failed"));
                 }
             }
             return;
@@ -942,7 +948,7 @@ impl ShellSession {
             appearance,
         ) {
             self.error_message = Some(format_core_error(&error));
-            self.notify_status("Setup failed");
+            self.notify_status(i18n::msg!("account-setup-failed"));
             return;
         }
 
@@ -953,7 +959,7 @@ impl ShellSession {
                 self.setup_admin_password.clear();
                 self.setup_admin_password_confirm.clear();
                 self.error_message = Some(format_core_error(&error));
-                self.notify_status("Login failed");
+                self.notify_status(i18n::msg!("account-login-failed"));
             }
         }
     }
@@ -997,7 +1003,7 @@ impl ShellSession {
         self.focused_component = ShellComponent::SetupAppearanceShape;
         self.active_popup = None;
         self.error_message = None;
-        self.notify_status("Choose your appearance to finish your first sign-in");
+        self.notify_status(i18n::msg!("account-first-sign-in-appearance"));
         self.refresh_hit_map();
     }
 
@@ -1019,8 +1025,10 @@ impl ShellSession {
             }),
             Err(error) if self.identity_backend == identity::IdentityBackend::Linux => {
                 self.clear_auth_passwords();
-                self.error_message = Some(format!("Could not load your UX profile: {error}"));
-                self.notify_status("Login incomplete");
+                self.error_message = Some(
+                    i18n::msg!("account-profile-load-failed", error = error.to_string()).into(),
+                );
+                self.notify_status(i18n::msg!("account-login-incomplete"));
                 return;
             }
             Err(_) => None,
@@ -1060,7 +1068,7 @@ impl ShellSession {
                 .update_user_appearance(&session, &session.username, appearance)
             {
                 Ok(account) => active_appearance = Some(account.appearance),
-                Err(error) => icon_fallback_error = Some(format_core_error(&error)),
+                Err(error) => icon_fallback_error = Some(error.to_string()),
             }
         }
         self.app.dispatch_at(
@@ -1081,10 +1089,13 @@ impl ShellSession {
         self.login_username = session.username.clone();
         self.clear_auth_passwords();
         self.error_message = None;
-        self.notify_status(format!("Signed in as {}", session.username));
+        self.notify_status(i18n::msg!(
+            "account-signed-in",
+            username = session.username.clone()
+        ));
         if let Some(error) = icon_fallback_error {
             self.notify_alert_with_tone(
-                format!("Could not save the ASCII icon fallback: {error}"),
+                i18n::msg!("account-ascii-fallback-save-failed", error = error),
                 ui::NotificationTone::Warning,
             );
         }
@@ -1099,7 +1110,7 @@ impl ShellSession {
             if permission.allowed {
                 self.home_mode = ShellHomeMode::Debug;
             } else {
-                self.notify_toast("Debug mode denied");
+                self.notify_toast(i18n::msg!("account-debug-mode-denied"));
             }
         }
 
@@ -1116,11 +1127,11 @@ impl ShellSession {
     pub(in crate::session) fn open_user_management(&mut self) {
         if self.is_strict_guest() {
             self.error_message = None;
-            self.notify_status("Guest access is read-only");
+            self.notify_status(i18n::msg!("account-guest-read-only"));
             return;
         }
         if self.app.auth_session().is_none() {
-            self.error_message = Some("Login required".to_string());
+            self.error_message = Some(i18n::msg!("account-login-required").into());
             return;
         };
 
@@ -1131,9 +1142,9 @@ impl ShellSession {
             self.user_management_focus = UserManagementPageFocus::UserList;
             self.ensure_user_management_selection_visible();
             let status = if self.can_manage_all_users() {
-                "User Management"
+                i18n::msg!("account-user-management")
             } else {
-                "User Profile"
+                i18n::msg!("account-user-profile")
             };
             self.notify_status(status);
             self.refresh_hit_map();
