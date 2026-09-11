@@ -78,6 +78,11 @@ presentation, persistence of the selected language, and publication of a new
 `Arc<LanguageSnapshot>` after a successful strict reload. Existing snapshots
 remain unchanged even if asset files are edited or removed.
 
+Use `render_diagnostic(&message)` for domain error `Display` implementations and
+log text. It always uses a lazily initialized immutable embedded English snapshot,
+including for nested arguments, independently of the active UI scope and editable
+English files. Both initialization and rendering are free of filesystem access.
+
 `LocalizedError` carries a stable `event_code`, a retained `LocalizedMessage`, and
 an optional boxed `LocalizedError` cause. Its `Display` is machine-oriented;
 render its message explicitly for user-facing presentation.

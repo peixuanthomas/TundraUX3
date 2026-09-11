@@ -56,3 +56,13 @@ pub fn render_current(message: &LocalizedMessage) -> String {
         });
     snapshot.render(message)
 }
+
+/// Render stable diagnostic text from immutable embedded English, independent of
+/// the active UI scope and editable locale files. Nested messages use this same
+/// snapshot. Initialization and formatting perform no filesystem access.
+pub fn render_diagnostic(message: &LocalizedMessage) -> String {
+    static DIAGNOSTIC: OnceLock<LanguageSnapshot> = OnceLock::new();
+    DIAGNOSTIC
+        .get_or_init(|| LanguageSnapshot::embedded(0))
+        .render(message)
+}

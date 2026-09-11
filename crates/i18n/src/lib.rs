@@ -12,7 +12,7 @@ pub use catalog::{
 };
 pub use error::{LanguageError, LanguageErrorKind, RepairDiagnostic, RepairKind};
 pub use message::{LocalizedError, LocalizedMessage, LocalizedText, MessageArg};
-pub use scope::{SnapshotGuard, enter_snapshot, render_current, with_snapshot};
+pub use scope::{SnapshotGuard, enter_snapshot, render_current, render_diagnostic, with_snapshot};
 pub use snapshot::{LanguageLoad, LanguageSnapshot};
 
 include!(concat!(env!("OUT_DIR"), "/embedded.rs"));

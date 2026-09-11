@@ -605,3 +605,50 @@ fn startup_fallback_reports_repeated_write_failures_once() {
     }
     assert_eq!(fs::read_to_string(root).unwrap(), "keep this file");
 }
+
+#[test]
+fn diagnostic_render_ignores_disk_customization_and_active_language() {
+    let fixture = Fixture::new();
+    fixture.locale(
+        "en-US",
+        "English",
+        "resources-recovery-title = Customized English recovery\nlanguage-reload-failed = Customized English failure: { $reason }\n",
+    );
+    fixture.locale(
+        "zh-CN",
+        "简体中文",
+        "resources-recovery-title = 中文恢复\nlanguage-reload-failed = 中文失败：{ $reason }\n",
+    );
+    let english = Arc::new(fixture.snapshot("en-US", 1));
+    let chinese = Arc::new(fixture.snapshot("zh-CN", 2));
+    let message = msg!(
+        "language-reload-failed",
+        reason = msg!("resources-recovery-title")
+    );
+    let original_english = LanguageSnapshot::embedded(0).render(&message);
+    assert!(original_english.contains("Resource recovery"));
+    assert_ne!(original_english, english.render(&message));
+    assert_ne!(original_english, chinese.render(&message));
+    // Neither lazy diagnostic initialization nor subsequent renders need the files.
+    fs::remove_dir_all(fixture.0.join("locales")).unwrap();
+    with_snapshot(&chinese, || {
+        assert_eq!(render_current(&message), "中文失败：中文恢复");
+        assert_eq!(render_diagnostic(&message), original_english);
+        with_snapshot(&english, || {
+            assert_eq!(
+                render_current(&message),
+                "Customized English failure: Customized English recovery"
+            );
+            assert_eq!(render_diagnostic(&message), original_english);
+        });
+        assert_eq!(tr!("resources-recovery-title"), "中文恢复");
+        assert_eq!(
+            render_diagnostic(&msg!("resources-recovery-title")),
+            "Resource recovery"
+        );
+    });
+    let threaded = std::thread::spawn(move || render_diagnostic(&message))
+        .join()
+        .unwrap();
+    assert_eq!(threaded, original_english);
+}
