@@ -1503,11 +1503,8 @@ impl ShellSession {
             .as_ref()
             .map(i18n::LocalizedText::render_current)
             .or_else(|| {
-                (self.identity_backend == identity::IdentityBackend::Linux).then(|| {
-                    i18n::tr!(
-                        "shell-linux-system-user-session-permissions"
-                    )
-                })
+                (self.identity_backend == identity::IdentityBackend::Linux)
+                    .then(|| i18n::tr!("shell-linux-system-user-session-permissions"))
             });
         let mut model = ui::UserManagementViewModel::new(
             current_user.clone(),
