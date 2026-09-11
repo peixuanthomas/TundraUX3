@@ -3,6 +3,7 @@ use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use crate::artwork::load_art_set;
 use crate::asset_error::AssetError;
 use crate::asset_manifest::DEFAULT_THEME_ID;
 use crate::asset_validation::{AssetCheckStatus, check_default_theme, validate_default_theme_file};
@@ -22,7 +23,7 @@ pub struct AssetRecoveryFile {
     pub path: PathBuf,
     /// The original validation/read failure that triggered recovery.
     pub issue: String,
-    /// Restore or post-write validation failure; present only for memory fallbacks.
+    /// Restore, post-write validation, or dependency failure; present only for memory fallbacks.
     pub repair_error: Option<String>,
 }
 
@@ -64,6 +65,33 @@ pub(crate) fn recover_default_theme(
                 report.fallback.push(recovery);
             }
         }
+    }
+    // A syntactically valid custom catalog can still refer to an unavailable image.
+    // Use its complete embedded catalog in memory so every image dependency resolves
+    // to a default file already repaired above. Never rewrite healthy custom data.
+    for key in ["home_icons", "launcher_icons"] {
+        let file = embedded_default_theme_file(key).expect("embedded icon catalog");
+        let catalog = load_art_set(&resolver, DEFAULT_THEME_ID, key, file.relative_path)?;
+        let failures = catalog
+            .items()
+            .filter_map(|item| item.image_path())
+            .filter_map(|path| resolver.read_asset(DEFAULT_THEME_ID, path, path).err())
+            .map(|error| error.to_string())
+            .collect::<Vec<_>>();
+        if failures.is_empty() {
+            continue;
+        }
+        resolver.use_embedded_default(file.relative_path, file.contents);
+        validate_default_theme_file(&resolver, file)?;
+        report.repaired.retain(|recovery| recovery.key != key);
+        report.fallback.push(AssetRecoveryFile {
+            key: key.to_string(),
+            path: resolver.asset_path(DEFAULT_THEME_ID, file.relative_path),
+            issue: failures.join("; "),
+            repair_error: Some(
+                "custom image dependencies are unavailable; using the embedded catalog without replacing the disk catalog".to_string(),
+            ),
+        });
     }
     let store = AsciiAssetStore::load_with_resolver(resolver, DEFAULT_THEME_ID)?;
     Ok((store, report))

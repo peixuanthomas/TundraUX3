@@ -406,3 +406,82 @@ fn restore_atomically_replaces_the_destination_instead_of_truncating_it() {
     );
     assert_eq!(fs::read_dir(&theme).unwrap().count(), 1);
 }
+
+#[test]
+fn automatic_recovery_completes_custom_image_dependencies_without_overwriting_catalogs() {
+    let root = TempDir::new("custom-image-dependencies");
+    restore_default_theme(root.path()).unwrap();
+    let theme = root.path().join("themes/default");
+    let mut custom_catalogs = Vec::new();
+    for (catalog, original, custom) in [
+        (
+            "home_icons.toml",
+            "home_icons/explorer.png",
+            "custom/missing.png",
+        ),
+        (
+            "launcher_icons.toml",
+            "launcher_icons/editor.png",
+            "custom/unreadable.png",
+        ),
+    ] {
+        let path = theme.join(catalog);
+        let contents = fs::read_to_string(&path).unwrap().replace(original, custom);
+        fs::write(&path, &contents).unwrap();
+        custom_catalogs.push((path, contents));
+    }
+    // A directory is a deterministic unreadable image on every supported platform.
+    let unreadable = theme.join("custom/unreadable.png");
+    fs::create_dir_all(&unreadable).unwrap();
+    fs::write(unreadable.join("keep"), b"custom data").unwrap();
+    let custom_banner = "schema_version = 1\n[items.tundraux3]\nlines = [\"MY BANNER\"]\n";
+    fs::write(theme.join("banner.toml"), custom_banner).unwrap();
+    // Combine a missing custom image dependency with an unwritable default image.
+    let blocked_default = theme.join("home_icons/explorer.png");
+    fs::remove_file(&blocked_default).unwrap();
+    fs::create_dir(&blocked_default).unwrap();
+
+    let (mut store, report) =
+        AsciiAssetStore::load_default_with_root_and_recovery(root.path()).unwrap();
+    assert!(report.repaired.is_empty());
+    assert_eq!(report.fallback.len(), 3);
+    for key in ["home_icons", "launcher_icons", "home_icons/explorer.png"] {
+        assert!(
+            report
+                .fallback
+                .iter()
+                .any(|file| file.key == key && file.repair_error.is_some())
+        );
+    }
+    for (path, contents) in custom_catalogs {
+        assert_eq!(fs::read_to_string(path).unwrap(), contents);
+    }
+    assert!(!theme.join("custom/missing.png").exists());
+    assert_eq!(fs::read(unreadable.join("keep")).unwrap(), b"custom data");
+    assert_eq!(store.root(), root.path());
+    assert_eq!(store.banner_lines("tundraux3").unwrap(), &["MY BANNER"]);
+    assert_eq!(
+        store.home_icon_image_path("explorer"),
+        Some(blocked_default)
+    );
+    assert_eq!(
+        store.home_icon_image_bytes("explorer"),
+        Some(
+            embedded_default_theme_file("home_icons/explorer.png")
+                .unwrap()
+                .contents
+        )
+    );
+    assert_eq!(
+        store.launcher_icon_image_bytes("builtin.editor"),
+        Some(
+            embedded_default_theme_file("launcher_icons/editor.png")
+                .unwrap()
+                .contents
+        )
+    );
+    store
+        .reload()
+        .expect("reloading retains the complete fallback dependency graph");
+    assert!(store.home_icon_image_bytes("explorer").is_some());
+}

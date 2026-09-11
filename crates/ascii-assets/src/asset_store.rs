@@ -52,8 +52,9 @@ impl AsciiAssetStore {
     ///
     /// Default PNGs use the existing exact embedded-content integrity checks.
     /// Valid custom text/catalog files and separately referenced custom images are
-    /// preserved. Failures loading those non-embedded image paths still return an
-    /// error, since they have no built-in replacement.
+    /// preserved on disk. If a custom image cannot be read, its owning catalog
+    /// falls back to the complete embedded catalog in memory, including its default
+    /// image references. Other healthy catalogs remain active.
     pub fn load_default_with_root_and_recovery(
         root: impl Into<PathBuf>,
     ) -> Result<(Self, crate::DefaultThemeRecoveryReport), AssetError> {
