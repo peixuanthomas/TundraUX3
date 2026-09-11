@@ -6,7 +6,9 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::schema::{SCHEMA_VERSION, VersionedDocument};
 
-pub const SUPPORTED_LANGUAGE: &str = "en-US";
+pub const DEFAULT_LANGUAGE: &str = "en-US";
+/// Legacy name; this is the default, not a language whitelist.
+pub const SUPPORTED_LANGUAGE: &str = DEFAULT_LANGUAGE;
 pub const DEFAULT_ANIMATION_SPEED_PERCENT: u16 = 100;
 pub const MIN_ANIMATION_SPEED_PERCENT: u16 = 50;
 pub const MAX_ANIMATION_SPEED_PERCENT: u16 = 200;
@@ -59,9 +61,13 @@ impl StorageConfig {
         changed |= self.time_sync.normalize();
         changed |= self.system_status.normalize();
         changed |= self.runtime_logs.normalize();
-        if self.language != SUPPORTED_LANGUAGE {
-            self.language = SUPPORTED_LANGUAGE.to_string();
-            changed = true;
+        // Resource availability is checked by the host, never by normalizing a
+        // stored preference back to English when its pack is temporarily absent.
+        if let Ok(code) = i18n::canonicalize_locale(&self.language) {
+            if code != self.language {
+                self.language = code;
+                changed = true;
+            }
         }
         changed
     }

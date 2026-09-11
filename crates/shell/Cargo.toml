@@ -11,6 +11,8 @@ name = "tundra-shell"
 path = "src/main.rs"
 
 [dependencies]
+ascii-assets = { path = "../ascii-assets" }
+i18n = { path = "../i18n" }
 runtime-log = { path = "../runtime-log" }
 chrono = { version = "0.4", features = ["serde"] }
 chrono-tz = "0.10"

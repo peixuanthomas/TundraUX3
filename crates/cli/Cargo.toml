@@ -11,6 +11,7 @@ name = "tundra-cli"
 path = "src/main.rs"
 
 [dependencies]
+i18n = { path = "../i18n" }
 serde_json = "1"
 chrono = { version = "0.4", features = ["serde"] }
 runtime-log = { path = "../runtime-log" }

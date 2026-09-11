@@ -181,14 +181,14 @@ fn toml_and_json_documents_round_trip() {
         .save_config(&config)
         .expect("config should save atomically");
     let mut expected_config = config.clone();
-    expected_config.language = "en-US".to_string();
+    expected_config.language = "zh-CN".to_string();
     assert_eq!(
         manager.load_config().expect("config should reload"),
         expected_config
     );
     let config_contents =
         fs::read_to_string(&manager.layout().config_path).expect("config should be readable");
-    assert!(config_contents.contains("language = \"en-US\""));
+    assert!(config_contents.contains("language = \"zh-CN\""));
     assert!(config_contents.contains("timezone = \"Asia/Shanghai\""));
     assert!(config_contents.contains("weather_location = \"Pudong, Shanghai, China\""));
     assert!(config_contents.contains("[appearance]"));
@@ -497,7 +497,7 @@ fn legacy_pinned_apps_migrate_to_unapproved_launcher_entries() {
 }
 
 #[test]
-fn existing_non_english_config_is_migrated_to_english_on_open() {
+fn existing_non_english_config_is_canonicalized_without_losing_language_on_open() {
     let base = unique_temp_root("non-english-config");
     let paths = app_paths(&base);
     let layout = StorageLayout::from_app_paths(&paths);
@@ -513,11 +513,11 @@ fn existing_non_english_config_is_migrated_to_english_on_open() {
 
     assert_eq!(
         opened.manager.load_config().expect("config").language,
-        "en-US"
+        "zh-CN"
     );
     assert!(opened.report.migrated_files.contains(&layout.config_path));
     let contents = fs::read_to_string(&layout.config_path).expect("migrated config is readable");
-    assert!(contents.contains("language = \"en-US\""));
+    assert!(contents.contains("language = \"zh-CN\""));
     assert!(!contents.contains("zh-Hans"));
 
     cleanup(&base);

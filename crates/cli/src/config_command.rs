@@ -203,21 +203,13 @@ fn clean_config_value(name: &str, value: String) -> Result<String, String> {
 
 fn resolve_language(value: &str) -> Result<app::SetupLanguageOption, String> {
     let value = clean_config_value("language", value.to_string())?;
-    app::setup_language_options()
-        .into_iter()
-        .find(|language| {
-            language.code == value || language.label.eq_ignore_ascii_case(value.as_str())
-        })
-        .ok_or_else(|| {
-            format!(
-                "unsupported language {value:?}; available values: {}",
-                app::setup_language_options()
-                    .into_iter()
-                    .map(|language| language.code)
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            )
-        })
+    let root = ascii_assets::asset_root_for_recovery_from_env_or_current_exe().map_err(|error| error.to_string())?;
+    let catalog = i18n::LanguageCatalog::discover(&root).unwrap_or_else(|_| i18n::LanguageCatalog::built_in());
+    let code = i18n::canonicalize_locale(&value).unwrap_or_else(|_| value.clone());
+    let option = catalog.options().iter().find(|option| option.code == code || option.native_name.eq_ignore_ascii_case(&value))
+        .ok_or_else(|| format!("unsupported language {value:?}; available values: {}", catalog.options().iter().map(|option| option.code.as_str()).collect::<Vec<_>>().join(", ")))?;
+    i18n::LanguageSnapshot::load(&root, &option.code, 1).map_err(|error| error.to_string())?;
+    Ok(app::SetupLanguageOption { code: option.code.clone(), label: option.native_name.clone() })
 }
 
 fn resolve_timezone(value: &str) -> Result<app::SetupTimezoneOption, String> {

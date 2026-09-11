@@ -45,10 +45,10 @@ pub const BUILT_IN_LAUNCHER_APPLICATIONS: &[BuiltInApplicationDescriptor] =
     &[COMMAND_LINE_APPLICATION, EDITOR_APPLICATION];
 
 pub fn setup_language_options() -> Vec<SetupLanguageOption> {
-    vec![SetupLanguageOption {
-        code: "en-US".to_string(),
-        label: "English".to_string(),
-    }]
+    i18n::LanguageCatalog::built_in().options().iter().map(|option| SetupLanguageOption {
+        code: option.code.clone(),
+        label: option.native_name.clone(),
+    }).collect()
 }
 
 pub fn setup_timezone_options() -> Vec<SetupTimezoneOption> {

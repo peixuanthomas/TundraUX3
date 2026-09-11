@@ -1042,7 +1042,7 @@ fn config_set_theme_is_read_only_and_does_not_write_config() {
 }
 
 #[test]
-fn config_set_rejects_non_english_language() {
+fn config_set_accepts_simplified_chinese_alias() {
     let mut stdout = Vec::new();
     let mut stderr = Vec::new();
     let tree = TempTree::new("config-set-non-english");
@@ -1057,14 +1057,12 @@ fn config_set_rejects_non_english_language() {
         &mut stderr,
     );
 
-    assert_ne!(exit_code, 0);
-    assert!(stdout.is_empty());
-    let stderr = String::from_utf8(stderr).expect("config error should be utf8");
-    assert!(stderr.contains("unsupported language"));
-    assert!(stderr.contains("available values: en-US"));
+    assert_eq!(exit_code, 0, "{}", String::from_utf8_lossy(&stderr));
+    assert!(stderr.is_empty());
+    assert!(String::from_utf8_lossy(&stdout).contains("zh-CN"));
     assert_eq!(
         opened.manager.load_config().expect("config").language,
-        "en-US"
+        "zh-CN"
     );
 }
 
