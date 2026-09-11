@@ -554,9 +554,12 @@ fn tundra_system_stack_check(probe: &dyn LinuxDoctorProbe) -> EnvironmentCheck {
         "/usr/libexec/tundra/tundra-sessiond",
         "/usr/libexec/tundra/tundra-greeter",
         "/usr/libexec/tundra/tundra-privileged",
+        "/usr/libexec/tundra/tundra-system-maintenance",
+        "/etc/tundra/update-trusted-root.jsonl",
         "/etc/tundra/privileged.toml",
         "/etc/pam.d/tundra-session",
-        "/usr/bin/kmscon",
+        "/usr/libexec/tundra/kmscon",
+        "/usr/libexec/tundra/modules/kmscon/mod-pango.so",
     ];
     let missing: Vec<_> = required
         .into_iter()
