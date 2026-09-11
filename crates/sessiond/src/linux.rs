@@ -211,6 +211,7 @@ fn pam_worker(username: &str, fd: i32, mode: &str, frontend_fd: Option<i32>) -> 
     peer_root(fd)?;
     let socket = unsafe { UnixStream::from_raw_fd(fd) };
     socket.set_read_timeout(Some(std::time::Duration::from_secs(120)))?;
+    socket.set_write_timeout(Some(std::time::Duration::from_secs(2)))?;
     unsafe {
         libc::fcntl(fd, libc::F_SETFD, libc::FD_CLOEXEC);
         libc::prctl(libc::PR_SET_DUMPABLE, 0, 0, 0, 0);

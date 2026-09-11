@@ -56,13 +56,15 @@ impl Worker {
                 Ok(())
             });
         }
+        parent.set_read_timeout(Some(Duration::from_secs(120)))?;
+        parent.set_write_timeout(Some(Duration::from_secs(2)))?;
+        let reader = BufReader::with_capacity(1, parent.try_clone()?);
         let process = cmd.spawn()?;
         drop(child);
-        parent.set_read_timeout(Some(Duration::from_secs(120)))?;
         let mut verified = false;
         let mut worker = Self {
             child: process,
-            reader: BufReader::with_capacity(1, parent.try_clone()?),
+            reader,
             writer: parent,
             identity: SessionIdentity {
                 uid: user.uid,
@@ -103,7 +105,16 @@ impl Worker {
         Ok(worker)
     }
     fn close(&mut self) -> io::Result<()> {
+        if let Some(status) = self.child.try_wait()? {
+            return if status.success() {
+                Ok(())
+            } else {
+                Err(io::Error::other("PAM worker cleanup failed"))
+            };
+        }
         let _ = write(&mut self.writer, &ClientMessage::Logout {});
+        // EOF also releases a PAM conversation blocked waiting for a response.
+        let _ = self.writer.shutdown(std::net::Shutdown::Write);
         let deadline = Instant::now() + Duration::from_secs(15);
         loop {
             if let Some(status) = self.child.try_wait()? {
@@ -128,7 +139,13 @@ impl Worker {
 }
 impl Drop for Worker {
     fn drop(&mut self) {
-        let _ = write(&mut self.writer, &ClientMessage::Logout {});
+        if self.close().is_err() && !matches!(self.child.try_wait(), Ok(Some(_))) {
+            // Do not kill PAM during teardown or keep serving after losing its
+            // lifecycle. Exiting closes all channels and reparents the worker
+            // to init for eventual reaping; the trusted VT gate stays locked.
+            eprintln!("PAM worker did not finish bounded cleanup; sessiond stopping");
+            std::process::exit(1);
+        }
     }
 }
 pub struct Runtime {
@@ -157,6 +174,7 @@ impl Runtime {
         })?;
         drop(client);
         front.set_read_timeout(Some(Duration::from_secs(120)))?;
+        front.set_write_timeout(Some(Duration::from_secs(2)))?;
         let mut gate = VtGate::new()?;
         Kmscon.activate(TRUSTED_VT)?;
         gate.secure()?;
@@ -426,5 +444,42 @@ impl Runtime {
             _ => return Err(io::Error::other("unsolicited trusted channel response")),
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod worker_tests {
+    use super::*;
+    #[test]
+    fn dropping_a_failed_worker_reaps_the_child() {
+        let (parent, peer) = UnixStream::pair().unwrap();
+        parent
+            .set_write_timeout(Some(Duration::from_millis(100)))
+            .unwrap();
+        drop(peer);
+        let child = Command::new("/bin/sh")
+            .args(["-c", "exit 7"])
+            .spawn()
+            .unwrap();
+        let pid = child.id();
+        let worker = Worker {
+            child,
+            reader: BufReader::with_capacity(1, parent.try_clone().unwrap()),
+            writer: parent,
+            identity: SessionIdentity {
+                uid: 1,
+                logind_session_id: String::new(),
+            },
+        };
+        drop(worker);
+        let mut status = 0;
+        assert_eq!(
+            unsafe { libc::waitpid(pid as i32, &mut status, libc::WNOHANG) },
+            -1
+        );
+        assert_eq!(
+            io::Error::last_os_error().raw_os_error(),
+            Some(libc::ECHILD)
+        );
     }
 }
