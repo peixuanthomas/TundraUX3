@@ -234,18 +234,36 @@ fn zero_day_retention_does_not_delete_another_active_writer() {
     let dir = tempfile::tempdir().unwrap();
     let a = RuntimeLogRuntime::start(RuntimeLogConfig::new(dir.path().to_path_buf(), "a".into()))
         .unwrap();
-    a.handle()
-        .record(event("alice", LogPhase::Succeeded, "active"));
-    let deadline = Instant::now() + Duration::from_secs(2);
+    assert!(
+        a.handle()
+            .record(event("alice", LogPhase::Succeeded, "active"))
+    );
+    let deadline = Instant::now() + Duration::from_secs(5);
     while a.handle().health().written_events == 0 && Instant::now() < deadline {
         std::thread::sleep(Duration::from_millis(5));
     }
+    assert_eq!(a.handle().health().written_events, 1);
+    let active_segments: Vec<_> = fs::read_dir(dir.path())
+        .unwrap()
+        .map(Result::unwrap)
+        .filter(|entry| entry.file_name().to_string_lossy().starts_with("runtime-"))
+        .map(|entry| (entry.path(), entry.metadata().unwrap().len()))
+        .collect();
+    assert_eq!(active_segments.len(), 1);
+    assert!(active_segments[0].1 > 0);
     let mut config = RuntimeLogConfig::new(dir.path().to_path_buf(), "b".into());
     config.max_age_days = 0;
     let b = RuntimeLogRuntime::start(config).unwrap();
     b.shutdown();
-    assert_eq!(query_logs(dir.path(), &LogQuery::default()).events.len(), 1);
+    // Windows enforces the active segment's exclusive lock on reads as well.
+    // Check retention while the writer is live, then read after it releases the lock.
+    for (path, length) in active_segments {
+        assert_eq!(fs::metadata(path).unwrap().len(), length);
+    }
     a.shutdown();
+    let result = query_logs(dir.path(), &LogQuery::default());
+    assert_eq!(result.events.len(), 1, "{result:?}");
+    assert_eq!(result.events[0].message, "active");
 }
 #[test]
 fn tiny_queue_has_nonblocking_backpressure() {
