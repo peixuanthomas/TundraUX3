@@ -79,3 +79,18 @@ operation ID was supplied. Root additionally skipped the specifically non-root
 name-ownership case. No power or valid update action was submitted. The
 transient service was handed to the sessiond integration task for subsequent
 non-power consent tests and cleanup.
+
+### Existing-operation sender isolation follow-up
+
+During the subsequent physical-seat test, an authenticated administrator
+UID 1003 in managed logind session `426` held a real `ReadSystemLogs` operation
+on live sender `:1.689`. While that protected consent operation was pending,
+the harness ran with its actual operation ID from SSH UID 1001 (sender
+`:1.696`) and root (sender `:1.699`). Both `GetResult` and `Cancel` returned
+`AccessDenied: operation belongs to another sender` for both actors. This adds
+four successful existing-operation ownership checks; the original unknown-ID
+cases remain separate evidence. The service owner stayed `:1.486` throughout.
+The reruns passed 21 checks for SSH and 20 for root, with only root's intentional
+non-root-name-ownership skip. The origin operation was not modified by these
+probes. Machine-readable host reports are `/tmp/tundra-foreign-ssh.json` and
+`/tmp/tundra-foreign-root.json`.
