@@ -1,49 +1,84 @@
-# Binaries are compiled with Cargo.lock by scripts/package-linux.sh.
+# Binaries are built with Cargo.lock by scripts/package-linux.sh.
 %global debug_package %{nil}
+%global _build_id_links none
 
 Name:           tundraux3
 Version:        %{tundra_version}
 Release:        1
-Summary:        Terminal desktop environment experiment
+Summary:        User desktop with opt-in PAM sessions and protected system services
 License:        MIT AND GPL-3.0-or-later
 URL:            https://github.com/peixuanthomas/TundraUX3
 Source0:        %{name}-%{version}-linux-x86_64.tar.gz
-Source1:        tundraux3.desktop
-Source2:        tundraux3.pam
 ExclusiveArch:  x86_64
 Requires:       xdg-utils
 Requires:       glib2
 Requires:       pam
 Requires:       glibc
-Requires:       sudo
-Recommends:     dbus
+Requires:       systemd
+Requires:       dbus
+Requires:       curl
+Requires:       gh >= 2.87.3
+Requires:       kmscon >= 10.0.3
+Requires:       google-noto-sans-cjk-fonts
+Requires(post): systemd
 Recommends:     xdg-desktop-portal
-Recommends:     polkit
-Recommends:     xorg-x11-server-Xwayland
 
 %description
-TundraUX3 provides a full-screen terminal shell and its management CLI.
-This package includes the default assets and Fedora system PAM integration.
+TundraUX3 runs the desktop as an ordinary user. This package includes optional
+PAM/logind session and authorization services. Installation never starts the seat,
+enables desktop services, or replaces the existing display manager.
 
 %prep
 %setup -q -n %{name}-%{version}-linux-x86_64
 
 %build
-# The portable archive contains the locked Cargo release build.
+# The archive contains the common, already validated system-root staging tree.
 
 %install
-install -Dm755 tundra-shell %{buildroot}%{_bindir}/tundra-shell
-install -Dm755 tundra-cli %{buildroot}%{_bindir}/tundra-cli
-install -d %{buildroot}%{_datadir}/%{name}
-cp -a assets %{buildroot}%{_datadir}/%{name}/assets
-install -Dm644 %{SOURCE1} %{buildroot}%{_datadir}/applications/tundraux3.desktop
-install -Dm644 %{SOURCE2} %{buildroot}%{_sysconfdir}/pam.d/tundraux3
+mkdir -p %{buildroot}
+cp -a system-root/. %{buildroot}/
+
+%post
+systemd-sysusers /usr/lib/sysusers.d/tundra.conf
+systemd-tmpfiles --create /usr/lib/tmpfiles.d/tundra.conf
+release=$(cat /usr/share/tundra/bootstrap-release)
+case "$release" in v[0-9]*.[0-9]*.[0-9]*) ;; *) exit 1;; esac
+current=/var/lib/tundra/runtime/current
+if [ ! -e "$current" ] && [ ! -L "$current" ]; then
+  ln -s "versions/$release" "$current"
+elif [ -L "$current" ] && [ ! -e "$current" ]; then
+  # The previous OS package's bootstrap version may have been removed.
+  # Preserve every still-existing online version; repair only a dangling
+  # version pointer using the newly installed trusted bootstrap.
+  case "$(readlink "$current")" in versions/v*) ;; *) exit 1;; esac
+  pending="/var/lib/tundra/runtime/bootstrap-current.$$"
+  ln -s "versions/$release" "$pending"
+  mv -T "$pending" "$current"
+fi
+if [ -d /run/systemd/system ]; then systemctl daemon-reload; fi
+
+%postun
+if [ -d /run/systemd/system ]; then systemctl daemon-reload; fi
 
 %files
-%license LICENSE LICENSE.weathr
-%doc README-LINUX.txt
+%defattr(-,root,root,-)
 %{_bindir}/tundra-shell
 %{_bindir}/tundra-cli
-%{_datadir}/%{name}/
+/usr/libexec/tundra/
+/usr/lib/systemd/system/tundra-*.service
+/usr/lib/sysusers.d/tundra.conf
+/usr/lib/tmpfiles.d/tundra.conf
+%{_datadir}/dbus-1/system.d/org.tundra.*.conf
+%{_datadir}/tundra/
+%{_datadir}/tundraux3/
 %{_datadir}/applications/tundraux3.desktop
-%config(noreplace) %{_sysconfdir}/pam.d/tundraux3
+%{_datadir}/doc/tundraux3/
+%dir /var/lib/tundra
+%dir /var/lib/tundra/runtime
+%dir /var/lib/tundra/runtime/versions
+/var/lib/tundra/runtime/versions/v%{version}/
+%dir %{_sysconfdir}/tundra
+%config(noreplace) %{_sysconfdir}/pam.d/tundra-session
+%config(noreplace) %{_sysconfdir}/pam.d/tundra-greeter
+%config(noreplace) %{_sysconfdir}/tundra/privileged.toml
+%{_sysconfdir}/tundra/update-trusted-root.jsonl

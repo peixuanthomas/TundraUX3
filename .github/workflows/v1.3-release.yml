@@ -30,9 +30,10 @@ jobs:
           set -euo pipefail
           test "$GITHUB_REF" = refs/heads/master
           cargo metadata --locked --no-deps --format-version 1 > metadata.json
-          jq -e '[.packages[] | select(.manifest_path | contains("/crates/"))] | length == 14 and all(.[]; .version == "1.3.0")' metadata.json
+          jq -e '[.packages[] | select(.manifest_path | contains("/crates/"))] | all(.[]; .version == "1.3.0") and ([.[].name] | index("tundra-sessiond") != null and index("tundra-greeter") != null and index("tundra-privileged") != null and index("system-maintenance") != null and index("session-protocol") != null)' metadata.json
           test -s packaging/releases/v1.3.md
           bash -n scripts/package-linux.sh
+          python3 -m unittest discover -s scripts/tests -p test_stage_linux_system.py
           python3 scripts/check-localization.py
 
   windows-x64:
@@ -192,6 +193,13 @@ jobs:
           rustup toolchain install stable --profile minimal
           rustup default stable
 
+      - name: Install Linux build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libpam0g-dev libsystemd-dev libdbus-1-dev pkg-config
+          gh attestation trusted-root --verify-only
+          gh attestation verify --help | grep -- --source-ref
+
       - name: Run workspace regression tests
         shell: bash
         run: |
@@ -225,9 +233,17 @@ jobs:
           sudo apt-get install -y ./dist/TundraUX3-v1.3-linux-amd64.deb
           test "$(dpkg-query -W -f='${Version}' tundraux3)" = 1.3.0
           test -x /usr/bin/tundra-shell
-          test -d /usr/share/tundraux3/assets
-          cmp packaging/linux/pam.d/tundraux3 /etc/pam.d/tundraux3
+          test -d /var/lib/tundra/runtime/versions/v1.3.0/share/tundraux3/assets
+          test "$(readlink /var/lib/tundra/runtime/current)" = versions/v1.3.0
+          test -x /usr/libexec/tundra/tundra-system-maintenance
+          test ! -L /usr/libexec/tundra/tundra-system-maintenance
+          cmp packaging/linux/pam.d/tundra-session /etc/pam.d/tundra-session
+          test -s /etc/tundra/update-trusted-root.jsonl
+          test "$(systemctl is-enabled tundra-sessiond.service || true)" = disabled
+          test "$(systemctl is-enabled tundra-privileged.service || true)" = disabled
           /usr/bin/tundra-cli help
+          # Ubuntu archive kmscon 9.0 is insufficient; package installation tests
+          # ordinary UX and inactive service payload, not independent-seat support.
 
       - name: Stage Linux release assets
         uses: actions/upload-artifact@v7
@@ -253,7 +269,7 @@ jobs:
     steps:
       - name: Install build and packaging requirements
         run: |
-          dnf install -y cmake curl gcc gcc-c++ git make openssl-devel perl pkgconf-pkg-config rpm-build tar gzip diffutils findutils
+          dnf install -y cmake curl gcc gcc-c++ git make openssl-devel perl pkgconf-pkg-config rpm-build tar gzip diffutils findutils python3 pam-devel systemd-devel dbus-devel gh
       - uses: actions/checkout@v7
         with:
           ref: ${{ env.RELEASE_REF }}
@@ -285,10 +301,17 @@ jobs:
           dnf install -y ./dist/TundraUX3-v1.3-fedora-x86_64.rpm
           rpm -V tundraux3
           test -x /usr/bin/tundra-shell
-          test -d /usr/share/tundraux3/assets
+          test -d /var/lib/tundra/runtime/versions/v1.3.0/share/tundraux3/assets
+          test "$(readlink /var/lib/tundra/runtime/current)" = versions/v1.3.0
           test -f /usr/share/applications/tundraux3.desktop
-          cmp packaging/rpm/tundraux3.pam /etc/pam.d/tundraux3
-          /usr/bin/tundra-cli help
+          test -x /usr/libexec/tundra/tundra-system-maintenance
+          cmp packaging/linux/pam.d/tundra-session.fedora /etc/pam.d/tundra-session
+          test -s /etc/tundra/update-trusted-root.jsonl
+          getent passwd tundra-greeter
+          getent group tundra-admin
+          test ! -e /etc/systemd/system/multi-user.target.wants/tundra-sessiond.service
+          # Containers do not have a login seat. Do not invoke root UX as an install test.
+          runuser -u nobody -- /usr/bin/tundra-cli __update-probe
       - name: Stage Fedora release assets
         uses: actions/upload-artifact@v7
         with:

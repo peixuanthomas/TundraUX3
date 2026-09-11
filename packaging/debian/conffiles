@@ -1,0 +1,3 @@
+/etc/pam.d/tundra-session
+/etc/pam.d/tundra-greeter
+/etc/tundra/privileged.toml

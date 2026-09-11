@@ -4,6 +4,7 @@ Before=tundra-sessiond.service tundra-privileged.service
 
 [Service]
 Type=oneshot
+RemainAfterExit=yes
 ExecStart=/usr/libexec/tundra/tundra-system-maintenance recover
 User=root
 Group=root

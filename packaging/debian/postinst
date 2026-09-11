@@ -1,0 +1,24 @@
+#!/bin/sh
+set -eu
+case "${1:-}" in
+  configure)
+    systemd-sysusers /usr/lib/sysusers.d/tundra.conf
+    systemd-tmpfiles --create /usr/lib/tmpfiles.d/tundra.conf
+    release=$(cat /usr/share/tundra/bootstrap-release)
+    case "$release" in v[0-9]*.[0-9]*.[0-9]*) ;; *) echo 'Invalid packaged bootstrap version' >&2; exit 1;; esac
+    current=/var/lib/tundra/runtime/current
+    if [ ! -e "$current" ] && [ ! -L "$current" ]; then
+      ln -s "versions/$release" "$current"
+    elif [ -L "$current" ] && [ ! -e "$current" ]; then
+      # The previous OS package's bootstrap version may have been removed.
+      # Preserve every still-existing online version; repair only a dangling
+      # version pointer using the newly installed trusted bootstrap.
+      case "$(readlink "$current")" in versions/v*) ;; *) exit 1;; esac
+      pending="/var/lib/tundra/runtime/bootstrap-current.$$"
+      ln -s "versions/$release" "$pending"
+      mv -T "$pending" "$current"
+    fi
+    if [ -d /run/systemd/system ]; then systemctl daemon-reload; fi
+    # Installation never starts/enables a seat service or modifies display-manager.service.
+    ;;
+esac
