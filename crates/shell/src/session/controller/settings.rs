@@ -64,22 +64,23 @@ pub(in crate::session) const UPDATE_SETTINGS_FIELDS: &[ui::SettingsField] = &[
 impl ShellSession {
     pub(in crate::session) fn open_settings(&mut self) {
         if self.is_strict_guest() {
-            self.notify_status("Guest access is read-only");
+            self.notify_status(i18n::msg!("settings-guest-read-only"));
             return;
         }
         let Some(actor) = self.app.auth_session().cloned() else {
-            self.error_message = Some("Login required".to_string());
+            self.error_message = Some(i18n::msg!("settings-login-required").into());
             return;
         };
         let Some(storage) = self.storage_manager.clone() else {
-            self.error_message = Some("Storage unavailable".to_string());
+            self.error_message = Some(i18n::msg!("settings-storage-unavailable").into());
             return;
         };
         let config = match storage.load_config() {
             Ok(config) => config,
             Err(error) => {
-                self.error_message = Some(format!("Could not load Settings: {error}"));
-                self.notify_status("Settings unavailable");
+                self.error_message =
+                    Some(i18n::msg!("settings-load-failed", reason = error.to_string()).into());
+                self.notify_status(i18n::msg!("settings-unavailable"));
                 return;
             }
         };
@@ -94,8 +95,14 @@ impl ShellSession {
         }) {
             Ok(appearance) => appearance,
             Err(error) => {
-                self.error_message = Some(format!("Could not load your appearance: {error}"));
-                self.notify_status("Settings unavailable");
+                self.error_message = Some(
+                    i18n::msg!(
+                        "settings-appearance-load-failed",
+                        reason = error.to_string()
+                    )
+                    .into(),
+                );
+                self.notify_status(i18n::msg!("settings-unavailable"));
                 return;
             }
         };
@@ -108,7 +115,7 @@ impl ShellSession {
         self.settings_state = Some(SettingsState {
             category: ui::SettingsCategory::Appearance,
             selected_field: ui::SettingsField::Theme,
-            status: "Ready".to_string(),
+            status: i18n::msg!("settings-ready").into(),
             scroll_offset: 0,
             picker: None,
             color_editor: None,
@@ -122,7 +129,7 @@ impl ShellSession {
         }
         self.focused_component = ShellComponent::Settings;
         self.error_message = None;
-        self.notify_status("Settings");
+        self.notify_status(i18n::msg!("settings-title"));
         self.refresh_hit_map();
     }
 
@@ -139,7 +146,7 @@ impl ShellSession {
         } else {
             ShellComponent::Settings
         };
-        self.notify_status("Ready");
+        self.notify_status(i18n::msg!("settings-ready"));
         self.refresh_hit_map();
     }
 
@@ -369,9 +376,12 @@ impl ShellSession {
             state.file_extensions_editor = None;
             state.time_sync_server_editor = None;
             state.time_sync_validation_request_id = None;
-            state.status = "Ready".to_string();
+            state.status = i18n::msg!("settings-ready").into();
         }
-        self.notify_status(format!("Settings: {}", category.label()));
+        self.notify_status(i18n::msg!(
+            "settings-category-status",
+            category = format!("{category:?}")
+        ));
         if category == ui::SettingsCategory::Update && !self.settings_update_state.checked_once {
             self.begin_update_check();
         }
@@ -447,9 +457,7 @@ impl ShellSession {
                 if self.ascii_assets.theme_id() == ui::DEFAULT_THEME_ID {
                     self.open_settings_picker(ui::SettingsPickerKind::Theme)
                 } else {
-                    self.set_settings_error(
-                        "Icon mode can only be changed for the Default asset theme",
-                    )
+                    self.set_settings_error(i18n::msg!("settings-icon-theme-only"))
                 }
             }
             ui::SettingsField::BorderColor => {
@@ -526,7 +534,10 @@ impl ShellSession {
                 storage::BorderShape::Rounded => storage::BorderShape::Square,
                 storage::BorderShape::Square => storage::BorderShape::Rounded,
             };
-            self.save_settings_appearance(appearance, "Border shape");
+            self.save_settings_appearance(
+                appearance,
+                settings_saved_field(ui::SettingsField::BorderShape),
+            );
             return;
         }
         if field == ui::SettingsField::MotionPreference {
@@ -537,7 +548,10 @@ impl ShellSession {
                 storage::MotionPreference::Full => storage::MotionPreference::Reduced,
                 storage::MotionPreference::Reduced => storage::MotionPreference::Full,
             };
-            self.save_settings_appearance(appearance, "Motion");
+            self.save_settings_appearance(
+                appearance,
+                settings_saved_field(ui::SettingsField::MotionPreference),
+            );
             return;
         }
         if field == ui::SettingsField::AnimationSpeed {
@@ -545,7 +559,7 @@ impl ShellSession {
                 return;
             };
             if appearance.motion_preference.reduced() {
-                self.set_settings_error("Enable Full motion to adjust animation speed");
+                self.set_settings_error(i18n::msg!("settings-full-motion-required"));
                 return;
             }
             let speed = appearance.normalized_animation_speed_percent();
@@ -558,7 +572,10 @@ impl ShellSession {
                     .saturating_sub(storage::ANIMATION_SPEED_STEP_PERCENT)
                     .max(storage::MIN_ANIMATION_SPEED_PERCENT)
             };
-            self.save_settings_appearance(appearance, "Animation speed");
+            self.save_settings_appearance(
+                appearance,
+                settings_saved_field(ui::SettingsField::AnimationSpeed),
+            );
             return;
         }
         if field == ui::SettingsField::TimeSyncSource {
@@ -574,17 +591,20 @@ impl ShellSession {
         direction: i8,
     ) {
         if !self.can_change_global_settings() {
-            self.set_settings_error("Administrator permission is required");
+            self.set_settings_error(i18n::msg!("settings-admin-required"));
             return;
         }
         let Some(storage) = self.storage_manager.clone() else {
-            self.set_settings_error("Storage unavailable");
+            self.set_settings_error(i18n::msg!("settings-storage-unavailable"));
             return;
         };
         let mut config = match storage.load_config() {
             Ok(config) => config,
             Err(error) => {
-                self.set_settings_error(format!("Could not load Settings: {error}"));
+                self.set_settings_error(i18n::msg!(
+                    "settings-load-failed",
+                    reason = error.to_string()
+                ));
                 return;
             }
         };
@@ -705,31 +725,35 @@ impl ShellSession {
         config.editor = normalized_editor_config(config.editor);
         config.system_status.normalize();
         if let Err(error) = self.save_settings_config_logged(&storage, &config) {
-            self.set_settings_error(format!("Could not save Settings: {error}"));
+            self.set_settings_error(i18n::msg!(
+                "settings-save-failed",
+                reason = error.to_string()
+            ));
             return;
         }
         self.replace_storage_config(config);
         if let Some(state) = self.settings_state.as_mut() {
-            state.status = format!("Saved {}", settings_field_label(field));
+            state.status = settings_saved_field(field).into();
         }
-        self.notify_status(format!("Saved {}", settings_field_label(field)));
+        self.notify_status(settings_saved_field(field));
     }
 
     pub(in crate::session) fn save_settings_appearance(
         &mut self,
         appearance: storage::AppearanceConfig,
-        label: &str,
+        message: impl Into<i18n::LocalizedText>,
     ) -> bool {
+        let message = message.into();
         if appearance.border_color == appearance.accent_color {
-            self.set_settings_error("Accent color must differ from the border color");
+            self.set_settings_error(i18n::msg!("settings-accent-distinct"));
             return false;
         }
         let Some(storage) = self.storage_manager.clone() else {
-            self.set_settings_error("Storage unavailable");
+            self.set_settings_error(i18n::msg!("settings-storage-unavailable"));
             return false;
         };
         let Some(actor) = self.app.auth_session().cloned() else {
-            self.set_settings_error("Login required");
+            self.set_settings_error(i18n::msg!("settings-login-required"));
             return false;
         };
         let users = UserService::with_debug_policy(storage, self.debug_policy)
@@ -741,13 +765,16 @@ impl ShellSession {
                     Instant::now(),
                 );
                 if let Some(state) = self.settings_state.as_mut() {
-                    state.status = format!("Saved {label}");
+                    state.status = message.clone();
                 }
-                self.notify_status(format!("Saved {label}"));
+                self.notify_status(message);
                 true
             }
             Err(error) => {
-                self.set_settings_error(format!("Could not save appearance: {error}"));
+                self.set_settings_error(i18n::msg!(
+                    "settings-appearance-save-failed",
+                    reason = error.to_string()
+                ));
                 false
             }
         }
@@ -758,11 +785,14 @@ impl ShellSession {
             return;
         };
         if appearance.motion_preference.reduced() {
-            self.set_settings_error("Enable Full motion to restore animation speed");
+            self.set_settings_error(i18n::msg!("settings-full-motion-reset"));
             return;
         }
         appearance.animation_speed_percent = storage::DEFAULT_ANIMATION_SPEED_PERCENT;
-        self.save_settings_appearance(appearance, "Animation speed default");
+        self.save_settings_appearance(
+            appearance,
+            settings_saved_field(ui::SettingsField::ResetAnimationSpeed),
+        );
     }
 
     pub(in crate::session) fn refresh_asset_cache_for_theme(
@@ -781,7 +811,7 @@ impl ShellSession {
                 .active_appearance()
                 .is_some_and(|appearance| appearance.motion_preference.reduced())
         {
-            self.set_settings_error("Enable Full motion to adjust animation speed");
+            self.set_settings_error(i18n::msg!("settings-full-motion-required"));
             return;
         }
         if !matches!(
@@ -793,7 +823,7 @@ impl ShellSession {
                 | ui::SettingsPickerKind::AccentColor
         ) && !self.can_change_global_settings()
         {
-            self.set_settings_error("Administrator permission is required");
+            self.set_settings_error(i18n::msg!("settings-admin-required"));
             return;
         }
         let selected_index = self.settings_picker_initial_index(kind);
@@ -811,7 +841,7 @@ impl ShellSession {
             state.file_extensions_editor = None;
             state.time_sync_server_editor = None;
             state.time_sync_validation_request_id = None;
-            state.status = "Choose a value".to_string();
+            state.status = i18n::msg!("settings-choose-value").into();
         }
     }
 
@@ -845,7 +875,8 @@ impl ShellSession {
                     animation_speed_picker_index(appearance.normalized_animation_speed_percent())
                 })
                 .unwrap_or(0),
-            ui::SettingsPickerKind::Language => app::setup_language_options()
+            ui::SettingsPickerKind::Language => self
+                .language_options()
                 .iter()
                 .position(|option| option.code == config.language)
                 .unwrap_or(0),
@@ -881,7 +912,7 @@ impl ShellSession {
                     self.open_settings_picker(ui::SettingsPickerKind::Theme);
                 } else if let Some(state) = self.settings_state.as_mut() {
                     state.picker = None;
-                    state.status = "Ready".to_string();
+                    state.status = i18n::msg!("settings-ready").into();
                 }
             }
             InputKey::Up => self.select_settings_picker_delta(-1),
@@ -894,7 +925,7 @@ impl ShellSession {
                     .settings_state
                     .as_ref()
                     .and_then(|state| state.picker.as_ref())
-                    .map(settings_picker_options)
+                    .map(|picker| settings_picker_options(picker, &self.language_options()))
                     .map(|options| options.len().saturating_sub(1))
                     .unwrap_or(0);
                 self.select_settings_picker_at(last);
@@ -943,7 +974,7 @@ impl ShellSession {
             .settings_state
             .as_ref()
             .and_then(|state| state.picker.as_ref())
-            .map(settings_picker_options)
+            .map(|picker| settings_picker_options(picker, &self.language_options()))
             .map(|options| options.len())
             .unwrap_or(0);
         if count == 0 {
@@ -965,7 +996,7 @@ impl ShellSession {
             .settings_state
             .as_ref()
             .and_then(|state| state.picker.as_ref())
-            .map(settings_picker_options)
+            .map(|picker| settings_picker_options(picker, &self.language_options()))
             .map(|options| options.len())
             .unwrap_or(0);
         let visible = settings_picker_visible_rows(self.terminal_size.1);
@@ -994,25 +1025,21 @@ impl ShellSession {
         else {
             return;
         };
-        let options = settings_picker_options(&picker);
+        let options = settings_picker_options(&picker, &self.language_options());
         let Some(option) = options.get(picker.selected_index).cloned() else {
-            self.set_settings_error("No matching options");
+            self.set_settings_error(i18n::msg!("settings-no-options"));
             return;
         };
         if !option.enabled {
             if let Some(state) = self.settings_state.as_mut() {
-                state.status =
-                    "Image icons are unavailable in this terminal; ASCII icons remain active"
-                        .to_string();
+                state.status = i18n::msg!("settings-images-unavailable").into();
             }
             return;
         }
         match picker.kind {
             ui::SettingsPickerKind::Theme => {
                 if self.ascii_assets.theme_id() != ui::DEFAULT_THEME_ID {
-                    self.set_settings_error(
-                        "Icon mode can only be changed for the Default asset theme",
-                    );
+                    self.set_settings_error(i18n::msg!("settings-icon-theme-only"));
                     return;
                 }
                 self.open_settings_picker(ui::SettingsPickerKind::DefaultThemeIcons);
@@ -1029,14 +1056,16 @@ impl ShellSession {
                 if appearance.icon_display_mode != icon_display_mode {
                     let theme_id = self.ascii_assets.theme_id().to_string();
                     if let Err(error) = self.refresh_asset_cache_for_theme(&theme_id) {
-                        self.set_settings_error(format!(
-                            "Could not refresh the {theme_id} asset cache: {error}"
+                        self.set_settings_error(i18n::msg!(
+                            "settings-cache-refresh-failed",
+                            theme = theme_id,
+                            reason = error.to_string()
                         ));
                         return;
                     }
                 }
                 appearance.icon_display_mode = icon_display_mode;
-                if self.save_settings_appearance(appearance, "Default theme icon mode")
+                if self.save_settings_appearance(appearance, i18n::msg!("settings-saved-icon-mode"))
                     && let Some(state) = self.settings_state.as_mut()
                 {
                     state.picker = None;
@@ -1047,13 +1076,15 @@ impl ShellSession {
                     return;
                 };
                 if appearance.motion_preference.reduced() {
-                    self.set_settings_error("Enable Full motion to adjust animation speed");
+                    self.set_settings_error(i18n::msg!("settings-full-motion-required"));
                     return;
                 }
                 appearance.animation_speed_percent =
                     animation_speed_for_picker_index(picker.selected_index);
-                if self.save_settings_appearance(appearance, "Animation speed")
-                    && let Some(state) = self.settings_state.as_mut()
+                if self.save_settings_appearance(
+                    appearance,
+                    settings_saved_field(ui::SettingsField::AnimationSpeed),
+                ) && let Some(state) = self.settings_state.as_mut()
                 {
                     state.picker = None;
                 }
@@ -1065,7 +1096,7 @@ impl ShellSession {
                 self.save_region_picker_value(None, option.timezone_id)
             }
             ui::SettingsPickerKind::BorderColor | ui::SettingsPickerKind::AccentColor => {
-                if option.label == "Custom color…" {
+                if option.detail == "#RRGGBB" {
                     if let Some(state) = self.settings_state.as_mut() {
                         state.picker = None;
                         state.color_editor = Some(SettingsColorEditorState {
@@ -1077,7 +1108,7 @@ impl ShellSession {
                     return;
                 }
                 let Ok(color) = option.detail.parse::<storage::BorderColor>() else {
-                    self.set_settings_error("Invalid color option");
+                    self.set_settings_error(i18n::msg!("settings-invalid-color-option"));
                     return;
                 };
                 let Some(mut appearance) = self.app.active_appearance().cloned() else {
@@ -1088,7 +1119,7 @@ impl ShellSession {
                     ui::SettingsPickerKind::AccentColor => appearance.accent_color = color,
                     _ => {}
                 }
-                if self.save_settings_appearance(appearance, picker_label(picker.kind))
+                if self.save_settings_appearance(appearance, settings_saved_picker(picker.kind))
                     && let Some(state) = self.settings_state.as_mut()
                 {
                     state.picker = None;
@@ -1103,41 +1134,61 @@ impl ShellSession {
         timezone: Option<String>,
     ) {
         if !self.can_change_global_settings() {
-            self.set_settings_error("Administrator permission is required");
+            self.set_settings_error(i18n::msg!("settings-admin-required"));
             return;
         }
         let Some(storage) = self.storage_manager.clone() else {
-            self.set_settings_error("Storage unavailable");
+            self.set_settings_error(i18n::msg!("settings-storage-unavailable"));
             return;
         };
         let mut config = match storage.load_config() {
             Ok(config) => config,
             Err(error) => {
-                self.set_settings_error(format!("Could not load Settings: {error}"));
+                self.set_settings_error(i18n::msg!(
+                    "settings-load-failed",
+                    reason = error.to_string()
+                ));
                 return;
             }
         };
-        if let Some(language) = language {
-            config.language = language;
-        }
+        let candidate = if let Some(code) = language {
+            match self.prepare_language(&code) {
+                Ok((catalog, loaded)) => {
+                    config.language = loaded.snapshot.code().to_string();
+                    Some((catalog, loaded))
+                }
+                Err(error) => {
+                    self.report_language_failure(&error);
+                    return;
+                }
+            }
+        } else {
+            None
+        };
         if let Some(timezone) = timezone.clone() {
             config.timezone = timezone;
         }
         if let Err(error) = self.save_settings_config_logged(&storage, &config) {
-            self.set_settings_error(format!("Could not save Settings: {error}"));
+            self.set_settings_error(i18n::msg!(
+                "settings-save-failed",
+                reason = error.to_string()
+            ));
             return;
         }
         self.replace_storage_config(config);
+        if let Some((catalog, loaded)) = candidate {
+            self.publish_language(catalog, loaded);
+        }
         if let Some(state) = self.settings_state.as_mut() {
             state.picker = None;
-            state.status = "Saved region and time".to_string();
+            state.status = i18n::msg!("settings-saved-region").into();
         }
-        self.notify_status("Saved region and time");
+        self.notify_status(i18n::msg!("settings-saved-region"));
     }
 
     pub(in crate::session) fn open_settings_weather_location(&mut self) {
         if !self.can_change_global_settings() {
-            self.set_settings_error("Administrator permission is required");
+            self.set_settings_error(i18n::msg!("settings-admin-required"));
             return;
         }
         let value = self
@@ -1154,13 +1205,13 @@ impl ShellSession {
             state.file_extensions_editor = None;
             state.time_sync_server_editor = None;
             state.time_sync_validation_request_id = None;
-            state.status = "Enter an English weather location".to_string();
+            state.status = i18n::msg!("settings-enter-weather").into();
         }
     }
 
     pub(in crate::session) fn open_settings_file_extensions(&mut self) {
         if !self.can_change_global_settings() {
-            self.set_settings_error("Administrator permission is required");
+            self.set_settings_error(i18n::msg!("settings-admin-required"));
             return;
         }
         let value = format_editor_explorer_open_extensions(
@@ -1174,17 +1225,17 @@ impl ShellSession {
             state.weather_location_editor = None;
             state.time_sync_server_editor = None;
             state.time_sync_validation_request_id = None;
-            state.status = "Enter Explorer file suffixes".to_string();
+            state.status = i18n::msg!("settings-enter-suffixes").into();
         }
     }
 
     pub(in crate::session) fn open_settings_time_sync_server(&mut self) {
         if !self.can_change_global_settings() {
-            self.set_settings_error("Administrator permission is required");
+            self.set_settings_error(i18n::msg!("settings-admin-required"));
             return;
         }
         if self.app.storage_config().time_sync.source != storage::TimeSyncSource::NetworkServer {
-            self.set_settings_error("Choose Network server as the time source first");
+            self.set_settings_error(i18n::msg!("settings-network-source-required"));
             return;
         }
         let value = self
@@ -1205,7 +1256,7 @@ impl ShellSession {
             state.color_editor = None;
             state.weather_location_editor = None;
             state.file_extensions_editor = None;
-            state.status = "Enter a time synchronization server".to_string();
+            state.status = i18n::msg!("settings-enter-time-server").into();
         }
     }
 
@@ -1223,7 +1274,7 @@ impl ShellSession {
                 if let Some(state) = self.settings_state.as_mut() {
                     state.time_sync_server_editor = None;
                     state.time_sync_validation_request_id = None;
-                    state.status = "Ready".to_string();
+                    state.status = i18n::msg!("settings-ready").into();
                 }
             }
             _ if validating => {}
@@ -1244,10 +1295,13 @@ impl ShellSession {
                     .and_then(|state| state.time_sync_server_editor.as_mut())
                 {
                     if editor.value.len() >= time::MAX_TIME_SERVER_URL_LEN {
-                        editor.error = Some(format!(
-                            "The server address is limited to {} characters",
-                            time::MAX_TIME_SERVER_URL_LEN
-                        ));
+                        editor.error = Some(
+                            i18n::msg!(
+                                "settings-server-limit",
+                                limit = time::MAX_TIME_SERVER_URL_LEN
+                            )
+                            .into(),
+                        );
                     } else {
                         editor.value.push(*character);
                         editor.error = None;
@@ -1276,10 +1330,11 @@ impl ShellSession {
                     .as_mut()
                     .and_then(|state| state.time_sync_server_editor.as_mut())
                 {
-                    editor.error = Some(error.clone());
+                    editor.error = Some(error.clone().into());
                 }
-                self.show_time_sync_failure_dialog(format!(
-                    "Could not validate the time synchronization server: {error}. The setting was not saved."
+                self.show_time_sync_failure_dialog(i18n::msg!(
+                    "settings-server-validation-failed",
+                    reason = error.to_string()
                 ));
                 return;
             }
@@ -1292,7 +1347,7 @@ impl ShellSession {
 
     pub(in crate::session) fn change_time_sync_source(&mut self, platform: &dyn Platform) {
         if !self.can_change_global_settings() {
-            self.set_settings_error("Administrator permission is required");
+            self.set_settings_error(i18n::msg!("settings-admin-required"));
             return;
         }
         let current = self.app.storage_config().time_sync.clone();
@@ -1306,8 +1361,9 @@ impl ShellSession {
                         DateTime::<Utc>::from(system_time),
                     );
                 }
-                Err(error) => self.show_time_sync_failure_dialog(format!(
-                    "Could not read the operating system time: {error}"
+                Err(error) => self.show_time_sync_failure_dialog(i18n::msg!(
+                    "settings-system-time-failed",
+                    reason = error.to_string()
                 )),
             },
             storage::TimeSyncSource::OperatingSystem => {
@@ -1327,7 +1383,7 @@ impl ShellSession {
             .as_ref()
             .is_some_and(|state| state.time_sync_validation_request_id.is_some())
         {
-            self.set_settings_error("A time sync validation is already running");
+            self.set_settings_error(i18n::msg!("settings-validation-running"));
             return;
         }
         match self
@@ -1337,13 +1393,13 @@ impl ShellSession {
             Ok(request_id) => {
                 if let Some(state) = self.settings_state.as_mut() {
                     state.time_sync_validation_request_id = Some(request_id);
-                    state.status = "Testing time synchronization…".to_string();
+                    state.status = i18n::msg!("settings-testing-time").into();
                     if let Some(editor) = state.time_sync_server_editor.as_mut() {
                         editor.validating = true;
                         editor.error = None;
                     }
                 }
-                self.notify_status("Testing time synchronization…");
+                self.notify_status(i18n::msg!("settings-testing-time"));
             }
             Err(error) => self.show_time_sync_failure_dialog(error),
         }
@@ -1354,13 +1410,12 @@ impl ShellSession {
         self.settings_update_state.confirmation_open = false;
         self.settings_update_state.error = None;
         if !self.settings_task_runtime.update_supported() {
-            self.settings_update_state.status =
-                "Automatic updates are supported only on Windows and Linux".to_string();
+            self.settings_update_state.status = i18n::msg!("settings-update-unsupported").into();
             self.settings_update_state.phase = None;
             return;
         }
         if self.settings_update_state.busy || self.settings_task_runtime.update_busy() {
-            self.settings_update_state.status = "An update task is already running".to_string();
+            self.settings_update_state.status = i18n::msg!("settings-update-running").into();
             return;
         }
         match self
@@ -1370,8 +1425,8 @@ impl ShellSession {
             Ok(()) => {
                 self.settings_update_state.busy = true;
                 self.settings_update_state.phase = Some(app::update::UpdatePhase::Checking);
-                self.settings_update_state.status = "Checking GitHub…".to_string();
-                self.notify_status("Checking for updates…");
+                self.settings_update_state.status = i18n::msg!("settings-checking-github").into();
+                self.notify_status(i18n::msg!("settings-checking-updates"));
             }
             Err(error) => self.set_update_error(error),
         }
@@ -1379,24 +1434,24 @@ impl ShellSession {
 
     pub(in crate::session) fn open_update_confirmation(&mut self) {
         if !self.settings_task_runtime.update_supported() {
-            self.set_update_error("Automatic updates are supported only on Windows and Linux");
+            self.set_update_error(i18n::msg!("settings-update-unsupported"));
             return;
         }
         if !self.can_change_global_settings() {
-            self.set_update_error("Administrator permission is required to install updates");
+            self.set_update_error(i18n::msg!("settings-update-admin-required"));
             return;
         }
         if self.settings_update_state.busy {
-            self.set_update_error("Wait for the current update task to finish");
+            self.set_update_error(i18n::msg!("settings-update-wait"));
             return;
         }
         let Some(check) = self.settings_update_state.check_result.as_ref() else {
-            self.set_update_error("Check GitHub before starting an update");
+            self.set_update_error(i18n::msg!("settings-update-check-first"));
             return;
         };
         let identity = app::update::current_build_identity();
         if matches!(check.relation, app::update::UpdateRelation::Identical) && !identity.dirty {
-            self.settings_update_state.status = "This build is already up to date".to_string();
+            self.settings_update_state.status = i18n::msg!("settings-update-current-build").into();
             return;
         }
         self.settings_update_state.confirmation_open = true;
@@ -1406,7 +1461,7 @@ impl ShellSession {
     pub(in crate::session) fn cancel_update_confirmation(&mut self) {
         self.settings_update_state.confirmation_open = false;
         self.settings_update_state.confirm_selected = true;
-        self.settings_update_state.status = "Update cancelled".to_string();
+        self.settings_update_state.status = i18n::msg!("settings-update-cancelled").into();
     }
 
     pub(in crate::session) fn begin_confirmed_update(&mut self) {
@@ -1415,11 +1470,11 @@ impl ShellSession {
         }
         self.settings_update_state.confirmation_open = false;
         if !self.can_change_global_settings() {
-            self.set_update_error("Administrator permission is required to install updates");
+            self.set_update_error(i18n::msg!("settings-update-admin-required"));
             return;
         }
         let Some(check) = self.settings_update_state.check_result.clone() else {
-            self.set_update_error("The update check result is no longer available");
+            self.set_update_error(i18n::msg!("settings-update-check-expired"));
             return;
         };
         let install_dir = match std::env::current_exe()
@@ -1428,7 +1483,7 @@ impl ShellSession {
         {
             Some(path) => path,
             None => {
-                self.set_update_error("Could not locate the running TundraUX installation");
+                self.set_update_error(i18n::msg!("settings-installation-unavailable"));
                 return;
             }
         };
@@ -1443,22 +1498,27 @@ impl ShellSession {
                     Some(ui::components::UpdateActivityViewModel::default());
                 self.settings_update_state.phase = Some(app::update::UpdatePhase::Downloading);
                 self.settings_update_state.status =
-                    "Downloading the selected GitHub source snapshot…".to_string();
-                self.notify_status("Update started; TundraUX will restart automatically");
+                    i18n::msg!("settings-update-downloading").into();
+                self.notify_status(i18n::msg!("settings-update-started"));
             }
             Err(error) => self.set_update_error(error),
         }
     }
 
-    fn set_update_error(&mut self, message: impl Into<String>) {
+    fn set_update_error(&mut self, message: impl Into<i18n::LocalizedText>) {
         let message = message.into();
         self.settings_update_state.busy = false;
         self.settings_update_state.phase = Some(app::update::UpdatePhase::Failed);
-        self.settings_update_state.status = format!("Update failed: {message}");
+        self.settings_update_state.status = message.clone();
         self.settings_update_state.error = Some(message.clone());
+        // Diagnostic output uses raw external text or stable message identity, never translated UI text.
+        let diagnostic = match &message {
+            i18n::LocalizedText::Raw(raw) => raw.clone(),
+            i18n::LocalizedText::Message(message) => format!("{} {:?}", message.id, message.args),
+        };
         self.settings_update_state
-            .append_output(&format!("ERROR: {message}"));
-        self.notify_status(format!("Update failed: {message}"));
+            .append_output(&format!("ERROR: {diagnostic}"));
+        self.notify_status(message);
     }
 
     pub(in crate::session) fn poll_settings_background_tasks(&mut self) {
@@ -1482,18 +1542,19 @@ impl ShellSession {
                 Ok(utc) => self.persist_validated_time_sync_config(event.config, utc),
                 Err(error) => {
                     let message = match event.config.server_url.as_deref() {
-                        Some(server) => format!(
-                            "Could not synchronize with {server}: {error}. The setting was not saved."
+                        Some(server) => i18n::msg!(
+                            "settings-server-sync-failed",
+                            server = server,
+                            reason = error.to_string()
                         ),
-                        None => format!(
-                            "Could not synchronize with the default time servers: {error}. The setting was not saved."
-                        ),
+                        None => {
+                            i18n::msg!("settings-default-sync-failed", reason = error.to_string())
+                        }
                     };
                     if let Some(state) = self.settings_state.as_mut() {
-                        state.status = "Time synchronization test failed".to_string();
+                        state.status = i18n::msg!("settings-sync-test-failed").into();
                         if let Some(editor) = state.time_sync_server_editor.as_mut() {
-                            editor.error =
-                                Some("Synchronization failed; review the error dialog".to_string());
+                            editor.error = Some(i18n::msg!("settings-sync-review-error").into());
                         }
                     }
                     self.show_time_sync_failure_dialog(message);
@@ -1511,7 +1572,8 @@ impl ShellSession {
                     self.settings_update_state.phase = None;
                     self.settings_update_state.error = None;
                     self.settings_update_state.checked_at = Some(Utc::now());
-                    self.settings_update_state.status = update_relation_label(&result.relation);
+                    self.settings_update_state.status =
+                        update_relation_label(&result.relation).into();
                     self.settings_update_state.check_result = Some(result);
                 }
                 SettingsUpdateTaskEvent::CheckCompleted(Err(error))
@@ -1523,7 +1585,7 @@ impl ShellSession {
                     self.settings_update_state.phase =
                         Some(app::update::UpdatePhase::WaitingForRestart);
                     self.settings_update_state.status =
-                        "Update prepared; restarting TundraUX…".to_string();
+                        i18n::msg!("settings-update-restarting").into();
                     self.update_apply_manifest = Some(manifest_path);
                     self.shutdown_requested = true;
                 }
@@ -1537,19 +1599,25 @@ impl ShellSession {
         utc: DateTime<Utc>,
     ) {
         let Some(storage) = self.storage_manager.clone() else {
-            self.set_settings_error("Storage unavailable");
+            self.set_settings_error(i18n::msg!("settings-storage-unavailable"));
             return;
         };
         let mut config = match storage.load_config() {
             Ok(config) => config,
             Err(error) => {
-                self.set_settings_error(format!("Could not load Settings: {error}"));
+                self.set_settings_error(i18n::msg!(
+                    "settings-load-failed",
+                    reason = error.to_string()
+                ));
                 return;
             }
         };
         config.time_sync = time_sync;
         if let Err(error) = self.save_settings_config_logged(&storage, &config) {
-            self.set_settings_error(format!("Could not save Settings: {error}"));
+            self.set_settings_error(i18n::msg!(
+                "settings-save-failed",
+                reason = error.to_string()
+            ));
             return;
         }
         self.replace_storage_config(config);
@@ -1557,9 +1625,9 @@ impl ShellSession {
         if let Some(state) = self.settings_state.as_mut() {
             state.time_sync_server_editor = None;
             state.time_sync_validation_request_id = None;
-            state.status = "Saved time synchronization settings".to_string();
+            state.status = i18n::msg!("settings-saved-time-sync").into();
         }
-        self.notify_status("Saved time synchronization settings");
+        self.notify_status(i18n::msg!("settings-saved-time-sync"));
     }
 
     pub(in crate::session) fn handle_settings_file_extensions_key(&mut self, key: &KeyInput) {
@@ -1570,7 +1638,7 @@ impl ShellSession {
             InputKey::Escape => {
                 if let Some(state) = self.settings_state.as_mut() {
                     state.file_extensions_editor = None;
-                    state.status = "Ready".to_string();
+                    state.status = i18n::msg!("settings-ready").into();
                 }
             }
             InputKey::Backspace => {
@@ -1592,13 +1660,15 @@ impl ShellSession {
                     return;
                 };
                 if !is_editor_extension_input_character(*character) {
-                    editor.error = Some(
-                        "Use ASCII letters, numbers, dots, commas, spaces, +, - or _".to_string(),
-                    );
+                    editor.error = Some(i18n::msg!("settings-suffix-characters").into());
                 } else if editor.value.len() >= EDITOR_EXTENSIONS_INPUT_MAX_LEN {
-                    editor.error = Some(format!(
-                        "The suffix list is limited to {EDITOR_EXTENSIONS_INPUT_MAX_LEN} characters"
-                    ));
+                    editor.error = Some(
+                        i18n::msg!(
+                            "settings-suffix-limit",
+                            limit = EDITOR_EXTENSIONS_INPUT_MAX_LEN
+                        )
+                        .into(),
+                    );
                 } else {
                     editor.value.push(*character);
                     editor.error = None;
@@ -1611,7 +1681,7 @@ impl ShellSession {
 
     pub(in crate::session) fn save_settings_file_extensions(&mut self) {
         if !self.can_change_global_settings() {
-            self.set_settings_error("Administrator permission is required");
+            self.set_settings_error(i18n::msg!("settings-admin-required"));
             return;
         }
         let Some(value) = self
@@ -1636,27 +1706,33 @@ impl ShellSession {
             }
         };
         let Some(storage) = self.storage_manager.clone() else {
-            self.set_settings_error("Storage unavailable");
+            self.set_settings_error(i18n::msg!("settings-storage-unavailable"));
             return;
         };
         let mut config = match storage.load_config() {
             Ok(config) => config,
             Err(error) => {
-                self.set_settings_error(format!("Could not load Settings: {error}"));
+                self.set_settings_error(i18n::msg!(
+                    "settings-load-failed",
+                    reason = error.to_string()
+                ));
                 return;
             }
         };
         config.editor.explorer_open_extensions = extensions;
         if let Err(error) = self.save_settings_config_logged(&storage, &config) {
-            self.set_settings_error(format!("Could not save Settings: {error}"));
+            self.set_settings_error(i18n::msg!(
+                "settings-save-failed",
+                reason = error.to_string()
+            ));
             return;
         }
         self.replace_storage_config(config);
         if let Some(state) = self.settings_state.as_mut() {
             state.file_extensions_editor = None;
-            state.status = "Saved Explorer file suffixes".to_string();
+            state.status = i18n::msg!("settings-saved-suffixes").into();
         }
-        self.notify_status("Saved Explorer file suffixes");
+        self.notify_status(i18n::msg!("settings-saved-suffixes"));
     }
 
     pub(in crate::session) fn handle_settings_weather_location_key(&mut self, key: &KeyInput) {
@@ -1667,7 +1743,7 @@ impl ShellSession {
             InputKey::Escape => {
                 if let Some(state) = self.settings_state.as_mut() {
                     state.weather_location_editor = None;
-                    state.status = "Ready".to_string();
+                    state.status = i18n::msg!("settings-ready").into();
                 }
             }
             InputKey::Backspace => {
@@ -1687,14 +1763,12 @@ impl ShellSession {
                     return;
                 };
                 if !is_weather_location_character(*character) {
-                    editor.error = Some(
-                        "Only English letters, numbers and common address punctuation are allowed"
-                            .to_string(),
-                    );
+                    editor.error = Some(i18n::msg!("settings-weather-characters").into());
                 } else if editor.value.len() >= WEATHER_LOCATION_MAX_LEN {
-                    editor.error = Some(format!(
-                        "Weather location is limited to {WEATHER_LOCATION_MAX_LEN} characters"
-                    ));
+                    editor.error = Some(
+                        i18n::msg!("settings-weather-limit", limit = WEATHER_LOCATION_MAX_LEN)
+                            .into(),
+                    );
                 } else {
                     editor.value.push(*character);
                     editor.error = None;
@@ -1719,16 +1793,17 @@ impl ShellSession {
             return;
         }
         let notification = ShellNotification::modal(
-            "Confirm weather location",
-            format!(
-                "Save {value:?}? Weather uses text search, so the match may be inaccurate or return no results."
+            i18n::msg!("settings-confirm-weather"),
+            i18n::msg!(
+                "settings-weather-confirmation",
+                location = format!("{value:?}")
             ),
             ui::NotificationTone::Warning,
             vec![
-                ShellNotificationAction::new("save", "Save")
+                ShellNotificationAction::new("save", i18n::msg!("settings-save"))
                     .with_shortcut(InputKey::Char('s'))
                     .with_follow_up(ShellCommand::SettingsWeatherLocationConfirmed),
-                ShellNotificationAction::new("cancel", "Cancel")
+                ShellNotificationAction::new("cancel", i18n::msg!("settings-cancel"))
                     .with_shortcut(InputKey::Escape)
                     .cancel(),
             ],
@@ -1739,7 +1814,7 @@ impl ShellSession {
 
     pub(in crate::session) fn save_settings_weather_location(&mut self) {
         if !self.can_change_global_settings() {
-            self.set_settings_error("Administrator permission is required");
+            self.set_settings_error(i18n::msg!("settings-admin-required"));
             return;
         }
         let Some(value) = self
@@ -1751,27 +1826,33 @@ impl ShellSession {
             return;
         };
         let Some(storage) = self.storage_manager.clone() else {
-            self.set_settings_error("Storage unavailable");
+            self.set_settings_error(i18n::msg!("settings-storage-unavailable"));
             return;
         };
         let mut config = match storage.load_config() {
             Ok(config) => config,
             Err(error) => {
-                self.set_settings_error(format!("Could not load Settings: {error}"));
+                self.set_settings_error(i18n::msg!(
+                    "settings-load-failed",
+                    reason = error.to_string()
+                ));
                 return;
             }
         };
         config.weather_location = (!value.is_empty()).then_some(value);
         if let Err(error) = self.save_settings_config_logged(&storage, &config) {
-            self.set_settings_error(format!("Could not save Settings: {error}"));
+            self.set_settings_error(i18n::msg!(
+                "settings-save-failed",
+                reason = error.to_string()
+            ));
             return;
         }
         self.replace_storage_config(config);
         if let Some(state) = self.settings_state.as_mut() {
             state.weather_location_editor = None;
-            state.status = "Saved weather location".to_string();
+            state.status = i18n::msg!("settings-saved-weather").into();
         }
-        self.notify_status("Saved weather location");
+        self.notify_status(i18n::msg!("settings-saved-weather"));
     }
 
     pub(in crate::session) fn handle_settings_color_key(&mut self, key: &KeyInput) {
@@ -1782,7 +1863,7 @@ impl ShellSession {
             InputKey::Escape => {
                 if let Some(state) = self.settings_state.as_mut() {
                     state.color_editor = None;
-                    state.status = "Ready".to_string();
+                    state.status = i18n::msg!("settings-ready").into();
                 }
             }
             InputKey::Backspace => {
@@ -1824,11 +1905,11 @@ impl ShellSession {
         };
         let color = match editor.value.parse::<storage::BorderColor>() {
             Ok(color) => color,
-            Err(error) => {
+            Err(_) => {
                 if let Some(state) = self.settings_state.as_mut()
                     && let Some(color_editor) = state.color_editor.as_mut()
                 {
-                    color_editor.error = Some(error.to_string());
+                    color_editor.error = Some(i18n::msg!("settings-invalid-custom-color").into());
                 }
                 return;
             }
@@ -1841,7 +1922,7 @@ impl ShellSession {
             ui::SettingsPickerKind::AccentColor => appearance.accent_color = color,
             _ => return,
         }
-        if self.save_settings_appearance(appearance, picker_label(editor.kind))
+        if self.save_settings_appearance(appearance, settings_saved_picker(editor.kind))
             && let Some(state) = self.settings_state.as_mut()
         {
             state.color_editor = None;
@@ -1853,21 +1934,21 @@ impl ShellSession {
             return;
         };
         if category != ui::SettingsCategory::Appearance && !self.can_change_global_settings() {
-            self.set_settings_error("Administrator permission is required");
+            self.set_settings_error(i18n::msg!("settings-admin-required"));
             return;
         }
         let notification = ShellNotification::modal(
-            "Restore defaults",
-            format!(
-                "Restore all {} settings to their defaults?",
-                category.label()
+            i18n::msg!("settings-restore-defaults"),
+            i18n::msg!(
+                "settings-restore-confirmation",
+                category = format!("{category:?}")
             ),
             ui::NotificationTone::Warning,
             vec![
-                ShellNotificationAction::new("restore", "Restore")
+                ShellNotificationAction::new("restore", i18n::msg!("settings-restore"))
                     .with_shortcut(InputKey::Char('r'))
                     .with_follow_up(ShellCommand::SettingsRestoreDefaultsConfirmed),
-                ShellNotificationAction::new("cancel", "Cancel")
+                ShellNotificationAction::new("cancel", i18n::msg!("settings-cancel"))
                     .with_shortcut(InputKey::Escape)
                     .cancel(),
             ],
@@ -1883,22 +1964,25 @@ impl ShellSession {
         if category == ui::SettingsCategory::Appearance {
             self.save_settings_appearance(
                 storage::AppearanceConfig::default(),
-                "Appearance defaults",
+                i18n::msg!("settings-saved-appearance-defaults"),
             );
             return;
         }
         if !self.can_change_global_settings() {
-            self.set_settings_error("Administrator permission is required");
+            self.set_settings_error(i18n::msg!("settings-admin-required"));
             return;
         }
         let Some(storage) = self.storage_manager.clone() else {
-            self.set_settings_error("Storage unavailable");
+            self.set_settings_error(i18n::msg!("settings-storage-unavailable"));
             return;
         };
         let mut config = match storage.load_config() {
             Ok(config) => config,
             Err(error) => {
-                self.set_settings_error(format!("Could not load Settings: {error}"));
+                self.set_settings_error(i18n::msg!(
+                    "settings-load-failed",
+                    reason = error.to_string()
+                ));
                 return;
             }
         };
@@ -1916,26 +2000,54 @@ impl ShellSession {
             ui::SettingsCategory::Appearance => unreachable!(),
             ui::SettingsCategory::Update => return,
         }
+        let candidate = if category == ui::SettingsCategory::RegionTime {
+            match self.prepare_language(&config.language) {
+                Ok(candidate) => Some(candidate),
+                Err(error) => {
+                    self.report_language_failure(&error);
+                    return;
+                }
+            }
+        } else {
+            None
+        };
         if let Err(error) = self.save_settings_config_logged(&storage, &config) {
-            self.set_settings_error(format!("Could not restore defaults: {error}"));
+            self.set_settings_error(i18n::msg!(
+                "settings-restore-failed",
+                reason = error.to_string()
+            ));
             return;
         }
         self.replace_storage_config(config);
-        if let Some(state) = self.settings_state.as_mut() {
-            state.status = format!("Restored {} defaults", category.label());
+        if let Some((catalog, loaded)) = candidate {
+            self.publish_language(catalog, loaded);
         }
-        self.notify_status(format!("Restored {} defaults", category.label()));
+        if let Some(state) = self.settings_state.as_mut() {
+            state.status = i18n::msg!(
+                "settings-restored-category",
+                category = format!("{category:?}")
+            )
+            .into();
+        }
+        self.notify_status(i18n::msg!(
+            "settings-restored-category",
+            category = format!("{category:?}")
+        ));
     }
 
-    pub(in crate::session) fn set_settings_error(&mut self, message: impl Into<String>) {
+    pub(in crate::session) fn set_settings_error(
+        &mut self,
+        message: impl Into<i18n::LocalizedText>,
+    ) {
         let message = message.into();
         if let Some(state) = self.settings_state.as_mut() {
-            state.status = format!("Error: {message}");
+            state.status = message.clone();
         }
-        self.notify_status(format!("Settings error: {message}"));
+        self.notify_status(message);
     }
 
     pub fn to_settings_view_model(&self) -> Option<ui::SettingsViewModel> {
+        let _language = i18n::enter_snapshot(self.language.clone());
         let state = self.settings_state.as_ref()?;
         let config = self.app.storage_config();
         let appearance = self.app.active_appearance()?;
@@ -1956,6 +2068,7 @@ impl ShellSession {
                 global_enabled,
                 self.ascii_assets.theme_id(),
                 self.terminal_image_support,
+                &self.language_options(),
             )
         };
         let appearance_preview = (state.category == ui::SettingsCategory::Appearance).then_some(
@@ -1969,10 +2082,10 @@ impl ShellSession {
             },
         );
         let picker = state.picker.as_ref().map(|picker| {
-            let options = settings_picker_options(picker);
+            let options = settings_picker_options(picker, &self.language_options());
             ui::SettingsPickerViewModel {
                 kind: picker.kind,
-                title: picker_title(picker.kind).to_string(),
+                title: picker_title(picker.kind),
                 query: picker.query.clone(),
                 selected_index: picker.selected_index.min(options.len().saturating_sub(1)),
                 window_start: picker.window_start,
@@ -1988,26 +2101,38 @@ impl ShellSession {
                 .color_editor
                 .as_ref()
                 .map(|editor| ui::SettingsColorEditorViewModel {
-                    title: format!("Custom {}", picker_label(editor.kind)),
+                    title: i18n::tr!("settings-custom-label", label = picker_label(editor.kind)),
                     value: editor.value.clone(),
-                    error: editor.error.clone(),
+                    error: editor
+                        .error
+                        .as_ref()
+                        .map(i18n::LocalizedText::render_current),
                 });
         let weather_location_editor = state.weather_location_editor.as_ref().map(|editor| {
             ui::SettingsWeatherLocationEditorViewModel {
                 value: editor.value.clone(),
-                error: editor.error.clone(),
+                error: editor
+                    .error
+                    .as_ref()
+                    .map(i18n::LocalizedText::render_current),
             }
         });
         let file_extensions_editor = state.file_extensions_editor.as_ref().map(|editor| {
             ui::SettingsFileExtensionsEditorViewModel {
                 value: editor.value.clone(),
-                error: editor.error.clone(),
+                error: editor
+                    .error
+                    .as_ref()
+                    .map(i18n::LocalizedText::render_current),
             }
         });
         let time_sync_server_editor = state.time_sync_server_editor.as_ref().map(|editor| {
             ui::SettingsTimeSyncServerEditorViewModel {
                 value: editor.value.clone(),
-                error: editor.error.clone(),
+                error: editor
+                    .error
+                    .as_ref()
+                    .map(i18n::LocalizedText::render_current),
                 validating: editor.validating,
             }
         });
@@ -2031,23 +2156,23 @@ impl ShellSession {
                             .collect()
                     })
                     .unwrap_or_default(),
-                empty_message: self.settings_update_state.status.clone(),
+                empty_message: self.settings_update_state.status.render_current(),
                 confirmation: self.settings_update_state.confirmation_open.then(|| {
                     ui::SettingsUpdateConfirmationViewModel {
                         title: if replacement {
-                            "Replace with GitHub version".to_string()
+                            i18n::tr!("settings-replace-github")
                         } else {
-                            "Install update".to_string()
+                            i18n::tr!("settings-install-update")
                         },
                         body: if replacement {
-                            "This is a non-standard, dirty, ahead, diverged, or unknown build. TundraUX will download the exact checked GitHub commit, compile it locally, replace only the Shell and CLI programs, then restart immediately. Local assets will be kept unchanged. If startup fails, the previous local version will be restored.".to_string()
+                            i18n::tr!("settings-update-replace-body")
                         } else {
-                            "TundraUX will download the exact checked GitHub commit, compile it locally, replace only the Shell and CLI programs, then restart immediately. Local assets will be kept unchanged. If startup fails, the previous local version will be restored.".to_string()
+                            i18n::tr!("settings-update-install-body")
                         },
                         confirm_label: if replacement {
-                            "Replace and restart".to_string()
+                            i18n::tr!("settings-replace-restart")
                         } else {
-                            "Update and restart".to_string()
+                            i18n::tr!("settings-update-restart")
                         },
                         confirm_selected: self.settings_update_state.confirm_selected,
                     }
@@ -2060,12 +2185,12 @@ impl ShellSession {
             cards,
             appearance_preview,
             status: if state.category == ui::SettingsCategory::Update {
-                self.settings_update_state.status.clone()
+                self.settings_update_state.status.render_current()
             } else {
-                state.status.clone()
+                state.status.render_current()
             },
             locked_message: (!global_enabled && state.category != ui::SettingsCategory::Appearance)
-                .then_some("Locked: administrator permission is required".to_string()),
+                .then_some(i18n::tr!("settings-locked")),
             scroll_offset: state.scroll_offset,
             picker,
             color_editor,
@@ -2104,8 +2229,12 @@ fn update_settings_cards(
         .commit_sha
         .as_deref()
         .map(str::to_string)
-        .unwrap_or_else(|| "unknown".to_string());
-    let local_state = if identity.dirty { "dirty" } else { "clean" };
+        .unwrap_or_else(|| i18n::tr!("settings-unknown"));
+    let local_state = if identity.dirty {
+        i18n::tr!("settings-dirty")
+    } else {
+        i18n::tr!("settings-clean")
+    };
     let (remote_value, remote_description) = update
         .check_result
         .as_ref()
@@ -2113,24 +2242,25 @@ fn update_settings_cards(
             let checked = update
                 .checked_at
                 .map(|value| value.format("%Y-%m-%d %H:%M:%S UTC").to_string())
-                .unwrap_or_else(|| "unknown time".to_string());
+                .unwrap_or_else(|| i18n::tr!("settings-unknown-time"));
             (
                 format!(
                     "{} @ {}",
                     result.default_branch,
                     short_sha(&result.head_sha)
                 ),
-                format!(
-                    "Full SHA: {}. Checked {checked}. {}",
-                    result.head_sha,
-                    update_relation_label(&result.relation)
+                i18n::tr!(
+                    "settings-remote-build-details",
+                    sha = result.head_sha.clone(),
+                    checked = checked,
+                    relation = update_relation_label(&result.relation).render_current()
                 ),
             )
         })
         .unwrap_or_else(|| {
             (
-                "Not checked".to_string(),
-                "Open this page or choose Check again to query GitHub.".to_string(),
+                i18n::tr!("settings-not-checked"),
+                i18n::tr!("settings-check-help"),
             )
         });
     let identity_requires_replacement = identity.dirty
@@ -2155,45 +2285,49 @@ fn update_settings_cards(
         .is_some_and(|result| matches!(result.relation, app::update::UpdateRelation::Identical))
         && !identity.dirty
     {
-        "Already up to date"
+        i18n::tr!("settings-up-to-date")
     } else if identity_requires_replacement {
-        "Replace with GitHub version"
+        i18n::tr!("settings-replace-github")
     } else {
-        "Start update"
+        i18n::tr!("settings-start-update")
     };
     vec![
         Card::new(
-            "Installed build",
+            i18n::tr!("settings-installed-build"),
             vec![Item::new(
                 Field::InstalledVersion,
-                "Version",
+                i18n::tr!("settings-version"),
                 format!("{} ({})", identity.package_version, short_sha(&local_sha)),
-                format!("Full SHA: {local_sha}. Build state: {local_state}."),
+                i18n::tr!(
+                    "settings-local-build-details",
+                    sha = local_sha,
+                    state = local_state
+                ),
                 Kind::ReadOnly,
             )],
         ),
         Card::new(
-            "GitHub default branch",
+            i18n::tr!("settings-github-default-branch"),
             vec![Item::new(
                 Field::RemoteVersion,
-                "Latest commit",
+                i18n::tr!("settings-latest-commit"),
                 remote_value,
                 remote_description,
                 Kind::ReadOnly,
             )],
         ),
         Card::new(
-            "Actions",
+            i18n::tr!("settings-actions"),
             vec![
                 Item::new(
                     Field::CheckUpdates,
-                    "Check again",
+                    i18n::tr!("settings-check-again"),
                     if update.busy {
-                        "Working…"
+                        i18n::tr!("settings-working")
                     } else {
-                        "Check GitHub"
+                        i18n::tr!("settings-check-github")
                     },
-                    "Refresh the default branch, commit relation, and commit messages.",
+                    i18n::tr!("settings-check-description"),
                     Kind::Action,
                 )
                 .enabled(supported && !update.busy),
@@ -2201,9 +2335,9 @@ fn update_settings_cards(
                     Field::StartUpdate,
                     start_label,
                     if admin {
-                        "Confirm once"
+                        i18n::tr!("settings-confirm-once")
                     } else {
-                        "Administrator only"
+                        i18n::tr!("settings-admin-only")
                     },
                     "",
                     Kind::Action,
@@ -2218,22 +2352,24 @@ fn short_sha(value: &str) -> String {
     value.chars().take(7).collect()
 }
 
-fn update_relation_label(relation: &app::update::UpdateRelation) -> String {
+fn update_relation_label(relation: &app::update::UpdateRelation) -> i18n::LocalizedMessage {
     match relation {
-        app::update::UpdateRelation::Identical => "Already up to date".to_string(),
+        app::update::UpdateRelation::Identical => i18n::msg!("settings-up-to-date"),
         app::update::UpdateRelation::Behind { remote_ahead } => {
-            format!("Behind GitHub by {remote_ahead} commit(s)")
+            i18n::msg!("settings-update-behind", count = *remote_ahead)
         }
         app::update::UpdateRelation::Ahead { local_ahead } => {
-            format!("Local build is ahead by {local_ahead} commit(s)")
+            i18n::msg!("settings-update-ahead", count = *local_ahead)
         }
         app::update::UpdateRelation::Diverged {
             remote_ahead,
             local_ahead,
-        } => format!(
-            "Builds diverged: GitHub has {remote_ahead} new commit(s), local has {local_ahead}"
+        } => i18n::msg!(
+            "settings-update-diverged",
+            remote = *remote_ahead,
+            local = *local_ahead
         ),
-        app::update::UpdateRelation::Unknown => "The local commit is unknown to GitHub".to_string(),
+        app::update::UpdateRelation::Unknown => i18n::msg!("settings-unknown-commit"),
     }
 }
 
@@ -2244,6 +2380,7 @@ pub(in crate::session) fn settings_cards(
     global_enabled: bool,
     asset_theme_id: &str,
     image_icons_supported: bool,
+    languages: &[app::SetupLanguageOption],
 ) -> Vec<ui::SettingsCardViewModel> {
     use ui::{
         SettingsCardViewModel as Card, SettingsControlKind as Kind, SettingsField as Field,
@@ -2253,7 +2390,11 @@ pub(in crate::session) fn settings_cards(
         Item::new(
             field,
             label,
-            if value { "On" } else { "Off" },
+            if value {
+                i18n::tr!("settings-on")
+            } else {
+                i18n::tr!("settings-off")
+            },
             description,
             Kind::Toggle,
         )
@@ -2262,9 +2403,9 @@ pub(in crate::session) fn settings_cards(
     let reset = |enabled| {
         Item::new(
             Field::RestoreDefaults,
-            "Restore defaults",
-            "Confirm",
-            "Restore every setting in this category.",
+            i18n::tr!("settings-restore-defaults"),
+            i18n::tr!("settings-confirm"),
+            i18n::tr!("settings-restore-help"),
             Kind::Action,
         )
         .enabled(enabled)
@@ -2273,25 +2414,25 @@ pub(in crate::session) fn settings_cards(
     match state.category {
         ui::SettingsCategory::Appearance => vec![
             Card::new(
-                "Theme",
+                i18n::tr!("settings-theme"),
                 vec![
                     Item::new(
                         Field::Theme,
-                        "Theme",
+                        i18n::tr!("settings-theme"),
                         if asset_theme_id == ui::DEFAULT_THEME_ID {
                             match (appearance.icon_display_mode, image_icons_supported) {
                                 (storage::IconDisplayMode::Image, true) => {
-                                    "Default theme / Image icons"
+                                    i18n::tr!("settings-default-image-icons")
                                 }
-                                _ => "Default theme / ASCII icons",
+                                _ => i18n::tr!("settings-default-ascii-icons"),
                             }
                         } else {
-                            asset_theme_id
+                            asset_theme_id.to_string()
                         },
                         if asset_theme_id == ui::DEFAULT_THEME_ID {
-                            "Open Default theme options to choose ASCII or image icons."
+                            i18n::tr!("settings-icon-options-help")
                         } else {
-                            "Icon mode switching is available only for the Default asset theme."
+                            i18n::tr!("settings-icon-switch-help")
                         },
                         Kind::Picker,
                     )
@@ -2299,120 +2440,123 @@ pub(in crate::session) fn settings_cards(
                 ],
             ),
             Card::new(
-                "Visual style",
+                i18n::tr!("settings-visual-style"),
                 vec![
                     Item::new(
                         Field::BorderShape,
-                        "Border shape",
+                        i18n::tr!("settings-border-shape"),
                         match appearance.border_shape {
-                            storage::BorderShape::Rounded => "Rounded",
-                            storage::BorderShape::Square => "Square",
+                            storage::BorderShape::Rounded => i18n::tr!("settings-rounded"),
+                            storage::BorderShape::Square => i18n::tr!("settings-square"),
                         },
-                        "Choose rounded or square card borders.",
+                        i18n::tr!("settings-border-shape-help"),
                         Kind::Cycle,
                     ),
                     Item::new(
                         Field::BorderColor,
-                        "Border color",
-                        appearance.border_color.to_string(),
-                        "Choose a standard color or enter #RRGGBB.",
+                        i18n::tr!("settings-border-color"),
+                        settings_color_label(appearance.border_color),
+                        i18n::tr!("settings-border-color-help"),
                         Kind::Palette,
                     ),
                     Item::new(
                         Field::AccentColor,
-                        "Accent color",
-                        appearance.accent_color.to_string(),
-                        "Used for selection and focus; must differ from the border.",
+                        i18n::tr!("settings-accent-color"),
+                        settings_color_label(appearance.accent_color),
+                        i18n::tr!("settings-accent-color-help"),
                         Kind::Palette,
                     ),
                 ],
             ),
             Card::new(
-                "Animation",
+                i18n::tr!("settings-animation"),
                 vec![
                     Item::new(
                         Field::MotionPreference,
-                        "Motion",
+                        i18n::tr!("settings-motion"),
                         match appearance.motion_preference {
-                            storage::MotionPreference::Full => "Full",
-                            storage::MotionPreference::Reduced => "Reduced",
+                            storage::MotionPreference::Full => i18n::tr!("settings-full"),
+                            storage::MotionPreference::Reduced => i18n::tr!("settings-reduced"),
                         },
-                        "Use Reduced to disable interface transitions while preserving essential refreshes.",
+                        i18n::tr!("settings-motion-help"),
                         Kind::Cycle,
                     ),
                     Item::new(
                         Field::AnimationSpeed,
-                        "Animation speed",
-                        format!("{}%", appearance.normalized_animation_speed_percent()),
-                        "Adjust transition speed from 50% to 200% in 25% steps.",
+                        i18n::tr!("settings-animation-speed"),
+                        i18n::tr!(
+                            "settings-value-percent",
+                            value = appearance.normalized_animation_speed_percent()
+                        ),
+                        i18n::tr!("settings-animation-speed-help"),
                         Kind::Stepper,
                     )
                     .enabled(motion_enabled),
                     Item::new(
                         Field::ResetAnimationSpeed,
-                        "Restore speed default",
-                        "Reset",
-                        "Restore animation speed to the 100% default.",
+                        i18n::tr!("settings-restore-speed"),
+                        i18n::tr!("settings-reset"),
+                        i18n::tr!("settings-restore-speed-help"),
                         Kind::Action,
                     )
                     .enabled(motion_enabled),
                 ],
             ),
-            Card::new("Reset", vec![reset(true)]),
+            Card::new(i18n::tr!("settings-reset"), vec![reset(true)]),
         ],
         ui::SettingsCategory::RegionTime => vec![
             Card::new(
-                "Language and timezone",
+                i18n::tr!("settings-language-timezone"),
                 vec![
                     Item::new(
                         Field::Language,
-                        "Language",
-                        language_label(&config.language),
-                        "Choose from the extensible language catalogue.",
+                        i18n::tr!("settings-language"),
+                        language_label(&config.language, languages),
+                        i18n::tr!("settings-language-help"),
                         Kind::Picker,
                     )
                     .enabled(global_enabled),
                     Item::new(
                         Field::Timezone,
-                        "City / timezone",
+                        i18n::tr!("settings-city-timezone"),
                         timezone_label(&config.timezone),
-                        "Search by city, region or timezone identifier.",
+                        i18n::tr!("settings-timezone-help"),
                         Kind::Picker,
                     )
                     .enabled(global_enabled),
                     Item::new(
                         Field::WeatherLocation,
-                        "Weather location",
+                        i18n::tr!("settings-weather-location"),
                         config
                             .weather_location
-                            .as_deref()
-                            .unwrap_or("Same as timezone"),
-                        "Enter a detailed English city or address used only by Weathr.",
+                            .clone()
+                            .unwrap_or_else(|| i18n::tr!("settings-same-timezone")),
+                        i18n::tr!("settings-weather-help"),
                         Kind::Picker,
                     )
                     .enabled(global_enabled),
                 ],
             ),
             Card::new(
-                "Time synchronization",
+                i18n::tr!("settings-time-sync"),
                 vec![
                     Item::new(
                         Field::TimeSyncSource,
-                        "Time source",
+                        i18n::tr!("settings-time-source"),
                         time_sync_source_label(config.time_sync.source),
-                        "Use a network time server or the operating system clock.",
+                        i18n::tr!("settings-time-source-help"),
                         Kind::Cycle,
                     )
                     .enabled(global_enabled),
                     Item::new(
                         Field::TimeSyncServer,
-                        "Synchronization server",
+                        i18n::tr!("settings-sync-server"),
                         config
                             .time_sync
                             .server_url
-                            .as_deref()
-                            .unwrap_or("Automatic default servers"),
-                        "Set an HTTP(S) server; it must synchronize successfully before saving.",
+                            .clone()
+                            .unwrap_or_else(|| i18n::tr!("settings-automatic-servers")),
+                        i18n::tr!("settings-time-server-help"),
                         Kind::Picker,
                     )
                     .enabled(
@@ -2421,213 +2565,237 @@ pub(in crate::session) fn settings_cards(
                     ),
                 ],
             ),
-            Card::new("Reset", vec![reset(global_enabled)]),
+            Card::new(i18n::tr!("settings-reset"), vec![reset(global_enabled)]),
         ],
         ui::SettingsCategory::System => vec![
             Card::new(
-                "Storage pressure",
+                i18n::tr!("settings-storage-pressure"),
                 vec![
                     Item::new(
                         Field::SystemLowAvailable,
-                        "Low available",
-                        format!("{} GiB", config.system_status.low_available_gib),
-                        "Low pressure is reported when either the available-space or percentage threshold is reached.",
+                        i18n::tr!("settings-low-available"),
+                        i18n::tr!(
+                            "settings-value-gib",
+                            value = config.system_status.low_available_gib
+                        ),
+                        i18n::tr!("settings-low-available-help"),
                         Kind::Stepper,
                     )
                     .enabled(global_enabled),
                     Item::new(
                         Field::SystemLowPercentage,
-                        "Low percentage",
-                        format!("{}%", config.system_status.low_percentage),
-                        "Low pressure is reported when either the absolute or percentage threshold is reached.",
+                        i18n::tr!("settings-low-percentage"),
+                        i18n::tr!(
+                            "settings-value-percent",
+                            value = config.system_status.low_percentage
+                        ),
+                        i18n::tr!("settings-low-percentage-help"),
                         Kind::Stepper,
                     )
                     .enabled(global_enabled),
                     Item::new(
                         Field::SystemCriticalAvailable,
-                        "Critical available",
-                        format!("{} GiB", config.system_status.critical_available_gib),
-                        "Critical pressure is reported when either the available-space or percentage threshold is reached.",
+                        i18n::tr!("settings-critical-available"),
+                        i18n::tr!(
+                            "settings-value-gib",
+                            value = config.system_status.critical_available_gib
+                        ),
+                        i18n::tr!("settings-critical-available-help"),
                         Kind::Stepper,
                     )
                     .enabled(global_enabled),
                     Item::new(
                         Field::SystemCriticalPercentage,
-                        "Critical percentage",
-                        format!("{}%", config.system_status.critical_percentage),
-                        "Critical pressure is reported when either the absolute or percentage threshold is reached.",
+                        i18n::tr!("settings-critical-percentage"),
+                        i18n::tr!(
+                            "settings-value-percent",
+                            value = config.system_status.critical_percentage
+                        ),
+                        i18n::tr!("settings-critical-percentage-help"),
                         Kind::Stepper,
                     )
                     .enabled(global_enabled),
                 ],
             ),
-            Card::new("Reset", vec![reset(global_enabled)]),
+            Card::new(i18n::tr!("settings-reset"), vec![reset(global_enabled)]),
         ],
         ui::SettingsCategory::FileExplorer => vec![
             Card::new(
-                "Display",
+                i18n::tr!("settings-display"),
                 vec![
                     toggle(
                         Field::ShowHidden,
-                        "Show hidden files",
+                        i18n::tr!("settings-show-hidden"),
                         config.explorer.show_hidden,
-                        "Display hidden files in Explorer.",
+                        i18n::tr!("settings-show-hidden-help"),
                         global_enabled,
                     ),
                     toggle(
                         Field::ShowSystem,
-                        "Show system files",
+                        i18n::tr!("settings-show-system"),
                         config.explorer.show_system,
-                        "Display operating-system files.",
+                        i18n::tr!("settings-show-system-help"),
                         global_enabled,
                     ),
                     toggle(
                         Field::ShowExtensions,
-                        "Show file extensions",
+                        i18n::tr!("settings-show-extensions"),
                         config.explorer.show_extensions,
-                        "Show filename extensions.",
+                        i18n::tr!("settings-show-extensions-help"),
                         global_enabled,
                     ),
                     toggle(
                         Field::FoldersFirst,
-                        "Folders first",
+                        i18n::tr!("settings-folders-first"),
                         config.explorer.folders_first,
-                        "Group directories before files.",
+                        i18n::tr!("settings-folders-first-help"),
                         global_enabled,
                     ),
                     toggle(
                         Field::ShowSidebar,
-                        "Show Quick Access",
+                        i18n::tr!("settings-show-quick-access"),
                         config.explorer.show_sidebar,
-                        "Show the Quick Access sidebar.",
+                        i18n::tr!("settings-quick-access-help"),
                         global_enabled,
                     ),
                 ],
             ),
             Card::new(
-                "Sorting & format",
+                i18n::tr!("settings-sorting-format"),
                 vec![
                     toggle(
                         Field::CaseSensitiveSort,
-                        "Case-sensitive sort",
+                        i18n::tr!("settings-case-sensitive"),
                         config.explorer.case_sensitive_sort,
-                        "Treat letter case as significant while sorting.",
+                        i18n::tr!("settings-case-sensitive-help"),
                         global_enabled,
                     ),
                     Item::new(
                         Field::SizeFormat,
-                        "Size format",
+                        i18n::tr!("settings-size-format"),
                         size_format_label(config.explorer.size_format),
-                        "Choose human-readable binary sizes or exact bytes.",
+                        i18n::tr!("settings-size-format-help"),
                         Kind::Cycle,
                     )
                     .enabled(global_enabled),
                     Item::new(
                         Field::DateZone,
-                        "Date timezone",
+                        i18n::tr!("settings-date-timezone"),
                         date_zone_label(config.explorer.date_zone),
-                        "Use the configured timezone or UTC for file dates.",
+                        i18n::tr!("settings-date-timezone-help"),
                         Kind::Cycle,
                     )
                     .enabled(global_enabled),
                     Item::new(
                         Field::SortField,
-                        "Default sort field",
+                        i18n::tr!("settings-default-sort-field"),
                         sort_field_label(config.explorer.sort_field),
-                        "Choose the default Explorer sort column.",
+                        i18n::tr!("settings-sort-field-help"),
                         Kind::Cycle,
                     )
                     .enabled(global_enabled),
                     Item::new(
                         Field::SortDirection,
-                        "Default direction",
+                        i18n::tr!("settings-default-direction"),
                         sort_direction_label(config.explorer.sort_direction),
-                        "Choose ascending or descending order.",
+                        i18n::tr!("settings-sort-direction-help"),
                         Kind::Cycle,
                     )
                     .enabled(global_enabled),
                 ],
             ),
             Card::new(
-                "Safety",
+                i18n::tr!("settings-safety"),
                 vec![
                     toggle(
                         Field::ConfirmDelete,
-                        "Confirm delete",
+                        i18n::tr!("settings-confirm-delete"),
                         config.explorer.confirm_delete,
-                        "Ask before moving items to Trash.",
+                        i18n::tr!("settings-confirm-delete-help"),
                         global_enabled,
                     ),
                     toggle(
                         Field::ConfirmNameConflicts,
-                        "Confirm name conflicts",
+                        i18n::tr!("settings-confirm-conflicts"),
                         config.explorer.confirm_name_conflicts,
-                        "Ask how to resolve duplicate names.",
+                        i18n::tr!("settings-confirm-conflicts-help"),
                         global_enabled,
                     ),
                 ],
             ),
-            Card::new("Reset", vec![reset(global_enabled)]),
+            Card::new(i18n::tr!("settings-reset"), vec![reset(global_enabled)]),
         ],
         ui::SettingsCategory::Editor => vec![
             Card::new(
-                "Explorer file opening",
+                i18n::tr!("settings-explorer-opening"),
                 vec![
                     Item::new(
                         Field::ExplorerOpenExtensions,
-                        "Open in Editor",
+                        i18n::tr!("settings-open-editor"),
                         editor_extensions_summary(&config.editor.explorer_open_extensions),
-                        "Choose filename suffixes that Explorer opens in the built-in Editor.",
+                        i18n::tr!("settings-open-editor-help"),
                         Kind::Picker,
                     )
                     .enabled(global_enabled),
                 ],
             ),
             Card::new(
-                "Cursor acceleration",
+                i18n::tr!("settings-cursor-acceleration"),
                 vec![
                     toggle(
                         Field::CursorAcceleration,
-                        "Cursor acceleration",
+                        i18n::tr!("settings-cursor-acceleration"),
                         config.editor.cursor_acceleration_enabled,
-                        "Accelerate repeated arrow-key movement.",
+                        i18n::tr!("settings-cursor-acceleration-help"),
                         global_enabled,
                     ),
                     Item::new(
                         Field::CursorDelay,
-                        "Start delay",
-                        format!("{} ms", config.editor.cursor_acceleration_delay_ms),
-                        "Delay before acceleration begins.",
+                        i18n::tr!("settings-start-delay"),
+                        i18n::tr!(
+                            "settings-value-ms",
+                            value = config.editor.cursor_acceleration_delay_ms
+                        ),
+                        i18n::tr!("settings-cursor-delay-help"),
                         Kind::Stepper,
                     )
                     .enabled(global_enabled),
                     Item::new(
                         Field::CursorRamp,
-                        "Ramp to maximum",
-                        format!("{} ms", config.editor.cursor_acceleration_ramp_ms),
-                        "Time taken to reach the maximum step.",
+                        i18n::tr!("settings-ramp-maximum"),
+                        i18n::tr!(
+                            "settings-value-ms",
+                            value = config.editor.cursor_acceleration_ramp_ms
+                        ),
+                        i18n::tr!("settings-cursor-ramp-help"),
                         Kind::Stepper,
                     )
                     .enabled(global_enabled),
                     Item::new(
                         Field::CursorHorizontalStep,
-                        "Horizontal maximum",
-                        format!("{} cells", config.editor.cursor_horizontal_max_step),
-                        "Maximum horizontal movement per repeat.",
+                        i18n::tr!("settings-horizontal-maximum"),
+                        i18n::tr!(
+                            "settings-value-cells",
+                            value = config.editor.cursor_horizontal_max_step
+                        ),
+                        i18n::tr!("settings-horizontal-help"),
                         Kind::Stepper,
                     )
                     .enabled(global_enabled),
                     Item::new(
                         Field::CursorVerticalStep,
-                        "Vertical maximum",
-                        format!("{} lines", config.editor.cursor_vertical_max_step),
-                        "Maximum vertical movement per repeat.",
+                        i18n::tr!("settings-vertical-maximum"),
+                        i18n::tr!(
+                            "settings-value-lines",
+                            value = config.editor.cursor_vertical_max_step
+                        ),
+                        i18n::tr!("settings-vertical-help"),
                         Kind::Stepper,
                     )
                     .enabled(global_enabled),
                 ],
             ),
-            Card::new("Reset", vec![reset(global_enabled)]),
+            Card::new(i18n::tr!("settings-reset"), vec![reset(global_enabled)]),
         ],
         ui::SettingsCategory::Update => Vec::new(),
     }
@@ -2635,21 +2803,22 @@ pub(in crate::session) fn settings_cards(
 
 pub(in crate::session) fn settings_picker_options(
     picker: &SettingsPickerState,
+    languages: &[app::SetupLanguageOption],
 ) -> Vec<ui::SettingsPickerOptionViewModel> {
     let query = picker.query.trim().to_ascii_lowercase();
     match picker.kind {
         ui::SettingsPickerKind::Theme => vec![ui::SettingsPickerOptionViewModel::new(
-            "Default theme",
-            "Built-in asset theme",
+            i18n::tr!("settings-default-theme"),
+            i18n::tr!("settings-built-in-theme"),
         )],
         ui::SettingsPickerKind::DefaultThemeIcons => vec![
             ui::SettingsPickerOptionViewModel::new(
-                "ASCII icons",
-                "Always use text-based asset icons",
+                i18n::tr!("settings-ascii-icons"),
+                i18n::tr!("settings-ascii-icons-help"),
             ),
             ui::SettingsPickerOptionViewModel::new(
-                "Image icons",
-                "Requires Kitty, Sixel, or iTerm2 image support",
+                i18n::tr!("settings-image-icons"),
+                i18n::tr!("settings-image-icons-help"),
             )
             .enabled(picker.image_icons_supported),
         ],
@@ -2658,15 +2827,19 @@ pub(in crate::session) fn settings_picker_options(
             .step_by(usize::from(storage::ANIMATION_SPEED_STEP_PERCENT))
             .map(|speed| {
                 let detail = match speed.cmp(&storage::DEFAULT_ANIMATION_SPEED_PERCENT) {
-                    std::cmp::Ordering::Less => "Slower than default",
-                    std::cmp::Ordering::Equal => "Default",
-                    std::cmp::Ordering::Greater => "Faster than default",
+                    std::cmp::Ordering::Less => i18n::tr!("settings-slower-default"),
+                    std::cmp::Ordering::Equal => i18n::tr!("settings-default"),
+                    std::cmp::Ordering::Greater => i18n::tr!("settings-faster-default"),
                 };
-                ui::SettingsPickerOptionViewModel::new(format!("{speed}%"), detail)
+                ui::SettingsPickerOptionViewModel::new(
+                    i18n::tr!("settings-value-percent", value = speed),
+                    detail,
+                )
             })
             .collect(),
-        ui::SettingsPickerKind::Language => app::setup_language_options()
-            .into_iter()
+        ui::SettingsPickerKind::Language => languages
+            .iter()
+            .cloned()
             .filter(|option| {
                 query.is_empty()
                     || option.code.to_ascii_lowercase().contains(&query)
@@ -2674,28 +2847,41 @@ pub(in crate::session) fn settings_picker_options(
             })
             .map(|option| ui::SettingsPickerOptionViewModel::new(option.label, option.code))
             .collect(),
-        ui::SettingsPickerKind::Timezone => {
-            app::setup_timezone_options()
-                .into_iter()
-                .filter(|option| {
-                    query.is_empty()
-                        || option.id.to_ascii_lowercase().contains(&query)
-                        || option.label.to_ascii_lowercase().contains(&query)
-                        || option.description.to_ascii_lowercase().contains(&query)
-                })
-                .map(|option| {
-                    ui::SettingsPickerOptionViewModel::new(option.label, option.description)
-                        .timezone(option.id, option.longitude, option.latitude)
-                })
-                .collect()
-        }
+        ui::SettingsPickerKind::Timezone => app::setup_timezone_options()
+            .into_iter()
+            .filter(|option| {
+                query.is_empty()
+                    || option.id.to_ascii_lowercase().contains(&query)
+                    || option.label.to_ascii_lowercase().contains(&query)
+                    || option.description.to_ascii_lowercase().contains(&query)
+                    || option
+                        .localized_label()
+                        .render_current()
+                        .to_ascii_lowercase()
+                        .contains(&query)
+                    || option
+                        .localized_description()
+                        .render_current()
+                        .to_ascii_lowercase()
+                        .contains(&query)
+            })
+            .map(|option| {
+                ui::SettingsPickerOptionViewModel::new(
+                    option.localized_label().render_current(),
+                    option.localized_description().render_current(),
+                )
+                .timezone(option.id, option.longitude, option.latitude)
+            })
+            .collect(),
         ui::SettingsPickerKind::BorderColor | ui::SettingsPickerKind::AccentColor => {
             let mut options = ui::setup_standard_color_options()
                 .iter()
-                .map(|option| ui::SettingsPickerOptionViewModel::new(option.label, option.value))
+                .map(|option| {
+                    ui::SettingsPickerOptionViewModel::new(option.label.clone(), option.value)
+                })
                 .collect::<Vec<_>>();
             options.push(ui::SettingsPickerOptionViewModel::new(
-                "Custom color…",
+                i18n::tr!("settings-custom-color"),
                 "#RRGGBB",
             ));
             options
@@ -2736,50 +2922,68 @@ pub(in crate::session) fn settings_picker_visible_rows(terminal_height: u16) -> 
     usize::from(terminal_height.saturating_sub(10).clamp(4, 18))
 }
 
-pub(in crate::session) fn picker_title(kind: ui::SettingsPickerKind) -> &'static str {
+pub(in crate::session) fn picker_title(kind: ui::SettingsPickerKind) -> String {
     match kind {
-        ui::SettingsPickerKind::Theme => "Choose theme",
-        ui::SettingsPickerKind::DefaultThemeIcons => "Default theme",
-        ui::SettingsPickerKind::AnimationSpeed => "Choose animation speed",
-        ui::SettingsPickerKind::Language => "Choose language",
-        ui::SettingsPickerKind::Timezone => "Choose city and timezone",
-        ui::SettingsPickerKind::BorderColor => "Choose border color",
-        ui::SettingsPickerKind::AccentColor => "Choose accent color",
+        ui::SettingsPickerKind::Theme => i18n::tr!("settings-choose-theme"),
+        ui::SettingsPickerKind::DefaultThemeIcons => i18n::tr!("settings-default-theme"),
+        ui::SettingsPickerKind::AnimationSpeed => i18n::tr!("settings-choose-speed"),
+        ui::SettingsPickerKind::Language => i18n::tr!("settings-choose-language"),
+        ui::SettingsPickerKind::Timezone => i18n::tr!("settings-choose-timezone"),
+        ui::SettingsPickerKind::BorderColor => i18n::tr!("settings-choose-border-color"),
+        ui::SettingsPickerKind::AccentColor => i18n::tr!("settings-choose-accent-color"),
     }
 }
 
-pub(in crate::session) fn picker_label(kind: ui::SettingsPickerKind) -> &'static str {
+pub(in crate::session) fn picker_label(kind: ui::SettingsPickerKind) -> String {
     match kind {
-        ui::SettingsPickerKind::Theme => "Theme",
-        ui::SettingsPickerKind::DefaultThemeIcons => "Default theme icon mode",
-        ui::SettingsPickerKind::AnimationSpeed => "Animation speed",
-        ui::SettingsPickerKind::BorderColor => "Border color",
-        ui::SettingsPickerKind::AccentColor => "Accent color",
-        ui::SettingsPickerKind::Language => "Language",
-        ui::SettingsPickerKind::Timezone => "Timezone",
+        ui::SettingsPickerKind::Theme => i18n::tr!("settings-theme"),
+        ui::SettingsPickerKind::DefaultThemeIcons => i18n::tr!("settings-default-icon-mode"),
+        ui::SettingsPickerKind::AnimationSpeed => i18n::tr!("settings-animation-speed"),
+        ui::SettingsPickerKind::BorderColor => i18n::tr!("settings-border-color"),
+        ui::SettingsPickerKind::AccentColor => i18n::tr!("settings-accent-color"),
+        ui::SettingsPickerKind::Language => i18n::tr!("settings-language"),
+        ui::SettingsPickerKind::Timezone => i18n::tr!("settings-timezone"),
     }
 }
 
-pub(in crate::session) fn language_label(code: &str) -> String {
-    app::setup_language_options()
-        .into_iter()
+pub(in crate::session) fn language_label(
+    code: &str,
+    languages: &[app::SetupLanguageOption],
+) -> String {
+    languages
+        .iter()
         .find(|option| option.code == code)
         .map(|option| format!("{} ({})", option.label, option.code))
         .unwrap_or_else(|| code.to_string())
+}
+
+fn settings_color_label(color: storage::BorderColor) -> String {
+    let value = color.to_string();
+    ui::setup_standard_color_options()
+        .into_iter()
+        .find(|option| option.value == value)
+        .map(|option| option.label)
+        .unwrap_or(value)
 }
 
 pub(in crate::session) fn timezone_label(id: &str) -> String {
     app::setup_timezone_options()
         .into_iter()
         .find(|option| option.id == id)
-        .map(|option| format!("{} ({})", option.label, option.id))
+        .map(|option| {
+            format!(
+                "{} ({})",
+                option.localized_label().render_current(),
+                option.id
+            )
+        })
         .unwrap_or_else(|| id.to_string())
 }
 
-pub(in crate::session) fn time_sync_source_label(source: storage::TimeSyncSource) -> &'static str {
+pub(in crate::session) fn time_sync_source_label(source: storage::TimeSyncSource) -> String {
     match source {
-        storage::TimeSyncSource::NetworkServer => "Network server",
-        storage::TimeSyncSource::OperatingSystem => "Operating system",
+        storage::TimeSyncSource::NetworkServer => i18n::tr!("settings-network-server"),
+        storage::TimeSyncSource::OperatingSystem => i18n::tr!("settings-operating-system"),
     }
 }
 
@@ -2813,48 +3017,17 @@ fn adjust_u8_setting_in_range(value: u8, increase: bool, minimum: u8, maximum: u
     }
 }
 
-pub(in crate::session) fn settings_field_label(field: ui::SettingsField) -> &'static str {
-    match field {
-        ui::SettingsField::Theme => "Theme",
-        ui::SettingsField::ShowHidden => "Show hidden files",
-        ui::SettingsField::ShowSystem => "Show system files",
-        ui::SettingsField::ShowExtensions => "Show file extensions",
-        ui::SettingsField::FoldersFirst => "Folders first",
-        ui::SettingsField::ShowSidebar => "Quick Access",
-        ui::SettingsField::CaseSensitiveSort => "Case-sensitive sort",
-        ui::SettingsField::SizeFormat => "Size format",
-        ui::SettingsField::DateZone => "Date timezone",
-        ui::SettingsField::SortField => "Sort field",
-        ui::SettingsField::SortDirection => "Sort direction",
-        ui::SettingsField::ConfirmDelete => "Delete confirmation",
-        ui::SettingsField::ConfirmNameConflicts => "Conflict confirmation",
-        ui::SettingsField::ExplorerOpenExtensions => "Explorer file suffixes",
-        ui::SettingsField::CursorAcceleration => "Cursor acceleration",
-        ui::SettingsField::CursorDelay => "Cursor delay",
-        ui::SettingsField::CursorRamp => "Cursor ramp",
-        ui::SettingsField::CursorHorizontalStep => "Horizontal maximum",
-        ui::SettingsField::CursorVerticalStep => "Vertical maximum",
-        ui::SettingsField::BorderShape => "Border shape",
-        ui::SettingsField::BorderColor => "Border color",
-        ui::SettingsField::AccentColor => "Accent color",
-        ui::SettingsField::MotionPreference => "Motion",
-        ui::SettingsField::AnimationSpeed => "Animation speed",
-        ui::SettingsField::ResetAnimationSpeed => "Animation speed default",
-        ui::SettingsField::Language => "Language",
-        ui::SettingsField::Timezone => "Timezone",
-        ui::SettingsField::TimeSyncSource => "Time source",
-        ui::SettingsField::TimeSyncServer => "Time synchronization server",
-        ui::SettingsField::WeatherLocation => "Weather location",
-        ui::SettingsField::SystemLowAvailable => "Low available",
-        ui::SettingsField::SystemLowPercentage => "Low percentage",
-        ui::SettingsField::SystemCriticalAvailable => "Critical available",
-        ui::SettingsField::SystemCriticalPercentage => "Critical percentage",
-        ui::SettingsField::RestoreDefaults => "Defaults",
-        ui::SettingsField::InstalledVersion => "Installed version",
-        ui::SettingsField::RemoteVersion => "GitHub version",
-        ui::SettingsField::CheckUpdates => "Check updates",
-        ui::SettingsField::StartUpdate => "Start update",
-    }
+fn settings_saved_field(field: ui::SettingsField) -> i18n::LocalizedMessage {
+    i18n::msg!("settings-saved-field", field = format!("{field:?}"))
+}
+
+fn settings_saved_picker(kind: ui::SettingsPickerKind) -> i18n::LocalizedMessage {
+    let field = match kind {
+        ui::SettingsPickerKind::BorderColor => ui::SettingsField::BorderColor,
+        ui::SettingsPickerKind::AccentColor => ui::SettingsField::AccentColor,
+        _ => unreachable!("only color pickers save appearance through this helper"),
+    };
+    settings_saved_field(field)
 }
 
 pub(in crate::session) fn is_weather_location_character(character: char) -> bool {
@@ -2870,7 +3043,7 @@ pub(in crate::session) fn is_editor_extension_input_character(character: char) -
 
 pub(in crate::session) fn parse_editor_explorer_open_extensions(
     value: &str,
-) -> Result<Vec<String>, String> {
+) -> Result<Vec<String>, i18n::LocalizedText> {
     let mut extensions = Vec::new();
     for raw in value.split(|character: char| {
         character == ',' || character == ';' || character.is_ascii_whitespace()
@@ -2879,18 +3052,17 @@ pub(in crate::session) fn parse_editor_explorer_open_extensions(
             continue;
         }
         let Some(extension) = storage::normalize_editor_explorer_open_extension(raw) else {
-            return Err(format!(
-                "Invalid suffix {raw:?}; use values such as .md, .rs or .d.ts"
-            ));
+            return Err(i18n::msg!("settings-invalid-suffix", suffix = format!("{raw:?}")).into());
         };
         if extensions.contains(&extension) {
             continue;
         }
         if extensions.len() >= storage::MAX_EDITOR_EXPLORER_OPEN_EXTENSIONS {
-            return Err(format!(
-                "At most {} suffixes are allowed",
-                storage::MAX_EDITOR_EXPLORER_OPEN_EXTENSIONS
-            ));
+            return Err(i18n::msg!(
+                "settings-suffix-count-limit",
+                limit = storage::MAX_EDITOR_EXPLORER_OPEN_EXTENSIONS
+            )
+            .into());
         }
         extensions.push(extension);
     }
@@ -2910,6 +3082,133 @@ fn settings_scroll_offset(current: u16, delta: i16, maximum: u16) -> u16 {
 mod update_tests {
     use super::*;
 
+    fn settings_language_snapshots() -> Vec<std::sync::Arc<i18n::LanguageSnapshot>> {
+        let root = std::env::temp_dir().join(format!(
+            "tux3-settings-locales-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let canonical =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../ascii-assets/assets/locales");
+        let mut snapshots = Vec::new();
+        for code in ["en-US", "zh-CN"] {
+            let locale = root.join("locales").join(code);
+            std::fs::create_dir_all(locale.join("modules")).unwrap();
+            for relative in [
+                "manifest.toml",
+                "modules/settings.ftl",
+                "modules/ui-settings.ftl",
+            ] {
+                std::fs::copy(canonical.join(code).join(relative), locale.join(relative)).unwrap();
+            }
+            snapshots.push(std::sync::Arc::new(
+                i18n::LanguageSnapshot::load(&root, code, 1)
+                    .unwrap()
+                    .snapshot,
+            ));
+        }
+        std::fs::remove_dir_all(root).unwrap();
+        snapshots
+    }
+
+    #[test]
+    fn saved_settings_and_validation_messages_rerender_with_their_arguments() {
+        let saved: i18n::LocalizedText =
+            settings_saved_field(ui::SettingsField::BorderShape).into();
+        let category: i18n::LocalizedText = i18n::msg!(
+            "settings-category-status",
+            category = format!("{:?}", ui::SettingsCategory::RegionTime)
+        )
+        .into();
+        let invalid = parse_editor_explorer_open_extensions("bad/suffix").unwrap_err();
+        let relation = update_relation_label(&app::update::UpdateRelation::Diverged {
+            remote_ahead: 2,
+            local_ahead: 3,
+        });
+        let retained = (
+            saved.clone(),
+            category.clone(),
+            invalid.clone(),
+            relation.clone(),
+        );
+        for (snapshot, expected_saved, expected_category, expected_invalid, expected_relation) in
+            settings_language_snapshots()
+                .into_iter()
+                .zip([
+                    (
+                        "Saved Border shape",
+                        "Settings: Region & Time",
+                        "Invalid suffix",
+                        "Builds diverged",
+                    ),
+                    (
+                        "已保存边框形状",
+                        "设置：区域与时间",
+                        "无效后缀",
+                        "构建已分叉",
+                    ),
+                ])
+                .map(|(snapshot, (saved, category, invalid, relation))| {
+                    (snapshot, saved, category, invalid, relation)
+                })
+        {
+            let _language = i18n::enter_snapshot(snapshot);
+            assert_eq!(saved.render_current(), expected_saved);
+            assert_eq!(category.render_current(), expected_category);
+            assert!(invalid.render_current().starts_with(expected_invalid));
+            assert!(invalid.render_current().contains("bad/suffix"));
+            let rendered_relation = relation.render_current();
+            assert!(rendered_relation.starts_with(expected_relation));
+            assert!(rendered_relation.contains('2'));
+            assert!(rendered_relation.contains('3'));
+            assert_eq!(
+                (&saved, &category, &invalid, &relation),
+                (&retained.0, &retained.1, &retained.2, &retained.3)
+            );
+        }
+    }
+
+    #[test]
+    fn update_cards_and_picker_labels_rerender_without_changing_action_or_color_values() {
+        let identity = app::update::BuildIdentity {
+            package_version: "1.2.3".to_string(),
+            commit_sha: Some("1111111111111111".to_string()),
+            dirty: false,
+        };
+        let update = checked_update_state(app::update::UpdateRelation::Behind { remote_ahead: 1 });
+        let picker = SettingsPickerState {
+            kind: ui::SettingsPickerKind::BorderColor,
+            query: String::new(),
+            selected_index: 0,
+            window_start: 0,
+            image_icons_supported: false,
+        };
+        for (snapshot, (start_label, custom_label)) in
+            settings_language_snapshots().into_iter().zip([
+                ("Start update", "Custom color…"),
+                ("开始更新", "自定义颜色…"),
+            ])
+        {
+            let _language = i18n::enter_snapshot(snapshot);
+            let cards = update_settings_cards(&identity, &update, true, true);
+            let start = cards
+                .iter()
+                .flat_map(|card| &card.items)
+                .find(|item| item.field == ui::SettingsField::StartUpdate)
+                .unwrap();
+            assert_eq!(start.label, start_label);
+            assert!(start.enabled);
+            let options = settings_picker_options(&picker, &[]);
+            let custom = options.last().unwrap();
+            assert_eq!(custom.label, custom_label);
+            assert_eq!(custom.detail, "#RRGGBB");
+            assert_eq!(options[0].detail, "white");
+        }
+    }
+
     fn checked_update_state(relation: app::update::UpdateRelation) -> SettingsUpdateState {
         SettingsUpdateState {
             activity: None,
@@ -2924,7 +3223,7 @@ mod update_tests {
             }),
             checked_at: Some(Utc::now()),
             phase: None,
-            status: "Checked".to_string(),
+            status: "Checked".into(),
             error: None,
             confirmation_open: false,
             confirm_selected: true,
@@ -3020,46 +3319,44 @@ pub(in crate::session) fn format_editor_explorer_open_extensions(extensions: &[S
 
 pub(in crate::session) fn editor_extensions_summary(extensions: &[String]) -> String {
     if extensions.is_empty() {
-        return "System default".to_string();
+        return i18n::tr!("settings-system-default");
     }
     if extensions.len() <= 4 {
         return format_editor_explorer_open_extensions(extensions);
     }
-    format!(
-        "{}, +{} more",
-        format_editor_explorer_open_extensions(&extensions[..3]),
-        extensions.len() - 3
+    i18n::tr!(
+        "settings-more-suffixes",
+        suffixes = format_editor_explorer_open_extensions(&extensions[..3]),
+        count = extensions.len() - 3
     )
 }
 
-pub(in crate::session) fn size_format_label(value: storage::ExplorerSizeFormat) -> &'static str {
+pub(in crate::session) fn size_format_label(value: storage::ExplorerSizeFormat) -> String {
     match value {
-        storage::ExplorerSizeFormat::HumanBinary => "Human binary",
-        storage::ExplorerSizeFormat::Bytes => "Bytes",
+        storage::ExplorerSizeFormat::HumanBinary => i18n::tr!("settings-human-binary"),
+        storage::ExplorerSizeFormat::Bytes => i18n::tr!("settings-bytes"),
     }
 }
 
-pub(in crate::session) fn date_zone_label(value: storage::ExplorerDateZone) -> &'static str {
+pub(in crate::session) fn date_zone_label(value: storage::ExplorerDateZone) -> String {
     match value {
-        storage::ExplorerDateZone::ConfiguredTimezone => "Configured timezone",
-        storage::ExplorerDateZone::Utc => "UTC",
+        storage::ExplorerDateZone::ConfiguredTimezone => i18n::tr!("settings-configured-timezone"),
+        storage::ExplorerDateZone::Utc => i18n::tr!("settings-utc"),
     }
 }
 
-pub(in crate::session) fn sort_field_label(value: storage::ExplorerSortField) -> &'static str {
+pub(in crate::session) fn sort_field_label(value: storage::ExplorerSortField) -> String {
     match value {
-        storage::ExplorerSortField::Name => "Name",
-        storage::ExplorerSortField::Type => "Type",
-        storage::ExplorerSortField::Size => "Size",
-        storage::ExplorerSortField::Modified => "Modified",
+        storage::ExplorerSortField::Name => i18n::tr!("settings-name"),
+        storage::ExplorerSortField::Type => i18n::tr!("settings-type"),
+        storage::ExplorerSortField::Size => i18n::tr!("settings-size"),
+        storage::ExplorerSortField::Modified => i18n::tr!("settings-modified"),
     }
 }
 
-pub(in crate::session) fn sort_direction_label(
-    value: storage::ExplorerSortDirection,
-) -> &'static str {
+pub(in crate::session) fn sort_direction_label(value: storage::ExplorerSortDirection) -> String {
     match value {
-        storage::ExplorerSortDirection::Ascending => "Ascending",
-        storage::ExplorerSortDirection::Descending => "Descending",
+        storage::ExplorerSortDirection::Ascending => i18n::tr!("settings-ascending"),
+        storage::ExplorerSortDirection::Descending => i18n::tr!("settings-descending"),
     }
 }
