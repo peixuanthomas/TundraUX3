@@ -310,7 +310,12 @@ pub enum ExplorerTaskError {
 impl fmt::Display for ExplorerTaskError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::InvalidPlan { message } => formatter.write_str(&message.render_current()),
+            Self::InvalidPlan { message } => match message {
+                LocalizedText::Message(message) => {
+                    formatter.write_str(&i18n::render_diagnostic(message))
+                }
+                LocalizedText::Raw(raw) => formatter.write_str(raw),
+            },
             Self::Io {
                 operation,
                 path,

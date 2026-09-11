@@ -146,7 +146,7 @@ pub enum LauncherError {
 impl fmt::Display for LauncherError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Localized(error) => formatter.write_str(&i18n::render_current(&error.message)),
+            Self::Localized(error) => formatter.write_str(&i18n::render_diagnostic(&error.message)),
             Self::PermissionDenied(reason) => write!(formatter, "permission denied: {reason}"),
             Self::InvalidPath { path, reason } => write!(
                 formatter,

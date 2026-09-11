@@ -304,3 +304,83 @@ fn localized_file_types_do_not_change_type_sort_keys_or_selection() {
     );
     assert!(state.selected_paths.contains(&fixture.0.join("b.txt")));
 }
+
+#[test]
+fn diagnostic_display_ignores_current_language_and_custom_english_resources() {
+    use std::sync::Arc;
+    let fixture = LocaleFixture::new();
+    let chinese = Arc::new(fixture.chinese());
+    let explorer = app::explorer::ExplorerError::Localized(i18n::LocalizedError::new(
+        "EXPLORER_INVALID_OPERATION",
+        msg!("app-explorer-nothing-selected"),
+    ));
+    let launcher = app::launcher::LauncherError::Localized(i18n::LocalizedError::new(
+        "LAUNCHER_INVALID_PATH",
+        msg!(
+            "app-launcher-absolute-path-required",
+            path = "/tmp/{raw}.exe"
+        ),
+    ));
+    let task = ExplorerTaskError::InvalidPlan {
+        message: msg!("app-tasks-source-required").into(),
+    };
+    let errors: [&dyn std::fmt::Display; 3] = [&explorer, &launcher, &task];
+    let expected = errors.iter().map(ToString::to_string).collect::<Vec<_>>();
+    assert_eq!(expected[0], "nothing selected");
+    assert!(expected[1].contains("/tmp/{raw}.exe"));
+    assert_eq!(expected[2], "a transfer requires at least one source");
+    i18n::with_snapshot(&chinese, || {
+        assert_eq!(
+            errors.iter().map(ToString::to_string).collect::<Vec<_>>(),
+            expected
+        );
+        assert_eq!(
+            explorer.localized().message.render_current(),
+            "未选择任何项目"
+        );
+    });
+    for (module, text) in [
+        (
+            "explorer",
+            "app-explorer-nothing-selected = Customized selection error\n",
+        ),
+        (
+            "launcher",
+            "app-launcher-absolute-path-required = Customized path { $path }\n",
+        ),
+        (
+            "tasks",
+            "app-tasks-source-required = Customized source error\n",
+        ),
+    ] {
+        fs::write(
+            fixture
+                .0
+                .join(format!("locales/en-US/modules/app-{module}.ftl")),
+            text,
+        )
+        .unwrap();
+    }
+    let custom_english = Arc::new(
+        LanguageSnapshot::load(&fixture.0, "en-US", 3)
+            .unwrap()
+            .snapshot,
+    );
+    i18n::with_snapshot(&custom_english, || {
+        assert_eq!(
+            explorer.localized().message.render_current(),
+            "Customized selection error"
+        );
+        assert_eq!(
+            errors.iter().map(ToString::to_string).collect::<Vec<_>>(),
+            expected
+        );
+    });
+    assert_eq!(
+        ExplorerTaskError::InvalidPlan {
+            message: LocalizedText::Raw("raw {diagnostic}".into())
+        }
+        .to_string(),
+        "raw {diagnostic}"
+    );
+}
