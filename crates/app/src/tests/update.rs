@@ -197,11 +197,17 @@ fn update_preparation_failures_never_touch_installation() {
 }
 
 pub(super) fn update_test_root(name: &str) -> PathBuf {
-    std::env::temp_dir().join(format!(
-        "tundra-update-{name}-{}-{}",
-        std::process::id(),
-        unix_millis()
-    ))
+    // macOS temp_dir() may start with /var or /tmp, which are symlinks.
+    // Document writes intentionally reject symlink ancestors, so fixtures must
+    // use the actual temporary directory rather than weakening that validation.
+    std::env::temp_dir()
+        .canonicalize()
+        .expect("canonical temporary directory")
+        .join(format!(
+            "tundra-update-{name}-{}-{}",
+            std::process::id(),
+            unix_millis()
+        ))
 }
 
 #[test]
@@ -358,18 +364,32 @@ fn update_api_rate_limit_at_any_step_uses_git_fallback() {
 fn update_failed_fallback_preserves_both_errors() {
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let address = listener.local_addr().unwrap();
-    drop(listener);
+    // A closed port may be answered by a system proxy with an HTTP error rather
+    // than a transport failure. Return an explicit API error from a live fixture.
+    let server = std::thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        stream.read(&mut [0; 2048]).unwrap();
+        let body = "fixture API failure";
+        write!(
+            stream,
+            "HTTP/1.1 503 Service Unavailable\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+            body.len()
+        )
+        .unwrap();
+    });
     let error = check_with_fallback(
         &current_build_identity(),
         &format!("http://{address}"),
         || Err(UpdateError::new("git missing")),
     )
     .unwrap_err();
-    assert!(error.to_string().contains("GitHub request failed"));
+    server.join().unwrap();
+    let message = error.to_string();
+    assert!(message.contains("GitHub returned HTTP 503"), "{message}");
+    assert!(message.contains("fixture API failure"), "{message}");
     assert!(
-        error
-            .to_string()
-            .contains("Git fallback failed: git missing")
+        message.contains("Git fallback failed: git missing"),
+        "{message}"
     );
 }
 
