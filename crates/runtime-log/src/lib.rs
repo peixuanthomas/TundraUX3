@@ -41,6 +41,8 @@ impl RuntimeLogEvent {
             phase,
             context,
             message: message.into(),
+            message_id: None,
+            message_args: Default::default(),
             error_code: None,
             os_error_code: None,
             error_chain: Vec::new(),

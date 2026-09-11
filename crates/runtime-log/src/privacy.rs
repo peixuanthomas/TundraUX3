@@ -102,10 +102,54 @@ fn path(value: &mut Option<PathBuf>) {
         *p = PathBuf::from(sanitize_text(&p.to_string_lossy()));
     }
 }
+
+fn sanitize_argument(value: &mut serde_json::Value) {
+    match value {
+        serde_json::Value::String(text) => *text = sanitize_text(text),
+        serde_json::Value::Array(items) => {
+            for item in items {
+                sanitize_argument(item);
+            }
+        }
+        serde_json::Value::Object(fields) => {
+            *fields = std::mem::take(fields)
+                .into_iter()
+                .map(|(key, mut value)| {
+                    let clean_key = sanitize_text(&key);
+                    if clean_key != key {
+                        value = serde_json::Value::String("[REDACTED]".into());
+                    } else {
+                        sanitize_argument(&mut value);
+                    }
+                    (clean_key, value)
+                })
+                .collect();
+        }
+        _ => {}
+    }
+}
+
 /// Bound and sanitize all externally supplied string fields before persistence.
 pub fn sanitize_event(event: &mut RuntimeLogEvent) {
     event.event_id = sanitize_text(&event.event_id);
     event.message = sanitize_text(&event.message);
+    opt(&mut event.message_id);
+    event.message_args = std::mem::take(&mut event.message_args)
+        .into_iter()
+        .take(16)
+        .map(|(key, mut value)| {
+            let clean_key = sanitize_text(&key);
+            if clean_key != key {
+                value = serde_json::Value::String("[REDACTED]".into());
+            } else if serde_json::to_vec(&value).map_or(true, |bytes| bytes.len() > MAX_TEXT_BYTES)
+            {
+                value = serde_json::Value::String("[argument omitted: size limit]".into());
+            } else {
+                sanitize_argument(&mut value);
+            }
+            (clean_key, value)
+        })
+        .collect();
     opt(&mut event.context.run_id);
     event.context.app = sanitize_text(&event.context.app);
     event.context.module = sanitize_text(&event.context.module);

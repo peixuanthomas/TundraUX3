@@ -420,6 +420,8 @@ mod implementation {
                 ..Default::default()
             },
             message,
+            message_id: None,
+            message_args: Default::default(),
             error_code: None,
             os_error_code: None,
             error_chain: vec![],

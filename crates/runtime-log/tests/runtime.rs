@@ -407,3 +407,69 @@ fn snapshots_and_records_share_configured_capacity() {
     drop(guard);
     assert!(reserve_storage_capacity(dir.path(), 4097).is_err());
 }
+
+#[test]
+fn localization_metadata_is_optional_in_schema_one() {
+    let original = event("alice", LogPhase::Succeeded, "Copied 2 items");
+    let encoded = serde_json::to_value(&original).unwrap();
+    assert_eq!(encoded["schema_version"], 1);
+    assert!(encoded.get("message_id").is_none());
+    assert!(encoded.get("message_args").is_none());
+    let restored: RuntimeLogEvent = serde_json::from_value(encoded.clone()).unwrap();
+    assert_eq!(restored, original);
+
+    let mut explicit_null = encoded;
+    explicit_null["message_id"] = serde_json::Value::Null;
+    explicit_null["message_args"] = serde_json::json!({});
+    assert_eq!(
+        serde_json::from_value::<RuntimeLogEvent>(explicit_null).unwrap(),
+        original
+    );
+}
+
+#[test]
+fn localization_metadata_survives_persistence_with_readable_fallback() {
+    let (dir, runtime) = setup();
+    let mut original = event("alice", LogPhase::Succeeded, "Copied 2 items");
+    original.message_id = Some("app-explorer-copied".into());
+    original
+        .message_args
+        .insert("count".into(), serde_json::json!(2));
+    original
+        .message_args
+        .insert("destination".into(), serde_json::json!("/tmp/文档"));
+    assert!(runtime.handle().record(original.clone()));
+    runtime.shutdown();
+    let result = query_logs(dir.path(), &LogQuery::default());
+    assert_eq!(result.events.len(), 1);
+    let restored = &result.events[0];
+    assert_eq!(restored.schema_version, 1);
+    assert_eq!(restored.message, original.message);
+    assert_eq!(restored.message_id, original.message_id);
+    assert_eq!(restored.message_args, original.message_args);
+}
+
+#[test]
+fn localization_metadata_obeys_metadata_privacy_limits() {
+    let mut original = event("alice", LogPhase::Failed, "Failed");
+    original
+        .message_args
+        .insert("password".into(), serde_json::json!("opaque-secret"));
+    original.message_args.insert(
+        "details".into(),
+        serde_json::json!({
+            "nested": ["token=secret-value", {"cookie": "session-value"}],
+            "count": 3
+        }),
+    );
+    original
+        .message_args
+        .insert("oversize".into(), serde_json::json!("x".repeat(10_000)));
+    sanitize_event(&mut original);
+    let encoded = serde_json::to_string(&original).unwrap();
+    for secret in ["opaque-secret", "secret-value", "session-value"] {
+        assert!(!encoded.contains(secret));
+    }
+    assert!(encoded.len() < 4096);
+    assert_eq!(original.message_args["details"]["count"], 3);
+}

@@ -1,5 +1,6 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -60,6 +61,11 @@ pub struct RuntimeLogEvent {
     pub phase: LogPhase,
     pub context: LogContext,
     pub message: String,
+    /// Optional localization metadata; `message` remains the readable fallback.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message_id: Option<String>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub message_args: BTreeMap<String, serde_json::Value>,
     pub error_code: Option<String>,
     pub os_error_code: Option<i64>,
     pub error_chain: Vec<String>,
