@@ -1,0 +1,6 @@
+#%PAM-1.0
+# Ubuntu/Debian complete login stack. pam_systemd is supplied by common-session.
+@include common-auth
+@include common-account
+@include common-password
+@include common-session

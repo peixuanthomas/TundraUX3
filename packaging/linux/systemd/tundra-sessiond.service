@@ -1,0 +1,21 @@
+[Unit]
+Description=Tundra Linux session lifecycle service
+After=dbus.service systemd-logind.service
+Requires=dbus.service systemd-logind.service
+
+[Service]
+Type=dbus
+BusName=org.tundra.Session1
+ExecStart=/usr/libexec/tundra/tundra-sessiond
+User=root
+UMask=0077
+Restart=on-failure
+RestartSec=2
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateTmp=yes
+# pam_systemd must move a dedicated PAM worker into its session scope.
+# Do not enable PrivateUsers or NoNewPrivileges on the authentication worker.
+
+[Install]
+WantedBy=multi-user.target

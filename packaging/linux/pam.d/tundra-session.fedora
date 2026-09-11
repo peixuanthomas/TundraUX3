@@ -1,0 +1,9 @@
+#%PAM-1.0
+# Install as /etc/pam.d/tundra-session on Fedora; system-auth/session provides pam_systemd.
+auth       substack     system-auth
+auth       include      postlogin
+account    include      system-auth
+password   include      system-auth
+session    required     pam_loginuid.so
+session    include      system-auth
+session    include      postlogin
