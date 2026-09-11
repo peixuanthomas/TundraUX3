@@ -53,8 +53,8 @@ pub(super) fn category_tabs() -> Tabs {
     Tabs::new(
         "logs.categories",
         vec![
-            TabItem::new("logs.ux", "UX log"),
-            TabItem::new("logs.linux", "Linux log"),
+            TabItem::new("logs.ux", i18n::tr!("ui-logs-ux-log")),
+            TabItem::new("logs.linux", i18n::tr!("ui-logs-linux-log")),
         ],
     )
 }
@@ -62,19 +62,21 @@ pub(super) fn section_tabs() -> Tabs {
     Tabs::new(
         "logs.sections",
         vec![
-            TabItem::new("logs.events", "Events"),
-            TabItem::new("logs.files", "Files"),
-            TabItem::new("logs.incidents", "Incidents"),
+            TabItem::new("logs.events", i18n::tr!("ui-logs-events")),
+            TabItem::new("logs.files", i18n::tr!("ui-logs-files")),
+            TabItem::new("logs.incidents", i18n::tr!("ui-logs-incidents")),
         ],
     )
 }
-pub(super) const CONTROLS: [(LogsHitTarget, &str); 5] = [
-    (LogsHitTarget::Refresh, "R Refresh"),
-    (LogsHitTarget::Open, "O Open"),
-    (LogsHitTarget::FilterLevel, "L Level"),
-    (LogsHitTarget::FilterModule, "M Module"),
-    (LogsHitTarget::FilterTime, "T Time"),
-];
+pub(super) fn controls() -> [(LogsHitTarget, String); 5] {
+    [
+        (LogsHitTarget::Refresh, i18n::tr!("ui-logs-r-refresh")),
+        (LogsHitTarget::Open, i18n::tr!("ui-logs-o-open")),
+        (LogsHitTarget::FilterLevel, i18n::tr!("ui-logs-l-level")),
+        (LogsHitTarget::FilterModule, i18n::tr!("ui-logs-m-module")),
+        (LogsHitTarget::FilterTime, i18n::tr!("ui-logs-t-time")),
+    ]
+}
 
 /// Geometry is derived from the same Tabs and diagnostics composition used to render.
 pub fn logs_layout(main: Rect, model: &LogsViewModel) -> LogsLayout {
@@ -115,10 +117,11 @@ pub fn logs_layout(main: Rect, model: &LogsViewModel) -> LogsLayout {
         Vec::new()
     };
     let mut x = toolbar.x;
-    let controls = CONTROLS
+    let controls = controls()
         .into_iter()
         .map(|(target, label)| {
-            let width = (label.len() as u16 + 2).min(toolbar.right().saturating_sub(x));
+            let width = (unicode_width::UnicodeWidthStr::width(label.as_str()) as u16 + 2)
+                .min(toolbar.right().saturating_sub(x));
             let area = Rect::new(x, toolbar.y, width, toolbar.height);
             x = x.saturating_add(width).saturating_add(1);
             LogsControlLayout { target, area }

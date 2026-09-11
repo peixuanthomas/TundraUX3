@@ -61,11 +61,11 @@ impl UserManagementFormViewModel {
         }
     }
 
-    pub fn submit_label(&self) -> &'static str {
+    pub fn submit_label(&self) -> String {
         match self.kind {
-            UserManagementFormKind::Create => "Create",
-            UserManagementFormKind::EditInfo => "Save",
-            UserManagementFormKind::Password => "Set password",
+            UserManagementFormKind::Create => i18n::tr!("ui-user-management-create"),
+            UserManagementFormKind::EditInfo => i18n::tr!("ui-user-management-save"),
+            UserManagementFormKind::Password => i18n::tr!("ui-user-management-set-password"),
         }
     }
 }
@@ -192,30 +192,43 @@ impl UserManagementViewModel {
     /// consistent.
     pub fn default_actions(&self) -> Vec<UserManagementActionViewModel> {
         let selected = self.selected_user();
-        let no_selection = "No user selected";
+        let no_selection = i18n::tr!("ui-user-management-no-user-selected");
         let target_action =
-            |action: UserManagementAction, label: &str, shortcut: char, dangerous: bool| {
+            |action: UserManagementAction, label: String, shortcut: char, dangerous: bool| {
                 let action = UserManagementActionViewModel::new(action, label)
                     .with_shortcut(shortcut)
                     .dangerous(dangerous);
                 if selected.is_some() {
                     action
                 } else {
-                    action.disabled(no_selection)
+                    action.disabled(&no_selection)
                 }
             };
 
         if !self.can_manage_all {
             return vec![
-                target_action(UserManagementAction::EditInfo, "Edit profile", 'E', false),
+                target_action(
+                    UserManagementAction::EditInfo,
+                    i18n::tr!("ui-user-management-edit-profile"),
+                    'E',
+                    false,
+                ),
                 target_action(
                     UserManagementAction::SetPassword,
-                    "Change password",
+                    i18n::tr!("ui-user-management-change-password"),
                     'R',
                     false,
                 ),
-                target_action(UserManagementAction::Delete, "Delete account", 'X', true),
-                UserManagementActionViewModel::new(UserManagementAction::Back, "Back"),
+                target_action(
+                    UserManagementAction::Delete,
+                    i18n::tr!("ui-user-management-delete-account"),
+                    'X',
+                    true,
+                ),
+                UserManagementActionViewModel::new(
+                    UserManagementAction::Back,
+                    i18n::tr!("ui-user-management-back"),
+                ),
             ];
         }
 
@@ -227,17 +240,19 @@ impl UserManagementViewModel {
         let last_enabled_admin = selected.is_some_and(|user| {
             user.enabled && user.role.eq_ignore_ascii_case("admin") && enabled_admin_count <= 1
         });
-        let protected_reason = "The last enabled administrator must remain available";
+        let protected_reason =
+            i18n::tr!("ui-user-management-the-last-enabled-administrator-must-remain-available");
 
-        let toggle_enabled_label = selected.map_or("Enable", |user| {
-            if user.locked {
-                "Unlock"
-            } else if user.enabled {
-                "Disable"
-            } else {
-                "Enable"
-            }
-        });
+        let toggle_enabled_label =
+            selected.map_or(i18n::tr!("ui-user-management-enable"), |user| {
+                if user.locked {
+                    i18n::tr!("ui-user-management-unlock")
+                } else if user.enabled {
+                    i18n::tr!("ui-user-management-disable")
+                } else {
+                    i18n::tr!("ui-user-management-enable")
+                }
+            });
         let toggle_enabled_shortcut = selected.map_or('U', |user| {
             if user.enabled && !user.locked {
                 'D'
@@ -245,13 +260,14 @@ impl UserManagementViewModel {
                 'U'
             }
         });
-        let toggle_role_label = selected.map_or("Make admin", |user| {
-            if user.role.eq_ignore_ascii_case("admin") {
-                "Make user"
-            } else {
-                "Make admin"
-            }
-        });
+        let toggle_role_label =
+            selected.map_or(i18n::tr!("ui-user-management-make-admin"), |user| {
+                if user.role.eq_ignore_ascii_case("admin") {
+                    i18n::tr!("ui-user-management-make-user")
+                } else {
+                    i18n::tr!("ui-user-management-make-admin")
+                }
+            });
 
         let mut toggle_enabled = target_action(
             UserManagementAction::ToggleEnabled,
@@ -265,29 +281,45 @@ impl UserManagementViewModel {
             'C',
             false,
         );
-        let mut delete = target_action(UserManagementAction::Delete, "Delete", 'X', true);
+        let mut delete = target_action(
+            UserManagementAction::Delete,
+            i18n::tr!("ui-user-management-delete"),
+            'X',
+            true,
+        );
         if last_enabled_admin {
             if selected.is_some_and(|user| user.enabled && !user.locked) {
-                toggle_enabled = toggle_enabled.disabled(protected_reason);
+                toggle_enabled = toggle_enabled.disabled(&protected_reason);
             }
-            toggle_role = toggle_role.disabled(protected_reason);
-            delete = delete.disabled(protected_reason);
+            toggle_role = toggle_role.disabled(&protected_reason);
+            delete = delete.disabled(&protected_reason);
         }
 
         vec![
-            UserManagementActionViewModel::new(UserManagementAction::NewUser, "New user")
-                .with_shortcut('N'),
-            target_action(UserManagementAction::EditInfo, "Edit", 'E', false),
+            UserManagementActionViewModel::new(
+                UserManagementAction::NewUser,
+                i18n::tr!("ui-user-management-new-user"),
+            )
+            .with_shortcut('N'),
+            target_action(
+                UserManagementAction::EditInfo,
+                i18n::tr!("ui-user-management-edit"),
+                'E',
+                false,
+            ),
             target_action(
                 UserManagementAction::SetPassword,
-                "Set password",
+                i18n::tr!("ui-user-management-set-password"),
                 'R',
                 false,
             ),
             toggle_enabled,
             toggle_role,
             delete,
-            UserManagementActionViewModel::new(UserManagementAction::Back, "Back"),
+            UserManagementActionViewModel::new(
+                UserManagementAction::Back,
+                i18n::tr!("ui-user-management-back"),
+            ),
         ]
     }
 }

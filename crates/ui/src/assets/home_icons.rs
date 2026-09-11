@@ -94,8 +94,8 @@ impl RuntimeAsciiAssets {
     pub fn home_icon_for_label(&self, label: &str) -> Option<&HomeIcon> {
         let catalog = self.home_icon_catalog();
         catalog
-            .icon_for_label(label)
-            .or_else(|| catalog.icon_for_key(label))
+            .icon_for_key(label)
+            .or_else(|| catalog.icon_for_label(label))
             .or_else(|| catalog.icon_for_key("default"))
     }
 }

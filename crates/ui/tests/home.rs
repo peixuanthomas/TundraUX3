@@ -9,13 +9,13 @@ use support::terminal_output;
 use ui::{
     AuthField, BootstrapAdminViewModel, ClockViewModel, DebugDiagnosticsViewModel,
     ExitConfirmViewModel, HomeDisplayMode, HomeIconRenderer, HomeViewModel, LoginField,
-    LoginUserOptionViewModel, LoginViewModel, NOTIFICATION_TOO_SMALL_MESSAGE,
-    NotificationActionViewModel, NotificationLayout, NotificationLevel, NotificationTone,
-    NotificationViewModel, ShellChromeViewModel, ShellEntry, ShellLayout, StatusViewModel,
-    TimeSyncDialogViewModel, TundraTheme, UserManagementUserViewModel, UserManagementViewModel,
-    compute_shell_layout, home_entry_icon_area, home_logout_area, login_password_area,
-    login_password_visibility_area, login_user_list_area, login_user_list_visible_rows,
-    notification_layout, render_bootstrap_admin, render_clock, render_exit_confirmation,
+    LoginUserOptionViewModel, LoginViewModel, NotificationActionViewModel, NotificationLayout,
+    NotificationLevel, NotificationTone, NotificationViewModel, ShellChromeViewModel, ShellEntry,
+    ShellLayout, StatusViewModel, TimeSyncDialogViewModel, TundraTheme,
+    UserManagementUserViewModel, UserManagementViewModel, compute_shell_layout,
+    home_entry_icon_area, home_logout_area, login_password_area, login_password_visibility_area,
+    login_user_list_area, login_user_list_visible_rows, notification_layout,
+    notification_too_small_message, render_bootstrap_admin, render_clock, render_exit_confirmation,
     render_home, render_home_with_icons, render_login, render_notification_overlay,
     render_time_sync_failure_dialog, render_user_management, status_time_button_area,
 };
@@ -674,7 +674,7 @@ fn time_sync_failure_dialog_renders_expected_content() {
 
     let output = terminal_output(&dialog_terminal);
     assert!(output.contains("Time Sync"));
-    assert!(visible_text_without_spaces(&output).contains("联网校准时间失败"));
+    assert!(visible_text_without_spaces(&output).contains("Timesynchronizationfailed"));
 }
 
 #[test]
@@ -797,8 +797,9 @@ fn notification_overlay_renders_modal_actions_and_replaces_too_small_terminal_co
 
     let narrow_output = terminal_output(&narrow);
     assert!(
-        visible_text_without_spaces(&narrow_output)
-            .contains(&visible_text_without_spaces(NOTIFICATION_TOO_SMALL_MESSAGE))
+        visible_text_without_spaces(&narrow_output).contains(&visible_text_without_spaces(
+            &notification_too_small_message()
+        ))
     );
     assert!(!narrow_output.contains("BACKGROUND CONTENT"));
     assert!(!narrow_output.contains("Delete File"));

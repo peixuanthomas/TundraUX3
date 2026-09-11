@@ -180,7 +180,7 @@ fn all_kinds_and_sizes_and_states_render() {
             let mut m = model();
             m.dashboard.wide_widgets = vec![widget(kind, size, 0, 0)];
             let out = render(100, 24, &m);
-            assert!(out.contains(kind.label()));
+            assert!(out.contains(&kind.label()));
             assert!(out.contains("42%"));
             assert!(out.contains("secondary"));
             if size == SystemStatusWidgetSize::Large {
@@ -250,7 +250,7 @@ fn diagnostics_logs_and_incidents_are_independent_system_status_modules() {
             l.canvas.y
         );
         let out = render(120, 28, &m);
-        assert!(out.contains(detail.label()));
+        assert!(out.contains(&detail.label()));
         assert!(!out.contains("O Open logs"));
         assert!(!out.contains("Tab Switch"));
     }
@@ -597,7 +597,10 @@ fn overview_shows_usage_graphs_and_preserves_missing_and_stale_states() {
     for (w, h) in [(80, 24), (100, 24), (120, 40)] {
         let output = render(w, h, &m);
         for kind in kinds {
-            assert!(output.contains(kind.label()), "missing {kind:?} at {w}x{h}");
+            assert!(
+                output.contains(&kind.label()),
+                "missing {kind:?} at {w}x{h}"
+            );
         }
         assert!(output.contains("Stale"));
         assert!(output.contains("Unavailable"));

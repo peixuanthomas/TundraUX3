@@ -273,7 +273,7 @@ fn render_command_line_main(
     context: &RenderContext,
 ) {
     Surface::new()
-        .titled("Command Line")
+        .titled(i18n::tr!("ui-command-line-command-line"))
         .bordered(true)
         .render_frame(frame, main, context);
 
@@ -297,8 +297,10 @@ fn render_command_line_main(
 }
 
 fn render_size_blocker(frame: &mut Frame<'_>, area: Rect, theme: &TundraTheme) {
-    let message = format!(
-        "Command Line needs at least {MIN_COMMAND_LINE_TERMINAL_WIDTH}x{MIN_COMMAND_LINE_TERMINAL_HEIGHT} terminal cells. Resize to continue."
+    let message = i18n::tr!(
+        "ui-command-line-minimum-size",
+        min_command_line_terminal_width = MIN_COMMAND_LINE_TERMINAL_WIDTH,
+        min_command_line_terminal_height = MIN_COMMAND_LINE_TERMINAL_HEIGHT
     );
     frame.render_widget(
         Paragraph::new(message)
@@ -319,11 +321,11 @@ fn command_line_process_message(
     match &model.process_state {
         CommandLineProcessState::Running => None,
         CommandLineProcessState::Exited { code } => Some((
-            format!("CLI exited ({code}); Enter restart · Esc Launcher"),
+            i18n::tr!("ui-command-line-exited", code = *code),
             theme.muted_style(),
         )),
         CommandLineProcessState::Failed { message } => Some((
-            format!("{message} · Enter restart · Esc Launcher"),
+            i18n::tr!("ui-command-line-failed", message = message),
             theme.error_style(),
         )),
     }

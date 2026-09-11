@@ -71,7 +71,10 @@ impl PanicScreen {
             return;
         }
         let header = Rect::new(area.x, area.y, area.width, 1);
-        frame.render_widget(Paragraph::new("PANIC").style(style), header);
+        frame.render_widget(
+            Paragraph::new(i18n::tr!("ui-panic-title")).style(style),
+            header,
+        );
         let body = Rect::new(
             area.x,
             area.y.saturating_add(1),
@@ -92,9 +95,9 @@ impl PanicScreen {
         if area.height > 1 {
             let footer = Rect::new(area.x, area.bottom() - 1, area.width, 1);
             let help = if self.max_scroll > 0 {
-                "R: Restart | Q: Exit | Up/Down: Scroll"
+                i18n::tr!("ui-panic-help-scroll")
             } else {
-                "R: Restart | Q: Exit"
+                i18n::tr!("ui-panic-help")
             };
             frame.render_widget(Paragraph::new(help).style(style), footer);
         }

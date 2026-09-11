@@ -3,8 +3,8 @@ mod model;
 mod render;
 
 pub use layout::{
-    NOTIFICATION_TOO_SMALL_MESSAGE, NotificationActionLayout, NotificationDialogLayout,
-    NotificationLayout, notification_layout,
+    NotificationActionLayout, NotificationDialogLayout, NotificationLayout, notification_layout,
+    notification_too_small_message,
 };
 pub use model::{
     NotificationActionViewModel, NotificationLevel, NotificationTone, NotificationViewModel,

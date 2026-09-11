@@ -31,32 +31,44 @@ impl UiStyleVersion {
         }
     }
 
-    pub const fn title(self) -> &'static str {
+    pub fn title(self) -> String {
         match self {
-            Self::Glacier => "Glacier / native widgets",
-            Self::Tea => "Tea / minimal flow",
-            Self::Spring => "Spring / animated cards",
+            Self::Glacier => i18n::tr!("ui-style-preview-glacier-native-widgets"),
+            Self::Tea => i18n::tr!("ui-style-preview-tea-minimal-flow"),
+            Self::Spring => i18n::tr!("ui-style-preview-spring-animated-cards"),
         }
     }
 
-    pub const fn description(self) -> &'static str {
-        match self {
-            Self::Glacier => "Bordered panels, stepped progress, tachyonfx sweep.",
-            Self::Tea => "Borderless list and form, message-driven cubic progress.",
-            Self::Spring => "Raised cards, retargetable spring progress, soft reveal.",
-        }
-    }
-
-    pub const fn technique(self) -> &'static str {
+    pub fn description(self) -> String {
         match self {
             Self::Glacier => {
-                "Existing List + TextInput + Button + Dialog; Ratatui Gauge; tachyonfx after widget rendering."
+                i18n::tr!("ui-style-preview-bordered-panels-stepped-progress-tachyonfx-sweep")
             }
             Self::Tea => {
-                "Bubble Tea-inspired Model / Message / Update / View. Targets change immediately; the displayed value eases over 450 ms."
+                i18n::tr!("ui-style-preview-borderless-list-and-form-message-driven-cubic-progress")
             }
             Self::Spring => {
-                "Position + velocity + target persist across frames. A damped spring follows new targets without restarting its velocity."
+                i18n::tr!("ui-style-preview-raised-cards-retargetable-spring-progress-soft-reveal")
+            }
+        }
+    }
+
+    pub fn technique(self) -> String {
+        match self {
+            Self::Glacier => {
+                i18n::tr!(
+                    "ui-style-preview-existing-list-textinput-button-dialog-ratatui-gauge-tachyonfx-after-widget-rendering"
+                )
+            }
+            Self::Tea => {
+                i18n::tr!(
+                    "ui-style-preview-bubble-tea-inspired-model-message-update-view-targets-change-immediately-the-displayed-val"
+                )
+            }
+            Self::Spring => {
+                i18n::tr!(
+                    "ui-style-preview-position-velocity-target-persist-across-frames-a-damped-spring-follows-new-targets-without"
+                )
             }
         }
     }
@@ -178,8 +190,12 @@ pub fn render_preview(frame: &mut Frame<'_>, view: &PreviewView<'_>, context: &R
     Surface::new().render_frame(frame, area, context);
     let layout = preview_layout(area, view.version);
     if !layout.usable {
-        frame.render_widget(Paragraph::new("UI style preview needs at least 60 x 24 cells.\nResize to continue. Esc / Ctrl-C exits.")
-            .style(theme.body_style()).wrap(Wrap { trim: false }), area);
+        frame.render_widget(
+            Paragraph::new(i18n::tr!("ui-style-preview-minimum-size"))
+                .style(theme.body_style())
+                .wrap(Wrap { trim: false }),
+            area,
+        );
         return;
     }
     let [title, subtitle] =
@@ -223,8 +239,8 @@ pub fn render_preview(frame: &mut Frame<'_>, view: &PreviewView<'_>, context: &R
     let selected = view
         .list
         .selected_item()
-        .map(|item| item.label.as_str())
-        .unwrap_or("Preview");
+        .map(|item| item.label.clone())
+        .unwrap_or_else(|| i18n::tr!("ui-style-preview-preview"));
     let surface = Surface::new()
         .titled(format!(" {selected} "))
         .bordered(view.version != UiStyleVersion::Tea)
@@ -238,11 +254,15 @@ pub fn render_preview(frame: &mut Frame<'_>, view: &PreviewView<'_>, context: &R
     );
 
     let meter = Surface::new()
-        .titled(" Simulated task ")
+        .titled(i18n::tr!("ui-style-preview-simulated-task-padded"))
         .bordered(view.version != UiStyleVersion::Tea)
         .raised(view.version == UiStyleVersion::Spring);
     meter.render_frame(frame, layout.progress, context);
-    let status = if view.running { "Running" } else { "Settled" };
+    let status = if view.running {
+        i18n::tr!("ui-style-preview-running")
+    } else {
+        i18n::tr!("ui-style-preview-settled")
+    };
     let progress_area = if view.version == UiStyleVersion::Tea {
         Layout::vertical([Constraint::Length(1)])
             .flex(Flex::Center)
@@ -252,10 +272,11 @@ pub fn render_preview(frame: &mut Frame<'_>, view: &PreviewView<'_>, context: &R
     };
     frame.render_widget(
         ProgressGauge::new(
-            format!(
-                "{status}  {:.0}%  / target {:.0}%",
-                view.displayed * 100.0,
-                view.target * 100.0
+            i18n::tr!(
+                "ui-style-preview-progress",
+                status = status,
+                progress = format!("{:.0}", view.displayed * 100.0),
+                target = format!("{:.0}", view.target * 100.0)
             ),
             view.displayed,
             tokens.accent,
@@ -266,12 +287,14 @@ pub fn render_preview(frame: &mut Frame<'_>, view: &PreviewView<'_>, context: &R
     );
 
     let motion = if context.motion.reduced_motion {
-        "off"
+        i18n::tr!("ui-style-preview-motion-off")
     } else {
-        "on"
+        i18n::tr!("ui-style-preview-motion-on")
     };
-    frame.render_widget(Paragraph::new(format!(
-        "F1-F3 style | F4 motion {motion} | F5 replay | Esc back/exit\nTab/Shift-Tab focus | Arrows/mouse select | Enter activate\nType in the field. Demo only; no preferences are saved."
-    )).style(theme.muted_style()), layout.footer);
+    frame.render_widget(
+        Paragraph::new(i18n::tr!("ui-style-preview-help", motion = motion))
+            .style(theme.muted_style()),
+        layout.footer,
+    );
     view.dialog.render_frame(frame, layout.dialog, &theme);
 }

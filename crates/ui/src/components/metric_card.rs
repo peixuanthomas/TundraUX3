@@ -50,17 +50,18 @@ impl<'a> MetricCard<'a> {
         surface.render_frame(frame, area, &card_context);
         match &self.model.state {
             SystemStatusWidgetState::Loading => {
-                EmptyState::new("Loading...").render_frame(frame, inner, context);
+                EmptyState::new(i18n::tr!("ui-components-loading"))
+                    .render_frame(frame, inner, context);
                 return;
             }
             SystemStatusWidgetState::Unavailable { message } => {
-                EmptyState::new("Unavailable")
+                EmptyState::new(i18n::tr!("ui-components-unavailable"))
                     .detail(message)
                     .render_frame(frame, inner, context);
                 return;
             }
             SystemStatusWidgetState::Stale { message } if self.model.primary.is_empty() => {
-                EmptyState::new("Stale data")
+                EmptyState::new(i18n::tr!("ui-components-stale-data"))
                     .detail(message)
                     .render_frame(frame, inner, context);
                 return;
@@ -131,7 +132,7 @@ impl<'a> MetricCard<'a> {
         }
         if let Some(message) = stale {
             lines.push(Line::styled(
-                format!("Stale: {message}"),
+                i18n::tr!("ui-components-stale-message", message = message),
                 Style::default().fg(context.theme.warning),
             ));
         }

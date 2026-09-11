@@ -1,0 +1,42 @@
+# UI settings messages.
+
+ui-settings-appearance = 外观
+ui-settings-region-time = 区域与时间
+ui-settings-system = 系统
+ui-settings-file-explorer = 文件管理器
+ui-settings-editor = 编辑器
+ui-settings-update = 更新
+ui-settings-theme-motion-icons-colors-and-borders = 主题、动画、图标、颜色和边框
+ui-settings-language-city-and-timezone = 语言、城市和时区
+ui-settings-storage-pressure-warning-thresholds = 存储空间压力警告阈值
+ui-settings-display-sorting-and-safety = 显示、排序和安全
+ui-settings-cursor-and-file-associations = 光标和文件关联
+ui-settings-version-commits-and-source-updates = 版本、提交记录和源码更新
+ui-settings-settings-padded = { " " }设置{ " " }
+ui-settings-sections-padded = { " " }分区{ " " }
+ui-settings-preview-padded = { " " }预览{ " " }
+ui-settings-live-preview = 实时预览
+ui-settings-selected-controls-use-the-accent-color = 选中的控件使用强调色。
+ui-settings-commits-padded = { " " }提交记录{ " " }
+ui-settings-cancel-button = { "[" }取消]
+ui-settings-choose-a-setting = 请选择设置项。
+ui-settings-search-padded = 搜索：{ " " }
+ui-settings-arrows-choose-enter-apply-esc-back = 方向键：选择    Enter：应用    Esc：返回
+ui-settings-arrows-choose-enter-apply-esc-cancel = 方向键：选择    Enter：应用    Esc：取消
+ui-settings-enter-a-color-as-rrggbb = 请输入 #RRGGBB 格式的颜色。
+ui-settings-enter-apply-esc-cancel = Enter：应用    Esc：取消
+ui-settings-enter-a-detailed-city-or-address-using-english-characters = 请使用英文字符输入详细城市或地址。
+ui-settings-leave-empty-to-use-the-timezone-location = 留空则使用时区位置。
+ui-settings-enter-continue-esc-cancel = Enter：继续    Esc：取消
+ui-settings-weather-location-padded = { " " }天气位置{ " " }
+ui-settings-enter-comma-separated-filename-suffixes-explorer-should-open-here = 请输入要在此处打开的文件扩展名，以逗号分隔。
+ui-settings-examples-md-txt-rs-d-ts-matching-is-case-insensitive = 例如：.md、.txt、.rs、.d.ts（匹配时不区分大小写）
+ui-settings-leave-empty-to-always-use-the-system-default-enter-save-esc-cancel = 留空则始终使用系统默认程序。  Enter：保存  Esc：取消
+ui-settings-explorer-files-opened-in-editor-padded = { " " }在编辑器中打开的文件类型{ " " }
+ui-settings-synchronizing-with-this-server = 正在与此服务器同步…
+ui-settings-enter-an-http-s-endpoint-that-returns-a-valid-date-response-header = 请输入返回有效 Date 响应头的 HTTP(S) 地址。
+ui-settings-the-address-is-saved-only-after-a-successful-synchronization-test = 仅在同步测试成功后保存地址。
+ui-settings-enter-test-and-save-esc-cancel = Enter：测试并保存    Esc：取消
+ui-settings-time-synchronization-server-padded = { " " }时间同步服务器{ " " }
+
+ui-settings-locked-value = { $value } 已锁定

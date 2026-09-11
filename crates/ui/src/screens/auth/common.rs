@@ -14,7 +14,7 @@ pub(super) fn render_auth_screen(
     frame: &mut Frame<'_>,
     area: Rect,
     chrome: &ShellChromeViewModel,
-    title: &'static str,
+    title: &str,
     lines: Vec<Line<'static>>,
     theme: &TundraTheme,
 ) {

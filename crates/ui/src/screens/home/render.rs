@@ -1,3 +1,4 @@
+use crate::components::terminal_width;
 use ratatui::Frame;
 use ratatui::layout::{HorizontalAlignment, Rect};
 use ratatui::text::Line;
@@ -87,7 +88,7 @@ fn render_user_main(
 ) {
     let theme = &context.compatibility_theme();
     Surface::new()
-        .titled("Home")
+        .titled(i18n::tr!("ui-home-home"))
         .bordered(false)
         .render_frame(frame, area, context);
 
@@ -121,8 +122,9 @@ fn render_user_main(
         let icon_area = home_entry_icon_area(tile);
         let rendered_graphic = icon_area.width > 0
             && icon_area.height > 0
-            && icons.is_some_and(|icons| icons.render_icon(&entry.label, frame, icon_area));
-        if !rendered_graphic && let Some(icon) = home.home_icon_for_label(&entry.label) {
+            && icons
+                .is_some_and(|icons| icons.render_icon(entry.icon_identity(), frame, icon_area));
+        if !rendered_graphic && let Some(icon) = home.home_icon_for_label(entry.icon_identity()) {
             for (row, line) in icon
                 .lines()
                 .iter()
@@ -175,11 +177,11 @@ fn render_user_main(
     }
 
     let controls_text = if home.logout_visible() && home.entries().is_empty() {
-        "Tab: focus Logout / Clock    L: Logout    Q / Esc: exit"
+        i18n::tr!("ui-home-tab-focus-logout-clock-l-logout-q-esc-exit")
     } else if home.logout_visible() {
-        "Arrows: select    Enter: open    E: explorer    U: users    L: Logout    Q / Esc: exit"
+        i18n::tr!("ui-home-arrows-select-enter-open-e-explorer-u-users-l-logout-q-esc-exit")
     } else {
-        "Arrows: select    Enter: open    E: explorer    U: users    Q / Esc: exit"
+        i18n::tr!("ui-home-arrows-select-enter-open-e-explorer-u-users-q-esc-exit")
     };
     frame.render_widget(
         Paragraph::new(Line::from(controls_text))
@@ -206,16 +208,17 @@ fn render_home_account_summary(
     } else {
         summary.width
     };
-    let user = home.current_user.as_deref().unwrap_or("Unknown user");
+    let fallback = i18n::tr!("ui-home-unknown-user");
+    let user = home.current_user.as_deref().unwrap_or(&fallback);
     frame.render_widget(
-        Paragraph::new(Line::from(format!("User: {user}")))
+        Paragraph::new(Line::from(i18n::tr!("ui-home-current-user", user = user)))
             .alignment(HorizontalAlignment::Left)
             .style(theme.body_style())
             .wrap(Wrap { trim: true }),
         Rect::new(summary.x, summary.y, user_width, summary.height),
     );
     if logout.width > 0 {
-        let mut button = Button::new("home.logout", "[Logout]");
+        let mut button = Button::new("home.logout", i18n::tr!("ui-home-logout-button"));
         button.state.selected = home.logout_selected();
         button.render_borderless_frame(frame, logout, theme);
     }
@@ -328,16 +331,13 @@ pub fn home_logout_area(main: Rect, home: &HomeViewModel) -> Rect {
         return Rect::new(summary.x.saturating_add(summary.width), summary.y, 0, 0);
     }
 
-    const LOGOUT_LABEL_WIDTH: u16 = 8;
+    let logout_label_width =
+        u16::try_from(terminal_width(&i18n::tr!("ui-home-logout-button"))).unwrap_or(u16::MAX);
     const ACCOUNT_LOGOUT_GAP: u16 = 2;
-    let width = LOGOUT_LABEL_WIDTH.min(summary.width);
-    let user_width = home
-        .current_user
-        .as_deref()
-        .unwrap_or("Unknown user")
-        .chars()
-        .count()
-        .saturating_add("User: ".len());
+    let width = logout_label_width.min(summary.width);
+    let fallback = i18n::tr!("ui-home-unknown-user");
+    let user = home.current_user.as_deref().unwrap_or(&fallback);
+    let user_width = terminal_width(&i18n::tr!("ui-home-current-user", user = user));
     let desired_offset = u16::try_from(user_width)
         .unwrap_or(u16::MAX)
         .saturating_add(ACCOUNT_LOGOUT_GAP);

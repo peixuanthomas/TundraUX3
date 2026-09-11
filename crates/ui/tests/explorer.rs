@@ -428,7 +428,7 @@ fn explorer_toolbar_renders_actual_shortcuts_at_narrow_and_wide_widths() {
             );
             if width == 200 {
                 assert!(button.show_label);
-                assert!(text.contains(button.action.label()), "{text}");
+                assert!(text.contains(&button.action.label()), "{text}");
             }
             assert_eq!(
                 layout.hit_test(button.area.x, button.area.y),

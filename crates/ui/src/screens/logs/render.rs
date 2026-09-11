@@ -1,4 +1,4 @@
-use super::layout::{CONTROLS, category_tabs, section_tabs};
+use super::layout::{category_tabs, controls, section_tabs};
 use super::{LogsCategory, LogsSection, LogsViewModel, logs_layout};
 use crate::components::{Button, Surface};
 use crate::screens::diagnostics::render_diagnostics_content_titled;
@@ -13,20 +13,22 @@ use ratatui::{
     widgets::{Paragraph, Wrap},
 };
 
-pub(super) fn unavailable_reason(model: &LogsViewModel) -> Option<&'static str> {
+pub(super) fn unavailable_reason(model: &LogsViewModel) -> Option<String> {
     if model.category == LogsCategory::Linux {
         if !model.linux_available {
-            return Some(
-                "Linux log is unavailable on Windows and macOS. UX log remains available.",
-            );
+            return Some(i18n::tr!(
+                "ui-logs-linux-log-is-unavailable-on-windows-and-macos-ux-log-remains-available"
+            ));
         }
         if !model.can_view_system {
-            return Some(
-                "Linux log requires administrator access and operating system log permissions.",
-            );
+            return Some(i18n::tr!(
+                "ui-logs-linux-log-requires-administrator-access-and-operating-system-log-permissions"
+            ));
         }
     } else if !model.diagnostics.can_view_details {
-        return Some("Sign in to view your UX log. Guest access is disabled.");
+        return Some(i18n::tr!(
+            "ui-logs-sign-in-to-view-your-ux-log-guest-access-is-disabled"
+        ));
     }
     None
 }
@@ -55,17 +57,17 @@ pub(super) fn content_model(model: &LogsViewModel) -> DiagnosticsViewModel {
                     _ => DiagnosticsStatus::Pass,
                 },
                 summary: event.summary.clone(),
-                detail: format!(
-                    "Time: {}\nLevel: {}\nEvent: {}\nOperation: {}\n{}{}",
-                    event.timestamp,
-                    event.level,
-                    event.id,
-                    event.operation,
-                    event.detail,
-                    event
+                detail: i18n::tr!(
+                    "ui-logs-event-detail",
+                    time = event.timestamp.clone(),
+                    level = event.level.clone(),
+                    event = event.id.clone(),
+                    operation = event.operation.clone(),
+                    detail = event.detail.clone(),
+                    incident = event
                         .incident_id
                         .as_ref()
-                        .map(|id| format!("\nIncident: {id}"))
+                        .map(|id| i18n::tr!("ui-logs-incident-link", id = id.as_str()))
                         .unwrap_or_default()
                 ),
                 remediation: String::new(),
@@ -100,11 +102,10 @@ pub fn render_logs_with_context(
         ShellLayout::Full { top, main, status } => {
             render_top(frame, top, chrome, &theme);
             let layout = logs_layout(main, model);
-            Surface::new().titled("Logs").bordered(false).render_frame(
-                frame,
-                layout.panel,
-                context,
-            );
+            Surface::new()
+                .titled(i18n::tr!("ui-logs-logs"))
+                .bordered(false)
+                .render_frame(frame, layout.panel, context);
             let mut categories = category_tabs();
             categories.set_selected(Some(usize::from(model.category == LogsCategory::Linux)));
             categories.render_borderless_frame(frame, layout.category_tabs_area, &theme);
@@ -119,7 +120,7 @@ pub fn render_logs_with_context(
             }
             let unavailable = unavailable_reason(model);
             let content = content_model(model);
-            for (control, (target, label)) in layout.controls.iter().zip(CONTROLS) {
+            for (control, (target, label)) in layout.controls.iter().zip(controls()) {
                 let mut button = Button::new(format!("logs.{target:?}"), label);
                 button.set_disabled(
                     unavailable.is_some()
@@ -130,9 +131,9 @@ pub fn render_logs_with_context(
             }
             frame.render_widget(
                 Paragraph::new(if model.loading {
-                    "Loading logs..."
+                    i18n::tr!("ui-logs-loading-logs")
                 } else {
-                    &model.filter_summary
+                    model.filter_summary.clone()
                 })
                 .style(theme.muted_style()),
                 layout.filter_summary,
@@ -155,12 +156,12 @@ pub fn render_logs_with_context(
                 );
             } else {
                 let title = if model.category == LogsCategory::Linux {
-                    "Linux events"
+                    i18n::tr!("ui-logs-linux-events")
                 } else {
                     match model.section {
-                        LogsSection::Events => "UX events",
-                        LogsSection::Files => "Log files",
-                        LogsSection::Incidents => "Incidents",
+                        LogsSection::Events => i18n::tr!("ui-logs-ux-events"),
+                        LogsSection::Files => i18n::tr!("ui-logs-log-files"),
+                        LogsSection::Incidents => i18n::tr!("ui-logs-incidents"),
                     }
                 };
                 render_diagnostics_content_titled(
@@ -169,21 +170,21 @@ pub fn render_logs_with_context(
                     &content,
                     &theme,
                     context,
-                    title,
+                    &title,
                     (model.category == LogsCategory::Linux || model.section == LogsSection::Events)
                         .then_some((
                             if model.loading {
-                                "Loading events..."
+                                i18n::tr!("ui-logs-loading-events")
                             } else {
-                                "No events match the current query"
+                                i18n::tr!("ui-logs-no-events-match-the-current-query")
                             },
-                            "Select an event to inspect its operation and correlation identifiers.",
+                            i18n::tr!("ui-logs-select-an-event-to-inspect-its-operation-and-correlation-identifiers"),
                         )),
                 );
             }
             frame.render_widget(
                 Paragraph::new(model.feedback.as_deref().unwrap_or(
-                    "Esc Back · ←/→ Category · Tab Section · Enter/O Open read-only · R Refresh · I/E Link",
+                    &i18n::tr!("ui-logs-esc-back-category-tab-section-enter-o-open-read-only-r-refresh-i-e-link"),
                 ))
                 .style(theme.muted_style()),
                 layout.footer,

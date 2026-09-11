@@ -72,8 +72,8 @@ impl CommandPalette {
 
     pub fn new(id: impl Into<ComponentId>, commands: Vec<CommandPaletteCommand>) -> Self {
         let id = id.into();
-        let mut query_input =
-            TextInput::new(format!("{}.query", id.as_str())).with_placeholder("Type a command");
+        let mut query_input = TextInput::new(format!("{}.query", id.as_str()))
+            .with_placeholder(i18n::tr!("ui-components-type-a-command"));
         query_input.set_focused(false);
         let mut results = Self::make_results(&id, &commands, "");
         results.set_focused(false);
@@ -398,7 +398,7 @@ impl CommandPalette {
     fn block(&self, theme: &TundraTheme) -> ratatui::widgets::Block<'static> {
         theme
             .block()
-            .title("Command Palette")
+            .title(i18n::tr!("ui-components-command-palette"))
             .borders(Borders::ALL)
             .style(theme.body_style())
     }

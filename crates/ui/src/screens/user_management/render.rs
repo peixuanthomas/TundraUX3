@@ -53,22 +53,17 @@ fn render_user_management_main(
 ) {
     let layout = user_management_layout(main, model);
     Surface::new()
-        .titled("User Management")
+        .titled(i18n::tr!("ui-user-management-user-management"))
         .bordered(false)
         .render_frame(frame, layout.panel, context);
 
     render_clock_line(
         frame,
         layout.summary,
-        format!(
-            "Signed in: {}    {} {}",
-            model.current_user,
-            model.users.len(),
-            if model.users.len() == 1 {
-                "user"
-            } else {
-                "users"
-            }
+        i18n::tr!(
+            "ui-user-management-summary",
+            user = model.current_user.clone(),
+            count = model.users.len()
         ),
         theme.body_style(),
         HorizontalAlignment::Left,
@@ -79,7 +74,7 @@ fn render_user_management_main(
     render_clock_line(
         frame,
         layout.help,
-        "↑↓ Select · Tab Actions · Enter Activate · Esc Back".to_string(),
+        i18n::tr!("ui-user-management-select-tab-actions-enter-activate-esc-back"),
         theme.muted_style(),
         HorizontalAlignment::Left,
     );
@@ -139,7 +134,7 @@ fn render_user_management_table(
         render_clock_line(
             frame,
             empty,
-            "  No users available".to_string(),
+            i18n::tr!("ui-user-management-no-users-available-padded"),
             theme.muted_style(),
             HorizontalAlignment::Left,
         );
@@ -232,12 +227,22 @@ fn render_user_management_form(
     }
 
     let prompt = match (layout.compact, form.kind) {
-        (true, UserManagementFormKind::Create) => "Create user — User or Admin account".to_string(),
+        (true, UserManagementFormKind::Create) => {
+            i18n::tr!("ui-user-management-create-user-user-or-admin-account")
+        }
         (true, _) => form.title.clone(),
-        (false, UserManagementFormKind::Create) => "Create a User or Admin account.".to_string(),
-        (false, UserManagementFormKind::EditInfo) => format!("Editing: {}", form.username),
+        (false, UserManagementFormKind::Create) => {
+            i18n::tr!("ui-user-management-create-a-user-or-admin-account")
+        }
+        (false, UserManagementFormKind::EditInfo) => i18n::tr!(
+            "ui-user-management-editing",
+            username = form.username.clone()
+        ),
         (false, UserManagementFormKind::Password) => {
-            format!("Set a new password for {}.", form.username)
+            i18n::tr!(
+                "ui-user-management-password-for",
+                username = form.username.clone()
+            )
         }
     };
     render_clock_line(
@@ -252,17 +257,17 @@ fn render_user_management_form(
         let input = match field.field {
             UserManagementField::Username => Some((
                 "user-management.form.username",
-                "Username",
+                i18n::tr!("ui-user-management-username"),
                 form.username.clone(),
             )),
             UserManagementField::DisplayName => Some((
                 "user-management.form.display-name",
-                "Display name",
+                i18n::tr!("ui-user-management-display-name"),
                 form.display_name.clone(),
             )),
             UserManagementField::Password => Some((
                 "user-management.form.password",
-                "Password",
+                i18n::tr!("ui-user-management-password"),
                 "*".repeat(form.password_len),
             )),
             UserManagementField::Role => None,
@@ -273,7 +278,7 @@ fn render_user_management_form(
                 frame,
                 field.area,
                 id,
-                label,
+                &label,
                 value,
                 form.focused_field == field.field,
                 theme,
@@ -284,7 +289,7 @@ fn render_user_management_form(
                 field.area,
                 "user-management.form.role",
                 fit_cell(
-                    &format!("Role: {}  ◀/▶", form.role),
+                    &i18n::tr!("ui-user-management-role-picker", role = form.role.clone()),
                     usize::from(field.area.width),
                 ),
                 form.focused_field == field.field,
@@ -313,7 +318,7 @@ fn render_user_management_form(
         frame,
         layout.cancel,
         "user-management.form.cancel",
-        "[ Cancel ]",
+        i18n::tr!("ui-user-management-cancel-button"),
         form.focused_field == UserManagementField::Cancel,
         theme,
     );
@@ -323,7 +328,7 @@ fn render_user_management_input(
     frame: &mut Frame<'_>,
     area: Rect,
     id: &'static str,
-    label: &'static str,
+    label: &str,
     value: String,
     focused: bool,
     theme: &TundraTheme,
@@ -392,14 +397,14 @@ fn render_user_management_button(
 
 fn user_management_status(user: &UserManagementUserViewModel) -> String {
     let mut status = if !user.enabled {
-        "Disabled".to_string()
+        i18n::tr!("ui-user-management-disabled")
     } else if user.locked {
-        "Locked".to_string()
+        i18n::tr!("ui-user-management-locked")
     } else {
-        "Enabled".to_string()
+        i18n::tr!("ui-user-management-enabled")
     };
     if user.is_current {
-        status.push_str(" · You");
+        status = i18n::tr!("ui-user-management-current-status", status = status);
     }
     status
 }
@@ -439,13 +444,22 @@ fn user_management_column_widths(width: u16, mode: UserManagementColumnMode) -> 
 
 fn user_management_header_cells(mode: UserManagementColumnMode, widths: &[u16]) -> Vec<String> {
     let labels = match mode {
-        UserManagementColumnMode::Detailed => vec!["USERNAME", "DISPLAY NAME", "ROLE", "STATUS"],
-        UserManagementColumnMode::Account => vec!["ACCOUNT", "ROLE", "STATUS"],
+        UserManagementColumnMode::Detailed => vec![
+            i18n::tr!("ui-user-management-header-username"),
+            i18n::tr!("ui-user-management-header-display-name"),
+            i18n::tr!("ui-user-management-role"),
+            i18n::tr!("ui-user-management-status"),
+        ],
+        UserManagementColumnMode::Account => vec![
+            i18n::tr!("ui-user-management-account"),
+            i18n::tr!("ui-user-management-role"),
+            i18n::tr!("ui-user-management-status"),
+        ],
     };
     labels
         .into_iter()
         .zip(widths)
-        .map(|(label, width)| fit_cell(label, usize::from(*width)))
+        .map(|(label, width)| fit_cell(&label, usize::from(*width)))
         .collect()
 }
 

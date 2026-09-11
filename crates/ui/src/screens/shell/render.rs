@@ -16,7 +16,9 @@ use crate::{RenderContext, TundraTheme};
 const STATUS_TIME_BUTTON_HORIZONTAL_CHROME: u16 = 4;
 const STATUS_TIME_BUTTON_MIN_WIDTH: u16 = 3;
 const STATUS_TIME_BUTTON_RESERVED_LEFT_WIDTH: u16 = 12;
-const COMPACT_TERMINAL_MESSAGE: &str = "TundraUX 3 needs at least 50x12 terminal cells.";
+fn compact_terminal_message() -> String {
+    i18n::tr!("ui-shell-tundraux-3-needs-at-least-50x12-terminal-cells")
+}
 
 pub fn render_editor_app(
     frame: &mut Frame<'_>,
@@ -105,7 +107,7 @@ pub fn render_time_sync_failure_dialog_contextual(
     let theme = &context.compatibility_theme();
     let dialog = centered_rect(area, area.width.min(34), area.height.min(5));
     let surface = Surface::new()
-        .titled("Time Sync")
+        .titled(i18n::tr!("ui-shell-time-sync"))
         .bordered(true)
         .raised(true);
     let inner = surface.inner(dialog);
@@ -157,7 +159,7 @@ pub(crate) fn render_compact_home(
     );
 
     if inner.height > 1 {
-        let size_message = truncate_status_text(COMPACT_TERMINAL_MESSAGE, inner.width);
+        let size_message = truncate_status_text(&compact_terminal_message(), inner.width);
         frame.render_widget(
             Paragraph::new(size_message)
                 .style(theme.muted_style())
@@ -174,7 +176,7 @@ pub(crate) fn render_top(
     theme: &TundraTheme,
 ) {
     let stack = if chrome.screen_stack.is_empty() {
-        "Home".to_string()
+        i18n::tr!("ui-shell-home")
     } else {
         chrome.screen_stack.join(" > ")
     };
@@ -220,7 +222,9 @@ pub(crate) fn render_status(
         .filter(|area| area.width > 0 && area.height > 0);
 
     let context = RenderContext::from_theme(theme, Default::default(), Default::default());
-    let surface = Surface::new().titled("Status").bordered(true);
+    let surface = Surface::new()
+        .titled(i18n::tr!("ui-shell-status"))
+        .bordered(true);
     let inner = surface.inner(area);
     surface.render_frame(frame, area, &context);
     let left_width = match time_button {

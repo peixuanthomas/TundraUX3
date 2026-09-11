@@ -80,7 +80,7 @@ fn render_clock_face(
     }
     let theme = &context.compatibility_theme();
     Surface::new()
-        .titled("Clock")
+        .titled(i18n::tr!("ui-clock-clock"))
         .bordered(false)
         .render_frame(frame, layout.clock, context);
 
@@ -129,7 +129,7 @@ fn render_clock_panel(
     }
     let theme = &context.compatibility_theme();
     Surface::new()
-        .titled("Alarms & Timers")
+        .titled(i18n::tr!("ui-clock-alarms-timers"))
         .bordered(true)
         .render_frame(frame, layout.panel, context);
 
@@ -137,7 +137,7 @@ fn render_clock_panel(
         frame,
         layout.new_button,
         "clock.new",
-        "[ + New ]",
+        &i18n::tr!("ui-clock-new-button"),
         model.selected_entry_id.is_none() && model.create_dialog.is_none(),
         theme,
     );
@@ -145,9 +145,9 @@ fn render_clock_panel(
         frame,
         layout.alarms_heading,
         if model.alarms.is_empty() {
-            "ALARMS (none)".to_string()
+            i18n::tr!("ui-clock-alarms-none")
         } else {
-            "ALARMS".to_string()
+            i18n::tr!("ui-clock-alarms")
         },
         theme.title_style(),
         HorizontalAlignment::Left,
@@ -156,9 +156,9 @@ fn render_clock_panel(
         frame,
         layout.countdowns_heading,
         if model.countdowns.is_empty() {
-            "COUNTDOWNS (none)".to_string()
+            i18n::tr!("ui-clock-countdowns-none")
         } else {
-            "COUNTDOWNS".to_string()
+            i18n::tr!("ui-clock-countdowns")
         },
         theme.title_style(),
         HorizontalAlignment::Left,
@@ -225,7 +225,7 @@ fn render_clock_create_dialog(
     frame.render_widget(Clear, layout.dialog);
     let theme = &context.compatibility_theme();
     Surface::new()
-        .titled("New Alarm or Countdown")
+        .titled(i18n::tr!("ui-clock-new-alarm-or-countdown"))
         .bordered(true)
         .raised(true)
         .render_frame(frame, layout.dialog, context);
@@ -239,7 +239,7 @@ fn render_clock_create_dialog(
     render_clock_line(
         frame,
         prompt,
-        "Enter time (hh mm ss)".to_string(),
+        i18n::tr!("ui-clock-enter-time-hh-mm-ss"),
         theme.body_style(),
         HorizontalAlignment::Left,
     );
@@ -258,7 +258,7 @@ fn render_clock_create_dialog(
         frame,
         layout.create_alarm,
         "clock.create-alarm",
-        "[ Create Alarm ]",
+        &i18n::tr!("ui-clock-create-alarm-button"),
         model.focus == ClockCreateDialogFocus::CreateAlarm,
         theme,
     );
@@ -266,7 +266,7 @@ fn render_clock_create_dialog(
         frame,
         layout.create_countdown,
         "clock.create-countdown",
-        "[ Create Countdown ]",
+        &i18n::tr!("ui-clock-create-countdown-button"),
         model.focus == ClockCreateDialogFocus::CreateCountdown,
         theme,
     );
@@ -286,7 +286,7 @@ fn render_clock_create_input(
     let prefix = "[ ";
     let focused = model.focus == ClockCreateDialogFocus::Input;
     let mut input = TextInput::new("clock.create-input")
-        .with_placeholder("hh mm ss")
+        .with_placeholder(i18n::tr!("ui-clock-time-placeholder"))
         .with_placeholder_when_focused(true)
         .with_cursor_symbol("_");
     input.set_value(&model.input);
@@ -305,7 +305,7 @@ fn render_clock_create_input(
     input.render_borderless_frame_with_prefix(frame, input_area, &input_theme, prefix);
 
     let visible_value_width = if input_is_empty {
-        "hh mm ss".chars().count()
+        unicode_width::UnicodeWidthStr::width(i18n::tr!("ui-clock-time-placeholder").as_str())
     } else {
         model
             .input
@@ -313,10 +313,11 @@ fn render_clock_create_input(
             .count()
             .saturating_add(usize::from(focused))
     };
-    let input_capacity = usize::from(input_area.width).saturating_sub(prefix.chars().count());
+    let input_capacity =
+        usize::from(input_area.width).saturating_sub(unicode_width::UnicodeWidthStr::width(prefix));
     let suffix_x = area
         .x
-        .saturating_add(prefix.chars().count() as u16)
+        .saturating_add(unicode_width::UnicodeWidthStr::width(prefix) as u16)
         .saturating_add(visible_value_width.min(input_capacity) as u16)
         .min(area.right().saturating_sub(2));
     render_clock_line(
@@ -343,7 +344,7 @@ fn render_clock_button(
     frame: &mut Frame<'_>,
     area: Rect,
     id: &'static str,
-    label: &'static str,
+    label: &str,
     focused: bool,
     theme: &TundraTheme,
 ) {

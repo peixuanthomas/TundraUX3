@@ -11,8 +11,9 @@ const NOTIFICATION_DIALOG_WITH_ACTIONS_MIN_HEIGHT: u16 = 9;
 const NOTIFICATION_DIALOG_BORDER_CELLS: u16 = 2;
 const NOTIFICATION_ACTION_GAP: u16 = 4;
 
-pub const NOTIFICATION_TOO_SMALL_MESSAGE: &str =
-    "Terminal is too small to render this notification.";
+pub fn notification_too_small_message() -> String {
+    i18n::tr!("ui-notifications-terminal-is-too-small-to-render-this-notification")
+}
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum NotificationLayout {
     Dialog(NotificationDialogLayout),

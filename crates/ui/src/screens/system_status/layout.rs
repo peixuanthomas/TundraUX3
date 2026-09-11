@@ -131,14 +131,48 @@ pub fn system_status_layout(main: Rect, model: &SystemStatusViewModel) -> System
     };
     let column_count: u16 = if wide { 8 } else { 4 };
     let mut right = footer.right();
-    let mut refresh_button = button_from_right(footer, &mut right, 11);
-    let mut edit_button = button_from_right(footer, &mut right, 8);
+    let mut refresh_button = button_from_right(
+        footer,
+        &mut right,
+        localized_button_width(
+            &(if model.refreshing {
+                i18n::tr!("ui-system-status-refreshing")
+            } else {
+                i18n::tr!("ui-system-status-refresh")
+            }),
+        ),
+    );
+    let mut edit_button = button_from_right(
+        footer,
+        &mut right,
+        localized_button_width(&(i18n::tr!("ui-system-status-edit"))),
+    );
     right = footer.right();
-    let mut cancel_button = button_from_right(footer, &mut right, 10);
-    let mut save_button = button_from_right(footer, &mut right, 8);
-    let mut remove_button = button_from_right(footer, &mut right, 10);
-    let mut size_button = button_from_right(footer, &mut right, 8);
-    let mut add_button = button_from_right(footer, &mut right, 7);
+    let mut cancel_button = button_from_right(
+        footer,
+        &mut right,
+        localized_button_width(&(i18n::tr!("ui-system-status-cancel"))),
+    );
+    let mut save_button = button_from_right(
+        footer,
+        &mut right,
+        localized_button_width(&(i18n::tr!("ui-system-status-save"))),
+    );
+    let mut remove_button = button_from_right(
+        footer,
+        &mut right,
+        localized_button_width(&(i18n::tr!("ui-system-status-remove"))),
+    );
+    let mut size_button = button_from_right(
+        footer,
+        &mut right,
+        localized_button_width(&(i18n::tr!("ui-system-status-size"))),
+    );
+    let mut add_button = button_from_right(
+        footer,
+        &mut right,
+        localized_button_width(&(i18n::tr!("ui-system-status-add"))),
+    );
     if model.dashboard.editing {
         refresh_button = Rect::default();
         edit_button = Rect::default();
@@ -406,17 +440,17 @@ pub fn system_status_layout(main: Rect, model: &SystemStatusViewModel) -> System
                     DialogAction::new(
                         "confirm",
                         if dialog_model.confirm_label.is_empty() {
-                            "Confirm"
+                            i18n::tr!("ui-system-status-confirm")
                         } else {
-                            &dialog_model.confirm_label
+                            dialog_model.confirm_label.clone()
                         },
                     ),
                     DialogAction::new(
                         "cancel",
                         if dialog_model.cancel_label.is_empty() {
-                            "Cancel"
+                            i18n::tr!("ui-system-status-cancel")
                         } else {
-                            &dialog_model.cancel_label
+                            dialog_model.cancel_label.clone()
                         },
                     ),
                 ],
@@ -561,4 +595,10 @@ pub fn system_status_hit_test(
         .iter()
         .find(|r| rect_contains(r.area, x, y))
         .map(|r| SystemStatusHitTarget::Row(r.index))
+}
+
+fn localized_button_width(label: &str) -> u16 {
+    u16::try_from(unicode_width::UnicodeWidthStr::width(label))
+        .unwrap_or(u16::MAX)
+        .saturating_add(4)
 }

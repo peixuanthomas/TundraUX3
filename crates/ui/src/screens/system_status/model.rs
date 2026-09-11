@@ -30,20 +30,20 @@ impl SystemStatusWidgetKind {
         Self::TopProcesses,
         Self::Diagnostics,
     ];
-    pub const fn label(self) -> &'static str {
+    pub fn label(self) -> String {
         match self {
-            Self::SystemOverview => "System Overview",
-            Self::Cpu => "CPU",
-            Self::Memory => "Memory",
-            Self::Storage => "Storage",
-            Self::Network => "Network",
-            Self::Temperature => "Temperature",
-            Self::Battery => "Battery",
-            Self::UptimeLoad => "Uptime & Load",
-            Self::TopProcesses => "Top Processes",
-            Self::Diagnostics => "Diagnostics",
-            Self::Logs => "Logs",
-            Self::Incidents => "Incidents",
+            Self::SystemOverview => i18n::tr!("ui-system-status-system-overview"),
+            Self::Cpu => i18n::tr!("ui-system-status-cpu"),
+            Self::Memory => i18n::tr!("ui-system-status-memory"),
+            Self::Storage => i18n::tr!("ui-system-status-storage"),
+            Self::Network => i18n::tr!("ui-system-status-network"),
+            Self::Temperature => i18n::tr!("ui-system-status-temperature"),
+            Self::Battery => i18n::tr!("ui-system-status-battery"),
+            Self::UptimeLoad => i18n::tr!("ui-system-status-uptime-load"),
+            Self::TopProcesses => i18n::tr!("ui-system-status-top-processes"),
+            Self::Diagnostics => i18n::tr!("ui-system-status-diagnostics"),
+            Self::Logs => i18n::tr!("ui-system-status-logs"),
+            Self::Incidents => i18n::tr!("ui-system-status-incidents"),
         }
     }
     pub const fn detail(self) -> SystemStatusDetail {
@@ -251,20 +251,20 @@ impl SystemStatusDetail {
             _ => None,
         }
     }
-    pub const fn label(self) -> &'static str {
+    pub fn label(self) -> String {
         match self {
-            Self::Overview => "Overview",
-            Self::Cpu => "CPU",
-            Self::Memory => "Memory",
-            Self::Storage => "Storage",
-            Self::Network => "Network",
-            Self::Thermal => "Thermal",
-            Self::Power => "Power",
-            Self::UptimeLoad => "Uptime & Load",
-            Self::Processes => "Processes",
-            Self::Diagnostics => "Diagnostics",
-            Self::Logs => "Logs",
-            Self::Incidents => "Incidents",
+            Self::Overview => i18n::tr!("ui-system-status-overview"),
+            Self::Cpu => i18n::tr!("ui-system-status-cpu"),
+            Self::Memory => i18n::tr!("ui-system-status-memory"),
+            Self::Storage => i18n::tr!("ui-system-status-storage"),
+            Self::Network => i18n::tr!("ui-system-status-network"),
+            Self::Thermal => i18n::tr!("ui-system-status-thermal"),
+            Self::Power => i18n::tr!("ui-system-status-power"),
+            Self::UptimeLoad => i18n::tr!("ui-system-status-uptime-load"),
+            Self::Processes => i18n::tr!("ui-system-status-processes"),
+            Self::Diagnostics => i18n::tr!("ui-system-status-diagnostics"),
+            Self::Logs => i18n::tr!("ui-system-status-logs"),
+            Self::Incidents => i18n::tr!("ui-system-status-incidents"),
         }
     }
 }
@@ -288,14 +288,14 @@ pub enum SystemStatusTab {
 impl SystemStatusTab {
     pub const ALL: [Self; 4] = [Self::Overview, Self::Storage, Self::Network, Self::Health];
     pub const USER: [Self; 4] = Self::ALL;
-    pub const fn label(self) -> &'static str {
+    pub fn label(self) -> String {
         match self {
-            Self::Overview => "Overview",
-            Self::Storage => "Storage",
-            Self::Network => "Network",
-            Self::Health => "Health",
-            Self::Logs => "Logs",
-            Self::Incidents => "Incidents",
+            Self::Overview => i18n::tr!("ui-system-status-overview"),
+            Self::Storage => i18n::tr!("ui-system-status-storage"),
+            Self::Network => i18n::tr!("ui-system-status-network"),
+            Self::Health => i18n::tr!("ui-system-status-health"),
+            Self::Logs => i18n::tr!("ui-system-status-logs"),
+            Self::Incidents => i18n::tr!("ui-system-status-incidents"),
         }
     }
     pub const fn diagnostics_tab(self) -> Option<DiagnosticsTab> {

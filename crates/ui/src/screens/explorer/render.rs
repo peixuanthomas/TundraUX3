@@ -18,8 +18,6 @@ use crate::screens::shell::{
 };
 use crate::{RuntimeAsciiAssets, TundraTheme};
 
-const EXPLORER_HELP_LINE: &str = "Enter: open    Left/Right: back/forward    Backspace: parent    N: folder    T: text file    F2: rename    Del: delete    X: cut    C: copy    V: paste    F5: refresh    S: sort    O: options    /: search    H: hidden    Tab/Shift+Tab: quick access    Esc: back";
-
 pub fn render_explorer(
     frame: &mut Frame<'_>,
     area: Rect,
@@ -58,15 +56,17 @@ fn render_explorer_main(
     theme: &TundraTheme,
 ) {
     Surface::new()
-        .titled("Explorer")
+        .titled(i18n::tr!("ui-explorer-explorer"))
         .render_frame(frame, area, context);
 
     let layout = explorer_layout(area, model);
     let Some(assets) = model.ascii_assets.as_ref() else {
         frame.render_widget(
-            Paragraph::new("Explorer ASCII assets are unavailable")
-                .style(theme.error_style())
-                .alignment(HorizontalAlignment::Center),
+            Paragraph::new(i18n::tr!(
+                "ui-explorer-explorer-ascii-assets-are-unavailable"
+            ))
+            .style(theme.error_style())
+            .alignment(HorizontalAlignment::Center),
             layout.table,
         );
         return;
@@ -103,7 +103,7 @@ fn render_explorer_toolbar(
         render_explorer_button(
             frame,
             button_layout.area,
-            format!("explorer.toolbar.{}", button.action.label()),
+            format!("explorer.toolbar.{:?}", button.action),
             fit_cell(&text, usize::from(button_layout.area.width)),
             button.active,
             button.enabled,
@@ -122,7 +122,10 @@ fn render_explorer_path_bar(
         frame,
         layout.address_button,
         "explorer.address.edit",
-        fit_cell("[Edit]", usize::from(layout.address_button.width)),
+        fit_cell(
+            &i18n::tr!("ui-explorer-edit-button"),
+            usize::from(layout.address_button.width),
+        ),
         model.address_editing,
         true,
         theme,
@@ -175,7 +178,7 @@ fn render_explorer_sidebar(
 ) {
     if let Some(header) = layout.sidebar_header {
         frame.render_widget(
-            Paragraph::new("Quick access")
+            Paragraph::new(i18n::tr!("ui-explorer-quick-access"))
                 .alignment(HorizontalAlignment::Left)
                 .style(theme.title_style()),
             header,
@@ -367,9 +370,9 @@ fn render_explorer_table(
     if model.entries.is_empty() && layout.table_body.height > 0 {
         frame.render_widget(
             Paragraph::new(if model.is_trash {
-                "(Trash is empty)"
+                i18n::tr!("ui-explorer-trash-is-empty")
             } else {
-                "(empty directory)"
+                i18n::tr!("ui-explorer-empty-directory")
             })
             .style(context.compatibility_theme().muted_style())
             .alignment(HorizontalAlignment::Center),
@@ -399,33 +402,48 @@ fn render_explorer_footer(
     }
     let selected_names = selected_entry_names(model);
     let selected_summary = if selected_names.is_empty() {
-        format!("{} selected", model.effective_selected_count())
+        i18n::tr!(
+            "ui-explorer-selected-count",
+            count = model.effective_selected_count()
+        )
     } else {
-        format!("Selected: {}", selected_names.join(", "))
+        i18n::tr!(
+            "ui-explorer-selected-names",
+            names = selected_names.join(", ")
+        )
     };
     let mut lines = vec![Line::from(selected_summary)];
     if let Some(entry) = model.selected_entry() {
-        lines.push(Line::from(format!(
-            "Name: {} | Type: {} | Size: {}",
-            entry.name,
-            entry.kind,
-            entry.size.as_deref().unwrap_or("-")
+        lines.push(Line::from(i18n::tr!(
+            "ui-explorer-entry-details",
+            name = entry.name.clone(),
+            kind = entry.kind.clone(),
+            size = entry.size.as_deref().unwrap_or("-")
         )));
-        lines.push(Line::from(format!(
-            "Modified: {} | Attributes: {}",
-            entry.modified.as_deref().unwrap_or("-"),
-            format_attributes(&entry.attributes)
+        lines.push(Line::from(i18n::tr!(
+            "ui-explorer-entry-metadata",
+            modified = entry.modified.as_deref().unwrap_or("-"),
+            attributes = format_attributes(&entry.attributes)
         )));
     } else {
-        lines.push(Line::from("No entry selected"));
+        lines.push(Line::from(i18n::tr!("ui-explorer-no-entry-selected")));
         lines.push(Line::from(""));
     }
 
     let feedback = if let Some(error) = &model.error {
-        Line::styled(format!("Error: {error}"), theme.error_style())
+        Line::styled(
+            i18n::tr!("ui-explorer-error", error = error),
+            theme.error_style(),
+        )
     } else if let Some(operation) = &model.operation {
         let progress = operation.percent().map_or_else(
-            || format!("{}: {} items", operation.label, operation.completed_items),
+            || {
+                i18n::tr!(
+                    "ui-explorer-operation-items",
+                    operation = operation.label.clone(),
+                    count = operation.completed_items.clone()
+                )
+            },
             |percent| format!("{}: {percent}%", operation.label),
         );
         Line::styled(progress, theme.title_style())
@@ -433,7 +451,10 @@ fn render_explorer_footer(
         Line::styled(message.clone(), theme.muted_style())
     } else if model.listing_warning_count > 0 {
         Line::styled(
-            format!("{} metadata warning(s)", model.listing_warning_count),
+            i18n::tr!(
+                "ui-explorer-metadata-warnings",
+                count = model.listing_warning_count.clone()
+            ),
             theme.muted_style(),
         )
     } else {
@@ -441,13 +462,17 @@ fn render_explorer_footer(
     };
     lines.push(feedback);
     lines.push(Line::styled(
-        format!(
-            "Enter: open | Backspace: parent | /: search | Hidden files: {}{}",
-            if model.show_hidden { "shown" } else { "hidden" },
-            if layout.mode.shows_sidebar() {
-                " | Tab/Shift+Tab: quick access"
+        i18n::tr!(
+            "ui-explorer-compact-help",
+            hidden = if model.show_hidden {
+                i18n::tr!("ui-explorer-shown")
             } else {
-                ""
+                i18n::tr!("ui-explorer-hidden")
+            },
+            quick = if model.quick_locations.is_empty() {
+                String::new()
+            } else {
+                i18n::tr!("ui-explorer-quick-access-help")
             }
         ),
         theme.muted_style(),
@@ -487,16 +512,16 @@ fn render_explorer_overlay(
         return;
     };
     let title = match model.overlay.as_ref() {
-        Some(ExplorerOverlayViewModel::ContextMenu(menu)) => menu.title.as_str(),
-        Some(ExplorerOverlayViewModel::Name(dialog)) => dialog.title.as_str(),
-        Some(ExplorerOverlayViewModel::Options(options)) => options.title.as_str(),
-        Some(ExplorerOverlayViewModel::Conflict(conflict)) => conflict.title.as_str(),
-        Some(ExplorerOverlayViewModel::Properties(properties)) => properties.title.as_str(),
+        Some(ExplorerOverlayViewModel::ContextMenu(menu)) => menu.title.clone(),
+        Some(ExplorerOverlayViewModel::Name(dialog)) => dialog.title.clone(),
+        Some(ExplorerOverlayViewModel::Options(options)) => options.title.clone(),
+        Some(ExplorerOverlayViewModel::Conflict(conflict)) => conflict.title.clone(),
+        Some(ExplorerOverlayViewModel::Properties(properties)) => properties.title.clone(),
         None => model
             .pending_dialog
             .as_ref()
-            .map(|dialog| dialog.title.as_str())
-            .unwrap_or("Explorer"),
+            .map(|dialog| dialog.title.clone())
+            .unwrap_or_else(|| i18n::tr!("ui-explorer-explorer")),
     };
     frame.render_widget(Clear, overlay_layout.area);
     Panel::new(title).render_frame(frame, overlay_layout.area, context);
@@ -737,10 +762,16 @@ fn render_explorer_conflict_dialog(
     theme: &TundraTheme,
 ) {
     let lines = vec![
-        Line::from(format!("Source: {}", conflict.source)),
-        Line::from(format!("Destination: {}", conflict.destination)),
+        Line::from(i18n::tr!(
+            "ui-explorer-conflict-source",
+            source = conflict.source.clone()
+        )),
+        Line::from(i18n::tr!(
+            "ui-explorer-conflict-destination",
+            destination = conflict.destination.clone()
+        )),
         Line::styled(
-            "An item with this name already exists.",
+            i18n::tr!("ui-explorer-an-item-with-this-name-already-exists"),
             theme.muted_style(),
         ),
     ];
@@ -756,7 +787,7 @@ fn render_explorer_conflict_dialog(
                 render_explorer_button(
                     frame,
                     control.area,
-                    format!("explorer.conflict.{}", choice.label()),
+                    format!("explorer.conflict.{choice:?}"),
                     choice.label(),
                     selected,
                     control.enabled,
@@ -765,12 +796,12 @@ fn render_explorer_conflict_dialog(
             }
             ExplorerOverlayControl::ApplyToRemaining => {
                 let label = fit_cell(
-                    &format!(
-                        "Apply to remaining items: {}",
-                        if conflict.apply_to_remaining {
-                            "On"
+                    &i18n::tr!(
+                        "ui-explorer-apply-remaining",
+                        state = if conflict.apply_to_remaining {
+                            i18n::tr!("ui-explorer-on")
                         } else {
-                            "Off"
+                            i18n::tr!("ui-explorer-off")
                         }
                     ),
                     usize::from(control.area.width),
@@ -852,16 +883,19 @@ fn render_explorer_search(
 ) {
     let Some(search) = search else {
         frame.render_widget(
-            Paragraph::new(fit_cell("Search: /", usize::from(area.width)))
-                .alignment(HorizontalAlignment::Left)
-                .style(theme.muted_style()),
+            Paragraph::new(fit_cell(
+                &i18n::tr!("ui-explorer-search"),
+                usize::from(area.width),
+            ))
+            .alignment(HorizontalAlignment::Left)
+            .style(theme.muted_style()),
             area,
         );
         return;
     };
 
     let mut input = TextInput::new("explorer.search.input")
-        .with_placeholder("<empty>")
+        .with_placeholder(i18n::tr!("ui-explorer-empty"))
         .with_placeholder_when_focused(true)
         .with_cursor_symbol("_");
     input.set_value(&search.query);
@@ -872,11 +906,11 @@ fn render_explorer_search(
     if !search.active {
         input_theme.foreground = theme.muted;
     }
-    const PREFIX: &str = "Search: ";
-    input.render_borderless_frame_with_prefix(frame, area, &input_theme, PREFIX);
+    let prefix = i18n::tr!("ui-explorer-search-padded");
+    input.render_borderless_frame_with_prefix(frame, area, &input_theme, &prefix);
 
-    let visible_input_width = terminal_width(PREFIX).saturating_add(if search.query.is_empty() {
-        terminal_width("<empty>")
+    let visible_input_width = terminal_width(&prefix).saturating_add(if search.query.is_empty() {
+        terminal_width(&i18n::tr!("ui-explorer-empty"))
     } else {
         terminal_width(&search.query).saturating_add(usize::from(search.active))
     });
@@ -967,20 +1001,27 @@ fn legacy_explorer_icon_key(entry: &ExplorerEntryViewModel) -> &'static str {
 pub fn explorer_first_entry_content_line(model: &ExplorerViewModel, content_width: u16) -> usize {
     let width = usize::from(content_width.max(1));
     let mut line = 0usize;
-    line += wrapped_line_count(&format!("Path: {}", model.current_path), width);
     line += wrapped_line_count(
-        &format!(
-            "Hidden files: {}",
-            if model.show_hidden { "shown" } else { "hidden" }
+        &i18n::tr!("ui-explorer-path", path = model.current_path.clone()),
+        width,
+    );
+    line += wrapped_line_count(
+        &i18n::tr!(
+            "ui-explorer-hidden-files",
+            state = if model.show_hidden {
+                i18n::tr!("ui-explorer-shown")
+            } else {
+                i18n::tr!("ui-explorer-hidden")
+            }
         ),
         width,
     );
     if let Some(search) = &model.search {
         line += wrapped_line_count(&explorer_search_line(search), width);
     }
-    line += wrapped_line_count(EXPLORER_HELP_LINE, width);
+    line += wrapped_line_count(&i18n::tr!("ui-explorer-help"), width);
     line += 1;
-    line += wrapped_line_count("Entries", width);
+    line += wrapped_line_count(&i18n::tr!("ui-explorer-entries"), width);
     line
 }
 
@@ -990,18 +1031,25 @@ fn wrapped_line_count(text: &str, width: usize) -> usize {
 
 fn explorer_search_line(search: &ExplorerSearchViewModel) -> String {
     let query = if search.query.is_empty() {
-        "<empty>"
+        i18n::tr!("ui-explorer-empty")
     } else {
-        search.query.as_str()
+        search.query.clone()
     };
-    format!("Search: {query}{}", explorer_search_suffix(search))
+    i18n::tr!(
+        "ui-explorer-search-query",
+        query = query,
+        suffix = explorer_search_suffix(search)
+    )
 }
 
 fn explorer_search_suffix(search: &ExplorerSearchViewModel) -> String {
-    let mode = if search.active { "active" } else { "inactive" };
+    let mode = if search.active {
+        i18n::tr!("ui-explorer-active")
+    } else {
+        i18n::tr!("ui-explorer-inactive")
+    };
     match search.match_count {
-        Some(1) => format!(" (1 match, {mode})"),
-        Some(count) => format!(" ({count} matches, {mode})"),
+        Some(count) => i18n::tr!("ui-explorer-search-matches", count = count, mode = mode),
         None => format!(" ({mode})"),
     }
 }
@@ -1023,7 +1071,7 @@ fn selected_entry_names(model: &ExplorerViewModel) -> Vec<String> {
 
 fn format_attributes(attributes: &[String]) -> String {
     if attributes.is_empty() {
-        "none".to_string()
+        i18n::tr!("ui-explorer-none")
     } else {
         attributes.join(", ")
     }

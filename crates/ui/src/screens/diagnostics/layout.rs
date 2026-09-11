@@ -175,7 +175,8 @@ pub fn diagnostics_layout(main: Rect, model: &DiagnosticsViewModel) -> Diagnosti
     let tabs = [DiagnosticsTab::Health]
         .into_iter()
         .map(|tab| {
-            let desired = usize_to_u16(tab.label().chars().count()).saturating_add(4);
+            let desired = usize_to_u16(unicode_width::UnicodeWidthStr::width(tab.label().as_str()))
+                .saturating_add(4);
             let width = desired.min(tabs_area.right().saturating_sub(tab_x));
             let area = Rect::new(tab_x, tabs_area.y, width, tabs_area.height);
             tab_x = tab_x.saturating_add(width);

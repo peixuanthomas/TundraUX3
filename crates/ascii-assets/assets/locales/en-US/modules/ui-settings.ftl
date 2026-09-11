@@ -1,0 +1,42 @@
+# UI settings messages.
+
+ui-settings-appearance = Appearance
+ui-settings-region-time = Region & Time
+ui-settings-system = System
+ui-settings-file-explorer = File Explorer
+ui-settings-editor = Editor
+ui-settings-update = Update
+ui-settings-theme-motion-icons-colors-and-borders = Theme, motion, icons, colors and borders
+ui-settings-language-city-and-timezone = Language, city and timezone
+ui-settings-storage-pressure-warning-thresholds = Storage pressure warning thresholds
+ui-settings-display-sorting-and-safety = Display, sorting and safety
+ui-settings-cursor-and-file-associations = Cursor and file associations
+ui-settings-version-commits-and-source-updates = Version, commits and source updates
+ui-settings-settings-padded = { " " }Settings{ " " }
+ui-settings-sections-padded = { " " }Sections{ " " }
+ui-settings-preview-padded = { " " }Preview{ " " }
+ui-settings-live-preview = Live preview
+ui-settings-selected-controls-use-the-accent-color = Selected controls use the accent color.
+ui-settings-commits-padded = { " " }Commits{ " " }
+ui-settings-cancel-button = { "[" }Cancel]
+ui-settings-choose-a-setting = Choose a setting.
+ui-settings-search-padded = Search:{ " " }
+ui-settings-arrows-choose-enter-apply-esc-back = Arrows: choose    Enter: apply    Esc: back
+ui-settings-arrows-choose-enter-apply-esc-cancel = Arrows: choose    Enter: apply    Esc: cancel
+ui-settings-enter-a-color-as-rrggbb = Enter a color as #RRGGBB.
+ui-settings-enter-apply-esc-cancel = Enter: apply    Esc: cancel
+ui-settings-enter-a-detailed-city-or-address-using-english-characters = Enter a detailed city or address using English characters.
+ui-settings-leave-empty-to-use-the-timezone-location = Leave empty to use the timezone location.
+ui-settings-enter-continue-esc-cancel = Enter: continue    Esc: cancel
+ui-settings-weather-location-padded = { " " }Weather location{ " " }
+ui-settings-enter-comma-separated-filename-suffixes-explorer-should-open-here = Enter comma-separated filename suffixes Explorer should open here.
+ui-settings-examples-md-txt-rs-d-ts-matching-is-case-insensitive = Examples: .md, .txt, .rs, .d.ts (matching is case-insensitive)
+ui-settings-leave-empty-to-always-use-the-system-default-enter-save-esc-cancel = Leave empty to always use the system default.  Enter: save  Esc: cancel
+ui-settings-explorer-files-opened-in-editor-padded = { " " }Explorer files opened in Editor{ " " }
+ui-settings-synchronizing-with-this-server = Synchronizing with this server…
+ui-settings-enter-an-http-s-endpoint-that-returns-a-valid-date-response-header = Enter an HTTP(S) endpoint that returns a valid Date response header.
+ui-settings-the-address-is-saved-only-after-a-successful-synchronization-test = The address is saved only after a successful synchronization test.
+ui-settings-enter-test-and-save-esc-cancel = Enter: test and save    Esc: cancel
+ui-settings-time-synchronization-server-padded = { " " }Time synchronization server{ " " }
+
+ui-settings-locked-value = { $value } locked

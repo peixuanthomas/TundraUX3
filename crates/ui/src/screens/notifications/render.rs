@@ -4,8 +4,7 @@ use ratatui::text::Line;
 use ratatui::widgets::{Clear, Paragraph};
 
 use super::layout::{
-    NOTIFICATION_TOO_SMALL_MESSAGE, NotificationLayout, notification_action_text,
-    notification_layout, wrap_notification_text,
+    NotificationLayout, notification_action_text, notification_layout, wrap_notification_text,
 };
 use super::model::{NotificationLevel, NotificationTone, NotificationViewModel};
 use crate::components::{Button, Surface};
@@ -94,10 +93,13 @@ fn render_notification_too_small(frame: &mut Frame<'_>, area: Rect, theme: &Tund
         return;
     }
 
-    let lines = wrap_notification_text(NOTIFICATION_TOO_SMALL_MESSAGE, area.width)
-        .into_iter()
-        .map(Line::from)
-        .collect::<Vec<_>>();
+    let lines = wrap_notification_text(
+        &i18n::tr!("ui-notifications-terminal-is-too-small-to-render-this-notification"),
+        area.width,
+    )
+    .into_iter()
+    .map(Line::from)
+    .collect::<Vec<_>>();
     let height = u16::try_from(lines.len())
         .unwrap_or(u16::MAX)
         .min(area.height);
@@ -119,13 +121,13 @@ fn centered_rect(area: Rect, width: u16, height: u16) -> Rect {
         height,
     )
 }
-pub(crate) fn notification_tone_prefix(tone: NotificationTone) -> &'static str {
+pub(crate) fn notification_tone_prefix(tone: NotificationTone) -> String {
     match tone {
-        NotificationTone::Info => "[INFO]",
-        NotificationTone::Success => "[SUCCESS]",
-        NotificationTone::Warning => "[WARN]",
-        NotificationTone::Error => "[ERROR]",
-        NotificationTone::Critical => "[CRITICAL]",
+        NotificationTone::Info => i18n::tr!("ui-notifications-info-button"),
+        NotificationTone::Success => i18n::tr!("ui-notifications-success-button"),
+        NotificationTone::Warning => i18n::tr!("ui-notifications-warn-button"),
+        NotificationTone::Error => i18n::tr!("ui-notifications-error-button"),
+        NotificationTone::Critical => i18n::tr!("ui-notifications-critical-button"),
     }
 }
 

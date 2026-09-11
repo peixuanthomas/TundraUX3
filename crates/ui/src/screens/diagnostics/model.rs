@@ -22,11 +22,11 @@ pub enum DiagnosticsTab {
 impl DiagnosticsTab {
     pub const ALL: [Self; 3] = [Self::Health, Self::Logs, Self::Incidents];
 
-    pub const fn label(self) -> &'static str {
+    pub fn label(self) -> String {
         match self {
-            Self::Health => "Health",
-            Self::Logs => "Logs",
-            Self::Incidents => "Incidents",
+            Self::Health => i18n::tr!("ui-diagnostics-health"),
+            Self::Logs => i18n::tr!("ui-diagnostics-logs"),
+            Self::Incidents => i18n::tr!("ui-diagnostics-incidents"),
         }
     }
 }
@@ -41,12 +41,12 @@ pub enum DiagnosticsStatus {
 }
 
 impl DiagnosticsStatus {
-    pub const fn label(self) -> &'static str {
+    pub fn label(self) -> String {
         match self {
-            Self::Pass => "Pass",
-            Self::Unsupported => "Unsupported",
-            Self::Warning => "Warning",
-            Self::Fail => "Failure",
+            Self::Pass => i18n::tr!("ui-diagnostics-pass"),
+            Self::Unsupported => i18n::tr!("ui-diagnostics-unsupported"),
+            Self::Warning => i18n::tr!("ui-diagnostics-warning"),
+            Self::Fail => i18n::tr!("ui-diagnostics-failure"),
         }
     }
 

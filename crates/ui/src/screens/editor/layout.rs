@@ -818,7 +818,7 @@ pub(super) fn menu_popup_layout(
     let actions = menu_actions(menu);
     let desired_width = actions
         .iter()
-        .map(|action| terminal_width(menu_action_label(*action)))
+        .map(|action| terminal_width(&menu_action_label(*action)))
         .max()
         .unwrap_or_default()
         .saturating_add(4);
@@ -896,9 +896,24 @@ pub(super) fn settings_layout(
         })
         .collect::<Vec<_>>();
     let button_y = dialog.bottom().saturating_sub(2);
-    let restore = Rect::new(row_x, button_y, 20, 1);
-    let cancel = Rect::new(dialog.right().saturating_sub(11), button_y, 10, 1);
-    let save = Rect::new(cancel.x.saturating_sub(10), button_y, 9, 1);
+    let restore_width = to_u16(terminal_width(&i18n::tr!(
+        "ui-editor-restore-defaults-button"
+    )));
+    let cancel_width = to_u16(terminal_width(&i18n::tr!("ui-editor-cancel-button")));
+    let save_width = to_u16(terminal_width(&i18n::tr!("ui-editor-save-button"))).saturating_add(1);
+    let restore = Rect::new(row_x, button_y, restore_width, 1);
+    let cancel = Rect::new(
+        dialog.right().saturating_sub(cancel_width + 1),
+        button_y,
+        cancel_width,
+        1,
+    );
+    let save = Rect::new(
+        cancel.x.saturating_sub(save_width + 1),
+        button_y,
+        save_width,
+        1,
+    );
     fields.extend([
         EditorSettingsFieldLayout {
             field: EditorSettingsField::RestoreDefaults,
@@ -985,7 +1000,7 @@ pub(super) fn quick_menu_layout(
         EditorQuickAction::Heading(3),
     ];
     let item_widths =
-        actions.map(|action| to_u16(terminal_width(quick_action_label(action)).saturating_add(2)));
+        actions.map(|action| to_u16(terminal_width(&quick_action_label(action)).saturating_add(2)));
     let available_inner_width = area.width.saturating_sub(2);
     let minimum_inner_width = item_widths.iter().copied().max().unwrap_or_default();
     if available_inner_width < minimum_inner_width {
@@ -1080,15 +1095,15 @@ pub(super) fn menu_actions(menu: EditorMenu) -> Vec<EditorMenuAction> {
     }
 }
 
-pub(super) fn quick_action_label(action: EditorQuickAction) -> &'static str {
+pub(super) fn quick_action_label(action: EditorQuickAction) -> String {
     match action {
-        EditorQuickAction::Bold => "B",
-        EditorQuickAction::Italic => "I",
-        EditorQuickAction::Paragraph => "Normal",
-        EditorQuickAction::Heading(1) => "H1",
-        EditorQuickAction::Heading(2) => "H2",
-        EditorQuickAction::Heading(3) => "H3",
-        EditorQuickAction::Heading(_) => "H",
+        EditorQuickAction::Bold => "B".to_owned(),
+        EditorQuickAction::Italic => "I".to_owned(),
+        EditorQuickAction::Paragraph => i18n::tr!("ui-editor-normal"),
+        EditorQuickAction::Heading(1) => "H1".to_owned(),
+        EditorQuickAction::Heading(2) => "H2".to_owned(),
+        EditorQuickAction::Heading(3) => "H3".to_owned(),
+        EditorQuickAction::Heading(_) => "H".to_owned(),
     }
 }
 
@@ -1141,7 +1156,7 @@ pub(super) fn toolbar_layout(
     (items, overflow)
 }
 
-pub(super) fn toolbar_specs() -> Vec<(EditorToolbarAction, &'static str, u16)> {
+pub(super) fn toolbar_specs() -> Vec<(EditorToolbarAction, String, u16)> {
     vec![
         toolbar_spec(EditorToolbarAction::New),
         toolbar_spec(EditorToolbarAction::Open),
@@ -1152,76 +1167,85 @@ pub(super) fn toolbar_specs() -> Vec<(EditorToolbarAction, &'static str, u16)> {
     ]
 }
 
-pub(super) fn toolbar_spec(
-    action: EditorToolbarAction,
-) -> (EditorToolbarAction, &'static str, u16) {
+pub(super) fn toolbar_spec(action: EditorToolbarAction) -> (EditorToolbarAction, String, u16) {
     let label = toolbar_label(action);
-    (action, label, to_u16(terminal_width(label)))
+    let width = to_u16(terminal_width(&label));
+    (action, label, width)
 }
 
-pub(super) fn toolbar_label(action: EditorToolbarAction) -> &'static str {
+pub(super) fn toolbar_label(action: EditorToolbarAction) -> String {
     match action {
-        EditorToolbarAction::New => " New ",
-        EditorToolbarAction::Open => " Open ",
-        EditorToolbarAction::Save => " Save ",
-        EditorToolbarAction::Undo => " Undo ",
-        EditorToolbarAction::Redo => " Redo ",
-        EditorToolbarAction::ParagraphStyle => " Normal ",
-        EditorToolbarAction::Bold => " B ",
-        EditorToolbarAction::Italic => " I ",
-        EditorToolbarAction::Strikethrough => " S ",
-        EditorToolbarAction::InlineCode => " Code ",
-        EditorToolbarAction::BulletList => " Bullets ",
-        EditorToolbarAction::OrderedList => " Numbered ",
-        EditorToolbarAction::Quote => " Quote ",
-        EditorToolbarAction::Link => " Link ",
-        EditorToolbarAction::Image => " Image ",
-        EditorToolbarAction::Table => " Table ",
-        EditorToolbarAction::Find => " Find ",
-        EditorToolbarAction::More => " More ",
+        EditorToolbarAction::New => i18n::tr!("ui-editor-new-padded"),
+        EditorToolbarAction::Open => i18n::tr!("ui-editor-open-padded"),
+        EditorToolbarAction::Save => i18n::tr!("ui-editor-save-padded"),
+        EditorToolbarAction::Undo => i18n::tr!("ui-editor-undo-padded"),
+        EditorToolbarAction::Redo => i18n::tr!("ui-editor-redo-padded"),
+        EditorToolbarAction::ParagraphStyle => i18n::tr!("ui-editor-normal-padded"),
+        EditorToolbarAction::Bold => " B ".to_owned(),
+        EditorToolbarAction::Italic => " I ".to_owned(),
+        EditorToolbarAction::Strikethrough => " S ".to_owned(),
+        EditorToolbarAction::InlineCode => i18n::tr!("ui-editor-code-padded"),
+        EditorToolbarAction::BulletList => i18n::tr!("ui-editor-bullets-padded"),
+        EditorToolbarAction::OrderedList => i18n::tr!("ui-editor-numbered-padded"),
+        EditorToolbarAction::Quote => i18n::tr!("ui-editor-quote-padded"),
+        EditorToolbarAction::Link => i18n::tr!("ui-editor-link-padded"),
+        EditorToolbarAction::Image => i18n::tr!("ui-editor-image-padded"),
+        EditorToolbarAction::Table => i18n::tr!("ui-editor-table-padded"),
+        EditorToolbarAction::Find => i18n::tr!("ui-editor-find-padded"),
+        EditorToolbarAction::More => i18n::tr!("ui-editor-more-padded"),
     }
 }
 
-pub(super) fn menu_label(menu: EditorMenu) -> &'static str {
+pub(super) fn menu_label(menu: EditorMenu) -> String {
     match menu {
-        EditorMenu::File => "File",
-        EditorMenu::Edit => "Edit",
-        EditorMenu::Insert => "Insert",
-        EditorMenu::Format => "Format",
-        EditorMenu::View => "View",
-        EditorMenu::Settings => "Settings",
+        EditorMenu::File => i18n::tr!("ui-editor-file"),
+        EditorMenu::Edit => i18n::tr!("ui-editor-edit"),
+        EditorMenu::Insert => i18n::tr!("ui-editor-insert"),
+        EditorMenu::Format => i18n::tr!("ui-editor-format"),
+        EditorMenu::View => i18n::tr!("ui-editor-view"),
+        EditorMenu::Settings => i18n::tr!("ui-editor-settings"),
     }
 }
 
-pub(super) fn menu_action_label(action: EditorMenuAction) -> &'static str {
+pub(super) fn menu_action_label(action: EditorMenuAction) -> String {
     match action {
-        EditorMenuAction::Toolbar(EditorToolbarAction::New) => "New",
-        EditorMenuAction::Toolbar(EditorToolbarAction::Open) => "Open",
-        EditorMenuAction::Toolbar(EditorToolbarAction::Save) => "Save",
-        EditorMenuAction::Toolbar(EditorToolbarAction::Undo) => "Undo",
-        EditorMenuAction::Toolbar(EditorToolbarAction::Redo) => "Redo",
-        EditorMenuAction::Toolbar(EditorToolbarAction::ParagraphStyle) => "Normal text",
-        EditorMenuAction::Toolbar(EditorToolbarAction::Bold) => "Bold",
-        EditorMenuAction::Toolbar(EditorToolbarAction::Italic) => "Italic",
-        EditorMenuAction::Toolbar(EditorToolbarAction::Strikethrough) => "Strikethrough",
-        EditorMenuAction::Toolbar(EditorToolbarAction::InlineCode) => "Inline code",
-        EditorMenuAction::Toolbar(EditorToolbarAction::BulletList) => "Bulleted list",
-        EditorMenuAction::Toolbar(EditorToolbarAction::OrderedList) => "Numbered list",
-        EditorMenuAction::Toolbar(EditorToolbarAction::Quote) => "Quote",
-        EditorMenuAction::Toolbar(EditorToolbarAction::Link) => "Link",
-        EditorMenuAction::Toolbar(EditorToolbarAction::Image) => "Image",
-        EditorMenuAction::Toolbar(EditorToolbarAction::Table) => "Table",
-        EditorMenuAction::Toolbar(EditorToolbarAction::Find) => "Find",
-        EditorMenuAction::Toolbar(EditorToolbarAction::More) => "More",
-        EditorMenuAction::Mode(EditorMode::Rich) => "Rich view",
-        EditorMenuAction::Mode(EditorMode::Source) => "Source view",
+        EditorMenuAction::Toolbar(EditorToolbarAction::New) => i18n::tr!("ui-editor-new"),
+        EditorMenuAction::Toolbar(EditorToolbarAction::Open) => i18n::tr!("ui-editor-open"),
+        EditorMenuAction::Toolbar(EditorToolbarAction::Save) => i18n::tr!("ui-editor-save"),
+        EditorMenuAction::Toolbar(EditorToolbarAction::Undo) => i18n::tr!("ui-editor-undo"),
+        EditorMenuAction::Toolbar(EditorToolbarAction::Redo) => i18n::tr!("ui-editor-redo"),
+        EditorMenuAction::Toolbar(EditorToolbarAction::ParagraphStyle) => {
+            i18n::tr!("ui-editor-normal-text")
+        }
+        EditorMenuAction::Toolbar(EditorToolbarAction::Bold) => i18n::tr!("ui-editor-bold"),
+        EditorMenuAction::Toolbar(EditorToolbarAction::Italic) => i18n::tr!("ui-editor-italic"),
+        EditorMenuAction::Toolbar(EditorToolbarAction::Strikethrough) => {
+            i18n::tr!("ui-editor-strikethrough")
+        }
+        EditorMenuAction::Toolbar(EditorToolbarAction::InlineCode) => {
+            i18n::tr!("ui-editor-inline-code")
+        }
+        EditorMenuAction::Toolbar(EditorToolbarAction::BulletList) => {
+            i18n::tr!("ui-editor-bulleted-list")
+        }
+        EditorMenuAction::Toolbar(EditorToolbarAction::OrderedList) => {
+            i18n::tr!("ui-editor-numbered-list")
+        }
+        EditorMenuAction::Toolbar(EditorToolbarAction::Quote) => i18n::tr!("ui-editor-quote"),
+        EditorMenuAction::Toolbar(EditorToolbarAction::Link) => i18n::tr!("ui-editor-link"),
+        EditorMenuAction::Toolbar(EditorToolbarAction::Image) => i18n::tr!("ui-editor-image"),
+        EditorMenuAction::Toolbar(EditorToolbarAction::Table) => i18n::tr!("ui-editor-table"),
+        EditorMenuAction::Toolbar(EditorToolbarAction::Find) => i18n::tr!("ui-editor-find"),
+        EditorMenuAction::Toolbar(EditorToolbarAction::More) => i18n::tr!("ui-editor-more"),
+        EditorMenuAction::Mode(EditorMode::Rich) => i18n::tr!("ui-editor-rich-view"),
+        EditorMenuAction::Mode(EditorMode::Source) => i18n::tr!("ui-editor-source-view"),
     }
 }
 
-pub(super) fn mode_label(mode: EditorMode) -> &'static str {
+pub(super) fn mode_label(mode: EditorMode) -> String {
     match mode {
-        EditorMode::Rich => "Rich",
-        EditorMode::Source => "Source",
+        EditorMode::Rich => i18n::tr!("ui-editor-rich"),
+        EditorMode::Source => i18n::tr!("ui-editor-source"),
     }
 }
 

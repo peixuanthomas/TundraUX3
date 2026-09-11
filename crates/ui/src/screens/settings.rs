@@ -36,25 +36,25 @@ impl SettingsCategory {
         Self::Update,
     ];
 
-    pub const fn label(self) -> &'static str {
+    pub fn label(self) -> String {
         match self {
-            Self::Appearance => "Appearance",
-            Self::RegionTime => "Region & Time",
-            Self::System => "System",
-            Self::FileExplorer => "File Explorer",
-            Self::Editor => "Editor",
-            Self::Update => "Update",
+            Self::Appearance => i18n::tr!("ui-settings-appearance"),
+            Self::RegionTime => i18n::tr!("ui-settings-region-time"),
+            Self::System => i18n::tr!("ui-settings-system"),
+            Self::FileExplorer => i18n::tr!("ui-settings-file-explorer"),
+            Self::Editor => i18n::tr!("ui-settings-editor"),
+            Self::Update => i18n::tr!("ui-settings-update"),
         }
     }
 
-    pub const fn description(self) -> &'static str {
+    pub fn description(self) -> String {
         match self {
-            Self::Appearance => "Theme, motion, icons, colors and borders",
-            Self::RegionTime => "Language, city and timezone",
-            Self::System => "Storage pressure warning thresholds",
-            Self::FileExplorer => "Display, sorting and safety",
-            Self::Editor => "Cursor and file associations",
-            Self::Update => "Version, commits and source updates",
+            Self::Appearance => i18n::tr!("ui-settings-theme-motion-icons-colors-and-borders"),
+            Self::RegionTime => i18n::tr!("ui-settings-language-city-and-timezone"),
+            Self::System => i18n::tr!("ui-settings-storage-pressure-warning-thresholds"),
+            Self::FileExplorer => i18n::tr!("ui-settings-display-sorting-and-safety"),
+            Self::Editor => i18n::tr!("ui-settings-cursor-and-file-associations"),
+            Self::Update => i18n::tr!("ui-settings-version-commits-and-source-updates"),
         }
     }
 }
@@ -611,7 +611,7 @@ fn render_settings_content(
 ) {
     let theme = &context.compatibility_theme();
     Surface::new()
-        .titled(" Settings ")
+        .titled(i18n::tr!("ui-settings-settings-padded"))
         .bordered(false)
         .render_frame(frame, layout.main, context);
 
@@ -627,7 +627,7 @@ fn render_settings_content(
             })
             .collect(),
     )
-    .titled(" Sections ");
+    .titled(i18n::tr!("ui-settings-sections-padded"));
     categories.set_selected(
         SettingsCategory::ALL
             .iter()
@@ -651,16 +651,19 @@ fn render_settings_content(
             let preview_context =
                 RenderContext::from_theme(&preview_theme, context.motion, context.capabilities);
             let surface = Surface::new()
-                .titled(" Preview ")
+                .titled(i18n::tr!("ui-settings-preview-padded"))
                 .bordered(true)
                 .border_shape(preview.border_shape);
             let inner = surface.inner(visible);
             surface.render_frame(frame, visible, &preview_context);
             frame.render_widget(
                 Paragraph::new(vec![
-                    Line::styled("Live preview", preview_theme.title_style()),
                     Line::styled(
-                        "Selected controls use the accent color.",
+                        i18n::tr!("ui-settings-live-preview"),
+                        preview_theme.title_style(),
+                    ),
+                    Line::styled(
+                        i18n::tr!("ui-settings-selected-controls-use-the-accent-color"),
                         preview_theme.body_style(),
                     ),
                 ])
@@ -907,7 +910,7 @@ fn render_update_commits(
         return;
     };
     Surface::new()
-        .titled(" Commits ")
+        .titled(i18n::tr!("ui-settings-commits-padded"))
         .bordered(true)
         .raised(true)
         .render_frame(frame, visible, context);
@@ -965,7 +968,10 @@ fn render_update_confirmation(
         button.render_borderless_frame(frame, area, theme);
     }
     if let Some(area) = layout.update_cancel_button {
-        let mut button = Button::new("settings.update.cancel", "[Cancel]");
+        let mut button = Button::new(
+            "settings.update.cancel",
+            i18n::tr!("ui-settings-cancel-button"),
+        );
         button.state.selected = !confirmation.confirm_selected;
         button.render_borderless_frame(frame, area, theme);
     }
@@ -986,10 +992,10 @@ fn render_settings_footer(
         .iter()
         .flat_map(|card| &card.items)
         .find(|item| item.field == model.selected_field)
-        .map(|item| item.description.as_str())
-        .unwrap_or("Choose a setting.");
+        .map(|item| item.description.clone())
+        .unwrap_or_else(|| i18n::tr!("ui-settings-choose-a-setting"));
     let lock = model.locked_message.as_deref().unwrap_or("");
-    let text = [model.status.as_str(), lock, description]
+    let text = [model.status.as_str(), lock, description.as_str()]
         .into_iter()
         .filter(|part| !part.is_empty())
         .collect::<Vec<_>>()
@@ -1031,15 +1037,15 @@ fn render_picker(
             query_area,
             "settings.picker-search",
             &picker.query,
-            "Search: ",
+            &i18n::tr!("ui-settings-search-padded"),
             theme,
             theme.muted,
         );
     } else {
         let help = if picker.kind == SettingsPickerKind::DefaultThemeIcons {
-            "Arrows: choose    Enter: apply    Esc: back"
+            i18n::tr!("ui-settings-arrows-choose-enter-apply-esc-back")
         } else {
-            "Arrows: choose    Enter: apply    Esc: cancel"
+            i18n::tr!("ui-settings-arrows-choose-enter-apply-esc-cancel")
         };
         frame.render_widget(
             Paragraph::new(Line::styled(help, theme.muted_style()))
@@ -1107,13 +1113,16 @@ fn render_color_editor(
     let dialog = centered(area, area.width.min(56), area.height.min(9));
     frame.render_widget(Clear, dialog);
     let lines = vec![
-        Line::from("Enter a color as #RRGGBB."),
+        Line::from(i18n::tr!("ui-settings-enter-a-color-as-rrggbb")),
         Line::from(""),
         Line::styled(
             editor.error.clone().unwrap_or_default(),
             theme.error_style(),
         ),
-        Line::styled("Enter: apply    Esc: cancel", theme.muted_style()),
+        Line::styled(
+            i18n::tr!("ui-settings-enter-apply-esc-cancel"),
+            theme.muted_style(),
+        ),
     ];
     let surface = Surface::new()
         .titled(format!(" {} ", editor.title))
@@ -1140,20 +1149,25 @@ fn render_weather_location_editor(
     let dialog = centered(area, area.width.min(68), area.height.min(11));
     frame.render_widget(Clear, dialog);
     let lines = vec![
-        Line::from("Enter a detailed city or address using English characters."),
+        Line::from(i18n::tr!(
+            "ui-settings-enter-a-detailed-city-or-address-using-english-characters"
+        )),
         Line::from(""),
         Line::styled(
             editor.error.clone().unwrap_or_default(),
             theme.error_style(),
         ),
         Line::styled(
-            "Leave empty to use the timezone location.",
+            i18n::tr!("ui-settings-leave-empty-to-use-the-timezone-location"),
             theme.muted_style(),
         ),
-        Line::styled("Enter: continue    Esc: cancel", theme.muted_style()),
+        Line::styled(
+            i18n::tr!("ui-settings-enter-continue-esc-cancel"),
+            theme.muted_style(),
+        ),
     ];
     let surface = Surface::new()
-        .titled(" Weather location ")
+        .titled(i18n::tr!("ui-settings-weather-location-padded"))
         .bordered(true)
         .raised(true);
     let inner = surface.inner(dialog);
@@ -1183,23 +1197,29 @@ fn render_file_extensions_editor(
     let dialog = centered(area, area.width.min(72), area.height.min(11));
     frame.render_widget(Clear, dialog);
     let lines = vec![
-        Line::from("Enter comma-separated filename suffixes Explorer should open here."),
+        Line::from(i18n::tr!(
+            "ui-settings-enter-comma-separated-filename-suffixes-explorer-should-open-here"
+        )),
         Line::from(""),
         Line::styled(
             editor.error.clone().unwrap_or_default(),
             theme.error_style(),
         ),
         Line::styled(
-            "Examples: .md, .txt, .rs, .d.ts (matching is case-insensitive)",
+            i18n::tr!("ui-settings-examples-md-txt-rs-d-ts-matching-is-case-insensitive"),
             theme.muted_style(),
         ),
         Line::styled(
-            "Leave empty to always use the system default.  Enter: save  Esc: cancel",
+            i18n::tr!(
+                "ui-settings-leave-empty-to-always-use-the-system-default-enter-save-esc-cancel"
+            ),
             theme.muted_style(),
         ),
     ];
     let surface = Surface::new()
-        .titled(" Explorer files opened in Editor ")
+        .titled(i18n::tr!(
+            "ui-settings-explorer-files-opened-in-editor-padded"
+        ))
         .bordered(true)
         .raised(true);
     let inner = surface.inner(dialog);
@@ -1229,9 +1249,9 @@ fn render_time_sync_server_editor(
     let dialog = centered(area, area.width.min(76), area.height.min(11));
     frame.render_widget(Clear, dialog);
     let status = if editor.validating {
-        "Synchronizing with this server…"
+        i18n::tr!("ui-settings-synchronizing-with-this-server")
     } else {
-        editor.error.as_deref().unwrap_or_default()
+        editor.error.clone().unwrap_or_default()
     };
     let status_style = if editor.validating {
         theme.muted_style()
@@ -1239,17 +1259,24 @@ fn render_time_sync_server_editor(
         theme.error_style()
     };
     let lines = vec![
-        Line::from("Enter an HTTP(S) endpoint that returns a valid Date response header."),
+        Line::from(i18n::tr!(
+            "ui-settings-enter-an-http-s-endpoint-that-returns-a-valid-date-response-header"
+        )),
         Line::from(""),
         Line::styled(status, status_style),
         Line::styled(
-            "The address is saved only after a successful synchronization test.",
+            i18n::tr!(
+                "ui-settings-the-address-is-saved-only-after-a-successful-synchronization-test"
+            ),
             theme.muted_style(),
         ),
-        Line::styled("Enter: test and save    Esc: cancel", theme.muted_style()),
+        Line::styled(
+            i18n::tr!("ui-settings-enter-test-and-save-esc-cancel"),
+            theme.muted_style(),
+        ),
     ];
     let surface = Surface::new()
-        .titled(" Time synchronization server ")
+        .titled(i18n::tr!("ui-settings-time-synchronization-server-padded"))
         .bordered(true)
         .raised(true);
     let inner = surface.inner(dialog);
@@ -1351,7 +1378,7 @@ fn render_settings_control(
         let label = if item.enabled {
             item.value.clone()
         } else {
-            format!("{} locked", item.value)
+            i18n::tr!("ui-settings-locked-value", value = item.value.clone())
         };
         let style = if item.enabled {
             if selected {
@@ -1383,7 +1410,11 @@ fn render_settings_control(
 fn settings_control_width(item: &SettingsItemViewModel) -> u16 {
     let label_width = u16::try_from(terminal_width(&item.value)).unwrap_or(u16::MAX);
     if !item.enabled {
-        return label_width.saturating_add(" locked".len() as u16);
+        return u16::try_from(terminal_width(&i18n::tr!(
+            "ui-settings-locked-value",
+            value = item.value.clone()
+        )))
+        .unwrap_or(u16::MAX);
     }
 
     let component_padding = match item.kind {

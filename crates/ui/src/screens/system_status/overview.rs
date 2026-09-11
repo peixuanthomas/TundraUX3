@@ -15,18 +15,24 @@ pub(super) fn render_overview(
 ) {
     let metrics = &model.dashboard.overview_metrics;
     if metrics.is_empty() {
-        EmptyState::new("Loading system metrics...").render_frame(frame, layout.canvas, context);
+        EmptyState::new(i18n::tr!("ui-system-status-loading-system-metrics")).render_frame(
+            frame,
+            layout.canvas,
+            context,
+        );
         return;
     }
     let [summary, grid] =
         Layout::vertical([Constraint::Length(1), Constraint::Min(0)]).areas(layout.canvas);
     if let Some(overview) = model.detail_widget(SystemStatusDetail::Overview) {
+        // These rows are supplied by the shell with labels resolved in the same snapshot.
+        let identity_labels = [i18n::tr!("shell-system"), i18n::tr!("shell-os")];
         let identity = overview
             .compact_rows
             .iter()
             .filter(|row| {
                 row.first()
-                    .is_some_and(|label| matches!(label.as_str(), "System" | "OS"))
+                    .is_some_and(|label| identity_labels.contains(label))
             })
             .filter_map(|row| row.get(1))
             .cloned()
@@ -72,15 +78,16 @@ fn render_metric(
         return;
     }
     let stale = matches!(metric.state, SystemStatusWidgetState::Stale { .. });
-    let title = format!(
-        "{}{}",
-        if stale { "Stale " } else { "" },
-        if metric.kind == SystemStatusWidgetKind::Network {
-            "Network · Down"
-        } else {
-            metric.kind.label()
-        },
-    );
+    let title = if metric.kind == SystemStatusWidgetKind::Network {
+        i18n::tr!("ui-system-status-network-down")
+    } else {
+        metric.kind.label()
+    };
+    let title = if stale {
+        i18n::tr!("ui-system-status-stale-title", title = title)
+    } else {
+        title
+    };
     let surface = Surface::new().titled(title).bordered(true).raised(true);
     surface.render_frame(frame, area, context);
     let inner = surface.inner(area);
@@ -88,10 +95,15 @@ fn render_metric(
         return;
     }
     let placeholder = match &metric.state {
-        SystemStatusWidgetState::Loading => Some(("Loading...", "Waiting for a sample")),
-        SystemStatusWidgetState::Unavailable { message } => Some(("Unavailable", message.as_str())),
+        SystemStatusWidgetState::Loading => Some((
+            i18n::tr!("ui-system-status-loading"),
+            i18n::tr!("ui-system-status-waiting-for-a-sample"),
+        )),
+        SystemStatusWidgetState::Unavailable { message } => {
+            Some((i18n::tr!("ui-system-status-unavailable"), message.clone()))
+        }
         SystemStatusWidgetState::Stale { message } if metric.primary.is_empty() => {
-            Some(("Stale data", message.as_str()))
+            Some((i18n::tr!("ui-system-status-stale-data"), message.clone()))
         }
         _ => None,
     };
@@ -138,9 +150,9 @@ fn render_metric(
         Layout::vertical([Constraint::Min(0), Constraint::Length(graph_height)]).areas(inner);
     let mut lines = vec![Line::styled(
         if metric.primary.is_empty() {
-            "No readings"
+            i18n::tr!("ui-system-status-no-readings")
         } else {
-            &metric.primary
+            metric.primary.clone()
         },
         style.add_modifier(Modifier::BOLD),
     )];
@@ -173,9 +185,9 @@ fn render_metric(
         }
     } else if let Some(data) = trend {
         let label = match metric.kind {
-            SystemStatusWidgetKind::Network => "Download trend",
-            SystemStatusWidgetKind::Temperature => "Temperature trend",
-            _ => "Recent samples",
+            SystemStatusWidgetKind::Network => i18n::tr!("ui-system-status-download-trend"),
+            SystemStatusWidgetKind::Temperature => i18n::tr!("ui-system-status-temperature-trend"),
+            _ => i18n::tr!("ui-system-status-recent-samples"),
         };
         frame.render_widget(Sparkline::default().data(data).style(style), graph);
         if usize::from(text.height) > metric.secondary.len() + 1 {

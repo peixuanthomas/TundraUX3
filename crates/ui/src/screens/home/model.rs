@@ -11,6 +11,8 @@ pub enum HomeDisplayMode {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ShellEntry {
+    /// Stable ASCII asset key; presentation labels may change with the locale.
+    pub icon_key: Option<String>,
     pub label: String,
     pub description: String,
 }
@@ -18,9 +20,18 @@ pub struct ShellEntry {
 impl ShellEntry {
     pub fn new(label: impl Into<String>, description: impl Into<String>) -> Self {
         Self {
+            icon_key: None,
             label: label.into(),
             description: description.into(),
         }
+    }
+    pub fn with_icon_key(mut self, key: impl Into<String>) -> Self {
+        self.icon_key = Some(key.into());
+        self
+    }
+
+    pub fn icon_identity(&self) -> &str {
+        self.icon_key.as_deref().unwrap_or(&self.label)
     }
 }
 

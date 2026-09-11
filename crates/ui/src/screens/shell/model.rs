@@ -15,14 +15,12 @@ pub struct StatusViewModel {
 pub struct TimeSyncDialogViewModel;
 
 impl TimeSyncDialogViewModel {
-    pub const MESSAGE: &'static str = "联网校准时间失败";
-
     pub fn new() -> Self {
         Self
     }
 
-    pub fn message(&self) -> &'static str {
-        Self::MESSAGE
+    pub fn message(&self) -> String {
+        i18n::tr!("ui-shell-time-sync-failed")
     }
 }
 
@@ -48,11 +46,11 @@ pub struct ExitConfirmViewModel {
 impl ExitConfirmViewModel {
     pub fn new() -> Self {
         Self {
-            title: "Exit & power".to_string(),
-            message: "Choose an action. Esc returns to TundraUX.".to_string(),
-            confirm_label: "Y / Enter: Exit TundraUX".to_string(),
-            restart_label: "R: Restart TundraUX".to_string(),
-            cancel_label: "N / Esc: Cancel".to_string(),
+            title: i18n::tr!("ui-shell-exit-power"),
+            message: i18n::tr!("ui-shell-choose-an-action-esc-returns-to-tundraux"),
+            confirm_label: i18n::tr!("ui-shell-y-enter-exit-tundraux"),
+            restart_label: i18n::tr!("ui-shell-r-restart-tundraux"),
+            cancel_label: i18n::tr!("ui-shell-n-esc-cancel"),
         }
     }
 }

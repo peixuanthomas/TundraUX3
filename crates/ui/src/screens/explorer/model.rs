@@ -14,12 +14,12 @@ pub enum ExplorerSortColumn {
 impl ExplorerSortColumn {
     pub const ALL: [Self; 4] = [Self::Name, Self::Type, Self::Size, Self::Modified];
 
-    pub const fn label(self) -> &'static str {
+    pub fn label(self) -> String {
         match self {
-            Self::Name => "Name",
-            Self::Type => "Type",
-            Self::Size => "Size",
-            Self::Modified => "Modified",
+            Self::Name => i18n::tr!("ui-explorer-name"),
+            Self::Type => i18n::tr!("ui-explorer-type"),
+            Self::Size => i18n::tr!("ui-explorer-size"),
+            Self::Modified => i18n::tr!("ui-explorer-modified"),
         }
     }
 }
@@ -94,22 +94,22 @@ impl ExplorerToolbarAction {
         Self::Options,
     ];
 
-    pub const fn label(self) -> &'static str {
+    pub fn label(self) -> String {
         match self {
-            Self::Back => "Back",
-            Self::Forward => "Forward",
-            Self::Up => "Up",
-            Self::Refresh => "Refresh",
-            Self::New => "New",
-            Self::Cut => "Cut",
-            Self::Copy => "Copy",
-            Self::Paste => "Paste",
-            Self::Rename => "Rename",
-            Self::Delete => "Delete",
-            Self::Restore => "Restore",
-            Self::DumpTrash => "Dump Trash",
-            Self::Sort => "Sort",
-            Self::Options => "Options",
+            Self::Back => i18n::tr!("ui-explorer-back"),
+            Self::Forward => i18n::tr!("ui-explorer-forward"),
+            Self::Up => i18n::tr!("ui-explorer-up"),
+            Self::Refresh => i18n::tr!("ui-explorer-refresh"),
+            Self::New => i18n::tr!("ui-explorer-new"),
+            Self::Cut => i18n::tr!("ui-explorer-cut"),
+            Self::Copy => i18n::tr!("ui-explorer-copy"),
+            Self::Paste => i18n::tr!("ui-explorer-paste"),
+            Self::Rename => i18n::tr!("ui-explorer-rename"),
+            Self::Delete => i18n::tr!("ui-explorer-delete"),
+            Self::Restore => i18n::tr!("ui-explorer-restore"),
+            Self::DumpTrash => i18n::tr!("ui-explorer-dump-trash"),
+            Self::Sort => i18n::tr!("ui-explorer-sort"),
+            Self::Options => i18n::tr!("ui-explorer-options"),
         }
     }
 
@@ -331,14 +331,14 @@ pub enum ExplorerProgressStage {
 }
 
 impl ExplorerProgressStage {
-    pub const fn label(self) -> &'static str {
+    pub fn label(self) -> String {
         match self {
-            Self::Scanning => "Scanning",
-            Self::CheckingConflicts => "Checking conflicts",
-            Self::Copying => "Copying",
-            Self::Moving => "Moving",
-            Self::Deleting => "Deleting",
-            Self::Finishing => "Finishing",
+            Self::Scanning => i18n::tr!("ui-explorer-scanning"),
+            Self::CheckingConflicts => i18n::tr!("ui-explorer-checking-conflicts"),
+            Self::Copying => i18n::tr!("ui-explorer-copying"),
+            Self::Moving => i18n::tr!("ui-explorer-moving"),
+            Self::Deleting => i18n::tr!("ui-explorer-deleting"),
+            Self::Finishing => i18n::tr!("ui-explorer-finishing"),
         }
     }
 }
@@ -439,12 +439,12 @@ pub enum ExplorerConflictChoice {
 }
 
 impl ExplorerConflictChoice {
-    pub const fn label(self) -> &'static str {
+    pub fn label(self) -> String {
         match self {
-            Self::KeepBoth => "Keep both",
-            Self::Replace => "Replace",
-            Self::Skip => "Skip",
-            Self::Cancel => "Cancel",
+            Self::KeepBoth => i18n::tr!("ui-explorer-keep-both"),
+            Self::Replace => i18n::tr!("ui-explorer-replace"),
+            Self::Skip => i18n::tr!("ui-explorer-skip"),
+            Self::Cancel => i18n::tr!("ui-explorer-cancel"),
         }
     }
 }

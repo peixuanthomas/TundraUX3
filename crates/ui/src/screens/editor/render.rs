@@ -175,7 +175,7 @@ fn render_settings(
     };
     frame.render_widget(Clear, settings_layout.dialog);
     Surface::new()
-        .titled(" Editor Settings ")
+        .titled(i18n::tr!("ui-editor-editor-settings-padded"))
         .bordered(true)
         .raised(true)
         .render_frame(frame, settings_layout.dialog, context);
@@ -186,9 +186,11 @@ fn render_settings(
         1,
     );
     let description_text = if settings.editable {
-        "Hold one direction to accelerate with a quadratic curve."
+        i18n::tr!("ui-editor-hold-one-direction-to-accelerate-with-a-quadratic-curve")
     } else {
-        "Read-only: administrator permission is required to change these settings."
+        i18n::tr!(
+            "ui-editor-read-only-administrator-permission-is-required-to-change-these-settings"
+        )
     };
     frame.render_widget(
         Paragraph::new(description_text)
@@ -201,16 +203,19 @@ fn render_settings(
         let selected = field.field == settings.selected;
         let locked = !settings.editable && field.field != EditorSettingsField::Cancel;
         let label = match field.field {
-            EditorSettingsField::Enabled => " Cursor acceleration",
-            EditorSettingsField::ActivationDelay => " Start delay",
-            EditorSettingsField::RampDuration => " Ramp to maximum",
-            EditorSettingsField::HorizontalMaxStep => " Horizontal maximum",
-            EditorSettingsField::VerticalMaxStep => " Vertical maximum",
+            EditorSettingsField::Enabled => i18n::tr!("ui-editor-cursor-acceleration-padded"),
+            EditorSettingsField::ActivationDelay => i18n::tr!("ui-editor-start-delay-padded"),
+            EditorSettingsField::RampDuration => i18n::tr!("ui-editor-ramp-to-maximum-padded"),
+            EditorSettingsField::HorizontalMaxStep => {
+                i18n::tr!("ui-editor-horizontal-maximum-padded")
+            }
+            EditorSettingsField::VerticalMaxStep => i18n::tr!("ui-editor-vertical-maximum-padded"),
             EditorSettingsField::RestoreDefaults
             | EditorSettingsField::Save
-            | EditorSettingsField::Cancel => "",
+            | EditorSettingsField::Cancel => String::new(),
         };
-        let label = format!("{label:<width$}", width = usize::from(field.area.width));
+        let padding = usize::from(field.area.width).saturating_sub(terminal_width(&label));
+        let label = format!("{label}{}", " ".repeat(padding));
         render_editor_button(
             frame,
             field.area,
@@ -230,16 +235,18 @@ fn render_settings(
         let label = match control.control {
             EditorSettingsControl::ToggleEnabled => {
                 if settings.enabled {
-                    "[ ON ]"
+                    i18n::tr!("ui-editor-on-button")
                 } else {
-                    "[OFF ]"
+                    i18n::tr!("ui-editor-off-button")
                 }
             }
-            EditorSettingsControl::Decrease(_) => "[-]",
-            EditorSettingsControl::Increase(_) => "[+]",
-            EditorSettingsControl::RestoreDefaults => "[ Restore defaults ]",
-            EditorSettingsControl::Save => "[ Save ]",
-            EditorSettingsControl::Cancel => "[ Cancel ]",
+            EditorSettingsControl::Decrease(_) => "[-]".to_owned(),
+            EditorSettingsControl::Increase(_) => "[+]".to_owned(),
+            EditorSettingsControl::RestoreDefaults => {
+                i18n::tr!("ui-editor-restore-defaults-button")
+            }
+            EditorSettingsControl::Save => i18n::tr!("ui-editor-save-button"),
+            EditorSettingsControl::Cancel => i18n::tr!("ui-editor-cancel-button"),
         };
         render_editor_button(
             frame,
@@ -255,19 +262,22 @@ fn render_settings(
     for (field, value) in [
         (
             EditorSettingsField::ActivationDelay,
-            format!("{} ms", settings.activation_delay_ms),
+            i18n::tr!(
+                "ui-editor-milliseconds",
+                count = settings.activation_delay_ms
+            ),
         ),
         (
             EditorSettingsField::RampDuration,
-            format!("{} ms", settings.ramp_duration_ms),
+            i18n::tr!("ui-editor-milliseconds", count = settings.ramp_duration_ms),
         ),
         (
             EditorSettingsField::HorizontalMaxStep,
-            format!("{} cells", settings.horizontal_max_step),
+            i18n::tr!("ui-editor-cells", count = settings.horizontal_max_step),
         ),
         (
             EditorSettingsField::VerticalMaxStep,
-            format!("{} lines", settings.vertical_max_step),
+            i18n::tr!("ui-editor-lines", count = settings.vertical_max_step),
         ),
     ] {
         let Some(decrease) = settings_layout
@@ -290,7 +300,6 @@ fn render_settings(
             increase.area.x.saturating_sub(decrease.area.right()),
             1,
         );
-        let width = usize::from(value_area.width);
         let style = if !settings.editable {
             theme.muted_style()
         } else if settings.selected == field {
@@ -302,8 +311,8 @@ fn render_settings(
             theme.body_style()
         };
         frame.render_widget(
-            Paragraph::new(format!("{value:^width$}"))
-                .alignment(HorizontalAlignment::Left)
+            Paragraph::new(value)
+                .alignment(HorizontalAlignment::Center)
                 .style(style),
             value_area,
         );
@@ -316,9 +325,11 @@ fn render_settings(
         1,
     );
     frame.render_widget(
-        Paragraph::new("Tab select · Left/Right adjust · Enter activate · Esc cancel")
-            .alignment(HorizontalAlignment::Left)
-            .style(theme.muted_style()),
+        Paragraph::new(i18n::tr!(
+            "ui-editor-tab-select-left-right-adjust-enter-activate-esc-cancel"
+        ))
+        .alignment(HorizontalAlignment::Left)
+        .style(theme.muted_style()),
         help,
     );
 }
@@ -404,13 +415,13 @@ fn render_canvas(
             title.push_str(" *");
         }
         if model.read_only {
-            title.push_str(" [read-only]");
+            title = i18n::tr!("ui-editor-read-only-title", title = title);
         }
         if model
             .read_window
             .is_some_and(|window| window.start_byte > 0)
         {
-            title.push_str(" [tail]");
+            title = i18n::tr!("ui-editor-tail-title", title = title);
         }
         let title = terminal_safe_text(&title).into_owned();
         Surface::new().titled(title).bordered(true).render_frame(
@@ -536,47 +547,46 @@ fn render_status_bar(
     }
     let cursor = effective_cursor(layout, model).unwrap_or_default();
     let image = match model.image_protocol {
-        EditorImageProtocolStatus::Detecting => "image:detecting",
-        EditorImageProtocolStatus::Unsupported => "image:fallback",
-        EditorImageProtocolStatus::Available => "image:terminal",
+        EditorImageProtocolStatus::Detecting => i18n::tr!("ui-editor-image-detecting"),
+        EditorImageProtocolStatus::Unsupported => i18n::tr!("ui-editor-image-fallback"),
+        EditorImageProtocolStatus::Available => i18n::tr!("ui-editor-image-terminal"),
     };
     let mode = mode_label(model.mode);
     let read_window = model.read_window.map(|window| {
         if window.total_bytes == 0 {
-            "Bytes 0 of 0".to_string()
+            i18n::tr!("ui-editor-bytes-0-of-0")
         } else {
             let start = window.start_byte.min(window.total_bytes.saturating_sub(1));
-            format!(
-                "Bytes {}-{} of {}",
-                start.saturating_add(1),
-                window.total_bytes,
-                window.total_bytes
+            i18n::tr!(
+                "ui-editor-byte-window",
+                start = start.saturating_add(1),
+                end = window.total_bytes,
+                total = window.total_bytes
             )
         }
     });
-    let left = model
-        .status_message
-        .as_deref()
-        .unwrap_or(if model.read_only {
-            "Read only"
+    let left = model.status_message.clone().unwrap_or_else(|| {
+        if model.read_only {
+            i18n::tr!("ui-editor-read-only")
         } else {
-            "Ready"
-        });
+            i18n::tr!("ui-editor-ready")
+        }
+    });
     let left = if model.reload_available {
-        format!("{left} · R Reload")
+        i18n::tr!("ui-editor-reload-help", left = left)
     } else {
         left.to_string()
     };
-    let right = format!(
-        "{}  Ln {}, Col {}  {} words  {}/{}  {}{}",
-        mode,
-        cursor.line.saturating_add(1),
-        cursor.column.saturating_add(1),
-        model.word_count,
-        model.encoding,
-        model.line_ending,
-        image,
-        read_window.map_or_else(String::new, |window| format!("  {window}")),
+    let right = i18n::tr!(
+        "ui-editor-status",
+        mode = mode,
+        line = cursor.line.saturating_add(1),
+        column = cursor.column.saturating_add(1),
+        count = model.word_count.clone(),
+        encoding = model.encoding.clone(),
+        line_ending = model.line_ending.clone(),
+        protocol = image,
+        window = read_window.map_or_else(String::new, |window| format!("  {window}"))
     );
     let available = usize::from(layout.status_bar.width);
     let left_width = terminal_width(&left);

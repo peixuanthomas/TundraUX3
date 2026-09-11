@@ -53,14 +53,20 @@ fn render_diagnostics_main(
 ) {
     let layout = diagnostics_layout(main, model);
     Surface::new()
-        .titled("System Status / Diagnostics")
+        .titled(i18n::tr!("ui-diagnostics-system-status-diagnostics"))
         .bordered(false)
         .render_frame(frame, layout.panel, context);
 
     render_diagnostics_header(frame, layout.header, model, theme);
     render_diagnostics_tabs(frame, &layout, model, context);
     render_diagnostics_content(frame, &layout.content_layout(), model, theme, context);
-    render_diagnostics_footer(frame, layout.footer, model, theme, "Esc System Status");
+    render_diagnostics_footer(
+        frame,
+        layout.footer,
+        model,
+        theme,
+        &i18n::tr!("ui-diagnostics-esc-system-status"),
+    );
 
     if let (Some(dialog_layout), Some(dialog)) =
         (layout.repair_dialog.as_ref(), model.repair_dialog.as_ref())
@@ -92,54 +98,60 @@ pub(crate) fn render_diagnostics_header(
         .count();
     let (state, style) = if model.restart_required {
         (
-            "Restart required".to_string(),
+            i18n::tr!("ui-diagnostics-restart-required"),
             diagnostics_warning_style(theme),
         )
     } else if model.scanning {
-        ("Scanning health checks...".to_string(), theme.title_style())
+        (
+            i18n::tr!("ui-diagnostics-scanning-health-checks"),
+            theme.title_style(),
+        )
     } else if failure_count > 0 {
         (
-            format!(
-                "System needs attention — {warning_count} warning{} / {failure_count} failure{}",
-                if warning_count == 1 { "" } else { "s" },
-                if failure_count == 1 { "" } else { "s" },
+            i18n::tr!(
+                "ui-diagnostics-attention-failures",
+                warnings = warning_count,
+                failures = failure_count
             ),
             theme.error_style(),
         )
     } else if warning_count > 0 {
         (
-            format!(
-                "System needs attention — {warning_count} warning{}",
-                if warning_count == 1 { "" } else { "s" },
-            ),
+            i18n::tr!("ui-diagnostics-attention-warnings", count = warning_count),
             diagnostics_warning_style(theme),
         )
     } else if unsupported_count > 0 {
         (
-            format!(
-                "System healthy — {unsupported_count} unsupported {}",
-                if unsupported_count == 1 {
-                    "capability"
-                } else {
-                    "capabilities"
-                },
+            i18n::tr!(
+                "ui-diagnostics-unsupported-count",
+                count = unsupported_count
             ),
             theme.muted_style(),
         )
     } else if model.checks.is_empty() {
         (
-            "No health checks available".to_string(),
+            i18n::tr!("ui-diagnostics-no-health-checks-available"),
             theme.muted_style(),
         )
     } else {
-        ("System healthy".to_string(), theme.title_style())
+        (
+            i18n::tr!("ui-diagnostics-system-healthy"),
+            theme.title_style(),
+        )
     };
-    let scanned_at = model.scanned_at.as_deref().unwrap_or("not yet scanned");
+    let scanned_at = model
+        .scanned_at
+        .clone()
+        .unwrap_or_else(|| i18n::tr!("ui-diagnostics-not-yet-scanned"));
     render_clock_line(
         frame,
         area,
         fit_cell(
-            &format!("{state}    Last scan: {scanned_at}"),
+            &i18n::tr!(
+                "ui-diagnostics-last-scan",
+                state = state,
+                scanned_at = scanned_at
+            ),
             usize::from(area.width),
         ),
         style,
@@ -155,11 +167,11 @@ pub(crate) fn render_diagnostics_content(
     context: &RenderContext,
 ) {
     let title = match model.tab {
-        DiagnosticsTab::Health => "Checks",
-        DiagnosticsTab::Logs => "Logs",
-        DiagnosticsTab::Incidents => "Incidents",
+        DiagnosticsTab::Health => i18n::tr!("ui-diagnostics-checks"),
+        DiagnosticsTab::Logs => i18n::tr!("ui-diagnostics-logs"),
+        DiagnosticsTab::Incidents => i18n::tr!("ui-diagnostics-incidents"),
     };
-    render_diagnostics_content_titled(frame, layout, model, theme, context, title, None);
+    render_diagnostics_content_titled(frame, layout, model, theme, context, &title, None);
 }
 
 /// Shares the diagnostics list, details and scrollbar with other application hosts.
@@ -170,14 +182,14 @@ pub(crate) fn render_diagnostics_content_titled(
     theme: &TundraTheme,
     context: &RenderContext,
     title: &str,
-    empty_content: Option<(&str, &str)>,
+    empty_content: Option<(String, String)>,
 ) {
     Surface::new()
         .titled(title)
         .bordered(true)
         .render_frame(frame, layout.list_panel, context);
     Surface::new()
-        .titled("Details")
+        .titled(i18n::tr!("ui-diagnostics-details"))
         .bordered(true)
         .render_frame(frame, layout.detail_panel, context);
     if model.item_count() == 0 {
@@ -211,7 +223,7 @@ fn render_diagnostics_tabs(
         .into_iter()
         .map(|tab| {
             TabItem::new(
-                format!("diagnostics.tab.{}", tab.label().to_ascii_lowercase()),
+                format!("diagnostics.tab.{tab:?}"),
                 format!("[{}]", tab.label()),
             )
         })
@@ -231,18 +243,20 @@ fn render_diagnostics_rows(
 ) {
     if model.item_count() == 0 {
         let text = if model.scanning && model.tab == DiagnosticsTab::Health {
-            "  Scanning..."
+            i18n::tr!("ui-diagnostics-scanning-padded")
         } else {
             match model.tab {
-                DiagnosticsTab::Health => "  No checks available",
+                DiagnosticsTab::Health => i18n::tr!("ui-diagnostics-no-checks-available-padded"),
                 DiagnosticsTab::Logs => {
                     if model.can_view_details {
-                        "  No logs found"
+                        i18n::tr!("ui-diagnostics-no-logs-found-padded")
                     } else {
-                        "  Logs are restricted to administrators"
+                        i18n::tr!("ui-diagnostics-logs-are-restricted-to-administrators-padded")
                     }
                 }
-                DiagnosticsTab::Incidents => "  No incidents recorded",
+                DiagnosticsTab::Incidents => {
+                    i18n::tr!("ui-diagnostics-no-incidents-recorded-padded")
+                }
             }
         };
         render_clock_line(
@@ -290,9 +304,11 @@ fn render_diagnostics_rows(
                 DiagnosticsTab::Logs => {
                     let log = model.logs.get(index)?;
                     (
-                        format!(
-                            " {}  {}  {} bytes",
-                            log.relative_path, log.modified_at, log.size_bytes,
+                        i18n::tr!(
+                            "ui-diagnostics-log-row",
+                            name = log.relative_path.clone(),
+                            modified = log.modified_at.clone(),
+                            size = log.size_bytes.clone()
                         ),
                         DiagnosticsStatus::Pass,
                     )
@@ -348,19 +364,34 @@ fn render_diagnostics_detail(
 
     let lines = match model.tab {
         DiagnosticsTab::Health => model.selected_check().map_or_else(
-            || vec![Line::styled("No check selected", theme.muted_style())],
+            || {
+                vec![Line::styled(
+                    i18n::tr!("ui-diagnostics-no-check-selected"),
+                    theme.muted_style(),
+                )]
+            },
             |check| diagnostics_check_detail_lines(check, model, theme),
         ),
         DiagnosticsTab::Incidents => model.selected_incident().map_or_else(
-            || vec![Line::styled("No incident selected", theme.muted_style())],
+            || {
+                vec![Line::styled(
+                    i18n::tr!("ui-diagnostics-no-incident-selected"),
+                    theme.muted_style(),
+                )]
+            },
             |incident| diagnostics_incident_detail_lines(incident, model, theme),
         ),
         DiagnosticsTab::Logs if !model.can_view_details => vec![Line::styled(
-            "Logs are restricted to administrators",
+            i18n::tr!("ui-diagnostics-logs-are-restricted-to-administrators"),
             theme.muted_style(),
         )],
         DiagnosticsTab::Logs => model.selected_log().map_or_else(
-            || vec![Line::styled("No log selected", theme.muted_style())],
+            || {
+                vec![Line::styled(
+                    i18n::tr!("ui-diagnostics-no-log-selected"),
+                    theme.muted_style(),
+                )]
+            },
             |log| diagnostics_log_detail_lines(log, model, theme),
         ),
     };
@@ -380,17 +411,23 @@ fn diagnostics_log_detail_lines(
 ) -> Vec<Line<'static>> {
     if !model.can_view_details {
         return vec![Line::styled(
-            "Logs are restricted to administrators",
+            i18n::tr!("ui-diagnostics-logs-are-restricted-to-administrators"),
             theme.muted_style(),
         )];
     }
     vec![
         Line::styled(log.relative_path.clone(), theme.title_style()),
-        Line::from(format!("Modified: {}", log.modified_at)),
-        Line::from(format!("Size: {} bytes", log.size_bytes)),
-        Line::from(format!("Path: {}", log.path)),
+        Line::from(i18n::tr!(
+            "ui-diagnostics-modified",
+            modified = log.modified_at.clone()
+        )),
+        Line::from(i18n::tr!(
+            "ui-diagnostics-size-bytes",
+            size = log.size_bytes.clone()
+        )),
+        Line::from(i18n::tr!("ui-diagnostics-path", path = log.path.clone())),
         Line::styled(
-            "Press O to open read-only or E to explore the log folder",
+            i18n::tr!("ui-diagnostics-press-o-to-open-read-only-or-e-to-explore-the-log-folder"),
             theme.muted_style(),
         ),
     ]
@@ -406,27 +443,48 @@ fn diagnostics_check_detail_lines(
             format!("{} {}", check.status.marker(), check.label),
             diagnostics_status_style(check.status, theme, true),
         ),
-        Line::from(format!("Category: {}", check.category)),
-        Line::from(format!("Summary: {}", check.summary)),
+        Line::from(i18n::tr!(
+            "ui-diagnostics-category",
+            category = check.category.clone()
+        )),
+        Line::from(i18n::tr!(
+            "ui-diagnostics-summary",
+            summary = check.summary.clone()
+        )),
     ];
     if model.can_view_details {
-        lines.push(Line::from(format!("Detail: {}", check.detail)));
+        lines.push(Line::from(i18n::tr!(
+            "ui-diagnostics-detail",
+            detail = check.detail.clone()
+        )));
     } else {
         lines.push(Line::styled(
-            "Detail: Restricted to administrators",
+            i18n::tr!("ui-diagnostics-detail-restricted-to-administrators"),
             theme.muted_style(),
         ));
     }
     if !check.remediation.is_empty() {
-        lines.push(Line::from(format!("Recommended: {}", check.remediation)));
+        lines.push(Line::from(i18n::tr!(
+            "ui-diagnostics-recommended",
+            remediation = check.remediation.clone()
+        )));
     }
     if check.repairable {
         let (message, style) = if model.restart_required {
-            ("Repair disabled until restart", theme.muted_style())
+            (
+                i18n::tr!("ui-diagnostics-repair-disabled-until-restart"),
+                theme.muted_style(),
+            )
         } else if model.can_repair {
-            ("Repair available — press F", theme.title_style())
+            (
+                i18n::tr!("ui-diagnostics-repair-available-press-f"),
+                theme.title_style(),
+            )
         } else {
-            ("Repair requires administrator access", theme.muted_style())
+            (
+                i18n::tr!("ui-diagnostics-repair-requires-administrator-access"),
+                theme.muted_style(),
+            )
         };
         lines.push(Line::styled(message, style));
     }
@@ -439,28 +497,53 @@ fn diagnostics_incident_detail_lines(
     theme: &TundraTheme,
 ) -> Vec<Line<'static>> {
     let title = if model.can_view_details && !incident.restricted {
-        format!("{} Incident {}", incident.severity.marker(), incident.id)
+        i18n::tr!(
+            "ui-diagnostics-incident-id",
+            severity = incident.severity.marker(),
+            id = incident.id.clone()
+        )
     } else {
-        format!("{} Incident", incident.severity.marker())
+        i18n::tr!(
+            "ui-diagnostics-incident",
+            severity = incident.severity.marker()
+        )
     };
     let mut lines = vec![
         Line::styled(
             title,
             diagnostics_status_style(incident.severity, theme, true),
         ),
-        Line::from(format!("Occurred: {}", incident.occurred_at)),
-        Line::from(format!("Application: {}", incident.app)),
-        Line::from(format!("Recovery: {}", incident.recovery)),
+        Line::from(i18n::tr!(
+            "ui-diagnostics-occurred",
+            time = incident.occurred_at.clone()
+        )),
+        Line::from(i18n::tr!(
+            "ui-diagnostics-application",
+            app = incident.app.clone()
+        )),
+        Line::from(i18n::tr!(
+            "ui-diagnostics-recovery",
+            recovery = incident.recovery.clone()
+        )),
     ];
     if model.can_view_details && !incident.restricted {
         lines.extend([
-            Line::from(format!("Summary: {}", incident.summary)),
-            Line::from(format!("Detail: {}", incident.detail)),
-            Line::from(format!("Report: {}", incident.report_path)),
+            Line::from(i18n::tr!(
+                "ui-diagnostics-summary",
+                summary = incident.summary.clone()
+            )),
+            Line::from(i18n::tr!(
+                "ui-diagnostics-detail",
+                detail = incident.detail.clone()
+            )),
+            Line::from(i18n::tr!(
+                "ui-diagnostics-report",
+                path = incident.report_path.clone()
+            )),
         ]);
     } else {
         lines.push(Line::styled(
-            "Details and report path are restricted to administrators",
+            i18n::tr!("ui-diagnostics-details-and-report-path-are-restricted-to-administrators"),
             theme.muted_style(),
         ));
     }
@@ -475,29 +558,39 @@ pub(crate) fn render_diagnostics_footer(
     close_hint: &str,
 ) {
     let help = if model.restart_required {
-        format!("Restart required · Enter/R Restart · E Safe exit · {close_hint}")
+        i18n::tr!("ui-diagnostics-restart-help", close_hint = close_hint)
     } else if model.scanning {
-        format!("Scanning... · {close_hint}")
+        i18n::tr!("ui-diagnostics-scanning-help", close_hint = close_hint)
     } else {
-        let mut actions = vec!["R Rescan", "C Copy", close_hint];
+        let mut actions = vec![
+            i18n::tr!("ui-diagnostics-r-rescan"),
+            i18n::tr!("ui-diagnostics-c-copy"),
+            close_hint.to_owned(),
+        ];
         if model.can_repair && model.tab == DiagnosticsTab::Health {
-            actions.insert(1, "F Repair");
-            actions.insert(2, "A Repair all");
+            actions.insert(1, i18n::tr!("ui-diagnostics-f-repair"));
+            actions.insert(2, i18n::tr!("ui-diagnostics-a-repair-all"));
         }
         if model.tab != DiagnosticsTab::Health && model.can_view_details {
             actions.insert(
                 actions.len().saturating_sub(1),
                 match model.tab {
                     DiagnosticsTab::Health => unreachable!(),
-                    DiagnosticsTab::Logs => "O Open log",
-                    DiagnosticsTab::Incidents => "O Open report",
+                    DiagnosticsTab::Logs => i18n::tr!("ui-diagnostics-o-open-log"),
+                    DiagnosticsTab::Incidents => i18n::tr!("ui-diagnostics-o-open-report"),
                 },
             );
         }
         if model.can_view_details && model.tab != DiagnosticsTab::Health {
-            actions.insert(actions.len().saturating_sub(1), "E Log folder");
+            actions.insert(
+                actions.len().saturating_sub(1),
+                i18n::tr!("ui-diagnostics-e-log-folder"),
+            );
         }
-        actions.insert(actions.len().saturating_sub(1), "X Restart");
+        actions.insert(
+            actions.len().saturating_sub(1),
+            i18n::tr!("ui-diagnostics-x-restart"),
+        );
         actions.join(" · ")
     };
     let text = model
@@ -528,14 +621,19 @@ pub(crate) fn render_diagnostics_repair_dialog(
 ) {
     frame.render_widget(Clear, layout.dialog);
     Surface::new()
-        .titled("Repair preview")
+        .titled(i18n::tr!("ui-diagnostics-repair-preview"))
         .bordered(true)
         .raised(true)
         .render_frame(frame, layout.dialog, context);
     frame.render_widget(
         Paragraph::new(vec![
-            Line::styled("Review the changes before repair.", theme.title_style()),
-            Line::from("Storage document repairs require a safe restart."),
+            Line::styled(
+                i18n::tr!("ui-diagnostics-review-the-changes-before-repair"),
+                theme.title_style(),
+            ),
+            Line::from(i18n::tr!(
+                "ui-diagnostics-storage-document-repairs-require-a-safe-restart"
+            )),
         ])
         .alignment(HorizontalAlignment::Left)
         .style(theme.body_style())
@@ -552,7 +650,7 @@ pub(crate) fn render_diagnostics_repair_dialog(
                 layout.items_area.width,
                 u16::from(layout.items_area.height > 0),
             ),
-            "No repair actions selected".to_string(),
+            i18n::tr!("ui-diagnostics-no-repair-actions-selected"),
             theme.muted_style(),
             HorizontalAlignment::Left,
         );
@@ -580,7 +678,9 @@ pub(crate) fn render_diagnostics_repair_dialog(
     render_clock_line(
         frame,
         layout.help,
-        "R Restart · Repairs run in order; completed independent repairs are kept.".to_string(),
+        i18n::tr!(
+            "ui-diagnostics-r-restart-repairs-run-in-order-completed-independent-repairs-are-kept"
+        ),
         theme.muted_style(),
         HorizontalAlignment::Left,
     );
@@ -588,7 +688,7 @@ pub(crate) fn render_diagnostics_repair_dialog(
         frame,
         layout.confirm,
         "diagnostics.repair-confirm",
-        "[ Confirm repair ]",
+        &i18n::tr!("ui-diagnostics-confirm-repair-button"),
         model.confirm_selected,
         theme,
     );
@@ -597,7 +697,10 @@ pub(crate) fn render_diagnostics_repair_dialog(
     restart_theme.foreground = diagnostics_warning_style(theme)
         .fg
         .unwrap_or(theme.foreground);
-    let mut restart = Button::new("diagnostics.repair-restart", "[ Restart ]");
+    let mut restart = Button::new(
+        "diagnostics.repair-restart",
+        i18n::tr!("ui-diagnostics-restart-button"),
+    );
     restart.set_focused(true);
     restart.render_borderless_frame(frame, layout.restart, &restart_theme);
 
@@ -605,7 +708,7 @@ pub(crate) fn render_diagnostics_repair_dialog(
         frame,
         layout.cancel,
         "diagnostics.repair-cancel",
-        "[ Cancel ]",
+        &i18n::tr!("ui-diagnostics-cancel-button"),
         !model.confirm_selected,
         theme,
     );
@@ -615,7 +718,7 @@ fn render_diagnostics_button(
     frame: &mut Frame<'_>,
     area: Rect,
     id: &'static str,
-    label: &'static str,
+    label: &str,
     focused: bool,
     theme: &TundraTheme,
 ) {

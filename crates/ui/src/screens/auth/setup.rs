@@ -169,7 +169,13 @@ fn render_setup_language_page(
 
     let list_area = setup_language_list_area(area, model.languages.len());
     let items = if model.languages.is_empty() {
-        vec![ListItem::new("setup.language.empty", "No languages available").disabled(true)]
+        vec![
+            ListItem::new(
+                "setup.language.empty",
+                i18n::tr!("ui-auth-no-languages-available"),
+            )
+            .disabled(true),
+        ]
     } else {
         model
             .languages
@@ -242,7 +248,13 @@ fn render_setup_timezone_page(
         header,
     );
     let items = if model.timezones.is_empty() {
-        vec![ListItem::new("setup.timezone.empty", "No timezones available").disabled(true)]
+        vec![
+            ListItem::new(
+                "setup.timezone.empty",
+                i18n::tr!("ui-auth-no-timezones-available"),
+            )
+            .disabled(true),
+        ]
     } else {
         model
             .timezones
@@ -251,7 +263,11 @@ fn render_setup_timezone_page(
             .map(|(index, timezone)| {
                 ListItem::new(
                     format!("setup.timezone.{index}"),
-                    format!("{} ({})", timezone.label, timezone.id),
+                    i18n::tr!(
+                        "ui-auth-timezone-item",
+                        name = timezone.localized_label().render_current(),
+                        id = timezone.id.as_str()
+                    ),
                 )
             })
             .collect()
@@ -301,9 +317,9 @@ fn render_setup_admin_page(
         area,
         model,
         SetupField::AdminUsername,
-        "Admin username",
+        i18n::tr!("ui-auth-admin-username"),
         model.admin_username.clone(),
-        "Enter admin username",
+        i18n::tr!("ui-auth-enter-admin-username"),
         context,
     );
     render_setup_admin_field(
@@ -311,9 +327,9 @@ fn render_setup_admin_page(
         area,
         model,
         SetupField::AdminPassword,
-        "Admin password",
+        i18n::tr!("ui-auth-admin-password"),
         "*".repeat(model.admin_password_len),
-        "Enter admin password",
+        i18n::tr!("ui-auth-enter-admin-password"),
         context,
     );
     render_setup_admin_field(
@@ -321,9 +337,9 @@ fn render_setup_admin_page(
         area,
         model,
         SetupField::AdminPasswordConfirm,
-        "Re-enter password",
+        i18n::tr!("ui-auth-re-enter-password"),
         "*".repeat(model.admin_password_confirm_len),
-        "Re-enter admin password",
+        i18n::tr!("ui-auth-re-enter-admin-password"),
         context,
     );
     render_setup_admin_field(
@@ -331,9 +347,9 @@ fn render_setup_admin_page(
         area,
         model,
         SetupField::PasswordHint,
-        "Password hint",
+        i18n::tr!("ui-auth-password-hint"),
         model.password_hint.clone(),
-        "Optional recovery hint, not the password",
+        i18n::tr!("ui-auth-optional-recovery-hint-not-the-password"),
         context,
     );
 
@@ -344,9 +360,9 @@ fn render_setup_admin_page(
         setup_admin_field_area(area, SetupField::Submit),
         "setup.admin.submit",
         if model.can_submit {
-            "Submit: ready".to_string()
+            i18n::tr!("ui-auth-submit-ready")
         } else {
-            "Submit: incomplete".to_string()
+            i18n::tr!("ui-auth-submit-incomplete")
         },
         model.focused_field == SetupField::Submit,
         !model.can_submit,
@@ -355,9 +371,12 @@ fn render_setup_admin_page(
 
     if let Some(error) = &model.error {
         frame.render_widget(
-            Paragraph::new(Line::styled(format!("Error: {error}"), theme.error_style()))
-                .alignment(HorizontalAlignment::Left)
-                .wrap(Wrap { trim: true }),
+            Paragraph::new(Line::styled(
+                i18n::tr!("ui-auth-error", error = error),
+                theme.error_style(),
+            ))
+            .alignment(HorizontalAlignment::Left)
+            .wrap(Wrap { trim: true }),
             setup_admin_error_area(area),
         );
     }
@@ -382,12 +401,14 @@ fn render_setup_appearance_page(
     frame.render_widget(
         Paragraph::new(vec![
             Line::styled(
-                format!("Step: {}", setup_step_label(model.step)),
+                i18n::tr!("ui-auth-step", step = setup_step_label(model.step)),
                 theme.title_style(),
             ),
-            Line::from("Choose the frame shape, theme color, and accent color."),
+            Line::from(i18n::tr!(
+                "ui-auth-choose-the-frame-shape-theme-color-and-accent-color"
+            )),
             Line::styled(
-                "Tab / Up / Down: move    Left / Right: choose    Enter: activate",
+                i18n::tr!("ui-auth-tab-up-down-move-left-right-choose-enter-activate"),
                 theme.muted_style(),
             ),
         ])
@@ -402,7 +423,7 @@ fn render_setup_appearance_page(
         area,
         model,
         SetupField::AppearanceThemeColor,
-        "Theme color",
+        i18n::tr!("ui-auth-theme-color"),
         &model.theme_color_value,
         context,
     );
@@ -411,7 +432,7 @@ fn render_setup_appearance_page(
         area,
         model,
         SetupField::AppearanceThemeCustom,
-        "Use a custom theme color...",
+        &i18n::tr!("ui-auth-use-a-custom-theme-color"),
         context,
     );
     render_setup_color_palette(
@@ -419,7 +440,7 @@ fn render_setup_appearance_page(
         area,
         model,
         SetupField::AppearanceAccentColor,
-        "Accent color",
+        i18n::tr!("ui-auth-accent-color"),
         &model.accent_color_value,
         context,
     );
@@ -428,24 +449,25 @@ fn render_setup_appearance_page(
         area,
         model,
         SetupField::AppearanceAccentCustom,
-        "Use a custom accent color...",
+        &i18n::tr!("ui-auth-use-a-custom-accent-color"),
         context,
     );
 
     let preview = setup_appearance_preview_area(area);
     if preview.width > 0 && preview.height > 0 {
         let surface = Surface::new()
-            .titled("Preview")
+            .titled(i18n::tr!("ui-auth-preview"))
             .bordered(true)
             .border_shape(model.border_shape);
         let inner = surface.inner(preview);
         surface.render_frame(frame, preview, context);
         frame.render_widget(
             Paragraph::new(vec![
-                Line::styled("Live preview", theme.title_style()),
-                Line::from(format!(
-                    "Theme: {}    Accent: {}",
-                    model.theme_color_value, model.accent_color_value
+                Line::styled(i18n::tr!("ui-auth-live-preview"), theme.title_style()),
+                Line::from(i18n::tr!(
+                    "ui-auth-appearance-preview",
+                    theme = model.theme_color_value.clone(),
+                    accent = model.accent_color_value.clone()
                 )),
             ])
             .alignment(HorizontalAlignment::Left),
@@ -458,7 +480,7 @@ fn render_setup_appearance_page(
         frame,
         setup_appearance_field_area(area, SetupField::AppearanceSubmit),
         "setup.appearance.finish",
-        "Finish setup".to_string(),
+        i18n::tr!("ui-auth-finish-setup"),
         submit_focused,
         false,
         theme,
@@ -466,9 +488,12 @@ fn render_setup_appearance_page(
 
     if let Some(error) = &model.error {
         frame.render_widget(
-            Paragraph::new(Line::styled(format!("Error: {error}"), theme.error_style()))
-                .alignment(HorizontalAlignment::Left)
-                .wrap(Wrap { trim: true }),
+            Paragraph::new(Line::styled(
+                i18n::tr!("ui-auth-error", error = error),
+                theme.error_style(),
+            ))
+            .alignment(HorizontalAlignment::Left)
+            .wrap(Wrap { trim: true }),
             setup_appearance_error_area(area),
         );
     }
@@ -495,7 +520,7 @@ fn render_setup_shape_buttons(
     render_focused_surface(
         frame,
         outer,
-        "Frame shape",
+        &i18n::tr!("ui-auth-frame-shape"),
         focused,
         model.border_shape,
         context,
@@ -504,8 +529,8 @@ fn render_setup_shape_buttons(
     for (shape, button_area) in setup_appearance_shape_option_areas(area) {
         let selected = model.border_shape == shape;
         let label = match shape {
-            crate::BorderShape::Rounded => "Rounded",
-            crate::BorderShape::Square => "Square",
+            crate::BorderShape::Rounded => i18n::tr!("ui-auth-rounded"),
+            crate::BorderShape::Square => i18n::tr!("ui-auth-square"),
         };
         render_setup_inline_button(
             frame,
@@ -527,7 +552,7 @@ fn render_setup_color_palette(
     area: Rect,
     model: &SetupViewModel,
     field: SetupField,
-    title: &'static str,
+    title: String,
     selected_value: &str,
     context: &RenderContext,
 ) {
@@ -538,10 +563,10 @@ fn render_setup_color_palette(
     }
 
     let focused = model.focused_field == field;
-    render_focused_surface(frame, outer, title, focused, model.border_shape, context);
+    render_focused_surface(frame, outer, &title, focused, model.border_shape, context);
 
     for (index, button_area) in setup_appearance_palette_option_areas(area, field) {
-        let option = setup_standard_color_options()[index];
+        let option = &setup_standard_color_options()[index];
         let selected = option.value.eq_ignore_ascii_case(selected_value);
         let disabled =
             field == SetupField::AppearanceAccentColor && option.color == model.theme_color;
@@ -552,7 +577,7 @@ fn render_setup_color_palette(
         };
         let mut button = Button::new(
             format!("setup.appearance.{field_id}.{}", option.value),
-            option.label,
+            &option.label,
         );
         button.state.selected = selected;
         button.set_disabled(disabled);
@@ -576,7 +601,7 @@ fn render_setup_custom_color_button(
     area: Rect,
     model: &SetupViewModel,
     field: SetupField,
-    label: &'static str,
+    label: &str,
     context: &RenderContext,
 ) {
     let theme = &context.compatibility_theme();
@@ -608,14 +633,14 @@ fn render_setup_custom_color_dialog(
         return;
     }
     let target_label = match model.custom_color_target {
-        Some(SetupCustomColorTarget::Theme) => "theme",
-        Some(SetupCustomColorTarget::Accent) => "accent",
+        Some(SetupCustomColorTarget::Theme) => i18n::tr!("ui-auth-custom-theme-color"),
+        Some(SetupCustomColorTarget::Accent) => i18n::tr!("ui-auth-custom-accent-color"),
         None => return,
     };
 
     frame.render_widget(Clear, dialog);
     let dialog_surface = Surface::new()
-        .titled(format!("Custom {target_label} color"))
+        .titled(target_label)
         .bordered(true)
         .raised(true)
         .border_shape(model.border_shape);
@@ -624,7 +649,7 @@ fn render_setup_custom_color_dialog(
     let inner = setup_inner_area(dialog);
     let instruction = Rect::new(inner.x, inner.y, inner.width, 1.min(inner.height));
     frame.render_widget(
-        Paragraph::new("Enter #RRGGBB or a supported color name.")
+        Paragraph::new(i18n::tr!("ui-auth-enter-rrggbb-or-a-supported-color-name"))
             .alignment(HorizontalAlignment::Left)
             .style(theme.muted_style()),
         instruction,
@@ -634,7 +659,7 @@ fn render_setup_custom_color_dialog(
     if input_area.width > 0 && input_area.height > 0 {
         let input_context = focused_context(context, true);
         let input_surface = Surface::new()
-            .titled("Color code")
+            .titled(i18n::tr!("ui-auth-color-code"))
             .bordered(true)
             .border_shape(model.border_shape);
         let input_inner = input_surface.inner(input_area);
@@ -657,13 +682,19 @@ fn render_setup_custom_color_dialog(
         Line::styled(error.clone(), theme.error_style())
     } else if model.custom_color_conflicts_with_theme {
         Line::styled(
-            "Accent color must differ from the theme color",
+            i18n::tr!("ui-auth-accent-color-must-differ-from-the-theme-color"),
             theme.error_style(),
         )
     } else if model.custom_color_valid {
-        Line::styled("Valid color - press Enter to apply", theme.title_style())
+        Line::styled(
+            i18n::tr!("ui-auth-valid-color-press-enter-to-apply"),
+            theme.title_style(),
+        )
     } else {
-        Line::styled("Enter a complete color code", theme.muted_style())
+        Line::styled(
+            i18n::tr!("ui-auth-enter-a-complete-color-code"),
+            theme.muted_style(),
+        )
     };
     let feedback_area = Rect::new(
         inner.x,
@@ -683,7 +714,7 @@ fn render_setup_custom_color_dialog(
         1.min(inner.height.saturating_sub(6)),
     );
     frame.render_widget(
-        Paragraph::new("Enter: apply    Esc: cancel")
+        Paragraph::new(i18n::tr!("ui-auth-enter-apply-esc-cancel"))
             .alignment(HorizontalAlignment::Left)
             .style(theme.muted_style()),
         actions_area,
@@ -697,7 +728,7 @@ fn render_setup_surface(
     border_shape: crate::BorderShape,
 ) {
     Surface::new()
-        .titled("First Run Setup")
+        .titled(i18n::tr!("ui-auth-first-run-setup"))
         .bordered(true)
         .raised(true)
         .border_shape(border_shape)
@@ -736,12 +767,12 @@ fn render_focused_surface(
 fn setup_language_header_lines(model: &SetupViewModel, theme: &TundraTheme) -> Vec<Line<'static>> {
     vec![
         Line::styled(
-            format!("Step: {}", setup_step_label(model.step)),
+            i18n::tr!("ui-auth-step", step = setup_step_label(model.step)),
             theme.title_style(),
         ),
-        Line::from("Choose a language, then continue."),
+        Line::from(i18n::tr!("ui-auth-choose-a-language-then-continue")),
         Line::styled(
-            "Enter / Space: continue    Up / Down: choose    F1: help",
+            i18n::tr!("ui-auth-enter-space-continue-up-down-choose-f1-help"),
             theme.muted_style(),
         ),
         Line::from(""),
@@ -760,12 +791,14 @@ fn setup_language_footer_lines(model: &SetupViewModel, theme: &TundraTheme) -> V
 fn setup_timezone_header_lines(model: &SetupViewModel, theme: &TundraTheme) -> Vec<Line<'static>> {
     vec![
         Line::styled(
-            format!("Step: {}", setup_step_label(model.step)),
+            i18n::tr!("ui-auth-step", step = setup_step_label(model.step)),
             theme.title_style(),
         ),
-        Line::from("Choose a city or IANA zone, then continue."),
+        Line::from(i18n::tr!(
+            "ui-auth-choose-a-city-or-iana-zone-then-continue"
+        )),
         Line::styled(
-            "Enter: continue    Up / Down: choose    PgUp / PgDn: jump    F1: help",
+            i18n::tr!("ui-auth-enter-continue-up-down-choose-pgup-pgdn-jump-f1-help"),
             theme.muted_style(),
         ),
         Line::from(selected_timezone_id_summary(model)),
@@ -779,7 +812,10 @@ fn setup_timezone_header_lines(model: &SetupViewModel, theme: &TundraTheme) -> V
 fn setup_timezone_footer_lines(model: &SetupViewModel, theme: &TundraTheme) -> Vec<Line<'static>> {
     let mut lines = Vec::new();
     if let Some(error) = &model.error {
-        lines.push(Line::styled(format!("Error: {error}"), theme.error_style()));
+        lines.push(Line::styled(
+            i18n::tr!("ui-auth-error", error = error),
+            theme.error_style(),
+        ));
     }
     lines
 }
@@ -787,12 +823,12 @@ fn setup_timezone_footer_lines(model: &SetupViewModel, theme: &TundraTheme) -> V
 fn setup_admin_header_lines(model: &SetupViewModel, theme: &TundraTheme) -> Vec<Line<'static>> {
     vec![
         Line::styled(
-            format!("Step: {}", setup_step_label(model.step)),
+            i18n::tr!("ui-auth-step", step = setup_step_label(model.step)),
             theme.title_style(),
         ),
-        Line::from("Create the first administrator account."),
+        Line::from(i18n::tr!("ui-auth-create-the-first-administrator-account")),
         Line::styled(
-            "Tab / Down / Enter: next    Shift+Tab / Up: previous    Enter on submit: finish",
+            i18n::tr!("ui-auth-tab-down-enter-next-shift-tab-up-previous-enter-on-submit-finish"),
             theme.muted_style(),
         ),
     ]
@@ -804,9 +840,9 @@ fn render_setup_admin_field(
     area: Rect,
     model: &SetupViewModel,
     field: SetupField,
-    title: &'static str,
+    title: String,
     value: String,
-    placeholder: &'static str,
+    placeholder: String,
     context: &RenderContext,
 ) {
     let theme = &context.compatibility_theme();
@@ -864,7 +900,7 @@ fn render_setup_inline_button(
     // Button's inline renderer centers its label. Padding to the existing row
     // width preserves the setup page's established left-aligned text without
     // changing the controller-owned hit rectangle.
-    let label_width = label.chars().count();
+    let label_width = unicode_width::UnicodeWidthStr::width(label.as_str());
     let padded_label = if label_width < usize::from(area.width) {
         format!(
             "{label}{}",
@@ -893,7 +929,7 @@ fn render_setup_password_checklist(
     }
 
     let surface = Surface::new()
-        .titled("Password checklist")
+        .titled(i18n::tr!("ui-auth-password-checklist"))
         .bordered(true)
         .border_shape(model.border_shape);
     let inner = surface.inner(checklist_area);
@@ -914,7 +950,10 @@ fn render_setup_password_checklist(
 fn append_setup_error(lines: &mut Vec<Line<'static>>, model: &SetupViewModel, theme: &TundraTheme) {
     if let Some(error) = &model.error {
         lines.push(Line::from(""));
-        lines.push(Line::styled(format!("Error: {error}"), theme.error_style()));
+        lines.push(Line::styled(
+            i18n::tr!("ui-auth-error", error = error),
+            theme.error_style(),
+        ));
     }
 }
 
@@ -1028,9 +1067,10 @@ pub fn setup_appearance_palette_option_areas(main: Rect, field: SetupField) -> V
     let mut y = inner.y;
     let mut areas = Vec::new();
     for (index, option) in setup_standard_color_options().iter().enumerate() {
-        let desired_width = u16::try_from(option.label.chars().count())
-            .unwrap_or(u16::MAX)
-            .saturating_add(3);
+        let desired_width =
+            u16::try_from(unicode_width::UnicodeWidthStr::width(option.label.as_str()))
+                .unwrap_or(u16::MAX)
+                .saturating_add(3);
         if x > inner.x && x.saturating_add(desired_width) > right {
             x = inner.x;
             y = y.saturating_add(1);
@@ -1217,7 +1257,7 @@ fn setup_password_checklist_lines(
 ) -> Vec<Line<'static>> {
     if model.password_requirements.is_empty() {
         return vec![Line::styled(
-            "No password rules available",
+            i18n::tr!("ui-auth-no-password-rules-available"),
             theme.muted_style(),
         )];
     }
@@ -1240,29 +1280,40 @@ fn setup_password_checklist_lines(
 fn selected_language_summary(model: &SetupViewModel) -> String {
     model
         .selected_language()
-        .map(|language| format!("Selected language: {}", language.code))
-        .unwrap_or_else(|| "Selected language: none".to_string())
+        .map(|language| {
+            i18n::tr!(
+                "ui-auth-selected-language",
+                language = language.code.clone()
+            )
+        })
+        .unwrap_or_else(|| i18n::tr!("ui-auth-selected-language-none"))
 }
 
 fn selected_timezone_id_summary(model: &SetupViewModel) -> String {
     model
         .selected_timezone()
-        .map(|timezone| format!("Selected timezone: {}", timezone.id))
-        .unwrap_or_else(|| "Selected timezone: none".to_string())
+        .map(|timezone| i18n::tr!("ui-auth-selected-timezone", timezone = timezone.id.clone()))
+        .unwrap_or_else(|| i18n::tr!("ui-auth-selected-timezone-none"))
 }
 
 fn selected_timezone_description_summary(model: &SetupViewModel) -> String {
     model
         .selected_timezone()
-        .map(|timezone| format!("{} - {}", timezone.label, timezone.description))
-        .unwrap_or_else(|| "No timezone selected".to_string())
+        .map(|timezone| {
+            i18n::tr!(
+                "ui-auth-timezone-description",
+                name = timezone.localized_label().render_current(),
+                description = timezone.localized_description().render_current()
+            )
+        })
+        .unwrap_or_else(|| i18n::tr!("ui-auth-no-timezone-selected"))
 }
 
-fn setup_step_label(step: SetupStep) -> &'static str {
+fn setup_step_label(step: SetupStep) -> String {
     match step {
-        SetupStep::Language => "Language",
-        SetupStep::Timezone => "Timezone",
-        SetupStep::Admin => "Admin",
-        SetupStep::Appearance => "Appearance",
+        SetupStep::Language => i18n::tr!("ui-auth-language"),
+        SetupStep::Timezone => i18n::tr!("ui-auth-timezone"),
+        SetupStep::Admin => i18n::tr!("ui-auth-admin"),
+        SetupStep::Appearance => i18n::tr!("ui-auth-appearance"),
     }
 }

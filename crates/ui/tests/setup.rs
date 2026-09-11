@@ -20,7 +20,7 @@ const WIDE_SETUP_HEIGHT: u16 = 34;
 const SETUP_CONTROLS_WIDTH: u16 = 48;
 
 #[test]
-fn setup_catalog_exposes_only_english_and_required_timezones() {
+fn setup_catalog_exposes_english_chinese_and_required_timezones() {
     let languages = setup_language_options();
     let language_labels = languages
         .iter()
@@ -33,9 +33,9 @@ fn setup_catalog_exposes_only_english_and_required_timezones() {
         .map(|timezone| timezone.id.as_str())
         .collect();
 
-    assert_eq!(languages.len(), 1);
+    assert_eq!(languages.len(), 2);
     assert!(language_labels.contains("English (en-US)"));
-    assert!(!language_labels.contains("zh-Hans"));
+    assert!(language_labels.contains("zh-CN"));
     assert!(timezone_ids.contains(&"UTC"));
     assert!(timezone_ids.contains(&"America/Los_Angeles"));
     assert!(timezone_ids.contains(&"Pacific/Auckland"));

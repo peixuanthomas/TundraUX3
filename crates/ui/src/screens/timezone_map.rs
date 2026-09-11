@@ -662,7 +662,7 @@ impl Widget for TimezoneMapWidget<'_> {
         let colors = self.input.colors;
         let block = Block::default()
             .border_type(self.border_shape.border_type())
-            .title("Timezone Map")
+            .title(i18n::tr!("ui-timezone-map-timezone-map"))
             .title_style(
                 Style::default()
                     .fg(colors.title)

@@ -66,9 +66,9 @@ fn render_login_main(
     let theme = &context.compatibility_theme();
     Surface::new()
         .titled(if model.system_users {
-            "Linux Login"
+            i18n::tr!("ui-auth-linux-login")
         } else {
-            "Login"
+            i18n::tr!("ui-auth-login")
         })
         .bordered(true)
         .render_frame(frame, main, context);
@@ -82,24 +82,29 @@ fn render_login_main(
         frame,
         layout.password_visibility,
         if model.password_is_visible() {
-            "[Hide]"
+            i18n::tr!("ui-auth-hide-button")
         } else {
-            "[Show]"
+            i18n::tr!("ui-auth-show-button")
         },
         model.focused_field == LoginField::PasswordVisibility,
         theme,
     );
     if layout.help.height > 0 {
         let mut lines = vec![
-            Line::from("Users: Up/Down/Home/End    Tab: password/show"),
-            Line::from("Enter: activate    F2: show/hide    Esc: exit"),
+            Line::from(i18n::tr!(
+                "ui-auth-users-up-down-home-end-tab-password-show"
+            )),
+            Line::from(i18n::tr!("ui-auth-enter-activate-f2-show-hide-esc-exit")),
         ];
         if model.system_users {
-            lines.insert(0, Line::from("Linux password | Root session"));
+            lines.insert(
+                0,
+                Line::from(i18n::tr!("ui-auth-linux-password-root-session")),
+            );
             if model.users.is_empty() {
-                lines.push(Line::from(
-                    "No Linux login accounts found. Create an account in Linux.",
-                ));
+                lines.push(Line::from(i18n::tr!(
+                    "ui-auth-no-linux-login-accounts-found-create-an-account-in-linux"
+                )));
             }
         }
         if let Some(error) = &model.error {
@@ -133,7 +138,10 @@ fn render_login_user_list(
     let visible_rows = area.height.saturating_sub(2) as usize;
     let (start, _) = login_user_window_bounds(model, visible_rows);
     let items: Vec<ListItem> = if model.users.is_empty() {
-        vec![ListItem::new("login.user.empty", "(no local users)")]
+        vec![ListItem::new(
+            "login.user.empty",
+            i18n::tr!("ui-auth-no-local-users"),
+        )]
     } else {
         model
             .users
@@ -142,10 +150,10 @@ fn render_login_user_list(
             .map(|(index, user)| {
                 let mut suffix = String::new();
                 if !user.enabled {
-                    suffix.push_str(" disabled");
+                    suffix.push_str(&i18n::tr!("ui-auth-account-disabled"));
                 }
                 if user.locked {
-                    suffix.push_str(" locked");
+                    suffix.push_str(&i18n::tr!("ui-auth-account-locked"));
                 }
                 let label = if suffix.is_empty() {
                     format!("{} ({})", user.username, user.role)
@@ -158,7 +166,7 @@ fn render_login_user_list(
     };
 
     let mut list = List::new("login.users", items)
-        .titled("Users")
+        .titled(i18n::tr!("ui-auth-users"))
         .with_viewport_start(start);
     list.set_focused(model.focused_field == LoginField::UserList);
     list.set_selected((!model.users.is_empty()).then_some(model.selected_index));
@@ -183,20 +191,22 @@ fn render_login_username_field(
     let selected = model.selected_user();
     let username = selected
         .map(|user| user.username.clone())
-        .unwrap_or_else(|| "No user selected".to_string());
+        .unwrap_or_else(|| i18n::tr!("ui-auth-no-user-selected"));
     let display = selected
         .map(|user| user.display_name.clone())
-        .unwrap_or_else(|| "Choose a local account".to_string());
+        .unwrap_or_else(|| i18n::tr!("ui-auth-choose-a-local-account"));
     let role = selected
         .map(|user| user.role.clone())
-        .unwrap_or_else(|| "Unavailable".to_string());
+        .unwrap_or_else(|| i18n::tr!("ui-auth-unavailable"));
 
     let lines = vec![
         Line::styled(username, theme.title_style()),
         Line::from(display),
         Line::styled(role, theme.muted_style()),
     ];
-    let surface = Surface::new().titled("Selected User").bordered(true);
+    let surface = Surface::new()
+        .titled(i18n::tr!("ui-auth-selected-user"))
+        .bordered(true);
     let inner = surface.inner(area);
     surface.render_frame(frame, area, context);
     frame.render_widget(
@@ -219,7 +229,9 @@ fn render_login_password_field(
 
     let theme = &context.compatibility_theme();
     let focused = model.focused_field == LoginField::Password;
-    let surface = Surface::new().titled("Password").bordered(true);
+    let surface = Surface::new()
+        .titled(i18n::tr!("ui-auth-password"))
+        .bordered(true);
     let inner = surface.inner(area);
     surface.render_frame(
         frame,
@@ -237,7 +249,7 @@ fn render_login_password_field(
         },
     );
     frame.render_widget(
-        Paragraph::new("Password").style(if focused {
+        Paragraph::new(i18n::tr!("ui-auth-password")).style(if focused {
             theme.title_style()
         } else {
             theme.body_style()
@@ -255,9 +267,12 @@ fn render_login_password_field(
     }
 
     let (password, placeholder) = if let Some(visible) = model.visible_password() {
-        (visible.to_string(), "")
+        (visible.to_string(), String::new())
     } else {
-        ("*".repeat(model.password_len), "Enter password")
+        (
+            "*".repeat(model.password_len),
+            i18n::tr!("ui-auth-enter-password"),
+        )
     };
     let mut input = TextInput::new("login.password")
         .with_placeholder(placeholder)
@@ -280,7 +295,7 @@ fn render_login_password_field(
 fn render_login_button(
     frame: &mut Frame<'_>,
     area: Rect,
-    label: &'static str,
+    label: String,
     selected: bool,
     theme: &TundraTheme,
 ) {

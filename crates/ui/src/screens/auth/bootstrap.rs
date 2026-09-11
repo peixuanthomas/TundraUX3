@@ -31,7 +31,7 @@ pub(crate) fn render_bootstrap_admin_context(
         frame,
         area,
         chrome,
-        "Create Admin",
+        &i18n::tr!("ui-auth-create-admin"),
         bootstrap_lines(model),
         theme,
     );
@@ -49,7 +49,7 @@ pub(crate) fn render_bootstrap_admin_context(
             u16::from(inner.height > 2),
         ),
         "bootstrap.username",
-        "Admin username: ",
+        &i18n::tr!("ui-auth-admin-username-padded"),
         &model.username,
         model.focused_field == AuthField::Username,
         theme,
@@ -63,7 +63,7 @@ pub(crate) fn render_bootstrap_admin_context(
             u16::from(inner.height > 3),
         ),
         "bootstrap.password",
-        "Admin password: ",
+        &i18n::tr!("ui-auth-admin-password-padded"),
         &"*".repeat(model.password_len),
         model.focused_field == AuthField::Password,
         theme,
@@ -75,7 +75,7 @@ fn render_bootstrap_input(
     frame: &mut Frame<'_>,
     area: Rect,
     id: &'static str,
-    label: &'static str,
+    label: &str,
     value: &str,
     focused: bool,
     theme: &TundraTheme,
@@ -94,7 +94,9 @@ fn render_bootstrap_input(
 
 fn bootstrap_lines(model: &BootstrapAdminViewModel) -> Vec<Line<'static>> {
     let mut lines = vec![
-        Line::from("Tab / Down: password    Enter on password: create admin    Esc: exit"),
+        Line::from(i18n::tr!(
+            "ui-auth-tab-down-password-enter-on-password-create-admin-esc-exit"
+        )),
         Line::from(""),
         Line::from(""),
         Line::from(""),

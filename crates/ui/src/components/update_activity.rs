@@ -7,7 +7,7 @@ pub struct UpdateMeterViewModel {
     pub percent: Option<u16>,
     /// Animated fill in basis points; real values and labels remain authoritative.
     pub display_basis_points: Option<u16>,
-    pub label: String,
+    pub label: i18n::LocalizedText,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -23,12 +23,12 @@ impl Default for UpdateActivityViewModel {
             download: UpdateMeterViewModel {
                 percent: None,
                 display_basis_points: None,
-                label: "Download: waiting".into(),
+                label: i18n::msg!("ui-components-download-waiting").into(),
             },
             compilation: UpdateMeterViewModel {
                 percent: None,
                 display_basis_points: None,
-                label: "Compilation: waiting".into(),
+                label: i18n::msg!("ui-components-compilation-waiting").into(),
             },
             output: Vec::new(),
         }
@@ -54,7 +54,7 @@ impl<'a> UpdateActivity<'a> {
     ) {
         if let Some((area, _)) = visible_scrolled_rect(clip.x, y, clip.width, 4, clip) {
             Surface::new()
-                .titled(" Progress ")
+                .titled(i18n::tr!("ui-components-progress-padded"))
                 .bordered(true)
                 .raised(true)
                 .render_frame(frame, area, context);
@@ -72,7 +72,7 @@ impl<'a> UpdateActivity<'a> {
             ) {
                 frame.render_widget(
                     ProgressGauge::new(
-                        meter.label.as_str(),
+                        meter.label.render_current(),
                         f64::from(
                             meter
                                 .display_basis_points
@@ -90,7 +90,7 @@ impl<'a> UpdateActivity<'a> {
         let log_y = y + 5;
         if let Some((area, _)) = visible_scrolled_rect(clip.x, log_y, clip.width, 12, clip) {
             Surface::new()
-                .titled(" Live output ")
+                .titled(i18n::tr!("ui-components-live-output-padded"))
                 .bordered(true)
                 .raised(true)
                 .render_frame(frame, area, context);

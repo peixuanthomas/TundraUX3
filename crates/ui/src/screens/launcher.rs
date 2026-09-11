@@ -15,7 +15,11 @@ use crate::{
 
 const GRID_TILE_MIN_WIDTH: u16 = 20;
 const GRID_TILE_HEIGHT: u16 = 9;
-const EMPTY_MESSAGE: &str = "No Launcher items. Go to Explorer, select a file, then right-click and choose Add to Launcher.";
+fn empty_message() -> String {
+    i18n::tr!(
+        "ui-launcher-no-launcher-items-go-to-explorer-select-a-file-then-right-click-and-choose-add-to-launcher"
+    )
+}
 
 pub use app::launcher::{LauncherItemStatus, LauncherViewMode};
 
@@ -87,9 +91,9 @@ impl LauncherItemViewModel {
     pub fn built_in(descriptor: app::BuiltInApplicationDescriptor) -> Self {
         Self {
             id: descriptor.id.to_string(),
-            name: descriptor.name.to_string(),
-            path: descriptor.description.to_string(),
-            type_label: descriptor.type_label.to_string(),
+            name: descriptor.localized_name().render_current(),
+            path: descriptor.localized_description().render_current(),
+            type_label: descriptor.localized_type_label().render_current(),
             status: LauncherItemStatus::Ready,
             source: LauncherItemSource::BuiltIn,
             capabilities: LauncherItemCapabilities::BUILT_IN,
@@ -114,11 +118,11 @@ pub enum LauncherToolbarAction {
 }
 
 impl LauncherToolbarAction {
-    pub const fn label(self) -> &'static str {
+    pub fn label(self) -> String {
         match self {
-            Self::Remove => "Remove",
-            Self::Refresh => "Refresh",
-            Self::ToggleView => "View",
+            Self::Remove => i18n::tr!("ui-launcher-remove"),
+            Self::Refresh => i18n::tr!("ui-launcher-refresh"),
+            Self::ToggleView => i18n::tr!("ui-launcher-view"),
         }
     }
 
@@ -744,9 +748,9 @@ fn render_launcher_main(
     let layout = launcher_layout(main, model);
     let theme = &context.compatibility_theme();
     Surface::new()
-        .titled(format!(
-            "Launcher · {}",
-            launcher_view_mode_label(model.view_mode)
+        .titled(i18n::tr!(
+            "ui-launcher-title",
+            mode = launcher_view_mode_label(model.view_mode)
         ))
         .bordered(false)
         .render_frame(frame, layout.panel, context);
@@ -794,7 +798,7 @@ fn render_launcher_toolbar(
             continue;
         };
         let mut component = Button::new(
-            format!("launcher.toolbar.{}", button.action.label().to_lowercase()),
+            format!("launcher.toolbar.{:?}", button.action),
             format!("[{} {}]", button.action.shortcut(), button.label),
         );
         component.set_disabled(!button.enabled);
@@ -811,7 +815,7 @@ fn render_launcher_grid(
 ) {
     if model.items.is_empty() {
         frame.render_widget(
-            Paragraph::new(EMPTY_MESSAGE)
+            Paragraph::new(empty_message())
                 .style(theme.muted_style())
                 .alignment(HorizontalAlignment::Center)
                 .wrap(Wrap { trim: true }),
@@ -907,7 +911,7 @@ fn render_launcher_details(
     let width = layout.content.width.saturating_sub(scrollbar_width);
     if model.items.is_empty() {
         frame.render_widget(
-            Paragraph::new(EMPTY_MESSAGE)
+            Paragraph::new(empty_message())
                 .style(theme.muted_style())
                 .alignment(HorizontalAlignment::Center)
                 .wrap(Wrap { trim: true }),
@@ -922,16 +926,16 @@ fn render_launcher_details(
     }
     let widths = detail_widths(width);
     let header = [
-        fit_text("Name", widths[0]),
-        fit_text("Type", widths[1]),
-        fit_text("Integrity", widths[2]),
-        fit_text("Path", widths[3]),
+        fit_text(&i18n::tr!("ui-launcher-name"), widths[0]),
+        fit_text(&i18n::tr!("ui-launcher-type"), widths[1]),
+        fit_text(&i18n::tr!("ui-launcher-integrity"), widths[2]),
+        fit_text(&i18n::tr!("ui-launcher-path"), widths[3]),
     ];
     let rows = model.items.iter().map(|item| {
         vec![
             fit_text(&format!("[A] {}", item.name), widths[0]),
             fit_text(&item.type_label, widths[1]),
-            fit_text(launcher_status_label(item.status), widths[2]),
+            fit_text(&launcher_status_label(item.status), widths[2]),
             fit_text(&item.path, widths[3]),
         ]
     });
@@ -996,11 +1000,7 @@ fn render_launcher_footer(
         (message.clone(), theme.body_style())
     } else {
         (
-            format!(
-                "{} item{} · Enter launch · Esc Home",
-                model.items.len(),
-                if model.items.len() == 1 { "" } else { "s" }
-            ),
+            i18n::tr!("ui-launcher-item-count", count = model.items.len()),
             theme.muted_style(),
         )
     };
@@ -1083,21 +1083,21 @@ fn status_style(status: LauncherItemStatus, theme: &TundraTheme) -> Style {
     }
 }
 
-fn launcher_view_mode_label(mode: LauncherViewMode) -> &'static str {
+fn launcher_view_mode_label(mode: LauncherViewMode) -> String {
     match mode {
-        LauncherViewMode::LargeIcons => "Large icons",
-        LauncherViewMode::Details => "Details",
+        LauncherViewMode::LargeIcons => i18n::tr!("ui-launcher-large-icons"),
+        LauncherViewMode::Details => i18n::tr!("ui-launcher-details"),
     }
 }
 
-fn launcher_status_label(status: LauncherItemStatus) -> &'static str {
+fn launcher_status_label(status: LauncherItemStatus) -> String {
     match status {
-        LauncherItemStatus::Ready => "Ready",
-        LauncherItemStatus::Checking => "Checking",
-        LauncherItemStatus::Changed => "Changed",
-        LauncherItemStatus::Missing => "Missing",
-        LauncherItemStatus::NeedsApproval => "Needs approval",
-        LauncherItemStatus::Unsupported => "Unsupported",
+        LauncherItemStatus::Ready => i18n::tr!("ui-launcher-ready"),
+        LauncherItemStatus::Checking => i18n::tr!("ui-launcher-checking"),
+        LauncherItemStatus::Changed => i18n::tr!("ui-launcher-changed"),
+        LauncherItemStatus::Missing => i18n::tr!("ui-launcher-missing"),
+        LauncherItemStatus::NeedsApproval => i18n::tr!("ui-launcher-needs-approval"),
+        LauncherItemStatus::Unsupported => i18n::tr!("ui-launcher-unsupported"),
     }
 }
 
