@@ -172,22 +172,21 @@ impl PreviewModel {
             list: List::new(
                 "preview.list",
                 vec![
-                    ListItem::new("explorer", "Explorer / files"),
-                    ListItem::new("launcher", "Launcher / apps"),
-                    ListItem::new("settings", "Settings / preferences"),
-                    ListItem::new("updates", "Updates / tasks"),
+                    ListItem::new("explorer", i18n::tr!("preview-explorer")),
+                    ListItem::new("launcher", i18n::tr!("preview-launcher")),
+                    ListItem::new("settings", i18n::tr!("preview-settings")),
+                    ListItem::new("updates", i18n::tr!("preview-updates")),
                 ],
             )
-            .titled(" Components "),
-            input: TextInput::new("preview.input")
-                .with_placeholder("Type here: Unicode / paste supported"),
-            replay: Button::new("preview.replay", "Replay"),
-            inspect: Button::new("preview.inspect", "Open dialog"),
+            .titled(i18n::tr!("preview-components")),
+            input: TextInput::new("preview.input").with_placeholder(i18n::tr!("preview-input")),
+            replay: Button::new("preview.replay", i18n::tr!("preview-replay")),
+            inspect: Button::new("preview.inspect", i18n::tr!("preview-open")),
             dialog: Dialog::new(
                 "preview.dialog",
-                "Style details",
+                i18n::tr!("preview-details"),
                 "",
-                vec![DialogAction::new("close", "Back to preview")],
+                vec![DialogAction::new("close", i18n::tr!("preview-back"))],
             ),
             focus: 0,
             reduced,
@@ -389,13 +388,13 @@ impl PreviewModel {
             self.dialog.body = vec![
                 self.version.title().into(),
                 match self.version {
-                    UiStyleVersion::Glacier => "Native widgets + tachyonfx sweep.",
-                    UiStyleVersion::Tea => "Model -> Message -> Update -> View.",
-                    UiStyleVersion::Spring => "A spring retains position, velocity and target.",
+                    UiStyleVersion::Glacier => i18n::tr!("preview-glacier"),
+                    UiStyleVersion::Tea => i18n::tr!("preview-tea"),
+                    UiStyleVersion::Spring => i18n::tr!("preview-spring"),
                 }
                 .into(),
-                format!("Your text: {}", self.input.value()),
-                "Rust / Ratatui preview. No preferences are saved.".into(),
+                i18n::tr!("preview-user-text", text = self.input.value()),
+                i18n::tr!("preview-unsaved").into(),
             ];
             self.dialog.open();
             self.effect = None;

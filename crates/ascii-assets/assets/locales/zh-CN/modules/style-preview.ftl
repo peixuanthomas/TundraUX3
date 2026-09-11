@@ -1,0 +1,15 @@
+preview-explorer = 文件管理器 / 文件
+preview-launcher = 启动器 / 应用
+preview-settings = 设置 / 偏好
+preview-updates = 更新 / 任务
+preview-components = { " 组件 " }
+preview-input = 在此输入：支持 Unicode 和粘贴
+preview-replay = 重新播放
+preview-open = 打开弹窗
+preview-details = 样式详情
+preview-back = 返回预览
+preview-glacier = 原生控件与 tachyonfx 扫入效果。
+preview-tea = 模型 → 消息 → 更新 → 视图。
+preview-spring = 弹簧保留位置、速度和目标状态。
+preview-unsaved = Rust / Ratatui 预览，不保存偏好设置。
+preview-user-text = 您输入的文本：{ $text }

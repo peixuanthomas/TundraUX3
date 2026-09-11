@@ -1,0 +1,15 @@
+preview-explorer = Explorer / files
+preview-launcher = Launcher / apps
+preview-settings = Settings / preferences
+preview-updates = Updates / tasks
+preview-components = { " Components " }
+preview-input = Type here: Unicode / paste supported
+preview-replay = Replay
+preview-open = Open dialog
+preview-details = Style details
+preview-back = Back to preview
+preview-glacier = Native widgets + tachyonfx sweep.
+preview-tea = Model -> Message -> Update -> View.
+preview-spring = A spring retains position, velocity and target.
+preview-unsaved = Rust / Ratatui preview. No preferences are saved.
+preview-user-text = Your text: { $text }
