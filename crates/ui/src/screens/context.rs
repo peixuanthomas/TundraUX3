@@ -11,8 +11,9 @@ pub fn render_home_with_context(
     chrome: &ShellChromeViewModel,
     model: &HomeViewModel,
     context: &RenderContext,
+    icons: Option<&dyn HomeIconRenderer>,
 ) {
-    super::home::render_home_with_icons_context(frame, area, chrome, model, context, None);
+    super::home::render_home_with_icons_context(frame, area, chrome, model, context, icons);
 }
 pub fn render_setup_with_context(
     frame: &mut Frame<'_>,

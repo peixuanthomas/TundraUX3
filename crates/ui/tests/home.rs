@@ -324,6 +324,70 @@ fn user_home_allocates_graphical_icons_in_the_centered_launcher_style_area() {
 }
 
 #[test]
+fn contextual_home_uses_stable_image_keys_and_preserves_ascii_fallback() {
+    let context = ui::RenderContext::from_theme(
+        &TundraTheme::default_dark(),
+        Default::default(),
+        Default::default(),
+    );
+    for label in ["Explorer", "文件管理器"] {
+        let home = HomeViewModel::user(
+            "Strix",
+            "2026-07-01 09:30",
+            vec![ShellEntry::new(label, "Browse files").with_icon_key("explorer")],
+        );
+        let chrome = chrome_for("Home");
+        let tile = ui::home_entry_tile_areas(main_rect(100, 30), 1)[0];
+        let icon_area = home_entry_icon_area(tile);
+        let icons = RecordingHomeIconRenderer::default();
+        let unavailable = UnavailableHomeIconRenderer;
+        for (renderer, image_available) in [
+            (Some(&icons as &dyn HomeIconRenderer), true),
+            (Some(&unavailable as &dyn HomeIconRenderer), false),
+            (None, false),
+        ] {
+            let mut terminal = Terminal::new(TestBackend::new(100, 30)).expect("test terminal");
+            terminal
+                .draw(|frame| {
+                    ui::render_home_with_context(
+                        frame,
+                        frame.area(),
+                        &chrome,
+                        &home,
+                        &context,
+                        renderer,
+                    );
+                })
+                .expect("render contextual Home");
+            let output = terminal_output(&terminal);
+            // Wide characters leave a trailing blank cell in TestBackend's buffer.
+            assert!(output.replace(' ', "").contains(label));
+            assert!(output.contains("Browse files"));
+            if image_available {
+                assert_eq!(
+                    icons.calls.borrow().as_slice(),
+                    &[("explorer".to_string(), icon_area)]
+                );
+                for y in icon_area.y..icon_area.bottom() {
+                    assert!(
+                        buffer_row_text(&terminal, icon_area.x, y, icon_area.width)
+                            .trim()
+                            .is_empty()
+                    );
+                }
+            } else {
+                assert_centered_icon_matches_asset(
+                    &terminal,
+                    tile,
+                    home.home_icon_for_label("explorer")
+                        .expect("ASCII fallback"),
+                );
+            }
+        }
+    }
+}
+
+#[test]
 fn user_home_falls_back_to_ascii_when_graphical_icon_loading_is_unavailable() {
     let entries = vec![ShellEntry::new("Explorer", "Browse files")];
     let home = HomeViewModel::user("Strix", "2026-07-01 09:30", entries);

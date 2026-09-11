@@ -1367,26 +1367,11 @@ pub(super) fn run_fullscreen_shell_session<W: Write>(
                             &chrome,
                             home.as_ref().expect("Home requires its view model"),
                             &render_context,
+                            launcher_icons
+                                .as_ref()
+                                .filter(|_| graphical_icons_enabled)
+                                .map(|icons| icons as &dyn ui::HomeIconRenderer),
                         );
-                        if graphical_icons_enabled
-                            && let Some(icons) = launcher_icons.as_ref()
-                            && let ui::ShellLayout::Full { main, .. } =
-                                ui::compute_shell_layout(page_area)
-                        {
-                            let model = home.as_ref().expect("Home requires its view model");
-                            for (entry, tile) in model
-                                .entries()
-                                .iter()
-                                .zip(ui::home_entry_tile_areas(main, model.entries().len()))
-                            {
-                                ui::HomeIconRenderer::render_icon(
-                                    icons,
-                                    &entry.label,
-                                    frame,
-                                    ui::home_entry_icon_area(tile),
-                                );
-                            }
-                        }
                     }
                 }
 
