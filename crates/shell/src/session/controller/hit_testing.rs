@@ -690,20 +690,29 @@ pub(in crate::session) fn setup_password_requirements(
 
     vec![
         ui::SetupPasswordRequirementViewModel::new(
-            format!("At least {PASSWORD_MIN_LEN} characters"),
+            i18n::tr!(
+                "shell-at-least-password-min-len-characters",
+                PASSWORD_MIN_LEN = PASSWORD_MIN_LEN
+            ),
             password.len() >= PASSWORD_MIN_LEN,
         ),
         ui::SetupPasswordRequirementViewModel::new(
-            format!("At most {PASSWORD_MAX_LEN} characters"),
+            i18n::tr!(
+                "shell-at-most-password-max-len-characters",
+                PASSWORD_MAX_LEN = PASSWORD_MAX_LEN
+            ),
             password.len() <= PASSWORD_MAX_LEN,
         ),
-        ui::SetupPasswordRequirementViewModel::new("Not blank", !password.trim().is_empty()),
         ui::SetupPasswordRequirementViewModel::new(
-            "Different from username",
+            i18n::tr!("shell-not-blank"),
+            !password.trim().is_empty(),
+        ),
+        ui::SetupPasswordRequirementViewModel::new(
+            i18n::tr!("shell-different-from-username"),
             normalized_username != normalized_password,
         ),
         ui::SetupPasswordRequirementViewModel::new(
-            "Passwords match",
+            i18n::tr!("shell-passwords-match"),
             !password.is_empty() && password == password_confirm,
         ),
     ]

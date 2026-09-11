@@ -125,7 +125,9 @@ impl ShellSession {
                 self.pending_notification_commands.clear();
                 self.notify_alert_with_key(
                     NOTIFICATION_FOLLOW_UP_ALERT_KEY,
-                    "Notification follow-up limit reached",
+                    i18n::LocalizedText::from(i18n::msg!(
+                        "shell-notification-follow-up-limit-reached"
+                    )),
                     ui::NotificationTone::Critical,
                 );
                 break;
@@ -172,8 +174,10 @@ impl ShellSession {
                     | ShellCommand::Reboot
             )
         {
-            let status = "Wait for the Editor save to finish before exiting";
-            self.editor_message = Some(status.to_string());
+            let status = i18n::LocalizedText::from(i18n::msg!(
+                "shell-wait-for-the-editor-save-to-finish-before-exiting"
+            ));
+            self.editor_message = Some(status.clone());
             self.notify_status(status);
             if matches!(
                 routed.command,
@@ -204,11 +208,15 @@ impl ShellSession {
         );
         if editor_task_busy && changes_screen {
             let status = if self.editor_save_state.is_some() {
-                "Wait for the Editor save to finish before switching applications"
+                i18n::LocalizedText::from(i18n::msg!(
+                    "shell-wait-for-the-editor-save-to-finish-before-switching-applications"
+                ))
             } else {
-                "Press Esc to cancel loading before switching applications"
+                i18n::LocalizedText::from(i18n::msg!(
+                    "shell-press-esc-to-cancel-loading-before-switching-applications"
+                ))
             };
-            self.editor_message = Some(status.to_string());
+            self.editor_message = Some(status.clone());
             self.notify_status(status);
             self.refresh_hit_map();
             return ShellAction::Redraw;
@@ -263,7 +271,7 @@ impl ShellSession {
                     self.screen_stack.push(ShellScreen::ExitConfirm);
                 }
                 self.active_popup = None;
-                self.notify_status("Confirm exit");
+                self.notify_status(i18n::LocalizedText::from(i18n::msg!("shell-confirm-exit")));
                 self.show_exit_confirmation_modal(platform);
                 self.refresh_hit_map();
                 self.app
@@ -306,7 +314,7 @@ impl ShellSession {
                 self.notification_dismiss_modal_by_key(EXIT_CONFIRM_NOTIFICATION_KEY);
                 self.cancel_exit_confirmation();
                 self.active_popup = None;
-                self.notify_status("Ready");
+                self.notify_status(i18n::LocalizedText::from(i18n::msg!("shell-ready")));
                 self.refresh_hit_map();
                 self.app
                     .dispatch_at(app::AppCommand::CancelExit, received_at)
@@ -314,24 +322,33 @@ impl ShellSession {
             ShellCommand::OpenLatestCrashReport => {
                 if !self.diagnostics_can_view_details() {
                     self.notify_alert_with_tone(
-                        "Only administrators can open watchdog reports",
+                        i18n::LocalizedText::from(i18n::msg!(
+                            "shell-only-administrators-can-open-watchdog-reports"
+                        )),
                         ui::NotificationTone::Warning,
                     );
                 } else {
                     match self.latest_watchdog_report.clone() {
                         Some(path) => match platform.open_path(&path) {
                             Ok(()) => {
-                                self.notify_toast("Opened watchdog crash report");
+                                self.notify_toast(i18n::LocalizedText::from(i18n::msg!(
+                                    "shell-opened-watchdog-crash-report"
+                                )));
                             }
                             Err(error) => {
                                 self.notify_alert_with_tone(
-                                    format!("Could not open crash report: {error}"),
+                                    i18n::LocalizedText::from(i18n::msg!(
+                                        "shell-could-not-open-crash-report-error",
+                                        error = error.to_string()
+                                    )),
                                     ui::NotificationTone::Critical,
                                 );
                             }
                         },
                         None => self.notify_alert_with_tone(
-                            "No watchdog crash report path is available",
+                            i18n::LocalizedText::from(i18n::msg!(
+                                "shell-no-watchdog-crash-report-path-is-available"
+                            )),
                             ui::NotificationTone::Critical,
                         ),
                     }
@@ -341,24 +358,33 @@ impl ShellSession {
             ShellCommand::CopyLatestCrashSummary => {
                 if !self.diagnostics_can_view_details() {
                     self.notify_alert_with_tone(
-                        "Only administrators can copy full watchdog summaries",
+                        i18n::LocalizedText::from(i18n::msg!(
+                            "shell-only-administrators-can-copy-full-watchdog-summaries"
+                        )),
                         ui::NotificationTone::Warning,
                     );
                 } else {
                     match self.latest_watchdog_summary.clone() {
                         Some(summary) => match platform.write_clipboard_text(&summary) {
                             Ok(()) => {
-                                self.notify_toast("Copied watchdog incident summary");
+                                self.notify_toast(i18n::LocalizedText::from(i18n::msg!(
+                                    "shell-copied-watchdog-incident-summary"
+                                )));
                             }
                             Err(error) => {
                                 self.notify_alert_with_tone(
-                                    format!("Could not copy crash summary: {error}"),
+                                    i18n::LocalizedText::from(i18n::msg!(
+                                        "shell-could-not-copy-crash-summary-error",
+                                        error = error.to_string()
+                                    )),
                                     ui::NotificationTone::Critical,
                                 );
                             }
                         },
                         None => self.notify_alert_with_tone(
-                            "No watchdog incident summary is available",
+                            i18n::LocalizedText::from(i18n::msg!(
+                                "shell-no-watchdog-incident-summary-is-available"
+                            )),
                             ui::NotificationTone::Critical,
                         ),
                     }
@@ -367,12 +393,18 @@ impl ShellSession {
             }
             ShellCommand::FocusNext => {
                 self.move_focus(ui::FocusDirection::Next);
-                self.notify_status(format!("Focus: {}", self.focused_component.label()));
+                self.notify_status(i18n::LocalizedText::from(i18n::msg!(
+                    "shell-focus-arg1",
+                    arg1 = component_message(self.focused_component)
+                )));
                 ShellAction::Redraw
             }
             ShellCommand::FocusPrevious => {
                 self.move_focus(ui::FocusDirection::Previous);
-                self.notify_status(format!("Focus: {}", self.focused_component.label()));
+                self.notify_status(i18n::LocalizedText::from(i18n::msg!(
+                    "shell-focus-arg1",
+                    arg1 = component_message(self.focused_component)
+                )));
                 ShellAction::Redraw
             }
             ShellCommand::AppendAuthChar(character) => {
@@ -739,7 +771,9 @@ impl ShellSession {
                     .editor_state()
                     .is_some_and(EditorState::is_read_only)
                 {
-                    self.editor_message = Some("This document is read-only".to_string());
+                    self.editor_message = Some(i18n::LocalizedText::from(i18n::msg!(
+                        "shell-this-document-is-read-only"
+                    )));
                     return ShellAction::Redraw;
                 }
                 self.editor_close_after_save = true;
@@ -754,7 +788,9 @@ impl ShellSession {
             ShellCommand::EditorCancelClose => {
                 self.editor_close_after_save = false;
                 self.notification_dismiss_modal_by_key(EDITOR_CLOSE_NOTIFICATION_KEY);
-                self.notify_status("Close cancelled");
+                self.notify_status(i18n::LocalizedText::from(i18n::msg!(
+                    "shell-close-cancelled"
+                )));
                 ShellAction::Redraw
             }
             ShellCommand::EditorSaveAndOpen => {
@@ -763,7 +799,9 @@ impl ShellSession {
                     .editor_state()
                     .is_some_and(EditorState::is_read_only)
                 {
-                    self.editor_message = Some("This document is read-only".to_string());
+                    self.editor_message = Some(i18n::LocalizedText::from(i18n::msg!(
+                        "shell-this-document-is-read-only"
+                    )));
                     return ShellAction::Redraw;
                 }
                 self.editor_open_after_save = true;
@@ -778,7 +816,9 @@ impl ShellSession {
                     .editor_state()
                     .is_some_and(EditorState::is_read_only)
                 {
-                    self.editor_message = Some("This document is read-only".to_string());
+                    self.editor_message = Some(i18n::LocalizedText::from(i18n::msg!(
+                        "shell-this-document-is-read-only"
+                    )));
                     return ShellAction::Redraw;
                 }
                 self.editor_open_after_save = false;
@@ -791,7 +831,9 @@ impl ShellSession {
                 self.editor_open_after_save = false;
                 self.editor_discard_for_open = false;
                 self.notification_dismiss_modal_by_key(EDITOR_OPEN_NOTIFICATION_KEY);
-                self.notify_status("Open cancelled");
+                self.notify_status(i18n::LocalizedText::from(i18n::msg!(
+                    "shell-open-cancelled"
+                )));
                 ShellAction::Redraw
             }
             ShellCommand::ExplorerNext => {
@@ -1761,10 +1803,18 @@ impl ShellSession {
                 }
                 self.focus_component(target);
                 let click_label = match click {
-                    ClickKind::Single => "single click",
-                    ClickKind::Double => "double click",
+                    ClickKind::Single => {
+                        i18n::LocalizedText::from(i18n::msg!("shell-single-click"))
+                    }
+                    ClickKind::Double => {
+                        i18n::LocalizedText::from(i18n::msg!("shell-double-click"))
+                    }
                 };
-                self.notify_status(format!("{} activated by {click_label}", target.label()));
+                self.notify_status(i18n::LocalizedText::from(i18n::msg!(
+                    "shell-arg1-activated-by-click-label",
+                    arg1 = component_message(target),
+                    click_label = click_label
+                )));
                 ShellAction::Redraw
             }
             ShellCommand::OpenContextMenu {
@@ -1806,8 +1856,11 @@ impl ShellSession {
                 });
                 self.focused_component = ShellComponent::ContextMenu;
                 let status = match target {
-                    Some(target) => format!("Context menu: {}", target.label()),
-                    None => "Context menu".to_string(),
+                    Some(target) => i18n::LocalizedText::from(i18n::msg!(
+                        "shell-context-menu-arg1",
+                        arg1 = component_message(target)
+                    )),
+                    None => i18n::LocalizedText::from(i18n::msg!("shell-context-menu")),
                 };
                 self.notify_status(status);
                 self.refresh_hit_map();
@@ -1817,7 +1870,7 @@ impl ShellSession {
                 self.active_popup = None;
                 self.explorer_overlay_mode = None;
                 self.explorer_overlay_selection = 0;
-                self.notify_status("Ready");
+                self.notify_status(i18n::LocalizedText::from(i18n::msg!("shell-ready")));
                 self.refresh_hit_map();
                 ShellAction::Redraw
             }
@@ -1859,38 +1912,54 @@ impl ShellSession {
         let poweroff_available = platform.capabilities().power == CapabilityStatus::Supported
             && platform.can_poweroff().unwrap_or(false);
         let mut actions = vec![
-            ShellNotificationAction::new("restore-terminal", "Exit TundraUX")
-                .with_shortcut(InputKey::Char('y'))
-                .with_follow_up(ShellCommand::ConfirmExit),
-            ShellNotificationAction::new("restart", "Restart TundraUX")
-                .with_shortcut(InputKey::Char('r'))
-                .with_follow_up(ShellCommand::Restart),
+            ShellNotificationAction::new(
+                "restore-terminal",
+                i18n::LocalizedText::from(i18n::msg!("shell-exit-tundraux")),
+            )
+            .with_shortcut(InputKey::Char('y'))
+            .with_follow_up(ShellCommand::ConfirmExit),
+            ShellNotificationAction::new(
+                "restart",
+                i18n::LocalizedText::from(i18n::msg!("shell-restart-tundraux")),
+            )
+            .with_shortcut(InputKey::Char('r'))
+            .with_follow_up(ShellCommand::Restart),
         ];
         if platform.can_reboot().unwrap_or(false) {
             actions.push(
-                ShellNotificationAction::new("reboot", "Restart computer")
-                    .with_shortcut(InputKey::Char('b'))
-                    .with_follow_up(ShellCommand::Reboot),
+                ShellNotificationAction::new(
+                    "reboot",
+                    i18n::LocalizedText::from(i18n::msg!("shell-restart-computer")),
+                )
+                .with_shortcut(InputKey::Char('b'))
+                .with_follow_up(ShellCommand::Reboot),
             );
         }
         if poweroff_available {
             actions.push(
-                ShellNotificationAction::new("poweroff", "Shut down computer")
-                    .with_shortcut(InputKey::Char('p'))
-                    .with_follow_up(ShellCommand::PowerOff),
+                ShellNotificationAction::new(
+                    "poweroff",
+                    i18n::LocalizedText::from(i18n::msg!("shell-shut-down-computer")),
+                )
+                .with_shortcut(InputKey::Char('p'))
+                .with_follow_up(ShellCommand::PowerOff),
             );
         }
         actions.push(
-            ShellNotificationAction::new("cancel", "Cancel")
-                .with_shortcut(InputKey::Char('n'))
-                .cancel()
-                .with_follow_up(ShellCommand::CancelExit),
+            ShellNotificationAction::new(
+                "cancel",
+                i18n::LocalizedText::from(i18n::msg!("shell-cancel")),
+            )
+            .with_shortcut(InputKey::Char('n'))
+            .cancel()
+            .with_follow_up(ShellCommand::CancelExit),
         );
 
-        let message = "Choose an action. Esc returns to TundraUX.";
+        let message =
+            i18n::LocalizedText::from(i18n::msg!("shell-choose-an-action-esc-returns-to-tundraux"));
         self.notify_modal_with_options(
             ShellNotification::modal(
-                "Exit & power",
+                i18n::LocalizedText::from(i18n::msg!("shell-exit-power")),
                 message,
                 ui::NotificationTone::Warning,
                 actions,

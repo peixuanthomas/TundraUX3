@@ -64,11 +64,15 @@ impl ShellSession {
 
     pub(in crate::session) fn open_launcher(&mut self, platform: &dyn Platform) {
         if self.is_strict_guest() || self.app.auth_session().is_none() {
-            self.error_message = Some("Login required to use Launcher".to_string());
+            self.error_message = Some(i18n::LocalizedText::from(i18n::msg!(
+                "shell-login-required-to-use-launcher"
+            )));
             return;
         }
         let Some(storage) = self.storage_manager.clone() else {
-            self.error_message = Some("Storage unavailable".to_string());
+            self.error_message = Some(i18n::LocalizedText::from(i18n::msg!(
+                "shell-storage-unavailable"
+            )));
             return;
         };
         match self.launcher_controller().load(&storage) {
@@ -79,7 +83,7 @@ impl ShellSession {
                 );
             }
             Err(error) => {
-                self.error_message = Some(error.to_string());
+                self.error_message = Some(error.localized().message.into());
                 return;
             }
         }
@@ -94,7 +98,7 @@ impl ShellSession {
         self.focused_component = ShellComponent::Launcher;
         self.launcher_pending_confirmation = None;
         self.launcher_drag = None;
-        self.notify_status("Launcher");
+        self.notify_status(i18n::LocalizedText::from(i18n::msg!("shell-launcher")));
         self.refresh_hit_map();
     }
 
@@ -107,11 +111,11 @@ impl ShellSession {
         match self.active_screen() {
             ShellScreen::Explorer => {
                 self.focused_component = ShellComponent::Explorer;
-                self.notify_status("Explorer");
+                self.notify_status(i18n::LocalizedText::from(i18n::msg!("shell-explorer")));
             }
             _ => {
                 self.pop_to_home();
-                self.notify_status("Ready");
+                self.notify_status(i18n::LocalizedText::from(i18n::msg!("shell-ready")));
             }
         }
         self.refresh_hit_map();
@@ -161,10 +165,16 @@ impl ShellSession {
                     .to_string(),
                 );
                 if let Err(error) = storage.save_state(&state) {
-                    self.notify_status(format!("Could not save Launcher view: {error}"));
+                    self.notify_status(i18n::LocalizedText::from(i18n::msg!(
+                        "shell-could-not-save-launcher-view-error",
+                        error = error.to_string()
+                    )));
                 }
             }
-            Err(error) => self.notify_status(format!("Could not load Launcher view: {error}")),
+            Err(error) => self.notify_status(i18n::LocalizedText::from(i18n::msg!(
+                "shell-could-not-load-launcher-view-error",
+                error = error.to_string()
+            ))),
         }
     }
 
@@ -218,7 +228,9 @@ impl ShellSession {
         platform: &dyn Platform,
     ) {
         let Some(storage) = self.storage_manager.clone() else {
-            self.error_message = Some("Storage unavailable".to_string());
+            self.error_message = Some(i18n::LocalizedText::from(i18n::msg!(
+                "shell-storage-unavailable"
+            )));
             return;
         };
         if self.app.launcher_state().is_none() {
@@ -230,7 +242,7 @@ impl ShellSession {
                     );
                 }
                 Err(error) => {
-                    self.error_message = Some(error.to_string());
+                    self.error_message = Some(error.localized().message.into());
                     return;
                 }
             }
@@ -282,11 +294,14 @@ impl ShellSession {
                 record_shell_runtime_event(completed);
                 self.update_launcher_state(|state| match result {
                     Ok(()) => {
-                        state.message = Some(format!("Opened {}", path.display()));
+                        state.message = Some(i18n::LocalizedText::from(i18n::msg!(
+                            "shell-opened-arg1",
+                            arg1 = path.display().to_string()
+                        )));
                         state.error = None;
                     }
                     Err(error) => {
-                        state.error = Some(error.to_string());
+                        state.error = Some(error.to_string().into());
                         state.message = None;
                     }
                 })
@@ -315,15 +330,18 @@ impl ShellSession {
                 }
                 self.update_launcher_state(|state| {
                     let rejected = results.len().saturating_sub(added_ids.len());
-                    state.message = Some(format!(
-                        "Added {} item(s){}",
-                        added_ids.len(),
-                        if rejected > 0 {
-                            format!(", {rejected} skipped")
+                    state.message = Some(i18n::LocalizedText::from(i18n::msg!(
+                        "shell-added-arg1-item-s-arg2",
+                        arg1 = added_ids.len(),
+                        arg2 = if rejected > 0 {
+                            i18n::LocalizedText::from(i18n::msg!(
+                                "shell-rejected-skipped",
+                                rejected = rejected
+                            ))
                         } else {
-                            String::new()
+                            i18n::LocalizedText::from("")
                         }
-                    ));
+                    )));
                 });
             }
         }
@@ -332,7 +350,9 @@ impl ShellSession {
     pub(in crate::session) fn refresh_launcher(&mut self, platform: &dyn Platform) {
         if self.launcher_refresh_request.is_some() {
             self.update_launcher_state(|state| {
-                state.message = Some("Launcher refresh already in progress".to_string())
+                state.message = Some(i18n::LocalizedText::from(i18n::msg!(
+                    "shell-launcher-refresh-already-in-progress"
+                )))
             });
             return;
         }
@@ -353,7 +373,9 @@ impl ShellSession {
                     self.launcher_refresh_request = Some(request_id);
                     self.update_launcher_state(|state| {
                         state.error = None;
-                        state.message = Some("Checking Launcher items…".to_string());
+                        state.message = Some(i18n::LocalizedText::from(i18n::msg!(
+                            "shell-checking-launcher-items"
+                        )));
                         for item in &mut state.items {
                             item.status = if item.record.executable_kind.is_some() {
                                 LauncherItemStatus::Checking
@@ -375,10 +397,10 @@ impl ShellSession {
             match application.id {
                 id if id == app::COMMAND_LINE_APPLICATION.id => self.open_command_line(),
                 id if id == app::EDITOR_APPLICATION.id => self.open_editor(),
-                _ => self.notify_status(format!(
-                    "{} is not available in this build",
-                    application.name
-                )),
+                _ => self.notify_status(i18n::LocalizedText::from(i18n::msg!(
+                    "shell-arg1-is-not-available-in-this-build",
+                    arg1 = application.localized_name()
+                ))),
             }
             return;
         }
@@ -390,7 +412,9 @@ impl ShellSession {
     pub(in crate::session) fn request_launcher_remove(&mut self) {
         if !self.can_manage_launcher() {
             self.update_launcher_state(|state| {
-                state.error = Some("Only administrators can manage Launcher items".to_string())
+                state.error = Some(i18n::LocalizedText::from(i18n::msg!(
+                    "shell-only-administrators-can-manage-launcher-items"
+                )))
             });
             return;
         }
@@ -462,7 +486,9 @@ impl ShellSession {
             self.launcher_selected_index = index.saturating_add(self.built_in_launcher_count());
         } else {
             self.update_launcher_state(|state| {
-                state.error = Some("This file has not been approved in Launcher".to_string())
+                state.error = Some(i18n::LocalizedText::from(i18n::msg!(
+                    "shell-this-file-has-not-been-approved-in-launcher"
+                )))
             });
         }
     }
@@ -565,6 +591,7 @@ impl ShellSession {
     }
 
     pub fn to_launcher_view_model(&self) -> ui::LauncherViewModel {
+        let _language = i18n::enter_snapshot(self.language.clone());
         let built_in_applications = self.built_in_launcher_applications();
         let built_in_count = built_in_applications.len();
         let mut items = built_in_applications
@@ -572,6 +599,9 @@ impl ShellSession {
             .enumerate()
             .map(|(index, descriptor)| {
                 let mut item = ui::LauncherItemViewModel::built_in(descriptor);
+                item.name = descriptor.localized_name().render_current();
+                item.path = descriptor.localized_description().render_current();
+                item.type_label = descriptor.localized_type_label().render_current();
                 item.selected = self.launcher_selected_index == index;
                 item
             })
@@ -589,12 +619,16 @@ impl ShellSession {
                             .and_then(|name| name.to_str())
                             .unwrap_or(&item.record.path);
                         let type_label = match item.record.executable_kind {
-                            Some(LauncherExecutableKind::NativeBinary) => "Application",
-                            Some(LauncherExecutableKind::Installer) => "Installer",
-                            Some(LauncherExecutableKind::Script) => "Script",
-                            Some(LauncherExecutableKind::Shortcut) => "Shortcut",
-                            Some(LauncherExecutableKind::ApplicationBundle) => "Application bundle",
-                            None => "Unknown",
+                            Some(LauncherExecutableKind::NativeBinary) => {
+                                i18n::tr!("shell-application")
+                            }
+                            Some(LauncherExecutableKind::Installer) => i18n::tr!("shell-installer"),
+                            Some(LauncherExecutableKind::Script) => i18n::tr!("shell-script"),
+                            Some(LauncherExecutableKind::Shortcut) => i18n::tr!("shell-shortcut"),
+                            Some(LauncherExecutableKind::ApplicationBundle) => {
+                                i18n::tr!("shell-application-bundle")
+                            }
+                            None => i18n::tr!("shell-unknown"),
                         };
                         let mut model = ui::LauncherItemViewModel::new(
                             item.record.id.clone(),
@@ -624,8 +658,14 @@ impl ShellSession {
         model.viewport_offset = self.launcher_viewport_offset;
         model.drop_target = self.launcher_drag.as_ref().and_then(|drag| drag.target);
         if let Some(state) = self.app.launcher_state() {
-            model.message = state.message.clone();
-            model.error = state.error.clone();
+            model.message = state
+                .message
+                .as_ref()
+                .map(i18n::LocalizedText::render_current);
+            model.error = state
+                .error
+                .as_ref()
+                .map(i18n::LocalizedText::render_current);
         }
         model.confirmation =
             self.launcher_pending_confirmation
@@ -634,25 +674,27 @@ impl ShellSession {
                     LauncherPendingConfirmation::Launch { path, kind, .. } => {
                         ui::LauncherConfirmationViewModel {
                             kind: ui::LauncherConfirmationKind::Launch,
-                            title: "Confirm launch".to_string(),
-                            message: format!(
-                                "Open {} ({kind:?}) with the system default handler?",
-                                path.display()
+                            title: i18n::tr!("shell-confirm-launch"),
+                            message: i18n::tr!(
+                                "shell-open-arg1-kind-with-the-system-default-handler",
+                                arg1 = path.display().to_string(),
+                                kind = format!("{:?}", kind)
                             ),
-                            confirm_label: "Launch".to_string(),
-                            cancel_label: "Cancel".to_string(),
+                            confirm_label: i18n::tr!("shell-launch"),
+                            cancel_label: i18n::tr!("shell-cancel"),
                             confirm_selected: self.launcher_confirm_selected,
                         }
                     }
                     LauncherPendingConfirmation::Remove { label, .. } => {
                         ui::LauncherConfirmationViewModel {
                             kind: ui::LauncherConfirmationKind::Remove,
-                            title: "Remove from Launcher".to_string(),
-                            message: format!(
-                                "Remove {label} from Launcher? The file will not be deleted."
+                            title: i18n::tr!("shell-remove-from-launcher"),
+                            message: i18n::tr!(
+                                "shell-remove-label-from-launcher-the-file-will-not-be-deleted",
+                                label = label
                             ),
-                            confirm_label: "Remove".to_string(),
-                            cancel_label: "Cancel".to_string(),
+                            confirm_label: i18n::tr!("shell-remove"),
+                            cancel_label: i18n::tr!("shell-cancel"),
                             confirm_selected: self.launcher_confirm_selected,
                         }
                     }

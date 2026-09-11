@@ -9,10 +9,14 @@ impl ShellSession {
         );
         if !authorization.allowed {
             let message = match authorization.reason.as_deref() {
-                Some("not_authenticated") => "Login required to use Command Line",
-                _ => "Only administrators can use Command Line",
+                Some("not_authenticated") => i18n::LocalizedText::from(i18n::msg!(
+                    "shell-login-required-to-use-command-line"
+                )),
+                _ => i18n::LocalizedText::from(i18n::msg!(
+                    "shell-only-administrators-can-use-command-line"
+                )),
             };
-            self.error_message = Some(message.to_string());
+            self.error_message = Some(message.clone());
             self.notify_alert_with_tone(message, ui::NotificationTone::Error);
             return;
         }
@@ -21,11 +25,13 @@ impl ShellSession {
         if width < ui::MIN_COMMAND_LINE_TERMINAL_WIDTH
             || height < ui::MIN_COMMAND_LINE_TERMINAL_HEIGHT
         {
-            let message = format!(
-                "Command Line needs at least {}x{} terminal cells (current: {width}x{height})",
-                ui::MIN_COMMAND_LINE_TERMINAL_WIDTH,
-                ui::MIN_COMMAND_LINE_TERMINAL_HEIGHT,
-            );
+            let message = i18n::LocalizedText::from(i18n::msg!(
+                "shell-command-line-needs-at-least-arg1xarg2-terminal-cells-current-widthxheight",
+                arg1 = ui::MIN_COMMAND_LINE_TERMINAL_WIDTH,
+                arg2 = ui::MIN_COMMAND_LINE_TERMINAL_HEIGHT,
+                width = width,
+                height = height
+            ));
             self.update_launcher_state(|state| state.error = Some(message.clone()));
             self.notify_alert_with_tone(message, ui::NotificationTone::Error);
             return;
@@ -37,7 +43,7 @@ impl ShellSession {
         self.focused_component = ShellComponent::CommandLine;
         self.launcher_pending_confirmation = None;
         self.launcher_drag = None;
-        self.notify_status("Command Line");
+        self.notify_status(i18n::LocalizedText::from(i18n::msg!("shell-command-line")));
         self.refresh_hit_map();
     }
 
@@ -47,10 +53,10 @@ impl ShellSession {
         }
         if self.active_screen() == ShellScreen::Launcher {
             self.focused_component = ShellComponent::Launcher;
-            self.notify_status("Launcher");
+            self.notify_status(i18n::LocalizedText::from(i18n::msg!("shell-launcher")));
         } else {
             self.pop_to_home();
-            self.notify_status("Ready");
+            self.notify_status(i18n::LocalizedText::from(i18n::msg!("shell-ready")));
         }
         self.refresh_hit_map();
     }

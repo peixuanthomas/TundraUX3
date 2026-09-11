@@ -12,7 +12,7 @@ pub(in crate::session) struct LogsUiState {
     selected: usize,
     scroll: usize,
     explicit_scroll: bool,
-    feedback: Option<String>,
+    feedback: Option<i18n::LocalizedText>,
     job: Option<LogsJob>,
     revision: u64,
     time_filter: u8,
@@ -68,7 +68,7 @@ impl ShellSession {
         }
         self.focused_component = ShellComponent::Logs;
         self.request_logs_job(None);
-        self.notify_status("Logs");
+        self.notify_status(i18n::LocalizedText::from(i18n::msg!("shell-logs")));
     }
 
     pub(in crate::session) fn logs_select_legacy_section(&mut self, incidents: bool) {
@@ -93,11 +93,15 @@ impl ShellSession {
             return;
         };
         let Some(storage) = self.storage_manager.clone() else {
-            self.logs_state.feedback = Some("Log storage unavailable".into());
+            self.logs_state.feedback = Some(i18n::LocalizedText::from(i18n::msg!(
+                "shell-log-storage-unavailable"
+            )));
             return;
         };
         let Some(group) = self.settings_task_runtime.shared.task_group.clone() else {
-            self.logs_state.feedback = Some("Logs worker unavailable".into());
+            self.logs_state.feedback = Some(i18n::LocalizedText::from(i18n::msg!(
+                "shell-logs-worker-unavailable"
+            )));
             return;
         };
         if let Some(previous) = self.logs_state.job.take() {
@@ -171,7 +175,10 @@ impl ShellSession {
                 self.logs_state.feedback = None;
             }
             Err(error) => {
-                self.logs_state.feedback = Some(format!("Cannot start Logs query: {error}"))
+                self.logs_state.feedback = Some(i18n::LocalizedText::from(i18n::msg!(
+                    "shell-cannot-start-logs-query-error",
+                    error = error.to_string()
+                )))
             }
         }
     }
@@ -190,8 +197,9 @@ impl ShellSession {
             });
             if stopped {
                 self.logs_state.job = None;
-                self.logs_state.feedback =
-                    Some("Logs worker stopped before completing the request".into());
+                self.logs_state.feedback = Some(i18n::LocalizedText::from(i18n::msg!(
+                    "shell-logs-worker-stopped-before-completing-the-request"
+                )));
             }
             return;
         };
@@ -223,15 +231,18 @@ impl ShellSession {
                     .logs_state
                     .selected
                     .min(self.logs_count().saturating_sub(1));
-                self.logs_state.feedback = Some(format!(
-                    "{:?}{}",
-                    self.logs_state.snapshot.result.state,
-                    if self.logs_state.snapshot.result.notices.is_empty() {
-                        String::new()
-                    } else {
-                        format!(" — {}", self.logs_state.snapshot.result.notices.join("; "))
-                    }
-                ));
+                self.logs_state.feedback = Some(
+                    format!(
+                        "{:?}{}",
+                        self.logs_state.snapshot.result.state,
+                        if self.logs_state.snapshot.result.notices.is_empty() {
+                            String::new()
+                        } else {
+                            format!(" — {}", self.logs_state.snapshot.result.notices.join("; "))
+                        }
+                    )
+                    .into(),
+                );
             }
             LogsJobResult::Document(Ok(path)) => {
                 if self.active_screen() == ShellScreen::Logs {
@@ -254,7 +265,7 @@ impl ShellSession {
             }
             LogsJobResult::Document(Err(error)) => {
                 self.logs_state.refreshing_editor = false;
-                self.logs_state.feedback = Some(error.clone());
+                self.logs_state.feedback = Some(error.clone().into());
                 if self.active_screen() == ShellScreen::Editor {
                     self.report_editor_error(error);
                 }
@@ -347,7 +358,9 @@ impl ShellSession {
         if self.logs_state.job.is_none() {
             self.logs_state.refreshing_editor = true;
             self.request_logs_job(Some(selection));
-            self.editor_message = Some("Refreshing log query…".into());
+            self.editor_message = Some(i18n::LocalizedText::from(i18n::msg!(
+                "shell-refreshing-log-query"
+            )));
         }
         true
     }
@@ -576,6 +589,7 @@ impl ShellSession {
     }
 
     pub(in crate::session) fn to_logs_view_model(&self) -> ui::LogsViewModel {
+        let _language = i18n::enter_snapshot(self.language.clone());
         let state = &self.logs_state;
         let system = matches!(self.logs_access(), Some(LogAccess::Admin));
         let diagnostics = ui::DiagnosticsViewModel {
@@ -606,7 +620,7 @@ impl ShellSession {
                         .app
                         .as_ref()
                         .map(|app| app.display_name.clone())
-                        .unwrap_or_else(|| "Process".into()),
+                        .unwrap_or_else(|| i18n::tr!("shell-process")),
                     severity: diagnostics_incident_severity_to_ui(incident.severity),
                     recovery: format!("{:?}", incident.recovery),
                     summary: incident.summary.clone(),
@@ -630,17 +644,24 @@ impl ShellSession {
         let health = ProcessWatchdog::global().map(|process| process.runtime_log_health());
         let feedback =
             match health.filter(|health| health.dropped_events > 0 || health.write_failures > 0) {
-                Some(health) => Some(format!(
-                    "{} | Writer: {} dropped, {} failures{}",
-                    state.feedback.as_deref().unwrap_or(""),
-                    health.dropped_events,
-                    health.write_failures,
-                    health
+                Some(health) => Some(i18n::tr!(
+                    "shell-arg1-writer-arg2-dropped-arg3-failuresarg4",
+                    arg1 = state
+                        .feedback
+                        .as_ref()
+                        .map(i18n::LocalizedText::render_current)
+                        .unwrap_or_default(),
+                    arg2 = health.dropped_events,
+                    arg3 = health.write_failures,
+                    arg4 = health
                         .last_error
                         .map(|error| format!(" ({error})"))
                         .unwrap_or_default()
                 )),
-                None => state.feedback.clone(),
+                None => state
+                    .feedback
+                    .as_ref()
+                    .map(i18n::LocalizedText::render_current),
             };
         ui::LogsViewModel {
             category: state.category,
@@ -667,22 +688,33 @@ impl ShellSession {
             linux_available: cfg!(target_os = "linux"),
             can_view_system: system,
             loading: state.job.is_some(),
-            filter_summary: format!(
-                "Level: {} | Module: {} | Time: {} | {}",
-                state
+            filter_summary: i18n::tr!(
+                "shell-level-arg1-module-arg2-time-arg3-arg4",
+                arg1 = state
                     .query
                     .min_level
                     .map(|level| format!("{level:?}+ "))
-                    .unwrap_or_else(|| "All".into()),
-                state.query.module.as_deref().unwrap_or("All"),
-                ["All", "1 hour", "24 hours", "7 days"][usize::from(state.time_filter)],
-                state
+                    .unwrap_or_else(|| i18n::tr!("shell-all")),
+                arg2 = state
+                    .query
+                    .module
+                    .clone()
+                    .unwrap_or_else(|| i18n::tr!("shell-all")),
+                arg3 = [
+                    i18n::tr!("shell-all"),
+                    i18n::tr!("shell-1-hour"),
+                    i18n::tr!("shell-24-hours"),
+                    i18n::tr!("shell-7-days")
+                ][usize::from(state.time_filter)]
+                .clone(),
+                arg4 = state
                     .query
                     .incident_id
                     .as_ref()
-                    .map(|id| format!("Incident: {id}"))
-                    .unwrap_or_else(|| "C clear filters".into())
-            ),
+                    .map(|id| i18n::tr!("shell-incident-id", id = id))
+                    .unwrap_or_else(|| i18n::tr!("shell-c-clear-filters"))
+            )
+            .into(),
             feedback,
         }
     }

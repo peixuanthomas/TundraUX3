@@ -97,25 +97,31 @@ impl ShellDiagnosticsTaskRuntime {
         Ok(engine)
     }
 
-    pub(in crate::session) fn request_scan(&self) -> Result<(), String> {
+    pub(in crate::session) fn request_scan(&self) -> Result<(), DiagnosticsRequestError> {
         let engine = self.ensure_engine()?;
         engine
             .as_ref()
             .expect("Diagnostics engine initialized")
             .request_scan()
-            .map_err(|error| error.to_string())
+            .map_err(|error| DiagnosticsRequestError {
+                diagnostic: error.to_string(),
+                message: error.localized().message.into(),
+            })
     }
 
     pub(in crate::session) fn request_repair(
         &self,
         actions: Vec<app::diagnostics::DiagnosticsRepairAction>,
-    ) -> Result<(), String> {
+    ) -> Result<(), DiagnosticsRequestError> {
         let engine = self.ensure_engine()?;
         engine
             .as_ref()
             .expect("Diagnostics engine initialized")
             .request_repair(actions)
-            .map_err(|error| error.to_string())
+            .map_err(|error| DiagnosticsRequestError {
+                diagnostic: error.to_string(),
+                message: error.localized().message.into(),
+            })
     }
 
     pub(in crate::session) fn is_busy(&self) -> bool {
@@ -182,10 +188,11 @@ pub(in crate::session) fn apply_terminal_graphics_check(
     let Some(terminal_graphics) = terminal_graphics else {
         return;
     };
-    let Some(check) = snapshot.checks.iter_mut().find(|check| {
-        check.category == app::diagnostics::DiagnosticCategory::Environment
-            && check.label == "Terminal"
-    }) else {
+    let Some(check) = snapshot
+        .checks
+        .iter_mut()
+        .find(|check| check.id == "environment.terminal")
+    else {
         return;
     };
 
@@ -234,28 +241,26 @@ impl ShellSession {
                 }
                 self.pending_default_ascii_icon_fallback = true;
                 self.notify_modal(
-                    "Terminal graphics unsupported",
-                    "This terminal responded but does not support a compatible graphics protocol. The Default theme will use ASCII icons, and the change will be saved after sign-in.",
+                    i18n::LocalizedText::from(i18n::msg!("shell-terminal-graphics-unsupported")),
+                    i18n::LocalizedText::from(i18n::msg!("shell-this-terminal-responded-but-does-not-support-a-compatible-graphics-protocol-the-default-theme-will-use-ascii-i")),
                     ui::NotificationTone::Warning,
-                    vec![ShellNotificationAction::new("continue", "Continue").cancel()],
+                    vec![ShellNotificationAction::new("continue", i18n::LocalizedText::from(i18n::msg!("shell-continue"))).cancel()],
                 );
             }
             ui::TerminalGraphicsProbeStatus::Unsupported => {
                 self.notify_modal(
-                    "Terminal graphics unsupported",
-                    "This terminal responded but does not support a compatible graphics protocol. The custom theme was left unchanged; graphical icons may not render.",
+                    i18n::LocalizedText::from(i18n::msg!("shell-terminal-graphics-unsupported")),
+                    i18n::LocalizedText::from(i18n::msg!("shell-this-terminal-responded-but-does-not-support-a-compatible-graphics-protocol-the-custom-theme-was-left-unchange")),
                     ui::NotificationTone::Warning,
-                    vec![ShellNotificationAction::new("continue", "Continue").cancel()],
+                    vec![ShellNotificationAction::new("continue", i18n::LocalizedText::from(i18n::msg!("shell-continue"))).cancel()],
                 );
             }
             ui::TerminalGraphicsProbeStatus::NoResponse { reason } => {
                 self.notify_modal(
-                    "No terminal graphics response",
-                    format!(
-                        "TundraUX could not determine whether this terminal supports a graphics protocol ({reason}). Your theme was not changed."
-                    ),
+                    i18n::LocalizedText::from(i18n::msg!("shell-no-terminal-graphics-response")),
+                    i18n::LocalizedText::from(i18n::msg!("shell-tundraux-could-not-determine-whether-this-terminal-supports-a-graphics-protocol-reason-your-theme-was-not-chan", reason = reason.to_string())),
                     ui::NotificationTone::Warning,
-                    vec![ShellNotificationAction::new("continue", "Continue").cancel()],
+                    vec![ShellNotificationAction::new("continue", i18n::LocalizedText::from(i18n::msg!("shell-continue"))).cancel()],
                 );
             }
         }
@@ -285,7 +290,9 @@ impl ShellSession {
             .auth_session()
             .is_some_and(|session| session.role != UserRole::Guest);
         if !authenticated || self.active_screen() != ShellScreen::SystemStatus {
-            self.notify_status("Open Diagnostics from System Status");
+            self.notify_status(i18n::LocalizedText::from(i18n::msg!(
+                "shell-open-diagnostics-from-system-status"
+            )));
             return;
         }
         self.diagnostics_restart_required = self.diagnostics_restart_is_required();
@@ -296,7 +303,9 @@ impl ShellSession {
         if self.diagnostics_task_runtime.is_some() {
             self.request_diagnostics_scan();
         } else if self.app.diagnostics_snapshot().is_none() {
-            self.diagnostics_feedback = Some("Diagnostics runtime is unavailable".to_string());
+            self.diagnostics_feedback = Some(i18n::LocalizedText::from(i18n::msg!(
+                "shell-diagnostics-runtime-is-unavailable"
+            )));
         }
         self.refresh_hit_map();
     }
@@ -332,7 +341,9 @@ impl ShellSession {
         if self.diagnostics_restart_is_required() {
             self.diagnostics_restart_required = true;
             self.notify_alert_with_tone(
-                "Restart TundraUX before running another diagnostics scan",
+                i18n::LocalizedText::from(i18n::msg!(
+                    "shell-restart-tundraux-before-running-another-diagnostics-scan"
+                )),
                 ui::NotificationTone::Warning,
             );
             return;
@@ -345,23 +356,30 @@ impl ShellSession {
         {
             self.diagnostics_scanning = true;
             self.diagnostics_rescan_pending = true;
-            self.diagnostics_feedback = Some("Diagnostics task in progress…".to_string());
+            self.diagnostics_feedback = Some(i18n::LocalizedText::from(i18n::msg!(
+                "shell-diagnostics-task-in-progress"
+            )));
             return;
         }
         let result = self
             .diagnostics_task_runtime
             .as_ref()
-            .ok_or_else(|| "Diagnostics runtime is unavailable".to_string())
+            .ok_or_else(|| DiagnosticsRequestError {
+                diagnostic: "Diagnostics runtime is unavailable".to_string(),
+                message: i18n::msg!("shell-diagnostics-runtime-is-unavailable").into(),
+            })
             .and_then(ShellDiagnosticsTaskRuntime::request_scan);
         match result {
             Ok(()) => {
                 self.diagnostics_scanning = true;
-                self.diagnostics_feedback = Some("Scanning system health…".to_string());
+                self.diagnostics_feedback = Some(i18n::LocalizedText::from(i18n::msg!(
+                    "shell-scanning-system-health"
+                )));
             }
             Err(error) => {
                 self.diagnostics_scanning = false;
-                self.diagnostics_feedback = Some(error.clone());
-                self.notify_alert_with_tone(error, ui::NotificationTone::Critical);
+                self.diagnostics_feedback = Some(error.message.clone());
+                self.notify_alert_with_tone(error.message, ui::NotificationTone::Critical);
             }
         }
     }
@@ -379,14 +397,19 @@ impl ShellSession {
                     match result {
                         Ok(snapshot) => {
                             self.install_diagnostics_snapshot(snapshot);
-                            self.diagnostics_feedback = Some("Scan complete".to_string());
+                            self.diagnostics_feedback =
+                                Some(i18n::LocalizedText::from(i18n::msg!("shell-scan-complete")));
                         }
                         Err(error) => {
                             let message = if self.diagnostics_can_view_details() {
-                                format!("Diagnostics scan failed: {error}")
+                                i18n::LocalizedText::from(i18n::msg!(
+                                    "shell-diagnostics-scan-failed-error",
+                                    error = error.to_string()
+                                ))
                             } else {
-                                "Diagnostics scan failed; ask an administrator to review the details"
-                                    .to_string()
+                                i18n::LocalizedText::from(i18n::msg!(
+                                    "shell-diagnostics-scan-failed-ask-an-administrator-to-review-the-details"
+                                ))
                             };
                             self.diagnostics_feedback = Some(message.clone());
                             self.notify_alert_with_tone(message, ui::NotificationTone::Critical);
@@ -402,11 +425,12 @@ impl ShellSession {
                     total,
                     label,
                 } => {
-                    self.diagnostics_feedback = Some(format!(
-                        "Repairing {}/{}: {label}",
-                        completed.saturating_add(1),
-                        total
-                    ));
+                    self.diagnostics_feedback = Some(i18n::LocalizedText::from(i18n::msg!(
+                        "shell-repairing-arg1-arg2-label",
+                        arg1 = completed.saturating_add(1),
+                        arg2 = total,
+                        label = label
+                    )));
                 }
                 app::diagnostics::DiagnosticsTaskEvent::RepairCompleted {
                     results,
@@ -448,40 +472,50 @@ impl ShellSession {
                         .iter()
                         .filter(|result| result.backup_path.is_some())
                         .count();
-                    self.diagnostics_feedback = Some(format!(
-                        "Repair complete: {succeeded} succeeded, {failed} failed{}",
-                        if backups == 0 {
-                            String::new()
+                    self.diagnostics_feedback = Some(i18n::LocalizedText::from(i18n::msg!(
+                        "shell-repair-complete-succeeded-succeeded-failed-failedarg1",
+                        succeeded = succeeded,
+                        failed = failed,
+                        arg1 = if backups == 0 {
+                            i18n::LocalizedText::from("")
                         } else {
-                            format!(", {backups} backup(s) created")
+                            i18n::LocalizedText::from(i18n::msg!(
+                                "shell-backups-backup-s-created",
+                                backups = backups
+                            ))
                         }
-                    ));
+                    )));
                     if let Some(snapshot) = snapshot {
                         self.install_diagnostics_snapshot(snapshot);
                     }
                     if restart_required && succeeded > 0 {
                         self.diagnostics_restart_required = true;
                         self.notify_modal(
-                            "Restart required",
-                            "Storage was repaired and the current in-memory session is stale. Restart TundraUX before continuing.",
+                            i18n::LocalizedText::from(i18n::msg!("shell-restart-required")),
+                            i18n::LocalizedText::from(i18n::msg!("shell-storage-was-repaired-and-the-current-in-memory-session-is-stale-restart-tundraux-before-continuing")),
                             ui::NotificationTone::Warning,
                             vec![
-                                ShellNotificationAction::new("restart", "Restart now")
+                                ShellNotificationAction::new("restart", i18n::LocalizedText::from(i18n::msg!("shell-restart-now")))
                                     .with_shortcut(InputKey::Char('r'))
                                     .with_follow_up(ShellCommand::Restart),
-                                ShellNotificationAction::new("exit", "Exit now")
+                                ShellNotificationAction::new("exit", i18n::LocalizedText::from(i18n::msg!("shell-exit-now")))
                                     .with_shortcut(InputKey::Char('e'))
                                     .with_follow_up(ShellCommand::ConfirmExit),
-                                ShellNotificationAction::new("review", "Review results").cancel(),
+                                ShellNotificationAction::new("review", i18n::LocalizedText::from(i18n::msg!("shell-review-results"))).cancel(),
                             ],
                         );
                     } else if failed > 0 {
                         self.notify_alert_with_tone(
-                            format!("{failed} diagnostics repair action(s) failed"),
+                            i18n::LocalizedText::from(i18n::msg!(
+                                "shell-failed-diagnostics-repair-action-s-failed",
+                                failed = failed
+                            )),
                             ui::NotificationTone::Warning,
                         );
                     } else {
-                        self.notify_toast("Diagnostics repair completed");
+                        self.notify_toast(i18n::LocalizedText::from(i18n::msg!(
+                            "shell-diagnostics-repair-completed"
+                        )));
                     }
                     let rescan_pending = std::mem::take(&mut self.diagnostics_rescan_pending);
                     if rescan_pending && !self.diagnostics_restart_is_required() {
@@ -722,7 +756,9 @@ impl ShellSession {
                 self.diagnostics_repair_preview = vec![repair];
                 self.reset_diagnostics_repair_dialog_selection();
             }
-            None => self.notify_status("Selected check has no automatic repair"),
+            None => self.notify_status(i18n::LocalizedText::from(i18n::msg!(
+                "shell-selected-check-has-no-automatic-repair"
+            ))),
         }
         self.refresh_hit_map();
     }
@@ -737,7 +773,9 @@ impl ShellSession {
             .map(app::diagnostics::DiagnosticsSnapshot::repair_plan)
             .unwrap_or_default();
         if plan.is_empty() {
-            self.notify_status("No automatic repairs are available");
+            self.notify_status(i18n::LocalizedText::from(i18n::msg!(
+                "shell-no-automatic-repairs-are-available"
+            )));
         } else {
             self.diagnostics_repair_preview = plan;
             self.reset_diagnostics_repair_dialog_selection();
@@ -797,13 +835,18 @@ impl ShellSession {
         let result = self
             .diagnostics_task_runtime
             .as_ref()
-            .ok_or_else(|| "Diagnostics runtime is unavailable".to_string())
+            .ok_or_else(|| DiagnosticsRequestError {
+                diagnostic: "Diagnostics runtime is unavailable".to_string(),
+                message: i18n::msg!("shell-diagnostics-runtime-is-unavailable").into(),
+            })
             .and_then(|runtime| runtime.request_repair(actions.clone()));
         match result {
             Ok(()) => {
                 self.diagnostics_scanning = true;
-                self.diagnostics_feedback =
-                    Some(format!("Starting {} repair action(s)…", actions.len()));
+                self.diagnostics_feedback = Some(i18n::LocalizedText::from(i18n::msg!(
+                    "shell-starting-arg1-repair-action-s",
+                    arg1 = actions.len()
+                )));
             }
             Err(error) => {
                 self.diagnostics_repair_log_context = None;
@@ -814,10 +857,10 @@ impl ShellSession {
                     "Diagnostic repair could not start",
                 );
                 event.error_code = Some("UX_DIAGNOSTICS_SUBMIT_FAILED".into());
-                event.error_chain.push(error.clone());
+                event.error_chain.push(error.diagnostic);
                 record_shell_runtime_event(event);
                 self.diagnostics_repair_preview = actions;
-                self.notify_alert_with_tone(error, ui::NotificationTone::Critical);
+                self.notify_alert_with_tone(error.message, ui::NotificationTone::Critical);
             }
         }
         self.refresh_hit_map();
@@ -847,7 +890,10 @@ impl ShellSession {
             }
         });
         self.notify_alert_with_tone(
-            format!("Diagnostics repair denied: {reason}"),
+            i18n::LocalizedText::from(i18n::msg!(
+                "shell-diagnostics-repair-denied-reason",
+                reason = reason.to_string()
+            )),
             ui::NotificationTone::Warning,
         );
         false
@@ -855,7 +901,9 @@ impl ShellSession {
 
     pub(in crate::session) fn copy_diagnostics_summary(&mut self, platform: &dyn Platform) {
         let Some(snapshot) = self.app.diagnostics_snapshot() else {
-            self.notify_status("No diagnostics snapshot is available");
+            self.notify_status(i18n::LocalizedText::from(i18n::msg!(
+                "shell-no-diagnostics-snapshot-is-available"
+            )));
             return;
         };
         let full = self.diagnostics_can_view_details();
@@ -892,11 +940,16 @@ impl ShellSession {
         let text = lines.join("\n");
         match platform.write_clipboard_text(&text) {
             Ok(()) => {
-                self.notify_toast("Copied diagnostics summary");
+                self.notify_toast(i18n::LocalizedText::from(i18n::msg!(
+                    "shell-copied-diagnostics-summary"
+                )));
             }
             Err(error) => {
                 self.notify_alert_with_tone(
-                    format!("Could not copy diagnostics summary: {error}"),
+                    i18n::LocalizedText::from(i18n::msg!(
+                        "shell-could-not-copy-diagnostics-summary-error",
+                        error = error.to_string()
+                    )),
                     ui::NotificationTone::Critical,
                 );
             }
@@ -909,7 +962,9 @@ impl ShellSession {
     ) {
         if !self.diagnostics_can_explore_logs() {
             self.notify_alert_with_tone(
-                "Only administrators can explore the diagnostic log folder",
+                i18n::LocalizedText::from(i18n::msg!(
+                    "shell-only-administrators-can-explore-the-diagnostic-log-folder"
+                )),
                 ui::NotificationTone::Warning,
             );
             return;
@@ -917,7 +972,9 @@ impl ShellSession {
 
         let Some(storage) = self.storage_manager.clone() else {
             self.notify_alert_with_tone(
-                "Diagnostics log directory is unavailable",
+                i18n::LocalizedText::from(i18n::msg!(
+                    "shell-diagnostics-log-directory-is-unavailable"
+                )),
                 ui::NotificationTone::Critical,
             );
             return;
@@ -925,10 +982,10 @@ impl ShellSession {
         let logs_path = storage.layout().logs_path.clone();
         if !logs_path.is_dir() {
             self.notify_alert_with_tone(
-                format!(
-                    "Diagnostics log directory is unavailable: {}",
-                    logs_path.display()
-                ),
+                i18n::LocalizedText::from(i18n::msg!(
+                    "shell-diagnostics-log-directory-is-unavailable-arg1",
+                    arg1 = logs_path.display().to_string()
+                )),
                 ui::NotificationTone::Critical,
             );
             return;
@@ -940,7 +997,9 @@ impl ShellSession {
             logs_path,
             ExplorerPurpose::DiagnosticsLogs,
         );
-        self.notify_toast("Opened diagnostic log folder in Explorer");
+        self.notify_toast(i18n::LocalizedText::from(i18n::msg!(
+            "shell-opened-diagnostic-log-folder-in-explorer"
+        )));
     }
 
     fn diagnostics_can_explore_logs(&self) -> bool {
@@ -954,12 +1013,16 @@ impl ShellSession {
         _platform: &dyn Platform,
     ) {
         if self.diagnostics_tab == ui::DiagnosticsTab::Health {
-            self.notify_status("Open Logs from System Status");
+            self.notify_status(i18n::LocalizedText::from(i18n::msg!(
+                "shell-open-logs-from-system-status"
+            )));
             return;
         }
         if !self.diagnostics_can_view_details() {
             self.notify_alert_with_tone(
-                "Only administrators can open diagnostic logs and reports",
+                i18n::LocalizedText::from(i18n::msg!(
+                    "shell-only-administrators-can-open-diagnostic-logs-and-reports"
+                )),
                 ui::NotificationTone::Warning,
             );
             return;
@@ -973,13 +1036,15 @@ impl ShellSession {
                     .and_then(|snapshot| snapshot.logs.get(self.diagnostics_selected_log))
                     .map(|log| log.path.clone());
                 let Some(path) = path else {
-                    self.notify_status("No diagnostic log is selected");
+                    self.notify_status(i18n::LocalizedText::from(i18n::msg!(
+                        "shell-no-diagnostic-log-is-selected"
+                    )));
                     return;
                 };
                 (
                     EditorReloadPolicy::Log { path },
-                    "Could not open diagnostic log",
-                    "Opened diagnostic log read-only",
+                    i18n::LocalizedText::from(i18n::msg!("shell-could-not-open-diagnostic-log")),
+                    i18n::LocalizedText::from(i18n::msg!("shell-opened-diagnostic-log-read-only")),
                 )
             }
             ui::DiagnosticsTab::Incidents => {
@@ -994,13 +1059,19 @@ impl ShellSession {
                             .unwrap_or_else(|| incident.json_report_path.clone())
                     });
                 let Some(path) = path else {
-                    self.notify_status("No incident report is selected");
+                    self.notify_status(i18n::LocalizedText::from(i18n::msg!(
+                        "shell-no-incident-report-is-selected"
+                    )));
                     return;
                 };
                 (
                     EditorReloadPolicy::DiagnosticsReport { path },
-                    "Could not open diagnostics report",
-                    "Opened diagnostics report read-only",
+                    i18n::LocalizedText::from(i18n::msg!(
+                        "shell-could-not-open-diagnostics-report"
+                    )),
+                    i18n::LocalizedText::from(i18n::msg!(
+                        "shell-opened-diagnostics-report-read-only"
+                    )),
                 )
             }
             ui::DiagnosticsTab::Health => unreachable!(),
@@ -1012,7 +1083,11 @@ impl ShellSession {
             }
             Err(error) => {
                 self.notify_alert_with_tone(
-                    format!("{missing_message}: {error}"),
+                    i18n::LocalizedText::from(i18n::msg!(
+                        "shell-missing-message-error",
+                        missing_message = missing_message,
+                        error = error
+                    )),
                     ui::NotificationTone::Critical,
                 );
             }
@@ -1254,6 +1329,9 @@ mod diagnostics_shell_tests {
             custom_assets,
         );
 
+        // This theme-only fixture intentionally omits locale files. Acknowledge their
+        // startup recovery before checking the separate terminal graphics warning.
+        state.notification_dismiss_modal_by_key("shell.resource-recovery");
         state.apply_terminal_graphics_startup_policy(&ui::TerminalGraphicsProbeStatus::Unsupported);
 
         assert!(!state.pending_default_ascii_icon_fallback);
@@ -1469,8 +1547,9 @@ mod diagnostics_shell_tests {
         assert!(
             state
                 .editor_message
-                .as_deref()
+                .as_ref()
                 .unwrap()
+                .render_current()
                 .contains("Could not reload")
         );
         std::fs::remove_dir_all(directory).unwrap();
@@ -1766,7 +1845,7 @@ mod diagnostics_shell_tests {
                 .app
                 .notification_center()
                 .alert()
-                .is_some_and(|message| message.contains("Only administrators"))
+                .is_some_and(|message| message.render_current().contains("Only administrators"))
         );
     }
 
@@ -1946,5 +2025,21 @@ mod diagnostics_shell_tests {
         assert!(state.diagnostics_restart_required);
         assert!(state.auth_session().is_some());
         assert!(!state.return_to_lockscreen_requested);
+    }
+}
+
+/// Keeps submission diagnostics stable while retaining the UI message for language changes.
+#[derive(Debug)]
+pub(in crate::session) struct DiagnosticsRequestError {
+    diagnostic: String,
+    message: i18n::LocalizedText,
+}
+
+impl From<String> for DiagnosticsRequestError {
+    fn from(diagnostic: String) -> Self {
+        Self {
+            message: diagnostic.clone().into(),
+            diagnostic,
+        }
     }
 }

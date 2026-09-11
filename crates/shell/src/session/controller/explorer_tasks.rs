@@ -58,26 +58,29 @@ pub(in crate::session) fn collect_explorer_conflicts_no_follow(
     source: &Path,
     target: &Path,
     conflicts: &mut Vec<(PathBuf, PathBuf)>,
-) -> Result<(), String> {
+) -> Result<(), i18n::LocalizedText> {
     let source_attributes = platform.file_attributes(source).map_err(|error| {
-        format!(
-            "Could not inspect transfer source {}: {error}",
-            source.display()
-        )
+        i18n::LocalizedText::from(i18n::msg!(
+            "shell-could-not-inspect-transfer-source-arg1-error",
+            arg1 = source.display().to_string(),
+            error = error.to_string()
+        ))
     })?;
     let target_attributes = match std::fs::symlink_metadata(target) {
         Ok(_) => Some(platform.file_attributes(target).map_err(|error| {
-            format!(
-                "Could not inspect transfer target {}: {error}",
-                target.display()
-            )
+            i18n::LocalizedText::from(i18n::msg!(
+                "shell-could-not-inspect-transfer-target-arg1-error",
+                arg1 = target.display().to_string(),
+                error = error.to_string()
+            ))
         })?),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
         Err(error) => {
-            return Err(format!(
-                "Could not inspect transfer target {}: {error}",
-                target.display()
-            ));
+            return Err(i18n::LocalizedText::from(i18n::msg!(
+                "shell-could-not-inspect-transfer-target-arg1-error",
+                arg1 = target.display().to_string(),
+                error = error.to_string()
+            )));
         }
     };
     let Some(target_attributes) = target_attributes else {
@@ -97,18 +100,20 @@ pub(in crate::session) fn collect_explorer_conflicts_no_follow(
     }
 
     let directory = std::fs::read_dir(source).map_err(|error| {
-        format!(
-            "Could not scan source directory {} for conflicts: {error}",
-            source.display()
-        )
+        i18n::LocalizedText::from(i18n::msg!(
+            "shell-could-not-scan-source-directory-arg1-for-conflicts-error",
+            arg1 = source.display().to_string(),
+            error = error.to_string()
+        ))
     })?;
     let mut entries = directory
         .map(|entry| {
             entry.map_err(|error| {
-                format!(
-                    "Could not read an entry in {} during conflict scan: {error}",
-                    source.display()
-                )
+                i18n::LocalizedText::from(i18n::msg!(
+                    "shell-could-not-read-an-entry-in-arg1-during-conflict-scan-error",
+                    arg1 = source.display().to_string(),
+                    error = error.to_string()
+                ))
             })
         })
         .collect::<Result<Vec<_>, _>>()?;
@@ -353,11 +358,14 @@ impl ShellSession {
                 {
                     let _ = self.update_explorer_state(|state| {
                         if let Some(operation) = state.operation.as_mut() {
-                            operation.label = "Cancelling operation".to_string();
+                            operation.label =
+                                i18n::LocalizedText::from(i18n::msg!("shell-cancelling-operation"));
                             operation.cancellable = false;
                         }
                     });
-                    self.notify_status("Cancelling Explorer operation");
+                    self.notify_status(i18n::LocalizedText::from(i18n::msg!(
+                        "shell-cancelling-explorer-operation"
+                    )));
                     true
                 } else {
                     // The core controller still owns cancellation while waiting in its dialog.
@@ -370,11 +378,15 @@ impl ShellSession {
     }
     pub(in crate::session) fn start_explorer_background_paste(&mut self, platform: &dyn Platform) {
         let Some(state) = self.app.explorer_state() else {
-            self.report_explorer_task_error("Explorer unavailable");
+            self.report_explorer_task_error(i18n::LocalizedText::from(i18n::msg!(
+                "shell-explorer-unavailable"
+            )));
             return;
         };
         let Some(clipboard) = state.clipboard.clone() else {
-            self.report_explorer_task_error("clipboard is empty");
+            self.report_explorer_task_error(i18n::LocalizedText::from(i18n::msg!(
+                "shell-clipboard-is-empty"
+            )));
             return;
         };
         self.prepare_explorer_background_transfer(
@@ -396,7 +408,9 @@ impl ShellSession {
             return;
         }
         let Some(destination) = drag.target else {
-            self.report_explorer_task_error("Drag has no valid destination");
+            self.report_explorer_task_error(i18n::LocalizedText::from(i18n::msg!(
+                "shell-drag-has-no-valid-destination"
+            )));
             return;
         };
         self.prepare_explorer_background_transfer(
@@ -420,16 +434,19 @@ impl ShellSession {
         platform: &dyn Platform,
     ) {
         if clipboard.paths.is_empty() {
-            self.report_explorer_task_error("clipboard is empty");
+            self.report_explorer_task_error(i18n::LocalizedText::from(i18n::msg!(
+                "shell-clipboard-is-empty"
+            )));
             return;
         }
         let destination = match std::fs::canonicalize(&destination) {
             Ok(destination) => destination,
             Err(error) => {
-                self.report_explorer_task_error(format!(
-                    "Could not resolve transfer destination {}: {error}",
-                    destination.display()
-                ));
+                self.report_explorer_task_error(i18n::LocalizedText::from(i18n::msg!(
+                    "shell-could-not-resolve-transfer-destination-arg1-error",
+                    arg1 = destination.display().to_string(),
+                    error = error.to_string()
+                )));
                 return;
             }
         };
@@ -437,7 +454,10 @@ impl ShellSession {
         let mut targets = Vec::with_capacity(clipboard.paths.len());
         for source in &clipboard.paths {
             let Some(file_name) = source.file_name() else {
-                self.report_explorer_task_error(format!("{} has no file name", source.display()));
+                self.report_explorer_task_error(i18n::LocalizedText::from(i18n::msg!(
+                    "shell-arg1-has-no-file-name",
+                    arg1 = source.display().to_string()
+                )));
                 return;
             };
             let target = destination.join(file_name);
@@ -473,6 +493,7 @@ impl ShellSession {
                     target,
                     remaining: conflicts.len(),
                 });
+                let clipboard_mode = clipboard.mode;
                 state.pending_transfer = Some(ExplorerPendingTransfer {
                     clipboard,
                     destination,
@@ -480,7 +501,7 @@ impl ShellSession {
                     current_conflict: 0,
                     resolutions: BTreeMap::new(),
                 });
-                state.operation = Some(waiting_for_conflict_progress());
+                state.operation = Some(waiting_for_conflict_progress(clipboard_mode));
             });
             self.sync_explorer_background_conflict_notification();
             return;
@@ -504,7 +525,9 @@ impl ShellSession {
                 state.pending_conflict = None;
                 state.pending_transfer = None;
                 state.operation = None;
-                state.message = Some("Transfer cancelled".to_string());
+                state.message = Some(i18n::LocalizedText::from(i18n::msg!(
+                    "shell-transfer-cancelled"
+                )));
                 state.error = None;
             });
             self.notification_dismiss_modal_by_key(EXPLORER_CONFLICT_NOTIFICATION_KEY);
@@ -533,7 +556,9 @@ impl ShellSession {
                 .explorer_state()
                 .is_some_and(|state| state.pending_transfer.is_some())
             {
-                self.report_explorer_task_error("Invalid conflict state");
+                self.report_explorer_task_error(i18n::LocalizedText::from(i18n::msg!(
+                    "shell-invalid-conflict-state"
+                )));
             }
             return;
         };
@@ -608,7 +633,9 @@ impl ShellSession {
         paths: Vec<std::path::PathBuf>,
     ) {
         if paths.is_empty() {
-            self.report_explorer_task_error("No file is selected");
+            self.report_explorer_task_error(i18n::LocalizedText::from(i18n::msg!(
+                "shell-no-file-is-selected"
+            )));
             return;
         }
         if let Err(message) =
@@ -629,7 +656,9 @@ impl ShellSession {
         kind: ShellExplorerTaskKind,
     ) {
         let Some(runtime) = self.explorer_task_runtime.as_ref() else {
-            self.report_explorer_task_error("Explorer task service is unavailable");
+            self.report_explorer_task_error(i18n::LocalizedText::from(i18n::msg!(
+                "shell-explorer-task-service-is-unavailable"
+            )));
             return;
         };
         let actor = self
@@ -637,6 +666,7 @@ impl ShellSession {
             .auth_session()
             .map(|session| session.user_id.clone())
             .unwrap_or_else(|| "Guest".to_string());
+        let operation = plan.operation();
         match runtime.submit(plan, kind, actor) {
             Ok(_) => {
                 let _ = self.update_explorer_state(|state| {
@@ -645,8 +675,9 @@ impl ShellSession {
                     state.error = None;
                     state.message = None;
                     state.operation = Some(ExplorerOperationProgress {
+                        operation,
                         phase: ExplorerOperationPhase::Scanning,
-                        label: "Scanning files".to_string(),
+                        label: i18n::LocalizedText::from(i18n::msg!("shell-scanning-files")),
                         completed_items: 0,
                         total_items: None,
                         completed_bytes: 0,
@@ -656,10 +687,14 @@ impl ShellSession {
                 });
                 self.error_message = None;
                 self.resolve_explorer_alert();
-                self.notify_status("Explorer operation started");
+                self.notify_status(i18n::LocalizedText::from(i18n::msg!(
+                    "shell-explorer-operation-started"
+                )));
             }
             Err(ExplorerTaskSubmitError::Busy { .. }) => {
-                let message = "Another Explorer file operation is still running".to_string();
+                let message = i18n::LocalizedText::from(i18n::msg!(
+                    "shell-another-explorer-file-operation-is-still-running"
+                ));
                 let _ = self.update_explorer_state(|state| {
                     state.error = Some(message.clone());
                 });
@@ -670,14 +705,14 @@ impl ShellSession {
                     ui::NotificationTone::Error,
                 );
             }
-            Err(error) => self.report_explorer_task_error(error.to_string()),
+            Err(error) => self.report_explorer_task_error(error.localized().message),
         }
     }
     pub(in crate::session) fn preflight_explorer_permissions(
         &self,
         action: PermissionAction,
         resources: &[PathBuf],
-    ) -> Result<(), String> {
+    ) -> Result<(), i18n::LocalizedText> {
         let service = PermissionService::default();
         for resource in resources {
             let display = resource.display().to_string();
@@ -687,10 +722,11 @@ impl ShellSession {
                 let reason = authorization
                     .reason
                     .unwrap_or_else(|| "permission_denied".to_string());
-                return Err(format!(
-                    "Permission denied for {}: {reason}",
-                    resource.display()
-                ));
+                return Err(i18n::LocalizedText::from(i18n::msg!(
+                    "shell-permission-denied-for-arg1-reason",
+                    arg1 = resource.display().to_string(),
+                    reason = reason.to_string()
+                )));
             }
         }
         Ok(())
@@ -770,9 +806,12 @@ impl ShellSession {
                 if context.is_none() {
                     return;
                 }
-                let detail = format!(
-                    "Explorer operation stopped after an internal error: {message} (incident {incident_id}; recovery: {recovery:?})"
-                );
+                let detail = i18n::LocalizedText::from(i18n::msg!(
+                    "shell-explorer-operation-stopped-after-an-internal-error-message-incident-incident-id-recovery-recovery",
+                    message = message,
+                    incident_id = incident_id,
+                    recovery = format!("{:?}", recovery)
+                ));
                 let _ = self.update_explorer_state(|state| {
                     state.operation = None;
                     state.message = Some(detail.clone());
@@ -830,32 +869,37 @@ impl ShellSession {
                 let detail =
                     explorer_task_error_detail(summary.fatal_error.as_ref(), &summary.failures);
                 let message = if summary.cancelled {
-                    format!(
-                        "Operation cancelled: {} succeeded, {} failed{}",
-                        summary.succeeded_items,
-                        summary.failed_items,
-                        if detail.is_empty() {
-                            String::new()
-                        } else {
-                            format!(" ({detail})")
-                        }
-                    )
+                    i18n::LocalizedText::from(i18n::msg!(
+                        "shell-operation-cancelled-arg1-succeeded-arg2-failedarg3",
+                        arg1 = summary.succeeded_items,
+                        arg2 = summary.failed_items,
+                        arg3 = detail
+                            .as_ref()
+                            .map(|detail| i18n::LocalizedText::from(i18n::msg!(
+                                "shell-operation-error-detail-suffix",
+                                detail = detail
+                            )))
+                            .unwrap_or_else(|| "".into())
+                    ))
                 } else if summary.failed_items > 0 || summary.fatal_error.is_some() {
-                    format!(
-                        "Operation finished with errors: {} succeeded, {} failed{}",
-                        summary.succeeded_items,
-                        summary.failed_items,
-                        if detail.is_empty() {
-                            String::new()
-                        } else {
-                            format!(" ({detail})")
-                        }
-                    )
+                    i18n::LocalizedText::from(i18n::msg!(
+                        "shell-operation-finished-with-errors-arg1-succeeded-arg2-failedarg3",
+                        arg1 = summary.succeeded_items,
+                        arg2 = summary.failed_items,
+                        arg3 = detail
+                            .as_ref()
+                            .map(|detail| i18n::LocalizedText::from(i18n::msg!(
+                                "shell-operation-error-detail-suffix",
+                                detail = detail
+                            )))
+                            .unwrap_or_else(|| "".into())
+                    ))
                 } else {
-                    format!(
-                        "Operation complete: {} succeeded, {} skipped",
-                        summary.succeeded_items, summary.skipped_items
-                    )
+                    i18n::LocalizedText::from(i18n::msg!(
+                        "shell-operation-complete-arg1-succeeded-arg2-skipped",
+                        arg1 = summary.succeeded_items,
+                        arg2 = summary.skipped_items
+                    ))
                 };
                 let has_error = summary.failed_items > 0
                     || (!summary.cancelled && summary.fatal_error.is_some());
@@ -894,15 +938,18 @@ impl ShellSession {
                 match phase {
                     ExplorerTaskPhase::Planning => {
                         operation.phase = ExplorerOperationPhase::Scanning;
-                        operation.label = "Scanning files".to_string();
+                        operation.label =
+                            i18n::LocalizedText::from(i18n::msg!("shell-scanning-files"));
                     }
                     ExplorerTaskPhase::Executing => {
                         operation.phase = ExplorerOperationPhase::Executing;
-                        operation.label = "Applying file operation".to_string();
+                        operation.label =
+                            i18n::LocalizedText::from(i18n::msg!("shell-applying-file-operation"));
                     }
                     ExplorerTaskPhase::CleaningUp => {
                         operation.phase = ExplorerOperationPhase::Executing;
-                        operation.label = "Cleaning up staged files".to_string();
+                        operation.label =
+                            i18n::LocalizedText::from(i18n::msg!("shell-cleaning-up-staged-files"));
                         operation.cancellable = false;
                     }
                 }
@@ -915,7 +962,10 @@ impl ShellSession {
         self.notification_dismiss_modal_by_key(EXPLORER_CONFLICT_NOTIFICATION_KEY);
     }
 
-    pub(in crate::session) fn report_explorer_task_error(&mut self, message: impl Into<String>) {
+    pub(in crate::session) fn report_explorer_task_error(
+        &mut self,
+        message: impl Into<i18n::LocalizedText>,
+    ) {
         let message = message.into();
         let _ = self.update_explorer_state(|state| {
             state.operation = None;
@@ -929,21 +979,31 @@ impl ShellSession {
 fn explorer_task_error_detail(
     fatal_error: Option<&app::explorer_tasks::ExplorerTaskError>,
     failures: &[app::explorer_tasks::ExplorerItemFailure],
-) -> String {
+) -> Option<i18n::LocalizedText> {
     fatal_error
-        .map(ToString::to_string)
+        .map(|error| error.localized().message.into())
         .or_else(|| {
-            failures
-                .first()
-                .map(|failure| format!("{}: {}", failure.source.display(), failure.error))
+            failures.first().map(|failure| {
+                i18n::msg!(
+                    "shell-path-error-detail",
+                    path = failure.source.display().to_string(),
+                    reason = failure.error.localized().message
+                )
+                .into()
+            })
         })
-        .unwrap_or_default()
 }
 
-pub(in crate::session) fn waiting_for_conflict_progress() -> ExplorerOperationProgress {
+pub(in crate::session) fn waiting_for_conflict_progress(
+    mode: ExplorerClipboardMode,
+) -> ExplorerOperationProgress {
     ExplorerOperationProgress {
+        operation: match mode {
+            ExplorerClipboardMode::Copy => app::explorer_tasks::ExplorerTaskOperation::Copy,
+            ExplorerClipboardMode::Cut => app::explorer_tasks::ExplorerTaskOperation::Move,
+        },
         phase: ExplorerOperationPhase::WaitingForConflict,
-        label: "Waiting for conflict resolution".to_string(),
+        label: i18n::LocalizedText::from(i18n::msg!("shell-waiting-for-conflict-resolution")),
         completed_items: 0,
         total_items: None,
         completed_bytes: 0,
@@ -977,17 +1037,21 @@ mod explorer_task_workflow_tests {
                 message: "Linux Trash ownership mismatch".into(),
             }),
         }];
-        let detail = explorer_task_error_detail(None, &failures);
+        let detail = explorer_task_error_detail(None, &failures)
+            .unwrap()
+            .render_current();
         assert!(detail.contains("/home/user/Documents/alpha.txt"));
         assert!(detail.contains("Linux Trash ownership mismatch"));
         let fatal = ExplorerTaskError::Journal {
             message: "journal unavailable".into(),
         };
         assert_eq!(
-            explorer_task_error_detail(Some(&fatal), &failures),
+            explorer_task_error_detail(Some(&fatal), &failures)
+                .unwrap()
+                .render_current(),
             fatal.to_string()
         );
-        assert!(explorer_task_error_detail(None, &[]).is_empty());
+        assert!(explorer_task_error_detail(None, &[]).is_none());
     }
 
     fn test_explorer_watchdog() -> watchdog::AppWatchdog {

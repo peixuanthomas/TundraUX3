@@ -2,6 +2,7 @@ use super::super::controller::system_status::format_bytes;
 use super::super::*;
 impl ShellSession {
     pub fn to_system_status_view_model(&self) -> Option<ui::SystemStatusViewModel> {
+        let _language = i18n::enter_snapshot(self.language.clone());
         use system_services::*;
         let role = self.app.auth_session()?.role;
         if role == UserRole::Guest {
@@ -37,26 +38,28 @@ impl ShellSession {
             storage.and_then(|s| s.system_volume_index.and_then(|i| s.volumes.get(i)));
         let usage = system_volume
             .map(volume_usage)
-            .unwrap_or_else(|| "Unknown".into());
+            .unwrap_or_else(|| i18n::tr!("shell-unknown"));
         let system_volume_used_percentage = system_volume
             .and_then(used_percentage)
             .map(|percentage| percentage.round().clamp(0.0, 100.0) as u8);
         let refreshed = snapshot
             .and_then(successful_system_status_sampled_at)
             .map(format_sample_age)
-            .unwrap_or_else(|| "Not yet".into());
+            .unwrap_or_else(|| i18n::tr!("shell-not-yet"));
         let (network_status, network_tone) = match snapshot.map(|s| &s.network) {
-            None | Some(NetworkState::Loading) => {
-                ("Loading".into(), ui::components::ComponentTone::Muted)
-            }
-            Some(NetworkState::Unavailable { .. }) => {
-                ("Unavailable".into(), ui::components::ComponentTone::Muted)
-            }
+            None | Some(NetworkState::Loading) => (
+                i18n::tr!("shell-loading"),
+                ui::components::ComponentTone::Muted,
+            ),
+            Some(NetworkState::Unavailable { .. }) => (
+                i18n::tr!("shell-unavailable"),
+                ui::components::ComponentTone::Muted,
+            ),
             Some(NetworkState::Ready(n)) => (
                 if n.has_active_link {
-                    "Connected"
+                    i18n::tr!("shell-connected")
                 } else {
-                    "Disconnected"
+                    i18n::tr!("shell-disconnected")
                 }
                 .into(),
                 if n.has_active_link {
@@ -66,12 +69,12 @@ impl ShellSession {
                 },
             ),
             Some(NetworkState::Stale { last_good, .. }) => (
-                format!(
-                    "{} (stale)",
-                    if last_good.has_active_link {
-                        "Connected"
+                i18n::tr!(
+                    "shell-arg1-stale",
+                    arg1 = if last_good.has_active_link {
+                        i18n::tr!("shell-connected")
                     } else {
-                        "Disconnected"
+                        i18n::tr!("shell-disconnected")
                     }
                 ),
                 ui::components::ComponentTone::Warning,
@@ -104,7 +107,10 @@ impl ShellSession {
             .filter(|s| s.system_volume_source == SystemVolumeSource::FixedVolumeFallback)
             .and_then(|s| s.system_volume_index);
         let usage = if fallback_index.is_some() {
-            format!("{usage} (fixed-volume fallback; source unknown)")
+            i18n::tr!(
+                "shell-usage-fixed-volume-fallback-source-unknown",
+                usage = usage
+            )
         } else {
             usage
         };
@@ -115,20 +121,20 @@ impl ShellSession {
                     .enumerate()
                     .map(|(index, v)| ui::StorageVolumeRowViewModel {
                         volume: v.identifier.clone(),
-                        kind: format!("{:?}", v.kind),
+                        kind: storage_kind_label(v.kind),
                         system_volume: if Some(index) == fallback_index {
-                            "Fallback (source unknown)"
+                            i18n::tr!("shell-fallback-source-unknown")
                         } else if v.is_system {
-                            "Yes"
+                            i18n::tr!("shell-yes")
                         } else {
-                            "No"
+                            i18n::tr!("shell-no")
                         }
                         .into(),
-                        access: format!("{:?}", v.access),
+                        access: storage_access_label(v.access),
                         usage: volume_usage(v),
                         used_percentage: used_percentage(v)
                             .map(|p| format!("{p:.1}%"))
-                            .unwrap_or_else(|| "Unknown".into()),
+                            .unwrap_or_else(|| i18n::tr!("shell-unknown")),
                         pressure: pressure_label(v.pressure).into(),
                         tone: pressure_tone(v.pressure),
                     })
@@ -149,14 +155,14 @@ impl ShellSession {
                         ui::NetworkInterfaceRowViewModel {
                             name: i.name.clone(),
                             display_name: i.display_name.clone().unwrap_or_default(),
-                            kind: format!("{:?}", i.kind),
-                            link_state: format!("{:?}", i.link_state),
+                            kind: network_kind_label(i.kind),
+                            link_state: network_link_label(i.link_state),
                             received_rate: rates
                                 .map(|rate| format_rate(rate.received_bytes_per_second))
-                                .unwrap_or_else(|| "Unavailable".to_string()),
+                                .unwrap_or_else(|| i18n::tr!("shell-unavailable")),
                             transmitted_rate: rates
                                 .map(|rate| format_rate(rate.transmitted_bytes_per_second))
-                                .unwrap_or_else(|| "Unavailable".to_string()),
+                                .unwrap_or_else(|| i18n::tr!("shell-unavailable")),
                             addresses: i.addresses.join(", "),
                             tone: if i.link_state == NetworkLinkState::Up {
                                 ui::components::ComponentTone::Success
@@ -179,7 +185,7 @@ impl ShellSession {
                     network_tone,
                     active_link_count: network
                         .map(|n| n.active_link_count.to_string())
-                        .unwrap_or_else(|| "Unknown".into()),
+                        .unwrap_or_else(|| i18n::tr!("shell-unknown")),
                     last_refreshed: refreshed,
                 },
                 storage_state,
@@ -205,6 +211,7 @@ impl ShellSession {
         diagnostics: &ui::DiagnosticsViewModel,
         refreshed: &str,
     ) -> ui::SystemStatusDashboardViewModel {
+        let _language = i18n::enter_snapshot(self.language.clone());
         let dashboard = self.system_status_dashboard_config();
         let widgets_for = |profile: storage::DashboardProfile| {
             dashboard
@@ -231,9 +238,10 @@ impl ShellSession {
                 .map(|kind| {
                     let already_added = dashboard.widgets.contains(&kind);
                     let reason = if already_added {
-                        Some("Already added".to_string())
+                        Some(i18n::tr!("shell-already-added"))
                     } else {
                         self.system_status_widget_unavailable_reason(kind)
+                            .map(|text| text.render_current())
                     };
                     ui::SystemStatusPickerItemViewModel {
                         kind: super::super::controller::system_status::ui_widget_kind(kind),
@@ -248,7 +256,7 @@ impl ShellSession {
                 })
                 .collect();
             ui::SystemStatusPickerViewModel {
-                title: "Add widget".to_string(),
+                title: i18n::tr!("shell-add-widget"),
                 items,
                 selected: picker.selected,
             }
@@ -307,7 +315,10 @@ impl ShellSession {
             scroll_row: self.system_status_dashboard_scroll_row,
             editing: self.system_status_dashboard_draft.is_some(),
             dirty,
-            feedback: self.system_status_dashboard_feedback.clone(),
+            feedback: self
+                .system_status_dashboard_feedback
+                .as_ref()
+                .map(i18n::LocalizedText::render_current),
             picker,
             size_picker: self.system_status_size_picker.map(|picker| {
                 ui::SystemStatusSizePickerViewModel {
@@ -326,10 +337,10 @@ impl ShellSession {
             dialog: self
                 .system_status_discard_dialog
                 .then(|| ui::SystemStatusDialogViewModel {
-                    title: "Discard dashboard changes?".to_string(),
-                    message: "Your unsaved widget layout changes will be lost.".to_string(),
-                    confirm_label: "Discard".to_string(),
-                    cancel_label: "Continue editing".to_string(),
+                    title: i18n::tr!("shell-discard-dashboard-changes"),
+                    message: i18n::tr!("shell-your-unsaved-widget-layout-changes-will-be-lost"),
+                    confirm_label: i18n::tr!("shell-discard"),
+                    cancel_label: i18n::tr!("shell-continue-editing"),
                     selected_action: usize::from(!self.system_status_discard_confirm_selected),
                 }),
             dragging: None,
@@ -355,6 +366,7 @@ impl ShellSession {
         diagnostics: &ui::DiagnosticsViewModel,
         _refreshed: &str,
     ) -> ui::SystemStatusWidgetViewModel {
+        let _language = i18n::enter_snapshot(self.language.clone());
         use system_services::MetricState;
         use ui::components::ComponentTone;
 
@@ -436,37 +448,40 @@ impl ShellSession {
                     model.state = ui::SystemStatusWidgetState::Loading;
                 } else if critical || failed {
                     model.state = ui::SystemStatusWidgetState::Ready;
-                    model.primary = "Needs attention".into();
+                    model.primary = i18n::tr!("shell-needs-attention");
                     model.tone = ComponentTone::Danger;
                 } else if low || disconnected || warned {
                     model.state = ui::SystemStatusWidgetState::Ready;
-                    model.primary = "Needs attention".into();
+                    model.primary = i18n::tr!("shell-needs-attention");
                     model.tone = ComponentTone::Warning;
                 } else if stale {
                     model.state = ui::SystemStatusWidgetState::Stale {
-                        message: "Some system data is stale".into(),
+                        message: i18n::tr!("shell-some-system-data-is-stale"),
                     };
-                    model.primary = "Degraded".into();
+                    model.primary = i18n::tr!("shell-degraded");
                     model.tone = ComponentTone::Warning;
                 } else if unavailable {
                     model.state = ui::SystemStatusWidgetState::Ready;
-                    model.primary = "Degraded".into();
+                    model.primary = i18n::tr!("shell-degraded");
                     model.tone = ComponentTone::Warning;
                 } else {
                     model.state = ui::SystemStatusWidgetState::Ready;
-                    model.primary = "Healthy".into();
+                    model.primary = i18n::tr!("shell-healthy");
                     model.tone = ComponentTone::Success;
                 }
                 if let Some(metrics) = metrics {
                     let mut core = Vec::new();
                     if let Some(cpu) = metric_value(&metrics.cpu) {
-                        core.push(format!("CPU {:.0}%", cpu.usage_percent));
+                        core.push(i18n::tr!(
+                            "shell-cpu-arg1",
+                            arg1 = format!("{:.0}", cpu.usage_percent)
+                        ));
                     }
                     if let Some(memory) = metric_value(&metrics.memory) {
-                        core.push(format!(
-                            "Memory {} / {}",
-                            format_bytes(memory.used_bytes),
-                            format_bytes(memory.total_bytes)
+                        core.push(i18n::tr!(
+                            "shell-memory-arg1-arg2",
+                            arg1 = format_bytes(memory.used_bytes),
+                            arg2 = format_bytes(memory.total_bytes)
                         ));
                     }
                     if !core.is_empty() {
@@ -475,16 +490,16 @@ impl ShellSession {
                 }
                 let mut subsystem = Vec::new();
                 if let Some(storage) = storage_snapshot {
-                    subsystem.push(format!(
-                        "Storage {}",
-                        pressure_label(storage.overall_pressure)
+                    subsystem.push(i18n::tr!(
+                        "shell-storage-arg1",
+                        arg1 = pressure_label(storage.overall_pressure)
                     ));
                 }
                 if let Some(network) = snapshot.and_then(successful_network_snapshot) {
                     subsystem.push(if network.has_active_link {
-                        "Network connected".to_string()
+                        i18n::tr!("shell-network-connected")
                     } else {
-                        "Network disconnected".to_string()
+                        i18n::tr!("shell-network-disconnected")
                     });
                 }
                 if !subsystem.is_empty() {
@@ -498,50 +513,54 @@ impl ShellSession {
                             .collect::<Vec<_>>()
                             .join(" ");
                         model.compact_rows.push(vec![
-                            "System".to_string(),
+                            i18n::tr!("shell-system"),
                             identity
                                 .host_name
                                 .clone()
-                                .unwrap_or_else(|| "Unavailable".to_string()),
+                                .unwrap_or_else(|| i18n::tr!("shell-unavailable")),
                         ]);
                         model.compact_rows.push(vec![
-                            "OS".to_string(),
+                            i18n::tr!("shell-os"),
                             if os.is_empty() {
-                                "Unavailable".to_string()
+                                i18n::tr!("shell-unavailable")
                             } else {
                                 os
                             },
                         ]);
                         model.compact_rows.push(vec![
-                            "Kernel".to_string(),
+                            i18n::tr!("shell-kernel"),
                             identity
                                 .kernel_version
                                 .clone()
-                                .unwrap_or_else(|| "Unavailable".to_string()),
+                                .unwrap_or_else(|| i18n::tr!("shell-unavailable")),
                         ]);
                     }
                     if let Some(uptime) = metric_value(&metrics.uptime) {
-                        model
-                            .compact_rows
-                            .push(vec!["Uptime".to_string(), format_duration(uptime.seconds)]);
+                        model.compact_rows.push(vec![
+                            i18n::tr!("shell-uptime"),
+                            format_duration(uptime.seconds),
+                        ]);
                         let booted = metrics.sampled_at
                             - chrono::Duration::seconds(
                                 i64::try_from(uptime.seconds).unwrap_or(i64::MAX),
                             );
                         model.compact_rows.push(vec![
-                            "Booted".into(),
+                            i18n::tr!("shell-booted"),
                             booted.format("%Y-%m-%d %H:%M UTC").to_string(),
                         ]);
                     }
                     if let Some(cpu) = metric_value(&metrics.cpu) {
                         model.compact_rows.push(vec![
-                            "CPU".to_string(),
-                            format!("{:.0}% used", cpu.usage_percent),
+                            i18n::tr!("shell-cpu"),
+                            i18n::tr!(
+                                "shell-arg1-used",
+                                arg1 = format!("{:.0}", cpu.usage_percent)
+                            ),
                         ]);
                     }
                     if let Some(memory) = metric_value(&metrics.memory) {
                         model.compact_rows.push(vec![
-                            "Memory".to_string(),
+                            i18n::tr!("shell-memory"),
                             format!(
                                 "{} / {}",
                                 format_bytes(memory.used_bytes),
@@ -552,17 +571,17 @@ impl ShellSession {
                 }
                 if let Some(storage) = storage_snapshot {
                     model.compact_rows.push(vec![
-                        "Storage".to_string(),
+                        i18n::tr!("shell-storage"),
                         pressure_label(storage.overall_pressure).to_string(),
                     ]);
                 }
                 if let Some(network) = snapshot.and_then(successful_network_snapshot) {
                     model.compact_rows.push(vec![
-                        "Network".to_string(),
+                        i18n::tr!("shell-network"),
                         if network.has_active_link {
-                            "Connected"
+                            i18n::tr!("shell-connected")
                         } else {
-                            "Disconnected"
+                            i18n::tr!("shell-disconnected")
                         }
                         .to_string(),
                     ]);
@@ -584,18 +603,24 @@ impl ShellSession {
                             value: value.round().clamp(0.0, 100.0) as u64,
                         })
                         .collect();
-                    model.primary = format!("{:.0}% used", cpu.usage_percent);
-                    model.secondary.push(format!(
-                        "{} logical cores{}",
-                        cpu.logical_core_count,
-                        cpu.physical_core_count
-                            .map(|count| format!(" · {count} physical"))
+                    model.primary = i18n::tr!(
+                        "shell-arg1-used",
+                        arg1 = format!("{:.0}", cpu.usage_percent)
+                    );
+                    model.secondary.push(i18n::tr!(
+                        "shell-arg1-logical-coresarg2",
+                        arg1 = cpu.logical_core_count,
+                        arg2 = cpu
+                            .physical_core_count
+                            .map(|count| i18n::tr!("shell-count-physical", count = count))
                             .unwrap_or_default()
                     ));
                     if let Some(load) = metrics.and_then(|metrics| metric_value(&metrics.load)) {
-                        model.secondary.push(format!(
-                            "Load {:.2} / {:.2} / {:.2}",
-                            load.one, load.five, load.fifteen
+                        model.secondary.push(i18n::tr!(
+                            "shell-load-arg1-arg2-arg3",
+                            arg1 = format!("{:.2}", load.one),
+                            arg2 = format!("{:.2}", load.five),
+                            arg3 = format!("{:.2}", load.fifteen)
                         ));
                     }
                     model.compact_rows = cpu
@@ -603,7 +628,10 @@ impl ShellSession {
                         .iter()
                         .enumerate()
                         .map(|(index, value)| {
-                            vec![format!("Core {}", index + 1), format!("{value:.0}%")]
+                            vec![
+                                i18n::tr!("shell-core-arg1", arg1 = index + 1),
+                                format!("{value:.0}%"),
+                            ]
                         })
                         .collect();
                 }
@@ -625,17 +653,17 @@ impl ShellSession {
                     } else {
                         memory.used_bytes.saturating_mul(100) / memory.total_bytes
                     };
-                    model.primary = format!("{percentage}% used");
+                    model.primary = i18n::tr!("shell-percentage-used", percentage = percentage);
                     model.progress_percent = Some(percentage.min(100) as u16);
                     if memory.total_bytes > 0 {
                         model.bars.push(ui::SystemStatusBarItem {
-                            label: "RAM".into(),
+                            label: i18n::tr!("shell-ram"),
                             value: percentage.min(100),
                         });
                     }
                     if memory.swap_total_bytes > 0 {
                         model.bars.push(ui::SystemStatusBarItem {
-                            label: "Swap".into(),
+                            label: i18n::tr!("shell-swap"),
                             value: memory
                                 .swap_used_bytes
                                 .saturating_mul(100)
@@ -649,19 +677,19 @@ impl ShellSession {
                         format_bytes(memory.used_bytes),
                         format_bytes(memory.total_bytes)
                     ));
-                    model.secondary.push(format!(
-                        "{} available · Swap {} / {}",
-                        format_bytes(memory.available_bytes),
-                        format_bytes(memory.swap_used_bytes),
-                        format_bytes(memory.swap_total_bytes)
+                    model.secondary.push(i18n::tr!(
+                        "shell-arg1-available-swap-arg2-arg3",
+                        arg1 = format_bytes(memory.available_bytes),
+                        arg2 = format_bytes(memory.swap_used_bytes),
+                        arg3 = format_bytes(memory.swap_total_bytes)
                     ));
                     model.compact_rows = vec![
                         vec![
-                            "Available".to_string(),
+                            i18n::tr!("shell-available"),
                             format_bytes(memory.available_bytes),
                         ],
                         vec![
-                            "Swap used".to_string(),
+                            i18n::tr!("shell-swap-used"),
                             format_bytes(memory.swap_used_bytes),
                         ],
                     ];
@@ -683,7 +711,7 @@ impl ShellSession {
                         .and_then(|index| storage.volumes.get(index));
                     model.primary = system
                         .and_then(used_percentage)
-                        .map(|value| format!("{value:.0}% used"))
+                        .map(|value| i18n::tr!("shell-value-used", value = format!("{:.0}", value)))
                         .unwrap_or_else(|| pressure_label(storage.overall_pressure).to_string());
                     model.progress_percent = system
                         .and_then(used_percentage)
@@ -696,7 +724,7 @@ impl ShellSession {
                                 label: if can_view_all {
                                     volume.identifier.clone()
                                 } else {
-                                    "Storage".into()
+                                    i18n::tr!("shell-storage")
                                 },
                                 value: value.round().clamp(0.0, 100.0) as u64,
                             })
@@ -705,9 +733,10 @@ impl ShellSession {
                     if let Some(system) = system {
                         model.secondary.push(volume_usage(system));
                         if let Some(available) = system.available_bytes {
-                            model
-                                .secondary
-                                .push(format!("{} available", format_bytes(available)));
+                            model.secondary.push(i18n::tr!(
+                                "shell-arg1-available",
+                                arg1 = format_bytes(available)
+                            ));
                         }
                     }
                     model.compact_rows = storage
@@ -718,7 +747,7 @@ impl ShellSession {
                                 if can_view_all {
                                     volume.identifier.clone()
                                 } else {
-                                    "Device storage".to_string()
+                                    i18n::tr!("shell-device-storage")
                                 },
                                 volume_usage(volume),
                             ]
@@ -735,17 +764,17 @@ impl ShellSession {
                 model.primary = network
                     .map(|network| {
                         if network.has_active_link {
-                            "Connected".to_string()
+                            i18n::tr!("shell-connected")
                         } else {
-                            "Disconnected".to_string()
+                            i18n::tr!("shell-disconnected")
                         }
                     })
-                    .unwrap_or_else(|| "Link unavailable".to_string());
+                    .unwrap_or_else(|| i18n::tr!("shell-link-unavailable"));
                 if let Some(io) = io {
-                    model.secondary.push(format!(
-                        "Down {} · Up {}",
-                        format_rate(io.total_received_bytes_per_second),
-                        format_rate(io.total_transmitted_bytes_per_second)
+                    model.secondary.push(i18n::tr!(
+                        "shell-down-arg1-up-arg2",
+                        arg1 = format_rate(io.total_received_bytes_per_second),
+                        arg2 = format_rate(io.total_transmitted_bytes_per_second)
                     ));
                     if can_view_all {
                         model.compact_rows = io
@@ -798,7 +827,12 @@ impl ShellSession {
                                 format!("{:.1} °C", sensor.temperature_celsius),
                                 sensor
                                     .critical_celsius
-                                    .map(|value| format!("critical {value:.1} °C"))
+                                    .map(|value| {
+                                        i18n::tr!(
+                                            "shell-critical-value-c",
+                                            value = format!("{:.1}", value)
+                                        )
+                                    })
                                     .unwrap_or_default(),
                             ]
                         })
@@ -820,8 +854,11 @@ impl ShellSession {
                     if let Some(battery) = batteries.first() {
                         model.progress_percent =
                             Some(battery.charge_percent.round().clamp(0.0, 100.0) as u16);
-                        model.primary =
-                            format!("{:.0}% · {:?}", battery.charge_percent, battery.state);
+                        model.primary = format!(
+                            "{:.0}% · {}",
+                            battery.charge_percent,
+                            battery_state_label(battery.state)
+                        );
                         let time = battery
                             .time_to_empty_seconds
                             .or(battery.time_to_full_seconds);
@@ -845,12 +882,11 @@ impl ShellSession {
                         .enumerate()
                         .map(|(index, battery)| {
                             vec![
-                                battery
-                                    .model
-                                    .clone()
-                                    .unwrap_or_else(|| format!("Battery {}", index + 1)),
+                                battery.model.clone().unwrap_or_else(|| {
+                                    i18n::tr!("shell-battery-arg1", arg1 = index + 1)
+                                }),
                                 format!("{:.0}%", battery.charge_percent),
-                                format!("{:?}", battery.state),
+                                battery_state_label(battery.state),
                             ]
                         })
                         .collect();
@@ -868,7 +904,7 @@ impl ShellSession {
                                 i64::try_from(uptime.seconds).unwrap_or(i64::MAX),
                             );
                         model.compact_rows.push(vec![
-                            "Booted".into(),
+                            i18n::tr!("shell-booted"),
                             booted.format("%Y-%m-%d %H:%M UTC").to_string(),
                         ]);
                     }
@@ -879,14 +915,19 @@ impl ShellSession {
                         | MetricState::Stale {
                             last_good: load, ..
                         } => {
-                            model.secondary.push(format!(
-                                "Load {:.2} / {:.2} / {:.2}",
-                                load.one, load.five, load.fifteen
+                            model.secondary.push(i18n::tr!(
+                                "shell-load-arg1-arg2-arg3",
+                                arg1 = format!("{:.2}", load.one),
+                                arg2 = format!("{:.2}", load.five),
+                                arg3 = format!("{:.2}", load.fifteen)
                             ));
                             model.compact_rows.extend(vec![
-                                vec!["1 minute".to_string(), format!("{:.2}", load.one)],
-                                vec!["5 minutes".to_string(), format!("{:.2}", load.five)],
-                                vec!["15 minutes".to_string(), format!("{:.2}", load.fifteen)],
+                                vec![i18n::tr!("shell-1-minute"), format!("{:.2}", load.one)],
+                                vec![i18n::tr!("shell-5-minutes"), format!("{:.2}", load.five)],
+                                vec![
+                                    i18n::tr!("shell-15-minutes"),
+                                    format!("{:.2}", load.fifteen),
+                                ],
                             ]);
                         }
                         MetricState::Unavailable { reason } => {
@@ -924,7 +965,7 @@ impl ShellSession {
                         .take(20)
                         .map(|process| {
                             vec![
-                                "CPU".to_string(),
+                                i18n::tr!("shell-cpu"),
                                 process.pid.to_string(),
                                 process.name.clone(),
                                 format!("{:.1}%", process.cpu_percent),
@@ -933,7 +974,7 @@ impl ShellSession {
                         })
                         .chain(processes.top_memory.iter().take(20).map(|process| {
                             vec![
-                                "Memory".to_string(),
+                                i18n::tr!("shell-memory"),
                                 process.pid.to_string(),
                                 process.name.clone(),
                                 format!("{:.1}%", process.cpu_percent),
@@ -964,9 +1005,13 @@ impl ShellSession {
                     .filter(|check| check.status == ui::DiagnosticsStatus::Fail)
                     .count();
                 model.primary = if failures == 0 && warnings == 0 {
-                    "No issues".to_string()
+                    i18n::tr!("shell-no-issues")
                 } else {
-                    format!("{failures} failures · {warnings} warnings")
+                    i18n::tr!(
+                        "shell-failures-failures-warnings-warnings",
+                        failures = failures,
+                        warnings = warnings
+                    )
                 };
                 model.secondary = diagnostics
                     .checks
@@ -995,9 +1040,9 @@ impl ShellSession {
                     ui::SystemStatusWidgetState::Ready
                 };
                 model.primary = if diagnostics.can_view_details {
-                    format!("{} logs", diagnostics.logs.len())
+                    i18n::tr!("shell-arg1-logs", arg1 = diagnostics.logs.len())
                 } else {
-                    "Administrator access required".into()
+                    i18n::tr!("shell-administrator-access-required")
                 };
                 model.secondary = diagnostics
                     .logs
@@ -1023,7 +1068,8 @@ impl ShellSession {
                 } else {
                     ui::SystemStatusWidgetState::Ready
                 };
-                model.primary = format!("{} incidents", diagnostics.incidents.len());
+                model.primary =
+                    i18n::tr!("shell-arg1-incidents", arg1 = diagnostics.incidents.len());
                 model.secondary = diagnostics
                     .incidents
                     .iter()
@@ -1047,7 +1093,11 @@ impl ShellSession {
     }
 
     pub fn to_home_view_model(&self) -> ui::HomeViewModel {
-        let user = self.current_home_username().unwrap_or("Unauthenticated");
+        let _language = i18n::enter_snapshot(self.language.clone());
+        let user = self
+            .current_home_username()
+            .map(str::to_owned)
+            .unwrap_or_else(|| i18n::tr!("shell-unauthenticated"));
         let model = ui::HomeViewModel::user_with_selection_and_icon_assets(
             user,
             self.current_time_label(),
@@ -1065,7 +1115,7 @@ impl ShellSession {
                 scroll_direction: self.mouse_scroll_direction.clone(),
                 drag_direction: self.mouse_drag_direction.clone(),
                 terminal_flags: terminal_flag_labels(self.terminal_flags),
-                platform_capability_summary: self.platform_capability_summary.clone(),
+                platform_capability_summary: self.platform_capability_summary.render_current(),
             }),
             ShellHomeMode::User => model,
         };
@@ -1080,6 +1130,7 @@ impl ShellSession {
     }
 
     pub fn to_diagnostics_view_model(&self) -> ui::DiagnosticsViewModel {
+        let _language = i18n::enter_snapshot(self.language.clone());
         let can_view_details = self.diagnostics_can_view_details();
         let can_repair = self.diagnostics_can_repair();
         let (checks, logs, incidents, scanned_at) = self
@@ -1091,11 +1142,11 @@ impl ShellSession {
                     .iter()
                     .map(|check| ui::DiagnosticsCheckViewModel {
                         id: check.id.clone(),
-                        label: check.label.clone(),
-                        category: check.category.label().to_string(),
+                        label: check.localized_label().render_current(),
+                        category: check.category.localized_label().render_current(),
                         status: diagnostics_status_to_ui(check.status),
                         summary: if can_view_details {
-                            check.summary.clone()
+                            check.localized_summary().render_current()
                         } else {
                             diagnostics_public_check_summary(check)
                         },
@@ -1104,7 +1155,10 @@ impl ShellSession {
                         } else {
                             String::new()
                         },
-                        remediation: check.remediation.clone().unwrap_or_default(),
+                        remediation: check
+                            .localized_remediation()
+                            .map(|message| message.render_current())
+                            .unwrap_or_default(),
                         repairable: check.repair.is_some(),
                     })
                     .collect();
@@ -1116,17 +1170,17 @@ impl ShellSession {
                             .app
                             .as_ref()
                             .map(|app| app.display_name.clone())
-                            .unwrap_or_else(|| "TundraUX process".to_string());
+                            .unwrap_or_else(|| i18n::tr!("shell-tundraux-process"));
                         let recovery = if can_view_details {
                             format!("{:?}", incident.recovery)
                         } else {
                             diagnostics_recovery_label(&incident.recovery)
                         };
                         let detail = if can_view_details {
-                            format!(
-                                "Boundary: {}; Component: {}",
-                                incident.boundary,
-                                incident.component.as_deref().unwrap_or("none")
+                            i18n::tr!(
+                                "shell-boundary-arg1-component-arg2",
+                                arg1 = &incident.boundary,
+                                arg2 = incident.component.as_deref().unwrap_or("none")
                             )
                         } else {
                             String::new()
@@ -1203,7 +1257,7 @@ impl ShellSession {
                     .enumerate()
                     .map(|(index, action)| ui::DiagnosticsRepairItemViewModel {
                         id: index.to_string(),
-                        label: action.label(),
+                        label: action.localized_label().render_current(),
                     })
                     .collect(),
                 selected: self.diagnostics_repair_selected,
@@ -1231,7 +1285,10 @@ impl ShellSession {
             can_repair,
             restart_required: self.diagnostics_restart_is_required(),
             repair_dialog,
-            feedback: self.diagnostics_feedback.clone(),
+            feedback: self
+                .diagnostics_feedback
+                .as_ref()
+                .map(i18n::LocalizedText::render_current),
             scanned_at,
         }
     }
@@ -1243,6 +1300,7 @@ impl ShellSession {
     }
 
     pub fn to_clock_view_model(&self) -> ui::ClockViewModel {
+        let _language = i18n::enter_snapshot(self.language.clone());
         let snapshot = self.app.snapshot().clock;
         self.to_clock_view_model_at(&snapshot, Instant::now())
     }
@@ -1252,6 +1310,7 @@ impl ShellSession {
         snapshot: &time::ClockSnapshot,
         now: Instant,
     ) -> ui::ClockViewModel {
+        let _language = i18n::enter_snapshot(self.language.clone());
         let mut alarms = Vec::new();
         let mut countdowns = Vec::new();
         if let Some(scheduler) = &self.clock_scheduler {
@@ -1259,13 +1318,13 @@ impl ShellSession {
                 let label = match entry.kind {
                     ScheduledClockEntryKind::DailyAlarm => {
                         if entry.snoozed {
-                            format!("{} Daily (snoozed)", entry.display_time)
+                            i18n::tr!("shell-arg1-daily-snoozed", arg1 = entry.display_time)
                         } else {
-                            format!("{} Daily", entry.display_time)
+                            i18n::tr!("shell-arg1-daily", arg1 = entry.display_time)
                         }
                     }
                     ScheduledClockEntryKind::Countdown => {
-                        format!("{} left", entry.display_time)
+                        i18n::tr!("shell-arg1-left", arg1 = entry.display_time)
                     }
                 };
                 let view = ui::ClockEntryViewModel::new(entry.id, label, entry.strong);
@@ -1296,22 +1355,28 @@ impl ShellSession {
                 .as_ref()
                 .map(|state| ui::ClockCreateDialogViewModel {
                     input: state.input.clone(),
-                    error: state.error.clone(),
+                    error: state
+                        .error
+                        .as_ref()
+                        .map(i18n::LocalizedText::render_current),
                     focus: state.focus,
                 });
         model
     }
 
     pub fn to_time_sync_dialog_view_model(&self) -> Option<ui::TimeSyncDialogViewModel> {
+        let _language = i18n::enter_snapshot(self.language.clone());
         self.time_sync_dialog_visible
             .then(ui::TimeSyncDialogViewModel::new)
     }
 
     pub fn to_login_view_model(&self) -> ui::LoginViewModel {
+        let _language = i18n::enter_snapshot(self.language.clone());
         self.to_login_view_model_at(Instant::now())
     }
 
     pub fn to_login_view_model_at(&self, now: Instant) -> ui::LoginViewModel {
+        let _language = i18n::enter_snapshot(self.language.clone());
         let mut model = ui::LoginViewModel::new(
             self.login_users
                 .iter()
@@ -1334,7 +1399,9 @@ impl ShellSession {
                 ShellComponent::LoginPasswordVisibility => ui::LoginField::PasswordVisibility,
                 _ => ui::LoginField::UserList,
             },
-            self.error_message.clone(),
+            self.error_message
+                .as_ref()
+                .map(i18n::LocalizedText::render_current),
         );
         model.system_users = self.identity_backend == identity::IdentityBackend::Linux;
         if self.login_password_is_visible_at(now) {
@@ -1345,6 +1412,7 @@ impl ShellSession {
     }
 
     pub fn to_bootstrap_admin_view_model(&self) -> ui::BootstrapAdminViewModel {
+        let _language = i18n::enter_snapshot(self.language.clone());
         ui::BootstrapAdminViewModel::new(
             self.bootstrap_username.clone(),
             self.bootstrap_password.chars().count(),
@@ -1352,11 +1420,14 @@ impl ShellSession {
                 ShellComponent::BootstrapPassword => ui::AuthField::Password,
                 _ => ui::AuthField::Username,
             },
-            self.error_message.clone(),
+            self.error_message
+                .as_ref()
+                .map(i18n::LocalizedText::render_current),
         )
     }
 
     pub fn to_setup_view_model(&self) -> ui::SetupViewModel {
+        let _language = i18n::enter_snapshot(self.language.clone());
         let password_requirements = setup_password_requirements(
             &self.setup_admin_username,
             &self.setup_admin_password,
@@ -1376,8 +1447,15 @@ impl ShellSession {
 
         ui::SetupViewModel {
             step: self.setup_step,
-            languages: app::setup_language_options(),
-            timezones: app::setup_timezone_options(),
+            languages: self.language_options(),
+            timezones: app::setup_timezone_options()
+                .into_iter()
+                .map(|mut option| {
+                    option.label = option.localized_label().render_current();
+                    option.description = option.localized_description().render_current();
+                    option
+                })
+                .collect(),
             selected_language_index: self.setup_selected_language_index,
             selected_timezone_index: self.setup_selected_timezone_index,
             timezone_window_start: self.setup_timezone_window_start,
@@ -1402,22 +1480,35 @@ impl ShellSession {
                 && custom_color.is_some()
                 && !custom_color_conflicts_with_theme,
             custom_color_conflicts_with_theme,
-            custom_color_error: self.setup_custom_color_error.clone(),
-            error: self.error_message.clone(),
+            custom_color_error: self
+                .setup_custom_color_error
+                .as_ref()
+                .map(i18n::LocalizedText::render_current),
+            error: self
+                .error_message
+                .as_ref()
+                .map(i18n::LocalizedText::render_current),
         }
     }
 
     pub fn to_user_management_view_model(&self) -> ui::UserManagementViewModel {
+        let _language = i18n::enter_snapshot(self.language.clone());
         let current_user = self
             .app
             .auth_session()
             .map(|session| session.username.clone())
-            .unwrap_or_else(|| "Unauthenticated".to_string());
-        let message = self.user_management_message.clone().or_else(|| {
-            (self.identity_backend == identity::IdentityBackend::Linux).then(|| {
-                "Linux manages accounts and passwords. All UX sessions run as root.".into()
-            })
-        });
+            .unwrap_or_else(|| i18n::tr!("shell-unauthenticated"));
+        let message = self
+            .user_management_message
+            .as_ref()
+            .map(i18n::LocalizedText::render_current)
+            .or_else(|| {
+                (self.identity_backend == identity::IdentityBackend::Linux).then(|| {
+                    i18n::tr!(
+                        "shell-linux-manages-accounts-and-passwords-all-ux-sessions-run-as-root"
+                    )
+                })
+            });
         let mut model = ui::UserManagementViewModel::new(
             current_user.clone(),
             self.app
@@ -1457,13 +1548,18 @@ impl ShellSession {
     }
 
     pub fn to_explorer_view_model(&self) -> ui::ExplorerViewModel {
+        let _language = i18n::enter_snapshot(self.language.clone());
         let app_snapshot = self.app.snapshot();
         let Some(state) = self.app.explorer_state() else {
-            return ui::ExplorerViewModel::new("Explorer unavailable", Vec::new(), None);
+            return ui::ExplorerViewModel::new(
+                i18n::tr!("shell-explorer-unavailable"),
+                Vec::new(),
+                None,
+            );
         };
         let is_trash = state.current_location.is_trash();
         let display_path = if is_trash {
-            "Trash".to_string()
+            i18n::tr!("shell-trash")
         } else {
             state.current_path.display().to_string()
         };
@@ -1473,7 +1569,7 @@ impl ShellSession {
             .iter()
             .map(|entry| ui::ExplorerEntryViewModel {
                 name: explorer_display_name(entry, state.show_extensions),
-                kind: entry.type_label.clone(),
+                kind: entry.localized_type_label().render_current(),
                 size: (entry.kind == app::explorer::ExplorerEntryKind::File)
                     .then(|| explorer_size_label(entry.size, state.size_format)),
                 modified: entry.modified.map(|modified| {
@@ -1537,7 +1633,7 @@ impl ShellSession {
             .map(|location| {
                 let mut model = ui::ExplorerQuickLocationViewModel::new(
                     location.id.clone(),
-                    location.label.clone(),
+                    location.localized_label().render_current(),
                     location.path.display().to_string(),
                     location.icon_key.clone(),
                 );
@@ -1617,15 +1713,17 @@ impl ShellSession {
                 app::explorer::ExplorerOperationPhase::WaitingForConflict => {
                     ui::ExplorerProgressStage::CheckingConflicts
                 }
-                app::explorer::ExplorerOperationPhase::Executing => {
-                    if operation.label.to_ascii_lowercase().contains("mov") {
+                app::explorer::ExplorerOperationPhase::Executing => match operation.operation {
+                    app::explorer_tasks::ExplorerTaskOperation::Move => {
                         ui::ExplorerProgressStage::Moving
-                    } else if operation.label.to_ascii_lowercase().contains("trash") {
+                    }
+                    app::explorer_tasks::ExplorerTaskOperation::DeleteToTrash => {
                         ui::ExplorerProgressStage::Deleting
-                    } else {
+                    }
+                    app::explorer_tasks::ExplorerTaskOperation::Copy => {
                         ui::ExplorerProgressStage::Copying
                     }
-                }
+                },
                 app::explorer::ExplorerOperationPhase::Completed
                 | app::explorer::ExplorerOperationPhase::Cancelled
                 | app::explorer::ExplorerOperationPhase::Failed => {
@@ -1634,27 +1732,38 @@ impl ShellSession {
             };
             ui::ExplorerOperationProgressViewModel {
                 phase,
-                label: operation.label.clone(),
+                label: operation.label.render_current(),
                 completed_items: operation.completed_items as u64,
                 total_items: operation.total_items.map(|value| value as u64),
                 completed_bytes: operation.completed_bytes,
                 total_bytes: operation.total_bytes,
                 cancellable: operation.cancellable,
-                cancel_label: "Cancel".to_string(),
+                cancel_label: i18n::tr!("shell-cancel"),
             }
         });
         model.show_hidden = state.show_hidden;
         model.message = if is_trash && model.selected_count > 0 {
             state.selected_entry().map(|entry| {
                 entry.original_path.as_ref().map_or_else(
-                    || "Original location unavailable".to_string(),
-                    |path| format!("Original location: {}", path.display()),
+                    || i18n::tr!("shell-original-location-unavailable"),
+                    |path| {
+                        i18n::tr!(
+                            "shell-original-location-arg1",
+                            arg1 = path.display().to_string()
+                        )
+                    },
                 )
             })
         } else {
-            state.message.clone()
+            state
+                .message
+                .as_ref()
+                .map(i18n::LocalizedText::render_current)
         };
-        model.error = state.error.clone();
+        model.error = state
+            .error
+            .as_ref()
+            .map(i18n::LocalizedText::render_current);
         model.search = if self.explorer_input_mode == ExplorerInputMode::Search {
             Some(ui::ExplorerSearchViewModel::new(
                 self.explorer_input.clone(),
@@ -1672,16 +1781,18 @@ impl ShellSession {
         };
         model.pending_dialog = state.pending_dialog.as_ref().map(|dialog| {
             let (confirm, cancel) = match dialog.kind {
-                app::explorer::ExplorerDialogKind::DeleteToTrash => {
-                    ("Y / Enter: move", "N / Esc: cancel")
-                }
-                app::explorer::ExplorerDialogKind::DumpTrash => {
-                    ("Y / Enter: empty permanently", "N / Esc: cancel")
-                }
+                app::explorer::ExplorerDialogKind::DeleteToTrash => (
+                    i18n::tr!("shell-y-enter-move"),
+                    i18n::tr!("shell-n-esc-cancel"),
+                ),
+                app::explorer::ExplorerDialogKind::DumpTrash => (
+                    i18n::tr!("shell-y-enter-empty-permanently"),
+                    i18n::tr!("shell-n-esc-cancel"),
+                ),
             };
             ui::ExplorerDialogViewModel::new(
-                dialog.title.clone(),
-                dialog.message.clone(),
+                dialog.title.render_current(),
+                dialog.message.render_current(),
                 confirm,
                 cancel,
             )
@@ -1691,8 +1802,8 @@ impl ShellSession {
         model.overlay = if let Some(conflict) = state.pending_restore.as_ref() {
             Some(ui::ExplorerOverlayViewModel::Conflict(
                 ui::ExplorerConflictViewModel {
-                    title: "Restore conflict".to_string(),
-                    source: format!("Trash: {}", conflict.display_name),
+                    title: i18n::tr!("shell-restore-conflict"),
+                    source: i18n::tr!("shell-trash-arg1", arg1 = &conflict.display_name),
                     destination: conflict.target.display().to_string(),
                     choices: vec![
                         ui::ExplorerConflictChoice::KeepBoth,
@@ -1707,7 +1818,7 @@ impl ShellSession {
         } else if let Some(conflict) = state.pending_conflict.as_ref() {
             Some(ui::ExplorerOverlayViewModel::Conflict(
                 ui::ExplorerConflictViewModel {
-                    title: "Name conflict".to_string(),
+                    title: i18n::tr!("shell-name-conflict"),
                     source: conflict.source.display().to_string(),
                     destination: conflict.target.display().to_string(),
                     choices: vec![
@@ -1731,27 +1842,27 @@ impl ShellSession {
             let (kind, title, prompt, confirm_label) = match self.explorer_input_mode {
                 ExplorerInputMode::NewFolder => (
                     ui::ExplorerNameDialogKind::NewFolder,
-                    "New folder",
-                    "Folder name",
-                    "Create",
+                    i18n::tr!("shell-new-folder"),
+                    i18n::tr!("shell-folder-name"),
+                    i18n::tr!("shell-create"),
                 ),
                 ExplorerInputMode::NewTextFile => (
                     ui::ExplorerNameDialogKind::NewTextFile,
-                    "New text file",
-                    "File name",
-                    "Create",
+                    i18n::tr!("shell-new-text-file"),
+                    i18n::tr!("shell-file-name"),
+                    i18n::tr!("shell-create"),
                 ),
                 ExplorerInputMode::Rename => (
                     ui::ExplorerNameDialogKind::Rename,
-                    "Rename",
-                    "New name",
-                    "Rename",
+                    i18n::tr!("shell-rename"),
+                    i18n::tr!("shell-new-name"),
+                    i18n::tr!("shell-rename"),
                 ),
                 ExplorerInputMode::RestoreDestination => (
                     ui::ExplorerNameDialogKind::RestoreDestination,
-                    "Restore item",
-                    "Absolute destination directory",
-                    "Restore",
+                    i18n::tr!("shell-restore-item"),
+                    i18n::tr!("shell-absolute-destination-directory"),
+                    i18n::tr!("shell-restore"),
                 ),
                 ExplorerInputMode::Browse
                 | ExplorerInputMode::Address
@@ -1763,9 +1874,12 @@ impl ShellSession {
                     title: title.to_string(),
                     prompt: prompt.to_string(),
                     value: self.explorer_input.clone(),
-                    error: state.error.clone(),
+                    error: state
+                        .error
+                        .as_ref()
+                        .map(i18n::LocalizedText::render_current),
                     confirm_label: confirm_label.to_string(),
-                    cancel_label: "Cancel".to_string(),
+                    cancel_label: i18n::tr!("shell-cancel"),
                 },
             ))
         } else if let Some(overlay_mode) = self.explorer_overlay_mode {
@@ -1831,15 +1945,12 @@ impl ShellSession {
 
         let selected = self.app.managed_users().get(self.user_management_selected);
         let last_enabled_admin = self.selected_is_last_enabled_admin();
-        let no_selection_reason = selected.is_none().then(|| "No user selected".to_string());
-        let protected_reason =
-            last_enabled_admin.then(|| "At least one enabled admin is required".to_string());
         let mut actions = Vec::new();
 
         if self.can_manage_all_users() {
             actions.push(user_management_action_model(
                 UserManagementAction::NewUser,
-                "New user",
+                i18n::tr!("shell-new-user"),
                 Some('N'),
                 true,
                 None,
@@ -1850,25 +1961,25 @@ impl ShellSession {
         actions.push(user_management_action_model(
             UserManagementAction::EditInfo,
             if self.can_manage_all_users() {
-                "Edit"
+                i18n::tr!("shell-edit")
             } else {
-                "Edit profile"
+                i18n::tr!("shell-edit-profile")
             },
             Some('E'),
             selected.is_some(),
-            no_selection_reason.clone(),
+            None,
             false,
         ));
         actions.push(user_management_action_model(
             UserManagementAction::SetPassword,
             if self.can_manage_all_users() {
-                "Password"
+                i18n::tr!("shell-password")
             } else {
-                "Change password"
+                i18n::tr!("shell-change-password")
             },
             Some('R'),
             selected.is_some(),
-            no_selection_reason.clone(),
+            None,
             false,
         ));
 
@@ -1876,36 +1987,32 @@ impl ShellSession {
             let locked = selected.is_some_and(user_is_locked);
             let enabled = selected.is_some_and(|user| user.enabled);
             let (toggle_label, toggle_shortcut, disabling) = if !enabled {
-                ("Enable", Some('U'), false)
+                (i18n::tr!("shell-enable"), Some('U'), false)
             } else if locked {
-                ("Unlock", Some('U'), false)
+                (i18n::tr!("shell-unlock"), Some('U'), false)
             } else {
-                ("Disable", Some('D'), true)
+                (i18n::tr!("shell-disable"), Some('D'), true)
             };
             actions.push(user_management_action_model(
                 UserManagementAction::ToggleEnabled,
                 toggle_label,
                 toggle_shortcut,
                 selected.is_some() && !(disabling && last_enabled_admin),
-                no_selection_reason.clone().or_else(|| {
-                    (disabling && last_enabled_admin)
-                        .then(|| protected_reason.clone())
-                        .flatten()
-                }),
+                None,
                 disabling,
             ));
 
             let demoting = selected.is_some_and(|user| user.role == UserRole::Admin);
             actions.push(user_management_action_model(
                 UserManagementAction::ToggleRole,
-                if demoting { "Make user" } else { "Make admin" },
+                if demoting {
+                    i18n::tr!("shell-make-user")
+                } else {
+                    i18n::tr!("shell-make-admin")
+                },
                 Some('C'),
                 selected.is_some() && !(demoting && last_enabled_admin),
-                no_selection_reason.clone().or_else(|| {
-                    (demoting && last_enabled_admin)
-                        .then(|| protected_reason.clone())
-                        .flatten()
-                }),
+                None,
                 demoting,
             ));
         }
@@ -1913,18 +2020,18 @@ impl ShellSession {
         actions.push(user_management_action_model(
             UserManagementAction::Delete,
             if self.can_manage_all_users() {
-                "Delete"
+                i18n::tr!("shell-delete")
             } else {
-                "Delete account"
+                i18n::tr!("shell-delete-account")
             },
             Some('X'),
             selected.is_some() && !last_enabled_admin,
-            no_selection_reason.or(protected_reason),
+            None,
             true,
         ));
         actions.push(user_management_action_model(
             UserManagementAction::Back,
-            "Back",
+            i18n::tr!("shell-back"),
             None,
             true,
             None,
@@ -1934,10 +2041,13 @@ impl ShellSession {
             for action in &mut actions {
                 if action.action != UserManagementAction::Back {
                     action.enabled = false;
-                    action.disabled_reason =
-                        Some("Managed by Linux. Use Linux account tools.".into());
                 }
             }
+        }
+        for action in &mut actions {
+            action.disabled_reason = self
+                .user_management_disabled_reason(action.action)
+                .map(|reason| reason.render_current());
         }
         actions
     }
@@ -1947,7 +2057,7 @@ impl ShellSession {
             UserManagementMode::Browse => None,
             UserManagementMode::Create(form) => Some(ui::UserManagementFormViewModel {
                 kind: ui::UserManagementFormKind::Create,
-                title: "Create user".to_string(),
+                title: i18n::tr!("shell-create-user"),
                 username: form.username.clone(),
                 display_name: form.display_name.clone(),
                 role: form.role.as_str().to_string(),
@@ -1957,7 +2067,7 @@ impl ShellSession {
             }),
             UserManagementMode::EditInfo(form) => Some(ui::UserManagementFormViewModel {
                 kind: ui::UserManagementFormKind::EditInfo,
-                title: "Edit user info".to_string(),
+                title: i18n::tr!("shell-edit-user-info"),
                 username: form.username.clone(),
                 display_name: form.display_name.clone(),
                 role: String::new(),
@@ -1967,7 +2077,7 @@ impl ShellSession {
             }),
             UserManagementMode::Password(form) => Some(ui::UserManagementFormViewModel {
                 kind: ui::UserManagementFormKind::Password,
-                title: "Set password".to_string(),
+                title: i18n::tr!("shell-set-password"),
                 username: form.username.clone(),
                 display_name: String::new(),
                 role: String::new(),
@@ -1980,11 +2090,16 @@ impl ShellSession {
 
     fn user_management_form_error(&self) -> Option<String> {
         (self.user_management_feedback_tone == UserManagementFeedbackTone::Error)
-            .then(|| self.user_management_message.clone())
+            .then(|| {
+                self.user_management_message
+                    .as_ref()
+                    .map(i18n::LocalizedText::render_current)
+            })
             .flatten()
     }
 
     pub fn to_shell_chrome_view_model(&self) -> ui::ShellChromeViewModel {
+        let _language = i18n::enter_snapshot(self.language.clone());
         let status = if self.home_mode == ShellHomeMode::Debug {
             let mouse_position = self
                 .mouse_coordinates
@@ -2015,8 +2130,16 @@ impl ShellSession {
                 .collect(),
             status: ui::StatusViewModel {
                 status,
-                toast: self.app.notification_center().toast().map(str::to_owned),
-                error: self.app.notification_center().alert().map(str::to_owned),
+                toast: self
+                    .app
+                    .notification_center()
+                    .toast()
+                    .map(i18n::LocalizedText::render_current),
+                error: self
+                    .app
+                    .notification_center()
+                    .alert()
+                    .map(i18n::LocalizedText::render_current),
                 alert_tone: self
                     .app
                     .notification_center()
@@ -2056,7 +2179,7 @@ fn metric_widget_state<'a, T>(
                 message: if expose_error {
                     error.clone()
                 } else {
-                    "Metric data is stale".to_string()
+                    i18n::tr!("shell-metric-data-is-stale")
                 },
             },
             Some(last_good),
@@ -2066,7 +2189,7 @@ fn metric_widget_state<'a, T>(
                 message: if expose_error {
                     reason.clone()
                 } else {
-                    "Metric is unavailable".to_string()
+                    i18n::tr!("shell-metric-is-unavailable")
                 },
             },
             None,
@@ -2086,7 +2209,7 @@ fn storage_widget_state(
                 message: if expose_error {
                     error.clone()
                 } else {
-                    "Storage data is stale".to_string()
+                    i18n::tr!("shell-storage-data-is-stale")
                 },
             }
         }
@@ -2095,7 +2218,7 @@ fn storage_widget_state(
                 message: if expose_error {
                     reason.clone()
                 } else {
-                    "Storage is unavailable".to_string()
+                    i18n::tr!("shell-storage-is-unavailable")
                 },
             }
         }
@@ -2128,11 +2251,16 @@ fn format_duration(seconds: u64) -> String {
     let hours = seconds % 86_400 / 3_600;
     let minutes = seconds % 3_600 / 60;
     if days > 0 {
-        format!("{days}d {hours}h {minutes}m")
+        i18n::tr!(
+            "shell-daysd-hoursh-minutesm",
+            days = days,
+            hours = hours,
+            minutes = minutes
+        )
     } else if hours > 0 {
-        format!("{hours}h {minutes}m")
+        i18n::tr!("shell-hoursh-minutesm", hours = hours, minutes = minutes)
     } else {
-        format!("{minutes}m")
+        i18n::tr!("shell-minutesm", minutes = minutes)
     }
 }
 
@@ -2179,11 +2307,11 @@ fn format_sample_age(sampled_at: chrono::DateTime<Utc>) -> String {
         .num_seconds()
         .max(0) as u64;
     match seconds {
-        0..=1 => "just now".to_string(),
-        2..=59 => format!("{seconds}s ago"),
-        60..=3_599 => format!("{}m ago", seconds / 60),
-        3_600..=86_399 => format!("{}h ago", seconds / 3_600),
-        _ => format!("{}d ago", seconds / 86_400),
+        0..=1 => i18n::tr!("shell-just-now"),
+        2..=59 => i18n::tr!("shell-secondss-ago", seconds = seconds),
+        60..=3_599 => i18n::tr!("shell-arg1m-ago", arg1 = seconds / 60),
+        3_600..=86_399 => i18n::tr!("shell-arg1h-ago", arg1 = seconds / 3_600),
+        _ => i18n::tr!("shell-arg1d-ago", arg1 = seconds / 86_400),
     }
 }
 fn volume_usage(v: &system_services::StorageVolumeSnapshot) -> String {
@@ -2193,15 +2321,15 @@ fn volume_usage(v: &system_services::StorageVolumeSnapshot) -> String {
             super::super::controller::system_status::format_bytes(total - avail),
             super::super::controller::system_status::format_bytes(total)
         ),
-        _ => "Unknown".into(),
+        _ => i18n::tr!("shell-unknown"),
     }
 }
-fn pressure_label(v: system_services::StoragePressure) -> &'static str {
+fn pressure_label(v: system_services::StoragePressure) -> String {
     match v {
-        system_services::StoragePressure::Unknown => "Unknown",
-        system_services::StoragePressure::Normal => "Normal",
-        system_services::StoragePressure::Low => "Low",
-        system_services::StoragePressure::Critical => "Critical",
+        system_services::StoragePressure::Unknown => i18n::tr!("shell-unknown"),
+        system_services::StoragePressure::Normal => i18n::tr!("shell-normal"),
+        system_services::StoragePressure::Low => i18n::tr!("shell-low"),
+        system_services::StoragePressure::Critical => i18n::tr!("shell-critical"),
     }
 }
 fn pressure_tone(v: system_services::StoragePressure) -> ui::components::ComponentTone {
@@ -2210,5 +2338,182 @@ fn pressure_tone(v: system_services::StoragePressure) -> ui::components::Compone
         system_services::StoragePressure::Low => ui::components::ComponentTone::Warning,
         system_services::StoragePressure::Critical => ui::components::ComponentTone::Danger,
         _ => ui::components::ComponentTone::Muted,
+    }
+}
+
+fn storage_kind_label(value: system_services::StorageVolumeKind) -> String {
+    match value {
+        system_services::StorageVolumeKind::Fixed => i18n::tr!("shell-storage-kind-fixed"),
+        system_services::StorageVolumeKind::Removable => i18n::tr!("shell-storage-kind-removable"),
+    }
+}
+
+fn storage_access_label(value: system_services::StorageVolumeAccess) -> String {
+    match value {
+        system_services::StorageVolumeAccess::ReadWrite => {
+            i18n::tr!("shell-storage-access-readwrite")
+        }
+        system_services::StorageVolumeAccess::ReadOnly => {
+            i18n::tr!("shell-storage-access-readonly")
+        }
+        system_services::StorageVolumeAccess::Unavailable => {
+            i18n::tr!("shell-storage-access-unavailable")
+        }
+    }
+}
+
+fn network_kind_label(value: system_services::NetworkInterfaceKind) -> String {
+    match value {
+        system_services::NetworkInterfaceKind::Wired => i18n::tr!("shell-network-kind-wired"),
+        system_services::NetworkInterfaceKind::Wireless => i18n::tr!("shell-network-kind-wireless"),
+        system_services::NetworkInterfaceKind::Virtual => i18n::tr!("shell-network-kind-virtual"),
+        system_services::NetworkInterfaceKind::Unknown => i18n::tr!("shell-network-kind-unknown"),
+    }
+}
+
+fn network_link_label(value: system_services::NetworkLinkState) -> String {
+    match value {
+        system_services::NetworkLinkState::Up => i18n::tr!("shell-network-link-up"),
+        system_services::NetworkLinkState::Down => i18n::tr!("shell-network-link-down"),
+        system_services::NetworkLinkState::Unknown => i18n::tr!("shell-network-link-unknown"),
+    }
+}
+
+fn battery_state_label(state: system_services::BatteryState) -> String {
+    match state {
+        system_services::BatteryState::Charging => i18n::tr!("shell-battery-charging"),
+        system_services::BatteryState::Discharging => i18n::tr!("shell-battery-discharging"),
+        system_services::BatteryState::Full => i18n::tr!("shell-battery-full"),
+        system_services::BatteryState::Empty => i18n::tr!("shell-battery-empty"),
+        system_services::BatteryState::Unknown => i18n::tr!("shell-battery-unknown"),
+    }
+}
+
+#[cfg(test)]
+mod localization_tests {
+    use super::*;
+
+    fn snapshots() -> [std::sync::Arc<i18n::LanguageSnapshot>; 2] {
+        let root = std::env::temp_dir().join(format!(
+            "tux3-shell-message-tests-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let canonical =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../ascii-assets/assets/locales");
+        for code in ["en-US", "zh-CN"] {
+            let locale = root.join("locales").join(code);
+            std::fs::create_dir_all(locale.join("modules")).unwrap();
+            for relative in ["manifest.toml", "modules/shell-messages.ftl"] {
+                std::fs::copy(canonical.join(code).join(relative), locale.join(relative)).unwrap();
+            }
+        }
+        let snapshots = ["en-US", "zh-CN"].map(|code| {
+            std::sync::Arc::new(
+                i18n::LanguageSnapshot::load(&root, code, 1)
+                    .unwrap()
+                    .snapshot,
+            )
+        });
+        // Formatting must work entirely from the snapshots, including nested messages.
+        std::fs::remove_dir_all(root).unwrap();
+        snapshots
+    }
+
+    #[test]
+    fn retained_shell_notifications_render_with_the_session_snapshot() {
+        let [english, chinese] = snapshots();
+        let mut session = ShellSession::new(ShellLaunchConfig::default(), (120, 30));
+        session.home_mode = ShellHomeMode::User;
+        session.language = english.clone();
+        let raw_path = "/tmp/{ready}/Saved.txt";
+        session.notify_status(i18n::msg!("shell-saving-arg1", arg1 = raw_path));
+        session.notify_toast(i18n::msg!(
+            "shell-home-arg1",
+            arg1 = i18n::msg!("shell-explorer")
+        ));
+        let retained_status = session.app.notification_center().status().clone();
+        let english_model = session.to_shell_chrome_view_model();
+        assert_eq!(english_model.status.status, format!("Saving {raw_path}"));
+        assert_eq!(
+            english_model.status.toast.as_deref(),
+            Some("Home: Explorer")
+        );
+
+        // The public VM entry must override a different ambient snapshot and restore it on exit.
+        let _ambient = i18n::enter_snapshot(english);
+        session.language = chinese;
+        let chinese_model = session.to_shell_chrome_view_model();
+        assert_eq!(chinese_model.status.status, format!("正在保存 {raw_path}"));
+        assert_eq!(
+            chinese_model.status.toast.as_deref(),
+            Some("主页：文件管理器")
+        );
+        assert_eq!(session.app.notification_center().status(), &retained_status);
+        assert_eq!(i18n::tr!("shell-ready"), "Ready");
+    }
+
+    #[test]
+    fn explorer_progress_uses_operation_identity_in_every_language() {
+        use app::explorer::{ExplorerOperationPhase, ExplorerOperationProgress};
+        use app::explorer_tasks::ExplorerTaskOperation;
+        let mut session = ShellSession::new(ShellLaunchConfig::default(), (120, 30));
+        for language in snapshots() {
+            session.language = language;
+            for (operation, expected) in [
+                (
+                    ExplorerTaskOperation::Copy,
+                    ui::ExplorerProgressStage::Copying,
+                ),
+                (
+                    ExplorerTaskOperation::Move,
+                    ui::ExplorerProgressStage::Moving,
+                ),
+                (
+                    ExplorerTaskOperation::DeleteToTrash,
+                    ui::ExplorerProgressStage::Deleting,
+                ),
+            ] {
+                let mut explorer = ExplorerState::new(std::path::PathBuf::from("/tmp"), false);
+                explorer.operation = Some(ExplorerOperationProgress {
+                    operation,
+                    phase: ExplorerOperationPhase::Executing,
+                    // Deliberately misleading label: presentation must never inspect its words.
+                    label: "trash moving 复制".into(),
+                    completed_items: 0,
+                    total_items: Some(1),
+                    completed_bytes: 0,
+                    total_bytes: None,
+                    cancellable: true,
+                });
+                session.replace_explorer_state(Some(explorer));
+                assert_eq!(
+                    session.to_explorer_view_model().operation.unwrap().phase,
+                    expected
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn translated_explorer_sort_choices_keep_stable_command_ids() {
+        let [_, chinese] = snapshots();
+        let _language = i18n::enter_snapshot(chinese);
+        let ui::ExplorerOverlayViewModel::ContextMenu(menu) =
+            explorer_sort_menu_view_model((0, 0), ui::ExplorerSortColumn::Name, 0)
+        else {
+            panic!("sort menu expected");
+        };
+        assert_eq!(menu.title, "排序方式");
+        assert_eq!(
+            menu.items
+                .iter()
+                .map(|item| item.id.as_str())
+                .collect::<Vec<_>>(),
+            ["sort-name", "sort-type", "sort-size", "sort-modified"]
+        );
     }
 }

@@ -19,13 +19,13 @@ pub(in crate::session) enum EditorTaskStage {
 }
 
 impl EditorTaskStage {
-    pub(in crate::session) const fn label(self) -> &'static str {
+    pub(in crate::session) fn label(self) -> String {
         match self {
-            Self::Inspecting => "Inspecting",
-            Self::Reading => "Reading",
-            Self::Decoding => "Decoding",
-            Self::ParsingMarkdown => "Parsing Markdown",
-            Self::Writing => "Writing",
+            Self::Inspecting => i18n::tr!("shell-inspecting"),
+            Self::Reading => i18n::tr!("shell-reading"),
+            Self::Decoding => i18n::tr!("shell-decoding"),
+            Self::ParsingMarkdown => i18n::tr!("shell-parsing-markdown"),
+            Self::Writing => i18n::tr!("shell-writing"),
         }
     }
 }

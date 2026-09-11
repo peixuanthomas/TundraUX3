@@ -4,11 +4,11 @@ pub(in crate::session) enum LauncherRefreshEvent {
     ItemChecked {
         request_id: u64,
         id: String,
-        result: Result<LauncherItemStatus, String>,
+        result: Result<LauncherItemStatus, i18n::LocalizedText>,
     },
     Finished {
         request_id: u64,
-        error: Option<String>,
+        error: Option<i18n::LocalizedText>,
     },
 }
 
@@ -86,16 +86,18 @@ impl ShellLauncherTaskRuntime {
     pub(in crate::session) fn submit(
         &self,
         entries: Vec<storage::LauncherEntryRecord>,
-    ) -> Result<u64, String> {
+    ) -> Result<u64, i18n::LocalizedText> {
         use std::sync::atomic::Ordering;
 
-        let mut workers = self
-            .shared
-            .workers
-            .lock()
-            .map_err(|_| "Launcher refresh task registry is unavailable".to_string())?;
+        let mut workers = self.shared.workers.lock().map_err(|_| {
+            i18n::LocalizedText::from(i18n::msg!(
+                "shell-launcher-refresh-task-registry-is-unavailable"
+            ))
+        })?;
         if workers.len() >= MAX_CONCURRENT_LAUNCHER_REFRESHES {
-            return Err("Previous Launcher refreshes are still finishing".to_string());
+            return Err(i18n::LocalizedText::from(i18n::msg!(
+                "shell-previous-launcher-refreshes-are-still-finishing"
+            )));
         }
         let request_id = self
             .shared
@@ -113,7 +115,7 @@ impl ShellLauncherTaskRuntime {
                 let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                     for entry in &entries {
                         let result = app::launcher::verify_launcher_entry(entry, platform.as_ref())
-                            .map_err(|error| error.to_string());
+                            .map_err(|error| i18n::LocalizedText::from(error.localized().message));
                         if events
                             .send(LauncherRefreshEvent::ItemChecked {
                                 request_id,
@@ -136,13 +138,20 @@ impl ShellLauncherTaskRuntime {
                     Err(payload) => {
                         let _ = events.send(LauncherRefreshEvent::Finished {
                             request_id,
-                            error: Some("Launcher refresh worker panicked".to_string()),
+                            error: Some(i18n::LocalizedText::from(i18n::msg!(
+                                "shell-launcher-refresh-worker-panicked"
+                            ))),
                         });
                         std::panic::resume_unwind(payload);
                     }
                 }
             })
-            .map_err(|error| format!("Could not start Launcher refresh: {error}"))?;
+            .map_err(|error| {
+                i18n::LocalizedText::from(i18n::msg!(
+                    "shell-could-not-start-launcher-refresh-error",
+                    error = error.to_string()
+                ))
+            })?;
         workers.insert(request_id, worker);
         Ok(request_id)
     }
@@ -194,7 +203,9 @@ impl ShellSession {
                         if let Some(error) = error {
                             state.error = Some(error);
                         } else if state.error.is_none() {
-                            state.message = Some("Launcher refresh complete".to_string());
+                            state.message = Some(i18n::LocalizedText::from(i18n::msg!(
+                                "shell-launcher-refresh-complete"
+                            )));
                         }
                     });
                 }

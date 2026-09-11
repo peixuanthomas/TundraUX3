@@ -2,11 +2,15 @@ use super::super::*;
 impl ShellSession {
     pub(in crate::session) fn refresh_user_management(&mut self) -> bool {
         let Some(storage) = self.storage_manager.clone() else {
-            self.report_user_management_refresh_error("Storage unavailable".to_string());
+            self.report_user_management_refresh_error(i18n::LocalizedText::from(i18n::msg!(
+                "shell-storage-unavailable"
+            )));
             return false;
         };
         let Some(session) = self.app.auth_session().cloned() else {
-            self.report_user_management_refresh_error("Login required".to_string());
+            self.report_user_management_refresh_error(i18n::LocalizedText::from(i18n::msg!(
+                "shell-login-required"
+            )));
             return false;
         };
         let users = match UserService::with_debug_policy(storage, self.debug_policy)
@@ -53,7 +57,7 @@ impl ShellSession {
     pub(in crate::session) fn resolve_user_management_refresh_alert(&mut self) {
         let resolved_message = self
             .notification_alert_message_for_key(USER_MANAGEMENT_REFRESH_ALERT_KEY)
-            .map(str::to_string);
+            .cloned();
         if self.user_management_message.as_ref() == resolved_message.as_ref() {
             self.user_management_message = None;
         }
@@ -63,7 +67,11 @@ impl ShellSession {
         self.resolve_notification_alert(USER_MANAGEMENT_REFRESH_ALERT_KEY);
     }
 
-    pub(in crate::session) fn report_user_management_refresh_error(&mut self, message: String) {
+    pub(in crate::session) fn report_user_management_refresh_error(
+        &mut self,
+        message: impl Into<i18n::LocalizedText>,
+    ) {
+        let message = message.into();
         self.error_message = Some(message.clone());
         self.user_management_message = Some(message.clone());
         self.user_management_feedback_tone = UserManagementFeedbackTone::Error;
@@ -150,20 +158,24 @@ impl ShellSession {
     pub(in crate::session) fn disable_selected_user(&mut self) {
         if let Some(username) = self.selected_managed_username() {
             let current_user = self.is_current_username(&username);
-            let disabled = self.run_selected_user_operation("Disabled", |service, session| {
-                service.disable_user(session, &username)
-            });
+            let disabled = self.run_selected_user_operation(
+                i18n::LocalizedText::from(i18n::msg!("shell-disabled")),
+                |service, session| service.disable_user(session, &username),
+            );
             if disabled && current_user {
-                self.return_to_login("Account disabled");
+                self.return_to_login(i18n::LocalizedText::from(i18n::msg!(
+                    "shell-account-disabled"
+                )));
             }
         }
     }
 
     pub(in crate::session) fn unlock_selected_user(&mut self) {
         if let Some(username) = self.selected_managed_username() {
-            self.run_selected_user_operation("Enabled/unlocked", |service, session| {
-                service.enable_user(session, &username)
-            });
+            self.run_selected_user_operation(
+                i18n::LocalizedText::from(i18n::msg!("shell-enabled-unlocked")),
+                |service, session| service.enable_user(session, &username),
+            );
         }
     }
 
@@ -182,10 +194,10 @@ impl ShellSession {
                     UserRole::Admin => UserRole::User,
                 })
                 .unwrap_or(UserRole::User);
-            let changed = self
-                .run_selected_user_operation("Changed role for", |service, session| {
-                    service.change_role(session, &username, next_role)
-                });
+            let changed = self.run_selected_user_operation(
+                i18n::LocalizedText::from(i18n::msg!("shell-changed-role-for")),
+                |service, session| service.change_role(session, &username, next_role),
+            );
             if changed {
                 self.sync_current_session_role();
                 let _refresh_succeeded = self.refresh_user_management();
@@ -195,7 +207,7 @@ impl ShellSession {
 
     pub(in crate::session) fn run_selected_user_operation(
         &mut self,
-        success_prefix: &'static str,
+        success_prefix: i18n::LocalizedText,
         operation: impl FnOnce(UserService, &AuthSession) -> Result<(), CoreError>,
     ) -> bool {
         let Some(storage) = self.storage_manager.clone() else {
@@ -211,7 +223,11 @@ impl ShellSession {
             .with_backend(self.identity_backend);
         let succeeded = match operation(service, session) {
             Ok(()) => {
-                self.user_management_message = Some(format!("{success_prefix} {username}"));
+                self.user_management_message = Some(i18n::LocalizedText::from(i18n::msg!(
+                    "shell-success-prefix-username",
+                    success_prefix = success_prefix,
+                    username = username
+                )));
                 self.user_management_feedback_tone = UserManagementFeedbackTone::Success;
                 true
             }
@@ -249,7 +265,10 @@ impl ShellSession {
                     Ok(account) => {
                         self.user_management_mode = UserManagementMode::Browse;
                         self.user_management_feedback_tone = UserManagementFeedbackTone::Success;
-                        format!("Created {}", account.username)
+                        i18n::LocalizedText::from(i18n::msg!(
+                            "shell-created-arg1",
+                            arg1 = account.username
+                        ))
                     }
                     Err(error) => {
                         self.user_management_feedback_tone = UserManagementFeedbackTone::Error;
@@ -270,7 +289,10 @@ impl ShellSession {
                     Ok(account) => {
                         self.user_management_mode = UserManagementMode::Browse;
                         self.user_management_feedback_tone = UserManagementFeedbackTone::Success;
-                        format!("Updated {}", account.username)
+                        i18n::LocalizedText::from(i18n::msg!(
+                            "shell-updated-arg1",
+                            arg1 = account.username
+                        ))
                     }
                     Err(error) => {
                         self.user_management_feedback_tone = UserManagementFeedbackTone::Error;
@@ -284,7 +306,10 @@ impl ShellSession {
                     Ok(()) => {
                         self.user_management_mode = UserManagementMode::Browse;
                         self.user_management_feedback_tone = UserManagementFeedbackTone::Success;
-                        format!("Updated password for {}", form.username)
+                        i18n::LocalizedText::from(i18n::msg!(
+                            "shell-updated-password-for-arg1",
+                            arg1 = form.username
+                        ))
                     }
                     Err(error) => {
                         self.user_management_feedback_tone = UserManagementFeedbackTone::Error;
@@ -321,7 +346,10 @@ impl ShellSession {
             .delete_user(session, &username)
         {
             Ok(()) => {
-                self.user_management_message = Some(format!("Deleted {username}"));
+                self.user_management_message = Some(i18n::LocalizedText::from(i18n::msg!(
+                    "shell-deleted-username",
+                    username = username
+                )));
                 self.user_management_feedback_tone = UserManagementFeedbackTone::Success;
                 true
             }
@@ -343,7 +371,9 @@ impl ShellSession {
             }
         }
         if deleted && deleting_current_user {
-            self.return_to_login("Account deleted");
+            self.return_to_login(i18n::LocalizedText::from(i18n::msg!(
+                "shell-account-deleted"
+            )));
             return;
         }
         let _refresh_succeeded = self.refresh_user_management();
@@ -439,7 +469,8 @@ impl ShellSession {
     pub(in crate::session) fn cancel_user_management_form(&mut self) {
         if self.user_management_mode != UserManagementMode::Browse {
             self.user_management_mode = UserManagementMode::Browse;
-            self.user_management_message = Some("Cancelled".to_string());
+            self.user_management_message =
+                Some(i18n::LocalizedText::from(i18n::msg!("shell-cancelled")));
             self.user_management_feedback_tone = UserManagementFeedbackTone::Info;
             self.ensure_user_management_selection_visible();
         }
@@ -578,7 +609,7 @@ impl ShellSession {
             return;
         };
         if !action_model.enabled {
-            if let Some(reason) = action_model.disabled_reason {
+            if let Some(reason) = self.user_management_disabled_reason(action) {
                 self.user_management_message = Some(reason);
                 self.user_management_feedback_tone = UserManagementFeedbackTone::Error;
                 self.ensure_user_management_selection_visible();
@@ -609,6 +640,34 @@ impl ShellSession {
         self.normalize_user_management_focus();
     }
 
+    pub(in crate::session) fn user_management_disabled_reason(
+        &self,
+        action: ui::UserManagementAction,
+    ) -> Option<i18n::LocalizedText> {
+        use ui::UserManagementAction as Action;
+        if action == Action::Back {
+            return None;
+        }
+        if self.identity_backend == identity::IdentityBackend::Linux {
+            return Some(i18n::msg!("shell-managed-by-linux-use-linux-account-tools").into());
+        }
+        if action == Action::NewUser {
+            return None;
+        }
+        let Some(selected) = self.app.managed_users().get(self.user_management_selected) else {
+            return Some(i18n::msg!("shell-no-user-selected").into());
+        };
+        if self.selected_is_last_enabled_admin()
+            && (matches!(action, Action::Delete | Action::ToggleRole)
+                || (action == Action::ToggleEnabled
+                    && selected.enabled
+                    && !user_is_locked(selected)))
+        {
+            return Some(i18n::msg!("shell-at-least-one-enabled-admin-is-required").into());
+        }
+        None
+    }
+
     pub(in crate::session) fn request_delete_selected_user(&mut self) {
         use ui::UserManagementAction;
 
@@ -621,14 +680,20 @@ impl ShellSession {
         };
         let deleting_current_user = self.is_current_username(&username);
         let title = if deleting_current_user {
-            "Delete your account"
+            i18n::LocalizedText::from(i18n::msg!("shell-delete-your-account"))
         } else {
-            "Delete user"
+            i18n::LocalizedText::from(i18n::msg!("shell-delete-user"))
         };
         let message = if deleting_current_user {
-            format!("Delete {username}? You will be signed out immediately.")
+            i18n::LocalizedText::from(i18n::msg!(
+                "shell-delete-username-you-will-be-signed-out-immediately",
+                username = username
+            ))
         } else {
-            format!("Delete {username}? This action cannot be undone.")
+            i18n::LocalizedText::from(i18n::msg!(
+                "shell-delete-username-this-action-cannot-be-undone",
+                username = username
+            ))
         };
         self.notify_modal_with_options(
             ShellNotification::modal(
@@ -636,12 +701,18 @@ impl ShellSession {
                 message,
                 ui::NotificationTone::Warning,
                 vec![
-                    ShellNotificationAction::new("delete", "Delete")
-                        .with_shortcut(InputKey::Char('x'))
-                        .with_follow_up(ShellCommand::DeleteManagedUser),
-                    ShellNotificationAction::new("cancel", "Cancel")
-                        .with_shortcut(InputKey::Escape)
-                        .cancel(),
+                    ShellNotificationAction::new(
+                        "delete",
+                        i18n::LocalizedText::from(i18n::msg!("shell-delete")),
+                    )
+                    .with_shortcut(InputKey::Char('x'))
+                    .with_follow_up(ShellCommand::DeleteManagedUser),
+                    ShellNotificationAction::new(
+                        "cancel",
+                        i18n::LocalizedText::from(i18n::msg!("shell-cancel")),
+                    )
+                    .with_shortcut(InputKey::Escape)
+                    .cancel(),
                 ],
             )
             .with_selected_action(1)
@@ -713,7 +784,7 @@ impl ShellSession {
         self.user_management_mode = UserManagementMode::Browse;
         self.resolve_user_management_refresh_alert();
         self.pop_to_home();
-        self.notify_status("Ready");
+        self.notify_status(i18n::LocalizedText::from(i18n::msg!("shell-ready")));
         self.refresh_hit_map();
     }
 

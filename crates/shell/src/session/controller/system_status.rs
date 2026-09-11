@@ -27,7 +27,9 @@ impl ShellSession {
             .set_system_status_active(true)
             .is_err()
         {
-            self.notify_status("System Status service unavailable");
+            self.notify_status(i18n::LocalizedText::from(i18n::msg!(
+                "shell-system-status-service-unavailable"
+            )));
             return;
         }
         if self.active_screen() != ShellScreen::SystemStatus {
@@ -57,7 +59,9 @@ impl ShellSession {
         if self.diagnostics_task_runtime.is_some() {
             self.request_diagnostics_scan();
         } else if self.app.diagnostics_snapshot().is_none() {
-            self.diagnostics_feedback = Some("Diagnostics runtime is unavailable".to_string());
+            self.diagnostics_feedback = Some(i18n::LocalizedText::from(i18n::msg!(
+                "shell-diagnostics-runtime-is-unavailable"
+            )));
         }
     }
 
@@ -94,7 +98,9 @@ impl ShellSession {
                 .or(Some(0));
         } else {
             self.system_status_refresh_requested_revision = None;
-            self.notify_status("System Status service unavailable");
+            self.notify_status(i18n::LocalizedText::from(i18n::msg!(
+                "shell-system-status-service-unavailable"
+            )));
         }
     }
 
@@ -175,8 +181,11 @@ impl ShellSession {
                                 .available_bytes
                                 .map(format_bytes)
                                 .unwrap_or_else(|| "unknown".into());
-                            let message =
-                                format!("Storage {} has {available} available", volume.identifier);
+                            let message = i18n::LocalizedText::from(i18n::msg!(
+                                "shell-storage-arg1-has-available-available",
+                                arg1 = &volume.identifier,
+                                available = available
+                            ));
                             let tone = if next == SystemStatusAlertLevel::Critical {
                                 ui::NotificationTone::Critical
                             } else {
@@ -201,7 +210,9 @@ impl ShellSession {
                     if !self.system_status_disconnected_notified {
                         self.notify_alert_with_key(
                             "system-status.network",
-                            "Network connection was lost",
+                            i18n::LocalizedText::from(i18n::msg!(
+                                "shell-network-connection-was-lost"
+                            )),
                             ui::NotificationTone::Warning,
                         );
                         self.system_status_disconnected_notified = true;
@@ -305,9 +316,11 @@ impl ShellSession {
                         | storage::SystemStatusWidgetKind::Network
                         | storage::SystemStatusWidgetKind::TopProcesses
                 ) {
-                    "Administrator permission is required".to_string()
+                    i18n::LocalizedText::from(i18n::msg!(
+                        "shell-administrator-permission-is-required"
+                    ))
                 } else {
-                    "Details are unavailable".to_string()
+                    i18n::LocalizedText::from(i18n::msg!("shell-details-are-unavailable"))
                 },
             );
             return;
@@ -364,7 +377,9 @@ impl ShellSession {
         self.system_status_size_picker = None;
         self.system_status_discard_dialog = false;
         self.system_status_discard_confirm_selected = true;
-        self.system_status_dashboard_feedback = Some("Editing dashboard".to_string());
+        self.system_status_dashboard_feedback = Some(i18n::LocalizedText::from(i18n::msg!(
+            "shell-editing-dashboard"
+        )));
         self.ensure_system_status_widget_selection();
         self.restore_system_status_widget_focus();
     }
@@ -388,7 +403,9 @@ impl ShellSession {
         self.system_status_discard_dialog = false;
         self.system_status_discard_confirm_selected = true;
         self.system_status_widget_drag = None;
-        self.system_status_dashboard_feedback = Some("Dashboard changes cancelled".to_string());
+        self.system_status_dashboard_feedback = Some(i18n::LocalizedText::from(i18n::msg!(
+            "shell-dashboard-changes-cancelled"
+        )));
         self.ensure_system_status_widget_selection();
         self.restore_system_status_widget_focus();
         self.clamp_system_status_dashboard_scroll();
@@ -407,11 +424,15 @@ impl ShellSession {
             return;
         }
         let Some(storage) = self.storage_manager.clone() else {
-            self.system_status_dashboard_feedback = Some("Storage unavailable".to_string());
+            self.system_status_dashboard_feedback = Some(i18n::LocalizedText::from(i18n::msg!(
+                "shell-storage-unavailable"
+            )));
             return;
         };
         let Some(actor) = self.app.auth_session().cloned() else {
-            self.system_status_dashboard_feedback = Some("Login required".to_string());
+            self.system_status_dashboard_feedback = Some(i18n::LocalizedText::from(i18n::msg!(
+                "shell-login-required"
+            )));
             return;
         };
         match UserService::with_debug_policy(storage, self.debug_policy)
@@ -431,16 +452,19 @@ impl ShellSession {
                 self.system_status_discard_dialog = false;
                 self.system_status_discard_confirm_selected = true;
                 self.system_status_widget_drag = None;
-                self.system_status_dashboard_feedback = Some("Saved dashboard".to_string());
+                self.system_status_dashboard_feedback = Some(i18n::LocalizedText::from(
+                    i18n::msg!("shell-saved-dashboard"),
+                ));
                 self.ensure_system_status_widget_selection();
                 self.restore_system_status_widget_focus();
                 self.clamp_system_status_dashboard_scroll();
             }
             Err(error) => {
-                self.system_status_dashboard_feedback = Some(format!(
-                    "Could not save dashboard: {}",
-                    format_core_error(&error)
-                ));
+                self.system_status_dashboard_feedback =
+                    Some(i18n::LocalizedText::from(i18n::msg!(
+                        "shell-could-not-save-dashboard-arg1",
+                        arg1 = format_core_error(&error)
+                    )));
             }
         }
     }
@@ -550,8 +574,10 @@ impl ShellSession {
             self.system_status_selected_widget = Some(kind);
             self.system_status_dashboard_focus =
                 ui::SystemStatusDashboardFocus::Widget(ui_widget_kind(kind));
-            self.system_status_dashboard_feedback =
-                Some(format!("Added {}", ui_widget_kind(kind).label()));
+            self.system_status_dashboard_feedback = Some(i18n::LocalizedText::from(i18n::msg!(
+                "shell-added-arg1",
+                arg1 = system_status_widget_message(kind)
+            )));
             self.scroll_system_status_focused_widget_into_view(ui_widget_kind(kind));
         }
         self.system_status_add_picker = None;
@@ -567,8 +593,10 @@ impl ShellSession {
             .as_mut()
             .is_some_and(|dashboard| dashboard.remove_widget(kind))
         {
-            self.system_status_dashboard_feedback =
-                Some(format!("Removed {}", ui_widget_kind(kind).label()));
+            self.system_status_dashboard_feedback = Some(i18n::LocalizedText::from(i18n::msg!(
+                "shell-removed-arg1",
+                arg1 = system_status_widget_message(kind)
+            )));
             self.system_status_selected_widget = None;
             self.ensure_system_status_widget_selection();
             self.system_status_dashboard_focus = self
@@ -1079,18 +1107,20 @@ impl ShellSession {
     pub(in crate::session) fn system_status_widget_unavailable_reason(
         &self,
         kind: storage::SystemStatusWidgetKind,
-    ) -> Option<String> {
+    ) -> Option<i18n::LocalizedText> {
         if !self.system_status_widget_allowed(kind) {
-            return Some("Administrator permission is required".to_string());
+            return Some(i18n::LocalizedText::from(i18n::msg!(
+                "shell-administrator-permission-is-required"
+            )));
         }
         let metrics = &self.app.system_status_snapshot()?.metrics;
         match kind {
             storage::SystemStatusWidgetKind::Temperature => match &metrics.thermal {
-                MetricState::Unavailable { reason } => Some(reason.clone()),
+                MetricState::Unavailable { reason } => Some(reason.clone().into()),
                 _ => None,
             },
             storage::SystemStatusWidgetKind::Battery => match &metrics.batteries {
-                MetricState::Unavailable { reason } => Some(reason.clone()),
+                MetricState::Unavailable { reason } => Some(reason.clone().into()),
                 _ => None,
             },
             _ => None,
@@ -1505,5 +1535,24 @@ pub(in crate::session) fn format_bytes(bytes: u64) -> String {
         format!("{bytes} B")
     } else {
         format!("{value:.1} {}", UNITS[unit])
+    }
+}
+
+fn system_status_widget_message(kind: storage::SystemStatusWidgetKind) -> i18n::LocalizedMessage {
+    match kind {
+        storage::SystemStatusWidgetKind::SystemOverview => {
+            i18n::msg!("shell-widget-systemoverview")
+        }
+        storage::SystemStatusWidgetKind::Cpu => i18n::msg!("shell-widget-cpu"),
+        storage::SystemStatusWidgetKind::Memory => i18n::msg!("shell-widget-memory"),
+        storage::SystemStatusWidgetKind::Storage => i18n::msg!("shell-widget-storage"),
+        storage::SystemStatusWidgetKind::Network => i18n::msg!("shell-widget-network"),
+        storage::SystemStatusWidgetKind::Temperature => i18n::msg!("shell-widget-temperature"),
+        storage::SystemStatusWidgetKind::Battery => i18n::msg!("shell-widget-battery"),
+        storage::SystemStatusWidgetKind::UptimeLoad => i18n::msg!("shell-widget-uptimeload"),
+        storage::SystemStatusWidgetKind::TopProcesses => i18n::msg!("shell-widget-topprocesses"),
+        storage::SystemStatusWidgetKind::Diagnostics => i18n::msg!("shell-widget-diagnostics"),
+        storage::SystemStatusWidgetKind::Logs => i18n::msg!("shell-widget-logs"),
+        storage::SystemStatusWidgetKind::Incidents => i18n::msg!("shell-widget-incidents"),
     }
 }

@@ -8,7 +8,7 @@ impl ShellSession {
         match self.app.auth_session() {
             Some(session) => platform.user_dirs_for_user(&session.username),
             None => Err(platform::PlatformError::InvalidInput {
-                message: "Login required".into(),
+                message: "Login required".to_string(),
             }),
         }
     }
@@ -47,15 +47,21 @@ impl ShellSession {
         self.explorer_purpose = ExplorerPurpose::Browse;
         if self.is_strict_guest() {
             self.error_message = None;
-            self.notify_status("Guest access is read-only");
+            self.notify_status(i18n::LocalizedText::from(i18n::msg!(
+                "shell-guest-access-is-read-only"
+            )));
             return;
         }
         if self.app.auth_session().is_none() {
-            self.error_message = Some("Login required".to_string());
+            self.error_message = Some(i18n::LocalizedText::from(i18n::msg!(
+                "shell-login-required"
+            )));
             return;
         }
         let Some(storage) = self.storage_manager.clone() else {
-            self.error_message = Some("Storage unavailable".to_string());
+            self.error_message = Some(i18n::LocalizedText::from(i18n::msg!(
+                "shell-storage-unavailable"
+            )));
             return;
         };
 
@@ -63,7 +69,7 @@ impl ShellSession {
             Ok(dirs) => dirs,
             Err(error) => {
                 let message = error.to_string();
-                self.error_message = Some(message.clone());
+                self.error_message = Some(message.clone().into());
                 self.notify_alert_with_key(
                     EXPLORER_ALERT_KEY,
                     message,
@@ -102,7 +108,7 @@ impl ShellSession {
         self.explorer_overlay_mode = None;
         self.screen_stack.push(ShellScreen::Explorer);
         self.focused_component = ShellComponent::Explorer;
-        self.notify_status("Explorer");
+        self.notify_status(i18n::LocalizedText::from(i18n::msg!("shell-explorer")));
         self.apply_explorer_command(ExplorerCommand::Refresh, platform);
         self.refresh_hit_map();
     }
@@ -121,13 +127,13 @@ impl ShellSession {
             }
             if self.active_screen() == ShellScreen::Diagnostics {
                 self.focused_component = ShellComponent::Diagnostics;
-                self.notify_status("Diagnostics");
+                self.notify_status(i18n::LocalizedText::from(i18n::msg!("shell-diagnostics")));
             } else if self.active_screen() == ShellScreen::SystemStatus {
                 self.focused_component = ShellComponent::SystemStatus;
-                self.notify_status("System Status");
+                self.notify_status(i18n::LocalizedText::from(i18n::msg!("shell-system-status")));
             } else {
                 self.pop_to_home();
-                self.notify_status("Ready");
+                self.notify_status(i18n::LocalizedText::from(i18n::msg!("shell-ready")));
             }
             self.refresh_hit_map();
             return;
@@ -144,7 +150,7 @@ impl ShellSession {
         }
         self.explorer_purpose = ExplorerPurpose::Browse;
         self.pop_to_home();
-        self.notify_status("Ready");
+        self.notify_status(i18n::LocalizedText::from(i18n::msg!("shell-ready")));
     }
 
     pub(in crate::session) fn refresh_explorer_quick_locations(&mut self, platform: &dyn Platform) {
@@ -167,32 +173,37 @@ impl ShellSession {
             locations.extend([
                 app::explorer::ExplorerQuickLocation::new(
                     "desktop",
-                    "Desktop",
+                    i18n::LocalizedText::from(i18n::msg!("shell-desktop")),
                     dirs.desktop(),
                     "desktop",
                 ),
                 app::explorer::ExplorerQuickLocation::new(
                     "documents",
-                    "Documents",
+                    i18n::LocalizedText::from(i18n::msg!("shell-documents")),
                     dirs.documents(),
                     "documents",
                 ),
                 app::explorer::ExplorerQuickLocation::new(
                     "downloads",
-                    "Downloads",
+                    i18n::LocalizedText::from(i18n::msg!("shell-downloads")),
                     dirs.downloads(),
                     "downloads",
                 ),
                 app::explorer::ExplorerQuickLocation::new(
                     "pictures",
-                    "Pictures",
+                    i18n::LocalizedText::from(i18n::msg!("shell-pictures")),
                     dirs.pictures(),
                     "pictures",
                 ),
-                app::explorer::ExplorerQuickLocation::new("music", "Music", dirs.music(), "music"),
+                app::explorer::ExplorerQuickLocation::new(
+                    "music",
+                    i18n::LocalizedText::from(i18n::msg!("shell-music")),
+                    dirs.music(),
+                    "music",
+                ),
                 app::explorer::ExplorerQuickLocation::new(
                     "videos",
-                    "Videos",
+                    i18n::LocalizedText::from(i18n::msg!("shell-videos")),
                     dirs.videos(),
                     "videos",
                 ),
@@ -243,7 +254,7 @@ impl ShellSession {
     pub(in crate::session) fn resolve_explorer_alert(&mut self) {
         let resolved_message = self
             .notification_alert_message_for_key(EXPLORER_ALERT_KEY)
-            .map(str::to_string);
+            .cloned();
         if self.error_message.as_ref() == resolved_message.as_ref() {
             self.error_message = None;
         }
@@ -296,14 +307,14 @@ impl ShellSession {
         let command_kind = command.clone();
         let can_change_settings = self.can_change_explorer_settings();
         let Some(storage) = self.storage_manager.clone() else {
-            let message = "Storage unavailable".to_string();
-            self.error_message = Some(message.clone());
+            let message = i18n::LocalizedText::from(i18n::msg!("shell-storage-unavailable"));
+            self.error_message = Some(message.clone().into());
             self.notify_alert_with_key(EXPLORER_ALERT_KEY, message, ui::NotificationTone::Error);
             return;
         };
         if self.app.explorer_state().is_none() {
-            let message = "Explorer unavailable".to_string();
-            self.error_message = Some(message.clone());
+            let message = i18n::LocalizedText::from(i18n::msg!("shell-explorer-unavailable"));
+            self.error_message = Some(message.clone().into());
             self.notify_alert_with_key(EXPLORER_ALERT_KEY, message, ui::NotificationTone::Error);
             return;
         }
@@ -315,12 +326,13 @@ impl ShellSession {
         {
             let _ = self.update_explorer_state(|state| {
                 state.error = None;
-                state.message = Some(
-                    "Explorer options are read-only. Administrator permission is required."
-                        .to_string(),
-                );
+                state.message = Some(i18n::LocalizedText::from(i18n::msg!(
+                    "shell-explorer-options-are-read-only-administrator-permission-is-required"
+                )));
             });
-            self.notify_status("Explorer options are read-only");
+            self.notify_status(i18n::LocalizedText::from(i18n::msg!(
+                "shell-explorer-options-are-read-only"
+            )));
             self.refresh_hit_map();
             return;
         }
@@ -344,7 +356,9 @@ impl ShellSession {
         if let Some(error) = explorer_error {
             self.error_message = Some(error.clone());
             self.notify_alert_with_key(EXPLORER_ALERT_KEY, error, ui::NotificationTone::Error);
-            self.notify_status("Explorer error");
+            self.notify_status(i18n::LocalizedText::from(i18n::msg!(
+                "shell-explorer-error"
+            )));
         } else {
             self.error_message = None;
             self.resolve_explorer_alert();
@@ -362,12 +376,14 @@ impl ShellSession {
         ) && let Some(dialog) = pending_dialog
         {
             let (confirm_label, follow_up) = match dialog.kind {
-                app::explorer::ExplorerDialogKind::DeleteToTrash => {
-                    ("Move", ShellCommand::ExplorerConfirmDelete)
-                }
-                app::explorer::ExplorerDialogKind::DumpTrash => {
-                    ("Empty", ShellCommand::ExplorerConfirmDumpTrash)
-                }
+                app::explorer::ExplorerDialogKind::DeleteToTrash => (
+                    i18n::LocalizedText::from(i18n::msg!("shell-move")),
+                    ShellCommand::ExplorerConfirmDelete,
+                ),
+                app::explorer::ExplorerDialogKind::DumpTrash => (
+                    i18n::LocalizedText::from(i18n::msg!("shell-empty")),
+                    ShellCommand::ExplorerConfirmDumpTrash,
+                ),
             };
             self.notify_modal_with_options(
                 ShellNotification::modal(
@@ -378,10 +394,13 @@ impl ShellSession {
                         ShellNotificationAction::new("confirm", confirm_label)
                             .with_shortcut(InputKey::Char('y'))
                             .with_follow_up(follow_up),
-                        ShellNotificationAction::new("cancel", "Cancel")
-                            .with_shortcut(InputKey::Char('n'))
-                            .cancel()
-                            .with_follow_up(ShellCommand::CancelExplorerInput),
+                        ShellNotificationAction::new(
+                            "cancel",
+                            i18n::LocalizedText::from(i18n::msg!("shell-cancel")),
+                        )
+                        .with_shortcut(InputKey::Char('n'))
+                        .cancel()
+                        .with_follow_up(ShellCommand::CancelExplorerInput),
                     ],
                 )
                 .with_key(EXPLORER_DELETE_NOTIFICATION_KEY),
@@ -412,10 +431,9 @@ impl ShellSession {
                 // already updated the in-memory projection; skip persistence of shared defaults.
                 let _ = self.update_explorer_state(|state| {
                     state.error = None;
-                    state.message = Some(
-                        "Sort applied for this session; Explorer defaults are read-only."
-                            .to_string(),
-                    );
+                    state.message = Some(i18n::LocalizedText::from(i18n::msg!(
+                        "shell-sort-applied-for-this-session-explorer-defaults-are-read-only"
+                    )));
                 });
             }
             ExplorerEffect::PersistConfig(explorer) => match storage.load_config() {
@@ -423,7 +441,10 @@ impl ShellSession {
                     config.explorer = explorer;
                     if let Err(error) = storage.save_config(&config) {
                         let _ = self.update_explorer_state(|state| {
-                            state.error = Some(format!("Could not save Explorer options: {error}"));
+                            state.error = Some(i18n::LocalizedText::from(i18n::msg!(
+                                "shell-could-not-save-explorer-options-error",
+                                error = error.to_string()
+                            )));
                             state.message = None;
                         });
                     } else {
@@ -432,7 +453,10 @@ impl ShellSession {
                 }
                 Err(error) => {
                     let _ = self.update_explorer_state(|state| {
-                        state.error = Some(format!("Could not load Explorer options: {error}"));
+                        state.error = Some(i18n::LocalizedText::from(i18n::msg!(
+                            "shell-could-not-load-explorer-options-error",
+                            error = error.to_string()
+                        )));
                         state.message = None;
                     });
                 }
@@ -442,11 +466,14 @@ impl ShellSession {
                     let result = platform.open_path(&request.path);
                     let _ = self.update_explorer_state(|state| match result {
                         Ok(()) => {
-                            state.message = Some(format!("Opened {}", request.path.display()));
+                            state.message = Some(i18n::LocalizedText::from(i18n::msg!(
+                                "shell-opened-arg1",
+                                arg1 = request.path.display().to_string()
+                            )));
                             state.error = None;
                         }
                         Err(error) => {
-                            state.error = Some(error.to_string());
+                            state.error = Some(error.to_string().into());
                             state.message = None;
                         }
                     });
@@ -573,16 +600,16 @@ impl ShellSession {
         {
             let _ = self.update_explorer_state(|state| {
                 state.pending_dialog = None;
-                state.message = Some("Cancelled".to_string());
+                state.message = Some(i18n::LocalizedText::from(i18n::msg!("shell-cancelled")));
             });
             self.notification_dismiss_modal_by_key(EXPLORER_DELETE_NOTIFICATION_KEY);
-            self.notify_status("Cancelled");
+            self.notify_status(i18n::LocalizedText::from(i18n::msg!("shell-cancelled")));
             return;
         }
         self.explorer_input_mode = ExplorerInputMode::Browse;
         self.explorer_input.clear();
         self.explorer_input_replace_all = false;
-        self.notify_status("Explorer");
+        self.notify_status(i18n::LocalizedText::from(i18n::msg!("shell-explorer")));
     }
 
     pub(in crate::session) fn select_explorer_at(
@@ -1392,7 +1419,7 @@ mod tests {
             .map(|location| {
                 let mut view = ui::ExplorerQuickLocationViewModel::new(
                     location.id.clone(),
-                    location.label.clone(),
+                    location.localized_label().render_current(),
                     location.path.display().to_string(),
                     location.icon_key.clone(),
                 );

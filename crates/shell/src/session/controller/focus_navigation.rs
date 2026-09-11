@@ -2,6 +2,7 @@ use super::super::*;
 use crate::session::queries::ShellOverlayCategory;
 impl ShellSession {
     pub(in crate::session) fn refresh_hit_map(&mut self) {
+        let _language = i18n::enter_snapshot(self.language.clone());
         self.refresh_hit_map_with_motion(ui::MotionTransitions::default());
     }
 
@@ -9,6 +10,7 @@ impl ShellSession {
         &mut self,
         motion: ui::MotionTransitions,
     ) {
+        let _language = i18n::enter_snapshot(self.language.clone());
         let motion_ready = ui::RenderContext {
             transitions: motion,
             ..ui::RenderContext::default()

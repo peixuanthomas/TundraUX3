@@ -3,7 +3,7 @@ impl ShellSession {
     pub(in crate::session) fn logout_at(&mut self, now: Instant) -> bool {
         if self.diagnostics_restart_is_required() {
             self.notify_alert_with_tone(
-                "Restart TundraUX before signing out",
+                i18n::LocalizedText::from(i18n::msg!("shell-restart-tundraux-before-signing-out")),
                 ui::NotificationTone::Warning,
             );
             return false;
@@ -15,19 +15,26 @@ impl ShellSession {
                 .is_some_and(ShellDiagnosticsTaskRuntime::is_busy)
         {
             self.notify_alert_with_tone(
-                "Wait for the diagnostics task to finish before signing out",
+                i18n::LocalizedText::from(i18n::msg!(
+                    "shell-wait-for-the-diagnostics-task-to-finish-before-signing-out"
+                )),
                 ui::NotificationTone::Warning,
             );
             return false;
         }
         if !self.persist_editor_recovery_now(now) {
             self.notify_alert_with_tone(
-                "Could not save the Editor recovery; sign out was cancelled",
+                i18n::LocalizedText::from(i18n::msg!(
+                    "shell-could-not-save-the-editor-recovery-sign-out-was-cancelled"
+                )),
                 ui::NotificationTone::Error,
             );
             return false;
         }
-        self.return_to_login_at("Signed out", now);
+        self.return_to_login_at(
+            i18n::LocalizedText::from(i18n::msg!("shell-signed-out")),
+            now,
+        );
         true
     }
 
@@ -39,11 +46,15 @@ impl ShellSession {
         true
     }
 
-    pub(in crate::session) fn return_to_login(&mut self, status: &str) {
+    pub(in crate::session) fn return_to_login(&mut self, status: impl Into<i18n::LocalizedText>) {
         self.return_to_login_at(status, Instant::now());
     }
 
-    pub(in crate::session) fn return_to_login_at(&mut self, status: &str, now: Instant) {
+    pub(in crate::session) fn return_to_login_at(
+        &mut self,
+        status: impl Into<i18n::LocalizedText>,
+        now: Instant,
+    ) {
         // Account disable/delete may force a return to login without passing
         // through the ordinary Logout command. Preserve any dirty editor text
         // before the authenticated recovery context is cleared.
@@ -51,7 +62,7 @@ impl ShellSession {
         self.resolve_user_management_refresh_alert();
         self.notification_bindings = NotificationBindings::default();
         self.app.dispatch_at(
-            app::AppCommand::Notification(app::NotificationCommand::Reset(status.to_string())),
+            app::AppCommand::Notification(app::NotificationCommand::Reset(status.into())),
             now,
         );
         self.modal_focus_context = None;
@@ -152,24 +163,31 @@ impl ShellSession {
     }
 
     pub(in crate::session) fn user_home_entries(&self) -> Vec<ui::ShellEntry> {
+        let _language = i18n::enter_snapshot(self.language.clone());
         if self.is_strict_guest() {
             return Vec::new();
         }
         let mut entries = user_home_entries();
         if self.can_manage_all_users() {
-            entries.push(ui::ShellEntry::new(
-                "User Management",
-                "Manage local TundraUX users",
-            ));
+            entries.push(
+                ui::ShellEntry::new(
+                    i18n::tr!("shell-user-management"),
+                    i18n::tr!("shell-manage-local-tundraux-users"),
+                )
+                .with_icon_key("user_management"),
+            );
         } else if self
             .app
             .auth_session()
             .is_some_and(|session| session.role == UserRole::User)
         {
-            entries.push(ui::ShellEntry::new(
-                "User Profile",
-                "Manage your local TundraUX account",
-            ));
+            entries.push(
+                ui::ShellEntry::new(
+                    i18n::tr!("shell-user-profile"),
+                    i18n::tr!("shell-manage-your-local-tundraux-account"),
+                )
+                .with_icon_key("user_profile"),
+            );
         }
         entries
     }
@@ -197,10 +215,18 @@ impl ShellSession {
         }
 
         self.selected_home_entry_index = index.min(entries.len() - 1);
-        self.notify_status(format!(
-            "Home: {}",
-            entries[self.selected_home_entry_index].label
-        ));
+        self.notify_status(i18n::LocalizedText::from(i18n::msg!(
+            "shell-home-arg1",
+            arg1 = match self.selected_home_entry_index {
+                0 => i18n::msg!("shell-explorer"),
+                1 => i18n::msg!("shell-launcher"),
+                2 => i18n::msg!("shell-settings"),
+                3 => i18n::msg!("shell-system-status"),
+                4 => i18n::msg!("shell-logs"),
+                _ if self.can_manage_all_users() => i18n::msg!("shell-user-management"),
+                _ => i18n::msg!("shell-user-profile"),
+            }
+        )));
     }
 
     pub(in crate::session) fn select_home_entry_delta(&mut self, delta: isize) {
@@ -230,22 +256,19 @@ impl ShellSession {
         platform: &dyn Platform,
     ) {
         let entries = self.user_home_entries();
-        let Some(entry) = entries.get(index) else {
+        let Some(_) = entries.get(index) else {
             return;
         };
 
         self.selected_home_entry_index = index;
-        match entry.label.as_str() {
-            "Explorer" => self.open_explorer(platform),
-            "Launcher" => self.open_launcher(platform),
-            "Settings" => self.open_settings(),
-            "System Status" => self.open_system_status(),
-            "Logs" => self.open_logs(),
-            "User Management" | "User Profile" => self.open_user_management(),
-            label => {
-                self.error_message = None;
-                self.notify_status(format!("{label} is not implemented yet"));
-            }
+        match index {
+            0 => self.open_explorer(platform),
+            1 => self.open_launcher(platform),
+            2 => self.open_settings(),
+            3 => self.open_system_status(),
+            4 => self.open_logs(),
+            5 => self.open_user_management(),
+            _ => {}
         }
     }
 

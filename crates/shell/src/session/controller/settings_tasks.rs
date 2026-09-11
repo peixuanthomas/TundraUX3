@@ -10,8 +10,8 @@ pub(in crate::session) struct SettingsTimeSyncValidationEvent {
 #[derive(Debug)]
 pub(in crate::session) enum SettingsUpdateTaskEvent {
     Progress(app::update::UpdateProgress),
-    CheckCompleted(Result<app::update::UpdateCheckResult, String>),
-    PrepareCompleted(Result<std::path::PathBuf, String>),
+    CheckCompleted(Result<app::update::UpdateCheckResult, i18n::LocalizedText>),
+    PrepareCompleted(Result<std::path::PathBuf, i18n::LocalizedText>),
 }
 
 pub(in crate::session) struct ShellSettingsTaskShared {
@@ -130,22 +130,22 @@ impl ShellSettingsTaskRuntime {
     pub(in crate::session) fn submit_update_check(
         &self,
         identity: app::update::BuildIdentity,
-    ) -> Result<(), String> {
-        let task_group = self
-            .shared
-            .task_group
-            .clone()
-            .ok_or_else(|| "Update worker is unavailable".to_string())?;
+    ) -> Result<(), i18n::LocalizedText> {
+        let task_group = self.shared.task_group.clone().ok_or_else(|| {
+            i18n::LocalizedText::from(i18n::msg!("shell-update-worker-is-unavailable"))
+        })?;
         if !self.update_supported() {
-            return Err("Automatic updates are supported only on Windows and Linux".to_string());
+            return Err(i18n::LocalizedText::from(i18n::msg!(
+                "shell-automatic-updates-are-supported-only-on-windows-and-linux"
+            )));
         }
-        let mut worker_slot = self
-            .shared
-            .update_worker
-            .lock()
-            .map_err(|_| "Update task registry is unavailable".to_string())?;
+        let mut worker_slot = self.shared.update_worker.lock().map_err(|_| {
+            i18n::LocalizedText::from(i18n::msg!("shell-update-task-registry-is-unavailable"))
+        })?;
         if worker_slot.is_some() {
-            return Err("An update task is already running".to_string());
+            return Err(i18n::LocalizedText::from(i18n::msg!(
+                "shell-an-update-task-is-already-running"
+            )));
         }
         let request_id = self
             .shared
@@ -165,7 +165,8 @@ impl ShellSettingsTaskRuntime {
                     },
                 ));
                 let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                    app::update::check_for_updates(&identity).map_err(|error| error.to_string())
+                    app::update::check_for_updates(&identity)
+                        .map_err(|error| i18n::LocalizedText::from(error.to_string()))
                 }));
                 match result {
                     Ok(result) => {
@@ -173,13 +174,20 @@ impl ShellSettingsTaskRuntime {
                     }
                     Err(payload) => {
                         let _ = events.send(SettingsUpdateTaskEvent::CheckCompleted(Err(
-                            "Update check worker panicked".to_string(),
+                            i18n::LocalizedText::from(i18n::msg!(
+                                "shell-update-check-worker-panicked"
+                            )),
                         )));
                         std::panic::resume_unwind(payload);
                     }
                 }
             })
-            .map_err(|error| format!("Could not start update check: {error}"))?;
+            .map_err(|error| {
+                i18n::LocalizedText::from(i18n::msg!(
+                    "shell-could-not-start-update-check-error",
+                    error = error.to_string()
+                ))
+            })?;
         *worker_slot = Some(worker);
         Ok(())
     }
@@ -188,27 +196,25 @@ impl ShellSettingsTaskRuntime {
         &self,
         check: app::update::UpdateCheckResult,
         install_dir: std::path::PathBuf,
-    ) -> Result<(), String> {
-        let task_group = self
-            .shared
-            .task_group
-            .clone()
-            .ok_or_else(|| "Update worker is unavailable".to_string())?;
-        let platform = self
-            .shared
-            .platform
-            .clone()
-            .ok_or_else(|| "Update platform is unavailable".to_string())?;
+    ) -> Result<(), i18n::LocalizedText> {
+        let task_group = self.shared.task_group.clone().ok_or_else(|| {
+            i18n::LocalizedText::from(i18n::msg!("shell-update-worker-is-unavailable"))
+        })?;
+        let platform = self.shared.platform.clone().ok_or_else(|| {
+            i18n::LocalizedText::from(i18n::msg!("shell-update-platform-is-unavailable"))
+        })?;
         if !app::update::supports_updates(platform.kind()) {
-            return Err("Automatic updates are supported only on Windows and Linux".to_string());
+            return Err(i18n::LocalizedText::from(i18n::msg!(
+                "shell-automatic-updates-are-supported-only-on-windows-and-linux"
+            )));
         }
-        let mut worker_slot = self
-            .shared
-            .update_worker
-            .lock()
-            .map_err(|_| "Update task registry is unavailable".to_string())?;
+        let mut worker_slot = self.shared.update_worker.lock().map_err(|_| {
+            i18n::LocalizedText::from(i18n::msg!("shell-update-task-registry-is-unavailable"))
+        })?;
         if worker_slot.is_some() {
-            return Err("An update task is already running".to_string());
+            return Err(i18n::LocalizedText::from(i18n::msg!(
+                "shell-an-update-task-is-already-running"
+            )));
         }
         let request_id = self
             .shared
@@ -238,19 +244,28 @@ impl ShellSettingsTaskRuntime {
                 }));
                 match result {
                     Ok(result) => {
-                        let _ = events.send(SettingsUpdateTaskEvent::PrepareCompleted(
-                            result.map_err(|error| error.to_string()),
-                        ));
+                        let _ =
+                            events
+                                .send(SettingsUpdateTaskEvent::PrepareCompleted(result.map_err(
+                                    |error| i18n::LocalizedText::from(error.to_string()),
+                                )));
                     }
                     Err(payload) => {
                         let _ = events.send(SettingsUpdateTaskEvent::PrepareCompleted(Err(
-                            "Update build worker panicked".to_string(),
+                            i18n::LocalizedText::from(i18n::msg!(
+                                "shell-update-build-worker-panicked"
+                            )),
                         )));
                         std::panic::resume_unwind(payload);
                     }
                 }
             })
-            .map_err(|error| format!("Could not start update build: {error}"))?;
+            .map_err(|error| {
+                i18n::LocalizedText::from(i18n::msg!(
+                    "shell-could-not-start-update-build-error",
+                    error = error.to_string()
+                ))
+            })?;
         *worker_slot = Some(worker);
         Ok(())
     }
@@ -277,21 +292,23 @@ impl ShellSettingsTaskRuntime {
     pub(in crate::session) fn submit_time_sync_validation(
         &self,
         config: storage::TimeSyncConfig,
-    ) -> Result<u64, String> {
+    ) -> Result<u64, i18n::LocalizedText> {
         use std::sync::atomic::Ordering;
 
-        let task_group = self
-            .shared
-            .task_group
-            .clone()
-            .ok_or_else(|| "Time sync validation worker is unavailable".to_string())?;
-        let mut workers = self
-            .shared
-            .workers
-            .lock()
-            .map_err(|_| "Time sync validation task registry is unavailable".to_string())?;
+        let task_group = self.shared.task_group.clone().ok_or_else(|| {
+            i18n::LocalizedText::from(i18n::msg!(
+                "shell-time-sync-validation-worker-is-unavailable"
+            ))
+        })?;
+        let mut workers = self.shared.workers.lock().map_err(|_| {
+            i18n::LocalizedText::from(i18n::msg!(
+                "shell-time-sync-validation-task-registry-is-unavailable"
+            ))
+        })?;
         if !workers.is_empty() {
-            return Err("A time sync validation is already running".to_string());
+            return Err(i18n::LocalizedText::from(i18n::msg!(
+                "shell-a-time-sync-validation-is-already-running"
+            )));
         }
         let request_id = self
             .shared
@@ -307,7 +324,11 @@ impl ShellSettingsTaskRuntime {
             .shared
             .system_services_config
             .lock()
-            .map_err(|_| "System services configuration is unavailable".to_string())?
+            .map_err(|_| {
+                i18n::LocalizedText::from(i18n::msg!(
+                    "shell-system-services-configuration-is-unavailable"
+                ))
+            })?
             .clone();
         let worker = task_group
             .spawn_thread(TaskSpec::one_shot(task_id), move || {
@@ -355,7 +376,12 @@ impl ShellSettingsTaskRuntime {
                     result,
                 });
             })
-            .map_err(|error| format!("Could not start time sync validation: {error}"))?;
+            .map_err(|error| {
+                i18n::LocalizedText::from(i18n::msg!(
+                    "shell-could-not-start-time-sync-validation-error",
+                    error = error.to_string()
+                ))
+            })?;
         workers.insert(request_id, worker);
         Ok(request_id)
     }

@@ -76,10 +76,12 @@ impl ShellSession {
     }
 
     pub(in crate::session) fn reject_editor_settings_change(&mut self) {
-        self.editor_message = Some(
-            "Editor settings are read-only. Administrator permission is required.".to_string(),
-        );
-        self.notify_status("Editor settings are read-only");
+        self.editor_message = Some(i18n::LocalizedText::from(i18n::msg!(
+            "shell-editor-settings-are-read-only-administrator-permission-is-required"
+        )));
+        self.notify_status(i18n::LocalizedText::from(i18n::msg!(
+            "shell-editor-settings-are-read-only"
+        )));
     }
 
     pub(in crate::session) fn advance_editor_document_generation(&mut self) {
@@ -88,9 +90,9 @@ impl ShellSession {
 
     pub(in crate::session) fn open_editor(&mut self) {
         if self.editor_load_state.is_some() || self.editor_save_state.is_some() {
-            self.report_editor_error(
-                "Finish or cancel the active Editor file operation before creating a document",
-            );
+            self.report_editor_error(i18n::LocalizedText::from(i18n::msg!(
+                "shell-finish-or-cancel-the-active-editor-file-operation-before-creating-a-document"
+            )));
             return;
         }
         self.editor_read_session = None;
@@ -112,7 +114,9 @@ impl ShellSession {
         self.editor_close_after_save = false;
         self.editor_open_after_save = false;
         self.editor_discard_for_open = false;
-        self.editor_message = Some("New text document".to_string());
+        self.editor_message = Some(i18n::LocalizedText::from(i18n::msg!(
+            "shell-new-text-document"
+        )));
         self.restore_editor_recovery_if_present();
         self.rebuild_editor_rich_render_cache();
         if self.active_screen() != ShellScreen::Editor {
@@ -120,11 +124,12 @@ impl ShellSession {
         }
         self.focused_component = ShellComponent::Editor;
         self.active_popup = None;
-        self.notify_status("Editor");
+        self.notify_status(i18n::LocalizedText::from(i18n::msg!("shell-editor")));
         self.refresh_hit_map();
     }
 
     pub(in crate::session) fn rebuild_editor_rich_render_cache(&mut self) {
+        let _language = i18n::enter_snapshot(self.language.clone());
         self.editor_rich_render_cache = self.app.editor_state().and_then(|state| {
             let projection = state.rich_projection()?;
             Some(EditorRichRenderCache {
@@ -135,6 +140,7 @@ impl ShellSession {
     }
 
     pub fn to_editor_view_model(&self) -> ui::EditorViewModel {
+        let _language = i18n::enter_snapshot(self.language.clone());
         if let Some(load) = self.editor_load_state.as_ref()
             && matches!(load.operation, EditorLoadOperation::Open { .. })
         {
@@ -142,7 +148,8 @@ impl ShellSession {
                 .path
                 .file_name()
                 .and_then(|name| name.to_str())
-                .unwrap_or("Loading document");
+                .map(str::to_owned)
+                .unwrap_or_else(|| i18n::tr!("shell-loading-document"));
             let mut model = ui::EditorViewModel::source(file_name, "");
             model.path_hint = Some(load.path.display().to_string());
             model.read_only = true;
@@ -317,7 +324,11 @@ impl ShellSession {
             .as_ref()
             .map(editor_load_status)
             .or_else(|| self.editor_save_state.as_ref().map(editor_save_status))
-            .or_else(|| self.editor_message.clone());
+            .or_else(|| {
+                self.editor_message
+                    .as_ref()
+                    .map(i18n::LocalizedText::render_current)
+            });
         model
     }
 
@@ -339,23 +350,32 @@ impl ShellSession {
 }
 
 pub(in crate::session) fn editor_save_status(save: &EditorSaveState) -> String {
-    format!("Saving · {} · {}", save.stage.label(), save.path.display())
+    i18n::tr!(
+        "shell-saving-arg1-arg2",
+        arg1 = save.stage.label(),
+        arg2 = save.path.display().to_string()
+    )
 }
 
 pub(in crate::session) fn editor_load_status(load: &EditorLoadState) -> String {
     let action = if matches!(load.operation, EditorLoadOperation::Reload { .. }) {
-        "Reloading"
+        i18n::tr!("shell-reloading")
     } else {
-        "Loading"
+        i18n::tr!("shell-loading")
     };
     match load.total_bytes {
-        Some(total) if total > 0 => format!(
-            "{action} · {} · {} / {} bytes · Esc Cancel",
-            load.stage.label(),
-            load.completed_bytes.min(total),
-            total
+        Some(total) if total > 0 => i18n::tr!(
+            "shell-action-arg1-arg2-arg3-bytes-esc-cancel",
+            action = action,
+            arg1 = load.stage.label(),
+            arg2 = load.completed_bytes.min(total),
+            arg3 = total
         ),
-        _ => format!("{action} · {} · Esc Cancel", load.stage.label()),
+        _ => i18n::tr!(
+            "shell-action-arg1-esc-cancel",
+            action = action,
+            arg1 = load.stage.label()
+        ),
     }
 }
 
@@ -372,7 +392,7 @@ pub(in crate::session) fn editor_format_requires_selection(
 
 pub(in crate::session) fn editor_line_ending_label(metadata: app::editor::TextMetadata) -> String {
     if metadata.mixed_line_endings {
-        return "Mixed".to_string();
+        return i18n::tr!("shell-mixed");
     }
     match metadata.preferred_line_ending {
         app::editor::LineEnding::Lf => "LF".to_string(),
@@ -441,7 +461,7 @@ pub(in crate::session) fn restore_editor_recovery_v2(
     EditorState,
     Option<DocumentFingerprint>,
     bool,
-    Option<String>,
+    Option<i18n::LocalizedText>,
 ) {
     let kind = app::editor::DocumentKind::PlainText;
     let (mut state, fingerprint, unbound) =
@@ -470,9 +490,12 @@ pub(in crate::session) fn restore_editor_recovery_v2(
     }
     let warning = warning.map(|warning| {
         if unbound {
-            format!("{warning}; the original file also changed, so use Save As")
+            i18n::LocalizedText::from(i18n::msg!(
+                "shell-warning-the-original-file-also-changed-so-use-save-as",
+                warning = warning
+            ))
         } else {
-            warning
+            warning.into()
         }
     });
     (state, fingerprint, unbound, warning)
@@ -599,8 +622,10 @@ pub(in crate::session) fn append_editor_rich_block(
             output.push(ui::EditorRenderBlock::HorizontalRule);
         }
         ProjectedBlockKind::OpaqueMarkdown { raw, reason } => {
-            output.push(ui::EditorRenderBlock::RawHtml(format!(
-                "Unsupported Markdown (read-only: {reason})\n{raw}"
+            output.push(ui::EditorRenderBlock::RawHtml(i18n::tr!(
+                "shell-unsupported-markdown-read-only-reason-nraw",
+                reason = reason.to_string(),
+                raw = raw
             )));
         }
     }
@@ -684,13 +709,15 @@ impl ShellSession {
             if state.mode != app::editor::EditorMode::Rich
                 || state.document.kind != app::editor::DocumentKind::Markdown
             {
-                self.editor_message =
-                    Some("Markdown formatting is available in Rich mode".to_string());
+                self.editor_message = Some(i18n::LocalizedText::from(i18n::msg!(
+                    "shell-markdown-formatting-is-available-in-rich-mode"
+                )));
                 return;
             }
             if editor_format_requires_selection(format) && !state.has_selection() {
-                self.editor_message =
-                    Some("Select text before applying inline formatting".to_string());
+                self.editor_message = Some(i18n::LocalizedText::from(i18n::msg!(
+                    "shell-select-text-before-applying-inline-formatting"
+                )));
                 return;
             }
         }
@@ -793,15 +820,24 @@ impl ShellSession {
         match effect {
             app::editor::EditorEffect::WriteClipboard(text) => {
                 match platform.write_clipboard_text(&text) {
-                    Ok(()) => self.editor_message = Some("Copied".to_string()),
-                    Err(error) => self.report_editor_error(format!("Could not copy: {error}")),
+                    Ok(()) => {
+                        self.editor_message =
+                            Some(i18n::LocalizedText::from(i18n::msg!("shell-copied")))
+                    }
+                    Err(error) => self.report_editor_error(i18n::LocalizedText::from(i18n::msg!(
+                        "shell-could-not-copy-error",
+                        error = error.to_string()
+                    ))),
                 }
             }
             app::editor::EditorEffect::ReadClipboard => match platform.read_clipboard_text() {
                 Ok(text) => {
                     self.apply_editor_command(app::editor::EditorCommand::Paste(text), platform)
                 }
-                Err(error) => self.report_editor_error(format!("Could not paste: {error}")),
+                Err(error) => self.report_editor_error(i18n::LocalizedText::from(i18n::msg!(
+                    "shell-could-not-paste-error",
+                    error = error.to_string()
+                ))),
             },
             app::editor::EditorEffect::OpenFilePicker => {
                 if self.app.editor_state().is_some_and(EditorState::is_dirty) {
@@ -820,17 +856,28 @@ impl ShellSession {
             app::editor::EditorEffect::ConfirmClose => {
                 self.notify_modal_with_options(
                     ShellNotification::modal(
-                        "Unsaved document",
-                        "Save your changes before closing the Editor?",
+                        i18n::LocalizedText::from(i18n::msg!("shell-unsaved-document")),
+                        i18n::LocalizedText::from(i18n::msg!(
+                            "shell-save-your-changes-before-closing-the-editor"
+                        )),
                         ui::NotificationTone::Warning,
                         vec![
-                            ShellNotificationAction::new("save", "Save")
-                                .with_follow_up(ShellCommand::EditorSaveAndClose),
-                            ShellNotificationAction::new("discard", "Discard")
-                                .with_follow_up(ShellCommand::EditorDiscardAndClose),
-                            ShellNotificationAction::new("cancel", "Cancel")
-                                .cancel()
-                                .with_follow_up(ShellCommand::EditorCancelClose),
+                            ShellNotificationAction::new(
+                                "save",
+                                i18n::LocalizedText::from(i18n::msg!("shell-save")),
+                            )
+                            .with_follow_up(ShellCommand::EditorSaveAndClose),
+                            ShellNotificationAction::new(
+                                "discard",
+                                i18n::LocalizedText::from(i18n::msg!("shell-discard")),
+                            )
+                            .with_follow_up(ShellCommand::EditorDiscardAndClose),
+                            ShellNotificationAction::new(
+                                "cancel",
+                                i18n::LocalizedText::from(i18n::msg!("shell-cancel")),
+                            )
+                            .cancel()
+                            .with_follow_up(ShellCommand::EditorCancelClose),
                         ],
                     )
                     .with_key(EDITOR_CLOSE_NOTIFICATION_KEY)
@@ -963,14 +1010,15 @@ impl ShellSession {
                         .editor_state()
                         .is_some_and(EditorState::is_read_only)
                     {
-                        self.editor_message = Some("This document is read-only".to_string());
+                        self.editor_message = Some(i18n::LocalizedText::from(i18n::msg!(
+                            "shell-this-document-is-read-only"
+                        )));
                         return;
                     }
                     if self.app.editor_state().is_some_and(EditorState::is_dirty) {
-                        self.editor_message = Some(
-                            "Save or close the current document before creating a new one"
-                                .to_string(),
-                        );
+                        self.editor_message = Some(i18n::LocalizedText::from(i18n::msg!(
+                            "shell-save-or-close-the-current-document-before-creating-a-new-one"
+                        )));
                     } else {
                         self.advance_editor_document_generation();
                         self.app.dispatch_at(
@@ -981,7 +1029,9 @@ impl ShellSession {
                         self.editor_table_column_widths.clear();
                         self.editor_table_resize = None;
                         self.editor_fingerprint = None;
-                        self.editor_message = Some("New text document".to_string());
+                        self.editor_message = Some(i18n::LocalizedText::from(i18n::msg!(
+                            "shell-new-text-document"
+                        )));
                         self.rebuild_editor_rich_render_cache();
                     }
                     return;
@@ -997,12 +1047,15 @@ impl ShellSession {
                 ('v', _) => app::editor::EditorCommand::RequestPaste,
                 ('a', _) => app::editor::EditorCommand::SelectAll,
                 ('f', _) => {
-                    self.editor_message = Some("Find is not available in this build".to_string());
+                    self.editor_message = Some(i18n::LocalizedText::from(i18n::msg!(
+                        "shell-find-is-not-available-in-this-build"
+                    )));
                     return;
                 }
                 ('h', _) => {
-                    self.editor_message =
-                        Some("Replace is not available in this build".to_string());
+                    self.editor_message = Some(i18n::LocalizedText::from(i18n::msg!(
+                        "shell-replace-is-not-available-in-this-build"
+                    )));
                     return;
                 }
                 _ => return,
@@ -1038,7 +1091,9 @@ impl ShellSession {
             InputKey::Delete => app::editor::EditorCommand::DeleteForward,
             InputKey::Tab => app::editor::EditorCommand::InsertText("    ".to_string()),
             InputKey::BackTab => {
-                self.editor_message = Some("Outdent is not available for this block".to_string());
+                self.editor_message = Some(i18n::LocalizedText::from(i18n::msg!(
+                    "shell-outdent-is-not-available-for-this-block"
+                )));
                 return;
             }
             InputKey::Home => app::editor::EditorCommand::MoveCursor {
@@ -1294,21 +1349,31 @@ impl ShellSession {
             let mut config = match storage.load_config() {
                 Ok(config) => config,
                 Err(error) => {
-                    self.editor_message = Some(format!("Could not save Editor settings: {error}"));
+                    self.editor_message = Some(i18n::LocalizedText::from(i18n::msg!(
+                        "shell-could-not-save-editor-settings-error",
+                        error = error.to_string()
+                    )));
                     return;
                 }
             };
             config.editor = editor;
             if let Err(error) = storage.save_config(&config) {
-                self.editor_message = Some(format!("Could not save Editor settings: {error}"));
+                self.editor_message = Some(i18n::LocalizedText::from(i18n::msg!(
+                    "shell-could-not-save-editor-settings-error",
+                    error = error.to_string()
+                )));
                 return;
             }
-            self.editor_message = Some("Editor settings saved".to_string());
+            self.editor_message = Some(i18n::LocalizedText::from(i18n::msg!(
+                "shell-editor-settings-saved"
+            )));
             config
         } else {
             let mut config = self.app.storage_config().clone();
             config.editor = editor;
-            self.editor_message = Some("Editor settings applied for this session".to_string());
+            self.editor_message = Some(i18n::LocalizedText::from(i18n::msg!(
+                "shell-editor-settings-applied-for-this-session"
+            )));
             config
         };
         self.replace_storage_config(config);
@@ -1490,8 +1555,9 @@ impl ShellSession {
                         self.editor_focus = ui::EditorFocus::Canvas;
                     }
                     Some(ui::EditorHitTarget::TableEdge { .. }) => {
-                        self.editor_message =
-                            Some("Switch to Rich mode to edit table structure".to_string());
+                        self.editor_message = Some(i18n::LocalizedText::from(i18n::msg!(
+                            "shell-switch-to-rich-mode-to-edit-table-structure"
+                        )));
                     }
                     Some(ui::EditorHitTarget::RichTableEdge { table_id, edge }) => {
                         self.edit_editor_table_edge(
@@ -1502,8 +1568,9 @@ impl ShellSession {
                         );
                     }
                     Some(ui::EditorHitTarget::TableResize { .. }) => {
-                        self.editor_message =
-                            Some("Switch to Rich mode to resize table columns".to_string());
+                        self.editor_message = Some(i18n::LocalizedText::from(i18n::msg!(
+                            "shell-switch-to-rich-mode-to-resize-table-columns"
+                        )));
                     }
                     Some(ui::EditorHitTarget::RichTableResize {
                         table_id,
@@ -1519,10 +1586,11 @@ impl ShellSession {
                             start_x: coordinates.0,
                             start_width: width,
                         });
-                        self.editor_message = Some(format!(
-                            "Resizing table column {} ({width} cells)",
-                            column_index + 1
-                        ));
+                        self.editor_message = Some(i18n::LocalizedText::from(i18n::msg!(
+                            "shell-resizing-table-column-arg1-width-cells",
+                            arg1 = column_index + 1,
+                            width = width
+                        )));
                     }
                     Some(ui::EditorHitTarget::Canvas(position)) => {
                         self.editor_open_menu = None;
@@ -1541,16 +1609,15 @@ impl ShellSession {
                                 }
                             },
                             Some(_) => {
-                                self.editor_message = Some(
-                                    "This Rich decoration is not directly editable; click its text"
-                                        .to_string(),
-                                );
+                                self.editor_message = Some(i18n::LocalizedText::from(i18n::msg!(
+                                    "shell-this-rich-decoration-is-not-directly-editable-click-its-text"
+                                )));
                                 return;
                             }
                             None if rich_mode => {
-                                self.editor_message = Some(
-                                    "This Rich cell has no editable text position".to_string(),
-                                );
+                                self.editor_message = Some(i18n::LocalizedText::from(i18n::msg!(
+                                    "shell-this-rich-cell-has-no-editable-text-position"
+                                )));
                                 return;
                             }
                             None => self
@@ -1640,13 +1707,15 @@ impl ShellSession {
                             }
                         },
                         Some(_) => {
-                            self.editor_message =
-                                Some("Rich selection can only start on editable text".to_string());
+                            self.editor_message = Some(i18n::LocalizedText::from(i18n::msg!(
+                                "shell-rich-selection-can-only-start-on-editable-text"
+                            )));
                             return;
                         }
                         None if rich_mode => {
-                            self.editor_message =
-                                Some("This Rich cell has no editable text position".to_string());
+                            self.editor_message = Some(i18n::LocalizedText::from(i18n::msg!(
+                                "shell-this-rich-cell-has-no-editable-text-position"
+                            )));
                             return;
                         }
                         None => self
@@ -1710,10 +1779,11 @@ impl ShellSession {
             columns.resize(resize.column_index + 1, 0);
         }
         columns[resize.column_index] = width;
-        self.editor_message = Some(format!(
-            "Table column {} width: {width}",
-            resize.column_index + 1
-        ));
+        self.editor_message = Some(i18n::LocalizedText::from(i18n::msg!(
+            "shell-table-column-arg1-width-width",
+            arg1 = resize.column_index + 1,
+            width = width
+        )));
     }
 
     pub(in crate::session) fn edit_editor_table_edge(
@@ -1742,16 +1812,26 @@ impl ShellSession {
                 widths.clear();
             }
             let action = match edit {
-                app::editor::TableColumnEdit::Insert => "added",
-                app::editor::TableColumnEdit::Remove => "removed",
+                app::editor::TableColumnEdit::Insert => {
+                    i18n::LocalizedText::from(i18n::msg!("shell-added"))
+                }
+                app::editor::TableColumnEdit::Remove => {
+                    i18n::LocalizedText::from(i18n::msg!("shell-removed"))
+                }
             };
             let side = match edge {
-                ui::EditorTableEdge::Left => "left",
-                ui::EditorTableEdge::Right => "right",
+                ui::EditorTableEdge::Left => i18n::LocalizedText::from(i18n::msg!("shell-left")),
+                ui::EditorTableEdge::Right => i18n::LocalizedText::from(i18n::msg!("shell-right")),
             };
-            self.editor_message = Some(format!("Table column {action} on the {side}"));
+            self.editor_message = Some(i18n::LocalizedText::from(i18n::msg!(
+                "shell-table-column-action-on-the-side",
+                action = action,
+                side = side
+            )));
         } else if edit == app::editor::TableColumnEdit::Remove {
-            self.editor_message = Some("A table must keep at least one column".to_string());
+            self.editor_message = Some(i18n::LocalizedText::from(i18n::msg!(
+                "shell-a-table-must-keep-at-least-one-column"
+            )));
         }
         self.editor_open_menu = None;
         self.editor_focus = ui::EditorFocus::Canvas;
@@ -1809,7 +1889,9 @@ impl ShellSession {
                 ui::EditorToolbarAction::Find | ui::EditorToolbarAction::More
             )
         {
-            self.editor_message = Some("This document is read-only".to_string());
+            self.editor_message = Some(i18n::LocalizedText::from(i18n::msg!(
+                "shell-this-document-is-read-only"
+            )));
             return;
         }
         let command = match action {
@@ -1830,8 +1912,9 @@ impl ShellSession {
                     self.editor_fingerprint = None;
                     self.rebuild_editor_rich_render_cache();
                 } else {
-                    self.editor_message =
-                        Some("Save or close the current document first".to_string());
+                    self.editor_message = Some(i18n::LocalizedText::from(i18n::msg!(
+                        "shell-save-or-close-the-current-document-first"
+                    )));
                 }
                 return;
             }
@@ -1862,8 +1945,9 @@ impl ShellSession {
                 rows: 2,
             }),
             ui::EditorToolbarAction::Link => {
-                self.editor_message =
-                    Some("Inserted a link placeholder; edit its URL in Source mode".to_string());
+                self.editor_message = Some(i18n::LocalizedText::from(i18n::msg!(
+                    "shell-inserted-a-link-placeholder-edit-its-url-in-source-mode"
+                )));
                 EditorCommand::ApplyFormat(FormatCommand::Link {
                     url: "https://".to_string(),
                     title: None,
@@ -1876,8 +1960,9 @@ impl ShellSession {
                     .and_then(EditorState::selected_text)
                     .filter(|text| !text.is_empty())
                     .unwrap_or_else(|| "image".to_string());
-                self.editor_message =
-                    Some("Inserted an image placeholder; edit its path in Source mode".to_string());
+                self.editor_message = Some(i18n::LocalizedText::from(i18n::msg!(
+                    "shell-inserted-an-image-placeholder-edit-its-path-in-source-mode"
+                )));
                 EditorCommand::ApplyFormat(FormatCommand::Image {
                     url: "path/to/image.png".to_string(),
                     alt,
@@ -1885,7 +1970,9 @@ impl ShellSession {
                 })
             }
             ui::EditorToolbarAction::Find | ui::EditorToolbarAction::More => {
-                self.editor_message = Some("Use Source mode for this operation".to_string());
+                self.editor_message = Some(i18n::LocalizedText::from(i18n::msg!(
+                    "shell-use-source-mode-for-this-operation"
+                )));
                 return;
             }
         };
@@ -2007,12 +2094,11 @@ impl ShellSession {
     pub(in crate::session) fn open_diagnostics_editor(
         &mut self,
         reload: EditorReloadPolicy,
-    ) -> Result<(), String> {
+    ) -> Result<(), i18n::LocalizedText> {
         if self.app.editor_state().is_some_and(EditorState::is_dirty) {
-            return Err(
-                "the current Editor document has unsaved changes; close it before opening diagnostics"
-                    .to_string(),
-            );
+            return Err(i18n::LocalizedText::from(i18n::msg!(
+                "shell-the-current-editor-document-has-unsaved-changes-close-it-before-opening-diagnostics"
+            )));
         }
         let path = reload.path().to_path_buf();
         self.begin_editor_open_task(path, EditorTaskAccess::ReadOnly, Some(reload), false)
@@ -2024,12 +2110,16 @@ impl ShellSession {
         access: EditorTaskAccess,
         reload: Option<EditorReloadPolicy>,
         replacing_dirty: bool,
-    ) -> Result<(), String> {
+    ) -> Result<(), i18n::LocalizedText> {
         if self.editor_load_state.is_some() {
-            return Err("another Editor document is already loading".to_string());
+            return Err(i18n::LocalizedText::from(i18n::msg!(
+                "shell-another-editor-document-is-already-loading"
+            )));
         }
         if self.editor_save_state.is_some() {
-            return Err("the current Editor document is still saving".to_string());
+            return Err(i18n::LocalizedText::from(i18n::msg!(
+                "shell-the-current-editor-document-is-still-saving"
+            )));
         }
         let navigation = match self.active_screen() {
             ShellScreen::Explorer
@@ -2088,8 +2178,14 @@ impl ShellSession {
         self.editor_drag_anchor = None;
         self.active_popup = None;
         self.focused_component = ShellComponent::Editor;
-        self.editor_message = Some(format!("Loading {}", path.display()));
-        self.notify_status(format!("Loading {}", path.display()));
+        self.editor_message = Some(i18n::LocalizedText::from(i18n::msg!(
+            "shell-loading-arg1",
+            arg1 = path.display().to_string()
+        )));
+        self.notify_status(i18n::LocalizedText::from(i18n::msg!(
+            "shell-loading-arg1",
+            arg1 = path.display().to_string()
+        )));
         self.refresh_hit_map();
         Ok(())
     }
@@ -2131,7 +2227,11 @@ impl ShellSession {
             EditorTaskAccess::ReadOnly,
             self.app.auth_session().map(|s| s.user_id.clone()),
         ) {
-            self.report_editor_error(format!("Could not reload {}: {error}", path.display()));
+            self.report_editor_error(i18n::LocalizedText::from(i18n::msg!(
+                "shell-could-not-reload-arg1-error",
+                arg1 = path.display().to_string(),
+                error = error.to_string()
+            )));
             return;
         }
         self.editor_load_state = Some(EditorLoadState {
@@ -2149,7 +2249,10 @@ impl ShellSession {
                 old_cursor,
             },
         });
-        self.editor_message = Some(format!("Reloading {}", path.display()));
+        self.editor_message = Some(i18n::LocalizedText::from(i18n::msg!(
+            "shell-reloading-arg1",
+            arg1 = path.display().to_string()
+        )));
         self.refresh_hit_map();
     }
 
@@ -2159,8 +2262,12 @@ impl ShellSession {
         };
         self.editor_task_runtime.cancel(load.id);
         self.restore_editor_load_navigation(&load.operation);
-        self.editor_message = Some("Loading cancelled".to_string());
-        self.notify_status("Loading cancelled");
+        self.editor_message = Some(i18n::LocalizedText::from(i18n::msg!(
+            "shell-loading-cancelled"
+        )));
+        self.notify_status(i18n::LocalizedText::from(i18n::msg!(
+            "shell-loading-cancelled"
+        )));
         self.refresh_hit_map();
     }
 
@@ -2261,16 +2368,18 @@ impl ShellSession {
                         Err(error) => {
                             let action =
                                 if matches!(load.operation, EditorLoadOperation::Reload { .. }) {
-                                    "reload"
+                                    i18n::LocalizedText::from(i18n::msg!("shell-reload"))
                                 } else {
-                                    "open"
+                                    i18n::LocalizedText::from(i18n::msg!("shell-open"))
                                 };
                             self.restore_editor_load_navigation(&load.operation);
                             if error != "Editor load cancelled" {
-                                self.report_editor_error(format!(
-                                    "Could not {action} {}: {error}",
-                                    load.path.display()
-                                ));
+                                self.report_editor_error(i18n::LocalizedText::from(i18n::msg!(
+                                    "shell-could-not-action-arg1-error",
+                                    action = action,
+                                    arg1 = load.path.display().to_string(),
+                                    error = error.to_string()
+                                )));
                             }
                         }
                     }
@@ -2315,8 +2424,14 @@ impl ShellSession {
                 }
                 self.error_message = None;
                 self.resolve_notification_alert(EDITOR_ALERT_KEY);
-                self.editor_message = Some(format!("Saved {}", path.display()));
-                self.notify_toast(format!("Saved {}", path.display()));
+                self.editor_message = Some(i18n::LocalizedText::from(i18n::msg!(
+                    "shell-saved-arg1",
+                    arg1 = path.display().to_string()
+                )));
+                self.notify_toast(i18n::LocalizedText::from(i18n::msg!(
+                    "shell-saved-arg1",
+                    arg1 = path.display().to_string()
+                )));
                 let close_after_save = std::mem::take(&mut self.editor_close_after_save);
                 let open_after_save = std::mem::take(&mut self.editor_open_after_save);
                 let clean = self
@@ -2328,22 +2443,26 @@ impl ShellSession {
                 } else if open_after_save && clean {
                     self.continue_editor_open_after_save(platform);
                 } else if !clean && (close_after_save || open_after_save) {
-                    self.editor_message = Some(
-                        "Saved an earlier revision; newer edits are still unsaved".to_string(),
-                    );
+                    self.editor_message = Some(i18n::LocalizedText::from(i18n::msg!(
+                        "shell-saved-an-earlier-revision-newer-edits-are-still-unsaved"
+                    )));
                 }
             }
             Err(EditorSaveTaskError::ExternalModification) => {
                 self.editor_close_after_save = false;
                 self.editor_open_after_save = false;
                 self.report_editor_error(
-                    "The file changed outside the Editor. Use Save As or reload it before saving.",
+                    i18n::LocalizedText::from(i18n::msg!("shell-the-file-changed-outside-the-editor-use-save-as-or-reload-it-before-saving")),
                 );
             }
             Err(EditorSaveTaskError::Write(error)) => {
                 self.editor_close_after_save = false;
                 self.editor_open_after_save = false;
-                self.report_editor_error(format!("Could not save {}: {error}", path.display()));
+                self.report_editor_error(i18n::LocalizedText::from(i18n::msg!(
+                    "shell-could-not-save-arg1-error",
+                    arg1 = path.display().to_string(),
+                    error = error.to_string()
+                )));
             }
         }
     }
@@ -2417,9 +2536,15 @@ impl ShellSession {
                     .editor_state()
                     .is_some_and(EditorState::is_read_only);
                 self.editor_message = Some(if read_only {
-                    format!("Read-only: {}", path.display())
+                    i18n::LocalizedText::from(i18n::msg!(
+                        "shell-read-only-arg1",
+                        arg1 = path.display().to_string()
+                    ))
                 } else {
-                    format!("Opened {}", path.display())
+                    i18n::LocalizedText::from(i18n::msg!(
+                        "shell-opened-arg1",
+                        arg1 = path.display().to_string()
+                    ))
                 });
             }
             EditorLoadOperation::Reload {
@@ -2463,14 +2588,20 @@ impl ShellSession {
                 });
                 self.editor_quick_menu_anchor = None;
                 self.editor_drag_anchor = None;
-                self.editor_message = Some(format!("Reloaded {}", path.display()));
+                self.editor_message = Some(i18n::LocalizedText::from(i18n::msg!(
+                    "shell-reloaded-arg1",
+                    arg1 = path.display().to_string()
+                )));
             }
         }
         if self.active_screen() == ShellScreen::Editor {
             self.active_popup = None;
             self.focused_component = ShellComponent::Editor;
         }
-        self.notify_status(format!("Editor: {}", path.display()));
+        self.notify_status(i18n::LocalizedText::from(i18n::msg!(
+            "shell-editor-arg1",
+            arg1 = path.display().to_string()
+        )));
         self.refresh_hit_map();
     }
 
@@ -2478,7 +2609,7 @@ impl ShellSession {
         let replacing_dirty = self.app.editor_state().is_some_and(EditorState::is_dirty);
         if replacing_dirty && !self.editor_discard_for_open {
             self.report_editor_error(
-                "The current document has unsaved changes. Use Open in the Editor and choose Save or Discard first.",
+                i18n::LocalizedText::from(i18n::msg!("shell-the-current-document-has-unsaved-changes-use-open-in-the-editor-and-choose-save-or-discard-first")),
             );
             return false;
         }
@@ -2495,7 +2626,11 @@ impl ShellSession {
         match self.begin_editor_open_task(path.clone(), access, reload, replacing_dirty) {
             Ok(()) => true,
             Err(error) => {
-                self.report_editor_error(format!("Could not open {}: {error}", path.display()));
+                self.report_editor_error(i18n::LocalizedText::from(i18n::msg!(
+                    "shell-could-not-open-arg1-error",
+                    arg1 = path.display().to_string(),
+                    error = error
+                )));
                 false
             }
         }
@@ -2504,17 +2639,28 @@ impl ShellSession {
     pub(in crate::session) fn confirm_editor_open(&mut self) {
         self.notify_modal_with_options(
             ShellNotification::modal(
-                "Unsaved document",
-                "Save your changes before opening another document?",
+                i18n::LocalizedText::from(i18n::msg!("shell-unsaved-document")),
+                i18n::LocalizedText::from(i18n::msg!(
+                    "shell-save-your-changes-before-opening-another-document"
+                )),
                 ui::NotificationTone::Warning,
                 vec![
-                    ShellNotificationAction::new("save", "Save")
-                        .with_follow_up(ShellCommand::EditorSaveAndOpen),
-                    ShellNotificationAction::new("discard", "Discard")
-                        .with_follow_up(ShellCommand::EditorDiscardAndOpen),
-                    ShellNotificationAction::new("cancel", "Cancel")
-                        .cancel()
-                        .with_follow_up(ShellCommand::EditorCancelOpen),
+                    ShellNotificationAction::new(
+                        "save",
+                        i18n::LocalizedText::from(i18n::msg!("shell-save")),
+                    )
+                    .with_follow_up(ShellCommand::EditorSaveAndOpen),
+                    ShellNotificationAction::new(
+                        "discard",
+                        i18n::LocalizedText::from(i18n::msg!("shell-discard")),
+                    )
+                    .with_follow_up(ShellCommand::EditorDiscardAndOpen),
+                    ShellNotificationAction::new(
+                        "cancel",
+                        i18n::LocalizedText::from(i18n::msg!("shell-cancel")),
+                    )
+                    .cancel()
+                    .with_follow_up(ShellCommand::EditorCancelOpen),
                 ],
             )
             .with_key(EDITOR_OPEN_NOTIFICATION_KEY)
@@ -2526,11 +2672,15 @@ impl ShellSession {
         self.open_explorer(platform);
         if self.active_screen() == ShellScreen::Explorer {
             self.explorer_purpose = ExplorerPurpose::EditorOpen;
-            self.notify_status("Choose a Markdown or text document");
+            self.notify_status(i18n::LocalizedText::from(i18n::msg!(
+                "shell-choose-a-markdown-or-text-document"
+            )));
         } else {
             self.editor_open_after_save = false;
             self.editor_discard_for_open = false;
-            self.report_editor_error("Could not open the file picker");
+            self.report_editor_error(i18n::LocalizedText::from(i18n::msg!(
+                "shell-could-not-open-the-file-picker"
+            )));
         }
     }
 
@@ -2544,14 +2694,18 @@ impl ShellSession {
         if self.active_screen() != ShellScreen::Explorer {
             self.editor_close_after_save = false;
             self.editor_open_after_save = false;
-            self.report_editor_error("Could not open the Save As picker");
+            self.report_editor_error(i18n::LocalizedText::from(i18n::msg!(
+                "shell-could-not-open-the-save-as-picker"
+            )));
             return;
         }
         self.explorer_purpose = ExplorerPurpose::EditorSaveAs { snapshot };
         self.begin_explorer_input(ExplorerInputMode::NewTextFile);
         self.explorer_input = suggested_name;
         self.explorer_input_replace_all = true;
-        self.notify_status("Save As: enter a file name in the current directory");
+        self.notify_status(i18n::LocalizedText::from(i18n::msg!(
+            "shell-save-as-enter-a-file-name-in-the-current-directory"
+        )));
     }
 
     pub(in crate::session) fn submit_editor_save_as_from_explorer(
@@ -2575,7 +2729,9 @@ impl ShellSession {
             );
         if !valid_name {
             let _ = self.update_explorer_state(|state| {
-                state.error = Some("Enter a single file name without path separators".to_string());
+                state.error = Some(i18n::LocalizedText::from(i18n::msg!(
+                    "shell-enter-a-single-file-name-without-path-separators"
+                )));
                 state.message = None;
             });
             return true;
@@ -2585,7 +2741,9 @@ impl ShellSession {
             .explorer_state()
             .map(|state| state.current_path.clone())
         else {
-            self.report_editor_error("Save As destination is unavailable");
+            self.report_editor_error(i18n::LocalizedText::from(i18n::msg!(
+                "shell-save-as-destination-is-unavailable"
+            )));
             return true;
         };
         let path = directory.join(name);
@@ -2612,7 +2770,7 @@ impl ShellSession {
         self.explorer_input_replace_all = false;
         self.editor_discard_for_open = false;
         self.focused_component = ShellComponent::Editor;
-        self.notify_status("Editor");
+        self.notify_status(i18n::LocalizedText::from(i18n::msg!("shell-editor")));
         self.refresh_hit_map();
     }
 
@@ -2647,7 +2805,11 @@ impl ShellSession {
         ) {
             self.editor_close_after_save = false;
             self.editor_open_after_save = false;
-            self.report_editor_error(format!("Could not save {}: {error}", path.display()));
+            self.report_editor_error(i18n::LocalizedText::from(i18n::msg!(
+                "shell-could-not-save-arg1-error",
+                arg1 = path.display().to_string(),
+                error = error.to_string()
+            )));
             return false;
         }
         if self.active_screen() == ShellScreen::Explorer
@@ -2662,8 +2824,14 @@ impl ShellSession {
             revision,
             stage: EditorTaskStage::Writing,
         });
-        self.editor_message = Some(format!("Saving {}", path.display()));
-        self.notify_status(format!("Saving {}", path.display()));
+        self.editor_message = Some(i18n::LocalizedText::from(i18n::msg!(
+            "shell-saving-arg1",
+            arg1 = path.display().to_string()
+        )));
+        self.notify_status(i18n::LocalizedText::from(i18n::msg!(
+            "shell-saving-arg1",
+            arg1 = path.display().to_string()
+        )));
         self.refresh_hit_map();
         true
     }
@@ -2676,7 +2844,9 @@ impl ShellSession {
             self.explorer_input_replace_all = false;
             self.explorer_overlay_mode = None;
             self.focused_component = ShellComponent::Explorer;
-            self.notify_status("Choose a Markdown or text document");
+            self.notify_status(i18n::LocalizedText::from(i18n::msg!(
+                "shell-choose-a-markdown-or-text-document"
+            )));
             self.apply_explorer_command(ExplorerCommand::Refresh, platform);
             self.refresh_hit_map();
         } else {
@@ -2703,7 +2873,10 @@ impl ShellSession {
         let reason = authorization
             .reason
             .unwrap_or_else(|| "permission_denied".to_string());
-        self.report_editor_error(format!("Permission denied: {reason}"));
+        self.report_editor_error(i18n::LocalizedText::from(i18n::msg!(
+            "shell-permission-denied-reason",
+            reason = reason.to_string()
+        )));
         false
     }
 
@@ -2718,7 +2891,10 @@ impl ShellSession {
             Ok(Some(record)) => record,
             Ok(None) => return,
             Err(error) => {
-                self.report_editor_error(format!("Could not read the Editor recovery: {error}"));
+                self.report_editor_error(i18n::LocalizedText::from(i18n::msg!(
+                    "shell-could-not-read-the-editor-recovery-error",
+                    error = error.to_string()
+                )));
                 return;
             }
         };
@@ -2752,12 +2928,15 @@ impl ShellSession {
         self.editor_message = Some(if let Some(warning) = warning {
             warning
         } else if unbound {
-            "Recovered as an unbound draft because the original file changed; use Save As"
-                .to_string()
+            i18n::LocalizedText::from(i18n::msg!(
+                "shell-recovered-as-an-unbound-draft-because-the-original-file-changed-use-save-as"
+            ))
         } else {
-            "Recovered an unsaved document".to_string()
+            i18n::LocalizedText::from(i18n::msg!("shell-recovered-an-unsaved-document"))
         });
-        self.notify_toast("Recovered an unsaved Editor document");
+        self.notify_toast(i18n::LocalizedText::from(i18n::msg!(
+            "shell-recovered-an-unsaved-editor-document"
+        )));
     }
 
     pub(in crate::session) fn persist_editor_recovery_if_due(&mut self, now: Instant) {
@@ -2845,7 +3024,10 @@ impl ShellSession {
                 true
             }
             Err(error) => {
-                self.report_editor_error(format!("Could not save recovery: {error}"));
+                self.report_editor_error(i18n::LocalizedText::from(i18n::msg!(
+                    "shell-could-not-save-recovery-error",
+                    error = error.to_string()
+                )));
                 false
             }
         }
@@ -2891,33 +3073,36 @@ impl ShellSession {
         }
         if self.active_screen() == ShellScreen::Explorer && self.app.explorer_state().is_some() {
             self.focused_component = ShellComponent::Explorer;
-            self.notify_status("Explorer");
+            self.notify_status(i18n::LocalizedText::from(i18n::msg!("shell-explorer")));
             self.refresh_hit_map();
         } else if self.active_screen() == ShellScreen::Launcher
             && self.app.launcher_state().is_some()
         {
             self.focused_component = ShellComponent::Launcher;
-            self.notify_status("Launcher");
+            self.notify_status(i18n::LocalizedText::from(i18n::msg!("shell-launcher")));
             self.refresh_hit_map();
         } else if self.active_screen() == ShellScreen::Logs {
             self.focused_component = ShellComponent::Logs;
-            self.notify_status("Logs");
+            self.notify_status(i18n::LocalizedText::from(i18n::msg!("shell-logs")));
             self.refresh_hit_map();
         } else if self.active_screen() == ShellScreen::Diagnostics {
             self.focused_component = ShellComponent::Diagnostics;
-            self.notify_status("Diagnostics");
+            self.notify_status(i18n::LocalizedText::from(i18n::msg!("shell-diagnostics")));
             self.refresh_hit_map();
         } else if self.active_screen() == ShellScreen::SystemStatus {
             self.focused_component = ShellComponent::SystemStatus;
-            self.notify_status("System Status");
+            self.notify_status(i18n::LocalizedText::from(i18n::msg!("shell-system-status")));
             self.refresh_hit_map();
         } else {
             self.pop_to_home();
-            self.notify_status("Ready");
+            self.notify_status(i18n::LocalizedText::from(i18n::msg!("shell-ready")));
         }
     }
 
-    pub(in crate::session) fn report_editor_error(&mut self, message: impl Into<String>) {
+    pub(in crate::session) fn report_editor_error(
+        &mut self,
+        message: impl Into<i18n::LocalizedText>,
+    ) {
         let message = message.into();
         self.editor_message = Some(message.clone());
         self.error_message = Some(message.clone());
@@ -2929,7 +3114,10 @@ impl ShellSession {
             && let Err(error) =
                 app::editor_recovery::clear_editor_recovery(&app_paths, user_key.as_str())
         {
-            self.editor_message = Some(format!("Could not clear recovery: {error}"));
+            self.editor_message = Some(i18n::LocalizedText::from(i18n::msg!(
+                "shell-could-not-clear-recovery-error",
+                error = error.to_string()
+            )));
         }
         self.editor_recovery_dirty_since = None;
         self.editor_last_recovery_write = None;
