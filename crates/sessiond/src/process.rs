@@ -230,9 +230,20 @@ pub fn drain_session(identity: &session_protocol::SessionIdentity) -> io::Result
         ));
     }
     let path = Path::new("/sys/fs/cgroup").join(scope.trim_start_matches('/'));
-    for signal in [libc::SIGTERM, libc::SIGKILL] {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+    let mut signal = libc::SIGTERM;
+    loop {
         let mut pids = vec![];
         members(&path, &mut pids)?;
+        pids.retain(|pid| *pid != own);
+        if pids.is_empty() {
+            return Ok(());
+        }
+        if std::time::Instant::now() >= deadline {
+            return Err(io::Error::other(
+                "session processes remained after bounded cleanup",
+            ));
+        }
         for pid in pids {
             if pid == own {
                 continue;
@@ -256,11 +267,11 @@ pub fn drain_session(identity: &session_protocol::SessionIdentity) -> io::Result
                 }
             }
         }
-        if signal == libc::SIGTERM {
-            std::thread::sleep(std::time::Duration::from_millis(500));
-        }
+        std::thread::sleep(std::time::Duration::from_millis(
+            if signal == libc::SIGTERM { 500 } else { 20 },
+        ));
+        signal = libc::SIGKILL;
     }
-    Ok(())
 }
 
 #[cfg(test)]
