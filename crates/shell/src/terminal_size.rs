@@ -54,11 +54,13 @@ pub struct ShellTerminalSizeError {
 
 impl fmt::Display for ShellTerminalSizeError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            formatter,
-            "terminal is too small ({}x{}); resize it to at least {}x{} and try again",
-            self.width, self.height, self.required.width, self.required.height
-        )
+        formatter.write_str(&i18n::tr!(
+            "early-terminal-too-small",
+            width = self.width.to_string(),
+            height = self.height.to_string(),
+            required_width = self.required.width.to_string(),
+            required_height = self.required.height.to_string(),
+        ))
     }
 }
 
@@ -77,7 +79,7 @@ fn checked_terminal_size_with(
     let size = detect_size().map_err(|error| {
         io::Error::new(
             error.kind(),
-            format!("could not determine terminal size: {error}"),
+            i18n::tr!("early-terminal-size-unavailable", error = error.to_string()),
         )
     })?;
     requirement.validate(size).map_err(io::Error::other)?;

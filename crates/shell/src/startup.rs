@@ -321,9 +321,9 @@ pub fn prepare_shell_startup(
         && platform.is_native_backend()
         && unsafe { libc::geteuid() } != 0
     {
-        return Err(ShellStartupError::Identity(
-            "Linux mode requires root. Start tundra-shell with sudo.".into(),
-        ));
+        return Err(ShellStartupError::Identity(i18n::tr!(
+            "early-linux-root-required"
+        )));
     }
     ensure_startup_permissions(platform)?;
     let platform_kind = platform.kind();
@@ -376,12 +376,23 @@ fn ensure_startup_permissions(platform: &dyn Platform) -> Result<(), ShellStartu
     let request_error = platform.request_startup_permissions().err();
     let request_detail = request_error
         .map(|error| {
-            format!(" The operating-system permission screen could not be opened: {error}")
+            format!(
+                " {}",
+                i18n::tr!(
+                    "early-permission-screen-unavailable",
+                    error = error.to_string()
+                )
+            )
         })
         .unwrap_or_default();
     Err(ShellStartupError::Platform(PlatformError::Native {
         operation: "startup permission check",
-        message: format!("{name} is required. {message}{request_detail}"),
+        message: i18n::tr!(
+            "early-permission-required",
+            name = name,
+            message = message,
+            detail = request_detail
+        ),
     }))
 }
 

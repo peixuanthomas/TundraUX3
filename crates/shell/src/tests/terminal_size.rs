@@ -119,3 +119,80 @@ fn checked_terminal_size_does_not_replace_detection_failures_with_a_fallback() {
             .contains("could not determine terminal size")
     );
 }
+
+#[test]
+fn terminal_size_recovery_text_follows_the_locale_and_preserves_raw_detection_errors() {
+    use std::{
+        fs,
+        path::PathBuf,
+        sync::Arc,
+        time::{SystemTime, UNIX_EPOCH},
+    };
+
+    struct LocaleRoot(PathBuf);
+    impl Drop for LocaleRoot {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+    let root = LocaleRoot(std::env::temp_dir().join(format!(
+        "tundra-early-locale-{}-{}",
+        std::process::id(),
+        SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos(),
+    )));
+    for (code, contents) in [
+        (
+            "en-US",
+            include_str!("../../../ascii-assets/assets/locales/en-US/recovery/early.ftl"),
+        ),
+        (
+            "zh-CN",
+            include_str!("../../../ascii-assets/assets/locales/zh-CN/recovery/early.ftl"),
+        ),
+    ] {
+        let locale = root.0.join("locales").join(code);
+        fs::create_dir_all(locale.join("recovery")).unwrap();
+        fs::write(
+            locale.join("manifest.toml"),
+            format!("format_version = 1\ncode = \"{code}\"\nnative_name = \"{code}\"\n"),
+        )
+        .unwrap();
+        fs::write(locale.join("recovery/early.ftl"), contents).unwrap();
+    }
+    let requirement = ShellTerminalSizeRequirement {
+        width: 108,
+        height: 20,
+    };
+    let error = requirement.validate((80, 18)).unwrap_err();
+    let english = i18n::LanguageSnapshot::load(&root.0, "en-US", 1)
+        .unwrap()
+        .snapshot;
+    let _english = i18n::enter_snapshot(Arc::new(english));
+    assert_eq!(
+        error.to_string(),
+        "terminal is too small (80x18); resize it to at least 108x20 and try again"
+    );
+    {
+        let chinese = i18n::LanguageSnapshot::load(&root.0, "zh-CN", 2)
+            .unwrap()
+            .snapshot;
+        let _chinese = i18n::enter_snapshot(Arc::new(chinese));
+        assert_eq!(
+            error.to_string(),
+            "终端尺寸过小（80x18）；请将终端调整为至少 108x20 后重试"
+        );
+        let detected = checked_terminal_size_with(requirement, || {
+            Err(io::Error::new(
+                io::ErrorKind::NotConnected,
+                "raw OS detail /dev/tty",
+            ))
+        })
+        .unwrap_err();
+        assert_eq!(detected.kind(), io::ErrorKind::NotConnected);
+        assert_eq!(
+            detected.to_string(),
+            "无法确定终端尺寸：raw OS detail /dev/tty"
+        );
+    }
+    assert!(error.to_string().contains("resize"));
+}
