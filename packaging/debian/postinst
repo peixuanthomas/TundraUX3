@@ -21,7 +21,7 @@ case "${1:-}" in
     if [ -e /sys/fs/selinux/enforce ]; then
       semodule -X 100 -i /usr/share/selinux/packages/tundra-runtime.cil
       restorecon -RF /var/lib/tundra/runtime/versions
-    elif semodule -l >/dev/null 2>&1; then
+    elif semodule -l 2>/dev/null | grep -q '[[:alnum:]]'; then
       semodule -n -X 100 -i /usr/share/selinux/packages/tundra-runtime.cil
     fi
     if [ -d /run/systemd/system ]; then systemctl daemon-reload; fi
