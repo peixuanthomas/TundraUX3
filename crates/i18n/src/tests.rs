@@ -652,3 +652,47 @@ fn diagnostic_render_ignores_disk_customization_and_active_language() {
         .unwrap();
     assert_eq!(threaded, original_english);
 }
+
+#[test]
+fn strict_failed_candidate_retains_completed_english_repair_diagnostics() {
+    let fixture = Fixture::new();
+    let previous = fixture.snapshot("en-US", 1);
+    let (relative, original) = EMBEDDED_FILES
+        .iter()
+        .find(|(_, text)| !text.trim().is_empty())
+        .unwrap();
+    let english_path = fixture.0.join("locales/en-US").join(relative);
+    fs::write(&english_path, "broken = {\n").unwrap();
+    fixture.locale("zh-CN", "简体中文", "broken = {\n");
+
+    let error = LanguageSnapshot::load(&fixture.0, "zh-CN", 2).unwrap_err();
+    assert_eq!(error.kind, LanguageErrorKind::Syntax);
+    assert_eq!(error.path, Some(fixture.0.join("locales/zh-CN/test.ftl")));
+    assert_eq!(fs::read_to_string(&english_path).unwrap(), *original);
+    assert_eq!(
+        error
+            .diagnostics
+            .iter()
+            .filter(|diagnostic| diagnostic.path == english_path
+                && diagnostic.kind == RepairKind::CorruptFile
+                && diagnostic.repaired)
+            .count(),
+        1
+    );
+    assert_eq!(previous.code(), "en-US");
+    assert_eq!(previous.generation(), 1);
+    assert_eq!(
+        msg!("resources-recovery-title").render(&previous),
+        "Resource recovery"
+    );
+
+    let mut without_diagnostics = error.clone();
+    without_diagnostics.diagnostics.clear();
+    assert_eq!(error.to_string(), without_diagnostics.to_string());
+    assert!(
+        canonicalize_locale("../invalid")
+            .unwrap_err()
+            .diagnostics
+            .is_empty()
+    );
+}

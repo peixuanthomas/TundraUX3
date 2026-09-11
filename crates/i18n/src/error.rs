@@ -16,6 +16,9 @@ pub struct LanguageError {
     pub kind: LanguageErrorKind,
     pub path: Option<PathBuf>,
     pub message: String,
+    /// Repairs completed before a strict candidate failed. Callers may report these
+    /// without publishing a new snapshot; they are excluded from `Display`.
+    pub diagnostics: Vec<RepairDiagnostic>,
 }
 
 impl LanguageError {
@@ -28,6 +31,7 @@ impl LanguageError {
             kind,
             path: path.into(),
             message: message.into(),
+            diagnostics: Vec::new(),
         }
     }
 }

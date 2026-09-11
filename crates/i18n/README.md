@@ -73,7 +73,10 @@ content in memory and produce structured diagnostics:
 - `message: String`
 - `repaired: bool` (whether the correction was persisted)
 
-`LanguageLoad` exposes `snapshot` and `diagnostics`. Callers own logging, recovery
+`LanguageLoad` exposes `snapshot` and `diagnostics`. A failed strict load exposes
+repairs already performed through `LanguageError::diagnostics`, allowing callers
+to report those repairs while retaining the previous snapshot. Error `Display`
+continues to contain only the original failure text. Callers own logging, recovery
 presentation, persistence of the selected language, and publication of a new
 `Arc<LanguageSnapshot>` after a successful strict reload. Existing snapshots
 remain unchanged even if asset files are edited or removed.

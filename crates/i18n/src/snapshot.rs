@@ -74,7 +74,17 @@ impl LanguageSnapshot {
         generation: u64,
     ) -> Result<LanguageLoad, LanguageError> {
         let mut diagnostics = Vec::new();
-        let snapshot = Self::load_inner(root.as_ref(), code, generation, false, &mut diagnostics)?;
+        let snapshot =
+            match Self::load_inner(root.as_ref(), code, generation, false, &mut diagnostics) {
+                Ok(snapshot) => snapshot,
+                Err(mut error) => {
+                    // Repairing English is an independent side effect, even when the
+                    // requested language cannot become a publishable candidate.
+                    diagnostics.append(&mut error.diagnostics);
+                    error.diagnostics = diagnostics;
+                    return Err(error);
+                }
+            };
         Ok(LanguageLoad {
             snapshot,
             diagnostics,
