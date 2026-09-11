@@ -51,7 +51,9 @@ shell scripts or source-built update helpers.
   switching the atomic symlink, starts sessiond/privileged and checks their active
   status. Failure restores the recorded previous version. At boot run `recover`
   before sessiond/privileged: an uncommitted transaction restores the previous
-  runtime even if power failed after the symlink was switched.
+  runtime even if power failed after the symlink was switched. Recovery also clears
+  the protected maintenance marker when a crash occurred after logout but before
+  the transaction journal was created. It never starts services itself.
 
 The package must integrate the maintenance-ready handshake with sessiond so no
 new login is accepted between logout and update completion. A root marker alone

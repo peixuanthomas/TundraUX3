@@ -435,13 +435,24 @@ fn systemctl(verb: &str) -> Result<()> {
     )
 }
 fn release_maintenance() -> Result<()> {
-    let marker = Path::new("/run/tundra/maintenance-ready");
-    if marker.exists() {
-        trusted_path(marker, false)?;
-        fs::remove_file(marker)?;
-        sync_dir(marker.parent().unwrap())?;
+    release_maintenance_in(Path::new("/run/tundra/maintenance-ready"), trusted_path)
+}
+fn release_maintenance_in(
+    marker: &Path,
+    validate: impl Fn(&Path, bool) -> Result<()>,
+) -> Result<()> {
+    match fs::symlink_metadata(marker) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(error.into()),
+        Ok(_) => {}
     }
-    Ok(())
+    validate(marker, false)?;
+    fs::remove_file(marker)?;
+    sync_dir(
+        marker
+            .parent()
+            .ok_or_else(|| invalid("marker has no parent"))?,
+    )
 }
 fn assert_no_sessions() -> Result<()> {
     // sessiond clears its root-owned marker only after PAM close; fail closed if absent service integration.
@@ -496,28 +507,80 @@ pub fn apply_prepared(release_id: &str) -> Result<()> {
 /// Run before sessiond startup. Uncommitted transactions always restore the previous version.
 pub fn recover() -> Result<()> {
     let _lock = state_lock()?;
-    let path = Path::new(ROOT).join("transaction.json");
-    if !path.exists() {
-        return Ok(());
+    recover_in(
+        Path::new(ROOT),
+        Path::new("/run/tundra/maintenance-ready"),
+        trusted_path,
+    )
+}
+fn recover_in(
+    root: &Path,
+    marker: &Path,
+    validate: impl Fn(&Path, bool) -> Result<()>,
+) -> Result<()> {
+    let path = root.join("transaction.json");
+    match fs::symlink_metadata(&path) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            // CloseSession can finish and publish its marker before the worker
+            // writes its journal. Recovery precedes session startup and holds
+            // the root maintenance lock, so this protected marker is stale.
+            return release_maintenance_in(marker, validate);
+        }
+        Err(error) => return Err(error.into()),
+        Ok(_) => {}
     }
-    trusted_path(&path, false)?;
+    validate(&path, false)?;
     let transaction: Transaction = serde_json::from_reader(File::open(&path)?)?;
     if !transaction.committed {
-        trusted_path(
-            &Path::new(ROOT).join("versions").join(&transaction.previous),
-            true,
-        )?;
-        point_to(&transaction.previous)?;
+        validate(&root.join("versions").join(&transaction.previous), true)?;
+        point_to_in(root, &transaction.previous)?;
         fs::remove_file(&path)?;
-        sync_dir(Path::new(ROOT))?;
+        sync_dir(root)?;
     }
-    release_maintenance()?;
-    Ok(())
+    release_maintenance_in(marker, validate)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn recovery_clears_pre_journal_marker_and_rolls_back_before_resuming() {
+        let root =
+            std::env::temp_dir().join(format!("tundra-recovery-test-{}", std::process::id()));
+        fs::create_dir(&root).unwrap();
+        let marker = root.join("maintenance-ready");
+        point_to_in(&root, "v1.0.0").unwrap();
+        fs::write(&marker, "sessions-closed").unwrap();
+        // The fixture represents already-protected root storage. Production
+        // always uses trusted_path and the fixed root-owned state/marker paths.
+        recover_in(&root, &marker, |_, _| Ok(())).unwrap();
+        assert!(!marker.exists());
+        assert_eq!(
+            fs::read_link(root.join("current")).unwrap(),
+            Path::new("versions/v1.0.0")
+        );
+        fs::write(&marker, "sessions-closed").unwrap();
+        assert!(recover_in(&root, &marker, trusted_path).is_err());
+        assert!(marker.exists());
+        point_to_in(&root, "v2.0.0").unwrap();
+        atomic_json(
+            &root.join("transaction.json"),
+            &Transaction {
+                previous: "v1.0.0".into(),
+                next: "v2.0.0".into(),
+                committed: false,
+            },
+        )
+        .unwrap();
+        recover_in(&root, &marker, |_, _| Ok(())).unwrap();
+        assert!(!marker.exists());
+        assert!(!root.join("transaction.json").exists());
+        assert_eq!(
+            fs::read_link(root.join("current")).unwrap(),
+            Path::new("versions/v1.0.0")
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
     #[test]
     fn atomic_pointer_replaces_stale_pending_and_rejects_paths() {
         let root = std::env::temp_dir().join(format!("tundra-pointer-test-{}", std::process::id()));
