@@ -91,3 +91,6 @@ tundra-cli system update vX.Y.Z
 
 `session status` 显示真实用户、logind 身份及受管理快照；其它命令必须满足服务端权限。
 安装与发行版依赖请参阅 `packaging/linux/README-LINUX.txt`。
+
+本次实现的实机证据、安装包摘要、自动测试结果和未验证范围见
+[2026-09-12 验证记录](validation-2026-09-12.md)。
