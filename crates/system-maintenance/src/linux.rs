@@ -370,12 +370,7 @@ fn prepare_locked(release_id: &str, file: File) -> Result<ReleaseManifest> {
             .by_name("share/tundra/release.json")?
             .take(16 * 1024),
     )?;
-    // runtime_sha256 cannot be included in its own digest; inner manifest uses 64 zeros.
-    let mut expected = manifest.clone();
-    expected.runtime_sha256 = "0".repeat(64);
-    if metadata != expected {
-        return Err(invalid("attested release metadata mismatch"));
-    }
+    manifest.validate_attested_metadata(&metadata)?;
     drop(runtime_zip);
     let extracted = staging.join("runtime");
     private_dir(&extracted)?;

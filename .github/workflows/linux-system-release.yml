@@ -19,7 +19,7 @@ jobs:
       id-token: write
       attestations: write
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           persist-credentials: false
       - name: Build the reviewed master commit
@@ -46,6 +46,15 @@ jobs:
           with zipfile.ZipFile(runtime, 'w', zipfile.ZIP_DEFLATED) as archive:
               for name in ['tundra-shell', 'tundra-cli', 'tundra-sessiond', 'tundra-greeter', 'tundra-privileged']:
                   archive.write(root/'target/release'/name, 'bin/'+name)
+              asset_root = root/'crates/ascii-assets/assets'
+              for source in sorted(asset_root.rglob('*')):
+                  if source.is_symlink():
+                      raise SystemExit('release assets must not contain symlinks')
+                  if source.is_file():
+                      archive.write(source, 'share/tundraux3/assets/'+str(source.relative_to(asset_root)))
+              for locale in ['en-US', 'zh-CN']:
+                  source = asset_root/'locales'/locale/'greeter.ftl'
+                  archive.write(source, 'share/tundra/greeter/locales/'+locale+'/greeter.ftl')
               archive.writestr('share/tundra/release.json', json.dumps(release))
           release['runtime_sha256'] = hashlib.sha256(runtime.read_bytes()).hexdigest()
           (out/'release.json').write_text(json.dumps(release))
@@ -54,7 +63,7 @@ jobs:
           PY
       - name: Attest exact runtime bytes
         id: attest
-        uses: actions/attest-build-provenance@v3
+        uses: actions/attest-build-provenance@43d14bc2b83dec42d39ecae14e916627a18bb661 # v3
         with:
           subject-path: system-release/runtime.zip
       - name: Publish envelope without replacing existing release assets

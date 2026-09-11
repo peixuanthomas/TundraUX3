@@ -33,6 +33,16 @@ pub fn release_version(id: &str) -> Result<semver::Version> {
     Ok(version)
 }
 impl ReleaseManifest {
+    /// Bind display/authorization metadata to the manifest inside the attested runtime.
+    pub fn validate_attested_metadata(&self, embedded: &Self) -> Result<()> {
+        let mut expected = self.clone();
+        // A digest cannot cover a ZIP containing itself; only this self-reference differs.
+        expected.runtime_sha256 = "0".repeat(64);
+        if embedded != &expected {
+            return Err(invalid("attested release metadata mismatch"));
+        }
+        Ok(())
+    }
     pub fn validate(&self, id: &str, current: Option<&str>) -> Result<()> {
         let version = release_version(id)?;
         if self.version != id
@@ -211,5 +221,32 @@ mod tests {
             )
             .is_err()
         );
+    }
+    #[test]
+    fn unsigned_envelope_cannot_replace_attested_release_metadata() {
+        let outer = ReleaseManifest {
+            version: "v2.0.0".into(),
+            source_sha: "a".repeat(40),
+            architecture: "x86_64-unknown-linux-gnu".into(),
+            protocol: 1,
+            runtime_sha256: "b".repeat(64),
+        };
+        let mut inner = outer.clone();
+        inner.runtime_sha256 = "0".repeat(64);
+        assert!(outer.validate_attested_metadata(&inner).is_ok());
+        let mut tampered = outer.clone();
+        tampered.version = "v99.0.0".into();
+        assert!(tampered.validate_attested_metadata(&inner).is_err());
+        tampered = outer.clone();
+        tampered.source_sha = "c".repeat(40);
+        assert!(tampered.validate_attested_metadata(&inner).is_err());
+        tampered = outer.clone();
+        tampered.protocol = 2;
+        assert!(tampered.validate_attested_metadata(&inner).is_err());
+        tampered = outer.clone();
+        tampered.architecture = "aarch64".into();
+        assert!(tampered.validate_attested_metadata(&inner).is_err());
+        inner.runtime_sha256 = outer.runtime_sha256.clone();
+        assert!(outer.validate_attested_metadata(&inner).is_err());
     }
 }
