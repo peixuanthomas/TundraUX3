@@ -184,13 +184,15 @@ flowchart TD
 
 关键边界是：`app` 不依赖 `ui`、Ratatui 或 crossterm。UI 可以读取应用领域类型，但应用命令不携带坐标、`Rect`、`UiId` 或终端按键。`shell` 是组合根，负责连接终端世界、领域状态、平台副作用与生命周期。
 
-### 12 个 workspace crate
+### 14 个 workspace crate
 
 | Crate | 主要职责 |
 | --- | --- |
 | `app` | `AppState`、`AppCommand`、`AppAction`、只读快照，以及可选的 Editor、Explorer、Launcher、Diagnostics、通知、认证与配置领域模型。 |
 | `ascii-assets` | 主题清单、banner、图标、天气世界、时钟字体的加载、校验和尺寸统计。 |
 | `cli` | `tundra-cli` 参数解析、诊断、路径查看、公开配置读写、存储重置、资源/动画预览与 Weathr 启动；不依赖 UI。 |
+| `i18n` | Fluent 语言目录、资源校验、默认英文修复、稳定消息与参数契约、不可变内存快照。 |
+| `runtime-log` | 固定语言事件日志、稳定事件代码、可选消息 ID 与结构化参数、历史日志兼容。 |
 | `identity` | 用户、角色、会话、授权、密码验证与登录锁定；记录由 storage 持久化。 |
 | `platform` | Windows/macOS/Linux 的系统路径、终端能力、文件系统、启动外部程序、Trash、电脑重启、关机与系统诊断边界。 |
 | `shell` | `ShellSession`、控制器、presentation、终端事件转换、全屏会话、锁屏与应用组合，以及 `tundra-shell` 入口。 |
@@ -208,6 +210,8 @@ crates/
 ├── app/src/{application,editor,explorer,launcher,diagnostics}/
 ├── ui/src/{foundation,screens,components,assets,theme}/
 ├── shell/src/session/{controller,presentation,runtime.rs,ui_state.rs}
+├── i18n/
+├── runtime-log/
 ├── identity/
 ├── storage/
 ├── platform/
@@ -618,7 +622,7 @@ cargo build --locked -p shell -p cli -p weathr
 
 `scripts/package-linux.sh` 只允许在 Linux x86_64 主机运行，默认将产物写入 `dist/`；版本可由 `TUNDRAUX3_VERSION` 覆盖，否则读取 workspace 版本。脚本执行 `cargo build --release --locked -p shell -p cli`，并拒绝将 `/` 或仓库根目录作为输出目录。
 
-- 便携包 `tundraux3-<version>-linux-x86_64.tar.gz` 包含两个二进制、`debug assets/`、根许可证、Weathr 许可证和 Linux 说明。
+- 便携包 `tundraux3-<version>-linux-x86_64.tar.gz` 包含两个二进制、`assets/`（包含主题和语言包）、根许可证、Weathr 许可证和 Linux 说明。
 - Debian 包 `tundraux3_<version>_amd64.deb` 将二进制安装到 `/usr/bin`、资源安装到 `/usr/share/tundraux3/assets`，并附带 desktop entry 与许可证；`--tar-only` 和 `--rpm` 跳过这一产物。
 - RPM 包 `tundraux3-<version>-1.x86_64.rpm` 复用相同程序、资源和 desktop entry，使用 Fedora `system-auth` PAM 配置，以 `%config(noreplace)` 保留本地修改；依赖 `xdg-utils`、`glib2`、`pam`、`glibc`、`sudo`，并由 RPM 自动扫描共享库依赖。正式包在 Fedora 43 x86_64 构建并验证安装，其他衍生发行版必须满足其依赖，不承诺旧版 RHEL 系兼容。
 - 所有产物在 `SHA256SUMS` 中记录校验和。`.deb` 依赖 `xdg-utils` 与 `libglib2.0-bin`，并推荐 D-Bus 用户会话、portal、polkit 与 XWayland。
@@ -649,6 +653,10 @@ macOS 的 Explorer Trash 可能需要 Full Disk Access，启动/诊断会提示�
 ### 配置或状态损坏
 
 不要立刻运行 `tundra-cli new`。先备份 `tundra-cli debug paths` 报告的配置和状态目录，再查看 Shell 恢复提示和日志。Storage 会尽可能保留损坏原件并重建默认文档；`new` 只适用于明确需要彻底重置时。
+
+## 多语言
+
+界面与启动恢复提示支持 English（`en-US`）和简体中文（`zh-CN`）。在区域与时间设置中确认语言会重新读取语言包，包括再次选择当前语言。语言包与主题独立，默认英文及图形资源在启动时自动修复；写入失败时使用内置资源继续运行。详见[语言资源与恢复](LOCALIZATION.md)。
 
 ## 架构约束
 

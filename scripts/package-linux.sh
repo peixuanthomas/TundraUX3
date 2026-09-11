@@ -65,6 +65,9 @@ cargo build --release --locked -p shell -p cli
 install -Dm755 "$release_dir/tundra-shell" "$stage_root/$portable_name/tundra-shell"
 install -Dm755 "$release_dir/tundra-cli" "$stage_root/$portable_name/tundra-cli"
 cp -a crates/ascii-assets/assets "$stage_root/$portable_name/assets"
+for locale in en-US zh-CN; do
+  test -s "$stage_root/$portable_name/assets/locales/$locale/manifest.toml"
+done
 install -Dm644 LICENSE "$stage_root/$portable_name/LICENSE"
 install -Dm644 crates/weathr/LICENSE.weathr "$stage_root/$portable_name/LICENSE.weathr"
 install -Dm644 packaging/linux/README-LINUX.txt "$stage_root/$portable_name/README-LINUX.txt"

@@ -30,9 +30,10 @@ jobs:
           set -euo pipefail
           test "$GITHUB_REF" = refs/heads/master
           cargo metadata --locked --no-deps --format-version 1 > metadata.json
-          jq -e '[.packages[] | select(.manifest_path | contains("/crates/"))] | length == 12 and all(.[]; .version == "1.3.0")' metadata.json
+          jq -e '[.packages[] | select(.manifest_path | contains("/crates/"))] | length == 14 and all(.[]; .version == "1.3.0")' metadata.json
           test -s packaging/releases/v1.3.md
           bash -n scripts/package-linux.sh
+          python3 scripts/check-localization.py
 
   windows-x64:
     needs: validate
@@ -74,6 +75,12 @@ jobs:
           New-Item -ItemType Directory -Force -Path package | Out-Null
           Copy-Item target/x86_64-pc-windows-msvc/release/tundra-shell.exe package/
           Copy-Item target/x86_64-pc-windows-msvc/release/tundra-cli.exe package/
+          Copy-Item -Recurse crates/ascii-assets/assets package/assets
+          foreach ($locale in @("en-US", "zh-CN")) {
+            if (!(Test-Path "package/assets/locales/$locale/manifest.toml")) {
+              throw "Missing packaged locale: $locale"
+            }
+          }
           Copy-Item LICENSE package/
           Copy-Item crates/weathr/LICENSE.weathr package/
           Compress-Archive -Path package/* -DestinationPath TundraUX3-v1.3-windows-x64.zip
@@ -142,12 +149,16 @@ jobs:
             target/x86_64-apple-darwin/release/tundra-cli \
             -output package/tundra-cli
           chmod 755 package/tundra-shell package/tundra-cli
+          cp -R crates/ascii-assets/assets package/assets
+          for locale in en-US zh-CN; do
+            test -s "package/assets/locales/$locale/manifest.toml"
+          done
           cp LICENSE package/
           cp crates/weathr/LICENSE.weathr package/
           lipo -info package/tundra-shell
           lipo -info package/tundra-cli
           tar -C package -czf TundraUX3-v1.3-macos-universal.tar.gz \
-            tundra-shell tundra-cli LICENSE LICENSE.weathr
+            tundra-shell tundra-cli assets LICENSE LICENSE.weathr
           shasum -a 256 TundraUX3-v1.3-macos-universal.tar.gz \
             > TundraUX3-v1.3-macos-universal.sha256
 

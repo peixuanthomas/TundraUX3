@@ -27,6 +27,13 @@ jobs:
       - name: Compile workspace
         shell: bash
         run: cargo build --workspace --locked
+      - name: Test localization and resource recovery
+        shell: bash
+        run: |
+          python3 scripts/check-localization.py
+          cargo test --locked -p i18n -p ascii-assets
+          cargo test --locked -p ui --test localization
+          cargo test --locked -p shell session::localization::tests --lib
       - name: Test system metrics
         shell: bash
         run: |

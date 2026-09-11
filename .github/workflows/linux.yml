@@ -23,6 +23,12 @@ jobs:
           cargo test --locked -p platform --lib --no-run --message-format=json > "$RUNNER_TEMP/platform-tests.json"
           test_binary="$(jq -r 'select(.executable != null and .target.name == "platform") | .executable' "$RUNNER_TEMP/platform-tests.json")"
           sudo "$test_binary" --ignored --exact linux::root_trash_tests::root_trash_handles_other_users_and_preserves_private_metadata
+      - name: Test localization and resource recovery
+        run: |
+          python3 scripts/check-localization.py
+          cargo test --locked -p i18n -p ascii-assets
+          cargo test --locked -p ui --test localization
+          cargo test --locked -p shell session::localization::tests --lib
       - name: Test system metrics
         run: |
           cargo test --locked -p platform --test linux_logs

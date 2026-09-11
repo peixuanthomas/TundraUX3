@@ -59,6 +59,21 @@ fn runtime_asset_copy_includes_valid_icon_assets() {
             "copied runtime assets should include Home icon {icon}"
         );
     }
+    for locale in ["en-US", "zh-CN"] {
+        for relative in [
+            "manifest.toml",
+            "common/notifications.ftl",
+            "modules/shell-messages.ftl",
+            "recovery/startup.ftl",
+        ] {
+            let relative = format!("locales/{locale}/{relative}");
+            assert_eq!(
+                fs::read(copied_root.join(&relative)).expect("packaged locale resource"),
+                fs::read(Path::new(CANONICAL_ASSETS_DIR).join(&relative)).unwrap(),
+                "packaged locale must preserve canonical resource {relative}"
+            );
+        }
+    }
     let store = AsciiAssetStore::load_with_root(&copied_root, DEFAULT_THEME_ID)
         .expect("copied runtime assets should be self-contained");
     let report = check_required_assets(&copied_root, DEFAULT_THEME_ID);
