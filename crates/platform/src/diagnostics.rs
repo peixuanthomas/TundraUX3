@@ -38,6 +38,8 @@ impl CheckStatus {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EnvironmentCheck {
+    /// Stable producer identity; independent of diagnostic display text.
+    pub id: &'static str,
     pub label: String,
     pub status: CheckStatus,
     pub message: String,
@@ -45,10 +47,19 @@ pub struct EnvironmentCheck {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PathCheck {
+    /// Stable application-directory role, or `directory` for an ad-hoc probe.
+    pub id: &'static str,
     pub label: String,
     pub path: PathBuf,
     pub status: CheckStatus,
     pub message: String,
+}
+
+impl PathCheck {
+    fn with_id(mut self, id: &'static str) -> Self {
+        self.id = id;
+        self
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -85,11 +96,12 @@ pub fn run_doctor_with(platform: &dyn Platform) -> Result<DoctorReport, Platform
     environment_checks.extend(capability_checks(platform));
 
     let path_checks = vec![
-        check_file_parent_read_write("Config parent", app_paths.config_path()),
-        check_directory_read_write("Data path", app_paths.data_path()),
-        check_directory_read_write("Cache path", app_paths.cache_path()),
-        check_directory_read_write("Logs path", app_paths.logs_path()),
-        check_directory_read_write("Temp path", app_paths.temp_path()),
+        check_file_parent_read_write("Config parent", app_paths.config_path())
+            .with_id("config-parent"),
+        check_directory_read_write("Data path", app_paths.data_path()).with_id("data-path"),
+        check_directory_read_write("Cache path", app_paths.cache_path()).with_id("cache-path"),
+        check_directory_read_write("Logs path", app_paths.logs_path()).with_id("logs-path"),
+        check_directory_read_write("Temp path", app_paths.temp_path()).with_id("temp-path"),
     ];
 
     Ok(DoctorReport {
@@ -103,16 +115,19 @@ pub fn run_doctor_with(platform: &dyn Platform) -> Result<DoctorReport, Platform
 fn startup_permission_check(platform: &dyn Platform) -> EnvironmentCheck {
     match platform.startup_permission_status() {
         Ok(StartupPermissionStatus::Ready) => EnvironmentCheck {
+            id: "startup-permissions",
             label: "Startup permissions".to_string(),
             status: CheckStatus::Pass,
             message: "required startup permissions are available".to_string(),
         },
         Ok(StartupPermissionStatus::ActionRequired { name, message }) => EnvironmentCheck {
+            id: "startup-permissions",
             label: "Startup permissions".to_string(),
             status: CheckStatus::Fail,
             message: format!("{name}: {message}"),
         },
         Err(error) => EnvironmentCheck {
+            id: "startup-permissions",
             label: "Startup permissions".to_string(),
             status: CheckStatus::Fail,
             message: error.to_string(),
@@ -222,6 +237,7 @@ pub fn check_directory_read_write(label: impl Into<String>, directory: &Path) ->
     };
 
     let mut check = PathCheck {
+        id: "directory",
         label,
         path: directory.to_path_buf(),
         status: CheckStatus::Pass,
@@ -250,16 +266,19 @@ fn platform_check(platform: &dyn Platform) -> EnvironmentCheck {
     match platform.kind() {
         PlatformKind::Windows => windows_platform_check(),
         PlatformKind::Macos => EnvironmentCheck {
+            id: "platform",
             label: "Platform".to_string(),
             status: CheckStatus::Pass,
             message: "macOS platform supported".to_string(),
         },
         PlatformKind::Linux => EnvironmentCheck {
+            id: "platform",
             label: "Platform".to_string(),
             status: CheckStatus::Pass,
             message: "Linux platform supported".to_string(),
         },
         PlatformKind::Unsupported => EnvironmentCheck {
+            id: "platform",
             label: "Platform".to_string(),
             status: CheckStatus::Fail,
             message: "unsupported platform".to_string(),
@@ -272,17 +291,20 @@ fn windows_platform_check() -> EnvironmentCheck {
     match crate::windows::current_windows_build() {
         Ok(build) if classify_windows_build(build) == WindowsBuildClass::Windows11OrNewer => {
             EnvironmentCheck {
+                id: "platform",
                 label: "Platform".to_string(),
                 status: CheckStatus::Pass,
                 message: format!("Windows build {build} meets Windows 11 requirement"),
             }
         }
         Ok(build) => EnvironmentCheck {
+            id: "platform",
             label: "Platform".to_string(),
             status: CheckStatus::Fail,
             message: format!("Windows build {build} is below Windows 11 build 22000"),
         },
         Err(error) => EnvironmentCheck {
+            id: "platform",
             label: "Platform".to_string(),
             status: CheckStatus::Fail,
             message: error,
@@ -293,9 +315,47 @@ fn windows_platform_check() -> EnvironmentCheck {
 #[cfg(not(windows))]
 fn windows_platform_check() -> EnvironmentCheck {
     EnvironmentCheck {
+        id: "platform",
         label: "Platform".to_string(),
         status: CheckStatus::Fail,
         message: "Windows platform check is unavailable on this build".to_string(),
+    }
+}
+
+impl EnvironmentCheck {
+    /// The key is a stable capability API name, not a rendered label.
+    pub fn capability(key: &'static str, status: crate::CapabilityStatus) -> Self {
+        let id = match key {
+            "open_path" => "capability.open_path",
+            "open_with" => "capability.open_with",
+            "open_uri" => "capability.open_uri",
+            "spawn_detached" => "capability.spawn_detached",
+            "spawn_wait" => "capability.spawn_wait",
+            "clipboard_text" => "capability.clipboard_text",
+            "user_dirs" => "capability.user_dirs",
+            "app_paths" => "capability.app_paths",
+            "temp" => "capability.temp",
+            "file_attributes" => "capability.file_attributes",
+            "directory_listing" => "capability.directory_listing",
+            "local_volumes" => "capability.local_volumes",
+            "network_status" => "capability.network_status",
+            "trash" => "capability.trash",
+            "critical_dialog" => "capability.critical_dialog",
+            "power" => "capability.power",
+            // Preserve the producer key for future capabilities until they acquire a display entry.
+            _ => key,
+        };
+        Self {
+            id,
+            label: format!("Capability: {key}"),
+            status: match status {
+                crate::CapabilityStatus::Supported => CheckStatus::Pass,
+                crate::CapabilityStatus::BestEffort | crate::CapabilityStatus::Unsupported => {
+                    CheckStatus::Warning
+                }
+            },
+            message: status.as_str().to_string(),
+        }
     }
 }
 
@@ -304,20 +364,13 @@ fn capability_checks(platform: &dyn Platform) -> Vec<EnvironmentCheck> {
         .capabilities()
         .checks()
         .into_iter()
-        .map(|(name, status)| EnvironmentCheck {
-            label: format!("Capability: {name}"),
-            status: match status {
-                crate::CapabilityStatus::Supported => CheckStatus::Pass,
-                crate::CapabilityStatus::BestEffort => CheckStatus::Warning,
-                crate::CapabilityStatus::Unsupported => CheckStatus::Warning,
-            },
-            message: status.as_str().to_string(),
-        })
+        .map(|(key, status)| EnvironmentCheck::capability(key, status))
         .collect()
 }
 
 fn failed_path_check(label: String, path: &Path, message: impl Into<String>) -> PathCheck {
     PathCheck {
+        id: "directory",
         label,
         path: path.to_path_buf(),
         status: CheckStatus::Fail,

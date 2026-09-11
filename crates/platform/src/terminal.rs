@@ -64,6 +64,7 @@ pub fn terminal_environment_check_with_graphics_protocol(
 ) -> EnvironmentCheck {
     if let Some(protocol) = graphics_protocol.filter(|value| !value.trim().is_empty()) {
         return EnvironmentCheck {
+            id: "terminal",
             label: "Terminal".to_string(),
             status: CheckStatus::Pass,
             message: format!(
@@ -77,6 +78,7 @@ pub fn terminal_environment_check_with_graphics_protocol(
         PlatformKind::Windows => {
             if is_windows_terminal_session(wt_session) {
                 EnvironmentCheck {
+                    id: "terminal",
                     label: "Terminal".to_string(),
                     status: CheckStatus::Warning,
                     message: "Windows Terminal detected, but no inline graphics protocol was detected; text-only UI is available"
@@ -84,6 +86,7 @@ pub fn terminal_environment_check_with_graphics_protocol(
                 }
             } else {
                 EnvironmentCheck {
+                    id: "terminal",
                     label: "Terminal".to_string(),
                     status: CheckStatus::Warning,
                     message: "No inline graphics protocol detected; this terminal is text-only and advanced UI features are unavailable"
@@ -92,12 +95,14 @@ pub fn terminal_environment_check_with_graphics_protocol(
             }
         }
         PlatformKind::Macos | PlatformKind::Linux => EnvironmentCheck {
+            id: "terminal",
             label: "Terminal".to_string(),
             status: CheckStatus::Warning,
             message: "No inline graphics protocol detected; this terminal is text-only and advanced UI features are unavailable"
                 .to_string(),
         },
         PlatformKind::Unsupported => EnvironmentCheck {
+            id: "terminal",
             label: "Terminal".to_string(),
             status: CheckStatus::Warning,
             message: "No supported inline graphics protocol detected on this platform; only text UI can be assumed"
