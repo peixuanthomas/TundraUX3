@@ -41,6 +41,19 @@ pub fn supports_updates(kind: PlatformKind) -> bool {
     matches!(kind, PlatformKind::Windows | PlatformKind::Linux)
 }
 
+fn require_current_portable_installation() -> Result<(), UpdateError> {
+    #[cfg(target_os = "linux")]
+    {
+        let installation = platform::installation::current_installation();
+        if installation.backend != platform::installation::UpdateBackend::PortableUser {
+            return Err(UpdateError::new(installation.reason.unwrap_or_else(|| {
+                "System RPM installations must be updated through PackageKit".into()
+            })));
+        }
+    }
+    Ok(())
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BuildIdentity {
     pub package_version: String,
@@ -214,6 +227,7 @@ struct Compare {
 }
 
 pub fn check_for_updates(identity: &BuildIdentity) -> Result<UpdateCheckResult, UpdateError> {
+    require_current_portable_installation()?;
     check_with_fallback(identity, API_ROOT, || git::check(identity))
 }
 
@@ -391,11 +405,21 @@ pub fn prepare_update(
     check: &UpdateCheckResult,
     progress: &mut dyn FnMut(UpdateProgress),
 ) -> Result<PreparedUpdate, UpdateError> {
+    require_current_portable_installation()?;
     if !supports_updates(platform.kind()) {
         return Err(UpdateError::new(
             "automatic updates are supported only on Windows and Linux",
         ));
     }
+    prepare_portable_update(platform, check, progress)
+}
+
+// Called only after installation provenance is checked at the public boundary.
+fn prepare_portable_update(
+    platform: &dyn Platform,
+    check: &UpdateCheckResult,
+    progress: &mut dyn FnMut(UpdateProgress),
+) -> Result<PreparedUpdate, UpdateError> {
     notify(
         progress,
         UpdatePhase::Downloading,
@@ -866,6 +890,9 @@ pub fn stage_update_for_apply(
     prepared: &PreparedUpdate,
     install_dir: &Path,
 ) -> Result<StagedUpdate, UpdateError> {
+    #[cfg(target_os = "linux")]
+    platform::linux::installation::require_portable_directory(install_dir)
+        .map_err(|error| UpdateError::new(error.to_string()))?;
     #[cfg(not(any(windows, target_os = "linux")))]
     {
         let _ = (prepared, install_dir);
@@ -943,6 +970,12 @@ pub fn launch_update_helper(manifest_path: &Path, parent_pid: u32) -> Result<(),
 }
 
 pub fn recover_interrupted_update_from_current_exe(parent_pid: u32) -> Result<bool, UpdateError> {
+    #[cfg(target_os = "linux")]
+    if platform::installation::current_installation().backend
+        != platform::installation::UpdateBackend::PortableUser
+    {
+        return Ok(false);
+    }
     #[cfg(not(any(windows, target_os = "linux")))]
     {
         let _ = parent_pid;
@@ -966,6 +999,9 @@ fn scan_update_recovery(
     parent_pid: u32,
     launch_helper: &dyn Fn(&Path, u32, bool) -> Result<(), UpdateError>,
 ) -> Result<bool, UpdateError> {
+    #[cfg(target_os = "linux")]
+    platform::linux::installation::require_portable_directory(install_dir)
+        .map_err(|error| UpdateError::new(error.to_string()))?;
     let install_dir = fs::canonicalize(install_dir).map_err(|error| {
         UpdateError::new(format!(
             "could not resolve installation directory for update recovery: {error}"
@@ -1469,6 +1505,9 @@ fn load_manifest(path: &Path) -> Result<TransactionManifest, UpdateError> {
     let manifest: TransactionManifest = serde_json::from_slice(&bytes)
         .map_err(|error| UpdateError::new(format!("invalid update transaction: {error}")))?;
     validate_manifest_location(path, &manifest)?;
+    #[cfg(target_os = "linux")]
+    platform::linux::installation::require_portable_directory(&manifest.install_dir)
+        .map_err(|error| UpdateError::new(error.to_string()))?;
     Ok(manifest)
 }
 

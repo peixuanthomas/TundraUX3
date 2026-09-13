@@ -237,16 +237,17 @@ impl LinuxDoctorProbe for SystemDoctorProbe {
 
 #[cfg(target_os = "linux")]
 fn query_logind_poweroff_state() -> Result<String, String> {
-    let connection = zbus::blocking::Connection::system().map_err(|error| error.to_string())?;
-    let proxy = zbus::blocking::Proxy::new(
-        &connection,
-        "org.freedesktop.login1",
-        "/org/freedesktop/login1",
-        "org.freedesktop.login1.Manager",
-    )
-    .map_err(|error| error.to_string())?;
-    proxy
-        .call("CanPowerOff", &())
+    use platform::linux::power::{PowerAction, PowerAvailability, availability};
+    availability(PowerAction::PowerOff)
+        .map(|state| {
+            match state {
+                PowerAvailability::Allowed => "yes",
+                PowerAvailability::AuthorizationRequired => "challenge",
+                PowerAvailability::Denied => "no",
+                PowerAvailability::Unavailable => "na",
+            }
+            .into()
+        })
         .map_err(|error| error.to_string())
 }
 

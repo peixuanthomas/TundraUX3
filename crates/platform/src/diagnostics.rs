@@ -94,6 +94,10 @@ pub fn run_doctor_with(platform: &dyn Platform) -> Result<DoctorReport, Platform
     environment_checks.push(crate::terminal_environment_check(platform.kind()));
     environment_checks.push(startup_permission_check(platform));
     environment_checks.extend(capability_checks(platform));
+    #[cfg(target_os = "linux")]
+    if platform.is_native_backend() && platform.kind() == PlatformKind::Linux {
+        environment_checks.extend(crate::linux::diagnostics::checks());
+    }
 
     let path_checks = vec![
         check_file_parent_read_write("Config parent", app_paths.config_path())

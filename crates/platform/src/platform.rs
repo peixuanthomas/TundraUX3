@@ -521,8 +521,8 @@ pub trait Platform: Send + Sync {
     }
 
     fn user_dirs(&self) -> Result<UserDirs, PlatformError>;
-    /// Personal folders for the authenticated application user. Linux resolves
-    /// the system account independently of the elevated process environment;
+    /// Personal folders for the application user. Linux accepts only the
+    /// current process account resolved through NSS;
     /// other platforms retain their process-user directory behavior.
     fn user_dirs_for_user(&self, _username: &str) -> Result<UserDirs, PlatformError> {
         self.user_dirs()
@@ -740,6 +740,7 @@ pub trait Platform: Send + Sync {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PlatformError {
+    Service(crate::service::ServiceError),
     DetailedIo {
         operation: &'static str,
         path: Option<PathBuf>,
@@ -784,6 +785,7 @@ pub enum PlatformError {
 impl fmt::Display for PlatformError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::Service(error) => error.fmt(formatter),
             Self::DetailedIo {
                 operation,
                 path,
@@ -868,10 +870,17 @@ impl PlatformError {
 impl std::error::Error for PlatformError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
+            Self::Service(error) => Some(error),
             Self::DetailedIo { error, .. } => Some(error),
             Self::PathResolution(error) => Some(error),
             _ => None,
         }
+    }
+}
+
+impl From<crate::service::ServiceError> for PlatformError {
+    fn from(error: crate::service::ServiceError) -> Self {
+        Self::Service(error)
     }
 }
 

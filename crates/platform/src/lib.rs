@@ -1,5 +1,7 @@
 mod diagnostics;
+pub mod installation;
 pub mod linux_logs;
+pub mod service;
 pub use linux_logs::query_linux_logs;
 mod document;
 mod error_details;

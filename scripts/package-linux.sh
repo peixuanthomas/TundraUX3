@@ -71,6 +71,9 @@ done
 install -Dm644 LICENSE "$stage_root/$portable_name/LICENSE"
 install -Dm644 crates/weathr/LICENSE.weathr "$stage_root/$portable_name/LICENSE.weathr"
 install -Dm644 packaging/linux/README-LINUX.txt "$stage_root/$portable_name/README-LINUX.txt"
+# Explicit provenance for ordinary-user portable updates. RPM/DEB install only
+# their listed system files and must never install this marker beside /usr/bin.
+install -Dm644 packaging/linux/tundra-installation.json "$stage_root/$portable_name/tundra-installation.json"
 
 tar -C "$stage_root" -czf "$out_dir/$portable_name.tar.gz" "$portable_name"
 

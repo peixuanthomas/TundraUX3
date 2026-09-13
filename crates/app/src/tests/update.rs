@@ -3,6 +3,25 @@ use platform::ProcessStream;
 use std::cell::Cell;
 use std::io::Write;
 
+fn mark_portable_fixture(install: &Path) {
+    #[cfg(target_os = "linux")]
+    {
+        fs::write(
+            install.join(platform::installation::PORTABLE_MARKER),
+            platform::installation::PORTABLE_MARKER_CONTENT,
+        )
+        .unwrap();
+        for name in [SHELL_FILE, CLI_FILE] {
+            let path = install.join(name);
+            if !path.exists() {
+                fs::write(path, b"fixture").unwrap();
+            }
+        }
+    }
+    #[cfg(not(target_os = "linux"))]
+    let _ = install;
+}
+
 #[test]
 fn update_compare_relations_are_mapped_from_local_to_remote() {
     assert_eq!(
@@ -216,6 +235,7 @@ fn update_manifest_must_stay_below_the_install_update_directory() {
     let install = root.join("install");
     let transaction_dir = install.join(".tundra-update/tx");
     fs::create_dir_all(&transaction_dir).unwrap();
+    mark_portable_fixture(&install);
     let path = transaction_dir.join("transaction.json");
     let manifest = TransactionManifest {
         protocol: UPDATE_PROTOCOL_VERSION,
@@ -465,7 +485,7 @@ fn update_preparation_uses_disk_cache_and_cleans_failed_work() {
         commits: Vec::new(),
     };
     assert!(
-        prepare_update(&platform, &check, &mut |_| {})
+        prepare_portable_update(&platform, &check, &mut |_| {})
             .unwrap_err()
             .to_string()
             .contains("invalid source commit")
@@ -635,6 +655,7 @@ fn transaction_fixture(name: &str) -> (PathBuf, PathBuf, TransactionManifest) {
     .unwrap();
     fs::write(new.join(SHELL_FILE), b"new shell").unwrap();
     fs::write(new.join(CLI_FILE), b"new cli").unwrap();
+    mark_portable_fixture(&install);
     let manifest_path = transaction_dir.join("transaction.json");
     let manifest = TransactionManifest {
         protocol: UPDATE_PROTOCOL_VERSION,
@@ -735,6 +756,7 @@ fn recovery_scan_fixture(name: &str, state: TransactionState) -> (PathBuf, PathB
     assert_ne!(install, canonical_install);
     let transaction_dir = canonical_install.join(".tundra-update/tx");
     fs::create_dir_all(&transaction_dir).unwrap();
+    mark_portable_fixture(&canonical_install);
     let manifest_path = transaction_dir.join("transaction.json");
     let manifest = TransactionManifest {
         protocol: UPDATE_PROTOCOL_VERSION,
@@ -834,5 +856,29 @@ fn update_rejects_old_transactions_before_replacing_programs() {
             .to_string()
             .contains("unsupported update protocol 1")
     );
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn unrecognized_installation_cannot_stage_or_recover_portable_replacement() {
+    let root = update_test_root("unrecognized-installation");
+    fs::create_dir_all(&root).unwrap();
+    let prepared = PreparedUpdate {
+        work_dir: root.clone(),
+        target_sha: "abc".into(),
+        shell_exe: root.join("new-shell"),
+        cli_exe: root.join("new-cli"),
+    };
+    assert!(stage_update_for_apply(&prepared, &root).is_err());
+    assert!(
+        scan_update_recovery(&root, 42, &|_, _, _| panic!(
+            "unrecognized installation launched replacement helper"
+        ))
+        .is_err()
+    );
+    assert!(!root.join(".tundra-update").exists());
+    // Test binaries have no official portable marker or tundraux3 RPM ownership.
+    assert!(check_for_updates(&current_build_identity()).is_err());
     fs::remove_dir_all(root).unwrap();
 }
