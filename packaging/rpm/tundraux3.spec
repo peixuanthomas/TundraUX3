@@ -9,21 +9,20 @@ License:        MIT AND GPL-3.0-or-later
 URL:            https://github.com/peixuanthomas/TundraUX3
 Source0:        %{name}-%{version}-linux-x86_64.tar.gz
 Source1:        tundraux3.desktop
-Source2:        tundraux3.pam
 ExclusiveArch:  x86_64
 Requires:       xdg-utils
 Requires:       glib2
-Requires:       pam
 Requires:       glibc
-Requires:       sudo
+Requires:       PackageKit
+Requires:       polkit
 Recommends:     dbus
 Recommends:     xdg-desktop-portal
-Recommends:     polkit
 Recommends:     xorg-x11-server-Xwayland
 
 %description
 TundraUX3 provides a full-screen terminal shell and its management CLI.
-This package includes the default assets and Fedora system PAM integration.
+This package includes the default assets and a Fedora PackageKit update frontend.
+Start Tundra from an already logged-in ordinary user session.
 
 %prep
 %setup -q -n %{name}-%{version}-linux-x86_64
@@ -37,7 +36,6 @@ install -Dm755 tundra-cli %{buildroot}%{_bindir}/tundra-cli
 install -d %{buildroot}%{_datadir}/%{name}
 cp -a assets %{buildroot}%{_datadir}/%{name}/assets
 install -Dm644 %{SOURCE1} %{buildroot}%{_datadir}/applications/tundraux3.desktop
-install -Dm644 %{SOURCE2} %{buildroot}%{_sysconfdir}/pam.d/tundraux3
 
 %files
 %license LICENSE LICENSE.weathr
@@ -46,4 +44,3 @@ install -Dm644 %{SOURCE2} %{buildroot}%{_sysconfdir}/pam.d/tundraux3
 %{_bindir}/tundra-cli
 %{_datadir}/%{name}/
 %{_datadir}/applications/tundraux3.desktop
-%config(noreplace) %{_sysconfdir}/pam.d/tundraux3

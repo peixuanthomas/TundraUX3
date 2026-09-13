@@ -17,12 +17,10 @@ jobs:
         run: rustup toolchain install stable --profile minimal && rustup default stable
       - name: Locked build
         run: cargo build --workspace --locked
-      - name: Test Linux Trash ownership and root lifecycle
+      - name: Test ordinary-user identity and platform boundaries
         run: |
           cargo test --locked -p platform --lib
-          cargo test --locked -p platform --lib --no-run --message-format=json > "$RUNNER_TEMP/platform-tests.json"
-          test_binary="$(jq -r 'select(.executable != null and .target.name == "platform") | .executable' "$RUNNER_TEMP/platform-tests.json")"
-          sudo "$test_binary" --ignored --exact linux::root_trash_tests::root_trash_handles_other_users_and_preserves_private_metadata
+          cargo test --locked -p identity
       - name: Test localization and resource recovery
         run: |
           python3 scripts/check-localization.py
@@ -47,29 +45,28 @@ jobs:
     steps:
       - name: Install checkout and build requirements
         run: |
-          dnf install -y cmake curl gcc gcc-c++ git make openssl-devel perl pkgconf-pkg-config
+          dnf install -y cmake curl gcc gcc-c++ git make openssl-devel perl pkgconf-pkg-config shadow-utils util-linux
       - uses: actions/checkout@v6
       - name: Install stable Rust
         run: |
-          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
-          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+          useradd --create-home tundra-ci
+          chown -R tundra-ci:tundra-ci "$GITHUB_WORKSPACE"
+          runuser -u tundra-ci -- bash -c 'curl --proto "=https" --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal'
+          echo "/home/tundra-ci/.cargo/bin" >> "$GITHUB_PATH"
       - name: Locked build
         run: |
-          source "$HOME/.cargo/env"
-          cargo build --workspace --locked
-      - name: Test Linux Trash ownership and root lifecycle
+          runuser -u tundra-ci -- /home/tundra-ci/.cargo/bin/cargo build --workspace --locked
+      - name: Test ordinary-user identity and platform boundaries
         run: |
-          source "$HOME/.cargo/env"
-          cargo test --locked -p platform --lib
-          cargo test --locked -p platform --lib root_trash_handles_other_users_and_preserves_private_metadata -- --ignored
+          runuser -u tundra-ci -- /home/tundra-ci/.cargo/bin/cargo test --locked -p platform --lib
+          runuser -u tundra-ci -- /home/tundra-ci/.cargo/bin/cargo test --locked -p identity
       - name: Test system metrics
         run: |
-          source "$HOME/.cargo/env"
-          cargo test --locked -p platform --test linux_logs
-          cargo test --locked -p runtime-log
-          cargo test --locked -p app runtime_logs
-          cargo test --locked -p cli --test logs
-          cargo test --locked -p ui --test logs
-          cargo test --locked -p platform --test system_status
-          cargo test --locked -p system-services --no-default-features
-          cargo test --locked -p system-services --features runtime
+          runuser -u tundra-ci -- /home/tundra-ci/.cargo/bin/cargo test --locked -p platform --test linux_logs
+          runuser -u tundra-ci -- /home/tundra-ci/.cargo/bin/cargo test --locked -p runtime-log
+          runuser -u tundra-ci -- /home/tundra-ci/.cargo/bin/cargo test --locked -p app runtime_logs
+          runuser -u tundra-ci -- /home/tundra-ci/.cargo/bin/cargo test --locked -p cli --test logs
+          runuser -u tundra-ci -- /home/tundra-ci/.cargo/bin/cargo test --locked -p ui --test logs
+          runuser -u tundra-ci -- /home/tundra-ci/.cargo/bin/cargo test --locked -p platform --test system_status
+          runuser -u tundra-ci -- /home/tundra-ci/.cargo/bin/cargo test --locked -p system-services --no-default-features
+          runuser -u tundra-ci -- /home/tundra-ci/.cargo/bin/cargo test --locked -p system-services --features runtime

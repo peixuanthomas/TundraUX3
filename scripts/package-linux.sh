@@ -89,9 +89,7 @@ if [[ "$build_deb" == true ]]; then
   install -Dm644 crates/weathr/LICENSE.weathr "$deb_root/usr/share/doc/tundraux3/LICENSE.weathr"
   install -Dm644 packaging/linux/README-LINUX.txt "$deb_root/usr/share/doc/tundraux3/README-LINUX.txt"
 
-  install -Dm644 packaging/linux/pam.d/tundraux3 "$deb_root/etc/pam.d/tundraux3"
   install -d "$deb_root/DEBIAN"
-  printf '%s\n' '/etc/pam.d/tundraux3' > "$deb_root/DEBIAN/conffiles"
   sed "s/@VERSION@/$version/g" packaging/debian/control > "$deb_root/DEBIAN/control"
   dpkg-deb --build --root-owner-group "$deb_root" "$out_dir/$package_name.deb"
   artifacts+=("$package_name.deb")
@@ -102,7 +100,6 @@ if [[ "$build_rpm" == true ]]; then
   mkdir -p "$rpm_root"/{BUILD,BUILDROOT,RPMS,SOURCES,SPECS,SRPMS}
   cp "$out_dir/$portable_name.tar.gz" "$rpm_root/SOURCES/"
   cp packaging/debian/tundraux3.desktop "$rpm_root/SOURCES/"
-  cp packaging/rpm/tundraux3.pam "$rpm_root/SOURCES/"
   rpmbuild -bb --define "_topdir $rpm_root" --define "tundra_version $version" \
     packaging/rpm/tundraux3.spec
   rpm_name="tundraux3-${version}-1.x86_64.rpm"

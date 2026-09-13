@@ -114,3 +114,22 @@ Only the disposable credential is typed, and failure captures redact it. The
 the fixture frontend. Monitor captures contain PackageKit property changes,
 never authentication prompt responses. Artifacts remain under
 `/srv/tundra-fixture` in the test container.
+
+## Package metadata and payload validation
+
+`package-artifacts.py` checks the actual RPM spec and DEB control using already
+built native Shell/CLI payloads. In a **separate fresh Fedora fixture container**,
+copy those programs to `/srv/tundra-package-fixture/tundra-shell` and `tundra-cli`,
+and copy the source `packaging/`, `crates/ascii-assets/assets/`,
+`crates/weathr/LICENSE.weathr`, and `LICENSE` under
+`/srv/tundra-package-fixture/source/`. Copy the checker into the same fixture
+folder, then execute it with container Python. The image includes rpmbuild and
+dpkg-deb. The checker refuses to overwrite its existing work directory.
+
+It builds the portable payload with its formal marker, builds and installs the
+RPM inside that container, verifies dependency/provider/ownership/root-rejection
+contracts and absence of PAM/session services or installation scripts, and
+inspects the DEB metadata and payload. It does not install the DEB on Fedora.
+These checks use stripped debug programs; release-profile builds and Debian
+runtime validation remain separate CI checks in `scripts/package-linux.sh` and
+the release workflows. No artifacts from this checker are release artifacts.

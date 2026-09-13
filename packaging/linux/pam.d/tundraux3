@@ -1,4 +1,0 @@
-# Debian/Ubuntu PAM policy. Never add pam_rootok: the root UX process must
-# still verify the selected Linux account's password.
-@include common-auth
-@include common-account
