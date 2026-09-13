@@ -31,6 +31,7 @@ pub mod diagnostics;
 pub mod identity;
 pub mod installation;
 pub mod power;
+pub mod updates;
 mod user_dirs;
 
 use user_dirs::resolve_user_dirs;
