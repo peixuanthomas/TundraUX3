@@ -374,6 +374,7 @@ mod tests {
         );
         state.app.dispatch_at(
             app::AppCommand::SetAuthSession(Some(AuthSession {
+                source: identity::IdentitySource::LocalAccount,
                 session_id: "language-test".into(),
                 user_id: "language-admin".into(),
                 username: "admin".into(),

@@ -2,6 +2,20 @@ use std::sync::Arc;
 use watchdog::{ProcessWatchdog, WatchdogConfig, WatchdogRuntime};
 
 fn main() {
+    #[cfg(target_os = "linux")]
+    match platform::linux::identity::LinuxUserContext::current() {
+        Ok(user) => {
+            // SAFETY: no threads or runtime have been started at executable entry.
+            unsafe {
+                user.install_environment();
+            }
+        }
+        Err(error) => {
+            eprintln!("{error}");
+            std::process::exit(1);
+        }
+    }
+
     // Entry and post-run failures remain renderable without loading or repairing assets.
     // Runtime language scopes override this fallback while the shell is running.
     let _language = i18n::enter_snapshot(Arc::new(i18n::LanguageSnapshot::embedded(0)));
@@ -23,15 +37,6 @@ fn main() {
             i18n::tr!("shell-entry-failed", error = error.to_string())
         );
         std::process::exit(2);
-    }
-
-    #[cfg(target_os = "linux")]
-    if let Err(error) = ensure_linux_root() {
-        eprintln!(
-            "{}",
-            i18n::tr!("shell-entry-root-required", error = error.to_string())
-        );
-        std::process::exit(1);
     }
 
     if std::env::var_os(app::update::UPDATE_READY_FILE_ENV).is_none() {
@@ -139,30 +144,6 @@ fn main() {
     if exit_code != 0 {
         std::process::exit(exit_code);
     }
-}
-
-#[cfg(target_os = "linux")]
-fn ensure_linux_root() -> std::io::Result<()> {
-    use std::os::unix::process::CommandExt;
-
-    // Elevate before threads, storage, update recovery or terminal raw mode.
-    // sudo owns the OS authentication prompt; UX never handles a sudo password.
-    if unsafe { libc::geteuid() } == 0 {
-        return Ok(());
-    }
-    eprintln!("{}", i18n::tr!("shell-entry-sudo-request"));
-    let executable = std::env::current_exe()?;
-    let error = std::process::Command::new("/usr/bin/sudo")
-        .args(["-H", "--"])
-        .arg(executable)
-        .exec();
-    Err(std::io::Error::new(
-        error.kind(),
-        i18n::render_diagnostic(&i18n::msg!(
-            "shell-entry-sudo-start-failed",
-            error = error.to_string()
-        )),
-    ))
 }
 
 fn reset_storage_and_restart() -> Result<(), std::io::Error> {

@@ -1119,7 +1119,9 @@ impl ShellSession {
             }),
             ShellHomeMode::User => model,
         };
-        if let Some(username) = self.current_home_username() {
+        if self.identity_backend != identity::IdentityBackend::Linux
+            && let Some(username) = self.current_home_username()
+        {
             model.with_account_logout(
                 username,
                 self.focused_component == ShellComponent::HomeLogout,
@@ -1932,10 +1934,9 @@ impl ShellSession {
     }
 
     pub(in crate::session) fn can_manage_all_users(&self) -> bool {
-        matches!(
-            self.app.auth_session().map(|session| session.role),
-            Some(UserRole::Admin)
-        )
+        PermissionService::new(self.debug_policy)
+            .authorize(self.app.auth_session(), PermissionAction::ManageUsers, None)
+            .allowed
     }
 
     pub(in crate::session) fn user_management_action_view_models(
@@ -2038,11 +2039,7 @@ impl ShellSession {
             false,
         ));
         if self.identity_backend == identity::IdentityBackend::Linux {
-            for action in &mut actions {
-                if action.action != UserManagementAction::Back {
-                    action.enabled = false;
-                }
-            }
+            actions.retain(|action| action.action == UserManagementAction::Back);
         }
         for action in &mut actions {
             action.disabled_reason = self

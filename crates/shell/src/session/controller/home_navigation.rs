@@ -1,6 +1,9 @@
 use super::super::*;
 impl ShellSession {
     pub(in crate::session) fn logout_at(&mut self, now: Instant) -> bool {
+        if self.identity_backend == identity::IdentityBackend::Linux {
+            return false;
+        }
         if self.diagnostics_restart_is_required() {
             self.notify_alert_with_tone(
                 i18n::LocalizedText::from(i18n::msg!("shell-restart-tundraux-before-signing-out")),
@@ -55,6 +58,9 @@ impl ShellSession {
         status: impl Into<i18n::LocalizedText>,
         now: Instant,
     ) {
+        if self.identity_backend == identity::IdentityBackend::Linux {
+            return;
+        }
         // Account disable/delete may force a return to login without passing
         // through the ordinary Logout command. Preserve any dirty editor text
         // before the authenticated recovery context is cleared.

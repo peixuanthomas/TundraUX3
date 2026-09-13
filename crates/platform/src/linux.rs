@@ -26,11 +26,11 @@ use watchdog::{
     TaskSpec,
 };
 
+pub mod identity;
 mod user_dirs;
 
 use user_dirs::resolve_user_dirs;
 
-use crate::paths::home_dir_from_env;
 use crate::{
     AppPaths, ExecutableKind, FileAttributes, FileOpenPolicy, LocalVolume, NetworkInterface,
     NetworkInterfaceKind, NetworkLinkState, NetworkStatus, Platform, PlatformCapabilities,
@@ -70,21 +70,27 @@ impl Platform for LinuxPlatform {
     }
 
     fn user_dirs(&self) -> Result<UserDirs, PlatformError> {
-        let home = home_dir_from_env()?;
+        let home = current_home()?;
         let base_dirs = XdgBaseDirs::from_environment(&home);
         resolve_user_dirs(&home, &base_dirs.config, base_dirs.data)
     }
 
     fn user_dirs_for_user(&self, username: &str) -> Result<UserDirs, PlatformError> {
-        let home = account_home(username)?;
-        // HOME and XDG_* belong to the root process, not necessarily to the
-        // authenticated user. Never use them to resolve another account's data.
-        let base_dirs = XdgBaseDirs::resolve(&home, None, None, None, None);
-        resolve_user_dirs(&home, &base_dirs.config, base_dirs.data)
+        let current =
+            identity::LinuxUserContext::current().map_err(|error| PlatformError::Native {
+                operation: "resolve current Linux identity",
+                message: error.to_string(),
+            })?;
+        if username != current.username {
+            return Err(PlatformError::InvalidInput {
+                message: "Only the current Linux account is available".into(),
+            });
+        }
+        self.user_dirs()
     }
 
     fn app_paths(&self) -> Result<AppPaths, PlatformError> {
-        let home = home_dir_from_env()?;
+        let home = current_home()?;
         let base_dirs = XdgBaseDirs::from_environment(&home);
         build_linux_app_paths(
             base_dirs.config,
@@ -540,36 +546,13 @@ fn start_logind_listener(
         })
 }
 
-fn account_home(username: &str) -> Result<PathBuf, PlatformError> {
-    if username.is_empty()
-        || username.starts_with(['-', '+'])
-        || username.chars().any(|c| c.is_control() || c == ':')
-    {
-        return Err(PlatformError::InvalidInput {
-            message: "Invalid Linux account name".into(),
-        });
-    }
-    // Match the identity backend: getent resolves NSS accounts, including
-    // accounts whose home is outside /home or supplied by a directory service.
-    let output = Command::new("/usr/bin/getent")
-        .args(["passwd", "--", username])
-        .output()
+fn current_home() -> Result<PathBuf, PlatformError> {
+    identity::LinuxUserContext::current()
+        .map(|user| user.home)
         .map_err(|error| PlatformError::Native {
-            operation: "resolve Linux user home",
+            operation: "resolve current Linux identity",
             message: error.to_string(),
-        })?;
-    if output.status.success() {
-        let line = output.stdout.strip_suffix(b"\n").unwrap_or(&output.stdout);
-        let fields: Vec<_> = line.split(|byte| *byte == b':').collect();
-        if fields.len() == 7 && fields[0] == username.as_bytes() {
-            let home = PathBuf::from(OsString::from_vec(fields[5].to_vec()));
-            return crate::paths::require_absolute("Linux user home", home).map_err(Into::into);
-        }
-    }
-    Err(PlatformError::Native {
-        operation: "resolve Linux user home",
-        message: format!("Cannot resolve the home directory for Linux user {username}"),
-    })
+        })
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1050,7 +1033,7 @@ fn trash_roots() -> Result<Vec<TrashRoot>, PlatformError> {
 }
 
 fn home_trash_root() -> Result<TrashRoot, PlatformError> {
-    let home = home_dir_from_env()?;
+    let home = current_home()?;
     let base = XdgBaseDirs::from_environment(&home);
     private_trash_root(base.data.join("Trash"))
 }
@@ -1259,12 +1242,8 @@ fn directory_stat(directory: &OwnedFd) -> io::Result<libc::stat> {
     Ok(unsafe { stat.assume_init() })
 }
 
-// Linux UX deliberately runs as root while browsing the selected user's files.
-// Content keeps its original owner across rename; only private Trash directories
-// and .trashinfo files must belong to the process user.
 fn trash_content_owner_allowed(metadata: &fs::Metadata) -> bool {
-    let uid = unsafe { libc::geteuid() };
-    uid == 0 || metadata.uid() == uid
+    metadata.uid() == unsafe { libc::geteuid() }
 }
 
 fn list_trash_root(root: &TrashRoot) -> Result<Vec<TrashEntry>, PlatformError> {
@@ -1336,9 +1315,7 @@ fn move_one_to_trash(path: &Path) -> Result<(), PlatformError> {
     }
     if !trash_content_owner_allowed(&metadata) {
         return Err(PlatformError::InvalidInput {
-            message:
-                "Linux Trash only accepts items owned by the current user unless running as root"
-                    .to_string(),
+            message: "Linux Trash only accepts items owned by the current user ".to_string(),
         });
     }
     let mount = mount_for_path(path)?;
@@ -2022,14 +1999,6 @@ fn copy_no_follow(source: &Path, destination: &Path) -> Result<(), PlatformError
             })?;
             copy_no_follow(&entry.path(), &destination.join(entry.file_name()))?;
         }
-        let directory = open_directory_tree(destination, false).map_err(|error| {
-            io_error(
-                "open restored Trash directory",
-                Some(destination.to_path_buf()),
-                error,
-            )
-        })?;
-        preserve_trash_content_owner(&directory, &metadata, destination)?;
     } else {
         let mut input = OpenOptions::new()
             .read(true)
@@ -2055,7 +2024,6 @@ fn copy_no_follow(source: &Path, destination: &Path) -> Result<(), PlatformError
                     error,
                 )
             })?;
-        preserve_trash_content_owner(&output, &metadata, destination)?;
         io::copy(&mut input, &mut output)
             .and_then(|_| output.sync_all())
             .map_err(|error| {
@@ -2065,23 +2033,6 @@ fn copy_no_follow(source: &Path, destination: &Path) -> Result<(), PlatformError
                     error,
                 )
             })?;
-    }
-    Ok(())
-}
-
-fn preserve_trash_content_owner(
-    file: &impl AsRawFd,
-    metadata: &fs::Metadata,
-    destination: &Path,
-) -> Result<(), PlatformError> {
-    if unsafe { libc::geteuid() } == 0
-        && unsafe { libc::fchown(file.as_raw_fd(), metadata.uid(), metadata.gid()) } != 0
-    {
-        return Err(io_error(
-            "preserve restored Linux Trash ownership",
-            Some(destination.to_path_buf()),
-            io::Error::last_os_error(),
-        ));
     }
     Ok(())
 }
@@ -2187,7 +2138,7 @@ fn resolve_icon(icon: &str, preferred_size: u32) -> Option<PathBuf> {
     if direct.is_absolute() && direct.is_file() {
         return Some(direct);
     }
-    let home = home_dir_from_env().ok()?;
+    let home = current_home().ok()?;
     let base = XdgBaseDirs::from_environment(&home);
     let mut roots = vec![
         home.join(".local/share/icons"),
@@ -2751,10 +2702,6 @@ mod tests {
         assert!(!logind_allows_power_action(""));
     }
 }
-
-#[cfg(test)]
-#[path = "linux/tests/root_trash.rs"]
-mod root_trash_tests;
 
 #[cfg(test)]
 #[path = "linux/tests/mounts.rs"]

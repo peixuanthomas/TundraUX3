@@ -15,7 +15,9 @@ impl ShellSession {
     }
 
     pub(in crate::session) fn login_idle_tracking_active(&self) -> bool {
-        self.screen_stack.contains(&ShellScreen::Login) && self.app.auth_session().is_none()
+        self.identity_backend != identity::IdentityBackend::Linux
+            && self.screen_stack.contains(&ShellScreen::Login)
+            && self.app.auth_session().is_none()
     }
 
     pub(in crate::session) fn expire_login_password_visibility_at(&mut self, now: Instant) {
@@ -57,6 +59,9 @@ impl ShellSession {
     }
 
     pub(in crate::session) fn prepare_return_to_lockscreen(&mut self) {
+        if self.identity_backend == identity::IdentityBackend::Linux {
+            return;
+        }
         self.login_password.clear();
         self.login_password_visible_until = None;
         self.error_message = None;

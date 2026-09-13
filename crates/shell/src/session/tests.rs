@@ -45,6 +45,7 @@ impl Drop for SystemStatusTempGuard {
 fn set_test_auth_role(state: &mut ShellSession, role: UserRole) {
     state.app.dispatch_at(
         app::AppCommand::SetAuthSession(Some(AuthSession {
+            source: identity::IdentitySource::LocalAccount,
             session_id: format!("{}-session", role.as_str()),
             user_id: format!("{}-id", role.as_str()),
             username: role.as_str().to_ascii_lowercase(),
@@ -1916,6 +1917,7 @@ fn system_status_alert_dedupe_upgrade_recovery_and_network_baseline() {
         Instant::now(),
     );
     state.complete_login(AuthSession {
+        source: identity::IdentitySource::LocalAccount,
         session_id: "next-admin-session".into(),
         user_id: "next-admin".into(),
         username: "next-admin".into(),
@@ -1927,6 +1929,7 @@ fn system_status_alert_dedupe_upgrade_recovery_and_network_baseline() {
     assert_eq!(state.app.notification_center().alert_count(), 0);
 
     state.complete_login(AuthSession {
+        source: identity::IdentitySource::LocalAccount,
         session_id: "user-session".into(),
         user_id: "user-id".into(),
         username: "user".into(),
@@ -5095,6 +5098,7 @@ fn watchdog_incident_shows_details_and_view_actions_to_standard_users() {
     );
     state.app.dispatch_at(
         app::AppCommand::SetAuthSession(Some(AuthSession {
+            source: identity::IdentitySource::LocalAccount,
             session_id: "user-session".to_string(),
             user_id: "user-id".to_string(),
             username: "user".to_string(),
@@ -5407,30 +5411,11 @@ fn linux_account_actions_are_managed_by_linux_even_for_admin() {
     set_test_auth_role(&mut state, UserRole::Admin);
     state.identity_backend = identity::IdentityBackend::Linux;
     let actions = state.user_management_action_view_models();
-    assert!(
-        actions
-            .iter()
-            .any(|action| action.action == ui::UserManagementAction::NewUser)
-    );
-    for action in actions {
-        assert_eq!(
-            action.enabled,
-            action.action == ui::UserManagementAction::Back
-        );
-        if action.action != ui::UserManagementAction::Back {
-            assert!(action.disabled_reason.unwrap().contains("Linux"));
-        }
-    }
+    assert_eq!(actions.len(), 1);
+    assert_eq!(actions[0].action, ui::UserManagementAction::Back);
+    assert!(actions[0].enabled);
     state.activate_user_management_action(ui::UserManagementAction::NewUser);
     assert_eq!(state.user_management_mode, UserManagementMode::Browse);
-    assert!(
-        state
-            .user_management_message
-            .as_ref()
-            .map(i18n::LocalizedText::render_current)
-            .unwrap()
-            .contains("Linux")
-    );
 }
 
 #[test]
@@ -5656,4 +5641,66 @@ fn system_overview_metrics_do_not_depend_on_dashboard_placements() {
             .progress_percent
             .is_some()
     );
+}
+
+#[test]
+fn linux_current_user_cannot_reenter_internal_authentication() {
+    let mut state = ShellSession::new_for_home_mode(
+        ShellLaunchConfig::default(),
+        (120, 40),
+        ShellHomeMode::User,
+    );
+    set_test_auth_role(&mut state, UserRole::User);
+    state.identity_backend = identity::IdentityBackend::Linux;
+    let original = state.app.auth_session().cloned();
+    for command in [
+        ShellCommand::Logout,
+        ShellCommand::LogoutToLockscreen,
+        ShellCommand::SubmitLogin,
+        ShellCommand::AppendAuthChar('x'),
+        ShellCommand::SubmitBootstrapAdmin,
+        ShellCommand::ActivateLogin {
+            target: ShellComponent::LoginPassword,
+            coordinates: (1, 1),
+        },
+    ] {
+        state.apply_routed_event_once(
+            RoutedEvent {
+                input: InputEvent::Tick,
+                target: RoutedTarget::Global,
+                command,
+            },
+            platform::native_platform().as_ref(),
+            Instant::now(),
+        );
+        assert_eq!(state.active_screen(), ShellScreen::Home);
+        assert_eq!(state.app.auth_session(), original.as_ref());
+        assert!(state.login_password.is_empty());
+        assert!(!state.return_to_lockscreen_requested);
+    }
+    state.apply_input(InputEvent::key(InputKey::Char('L')));
+    assert_eq!(state.active_screen(), ShellScreen::Home);
+    assert!(!state.return_to_lockscreen_requested);
+}
+
+#[test]
+fn linux_personal_apps_use_process_permissions_without_admin_role() {
+    let mut state = ShellSession::new_for_home_mode(
+        ShellLaunchConfig::default(),
+        (120, 40),
+        ShellHomeMode::User,
+    );
+    set_test_auth_role(&mut state, UserRole::User);
+    let mut session = state.app.auth_session().unwrap().clone();
+    session.source = identity::IdentitySource::LinuxCurrentProcess;
+    state.app.dispatch_at(
+        app::AppCommand::SetAuthSession(Some(session)),
+        Instant::now(),
+    );
+    state.identity_backend = identity::IdentityBackend::Linux;
+    assert!(state.to_logs_view_model().can_view_system);
+    assert!(state.can_manage_launcher());
+    assert!(state.can_execute_command_line());
+    assert!(state.can_change_global_settings());
+    assert!(!state.can_manage_all_users());
 }

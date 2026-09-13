@@ -282,6 +282,13 @@ impl CommandLinePty {
         for (name, value) in config.env {
             command.env(name, value);
         }
+        #[cfg(target_os = "linux")]
+        {
+            let user = platform::linux::identity::LinuxUserContext::current()?;
+            for (name, value) in user.environment() {
+                command.env(name, value);
+            }
+        }
         if let Some(cwd) = config.cwd {
             command.cwd(cwd);
         }
@@ -1471,6 +1478,7 @@ mod tests {
             if let Some(role) = role {
                 state.app.dispatch_at(
                     app::AppCommand::SetAuthSession(Some(identity::AuthSession {
+                        source: identity::IdentitySource::LocalAccount,
                         session_id: "panic-test-session".into(),
                         user_id: "panic-test-user".into(),
                         username: "panic-test".into(),
@@ -1542,14 +1550,21 @@ mod tests {
         );
         #[cfg(unix)]
         let (program, args) = (OsString::from("/bin/sh"), Vec::new());
+        #[cfg(target_os = "linux")]
+        let environment = vec![
+            ("HOME".into(), "/root".into()),
+            ("USER".into(), "root".into()),
+        ];
+        #[cfg(not(target_os = "linux"))]
+        let environment = Vec::new();
         let pty = CommandLinePty::spawn(
             CommandLinePtyConfig {
                 program,
                 args,
-                env: Vec::new(),
+                env: environment,
                 cwd: None,
-                columns: 40,
-                rows: 4,
+                columns: 160,
+                rows: 12,
                 scrollback_lines: 0,
             },
             &reader_tasks,
@@ -1560,6 +1575,41 @@ mod tests {
             pty.try_wait().expect("initial PTY child status").is_none(),
             "interactive PTY child exited before containment was exercised"
         );
+
+        #[cfg(target_os = "linux")]
+        {
+            let current = platform::linux::identity::LinuxUserContext::current().unwrap();
+            for (command, expected) in [
+                (
+                    "printf 'uid='; id -u\r",
+                    format!("uid={}", current.process.uid),
+                ),
+                (
+                    "printf 'ruid='; id -ru\r",
+                    format!("ruid={}", current.process.uid),
+                ),
+                (
+                    "printf 'gid='; id -g\r",
+                    format!("gid={}", current.process.gid),
+                ),
+                (
+                    "printf 'home=%s\\n' \"$HOME\"\r",
+                    format!("home={}", current.home.display()),
+                ),
+                (
+                    "printf 'user=%s\\n' \"$USER\"\r",
+                    format!("user={}", current.username),
+                ),
+            ] {
+                pty.write(command.as_bytes()).unwrap();
+                assert_snapshot_contains(
+                    &pty,
+                    &expected,
+                    Duration::from_secs(5),
+                    "current Linux user identity",
+                );
+            }
+        }
 
         pty.force_terminate()
             .expect("terminate contained process tree");
@@ -1689,7 +1739,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(root);
     }
 
-    #[cfg(windows)]
+    #[cfg(any(windows, target_os = "linux"))]
     fn assert_snapshot_contains(
         pty: &CommandLinePty,
         expected: &str,
@@ -1710,7 +1760,7 @@ mod tests {
             }
             assert!(
                 std::time::Instant::now() < deadline,
-                "ConPTY did not render {description}; last screen: {screen:?}",
+                "PTY did not render {description}; last screen: {screen:?}",
             );
             std::thread::sleep(Duration::from_millis(10));
         }

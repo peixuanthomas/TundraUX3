@@ -160,6 +160,33 @@ impl ShellSession {
         platform: &dyn Platform,
         received_at: Instant,
     ) -> ShellAction {
+        if self.identity_backend == identity::IdentityBackend::Linux
+            && matches!(
+                routed.command,
+                ShellCommand::Logout
+                    | ShellCommand::LogoutToLockscreen
+                    | ShellCommand::SubmitLogin
+                    | ShellCommand::SubmitBootstrapAdmin
+                    | ShellCommand::AppendAuthChar(_)
+                    | ShellCommand::AuthBackspace
+                    | ShellCommand::LoginPreviousUser
+                    | ShellCommand::LoginNextUser
+                    | ShellCommand::LoginPageUserUp
+                    | ShellCommand::LoginPageUserDown
+                    | ShellCommand::LoginFirstUser
+                    | ShellCommand::LoginLastUser
+                    | ShellCommand::LoginFocusUserList
+                    | ShellCommand::LoginFocusPassword
+                    | ShellCommand::LoginFocusPasswordVisibility
+                    | ShellCommand::ToggleLoginPasswordVisibility
+                    | ShellCommand::ActivateLogin { .. }
+                    | ShellCommand::AppendSetupAdminChar(_)
+                    | ShellCommand::SetupAdminBackspace
+                    | ShellCommand::UnlockManagedUser
+            )
+        {
+            return ShellAction::Redraw;
+        }
         self.record_input_diagnostics(&routed);
         if !matches!(routed.input, InputEvent::Mouse(_)) {
             self.notification_pointer_capture = None;

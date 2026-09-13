@@ -317,13 +317,9 @@ pub fn prepare_shell_startup(
     platform: &dyn Platform,
 ) -> Result<ShellStartupState, ShellStartupError> {
     #[cfg(target_os = "linux")]
-    if platform.kind() == PlatformKind::Linux
-        && platform.is_native_backend()
-        && unsafe { libc::geteuid() } != 0
-    {
-        return Err(ShellStartupError::Identity(i18n::render_diagnostic(
-            &i18n::msg!("early-linux-root-required"),
-        )));
+    if platform.kind() == PlatformKind::Linux && platform.is_native_backend() {
+        platform::linux::identity::LinuxUserContext::current()
+            .map_err(|error| ShellStartupError::Identity(error.to_string()))?;
     }
     ensure_startup_permissions(platform)?;
     let platform_kind = platform.kind();

@@ -29,11 +29,13 @@ pub fn default_shell_shortcuts() -> Vec<ShellShortcut> {
             binding: KeyBinding::from(&KeyInput::from_label("Esc")),
             command: ShellCommand::RequestExit,
         },
+        #[cfg(not(target_os = "linux"))]
         ShellShortcut {
             scope: ShortcutScope::Screen(ShellScreen::Home),
             binding: KeyBinding::from(&KeyInput::from_label("L")),
             command: ShellCommand::LogoutToLockscreen,
         },
+        #[cfg(not(target_os = "linux"))]
         ShellShortcut {
             scope: ShortcutScope::Screen(ShellScreen::Login),
             binding: KeyBinding::from(&KeyInput::from_label("F2")),

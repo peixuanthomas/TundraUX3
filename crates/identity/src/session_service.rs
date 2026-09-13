@@ -41,15 +41,7 @@ impl SessionService {
 
     pub fn login(&mut self, username: &str, password: &str) -> Result<AuthSession, CoreError> {
         if self.backend == crate::IdentityBackend::Linux {
-            self.current_session = None;
-            #[cfg(target_os = "linux")]
-            {
-                let session = crate::linux::login(&self.storage, username, password)?;
-                self.current_session = Some(session.clone());
-                return Ok(session);
-            }
-            #[cfg(not(target_os = "linux"))]
-            return Err(CoreError::SystemIdentity("Linux is unavailable".into()));
+            return Err(CoreError::SystemAccountManaged);
         }
         let mut document = self.storage.load_users()?;
         if document.users.is_empty() {
@@ -102,6 +94,7 @@ impl SessionService {
         record.last_login_at_epoch_ms = Some(now);
         record.updated_at_epoch_ms = now;
         let session = AuthSession {
+            source: crate::IdentitySource::LocalAccount,
             session_id: format!("session-{}-{}", record.id, unix_nanos()),
             user_id: record.id.clone(),
             username: record.username.clone(),
@@ -113,7 +106,20 @@ impl SessionService {
         Ok(session)
     }
 
+    #[cfg(target_os = "linux")]
+    pub fn attach_current_linux_user(&mut self) -> Result<AuthSession, CoreError> {
+        if self.backend != crate::IdentityBackend::Linux {
+            return Err(CoreError::SystemIdentity(
+                "Current-process attachment requires Linux backend".into(),
+            ));
+        }
+        let session = crate::linux::attach(&self.storage)?;
+        self.current_session = Some(session.clone());
+        Ok(session)
+    }
+
     pub fn logout(&mut self) -> Result<(), CoreError> {
+        self.backend.require_local()?;
         self.current_session = None;
         Ok(())
     }

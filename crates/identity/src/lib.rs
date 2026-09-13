@@ -19,6 +19,6 @@ pub use credentials::{
     verify_password,
 };
 pub use error::CoreError;
-pub use identity::{AuthSession, UserAccount};
+pub use identity::{AuthSession, IdentitySource, UserAccount};
 pub use session_service::{FAILED_LOGIN_LOCK_THRESHOLD, LOCKOUT_DURATION_MS, SessionService};
 pub use user_service::UserService;

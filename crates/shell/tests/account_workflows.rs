@@ -2132,15 +2132,35 @@ impl Drop for FixtureRoot {
 }
 
 #[test]
-fn linux_login_skips_local_setup_even_when_no_accounts_are_available() {
+#[cfg(target_os = "linux")]
+fn linux_attaches_current_user_and_only_requires_first_appearance_setup() {
     let fixture = FixtureRoot::new("linux-empty-users");
     let platform = mock_platform(fixture.path());
     let mut startup = prepare_shell_startup(&platform).unwrap();
     startup.identity_backend = identity::IdentityBackend::Linux;
     startup.auth_bootstrap_required = false;
+    let mut state = ShellSession::new_with_startup(default_config(), (120, 40), startup);
+    let current = platform::linux::identity::LinuxUserContext::current().unwrap();
+    assert_eq!(state.active_screen(), ShellScreen::FirstRunSetup);
+    assert_eq!(state.to_setup_view_model().step, ui::SetupStep::Appearance);
+    for _ in 0..5 {
+        state.apply_input(InputEvent::Key(KeyInput::from_label("Tab")));
+    }
+    state.apply_input(InputEvent::Key(KeyInput::from_label("Enter")));
+    assert_eq!(state.active_screen(), ShellScreen::Home);
+    let session = state.auth_session().unwrap();
+    assert_eq!(
+        session.source,
+        identity::IdentitySource::LinuxCurrentProcess
+    );
+    assert_eq!(session.username, current.username);
+    assert_eq!(session.role, identity::UserRole::User);
+    drop(state);
+
+    let mut startup = prepare_shell_startup(&platform).unwrap();
+    startup.identity_backend = identity::IdentityBackend::Linux;
+    startup.auth_bootstrap_required = false;
     let state = ShellSession::new_with_startup(default_config(), (120, 40), startup);
-    assert_eq!(state.active_screen(), ShellScreen::Login);
-    assert!(state.to_login_view_model().system_users);
-    assert!(state.to_login_view_model().users.is_empty());
-    assert!(state.auth_session().is_none());
+    assert_eq!(state.active_screen(), ShellScreen::Home);
+    assert_eq!(state.auth_session().unwrap().username, current.username);
 }

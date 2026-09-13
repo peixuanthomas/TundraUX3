@@ -5,10 +5,13 @@ impl ShellSession {
     }
 
     pub(in crate::session) fn can_manage_launcher(&self) -> bool {
-        matches!(
-            self.app.auth_session().map(|session| session.role),
-            Some(UserRole::Admin)
-        )
+        PermissionService::new(self.debug_policy)
+            .authorize(
+                self.app.auth_session(),
+                PermissionAction::ManageLauncher,
+                None,
+            )
+            .allowed
     }
 
     pub(in crate::session) fn can_execute_command_line(&self) -> bool {

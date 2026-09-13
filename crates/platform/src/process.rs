@@ -11,47 +11,6 @@ pub struct ProcessOutput {
     pub text: String,
 }
 
-/// Resolve the account that invoked sudo without assuming a /home layout.
-pub fn sudo_user_home() -> Option<PathBuf> {
-    #[cfg(target_os = "linux")]
-    {
-        use std::os::unix::ffi::OsStrExt;
-        if unsafe { libc::geteuid() } != 0 {
-            return None;
-        }
-        let uid = std::env::var("SUDO_UID")
-            .ok()?
-            .parse::<libc::uid_t>()
-            .ok()?;
-        let mut entry = std::mem::MaybeUninit::<libc::passwd>::uninit();
-        let mut buffer = vec![0u8; 65536];
-        let mut result = std::ptr::null_mut();
-        let status = unsafe {
-            libc::getpwuid_r(
-                uid,
-                entry.as_mut_ptr(),
-                buffer.as_mut_ptr().cast(),
-                buffer.len(),
-                &mut result,
-            )
-        };
-        if status != 0 || result.is_null() {
-            return None;
-        }
-        let entry = unsafe { entry.assume_init() };
-        if entry.pw_dir.is_null() {
-            return None;
-        }
-        let bytes = unsafe { std::ffi::CStr::from_ptr(entry.pw_dir) }.to_bytes();
-        let home = PathBuf::from(std::ffi::OsStr::from_bytes(bytes));
-        home.is_absolute().then_some(home)
-    }
-    #[cfg(not(target_os = "linux"))]
-    {
-        None
-    }
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProcessSpec {
     program: PathBuf,
@@ -164,7 +123,7 @@ pub(crate) fn spawn_detached_impl(
     reject_windows_scripts: bool,
 ) -> Result<(), PlatformError> {
     validate_process_spec(spec, reject_windows_scripts)?;
-    let mut command = command_from_spec(spec);
+    let mut command = command_from_spec(spec)?;
     command
         .stdin(Stdio::null())
         .stdout(Stdio::null())
@@ -184,7 +143,7 @@ pub(crate) fn spawn_wait_impl(
     reject_windows_scripts: bool,
 ) -> Result<ProcessExit, PlatformError> {
     validate_process_spec(spec, reject_windows_scripts)?;
-    let output = command_from_spec(spec)
+    let output = command_from_spec(spec)?
         .output()
         .map_err(|error| PlatformError::Io {
             operation: "spawn process and wait",
@@ -199,7 +158,7 @@ pub(crate) fn spawn_wait_impl(
     })
 }
 
-fn command_from_spec(spec: &ProcessSpec) -> Command {
+fn command_from_spec(spec: &ProcessSpec) -> Result<Command, PlatformError> {
     let mut command = Command::new(&spec.program);
     command.args(&spec.args);
 
@@ -211,7 +170,17 @@ fn command_from_spec(spec: &ProcessSpec) -> Command {
         command.env(key, value);
     }
 
-    command
+    #[cfg(target_os = "linux")]
+    {
+        let user = crate::linux::identity::LinuxUserContext::current().map_err(|error| {
+            PlatformError::Native {
+                operation: "resolve child process identity",
+                message: error.to_string(),
+            }
+        })?;
+        command.envs(user.environment());
+    }
+    Ok(command)
 }
 
 pub(crate) fn spawn_streaming_impl(
@@ -226,7 +195,7 @@ pub(crate) fn spawn_streaming_impl(
         path: Some(spec.program.clone()),
         message: error.to_string(),
     };
-    let mut child = command_from_spec(spec)
+    let mut child = command_from_spec(spec)?
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())

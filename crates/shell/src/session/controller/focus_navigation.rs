@@ -230,7 +230,9 @@ impl ShellSession {
         }
 
         let mut order = vec![ShellComponent::Home];
-        if self.app.auth_session().is_some() {
+        if self.identity_backend != identity::IdentityBackend::Linux
+            && self.app.auth_session().is_some()
+        {
             order.push(ShellComponent::HomeLogout);
         }
         order.extend([

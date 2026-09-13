@@ -29,6 +29,7 @@ fn fixture(pending: bool) -> (PersonalizationTempGuard, StorageManager, AuthSess
     .unwrap();
     let manager = StorageManager::open(paths).unwrap().manager;
     let session = AuthSession {
+        source: identity::IdentitySource::LinuxCurrentProcess,
         session_id: "linux-session".into(),
         user_id: "linux-uid-1000".into(),
         username: "peixuan".into(),
@@ -63,9 +64,10 @@ fn linux_state(manager: &StorageManager, images: bool) -> ShellSession {
         PlatformCapabilities::native_supported(),
     );
     startup.storage_manager = Some(manager.clone());
-    startup.identity_backend = identity::IdentityBackend::Linux;
+    // Build an isolated UI fixture without attaching the host NSS account.
     let mut state =
         ShellSession::new_with_startup(ShellLaunchConfig::default(), (120, 40), startup);
+    state.identity_backend = identity::IdentityBackend::Linux;
     state.set_terminal_image_support(images);
     state
 }

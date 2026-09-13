@@ -188,7 +188,8 @@ impl ShellSession {
                 (RoutedTarget::Global, ShellCommand::OpenUserManagement)
             }
             ShellScreen::Home
-                if self.current_home_username().is_some()
+                if self.identity_backend != identity::IdentityBackend::Linux
+                    && self.current_home_username().is_some()
                     && (key.is_character('l') || key.is_character('L')) =>
             {
                 (RoutedTarget::Global, ShellCommand::LogoutToLockscreen)

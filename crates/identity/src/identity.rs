@@ -4,8 +4,15 @@ use storage::{AppearanceConfig, SystemStatusDashboardConfig, UserRecord, UsersDo
 use crate::authorization::UserRole;
 use crate::error::CoreError;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IdentitySource {
+    LocalAccount,
+    LinuxCurrentProcess,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AuthSession {
+    pub source: IdentitySource,
     pub session_id: String,
     pub user_id: String,
     pub username: String,

@@ -17,9 +17,6 @@ impl Toolchain {
         if let Some(home) = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE")) {
             homes.push(PathBuf::from(home).join(".rustup"));
         }
-        if let Some(home) = platform::sudo_user_home() {
-            homes.push(home.join(".rustup"));
-        }
         Self::from_locations(std::env::split_paths(&path), &homes)
     }
 
@@ -28,7 +25,6 @@ impl Toolchain {
         homes: &[PathBuf],
     ) -> Result<Self, UpdateError> {
         // Prefer a complete installed toolchain, not rustup's proxy binaries:
-        // sudo changes HOME and the proxies would use root's rustup settings.
         for dir in path {
             if dir.is_absolute()
                 && let Some(pair) = Self::in_dir(&dir)
@@ -52,7 +48,7 @@ impl Toolchain {
             }
         }
         Err(UpdateError::new(
-            "could not find a complete installed Rust toolchain (cargo and rustc), including the sudo user's default toolchain",
+            "could not find a complete installed Rust toolchain (cargo and rustc)",
         ))
     }
 
@@ -91,7 +87,7 @@ impl Toolchain {
 mod tests {
     use super::*;
     #[test]
-    fn update_toolchain_finds_default_rustup_tools_outside_sudo_path() {
+    fn update_toolchain_finds_current_users_default_tools_outside_path() {
         let root = std::env::temp_dir().join(format!("tundra-toolchain-{}", std::process::id()));
         let home = root.join("invoking-user/.rustup");
         let bin = home.join("toolchains/stable-test/bin");

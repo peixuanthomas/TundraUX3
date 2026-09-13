@@ -339,6 +339,21 @@ impl ShellSession {
                 ui::NotificationTone::Error,
             );
         }
+        #[cfg(target_os = "linux")]
+        if state.identity_backend == identity::IdentityBackend::Linux {
+            if let Some(storage) = state.storage_manager.clone() {
+                match SessionService::new(storage)
+                    .with_backend(identity::IdentityBackend::Linux)
+                    .attach_current_linux_user()
+                {
+                    Ok(session) => state.complete_login(session),
+                    Err(error) => {
+                        state.error_message = Some(format_core_error(&error));
+                        state.shutdown_requested = true;
+                    }
+                }
+            }
+        }
         state.refresh_hit_map();
         if !auth_gate_enabled && let Some(restored_session) = startup.restored_session.as_ref() {
             state.apply_restored_session(restored_session);

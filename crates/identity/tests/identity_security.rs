@@ -627,6 +627,7 @@ fn delete_user_removes_accounts_but_preserves_last_enabled_admin() {
 
 fn session(username: &str, role: UserRole) -> identity::AuthSession {
     identity::AuthSession {
+        source: identity::IdentitySource::LocalAccount,
         session_id: format!("session-{username}"),
         user_id: format!("id-{username}"),
         username: username.to_string(),
@@ -786,4 +787,29 @@ fn personalization_completion_only_updates_the_authenticated_profile() {
         after.users[0].system_status_dashboard,
         document.users[0].system_status_dashboard
     );
+}
+
+#[test]
+fn linux_current_process_permissions_do_not_use_local_admin_role() {
+    let permissions = identity::PermissionService::default();
+    for role in [UserRole::Guest, UserRole::User, UserRole::Admin] {
+        let mut actor = session("current", role);
+        actor.source = identity::IdentitySource::LinuxCurrentProcess;
+        for action in [
+            PermissionAction::ReadFile,
+            PermissionAction::WriteFile,
+            PermissionAction::ExecuteCommandLine,
+            PermissionAction::ManageLauncher,
+            PermissionAction::ManageOwnUser,
+            PermissionAction::ChangeSettings,
+            PermissionAction::ViewDiagnosticsDetails,
+        ] {
+            assert!(permissions.authorize(Some(&actor), action, None).allowed);
+        }
+        assert!(
+            !permissions
+                .authorize(Some(&actor), PermissionAction::ManageUsers, None)
+                .allowed
+        );
+    }
 }

@@ -139,6 +139,17 @@ impl PermissionService {
         action: PermissionAction,
         _resource: Option<&str>,
     ) -> Authorization {
+        if session
+            .is_some_and(|session| session.source == crate::IdentitySource::LinuxCurrentProcess)
+        {
+            return match action {
+                PermissionAction::ManageUsers => Authorization::deny("system_account_managed"),
+                PermissionAction::EnterDebugMode if !self.debug_policy.allows_debug() => {
+                    Authorization::deny("debug_policy_denied")
+                }
+                _ => Authorization::allow(),
+            };
+        }
         let role = session
             .map(|session| session.role)
             .unwrap_or(UserRole::Guest);

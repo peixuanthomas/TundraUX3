@@ -11,6 +11,7 @@ from __future__ import annotations
 import fcntl
 import os
 import pty
+import re
 import select
 import shutil
 import signal
@@ -27,11 +28,10 @@ MOUSE_CAPTURE_SEQUENCE = b"\x1b[?1003h"
 # The startup animation never renders the final boxed Status panel. Matching
 # its UTF-8 border/title survives Ratatui's debug/release diff differences.
 SHELL_READY_SEQUENCE = "╭Status".encode()
-KEYBOARD_SENTINEL = b" "
-# Space safely advances the isolated first-run setup from Language to
-# Timezone. It follows the same ordinary character path as Editor typing and,
-# unlike debug-only input diagnostics, is visible in release builds too.
-KEYBOARD_SENTINEL_SEQUENCE = b"Timezone"
+KEYBOARD_SENTINEL = b"\t\t\t\t\t\r"
+# Complete the current user's Appearance setup through its existing focus order.
+# The resulting Home page proves ordinary input was processed after the flood.
+KEYBOARD_SENTINEL_SEQUENCE = b"Explorer"
 MOUSE_FLOOD_EVENT_COUNT = int(os.environ.get("TUNDRA_PTY_MOUSE_EVENT_COUNT", "64"))
 MOUSE_FLOOD_WRITE_TIMEOUT = 8.0
 KEYBOARD_SENTINEL_TIMEOUT = float(
@@ -77,11 +77,18 @@ def wait_for_output(
     start_offset: int = 0,
 ) -> bool:
     deadline = time.monotonic() + timeout
-    while output.find(sequence, start_offset) < 0 and time.monotonic() < deadline:
+    def contains_sequence() -> bool:
+        if output.find(sequence, start_offset) >= 0:
+            return True
+        # Ratatui can switch styles between a border and its title.
+        visible = re.sub(rb"\x1b\[[0-?]*[ -/]*[@-~]", b"", bytes(output[start_offset:]))
+        return sequence in visible
+
+    while not contains_sequence() and time.monotonic() < deadline:
         if child.poll() is not None:
             return False
         read_available(fd, output, 0.1)
-    return output.find(sequence, start_offset) >= 0
+    return contains_sequence()
 
 
 def wait_for_output_quiet(
@@ -232,6 +239,13 @@ def main() -> int:
                 "tundra-shell output did not become idle after the ready frame; "
                 f"output:\n{output_diagnostic(output)}"
             )
+
+        # A bare PTY has no graphics responder. Acknowledge the real warning
+        # before testing Appearance keyboard navigation.
+        if b"No terminal graphics response" in output:
+            os.write(master, b"\r")
+            if not wait_for_output_quiet(master, output, child, quiet_period=0.2):
+                raise SystemExit("shell did not settle after the graphics warning")
 
         sentinel_offset = len(output)
         flood_duration = write_events_while_draining_output(

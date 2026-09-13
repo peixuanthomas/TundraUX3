@@ -815,6 +815,9 @@ impl ShellSession {
     }
 
     pub(in crate::session) fn sync_current_session_role(&mut self) {
+        if self.identity_backend == identity::IdentityBackend::Linux {
+            return;
+        }
         let Some(mut session) = self.app.auth_session().cloned() else {
             return;
         };

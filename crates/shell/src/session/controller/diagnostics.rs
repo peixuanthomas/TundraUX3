@@ -1003,9 +1003,10 @@ impl ShellSession {
     }
 
     fn diagnostics_can_explore_logs(&self) -> bool {
-        self.app
-            .auth_session()
-            .is_some_and(|session| session.role == UserRole::Admin)
+        self.app.auth_session().is_some_and(|session| {
+            session.source == identity::IdentitySource::LinuxCurrentProcess
+                || session.role == UserRole::Admin
+        })
     }
 
     pub(in crate::session) fn open_selected_diagnostics_report(
@@ -1153,6 +1154,7 @@ mod diagnostics_shell_tests {
 
     fn session(role: UserRole) -> AuthSession {
         AuthSession {
+            source: identity::IdentitySource::LocalAccount,
             session_id: format!("{}-session", role.as_str()),
             user_id: format!("{}-id", role.as_str()),
             username: role.as_str().to_ascii_lowercase(),

@@ -81,6 +81,9 @@ impl ShellSession {
 
     fn logs_access(&self) -> Option<LogAccess> {
         let session = self.app.auth_session()?;
+        if session.source == identity::IdentitySource::LinuxCurrentProcess {
+            return Some(LogAccess::OsUser);
+        }
         match session.role {
             UserRole::Guest => None,
             UserRole::Admin => Some(LogAccess::Admin),
@@ -591,7 +594,10 @@ impl ShellSession {
     pub(in crate::session) fn to_logs_view_model(&self) -> ui::LogsViewModel {
         let _language = i18n::enter_snapshot(self.language.clone());
         let state = &self.logs_state;
-        let system = matches!(self.logs_access(), Some(LogAccess::Admin));
+        let system = matches!(
+            self.logs_access(),
+            Some(LogAccess::Admin | LogAccess::OsUser)
+        );
         let diagnostics = ui::DiagnosticsViewModel {
             tab: if state.section == ui::LogsSection::Incidents {
                 ui::DiagnosticsTab::Incidents
@@ -834,6 +840,7 @@ mod tests {
         );
         state.app.dispatch_at(
             app::AppCommand::SetAuthSession(Some(AuthSession {
+                source: identity::IdentitySource::LocalAccount,
                 session_id: "logs-session".into(),
                 user_id: "alice".into(),
                 username: "alice".into(),
