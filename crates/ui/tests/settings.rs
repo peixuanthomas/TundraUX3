@@ -529,6 +529,7 @@ fn update_commits_wrap_complete_messages_and_follow_detail_scroll() {
     model.appearance_preview = None;
     model.cards.clear();
     model.update = Some(SettingsUpdateViewModel {
+        summary_title: None,
         activity: None,
         commits: vec![SettingsUpdateCommitViewModel {
             sha: "1234567890abcdef".to_string(),
@@ -595,6 +596,7 @@ fn update_confirmation_draws_complete_buttons_and_blocks_underlying_hits() {
         for (width, height) in [(50, 12), (80, 24), (120, 32)] {
             let mut model = sample_model();
             model.update = Some(SettingsUpdateViewModel {
+        summary_title: None,
                 activity: None,
                 commits: Vec::new(),
                 empty_message: "Up to date".to_string(),
@@ -671,6 +673,7 @@ fn update_activity_shows_both_meters_and_latest_output_with_page_scrolling() {
     model.cards.clear();
     model.status = "Compiling release executables".into();
     model.update = Some(SettingsUpdateViewModel {
+        summary_title: None,
         activity: Some(UpdateActivityViewModel {
             download: UpdateMeterViewModel {
                 percent: Some(100),

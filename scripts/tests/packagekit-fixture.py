@@ -65,6 +65,7 @@ def main():
             payload = '/opt/tundra-fixture/bin/packagekit-update-probe' if binary else f'/opt/tundra-fixture/{name}.txt'
             requires = 'Requires: tundra-runtime >= 1.0.0\n' if binary and version == '2.0.0' else ''
             install = f'install -Dm755 %{{SOURCE0}} %{{buildroot}}{payload}' if binary else f'install -Dm644 /dev/null %{{buildroot}}{payload}'
+            pre = '%pre\nif test -f /srv/tundra-fixture/fail-install; then exit 1; fi\n' if binary and version == '2.0.0' else ''
             spec = build / 'SPECS' / f'{name}-{version}.spec'
             spec.write_text(f'''%global debug_package %{{nil}}
 %global __os_install_post %{{nil}}
@@ -84,6 +85,7 @@ Disposable test payload for the fixed-package PackageKit integration.
 {install}
 %files
 {payload}
+{pre}
 ''')
             run('rpmbuild', '-bb', '--define', f'_topdir {build}', str(spec))
             packages = list((build / 'RPMS').glob(f'*/{name}-{version}-1.*.rpm'))
@@ -97,6 +99,10 @@ Disposable test payload for the fixed-package PackageKit integration.
             else:
                 shutil.copy2(package, repo / package.name)
     run('rpm', '--upgrade', *initial)
+    # The full Shell checks locale/resource contracts against its exact build.
+    # A backend-only probe needs no assets; a Shell PTY fixture supplies these.
+    if (root / 'assets').is_dir():
+        shutil.copytree(root / 'assets', Path('/opt/tundra-fixture/bin/assets'), dirs_exist_ok=True)
     run('createrepo_c', str(repo))
     backup = root / 'original-repositories'
     backup.mkdir(exist_ok=True)

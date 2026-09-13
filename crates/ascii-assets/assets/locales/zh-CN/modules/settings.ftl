@@ -302,3 +302,33 @@ settings-category-name =
         [Update] { ui-settings-update }
        *[other] { $category }
     }
+
+settings-rpm-working = 正在检查安装类型和系统软件包服务…
+settings-rpm-cancelling = 已请求取消，正在等待 PackageKit 返回结果。
+settings-rpm-progress = { $stage } { $package } { $percent }
+settings-rpm-candidate = 有可用的 TundraUX3 软件包更新。安装前请检查依赖变更。
+settings-rpm-no-candidate = 当前配置的软件源未提供更新版本的 TundraUX3 软件包。
+settings-rpm-preview-title = 检查软件包更新
+settings-rpm-install = 安装已确认的更新
+settings-rpm-installed = 更新已成功安装：{ $version }。重启 Tundra 后生效。{ $restart }
+settings-rpm-system-restart = 建议重启系统。Tundra 不会自动重启系统。
+settings-rpm-cancelled = PackageKit 已取消事务。部分软件包可能已经发生变化，请重新检查已安装版本。
+settings-rpm-unknown = 结果未知。请查询已安装软件包和事务历史；不会自动重新执行更新。
+settings-rpm-no-pending = 没有记录待确认的更新结果。检查更新可刷新已安装版本。
+settings-rpm-backend = 安装类型与软件包更新
+settings-rpm-candidate-label = 候选版本 / 软件源
+settings-rpm-cancel-action = 取消软件包事务
+settings-rpm-cancel-help = 仅当 PackageKit 允许取消时可用。取消不保证回滚。
+settings-rpm-query = 查询更新结果
+settings-rpm-restart = 重启 Tundra
+settings-rpm-restart-help = 重启 Tundra 以加载已安装版本。未保存文档将先保留在编辑器恢复数据中；若无法保存恢复数据，将停止重启。
+settings-rpm-recheck-version = 请重新检查当前已安装版本
+settings-rpm-stage-preparing = 正在准备
+settings-rpm-stage-starting = 正在启动事务
+settings-rpm-stage-waiting = 正在等待 PackageKit
+settings-rpm-stage-authorizing = 正在等待系统授权
+settings-rpm-stage-downloading = 正在下载
+settings-rpm-stage-installing = 正在安装
+settings-rpm-stage-verifying = 正在验证
+settings-rpm-stage-finished = 事务已结束
+settings-rpm-details-title = 软件包事务

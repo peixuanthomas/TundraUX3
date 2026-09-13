@@ -110,6 +110,8 @@ pub enum ShellCommand {
     CloseSettings,
     SettingsKey(KeyInput),
     SettingsPointer(MouseInput),
+    SettingsRpmUpdateConfirmed,
+    SettingsRpmUpdateCancelled,
     SettingsRestoreDefaultsConfirmed,
     SettingsWeatherLocationConfirmed,
     EditorSaveAndClose,

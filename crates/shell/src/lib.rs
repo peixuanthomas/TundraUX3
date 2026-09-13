@@ -63,3 +63,6 @@ pub(crate) use terminal_size::checked_current_terminal_size;
 mod session;
 
 pub use session::*;
+
+#[cfg(target_os = "linux")]
+mod authorization;

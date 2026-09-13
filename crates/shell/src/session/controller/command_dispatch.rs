@@ -787,6 +787,14 @@ impl ShellSession {
                 self.handle_settings_pointer(mouse, platform);
                 ShellAction::Redraw
             }
+            ShellCommand::SettingsRpmUpdateConfirmed => {
+                self.confirm_rpm_update();
+                ShellAction::Redraw
+            }
+            ShellCommand::SettingsRpmUpdateCancelled => {
+                self.cancel_rpm_confirmation();
+                ShellAction::Redraw
+            }
             ShellCommand::SettingsRestoreDefaultsConfirmed => {
                 self.restore_settings_defaults();
                 ShellAction::Redraw
@@ -1942,8 +1950,11 @@ impl ShellSession {
     }
 
     pub(in crate::session) fn show_exit_confirmation_modal(&mut self, platform: &dyn Platform) {
+        // Native Linux availability and authorization are evaluated by the background
+        // logind request. Opening this menu must not synchronously call the system bus.
+        let native_linux = platform.kind() == PlatformKind::Linux && platform.is_native_backend();
         let poweroff_available = platform.capabilities().power == CapabilityStatus::Supported
-            && platform.can_poweroff().unwrap_or(false);
+            && (native_linux || platform.can_poweroff().unwrap_or(false));
         let mut actions = vec![
             ShellNotificationAction::new(
                 "restore-terminal",
@@ -1958,7 +1969,7 @@ impl ShellSession {
             .with_shortcut(InputKey::Char('r'))
             .with_follow_up(ShellCommand::Restart),
         ];
-        if platform.can_reboot().unwrap_or(false) {
+        if native_linux || platform.can_reboot().unwrap_or(false) {
             actions.push(
                 ShellNotificationAction::new(
                     "reboot",

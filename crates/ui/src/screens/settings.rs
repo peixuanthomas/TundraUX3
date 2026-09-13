@@ -100,6 +100,9 @@ pub enum SettingsField {
     RemoteVersion,
     CheckUpdates,
     StartUpdate,
+    CancelRpmUpdate,
+    QueryRpmUpdate,
+    RestartAfterRpmUpdate,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -299,6 +302,7 @@ pub struct SettingsUpdateConfirmationViewModel {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SettingsUpdateViewModel {
+    pub summary_title: Option<String>,
     pub activity: Option<crate::components::UpdateActivityViewModel>,
     pub commits: Vec<SettingsUpdateCommitViewModel>,
     pub empty_message: String,
@@ -910,7 +914,12 @@ fn render_update_commits(
         return;
     };
     Surface::new()
-        .titled(i18n::tr!("ui-settings-commits-padded"))
+        .titled(
+            update
+                .summary_title
+                .clone()
+                .unwrap_or_else(|| i18n::tr!("ui-settings-commits-padded")),
+        )
         .bordered(true)
         .raised(true)
         .render_frame(frame, visible, context);

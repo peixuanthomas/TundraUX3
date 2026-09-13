@@ -59,6 +59,12 @@ impl RpmUpdates {
             },
         })
     }
+    pub fn set_authorization_interaction(
+        &mut self,
+        interaction: std::sync::Arc<dyn super::authorization::Interaction>,
+    ) {
+        self.controller.transport.interaction = Some(interaction);
+    }
     pub fn cancellation(&self) -> UpdateCancellation {
         self.controller.cancellation.clone()
     }

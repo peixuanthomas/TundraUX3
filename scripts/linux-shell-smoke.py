@@ -28,10 +28,11 @@ MOUSE_CAPTURE_SEQUENCE = b"\x1b[?1003h"
 # The startup animation never renders the final boxed Status panel. Matching
 # its UTF-8 border/title survives Ratatui's debug/release diff differences.
 SHELL_READY_SEQUENCE = "╭Status".encode()
-KEYBOARD_SENTINEL = b"\t\t\t\t\t\r"
-# Complete the current user's Appearance setup through its existing focus order.
-# The resulting Home page proves ordinary input was processed after the flood.
-KEYBOARD_SENTINEL_SEQUENCE = b"Explorer"
+# Type one ordinary character into the existing Appearance color input. Ratatui
+# may emit only changed cells, so a multi-character value is not a reliable byte
+# marker. Keep this deadline independent of saving preferences and loading Home.
+KEYBOARD_SENTINEL = "Ω".encode("utf-8")
+KEYBOARD_SENTINEL_SEQUENCE = KEYBOARD_SENTINEL
 MOUSE_FLOOD_EVENT_COUNT = int(os.environ.get("TUNDRA_PTY_MOUSE_EVENT_COUNT", "64"))
 MOUSE_FLOOD_WRITE_TIMEOUT = 8.0
 KEYBOARD_SENTINEL_TIMEOUT = float(
@@ -247,6 +248,15 @@ def main() -> int:
             if not wait_for_output_quiet(master, output, child, quiet_period=0.2):
                 raise SystemExit("shell did not settle after the graphics warning")
 
+        os.write(master, b"\t\t\r")
+        if not wait_for_output(master, output, b"Custom theme color", child, 5.0):
+            raise SystemExit("Appearance color input did not open")
+        os.write(master, b"\x7f" * 32)
+        if not wait_for_output_quiet(master, output, child, quiet_period=0.2):
+            raise SystemExit("Appearance color input did not settle")
+        if KEYBOARD_SENTINEL_SEQUENCE in output:
+            raise SystemExit("keyboard sentinel unexpectedly appears in the initial frame")
+
         sentinel_offset = len(output)
         flood_duration = write_events_while_draining_output(
             master,
@@ -276,6 +286,18 @@ def main() -> int:
                 f"{output_diagnostic(output)}"
             )
         sentinel_latency = time.monotonic() - sentinel_started_at
+
+        # Cancel the temporary color, then complete the real first-use workflow.
+        # Saving a profile is a separate assertion, not an input dispatch timer.
+        os.write(master, b"\x1b")
+        if not wait_for_output_quiet(master, output, child, quiet_period=0.2):
+            raise SystemExit("Appearance color input did not close")
+        home_offset = len(output)
+        os.write(master, b"\t\t\t\r")
+        if not wait_for_output(
+            master, output, b"Explorer", child, 10.0, start_offset=home_offset
+        ):
+            raise SystemExit("Appearance setup did not finish at Home")
 
         if child.poll() is None:
             signal_process_group(child, signal.SIGTERM)

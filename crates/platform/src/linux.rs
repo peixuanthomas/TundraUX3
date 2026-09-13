@@ -26,6 +26,7 @@ use watchdog::{
     TaskSpec,
 };
 
+pub mod authorization;
 pub mod dbus;
 pub mod diagnostics;
 pub mod identity;

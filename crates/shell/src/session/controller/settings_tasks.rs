@@ -9,6 +9,8 @@ pub(in crate::session) struct SettingsTimeSyncValidationEvent {
 
 #[derive(Debug)]
 pub(in crate::session) enum SettingsUpdateTaskEvent {
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+    Rpm(RpmTaskEvent),
     Progress(app::update::UpdateProgress),
     CheckCompleted(Result<app::update::UpdateCheckResult, i18n::LocalizedText>),
     PrepareCompleted(Result<std::path::PathBuf, i18n::LocalizedText>),
@@ -25,6 +27,14 @@ pub(in crate::session) struct ShellSettingsTaskShared {
     pub(in crate::session) update_event_tx: mpsc::Sender<SettingsUpdateTaskEvent>,
     pub(in crate::session) update_event_rx: Mutex<mpsc::Receiver<SettingsUpdateTaskEvent>>,
     pub(in crate::session) update_worker: Mutex<Option<ManagedThreadHandle<()>>>,
+    #[cfg(target_os = "linux")]
+    pub(in crate::session) authorization:
+        Mutex<Option<Arc<dyn platform::linux::authorization::Interaction>>>,
+    #[cfg(target_os = "linux")]
+    pub(in crate::session) rpm_client: Mutex<Option<platform::linux::updates::RpmUpdates>>,
+    #[cfg(target_os = "linux")]
+    pub(in crate::session) rpm_cancellation:
+        Mutex<Option<platform::linux::updates::UpdateCancellation>>,
     pub(in crate::session) platform: Option<std::sync::Arc<dyn Platform>>,
 }
 
@@ -67,6 +77,12 @@ impl ShellSettingsTaskRuntime {
                 update_event_tx,
                 update_event_rx: Mutex::new(update_event_rx),
                 update_worker: Mutex::new(None),
+                #[cfg(target_os = "linux")]
+                authorization: Mutex::new(None),
+                #[cfg(target_os = "linux")]
+                rpm_client: Mutex::new(None),
+                #[cfg(target_os = "linux")]
+                rpm_cancellation: Mutex::new(None),
                 platform: None,
             }),
         }
@@ -108,6 +124,12 @@ impl ShellSettingsTaskRuntime {
                 update_event_tx,
                 update_event_rx: Mutex::new(update_event_rx),
                 update_worker: Mutex::new(None),
+                #[cfg(target_os = "linux")]
+                authorization: Mutex::new(None),
+                #[cfg(target_os = "linux")]
+                rpm_client: Mutex::new(None),
+                #[cfg(target_os = "linux")]
+                rpm_cancellation: Mutex::new(None),
                 platform,
             }),
         }
@@ -279,7 +301,8 @@ impl ShellSettingsTaskRuntime {
         if events.iter().any(|event| {
             matches!(
                 event,
-                SettingsUpdateTaskEvent::CheckCompleted(_)
+                SettingsUpdateTaskEvent::Rpm(RpmTaskEvent::Completed(_))
+                    | SettingsUpdateTaskEvent::CheckCompleted(_)
                     | SettingsUpdateTaskEvent::PrepareCompleted(_)
             )
         }) && let Ok(mut worker) = self.shared.update_worker.lock()
@@ -644,6 +667,12 @@ mod tests {
                 update_event_tx,
                 update_event_rx: Mutex::new(update_event_rx),
                 update_worker: Mutex::new(None),
+                #[cfg(target_os = "linux")]
+                authorization: Mutex::new(None),
+                #[cfg(target_os = "linux")]
+                rpm_client: Mutex::new(None),
+                #[cfg(target_os = "linux")]
+                rpm_cancellation: Mutex::new(None),
                 platform: None,
             }),
         }

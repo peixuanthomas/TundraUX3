@@ -11,6 +11,14 @@ pub fn system() -> Result<Connection, ServiceError> {
         .map_err(map_error)
 }
 
+pub fn authorization_system() -> Result<Connection, ServiceError> {
+    Builder::system()
+        .map_err(map_error)?
+        .method_timeout(Duration::from_secs(300))
+        .build()
+        .map_err(map_error)
+}
+
 pub fn session() -> Result<Connection, ServiceError> {
     Builder::session()
         .map_err(map_error)?

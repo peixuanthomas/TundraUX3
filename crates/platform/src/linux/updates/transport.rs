@@ -98,11 +98,13 @@ pub(super) trait Transport {
 
 pub(super) struct DbusTransport {
     connection: Connection,
+    pub interaction: Option<std::sync::Arc<dyn super::super::authorization::Interaction>>,
 }
 impl DbusTransport {
     pub fn new() -> Result<Self, ServiceError> {
         Ok(Self {
             connection: dbus::system()?,
+            interaction: None,
         })
     }
     fn owner(&self) -> Result<String, ServiceError> {
@@ -124,6 +126,16 @@ impl Transport for DbusTransport {
         progress: &mut dyn FnMut(UpdateProgress),
         started: &mut dyn FnMut(&str) -> Result<(), ServiceError>,
     ) -> Result<Report, ServiceError> {
+        let mut authorization = if matches!(operation, Operation::Execute(_)) {
+            super::super::authorization::prepare(
+                &self.connection,
+                super::super::authorization::Action::Update,
+                self.interaction.clone(),
+            )?
+        } else {
+            None
+        };
+        let mut awaiting_authorization = false;
         let manager = Proxy::new(
             &self.connection,
             SERVICE,
@@ -248,6 +260,13 @@ impl Transport for DbusTransport {
                     if let Some(value) =
                         properties.get("Status").and_then(|v| u32::try_from(v).ok())
                     {
+                        if value == 31 {
+                            awaiting_authorization = true;
+                        } else if awaiting_authorization {
+                            // The method reply precedes asynchronous authorization. Release the
+                            // terminal only when the service leaves its authorization stage.
+                            authorization.take();
+                        }
                         state.stage = match value {
                             1 | 30 => UpdateStage::Waiting,
                             31 => UpdateStage::Authorizing,

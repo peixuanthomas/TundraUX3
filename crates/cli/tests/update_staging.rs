@@ -17,6 +17,12 @@ fn update_staging_requires_only_programs_and_uses_the_validated_new_helper() {
         let prepared_dir = root.join("prepared");
         fs::create_dir_all(&install).unwrap();
         fs::create_dir_all(&prepared_dir).unwrap();
+        #[cfg(target_os = "linux")]
+        fs::write(
+            install.join("tundra-installation.json"),
+            include_str!("../../../packaging/linux/tundra-installation.json"),
+        )
+        .unwrap();
         let shell_name = format!("tundra-shell{suffix}");
         let cli_name = format!("tundra-cli{suffix}");
         fs::write(install.join(&shell_name), b"old shell").unwrap();

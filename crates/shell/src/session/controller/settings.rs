@@ -261,7 +261,15 @@ impl ShellSession {
                 let last = self
                     .settings_state
                     .as_ref()
-                    .map(|state| settings_fields(state.category).len().saturating_sub(1))
+                    .map(|state| {
+                        if state.category == ui::SettingsCategory::Update
+                            && self.uses_rpm_settings_cards()
+                        {
+                            RPM_SETTINGS_FIELDS.len().saturating_sub(1)
+                        } else {
+                            settings_fields(state.category).len().saturating_sub(1)
+                        }
+                    })
                     .unwrap_or(0);
                 self.select_settings_field_at(last);
             }
@@ -391,7 +399,12 @@ impl ShellSession {
         let Some(state) = self.settings_state.as_ref() else {
             return;
         };
-        let fields = settings_fields(state.category);
+        let fields =
+            if state.category == ui::SettingsCategory::Update && self.uses_rpm_settings_cards() {
+                RPM_SETTINGS_FIELDS
+            } else {
+                settings_fields(state.category)
+            };
         let index = fields
             .iter()
             .position(|field| *field == state.selected_field)
@@ -401,11 +414,16 @@ impl ShellSession {
     }
 
     pub(in crate::session) fn select_settings_field_at(&mut self, index: usize) {
+        let rpm = self.uses_rpm_settings_cards();
         {
             let Some(state) = self.settings_state.as_mut() else {
                 return;
             };
-            let fields = settings_fields(state.category);
+            let fields = if state.category == ui::SettingsCategory::Update && rpm {
+                RPM_SETTINGS_FIELDS
+            } else {
+                settings_fields(state.category)
+            };
             state.selected_field = fields[index.min(fields.len().saturating_sub(1))];
             state.scroll_offset = u16::try_from(index).unwrap_or(u16::MAX).saturating_sub(6);
         }
@@ -479,6 +497,31 @@ impl ShellSession {
             ui::SettingsField::RestoreDefaults => self.request_settings_restore_defaults(),
             ui::SettingsField::CheckUpdates => self.begin_update_check(),
             ui::SettingsField::StartUpdate => self.open_update_confirmation(),
+            ui::SettingsField::CancelRpmUpdate => self.request_rpm_cancellation(),
+            ui::SettingsField::QueryRpmUpdate => self.start_rpm_task(RpmTask::Query),
+            ui::SettingsField::RestartAfterRpmUpdate => {
+                if self.settings_update_state.rpm.as_ref().is_some_and(|rpm| {
+                    matches!(
+                        rpm.result,
+                        Some(platform::updates::UpdateResult::Installed { .. })
+                    )
+                }) {
+                    self.notify_modal(
+                        i18n::msg!("settings-rpm-restart"),
+                        i18n::msg!("settings-rpm-restart-help"),
+                        ui::NotificationTone::Warning,
+                        vec![
+                            ShellNotificationAction::new(
+                                "restart",
+                                i18n::msg!("settings-rpm-restart"),
+                            )
+                            .with_follow_up(ShellCommand::Restart),
+                            ShellNotificationAction::new("cancel", i18n::msg!("settings-cancel"))
+                                .cancel(),
+                        ],
+                    );
+                }
+            }
             ui::SettingsField::InstalledVersion | ui::SettingsField::RemoteVersion => {}
             _ => self.adjust_selected_setting(1, platform),
         }
@@ -1432,6 +1475,10 @@ impl ShellSession {
 
     pub(in crate::session) fn begin_update_check(&mut self) {
         self.settings_update_state.checked_once = true;
+        if self.uses_native_linux_updates() {
+            self.start_rpm_task(RpmTask::Check);
+            return;
+        }
         self.settings_update_state.confirmation_open = false;
         self.settings_update_state.error = None;
         if !self.settings_task_runtime.update_supported() {
@@ -1458,6 +1505,10 @@ impl ShellSession {
     }
 
     pub(in crate::session) fn open_update_confirmation(&mut self) {
+        if self.uses_rpm_settings_cards() {
+            self.start_rpm_task(RpmTask::Preview);
+            return;
+        }
         if !self.settings_task_runtime.update_supported() {
             self.set_update_error(i18n::msg!("settings-update-unsupported"));
             return;
@@ -1530,7 +1581,7 @@ impl ShellSession {
         }
     }
 
-    fn set_update_error(&mut self, message: impl Into<i18n::LocalizedText>) {
+    pub(in crate::session) fn set_update_error(&mut self, message: impl Into<i18n::LocalizedText>) {
         let message = message.into();
         self.settings_update_state.busy = false;
         self.settings_update_state.phase = Some(app::update::UpdatePhase::Failed);
@@ -1590,6 +1641,7 @@ impl ShellSession {
 
         for event in self.settings_task_runtime.drain_update_events() {
             match event {
+                SettingsUpdateTaskEvent::Rpm(event) => self.apply_rpm_event(event),
                 SettingsUpdateTaskEvent::Progress(progress) => {
                     self.settings_update_state.apply_progress(progress);
                 }
@@ -2178,6 +2230,9 @@ impl ShellSession {
                     !matches!(result.relation, app::update::UpdateRelation::Behind { .. })
                 });
             ui::SettingsUpdateViewModel {
+                summary_title: self
+                    .uses_rpm_settings_cards()
+                    .then(|| i18n::tr!("settings-rpm-details-title")),
                 activity: self.settings_update_state.activity.clone(),
                 commits: check
                     .map(|result| {
@@ -2260,6 +2315,13 @@ fn update_settings_cards(
         SettingsCardViewModel as Card, SettingsControlKind as Kind, SettingsField as Field,
         SettingsItemViewModel as Item,
     };
+    if update.rpm.as_ref().is_some_and(|rpm| {
+        rpm.installation.as_ref().is_none_or(|value| {
+            value.backend != platform::installation::UpdateBackend::PortableUser
+        })
+    }) {
+        return rpm_settings_cards(update);
+    }
     let local_sha = identity
         .commit_sha
         .as_deref()
@@ -3257,6 +3319,7 @@ mod update_tests {
 
     fn checked_update_state(relation: app::update::UpdateRelation) -> SettingsUpdateState {
         SettingsUpdateState {
+            rpm: None,
             activity: None,
             check_result: Some(app::update::UpdateCheckResult {
                 default_branch: "master".to_string(),

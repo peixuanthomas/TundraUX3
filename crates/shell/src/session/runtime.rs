@@ -930,6 +930,13 @@ pub(super) fn run_fullscreen_shell_session<W: Write>(
         state.repaired_resource_paths.clear();
         state.fallback_resource_paths.clear();
     }
+    #[cfg(target_os = "linux")]
+    let (authorization_host, authorization_interaction) =
+        crate::authorization::AuthorizationHost::channel();
+    #[cfg(target_os = "linux")]
+    if let Ok(mut interaction) = state.settings_task_runtime.shared.authorization.lock() {
+        *interaction = Some(authorization_interaction.clone());
+    }
     let mut system_status_snapshots = system_services.subscribe();
     state.apply_system_status_snapshot(app::AppSystemStatusSnapshot::from(
         &*system_status_snapshots.borrow_and_update(),
@@ -964,6 +971,12 @@ pub(super) fn run_fullscreen_shell_session<W: Write>(
     let mut update_ready_marked = false;
 
     loop {
+        #[cfg(target_os = "linux")]
+        if authorization_host
+            .handle_pending(&mut guard, || terminal_control.shutdown_requested())?
+        {
+            redraw.request_redraw();
+        }
         language_runtime.update_from(&state);
         let _language = i18n::enter_snapshot(state.language.clone());
         let state_before_polling = state.clone();
@@ -1571,6 +1584,19 @@ pub(super) fn run_fullscreen_shell_session<W: Write>(
             // the native platform service to power off.
             guard.restore()?;
             let reboot = action == Some(ShellAction::Reboot);
+            #[cfg(target_os = "linux")]
+            let result = authorization_host.power(
+                &mut guard,
+                if reboot {
+                    platform::linux::power::PowerAction::Reboot
+                } else {
+                    platform::linux::power::PowerAction::PowerOff
+                },
+                shell_watchdog,
+                authorization_interaction.clone(),
+                || terminal_control.shutdown_requested(),
+            );
+            #[cfg(not(target_os = "linux"))]
             let result = if reboot {
                 platform.reboot()
             } else {

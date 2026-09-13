@@ -302,3 +302,33 @@ settings-category-name =
         [Update] { ui-settings-update }
        *[other] { $category }
     }
+
+settings-rpm-working = Checking the installation and system package service…
+settings-rpm-cancelling = Cancellation requested; waiting for PackageKit.
+settings-rpm-progress = { $stage } { $package } { $percent }
+settings-rpm-candidate = A TundraUX3 package update is available. Review its dependencies before installing.
+settings-rpm-no-candidate = Your configured software sources do not provide a newer TundraUX3 package.
+settings-rpm-preview-title = Review package update
+settings-rpm-install = Install reviewed update
+settings-rpm-installed = Update installed successfully: { $version }. Restart Tundra to use it. { $restart }
+settings-rpm-system-restart = A system restart is recommended. Tundra will not restart the system automatically.
+settings-rpm-cancelled = PackageKit cancelled the transaction. Some packages may already have changed; check the installed version again.
+settings-rpm-unknown = Result unknown. Query the installed package and transaction history; the update will not be run again automatically.
+settings-rpm-no-pending = No pending update result is recorded. Check for updates to refresh the installed version.
+settings-rpm-backend = Installation and package updates
+settings-rpm-candidate-label = Candidate / repository
+settings-rpm-cancel-action = Cancel package transaction
+settings-rpm-cancel-help = Available only when PackageKit permits cancellation. Cancellation does not promise rollback.
+settings-rpm-query = Query update result
+settings-rpm-restart = Restart Tundra
+settings-rpm-restart-help = Restart Tundra to load the installed version. Unsaved documents will first be preserved in editor recovery; if recovery cannot be saved, restart is stopped.
+settings-rpm-recheck-version = Check the current installed version again
+settings-rpm-stage-preparing = Preparing
+settings-rpm-stage-starting = Starting transaction
+settings-rpm-stage-waiting = Waiting for PackageKit
+settings-rpm-stage-authorizing = Waiting for system authorization
+settings-rpm-stage-downloading = Downloading
+settings-rpm-stage-installing = Installing
+settings-rpm-stage-verifying = Verifying
+settings-rpm-stage-finished = Transaction finished
+settings-rpm-details-title = Package transaction

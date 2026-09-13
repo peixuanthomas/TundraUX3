@@ -31,6 +31,11 @@ fn linux_update_helper_replaces_or_restores_and_waits_for_shell() {
         fs::create_dir_all(install.join("assets/themes/default")).unwrap();
         fs::create_dir_all(install.join("assets/themes/custom")).unwrap();
         fs::create_dir_all(&prepared_dir).unwrap();
+        fs::write(
+            install.join("tundra-installation.json"),
+            include_str!("../../../packaging/linux/tundra-installation.json"),
+        )
+        .unwrap();
         fs::write(install.join("assets/themes/default/version"), "old").unwrap();
         fs::write(install.join("assets/themes/custom/version"), "custom").unwrap();
         fs::copy(env!("CARGO_BIN_EXE_tundra-cli"), install.join("tundra-cli")).unwrap();

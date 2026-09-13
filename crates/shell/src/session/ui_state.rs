@@ -171,6 +171,7 @@ pub(super) struct SystemStatusAddPickerState {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct SettingsUpdateState {
+    pub(super) rpm: Option<RpmSettingsState>,
     pub(super) activity: Option<ui::components::UpdateActivityViewModel>,
     pub(super) check_result: Option<app::update::UpdateCheckResult>,
     pub(super) checked_at: Option<chrono::DateTime<chrono::Utc>>,
@@ -186,6 +187,7 @@ pub(super) struct SettingsUpdateState {
 impl Default for SettingsUpdateState {
     fn default() -> Self {
         Self {
+            rpm: None,
             activity: None,
             check_result: None,
             checked_at: None,
