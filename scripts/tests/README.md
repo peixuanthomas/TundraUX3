@@ -108,7 +108,11 @@ Each invocation uses fresh XDG paths so old frontend journals cannot contaminate
 the next case. Assertions cover ordinary ownership of generated XDG data, credential absence
 from Shell output/state/logs, actual installed RPM version, resumed raw mode,
 alternate screen, mouse/focus reporting, hidden cursor and terminal restoration
-on exit. The emulator answers cursor-position queries required during redraw.
+on exit, absence of watchdog incidents, and preservation of the unrelated package.
+The `success` case also activates the restart action and verifies the new Home
+frame and the running executable inode against the installed RPM payload. This
+catches Linux restart failures after RPM unlinks the running executable.
+The emulator answers cursor-position queries required during redraw.
 Only the disposable credential is typed, and failure captures redact it. The
 `crash` case kills only the Shell's own text agent; interruption targets only
 the fixture frontend. Monitor captures contain PackageKit property changes,

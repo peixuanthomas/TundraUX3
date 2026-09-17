@@ -479,40 +479,60 @@ fn start_logind_listener(
         RestartPolicy::limited(3, Duration::from_secs(60), vec![Duration::from_secs(1)]),
     );
     app.task_group("platform-linux")
-        .spawn_thread(spec, move || {
-            // A session/system bus can reconnect after suspend or a desktop
-            // service restart. Keep the managed worker alive and resubscribe
-            // instead of treating a clean signal-stream end as success.
-            loop {
-                if let Ok(connection) = zbus::blocking::Connection::system()
-                    && let Ok(proxy) = zbus::blocking::Proxy::new(
-                        &connection,
-                        "org.freedesktop.login1",
-                        "/org/freedesktop/login1",
-                        "org.freedesktop.login1.Manager",
-                    )
-                    && let Ok(signals) = proxy.receive_signal(signal)
-                {
-                    for message in signals {
-                        if let Ok(preparing) = message.body().deserialize::<bool>() {
-                            let event = if preparing { Some(on_true) } else { on_false };
-                            if let Some(event) = event {
-                                if event == PlatformLifecycleEvent::PrepareForShutdown {
-                                    crate::terminal::request_process_shutdown();
-                                }
-                                let _ = sender.send(event);
-                            }
-                        }
+        .spawn_thread_with_cancellation(spec, move |cancellation| {
+            // Cancellation must also interrupt connection/subscription setup,
+            // an idle signal stream, and the reconnect delay.
+            futures_lite::future::block_on(futures_lite::future::race(
+                listen_for_logind_events(sender.clone(), signal, on_true, on_false),
+                async {
+                    while !cancellation.is_cancelled() {
+                        async_io::Timer::after(Duration::from_millis(50)).await;
                     }
-                }
-                std::thread::sleep(Duration::from_secs(1));
-            }
+                },
+            ));
         })
         .map(|_| ())
         .map_err(|error| PlatformError::Native {
             operation: "start logind listener",
             message: error.to_string(),
         })
+}
+
+async fn listen_for_logind_events(
+    sender: mpsc::Sender<PlatformLifecycleEvent>,
+    signal: &'static str,
+    on_true: PlatformLifecycleEvent,
+    on_false: Option<PlatformLifecycleEvent>,
+) {
+    use futures_lite::StreamExt;
+
+    // Reconnect after suspend or service restarts until the managed worker is
+    // cancelled. Dropping this future releases its connection and subscription.
+    loop {
+        if let Ok(connection) = zbus::Connection::system().await
+            && let Ok(proxy) = zbus::Proxy::new(
+                &connection,
+                "org.freedesktop.login1",
+                "/org/freedesktop/login1",
+                "org.freedesktop.login1.Manager",
+            )
+            .await
+            && let Ok(mut signals) = proxy.receive_signal(signal).await
+        {
+            while let Some(message) = signals.next().await {
+                if let Ok(preparing) = message.body().deserialize::<bool>() {
+                    let event = if preparing { Some(on_true) } else { on_false };
+                    if let Some(event) = event {
+                        if event == PlatformLifecycleEvent::PrepareForShutdown {
+                            crate::terminal::request_process_shutdown();
+                        }
+                        let _ = sender.send(event);
+                    }
+                }
+            }
+        }
+        async_io::Timer::after(Duration::from_secs(1)).await;
+    }
 }
 
 fn current_home() -> Result<PathBuf, PlatformError> {

@@ -246,6 +246,33 @@ try:
             assert secret.encode() not in path.read_bytes(), 'fixture credential reached user state/logs'
     installed = subprocess.check_output(['rpm', '-q', '--qf', '%{VERSION}', 'tundraux3'], text=True)
     assert installed == ('2.0.0' if case in ('success', 'gui') else '1.0.0'), 'Unexpected installed RPM after transaction'
+    assert subprocess.check_output(['rpm', '-q', '--qf', '%{VERSION}', 'tundra-unrelated'], text=True) == '1.0.0', 'Unrelated package was upgraded'
+    if case in ('success', 'gui'):
+        assert subprocess.check_output(['rpm', '-q', '--qf', '%{VERSION}', 'tundra-runtime'], text=True) == '1.0.0', 'Required dependency was not installed'
+    if case == 'success':
+        # Completed installation may move focus away from the now-disabled preview.
+        # Click the visible restart action instead of relying on the old row index.
+        rows = [(y, row) for y, row in enumerate(screen.display) if 'Restart Tundra' in row and 'installed' not in row]
+        assert rows, frame()
+        y, row = rows[0]
+        x = row.index('Restart Tundra') + 2
+        send(f'\x1b[<0;{x};{y + 1}M\x1b[<0;{x};{y + 1}m'.encode())
+        wait('editor recovery', 10)
+        screen.reset()
+        send(b'\r')
+        wait('Explorer', 45)
+        def running_executable_inode():
+            # Container root has no ptrace capability over the ordinary test user.
+            result = subprocess.run(['runuser', '-u', 'tundra-test', '--', 'stat', '-Lc', '%d:%i', f'/proc/{front_pid}/exe'], text=True, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+            return result.stdout.strip() if result.returncode == 0 else None
+        expected_inode = subprocess.check_output(['stat', '-Lc', '%d:%i', '/opt/tundra-fixture/bin/packagekit-update-probe'], text=True).strip()
+        deadline = time.monotonic() + 15
+        while running_executable_inode() != expected_inode and time.monotonic() < deadline:
+            read()
+        assert running_executable_inode() == expected_inode, 'Restart did not exec the installed executable'
+        assert subprocess.check_output(['rpm', '-q', '--qf', '%{VERSION}', 'tundraux3'], text=True) == '2.0.0'
+        save('restarted-home')
+        print('Updated Shell restarted to Home successfully', flush=True)
     print('PTY stage passed:', case)
 finally:
     if case == 'power_denied':
@@ -280,3 +307,5 @@ finally:
     assert bool(restored[3] & termios.ICANON) == bool(initial[3] & termios.ICANON), 'canonical mode not restored'
     assert bool(restored[3] & termios.ECHO) == bool(initial[3] & termios.ECHO), 'echo not restored'
     print('Terminal canonical/echo restored:', case)
+    reports = sorted(Path(f'/home/tundra-test/{state_name}').rglob('crash-*.json'))
+    assert not reports, f'Unexpected watchdog incidents: {reports}'

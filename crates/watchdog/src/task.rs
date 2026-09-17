@@ -27,6 +27,17 @@ struct TaskControl {
     aborts: Mutex<Vec<Arc<dyn Fn() + Send + Sync>>>,
 }
 
+/// Cooperative cancellation for managed threads. A worker must also bound or
+/// interrupt its blocking waits so cancellation can be observed promptly.
+#[derive(Clone)]
+pub struct ThreadCancellation(Arc<TaskControl>);
+
+impl ThreadCancellation {
+    pub fn is_cancelled(&self) -> bool {
+        self.0.cancelled.load(Ordering::Acquire)
+    }
+}
+
 impl TaskControl {
     fn cancel(&self) {
         self.cancelled.store(true, Ordering::Release);
@@ -234,6 +245,19 @@ impl ManagedTaskGroup {
         T: Send + 'static,
         F: FnMut() -> T + Send + 'static,
     {
+        self.spawn_thread_with_cancellation(spec, move |_| factory())
+    }
+
+    /// Starts a worker that can observe handle, group, and process shutdown.
+    pub fn spawn_thread_with_cancellation<T, F>(
+        &self,
+        spec: TaskSpec,
+        mut factory: F,
+    ) -> Result<ManagedThreadHandle<T>, WatchdogError>
+    where
+        T: Send + 'static,
+        F: FnMut(ThreadCancellation) -> T + Send + 'static,
+    {
         self.validate_spec(&spec)?;
         let task_name = format!("{}/{}", self.name, spec.id);
         let control = self.state.register(&task_name)?;
@@ -251,7 +275,8 @@ impl ManagedTaskGroup {
                         return None;
                     }
                     let context = task_context(&app, &thread_spec, &task_name, attempt);
-                    match runtime::catch_factory(context.clone(), &mut factory) {
+                    let cancellation = ThreadCancellation(worker_control.clone());
+                    match runtime::catch_factory(context.clone(), || factory(cancellation)) {
                         Ok(value) => {
                             log_restarted_completion(
                                 &app,

@@ -54,6 +54,45 @@ fn cleanup(runtime: WatchdogRuntime, root: &std::path::Path) {
 }
 
 #[test]
+fn managed_threads_observe_handle_group_and_process_cancellation() {
+    for stop in ["handle", "group", "process"] {
+        let (runtime, process, root) = test_runtime(stop);
+        let app = test_app(&process);
+        let group = app.task_group("cooperative-worker");
+        let (started_tx, started_rx) = std::sync::mpsc::channel();
+        let (stopped_tx, stopped_rx) = std::sync::mpsc::channel();
+        let worker = group
+            .spawn_thread_with_cancellation(
+                TaskSpec::one_shot(TaskId::new("waiting-worker").unwrap()),
+                move |cancellation| {
+                    started_tx.send(()).unwrap();
+                    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+                    while !cancellation.is_cancelled() && std::time::Instant::now() < deadline {
+                        thread::sleep(Duration::from_millis(1));
+                    }
+                    stopped_tx.send(cancellation.is_cancelled()).unwrap();
+                },
+            )
+            .unwrap();
+        started_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+        let mut runtime = Some(runtime);
+        match stop {
+            "handle" => worker.cancel(),
+            "group" => assert_eq!(group.shutdown(Duration::from_secs(2)).still_running, 0),
+            "process" => runtime.take().unwrap().shutdown().unwrap(),
+            _ => unreachable!(),
+        }
+        assert!(stopped_rx.recv_timeout(Duration::from_secs(2)).unwrap());
+        assert_eq!(worker.join().unwrap(), None);
+        if let Some(runtime) = runtime {
+            runtime.shutdown().unwrap();
+        }
+        assert!(process.try_recv_incident().is_none());
+        fs::remove_dir_all(root).unwrap();
+    }
+}
+
+#[test]
 fn stale_run_marker_becomes_an_unclean_exit_incident() {
     let (runtime, process, root) = test_runtime("stale-run");
     let marker_directory = root.join("data").join("watchdog").join("runs");

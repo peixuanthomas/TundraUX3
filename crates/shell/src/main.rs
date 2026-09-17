@@ -39,6 +39,10 @@ fn main() {
         std::process::exit(2);
     }
 
+    // RPM replaces the running inode during an update. On Linux current_exe()
+    // then ends in " (deleted)"; retain the original path to exec the new file.
+    let restart_executable = std::env::current_exe();
+
     if std::env::var_os(app::update::UPDATE_READY_FILE_ENV).is_none() {
         match app::update::recover_interrupted_update_from_current_exe(std::process::id()) {
             Ok(true) => return,
@@ -86,7 +90,7 @@ fn main() {
     let exit_code = match (run_result, watchdog_shutdown) {
         (Ok(shell::ShellRunOutcome::Exit), Ok(())) => 0,
         (Ok(shell::ShellRunOutcome::RestartRequested), Ok(())) => {
-            match restart_current_executable() {
+            match restart_current_executable(restart_executable) {
                 Ok(()) => 0,
                 Err(error) => {
                     eprintln!(
@@ -97,16 +101,18 @@ fn main() {
                 }
             }
         }
-        (Ok(shell::ShellRunOutcome::ResetRequested), Ok(())) => match reset_storage_and_restart() {
-            Ok(()) => 0,
-            Err(error) => {
-                eprintln!(
-                    "{}",
-                    i18n::tr!("shell-entry-reset-failed", error = error.to_string())
-                );
-                4
+        (Ok(shell::ShellRunOutcome::ResetRequested), Ok(())) => {
+            match reset_storage_and_restart(restart_executable) {
+                Ok(()) => 0,
+                Err(error) => {
+                    eprintln!(
+                        "{}",
+                        i18n::tr!("shell-entry-reset-failed", error = error.to_string())
+                    );
+                    4
+                }
             }
-        },
+        }
         (Ok(shell::ShellRunOutcome::UpdatePrepared(manifest)), Ok(())) => {
             match app::update::launch_update_helper(&manifest, std::process::id()) {
                 Ok(()) => 0,
@@ -146,18 +152,22 @@ fn main() {
     }
 }
 
-fn reset_storage_and_restart() -> Result<(), std::io::Error> {
+fn reset_storage_and_restart(
+    executable: std::io::Result<std::path::PathBuf>,
+) -> Result<(), std::io::Error> {
     let platform = platform::native_platform();
     let paths = platform
         .app_paths()
         .map_err(|error| std::io::Error::other(error.to_string()))?;
     storage::reset_saved_content(&paths)?;
 
-    restart_current_executable()
+    restart_current_executable(executable)
 }
 
-fn restart_current_executable() -> Result<(), std::io::Error> {
-    let executable = std::env::current_exe()?;
+fn restart_current_executable(
+    executable: std::io::Result<std::path::PathBuf>,
+) -> Result<(), std::io::Error> {
+    let executable = executable?;
     let mut command = std::process::Command::new(&executable);
 
     #[cfg(unix)]
@@ -180,6 +190,10 @@ fn restart_current_executable() -> Result<(), std::io::Error> {
         Ok(())
     }
 }
+
+#[cfg(all(test, target_os = "linux"))]
+#[path = "main_tests.rs"]
+mod tests;
 
 fn restart_error(executable: &std::path::Path, error: std::io::Error) -> std::io::Error {
     std::io::Error::new(

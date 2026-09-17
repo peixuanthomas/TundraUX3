@@ -21,7 +21,7 @@ pub use log_error::capture_error;
 pub use model::*;
 pub use report_catalog::{IncidentReportCatalog, IncidentReportSummary};
 pub use runtime::{AppWatchdog, CaughtPanic, EmergencyCleanup, ProcessWatchdog, WatchdogRuntime};
-pub use task::{ManagedTaskGroup, ManagedThreadHandle};
+pub use task::{ManagedTaskGroup, ManagedThreadHandle, ThreadCancellation};
 
 #[cfg(feature = "tokio")]
 pub use task::{ManagedLocalTaskHandle, ManagedTaskHandle};
