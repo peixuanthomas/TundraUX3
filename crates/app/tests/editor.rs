@@ -274,6 +274,51 @@ fn source_viewport_clips_long_lines_without_flattening_them_into_the_result() {
 }
 
 #[test]
+fn source_viewport_past_line_end_returns_an_empty_range_in_unicode_documents() {
+    for line in [
+        format!("{}好", "a".repeat(106)),
+        "short".into(),
+        "好🙂e\u{301}".into(),
+        String::new(),
+    ] {
+        for newline in ["\n", "\r\n", "\r"] {
+            // Unicode elsewhere also sends an ASCII line through the grapheme path.
+            let source = format!("{line}{newline}{}好{newline}", "x".repeat(300));
+            let editor = EditorState::open("mixed.txt", source.as_bytes()).unwrap();
+            let line_width = editor.source_display_position(line.len()).unwrap().1;
+            for left in [line_width, line_width + 1, usize::MAX] {
+                let viewport = editor.source_viewport_lines(0..1, left, 80);
+                let visible = &viewport[0];
+                assert_eq!(visible.text, "");
+                assert_eq!(
+                    visible.visible_byte_range,
+                    SourceRange::new(line.len(), line.len())
+                );
+                assert_eq!(
+                    (visible.start_column, visible.end_column),
+                    (line_width, line_width)
+                );
+                assert_eq!(visible.truncated_left, !line.is_empty());
+                assert!(!visible.truncated_right);
+            }
+            // Check a nonzero document byte offset and the trailing empty line, too.
+            let viewport = editor.source_viewport_lines(1..3, usize::MAX, 80);
+            for visible in viewport {
+                assert_eq!(visible.text, "");
+                assert_eq!(
+                    visible.visible_byte_range.start,
+                    visible.line_byte_range.end
+                );
+                assert_eq!(visible.visible_byte_range.end, visible.line_byte_range.end);
+                assert!(!visible.truncated_right);
+            }
+            assert_eq!(editor.export_text(), source);
+            assert!(!editor.is_dirty());
+        }
+    }
+}
+
+#[test]
 fn source_display_positions_and_max_width_use_terminal_cells() {
     let ascii = "1234567";
     let unicode = "a好🙂e\u{301}\t\u{0001}";
