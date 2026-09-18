@@ -360,6 +360,8 @@ Unlock、Switch User 或 Logout。Exit 只终止本应用。Windows/macOS 仍使
 
 Linux 的 User Management 通过 AccountsService 管理真实的本地登录账户。普通用户只能查看自己、修改显示名和密码；管理员由 AccountsService 的 `AccountType` 判定，可创建账户、修改其他账户的显示名和密码、切换 User/Admin、锁定或解锁、删除账户。列表采用 `ListCachedUsers` 并补入当前 UID，过滤 root、服务账户和远程账户；它不是所有 NSS 账户的完整清单。每次操作重新核对当前进程 UID、账户名与系统角色，存储文件中的角色或调用者传入的角色不能授予系统权限。
 
+Settings 中的个人外观和仪表板偏好只核对当前进程用户并读写本地配置，不查询 AccountsService。系统账户服务缺失或暂时不可用时，个人设置仍可打开和保存；系统账户管理单独报告错误。
+
 账户读写在后台执行。受保护的修改交给 AccountsService 与 polkit，沿用图形授权代理或终端授权提示。修改自己的密码使用 `/usr/bin/passwd`，由系统读取旧密码、新密码并检查密码规则；UX 暂停读取键盘，完成或取消后恢复终端。管理员设置其他用户密码时，通过 libxcrypt 生成随机盐的 SHA-512 crypt 值交给 AccountsService，不保存系统密码或把密码放入命令行参数。该操作按 AccountsService 的规则解锁目标账户，密码表单明确提示这一点。
 
 锁定操作仅锁定密码登录，不结束已有会话，也不禁止密钥登录。当前账户不能被删除、锁定或降级，避免移除本会话的管理权限；删除其他账户始终保留主目录和文件。创建账户后若设置密码失败，会明确报告部分完成并刷新列表，用户可继续设置密码，不自动删除新账户。未安装 AccountsService、libxcrypt 或授权不可用时显示错误；不以 sudo 重启 UX，也不回退到修改 UX 本地账户。Windows/macOS 保持原有行为。

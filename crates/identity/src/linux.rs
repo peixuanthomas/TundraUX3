@@ -42,7 +42,9 @@ pub(super) fn record(
     Ok(record)
 }
 
-pub(super) fn users(storage: &StorageManager) -> Result<Vec<UserRecord>, CoreError> {
+/// Personal UX preferences need only the process identity and local storage.
+/// Do not query AccountsService here: it may be absent or unavailable.
+pub(super) fn current_profile(storage: &StorageManager) -> Result<UserRecord, CoreError> {
     let current = platform::linux::identity::LinuxUserContext::current()
         .map_err(|error| CoreError::SystemIdentity(error.to_string()))?;
     let mut record = UserRecord {
@@ -65,6 +67,11 @@ pub(super) fn users(storage: &StorageManager) -> Result<Vec<UserRecord>, CoreErr
         last_login_at_epoch_ms: None,
     };
     attach_preferences(&mut record, &storage.load_users()?.users);
+    Ok(record)
+}
+
+pub(super) fn users(storage: &StorageManager) -> Result<Vec<UserRecord>, CoreError> {
+    let record = current_profile(storage)?;
     // The desktop can still start without AccountsService; management reports its
     // availability separately. Stored UX roles never grant Linux admin access.
     if let Ok(account) = platform::linux::accounts::Accounts::current_account() {

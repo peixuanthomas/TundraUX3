@@ -24,6 +24,91 @@ fn default_config() -> ShellLaunchConfig {
     }
 }
 
+#[cfg(target_os = "linux")]
+#[test]
+fn linux_personal_settings_work_without_system_account_service() {
+    const CHILD: &str = "TUNDRA_TEST_SETTINGS_WITHOUT_ACCOUNT_SERVICE";
+    let fixture = FixtureRoot::new("linux-no-account-service");
+    if std::env::var_os(CHILD).is_none() {
+        // Change the bus address only in an isolated test process, never while
+        // other tests may be using the environment or the real system bus.
+        let result = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "linux_personal_settings_work_without_system_account_service",
+                "--nocapture",
+            ])
+            .env(CHILD, "1")
+            .env(
+                "DBUS_SYSTEM_BUS_ADDRESS",
+                format!("unix:path={}/missing-bus", fixture.path().display()),
+            )
+            .status()
+            .unwrap();
+        assert!(result.success());
+        return;
+    }
+    let platform = mock_platform(fixture.path()).with_kind(PlatformKind::Linux);
+    let manager = StorageManager::open_from_platform(&platform)
+        .unwrap()
+        .manager;
+    let backend = identity::IdentityBackend::Linux;
+    let actor = SessionService::new(manager.clone())
+        .with_backend(backend)
+        .attach_current_linux_user()
+        .unwrap();
+    let users = UserService::new(manager.clone()).with_backend(backend);
+    let appearance = storage::AppearanceConfig {
+        icon_display_mode: IconDisplayMode::Ascii,
+        ..Default::default()
+    };
+    users
+        .complete_personalization(&actor, appearance.clone())
+        .unwrap();
+    assert!(
+        users.list_accessible_users(&actor).is_err(),
+        "system account management must really be unavailable"
+    );
+
+    let mut startup = prepare_shell_startup(&platform).unwrap();
+    startup.identity_backend = backend;
+    startup.auth_bootstrap_required = false;
+    let mut state = ShellSession::new_with_startup(default_config(), (120, 40), startup);
+    assert_eq!(state.active_screen(), ShellScreen::Home);
+    open_settings_from_home(&mut state, &platform);
+    assert_eq!(state.active_screen(), ShellScreen::Settings);
+    assert!(state.to_settings_view_model().is_some());
+
+    // Exercise the normal settings save path, then reopen from disk.
+    let before = manager.load_users().unwrap().users[0]
+        .appearance
+        .border_shape;
+    press(&mut state, &platform, "Down");
+    press(&mut state, &platform, "Enter");
+    let saved = manager.load_users().unwrap().users[0].appearance.clone();
+    assert_ne!(saved.border_shape, before);
+    press(&mut state, &platform, "Esc");
+    open_settings_from_home(&mut state, &platform);
+    assert_eq!(state.active_screen(), ShellScreen::Settings);
+    assert_eq!(manager.load_users().unwrap().users[0].appearance, saved);
+
+    let before = manager.load_users().unwrap();
+    let mut wrong_actor = actor.clone();
+    wrong_actor.user_id.push_str("-another-user");
+    assert!(users.current_user_appearance(&wrong_actor).is_err());
+    assert!(
+        users
+            .update_user_appearance(&wrong_actor, &actor.username, appearance.clone())
+            .is_err()
+    );
+    assert!(
+        users
+            .update_user_appearance(&actor, "another-user", appearance)
+            .is_err()
+    );
+    assert_eq!(manager.load_users().unwrap(), before);
+}
+
 #[test]
 fn tab_cycles_sections_while_arrows_select_right_hand_settings() {
     let fixture = FixtureRoot::new("tab-section-cycle");

@@ -86,13 +86,7 @@ impl ShellSession {
         };
         let users = UserService::with_debug_policy(storage, self.debug_policy)
             .with_backend(self.identity_backend);
-        let appearance = match users.list_accessible_users(&actor).and_then(|users| {
-            users
-                .into_iter()
-                .find(|user| user.id == actor.user_id)
-                .map(|user| user.appearance)
-                .ok_or(CoreError::UserNotFound)
-        }) {
+        let appearance = match users.current_user_appearance(&actor) {
             Ok(appearance) => appearance,
             Err(error) => {
                 self.error_message = Some(

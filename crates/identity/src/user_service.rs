@@ -111,6 +111,47 @@ impl UserService {
         self.backend.users(&self.storage)
     }
 
+    /// Read only the caller's saved appearance, without listing system accounts.
+    pub fn current_user_appearance(
+        &self,
+        actor: &AuthSession,
+    ) -> Result<AppearanceConfig, CoreError> {
+        Ok(self
+            .own_preferences_record(actor, &actor.username)?
+            .appearance)
+    }
+
+    fn own_preferences_record(
+        &self,
+        actor: &AuthSession,
+        username: &str,
+    ) -> Result<UserRecord, CoreError> {
+        if !self.backend.usernames_match(username, &actor.username) {
+            return Err(CoreError::UserNotFound);
+        }
+        #[cfg(target_os = "linux")]
+        if self.backend == crate::IdentityBackend::Linux {
+            let record = crate::linux::current_profile(&self.storage)?;
+            if actor.source != crate::IdentitySource::LinuxCurrentProcess
+                || actor.user_id != record.id
+                || actor.username != record.username
+                || username != record.username
+            {
+                return Err(CoreError::UserNotFound);
+            }
+            return Ok(record);
+        }
+        self.backend.require_local()?;
+        let document = self.storage.load_users()?;
+        let index =
+            find_authenticated_user_index(&document, actor).ok_or(CoreError::UserNotFound)?;
+        let record = &document.users[index];
+        if !record.enabled {
+            return Err(CoreError::AccountDisabled);
+        }
+        Ok(record.clone())
+    }
+
     pub fn bootstrap_admin(
         &self,
         username: &str,
@@ -370,15 +411,7 @@ impl UserService {
         appearance: AppearanceConfig,
     ) -> Result<UserAccount, CoreError> {
         if self.backend == crate::IdentityBackend::Linux {
-            let mut record = self
-                .login_records()?
-                .into_iter()
-                .find(|user| {
-                    user.username == username
-                        && user.id == actor.user_id
-                        && user.username == actor.username
-                })
-                .ok_or(CoreError::UserNotFound)?;
+            let mut record = self.own_preferences_record(actor, username)?;
             record.appearance = appearance;
             record.updated_at_epoch_ms = unix_millis();
             let mut document = self.storage.load_users()?;
@@ -417,15 +450,7 @@ impl UserService {
         mut dashboard: SystemStatusDashboardConfig,
     ) -> Result<UserAccount, CoreError> {
         if self.backend == crate::IdentityBackend::Linux {
-            let mut record = self
-                .login_records()?
-                .into_iter()
-                .find(|user| {
-                    user.username == username
-                        && user.id == actor.user_id
-                        && user.username == actor.username
-                })
-                .ok_or(CoreError::UserNotFound)?;
+            let mut record = self.own_preferences_record(actor, username)?;
             dashboard.normalize();
             record.system_status_dashboard = dashboard;
             record.updated_at_epoch_ms = unix_millis();
