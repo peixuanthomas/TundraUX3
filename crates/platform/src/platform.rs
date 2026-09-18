@@ -1070,7 +1070,7 @@ pub fn default_file_open_policy(
         PlatformKind::Windows => windows_file_open_policy(path, attributes),
         PlatformKind::Macos => macos_file_open_policy(path, attributes),
         PlatformKind::Linux | PlatformKind::Unsupported => {
-            unix_like_file_open_policy(path, attributes)
+            unix_like_file_open_policy(kind, path, attributes)
         }
     }
 }
@@ -1155,6 +1155,7 @@ pub(crate) fn macos_file_open_policy(path: &Path, attributes: &FileAttributes) -
 }
 
 pub(crate) fn unix_like_file_open_policy(
+    kind: PlatformKind,
     path: &Path,
     attributes: &FileAttributes,
 ) -> FileOpenPolicy {
@@ -1189,7 +1190,9 @@ pub(crate) fn unix_like_file_open_policy(
         );
     }
 
-    if native_executable_bit(path) {
+    // Execute bits alone do not identify a Linux program: shared filesystems
+    // and copied files can give ordinary documents the same permissions.
+    if kind != PlatformKind::Linux && native_executable_bit(path) {
         return FileOpenPolicy::launcher_required(
             ExecutableKind::NativeBinary,
             "executable files must be opened through Launcher",

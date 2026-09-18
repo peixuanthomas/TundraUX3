@@ -246,32 +246,7 @@ impl Platform for LinuxPlatform {
     }
 
     fn file_open_policy(&self, path: &Path, attributes: &FileAttributes) -> FileOpenPolicy {
-        if attributes.symlink || attributes.junction || attributes.reparse_point {
-            return FileOpenPolicy::blocked(
-                "symbolic links and reparse points are blocked until safe path traversal is available",
-            );
-        }
-        if attributes.is_file && extension_is(path, "desktop") {
-            return FileOpenPolicy::launcher_required(
-                ExecutableKind::Shortcut,
-                ".desktop launchers must be reviewed through Launcher",
-            );
-        }
-        if attributes.is_file && is_script(path) {
-            return FileOpenPolicy::launcher_required(
-                ExecutableKind::Script,
-                "scripts must be opened through Launcher",
-            );
-        }
-        if attributes.is_file
-            && (is_elf(path) || extension_is(path, "appimage") || executable_bit(path))
-        {
-            return FileOpenPolicy::launcher_required(
-                ExecutableKind::NativeBinary,
-                "executable files must be opened through Launcher",
-            );
-        }
-        FileOpenPolicy::system_default()
+        crate::default_file_open_policy(PlatformKind::Linux, path, attributes)
     }
 
     fn show_critical_error(&self, title: &str, body: &str) -> Result<(), PlatformError> {
@@ -2048,20 +2023,6 @@ fn copy_no_follow(source: &Path, destination: &Path) -> Result<(), PlatformError
     Ok(())
 }
 
-fn is_elf(path: &Path) -> bool {
-    let mut magic = [0_u8; 4];
-    File::open(path)
-        .and_then(|mut file| file.read_exact(&mut magic))
-        .is_ok()
-        && magic == [0x7f, b'E', b'L', b'F']
-}
-fn is_script(path: &Path) -> bool {
-    let mut header = [0_u8; 2];
-    File::open(path)
-        .and_then(|mut file| file.read_exact(&mut header))
-        .is_ok()
-        && header == *b"#!"
-}
 fn executable_bit(path: &Path) -> bool {
     fs::symlink_metadata(path)
         .map(|metadata| metadata.permissions().mode() & 0o111 != 0)

@@ -422,6 +422,8 @@ Linux 回收站仅按当前进程用户的 Freedesktop Trash 权限工作，保�
 
 `tundra-cli debug doctor` 会报告缺失的 `xdg-open`、`gio`、session D-Bus、portal、polkit、logind 和剪贴板后端，并提供安装或会话建议。缺少桌面助手只降级相应功能；不会改用 shell 字符串执行、`sudo` 或永久删除作为兜底。
 
+Linux 文件管理器不会只凭可执行权限把文件送入 Launcher。普通文本、图片等仍按文件打开配置处理，即使文件权限为 `0755` 或 `0777`；ELF 程序、带 `#!` 开头的脚本、带可执行权限的已知脚本类型，以及 AppImage、EXE 和 `.desktop` 文件仍由 Launcher 管理。
+
 首发范围不包括 aarch64、系统镜像、会话切换或 SteamOS 式产品化。
 
 ### 程序自更新

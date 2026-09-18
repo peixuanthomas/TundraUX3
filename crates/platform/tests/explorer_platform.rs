@@ -153,6 +153,105 @@ fn linux_classifies_elf_shebang_appimage_and_desktop_entries() {
     cleanup_temp_path(&base).unwrap();
 }
 
+#[cfg(target_os = "linux")]
+#[test]
+fn linux_documents_with_execute_bits_keep_the_normal_open_route() {
+    use std::os::unix::fs::PermissionsExt;
+    let base = unique_temp_root("linux-executable-documents");
+    fs::create_dir_all(&base).unwrap();
+    let native = platform::linux::LinuxPlatform;
+    for mode in [0o644, 0o755, 0o777] {
+        for (name, contents) in [
+            ("notes.txt", b"ordinary text\n".as_slice()),
+            ("NOTES.TXT", b"ordinary text\n".as_slice()),
+            ("README.md", b"# Documentation\n".as_slice()),
+            ("config.json", b"{}".as_slice()),
+            ("empty.txt", b"".as_slice()),
+            ("README", b"plain text without an extension".as_slice()),
+            ("image.png", b"\x89PNG\r\n\x1a\n".as_slice()),
+        ] {
+            let path = base.join(name);
+            fs::write(&path, contents).unwrap();
+            fs::set_permissions(&path, fs::Permissions::from_mode(mode)).unwrap();
+            let attributes = native.file_attributes(&path).unwrap();
+            assert_eq!(
+                native.file_open_policy(&path, &attributes),
+                FileOpenPolicy::SystemDefault,
+                "{name} with mode {mode:o} must not be sent to Launcher"
+            );
+            assert_eq!(
+                default_file_open_policy(PlatformKind::Linux, &path, &attributes),
+                FileOpenPolicy::SystemDefault
+            );
+        }
+        let listing = native.read_directory(&base).unwrap();
+        assert!(
+            listing
+                .entries
+                .iter()
+                .all(|entry| entry.open_policy == FileOpenPolicy::SystemDefault)
+        );
+    }
+    fs::remove_dir_all(base).unwrap();
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn linux_executable_content_still_requires_launcher_even_with_text_extension() {
+    use std::os::unix::fs::{PermissionsExt, symlink};
+    let base = unique_temp_root("linux-executable-content");
+    fs::create_dir_all(&base).unwrap();
+    let native = platform::linux::LinuxPlatform;
+    for (name, contents, expected) in [
+        (
+            "binary.txt",
+            b"\x7fELFfixture".as_slice(),
+            ExecutableKind::NativeBinary,
+        ),
+        (
+            "script.txt",
+            b"#!/bin/sh\necho fixture\n".as_slice(),
+            ExecutableKind::Script,
+        ),
+        (
+            "tool.sh",
+            b"echo fixture\n".as_slice(),
+            ExecutableKind::Script,
+        ),
+        (
+            "portable.AppImage",
+            b"fixture".as_slice(),
+            ExecutableKind::NativeBinary,
+        ),
+        (
+            "application.desktop",
+            b"[Desktop Entry]\n".as_slice(),
+            ExecutableKind::Shortcut,
+        ),
+    ] {
+        let path = base.join(name);
+        fs::write(&path, contents).unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();
+        let attributes = native.file_attributes(&path).unwrap();
+        for policy in [
+            native.file_open_policy(&path, &attributes),
+            default_file_open_policy(PlatformKind::Linux, &path, &attributes),
+        ] {
+            assert!(
+                matches!(policy, FileOpenPolicy::LauncherRequired { kind, .. } if kind == expected),
+                "{name} must remain managed by Launcher"
+            );
+        }
+    }
+    let linked = base.join("linked.txt");
+    symlink(base.join("script.txt"), &linked).unwrap();
+    assert!(matches!(
+        native.file_open_policy(&linked, &native.file_attributes(&linked).unwrap()),
+        FileOpenPolicy::Blocked { .. }
+    ));
+    fs::remove_dir_all(base).unwrap();
+}
+
 #[test]
 fn macos_classifies_bundles_installers_and_mach_o_files() {
     let base = unique_temp_root("mach-o-policy");
