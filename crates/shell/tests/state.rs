@@ -1180,7 +1180,10 @@ fn mouse_double_click_on_launcher_without_authentication_stays_on_home() {
 
 #[test]
 fn state_builds_shell_chrome_view_model() {
-    let mut state = ShellSession::new(debug_config(), (120, 40));
+    // Even an explicitly supplied debug display mode must not expose input
+    // diagnostics in a release build.
+    let mut state =
+        ShellSession::new_for_home_mode(debug_config(), (120, 40), ShellHomeMode::Debug);
     state.apply_input(InputEvent::from_key_label("q"));
 
     let chrome = state.to_shell_chrome_view_model();
@@ -1200,16 +1203,20 @@ fn state_builds_shell_chrome_view_model() {
         chrome.screen_stack,
         vec!["Home".to_string(), "ExitConfirm".to_string()]
     );
-    assert!(
-        chrome
-            .status
-            .status
-            .starts_with("Confirm exit | Last Key: q")
-    );
-    assert!(chrome.status.status.contains("Mouse position: none"));
-    assert!(chrome.status.status.contains("Size: 120x40"));
-    assert!(chrome.status.status.contains("Scroll: none"));
-    assert!(chrome.status.status.contains("Drag: none"));
+    if cfg!(debug_assertions) {
+        assert!(
+            chrome
+                .status
+                .status
+                .starts_with("Confirm exit | Last Key: q")
+        );
+        assert!(chrome.status.status.contains("Mouse position: none"));
+        assert!(chrome.status.status.contains("Size: 120x40"));
+        assert!(chrome.status.status.contains("Scroll: none"));
+        assert!(chrome.status.status.contains("Drag: none"));
+    } else {
+        assert_eq!(chrome.status.status, "Confirm exit");
+    }
     assert_eq!(chrome.status.toast, None);
     assert_eq!(chrome.status.error, None);
 }

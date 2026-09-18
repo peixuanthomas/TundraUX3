@@ -2097,7 +2097,7 @@ impl ShellSession {
 
     pub fn to_shell_chrome_view_model(&self) -> ui::ShellChromeViewModel {
         let _language = i18n::enter_snapshot(self.language.clone());
-        let status = if self.home_mode == ShellHomeMode::Debug {
+        let status = if cfg!(debug_assertions) && self.home_mode == ShellHomeMode::Debug {
             let mouse_position = self
                 .mouse_coordinates
                 .map(|(x, y)| format!("{x},{y}"))

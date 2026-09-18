@@ -96,7 +96,7 @@ cargo run -p cli --bin tundra-cli -- repl
 5. Linux 附着当前用户并按该 UID 的完成标记进入 Appearance 或 Home。Windows/macOS 在本地用户列表为空时创建账户，否则显示锁屏与登录。
 6. 构造同时持有 `AppState` 与 `UiSessionState` 的 `ShellSession`，并建立首屏、焦点和命中表。
 7. 进入事件循环：采集终端、时间与后台任务事件，分发命令，构造 ViewModel，再布局并绘制一帧。
-8. 主运行结果明确区分退出、重启和重置：退出恢复终端后结束；Unix 重启通过 `exec` 保持前台终端组；重置由 Shell 收尾后重新创建初始存储。Windows/macOS 的应用内注销销毁本次 Shell UI 会话并返回锁屏；Linux 不提供注销系统会话的入口。支持电脑重启或关机的平台会先保存编辑器恢复数据、恢复终端，再调用对应的系统接口；请求失败时返回退出菜单并显示错误。
+8. 主运行结果明确区分退出、重启和重置：退出恢复终端后结束；Unix 重启通过 `exec` 保持前台终端组；Windows 重启后由原进程等待新进程退出并传回退出码，避免 PowerShell 提前恢复读取键盘、与新界面争用终端；重置由 Shell 收尾后重新创建初始存储，再按相同方式重启。Windows/macOS 的应用内注销销毁本次 Shell UI 会话并返回锁屏；Linux 不提供注销系统会话的入口。支持电脑重启或关机的平台会先保存编辑器恢复数据、恢复终端，再调用对应的系统接口；请求失败时返回退出菜单并显示错误。
 
 ```mermaid
 flowchart TD
