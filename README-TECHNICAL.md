@@ -472,6 +472,8 @@ Linux 应用目录为 `0700`；配置、用户、会话、恢复、日志和临�
 
 每个进程只创建一个 `WatchdogRuntime`。它提供进程级 panic 边界、受管理任务/线程、恢复策略、运行 journal 和事故报告；`ManagedTaskGroup` 统一管理线程与 Tokio 任务。所有可能 panic 的生产后台工作都应进入 managed task group，并声明是否可安全重放。
 
+长期运行的线程通过 `spawn_cancellable_thread` 接收停止请求，并在等待期间检查 `ThreadCancellation`。Linux 的 logind 休眠和关机监听在连接、订阅、等待信号及断线重试时均可取消；正常退出会结束监听，不会因一直等不到系统信号而触发 watchdog 关闭超时。
+
 重启策略受重放安全性约束：只有 `Idempotent`，或具备恢复处理器的 `Checkpointed` 任务允许重启；`Never + RestartTask` 组合会被拒绝。
 
 `OperationGuard` 在下列目录以原子方式维护操作 journal：

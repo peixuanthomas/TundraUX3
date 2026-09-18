@@ -16,6 +16,9 @@ watchdog = { path = "../watchdog" }
 sysinfo = "0.39"
 battery = "0.7.8"
 
+[dev-dependencies]
+watchdog = { path = "../watchdog", features = ["test-support"] }
+
 [target.'cfg(target_os = "linux")'.dependencies]
 # Keep desktop-only integrations out of the Windows and macOS dependency graph.
 arboard = { version = "3.6", default-features = false, features = ["wayland-data-control"] }

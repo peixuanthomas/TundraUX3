@@ -54,6 +54,45 @@ fn cleanup(runtime: WatchdogRuntime, root: &std::path::Path) {
 }
 
 #[test]
+fn managed_threads_observe_handle_group_and_runtime_cancellation() {
+    for scope in ["handle", "group", "runtime"] {
+        let (runtime, process, root) = test_runtime(scope);
+        let group = test_app(&process).task_group("cooperative-stop");
+        let (started_tx, started_rx) = std::sync::mpsc::channel();
+        let handle = group
+            .spawn_cancellable_thread(
+                TaskSpec::one_shot(TaskId::new("worker").unwrap()),
+                move |cancellation| {
+                    started_tx.send(()).unwrap();
+                    while !cancellation.is_cancelled() {
+                        thread::sleep(Duration::from_millis(5));
+                    }
+                },
+            )
+            .unwrap();
+        started_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+        let mut runtime = Some(runtime);
+        match scope {
+            "handle" => handle.cancel(),
+            "group" => assert_eq!(group.shutdown(Duration::from_secs(1)).still_running, 0),
+            "runtime" => runtime.take().unwrap().shutdown().unwrap(),
+            _ => unreachable!(),
+        }
+        let deadline = std::time::Instant::now() + Duration::from_secs(1);
+        while !handle.is_finished() && std::time::Instant::now() < deadline {
+            thread::sleep(Duration::from_millis(5));
+        }
+        assert!(handle.is_finished(), "{scope} must stop the running worker");
+        assert_eq!(handle.join().unwrap(), None);
+        if let Some(runtime) = runtime {
+            runtime.shutdown().unwrap();
+        }
+        assert!(process.try_recv_incident().is_none());
+        fs::remove_dir_all(root).unwrap();
+    }
+}
+
+#[test]
 fn stale_run_marker_becomes_an_unclean_exit_incident() {
     let (runtime, process, root) = test_runtime("stale-run");
     let marker_directory = root.join("data").join("watchdog").join("runs");

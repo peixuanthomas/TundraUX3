@@ -480,34 +480,10 @@ fn start_logind_listener(
         RestartPolicy::limited(3, Duration::from_secs(60), vec![Duration::from_secs(1)]),
     );
     app.task_group("platform-linux")
-        .spawn_thread(spec, move || {
-            // A session/system bus can reconnect after suspend or a desktop
-            // service restart. Keep the managed worker alive and resubscribe
-            // instead of treating a clean signal-stream end as success.
-            loop {
-                if let Ok(connection) = zbus::blocking::Connection::system()
-                    && let Ok(proxy) = zbus::blocking::Proxy::new(
-                        &connection,
-                        "org.freedesktop.login1",
-                        "/org/freedesktop/login1",
-                        "org.freedesktop.login1.Manager",
-                    )
-                    && let Ok(signals) = proxy.receive_signal(signal)
-                {
-                    for message in signals {
-                        if let Ok(preparing) = message.body().deserialize::<bool>() {
-                            let event = if preparing { Some(on_true) } else { on_false };
-                            if let Some(event) = event {
-                                if event == PlatformLifecycleEvent::PrepareForShutdown {
-                                    crate::terminal::request_process_shutdown();
-                                }
-                                let _ = sender.send(event);
-                            }
-                        }
-                    }
-                }
-                std::thread::sleep(Duration::from_secs(1));
-            }
+        .spawn_cancellable_thread(spec, move |cancellation| {
+            run_logind_listener(cancellation, &sender, signal, on_true, on_false, || {
+                zbus::Connection::system()
+            });
         })
         .map(|_| ())
         .map_err(|error| PlatformError::Native {
@@ -515,6 +491,71 @@ fn start_logind_listener(
             message: error.to_string(),
         })
 }
+
+fn run_logind_listener<F, Fut>(
+    cancellation: watchdog::ThreadCancellation,
+    sender: &mpsc::Sender<PlatformLifecycleEvent>,
+    signal: &str,
+    on_true: PlatformLifecycleEvent,
+    on_false: Option<PlatformLifecycleEvent>,
+    connect: F,
+) where
+    F: Fn() -> Fut,
+    Fut: std::future::Future<Output = zbus::Result<zbus::Connection>>,
+{
+    use futures_lite::{StreamExt, future};
+
+    // Race the entire subscription lifetime, including connection setup and
+    // retries. A blocking signal iterator can wait forever without observing
+    // watchdog cancellation, even when logind and the bus are healthy.
+    future::block_on(future::race(
+        async {
+            while !cancellation.is_cancelled() {
+                async_io::Timer::after(Duration::from_millis(25)).await;
+            }
+        },
+        async {
+            loop {
+                if cancellation.is_cancelled() {
+                    return;
+                }
+                if let Ok(connection) = connect().await
+                    && let Ok(proxy) = zbus::Proxy::new(
+                        &connection,
+                        "org.freedesktop.login1",
+                        "/org/freedesktop/login1",
+                        "org.freedesktop.login1.Manager",
+                    )
+                    .await
+                    && let Ok(mut signals) = proxy.receive_signal(signal).await
+                {
+                    while let Some(message) = signals.next().await {
+                        if cancellation.is_cancelled() {
+                            return;
+                        }
+                        if let Ok(preparing) = message.body().deserialize::<bool>() {
+                            let event = if preparing { Some(on_true) } else { on_false };
+                            if let Some(event) = event {
+                                if event == PlatformLifecycleEvent::PrepareForShutdown {
+                                    crate::terminal::request_process_shutdown();
+                                }
+                                if sender.send(event).is_err() {
+                                    return;
+                                }
+                            }
+                        }
+                    }
+                }
+                // Reconnect after a bus/service restart without delaying exit.
+                async_io::Timer::after(Duration::from_secs(1)).await;
+            }
+        },
+    ));
+}
+
+#[cfg(test)]
+#[path = "linux/lifecycle_tests.rs"]
+mod lifecycle_tests;
 
 fn current_home() -> Result<PathBuf, PlatformError> {
     identity::LinuxUserContext::current()

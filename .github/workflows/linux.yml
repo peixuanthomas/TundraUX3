@@ -21,6 +21,7 @@ jobs:
         run: |
           cargo test --locked -p platform --lib
           cargo test --locked -p platform --lib account_service_reads_and_writes -- --ignored
+          cargo test --locked -p platform --lib logind_signals_and_shutdown -- --ignored
           cargo test --locked -p identity
           cargo test --locked -p shell --test settings linux_personal_settings_work_without_system_account_service
       - name: Test localization and resource recovery
@@ -62,6 +63,7 @@ jobs:
         run: |
           runuser -u tundra-ci -- /home/tundra-ci/.cargo/bin/cargo test --locked -p platform --lib
           runuser -u tundra-ci -- /home/tundra-ci/.cargo/bin/cargo test --locked -p platform --lib account_service_reads_and_writes -- --ignored
+          runuser -u tundra-ci -- /home/tundra-ci/.cargo/bin/cargo test --locked -p platform --lib logind_signals_and_shutdown -- --ignored
           runuser -u tundra-ci -- /home/tundra-ci/.cargo/bin/cargo test --locked -p identity
           runuser -u tundra-ci -- /home/tundra-ci/.cargo/bin/cargo test --locked -p shell --test settings linux_personal_settings_work_without_system_account_service
       - name: Test system metrics

@@ -166,6 +166,19 @@ pub struct ManagedThreadHandle<T> {
     control: Arc<TaskControl>,
 }
 
+/// A cooperative stop request for a managed thread. Long-running workers must
+/// check this while waiting for work as well as between operations.
+#[derive(Clone)]
+pub struct ThreadCancellation {
+    control: Arc<TaskControl>,
+}
+
+impl ThreadCancellation {
+    pub fn is_cancelled(&self) -> bool {
+        self.control.cancelled.load(Ordering::Acquire)
+    }
+}
+
 #[cfg(feature = "tokio")]
 pub struct ManagedTaskHandle<T> {
     join: tokio::task::JoinHandle<Option<T>>,
@@ -234,6 +247,20 @@ impl ManagedTaskGroup {
         T: Send + 'static,
         F: FnMut() -> T + Send + 'static,
     {
+        self.spawn_cancellable_thread(spec, move |_| factory())
+    }
+
+    /// Like `spawn_thread`, but lets the worker observe handle, group, and
+    /// process shutdown requests. Cancellation does not forcibly kill a thread.
+    pub fn spawn_cancellable_thread<T, F>(
+        &self,
+        spec: TaskSpec,
+        mut factory: F,
+    ) -> Result<ManagedThreadHandle<T>, WatchdogError>
+    where
+        T: Send + 'static,
+        F: FnMut(ThreadCancellation) -> T + Send + 'static,
+    {
         self.validate_spec(&spec)?;
         let task_name = format!("{}/{}", self.name, spec.id);
         let control = self.state.register(&task_name)?;
@@ -251,7 +278,11 @@ impl ManagedTaskGroup {
                         return None;
                     }
                     let context = task_context(&app, &thread_spec, &task_name, attempt);
-                    match runtime::catch_factory(context.clone(), &mut factory) {
+                    match runtime::catch_factory(context.clone(), || {
+                        factory(ThreadCancellation {
+                            control: worker_control.clone(),
+                        })
+                    }) {
                         Ok(value) => {
                             log_restarted_completion(
                                 &app,
