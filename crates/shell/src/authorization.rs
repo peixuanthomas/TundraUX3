@@ -15,12 +15,22 @@ enum Request {
     Begin(mpsc::Sender<Result<(), ServiceError>>),
     Fallback(mpsc::Sender<Result<(), ServiceError>>),
     End,
+    Password(mpsc::Sender<Result<(), ServiceError>>),
 }
 struct ChannelInteraction {
     sender: mpsc::Sender<Request>,
     cancelled: Arc<std::sync::atomic::AtomicBool>,
 }
 impl Interaction for ChannelInteraction {
+    fn change_own_password(&self) -> Result<(), ServiceError> {
+        let (sender, receiver) = mpsc::channel();
+        self.sender
+            .send(Request::Password(sender))
+            .map_err(|_| ServiceError::AuthorizationCancelled)?;
+        receiver
+            .recv_timeout(Duration::from_secs(300))
+            .map_err(|_| ServiceError::AuthorizationCancelled)?
+    }
     fn begin(&self) -> Result<(), ServiceError> {
         let (sender, receiver) = mpsc::channel();
         self.sender
@@ -112,6 +122,50 @@ impl AuthorizationHost {
         let Ok(request) = self.receiver.try_recv() else {
             return Ok(false);
         };
+        if let Request::Password(reply) = request {
+            let mut suspension = Suspension::enter(guard)?;
+            let result = (|| {
+                let tty = controlling_terminal()?;
+                let mut child = std::process::Command::new("/usr/bin/passwd")
+                    .stdin(
+                        tty.try_clone()
+                            .map_err(|_| ServiceError::ServiceUnavailable)?,
+                    )
+                    .stdout(
+                        tty.try_clone()
+                            .map_err(|_| ServiceError::ServiceUnavailable)?,
+                    )
+                    .stderr(tty)
+                    .spawn()
+                    .map_err(|_| ServiceError::ServiceUnavailable)?;
+                let deadline = std::time::Instant::now() + Duration::from_secs(295);
+                loop {
+                    if stop() || std::time::Instant::now() >= deadline {
+                        let _ = child.kill();
+                        let _ = child.wait();
+                        return Err(ServiceError::AuthorizationCancelled);
+                    }
+                    match child.try_wait() {
+                        Ok(Some(status)) => {
+                            return if status.success() {
+                                Ok(())
+                            } else {
+                                Err(ServiceError::PermissionDenied)
+                            };
+                        }
+                        Ok(None) => std::thread::sleep(Duration::from_millis(50)),
+                        Err(_) => {
+                            let _ = child.kill();
+                            let _ = child.wait();
+                            return Err(ServiceError::Unknown);
+                        }
+                    }
+                }
+            })();
+            suspension.finish()?;
+            let _ = reply.send(result);
+            return Ok(true);
+        }
         let Request::Begin(reply) = request else {
             if let Request::Fallback(reply) = request {
                 let _ = reply.send(Err(ServiceError::AuthorizationCancelled));
@@ -139,6 +193,9 @@ impl AuthorizationHost {
             match self.receiver.recv_timeout(Duration::from_millis(50)) {
                 Ok(Request::End) | Err(mpsc::RecvTimeoutError::Disconnected) => break,
                 Ok(Request::Begin(reply)) => {
+                    let _ = reply.send(Err(ServiceError::Busy));
+                }
+                Ok(Request::Password(reply)) => {
                     let _ = reply.send(Err(ServiceError::Busy));
                 }
                 Ok(Request::Fallback(reply)) => {

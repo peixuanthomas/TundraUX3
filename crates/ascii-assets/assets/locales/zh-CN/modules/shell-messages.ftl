@@ -644,3 +644,13 @@ shell-battery-unknown = 未知
 
 shell-operation-error-detail-suffix = （{ $detail }）
 shell-path-error-detail = { $path }：{ $reason }
+
+shell-linux-system-accounts = 此处管理真实 Linux 登录账户，修改由系统授权。修改自己的密码时使用系统提示。
+shell-linux-accounts-working = 正在等待 Linux 账户服务或系统授权…
+shell-linux-protect-current-account = 无法删除、禁用或更改当前会话所用账户的角色。
+shell-linux-delete-account-keep-files = 删除 Linux 账户 { $username }？将保留其主目录和文件。
+shell-linux-password-enables-account = 设置此 Linux 密码后，也会启用该账户。
+shell-linux-account-refresh-error = { $operation } 无法刷新账户列表：{ $error }
+shell-linux-lock-password = 锁定密码登录
+shell-linux-unlock-password = 解锁密码登录
+shell-linux-set-password-and-unlock = 设置密码并解锁

@@ -196,6 +196,8 @@ impl ShellSession {
             user_management_message: None,
             user_management_feedback_tone: UserManagementFeedbackTone::Info,
             user_management_mode: UserManagementMode::Browse,
+            #[cfg(target_os = "linux")]
+            user_management_job: None,
             selected_home_entry_index: 0,
             settings_state: None,
             settings_task_runtime: runtime_services.settings,

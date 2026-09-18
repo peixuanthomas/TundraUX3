@@ -13,6 +13,7 @@ pub enum ServiceError {
     UntrustedTransaction,
     Timeout,
     Unknown,
+    AccountPasswordSetupFailed,
 }
 
 impl fmt::Display for ServiceError {
@@ -28,6 +29,7 @@ impl fmt::Display for ServiceError {
             Self::UntrustedTransaction => "The transaction cannot be safely previewed or requires additional trust, removal, or license acceptance",
             Self::Timeout => "The system service did not respond in time",
             Self::Unknown => "The system service could not complete the operation",
+            Self::AccountPasswordSetupFailed => "Account created, but password setup failed. Set its password before use.",
         })
     }
 }

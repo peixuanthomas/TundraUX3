@@ -3,6 +3,45 @@ use crate::time::{unix_millis, unix_nanos};
 use crate::{AuthSession, CoreError, IdentitySource, UserRole};
 use storage::{StorageManager, UserRecord};
 
+pub(super) fn error(error: platform::service::ServiceError) -> CoreError {
+    CoreError::SystemIdentity(error.to_string())
+}
+
+pub(super) fn record(
+    account: platform::linux::accounts::Account,
+    storage: &StorageManager,
+) -> Result<UserRecord, CoreError> {
+    let role = if account.admin {
+        UserRole::Admin
+    } else {
+        UserRole::User
+    };
+    let mut record = UserRecord {
+        id: format!("linux-uid-{}", account.uid),
+        username: account.username,
+        display_name: account.display_name,
+        role: role.as_str().into(),
+        password_hash: String::new(),
+        password_hint: None,
+        appearance: Default::default(),
+        personalization_pending: true,
+        system_status_dashboard: storage::SystemStatusDashboardConfig::for_role(role.as_str()),
+        // AccountsService Locked only locks password authentication. Existing
+        // sessions and key-based login can remain valid; do not disable the UX.
+        enabled: true,
+        failed_login_attempts: 0,
+        locked_until_epoch_ms: account.locked.then_some(u64::MAX),
+        created_at_epoch_ms: 0,
+        updated_at_epoch_ms: 0,
+        last_login_at_epoch_ms: None,
+    };
+    if record.display_name.is_empty() {
+        record.display_name = record.username.clone();
+    }
+    attach_preferences(&mut record, &storage.load_users()?.users);
+    Ok(record)
+}
+
 pub(super) fn users(storage: &StorageManager) -> Result<Vec<UserRecord>, CoreError> {
     let current = platform::linux::identity::LinuxUserContext::current()
         .map_err(|error| CoreError::SystemIdentity(error.to_string()))?;
@@ -26,6 +65,11 @@ pub(super) fn users(storage: &StorageManager) -> Result<Vec<UserRecord>, CoreErr
         last_login_at_epoch_ms: None,
     };
     attach_preferences(&mut record, &storage.load_users()?.users);
+    // The desktop can still start without AccountsService; management reports its
+    // availability separately. Stored UX roles never grant Linux admin access.
+    if let Ok(account) = platform::linux::accounts::Accounts::current_account() {
+        return Ok(vec![self::record(account, storage)?]);
+    }
     Ok(vec![record])
 }
 
@@ -51,7 +95,7 @@ pub(super) fn attach(storage: &StorageManager) -> Result<AuthSession, CoreError>
         session_id: format!("app-session-{}-{}", current.id, unix_nanos()),
         user_id: current.id.clone(),
         username: current.username.clone(),
-        role: UserRole::User,
+        role: UserRole::from_storage(&current.role),
         started_at_epoch_ms: now,
     };
     let mut document = storage.load_users()?;

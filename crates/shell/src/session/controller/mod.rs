@@ -24,6 +24,10 @@ pub(super) use settings_rpm_tasks::*;
 pub(super) mod system_status;
 mod time_sync;
 mod user_management;
+#[cfg(target_os = "linux")]
+mod user_management_tasks;
+#[cfg(target_os = "linux")]
+pub(super) use user_management_tasks::*;
 
 pub(super) use diagnostics::*;
 pub(super) use editor::*;

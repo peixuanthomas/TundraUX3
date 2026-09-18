@@ -20,6 +20,7 @@ jobs:
       - name: Test ordinary-user identity and platform boundaries
         run: |
           cargo test --locked -p platform --lib
+          cargo test --locked -p platform --lib account_service_reads_and_writes -- --ignored
           cargo test --locked -p identity
       - name: Test localization and resource recovery
         run: |
@@ -45,7 +46,7 @@ jobs:
     steps:
       - name: Install checkout and build requirements
         run: |
-          dnf install -y cmake curl gcc gcc-c++ git make openssl-devel perl pkgconf-pkg-config shadow-utils util-linux
+          dnf install -y cmake curl dbus-daemon gcc gcc-c++ git make openssl-devel perl pkgconf-pkg-config shadow-utils util-linux
       - uses: actions/checkout@v6
       - name: Install stable Rust
         run: |
@@ -59,6 +60,7 @@ jobs:
       - name: Test ordinary-user identity and platform boundaries
         run: |
           runuser -u tundra-ci -- /home/tundra-ci/.cargo/bin/cargo test --locked -p platform --lib
+          runuser -u tundra-ci -- /home/tundra-ci/.cargo/bin/cargo test --locked -p platform --lib account_service_reads_and_writes -- --ignored
           runuser -u tundra-ci -- /home/tundra-ci/.cargo/bin/cargo test --locked -p identity
       - name: Test system metrics
         run: |

@@ -790,7 +790,7 @@ fn personalization_completion_only_updates_the_authenticated_profile() {
 }
 
 #[test]
-fn linux_current_process_permissions_do_not_use_local_admin_role() {
+fn linux_current_process_permissions_use_system_role_only_for_user_management() {
     let permissions = identity::PermissionService::default();
     for role in [UserRole::Guest, UserRole::User, UserRole::Admin] {
         let mut actor = session("current", role);
@@ -806,10 +806,11 @@ fn linux_current_process_permissions_do_not_use_local_admin_role() {
         ] {
             assert!(permissions.authorize(Some(&actor), action, None).allowed);
         }
-        assert!(
-            !permissions
+        assert_eq!(
+            permissions
                 .authorize(Some(&actor), PermissionAction::ManageUsers, None)
-                .allowed
+                .allowed,
+            role == UserRole::Admin
         );
     }
 }
