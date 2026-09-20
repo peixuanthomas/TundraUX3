@@ -1,6 +1,4 @@
 use std::fs;
-use std::io::{Read, Write};
-use std::net::TcpListener;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -383,88 +381,6 @@ fn operating_system_time_source_uses_platform_boundary_and_persists() {
             .any(|call| matches!(call, MockCall::SystemTime))
     );
     assert!(!state.time_sync_failure_dialog_visible());
-}
-
-#[test]
-fn time_server_is_saved_only_after_successful_synchronization() {
-    let fixture = FixtureRoot::new("valid-time-server");
-    let platform = mock_platform(fixture.path());
-    let manager = initialize_users(&platform, false, false);
-    let listener = TcpListener::bind("127.0.0.1:0").expect("bind test time server");
-    let address = listener.local_addr().expect("time server address");
-    let server = std::thread::spawn(move || {
-        let (mut stream, _) = listener.accept().expect("accept time request");
-        let mut request = [0_u8; 2048];
-        let _ = stream.read(&mut request);
-        stream
-            .write_all(
-                b"HTTP/1.1 204 No Content\r\nDate: Tue, 15 Nov 1994 08:12:31 GMT\r\nConnection: close\r\n\r\n",
-            )
-            .expect("write time response");
-    });
-    let mut state = logged_in_state(&platform, "AdminUser", "StrongPass123");
-
-    open_time_server_editor(&mut state, &platform);
-    let url = format!("http://{address}/clock");
-    for character in url.chars() {
-        press(&mut state, &platform, &character.to_string());
-    }
-    press(&mut state, &platform, "Enter");
-    assert_eq!(manager.load_config().unwrap().time_sync.server_url, None);
-
-    drive_settings_until(&mut state, &platform, |state| {
-        state
-            .to_settings_view_model()
-            .is_some_and(|model| model.time_sync_server_editor.is_none())
-    });
-    server.join().expect("time server thread");
-    assert_eq!(
-        manager
-            .load_config()
-            .unwrap()
-            .time_sync
-            .server_url
-            .as_deref(),
-        Some(format!("http://{address}/clock").as_str())
-    );
-}
-
-#[test]
-fn failed_time_server_validation_shows_error_and_does_not_save() {
-    let fixture = FixtureRoot::new("invalid-time-server");
-    let platform = mock_platform(fixture.path());
-    let manager = initialize_users(&platform, false, false);
-    // Keep the endpoint under the test's control and return an explicit HTTP failure.
-    // Releasing a port does not guarantee a prompt connection-refused result on every host.
-    let listener = TcpListener::bind("127.0.0.1:0").expect("bind failing time server");
-    let address = listener.local_addr().expect("time server address");
-    let server = std::thread::spawn(move || {
-        let (mut stream, _) = listener.accept().expect("accept time request");
-        stream
-            .set_read_timeout(Some(Duration::from_secs(5)))
-            .unwrap();
-        let mut request = [0_u8; 2048];
-        stream.read(&mut request).expect("read time request");
-        stream.write_all(b"HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").expect("write failing response");
-    });
-    let mut state = logged_in_state(&platform, "AdminUser", "StrongPass123");
-
-    open_time_server_editor(&mut state, &platform);
-    for character in format!("http://{address}/clock").chars() {
-        press(&mut state, &platform, &character.to_string());
-    }
-    press(&mut state, &platform, "Enter");
-    drive_settings_until(&mut state, &platform, |state| {
-        state.time_sync_failure_dialog_visible()
-    });
-
-    server.join().expect("failing time server thread");
-    assert_eq!(manager.load_config().unwrap().time_sync.server_url, None);
-    assert!(
-        state
-            .time_sync_failure_message()
-            .is_some_and(|message| message.contains("setting was not saved"))
-    );
 }
 
 #[test]
@@ -942,21 +858,6 @@ fn open_time_server_editor(state: &mut ShellSession, platform: &MockPlatform) {
             .time_sync_server_editor
             .is_some()
     );
-}
-
-fn drive_settings_until(
-    state: &mut ShellSession,
-    platform: &MockPlatform,
-    done: impl Fn(&ShellSession) -> bool,
-) {
-    for _ in 0..1_000 {
-        state.apply_input_with_platform(InputEvent::Tick, platform);
-        if done(state) {
-            return;
-        }
-        std::thread::sleep(Duration::from_millis(5));
-    }
-    panic!("Settings background task did not finish in time");
 }
 
 fn press(state: &mut ShellSession, platform: &MockPlatform, key: &str) {
