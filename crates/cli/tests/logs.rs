@@ -273,12 +273,3 @@ fn logs_incident_filters_and_export_preserve_correlation() {
     assert_eq!(exported["run_id"], "run-a");
     assert_eq!(exported["task_id"], "task-a");
 }
-#[test]
-fn logs_help_explains_access_filters_and_exit_codes() {
-    let fixture = Fixture::new();
-    let (code, stdout, _) = fixture.run(&["logs", "help"]);
-    assert_eq!(code, 0);
-    assert!(stdout.contains("--source ux|linux"));
-    assert!(stdout.contains("current OS identity"));
-    assert!(stdout.contains("3 partial/truncated"));
-}

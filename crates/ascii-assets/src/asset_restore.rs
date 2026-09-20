@@ -232,5 +232,5 @@ pub fn restore_default_theme(root: &Path) -> Result<Vec<AssetRestoreReport>, Ass
 }
 
 #[cfg(test)]
-#[path = "tests/asset_restore.rs"]
+#[path = "../tests/unit/asset_restore.rs"]
 mod tests;

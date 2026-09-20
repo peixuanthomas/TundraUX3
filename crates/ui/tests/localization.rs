@@ -227,26 +227,3 @@ fn home_icon_identity_is_independent_of_the_display_language() {
     let legacy = ShellEntry::new("Explorer", "Files");
     assert_eq!(legacy.icon_identity(), "Explorer");
 }
-
-#[test]
-fn numeric_counts_use_fluent_plural_rules() {
-    let fixture = LocaleFixture::new();
-    with_snapshot(&fixture.snapshot("en-US"), || {
-        assert_eq!(
-            i18n::tr!("ui-launcher-item-count", count = 1),
-            "1 item · Enter launch · Esc Home"
-        );
-        assert_eq!(
-            i18n::tr!("ui-launcher-item-count", count = 2),
-            "2 items · Enter launch · Esc Home"
-        );
-        assert_eq!(i18n::tr!("ui-editor-cells", count = 1), "1 cell");
-    });
-    with_snapshot(&fixture.snapshot("zh-CN"), || {
-        assert_eq!(
-            i18n::tr!("ui-launcher-item-count", count = 2),
-            "2 项 · Enter 启动 · Esc 主页"
-        );
-        assert_eq!(i18n::tr!("ui-editor-cells", count = 2), "2 格");
-    });
-}

@@ -458,5 +458,5 @@ impl Default for AppState {
 }
 
 #[cfg(test)]
-#[path = "tests/state.rs"]
+#[path = "../../tests/unit/application/state.rs"]
 mod tests;

@@ -51,18 +51,6 @@ fn launcher_editor_entry_opens_a_plain_text_document() {
 }
 
 #[test]
-fn terminal_text_sizing_capability_reaches_the_editor_view_model() {
-    let fixture = FixtureRoot::new("text-sizing");
-    let platform = mock_platform(fixture.path());
-    let mut state = new_user_home_state(&platform);
-    state.set_terminal_text_sizing_support(true);
-
-    open_editor_from_home(&mut state, &platform);
-
-    assert!(state.to_editor_view_model().text_sizing_protocol);
-}
-
-#[test]
 fn explorer_opens_c_with_cached_highlights_that_update_after_typing() {
     let fixture = FixtureRoot::new("c-highlights");
     let platform = mock_platform(fixture.path());

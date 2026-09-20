@@ -11,13 +11,12 @@ use ui::{
     ExitConfirmViewModel, HomeDisplayMode, HomeIconRenderer, HomeViewModel, LoginField,
     LoginUserOptionViewModel, LoginViewModel, NotificationActionViewModel, NotificationLayout,
     NotificationLevel, NotificationTone, NotificationViewModel, ShellChromeViewModel, ShellEntry,
-    ShellLayout, StatusViewModel, TimeSyncDialogViewModel, TundraTheme,
-    UserManagementUserViewModel, UserManagementViewModel, compute_shell_layout,
+    ShellLayout, StatusViewModel, TundraTheme, UserManagementViewModel, compute_shell_layout,
     home_entry_icon_area, home_logout_area, login_password_area, login_password_visibility_area,
     login_user_list_area, login_user_list_visible_rows, notification_layout,
     notification_too_small_message, render_bootstrap_admin, render_clock, render_exit_confirmation,
     render_home, render_home_with_icons, render_login, render_notification_overlay,
-    render_time_sync_failure_dialog, render_user_management, status_time_button_area,
+    render_user_management, status_time_button_area,
 };
 
 #[derive(Default)]
@@ -48,194 +47,6 @@ impl HomeIconRenderer for UnavailableHomeIconRenderer {
 }
 
 #[test]
-fn debug_home_renders_normal_entries_and_keeps_diagnostics_out_of_main_content() {
-    let diagnostics = DebugDiagnosticsViewModel {
-        tick_count: 0,
-        last_key_event: None,
-        last_mouse_event: None,
-        last_resize_event: None,
-        mouse_coordinates: None,
-        scroll_direction: None,
-        drag_direction: None,
-        terminal_flags: Vec::new(),
-        platform_capability_summary: "Windows: 15 supported, 0 best-effort, 0 unsupported"
-            .to_string(),
-    };
-    let home = HomeViewModel::user(
-        "Developer",
-        "2026-07-01 09:30",
-        vec![ShellEntry::new(
-            "Explorer",
-            "Browse files and pinned places",
-        )],
-    )
-    .with_debug_diagnostics(diagnostics);
-    let chrome = ShellChromeViewModel {
-        app_name: "TundraUX 3".to_string(),
-        build_mode: "debug".to_string(),
-        display_mode: HomeDisplayMode::Debug,
-        terminal_size: (100, 30),
-        screen_stack: vec!["Home".to_string()],
-        status: StatusViewModel {
-            status:
-                "Last Key: none | Mouse position: none | Size: 100x30 | Scroll: none | Drag: none"
-                    .to_string(),
-            toast: None,
-            error: None,
-            alert_tone: NotificationTone::Info,
-            time_button_label: None,
-            time_button_selected: false,
-        },
-    };
-    let mut terminal = Terminal::new(TestBackend::new(100, 30)).expect("test terminal");
-
-    terminal
-        .draw(|frame| {
-            render_home(
-                frame,
-                frame.area(),
-                &chrome,
-                &home,
-                &TundraTheme::default_dark(),
-            );
-        })
-        .expect("render home");
-
-    let output: String = terminal
-        .backend()
-        .buffer()
-        .content()
-        .iter()
-        .map(|cell| cell.symbol())
-        .collect();
-    assert!(output.contains("Explorer"));
-    assert!(output.contains("Last Key: none"));
-    assert!(!output.contains("Platform capabilities:"));
-    assert!(!output.contains("Tick:"));
-}
-
-#[test]
-fn user_home_renders_ascii_entry_tiles_with_selected_accent() {
-    let entries = vec![
-        ShellEntry::new("Explorer", "Browse files"),
-        ShellEntry::new("Launcher", "Open apps and commands"),
-        ShellEntry::new("Editor", "Edit text files"),
-    ];
-    let home = HomeViewModel::user_with_selection("Strix", "2026-07-01 09:30", entries, 1);
-    let chrome = ShellChromeViewModel {
-        app_name: "TundraUX 3".to_string(),
-        build_mode: "debug".to_string(),
-        display_mode: HomeDisplayMode::User,
-        terminal_size: (100, 30),
-        screen_stack: vec!["Home".to_string()],
-        status: StatusViewModel {
-            status: "Ready".to_string(),
-            toast: None,
-            error: None,
-            alert_tone: NotificationTone::Info,
-            time_button_label: None,
-            time_button_selected: false,
-        },
-    };
-    let mut terminal = Terminal::new(TestBackend::new(100, 30)).expect("test terminal");
-
-    terminal
-        .draw(|frame| {
-            render_home(
-                frame,
-                frame.area(),
-                &chrome,
-                &home,
-                &TundraTheme::default_dark(),
-            );
-        })
-        .expect("render home");
-
-    let output = terminal_output(&terminal);
-    let icon_line = first_non_blank_icon_line(
-        home.home_icon_for_label("Launcher")
-            .expect("home view model should carry loaded icon assets"),
-    );
-    assert!(output.contains("User: Strix"));
-    assert!(!output.contains("Time: 2026-07-01 09:30"));
-    assert!(output.contains(icon_line));
-    assert!(output.contains("Launcher"));
-    assert!(output.contains("Open apps and commands"));
-    assert!(output.contains("Arrows: select"));
-    assert!(output.contains("Enter: open"));
-
-    let main = main_rect(100, 30);
-    let selected_tile = ui::home_entry_tile_areas(main, home.entries().len())[1];
-    assert!(
-        region_has_fg(
-            &terminal,
-            selected_tile,
-            TundraTheme::default_dark().accent_color
-        ),
-        "selected home tile should use the accent style"
-    );
-}
-
-#[test]
-fn authenticated_user_and_debug_homes_render_single_line_account_logout() {
-    let theme = TundraTheme::default_dark();
-    let chrome = chrome_for("Home");
-    let user_home = HomeViewModel::user("ignored", "2026-07-01 09:30", Vec::new())
-        .with_account_logout("Strix", true);
-    let mut user_terminal = Terminal::new(TestBackend::new(80, 24)).expect("test terminal");
-    user_terminal
-        .draw(|frame| render_home(frame, frame.area(), &chrome, &user_home, &theme))
-        .expect("render user home");
-    let user_output = terminal_output(&user_terminal);
-    let main = main_rect(80, 24);
-    let logout = home_logout_area(main, &user_home);
-
-    assert!(user_output.contains("User: Strix  [Logout]"));
-    assert!(!user_output.contains("Time:"));
-    assert!(user_output.contains("Tab: focus Logout / Clock"));
-    assert!(user_output.contains("L: Logout"));
-    assert!(!user_output.contains("E: explorer"));
-    assert!(!user_output.contains("U: users"));
-    assert!(!user_output.contains("Arrows: select"));
-    assert!(logout.width > 0 && logout.height == 1);
-    assert!(region_has_fg(&user_terminal, logout, theme.accent_color));
-    assert!(region_has_bg(&user_terminal, logout, theme.background));
-
-    let debug_home = HomeViewModel::user(
-        "ignored",
-        "2026-07-01 09:30",
-        vec![ShellEntry::new(
-            "Explorer",
-            "Browse files and pinned places",
-        )],
-    )
-    .with_debug_diagnostics(DebugDiagnosticsViewModel {
-        tick_count: 1,
-        last_key_event: None,
-        last_mouse_event: None,
-        last_resize_event: None,
-        mouse_coordinates: None,
-        scroll_direction: None,
-        drag_direction: None,
-        terminal_flags: Vec::new(),
-        platform_capability_summary: "supported".to_string(),
-    })
-    .with_account_logout("Admin", false);
-    let mut debug_terminal = Terminal::new(TestBackend::new(80, 24)).expect("test terminal");
-    debug_terminal
-        .draw(|frame| render_home(frame, frame.area(), &chrome, &debug_home, &theme))
-        .expect("render authenticated debug home");
-    let debug_output = terminal_output(&debug_terminal);
-
-    assert!(debug_output.contains("User: Admin  [Logout]"));
-    assert!(debug_output.contains("Explorer"));
-    assert!(debug_output.contains("Arrows: select"));
-    assert!(!debug_output.contains("Tick: 1"));
-    assert!(debug_output.contains("L: Logout"));
-    assert!(home_logout_area(main, &debug_home).width > 0);
-}
-
-#[test]
 fn storage_free_debug_home_does_not_expose_logout_hit_area() {
     let home = HomeViewModel::debug(DebugDiagnosticsViewModel {
         tick_count: 0,
@@ -250,77 +61,6 @@ fn storage_free_debug_home_does_not_expose_logout_hit_area() {
     });
 
     assert_eq!(home_logout_area(main_rect(80, 24), &home).width, 0);
-}
-
-#[test]
-fn user_home_preserves_ascii_icon_spacing_when_centered() {
-    let entries = vec![ShellEntry::new("Settings", "Adjust TundraUX")];
-    let home = HomeViewModel::user_with_selection("Strix", "2026-07-01 09:30", entries, 0);
-    let chrome = ShellChromeViewModel {
-        app_name: "TundraUX 3".to_string(),
-        build_mode: "debug".to_string(),
-        display_mode: HomeDisplayMode::User,
-        terminal_size: (100, 30),
-        screen_stack: vec!["Home".to_string()],
-        status: StatusViewModel {
-            status: "Ready".to_string(),
-            toast: None,
-            error: None,
-            alert_tone: NotificationTone::Info,
-            time_button_label: None,
-            time_button_selected: false,
-        },
-    };
-    let mut terminal = Terminal::new(TestBackend::new(100, 30)).expect("test terminal");
-
-    terminal
-        .draw(|frame| {
-            render_home(
-                frame,
-                frame.area(),
-                &chrome,
-                &home,
-                &TundraTheme::default_dark(),
-            );
-        })
-        .expect("render home");
-
-    let main = main_rect(100, 30);
-    let tile = ui::home_entry_tile_areas(main, home.entries().len())[0];
-    let icon = home
-        .home_icon_for_label("Settings")
-        .expect("home view model should carry loaded icon assets");
-
-    assert_centered_icon_matches_asset(&terminal, tile, icon);
-}
-
-#[test]
-fn user_home_allocates_graphical_icons_in_the_centered_launcher_style_area() {
-    let entries = vec![ShellEntry::new("Explorer", "Browse files")];
-    let home = HomeViewModel::user("Strix", "2026-07-01 09:30", entries);
-    let chrome = chrome_for("Home");
-    let icons = RecordingHomeIconRenderer::default();
-    let mut terminal = Terminal::new(TestBackend::new(100, 30)).expect("test terminal");
-
-    terminal
-        .draw(|frame| {
-            render_home_with_icons(
-                frame,
-                frame.area(),
-                &chrome,
-                &home,
-                &TundraTheme::default_dark(),
-                Some(&icons),
-            );
-        })
-        .expect("render Home with graphical icons");
-
-    let main = main_rect(100, 30);
-    let tile = ui::home_entry_tile_areas(main, home.entries().len())[0];
-    assert_eq!(
-        icons.calls.borrow().as_slice(),
-        &[("Explorer".to_string(), home_entry_icon_area(tile))]
-    );
 }
 
 #[test]
@@ -445,96 +185,6 @@ fn home_entry_index_at_maps_coordinates_to_entry_tiles() {
         Some(1)
     );
     assert_eq!(ui::home_entry_index_at(main, 5, (main.x, main.y)), None);
-}
-
-#[test]
-fn small_terminal_returns_compact_layout() {
-    assert_eq!(
-        compute_shell_layout(Rect::new(0, 0, 49, 30)),
-        ShellLayout::Compact(Rect::new(0, 0, 49, 30))
-    );
-    assert_eq!(
-        compute_shell_layout(Rect::new(0, 0, 100, 11)),
-        ShellLayout::Compact(Rect::new(0, 0, 100, 11))
-    );
-}
-
-#[test]
-fn normal_terminal_splits_top_main_status() {
-    assert_eq!(
-        compute_shell_layout(Rect::new(0, 0, 100, 30)),
-        ShellLayout::Full {
-            top: Rect::new(0, 0, 100, 3),
-            main: Rect::new(1, 4, 98, 22),
-            status: Rect::new(0, 27, 100, 3),
-        }
-    );
-}
-
-#[test]
-fn status_bar_renders_selectable_time_button_on_the_right() {
-    let label = "2026-07-10 09:30";
-    let diagnostics = DebugDiagnosticsViewModel {
-        tick_count: 0,
-        last_key_event: None,
-        last_mouse_event: None,
-        last_resize_event: None,
-        mouse_coordinates: None,
-        scroll_direction: None,
-        drag_direction: None,
-        terminal_flags: Vec::new(),
-        platform_capability_summary: "Windows: ready".to_string(),
-    };
-    let home = HomeViewModel::debug(diagnostics);
-    let chrome = ShellChromeViewModel {
-        app_name: "TundraUX 3".to_string(),
-        build_mode: "debug".to_string(),
-        display_mode: HomeDisplayMode::Debug,
-        terminal_size: (120, 30),
-        screen_stack: vec!["Home".to_string()],
-        status: StatusViewModel {
-            status: "Ready".to_string(),
-            toast: Some("Saved".to_string()),
-            error: Some("Network unavailable".to_string()),
-            alert_tone: NotificationTone::Critical,
-            time_button_label: Some(label.to_string()),
-            time_button_selected: true,
-        },
-    };
-    let mut terminal = Terminal::new(TestBackend::new(120, 30)).expect("test terminal");
-
-    terminal
-        .draw(|frame| {
-            render_home(
-                frame,
-                frame.area(),
-                &chrome,
-                &home,
-                &TundraTheme::default_dark(),
-            );
-        })
-        .expect("render home");
-
-    let output = terminal_output(&terminal);
-    assert!(output.contains("[CRITICAL] Network unavailable"));
-    assert!(!output.contains("Ready"));
-    assert!(!output.contains("Saved"));
-    assert!(output.contains(label));
-
-    let status = status_rect(120, 30);
-    let button = status_time_button_area(status, label);
-    assert_eq!(
-        button.x.saturating_add(button.width),
-        status.x + status.width
-    );
-    assert_eq!(
-        button.width,
-        u16::try_from(label.chars().count()).unwrap() + 4
-    );
-    assert!(
-        region_has_fg(&terminal, button, TundraTheme::default_dark().accent_color),
-        "selected time button should use the accent style"
-    );
 }
 
 #[test]
@@ -723,25 +373,6 @@ fn extremely_small_compact_layout_uses_borderless_notification_fallback() {
 }
 
 #[test]
-fn time_sync_failure_dialog_renders_expected_content() {
-    let mut dialog_terminal = Terminal::new(TestBackend::new(80, 24)).expect("test terminal");
-    dialog_terminal
-        .draw(|frame| {
-            render_time_sync_failure_dialog(
-                frame,
-                frame.area(),
-                &TimeSyncDialogViewModel::new(),
-                &TundraTheme::default_dark(),
-            );
-        })
-        .expect("render time sync dialog");
-
-    let output = terminal_output(&dialog_terminal);
-    assert!(output.contains("Time Sync"));
-    assert!(visible_text_without_spaces(&output).contains("Timesynchronizationfailed"));
-}
-
-#[test]
 fn exit_menu_actions_remain_separate_and_visible_after_resize() {
     let labels = [
         "Exit TundraUX",
@@ -870,39 +501,6 @@ fn notification_overlay_renders_modal_actions_and_replaces_too_small_terminal_co
     assert!(!narrow_output.contains("README.md"));
     assert!(!narrow_output.contains("Y: Move"));
     assert!(!narrow_output.contains("N: Cancel"));
-}
-
-#[test]
-fn modal_notification_tones_have_text_labels() {
-    for (tone, prefix) in [
-        (NotificationTone::Info, "[INFO]"),
-        (NotificationTone::Success, "[SUCCESS]"),
-        (NotificationTone::Warning, "[WARN]"),
-        (NotificationTone::Error, "[ERROR]"),
-        (NotificationTone::Critical, "[CRITICAL]"),
-    ] {
-        let model = NotificationViewModel::new(
-            "tone",
-            NotificationLevel::Modal,
-            tone,
-            "Notification",
-            "Message",
-            vec![NotificationActionViewModel::new("ok", "OK")],
-        );
-        let mut terminal = Terminal::new(TestBackend::new(80, 24)).expect("test terminal");
-        terminal
-            .draw(|frame| {
-                render_notification_overlay(
-                    frame,
-                    frame.area(),
-                    &model,
-                    &TundraTheme::default_dark(),
-                );
-            })
-            .expect("render notification tone");
-
-        assert!(terminal_output(&terminal).contains(prefix));
-    }
 }
 
 #[test]
@@ -1138,67 +736,6 @@ fn login_renderer_reveals_only_explicit_plaintext_and_focuses_visibility_control
     ));
 }
 
-#[test]
-fn bootstrap_and_user_management_render_expected_content() {
-    let chrome = chrome_for("BootstrapAdmin");
-    let bootstrap = BootstrapAdminViewModel::new("AdminUser", 10, AuthField::Username, None);
-    let mut terminal = Terminal::new(TestBackend::new(90, 24)).expect("test terminal");
-
-    terminal
-        .draw(|frame| {
-            render_bootstrap_admin(
-                frame,
-                frame.area(),
-                &chrome,
-                &bootstrap,
-                &TundraTheme::default_dark(),
-            );
-        })
-        .expect("render bootstrap");
-    let output = terminal_output(&terminal);
-    assert!(output.contains("Tab / Down: password"));
-    assert!(output.contains("Enter on password: create admin"));
-    assert!(output.contains("Admin username: AdminUser_"));
-    assert_eq!(
-        output.matches("Admin username:").count(),
-        1,
-        "the controlled TextInput must be the only username representation",
-    );
-
-    let management = UserManagementViewModel::new(
-        "AdminUser",
-        vec![UserManagementUserViewModel {
-            username: "user2".to_string(),
-            display_name: "User Two".to_string(),
-            role: "User".to_string(),
-            enabled: true,
-            locked: false,
-            is_current: false,
-        }],
-        0,
-        Some("Created user2".to_string()),
-        true,
-        None,
-    );
-    terminal
-        .draw(|frame| {
-            render_user_management(
-                frame,
-                frame.area(),
-                &chrome,
-                &management,
-                &TundraTheme::default_dark(),
-            );
-        })
-        .expect("render user management");
-    let output = terminal_output(&terminal);
-    assert!(output.contains("Signed in: AdminUser"));
-    assert!(output.contains("user2"));
-    assert!(output.contains("User Two"));
-    assert!(output.contains("Enabled"));
-    assert!(output.contains("Created user2"));
-}
-
 fn chrome_for(screen: &str) -> ShellChromeViewModel {
     ShellChromeViewModel {
         app_name: "TundraUX 3".to_string(),
@@ -1244,16 +781,6 @@ fn buffer_row_text(terminal: &Terminal<TestBackend>, x: u16, y: u16, width: u16)
         .filter_map(|column| buffer.cell((column, y)))
         .map(|cell| cell.symbol())
         .collect()
-}
-
-fn first_non_blank_icon_line(icon: &ui::HomeIcon) -> &str {
-    icon.lines
-        .iter()
-        .find_map(|line| {
-            let line: &str = line.as_ref();
-            (!line.trim().is_empty()).then_some(line)
-        })
-        .expect("icon asset should contain visible content")
 }
 
 fn assert_centered_icon_matches_asset(

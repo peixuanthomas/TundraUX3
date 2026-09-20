@@ -245,22 +245,8 @@ pub(crate) fn byte_index_for_char(value: &str, char_index: usize) -> usize {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::{terminal_width, truncate_to_terminal_width};
-
-    #[test]
-    fn terminal_width_uses_ratatui_cell_width_for_cjk_and_emoji() {
-        assert_eq!(terminal_width("中文"), 4);
-        assert_eq!(terminal_width("日本"), 4);
-        assert_eq!(terminal_width("🙂"), 2);
-    }
-
-    #[test]
-    fn truncation_keeps_wide_graphemes_intact() {
-        assert_eq!(truncate_to_terminal_width("A中文B", 3), "A中");
-        assert_eq!(truncate_to_terminal_width("A🙂B", 3), "A🙂");
-    }
-}
+#[path = "../../tests/unit/components/foundation/tests.rs"]
+mod tests;
 
 pub(crate) fn visible_scrolled_rect(
     x: u16,

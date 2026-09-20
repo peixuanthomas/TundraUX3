@@ -904,5 +904,5 @@ fn bounds_for_regions(regions: impl Iterator<Item = Rect>) -> Option<Rect> {
 }
 
 #[cfg(test)]
-#[path = "tests/motion_effects.rs"]
+#[path = "../../tests/unit/session/motion_effects.rs"]
 mod tests;

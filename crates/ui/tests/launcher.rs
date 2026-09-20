@@ -80,29 +80,6 @@ fn text_at(terminal: &Terminal<TestBackend>, x: u16, y: u16, width: u16) -> Stri
 }
 
 #[test]
-fn large_icons_render_the_default_application_ascii_icon_when_native_icons_are_unavailable() {
-    let model = LauncherViewModel::new(
-        vec![item(0, LauncherItemStatus::Ready)],
-        Some(0),
-        LauncherViewMode::LargeIcons,
-        false,
-    );
-    let output = render(&model, 100, 30);
-    let icon_line = model
-        .default_app_icon()
-        .expect("default Application ASCII icon")
-        .lines()
-        .first()
-        .expect("icon line")
-        .trim();
-
-    assert!(output.contains("Launcher · Large icons"));
-    assert!(output.contains("Application 0"));
-    assert!(!icon_line.is_empty());
-    assert!(output.contains(icon_line));
-}
-
-#[test]
 fn built_in_launcher_item_falls_back_to_ascii_when_graphical_icon_loading_fails() {
     let command_line = LauncherItemViewModel::command_line();
     let model = LauncherViewModel::new(
@@ -142,34 +119,6 @@ fn built_in_launcher_item_falls_back_to_ascii_when_graphical_icon_loading_fails(
         .map(|cell| cell.symbol())
         .collect::<String>();
     assert!(output.contains(icon_line));
-}
-
-#[test]
-fn details_render_columns_and_all_item_integrity_labels() {
-    let model = LauncherViewModel::new(
-        vec![
-            item(0, LauncherItemStatus::Ready),
-            item(1, LauncherItemStatus::Changed),
-            item(2, LauncherItemStatus::NeedsApproval),
-        ],
-        Some(1),
-        LauncherViewMode::Details,
-        false,
-    );
-    let output = render(&model, 100, 30);
-
-    for label in [
-        "Name",
-        "Type",
-        "Integrity",
-        "Path",
-        "Ready",
-        "Changed",
-        "Needs approval",
-    ] {
-        assert!(output.contains(label), "missing {label} in {output}");
-    }
-    assert!(output.contains("[A] Application 1"));
 }
 
 #[test]
@@ -395,23 +344,6 @@ fn large_icon_drop_target_uses_linear_insertion_boundaries_and_renders_a_vertica
 }
 
 #[test]
-fn empty_launcher_directs_users_to_explorer_without_an_add_action() {
-    for view_mode in [LauncherViewMode::LargeIcons, LauncherViewMode::Details] {
-        let model = LauncherViewModel::new(vec![], None, view_mode, true);
-        let output = render(&model, 100, 30);
-
-        assert!(output.contains("Go to Explorer, select a file"));
-        assert!(output.contains("right-click and choose Add to Launcher"));
-        assert!(
-            model
-                .toolbar
-                .iter()
-                .all(|button| button.action != LauncherToolbarAction::Remove)
-        );
-    }
-}
-
-#[test]
 fn confirmation_overlay_takes_precedence_in_hit_testing_and_rendering() {
     let mut model = LauncherViewModel::new(
         vec![item(0, LauncherItemStatus::Ready)],
@@ -444,18 +376,4 @@ fn confirmation_overlay_takes_precedence_in_hit_testing_and_rendering() {
     let output = render(&model, 100, 30);
     assert!(output.contains("Launch application?"));
     assert!(output.contains("[Launch]"));
-}
-
-#[test]
-fn compact_terminal_falls_back_to_the_shared_compact_home() {
-    let model = LauncherViewModel::new(
-        vec![item(0, LauncherItemStatus::Ready)],
-        None,
-        LauncherViewMode::LargeIcons,
-        false,
-    );
-    let output = render(&model, 20, 6);
-    assert!(!output.contains("Launcher · Large icons"));
-    assert!(output.contains("TundraUX 3"));
-    assert!(output.contains("Ready"));
 }

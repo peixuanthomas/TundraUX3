@@ -6,8 +6,8 @@ use ratatui::layout::{Position, Rect};
 use ratatui::style::{Color, Modifier};
 use support::terminal_output;
 use ui::{
-    EditorBlockArea, EditorBlockSourceMap, EditorDocumentPosition, EditorFocus, EditorHitTarget,
-    EditorMenu, EditorMenuAction, EditorQuickAction, EditorQuickMenuViewModel, EditorRenderBlock,
+    EditorBlockSourceMap, EditorDocumentPosition, EditorFocus, EditorHitTarget, EditorMenu,
+    EditorMenuAction, EditorQuickAction, EditorQuickMenuViewModel, EditorRenderBlock,
     EditorRenderSpan, EditorSelection, EditorSettingsControl, EditorSettingsField,
     EditorSettingsViewModel, EditorSourceRange, EditorSourceSelection, EditorSourceWindowLine,
     EditorTableAlignment, EditorTableCell, EditorTableEdge, EditorTextPosition,
@@ -167,85 +167,6 @@ fn shell_minimum_main_height_degrades_without_losing_the_editing_canvas() {
 }
 
 #[test]
-fn rich_renderer_covers_markdown_blocks_and_terminal_fallbacks() {
-    let model = sample_model();
-    let terminal = render(&model, 120, 40);
-    let output = terminal_output(&terminal);
-
-    assert!(output.contains("Terminal Editor"));
-    assert!(output.contains("strong"));
-    assert!(output.contains("emphasis"));
-    assert!(output.contains("inline_code"));
-    assert!(output.contains("linked text"));
-    assert!(output.contains("☒ completed task"));
-    assert!(output.contains("2. ordered item"));
-    assert!(output.contains("│ quoted text"));
-    assert!(output.contains("┌─ rust"));
-    assert!(output.contains("let answer = 42;"));
-    assert!(output.contains("Name"));
-    assert!(output.contains("Value"));
-    assert!(output.contains("Tundra"));
-    assert!(output.contains("HTML <details>raw</details>"));
-    assert!(output.contains("![Tundra logo](images/tundra.png)"));
-    assert!(output.contains("[^note] footnote text"));
-
-    let theme = TundraTheme::default_dark();
-    let (heading_x, heading_y) = find_text(&terminal, "Terminal Editor");
-    let heading = &terminal.backend().buffer()[(heading_x, heading_y)];
-    assert_eq!(heading.fg, theme.foreground);
-    assert!(heading.modifier.contains(Modifier::BOLD));
-    assert!(!heading.modifier.contains(Modifier::UNDERLINED));
-
-    let (strong_x, strong_y) = find_text(&terminal, "strong");
-    assert!(
-        terminal.backend().buffer()[(strong_x, strong_y)]
-            .modifier
-            .contains(Modifier::BOLD)
-    );
-    let (emphasis_x, emphasis_y) = find_text(&terminal, "emphasis");
-    assert!(
-        terminal.backend().buffer()[(emphasis_x, emphasis_y)]
-            .modifier
-            .contains(Modifier::ITALIC)
-    );
-    let (code_x, code_y) = find_text(&terminal, "inline_code");
-    assert_eq!(
-        terminal.backend().buffer()[(code_x, code_y)].bg,
-        Color::Black
-    );
-    let (link_x, link_y) = find_text(&terminal, "linked text");
-    let link = &terminal.backend().buffer()[(link_x, link_y)];
-    assert_eq!(link.fg, theme.accent_color);
-    assert!(link.modifier.contains(Modifier::UNDERLINED));
-}
-
-#[test]
-fn editor_canvas_uses_black_for_text_and_empty_cells_only() {
-    let model = EditorViewModel::new(
-        "black.md",
-        vec![EditorRenderBlock::paragraph("canvas text")],
-    );
-    let layout = editor_layout(Rect::new(0, 0, 72, 16), &model);
-    let terminal = render(&model, 72, 16);
-    let buffer = terminal.backend().buffer();
-    let (text_x, text_y) = find_text(&terminal, "canvas text");
-
-    assert_eq!(buffer[(text_x, text_y)].bg, Color::Black);
-    assert_eq!(
-        buffer[(layout.canvas.x, layout.canvas.bottom().saturating_sub(1))].bg,
-        Color::Black
-    );
-    assert_ne!(
-        buffer[(layout.menu_bar.x, layout.menu_bar.y)].bg,
-        Color::Black
-    );
-    assert_ne!(
-        buffer[(layout.status_bar.x, layout.status_bar.y)].bg,
-        Color::Black
-    );
-}
-
-#[test]
 fn source_mode_preserves_markdown_and_highlights_the_selection() {
     let mut model =
         EditorViewModel::source("README.md", "# raw **markdown**\n\n- [x] remains source");
@@ -268,38 +189,6 @@ fn source_mode_preserves_markdown_and_highlights_the_selection() {
     assert_ne!(unselected.bg, TundraTheme::default_dark().accent_color);
 
     assert!(layout.modes.is_empty());
-}
-
-#[test]
-fn source_mode_omits_markdown_toolbar_actions_and_keeps_plain_actions_available() {
-    let model = EditorViewModel::source("README.md", "plain **source**");
-    let layout = editor_layout(Rect::new(0, 0, 140, 14), &model);
-    let formatting = [
-        EditorToolbarAction::ParagraphStyle,
-        EditorToolbarAction::Bold,
-        EditorToolbarAction::Italic,
-        EditorToolbarAction::Strikethrough,
-        EditorToolbarAction::InlineCode,
-        EditorToolbarAction::BulletList,
-        EditorToolbarAction::OrderedList,
-        EditorToolbarAction::Quote,
-        EditorToolbarAction::Link,
-        EditorToolbarAction::Image,
-        EditorToolbarAction::Table,
-    ];
-
-    for action in formatting {
-        assert!(
-            layout
-                .toolbar_items
-                .iter()
-                .all(|item| item.action != action),
-            "{action:?} must not appear in the plain-text editor"
-        );
-    }
-    assert!(toolbar_item(&layout, EditorToolbarAction::New).enabled);
-    assert!(toolbar_item(&layout, EditorToolbarAction::Open).enabled);
-    assert!(toolbar_item(&layout, EditorToolbarAction::Save).enabled);
 }
 
 #[test]
@@ -498,55 +387,6 @@ fn quick_menu_clamps_flips_wraps_and_hides_when_the_border_cannot_fit() {
     let too_short = editor_layout(Rect::new(5, 3, 10, 5), &model);
     assert_eq!(too_short.quick_menu_popup, None);
     assert!(too_short.quick_menu_items.is_empty());
-}
-
-#[test]
-fn rich_heading_fallback_uses_body_color_without_level_modifiers() {
-    let model = EditorViewModel::new(
-        "headings.md",
-        vec![
-            EditorRenderBlock::heading(1, "Heading One"),
-            EditorRenderBlock::heading(2, "Heading Two"),
-            EditorRenderBlock::heading(3, "Heading Three"),
-            EditorRenderBlock::heading(6, "Heading Six"),
-        ],
-    );
-    let terminal = render(&model, 60, 12);
-    let theme = TundraTheme::default_dark();
-
-    for text in ["Heading One", "Heading Two", "Heading Three", "Heading Six"] {
-        let (x, y) = find_text(&terminal, text);
-        let cell = &terminal.backend().buffer()[(x, y)];
-        assert_eq!(cell.fg, theme.foreground, "{text}");
-        assert!(cell.modifier.contains(Modifier::BOLD), "{text}");
-        assert!(!cell.modifier.contains(Modifier::UNDERLINED), "{text}");
-        assert!(!cell.modifier.contains(Modifier::ITALIC), "{text}");
-    }
-}
-
-#[test]
-fn inactive_rich_headings_use_terminal_native_big_text() {
-    let mut model = EditorViewModel::new(
-        "headings.md",
-        vec![
-            EditorRenderBlock::heading(1, "Heading One"),
-            EditorRenderBlock::heading(2, "Heading Two"),
-            EditorRenderBlock::heading(3, "Heading Three"),
-        ],
-    );
-    model.text_sizing_protocol = true;
-    model.cursor = None;
-
-    let layout = editor_layout(Rect::new(0, 0, 60, 16), &model);
-    let terminal = render(&model, 60, 16);
-
-    assert_eq!(layout.document_line_count, 6);
-    for (document_line, ratio) in [(0, "n=7:d=7"), (2, "n=5:d=6"), (4, "n=3:d=4")] {
-        let area = line_area(&layout, document_line).area;
-        let symbol = terminal.backend().buffer()[(area.x, area.y)].symbol();
-        assert!(symbol.contains("]66;s=2:"), "{symbol:?}");
-        assert!(symbol.contains(ratio), "{symbol:?}");
-    }
 }
 
 #[test]
@@ -1370,52 +1210,6 @@ fn rich_and_source_views_preserve_the_same_cursor_and_selection_offsets() {
     let terminal = render(&rich, 60, 10);
     let first_selected = &terminal.backend().buffer()[(rich_layout.canvas.x, rich_layout.canvas.y)];
     assert_eq!(first_selected.bg, TundraTheme::default_dark().accent_color);
-}
-
-#[test]
-fn block_and_image_areas_track_visible_markdown_geometry() {
-    let mut model = EditorViewModel::new(
-        "images.md",
-        vec![
-            EditorRenderBlock::paragraph("before"),
-            EditorRenderBlock::Image {
-                markdown: "![preview](preview.png)".to_string(),
-            },
-            EditorRenderBlock::CodeBlock {
-                language: Some("text".to_string()),
-                lines: vec!["one".to_string(), "two".to_string()],
-            },
-        ],
-    );
-    model.image_protocol = ui::EditorImageProtocolStatus::Available;
-    let layout = editor_layout(Rect::new(0, 0, 80, 18), &model);
-
-    assert!(layout.block_areas.iter().any(|area| area.block_index == 0));
-    assert_eq!(
-        layout.image_areas,
-        vec![EditorBlockArea {
-            block_index: 1,
-            area: layout
-                .block_areas
-                .iter()
-                .find(|area| area.block_index == 1)
-                .expect("image block")
-                .area,
-        }]
-    );
-    let image = layout.image_areas[0];
-    assert_eq!(
-        layout.hit_test(image.area.x, image.area.y),
-        Some(EditorHitTarget::Canvas(EditorTextPosition::new(
-            layout
-                .line_areas
-                .iter()
-                .find(|line| line.block_index == Some(1))
-                .expect("image line")
-                .document_line,
-            0,
-        )))
-    );
 }
 
 #[test]

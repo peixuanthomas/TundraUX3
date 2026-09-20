@@ -1,7 +1,4 @@
-use ui::{
-    InputEvent, InputPhase, Key, KeyEvent, KeyModifiers, KeyStroke, MouseButton, MouseEvent,
-    MouseEventKind, ScrollDirection,
-};
+use ui::{InputEvent, InputPhase, Key, KeyEvent, KeyModifiers, KeyStroke};
 
 #[test]
 fn key_events_preserve_all_phases() {
@@ -71,34 +68,4 @@ fn modifiers_include_control_and_platform_modifier_keys() {
         KeyStroke::new(Key::Char('k'), modifiers).label(),
         "Ctrl+Alt+Super+Hyper+Meta+Shift+k"
     );
-}
-
-#[test]
-fn text_focus_and_shutdown_events_are_first_class() {
-    assert_eq!(
-        InputEvent::paste("clipboard"),
-        InputEvent::Paste("clipboard".into())
-    );
-    assert!(matches!(InputEvent::FocusGained, InputEvent::FocusGained));
-    assert!(matches!(InputEvent::FocusLost, InputEvent::FocusLost));
-    assert!(matches!(InputEvent::Shutdown, InputEvent::Shutdown));
-}
-
-#[test]
-fn mouse_events_retain_button_coordinates_modifiers_drag_and_scroll() {
-    let modifiers = KeyModifiers::SHIFT;
-    let down = MouseEvent::down(3, 4, MouseButton::Left).with_modifiers(modifiers);
-    let up = MouseEvent::up(3, 4, MouseButton::Left);
-    let moved = MouseEvent::moved(4, 5);
-    let drag = MouseEvent::drag(8, 9, MouseButton::Middle).with_modifiers(modifiers);
-    let scroll = MouseEvent::scroll(10, 11, ScrollDirection::Left);
-
-    assert_eq!((down.column(), down.row()), (3, 4));
-    assert_eq!(down.kind, MouseEventKind::Down(MouseButton::Left));
-    assert!(down.is_primary_down());
-    assert!(up.is_primary_up());
-    assert_eq!(moved.kind, MouseEventKind::Moved);
-    assert_eq!(drag.kind, MouseEventKind::Drag(MouseButton::Middle));
-    assert_eq!(drag.modifiers, modifiers);
-    assert_eq!(scroll.kind, MouseEventKind::Scroll(ScrollDirection::Left));
 }

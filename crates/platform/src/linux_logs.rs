@@ -29,6 +29,7 @@ pub fn query_linux_logs(query: &LogQuery, cancelled: &AtomicBool) -> LogQueryRes
 }
 
 #[cfg(any(target_os = "linux", test))]
+#[path = "."]
 mod implementation {
     use super::*;
     use chrono::{DateTime, Utc};
@@ -623,5 +624,6 @@ mod implementation {
     }
 
     #[cfg(test)]
+    #[path = "../tests/unit/linux_logs/implementation/tests.rs"]
     mod tests;
 }

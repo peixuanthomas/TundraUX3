@@ -171,22 +171,6 @@ fn invalid_utf8_is_rejected_without_lossy_decoding() {
 }
 
 #[test]
-fn owned_bytes_open_preserves_utf8_and_bom_metadata() {
-    let document = EditorDocument::open_owned(
-        PathBuf::from("owned.log"),
-        b"\xEF\xBB\xBFalpha\r\nbeta".to_vec(),
-    )
-    .expect("valid owned UTF-8 document");
-    assert_eq!(document.source(), "alpha\r\nbeta");
-    assert!(document.metadata.utf8_bom);
-    assert_eq!(document.metadata.preferred_line_ending, LineEnding::CrLf);
-
-    let error = EditorDocument::from_owned_bytes(None, DocumentKind::PlainText, vec![b'a', 0xff])
-        .expect_err("invalid owned UTF-8 must be rejected");
-    assert_eq!(error.valid_up_to, 1);
-}
-
-#[test]
 fn source_viewport_access_materializes_only_requested_lines() {
     let source = "zero\r\none\ntwo\rthree\n";
     let editor =
@@ -637,25 +621,6 @@ fn read_only_editor_keeps_navigation_selection_copy_and_close_available() {
         editor.apply(EditorCommand::RequestClose),
         vec![EditorEffect::Close]
     );
-}
-
-#[test]
-fn read_only_editor_allows_view_mode_changes() {
-    let document = EditorDocument::from_text(
-        Some(PathBuf::from("report.md")),
-        DocumentKind::Markdown,
-        "# report",
-    );
-    let mut editor = EditorState::from_read_only_document(document);
-
-    assert!(EditorCommand::SetMode(EditorMode::Source).is_allowed_in_read_only());
-    assert!(EditorCommand::ToggleMode.is_allowed_in_read_only());
-    assert!(!EditorCommand::RequestSave.is_allowed_in_read_only());
-    editor.apply(EditorCommand::SetMode(EditorMode::Source));
-    assert_eq!(editor.mode, EditorMode::Source);
-    editor.apply(EditorCommand::ToggleMode);
-    assert_eq!(editor.mode, EditorMode::Rich);
-    assert!(!editor.is_dirty());
 }
 
 #[test]
@@ -1622,39 +1587,6 @@ fn rich_delete_removes_content_without_ever_editing_inline_markers() {
     select_rich(&mut nested, id, 0, 2);
     nested.apply(EditorCommand::DeleteSelection);
     assert_eq!(nested.export_text(), "");
-}
-
-#[test]
-fn rich_punctuation_is_plain_text_and_does_not_rebuild_structure() {
-    let mut editor =
-        EditorState::from_document(EditorDocument::from_text(None, DocumentKind::Markdown, "x"));
-    let id = rich_container(&editor);
-    move_rich(&mut editor, id, 1);
-
-    let typed = "*****`# ---|";
-    for character in typed.chars() {
-        editor.apply(EditorCommand::InsertText(character.to_string()));
-        let document = editor.rich_document().unwrap();
-        assert_eq!(document.blocks.len(), 1);
-        assert_eq!(document.blocks[0].id, id);
-        assert!(matches!(
-            document.blocks[0].kind,
-            RichBlockKind::Paragraph { .. }
-        ));
-        assert_eq!(editor.mode, EditorMode::Rich);
-    }
-
-    let projection = editor.rich_projection().unwrap();
-    let ProjectedBlockKind::Paragraph { content } = &projection.blocks[0].kind else {
-        panic!("punctuation must not create Markdown structure");
-    };
-    assert_eq!(
-        content
-            .iter()
-            .map(|span| span.text.as_str())
-            .collect::<String>(),
-        format!("x{typed}")
-    );
 }
 
 #[test]

@@ -133,5 +133,5 @@ fn parse_http_date(value: &str) -> Result<DateTime<Utc>, String> {
 }
 
 #[cfg(test)]
-#[path = "tests/network.rs"]
+#[path = "../tests/unit/network.rs"]
 mod tests;

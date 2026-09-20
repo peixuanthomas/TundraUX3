@@ -36,6 +36,7 @@ macro_rules! tr {
 }
 
 #[cfg(test)]
+#[path = "../tests/unit/root.rs"]
 mod tests;
 
 #[cfg(test)]

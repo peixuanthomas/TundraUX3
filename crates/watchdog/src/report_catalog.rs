@@ -198,5 +198,5 @@ fn is_older_than_retention(
 }
 
 #[cfg(test)]
-#[path = "tests/report_catalog.rs"]
+#[path = "../tests/unit/report_catalog.rs"]
 mod tests;

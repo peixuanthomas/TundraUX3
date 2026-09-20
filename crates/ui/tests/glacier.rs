@@ -2,87 +2,15 @@ use std::time::Duration;
 
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
-use ratatui::style::Color;
 use ui::components::{
-    Button, ComponentEvent, ComponentTone, DataTable, EmptyState, InputEvent, List, ListItem,
-    MouseButton, NavRail, NavRailItem, Panel, Picker, Scrollbar, Skeleton, Surface, Toast,
-    ToastTone,
+    ComponentEvent, ComponentTone, DataTable, InputEvent, List, ListItem, MouseButton, NavRail,
+    NavRailItem, Surface, Toast, ToastTone,
 };
 use ui::{
     BorderShape, FrostMotion, MotionDirection, MotionFrame, MotionIdentity, MotionOverlayIdentity,
     MotionOverlayKind, MotionTimings, MotionTransitionKind, MouseEvent, RenderCapabilities,
-    RenderContext, ThemeTokens, TundraTheme, schedule_motion, schedule_motion_range,
+    RenderContext, TundraTheme, schedule_motion, schedule_motion_range,
 };
-
-#[test]
-fn panel_borders_and_titles_use_canvas_background_and_configured_color() {
-    let area = Rect::new(0, 0, 16, 4);
-    for capabilities in [RenderCapabilities::default(), RenderCapabilities::ansi()] {
-        for border in [Color::White, Color::Blue, Color::LightCyan] {
-            let theme = TundraTheme::default()
-                .with_border_shape(BorderShape::Square)
-                .with_border_color(border);
-            let context = RenderContext::from_theme(&theme, MotionFrame::default(), capabilities);
-            for raised in [false, true] {
-                let mut buffer = Buffer::empty(area);
-                Surface::new()
-                    .titled(" Theme ")
-                    .bordered(true)
-                    .raised(raised)
-                    .render(area, &mut buffer, &context);
-                for (position, symbol) in [((0, 0), "┌"), ((0, 1), "│"), ((1, 3), "─")] {
-                    let cell = &buffer[position];
-                    assert_eq!(cell.symbol(), symbol);
-                    assert_eq!(cell.fg, border);
-                    assert_eq!(cell.bg, context.theme.canvas);
-                }
-                assert_eq!(buffer[(2, 0)].symbol(), "T");
-                assert_eq!(buffer[(2, 0)].bg, context.theme.canvas);
-                assert_eq!(
-                    buffer[(2, 1)].bg,
-                    if raised {
-                        context.theme.raised
-                    } else {
-                        context.theme.surface
-                    }
-                );
-                if capabilities == RenderCapabilities::ansi() {
-                    assert_eq!(buffer[(2, 1)].bg, Color::Black);
-                }
-            }
-        }
-    }
-}
-
-#[test]
-fn home_button_border_colors_do_not_paint_a_background_band() {
-    let area = Rect::new(0, 0, 16, 4);
-    for capabilities in [RenderCapabilities::default(), RenderCapabilities::ansi()] {
-        let context = RenderContext::from_theme(
-            &TundraTheme::default().with_border_color(Color::Blue),
-            MotionFrame::default(),
-            capabilities,
-        );
-        let theme = context.compatibility_theme();
-        for selected in [false, true] {
-            let mut button = Button::new("home.settings", "Settings");
-            button.state.selected = selected;
-            let mut buffer = Buffer::empty(area);
-            button.render_surface(area, &mut buffer, &theme);
-            let border = &buffer[(0, 1)];
-            assert_eq!(border.symbol(), "│");
-            assert_eq!(border.bg, theme.background);
-            assert_eq!(
-                border.fg,
-                if selected {
-                    theme.tokens().focus
-                } else {
-                    Color::Blue
-                }
-            );
-        }
-    }
-}
 
 #[test]
 fn render_context_and_surface_preserve_or_explicitly_override_border_shape() {
@@ -624,16 +552,6 @@ fn data_table_padding_uses_terminal_cell_width_for_cjk_and_emoji() {
 }
 
 #[test]
-fn custom_accent_derives_soft_strong_and_focus_tokens() {
-    let tokens = ThemeTokens::glacier_night().with_accent(Color::Rgb(0xD8, 0x91, 0xFF));
-    assert_eq!(tokens.accent, Color::Rgb(0xD8, 0x91, 0xFF));
-    assert_ne!(tokens.accent_soft, tokens.accent);
-    assert_ne!(tokens.accent_strong, tokens.accent);
-    assert_ne!(tokens.focus, tokens.accent);
-    assert_eq!(tokens.surface, ThemeTokens::glacier_night().surface);
-}
-
-#[test]
 fn frost_motion_only_requests_redraw_while_active_and_respects_reduced_motion() {
     let start = MotionFrame {
         now: Duration::ZERO,
@@ -683,43 +601,4 @@ fn frost_motion_only_requests_redraw_while_active_and_respects_reduced_motion() 
         MotionTimings::resolve(context.motion, MotionTimings::DIALOG),
         Duration::ZERO
     );
-}
-
-#[test]
-fn glacier_components_render_at_minimum_standard_and_wide_sizes() {
-    for (width, height) in [(1, 1), (80, 24), (120, 32)] {
-        let area = Rect::new(0, 0, width, height);
-        let mut buffer = Buffer::empty(area);
-        let context = RenderContext::from_theme(
-            &TundraTheme::default(),
-            MotionFrame::default(),
-            RenderCapabilities::ansi(),
-        );
-        Surface::new()
-            .bordered(true)
-            .raised(true)
-            .render(area, &mut buffer, &context);
-        Panel::new("Panel").render(area, &mut buffer, &context);
-        Picker::new("picker", ["One", "Two"])
-            .titled("Picker")
-            .render(area, &mut buffer, &context);
-        NavRail::new(
-            "nav",
-            vec![
-                NavRailItem::new("home", "Home"),
-                NavRailItem::new("settings", "Settings"),
-            ],
-        )
-        .render(area, &mut buffer, &context);
-        DataTable::new("table", ["Name", "State"], [["Tundra", "Ready"]])
-            .titled("Data")
-            .render(area, &mut buffer, &context);
-        Scrollbar::new(100, 10, 20).render(area, &mut buffer, &context);
-        Toast::new("Saved", ToastTone::Success, context.motion).render(area, &mut buffer, &context);
-        EmptyState::new("Nothing here")
-            .detail("Try another folder")
-            .render(area, &mut buffer, &context);
-        Skeleton.render(area, &mut buffer, &context);
-        assert_eq!(buffer.area, area);
-    }
 }

@@ -172,6 +172,7 @@ fn partial(result: &mut LogQueryResult, notice: &str) {
 }
 
 #[cfg(test)]
+#[path = "../tests/unit/runtime_logs/tests.rs"]
 mod tests;
 
 fn file_owned_by(path: &Path, owner: &str, cancelled: &AtomicBool) -> bool {

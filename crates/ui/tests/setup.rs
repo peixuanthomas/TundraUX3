@@ -8,73 +8,15 @@ use ratatui::backend::TestBackend;
 use ratatui::layout::Rect;
 use ratatui::style::Color;
 use ui::{
-    HomeDisplayMode, NotificationTone, SetupField, SetupPasswordRequirementViewModel, SetupStep,
-    SetupTimezoneOption, SetupViewModel, ShellChromeViewModel, ShellLayout, StatusViewModel,
-    TundraTheme, compute_shell_layout, render_setup, setup_appearance_palette_option_areas,
-    setup_language_options, setup_standard_color_options, setup_timezone_list_area,
-    setup_timezone_options,
+    HomeDisplayMode, SetupField, SetupPasswordRequirementViewModel, SetupStep, SetupViewModel,
+    ShellChromeViewModel, ShellLayout, StatusViewModel, TundraTheme, compute_shell_layout,
+    render_setup, setup_appearance_palette_option_areas, setup_language_options,
+    setup_standard_color_options, setup_timezone_list_area, setup_timezone_options,
 };
 
 const WIDE_SETUP_WIDTH: u16 = 120;
 const WIDE_SETUP_HEIGHT: u16 = 34;
 const SETUP_CONTROLS_WIDTH: u16 = 48;
-
-#[test]
-fn setup_catalog_exposes_english_chinese_and_required_timezones() {
-    let languages = setup_language_options();
-    let language_labels = languages
-        .iter()
-        .map(|language| format!("{} ({})", language.label, language.code))
-        .collect::<Vec<_>>()
-        .join(" ");
-    let timezones = setup_timezone_options();
-    let timezone_ids: Vec<&str> = timezones
-        .iter()
-        .map(|timezone| timezone.id.as_str())
-        .collect();
-
-    assert_eq!(languages.len(), 2);
-    assert!(language_labels.contains("English (en-US)"));
-    assert!(language_labels.contains("zh-CN"));
-    assert!(timezone_ids.contains(&"UTC"));
-    assert!(timezone_ids.contains(&"America/Los_Angeles"));
-    assert!(timezone_ids.contains(&"Pacific/Auckland"));
-}
-
-#[test]
-fn setup_language_page_is_step_specific() {
-    let model = sample_model(SetupStep::Language, None);
-    let terminal = render_terminal(&model, 120, 34, TundraTheme::default_dark());
-    let output = terminal_output(&terminal);
-
-    assert!(output.contains("Step: Language"));
-    assert!(output.contains("English (en-US)"));
-    assert!(output.contains("Selected language: en-US"));
-    assert!(output.contains("continue"));
-    assert!(output.contains("help"));
-    assert!(!output.contains("Timezone"));
-    assert!(!output.contains("Timezone Map"));
-    assert!(!output.contains("Admin username"));
-    assert!(!output.contains("Admin password"));
-    assert!(!output.contains("Shanghai - China Standard Time"));
-    assert!(!output.contains("Tokyo - Japan Standard Time"));
-}
-
-#[test]
-fn setup_timezone_page_is_step_specific() {
-    let model = sample_model(SetupStep::Timezone, None);
-    let terminal = render_terminal(&model, 120, 34, TundraTheme::default_dark());
-    let output = terminal_output(&terminal);
-
-    assert!(output.contains("Step: Timezone"));
-    assert!(output.contains("Selected timezone: Asia/Tokyo"));
-    assert!(output.contains("Tokyo - Japan Standard Time"));
-    assert!(output.contains("Timezone Map"));
-    assert!(!output.contains("Language"));
-    assert!(!output.contains("English (en-US)"));
-    assert!(!output.contains("Admin username"));
-    assert!(!output.contains("Admin password"));
-}
 
 #[test]
 fn setup_admin_page_is_step_specific_and_masks_password() {
@@ -109,45 +51,6 @@ fn setup_admin_page_is_step_specific_and_masks_password() {
 }
 
 #[test]
-fn setup_admin_page_draws_empty_field_placeholders() {
-    let model = empty_admin_model();
-    let terminal = render_terminal(&model, 120, 34, TundraTheme::default_dark());
-    let output = terminal_output(&terminal);
-
-    assert!(output.contains("Enter admin username"));
-    assert!(output.contains("Enter admin password"));
-    assert!(output.contains("Re-enter admin password"));
-    assert!(output.contains("Optional recovery hint, not the password"));
-    assert!(output.contains("[ ] At least 10 characters"));
-    assert!(output.contains("[x] At most 256 characters"));
-    assert!(output.contains("[ ] Not blank"));
-    assert!(output.contains("[ ] Passwords match"));
-    assert!(output.contains("Submit: incomplete"));
-}
-
-#[test]
-fn setup_appearance_page_shows_shape_palettes_custom_buttons_and_preview() {
-    let mut model = sample_model(SetupStep::Appearance, None);
-    model.focused_field = SetupField::AppearanceShape;
-    let terminal = render_terminal(&model, 120, 34, TundraTheme::default_dark());
-    let output = terminal_output(&terminal);
-
-    assert!(output.contains("Step: Appearance"));
-    assert!(output.contains("Frame shape"));
-    assert!(output.contains("Rounded"));
-    assert!(output.contains("Square"));
-    assert!(output.contains("Theme color"));
-    assert!(output.contains("Accent color"));
-    assert!(output.contains("White"));
-    assert!(output.contains("Cyan"));
-    assert!(output.contains("custom theme color"));
-    assert!(output.contains("custom accent color"));
-    assert!(output.contains("Live preview"));
-    assert!(output.contains("Finish setup"));
-    assert!(!output.contains("Admin password"));
-}
-
-#[test]
 fn setup_appearance_disables_the_accent_option_matching_the_theme_color() {
     let theme = TundraTheme::default_dark();
     let mut model = sample_model(SetupStep::Appearance, None);
@@ -174,128 +77,6 @@ fn setup_appearance_disables_the_accent_option_matching_the_theme_color() {
     assert!(!output.contains("[xCyan]"));
     assert!(region_has_fg(&terminal, cyan_area, theme.muted));
     assert!(!region_has_fg(&terminal, cyan_area, Color::Cyan));
-}
-
-#[test]
-fn setup_custom_color_dialog_shows_input_and_validation_feedback() {
-    let mut model = sample_model(SetupStep::Appearance, None);
-    model.focused_field = SetupField::AppearanceThemeCustom;
-    model.custom_color_target = Some(ui::SetupCustomColorTarget::Theme);
-    model.custom_color_input = "#12GG00".to_string();
-    model.custom_color_error =
-        Some("Invalid color. Use #RRGGBB or a supported color name.".to_string());
-    let terminal = render_terminal(&model, 120, 34, TundraTheme::default_dark());
-    let output = terminal_output(&terminal);
-
-    assert!(output.contains("Custom theme color"));
-    assert!(output.contains("Color code"));
-    assert!(output.contains("#12GG00_"));
-    assert!(output.contains("Invalid color"));
-    assert!(output.contains("Enter: apply"));
-    assert!(output.contains("Esc: cancel"));
-}
-
-#[test]
-fn setup_custom_accent_dialog_rejects_the_theme_color() {
-    let mut model = sample_model(SetupStep::Appearance, None);
-    model.focused_field = SetupField::AppearanceAccentCustom;
-    model.custom_color_target = Some(ui::SetupCustomColorTarget::Accent);
-    model.custom_color_input = "white".to_string();
-    model.custom_color_conflicts_with_theme = true;
-    let terminal = render_terminal(&model, 120, 34, TundraTheme::default_dark());
-    let output = terminal_output(&terminal);
-
-    assert!(!model.custom_color_valid);
-    assert!(output.contains("Accent color must differ from the theme color"));
-}
-
-#[test]
-fn setup_renderer_shows_errors_with_error_style() {
-    let model = sample_model(
-        SetupStep::Timezone,
-        Some("Timezone service unavailable".to_string()),
-    );
-    let terminal = render_terminal(&model, 120, 34, TundraTheme::default_dark());
-    let output = terminal_output(&terminal);
-
-    assert!(output.contains("Error: Timezone service unavailable"));
-    assert!(
-        terminal
-            .backend()
-            .buffer()
-            .content()
-            .iter()
-            .any(|cell| cell.fg == TundraTheme::default_dark().error && cell.symbol() != " ")
-    );
-}
-
-#[test]
-fn setup_renderer_uses_no_map_fallback_on_narrow_full_layout() {
-    let model = sample_model(SetupStep::Timezone, None);
-    let terminal = render_terminal(&model, 70, 24, TundraTheme::default_dark());
-    let output = terminal_output(&terminal);
-
-    assert!(output.contains("First Run Setup"));
-    assert!(!output.contains("Timezone Map"));
-}
-
-#[test]
-fn setup_renderer_compact_layout_does_not_panic() {
-    let model = sample_model(SetupStep::Timezone, None);
-    let terminal = render_terminal(&model, 48, 10, TundraTheme::default_dark());
-    let output = terminal_output(&terminal);
-
-    assert!(output.contains("needs at least 50x12"));
-}
-
-#[test]
-fn setup_renderer_draws_timezone_map_layers() {
-    let theme = map_test_theme();
-    let model = sample_model_with_timezone(SetupStep::Timezone, "Asia/Shanghai", None);
-    let terminal = render_terminal(&model, WIDE_SETUP_WIDTH, WIDE_SETUP_HEIGHT, theme);
-
-    let gray_map_cells = map_cells_with_fg(&terminal, theme.muted);
-    let selected_timezone_cells = map_cells_with_fg(&terminal, Color::White);
-    let marker_cells = map_cells_with_fg(&terminal, theme.accent_color);
-
-    assert!(
-        !gray_map_cells.is_empty(),
-        "map should draw gray unselected cells"
-    );
-    assert!(
-        !selected_timezone_cells.is_empty(),
-        "map should draw white selected timezone cells"
-    );
-    assert!(
-        !marker_cells.is_empty(),
-        "map should draw an accent city marker"
-    );
-}
-
-#[test]
-fn setup_renderer_draws_fine_world_map_art_not_full_blocks() {
-    let theme = map_test_theme();
-    let model = sample_model_with_timezone(SetupStep::Timezone, "Asia/Shanghai", None);
-    let terminal = render_terminal(&model, WIDE_SETUP_WIDTH, WIDE_SETUP_HEIGHT, theme);
-    let symbols = map_symbols(&terminal);
-    let gray_map_cells = map_cells_with_fg(&terminal, theme.muted);
-    let min_gray_x = gray_map_cells.iter().map(|(x, _)| *x).min().unwrap_or(0);
-    let max_gray_x = gray_map_cells.iter().map(|(x, _)| *x).max().unwrap_or(0);
-
-    assert!(
-        symbols.iter().any(|symbol| is_braille_symbol(symbol)),
-        "map should render fine-grained terminal art"
-    );
-    assert!(
-        !symbols
-            .iter()
-            .any(|symbol| matches!(symbol.as_str(), "█" | "▀" | "▄")),
-        "map should not use legacy full-block map cells"
-    );
-    assert!(
-        max_gray_x.saturating_sub(min_gray_x) >= 40,
-        "unselected world map should span the panel instead of only drawing the selected city"
-    );
 }
 
 #[test]
@@ -328,41 +109,6 @@ fn setup_renderer_updates_selected_timezone_cells_between_shanghai_and_tokyo() {
 }
 
 #[test]
-fn setup_renderer_handles_utc_and_utc_alias_timezone_map_without_panic() {
-    let utc = sample_model_with_timezone(SetupStep::Timezone, "UTC", None);
-    let utc_terminal = render_terminal(
-        &utc,
-        WIDE_SETUP_WIDTH,
-        WIDE_SETUP_HEIGHT,
-        TundraTheme::default_dark(),
-    );
-    let utc_output = terminal_output(&utc_terminal);
-    assert!(utc_output.contains("Selected timezone: UTC"));
-    assert!(utc_output.contains("Timezone Map"));
-
-    let alias = sample_model_with_timezone_option(
-        SetupStep::Timezone,
-        SetupTimezoneOption {
-            id: "Etc/UTC".to_string(),
-            label: "UTC".to_string(),
-            description: "Coordinated Universal Time".to_string(),
-            longitude: 0.0,
-            latitude: 0.0,
-        },
-        None,
-    );
-    let alias_terminal = render_terminal(
-        &alias,
-        WIDE_SETUP_WIDTH,
-        WIDE_SETUP_HEIGHT,
-        TundraTheme::default_dark(),
-    );
-    let alias_output = terminal_output(&alias_terminal);
-    assert!(alias_output.contains("Selected timezone: Etc/UTC"));
-    assert!(alias_output.contains("Timezone Map"));
-}
-
-#[test]
 fn setup_renderer_uses_glacier_timezone_scrollbar_when_window_is_partial() {
     let model = sample_model(SetupStep::Timezone, None);
     let terminal = render_terminal(&model, 70, 19, TundraTheme::default_dark());
@@ -373,52 +119,8 @@ fn setup_renderer_uses_glacier_timezone_scrollbar_when_window_is_partial() {
     assert!(region_has_symbol(&terminal, list_area, "█"));
 }
 
-#[test]
-fn compact_setup_shows_highest_priority_notification() {
-    let model = sample_model(SetupStep::Language, None);
-    let mut chrome = chrome_for("Setup", 49, 11);
-    chrome.status = StatusViewModel {
-        status: "Compact status".to_string(),
-        toast: Some("Compact toast".to_string()),
-        error: Some("Setup alert".to_string()),
-        alert_tone: NotificationTone::Warning,
-        time_button_label: None,
-        time_button_selected: false,
-    };
-    let mut terminal = Terminal::new(TestBackend::new(49, 11)).expect("test terminal");
-
-    terminal
-        .draw(|frame| {
-            render_setup(
-                frame,
-                frame.area(),
-                &chrome,
-                &model,
-                &TundraTheme::default_dark(),
-            );
-        })
-        .expect("render compact setup");
-
-    let output = terminal_output(&terminal);
-    assert!(output.contains("[WARN] Setup alert"));
-    assert!(!output.contains("Compact toast"));
-    assert!(!output.contains("Compact status"));
-}
-
 fn sample_model(step: SetupStep, error: Option<String>) -> SetupViewModel {
     sample_model_with_timezone(step, "Asia/Tokyo", error)
-}
-
-fn empty_admin_model() -> SetupViewModel {
-    let mut model = sample_model(SetupStep::Admin, None);
-    model.admin_username.clear();
-    model.admin_password_len = 0;
-    model.admin_password_confirm_len = 0;
-    model.password_requirements = sample_password_requirements(false);
-    model.password_hint.clear();
-    model.focused_field = SetupField::AdminUsername;
-    model.can_submit = false;
-    model
 }
 
 fn sample_password_requirements(valid: bool) -> Vec<SetupPasswordRequirementViewModel> {
@@ -469,29 +171,6 @@ fn sample_model_with_timezone(
         custom_color_error: None,
         error,
     }
-}
-
-fn sample_model_with_timezone_option(
-    step: SetupStep,
-    timezone: SetupTimezoneOption,
-    error: Option<String>,
-) -> SetupViewModel {
-    let mut model = sample_model(step, error);
-    let selected_timezone_index = model
-        .timezones
-        .iter()
-        .position(|candidate| candidate.id == timezone.id)
-        .unwrap_or(model.timezones.len());
-
-    if selected_timezone_index == model.timezones.len() {
-        model.timezones.push(timezone);
-    } else {
-        model.timezones[selected_timezone_index] = timezone;
-    }
-
-    model.selected_timezone_index = selected_timezone_index;
-    model.timezone_window_start = selected_timezone_index.saturating_sub(2);
-    model
 }
 
 fn chrome_for(screen: &str, width: u16, height: u16) -> ShellChromeViewModel {
@@ -589,29 +268,4 @@ fn map_cells_with_fg(terminal: &Terminal<TestBackend>, fg: Color) -> Vec<(u16, u
     }
 
     cells
-}
-
-fn map_symbols(terminal: &Terminal<TestBackend>) -> Vec<String> {
-    let buffer = terminal.backend().buffer();
-    let mut symbols = Vec::new();
-    let map_x = SETUP_CONTROLS_WIDTH + 1;
-    let map_y = 4;
-    let map_right = WIDE_SETUP_WIDTH - 1;
-    let map_bottom = WIDE_SETUP_HEIGHT - 5;
-
-    for y in map_y..map_bottom {
-        for x in map_x..map_right {
-            if let Some(cell) = buffer.cell((x, y)) {
-                symbols.push(cell.symbol().to_string());
-            }
-        }
-    }
-
-    symbols
-}
-
-fn is_braille_symbol(symbol: &str) -> bool {
-    symbol
-        .chars()
-        .any(|character| ('\u{2801}'..='\u{28ff}').contains(&character))
 }

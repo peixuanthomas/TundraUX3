@@ -149,5 +149,5 @@ fn advance_utc(anchor: DateTime<Utc>, elapsed: Duration) -> DateTime<Utc> {
 }
 
 #[cfg(test)]
-#[path = "tests/clock.rs"]
+#[path = "../tests/unit/clock.rs"]
 mod tests;

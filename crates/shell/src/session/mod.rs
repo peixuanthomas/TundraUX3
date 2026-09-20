@@ -11,8 +11,6 @@ use app::launcher::{
     LauncherAddOutcome, LauncherCommand, LauncherController, LauncherEffect, LauncherItemStatus,
     LauncherState,
 };
-#[cfg(test)]
-use app::{DEFAULT_TOAST_DURATION, MAX_NOTIFICATION_RESPONSES};
 use identity::{
     AuthSession, CoreError, DebugPolicy, PASSWORD_MAX_LEN, PASSWORD_MIN_LEN, PermissionAction,
     PermissionService, SessionService, UserAccount, UserRole, UserService,
@@ -62,7 +60,7 @@ mod controller;
 mod localization;
 mod motion_effects;
 #[cfg(test)]
-#[path = "tests/personalization.rs"]
+#[path = "../../tests/unit/session/personalization.rs"]
 mod personalization_tests;
 mod presentation;
 mod queries;
@@ -70,6 +68,7 @@ mod redraw;
 mod runtime;
 mod spring_progress;
 #[cfg(test)]
+#[path = "../../tests/unit/session/tests.rs"]
 mod tests;
 mod ui_state;
 
