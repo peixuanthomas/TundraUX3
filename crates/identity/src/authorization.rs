@@ -143,7 +143,13 @@ impl PermissionService {
             .is_some_and(|session| session.source == crate::IdentitySource::LinuxCurrentProcess)
         {
             return match action {
-                PermissionAction::ManageUsers => Authorization::deny("system_account_managed"),
+                PermissionAction::ManageUsers => {
+                    if session.is_some_and(|session| session.role == UserRole::Admin) {
+                        Authorization::allow()
+                    } else {
+                        Authorization::deny("insufficient_role")
+                    }
+                }
                 PermissionAction::EnterDebugMode if !self.debug_policy.allows_debug() => {
                     Authorization::deny("debug_policy_denied")
                 }

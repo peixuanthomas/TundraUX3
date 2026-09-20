@@ -5402,7 +5402,7 @@ fn system_status_picker_wheel_moves_selection_without_editing_or_scrolling_dashb
 }
 
 #[test]
-fn linux_account_actions_are_managed_by_linux_even_for_admin() {
+fn linux_admin_can_manage_accounts_but_cannot_remove_own_access() {
     let mut state = ShellSession::new_for_home_mode(
         ShellLaunchConfig::default(),
         (120, 40),
@@ -5411,11 +5411,46 @@ fn linux_account_actions_are_managed_by_linux_even_for_admin() {
     set_test_auth_role(&mut state, UserRole::Admin);
     state.identity_backend = identity::IdentityBackend::Linux;
     let actions = state.user_management_action_view_models();
-    assert_eq!(actions.len(), 1);
-    assert_eq!(actions[0].action, ui::UserManagementAction::Back);
-    assert!(actions[0].enabled);
+    assert!(
+        actions
+            .iter()
+            .any(|action| action.action == ui::UserManagementAction::NewUser && action.enabled)
+    );
+    assert!(
+        actions
+            .iter()
+            .any(|action| action.action == ui::UserManagementAction::EditInfo)
+    );
+    assert!(
+        actions
+            .iter()
+            .any(|action| action.action == ui::UserManagementAction::SetPassword)
+    );
     state.activate_user_management_action(ui::UserManagementAction::NewUser);
-    assert_eq!(state.user_management_mode, UserManagementMode::Browse);
+    assert!(matches!(
+        state.user_management_mode,
+        UserManagementMode::Create(_)
+    ));
+}
+
+#[test]
+fn linux_ordinary_user_has_no_create_role_lock_or_delete_action() {
+    let mut state = ShellSession::new_for_home_mode(
+        ShellLaunchConfig::default(),
+        (120, 40),
+        ShellHomeMode::User,
+    );
+    set_test_auth_role(&mut state, UserRole::User);
+    state.identity_backend = identity::IdentityBackend::Linux;
+    let actions = state.user_management_action_view_models();
+    assert_eq!(
+        actions.iter().map(|a| a.action).collect::<Vec<_>>(),
+        vec![
+            ui::UserManagementAction::EditInfo,
+            ui::UserManagementAction::SetPassword,
+            ui::UserManagementAction::Back
+        ]
+    );
 }
 
 #[test]

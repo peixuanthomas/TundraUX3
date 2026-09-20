@@ -13,11 +13,15 @@ use zbus::{
 #[derive(Clone, Copy)]
 pub enum Action {
     Update,
+    ManageAccounts,
+    ChangeOwnAccount,
 }
 impl Action {
     fn policy(self) -> &'static str {
         match self {
             Self::Update => "org.freedesktop.packagekit.system-update",
+            Self::ManageAccounts => "org.freedesktop.accounts.user-administration",
+            Self::ChangeOwnAccount => "org.freedesktop.accounts.change-own-user-data",
         }
     }
 }
@@ -27,6 +31,10 @@ pub trait Interaction: Send + Sync {
     fn begin(&self) -> Result<(), ServiceError>;
     fn fallback(&self) -> Result<(), ServiceError>;
     fn finish(&self);
+    /// Run the system password conversation while the terminal owner suspends its UI.
+    fn change_own_password(&self) -> Result<(), ServiceError> {
+        Err(ServiceError::Unsupported)
+    }
     fn cancelled(&self) -> bool {
         false
     }
@@ -89,6 +97,7 @@ fn decision(allowed: bool, challenge: bool, details: &HashMap<String, String>) -
 
 fn check(
     connection: &Connection,
+    authority_connection: &Connection,
     action: Action,
     interactive: bool,
 ) -> Result<Decision, ServiceError> {
@@ -99,9 +108,8 @@ fn check(
         "system-bus-name",
         HashMap::from([("name", Value::from(name.as_str()))]),
     );
-    let authority_connection = dbus::authorization_system()?;
     let proxy = Proxy::new(
-        &authority_connection,
+        authority_connection,
         "org.freedesktop.PolicyKit1",
         "/org/freedesktop/PolicyKit1/Authority",
         "org.freedesktop.PolicyKit1.Authority",
@@ -129,7 +137,18 @@ pub fn prepare(
     action: Action,
     interaction: Option<Arc<dyn Interaction>>,
 ) -> Result<Option<Lease>, ServiceError> {
-    match check(connection, action, false)? {
+    let authority_connection = dbus::authorization_system()?;
+    prepare_using(connection, &authority_connection, action, interaction)
+}
+
+/// The caller must give the authority connection an interactive timeout.
+pub(super) fn prepare_using(
+    connection: &Connection,
+    authority_connection: &Connection,
+    action: Action,
+    interaction: Option<Arc<dyn Interaction>>,
+) -> Result<Option<Lease>, ServiceError> {
+    match check(connection, authority_connection, action, false)? {
         Decision::Allowed => return Ok(None),
         Decision::Cancelled => return Err(ServiceError::AuthorizationCancelled),
         Decision::Denied => return Err(ServiceError::PermissionDenied),
@@ -140,7 +159,7 @@ pub fn prepare(
         return Ok(None);
     };
     let lease = Lease::begin(interaction)?;
-    let decision = check(connection, action, true)?;
+    let decision = check(connection, authority_connection, action, true)?;
     if lease.interaction.cancelled() {
         return Err(ServiceError::AuthorizationCancelled);
     }

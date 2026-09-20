@@ -269,6 +269,8 @@ impl ShellSession {
                 self.poll_settings_background_tasks();
                 self.drain_diagnostics_events();
                 self.poll_logs_tasks();
+                #[cfg(target_os = "linux")]
+                self.poll_user_management_task();
                 self.poll_editor_background_tasks(platform);
                 self.persist_editor_recovery_if_due(received_at);
                 ShellAction::Redraw

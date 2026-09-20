@@ -12,19 +12,82 @@ use crate::identity::{
 };
 use crate::time::unix_millis;
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct UserService {
     storage: StorageManager,
     debug_policy: DebugPolicy,
     backend: crate::IdentityBackend,
+    #[cfg(target_os = "linux")]
+    interaction: Option<std::sync::Arc<dyn platform::linux::authorization::Interaction>>,
+}
+
+impl std::fmt::Debug for UserService {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("UserService")
+            .field("backend", &self.backend)
+            .field("debug_policy", &self.debug_policy)
+            .finish_non_exhaustive()
+    }
 }
 
 impl UserService {
+    #[cfg(target_os = "linux")]
+    pub fn with_authorization_interaction(
+        mut self,
+        interaction: std::sync::Arc<dyn platform::linux::authorization::Interaction>,
+    ) -> Self {
+        self.interaction = Some(interaction);
+        self
+    }
+
+    #[cfg(target_os = "linux")]
+    fn linux_accounts(
+        &self,
+        actor: &AuthSession,
+    ) -> Result<platform::linux::accounts::Accounts, CoreError> {
+        if actor.source != crate::IdentitySource::LinuxCurrentProcess {
+            return Err(CoreError::SystemAccountManaged);
+        }
+        let mut accounts =
+            platform::linux::accounts::Accounts::current().map_err(crate::linux::error)?;
+        let current = accounts.actor().map_err(crate::linux::error)?;
+        if actor.user_id != format!("linux-uid-{}", current.uid)
+            || actor.username != current.username
+        {
+            return Err(CoreError::PermissionDenied {
+                action: PermissionAction::ManageOwnUser,
+                reason: "stale_session".into(),
+            });
+        }
+        if let Some(interaction) = &self.interaction {
+            accounts.set_interaction(interaction.clone());
+        }
+        Ok(accounts)
+    }
+
+    #[cfg(target_os = "linux")]
+    fn linux_visible(
+        &self,
+        accounts: &platform::linux::accounts::Accounts,
+    ) -> Result<Vec<UserAccount>, CoreError> {
+        accounts
+            .visible()
+            .map_err(crate::linux::error)?
+            .into_iter()
+            .map(|account| {
+                crate::linux::record(account, &self.storage)
+                    .map(|record| UserAccount::from_record(&record))
+            })
+            .collect()
+    }
+
     pub fn new(storage: StorageManager) -> Self {
         Self {
             storage,
             debug_policy: DebugPolicy::default(),
             backend: crate::IdentityBackend::Local,
+            #[cfg(target_os = "linux")]
+            interaction: None,
         }
     }
 
@@ -33,6 +96,8 @@ impl UserService {
             storage,
             debug_policy,
             backend: crate::IdentityBackend::Local,
+            #[cfg(target_os = "linux")]
+            interaction: None,
         }
     }
 
@@ -116,17 +181,18 @@ impl UserService {
     }
 
     pub fn list_users(&self, actor: &AuthSession) -> Result<Vec<UserAccount>, CoreError> {
+        #[cfg(target_os = "linux")]
         if self.backend == crate::IdentityBackend::Linux {
-            let records = self.login_records()?;
-            if !records
-                .iter()
-                .any(|user| user.id == actor.user_id && user.username == actor.username)
-            {
-                return Err(CoreError::UserNotFound);
+            let accounts = self.linux_accounts(actor)?;
+            if !accounts.actor().map_err(crate::linux::error)?.admin {
+                return Err(CoreError::PermissionDenied {
+                    action: PermissionAction::ManageUsers,
+                    reason: "insufficient_role".into(),
+                });
             }
-            return Ok(records.iter().map(UserAccount::from_record).collect());
+            return self.linux_visible(&accounts);
         }
-
+        self.backend.require_local()?;
         self.authorize_manage_users(actor, "list_users")?;
         Ok(self
             .storage
@@ -141,17 +207,11 @@ impl UserService {
         &self,
         actor: &AuthSession,
     ) -> Result<Vec<UserAccount>, CoreError> {
+        #[cfg(target_os = "linux")]
         if self.backend == crate::IdentityBackend::Linux {
-            let records = self.login_records()?;
-            if !records
-                .iter()
-                .any(|user| user.id == actor.user_id && user.username == actor.username)
-            {
-                return Err(CoreError::UserNotFound);
-            }
-            return Ok(records.iter().map(UserAccount::from_record).collect());
+            return self.linux_visible(&self.linux_accounts(actor)?);
         }
-
+        self.backend.require_local()?;
         let document = self.storage.load_users()?;
         if actor_can_manage_users(&document, actor) {
             return Ok(document
@@ -186,6 +246,26 @@ impl UserService {
         role: UserRole,
         password: &str,
     ) -> Result<UserAccount, CoreError> {
+        #[cfg(target_os = "linux")]
+        if self.backend == crate::IdentityBackend::Linux {
+            let accounts = self.linux_accounts(actor)?;
+            validate_username(username)?;
+            validate_password(username, password)?;
+            let name = normalize_display_name(display_name, username)?;
+            if role == UserRole::Guest {
+                return Err(CoreError::InvalidUserInfo(
+                    "Linux supports User and Admin accounts".into(),
+                ));
+            }
+            let account = accounts
+                .create(username.trim(), &name, role == UserRole::Admin, password)
+                .map_err(crate::linux::error)?;
+            return Ok(UserAccount::from_record(&crate::linux::record(
+                account,
+                &self.storage,
+            )?));
+        }
+
         self.backend.require_local()?;
         self.authorize_manage_users(actor, "create_user")?;
         validate_username(username)?;
@@ -224,6 +304,20 @@ impl UserService {
         username: &str,
         display_name: &str,
     ) -> Result<UserAccount, CoreError> {
+        #[cfg(target_os = "linux")]
+        if self.backend == crate::IdentityBackend::Linux {
+            let accounts = self.linux_accounts(actor)?;
+            let name = normalize_display_name(display_name, username)?;
+            accounts
+                .rename(username, &name)
+                .map_err(crate::linux::error)?;
+            return self
+                .linux_visible(&accounts)?
+                .into_iter()
+                .find(|user| user.username == username)
+                .ok_or(CoreError::UserNotFound);
+        }
+
         self.backend.require_local()?;
         let mut document = self.storage.load_users()?;
         let Some(index) = find_user_index(&document, username) else {
@@ -371,6 +465,17 @@ impl UserService {
         username: &str,
         password: &str,
     ) -> Result<(), CoreError> {
+        #[cfg(target_os = "linux")]
+        if self.backend == crate::IdentityBackend::Linux {
+            let accounts = self.linux_accounts(actor)?;
+            if username != actor.username {
+                validate_password(username, password)?;
+            }
+            return accounts
+                .password(username, password)
+                .map_err(crate::linux::error);
+        }
+
         self.backend.require_local()?;
         let mut document = self.storage.load_users()?;
         let Some(index) = find_user_index(&document, username) else {
@@ -388,6 +493,14 @@ impl UserService {
     }
 
     pub fn disable_user(&self, actor: &AuthSession, username: &str) -> Result<(), CoreError> {
+        #[cfg(target_os = "linux")]
+        if self.backend == crate::IdentityBackend::Linux {
+            return self
+                .linux_accounts(actor)?
+                .set_locked(username, true)
+                .map_err(crate::linux::error);
+        }
+
         self.update_user(actor, username, "disable_user", |document, index, now| {
             ensure_can_remove_enabled_admin(document, index)?;
             let record = &mut document.users[index];
@@ -398,6 +511,14 @@ impl UserService {
     }
 
     pub fn enable_user(&self, actor: &AuthSession, username: &str) -> Result<(), CoreError> {
+        #[cfg(target_os = "linux")]
+        if self.backend == crate::IdentityBackend::Linux {
+            return self
+                .linux_accounts(actor)?
+                .set_locked(username, false)
+                .map_err(crate::linux::error);
+        }
+
         self.update_user(actor, username, "enable_user", |document, index, now| {
             let record = &mut document.users[index];
             record.enabled = true;
@@ -409,6 +530,11 @@ impl UserService {
     }
 
     pub fn unlock_user(&self, actor: &AuthSession, username: &str) -> Result<(), CoreError> {
+        #[cfg(target_os = "linux")]
+        if self.backend == crate::IdentityBackend::Linux {
+            return self.enable_user(actor, username);
+        }
+
         self.update_user(actor, username, "unlock_user", |document, index, now| {
             let record = &mut document.users[index];
             record.failed_login_attempts = 0;
@@ -424,6 +550,11 @@ impl UserService {
         username: &str,
         password: &str,
     ) -> Result<(), CoreError> {
+        #[cfg(target_os = "linux")]
+        if self.backend == crate::IdentityBackend::Linux {
+            return self.set_user_password(actor, username, password);
+        }
+
         self.backend.require_local()?;
         validate_password(username, password)?;
         self.update_user(actor, username, "reset_password", |document, index, now| {
@@ -442,6 +573,19 @@ impl UserService {
         username: &str,
         role: UserRole,
     ) -> Result<(), CoreError> {
+        #[cfg(target_os = "linux")]
+        if self.backend == crate::IdentityBackend::Linux {
+            if role == UserRole::Guest {
+                return Err(CoreError::InvalidUserInfo(
+                    "Linux supports User and Admin accounts".into(),
+                ));
+            }
+            return self
+                .linux_accounts(actor)?
+                .set_admin(username, role == UserRole::Admin)
+                .map_err(crate::linux::error);
+        }
+
         self.update_user(actor, username, "change_role", |document, index, now| {
             if role != UserRole::Admin {
                 ensure_can_remove_enabled_admin(document, index)?;
@@ -454,6 +598,14 @@ impl UserService {
     }
 
     pub fn delete_user(&self, actor: &AuthSession, username: &str) -> Result<(), CoreError> {
+        #[cfg(target_os = "linux")]
+        if self.backend == crate::IdentityBackend::Linux {
+            return self
+                .linux_accounts(actor)?
+                .delete(username)
+                .map_err(crate::linux::error);
+        }
+
         self.backend.require_local()?;
         let mut document = self.storage.load_users()?;
         let Some(index) = find_user_index(&document, username) else {

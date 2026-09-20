@@ -1505,11 +1505,8 @@ impl ShellSession {
             .as_ref()
             .map(i18n::LocalizedText::render_current)
             .or_else(|| {
-                (self.identity_backend == identity::IdentityBackend::Linux).then(|| {
-                    i18n::tr!(
-                        "shell-linux-manages-accounts-and-passwords-all-ux-sessions-run-as-root"
-                    )
-                })
+                (self.identity_backend == identity::IdentityBackend::Linux)
+                    .then(|| i18n::tr!("shell-linux-system-accounts"))
             });
         let mut model = ui::UserManagementViewModel::new(
             current_user.clone(),
@@ -1987,13 +1984,20 @@ impl ShellSession {
         if self.can_manage_all_users() {
             let locked = selected.is_some_and(user_is_locked);
             let enabled = selected.is_some_and(|user| user.enabled);
-            let (toggle_label, toggle_shortcut, disabling) = if !enabled {
-                (i18n::tr!("shell-enable"), Some('U'), false)
-            } else if locked {
-                (i18n::tr!("shell-unlock"), Some('U'), false)
-            } else {
-                (i18n::tr!("shell-disable"), Some('D'), true)
-            };
+            let (toggle_label, toggle_shortcut, disabling) =
+                if self.identity_backend == identity::IdentityBackend::Linux {
+                    if locked {
+                        (i18n::tr!("shell-linux-unlock-password"), Some('U'), false)
+                    } else {
+                        (i18n::tr!("shell-linux-lock-password"), Some('D'), true)
+                    }
+                } else if !enabled {
+                    (i18n::tr!("shell-enable"), Some('U'), false)
+                } else if locked {
+                    (i18n::tr!("shell-unlock"), Some('U'), false)
+                } else {
+                    (i18n::tr!("shell-disable"), Some('D'), true)
+                };
             actions.push(user_management_action_model(
                 UserManagementAction::ToggleEnabled,
                 toggle_label,
@@ -2039,12 +2043,19 @@ impl ShellSession {
             false,
         ));
         if self.identity_backend == identity::IdentityBackend::Linux {
-            actions.retain(|action| action.action == UserManagementAction::Back);
+            actions.retain(|action| {
+                action.action != UserManagementAction::Delete || self.can_manage_all_users()
+            });
         }
         for action in &mut actions {
             action.disabled_reason = self
                 .user_management_disabled_reason(action.action)
                 .map(|reason| reason.render_current());
+            if self.identity_backend == identity::IdentityBackend::Linux
+                && action.disabled_reason.is_some()
+            {
+                action.enabled = false;
+            }
         }
         actions
     }
@@ -2074,7 +2085,11 @@ impl ShellSession {
             }),
             UserManagementMode::Password(form) => Some(ui::UserManagementFormViewModel {
                 kind: ui::UserManagementFormKind::Password,
-                title: i18n::tr!("shell-set-password"),
+                title: if self.identity_backend == identity::IdentityBackend::Linux {
+                    i18n::tr!("shell-linux-set-password-and-unlock")
+                } else {
+                    i18n::tr!("shell-set-password")
+                },
                 username: form.username.clone(),
                 display_name: String::new(),
                 role: String::new(),
@@ -2097,7 +2112,7 @@ impl ShellSession {
 
     pub fn to_shell_chrome_view_model(&self) -> ui::ShellChromeViewModel {
         let _language = i18n::enter_snapshot(self.language.clone());
-        let status = if self.home_mode == ShellHomeMode::Debug {
+        let status = if cfg!(debug_assertions) && self.home_mode == ShellHomeMode::Debug {
             let mouse_position = self
                 .mouse_coordinates
                 .map(|(x, y)| format!("{x},{y}"))

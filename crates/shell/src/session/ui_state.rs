@@ -624,6 +624,8 @@ pub struct UiSessionState {
     pub(super) user_management_message: Option<i18n::LocalizedText>,
     pub(super) user_management_feedback_tone: UserManagementFeedbackTone,
     pub(super) user_management_mode: UserManagementMode,
+    #[cfg(target_os = "linux")]
+    pub(super) user_management_job: Option<UserManagementJob>,
     pub(super) selected_home_entry_index: usize,
     pub(super) settings_state: Option<SettingsState>,
     pub(super) settings_task_runtime: ShellSettingsTaskRuntime,

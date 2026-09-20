@@ -50,10 +50,23 @@ remain permission failures. Tundra does not read or migrate old /root data.
 On first use, the current UID's profile opens Appearance. After its preferences
 and completion marker are saved, Home opens. Interrupted setup resumes next time;
 completed profiles enter Home directly. Weather remains a separate application.
-The Linux UI has no password login, lock/unlock, user switching, or system logout.
-Exit closes only Tundra. The Users page shows the current account and personal UX
-preferences; system account creation, deletion, passwords, and roles belong to
-Fedora. Windows/macOS keep their existing application-local identity model.
+The Linux UI has no application password login, screen lock, user switching, or system logout.
+Exit closes only Tundra. User Management requires AccountsService, polkit and
+libxcrypt (libcrypt.so.1). Ordinary users see and edit only their own account.
+AccountsService administrators can create, edit, lock/unlock and delete other
+local login accounts, including changing User/Admin status. Root, service and
+remote accounts are excluded. Locking affects password login only; existing
+sessions and key-based login are not terminated. Deletion keeps the home
+directory and files; the
+account running Tundra cannot be deleted, locked or demoted. Setting another
+user's password also unlocks that account, as defined by AccountsService.
+
+Privileged writes use the system's polkit authorization agent, with the existing
+terminal-agent fallback. Changing your own password runs /usr/bin/passwd with
+the TUI suspended; the system prompts for passwords and enforces its own rules.
+If account creation succeeds but password setup fails, the new account remains
+visible for repair. Missing services produce an error, never a local UX account
+fallback. Windows/macOS keep their existing application-local identity model.
 
 The profile key linux-uid-<UID> owns appearance, dashboard, clock, and other personal
 preferences. Historical UX passwords, Admin roles, and lock states cannot grant
