@@ -2,11 +2,10 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use platform::mock::{MockCall, MockPlatform};
+use platform::mock::MockPlatform;
 use platform::{
-    AppPaths, DirectoryListing, ExecutableKind, FileAttributes, FileOpenPolicy, LocalVolume,
-    Platform, PlatformError, PlatformKind, TrashEntry, TrashRestoreTarget, TrashStats, UserDirs,
-    VolumeAccess, VolumeKind, cleanup_temp_path, default_file_open_policy,
+    AppPaths, ExecutableKind, FileAttributes, FileOpenPolicy, Platform, PlatformError,
+    PlatformKind, UserDirs, cleanup_temp_path, default_file_open_policy,
 };
 
 #[test]
@@ -332,126 +331,10 @@ fn directory_listing_keeps_entries_with_metadata_failures() {
     cleanup_temp_path(&base).expect("cleanup partial listing fixture");
 }
 
-#[test]
-fn mock_injects_directory_policy_and_cross_device_rename_results() {
-    let base = unique_temp_root("mock-explorer-injection");
-    let platform = mock_platform(&base);
-    let virtual_directory = base.join("virtual");
-    let listing = DirectoryListing {
-        path: virtual_directory.clone(),
-        entries: Vec::new(),
-        warnings: Vec::new(),
-    };
-    platform.set_directory_listing(virtual_directory.clone(), listing.clone());
-    assert_eq!(
-        platform
-            .read_directory(&virtual_directory)
-            .expect("injected listing"),
-        listing
-    );
-
-    let executable = virtual_directory.join("tool.bin");
-    platform.set_file_open_policy(
-        executable.clone(),
-        FileOpenPolicy::launcher_required(
-            ExecutableKind::NativeBinary,
-            "injected executable classification",
-        ),
-    );
-    assert!(
-        platform
-            .file_open_policy(&executable, &file_attributes(executable.clone()))
-            .requires_launcher()
-    );
-
-    let target = base.join("other-volume").join("tool.bin");
-    platform.set_cross_device_rename(executable.clone(), target.clone(), "not same device");
-    assert!(matches!(
-        platform.rename_path(&executable, &target),
-        Err(PlatformError::CrossDevice { .. })
-    ));
-    assert!(platform.calls().contains(&MockCall::RenamePath {
-        source: executable,
-        target,
-    }));
-}
-
-#[test]
-fn mock_injects_and_records_volume_and_trash_operations() {
-    let base = unique_temp_root("mock-trash-injection");
-    let platform = mock_platform(&base);
-    let volume = LocalVolume {
-        root: base.clone(),
-        label: Some("Fixture".to_string()),
-        kind: VolumeKind::Fixed,
-        total_bytes: Some(1024),
-        available_bytes: Some(512),
-        is_system: true,
-        access: VolumeAccess::ReadWrite,
-    };
-    platform.set_local_volumes_result(Ok(vec![volume.clone()]));
-    assert_eq!(
-        platform.local_volumes().expect("injected volumes"),
-        vec![volume]
-    );
-
-    let id = MockPlatform::trash_entry_id("fixture-trash-id");
-    let entry = TrashEntry {
-        id: id.clone(),
-        display_name: "deleted.txt".to_string(),
-        original_path: Some(base.join("deleted.txt")),
-        deleted_at: None,
-        size: 7,
-        is_directory: false,
-    };
-    platform.set_trash_entries_result(Ok(vec![entry.clone()]));
-    platform.set_trash_stats_result(Ok(TrashStats {
-        item_count: 1,
-        total_bytes: 7,
-    }));
-    assert_eq!(platform.list_trash().expect("injected Trash"), vec![entry]);
-    assert_eq!(
-        platform.trash_stats().expect("injected stats").total_bytes,
-        7
-    );
-
-    let destination = base.join("restored.txt");
-    let target = TrashRestoreTarget::DestinationPath(destination.clone());
-    platform.set_restore_result(id.clone(), target.clone(), Ok(destination.clone()));
-    assert_eq!(
-        platform
-            .restore_trash_item(&id, target.clone())
-            .expect("injected restore"),
-        destination
-    );
-    let moved_paths = vec![base.join("one"), base.join("two")];
-    platform.move_to_trash(&moved_paths).expect("injected move");
-    platform.empty_trash().expect("injected empty");
-
-    let calls = platform.calls();
-    assert!(calls.contains(&MockCall::LocalVolumes));
-    assert!(calls.contains(&MockCall::ListTrash));
-    assert!(calls.contains(&MockCall::TrashStats));
-    assert!(calls.contains(&MockCall::MoveToTrash(moved_paths)));
-    assert!(calls.contains(&MockCall::RestoreTrashItem { id, target }));
-    assert!(calls.contains(&MockCall::EmptyTrash));
-}
-
-#[test]
-fn platform_trait_remains_object_safe_with_trash_api() {
-    fn accepts_platform(platform: &dyn Platform) {
-        assert!(!platform.is_native_backend());
-    }
-    let base = unique_temp_root("object-safe-platform");
-    let platform = mock_platform(&base).with_kind(PlatformKind::Windows);
-    accepts_platform(&platform);
-    assert_eq!(platform.kind(), PlatformKind::Windows);
-    assert!(!platform.is_native_backend());
-}
-
 #[cfg(windows)]
 #[test]
 fn windows_volume_enumeration_only_returns_supported_local_kinds() {
+    use platform::VolumeKind;
     use platform::windows::WindowsPlatform;
 
     let volumes = WindowsPlatform

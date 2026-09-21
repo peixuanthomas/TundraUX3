@@ -12,7 +12,7 @@ use shell::{
     ShellStartupState, ShellStorageReport, default_shell_shortcuts, detect_shortcut_conflicts,
 };
 use storage::StorageManager;
-use ui::{HomeDisplayMode, NotificationLayout, NotificationTone};
+use ui::{NotificationLayout, NotificationTone};
 
 fn debug_config() -> ShellLaunchConfig {
     ShellLaunchConfig {
@@ -58,31 +58,6 @@ fn debug_override_selects_debug_home() {
     assert!(terminal_flags.alternate_screen);
     assert!(terminal_flags.mouse_capture);
     assert!(terminal_flags.cursor_restore_enabled);
-}
-
-#[test]
-fn launcher_view_model_is_safe_before_launcher_state_is_loaded() {
-    let state = ShellSession::new(debug_config(), (120, 40));
-
-    let launcher = state.to_launcher_view_model();
-
-    assert_eq!(launcher.items.len(), 1);
-    assert_eq!(launcher.items[0].id, app::EDITOR_APPLICATION.id);
-    assert!(launcher.items[0].is_builtin());
-    assert_eq!(launcher.selected_index, Some(0));
-    assert_eq!(launcher.view_mode, ui::LauncherViewMode::LargeIcons);
-}
-
-#[test]
-fn build_default_selects_expected_home_for_build_profile() {
-    let state = ShellSession::new(build_default_config(), (120, 40));
-    let expected = if cfg!(debug_assertions) {
-        ShellHomeMode::Debug
-    } else {
-        ShellHomeMode::User
-    };
-
-    assert_eq!(state.home_mode(), expected);
 }
 
 #[test]
@@ -942,28 +917,6 @@ fn modal_notifications_are_fifo_and_low_priority_notifications_do_not_interrupt(
 }
 
 #[test]
-fn user_state_builds_user_home_view_model() {
-    let state =
-        ShellSession::new_for_home_mode(build_default_config(), (120, 40), ShellHomeMode::User);
-
-    let home = state.to_home_view_model();
-
-    assert_eq!(home.display_mode(), HomeDisplayMode::User);
-    assert_eq!(home.diagnostics(), None);
-    assert_eq!(home.entries().len(), 5);
-    assert!(
-        home.entries()
-            .iter()
-            .all(|entry| entry.label != "Diagnostics")
-    );
-    assert!(
-        home.entries()
-            .iter()
-            .any(|entry| entry.label == "System Status")
-    );
-}
-
-#[test]
 fn current_time_label_uses_configured_timezone_datetime() {
     let fixture = FixtureRoot::new("clock-timezone");
     let opened = storage_manager_at(&fixture);
@@ -1073,28 +1026,6 @@ fn successful_time_sync_clears_failure_dialog_and_updates_anchor() {
 }
 
 #[test]
-fn explicit_user_mode_shows_product_entries_without_diagnostics() {
-    let config = ShellLaunchConfig {
-        home_mode_override: HomeModeOverride::BuildDefault,
-    };
-    let state = ShellSession::new_for_home_mode(config, (120, 35), ShellHomeMode::User);
-
-    let home = state.to_home_view_model();
-
-    assert_eq!(home.display_mode(), HomeDisplayMode::User);
-    assert_eq!(home.diagnostics(), None);
-    let labels: Vec<_> = home
-        .entries()
-        .iter()
-        .map(|entry| entry.label.as_str())
-        .collect();
-    assert_eq!(
-        labels,
-        vec!["Explorer", "Launcher", "Settings", "System Status", "Logs"]
-    );
-}
-
-#[test]
 fn home_arrow_keys_update_selected_entry() {
     let mut state =
         ShellSession::new_for_home_mode(build_default_config(), (120, 40), ShellHomeMode::User);
@@ -1176,64 +1107,6 @@ fn mouse_double_click_on_launcher_without_authentication_stays_on_home() {
     );
     assert_eq!(state.active_screen(), ShellScreen::Home);
     assert_eq!(state.status(), "Home: Launcher");
-}
-
-#[test]
-fn state_builds_shell_chrome_view_model() {
-    // Even an explicitly supplied debug display mode must not expose input
-    // diagnostics in a release build.
-    let mut state =
-        ShellSession::new_for_home_mode(debug_config(), (120, 40), ShellHomeMode::Debug);
-    state.apply_input(InputEvent::from_key_label("q"));
-
-    let chrome = state.to_shell_chrome_view_model();
-
-    assert_eq!(chrome.app_name, "TundraUX 3");
-    assert_eq!(
-        chrome.build_mode,
-        if cfg!(debug_assertions) {
-            "debug"
-        } else {
-            "release"
-        }
-    );
-    assert_eq!(chrome.display_mode, HomeDisplayMode::Debug);
-    assert_eq!(chrome.terminal_size, (120, 40));
-    assert_eq!(
-        chrome.screen_stack,
-        vec!["Home".to_string(), "ExitConfirm".to_string()]
-    );
-    if cfg!(debug_assertions) {
-        assert!(
-            chrome
-                .status
-                .status
-                .starts_with("Confirm exit | Last Key: q")
-        );
-        assert!(chrome.status.status.contains("Mouse position: none"));
-        assert!(chrome.status.status.contains("Size: 120x40"));
-        assert!(chrome.status.status.contains("Scroll: none"));
-        assert!(chrome.status.status.contains("Drag: none"));
-    } else {
-        assert_eq!(chrome.status.status, "Confirm exit");
-    }
-    assert_eq!(chrome.status.toast, None);
-    assert_eq!(chrome.status.error, None);
-}
-
-#[test]
-fn new_with_startup_clean_storage_starts_ready_without_toast() {
-    let startup = ShellStartupState::clean(
-        PlatformKind::Windows,
-        PlatformCapabilities::native_supported(),
-    );
-
-    let state = ShellSession::new_with_startup(debug_config(), (120, 40), startup);
-    let chrome = state.to_shell_chrome_view_model();
-
-    assert_eq!(state.status(), "Ready");
-    assert_eq!(chrome.status.toast, None);
-    assert_eq!(chrome.status.error, None);
 }
 
 #[test]

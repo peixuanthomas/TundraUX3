@@ -121,5 +121,5 @@ fn parse_user_dir_value(raw_value: &str, home: &Path) -> Option<PathBuf> {
 }
 
 #[cfg(test)]
-#[path = "user_dirs_tests.rs"]
+#[path = "../../tests/unit/linux/user_dirs_tests.rs"]
 mod tests;

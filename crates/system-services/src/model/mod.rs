@@ -26,4 +26,5 @@ pub struct SystemSnapshot {
 }
 
 #[cfg(test)]
+#[path = "../../tests/unit/model/tests.rs"]
 mod tests;

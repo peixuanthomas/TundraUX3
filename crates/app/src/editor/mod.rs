@@ -1135,12 +1135,15 @@ impl SourceBuffer {
             column = next_column;
         }
 
-        let visible_start = visible_start.unwrap_or_else(|| line.end.min(byte));
-        if visible_start == visible_end {
-            visible_end = visible_start;
+        let visible_start = visible_start.unwrap_or_else(|| {
+            // No grapheme intersects this viewport (for example, a short line
+            // scrolled entirely off the left edge). Both ends must follow the
+            // scan position; keeping visible_end at line.start inverts the range.
+            visible_end = line.end.min(byte);
             visible_start_column = column;
             visible_end_column = column;
-        }
+            visible_end
+        });
         let visible_byte_range = SourceRange::new(visible_start, visible_end);
         let text = self
             .text

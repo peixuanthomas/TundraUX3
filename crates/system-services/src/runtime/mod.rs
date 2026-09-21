@@ -605,4 +605,5 @@ fn snapshot(
 }
 
 #[cfg(test)]
+#[path = "../../tests/unit/runtime/tests.rs"]
 mod tests;

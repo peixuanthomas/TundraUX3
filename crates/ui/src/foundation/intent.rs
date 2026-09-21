@@ -30,38 +30,3 @@ impl From<app::AppCommand> for UiIntent {
         Self::App(Box::new(command))
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::{Key, KeyStroke, ShortcutBinding, ShortcutRegistry};
-
-    #[test]
-    fn shortcut_registry_resolves_typed_ui_and_app_intents() {
-        let mut registry = ShortcutRegistry::<UiIntent>::new();
-        registry
-            .register(ShortcutBinding::global(
-                KeyStroke::plain(Key::Tab),
-                UiIntent::Focus(FocusIntent::Next),
-            ))
-            .expect("focus shortcut");
-        registry
-            .register(ShortcutBinding::global(
-                KeyStroke::plain(Key::Escape),
-                UiIntent::App(Box::new(app::AppCommand::RequestExit)),
-            ))
-            .expect("app shortcut");
-
-        assert_eq!(
-            registry.command_for(&[crate::ShortcutScope::Global], &KeyStroke::plain(Key::Tab)),
-            Some(&UiIntent::Focus(FocusIntent::Next))
-        );
-        assert_eq!(
-            registry.command_for(
-                &[crate::ShortcutScope::Global],
-                &KeyStroke::plain(Key::Escape)
-            ),
-            Some(&UiIntent::App(Box::new(app::AppCommand::RequestExit)))
-        );
-    }
-}

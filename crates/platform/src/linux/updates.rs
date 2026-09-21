@@ -333,4 +333,5 @@ impl<T: Transport> Controller<T> {
 }
 
 #[cfg(test)]
+#[path = "../../tests/unit/linux/updates/tests.rs"]
 mod tests;

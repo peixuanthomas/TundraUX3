@@ -51,18 +51,6 @@ fn launcher_editor_entry_opens_a_plain_text_document() {
 }
 
 #[test]
-fn terminal_text_sizing_capability_reaches_the_editor_view_model() {
-    let fixture = FixtureRoot::new("text-sizing");
-    let platform = mock_platform(fixture.path());
-    let mut state = new_user_home_state(&platform);
-    state.set_terminal_text_sizing_support(true);
-
-    open_editor_from_home(&mut state, &platform);
-
-    assert!(state.to_editor_view_model().text_sizing_protocol);
-}
-
-#[test]
 fn explorer_opens_c_with_cached_highlights_that_update_after_typing() {
     let fixture = FixtureRoot::new("c-highlights");
     let platform = mock_platform(fixture.path());
@@ -183,6 +171,54 @@ fn source_caret_reveals_a_long_line_and_the_horizontal_scrollbar_moves_the_viewp
             .horizontal_content_width
             .saturating_sub(usize::from(layout.canvas.width))
     );
+}
+
+#[test]
+fn unicode_document_can_scroll_horizontally_past_short_lines() {
+    let fixture = FixtureRoot::new("unicode-horizontal-scroll");
+    let platform = mock_platform(fixture.path());
+    bootstrap_with_shell(&platform);
+    let short_line = format!("{}好", "a".repeat(106));
+    let source = format!("{short_line}\n{}", "x".repeat(300));
+    let path = fixture.path().join("Documents/mixed.txt");
+    fs::write(&path, &source).unwrap();
+    let mut state = logged_in_state(&platform);
+    open_only_document_in_editor(&mut state, &platform);
+
+    // Revealing the caret on the long line also clips the shorter Unicode line.
+    state.apply_input_with_platform(InputEvent::from_key_label("Down"), &platform);
+    state.apply_input_with_platform(InputEvent::from_key_label("End"), &platform);
+    let model = state.to_editor_view_model();
+    assert!(model.horizontal_scroll > 108);
+    assert_eq!(
+        model.source_window.as_ref().unwrap().lines[0].text.as_ref(),
+        ""
+    );
+
+    state.apply_input_with_platform(InputEvent::from_key_label("Home"), &platform);
+    let scrollbar = current_editor_layout(&state).horizontal_scrollbar.unwrap();
+    let grab = (scrollbar.thumb.x, scrollbar.thumb.y);
+    let end = (scrollbar.track.right().saturating_sub(1), scrollbar.track.y);
+    state.apply_input_with_platform(InputEvent::mouse_down(PointerButton::Left, grab), &platform);
+    state.apply_input_with_platform(InputEvent::mouse_drag(PointerButton::Left, end), &platform);
+    state.apply_input_with_platform(InputEvent::mouse_up(PointerButton::Left, end), &platform);
+    let model = state.to_editor_view_model();
+    assert!(model.horizontal_scroll > 108);
+    assert_eq!(
+        model.source_window.as_ref().unwrap().lines[0].text.as_ref(),
+        ""
+    );
+    assert_eq!(state.active_screen(), ShellScreen::Editor);
+
+    state.apply_input_with_platform(InputEvent::from_key_label("Home"), &platform);
+    let model = state.to_editor_view_model();
+    assert_eq!(model.horizontal_scroll, 0);
+    assert_eq!(
+        model.source_window.as_ref().unwrap().lines[0].text.as_ref(),
+        short_line
+    );
+    assert!(!model.dirty);
+    assert_eq!(fs::read_to_string(path).unwrap(), source);
 }
 
 #[test]

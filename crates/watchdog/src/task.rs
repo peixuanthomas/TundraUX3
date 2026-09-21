@@ -27,6 +27,17 @@ struct TaskControl {
     aborts: Mutex<Vec<Arc<dyn Fn() + Send + Sync>>>,
 }
 
+/// Cooperative cancellation for managed threads. A worker must also bound or
+/// interrupt its blocking waits so cancellation can be observed promptly.
+#[derive(Clone)]
+pub struct ThreadCancellation(Arc<TaskControl>);
+
+impl ThreadCancellation {
+    pub fn is_cancelled(&self) -> bool {
+        self.0.cancelled.load(Ordering::Acquire)
+    }
+}
+
 impl TaskControl {
     fn cancel(&self) {
         self.cancelled.store(true, Ordering::Release);
@@ -166,19 +177,6 @@ pub struct ManagedThreadHandle<T> {
     control: Arc<TaskControl>,
 }
 
-/// A cooperative stop request for a managed thread. Long-running workers must
-/// check this while waiting for work as well as between operations.
-#[derive(Clone)]
-pub struct ThreadCancellation {
-    control: Arc<TaskControl>,
-}
-
-impl ThreadCancellation {
-    pub fn is_cancelled(&self) -> bool {
-        self.control.cancelled.load(Ordering::Acquire)
-    }
-}
-
 #[cfg(feature = "tokio")]
 pub struct ManagedTaskHandle<T> {
     join: tokio::task::JoinHandle<Option<T>>,
@@ -247,12 +245,11 @@ impl ManagedTaskGroup {
         T: Send + 'static,
         F: FnMut() -> T + Send + 'static,
     {
-        self.spawn_cancellable_thread(spec, move |_| factory())
+        self.spawn_thread_with_cancellation(spec, move |_| factory())
     }
 
-    /// Like `spawn_thread`, but lets the worker observe handle, group, and
-    /// process shutdown requests. Cancellation does not forcibly kill a thread.
-    pub fn spawn_cancellable_thread<T, F>(
+    /// Starts a worker that can observe handle, group, and process shutdown.
+    pub fn spawn_thread_with_cancellation<T, F>(
         &self,
         spec: TaskSpec,
         mut factory: F,
@@ -278,11 +275,8 @@ impl ManagedTaskGroup {
                         return None;
                     }
                     let context = task_context(&app, &thread_spec, &task_name, attempt);
-                    match runtime::catch_factory(context.clone(), || {
-                        factory(ThreadCancellation {
-                            control: worker_control.clone(),
-                        })
-                    }) {
+                    let cancellation = ThreadCancellation(worker_control.clone());
+                    match runtime::catch_factory(context.clone(), || factory(cancellation)) {
                         Ok(value) => {
                             log_restarted_completion(
                                 &app,

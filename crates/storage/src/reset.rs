@@ -111,5 +111,5 @@ fn remove_symlink(path: &Path, _file_type: &fs::FileType) -> Result<(), io::Erro
 }
 
 #[cfg(test)]
-#[path = "tests/reset.rs"]
+#[path = "../tests/unit/reset.rs"]
 mod tests;

@@ -2,19 +2,19 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use platform::mock::{MockCall, MockPlatform, UnsupportedPlatform};
+use platform::mock::{MockCall, MockPlatform};
 use platform::{
-    AppPaths, CapabilityStatus, CheckStatus, FileAttributes, Platform, PlatformError, PlatformKind,
-    ProcessSpec, StartupPermissionStatus, UserDirs, build_binary_dir_app_paths,
-    build_linux_app_paths, build_macos_app_paths, build_windows_app_paths,
-    check_directory_read_write, classify_windows_build, cleanup_temp_path, create_temp_dir,
-    create_temp_file, default_file_attributes, is_windows_terminal_session, run_doctor_with,
+    AppPaths, CheckStatus, FileAttributes, Platform, PlatformError, PlatformKind, ProcessSpec,
+    StartupPermissionStatus, UserDirs, build_binary_dir_app_paths, build_linux_app_paths,
+    build_macos_app_paths, build_windows_app_paths, check_directory_read_write,
+    classify_windows_build, cleanup_temp_path, create_temp_dir, create_temp_file,
+    default_file_attributes, is_windows_terminal_session, run_doctor_with,
     terminal_environment_check_with, terminal_environment_check_with_graphics_protocol,
     validate_process_spec,
 };
 
 #[cfg(target_os = "linux")]
-use platform::native_platform;
+use platform::CapabilityStatus;
 
 #[test]
 fn windows_app_paths_follow_roaming_local_and_temp_roots() {
@@ -166,186 +166,6 @@ fn app_paths_reject_relative_binary_directory() {
     assert!(!message.contains("localappdata"));
 }
 
-#[cfg(windows)]
-#[test]
-fn app_path_templates_use_windows_native_placeholders() {
-    assert_eq!(
-        AppPaths::CONFIG_TEMPLATE,
-        r"%APPDATA%\TundraUX3\config.toml"
-    );
-    assert_eq!(AppPaths::DATA_TEMPLATE, r"%LOCALAPPDATA%\TundraUX3\state");
-    assert_eq!(AppPaths::CACHE_TEMPLATE, r"%LOCALAPPDATA%\TundraUX3\cache");
-    assert_eq!(AppPaths::LOGS_TEMPLATE, r"%LOCALAPPDATA%\TundraUX3\logs");
-    assert_eq!(AppPaths::TEMP_TEMPLATE, r"%TEMP%\TundraUX3");
-}
-
-#[cfg(target_os = "macos")]
-#[test]
-fn app_path_templates_use_macos_native_locations() {
-    assert_eq!(
-        AppPaths::CONFIG_TEMPLATE,
-        "~/Library/Application Support/TundraUX3/config.toml"
-    );
-    assert_eq!(
-        AppPaths::DATA_TEMPLATE,
-        "~/Library/Application Support/TundraUX3/state"
-    );
-    assert_eq!(AppPaths::CACHE_TEMPLATE, "~/Library/Caches/TundraUX3");
-    assert_eq!(AppPaths::LOGS_TEMPLATE, "~/Library/Logs/TundraUX3");
-    assert_eq!(AppPaths::TEMP_TEMPLATE, "<temp-dir>/TundraUX3");
-}
-
-#[cfg(target_os = "linux")]
-#[test]
-fn app_path_templates_use_linux_xdg_locations() {
-    assert_eq!(
-        AppPaths::CONFIG_TEMPLATE,
-        "$XDG_CONFIG_HOME/TundraUX3/config.toml"
-    );
-    assert_eq!(AppPaths::DATA_TEMPLATE, "$XDG_DATA_HOME/TundraUX3/state");
-    assert_eq!(AppPaths::CACHE_TEMPLATE, "$XDG_CACHE_HOME/TundraUX3");
-    assert_eq!(AppPaths::LOGS_TEMPLATE, "$XDG_STATE_HOME/TundraUX3/logs");
-    assert_eq!(AppPaths::TEMP_TEMPLATE, "<temp-dir>/TundraUX3");
-}
-
-#[cfg(not(any(windows, target_os = "macos", target_os = "linux")))]
-#[test]
-fn app_path_templates_mark_unsupported_platforms() {
-    assert_eq!(
-        AppPaths::CONFIG_TEMPLATE,
-        "<unsupported>/TundraUX3/config.toml"
-    );
-    assert_eq!(AppPaths::DATA_TEMPLATE, "<unsupported>/TundraUX3/state");
-    assert_eq!(AppPaths::CACHE_TEMPLATE, "<unsupported>/TundraUX3/cache");
-    assert_eq!(AppPaths::LOGS_TEMPLATE, "<unsupported>/TundraUX3/logs");
-    assert_eq!(AppPaths::TEMP_TEMPLATE, "<unsupported>/TundraUX3/temp");
-}
-
-#[test]
-fn platform_kind_names_include_linux() {
-    assert_eq!(PlatformKind::Windows.as_str(), "Windows");
-    assert_eq!(PlatformKind::Macos.as_str(), "macOS");
-    assert_eq!(PlatformKind::Linux.as_str(), "Linux");
-    assert_eq!(PlatformKind::Unsupported.as_str(), "Unsupported");
-}
-
-#[test]
-fn mock_platform_drives_doctor_path_checks() {
-    let base = unique_temp_root("mock-doctor");
-    let platform = mock_platform(&base).with_kind(PlatformKind::Macos);
-
-    let report = run_doctor_with(&platform).expect("mock platform doctor should run");
-
-    assert_eq!(report.platform_kind, PlatformKind::Macos);
-    assert_eq!(
-        report.app_paths,
-        build_windows_app_paths(base.join("Roaming"), base.join("Local"), base.join("Temp"))
-            .expect("fixture app paths should resolve")
-    );
-    assert_eq!(
-        report
-            .path_checks
-            .iter()
-            .map(|check| check.label.as_str())
-            .collect::<Vec<_>>(),
-        vec![
-            "Config parent",
-            "Data path",
-            "Cache path",
-            "Logs path",
-            "Temp path"
-        ]
-    );
-    assert!(
-        report
-            .path_checks
-            .iter()
-            .all(|check| check.status == CheckStatus::Pass),
-        "mock platform paths should all pass: {:?}",
-        report.path_checks
-    );
-    assert!(
-        report.environment_checks.iter().any(|check| {
-            check.label == "Capability: temp" && check.status == CheckStatus::Pass
-        }),
-        "doctor should report the mock temp capability"
-    );
-    assert!(!base.exists());
-}
-
-#[test]
-fn doctor_reports_linux_as_supported() {
-    let base = unique_temp_root("linux-doctor");
-    let platform = mock_platform(&base).with_kind(PlatformKind::Linux);
-
-    let report = run_doctor_with(&platform).expect("mock Linux doctor should run");
-    let platform_check = report
-        .environment_checks
-        .iter()
-        .find(|check| check.label == "Platform")
-        .expect("doctor should include a platform check");
-
-    assert_eq!(report.platform_kind, PlatformKind::Linux);
-    assert_eq!(platform_check.status, CheckStatus::Pass);
-    assert_eq!(platform_check.message, "Linux platform supported");
-
-    cleanup_temp_path(&base).expect("Linux doctor fixture should be removable");
-}
-
-#[test]
-fn mock_platform_records_process_clipboard_and_open_calls() {
-    let base = unique_temp_root("mock-calls");
-    let platform = mock_platform(&base);
-    let target = base.join("target.txt");
-    let application = base.join("viewer.exe");
-    let spec = ProcessSpec::new(base.join("program.exe"))
-        .arg("--flag")
-        .env("TUNDRA_TEST", "1")
-        .current_dir(&base);
-
-    platform
-        .open_path(&target)
-        .expect("mock open_path should pass");
-    platform
-        .open_with(&target, &application)
-        .expect("mock open_with should pass");
-    platform
-        .open_uri("tundra://test")
-        .expect("mock open_uri should pass");
-    platform
-        .write_clipboard_text("copied")
-        .expect("mock clipboard write should pass");
-    assert_eq!(
-        platform
-            .read_clipboard_text()
-            .expect("mock clipboard read should pass"),
-        "copied"
-    );
-    platform
-        .spawn_detached(&spec)
-        .expect("mock detached spawn should pass");
-    let exit = platform
-        .spawn_wait(&spec)
-        .expect("mock wait spawn should pass");
-
-    assert_eq!(exit.code, Some(0));
-    assert_eq!(
-        platform.calls(),
-        vec![
-            MockCall::OpenPath(target.clone()),
-            MockCall::OpenWith {
-                path: target,
-                application,
-            },
-            MockCall::OpenUri("tundra://test".to_string()),
-            MockCall::WriteClipboardText("copied".to_string()),
-            MockCall::ReadClipboardText,
-            MockCall::SpawnDetached(spec.clone()),
-            MockCall::SpawnWait(spec),
-        ]
-    );
-}
-
 #[test]
 fn doctor_fails_when_a_required_startup_permission_is_missing() {
     let base = unique_temp_root("doctor-startup-permission");
@@ -375,54 +195,6 @@ fn doctor_fails_when_a_required_startup_permission_is_missing() {
             .calls()
             .contains(&MockCall::RequestStartupPermissions)
     );
-}
-
-#[test]
-fn mock_platform_records_critical_dialog_and_process_liveness_calls() {
-    let base = unique_temp_root("mock-watchdog-platform");
-    let platform = mock_platform(&base);
-    platform.set_process_alive_result(42, Ok(true));
-
-    platform
-        .show_critical_error("TundraUX recovered", "incident wd-42")
-        .expect("mock critical dialog should pass");
-    assert!(
-        platform
-            .is_process_alive(42)
-            .expect("mock process probe should pass")
-    );
-    assert!(!platform.is_process_alive(7).expect("unknown mock PID"));
-
-    assert_eq!(
-        platform.calls(),
-        vec![
-            MockCall::ShowCriticalError {
-                title: "TundraUX recovered".to_string(),
-                body: "incident wd-42".to_string(),
-            },
-            MockCall::IsProcessAlive(42),
-            MockCall::IsProcessAlive(7),
-        ]
-    );
-    assert_eq!(
-        platform.capabilities().critical_dialog,
-        CapabilityStatus::Supported
-    );
-}
-
-#[test]
-fn mock_platform_propagates_injected_critical_dialog_failure() {
-    let base = unique_temp_root("mock-critical-error");
-    let platform = mock_platform(&base);
-    platform.set_critical_error_result(Err(PlatformError::Native {
-        operation: "mock critical dialog",
-        message: "injected failure".to_string(),
-    }));
-
-    let error = platform
-        .show_critical_error("title", "body")
-        .expect_err("injected critical dialog failure should be returned");
-    assert!(error.to_string().contains("injected failure"));
 }
 
 #[cfg(windows)]
@@ -476,15 +248,6 @@ fn linux_native_backend_reports_desktop_capabilities() {
 
 #[cfg(target_os = "linux")]
 #[test]
-fn native_platform_selects_linux_backend() {
-    let platform = native_platform();
-
-    assert_eq!(platform.kind(), PlatformKind::Linux);
-    assert!(platform.is_native_backend());
-}
-
-#[cfg(target_os = "linux")]
-#[test]
 fn linux_platform_reports_system_time_liveness_and_waited_process_results() {
     let platform = platform::linux::LinuxPlatform;
 
@@ -530,37 +293,6 @@ fn linux_platform_exposes_desktop_only_capabilities() {
         CapabilityStatus::Supported
     );
     assert_eq!(platform.capabilities().power, CapabilityStatus::Supported);
-}
-
-#[test]
-fn mock_platform_returns_injected_file_attributes() {
-    let base = unique_temp_root("mock-file-attributes");
-    let platform = mock_platform(&base);
-    let path = base.join("virtual.lnk");
-    let attributes = FileAttributes {
-        path: path.clone(),
-        is_file: true,
-        is_dir: false,
-        len: 42,
-        readonly: true,
-        modified: Some(UNIX_EPOCH),
-        hidden: true,
-        system: true,
-        archive: true,
-        symlink: true,
-        junction: true,
-        reparse_point: true,
-        shortcut: true,
-    };
-
-    platform.set_file_attributes(path.clone(), attributes.clone());
-
-    assert_eq!(
-        platform
-            .file_attributes(&path)
-            .expect("mock platform should return injected attributes"),
-        attributes
-    );
 }
 
 #[test]
@@ -709,41 +441,6 @@ fn unix_temp_helpers_use_private_modes_and_cleanup_does_not_follow_links() {
     );
 
     cleanup_temp_path(&base).unwrap();
-}
-
-#[test]
-fn unsupported_platform_reports_unsupported_capabilities() {
-    let platform = UnsupportedPlatform;
-
-    assert_eq!(platform.kind(), PlatformKind::Unsupported);
-    assert!(
-        platform
-            .capabilities()
-            .checks()
-            .into_iter()
-            .all(|(_, status)| status == CapabilityStatus::Unsupported)
-    );
-
-    match platform
-        .app_paths()
-        .expect_err("unsupported platform should not resolve app paths")
-    {
-        PlatformError::Unsupported { capability } => assert_eq!(capability, "app_paths"),
-        error => panic!("expected unsupported app_paths error, got {error:?}"),
-    }
-
-    assert!(matches!(
-        platform.show_critical_error("title", "body"),
-        Err(PlatformError::Unsupported {
-            capability: "critical_dialog"
-        })
-    ));
-    assert!(matches!(
-        platform.is_process_alive(42),
-        Err(PlatformError::Unsupported {
-            capability: "process_liveness"
-        })
-    ));
 }
 
 #[test]

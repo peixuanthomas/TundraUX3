@@ -205,21 +205,3 @@ fn minimum_terminal_size_for_assets(
             .max(supplied.1),
     )
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    #[test]
-    fn host_prompt_and_space_outcome_agree() {
-        assert_eq!(ExitSemantic::Start.prompt(), BottomHudPrompt::Start);
-        assert_eq!(
-            ExitSemantic::Start.resolve(AppRunOutcome::Space),
-            ShellLockscreenResult::Started
-        );
-        assert_eq!(ExitSemantic::Quit.prompt(), BottomHudPrompt::Quit);
-        assert_eq!(
-            ExitSemantic::Quit.resolve(AppRunOutcome::Space),
-            ShellLockscreenResult::Quit
-        );
-    }
-}

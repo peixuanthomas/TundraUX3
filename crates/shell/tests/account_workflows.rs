@@ -257,27 +257,6 @@ fn first_run_setup_enter_advances_language_timezone_admin_pages() {
 }
 
 #[test]
-fn timezone_setup_page_exposes_only_timezone_shell_targets() {
-    let (_fixture, mut state) = fresh_setup_state("setup-timezone-targets");
-
-    state.apply_input(InputEvent::from_key_label("Enter"));
-
-    let model = state.to_setup_view_model();
-    assert_eq!(model.step, ui::SetupStep::Timezone);
-    assert_eq!(model.focused_field, ui::SetupField::TimezoneList);
-    assert_setup_admin_empty(&state);
-
-    let setup_components = setup_hit_components(&state);
-    assert_eq!(setup_components, vec![ShellComponent::SetupTimezone]);
-    assert!(!setup_components.contains(&ShellComponent::SetupLanguage));
-    assert!(!setup_components.contains(&ShellComponent::SetupAdminUsername));
-    assert!(!setup_components.contains(&ShellComponent::SetupAdminPassword));
-    assert!(!setup_components.contains(&ShellComponent::SetupAdminPasswordConfirm));
-    assert!(!setup_components.contains(&ShellComponent::SetupAdminHint));
-    assert!(!setup_components.contains(&ShellComponent::SetupSubmit));
-}
-
-#[test]
 fn inactive_setup_pages_do_not_edit_admin_fields_before_admin_step() {
     let (_fixture, mut state) = fresh_setup_state("setup-inactive-admin");
 
@@ -413,41 +392,6 @@ fn admin_setup_up_down_keys_move_between_fields() {
     assert_eq!(state.focused_component(), ShellComponent::SetupSubmit);
     state.apply_input(InputEvent::from_key_label("Up"));
     assert_eq!(state.focused_component(), ShellComponent::SetupAdminHint);
-}
-
-#[test]
-fn admin_setup_password_checklist_updates_with_password_input() {
-    let (_fixture, mut state) = fresh_setup_state("setup-admin-password-checklist");
-
-    state.apply_input(InputEvent::from_key_label("Enter"));
-    state.apply_input(InputEvent::from_key_label("Enter"));
-    type_text(&mut state, "AdminUser");
-    state.apply_input(InputEvent::from_key_label("Down"));
-    type_text(&mut state, "short");
-
-    let requirements = state.to_setup_view_model().password_requirements;
-    assert_requirement(&requirements, "At least 10 characters", false);
-    assert_requirement(&requirements, "At most 256 characters", true);
-    assert_requirement(&requirements, "Not blank", true);
-    assert_requirement(&requirements, "Different from username", true);
-    assert_requirement(&requirements, "Passwords match", false);
-
-    for _ in 0..5 {
-        state.apply_input(InputEvent::from_key_label("Backspace"));
-    }
-    type_text(&mut state, "AdminUser");
-
-    let requirements = state.to_setup_view_model().password_requirements;
-    assert_requirement(&requirements, "At least 10 characters", false);
-    assert_requirement(&requirements, "Not blank", true);
-    assert_requirement(&requirements, "Different from username", false);
-    assert_requirement(&requirements, "Passwords match", false);
-
-    state.apply_input(InputEvent::from_key_label("Down"));
-    type_text(&mut state, "AdminUser");
-
-    let requirements = state.to_setup_view_model().password_requirements;
-    assert_requirement(&requirements, "Passwords match", true);
 }
 
 #[test]

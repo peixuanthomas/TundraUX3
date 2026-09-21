@@ -6,16 +6,14 @@ use ratatui::layout::Rect;
 use support::terminal_output;
 use ui::{
     ExplorerBreadcrumbViewModel, ExplorerConflictChoice, ExplorerConflictViewModel,
-    ExplorerContextMenuItemViewModel, ExplorerContextMenuViewModel, ExplorerDialogViewModel,
-    ExplorerEntryViewModel, ExplorerHitTarget, ExplorerLayoutMode, ExplorerNameDialogKind,
-    ExplorerNameDialogViewModel, ExplorerOperationProgressViewModel, ExplorerOptionViewModel,
-    ExplorerOptionsViewModel, ExplorerOverlayControl, ExplorerOverlayViewModel,
-    ExplorerProgressStage, ExplorerPropertiesViewModel, ExplorerPropertyViewModel,
-    ExplorerQuickLocationViewModel, ExplorerSearchViewModel, ExplorerSortColumn,
-    ExplorerToolbarAction, ExplorerViewModel, HomeDisplayMode, MotionFrame, NotificationTone,
-    RenderCapabilities, RenderContext, ShellChromeViewModel, ShellLayout, StatusViewModel,
-    TundraTheme, compute_shell_layout, explorer_first_entry_content_line, explorer_layout,
-    render_explorer, render_explorer_with_context,
+    ExplorerContextMenuItemViewModel, ExplorerContextMenuViewModel, ExplorerEntryViewModel,
+    ExplorerHitTarget, ExplorerNameDialogKind, ExplorerNameDialogViewModel,
+    ExplorerOperationProgressViewModel, ExplorerOverlayControl, ExplorerOverlayViewModel,
+    ExplorerProgressStage, ExplorerQuickLocationViewModel, ExplorerSortColumn,
+    ExplorerToolbarAction, ExplorerViewModel, HomeDisplayMode, MotionFrame, RenderCapabilities,
+    RenderContext, ShellChromeViewModel, ShellLayout, StatusViewModel, TundraTheme,
+    compute_shell_layout, explorer_first_entry_content_line, explorer_layout, render_explorer,
+    render_explorer_with_context,
 };
 
 #[test]
@@ -40,86 +38,6 @@ fn explorer_context_path_renders_real_sizes_with_ansi_and_reduced_motion() {
 }
 
 #[test]
-fn explorer_renderer_shows_path_entries_details_search_and_message() {
-    let mut model = ExplorerViewModel::new(
-        "/Users/strix/projects",
-        vec![
-            ExplorerEntryViewModel {
-                name: "src".to_string(),
-                kind: "Directory".to_string(),
-                size: None,
-                modified: Some("2026-07-02 09:10".to_string()),
-                attributes: vec!["hidden".to_string()],
-                selected: false,
-            },
-            ExplorerEntryViewModel {
-                name: "README.md".to_string(),
-                kind: "File".to_string(),
-                size: Some("1.2 KB".to_string()),
-                modified: Some("2026-07-02 10:15".to_string()),
-                attributes: vec!["readonly".to_string()],
-                selected: true,
-            },
-        ],
-        Some(1),
-    );
-    model.search = Some(ExplorerSearchViewModel::new("read", true, Some(1)));
-    model.show_hidden = true;
-    model.message = Some("Copied README.md".to_string());
-
-    let output = render_output(&model);
-
-    assert!(output.contains("/Users/strix/projects"));
-    assert!(output.contains("Hidden files: shown"));
-    assert!(output.contains("Search: read_ (1 match, active)"));
-    assert!(output.contains("[+] src"));
-    assert!(output.contains("Directory"));
-    assert!(output.contains("[T] README.md"));
-    assert!(output.contains("1.2 KB"));
-    assert!(output.contains("Selected: README.md"));
-    assert!(output.contains("Name: README.md"));
-    assert!(output.contains("Type: File"));
-    assert!(output.contains("Size: 1.2 KB"));
-    assert!(output.contains("Modified: 2026-07-02 10:15"));
-    assert!(output.contains("Attributes: readonly"));
-    assert!(output.contains("Copied README.md"));
-    assert!(output.contains("Explorer"));
-    assert!(output.contains("Ready"));
-    assert!(output.contains("TundraUX 3"));
-    assert!(output.contains("Enter: open"));
-    assert!(output.contains("Backspace: parent"));
-    assert!(output.contains("/: search"));
-}
-
-#[test]
-fn explorer_renderer_shows_pending_confirmation_dialog() {
-    let mut model = sample_model();
-    model.pending_dialog = Some(ExplorerDialogViewModel::new(
-        "Delete File",
-        "Delete README.md?",
-        "Enter: delete",
-        "Esc: cancel",
-    ));
-
-    let output = render_output(&model);
-
-    assert!(output.contains("Delete File"));
-    assert!(output.contains("Delete README.md?"));
-    assert!(output.contains("Enter: delete"));
-    assert!(output.contains("Esc: cancel"));
-}
-
-#[test]
-fn explorer_renderer_shows_error() {
-    let mut model = sample_model();
-    model.error = Some("Permission denied: README.md".to_string());
-
-    let output = render_output(&model);
-
-    assert!(output.contains("Error: Permission denied: README.md"));
-}
-
-#[test]
 fn explorer_address_editor_renders_the_controlled_value_and_cursor() {
     let mut model = sample_model();
     model.address_editing = true;
@@ -131,92 +49,12 @@ fn explorer_address_editor_renders_the_controlled_value_and_cursor() {
 }
 
 #[test]
-fn explorer_renderer_supports_volume_and_trash_quick_location_icons() {
-    let mut model = sample_model();
-    model.quick_locations = vec![
-        ExplorerQuickLocationViewModel::new("volume-c", "Local Disk (C:)", "C:\\", "drive"),
-        ExplorerQuickLocationViewModel::new("trash", "Trash", "", "trash"),
-    ];
-
-    let output = render_output(&model);
-
-    assert!(output.contains("[/] Local Disk (C:)"));
-    assert!(output.contains("[X] Trash"));
-}
-
-#[test]
 fn explorer_first_entry_line_accounts_for_wrapped_header_text() {
     let model = sample_model();
 
     assert!(
         explorer_first_entry_content_line(&model, 40)
             > explorer_first_entry_content_line(&model, 120)
-    );
-}
-
-#[test]
-fn compact_explorer_shows_highest_priority_notification() {
-    let model = sample_model();
-    let mut chrome = chrome_for("Explorer");
-    chrome.terminal_size = (49, 11);
-    chrome.status = StatusViewModel {
-        status: "Compact status".to_string(),
-        toast: Some("Compact toast".to_string()),
-        error: Some("Explorer alert".to_string()),
-        alert_tone: NotificationTone::Critical,
-        time_button_label: None,
-        time_button_selected: false,
-    };
-    let mut terminal = Terminal::new(TestBackend::new(49, 11)).expect("test terminal");
-
-    terminal
-        .draw(|frame| {
-            render_explorer(
-                frame,
-                frame.area(),
-                &chrome,
-                &model,
-                &TundraTheme::default_dark(),
-            );
-        })
-        .expect("render compact explorer");
-
-    let output = terminal_output(&terminal);
-    assert!(output.contains("[CRITICAL] Explorer alert"));
-    assert!(!output.contains("Compact toast"));
-    assert!(!output.contains("Compact status"));
-}
-
-#[test]
-fn explorer_layout_uses_the_documented_responsive_breakpoints() {
-    let mut model = sample_model();
-    model.quick_locations = vec![ExplorerQuickLocationViewModel::new(
-        "desktop",
-        "Desktop",
-        "/Users/strix/Desktop",
-        "desktop",
-    )];
-
-    let wide = explorer_layout(Rect::new(0, 0, 96, 24), &model);
-    assert_eq!(wide.mode, ExplorerLayoutMode::DetailedWithSidebar);
-    assert_eq!(wide.sidebar.expect("wide sidebar").width, 20);
-    assert_eq!(wide.columns.len(), 4);
-
-    let detailed = explorer_layout(Rect::new(0, 0, 95, 24), &model);
-    assert_eq!(detailed.mode, ExplorerLayoutMode::Detailed);
-    assert!(detailed.sidebar.is_none());
-    assert_eq!(detailed.columns.len(), 4);
-
-    let compact = explorer_layout(Rect::new(0, 0, 71, 24), &model);
-    assert_eq!(compact.mode, ExplorerLayoutMode::Compact);
-    assert!(compact.sidebar.is_none());
-    assert_eq!(
-        compact
-            .columns
-            .iter()
-            .map(|column| column.column)
-            .collect::<Vec<_>>(),
-        vec![ExplorerSortColumn::Name, ExplorerSortColumn::Type]
     );
 }
 
@@ -441,46 +279,6 @@ fn explorer_toolbar_renders_actual_shortcuts_at_narrow_and_wide_widths() {
 }
 
 #[test]
-fn explorer_toolbar_buttons_have_one_outer_bracket_pair() {
-    let model = sample_model();
-    let terminal = render_terminal(&model);
-    let ShellLayout::Full { main, .. } = compute_shell_layout(Rect::new(0, 0, 110, 32)) else {
-        panic!("test terminal must use the full shell layout");
-    };
-    let layout = explorer_layout(main, &model);
-    let buffer = terminal.backend().buffer();
-
-    for button in layout.toolbar_buttons {
-        let text: String = (button.area.x..button.area.right())
-            .map(|x| buffer.cell((x, button.area.y)).unwrap().symbol())
-            .collect();
-        assert!(text.contains(button.action.shortcut_label()), "{text}");
-        assert_eq!(
-            buffer
-                .cell((button.area.x, button.area.y))
-                .expect("toolbar opening bracket")
-                .symbol(),
-            "["
-        );
-        assert_ne!(
-            buffer
-                .cell((button.area.x.saturating_add(1), button.area.y))
-                .expect("toolbar icon")
-                .symbol(),
-            "[",
-            "toolbar button must not render a duplicate opening bracket"
-        );
-        assert_eq!(
-            buffer
-                .cell((button.area.right().saturating_sub(1), button.area.y))
-                .expect("toolbar closing bracket")
-                .symbol(),
-            "]"
-        );
-    }
-}
-
-#[test]
 fn explorer_explicit_wheel_viewport_does_not_snap_to_focus() {
     let entries = (0..20)
         .map(|index| ExplorerEntryViewModel {
@@ -621,124 +419,6 @@ fn explorer_progress_prefers_byte_percent_and_is_bounded() {
     };
 
     assert_eq!(progress.percent(), Some(100));
-}
-
-#[test]
-fn explorer_advanced_options_conflict_and_properties_overlays_render() {
-    let mut model = sample_model();
-    model.overlay = Some(ExplorerOverlayViewModel::Options(
-        ExplorerOptionsViewModel {
-            title: "Advanced options".to_string(),
-            options: vec![ExplorerOptionViewModel {
-                id: "hidden".to_string(),
-                label: "Show hidden".to_string(),
-                value: "Off".to_string(),
-                enabled: true,
-                selected: true,
-                focused: true,
-            }],
-            close_label: "Done".to_string(),
-        },
-    ));
-    let option_area = overlay_control_area(&model, &ExplorerOverlayControl::Option(0));
-    let options_terminal = render_terminal(&model);
-    let options = terminal_output(&options_terminal);
-    assert!(options.contains("Advanced options"));
-    assert!(options.contains("Show hidden: Off"));
-    assert!(options.contains("Done"));
-    assert_eq!(
-        options_terminal
-            .backend()
-            .buffer()
-            .cell((option_area.x, option_area.y))
-            .expect("option origin cell")
-            .symbol(),
-        "[",
-        "the component-rendered option button must start with a square bracket",
-    );
-    assert_eq!(
-        options_terminal
-            .backend()
-            .buffer()
-            .cell((option_area.x.saturating_add(1), option_area.y))
-            .expect("option label cell")
-            .symbol(),
-        "S",
-        "the bracketed option label must remain left aligned",
-    );
-    let option_cell = &options_terminal.backend().buffer()[(option_area.x, option_area.y)];
-    assert_eq!(option_cell.fg, TundraTheme::default_dark().accent_color);
-    assert_eq!(
-        option_cell.bg,
-        TundraTheme::default_dark().background,
-        "selected Button text must not use an accent background",
-    );
-
-    model.overlay = Some(ExplorerOverlayViewModel::Conflict(
-        ExplorerConflictViewModel {
-            allow_apply_to_remaining: true,
-            title: "Name conflict".to_string(),
-            source: "README.md".to_string(),
-            destination: "/tmp/README.md".to_string(),
-            choices: vec![
-                ExplorerConflictChoice::KeepBoth,
-                ExplorerConflictChoice::Replace,
-                ExplorerConflictChoice::Skip,
-                ExplorerConflictChoice::Cancel,
-            ],
-            selected_choice: ExplorerConflictChoice::KeepBoth,
-            apply_to_remaining: true,
-        },
-    ));
-    let apply_area = overlay_control_area(&model, &ExplorerOverlayControl::ApplyToRemaining);
-    let conflict_terminal = render_terminal(&model);
-    let conflict = terminal_output(&conflict_terminal);
-    assert!(conflict.contains("Name conflict"));
-    assert!(conflict.contains("README.md"));
-    assert!(conflict.contains("Keep both"));
-    assert!(conflict.contains("Apply to remaining items: On"));
-    assert_eq!(
-        conflict_terminal
-            .backend()
-            .buffer()
-            .cell((apply_area.x, apply_area.y))
-            .expect("apply-to-remaining origin cell")
-            .symbol(),
-        "[",
-        "the component-rendered toggle button must start with a square bracket",
-    );
-    assert_eq!(
-        conflict_terminal
-            .backend()
-            .buffer()
-            .cell((apply_area.x.saturating_add(1), apply_area.y))
-            .expect("apply-to-remaining label cell")
-            .symbol(),
-        "A",
-        "the bracketed toggle label must remain left aligned",
-    );
-    let apply_cell = &conflict_terminal.backend().buffer()[(apply_area.x, apply_area.y)];
-    assert_eq!(apply_cell.fg, TundraTheme::default_dark().foreground);
-    assert_eq!(
-        apply_cell.bg,
-        TundraTheme::default_dark().background,
-        "selected Button text must not use an accent background",
-    );
-
-    model.overlay = Some(ExplorerOverlayViewModel::Properties(
-        ExplorerPropertiesViewModel {
-            title: "Properties".to_string(),
-            properties: vec![ExplorerPropertyViewModel {
-                label: "Type".to_string(),
-                value: "Markdown file".to_string(),
-            }],
-            close_label: "Close".to_string(),
-        },
-    ));
-    let properties = render_output(&model);
-    assert!(properties.contains("Properties"));
-    assert!(properties.contains("Type: Markdown file"));
-    assert!(properties.contains("Close"));
 }
 
 fn sample_model() -> ExplorerViewModel {

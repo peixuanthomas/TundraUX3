@@ -30,4 +30,5 @@ pub use task::{ManagedLocalTaskHandle, ManagedTaskHandle};
 compile_error!("watchdog recovery requires panic=\"unwind\"");
 
 #[cfg(test)]
+#[path = "../tests/unit/root.rs"]
 mod tests;

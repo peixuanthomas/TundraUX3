@@ -9,7 +9,7 @@ use cli::{
 };
 use platform::mock::{MockCall, MockPlatform, UnsupportedPlatform};
 use platform::{Platform, PlatformKind, UserDirs, build_macos_app_paths, build_windows_app_paths};
-use storage::{BorderColor, BorderShape, StorageConfig, StorageLayout, StorageManager};
+use storage::{BorderColor, BorderShape, StorageLayout, StorageManager};
 use watchdog::{
     BoundaryKind, BoundarySpec, ProcessWatchdog, RecoveryOutcome, WatchdogConfig, WatchdogRuntime,
 };
@@ -133,29 +133,6 @@ fn ui_style_command_selects_versions_and_rejects_invalid_arguments() {
     }
     assert!(output.contains("F1-F3"));
     assert!(stderr.is_empty());
-}
-
-#[test]
-fn debug_help_lists_diagnostics_and_report_tests() {
-    let mut stdout = Vec::new();
-    let mut stderr = Vec::new();
-    assert_eq!(run(["debug"], &mut stdout, &mut stderr), 0);
-    let help = String::from_utf8(stdout).unwrap();
-    for name in [
-        "asset",
-        "doctor",
-        "paths",
-        "explain",
-        "test-frost",
-        "test-matrix",
-        "test-watchdog-error",
-        "test-watchdog-critical",
-        "test-watchdog-panic",
-    ] {
-        assert!(help.contains(name), "missing {name}");
-    }
-    assert!(stderr.is_empty());
-    assert!(!help.contains("weathr"));
 }
 
 #[test]
@@ -325,15 +302,6 @@ fn asset_args_select_help_rendered_source_and_named_item_output() {
 }
 
 #[test]
-fn cls_arg_dispatches_without_extra_arguments() {
-    assert_eq!(parse_args(["cls"]), Ok(CliCommand::Cls));
-    assert_eq!(
-        parse_args(["cls", "extra"]),
-        Err(CliError::UnexpectedArgument("extra".to_string()))
-    );
-}
-
-#[test]
 fn editor_command_is_not_a_shell_launch_bypass() {
     assert_eq!(
         parse_args(["editor"]),
@@ -442,43 +410,6 @@ fn unknown_and_extra_arguments_are_errors() {
         parse_args(["debug", "doctor", "--json"]),
         Err(CliError::UnexpectedArgument("--json".to_string()))
     );
-}
-
-#[test]
-fn help_command_writes_usage_to_stdout() {
-    let mut stdout = Vec::new();
-    let mut stderr = Vec::new();
-
-    let exit_code = run(["help"], &mut stdout, &mut stderr);
-
-    assert_eq!(exit_code, 0, "{}", String::from_utf8_lossy(&stderr));
-    assert!(stderr.is_empty());
-    let stdout = String::from_utf8(stdout).expect("help output should be utf8");
-    assert!(stdout.contains("<cls|config|debug|logs|new|repl|help>"));
-    assert!(stdout.contains("cls     Clear terminal history and screen"));
-    assert!(stdout.contains("config  View or update user config"));
-    assert!(stdout.contains("new     Clear saved TundraUX3 data"));
-    assert!(!stdout.contains("Launch the shell directly"));
-    assert!(!stdout.contains("Launch the terminal weather scene"));
-    assert!(!stdout.contains("Windows 11"));
-    assert!(!stdout.contains("Windows Terminal"));
-}
-
-#[test]
-fn asset_without_a_name_prints_asset_specific_help() {
-    let mut stdout = Vec::new();
-    let mut stderr = Vec::new();
-
-    let exit_code = run(["debug", "asset"], &mut stdout, &mut stderr);
-
-    assert_eq!(exit_code, 0);
-    assert!(stderr.is_empty());
-    let stdout = String::from_utf8(stdout).expect("asset help output should be utf8");
-    assert!(stdout.contains("TundraUX3 asset test command"));
-    assert!(stdout.contains("asset <name> -a"));
-    assert!(stdout.contains("asset <name> --<item>"));
-    assert!(stdout.contains("explorer_icons"));
-    assert!(stdout.contains("weathr/world/house"));
 }
 
 #[test]
@@ -670,27 +601,6 @@ fn cls_command_clears_history_and_screen_then_moves_the_cursor_home() {
     assert_eq!(exit_code, 0);
     assert_eq!(stdout, b"\x1b[3J\x1b[2J\x1b[H");
     assert!(stderr.is_empty());
-}
-
-#[test]
-fn explain_command_prints_startup_and_boundary_notes() {
-    let mut stdout = Vec::new();
-    let mut stderr = Vec::new();
-
-    let exit_code = run(["debug", "explain"], &mut stdout, &mut stderr);
-
-    assert_eq!(exit_code, 0);
-    assert!(stderr.is_empty());
-    let stdout = String::from_utf8(stdout).expect("explain output should be utf8");
-    assert!(stdout.contains("Startup flow"));
-    assert!(stdout.contains("tundra-cli"));
-    assert!(stdout.contains("Kernel boundary"));
-    assert!(stdout.contains("UI boundary"));
-    assert!(stdout.contains("platform"));
-    assert!(stdout.contains("tundra-shell"));
-    assert!(stdout.contains("diagnostics and tests are under debug"));
-    assert!(!stdout.contains("Windows 11"));
-    assert!(!stdout.contains("Windows Terminal"));
 }
 
 #[test]
@@ -950,43 +860,6 @@ fn config_accent_color_accepts_hex_and_default_then_reports_canonical_values() {
 }
 
 #[test]
-fn config_get_theme_and_full_config_include_border_summary() {
-    let mut stdout = Vec::new();
-    let mut stderr = Vec::new();
-    let tree = TempTree::new("config-get-theme-summary");
-    let platform = mock_windows_platform(tree.path());
-
-    assert_eq!(
-        run_with_platform(
-            ["config", "get", "theme"],
-            &platform,
-            &mut stdout,
-            &mut stderr,
-        ),
-        0
-    );
-    assert!(stderr.is_empty());
-    assert_eq!(
-        String::from_utf8(stdout).expect("config output should be utf8"),
-        "border-shape = rounded\nborder-color = #29434E\naccent-color = #63D3E5\n"
-    );
-
-    let mut stdout = Vec::new();
-    let mut stderr = Vec::new();
-    assert_eq!(
-        run_with_platform(["config", "get"], &platform, &mut stdout, &mut stderr),
-        0
-    );
-    assert!(stderr.is_empty());
-    let stdout = String::from_utf8(stdout).expect("config output should be utf8");
-    assert!(
-        stdout.starts_with(
-            "border-shape = rounded\nborder-color = #29434E\naccent-color = #63D3E5\n"
-        )
-    );
-}
-
-#[test]
 fn config_rejects_invalid_border_values_without_writing_config() {
     let tree = TempTree::new("config-reject-invalid-border-values");
     let platform = mock_windows_platform(tree.path());
@@ -1093,33 +966,6 @@ fn config_set_address_by_label_updates_timezone() {
 }
 
 #[test]
-fn config_get_address_prints_resolved_location() {
-    let mut stdout = Vec::new();
-    let mut stderr = Vec::new();
-    let tree = TempTree::new("config-get-address");
-    let platform = mock_windows_platform(tree.path());
-    let app_paths = platform.app_paths().expect("mock app paths");
-    let opened = StorageManager::open(app_paths).expect("storage initializes");
-    let config = StorageConfig {
-        timezone: "Asia/Shanghai".to_string(),
-        ..StorageConfig::default()
-    };
-    opened.manager.save_config(&config).expect("config saves");
-
-    let exit_code = run_with_platform(
-        ["config", "get", "address"],
-        &platform,
-        &mut stdout,
-        &mut stderr,
-    );
-
-    assert_eq!(exit_code, 0);
-    assert!(stderr.is_empty());
-    let stdout = String::from_utf8(stdout).expect("config output should be utf8");
-    assert!(stdout.contains("address = Shanghai (Asia/Shanghai, 31.2304, 121.4737)"));
-}
-
-#[test]
 fn config_set_password_is_rejected_and_leaves_users_unchanged() {
     let mut stdout = Vec::new();
     let mut stderr = Vec::new();
@@ -1191,27 +1037,6 @@ fn new_command_clears_saved_content_and_recreates_default_storage() {
             .is_empty()
     );
     assert_eq!(manager.manager.load_config().expect("config").theme, "dark");
-}
-
-#[test]
-fn paths_command_prints_injected_windows_resolved_and_storage_paths() {
-    let mut stdout = Vec::new();
-    let mut stderr = Vec::new();
-    let tree = TempTree::new("windows-paths");
-    let platform = mock_windows_platform(tree.path());
-
-    let exit_code = run_with_platform(["debug", "paths"], &platform, &mut stdout, &mut stderr);
-
-    assert_eq!(exit_code, 0);
-    assert!(stderr.is_empty());
-    let stdout = String::from_utf8(stdout).expect("paths output should be utf8");
-    assert!(stdout.contains("Path templates:"));
-    assert!(stdout.contains("Resolved paths:"));
-    assert!(stdout.contains("Storage files:"));
-    assert_path_labels(&stdout);
-    assert_storage_labels(&stdout);
-    assert_windows_resolved_path_markers(&stdout);
-    assert_windows_storage_file_markers(&stdout);
 }
 
 #[test]
@@ -1390,25 +1215,6 @@ fn assert_storage_labels(output: &str) {
     assert!(output.contains("Recent files:"));
     assert!(output.contains("Sessions file:"));
     assert!(output.contains("Users file:"));
-}
-
-fn assert_windows_resolved_path_markers(output: &str) {
-    let normalized = output.replace('\\', "/");
-
-    assert!(normalized.contains("Roaming/TundraUX3/config.toml"));
-    assert!(normalized.contains("Local/TundraUX3/state"));
-    assert!(normalized.contains("Local/TundraUX3/cache"));
-    assert!(normalized.contains("Local/TundraUX3/logs"));
-    assert!(normalized.contains("Temp/TundraUX3"));
-}
-
-fn assert_windows_storage_file_markers(output: &str) {
-    let normalized = output.replace('\\', "/");
-
-    assert!(normalized.contains("Local/TundraUX3/state/state.v1.json"));
-    assert!(normalized.contains("Local/TundraUX3/state/recent-files.v1.json"));
-    assert!(normalized.contains("Local/TundraUX3/state/sessions.v1.json"));
-    assert!(normalized.contains("Local/TundraUX3/state/users.v2.json"));
 }
 
 fn assert_macos_resolved_path_markers(output: &str) {

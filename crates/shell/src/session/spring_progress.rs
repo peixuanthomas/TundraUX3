@@ -9,7 +9,7 @@ pub(super) struct SpringProgress {
 }
 
 #[cfg(test)]
-#[path = "tests/spring_progress.rs"]
+#[path = "../../tests/unit/session/spring_progress.rs"]
 mod tests;
 
 impl SpringProgress {

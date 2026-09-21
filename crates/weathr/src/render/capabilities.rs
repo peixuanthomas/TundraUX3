@@ -81,33 +81,3 @@ fn check_term_for_256() -> ColorSupport {
     }
     ColorSupport::Basic
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crossterm::style::Color;
-
-    #[test]
-    fn test_adjust_color_none() {
-        let caps = TerminalCapabilities {
-            color_support: ColorSupport::None,
-            is_tty: true,
-        };
-        assert_eq!(caps.adjust_color(Color::Red), Color::Reset);
-        assert_eq!(
-            caps.adjust_color(Color::Rgb { r: 255, g: 0, b: 0 }),
-            Color::Reset
-        );
-    }
-
-    #[test]
-    fn test_adjust_color_truecolor() {
-        let caps = TerminalCapabilities {
-            color_support: ColorSupport::TrueColor,
-            is_tty: true,
-        };
-        assert_eq!(caps.adjust_color(Color::Red), Color::Red);
-        let rgb = Color::Rgb { r: 255, g: 0, b: 0 };
-        assert_eq!(caps.adjust_color(rgb), rgb);
-    }
-}

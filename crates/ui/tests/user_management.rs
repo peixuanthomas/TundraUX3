@@ -7,11 +7,11 @@ use ratatui::style::Color;
 use support::terminal_output;
 use ui::{
     HomeDisplayMode, NotificationTone, ShellChromeViewModel, StatusViewModel, TundraTheme,
-    UserManagementAction, UserManagementColumnMode, UserManagementFeedbackTone,
-    UserManagementField, UserManagementFocus, UserManagementFormKind, UserManagementFormViewModel,
-    UserManagementUserViewModel, UserManagementViewModel, compute_shell_layout,
-    render_user_management, user_management_action_at, user_management_form_control_at,
-    user_management_layout, user_management_row_index_at,
+    UserManagementAction, UserManagementColumnMode, UserManagementField, UserManagementFocus,
+    UserManagementFormKind, UserManagementFormViewModel, UserManagementUserViewModel,
+    UserManagementViewModel, compute_shell_layout, render_user_management,
+    user_management_action_at, user_management_form_control_at, user_management_layout,
+    user_management_row_index_at,
 };
 
 #[test]
@@ -120,64 +120,6 @@ fn default_admin_actions_protect_the_last_enabled_administrator() {
 }
 
 #[test]
-fn renderer_draws_detailed_table_status_precedence_and_current_marker() {
-    let mut model = UserManagementViewModel::new(
-        "root",
-        vec![
-            user("root", "Administrator", "Admin", true, false, true),
-            user("locked", "Locked User", "User", true, true, false),
-            user("off", "Disabled User", "User", false, true, false),
-        ],
-        0,
-        None,
-        true,
-        None,
-    );
-    model.focus = UserManagementFocus::UserList;
-    let (terminal, main) = render(100, 24, &model);
-    let output = terminal_output(&terminal);
-    let layout = user_management_layout(main, &model);
-
-    assert!(output.contains("Signed in: root"));
-    assert!(output.contains("USERNAME"));
-    assert!(output.contains("DISPLAY NAME"));
-    assert!(output.contains("Enabled · You"));
-    assert!(output.contains("Locked"));
-    assert!(output.contains("Disabled"));
-    assert!(!output.contains("Disabled · You"));
-    assert!(region_has_fg(
-        &terminal,
-        layout.rows[0].area,
-        TundraTheme::default_dark().tokens().focus
-    ));
-}
-
-#[test]
-fn medium_renderer_uses_account_column_and_truncates_long_values() {
-    let model = UserManagementViewModel::new(
-        "root",
-        vec![user(
-            "an-extremely-long-username",
-            "An extraordinarily long display name",
-            "User",
-            true,
-            false,
-            false,
-        )],
-        0,
-        None,
-        true,
-        None,
-    );
-    let (terminal, _) = render(71, 18, &model);
-    let output = terminal_output(&terminal);
-
-    assert!(output.contains("ACCOUNT"));
-    assert!(!output.contains("DISPLAY NAME"));
-    assert!(output.contains('…'));
-}
-
-#[test]
 fn disabled_action_is_muted_and_exposes_its_reason() {
     let mut model = UserManagementViewModel::new(
         "root",
@@ -224,28 +166,6 @@ fn create_form_is_a_modal_with_role_password_and_action_focus() {
         &terminal,
         form.submit,
         TundraTheme::default_dark().accent_color
-    ));
-}
-
-#[test]
-fn role_cycle_is_rendered_by_the_focused_button_component() {
-    let mut model = model_with_users(2);
-    model.form = Some(create_form(UserManagementField::Role));
-    let (terminal, main) = render(100, 24, &model);
-    let layout = user_management_layout(main, &model);
-    let role = layout
-        .form
-        .expect("form geometry")
-        .fields
-        .into_iter()
-        .find(|field| field.field == UserManagementField::Role)
-        .expect("role field");
-
-    assert!(terminal_output(&terminal).contains("Role: User  ◀/▶"));
-    assert!(region_has_fg(
-        &terminal,
-        role.area,
-        TundraTheme::default_dark().accent_color,
     ));
 }
 
@@ -329,21 +249,6 @@ fn edit_and_password_forms_only_render_relevant_inputs() {
     let password = terminal_output(&terminal);
     assert!(password.contains("Password: *********"));
     assert!(password.contains("Password is too weak"));
-}
-
-#[test]
-fn feedback_error_uses_error_color() {
-    let mut model = model_with_users(1);
-    model.message = Some("Unable to save user".to_string());
-    model.feedback_tone = UserManagementFeedbackTone::Error;
-    let (terminal, main) = render(90, 22, &model);
-    let layout = user_management_layout(main, &model);
-
-    assert!(region_has_fg(
-        &terminal,
-        layout.feedback,
-        TundraTheme::default_dark().error
-    ));
 }
 
 fn model_with_users(count: usize) -> UserManagementViewModel {

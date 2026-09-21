@@ -51,5 +51,5 @@ fn copy_dir_recursive(source: &Path, destination: &Path) -> Result<(), std::io::
 }
 
 #[cfg(test)]
-#[path = "tests/asset_distribution.rs"]
+#[path = "../tests/unit/asset_distribution.rs"]
 mod tests;

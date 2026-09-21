@@ -1580,5 +1580,5 @@ fn transaction_paths(manifest: &TransactionManifest) -> TransactionPaths {
 }
 
 #[cfg(test)]
-#[path = "tests/update.rs"]
+#[path = "../tests/unit/update.rs"]
 mod tests;

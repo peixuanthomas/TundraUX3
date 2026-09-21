@@ -3,18 +3,6 @@ use ui::components::ComponentTone;
 use ui::*;
 
 #[test]
-fn breakpoint_is_exact() {
-    let m = model();
-    assert_eq!(
-        system_status_layout(Rect::new(0, 0, 88, 20), &m).column_count,
-        4
-    );
-    assert_eq!(
-        system_status_layout(Rect::new(0, 0, 89, 20), &m).column_count,
-        8
-    )
-}
-#[test]
 fn three_sizes_have_expected_geometry_and_no_overlap() {
     let m = model();
     // Keep the original content height after the Spring shell's outer inset.
@@ -130,38 +118,7 @@ fn dashboard_partial_scroll_clips_cards_without_overlap() {
         ))
     );
 }
-#[test]
-fn dashboard_has_no_global_tabs_and_footer_switches_modes() {
-    let mut m = model();
-    let out = render(100, 24, &m);
-    assert!(out.contains("Dashboard"));
-    assert!(!out.contains("Overview  Storage  Network"));
-    assert!(out.contains("Edit"));
-    assert!(out.contains("Refresh"));
-    let l = system_status_layout(full_main(100, 24), &m);
-    assert_eq!(
-        system_status_hit_test(&l, (l.edit_button.x, l.edit_button.y)),
-        Some(SystemStatusHitTarget::Edit)
-    );
-    assert!(l.save_button.is_empty());
-    assert!(l.cancel_button.is_empty());
-    m.dashboard.editing = true;
-    let editing = system_status_layout(full_main(100, 24), &m);
-    assert!(editing.edit_button.is_empty());
-    assert!(editing.refresh_button.is_empty());
-    assert_eq!(
-        system_status_hit_test(&editing, (editing.save_button.x, editing.save_button.y)),
-        Some(SystemStatusHitTarget::Save)
-    );
-    assert_eq!(
-        system_status_hit_test(&editing, (editing.cancel_button.x, editing.cancel_button.y)),
-        Some(SystemStatusHitTarget::Cancel)
-    );
-    let out = render(100, 24, &m);
-    for s in ["Add", "Size", "Remove", "Save", "Cancel"] {
-        assert!(out.contains(s))
-    }
-}
+
 #[test]
 fn too_short_uses_empty_state_but_keeps_footer() {
     let m = model();
@@ -169,40 +126,7 @@ fn too_short_uses_empty_state_but_keeps_footer() {
     assert!(l.empty_canvas);
     assert!(l.refresh_button.width > 0);
 }
-#[test]
-fn all_kinds_and_sizes_and_states_render() {
-    for kind in SystemStatusWidgetKind::ALL {
-        for size in [
-            SystemStatusWidgetSize::Small,
-            SystemStatusWidgetSize::Wide,
-            SystemStatusWidgetSize::Large,
-        ] {
-            let mut m = model();
-            m.dashboard.wide_widgets = vec![widget(kind, size, 0, 0)];
-            let out = render(100, 24, &m);
-            assert!(out.contains(&kind.label()));
-            assert!(out.contains("42%"));
-            assert!(out.contains("secondary"));
-            if size == SystemStatusWidgetSize::Large {
-                assert!(out.contains("A"));
-            }
-        }
-    }
-    for state in [
-        SystemStatusWidgetState::Loading,
-        SystemStatusWidgetState::Stale {
-            message: "old".into(),
-        },
-        SystemStatusWidgetState::Unavailable {
-            message: "denied".into(),
-        },
-    ] {
-        let mut m = model();
-        m.dashboard.wide_widgets[0].state = state;
-        let out = render(100, 24, &m);
-        assert!(out.contains("Loading") || out.contains("Stale") || out.contains("Unavailable"))
-    }
-}
+
 #[test]
 fn storage_network_and_diagnostics_details_remain_integrated() {
     let mut m = model();
@@ -231,48 +155,7 @@ fn storage_network_and_diagnostics_details_remain_integrated() {
     );
     assert!(render(120, 28, &m).contains("Data path"))
 }
-#[test]
-fn diagnostics_logs_and_incidents_are_independent_system_status_modules() {
-    for (detail, expected) in [
-        (SystemStatusDetail::Diagnostics, DiagnosticsTab::Health),
-        (SystemStatusDetail::Logs, DiagnosticsTab::Logs),
-        (SystemStatusDetail::Incidents, DiagnosticsTab::Incidents),
-    ] {
-        let mut m = model();
-        m.route = SystemStatusRoute::Detail(detail);
-        // A previous page must not decide the current page's content.
-        m.diagnostics.tab = DiagnosticsTab::Health;
-        let l = system_status_layout(full_main(120, 28), &m);
 
-        assert_eq!(l.diagnostics_content.as_ref().unwrap().active_tab, expected);
-        assert_eq!(
-            l.diagnostics_content.as_ref().unwrap().list_panel.y,
-            l.canvas.y
-        );
-        let out = render(120, 28, &m);
-        assert!(out.contains(&detail.label()));
-        assert!(!out.contains("O Open logs"));
-        assert!(!out.contains("Tab Switch"));
-    }
-    for (width, height) in [(108, 22), (120, 28)] {
-        let m = model();
-        let l = system_status_layout(full_main(width, height), &m);
-        assert_eq!(l.header.width, l.panel.width - 2);
-        assert_eq!(
-            system_status_hit_test(&l, (l.header.right() - 1, l.header.y)),
-            None
-        );
-        let out = render(width, height, &m);
-        for label in ["Diagnostics", "Logs", "Incidents"] {
-            let header: String = out
-                .chars()
-                .skip(l.header.y as usize * width as usize)
-                .take(width as usize)
-                .collect();
-            assert!(!header.contains(label), "{width}: unexpected {label}");
-        }
-    }
-}
 #[test]
 fn size_picker_renders_exact_rows_and_captures_dashboard_hits() {
     let mut m = model();
@@ -517,56 +400,6 @@ fn full_main(w: u16, h: u16) -> Rect {
         ShellLayout::Full { main, .. } => main,
         _ => panic!(),
     }
-}
-
-#[test]
-fn selection_only_accents_borders_and_edit_mode_blinks_slowly() {
-    use std::time::Duration;
-    let metric = widget(
-        SystemStatusWidgetKind::Cpu,
-        SystemStatusWidgetSize::Small,
-        0,
-        0,
-    );
-    let context = RenderContext::from_theme(
-        &TundraTheme::default_dark(),
-        Default::default(),
-        Default::default(),
-    );
-    let draw = |selected, editing, seconds, reduced_motion| {
-        let mut terminal = Terminal::new(TestBackend::new(24, 5)).unwrap();
-        let mut context = context;
-        context.motion.now = Duration::from_secs(seconds);
-        context.motion.reduced_motion = reduced_motion;
-        terminal
-            .draw(|frame| {
-                let mut card = ui::components::MetricCard::new(&metric);
-                card.state.selected = selected;
-                card.editing = editing;
-                card.render_frame(frame, frame.area(), &context);
-            })
-            .unwrap();
-        terminal.backend().buffer().clone()
-    };
-    let normal = draw(false, false, 0, false);
-    let selected = draw(true, false, 0, false);
-    assert_eq!(selected[(0, 2)].fg, context.theme.accent);
-    assert_ne!(normal[(0, 2)].fg, selected[(0, 2)].fg);
-    for y in 1..4 {
-        for x in 1..23 {
-            assert_eq!(normal[(x, y)].bg, selected[(x, y)].bg);
-        }
-    }
-    assert_eq!(draw(false, true, 0, false)[(0, 2)].fg, context.theme.accent);
-    assert_eq!(draw(false, true, 1, false)[(0, 2)].fg, context.theme.accent);
-    assert_eq!(draw(false, true, 2, false)[(0, 2)].fg, context.theme.border);
-    assert_eq!(draw(false, true, 4, false)[(0, 2)].fg, context.theme.accent);
-    assert_eq!(draw(true, true, 2, false)[(0, 2)].fg, context.theme.accent);
-    assert_eq!(draw(false, true, 0, true), draw(false, true, 2, true));
-    let mut m = model();
-    m.dashboard.editing = true;
-    m.dashboard.feedback = Some("Added CPU".into());
-    assert!(render(100, 24, &m).contains("EDIT MODE"));
 }
 
 #[test]

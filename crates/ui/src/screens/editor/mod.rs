@@ -26,4 +26,5 @@ pub use render::*;
 pub use source::*;
 
 #[cfg(test)]
+#[path = "../../../tests/unit/screens/editor/tests.rs"]
 mod tests;

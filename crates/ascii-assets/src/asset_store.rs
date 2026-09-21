@@ -224,5 +224,5 @@ fn load_image_assets(
 }
 
 #[cfg(test)]
-#[path = "tests/asset_store.rs"]
+#[path = "../tests/unit/asset_store.rs"]
 mod tests;

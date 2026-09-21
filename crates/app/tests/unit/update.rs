@@ -1,0 +1,736 @@
+use super::*;
+use platform::ProcessStream;
+#[cfg(any(windows, target_os = "linux"))]
+use std::cell::Cell;
+use std::io::Write;
+
+fn mark_portable_fixture(install: &Path) {
+    #[cfg(target_os = "linux")]
+    {
+        fs::write(
+            install.join(platform::installation::PORTABLE_MARKER),
+            platform::installation::PORTABLE_MARKER_CONTENT,
+        )
+        .unwrap();
+        for name in [SHELL_FILE, CLI_FILE] {
+            let path = install.join(name);
+            if !path.exists() {
+                fs::write(path, b"fixture").unwrap();
+            }
+        }
+    }
+    #[cfg(not(target_os = "linux"))]
+    let _ = install;
+}
+
+#[test]
+fn update_compare_relations_are_mapped_from_local_to_remote() {
+    assert_eq!(
+        relation_from_compare("identical", 0, 0),
+        UpdateRelation::Identical
+    );
+    assert_eq!(
+        relation_from_compare("ahead", 3, 0),
+        UpdateRelation::Behind { remote_ahead: 3 }
+    );
+    assert_eq!(
+        relation_from_compare("behind", 0, 2),
+        UpdateRelation::Ahead { local_ahead: 2 }
+    );
+    assert_eq!(
+        relation_from_compare("diverged", 4, 2),
+        UpdateRelation::Diverged {
+            remote_ahead: 4,
+            local_ahead: 2
+        }
+    );
+    assert_eq!(
+        relation_from_compare("mystery", 0, 0),
+        UpdateRelation::Unknown
+    );
+}
+
+#[test]
+fn update_rust_version_is_read_and_compared() {
+    let root = std::env::temp_dir().join(format!("tundra-update-manifest-{}", std::process::id()));
+    fs::create_dir_all(&root).unwrap();
+    let path = root.join("Cargo.toml");
+    fs::write(&path, "[workspace.package]\nrust-version = \"1.82\"\n").unwrap();
+    assert_eq!(
+        required_rust_version(&path).unwrap(),
+        Some(Version::new(1, 82, 0))
+    );
+    assert_eq!(
+        parse_rustc_version("rustc 1.85.1\nrelease: 1.85.1\n").unwrap(),
+        Version::new(1, 85, 1)
+    );
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn update_zip_rejects_parent_traversal() {
+    let mut cursor = Cursor::new(Vec::new());
+    {
+        let mut writer = zip::ZipWriter::new(&mut cursor);
+        writer
+            .start_file("../escape", zip::write::SimpleFileOptions::default())
+            .unwrap();
+        writer.write_all(b"bad").unwrap();
+        writer.finish().unwrap();
+    }
+    let root = std::env::temp_dir().join(format!("tundra-update-zip-{}", std::process::id()));
+    let error = extract_archive(cursor.get_ref(), &root).unwrap_err();
+    assert!(error.to_string().contains("unsafe path"));
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn update_product_validation_requires_both_programs_without_assets() {
+    let root = std::env::temp_dir().join(format!("tundra-update-products-{}", std::process::id()));
+    fs::create_dir_all(root.join("target/release")).unwrap();
+    fs::write(root.join("target/release").join(SHELL_FILE), b"shell").unwrap();
+    assert!(validate_product_paths(&root, &root.join("target"), "abc").is_err());
+    fs::write(root.join("target/release").join(CLI_FILE), b"cli").unwrap();
+    assert!(validate_product_paths(&root, &root.join("target"), "abc").is_ok());
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[derive(Clone, Copy)]
+enum PreparationFailure {
+    MissingRustc,
+    MissingCargo,
+    RustcTooOld,
+    Locked,
+    Compile,
+    MissingProduct,
+    CliProbe,
+    ShellProbe,
+}
+
+struct FakePreparationOperations {
+    failure: PreparationFailure,
+}
+
+impl PreparationOperations for FakePreparationOperations {
+    fn run(&self, spec: &ProcessSpec, name: &str) -> Result<ProcessExit, UpdateError> {
+        if name == "rustc" && matches!(self.failure, PreparationFailure::MissingRustc) {
+            return Err(UpdateError::new("could not run rustc: missing"));
+        }
+        if name == "cargo" && matches!(self.failure, PreparationFailure::MissingCargo) {
+            return Err(UpdateError::new("could not run cargo: missing"));
+        }
+        let failed_build = name == "cargo build"
+            && matches!(
+                self.failure,
+                PreparationFailure::Locked | PreparationFailure::Compile
+            );
+        let stdout = if name == "rustc" {
+            if matches!(self.failure, PreparationFailure::RustcTooOld) {
+                b"rustc 1.70.0\nrelease: 1.70.0\n".to_vec()
+            } else {
+                b"rustc 1.90.0\nrelease: 1.90.0\n".to_vec()
+            }
+        } else {
+            Vec::new()
+        };
+        assert!(name != "cargo build" || spec.args_slice().iter().any(|arg| arg == "--locked"));
+        if failed_build {
+            return Err(UpdateError::new(
+                if matches!(self.failure, PreparationFailure::Locked) {
+                    "cargo build failed: lock file needs to be updated"
+                } else {
+                    "cargo build failed: compiler error"
+                },
+            ));
+        }
+        Ok(ProcessExit {
+            code: Some(0),
+            stdout: ProcessStream::from_bytes(stdout),
+            stderr: ProcessStream::from_bytes(Vec::new()),
+        })
+    }
+
+    fn probe(&self, executable: &Path, _expected_sha: &str) -> Result<(), UpdateError> {
+        let cli = executable.file_name().is_some_and(|name| name == CLI_FILE);
+        if (cli && matches!(self.failure, PreparationFailure::CliProbe))
+            || (!cli && matches!(self.failure, PreparationFailure::ShellProbe))
+        {
+            Err(UpdateError::new(
+                "compiled program reported the wrong update protocol or commit",
+            ))
+        } else {
+            Ok(())
+        }
+    }
+}
+
+#[test]
+fn update_preparation_failures_never_touch_installation() {
+    for (index, failure) in [
+        PreparationFailure::MissingRustc,
+        PreparationFailure::MissingCargo,
+        PreparationFailure::RustcTooOld,
+        PreparationFailure::Locked,
+        PreparationFailure::Compile,
+        PreparationFailure::MissingProduct,
+        PreparationFailure::CliProbe,
+        PreparationFailure::ShellProbe,
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let root = update_test_root(&format!("prepare-failure-{index}"));
+        let source = root.join("source");
+        let target = root.join("target/release");
+        let install = root.join("unrelated-install");
+        fs::create_dir_all(&source).unwrap();
+        fs::create_dir_all(&target).unwrap();
+        fs::create_dir_all(&install).unwrap();
+        fs::write(
+            source.join("Cargo.toml"),
+            "[workspace.package]\nrust-version = \"1.80\"\n",
+        )
+        .unwrap();
+        fs::write(install.join("sentinel"), b"unchanged").unwrap();
+        if !matches!(failure, PreparationFailure::MissingProduct) {
+            fs::write(target.join(SHELL_FILE), b"shell").unwrap();
+            fs::write(target.join(CLI_FILE), b"cli").unwrap();
+        }
+        let check = UpdateCheckResult {
+            default_branch: "master".to_owned(),
+            head_sha: "target-sha".to_owned(),
+            relation: UpdateRelation::Behind { remote_ahead: 1 },
+            commits: Vec::new(),
+        };
+        let error = prepare_extracted_with_operations(
+            &check,
+            &mut |_| {},
+            &root,
+            &source,
+            &FakePreparationOperations { failure },
+        )
+        .unwrap_err();
+        assert!(!error.to_string().is_empty());
+        assert_eq!(fs::read(install.join("sentinel")).unwrap(), b"unchanged");
+        fs::remove_dir_all(root).unwrap();
+    }
+}
+
+pub(super) fn update_test_root(name: &str) -> PathBuf {
+    // macOS temp_dir() may start with /var or /tmp, which are symlinks.
+    // Document writes intentionally reject symlink ancestors, so fixtures must
+    // use the actual temporary directory rather than weakening that validation.
+    std::env::temp_dir()
+        .canonicalize()
+        .expect("canonical temporary directory")
+        .join(format!(
+            "tundra-update-{name}-{}-{}",
+            std::process::id(),
+            unix_millis()
+        ))
+}
+
+#[test]
+fn update_manifest_must_stay_below_the_install_update_directory() {
+    let root = update_test_root("manifest-location");
+    let install = root.join("install");
+    let transaction_dir = install.join(".tundra-update/tx");
+    fs::create_dir_all(&transaction_dir).unwrap();
+    mark_portable_fixture(&install);
+    let path = transaction_dir.join("transaction.json");
+    let manifest = TransactionManifest {
+        protocol: UPDATE_PROTOCOL_VERSION,
+        target_sha: "abc".to_string(),
+        install_dir: install.clone(),
+        transaction_dir: transaction_dir.clone(),
+        state: TransactionState::Prepared,
+        cli_replaced: false,
+        shell_replaced: false,
+    };
+    write_manifest(&path, &manifest).unwrap();
+    assert_eq!(load_manifest(&path).unwrap(), manifest);
+
+    let outside = install.join("outside");
+    fs::create_dir_all(&outside).unwrap();
+    let outside_path = outside.join("transaction.json");
+    let mut invalid = manifest;
+    invalid.transaction_dir = outside;
+    write_manifest(&outside_path, &invalid).unwrap();
+    assert!(
+        load_manifest(&outside_path)
+            .unwrap_err()
+            .to_string()
+            .contains("outside the installation update directory")
+    );
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn update_source_download_uses_codeload_pinned_to_a_full_sha() {
+    let sha = "a".repeat(40);
+    assert_eq!(
+        source_archive_url(&sha).unwrap(),
+        format!("https://codeload.github.com/peixuanthomas/TundraUX3/zip/{sha}")
+    );
+    for invalid in ["master", "../master", "short", ""] {
+        assert!(source_archive_url(invalid).is_err());
+    }
+}
+
+#[test]
+fn update_download_reports_known_unknown_and_truncated_lengths() {
+    for total in [Some(6), None] {
+        let mut events = Vec::new();
+        let bytes = download_source(Cursor::new(b"source"), total, &mut |event| {
+            events.push(event)
+        })
+        .unwrap();
+        assert_eq!(bytes, b"source");
+        assert_eq!(
+            events.last().unwrap().detail,
+            UpdateProgressDetail::Download {
+                received: 6,
+                total,
+                finished: true
+            }
+        );
+    }
+    let mut events = Vec::new();
+    assert!(
+        download_source(Cursor::new(b"short"), Some(9), &mut |event| events
+            .push(event))
+        .is_err()
+    );
+    assert!(!events.iter().any(|event| matches!(
+        event.detail,
+        UpdateProgressDetail::Download { finished: true, .. }
+    )));
+}
+
+#[test]
+fn update_preparation_uses_disk_cache_and_cleans_failed_work() {
+    let root = update_test_root("disk-cache");
+    let paths = platform::build_linux_app_paths(
+        root.join("config"),
+        root.join("data"),
+        root.join("disk-cache"),
+        root.join("state"),
+        root.join("runtime-tmpfs"),
+    )
+    .unwrap();
+    let dirs = platform::UserDirs::new(
+        root.join("desktop"),
+        root.join("documents"),
+        root.join("downloads"),
+        root.join("pictures"),
+        root.join("videos"),
+        root.join("music"),
+        root.join("data"),
+    )
+    .unwrap();
+    let platform =
+        platform::mock::MockPlatform::new(dirs, paths.clone()).with_kind(PlatformKind::Linux);
+    let check = UpdateCheckResult {
+        default_branch: "master".into(),
+        head_sha: "invalid-sha".into(),
+        relation: UpdateRelation::Unknown,
+        commits: Vec::new(),
+    };
+    assert!(
+        prepare_portable_update(&platform, &check, &mut |_| {})
+            .unwrap_err()
+            .to_string()
+            .contains("invalid source commit")
+    );
+    assert!(!root.join("runtime-tmpfs").exists());
+    let updates = paths.cache_path().join("updates");
+    assert!(updates.is_dir());
+    assert_eq!(fs::read_dir(updates).unwrap().count(), 0);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn update_cargo_progress_uses_real_counts_and_strips_terminal_controls() {
+    let line = clean_output("\u{1b}[2K    Building [===> ] 42/100: shell, cli\r");
+    assert_eq!(cargo_progress(&line), Some((42, 100)));
+    for line in ["error: 1/2", "Building [ ] 1/0:", "Building [ ] 10/2:"] {
+        assert_eq!(cargo_progress(line), None);
+    }
+    assert_eq!(clean_output("编译 \u{1b}[31merror\u{1b}[0m"), "编译 error");
+}
+
+#[cfg(any(windows, target_os = "linux"))]
+#[test]
+fn update_replacement_and_rollback_preserve_default_and_custom_assets() {
+    let root = update_test_root("rollback");
+    let install = root.join("install");
+    let transaction_dir = install.join(".tundra-update/tx");
+    let new = transaction_dir.join("new");
+    fs::create_dir_all(&new).unwrap();
+    fs::create_dir_all(transaction_dir.join("backup")).unwrap();
+    fs::create_dir_all(install.join("assets/themes/default")).unwrap();
+    fs::create_dir_all(install.join("assets/themes/custom")).unwrap();
+    fs::write(install.join(SHELL_FILE), b"old shell").unwrap();
+    fs::write(install.join(CLI_FILE), b"old cli").unwrap();
+    fs::write(
+        install.join("assets/themes/default/theme.txt"),
+        b"old theme",
+    )
+    .unwrap();
+    fs::write(
+        install.join("assets/themes/custom/theme.txt"),
+        b"custom theme",
+    )
+    .unwrap();
+    fs::write(new.join(SHELL_FILE), b"new shell").unwrap();
+    fs::write(new.join(CLI_FILE), b"new cli").unwrap();
+    let path = transaction_dir.join("transaction.json");
+    let mut manifest = TransactionManifest {
+        protocol: UPDATE_PROTOCOL_VERSION,
+        target_sha: "abc".to_string(),
+        install_dir: install.clone(),
+        transaction_dir,
+        state: TransactionState::Prepared,
+        cli_replaced: false,
+        shell_replaced: false,
+    };
+    write_manifest(&path, &manifest).unwrap();
+    apply_prepared_files(&path, &mut manifest).unwrap();
+    assert_eq!(fs::read(install.join(SHELL_FILE)).unwrap(), b"new shell");
+    assert_eq!(fs::read(install.join(CLI_FILE)).unwrap(), b"new cli");
+    assert_eq!(
+        fs::read(install.join("assets/themes/default/theme.txt")).unwrap(),
+        b"old theme"
+    );
+
+    rollback_files(&path, &mut manifest).unwrap();
+    assert_eq!(fs::read(install.join(SHELL_FILE)).unwrap(), b"old shell");
+    assert_eq!(fs::read(install.join(CLI_FILE)).unwrap(), b"old cli");
+    assert_eq!(
+        fs::read(install.join("assets/themes/default/theme.txt")).unwrap(),
+        b"old theme"
+    );
+    assert_eq!(
+        fs::read(install.join("assets/themes/custom/theme.txt")).unwrap(),
+        b"custom theme"
+    );
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[cfg(any(windows, target_os = "linux"))]
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum TransactionFailure {
+    Cli,
+    Shell,
+    NewLaunch,
+    ReadyTimeout,
+    RestoredLaunch,
+    None,
+}
+
+#[cfg(any(windows, target_os = "linux"))]
+struct FakeTransactionOperations {
+    failure: TransactionFailure,
+    injected: Cell<bool>,
+}
+
+#[cfg(any(windows, target_os = "linux"))]
+impl TransactionOperations for FakeTransactionOperations {
+    fn replace(&self, target: &Path, replacement: &Path, backup: &Path) -> Result<(), UpdateError> {
+        let failure = if target.file_name().is_some_and(|name| name == CLI_FILE) {
+            TransactionFailure::Cli
+        } else {
+            TransactionFailure::Shell
+        };
+        if self.failure == failure
+            && !self.injected.get()
+            && replacement
+                .parent()
+                .is_some_and(|path| path.ends_with("new"))
+        {
+            self.injected.set(true);
+            return Err(UpdateError::new("injected executable replacement failure"));
+        }
+        if target.exists() {
+            fs::rename(target, backup)?;
+        }
+        fs::rename(replacement, target)?;
+        Ok(())
+    }
+
+    fn launch_new_and_wait(
+        &self,
+        _paths: &TransactionPaths,
+        _target_sha: &str,
+    ) -> Result<(), UpdateError> {
+        match self.failure {
+            TransactionFailure::NewLaunch | TransactionFailure::RestoredLaunch => {
+                Err(UpdateError::new("injected new Shell launch failure"))
+            }
+            TransactionFailure::ReadyTimeout => Err(UpdateError::new(
+                "updated Shell did not become ready within 60 seconds",
+            )),
+            _ => Ok(()),
+        }
+    }
+
+    fn launch_restored(&self, _shell: &Path, _reason: &str) -> Result<(), UpdateError> {
+        if self.failure == TransactionFailure::RestoredLaunch {
+            Err(UpdateError::new("injected restored Shell launch failure"))
+        } else {
+            Ok(())
+        }
+    }
+}
+
+#[cfg(any(windows, target_os = "linux"))]
+fn transaction_fixture(name: &str) -> (PathBuf, PathBuf, TransactionManifest) {
+    let root = update_test_root(name);
+    let install = root.join("install");
+    let transaction_dir = install.join(".tundra-update/tx");
+    let new = transaction_dir.join("new");
+    fs::create_dir_all(&new).unwrap();
+    fs::create_dir_all(transaction_dir.join("backup")).unwrap();
+    fs::create_dir_all(install.join("assets/themes/default")).unwrap();
+    fs::create_dir_all(install.join("assets/themes/custom")).unwrap();
+    fs::write(install.join(SHELL_FILE), b"old shell").unwrap();
+    fs::write(install.join(CLI_FILE), b"old cli").unwrap();
+    fs::write(
+        install.join("assets/themes/default/theme.txt"),
+        b"old theme",
+    )
+    .unwrap();
+    fs::write(
+        install.join("assets/themes/custom/theme.txt"),
+        b"custom theme",
+    )
+    .unwrap();
+    fs::write(new.join(SHELL_FILE), b"new shell").unwrap();
+    fs::write(new.join(CLI_FILE), b"new cli").unwrap();
+    mark_portable_fixture(&install);
+    let manifest_path = transaction_dir.join("transaction.json");
+    let manifest = TransactionManifest {
+        protocol: UPDATE_PROTOCOL_VERSION,
+        target_sha: "abc".to_owned(),
+        install_dir: install,
+        transaction_dir,
+        state: TransactionState::Prepared,
+        cli_replaced: false,
+        shell_replaced: false,
+    };
+    write_manifest(&manifest_path, &manifest).unwrap();
+    (root, manifest_path, manifest)
+}
+
+#[cfg(any(windows, target_os = "linux"))]
+fn assert_old_install_preserved(manifest: &TransactionManifest) {
+    assert_eq!(
+        fs::read(manifest.install_dir.join(SHELL_FILE)).unwrap(),
+        b"old shell"
+    );
+    assert_eq!(
+        fs::read(manifest.install_dir.join(CLI_FILE)).unwrap(),
+        b"old cli"
+    );
+    assert_eq!(
+        fs::read(manifest.install_dir.join("assets/themes/default/theme.txt")).unwrap(),
+        b"old theme"
+    );
+    assert_eq!(
+        fs::read(manifest.install_dir.join("assets/themes/custom/theme.txt")).unwrap(),
+        b"custom theme"
+    );
+}
+
+#[cfg(any(windows, target_os = "linux"))]
+#[test]
+fn update_injected_transaction_failures_restore_every_installed_file() {
+    for failure in [
+        TransactionFailure::Cli,
+        TransactionFailure::Shell,
+        TransactionFailure::NewLaunch,
+        TransactionFailure::ReadyTimeout,
+        TransactionFailure::RestoredLaunch,
+    ] {
+        let (root, path, mut manifest) = transaction_fixture("injected-transaction");
+        let operations = FakeTransactionOperations {
+            failure,
+            injected: Cell::new(false),
+        };
+        let result = run_update_transaction(&path, &mut manifest, false, &operations);
+        if failure == TransactionFailure::RestoredLaunch {
+            assert!(result.is_err());
+            assert_eq!(
+                load_manifest(&path).unwrap().state,
+                TransactionState::Failed
+            );
+        } else {
+            assert!(result.is_ok());
+        }
+        assert_old_install_preserved(&manifest);
+        assert!(path.is_file(), "transaction journal must be retained");
+        fs::remove_dir_all(root).unwrap();
+    }
+}
+
+#[cfg(any(windows, target_os = "linux"))]
+#[test]
+fn update_interrupted_journal_recovers_old_installation() {
+    let (root, path, mut manifest) = transaction_fixture("interrupted");
+    let operations = FakeTransactionOperations {
+        failure: TransactionFailure::None,
+        injected: Cell::new(false),
+    };
+    manifest.state = TransactionState::Applying;
+    write_manifest(&path, &manifest).unwrap();
+    apply_prepared_files_with_operations(&path, &mut manifest, &operations).unwrap();
+    run_update_transaction(&path, &mut manifest, true, &operations).unwrap();
+    assert_old_install_preserved(&manifest);
+    assert_eq!(
+        load_manifest(&path).unwrap().state,
+        TransactionState::RolledBack
+    );
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[cfg(any(windows, target_os = "linux"))]
+fn recovery_scan_fixture(name: &str, state: TransactionState) -> (PathBuf, PathBuf, PathBuf) {
+    let root = update_test_root(name);
+    fs::create_dir_all(root.join("install")).unwrap();
+    // File URL conversion removes Windows verbatim prefixes, so joining `..`
+    // preserves the noncanonical spelling and Windows can resolve it normally.
+    let non_verbatim_root = reqwest::Url::from_directory_path(&root)
+        .unwrap()
+        .to_file_path()
+        .unwrap();
+    let install = non_verbatim_root.join("install/../install");
+    let canonical_install = fs::canonicalize(&install).unwrap();
+    assert_ne!(install, canonical_install);
+    let transaction_dir = canonical_install.join(".tundra-update/tx");
+    fs::create_dir_all(&transaction_dir).unwrap();
+    mark_portable_fixture(&canonical_install);
+    let manifest_path = transaction_dir.join("transaction.json");
+    let manifest = TransactionManifest {
+        protocol: UPDATE_PROTOCOL_VERSION,
+        target_sha: "abc".to_owned(),
+        install_dir: canonical_install,
+        transaction_dir,
+        state,
+        cli_replaced: false,
+        shell_replaced: false,
+    };
+    write_manifest(&manifest_path, &manifest).unwrap();
+    (root, install, manifest_path)
+}
+
+#[cfg(any(windows, target_os = "linux"))]
+#[test]
+fn update_recovery_scan_canonicalizes_install_path_for_cleanup_and_recovery() {
+    let (root, install, manifest_path) =
+        recovery_scan_fixture("recovery-scan-committed", TransactionState::Committed);
+    let launches = std::sync::Mutex::new(Vec::new());
+    assert!(
+        !scan_update_recovery(&install, 41, &|path, pid, recover_only| {
+            launches
+                .lock()
+                .unwrap()
+                .push((path.to_owned(), pid, recover_only));
+            Ok(())
+        })
+        .unwrap()
+    );
+    assert!(!manifest_path.parent().unwrap().exists());
+    assert!(launches.lock().unwrap().is_empty());
+    fs::remove_dir_all(root).unwrap();
+
+    for state in [TransactionState::Applying, TransactionState::AwaitingReady] {
+        let (root, install, manifest_path) = recovery_scan_fixture("recovery-scan", state);
+        let launches = std::sync::Mutex::new(Vec::new());
+        assert!(
+            scan_update_recovery(&install, 42, &|path, pid, recover_only| {
+                launches
+                    .lock()
+                    .unwrap()
+                    .push((path.to_owned(), pid, recover_only));
+                Ok(())
+            })
+            .unwrap()
+        );
+        assert_eq!(*launches.lock().unwrap(), vec![(manifest_path, 42, true)]);
+        fs::remove_dir_all(root).unwrap();
+    }
+}
+
+#[cfg(any(windows, target_os = "linux"))]
+#[test]
+fn update_transaction_succeeds_without_an_assets_directory() {
+    let (root, path, mut manifest) = transaction_fixture("programs-only");
+    // Remove only the assets created by this fixture to model external resources.
+    fs::remove_dir_all(manifest.install_dir.join("assets")).unwrap();
+    let operations = FakeTransactionOperations {
+        failure: TransactionFailure::None,
+        injected: Cell::new(false),
+    };
+    run_update_transaction(&path, &mut manifest, false, &operations).unwrap();
+    assert_eq!(manifest.state, TransactionState::Committed);
+    assert_eq!(
+        fs::read(manifest.install_dir.join(SHELL_FILE)).unwrap(),
+        b"new shell"
+    );
+    assert_eq!(
+        fs::read(manifest.install_dir.join(CLI_FILE)).unwrap(),
+        b"new cli"
+    );
+    assert!(!manifest.install_dir.join("assets").exists());
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn update_rejects_old_transactions_before_replacing_programs() {
+    let root = update_test_root("old-protocol");
+    let install = root.join("install");
+    let transaction_dir = install.join(".tundra-update/tx");
+    fs::create_dir_all(&transaction_dir).unwrap();
+    let path = transaction_dir.join("transaction.json");
+    let manifest = TransactionManifest {
+        protocol: 1,
+        target_sha: "abc".into(),
+        install_dir: install,
+        transaction_dir,
+        state: TransactionState::Prepared,
+        cli_replaced: false,
+        shell_replaced: false,
+    };
+    write_manifest(&path, &manifest).unwrap();
+    assert!(
+        load_manifest(&path)
+            .unwrap_err()
+            .to_string()
+            .contains("unsupported update protocol 1")
+    );
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn unrecognized_installation_cannot_stage_or_recover_portable_replacement() {
+    let root = update_test_root("unrecognized-installation");
+    fs::create_dir_all(&root).unwrap();
+    let prepared = PreparedUpdate {
+        work_dir: root.clone(),
+        target_sha: "abc".into(),
+        shell_exe: root.join("new-shell"),
+        cli_exe: root.join("new-cli"),
+    };
+    assert!(stage_update_for_apply(&prepared, &root).is_err());
+    assert!(
+        scan_update_recovery(&root, 42, &|_, _, _| panic!(
+            "unrecognized installation launched replacement helper"
+        ))
+        .is_err()
+    );
+    assert!(!root.join(".tundra-update").exists());
+    // Test binaries have no official portable marker or tundraux3 RPM ownership.
+    assert!(check_for_updates(&current_build_identity()).is_err());
+    fs::remove_dir_all(root).unwrap();
+}

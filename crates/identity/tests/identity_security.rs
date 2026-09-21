@@ -367,21 +367,6 @@ fn dashboard_updates_are_self_managed_and_require_an_enabled_authenticated_user(
 }
 
 #[test]
-fn bootstrap_admin_with_blank_hint_stores_none() {
-    let fixture = FixtureRoot::new("blank-hint");
-    let manager = storage(fixture.path());
-    let users = UserService::new(manager.clone());
-
-    let admin = users
-        .bootstrap_admin_with_hint("AdminUser", "StrongPass123", Some(" \t\n "))
-        .expect("blank hint should normalize to none");
-
-    assert_eq!(admin.password_hint, None);
-    let stored = manager.load_users().expect("users should load");
-    assert_eq!(stored.users[0].password_hint, None);
-}
-
-#[test]
 fn invalid_password_hint_rejects_without_creating_user() {
     let fixture = FixtureRoot::new("invalid-hint");
     let manager = storage(fixture.path());

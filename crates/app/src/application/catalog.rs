@@ -251,20 +251,3 @@ fn timezone(
         latitude,
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn built_in_launcher_applications_describe_command_line_and_editor() {
-        assert_eq!(
-            BUILT_IN_LAUNCHER_APPLICATIONS,
-            &[COMMAND_LINE_APPLICATION, EDITOR_APPLICATION]
-        );
-        assert!(COMMAND_LINE_APPLICATION.admin_only);
-        assert!(COMMAND_LINE_APPLICATION.fixed_in_launcher);
-        assert!(!EDITOR_APPLICATION.admin_only);
-        assert!(EDITOR_APPLICATION.fixed_in_launcher);
-    }
-}

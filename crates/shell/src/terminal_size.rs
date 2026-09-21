@@ -116,5 +116,5 @@ fn checked_terminal_size_with(
 }
 
 #[cfg(test)]
-#[path = "tests/terminal_size.rs"]
+#[path = "../tests/unit/terminal_size.rs"]
 mod tests;

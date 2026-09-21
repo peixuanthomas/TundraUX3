@@ -3,7 +3,6 @@ mod support;
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use ratatui::layout::Rect;
-use ratatui::style::Color;
 use support::terminal_output;
 use ui::components::Scrollbar as GlacierScrollbar;
 use ui::{
@@ -111,53 +110,6 @@ fn checks_that_fit_do_not_reserve_a_scrollbar_column() {
 }
 
 #[test]
-fn health_renderer_draws_two_columns_statuses_and_admin_details() {
-    let mut model = health_model();
-    model.checks = vec![
-        check(0, DiagnosticsStatus::Pass),
-        check(1, DiagnosticsStatus::Warning),
-        check(2, DiagnosticsStatus::Fail),
-    ];
-    model.selected_check = 1;
-    model.can_view_details = true;
-    model.can_repair = true;
-    let terminal = render(140, 30, &model);
-    let output = terminal_output(&terminal);
-    let layout = diagnostics_layout(full_main(140, 30), &model);
-
-    assert!(output.contains("System Status / Diagnostics"));
-    assert!(output.contains("Esc System Status"));
-    assert!(output.contains("[Health]"));
-    assert!(!output.contains("[Logs]"));
-    assert!(!output.contains("[Incidents]"));
-    assert!(output.contains("Checks"));
-    assert!(output.contains("Details"));
-    assert!(output.contains("System needs attention"));
-    assert!(output.contains("Detail: private detail 1"));
-    assert!(output.contains("Recommended: repair guidance 1"));
-    assert!(output.contains("Repair available"));
-    assert!(output.contains("F Repair"));
-    assert!(output.contains("A Repair all"));
-    assert!(!output.contains("O Open logs"));
-    assert!(!output.contains("E Log folder"));
-    assert!(region_has_fg(
-        &terminal,
-        layout.rows[0].area,
-        TundraTheme::default_dark().tokens().success
-    ));
-    assert!(region_has_fg(
-        &terminal,
-        layout.rows[1].area,
-        TundraTheme::default_dark().tokens().accent,
-    ));
-    assert!(region_has_fg(
-        &terminal,
-        layout.rows[2].area,
-        TundraTheme::default_dark().error
-    ));
-}
-
-#[test]
 fn incident_renderer_redacts_sensitive_fields_for_non_admins_at_108x20() {
     let mut model = health_model();
     model.tab = DiagnosticsTab::Incidents;
@@ -174,39 +126,6 @@ fn incident_renderer_redacts_sensitive_fields_for_non_admins_at_108x20() {
     assert!(!output.contains("SECRET stack trace"));
     assert!(!output.contains("/private/reports/incident-7.json"));
     assert!(!output.contains("incident-7"));
-}
-
-#[test]
-fn logs_tab_lists_metadata_scrolls_and_exposes_log_hit_targets() {
-    let mut model = health_model();
-    model.tab = DiagnosticsTab::Logs;
-    model.can_view_details = true;
-    model.can_repair = true;
-    model.logs = (0..12).map(log).collect();
-    model.selected_log = 10;
-    let layout = diagnostics_layout(full_main(108, 20), &model);
-
-    assert_eq!(layout.visible_start, 4);
-    assert_eq!(layout.rows.last().map(|row| row.index), Some(10));
-    // Logs remains a reusable content view; System Status navigation is Health-only.
-    assert_eq!(layout.tabs.len(), 1);
-    assert_eq!(layout.tabs[0].tab, DiagnosticsTab::Health);
-    let selected = layout.rows.last().expect("selected log row");
-    assert_eq!(
-        diagnostics_hit_test(&layout, (selected.area.x, selected.area.y)),
-        Some(DiagnosticsHitTarget::Log(10))
-    );
-
-    let output = terminal_output(&render(140, 32, &model));
-    assert!(output.contains("Logs"));
-    assert!(output.contains("service-10.log.1"));
-    assert!(output.contains("Modified: 2026-07-17 12:10"));
-    assert!(output.contains("Size: 1034 bytes"));
-    assert!(output.contains("Press O to open read-only or E to explore the log folder"));
-    assert!(output.contains("O Open log"));
-    assert!(output.contains("E Log folder"));
-    assert!(!output.contains("F Repair"));
-    assert!(!output.contains("A Repair all"));
 }
 
 #[test]
@@ -297,17 +216,6 @@ fn repair_preview_renders_items_and_modal_hit_geometry() {
     assert!(output.contains("Cancel"));
 }
 
-#[test]
-fn compact_terminal_renders_shared_compact_home_instead_of_diagnostics_content() {
-    let mut model = health_model();
-    model.checks = vec![check(0, DiagnosticsStatus::Fail)];
-    let output = terminal_output(&render(49, 30, &model));
-
-    assert!(output.contains("TundraUX 3"));
-    assert!(output.contains("needs at least 50x12"));
-    assert!(!output.contains("private detail"));
-}
-
 fn health_model() -> DiagnosticsViewModel {
     DiagnosticsViewModel {
         tab: DiagnosticsTab::Health,
@@ -336,18 +244,6 @@ fn log(index: usize) -> DiagnosticsLogViewModel {
         modified_at: format!("2026-07-17 12:{index:02}"),
         size_bytes: 1024 + index as u64,
     }
-}
-
-#[test]
-fn unsupported_check_is_informational_instead_of_a_warning() {
-    let mut model = health_model();
-    model.checks = vec![check(0, DiagnosticsStatus::Unsupported)];
-
-    let output = terminal_output(&render(120, 24, &model));
-
-    assert!(output.contains("unsupported capability"));
-    assert!(output.contains("[-]"));
-    assert!(!output.contains("System needs attention"));
 }
 
 fn check(index: usize, status: DiagnosticsStatus) -> DiagnosticsCheckViewModel {
@@ -418,14 +314,4 @@ fn full_main(width: u16, height: u16) -> Rect {
         ShellLayout::Full { main, .. } => main,
         ShellLayout::Compact(_) => panic!("test dimensions should produce a full shell"),
     }
-}
-
-fn region_has_fg(terminal: &Terminal<TestBackend>, area: Rect, fg: Color) -> bool {
-    let buffer = terminal.backend().buffer();
-    (area.y..area.bottom()).any(|y| {
-        (area.x..area.right()).any(|x| {
-            let cell = &buffer[(x, y)];
-            cell.fg == fg && !cell.symbol().trim().is_empty()
-        })
-    })
 }

@@ -316,6 +316,13 @@ def main() -> int:
                 f"output:\n{output_diagnostic(output)}"
             )
 
+        incidents = list(isolated.rglob("crash-*.json"))
+        if incidents:
+            raise SystemExit(
+                "normal startup/shutdown generated watchdog incidents:\n"
+                + "\n".join(path.read_text() for path in incidents)
+            )
+
         terminal_after = termios.tcgetattr(slave)
         # Raw mode changes input/output/local flags and control characters.
         # Comparing those fields catches a process that merely printed the

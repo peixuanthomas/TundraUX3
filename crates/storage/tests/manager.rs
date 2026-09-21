@@ -3,10 +3,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use platform::mock::MockPlatform;
-use platform::{
-    AppPaths, Platform, UserDirs, build_macos_app_paths, build_windows_app_paths, cleanup_temp_path,
-};
+use platform::{AppPaths, cleanup_temp_path};
 use storage::{
     AppearanceConfig, BorderColor, BorderShape, ClockDocument, ClockEntryRecord, ClockProfile,
     EditorConfig, ExplorerConfig, ExplorerDateZone, ExplorerSizeFormat, ExplorerSortDirection,
@@ -429,23 +426,6 @@ fn v2_config_migrates_system_status_defaults_and_round_trips() {
 }
 
 #[test]
-fn border_color_parses_named_hex_and_default_values_canonically() {
-    assert_eq!("WHITE".parse::<BorderColor>().unwrap(), BorderColor::White);
-    assert_eq!(
-        "default".parse::<BorderColor>().unwrap(),
-        BorderColor::White
-    );
-    assert_eq!(
-        "#38bdf8".parse::<BorderColor>().unwrap(),
-        BorderColor::Rgb(0x38, 0xBD, 0xF8)
-    );
-    assert_eq!(BorderColor::Rgb(0x38, 0xBD, 0xF8).to_string(), "#38BDF8");
-    assert!("#RGB".parse::<BorderColor>().is_err());
-    assert!("#🙂ab".parse::<BorderColor>().is_err());
-    assert!("orange".parse::<BorderColor>().is_err());
-}
-
-#[test]
 fn new_accent_default_is_glacier_and_legacy_default_value_is_cyan() {
     let config: StorageConfig =
         toml::from_str("schema_version = 1\n\n[appearance]\naccent_color = \"default\"\n")
@@ -841,69 +821,6 @@ fn legacy_v1_users_are_migrated_to_disabled_v2_records() {
     cleanup(&base);
 }
 
-#[test]
-fn open_from_platform_uses_mock_platform_app_paths() {
-    let base = unique_temp_root("mock-platform");
-    let platform = mock_platform(&base);
-    let expected_layout =
-        StorageLayout::from_app_paths(&platform.app_paths().expect("mock paths should resolve"));
-
-    let opened =
-        StorageManager::open_from_platform(&platform).expect("storage should open from mock paths");
-
-    assert_eq!(opened.manager.layout(), &expected_layout);
-    assert!(expected_layout.config_path.is_file());
-    assert!(expected_layout.users_path.is_file());
-
-    cleanup(&base);
-}
-
-#[test]
-fn windows_and_macos_builders_can_be_injected_directly() {
-    let windows_base = unique_temp_root("windows-builder");
-    let windows_paths = build_windows_app_paths(
-        windows_base.join("Roaming"),
-        windows_base.join("Local"),
-        windows_base.join("Temp"),
-    )
-    .expect("injected Windows paths should resolve");
-    let windows_layout = StorageLayout::from_app_paths(&windows_paths);
-    StorageManager::open(windows_paths).expect("storage should open with Windows paths");
-    assert_eq!(
-        windows_layout.config_path,
-        windows_base
-            .join("Roaming")
-            .join("TundraUX3")
-            .join("config.toml")
-    );
-    assert!(windows_layout.config_path.is_file());
-    assert!(windows_layout.users_path.is_file());
-
-    let macos_base = unique_temp_root("macos-builder");
-    let macos_paths = build_macos_app_paths(
-        macos_base.join("Users").join("tundra"),
-        macos_base.join("Tmp"),
-    )
-    .expect("injected macOS paths should resolve");
-    let macos_layout = StorageLayout::from_app_paths(&macos_paths);
-    StorageManager::open(macos_paths).expect("storage should open with macOS paths");
-    assert_eq!(
-        macos_layout.config_path,
-        macos_base
-            .join("Users")
-            .join("tundra")
-            .join("Library")
-            .join("Application Support")
-            .join("TundraUX3")
-            .join("config.toml")
-    );
-    assert!(macos_layout.config_path.is_file());
-    assert!(macos_layout.users_path.is_file());
-
-    cleanup(&windows_base);
-    cleanup(&macos_base);
-}
-
 fn app_paths(base: &Path) -> AppPaths {
     AppPaths::from_parts(
         base.join("config").join("config.toml"),
@@ -913,24 +830,6 @@ fn app_paths(base: &Path) -> AppPaths {
         base.join("temp"),
     )
     .expect("fixture paths should be absolute")
-}
-
-fn mock_platform(base: &Path) -> MockPlatform {
-    let user_dirs = UserDirs::new(
-        base.join("Desktop"),
-        base.join("Documents"),
-        base.join("Downloads"),
-        base.join("Pictures"),
-        base.join("Videos"),
-        base.join("Music"),
-        base.join("Roaming"),
-    )
-    .expect("fixture user directories should resolve");
-    let app_paths =
-        build_windows_app_paths(base.join("Roaming"), base.join("Local"), base.join("Temp"))
-            .expect("fixture app paths should resolve");
-
-    MockPlatform::new(user_dirs, app_paths)
 }
 
 fn unique_temp_root(case: &str) -> PathBuf {

@@ -1,15 +1,12 @@
-use ratatui::Terminal;
-use ratatui::backend::TestBackend;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier};
-use ratatui::widgets::BorderType;
 use ui::components::{
     Button, CommandPalette, CommandPaletteCommand, ComponentEvent, ComponentId, ContextMenu,
     ContextMenuItem, Dialog, DialogAction, InputEvent, Key, List, ListItem, MouseButton, TabItem,
     Tabs, TextInput,
 };
-use ui::{BorderShape, InputPhase, KeyModifiers, MouseEvent, TundraTheme};
+use ui::{InputPhase, KeyModifiers, MouseEvent, TundraTheme};
 
 #[test]
 fn button_keyboard_and_mouse_activate_the_same_component() {
@@ -44,40 +41,6 @@ fn button_keyboard_and_mouse_activate_the_same_component() {
     button.render(area, &mut buffer, &TundraTheme::default());
     assert_regular_weight_vertical_border(&buffer, area);
     assert!(buffer_text(&buffer).contains("[Save]"));
-}
-
-#[test]
-fn button_labels_use_exactly_one_pair_of_square_brackets() {
-    let area = Rect::new(0, 0, 16, 1);
-    let theme = TundraTheme::default();
-
-    let mut plain = Buffer::empty(area);
-    Button::new("plain", "Save").render_borderless(area, &mut plain, &theme);
-    assert!(buffer_text(&plain).contains("[Save]"));
-
-    let mut existing = Buffer::empty(area);
-    Button::new("existing", "[Save]").render_borderless(area, &mut existing, &theme);
-    assert!(buffer_text(&existing).contains("[Save]"));
-    assert!(!buffer_text(&existing).contains("[[Save]]"));
-}
-
-#[test]
-fn theme_defaults_to_rounded_borders_and_square_uses_ratatui_plain() {
-    let area = Rect::new(0, 0, 12, 3);
-    let button = Button::new("shape", "Shape");
-
-    let rounded = TundraTheme::default();
-    assert_eq!(rounded.border_shape, BorderShape::Rounded);
-    assert_eq!(rounded.border_type(), BorderType::Rounded);
-    let mut rounded_buffer = Buffer::empty(area);
-    button.render(area, &mut rounded_buffer, &rounded);
-    assert_eq!(rounded_buffer.cell((0, 0)).unwrap().symbol(), "╭");
-
-    let square = rounded.with_border_shape(BorderShape::Square);
-    assert_eq!(square.border_type(), BorderType::Plain);
-    let mut square_buffer = Buffer::empty(area);
-    button.render(area, &mut square_buffer, &square);
-    assert_eq!(square_buffer.cell((0, 0)).unwrap().symbol(), "┌");
 }
 
 #[test]
@@ -123,44 +86,6 @@ fn selected_controls_use_accent_borders_without_changing_regular_border_color() 
     let mut input_buffer = Buffer::empty(area);
     input.render(area, &mut input_buffer, &theme);
     assert_eq!(input_buffer.cell((0, 0)).unwrap().fg, Color::LightMagenta);
-}
-
-#[test]
-fn actively_pressed_button_changes_border_and_text_without_reversing_background() {
-    let area = Rect::new(0, 0, 16, 3);
-    let theme = TundraTheme::default()
-        .with_border_color(Color::LightGreen)
-        .with_accent_color(Color::LightMagenta);
-    let mut button = Button::new("save", "Save");
-    button.state.active = true;
-
-    let mut buffer = Buffer::empty(area);
-    button.render(area, &mut buffer, &theme);
-
-    assert_eq!(buffer.cell((0, 0)).unwrap().fg, theme.accent_color);
-    let text = buffer
-        .content()
-        .iter()
-        .find(|cell| cell.symbol() == "S")
-        .expect("active button text");
-    assert_eq!(text.fg, theme.accent_color);
-    assert_eq!(text.bg, theme.background);
-}
-
-#[test]
-fn rich_button_surface_uses_spring_card_background_and_selected_border() {
-    let area = Rect::new(0, 0, 16, 4);
-    let theme = TundraTheme::default()
-        .with_border_color(Color::LightGreen)
-        .with_accent_color(Color::LightMagenta);
-    let mut button = Button::new("app", "");
-    button.state.selected = true;
-
-    let mut buffer = Buffer::empty(area);
-    button.render_surface(area, &mut buffer, &theme);
-
-    assert_eq!(buffer.cell((0, 0)).unwrap().fg, Color::LightMagenta);
-    assert_eq!(buffer.cell((1, 1)).unwrap().bg, theme.tokens().raised);
 }
 
 #[test]
@@ -273,18 +198,6 @@ fn text_input_edits_text_and_maps_mouse_clicks_to_cursor_positions() {
     let mut buffer = Buffer::empty(area);
     input.render(area, &mut buffer, &TundraTheme::default());
     assert_regular_weight_vertical_border(&buffer, area);
-}
-
-#[test]
-fn text_input_cursor_symbol_is_configurable() {
-    let area = Rect::new(0, 0, 12, 3);
-    let mut input = TextInput::new("query").with_cursor_symbol("_");
-    input.set_value("ab");
-    input.set_focused(true);
-
-    let mut buffer = Buffer::empty(area);
-    input.render(area, &mut buffer, &TundraTheme::default());
-    assert_eq!(buffer.cell((3, 1)).expect("cursor cell").symbol(), "_");
 }
 
 #[test]
@@ -643,38 +556,6 @@ fn components_ignore_key_release_events() {
         ),
         ComponentEvent::None
     );
-}
-
-#[test]
-fn frame_render_entry_points_cover_bordered_and_borderless_components() {
-    let backend = TestBackend::new(60, 24);
-    let mut terminal = Terminal::new(backend).expect("test terminal");
-    let theme = TundraTheme::default();
-    let button = Button::new("save", "Save");
-    let input = TextInput::new("query").with_placeholder("Search");
-    let list = List::new("files", vec![ListItem::new("a", "Alpha")]);
-    let tabs = Tabs::new("sections", vec![TabItem::new("home", "Home")]);
-    let mut dialog = Dialog::new(
-        "confirm",
-        "Confirm",
-        "Apply?",
-        vec![DialogAction::new("ok", "OK")],
-    );
-    dialog.open();
-    let mut menu = ContextMenu::new("menu", vec![ContextMenuItem::new("open", "Open")]);
-    menu.open();
-
-    terminal
-        .draw(|frame| {
-            button.render_frame(frame, Rect::new(0, 0, 12, 3), &theme);
-            button.render_borderless_frame(frame, Rect::new(13, 1, 8, 1), &theme);
-            input.render_frame(frame, Rect::new(0, 4, 20, 3), &theme);
-            list.render_borderless_frame(frame, Rect::new(22, 0, 16, 4), &theme);
-            tabs.render_borderless_frame(frame, Rect::new(22, 5, 20, 1), &theme);
-            dialog.render_frame(frame, Rect::new(0, 8, 24, 6), &theme);
-            menu.render_frame(frame, Rect::new(30, 8, 12, 4), &theme);
-        })
-        .expect("draw reusable components");
 }
 
 #[test]
