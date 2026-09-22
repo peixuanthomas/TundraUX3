@@ -37,6 +37,10 @@ pub(crate) fn write_debug_help(output: &mut impl Write) -> std::io::Result<()> {
     writeln!(output, "Usage: tundra-cli debug <command>")?;
     writeln!(
         output,
+        "  clear-logs <all|TYPE|--file PATH> [--yes]  Preview or clear runtime, incidents, snapshots, or legacy logs"
+    )?;
+    writeln!(
+        output,
         "  view-ui-style [1|2|3]  Compare interactive UI styles and animations"
     )?;
     writeln!(

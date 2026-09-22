@@ -52,6 +52,57 @@ existing target. Its manifest records source status, truncation, damaged records
 and writer health. Partial exports retain usable records and report omissions.
 Exports are user-owned artifacts outside the managed runtime retention quota.
 
+## Clearing logs
+
+Use `debug clear-logs` in Command Line, or prefix it with `tundra-cli` in an
+external terminal. No arguments shows help. A target without `--yes` previews
+matching files and their sizes; `--yes` confirms permanent clearing.
+
+```sh
+tundra-cli debug clear-logs all
+tundra-cli debug clear-logs all --yes
+tundra-cli debug clear-logs incidents --yes
+tundra-cli debug clear-logs --type incidents --yes
+tundra-cli debug clear-logs runtime --yes
+tundra-cli debug clear-logs snapshots --yes
+tundra-cli debug clear-logs --file crashes/crash-EXAMPLE.json --yes
+tundra-cli debug clear-logs --file runtime/runtime-EXAMPLE.jsonl --yes
+```
+
+| Target | Files in the configured Tundra logs directory |
+| --- | --- |
+| `all` (also `--all`) | All four categories below. |
+| `runtime` | `runtime/runtime-*.jsonl` event segments. |
+| `incidents` | JSON, TXT and LOG report files directly under `crashes/`. |
+| `snapshots` | `runtime/snapshots/snapshot-*.json` and `*.jsonl` viewer snapshots. |
+| `legacy` | Top-level `*.log` files. |
+| `--file PATH` | One recognized log file; accepts a relative path or an absolute path inside the configured logs directory. |
+
+Exactly one target is required; `--type TYPE` is an alias for a named category.
+Selecting one incident JSON file does not delete its TXT sibling; `incidents`
+clears both report formats. Clearing incident reports leaves the corresponding
+runtime events intact. Clear `runtime` or `all` as well to remove those events.
+
+Clearing uses current OS filesystem permissions, refuses directory traversal
+and symlinks, and preserves log retention settings and locks. Inactive files are
+removed; active runtime segments are emptied while holding the same reservation
+lock used by writers. Writers resume at the actual end of the file so clearing
+cannot leave zero-filled gaps in subsequent events. A locked file that cannot
+be emptied is reported as a failure. Running processes can write queued events,
+repeat summaries, and new events after clearing; this command does not stop
+logging. The displayed file list describes this invocation, not future files.
+
+Scope is the configured Tundra logs directory only. Temporary watchdog fallback
+reports, user-owned exported bundles, Linux journal/dmesg, configuration,
+accounts, and watchdog state/run markers are excluded. Clearing does not dismiss
+in-memory notifications or regenerate an already open editor document; refresh
+Logs to read the current files.
+
+Output lists each removed or emptied file and reports failures individually.
+Exit codes are 0 for complete (including no matching files), 1 when no selected
+file can be cleared or output fails, 2 for invalid command arguments, and 3 for
+partial failure. A missing explicitly selected file is an error.
+
 ## TUI navigation
 
 Open **Logs** from Home. UX opens by default. Left/Right switches source; Tab

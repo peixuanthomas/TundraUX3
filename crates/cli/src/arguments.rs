@@ -2,6 +2,7 @@ use std::fmt;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CliCommand {
+    ClearLogs(crate::ClearLogsAction),
     Logs(crate::logs_command::LogsAction),
     Asset(AssetAction),
     Cls,
@@ -171,6 +172,9 @@ fn parse_debug_args(args: &[String]) -> Result<CliCommand, CliError> {
     let command = match command.as_str() {
         "help" | "-h" | "--help" => CliCommand::DebugHelp,
         "asset" => return parse_asset_args(rest).map(CliCommand::Asset),
+        "clear-logs" => {
+            return crate::clear_logs_command::parse_clear_logs(rest).map(CliCommand::ClearLogs);
+        }
         "doctor" => CliCommand::Doctor,
         "paths" => CliCommand::Paths,
         "explain" => CliCommand::Explain,

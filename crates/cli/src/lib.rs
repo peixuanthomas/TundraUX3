@@ -1,3 +1,5 @@
+mod clear_logs_command;
+pub use clear_logs_command::ClearLogsAction;
 mod logs_command;
 pub use logs_command::{LogsAction, LogsFormat, LogsVerb};
 mod arguments;

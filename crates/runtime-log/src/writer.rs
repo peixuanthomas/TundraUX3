@@ -622,6 +622,10 @@ impl Worker {
             ));
         }
         let segment = self.segments.get_mut(&owner).expect("segment inserted");
+        // A maintenance command may have truncated this active file under the
+        // same reservation lock. Append at its current end, not the old offset.
+        use std::io::{Seek, SeekFrom};
+        segment.bytes = segment.file.seek(SeekFrom::End(0))?;
         if let Err(error) = segment.file.write_all(&bytes) {
             self.close_segment(&owner);
             return Err(error);
@@ -651,7 +655,7 @@ impl Worker {
         }
     }
 }
-fn retention_lock(directory: &Path) -> io::Result<File> {
+pub(crate) fn retention_lock(directory: &Path) -> io::Result<File> {
     let mut opts = OpenOptions::new();
     opts.read(true).write(true).create(true);
     nofollow(&mut opts);

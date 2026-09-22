@@ -145,6 +145,9 @@ where
     Stderr: Write,
 {
     match parse_args(args) {
+        Ok(CliCommand::ClearLogs(action)) => {
+            crate::clear_logs_command::run_clear_logs(platform, stdout, stderr, action)
+        }
         Ok(CliCommand::Logs(action)) => {
             crate::logs_command::run_logs(platform, stdout, stderr, action)
         }

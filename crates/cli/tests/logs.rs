@@ -273,3 +273,100 @@ fn logs_incident_filters_and_export_preserve_correlation() {
     assert_eq!(exported["run_id"], "run-a");
     assert_eq!(exported["task_id"], "task-a");
 }
+
+#[test]
+fn debug_clear_logs_previews_confirms_and_selects_incidents_or_a_file() {
+    let fixture = Fixture::new();
+    fixture.events();
+    fs::write(fixture.root.join("crashes/crash-one.json"), "{}").unwrap();
+    fs::write(fixture.root.join("crashes/crash-one.txt"), "report").unwrap();
+    let (code, out, err) = fixture.run(&["debug", "clear-logs", "incidents"]);
+    assert_eq!(code, 0, "{err}");
+    assert!(out.contains("Would clear") && out.contains("--yes"));
+    assert!(fixture.root.join("crashes/crash-one.json").exists());
+    let (code, out, err) = fixture.run(&["debug", "clear-logs", "--type", "incidents", "--yes"]);
+    assert_eq!(code, 0, "{err}");
+    assert!(out.contains("2 file(s)"));
+    assert!(!fixture.root.join("crashes/crash-one.json").exists());
+    assert!(!fixture.root.join("crashes/crash-one.txt").exists());
+    assert!(fixture.root.join("runtime/runtime-test.jsonl").exists());
+    let (code, _, err) = fixture.run(&[
+        "debug",
+        "clear-logs",
+        "--file",
+        "runtime/runtime-test.jsonl",
+        "--yes",
+    ]);
+    assert_eq!(code, 0, "{err}");
+    assert!(!fixture.root.join("runtime/runtime-test.jsonl").exists());
+}
+#[test]
+fn debug_clear_logs_help_invalid_targets_and_partial_failures() {
+    let fixture = Fixture::new();
+    assert!(fixture.run(&["debug", "help"]).1.contains("clear-logs"));
+    assert!(
+        fixture
+            .run(&["debug", "clear-logs"])
+            .1
+            .contains("incidents")
+    );
+    for args in [
+        vec!["--yes"],
+        vec!["linux"],
+        vec!["--file"],
+        vec!["--type"],
+        vec!["all", "incidents"],
+        vec!["all", "--yes", "--yes"],
+        vec!["--file", "--yes"],
+        vec!["--all", "--type", "runtime"],
+    ] {
+        let mut command = vec!["debug", "clear-logs"];
+        command.extend(args);
+        assert_eq!(fixture.run(&command).0, 2, "{command:?}");
+    }
+    fs::write(fixture.root.join("crashes/crash-ok.json"), "{}").unwrap();
+    fs::create_dir(fixture.root.join("crashes/crash-directory.json")).unwrap();
+    let (code, out, err) = fixture.run(&["debug", "clear-logs", "all", "--yes"]);
+    assert_eq!(code, 3);
+    assert!(out.contains("1 failure(s)") && err.contains("crash-directory.json"));
+    assert_eq!(
+        fixture
+            .run(&[
+                "debug",
+                "clear-logs",
+                "--file",
+                "crashes/missing.json",
+                "--yes"
+            ])
+            .0,
+        1
+    );
+}
+
+#[test]
+fn debug_clear_logs_requires_a_writable_preview_before_deleting() {
+    struct BrokenOutput;
+    impl Write for BrokenOutput {
+        fn write(&mut self, _: &[u8]) -> std::io::Result<usize> {
+            Err(std::io::Error::new(
+                std::io::ErrorKind::BrokenPipe,
+                "closed",
+            ))
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+    let fixture = Fixture::new();
+    fixture.events();
+    assert_eq!(
+        run_with_platform(
+            ["debug", "clear-logs", "all", "--yes"],
+            &fixture.platform,
+            &mut BrokenOutput,
+            &mut Vec::new()
+        ),
+        1
+    );
+    assert!(fixture.root.join("runtime/runtime-test.jsonl").exists());
+}

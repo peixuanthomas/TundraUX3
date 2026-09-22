@@ -1,4 +1,8 @@
 //! Structured, bounded runtime logging shared by the shell, watchdog and CLI.
+mod clear;
+pub use clear::{
+    LogClearAction, LogClearEntry, LogClearReport, LogClearTarget, LogFileType, clear_logs,
+};
 mod model;
 mod privacy;
 mod reader;
