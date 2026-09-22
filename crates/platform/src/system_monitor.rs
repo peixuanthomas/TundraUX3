@@ -207,42 +207,7 @@ impl SystemMonitor for NativeSystemMonitor {
             Ok(thermal_values)
         };
 
-        let batteries = match battery::Manager::new() {
-            Err(error) => Err(error.to_string()),
-            Ok(manager) => match manager.batteries() {
-                Err(error) => Err(error.to_string()),
-                Ok(iter) => {
-                    let values = iter
-                        .filter_map(Result::ok)
-                        .map(|battery| BatterySample {
-                            vendor: battery.vendor().map(str::to_string),
-                            model: battery.model().map(str::to_string),
-                            state: match battery.state() {
-                                battery::State::Charging => BatterySampleState::Charging,
-                                battery::State::Discharging => BatterySampleState::Discharging,
-                                battery::State::Full => BatterySampleState::Full,
-                                battery::State::Empty => BatterySampleState::Empty,
-                                _ => BatterySampleState::Unknown,
-                            },
-                            charge_percent: battery.state_of_charge().get::<percent>(),
-                            energy_wh: battery.energy().get::<watt_hour>(),
-                            energy_full_wh: battery.energy_full().get::<watt_hour>(),
-                            time_to_empty_seconds: battery
-                                .time_to_empty()
-                                .map(|v| v.get::<second>() as u64),
-                            time_to_full_seconds: battery
-                                .time_to_full()
-                                .map(|v| v.get::<second>() as u64),
-                        })
-                        .collect::<Vec<_>>();
-                    if values.is_empty() {
-                        Err("no batteries detected".into())
-                    } else {
-                        Ok(values)
-                    }
-                }
-            },
-        };
+        let batteries = sample_batteries();
         let processes = self
             .system
             .processes()
@@ -293,3 +258,41 @@ impl SystemMonitor for NativeSystemMonitor {
         })
     }
 }
+
+fn sample_batteries() -> Result<Vec<BatterySample>, String> {
+    let manager = battery::Manager::new().map_err(|error| error.to_string())?;
+    let batteries = manager.batteries().map_err(|error| error.to_string())?;
+    collect_battery_samples(batteries.map(|result| {
+        result.map(|battery| BatterySample {
+            vendor: battery.vendor().map(str::to_string),
+            model: battery.model().map(str::to_string),
+            state: match battery.state() {
+                battery::State::Charging => BatterySampleState::Charging,
+                battery::State::Discharging => BatterySampleState::Discharging,
+                battery::State::Full => BatterySampleState::Full,
+                battery::State::Empty => BatterySampleState::Empty,
+                _ => BatterySampleState::Unknown,
+            },
+            charge_percent: battery.state_of_charge().get::<percent>(),
+            energy_wh: battery.energy().get::<watt_hour>(),
+            energy_full_wh: battery.energy_full().get::<watt_hour>(),
+            time_to_empty_seconds: battery.time_to_empty().map(|v| v.get::<second>() as u64),
+            time_to_full_seconds: battery.time_to_full().map(|v| v.get::<second>() as u64),
+        })
+    }))
+}
+
+fn collect_battery_samples<E: std::fmt::Display>(
+    samples: impl IntoIterator<Item = Result<BatterySample, E>>,
+) -> Result<Vec<BatterySample>, String> {
+    // Empty enumeration is normal on machines without batteries. A failed
+    // device read must remain an error, not become an empty or partial success.
+    samples
+        .into_iter()
+        .map(|result| result.map_err(|error| format!("could not read battery: {error}")))
+        .collect()
+}
+
+#[cfg(test)]
+#[path = "../tests/unit/system_monitor/tests.rs"]
+mod tests;

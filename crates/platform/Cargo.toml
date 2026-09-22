@@ -14,7 +14,8 @@ ratatui-image.workspace = true
 same-file = "1"
 watchdog = { path = "../watchdog" }
 sysinfo = "0.39"
-battery = "0.7.8"
+# Includes Apple Silicon capacity handling; newer releases require Rust 1.89.
+battery = { package = "starship-battery", version = "=0.10.1" }
 
 [dev-dependencies]
 watchdog = { path = "../watchdog", features = ["test-support"] }

@@ -84,6 +84,43 @@ fn metrics_channel() -> (
 }
 
 #[test]
+fn absent_batteries_clear_stale_samples_and_recover_as_ready() {
+    let (sender, receiver) = metrics_channel();
+    let battery = platform::BatterySample {
+        vendor: None,
+        model: None,
+        state: platform::BatterySampleState::Discharging,
+        charge_percent: 50.0,
+        energy_wh: 20.0,
+        energy_full_wh: 40.0,
+        time_to_empty_seconds: None,
+        time_to_full_seconds: None,
+    };
+    let mut monitor: Result<Box<dyn platform::SystemMonitor>, platform::PlatformError> =
+        Ok(Box::new(ScriptedSlowMonitor {
+            samples: VecDeque::from([
+                slow_sample(Ok(Vec::new()), Ok(vec![battery])),
+                slow_sample(Ok(Vec::new()), Err("device read failed")),
+                slow_sample(Ok(Vec::new()), Ok(Vec::new())),
+                slow_sample(Ok(Vec::new()), Ok(Vec::new())),
+            ]),
+        }));
+    refresh_slow_metrics(&sender, &mut monitor);
+    refresh_slow_metrics(&sender, &mut monitor);
+    assert!(matches!(
+        receiver.borrow().metrics.batteries,
+        MetricState::Stale { .. }
+    ));
+    for _ in 0..2 {
+        refresh_slow_metrics(&sender, &mut monitor);
+        assert_eq!(
+            receiver.borrow().metrics.batteries,
+            MetricState::Ready(Vec::new())
+        );
+    }
+}
+
+#[test]
 fn thermal_inner_failures_retain_last_good_and_recover_independently() {
     let first_good = vec![platform::ThermalSensorSample {
         label: "CPU".into(),
