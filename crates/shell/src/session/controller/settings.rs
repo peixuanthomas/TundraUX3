@@ -1,4 +1,5 @@
 use super::super::*;
+use super::settings_devices::*;
 pub(in crate::session) const SETTINGS_RESTORE_NOTIFICATION_KEY: &str = "settings.restore-defaults";
 pub(in crate::session) const SETTINGS_WEATHER_LOCATION_NOTIFICATION_KEY: &str =
     "settings.weather-location";
@@ -419,7 +420,19 @@ impl ShellSession {
                 settings_fields(state.category)
             };
             state.selected_field = fields[index.min(fields.len().saturating_sub(1))];
-            state.scroll_offset = u16::try_from(index).unwrap_or(u16::MAX).saturating_sub(6);
+        }
+        if let Some(layout) = self.current_settings_layout()
+            && let Some(row) = layout.selected_field_row
+            && let Some(state) = self.settings_state.as_mut()
+        {
+            state.scroll_offset = if row < layout.scroll_offset {
+                row
+            } else if row >= layout.scroll_offset.saturating_add(layout.detail.height) {
+                row.saturating_add(1).saturating_sub(layout.detail.height)
+            } else {
+                layout.scroll_offset
+            }
+            .min(layout.max_scroll_offset);
         }
         self.clamp_settings_scroll();
     }
@@ -457,6 +470,9 @@ impl ShellSession {
     }
 
     pub(in crate::session) fn activate_selected_setting(&mut self, platform: &dyn Platform) {
+        if self.block_unavailable_system_setting() {
+            return;
+        }
         let Some(field) = self
             .settings_state
             .as_ref()
@@ -526,6 +542,9 @@ impl ShellSession {
         direction: i8,
         platform: &dyn Platform,
     ) {
+        if self.block_unavailable_system_setting() {
+            return;
+        }
         let Some(field) = self
             .settings_state
             .as_ref()
@@ -2005,6 +2024,9 @@ impl ShellSession {
         let Some(category) = self.settings_state.as_ref().map(|state| state.category) else {
             return;
         };
+        if category.is_system_device() {
+            return;
+        }
         if category != ui::SettingsCategory::Appearance && !self.can_change_global_settings() {
             self.set_settings_error(i18n::msg!("settings-admin-required"));
             return;
@@ -2033,6 +2055,9 @@ impl ShellSession {
         let Some(category) = self.settings_state.as_ref().map(|state| state.category) else {
             return;
         };
+        if category.is_system_device() {
+            return;
+        }
         if category == ui::SettingsCategory::Appearance {
             self.save_settings_appearance(
                 storage::AppearanceConfig::default(),
@@ -2071,7 +2096,11 @@ impl ShellSession {
             ui::SettingsCategory::FileExplorer => config.explorer = defaults.explorer,
             ui::SettingsCategory::Editor => config.editor = defaults.editor,
             ui::SettingsCategory::Appearance => unreachable!(),
-            ui::SettingsCategory::Update => return,
+            ui::SettingsCategory::Update
+            | ui::SettingsCategory::Sound
+            | ui::SettingsCategory::Display
+            | ui::SettingsCategory::Wifi
+            | ui::SettingsCategory::Bluetooth => return,
         }
         let candidate = if category == ui::SettingsCategory::RegionTime {
             match self.prepare_language(&config.language) {
@@ -2134,7 +2163,10 @@ impl ShellSession {
         let appearance = self.app.active_appearance()?;
         let global_enabled = self.can_change_global_settings();
         let identity = app::update::current_build_identity();
-        let cards = if state.category == ui::SettingsCategory::Update {
+        let unavailable_reason = self.system_settings_unavailable_reason(state.category);
+        let cards = if let Some(reason) = unavailable_reason.as_deref() {
+            system_device_cards(state.category, reason)
+        } else if state.category == ui::SettingsCategory::Update {
             update_settings_cards(
                 &identity,
                 &self.settings_update_state,
@@ -2268,13 +2300,17 @@ impl ShellSession {
             selected_field: state.selected_field,
             cards,
             appearance_preview,
-            status: if state.category == ui::SettingsCategory::Update {
+            status: if let Some(reason) = unavailable_reason.as_ref() {
+                reason.clone()
+            } else if state.category == ui::SettingsCategory::Update {
                 self.settings_update_state.status.render_current()
             } else {
                 state.status.render_current()
             },
-            locked_message: (!global_enabled && state.category != ui::SettingsCategory::Appearance)
-                .then_some(i18n::tr!("settings-locked")),
+            locked_message: (!global_enabled
+                && state.category != ui::SettingsCategory::Appearance
+                && !state.category.is_system_device())
+            .then_some(i18n::tr!("settings-locked")),
             scroll_offset: state.scroll_offset,
             picker,
             color_editor,
@@ -2293,6 +2329,10 @@ pub(in crate::session) fn settings_fields(
         ui::SettingsCategory::Appearance => APPEARANCE_SETTINGS_FIELDS,
         ui::SettingsCategory::RegionTime => REGION_SETTINGS_FIELDS,
         ui::SettingsCategory::System => SYSTEM_SETTINGS_FIELDS,
+        ui::SettingsCategory::Sound => SOUND_FIELDS,
+        ui::SettingsCategory::Display => DISPLAY_FIELDS,
+        ui::SettingsCategory::Wifi => WIFI_FIELDS,
+        ui::SettingsCategory::Bluetooth => BLUETOOTH_FIELDS,
         ui::SettingsCategory::FileExplorer => EXPLORER_SETTINGS_FIELDS,
         ui::SettingsCategory::Editor => EDITOR_SETTINGS_FIELDS,
         ui::SettingsCategory::Update => UPDATE_SETTINGS_FIELDS,
@@ -2888,7 +2928,11 @@ pub(in crate::session) fn settings_cards(
             ),
             Card::new(i18n::tr!("settings-reset"), vec![reset(global_enabled)]),
         ],
-        ui::SettingsCategory::Update => Vec::new(),
+        ui::SettingsCategory::Update
+        | ui::SettingsCategory::Sound
+        | ui::SettingsCategory::Display
+        | ui::SettingsCategory::Wifi
+        | ui::SettingsCategory::Bluetooth => Vec::new(),
     }
 }
 

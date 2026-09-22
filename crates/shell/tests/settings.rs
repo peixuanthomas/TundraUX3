@@ -127,6 +127,10 @@ fn tab_cycles_sections_while_arrows_select_right_hand_settings() {
     for expected in [
         SettingsCategory::RegionTime,
         SettingsCategory::System,
+        SettingsCategory::Sound,
+        SettingsCategory::Display,
+        SettingsCategory::Wifi,
+        SettingsCategory::Bluetooth,
         SettingsCategory::FileExplorer,
         SettingsCategory::Editor,
         SettingsCategory::Update,
@@ -363,9 +367,7 @@ fn admin_settings_immediately_persist_global_changes_and_confirm_picker_selectio
         highlighted_timezone
     );
 
-    // System sits between Region & Time and File Explorer.
-    press(&mut state, &platform, "Tab");
-    press(&mut state, &platform, "Tab");
+    select_category(&mut state, &platform, SettingsCategory::FileExplorer);
     assert_eq!(
         state.to_settings_view_model().unwrap().selected_category,
         SettingsCategory::FileExplorer
@@ -498,9 +500,7 @@ fn editor_settings_save_normalized_explorer_open_suffixes() {
     let mut state = logged_in_state(&platform, "AdminUser", "StrongPass123");
 
     open_settings_from_home(&mut state, &platform);
-    for _ in 0..4 {
-        press(&mut state, &platform, "Tab");
-    }
+    select_category(&mut state, &platform, SettingsCategory::Editor);
     assert_eq!(
         state.to_settings_view_model().unwrap().selected_field,
         SettingsField::ExplorerOpenExtensions
@@ -1014,5 +1014,121 @@ impl FixtureRoot {
 impl Drop for FixtureRoot {
     fn drop(&mut self) {
         let _ = cleanup_temp_path(&self.path);
+    }
+}
+
+fn select_category(state: &mut ShellSession, platform: &MockPlatform, category: SettingsCategory) {
+    for _ in 0..SettingsCategory::ALL.len() {
+        if state.to_settings_view_model().unwrap().selected_category == category {
+            return;
+        }
+        press(state, platform, "Tab");
+    }
+    panic!("settings category not reachable: {category:?}");
+}
+
+#[test]
+fn system_device_settings_are_unavailable_without_side_effects_on_every_platform() {
+    for kind in [
+        PlatformKind::Macos,
+        PlatformKind::Windows,
+        PlatformKind::Linux,
+        PlatformKind::Unsupported,
+    ] {
+        let fixture = FixtureRoot::new(&format!("device-settings-{kind:?}"));
+        let platform = mock_platform(fixture.path()).with_kind(kind);
+        let manager = initialize_users(&platform, true, false);
+        for (username, password) in [
+            ("AdminUser", "StrongPass123"),
+            ("NormalUser", "NormalPass123"),
+        ] {
+            let mut state = logged_in_state(&platform, username, password);
+            open_settings_from_home(&mut state, &platform);
+            state.apply_input_with_platform(
+                InputEvent::Resize {
+                    width: 108,
+                    height: 20,
+                },
+                &platform,
+            );
+            let before = manager.load_config().unwrap();
+            let users_before = manager.load_users().unwrap();
+            let expected = if kind == PlatformKind::Linux {
+                "This feature is not connected to system services yet."
+            } else {
+                "This feature is not supported on this platform yet."
+            };
+            for (category, count) in [
+                (SettingsCategory::Sound, 6),
+                (SettingsCategory::Display, 3),
+                (SettingsCategory::Wifi, 8),
+                (SettingsCategory::Bluetooth, 10),
+            ] {
+                select_category(&mut state, &platform, category);
+                let model = state.to_settings_view_model().unwrap();
+                assert_eq!(model.status, expected);
+                assert!(model.locked_message.is_none());
+                let items = model
+                    .cards
+                    .iter()
+                    .flat_map(|card| &card.items)
+                    .collect::<Vec<_>>();
+                assert_eq!(items.len(), count);
+                assert!(
+                    items.iter().all(|item| !item.enabled
+                        && item.unavailable_reason.as_deref() == Some(expected))
+                );
+                assert!(
+                    items
+                        .iter()
+                        .all(|item| item.field != SettingsField::RestoreDefaults)
+                );
+                assert!(
+                    items
+                        .iter()
+                        .all(|item| ["Not obtained", "Unavailable"].contains(&item.value.as_str()))
+                );
+                let calls_before = platform.calls();
+                for item in items {
+                    assert_eq!(
+                        state.to_settings_view_model().unwrap().selected_field,
+                        item.field
+                    );
+                    for key in ["Enter", " ", "Left", "Right"] {
+                        press(&mut state, &platform, key);
+                    }
+                    let model = state.to_settings_view_model().unwrap();
+                    let main = match ui::compute_shell_layout(Rect::new(0, 0, 108, 20)) {
+                        ui::ShellLayout::Compact(area) => area,
+                        ui::ShellLayout::Full { main, .. } => main,
+                    };
+                    let layout = ui::settings_layout(main, &model);
+                    let field = layout
+                        .fields
+                        .iter()
+                        .find(|entry| entry.field == item.field)
+                        .expect("selected item is visible");
+                    state.apply_input_with_platform(
+                        InputEvent::mouse_down(ui::MouseButton::Left, (field.area.x, field.area.y)),
+                        &platform,
+                    );
+                    let after = state.to_settings_view_model().unwrap();
+                    assert_eq!(after.cards, model.cards);
+                    assert_eq!(after.status, expected);
+                    assert!(after.picker.is_none());
+                    assert!(after.color_editor.is_none());
+                    assert!(after.weather_location_editor.is_none());
+                    assert!(after.file_extensions_editor.is_none());
+                    assert!(after.time_sync_server_editor.is_none());
+                    assert!(after.update.is_none());
+                    press(&mut state, &platform, "Down");
+                }
+                assert_eq!(platform.calls(), calls_before);
+            }
+            assert_eq!(manager.load_config().unwrap(), before);
+            assert_eq!(manager.load_users().unwrap(), users_before);
+            press(&mut state, &platform, "Esc");
+            assert_eq!(state.active_screen(), ShellScreen::Home);
+        }
     }
 }

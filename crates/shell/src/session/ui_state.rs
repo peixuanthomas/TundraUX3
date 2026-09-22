@@ -577,6 +577,7 @@ pub struct UiSessionState {
     pub(super) user_management_job: Option<UserManagementJob>,
     pub(super) selected_home_entry_index: usize,
     pub(super) settings_state: Option<SettingsState>,
+    pub(super) system_settings_backend: app::system_settings::UnavailableSystemSettingsBackend,
     pub(super) settings_task_runtime: ShellSettingsTaskRuntime,
     pub(super) settings_update_state: SettingsUpdateState,
     pub(super) update_apply_manifest: Option<std::path::PathBuf>,

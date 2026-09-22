@@ -40,3 +40,12 @@ ui-settings-enter-test-and-save-esc-cancel = Enter: test and save    Esc: cancel
 ui-settings-time-synchronization-server-padded = { " " }Time synchronization server{ " " }
 
 ui-settings-locked-value = { $value } locked
+
+ui-settings-sound = Sound
+ui-settings-sound-description = Volume, mute and audio devices
+ui-settings-display = Display
+ui-settings-display-description = Displays, brightness and automatic brightness
+ui-settings-wifi = Wi-Fi
+ui-settings-wifi-description = Wireless networks and connections
+ui-settings-bluetooth = Bluetooth
+ui-settings-bluetooth-description = Bluetooth devices, pairing and connections

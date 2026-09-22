@@ -200,6 +200,13 @@ impl ShellSession {
             user_management_job: None,
             selected_home_entry_index: 0,
             settings_state: None,
+            system_settings_backend: app::system_settings::UnavailableSystemSettingsBackend {
+                reason: if startup.platform_kind == PlatformKind::Linux {
+                    app::system_settings::UnavailableReason::NotIntegrated
+                } else {
+                    app::system_settings::UnavailableReason::UnsupportedPlatform
+                },
+            },
             settings_task_runtime: runtime_services.settings,
             settings_update_state: SettingsUpdateState::default(),
             update_apply_manifest: None,

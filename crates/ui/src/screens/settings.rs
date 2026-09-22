@@ -21,26 +21,45 @@ pub enum SettingsCategory {
     Appearance,
     RegionTime,
     System,
+    Sound,
+    Display,
+    Wifi,
+    Bluetooth,
     FileExplorer,
     Editor,
     Update,
 }
 
 impl SettingsCategory {
-    pub const ALL: [Self; 6] = [
+    pub const ALL: [Self; 10] = [
         Self::Appearance,
         Self::RegionTime,
         Self::System,
+        Self::Sound,
+        Self::Display,
+        Self::Wifi,
+        Self::Bluetooth,
         Self::FileExplorer,
         Self::Editor,
         Self::Update,
     ];
+
+    pub fn is_system_device(self) -> bool {
+        matches!(
+            self,
+            Self::Sound | Self::Display | Self::Wifi | Self::Bluetooth
+        )
+    }
 
     pub fn label(self) -> String {
         match self {
             Self::Appearance => i18n::tr!("ui-settings-appearance"),
             Self::RegionTime => i18n::tr!("ui-settings-region-time"),
             Self::System => i18n::tr!("ui-settings-system"),
+            Self::Sound => i18n::tr!("ui-settings-sound"),
+            Self::Display => i18n::tr!("ui-settings-display"),
+            Self::Wifi => i18n::tr!("ui-settings-wifi"),
+            Self::Bluetooth => i18n::tr!("ui-settings-bluetooth"),
             Self::FileExplorer => i18n::tr!("ui-settings-file-explorer"),
             Self::Editor => i18n::tr!("ui-settings-editor"),
             Self::Update => i18n::tr!("ui-settings-update"),
@@ -52,6 +71,10 @@ impl SettingsCategory {
             Self::Appearance => i18n::tr!("ui-settings-theme-motion-icons-colors-and-borders"),
             Self::RegionTime => i18n::tr!("ui-settings-language-city-and-timezone"),
             Self::System => i18n::tr!("ui-settings-storage-pressure-warning-thresholds"),
+            Self::Sound => i18n::tr!("ui-settings-sound-description"),
+            Self::Display => i18n::tr!("ui-settings-display-description"),
+            Self::Wifi => i18n::tr!("ui-settings-wifi-description"),
+            Self::Bluetooth => i18n::tr!("ui-settings-bluetooth-description"),
             Self::FileExplorer => i18n::tr!("ui-settings-display-sorting-and-safety"),
             Self::Editor => i18n::tr!("ui-settings-cursor-and-file-associations"),
             Self::Update => i18n::tr!("ui-settings-version-commits-and-source-updates"),
@@ -61,6 +84,33 @@ impl SettingsCategory {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum SettingsField {
+    SoundOutputDevice,
+    SoundOutputVolume,
+    SoundOutputMute,
+    SoundInputDevice,
+    SoundInputVolume,
+    SoundInputMute,
+    DisplayDevice,
+    DisplayBrightness,
+    DisplayAutomaticBrightness,
+    WifiEnabled,
+    WifiConnection,
+    WifiAvailableNetworks,
+    WifiSavedNetworks,
+    WifiRefresh,
+    WifiConnect,
+    WifiDisconnect,
+    WifiForget,
+    BluetoothEnabled,
+    BluetoothDiscoverable,
+    BluetoothConnectedDevices,
+    BluetoothPairedDevices,
+    BluetoothNearbyDevices,
+    BluetoothSearch,
+    BluetoothPair,
+    BluetoothConnect,
+    BluetoothDisconnect,
+    BluetoothUnpair,
     Theme,
     BorderShape,
     BorderColor,
@@ -130,6 +180,7 @@ pub struct SettingsItemViewModel {
     pub description: String,
     pub kind: SettingsControlKind,
     pub enabled: bool,
+    pub unavailable_reason: Option<String>,
 }
 
 impl SettingsItemViewModel {
@@ -147,7 +198,14 @@ impl SettingsItemViewModel {
             description: description.into(),
             kind,
             enabled: true,
+            unavailable_reason: None,
         }
+    }
+
+    pub fn unavailable(mut self, reason: impl Into<String>) -> Self {
+        self.enabled = false;
+        self.unavailable_reason = Some(reason.into());
+        self
     }
 
     pub fn enabled(mut self, enabled: bool) -> Self {
@@ -350,6 +408,8 @@ pub struct SettingsLayout {
     pub scroll_offset: u16,
     pub category_cards: Vec<SettingsCategoryLayout>,
     pub fields: Vec<SettingsFieldLayout>,
+    /// Absolute content row, including card spacing, even when scrolled out of view.
+    pub selected_field_row: Option<u16>,
     pub picker_options: Vec<SettingsPickerOptionLayout>,
     pub picker_dialog: Option<Rect>,
     pub color_editor: Option<Rect>,
@@ -423,25 +483,29 @@ pub fn settings_layout(area: Rect, model: &SettingsViewModel) -> SettingsLayout 
         0
     };
     let scroll_offset = model.scroll_offset.min(max_scroll_offset);
+    let category_inner = inset(category_area, 1, 1);
+    let category_start = settings_category_viewport(category_area, model.selected_category);
     let category_cards = SettingsCategory::ALL
         .into_iter()
         .enumerate()
+        .skip(category_start)
         .filter_map(|(index, category)| {
             let row = Rect::new(
                 category_area.x.saturating_add(1),
                 category_area
                     .y
                     .saturating_add(1)
-                    .saturating_add(index as u16),
+                    .saturating_add((index - category_start) as u16),
                 category_area.width.saturating_sub(2),
                 1,
             );
-            rect_intersection(row, category_area)
+            rect_intersection(row, category_inner)
                 .map(|area| SettingsCategoryLayout { category, area })
         })
         .collect();
 
     let mut fields = Vec::new();
+    let mut selected_field_row = None;
     let mut y = i32::from(detail_area.y) - i32::from(scroll_offset);
     if model.appearance_preview.is_some() {
         y += 5;
@@ -453,6 +517,10 @@ pub fn settings_layout(area: Rect, model: &SettingsViewModel) -> SettingsLayout 
             .max(3);
         for (index, item) in card.items.iter().enumerate() {
             let row_y = y + 1 + i32::try_from(index).unwrap_or(i32::MAX);
+            if item.field == model.selected_field {
+                selected_field_row =
+                    u16::try_from(row_y - i32::from(detail_area.y) + i32::from(scroll_offset)).ok();
+            }
             if row_y >= i32::from(detail_area.y) && row_y < i32::from(detail_area.bottom()) {
                 fields.push(SettingsFieldLayout {
                     field: item.field,
@@ -526,6 +594,7 @@ pub fn settings_layout(area: Rect, model: &SettingsViewModel) -> SettingsLayout 
         scroll_offset,
         category_cards,
         fields,
+        selected_field_row,
         picker_options,
         picker_dialog,
         color_editor: model
@@ -637,6 +706,10 @@ fn render_settings_content(
             .iter()
             .position(|category| *category == model.selected_category),
     );
+    categories = categories.with_viewport_start(settings_category_viewport(
+        settings_category_area(layout),
+        model.selected_category,
+    ));
     categories.set_focused(true);
     categories.render_with_context(settings_category_area(layout), frame.buffer_mut(), context);
 
@@ -729,15 +802,11 @@ fn render_cards(
             .unwrap_or(u16::MAX)
             .saturating_add(2)
             .max(3);
-        if let Some((visible, _)) =
-            visible_scrolled_rect(detail_area.x, y, detail_area.width, height, detail_area)
-        {
-            Surface::new()
-                .titled(format!(" {} ", card.title))
-                .bordered(true)
-                .raised(true)
-                .render_frame(frame, visible, context);
-        }
+        Surface::new()
+            .titled(format!(" {} ", card.title))
+            .bordered(true)
+            .raised(true)
+            .render_scrolled_frame(frame, detail_area, y, height, context);
         let rows_height = u16::try_from(card.items.len()).unwrap_or(u16::MAX);
         let Some((visible_rows, skipped_rows)) = visible_scrolled_rect(
             detail_area.x.saturating_add(1),
@@ -996,15 +1065,19 @@ fn render_settings_footer(
     if detail.height < 2 {
         return;
     }
-    let description = model
+    let selected = model
         .cards
         .iter()
         .flat_map(|card| &card.items)
-        .find(|item| item.field == model.selected_field)
+        .find(|item| item.field == model.selected_field);
+    let description = selected
         .map(|item| item.description.clone())
         .unwrap_or_else(|| i18n::tr!("ui-settings-choose-a-setting"));
     let lock = model.locked_message.as_deref().unwrap_or("");
-    let text = [model.status.as_str(), lock, description.as_str()]
+    let status = selected
+        .and_then(|item| item.unavailable_reason.as_deref())
+        .unwrap_or(&model.status);
+    let text = [status, lock, description.as_str()]
         .into_iter()
         .filter(|part| !part.is_empty())
         .collect::<Vec<_>>()
@@ -1355,6 +1428,14 @@ fn settings_raw_detail_area(layout: &SettingsLayout) -> Rect {
     settings_content_areas(layout.main).1
 }
 
+fn settings_category_viewport(area: Rect, selected: SettingsCategory) -> usize {
+    let index = SettingsCategory::ALL
+        .iter()
+        .position(|category| *category == selected)
+        .unwrap_or(0);
+    ComponentList::automatic_viewport_start(index, usize::from(area.height.saturating_sub(2)))
+}
+
 fn settings_category_area(layout: &SettingsLayout) -> Rect {
     settings_content_areas(layout.main).0
 }
@@ -1384,7 +1465,7 @@ fn render_settings_control(
     }
 
     if !item.enabled || item.kind == SettingsControlKind::ReadOnly {
-        let label = if item.enabled {
+        let label = if item.enabled || item.unavailable_reason.is_some() {
             item.value.clone()
         } else {
             i18n::tr!("ui-settings-locked-value", value = item.value.clone())
@@ -1418,7 +1499,7 @@ fn render_settings_control(
 
 fn settings_control_width(item: &SettingsItemViewModel) -> u16 {
     let label_width = u16::try_from(terminal_width(&item.value)).unwrap_or(u16::MAX);
-    if !item.enabled {
+    if !item.enabled && item.unavailable_reason.is_none() {
         return u16::try_from(terminal_width(&i18n::tr!(
             "ui-settings-locked-value",
             value = item.value.clone()

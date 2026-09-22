@@ -4,6 +4,7 @@ pub mod editor;
 pub mod explorer;
 pub mod launcher;
 pub mod runtime_logs;
+pub mod system_settings;
 pub mod update;
 
 pub use editor::markdown_codec;

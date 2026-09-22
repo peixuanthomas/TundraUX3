@@ -16,6 +16,7 @@ mod launcher;
 mod launcher_tasks;
 mod notifications;
 mod settings;
+mod settings_devices;
 mod settings_rpm;
 pub(super) use settings_rpm::*;
 mod settings_rpm_tasks;

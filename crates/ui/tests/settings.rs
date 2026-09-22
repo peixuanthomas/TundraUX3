@@ -634,3 +634,170 @@ fn chrome() -> ShellChromeViewModel {
         },
     }
 }
+
+#[test]
+fn scrolled_categories_render_and_hit_the_same_rows() {
+    for category in SettingsCategory::ALL {
+        let mut model = sample_model();
+        model.selected_category = category;
+        let mut terminal = Terminal::new(TestBackend::new(80, 12)).unwrap();
+        let mut layout = None;
+        terminal
+            .draw(|frame| {
+                layout = Some(render_settings(
+                    frame,
+                    frame.area(),
+                    &chrome(),
+                    &model,
+                    &TundraTheme::default_dark(),
+                ));
+            })
+            .unwrap();
+        let layout = layout.unwrap();
+        assert!(
+            layout
+                .category_cards
+                .iter()
+                .any(|entry| entry.category == category)
+        );
+        for entry in &layout.category_cards {
+            assert_eq!(
+                settings_hit_test(&layout, (entry.area.x, entry.area.y)),
+                Some(SettingsHitTarget::Category(entry.category))
+            );
+            let line = (entry.area.x..entry.area.right())
+                .map(|x| terminal.backend().buffer()[(x, entry.area.y)].symbol())
+                .collect::<String>();
+            assert!(
+                line.contains(&entry.category.label()),
+                "{category:?}: {line}"
+            );
+        }
+        let last = layout.category_cards.last().unwrap();
+        assert_eq!(
+            settings_hit_test(&layout, (last.area.x, last.area.bottom())),
+            None,
+            "sidebar bottom border cannot select a hidden category"
+        );
+    }
+}
+
+#[test]
+fn unavailable_settings_use_localized_reasons_and_theme_without_permission_lock() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../ascii-assets/assets");
+    for (language, reason, missing) in [
+        (
+            "en-US",
+            "This feature is not supported on this platform yet.",
+            "Not obtained",
+        ),
+        ("zh-CN", "当前平台暂不支持此功能", "未获取"),
+    ] {
+        let snapshot = i18n::LanguageSnapshot::load(&root, language, 1)
+            .unwrap()
+            .snapshot;
+        let _language = i18n::enter_snapshot(std::sync::Arc::new(snapshot));
+        for category in [
+            SettingsCategory::Sound,
+            SettingsCategory::Display,
+            SettingsCategory::Wifi,
+            SettingsCategory::Bluetooth,
+        ] {
+            assert!(!category.label().starts_with("ui-settings-"));
+            assert!(!category.description().starts_with("ui-settings-"));
+            let mut model = sample_model();
+            model.selected_category = category;
+            model.selected_field = SettingsField::SoundOutputVolume;
+            model.appearance_preview = None;
+            model.locked_message = None;
+            model.cards = vec![SettingsCardViewModel::new(
+                category.label(),
+                vec![
+                    SettingsItemViewModel::new(
+                        SettingsField::SoundOutputVolume,
+                        i18n::tr!("settings-device-sound-output-volume"),
+                        i18n::tr!("settings-device-not-obtained"),
+                        i18n::tr!("settings-device-sound-output-volume-help"),
+                        SettingsControlKind::Stepper,
+                    )
+                    .unavailable(i18n::tr!("settings-device-unsupported")),
+                ],
+            )];
+            for (width, height) in [(80, 24), (108, 20), (120, 32)] {
+                let theme = TundraTheme {
+                    muted: Color::Magenta,
+                    ..TundraTheme::default_dark()
+                };
+                let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+                terminal
+                    .draw(|frame| {
+                        render_settings(frame, frame.area(), &chrome(), &model, &theme);
+                    })
+                    .unwrap();
+                let output = terminal_output(&terminal);
+                assert!(
+                    output.replace(' ', "").contains(&reason.replace(' ', "")),
+                    "{language}: {output}"
+                );
+                assert!(output.replace(' ', "").contains(&missing.replace(' ', "")));
+                assert!(!output.contains("locked") && !output.contains("已锁定"));
+                assert!(
+                    terminal
+                        .backend()
+                        .buffer()
+                        .content()
+                        .iter()
+                        .any(
+                            |cell| cell.symbol() == missing.chars().next().unwrap().to_string()
+                                && cell.fg == theme.muted
+                        )
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn clipped_setting_cards_keep_borders_off_content_rows() {
+    let mut model = sample_model();
+    model.appearance_preview = None;
+    model.cards = vec![SettingsCardViewModel::new(
+        "Clipped card",
+        (0..20)
+            .map(|index| {
+                SettingsItemViewModel::new(
+                    SettingsField::BluetoothUnpair,
+                    format!("Device {index}"),
+                    "Unavailable",
+                    "Not integrated",
+                    SettingsControlKind::Action,
+                )
+                .unavailable("Not integrated")
+            })
+            .collect(),
+    )];
+    model.scroll_offset = 3;
+    let mut terminal = Terminal::new(TestBackend::new(80, 12)).unwrap();
+    let mut layout = None;
+    terminal
+        .draw(|frame| {
+            layout = Some(render_settings(
+                frame,
+                frame.area(),
+                &chrome(),
+                &model,
+                &TundraTheme::default_dark(),
+            ));
+        })
+        .unwrap();
+    let detail = layout.unwrap().detail;
+    for y in [detail.y, detail.bottom() - 1] {
+        assert_eq!(terminal.backend().buffer()[(detail.x, y)].symbol(), "│");
+        assert_eq!(
+            terminal.backend().buffer()[(detail.right() - 1, y)].symbol(),
+            "│"
+        );
+    }
+    assert!(!terminal_output(&terminal).contains("Clipped card"));
+    assert!(terminal_output(&terminal).contains("Device 2"));
+}

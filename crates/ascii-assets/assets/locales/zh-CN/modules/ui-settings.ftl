@@ -40,3 +40,12 @@ ui-settings-enter-test-and-save-esc-cancel = Enter：测试并保存    Esc：�
 ui-settings-time-synchronization-server-padded = { " " }时间同步服务器{ " " }
 
 ui-settings-locked-value = { $value } 已锁定
+
+ui-settings-sound = 声音
+ui-settings-sound-description = 音量、静音与声音设备
+ui-settings-display = 显示与亮度
+ui-settings-display-description = 显示设备、亮度与自动亮度
+ui-settings-wifi = Wi-Fi
+ui-settings-wifi-description = 无线网络与连接管理
+ui-settings-bluetooth = 蓝牙
+ui-settings-bluetooth-description = 蓝牙设备、配对与连接

@@ -72,6 +72,39 @@ impl Surface {
         frame.render_widget(self.block(context), area);
     }
 
+    /// Render a vertically scrolled surface without moving its title or end borders
+    /// onto content rows when the viewport clips the original top or bottom.
+    pub fn render_scrolled_frame(
+        &self,
+        frame: &mut Frame<'_>,
+        viewport: Rect,
+        y: i32,
+        height: u16,
+        context: &RenderContext,
+    ) {
+        let Some((visible, skipped)) =
+            super::visible_scrolled_rect(viewport.x, y, viewport.width, height, viewport)
+        else {
+            return;
+        };
+        let mut surface = self.clone();
+        if skipped > 0 {
+            surface.title = None;
+        }
+        let mut block = surface.block(context);
+        if self.bordered {
+            let mut borders = Borders::LEFT | Borders::RIGHT;
+            if skipped == 0 {
+                borders |= Borders::TOP;
+            }
+            if y + i32::from(height) <= i32::from(viewport.bottom()) {
+                borders |= Borders::BOTTOM;
+            }
+            block = block.borders(borders);
+        }
+        frame.render_widget(block, visible);
+    }
+
     pub fn render_with_theme(&self, area: Rect, buffer: &mut Buffer, theme: &TundraTheme) {
         self.render(
             area,
