@@ -1,5 +1,6 @@
 //! Composition harness for existing page fixtures. Production frames use ScreenCompositor.
-#![allow(dead_code, unused_imports)]
+// Each integration-test crate imports only its own page fixture wrappers.
+#![allow(dead_code)]
 pub use ::ui::*;
 use ratatui::{Frame, layout::Rect};
 
@@ -25,24 +26,48 @@ fn compose(
     layout
 }
 
-pub fn render_home(
-    frame: &mut Frame<'_>,
-    area: Rect,
-    chrome: &ShellChromeViewModel,
-    model: &HomeViewModel,
-    theme: &TundraTheme,
-) {
-    let context = &RenderContext::from_theme(theme, Default::default(), Default::default());
-    compose(
-        frame,
-        area,
-        chrome,
-        ScreenContent::Home(model),
-        context,
-        None,
-        None,
-    );
+macro_rules! themed_page {
+    ($name:ident, $model:ty, $variant:ident) => {
+        pub fn $name(
+            frame: &mut Frame<'_>,
+            area: Rect,
+            chrome: &ShellChromeViewModel,
+            model: &$model,
+            theme: &TundraTheme,
+        ) {
+            let context = RenderContext::from_theme(theme, Default::default(), Default::default());
+            compose(
+                frame,
+                area,
+                chrome,
+                ScreenContent::$variant(model),
+                &context,
+                None,
+                None,
+            );
+        }
+    };
 }
+
+themed_page!(render_home, HomeViewModel, Home);
+themed_page!(render_setup, SetupViewModel, Setup);
+themed_page!(render_login, LoginViewModel, Login);
+themed_page!(
+    render_bootstrap_admin,
+    BootstrapAdminViewModel,
+    BootstrapAdmin
+);
+themed_page!(
+    render_user_management,
+    UserManagementViewModel,
+    UserManagement
+);
+themed_page!(render_explorer, ExplorerViewModel, Explorer);
+themed_page!(render_launcher, LauncherViewModel, Launcher);
+themed_page!(render_command_line, CommandLineViewModel, CommandLine);
+themed_page!(render_diagnostics, DiagnosticsViewModel, Diagnostics);
+themed_page!(render_system_status, SystemStatusViewModel, SystemStatus);
+themed_page!(render_clock, ClockViewModel, Clock);
 
 pub fn render_home_with_context(
     frame: &mut Frame<'_>,
@@ -83,101 +108,6 @@ pub fn render_home_with_icons(
     );
 }
 
-pub fn render_setup(
-    frame: &mut Frame<'_>,
-    area: Rect,
-    chrome: &ShellChromeViewModel,
-    model: &SetupViewModel,
-    theme: &TundraTheme,
-) {
-    let context = &RenderContext::from_theme(theme, Default::default(), Default::default());
-    compose(
-        frame,
-        area,
-        chrome,
-        ScreenContent::Setup(model),
-        context,
-        None,
-        None,
-    );
-}
-
-pub fn render_login(
-    frame: &mut Frame<'_>,
-    area: Rect,
-    chrome: &ShellChromeViewModel,
-    model: &LoginViewModel,
-    theme: &TundraTheme,
-) {
-    let context = &RenderContext::from_theme(theme, Default::default(), Default::default());
-    compose(
-        frame,
-        area,
-        chrome,
-        ScreenContent::Login(model),
-        context,
-        None,
-        None,
-    );
-}
-
-pub fn render_bootstrap_admin(
-    frame: &mut Frame<'_>,
-    area: Rect,
-    chrome: &ShellChromeViewModel,
-    model: &BootstrapAdminViewModel,
-    theme: &TundraTheme,
-) {
-    let context = &RenderContext::from_theme(theme, Default::default(), Default::default());
-    compose(
-        frame,
-        area,
-        chrome,
-        ScreenContent::BootstrapAdmin(model),
-        context,
-        None,
-        None,
-    );
-}
-
-pub fn render_user_management(
-    frame: &mut Frame<'_>,
-    area: Rect,
-    chrome: &ShellChromeViewModel,
-    model: &UserManagementViewModel,
-    theme: &TundraTheme,
-) {
-    let context = &RenderContext::from_theme(theme, Default::default(), Default::default());
-    compose(
-        frame,
-        area,
-        chrome,
-        ScreenContent::UserManagement(model),
-        context,
-        None,
-        None,
-    );
-}
-
-pub fn render_explorer(
-    frame: &mut Frame<'_>,
-    area: Rect,
-    chrome: &ShellChromeViewModel,
-    model: &ExplorerViewModel,
-    theme: &TundraTheme,
-) {
-    let context = &RenderContext::from_theme(theme, Default::default(), Default::default());
-    compose(
-        frame,
-        area,
-        chrome,
-        ScreenContent::Explorer(model),
-        context,
-        None,
-        None,
-    );
-}
-
 pub fn render_explorer_with_context(
     frame: &mut Frame<'_>,
     area: Rect,
@@ -190,25 +120,6 @@ pub fn render_explorer_with_context(
         area,
         chrome,
         ScreenContent::Explorer(model),
-        context,
-        None,
-        None,
-    );
-}
-
-pub fn render_launcher(
-    frame: &mut Frame<'_>,
-    area: Rect,
-    chrome: &ShellChromeViewModel,
-    model: &LauncherViewModel,
-    theme: &TundraTheme,
-) {
-    let context = &RenderContext::from_theme(theme, Default::default(), Default::default());
-    compose(
-        frame,
-        area,
-        chrome,
-        ScreenContent::Launcher(model),
         context,
         None,
         None,
@@ -235,25 +146,6 @@ pub fn render_launcher_with_icons(
     );
 }
 
-pub fn render_command_line(
-    frame: &mut Frame<'_>,
-    area: Rect,
-    chrome: &ShellChromeViewModel,
-    model: &CommandLineViewModel,
-    theme: &TundraTheme,
-) {
-    let context = &RenderContext::from_theme(theme, Default::default(), Default::default());
-    compose(
-        frame,
-        area,
-        chrome,
-        ScreenContent::CommandLine(model),
-        context,
-        None,
-        None,
-    );
-}
-
 pub fn render_settings(
     frame: &mut Frame<'_>,
     area: Rect,
@@ -262,7 +154,7 @@ pub fn render_settings(
     theme: &TundraTheme,
 ) -> SettingsLayout {
     let context = &RenderContext::from_theme(theme, Default::default(), Default::default());
-    compose(
+    let layout = compose(
         frame,
         area,
         chrome,
@@ -271,10 +163,7 @@ pub fn render_settings(
         None,
         None,
     );
-    settings_layout(
-        ShellFrameLayout::new(area, chrome.status.time_button_label.as_deref(), context).main,
-        model,
-    )
+    settings_layout(layout.main, model)
 }
 
 pub fn render_logs_with_context(
@@ -289,63 +178,6 @@ pub fn render_logs_with_context(
         area,
         chrome,
         ScreenContent::Logs(model),
-        context,
-        None,
-        None,
-    );
-}
-
-pub fn render_diagnostics(
-    frame: &mut Frame<'_>,
-    area: Rect,
-    chrome: &ShellChromeViewModel,
-    model: &DiagnosticsViewModel,
-    theme: &TundraTheme,
-) {
-    let context = &RenderContext::from_theme(theme, Default::default(), Default::default());
-    compose(
-        frame,
-        area,
-        chrome,
-        ScreenContent::Diagnostics(model),
-        context,
-        None,
-        None,
-    );
-}
-
-pub fn render_system_status(
-    frame: &mut Frame<'_>,
-    area: Rect,
-    chrome: &ShellChromeViewModel,
-    model: &SystemStatusViewModel,
-    theme: &TundraTheme,
-) {
-    let context = &RenderContext::from_theme(theme, Default::default(), Default::default());
-    compose(
-        frame,
-        area,
-        chrome,
-        ScreenContent::SystemStatus(model),
-        context,
-        None,
-        None,
-    );
-}
-
-pub fn render_clock(
-    frame: &mut Frame<'_>,
-    area: Rect,
-    chrome: &ShellChromeViewModel,
-    model: &ClockViewModel,
-    theme: &TundraTheme,
-) {
-    let context = &RenderContext::from_theme(theme, Default::default(), Default::default());
-    compose(
-        frame,
-        area,
-        chrome,
-        ScreenContent::Clock(model),
         context,
         None,
         None,
