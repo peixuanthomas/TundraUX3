@@ -6,42 +6,15 @@ use crate::components::{
 use crate::screens::diagnostics::{
     render_diagnostics_content, render_diagnostics_footer, render_diagnostics_repair_dialog,
 };
-use crate::screens::shell::{fit_cell, render_compact_home, render_status, render_top};
-use crate::{RenderContext, ShellChromeViewModel, ShellLayout, TundraTheme, compute_shell_layout};
+use crate::screens::shell::fit_cell;
+use crate::{RenderContext, TundraTheme};
 use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::Style;
 use ratatui::text::Line;
 use ratatui::widgets::{Clear, Paragraph, Sparkline};
 
-pub fn render_system_status(
-    frame: &mut Frame<'_>,
-    area: Rect,
-    chrome: &ShellChromeViewModel,
-    model: &SystemStatusViewModel,
-    theme: &TundraTheme,
-) {
-    let context = RenderContext::from_theme(theme, Default::default(), Default::default());
-    render_system_status_contextual(frame, area, chrome, model, &context)
-}
-pub fn render_system_status_contextual(
-    frame: &mut Frame<'_>,
-    area: Rect,
-    chrome: &ShellChromeViewModel,
-    model: &SystemStatusViewModel,
-    context: &RenderContext,
-) {
-    let theme = &context.compatibility_theme();
-    match compute_shell_layout(area) {
-        ShellLayout::Compact(c) => render_compact_home(frame, c, chrome, theme),
-        ShellLayout::Full { top, main, status } => {
-            render_top(frame, top, chrome, theme);
-            render_main(frame, main, model, context);
-            render_status(frame, status, chrome, theme)
-        }
-    }
-}
-fn render_main(
+pub fn render_system_status_content(
     frame: &mut Frame<'_>,
     main: Rect,
     model: &SystemStatusViewModel,
@@ -210,7 +183,6 @@ fn render_dashboard(
             theme,
         )
     }
-    render_overlays(frame, l, model, context)
 }
 fn button(
     frame: &mut Frame<'_>,
@@ -350,12 +322,6 @@ fn render_detail(
                 theme,
                 &i18n::tr!("ui-system-status-esc-dashboard"),
             );
-            if let (Some(dl), Some(dialog)) = (
-                l.diagnostics_repair_dialog.as_ref(),
-                model.diagnostics.repair_dialog.as_ref(),
-            ) {
-                render_diagnostics_repair_dialog(frame, dl, dialog, theme, context)
-            }
         }
         _ => {
             if let Some(vm) = model.detail_widget(d) {
@@ -658,5 +624,28 @@ fn detail_scroll(
     if let Some(a) = l.scrollbar {
         Scrollbar::new(model.item_count(), l.visible_capacity, l.visible_start)
             .render_frame(frame, a, context)
+    }
+}
+
+pub fn render_system_status_overlay(
+    frame: &mut Frame<'_>,
+    main: Rect,
+    model: &SystemStatusViewModel,
+    context: &RenderContext,
+) {
+    let l = system_status_layout(main, model);
+    if model.route == SystemStatusRoute::Dashboard {
+        render_overlays(frame, &l, model, context);
+    } else if let (Some(dl), Some(dialog)) = (
+        &l.diagnostics_repair_dialog,
+        &model.diagnostics.repair_dialog,
+    ) {
+        render_diagnostics_repair_dialog(
+            frame,
+            dl,
+            dialog,
+            &context.compatibility_theme(),
+            context,
+        );
     }
 }

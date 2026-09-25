@@ -14,8 +14,8 @@ pub use model::{
     DiagnosticsLogViewModel, DiagnosticsRepairDialogViewModel, DiagnosticsRepairItemViewModel,
     DiagnosticsStatus, DiagnosticsTab, DiagnosticsViewModel,
 };
-pub use render::{render_diagnostics, render_diagnostics_contextual};
 pub(crate) use render::{
     render_diagnostics_content, render_diagnostics_content_titled, render_diagnostics_footer,
     render_diagnostics_repair_dialog,
 };
+pub use render::{render_diagnostics_overlay, render_diagnostics_page_content};

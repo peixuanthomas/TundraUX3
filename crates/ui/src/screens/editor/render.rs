@@ -31,12 +31,19 @@ pub fn render_editor_contextual(
     render_toolbar(frame, &layout, model, theme, context);
     render_canvas(frame, &layout, model, theme, context);
     render_status_bar(frame, &layout, model, theme);
-    // Popups overlap the editor chrome and canvas. Settings is modal, so it
-    // is painted last and receives the highest hit-test priority.
+    layout
+}
+
+pub fn render_editor_overlay(
+    frame: &mut Frame<'_>,
+    layout: &EditorLayout,
+    model: &EditorViewModel,
+    context: &RenderContext,
+) {
+    let theme = &context.compatibility_theme();
     render_menu_popup(frame, &layout, model, theme, context);
     render_quick_menu(frame, &layout, theme, context);
-    render_settings(frame, &layout, model, theme, context);
-    layout
+    render_settings(frame, layout, model, theme, context);
 }
 
 fn render_menu_bar(

@@ -317,7 +317,7 @@ impl ShellSession {
             return;
         };
         let area = Rect::new(0, 0, self.terminal_size.0, self.terminal_size.1);
-        let app_area = match ui::compute_shell_layout(area) {
+        let app_area = match self.shell_layout_for(area) {
             ui::ShellLayout::Compact(compact) => compact,
             ui::ShellLayout::Full { main, .. } => main,
         };
@@ -450,7 +450,7 @@ impl ShellSession {
     fn current_settings_layout(&self) -> Option<ui::SettingsLayout> {
         let model = self.to_settings_view_model()?;
         let terminal = Rect::new(0, 0, self.terminal_size.0, self.terminal_size.1);
-        let main = match ui::compute_shell_layout(terminal) {
+        let main = match self.shell_layout_for(terminal) {
             ui::ShellLayout::Compact(compact) => compact,
             ui::ShellLayout::Full { main, .. } => main,
         };

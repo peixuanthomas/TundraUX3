@@ -789,7 +789,7 @@ impl ShellSession {
         let left_column = viewport.left_column;
 
         let area = Rect::new(0, 0, self.terminal_size.0, self.terminal_size.1);
-        let editor_area = match ui::compute_shell_layout(area) {
+        let editor_area = match self.shell_layout_for(area) {
             ui::ShellLayout::Compact(compact) => compact,
             ui::ShellLayout::Full { main, .. } => main,
         };
@@ -1984,7 +1984,7 @@ impl ShellSession {
         coordinates: CellPosition,
     ) -> (Option<ui::EditorHitTarget>, Option<ui::EditorDocumentHit>) {
         let area = Rect::new(0, 0, self.terminal_size.0, self.terminal_size.1);
-        let editor_area = match ui::compute_shell_layout(area) {
+        let editor_area = match self.shell_layout_for(area) {
             ui::ShellLayout::Compact(compact) => compact,
             ui::ShellLayout::Full { main, .. } => main,
         };
@@ -2001,7 +2001,7 @@ impl ShellSession {
         axis: ScrollbarAxis,
     ) {
         let area = Rect::new(0, 0, self.terminal_size.0, self.terminal_size.1);
-        let editor_area = match ui::compute_shell_layout(area) {
+        let editor_area = match self.shell_layout_for(area) {
             ui::ShellLayout::Compact(compact) => compact,
             ui::ShellLayout::Full { main, .. } => main,
         };
@@ -2031,7 +2031,7 @@ impl ShellSession {
             return;
         };
         let area = Rect::new(0, 0, self.terminal_size.0, self.terminal_size.1);
-        let editor_area = match ui::compute_shell_layout(area) {
+        let editor_area = match self.shell_layout_for(area) {
             ui::ShellLayout::Compact(compact) => compact,
             ui::ShellLayout::Full { main, .. } => main,
         };
@@ -2206,7 +2206,7 @@ impl ShellSession {
         let path = session.reload.path().to_path_buf();
         let model = self.to_editor_view_model();
         let area = Rect::new(0, 0, self.terminal_size.0, self.terminal_size.1);
-        let editor_area = match ui::compute_shell_layout(area) {
+        let editor_area = match self.shell_layout_for(area) {
             ui::ShellLayout::Compact(compact) => compact,
             ui::ShellLayout::Full { main, .. } => main,
         };

@@ -151,52 +151,26 @@ fn batched_input_installs_settled_hit_map_before_the_next_event() {
 }
 
 #[test]
-fn fullscreen_runtime_wires_motion_preferences_capabilities_and_contextual_renderers() {
+fn fullscreen_runtime_delegates_frame_composition() {
     let source = include_str!("../../../../src/session/runtime.rs");
     let start = source
         .find("pub(super) fn run_fullscreen_shell_session")
-        .expect("fullscreen runtime");
+        .unwrap();
     let end = source[start..]
         .find("fn read_ready_terminal_event_batch")
-        .map(|offset| start + offset)
-        .expect("runtime helper boundary");
+        .unwrap()
+        + start;
     let runtime = &source[start..end];
-
-    assert!(runtime.contains("reduced_motion_enabled(&state)"));
-    assert!(runtime.contains("shell_render_capabilities(terminal_graphics_probe)"));
-    assert!(runtime.contains("ui::RenderContext::from_theme_with_transitions("));
-    assert!(runtime.contains("state.refresh_hit_map_with_motion(motion_transitions)"));
-    assert!(runtime.contains("render_context.page_area(area)"));
-    assert!(runtime.contains("sync_shell_toast(&mut shell_toast"));
-    assert!(runtime.contains("|| state.active_screen() == ShellScreen::ExitConfirm"));
-    for renderer in [
-        "render_setup_with_context",
-        "render_login_with_context",
-        "render_bootstrap_admin_with_context",
-        "render_user_management_with_context",
-        "render_explorer_with_context",
-        "render_launcher_with_context",
-        "render_command_line_with_context",
-        "render_editor_app_with_context",
-        "render_settings_with_context",
-        "render_diagnostics_with_context",
-        "render_clock_with_context",
-        "render_home_with_context",
-        "render_time_sync_failure_dialog_with_context",
-        "render_notification_overlay_with_context",
-    ] {
-        assert!(runtime.contains(renderer), "missing {renderer}");
-    }
-    for legacy in [
-        "ui::render_setup(",
-        "ui::render_login(",
-        "ui::render_launcher_with_icons(",
-        "ui::render_home_with_icons(",
-        "ui::render_notification_overlay(",
-        "ui::render_exit_confirmation_with_context(",
-    ] {
-        assert!(!runtime.contains(legacy), "legacy runtime call {legacy}");
-    }
+    assert!(runtime.contains("compositor.prepare("));
+    assert!(runtime.contains("compositor.render(frame,"));
+    assert!(
+        !runtime.contains("ui::render_"),
+        "normal frames must use the compositor"
+    );
+    assert!(
+        !runtime.contains("frame.buffer_mut()"),
+        "post effects belong to the compositor"
+    );
 }
 
 #[test]

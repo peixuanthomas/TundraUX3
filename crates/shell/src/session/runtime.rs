@@ -503,7 +503,7 @@ impl LauncherIconRuntime {
         changed
     }
 
-    fn sync(&mut self, model: &ui::LauncherViewModel, main: Rect) {
+    pub(super) fn sync(&mut self, model: &ui::LauncherViewModel, main: Rect) {
         self.poll_results();
         let ids = model
             .items
@@ -588,7 +588,7 @@ impl LauncherIconRuntime {
         }
     }
 
-    fn sync_home(&mut self, model: &ui::HomeViewModel, main: Rect) {
+    pub(super) fn sync_home(&mut self, model: &ui::HomeViewModel, main: Rect) {
         let labels = model
             .entries()
             .iter()
@@ -649,6 +649,12 @@ impl ui::LauncherIconRenderer for LauncherIconRuntime {
         let Some(icon) = self.prepared.get(item_id) else {
             return false;
         };
+        // A resize can land between preparation and Terminal::draw. A fixed-size
+        // image protocol must never paint an obsolete allocation; use the page's
+        // text fallback until the next preparation pass catches up.
+        if icon.area != area {
+            return false;
+        }
         icon.image.render_centered(frame, area);
         true
     }
@@ -659,6 +665,12 @@ impl ui::HomeIconRenderer for LauncherIconRuntime {
         let Some(icon) = self.home_prepared.get(entry_label) else {
             return false;
         };
+        // A resize can land between preparation and Terminal::draw. A fixed-size
+        // image protocol must never paint an obsolete allocation; use the page's
+        // text fallback until the next preparation pass catches up.
+        if icon.area != area {
+            return false;
+        }
         icon.image.render_centered(frame, area);
         true
     }
@@ -962,9 +974,7 @@ pub(super) fn run_fullscreen_shell_session<W: Write>(
         RedrawIdentity::from_session(&state),
         reduced_motion_enabled(&state),
     );
-    let mut motion_effects = ShellMotionEffects::default();
-    let mut spring_progress = super::spring_progress::SpringProgress::default();
-    let mut shell_toast: Option<ui::components::Toast> = None;
+    let mut compositor = ScreenCompositor::default();
     let mut terminal_size_error = None;
     let mut terminal_suspended = false;
     let mut last_background_poll = runtime_origin;
@@ -1004,7 +1014,7 @@ pub(super) fn run_fullscreen_shell_session<W: Write>(
                 }
                 PlatformLifecycleEvent::PrepareForSleep if !terminal_suspended => {
                     let _ = state.persist_editor_recovery_now(Instant::now());
-                    if let Some(routed) = motion_effects.cancel_for_suspend(&state) {
+                    if let Some(routed) = compositor.cancel_for_suspend(&state) {
                         state.apply_routed_event(routed, platform.as_ref(), Instant::now());
                         redraw.request_redraw();
                     }
@@ -1103,51 +1113,6 @@ pub(super) fn run_fullscreen_shell_session<W: Write>(
         );
         if redraw.is_due(frame_now) {
             let _language = i18n::enter_snapshot(state.language.clone());
-            let content_screen = state.content_screen();
-            let chrome = state.to_shell_chrome_view_model();
-            // Construct only the model that can be rendered this frame. Explorer,
-            // Launcher, Editor, and Diagnostics models may clone sizable lists or
-            // formatted content; rebuilding all of them for every Editor key made
-            // input latency depend on unrelated background state.
-            let home = matches!(content_screen, ShellScreen::Home | ShellScreen::ExitConfirm)
-                .then(|| state.to_home_view_model());
-            let clock = (content_screen == ShellScreen::Clock).then(|| {
-                let terminal_cell_aspect_ratio = crossterm::terminal::window_size()
-                    .map(|window| {
-                        ui::TerminalCellAspectRatio::from_window_size(
-                            window.columns,
-                            window.rows,
-                            window.width,
-                            window.height,
-                        )
-                    })
-                    .unwrap_or_default();
-                state
-                    .to_clock_view_model_at(&clock_snapshot, frame_now)
-                    .with_terminal_cell_aspect_ratio(terminal_cell_aspect_ratio)
-            });
-            let time_sync_dialog = (content_screen != ShellScreen::CommandLine)
-                .then(|| state.to_time_sync_dialog_view_model())
-                .flatten();
-            let setup =
-                (content_screen == ShellScreen::FirstRunSetup).then(|| state.to_setup_view_model());
-            let login = (content_screen == ShellScreen::Login)
-                .then(|| state.to_login_view_model_at(frame_now));
-            let bootstrap_admin = (content_screen == ShellScreen::BootstrapAdmin)
-                .then(|| state.to_bootstrap_admin_view_model());
-            let user_management = (content_screen == ShellScreen::UserManagement)
-                .then(|| state.to_user_management_view_model());
-            let explorer =
-                (content_screen == ShellScreen::Explorer).then(|| state.to_explorer_view_model());
-            let launcher =
-                (content_screen == ShellScreen::Launcher).then(|| state.to_launcher_view_model());
-            let command_line = (content_screen == ShellScreen::CommandLine).then(|| {
-                let mut model = command_line_host.view_model();
-                if let Some(username) = state.current_home_username() {
-                    model = model.with_prompt_username(username);
-                }
-                model
-            });
             let motion_frame = redraw.frame(frame_now, animation_speed_percent(&state));
             let motion_transitions = redraw.transitions(frame_now);
             let render_context = ui::RenderContext::from_theme_with_transitions(
@@ -1156,280 +1121,39 @@ pub(super) fn run_fullscreen_shell_session<W: Write>(
                 motion_transitions,
                 shell_render_capabilities(terminal_graphics_probe),
             );
-            let visible_toast = chrome
-                .status
-                .error
-                .is_none()
-                .then_some(chrome.status.toast.as_deref())
-                .flatten();
-            sync_shell_toast(&mut shell_toast, visible_toast, motion_frame);
-            if shell_toast
-                .as_ref()
-                .is_some_and(|toast| !toast.is_visible(motion_frame))
-            {
-                shell_toast = None;
-            }
-            let graphical_icons_enabled = state.graphical_icons_enabled();
-            if graphical_icons_enabled
-                && let Some(icon_runtime) = launcher_icons.as_mut()
-                && let ui::ShellLayout::Full { main, .. } =
-                    ui::compute_shell_layout(render_context.page_area(Rect::new(
-                        0,
-                        0,
-                        state.terminal_size().0,
-                        state.terminal_size().1,
-                    )))
-            {
-                if let Some(launcher) = launcher.as_ref() {
-                    icon_runtime.sync(launcher, main);
-                }
-                if let Some(home) = home.as_ref() {
-                    icon_runtime.sync_home(home, main);
-                }
-            }
-            let editor =
-                (content_screen == ShellScreen::Editor).then(|| state.to_editor_view_model());
-            let mut settings = (content_screen == ShellScreen::Settings)
-                .then(|| state.to_settings_view_model())
-                .flatten();
-            let logs = (content_screen == ShellScreen::Logs).then(|| state.to_logs_view_model());
-            let diagnostics = (content_screen == ShellScreen::Diagnostics)
-                .then(|| state.to_diagnostics_view_model());
-            let mut system_status = (content_screen == ShellScreen::SystemStatus)
-                .then(|| state.to_system_status_view_model())
-                .flatten();
-            let progress_requests_redraw =
-                spring_progress.update(settings.as_mut(), system_status.as_mut(), motion_frame);
-            let notification = (content_screen != ShellScreen::CommandLine
-                || state.active_screen() == ShellScreen::ExitConfirm)
-                .then(|| state.to_notification_view_model())
-                .flatten();
-            state.refresh_hit_map_with_motion(motion_transitions);
-            let terminal_area = Rect::new(0, 0, state.terminal_size().0, state.terminal_size().1);
-            let page_area = render_context.page_area(terminal_area);
-            let status_area = match ui::compute_shell_layout(page_area) {
-                ui::ShellLayout::Full { status, .. } => Some(status),
-                ui::ShellLayout::Compact(_) => None,
+            let aspect = if state.content_screen() == ShellScreen::Clock {
+                crossterm::terminal::window_size()
+                    .map(|window| {
+                        ui::TerminalCellAspectRatio::from_window_size(
+                            window.columns,
+                            window.rows,
+                            window.width,
+                            window.height,
+                        )
+                    })
+                    .unwrap_or_default()
+            } else {
+                ui::TerminalCellAspectRatio::default()
             };
-            motion_effects.update(
+            let prepared = compositor.prepare(
                 &state,
-                terminal_area,
-                page_area,
-                status_area,
-                render_context.theme,
-                motion_frame.reduced_motion,
+                &command_line_host,
+                frame_now,
+                aspect,
+                render_context,
+                launcher_icons.as_mut(),
             );
+            let mut animation_running = false;
             guard.terminal_mut().draw(|frame| {
-                let area = frame.area();
-                let page_area = render_context.page_area(area);
-                ui::components::Surface::new().render_frame(frame, area, &render_context);
-                match content_screen {
-                    ShellScreen::FirstRunSetup => {
-                        ui::render_setup_with_context(
-                            frame,
-                            page_area,
-                            &chrome,
-                            setup.as_ref().expect("Setup requires its view model"),
-                            &render_context,
-                        );
-                    }
-                    ShellScreen::Login => {
-                        ui::render_login_with_context(
-                            frame,
-                            page_area,
-                            &chrome,
-                            login.as_ref().expect("Login requires its view model"),
-                            &render_context,
-                        );
-                    }
-                    ShellScreen::BootstrapAdmin => {
-                        ui::render_bootstrap_admin_with_context(
-                            frame,
-                            page_area,
-                            &chrome,
-                            bootstrap_admin
-                                .as_ref()
-                                .expect("Bootstrap admin requires its view model"),
-                            &render_context,
-                        );
-                    }
-                    ShellScreen::UserManagement => {
-                        ui::render_user_management_with_context(
-                            frame,
-                            page_area,
-                            &chrome,
-                            user_management
-                                .as_ref()
-                                .expect("User management requires its view model"),
-                            &render_context,
-                        );
-                    }
-                    ShellScreen::Explorer => {
-                        ui::render_explorer_with_context(
-                            frame,
-                            page_area,
-                            &chrome,
-                            explorer.as_ref().expect("Explorer requires its view model"),
-                            &render_context,
-                        );
-                    }
-                    ShellScreen::Launcher => {
-                        ui::render_launcher_with_context(
-                            frame,
-                            page_area,
-                            &chrome,
-                            launcher.as_ref().expect("Launcher requires its view model"),
-                            &render_context,
-                        );
-                        if graphical_icons_enabled
-                            && let Some(icons) = launcher_icons.as_ref()
-                            && let ui::ShellLayout::Full { main, .. } =
-                                ui::compute_shell_layout(page_area)
-                        {
-                            let model =
-                                launcher.as_ref().expect("Launcher requires its view model");
-                            for item_layout in ui::launcher_layout(main, model).items {
-                                if let Some(item) = model.items.get(item_layout.index) {
-                                    ui::LauncherIconRenderer::render_icon(
-                                        icons,
-                                        &item.id,
-                                        frame,
-                                        item_layout.icon_area,
-                                    );
-                                }
-                            }
-                        }
-                    }
-                    ShellScreen::CommandLine => {
-                        ui::render_command_line_with_context(
-                            frame,
-                            page_area,
-                            &chrome,
-                            command_line
-                                .as_ref()
-                                .expect("Command Line requires its view model"),
-                            &render_context,
-                        );
-                    }
-                    ShellScreen::Editor => {
-                        ui::render_editor_app_with_context(
-                            frame,
-                            page_area,
-                            &chrome,
-                            editor
-                                .as_ref()
-                                .expect("Editor content requires its view model"),
-                            &render_context,
-                        );
-                    }
-                    ShellScreen::Settings => {
-                        ui::render_settings_with_context(
-                            frame,
-                            page_area,
-                            &chrome,
-                            settings
-                                .as_ref()
-                                .expect("Settings content requires its view model"),
-                            &render_context,
-                        );
-                    }
-                    ShellScreen::Logs => {
-                        ui::render_logs_with_context(
-                            frame,
-                            page_area,
-                            &chrome,
-                            logs.as_ref().expect("Logs view model"),
-                            &render_context,
-                        );
-                    }
-                    ShellScreen::Diagnostics => {
-                        ui::render_diagnostics_with_context(
-                            frame,
-                            page_area,
-                            &chrome,
-                            diagnostics
-                                .as_ref()
-                                .expect("Diagnostics requires its view model"),
-                            &render_context,
-                        );
-                    }
-                    ShellScreen::SystemStatus => {
-                        ui::render_system_status_contextual(
-                            frame,
-                            page_area,
-                            &chrome,
-                            system_status
-                                .as_ref()
-                                .expect("System Status requires its view model"),
-                            &render_context,
-                        );
-                    }
-                    ShellScreen::Clock => {
-                        ui::render_clock_with_context(
-                            frame,
-                            page_area,
-                            &chrome,
-                            clock.as_ref().expect("Clock requires its view model"),
-                            &render_context,
-                        );
-                    }
-                    ShellScreen::Home | ShellScreen::ExitConfirm => {
-                        ui::render_home_with_context(
-                            frame,
-                            page_area,
-                            &chrome,
-                            home.as_ref().expect("Home requires its view model"),
-                            &render_context,
-                            launcher_icons
-                                .as_ref()
-                                .filter(|_| graphical_icons_enabled)
-                                .map(|icons| icons as &dyn ui::HomeIconRenderer),
-                        );
-                    }
-                }
-
-                // ExitConfirm is only a routing marker. Its notification is the
-                // sole visual so a queued follow-up cannot expose the legacy
-                // confirmation dialog for one frame and flash before returning.
-                if notification.is_none()
-                    && let Some(dialog) = time_sync_dialog.as_ref()
-                {
-                    ui::render_time_sync_failure_dialog_with_context(
-                        frame,
-                        area,
-                        dialog,
-                        &render_context,
-                    );
-                }
-                if let Some(notification) = notification.as_ref() {
-                    ui::render_notification_overlay_with_context(
-                        frame,
-                        area,
-                        notification,
-                        &render_context,
-                    );
-                }
-                if notification.is_none()
-                    && let Some(toast) = shell_toast.as_ref()
-                    && let ui::ShellLayout::Full { status, .. } =
-                        ui::compute_shell_layout(page_area)
-                {
-                    toast.render_frame(frame, status, &render_context);
-                }
-                motion_effects.process(motion_frame.scaled_delta(), frame.buffer_mut(), &state);
+                animation_running =
+                    compositor.render(frame, &mut state, &prepared, launcher_icons.as_ref());
             })?;
             if !update_ready_marked {
                 app::update::mark_update_ready_from_env().map_err(io::Error::other)?;
                 update_ready_marked = true;
             }
-            let toast_requests_redraw = shell_toast
-                .as_ref()
-                .is_some_and(|toast| toast.requests_redraw(motion_frame));
             redraw.did_draw(frame_now);
-            if toast_requests_redraw || progress_requests_redraw {
-                redraw.request_animation_frame(frame_now);
-            }
-            if motion_effects.is_running() {
+            if animation_running {
                 redraw.request_animation_frame(frame_now);
             }
         }
@@ -1444,7 +1168,7 @@ pub(super) fn run_fullscreen_shell_session<W: Write>(
         // An exit effect can finish on the frame just drawn. Apply its already-routed
         // action before deriving any blocking poll deadline, then immediately render the
         // resulting natural state on the next loop iteration.
-        if let Some(routed) = motion_effects.take_deferred_close(&state) {
+        if let Some(routed) = compositor.take_deferred_close(&state) {
             state.apply_routed_event(routed, platform.as_ref(), Instant::now());
             redraw.request_redraw();
             continue;
@@ -1493,7 +1217,7 @@ pub(super) fn run_fullscreen_shell_session<W: Write>(
                 }
                 let boundary_changed = matches!(&terminal_event, event::Event::Resize(_, _));
                 if boundary_changed {
-                    motion_effects.cancel_for_bounds_change();
+                    compositor.cancel_for_bounds_change();
                 }
                 let input = crossterm_event_to_input(terminal_event);
                 let command_line_captures = command_line_captures_input(&state, &input);
@@ -1516,9 +1240,8 @@ pub(super) fn run_fullscreen_shell_session<W: Write>(
                     action = Some(ShellAction::Redraw);
                 } else {
                     let received_at = Instant::now();
-                    let (input_action, motion_blocked) = dispatch_motion_aware_input(
+                    let (input_action, motion_blocked) = compositor.dispatch_input(
                         &mut state,
-                        &mut motion_effects,
                         input,
                         platform.as_ref(),
                         received_at,
@@ -1534,13 +1257,13 @@ pub(super) fn run_fullscreen_shell_session<W: Write>(
                     identity_before_input,
                     Instant::now(),
                 );
-                synchronize_motion_effects_after_input(
-                    &state,
-                    &mut motion_effects,
+                let context = ui::RenderContext::from_theme(
                     &theme,
-                    terminal_graphics_probe,
+                    redraw.frame(Instant::now(), animation_speed_percent(&state)),
+                    shell_render_capabilities(terminal_graphics_probe),
                 );
-                if let Some(routed) = motion_effects.take_deferred_close(&state) {
+                compositor.synchronize_after_input(&state, &context);
+                if let Some(routed) = compositor.take_deferred_close(&state) {
                     action =
                         Some(state.apply_routed_event(routed, platform.as_ref(), Instant::now()));
                     redraw.request_redraw();
@@ -1727,36 +1450,6 @@ fn animation_speed_percent(state: &ShellSession) -> u16 {
         .unwrap_or(storage::DEFAULT_ANIMATION_SPEED_PERCENT)
 }
 
-fn sync_shell_toast(
-    toast: &mut Option<ui::components::Toast>,
-    visible_message: Option<&str>,
-    frame: ui::MotionFrame,
-) {
-    match visible_message {
-        Some(message) => match toast.as_mut() {
-            Some(toast) if toast.message == message => {
-                if toast.dismiss_at.is_some() {
-                    toast.resume(frame);
-                }
-            }
-            _ => {
-                *toast = Some(ui::components::Toast::new(
-                    message,
-                    ui::components::ToastTone::Info,
-                    frame,
-                ));
-            }
-        },
-        None => {
-            if let Some(toast) = toast.as_mut()
-                && toast.dismiss_at.is_none()
-            {
-                toast.dismiss(frame);
-            }
-        }
-    }
-}
-
 fn synchronize_motion_hit_map_after_input(
     state: &mut ShellSession,
     redraw: &mut RedrawScheduler,
@@ -1769,29 +1462,6 @@ fn synchronize_motion_hit_map_after_input(
     }
     redraw.observe(now, identity_after_input, reduced_motion_enabled(state));
     state.refresh_hit_map_with_motion(redraw.transitions(now));
-}
-
-fn synchronize_motion_effects_after_input(
-    state: &ShellSession,
-    motion_effects: &mut ShellMotionEffects,
-    theme: &ui::TundraTheme,
-    terminal_graphics_probe: &ui::TerminalGraphicsProbe,
-) {
-    let terminal_area = Rect::new(0, 0, state.terminal_size().0, state.terminal_size().1);
-    let capabilities = shell_render_capabilities(terminal_graphics_probe);
-    let tokens = theme.tokens().for_capability(capabilities.color);
-    let status_area = match ui::compute_shell_layout(terminal_area) {
-        ui::ShellLayout::Full { status, .. } => Some(status),
-        ui::ShellLayout::Compact(_) => None,
-    };
-    motion_effects.update(
-        state,
-        terminal_area,
-        terminal_area,
-        status_area,
-        tokens,
-        reduced_motion_enabled(state),
-    );
 }
 
 fn session_render_state_changed(before: &ShellSession, after: &ShellSession) -> bool {

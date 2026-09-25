@@ -504,7 +504,7 @@ impl ShellSession {
     ) {
         self.launcher_drag = None;
         let area = Rect::new(0, 0, self.terminal_size.0, self.terminal_size.1);
-        let ui::ShellLayout::Full { main, .. } = ui::compute_shell_layout(area) else {
+        let ui::ShellLayout::Full { main, .. } = self.shell_layout_for(area) else {
             return;
         };
         let model = self.to_launcher_view_model();
@@ -540,7 +540,7 @@ impl ShellSession {
             return;
         }
         let area = Rect::new(0, 0, self.terminal_size.0, self.terminal_size.1);
-        let ui::ShellLayout::Full { main, .. } = ui::compute_shell_layout(area) else {
+        let ui::ShellLayout::Full { main, .. } = self.shell_layout_for(area) else {
             self.launcher_drag = None;
             return;
         };
@@ -564,7 +564,7 @@ impl ShellSession {
             return;
         }
         let area = Rect::new(0, 0, self.terminal_size.0, self.terminal_size.1);
-        let ui::ShellLayout::Full { main, .. } = ui::compute_shell_layout(area) else {
+        let ui::ShellLayout::Full { main, .. } = self.shell_layout_for(area) else {
             return;
         };
         let model = self.to_launcher_view_model();

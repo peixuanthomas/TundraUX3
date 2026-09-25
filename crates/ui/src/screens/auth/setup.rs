@@ -5,10 +5,7 @@ use ratatui::widgets::{Clear, Paragraph, Wrap};
 
 use super::{SetupCustomColorTarget, SetupField, SetupStep, SetupViewModel};
 use crate::components::{Button, List, ListItem, Scrollbar, Surface, TextInput};
-use crate::screens::shell::{
-    ShellChromeViewModel, ShellLayout, centered_rect, compute_shell_layout, render_compact_home,
-    render_status, render_top,
-};
+use crate::screens::shell::centered_rect;
 use crate::timezone_map::{TimezoneMapWidget, boundary_id_for_timezone};
 use crate::{RenderContext, TundraTheme, setup_standard_color_options};
 
@@ -47,24 +44,7 @@ const SETUP_APPEARANCE_SUBMIT_LINE: u16 = 23;
 const SETUP_APPEARANCE_ERROR_LINE: u16 = 25;
 const SETUP_APPEARANCE_BUTTON_GAP: u16 = 1;
 
-pub fn render_setup(
-    frame: &mut Frame<'_>,
-    area: Rect,
-    chrome: &ShellChromeViewModel,
-    model: &SetupViewModel,
-    theme: &TundraTheme,
-) {
-    let context = RenderContext::from_theme(theme, Default::default(), Default::default());
-    render_setup_context(frame, area, chrome, model, &context);
-}
-
-pub(crate) fn render_setup_context(
-    frame: &mut Frame<'_>,
-    area: Rect,
-    chrome: &ShellChromeViewModel,
-    model: &SetupViewModel,
-    context: &RenderContext,
-) {
+pub fn setup_render_context(model: &SetupViewModel, context: &RenderContext) -> RenderContext {
     let theme = context.compatibility_theme();
     let appearance_theme = if model.step == SetupStep::Appearance {
         theme
@@ -75,19 +55,13 @@ pub(crate) fn render_setup_context(
         theme
     };
     let theme = &appearance_theme;
-    let appearance_context = RenderContext::from_theme(theme, context.motion, context.capabilities);
-
-    match compute_shell_layout(area) {
-        ShellLayout::Compact(compact) => render_compact_home(frame, compact, chrome, theme),
-        ShellLayout::Full { top, main, status } => {
-            render_top(frame, top, chrome, theme);
-            render_setup_main(frame, main, model, &appearance_context);
-            render_status(frame, status, chrome, theme);
-        }
+    RenderContext {
+        theme: theme.tokens().for_capability(context.capabilities.color),
+        ..*context
     }
 }
 
-fn render_setup_main(
+pub fn render_setup_content(
     frame: &mut Frame<'_>,
     area: Rect,
     model: &SetupViewModel,
@@ -496,10 +470,6 @@ fn render_setup_appearance_page(
             .wrap(Wrap { trim: true }),
             setup_appearance_error_area(area),
         );
-    }
-
-    if model.custom_color_target.is_some() {
-        render_setup_custom_color_dialog(frame, area, model, context);
     }
 }
 
@@ -1315,5 +1285,16 @@ fn setup_step_label(step: SetupStep) -> String {
         SetupStep::Timezone => i18n::tr!("ui-auth-timezone"),
         SetupStep::Admin => i18n::tr!("ui-auth-admin"),
         SetupStep::Appearance => i18n::tr!("ui-auth-appearance"),
+    }
+}
+
+pub fn render_setup_overlay(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    model: &SetupViewModel,
+    context: &RenderContext,
+) {
+    if model.step == SetupStep::Appearance && model.custom_color_target.is_some() {
+        render_setup_custom_color_dialog(frame, area, model, context);
     }
 }

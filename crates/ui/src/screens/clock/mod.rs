@@ -10,5 +10,5 @@ pub use model::{
     ClockCreateDialogFocus, ClockCreateDialogViewModel, ClockEntryViewModel, ClockViewModel,
     TerminalCellAspectRatio,
 };
-pub use render::{render_clock, render_clock_placeholder};
-pub(crate) use render::{render_clock_context, render_clock_line};
+pub(crate) use render::render_clock_line;
+pub use render::{render_clock_content, render_clock_overlay};

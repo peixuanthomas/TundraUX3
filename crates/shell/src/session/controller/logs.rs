@@ -311,8 +311,7 @@ impl ShellSession {
         }
     }
     fn logs_main_area(&self) -> Option<Rect> {
-        match ui::compute_shell_layout(Rect::new(0, 0, self.terminal_size.0, self.terminal_size.1))
-        {
+        match self.shell_layout_for(Rect::new(0, 0, self.terminal_size.0, self.terminal_size.1)) {
             ui::ShellLayout::Full { main, .. } => Some(main),
             _ => None,
         }

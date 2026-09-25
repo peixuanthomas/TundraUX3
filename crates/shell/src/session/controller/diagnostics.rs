@@ -731,7 +731,7 @@ impl ShellSession {
 
     fn active_diagnostics_content_layout(&self) -> Option<ui::DiagnosticsContentLayout> {
         let area = Rect::new(0, 0, self.terminal_size.0, self.terminal_size.1);
-        let ui::ShellLayout::Full { main, .. } = ui::compute_shell_layout(area) else {
+        let ui::ShellLayout::Full { main, .. } = self.shell_layout_for(area) else {
             return None;
         };
         if self.active_screen() == ShellScreen::SystemStatus {

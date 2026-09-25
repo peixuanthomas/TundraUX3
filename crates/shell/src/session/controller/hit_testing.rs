@@ -20,7 +20,7 @@ impl DragDirection {
 }
 #[allow(clippy::too_many_arguments)]
 pub(in crate::session) fn build_shell_hit_map(
-    terminal_size: CellPosition,
+    frame_layout: ui::ShellFrameLayout,
     content_screen: ShellScreen,
     exit_confirmation_visible: bool,
     active_popup: Option<ShellPopup>,
@@ -28,7 +28,6 @@ pub(in crate::session) fn build_shell_hit_map(
     language_count: usize,
     setup_custom_color_dialog_visible: bool,
     generation: u64,
-    time_button_label: Option<&str>,
     time_sync_dialog_visible: bool,
     notification_modal_component: Option<ShellComponent>,
     notification_model: Option<&ui::NotificationViewModel>,
@@ -45,21 +44,29 @@ pub(in crate::session) fn build_shell_hit_map(
     overlay_blocks_interaction: bool,
     generic_context_popup_visible: bool,
 ) -> ShellHitMap {
+    let terminal_area = frame_layout.bounds;
+    let terminal_size = (terminal_area.width, terminal_area.height);
     let (width, height) = terminal_size;
-    let terminal_area = Rect::new(0, 0, width, height);
     let motion_context = ui::RenderContext {
         transitions: motion,
         ..ui::RenderContext::default()
     };
-    let area = motion_context.page_area(terminal_area);
     let mut regions = Vec::new();
 
-    match ui::compute_shell_layout(area) {
+    match frame_layout.shell {
         ui::ShellLayout::Compact(compact) => {
             regions.push(ShellHitRegion {
-                component: ShellComponent::CompactHome,
+                component: match content_screen {
+                    ShellScreen::Editor => ShellComponent::Editor,
+                    ShellScreen::Settings => ShellComponent::Settings,
+                    _ => ShellComponent::CompactHome,
+                },
                 area: compact,
-                layer: ShellHitLayer::ShellChrome,
+                layer: if matches!(content_screen, ShellScreen::Editor | ShellScreen::Settings) {
+                    ShellHitLayer::AppContent
+                } else {
+                    ShellHitLayer::ShellChrome
+                },
             });
         }
         ui::ShellLayout::Full { top, main, status } => {
@@ -268,9 +275,8 @@ pub(in crate::session) fn build_shell_hit_map(
                 layer: ShellHitLayer::ShellChrome,
             });
             if clock_button_active_for_screen(content_screen)
-                && let Some(label) = time_button_label
+                && let Some(button) = frame_layout.time_button
             {
-                let button = ui::status_time_button_area(status, label);
                 if button.width > 0 && button.height > 0 {
                     regions.push(ShellHitRegion {
                         component: ShellComponent::ClockButton,
@@ -305,7 +311,7 @@ pub(in crate::session) fn build_shell_hit_map(
         && let Some(popup) = active_popup
     {
         let explorer_overlay = explorer_model.and_then(|model| {
-            let ui::ShellLayout::Full { main, .. } = ui::compute_shell_layout(area) else {
+            let ui::ShellLayout::Full { main, .. } = frame_layout.shell else {
                 return None;
             };
             ui::explorer_layout(main, model)
@@ -365,7 +371,7 @@ pub(in crate::session) fn build_shell_hit_map(
     if let Some(descriptor) = overlay_descriptor
         && descriptor.category != ShellOverlayCategory::ShellModal
         && let Some(component) = descriptor.component()
-        && let ui::ShellLayout::Full { main, .. } = ui::compute_shell_layout(area)
+        && let ui::ShellLayout::Full { main, .. } = frame_layout.shell
     {
         let surface = match content_screen {
             ShellScreen::FirstRunSetup => Some(ui::setup_custom_color_dialog_area(main)),

@@ -2335,7 +2335,29 @@ fn motion_progress_drives_page_and_overlay_hit_regions() {
         .iter()
         .find(|region| region.component == ShellComponent::TopBar)
         .expect("shifted top bar");
-    assert_eq!(shifted_top.area.y, 1);
+    assert_eq!(
+        shifted_top.area.y, 0,
+        "page motion must not move shell chrome"
+    );
+    let expected = ui::ShellFrameLayout::new(
+        Rect::new(0, 0, 120, 40),
+        state.status_time_button_label().as_deref(),
+        &ui::RenderContext {
+            transitions: ui::MotionTransitions {
+                screen: Some(transition(ui::MotionTransitionKind::Page, 0)),
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+    );
+    assert_eq!(state.shell_layout_for(expected.bounds), expected.shell);
+    let status = state
+        .hit_map()
+        .regions()
+        .iter()
+        .find(|region| region.component == ShellComponent::StatusBar)
+        .unwrap();
+    assert_eq!(status.area.y, 37);
 
     state.apply_input(InputEvent::from_key_label("Esc"));
     state.refresh_hit_map_with_motion(ui::MotionTransitions {

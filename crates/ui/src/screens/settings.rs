@@ -9,11 +9,7 @@ use crate::components::{
     Scrollbar, Surface, TextInput, UpdateActivity, terminal_width, truncate_to_terminal_width,
     visible_scrolled_rect,
 };
-use crate::screens::shell::{render_status, render_top};
-use crate::{
-    BorderShape, RenderContext, ShellChromeViewModel, ShellLayout, TimezoneMapWidget, TundraTheme,
-    compute_shell_layout,
-};
+use crate::{BorderShape, RenderContext, TimezoneMapWidget, TundraTheme};
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
 pub enum SettingsCategory {
@@ -421,38 +417,6 @@ pub struct SettingsLayout {
     pub update_cancel_button: Option<Rect>,
 }
 
-pub fn render_settings(
-    frame: &mut Frame<'_>,
-    area: Rect,
-    chrome: &ShellChromeViewModel,
-    model: &SettingsViewModel,
-    theme: &TundraTheme,
-) -> SettingsLayout {
-    let context = RenderContext::from_theme(theme, Default::default(), Default::default());
-    render_settings_context(frame, area, chrome, model, &context)
-}
-
-pub(crate) fn render_settings_context(
-    frame: &mut Frame<'_>,
-    area: Rect,
-    chrome: &ShellChromeViewModel,
-    model: &SettingsViewModel,
-    context: &RenderContext,
-) -> SettingsLayout {
-    let theme = &context.compatibility_theme();
-    let main = match compute_shell_layout(area) {
-        ShellLayout::Compact(compact) => compact,
-        ShellLayout::Full { top, main, status } => {
-            render_top(frame, top, chrome, theme);
-            render_status(frame, status, chrome, theme);
-            main
-        }
-    };
-    let layout = settings_layout(main, model);
-    render_settings_content(frame, &layout, model, context);
-    layout
-}
-
 pub fn settings_layout(area: Rect, model: &SettingsViewModel) -> SettingsLayout {
     let (category_area, raw_detail_area) = settings_content_areas(area);
     let mut detail_area = Rect::new(
@@ -676,7 +640,7 @@ pub fn settings_hit_test(layout: &SettingsLayout, point: (u16, u16)) -> Option<S
         .map(|category| SettingsHitTarget::Category(category.category))
 }
 
-fn render_settings_content(
+pub fn render_settings_content(
     frame: &mut Frame<'_>,
     layout: &SettingsLayout,
     model: &SettingsViewModel,
@@ -760,7 +724,14 @@ fn render_settings_content(
         .render_frame(frame, scrollbar, context);
     }
     render_settings_footer(frame, settings_raw_detail_area(layout), model, context);
+}
 
+pub fn render_settings_overlay(
+    frame: &mut Frame<'_>,
+    layout: &SettingsLayout,
+    model: &SettingsViewModel,
+    context: &RenderContext,
+) {
     if let Some(picker) = &model.picker {
         render_picker(frame, layout.main, picker, context);
     }

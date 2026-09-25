@@ -37,7 +37,7 @@ pub use launcher::{
     LauncherItemCapabilities, LauncherItemLayout, LauncherItemSource, LauncherItemStatus,
     LauncherItemViewModel, LauncherLayout, LauncherToolbarAction, LauncherToolbarButtonLayout,
     LauncherToolbarButtonViewModel, LauncherViewMode, LauncherViewModel, launcher_layout,
-    render_launcher, render_launcher_with_icons,
+    render_launcher_content, render_launcher_overlay,
 };
 pub use settings::{
     SettingsAppearancePreview, SettingsCardViewModel, SettingsCategory, SettingsCategoryLayout,
@@ -46,6 +46,6 @@ pub use settings::{
     SettingsItemViewModel, SettingsLayout, SettingsPickerKind, SettingsPickerOptionLayout,
     SettingsPickerOptionViewModel, SettingsPickerViewModel, SettingsTimeSyncServerEditorViewModel,
     SettingsUpdateCommitViewModel, SettingsUpdateConfirmationViewModel, SettingsUpdateViewModel,
-    SettingsViewModel, SettingsWeatherLocationEditorViewModel, render_settings, settings_hit_test,
-    settings_layout,
+    SettingsViewModel, SettingsWeatherLocationEditorViewModel, render_settings_content,
+    render_settings_overlay, settings_hit_test, settings_layout,
 };

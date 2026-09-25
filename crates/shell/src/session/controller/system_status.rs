@@ -1260,7 +1260,7 @@ impl ShellSession {
         &self,
     ) -> Option<(ui::SystemStatusViewModel, ui::SystemStatusLayout)> {
         let ui::ShellLayout::Full { main, .. } =
-            ui::compute_shell_layout(Rect::new(0, 0, self.terminal_size.0, self.terminal_size.1))
+            self.shell_layout_for(Rect::new(0, 0, self.terminal_size.0, self.terminal_size.1))
         else {
             return None;
         };

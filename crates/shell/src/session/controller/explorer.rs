@@ -1161,7 +1161,7 @@ impl ShellSession {
 
     pub(in crate::session) fn begin_explorer_scrollbar_drag(&mut self, coordinates: CellPosition) {
         let area = Rect::new(0, 0, self.terminal_size.0, self.terminal_size.1);
-        let ui::ShellLayout::Full { main, .. } = ui::compute_shell_layout(area) else {
+        let ui::ShellLayout::Full { main, .. } = self.shell_layout_for(area) else {
             return;
         };
         let layout = ui::explorer_layout(main, &self.to_explorer_view_model());
@@ -1184,7 +1184,7 @@ impl ShellSession {
             return;
         };
         let area = Rect::new(0, 0, self.terminal_size.0, self.terminal_size.1);
-        let ui::ShellLayout::Full { main, .. } = ui::compute_shell_layout(area) else {
+        let ui::ShellLayout::Full { main, .. } = self.shell_layout_for(area) else {
             return;
         };
         let model = self.to_explorer_view_model();
@@ -1232,7 +1232,7 @@ impl ShellSession {
         coordinates: CellPosition,
     ) -> Option<ui::ExplorerHitTarget> {
         let area = Rect::new(0, 0, self.terminal_size.0, self.terminal_size.1);
-        let ui::ShellLayout::Full { main, .. } = ui::compute_shell_layout(area) else {
+        let ui::ShellLayout::Full { main, .. } = self.shell_layout_for(area) else {
             return None;
         };
         if !rect_contains(main, coordinates) {

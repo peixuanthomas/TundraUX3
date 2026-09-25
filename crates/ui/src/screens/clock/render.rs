@@ -7,11 +7,7 @@ use ratatui::widgets::{Clear, Paragraph};
 use super::layout::{ClockEntryKind, ClockPageLayout, clock_page_layout};
 use super::model::{ClockCreateDialogFocus, ClockEntryViewModel, ClockViewModel};
 use crate::components::{Button, List, ListItem, Surface, TextInput};
-use crate::screens::shell::{render_compact_home, render_status, render_top};
-use crate::{
-    ClockFontAsset, RenderContext, ShellChromeViewModel, ShellLayout, TundraTheme,
-    compute_shell_layout,
-};
+use crate::{ClockFontAsset, RenderContext, TundraTheme};
 
 const LARGE_CLOCK_NUMERAL_MIN_WIDTH: usize = 64;
 const LARGE_CLOCK_NUMERAL_MIN_HEIGHT: usize = 21;
@@ -19,54 +15,15 @@ const LARGE_CLOCK_NUMERAL_CENTER_CLEARANCE: usize = 24;
 const LARGE_CLOCK_NUMERAL_VERTICAL_CLEARANCE: usize = 5;
 const CLOCK_OUTLINE_MIN_SAMPLES: usize = 720;
 const CLOCK_OUTLINE_MAX_SAMPLE_STEP: f64 = 0.5;
-pub fn render_clock_placeholder(
+pub fn render_clock_content(
     frame: &mut Frame<'_>,
-    area: Rect,
-    chrome: &ShellChromeViewModel,
-    model: &ClockViewModel,
-    theme: &TundraTheme,
-) {
-    render_clock(frame, area, chrome, model, theme);
-}
-
-pub fn render_clock(
-    frame: &mut Frame<'_>,
-    area: Rect,
-    chrome: &ShellChromeViewModel,
-    model: &ClockViewModel,
-    theme: &TundraTheme,
-) {
-    let context = RenderContext::from_theme(theme, Default::default(), Default::default());
-    render_clock_context(frame, area, chrome, model, &context);
-}
-
-pub(crate) fn render_clock_context(
-    frame: &mut Frame<'_>,
-    area: Rect,
-    chrome: &ShellChromeViewModel,
+    main: Rect,
     model: &ClockViewModel,
     context: &RenderContext,
 ) {
-    let theme = &context.compatibility_theme();
-    let main = match compute_shell_layout(area) {
-        ShellLayout::Compact(compact) => {
-            render_compact_home(frame, compact, chrome, theme);
-            return;
-        }
-        ShellLayout::Full { top, main, status } => {
-            render_top(frame, top, chrome, theme);
-            render_status(frame, status, chrome, theme);
-            main
-        }
-    };
-
     let layout = clock_page_layout(main, model);
     render_clock_face(frame, &layout, model, context);
     render_clock_panel(frame, &layout, model, context);
-    if let (Some(dialog_model), Some(dialog_layout)) = (&model.create_dialog, layout.create_dialog)
-    {
-        render_clock_create_dialog(frame, dialog_layout, dialog_model, context);
-    }
 }
 
 fn render_clock_face(
@@ -748,3 +705,16 @@ fn put_clock_char(cells: &mut [Vec<char>], x: isize, y: isize, character: char) 
 #[cfg(test)]
 #[path = "../../../tests/unit/screens/clock/render/analog_clock_tests.rs"]
 mod analog_clock_tests;
+
+pub fn render_clock_overlay(
+    frame: &mut Frame<'_>,
+    main: Rect,
+    model: &ClockViewModel,
+    context: &RenderContext,
+) {
+    let layout = clock_page_layout(main, model);
+    if let (Some(dialog_model), Some(dialog_layout)) = (&model.create_dialog, layout.create_dialog)
+    {
+        render_clock_create_dialog(frame, dialog_layout, dialog_model, context);
+    }
+}

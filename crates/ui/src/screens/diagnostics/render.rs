@@ -13,44 +13,15 @@ use super::model::{
 };
 use crate::components::{Button, ComponentTone, List, ListItem, Scrollbar, Surface, TabItem, Tabs};
 use crate::screens::clock::render_clock_line;
-use crate::screens::shell::{fit_cell, render_compact_home, render_status, render_top};
-use crate::{RenderContext, ShellChromeViewModel, ShellLayout, TundraTheme, compute_shell_layout};
-pub fn render_diagnostics(
+use crate::screens::shell::fit_cell;
+use crate::{RenderContext, TundraTheme};
+pub fn render_diagnostics_page_content(
     frame: &mut Frame<'_>,
-    area: Rect,
-    chrome: &ShellChromeViewModel,
-    model: &DiagnosticsViewModel,
-    theme: &TundraTheme,
-) {
-    let context = RenderContext::from_theme(theme, Default::default(), Default::default());
-    render_diagnostics_contextual(frame, area, chrome, model, &context);
-}
-
-pub fn render_diagnostics_contextual(
-    frame: &mut Frame<'_>,
-    area: Rect,
-    chrome: &ShellChromeViewModel,
+    main: Rect,
     model: &DiagnosticsViewModel,
     context: &RenderContext,
 ) {
     let theme = &context.compatibility_theme();
-    match compute_shell_layout(area) {
-        ShellLayout::Compact(compact) => render_compact_home(frame, compact, chrome, theme),
-        ShellLayout::Full { top, main, status } => {
-            render_top(frame, top, chrome, theme);
-            render_diagnostics_main(frame, main, model, theme, context);
-            render_status(frame, status, chrome, theme);
-        }
-    }
-}
-
-fn render_diagnostics_main(
-    frame: &mut Frame<'_>,
-    main: Rect,
-    model: &DiagnosticsViewModel,
-    theme: &TundraTheme,
-    context: &RenderContext,
-) {
     let layout = diagnostics_layout(main, model);
     Surface::new()
         .titled(i18n::tr!("ui-diagnostics-system-status-diagnostics"))
@@ -67,12 +38,6 @@ fn render_diagnostics_main(
         theme,
         &i18n::tr!("ui-diagnostics-esc-system-status"),
     );
-
-    if let (Some(dialog_layout), Some(dialog)) =
-        (layout.repair_dialog.as_ref(), model.repair_dialog.as_ref())
-    {
-        render_diagnostics_repair_dialog(frame, dialog_layout, dialog, theme, context);
-    }
 }
 
 pub(crate) fn render_diagnostics_header(
@@ -764,4 +729,19 @@ fn diagnostics_warning_style(theme: &TundraTheme) -> Style {
         .fg(theme.accent_color)
         .bg(theme.background)
         .add_modifier(Modifier::BOLD)
+}
+
+pub fn render_diagnostics_overlay(
+    frame: &mut Frame<'_>,
+    main: Rect,
+    model: &DiagnosticsViewModel,
+    context: &RenderContext,
+) {
+    let theme = &context.compatibility_theme();
+    let layout = diagnostics_layout(main, model);
+    if let (Some(dialog_layout), Some(dialog)) =
+        (layout.repair_dialog.as_ref(), model.repair_dialog.as_ref())
+    {
+        render_diagnostics_repair_dialog(frame, dialog_layout, dialog, theme, context);
+    }
 }

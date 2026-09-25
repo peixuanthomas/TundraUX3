@@ -663,6 +663,7 @@ pub struct UiSessionState {
     pub(super) focused_component: ShellComponent,
     pub(super) hovered_component: Option<ShellComponent>,
     pub(super) active_popup: Option<ShellPopup>,
+    pub(super) frame_layout: Option<ui::ShellFrameLayout>,
     pub(super) hit_map: ShellHitMap,
     pub(super) hit_map_generation: u64,
     pub(super) overlay_interaction_ready: bool,

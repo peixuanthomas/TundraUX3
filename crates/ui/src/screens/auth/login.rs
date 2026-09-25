@@ -5,10 +5,6 @@ use ratatui::widgets::{Paragraph, Wrap};
 
 use super::{LoginField, LoginViewModel};
 use crate::components::{Button, List, ListItem, Surface, TextInput};
-use crate::screens::shell::{
-    ShellChromeViewModel, ShellLayout, compute_shell_layout, render_compact_home, render_status,
-    render_top,
-};
 use crate::{RenderContext, TundraTheme};
 
 const LOGIN_USER_LIST_WIDTH: u16 = 30;
@@ -28,36 +24,7 @@ pub struct LoginLayout {
     pub help: Rect,
 }
 
-pub fn render_login(
-    frame: &mut Frame<'_>,
-    area: Rect,
-    chrome: &ShellChromeViewModel,
-    model: &LoginViewModel,
-    theme: &TundraTheme,
-) {
-    let context = RenderContext::from_theme(theme, Default::default(), Default::default());
-    render_login_context(frame, area, chrome, model, &context);
-}
-
-pub(crate) fn render_login_context(
-    frame: &mut Frame<'_>,
-    area: Rect,
-    chrome: &ShellChromeViewModel,
-    model: &LoginViewModel,
-    context: &RenderContext,
-) {
-    let theme = &context.compatibility_theme();
-    match compute_shell_layout(area) {
-        ShellLayout::Compact(compact) => render_compact_home(frame, compact, chrome, theme),
-        ShellLayout::Full { top, main, status } => {
-            render_top(frame, top, chrome, theme);
-            render_login_main(frame, main, model, context);
-            render_status(frame, status, chrome, theme);
-        }
-    }
-}
-
-fn render_login_main(
+pub fn render_login_content(
     frame: &mut Frame<'_>,
     main: Rect,
     model: &LoginViewModel,

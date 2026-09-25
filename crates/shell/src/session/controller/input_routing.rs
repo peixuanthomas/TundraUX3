@@ -209,7 +209,7 @@ impl ShellSession {
         key: &KeyInput,
     ) -> (RoutedTarget, ShellCommand) {
         let area = Rect::new(0, 0, self.terminal_size.0, self.terminal_size.1);
-        if matches!(ui::compute_shell_layout(area), ui::ShellLayout::Compact(_)) {
+        if matches!(self.shell_layout_for(area), ui::ShellLayout::Compact(_)) {
             return if matches!(&key.key, InputKey::Escape) {
                 (RoutedTarget::Global, ShellCommand::RequestExit)
             } else {
@@ -316,7 +316,7 @@ impl ShellSession {
         key: &KeyInput,
     ) -> (RoutedTarget, ShellCommand) {
         let area = Rect::new(0, 0, self.terminal_size.0, self.terminal_size.1);
-        if matches!(ui::compute_shell_layout(area), ui::ShellLayout::Compact(_)) {
+        if matches!(self.shell_layout_for(area), ui::ShellLayout::Compact(_)) {
             return match &key.key {
                 InputKey::Escape if self.clock_create_state.is_some() => (
                     RoutedTarget::Modal(ShellComponent::ClockCreateDialog),
@@ -423,7 +423,7 @@ impl ShellSession {
         key: &KeyInput,
     ) -> (RoutedTarget, ShellCommand) {
         let area = Rect::new(0, 0, self.terminal_size.0, self.terminal_size.1);
-        if matches!(ui::compute_shell_layout(area), ui::ShellLayout::Compact(_)) {
+        if matches!(self.shell_layout_for(area), ui::ShellLayout::Compact(_)) {
             return if matches!(&key.key, InputKey::Escape) {
                 (RoutedTarget::Global, ShellCommand::CloseDiagnostics)
             } else {
@@ -509,7 +509,7 @@ impl ShellSession {
     ) -> (RoutedTarget, ShellCommand) {
         let target = RoutedTarget::Component(ShellComponent::SystemStatus);
         let area = Rect::new(0, 0, self.terminal_size.0, self.terminal_size.1);
-        if matches!(ui::compute_shell_layout(area), ui::ShellLayout::Compact(_)) {
+        if matches!(self.shell_layout_for(area), ui::ShellLayout::Compact(_)) {
             return if matches!(&key.key, InputKey::Escape) {
                 (RoutedTarget::Global, ShellCommand::CloseSystemStatus)
             } else {
@@ -1042,7 +1042,7 @@ impl ShellSession {
             .is_some_and(|state| state.current_location.is_trash());
         let quick_locations_visible = || {
             let area = Rect::new(0, 0, self.terminal_size.0, self.terminal_size.1);
-            let ui::ShellLayout::Full { main, .. } = ui::compute_shell_layout(area) else {
+            let ui::ShellLayout::Full { main, .. } = self.shell_layout_for(area) else {
                 return false;
             };
             ui::explorer_layout(main, &self.to_explorer_view_model())
@@ -1181,7 +1181,7 @@ impl ShellSession {
     ) -> (RoutedTarget, ShellCommand) {
         let target = RoutedTarget::Component(ShellComponent::UserManagement);
         let area = Rect::new(0, 0, self.terminal_size.0, self.terminal_size.1);
-        if matches!(ui::compute_shell_layout(area), ui::ShellLayout::Compact(_)) {
+        if matches!(self.shell_layout_for(area), ui::ShellLayout::Compact(_)) {
             return match &key.key {
                 InputKey::Escape => (RoutedTarget::Global, ShellCommand::CloseUserManagement),
                 _ => (
@@ -1933,7 +1933,7 @@ impl ShellSession {
     ) -> (RoutedTarget, ShellCommand) {
         let coordinates = mouse.coordinates();
         let area = Rect::new(0, 0, self.terminal_size.0, self.terminal_size.1);
-        let ui::ShellLayout::Full { main, .. } = ui::compute_shell_layout(area) else {
+        let ui::ShellLayout::Full { main, .. } = self.shell_layout_for(area) else {
             return (
                 target_route(hit_target),
                 if matches!(mouse.kind, ui::MouseEventKind::Moved) {
@@ -2023,7 +2023,7 @@ impl ShellSession {
             RoutedTarget::Component(ShellComponent::SystemStatus)
         };
         let area = Rect::new(0, 0, self.terminal_size.0, self.terminal_size.1);
-        let ui::ShellLayout::Full { main, .. } = ui::compute_shell_layout(area) else {
+        let ui::ShellLayout::Full { main, .. } = self.shell_layout_for(area) else {
             return (
                 target_route(hit_target),
                 if matches!(mouse.kind, ui::MouseEventKind::Moved) {
@@ -2248,7 +2248,7 @@ impl ShellSession {
         let target = RoutedTarget::Component(ShellComponent::UserManagement);
         let coordinates = mouse.coordinates();
         let area = Rect::new(0, 0, self.terminal_size.0, self.terminal_size.1);
-        if matches!(ui::compute_shell_layout(area), ui::ShellLayout::Compact(_)) {
+        if matches!(self.shell_layout_for(area), ui::ShellLayout::Compact(_)) {
             return (
                 RoutedTarget::Component(ShellComponent::CompactHome),
                 ShellCommand::CaptureOverlayInput,
@@ -2317,7 +2317,7 @@ impl ShellSession {
     pub(in crate::session) fn clock_entry_id_at(&self, coordinates: CellPosition) -> Option<u64> {
         let (width, height) = self.terminal_size;
         let area = Rect::new(0, 0, width, height);
-        let ui::ShellLayout::Full { main, .. } = ui::compute_shell_layout(area) else {
+        let ui::ShellLayout::Full { main, .. } = self.shell_layout_for(area) else {
             return None;
         };
         let snapshot = self.app.snapshot().clock;

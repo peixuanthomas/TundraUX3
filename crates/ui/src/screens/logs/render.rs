@@ -2,10 +2,9 @@ use super::layout::{category_tabs, controls, section_tabs};
 use super::{LogsCategory, LogsSection, LogsViewModel, logs_layout};
 use crate::components::{Button, Surface};
 use crate::screens::diagnostics::render_diagnostics_content_titled;
-use crate::screens::shell::{render_compact_home, render_status, render_top};
 use crate::{
     DiagnosticsCheckViewModel, DiagnosticsStatus, DiagnosticsTab, DiagnosticsViewModel,
-    RenderContext, ShellChromeViewModel, ShellLayout, compute_shell_layout,
+    RenderContext,
 };
 use ratatui::{
     Frame,
@@ -89,82 +88,78 @@ pub(super) fn content_model(model: &LogsViewModel) -> DiagnosticsViewModel {
     content
 }
 
-pub fn render_logs_with_context(
+pub fn render_logs_content(
     frame: &mut Frame<'_>,
-    area: Rect,
-    chrome: &ShellChromeViewModel,
+    main: Rect,
     model: &LogsViewModel,
     context: &RenderContext,
 ) {
     let theme = context.compatibility_theme();
-    match compute_shell_layout(area) {
-        ShellLayout::Compact(compact) => render_compact_home(frame, compact, chrome, &theme),
-        ShellLayout::Full { top, main, status } => {
-            render_top(frame, top, chrome, &theme);
-            let layout = logs_layout(main, model);
-            Surface::new()
-                .titled(i18n::tr!("ui-logs-logs"))
-                .bordered(false)
-                .render_frame(frame, layout.panel, context);
-            let mut categories = category_tabs();
-            categories.set_selected(Some(usize::from(model.category == LogsCategory::Linux)));
-            categories.render_borderless_frame(frame, layout.category_tabs_area, &theme);
-            if model.category == LogsCategory::Ux {
-                let mut sections = section_tabs();
-                sections.set_selected(Some(match model.section {
-                    LogsSection::Events => 0,
-                    LogsSection::Files => 1,
-                    LogsSection::Incidents => 2,
-                }));
-                sections.render_borderless_frame(frame, layout.section_tabs_area, &theme);
+
+    let layout = logs_layout(main, model);
+    Surface::new()
+        .titled(i18n::tr!("ui-logs-logs"))
+        .bordered(false)
+        .render_frame(frame, layout.panel, context);
+    let mut categories = category_tabs();
+    categories.set_selected(Some(usize::from(model.category == LogsCategory::Linux)));
+    categories.render_borderless_frame(frame, layout.category_tabs_area, &theme);
+    if model.category == LogsCategory::Ux {
+        let mut sections = section_tabs();
+        sections.set_selected(Some(match model.section {
+            LogsSection::Events => 0,
+            LogsSection::Files => 1,
+            LogsSection::Incidents => 2,
+        }));
+        sections.render_borderless_frame(frame, layout.section_tabs_area, &theme);
+    }
+    let unavailable = unavailable_reason(model);
+    let content = content_model(model);
+    for (control, (target, label)) in layout.controls.iter().zip(controls()) {
+        let mut button = Button::new(format!("logs.{target:?}"), label);
+        button.set_disabled(
+            unavailable.is_some()
+                || model.loading
+                || (target == super::LogsHitTarget::Open && content.item_count() == 0),
+        );
+        button.render_borderless_frame(frame, control.area, &theme);
+    }
+    frame.render_widget(
+        Paragraph::new(if model.loading {
+            i18n::tr!("ui-logs-loading-logs")
+        } else {
+            model.filter_summary.clone()
+        })
+        .style(theme.muted_style()),
+        layout.filter_summary,
+    );
+    if let Some(reason) = unavailable {
+        frame.render_widget(
+            Paragraph::new(reason)
+                .style(theme.muted_style())
+                .wrap(Wrap { trim: true }),
+            Rect::new(
+                layout.content.list_panel.x,
+                layout.content.list_panel.y,
+                layout
+                    .content
+                    .detail_panel
+                    .right()
+                    .saturating_sub(layout.content.list_panel.x),
+                layout.content.list_panel.height,
+            ),
+        );
+    } else {
+        let title = if model.category == LogsCategory::Linux {
+            i18n::tr!("ui-logs-linux-events")
+        } else {
+            match model.section {
+                LogsSection::Events => i18n::tr!("ui-logs-ux-events"),
+                LogsSection::Files => i18n::tr!("ui-logs-log-files"),
+                LogsSection::Incidents => i18n::tr!("ui-logs-incidents"),
             }
-            let unavailable = unavailable_reason(model);
-            let content = content_model(model);
-            for (control, (target, label)) in layout.controls.iter().zip(controls()) {
-                let mut button = Button::new(format!("logs.{target:?}"), label);
-                button.set_disabled(
-                    unavailable.is_some()
-                        || model.loading
-                        || (target == super::LogsHitTarget::Open && content.item_count() == 0),
-                );
-                button.render_borderless_frame(frame, control.area, &theme);
-            }
-            frame.render_widget(
-                Paragraph::new(if model.loading {
-                    i18n::tr!("ui-logs-loading-logs")
-                } else {
-                    model.filter_summary.clone()
-                })
-                .style(theme.muted_style()),
-                layout.filter_summary,
-            );
-            if let Some(reason) = unavailable {
-                frame.render_widget(
-                    Paragraph::new(reason)
-                        .style(theme.muted_style())
-                        .wrap(Wrap { trim: true }),
-                    Rect::new(
-                        layout.content.list_panel.x,
-                        layout.content.list_panel.y,
-                        layout
-                            .content
-                            .detail_panel
-                            .right()
-                            .saturating_sub(layout.content.list_panel.x),
-                        layout.content.list_panel.height,
-                    ),
-                );
-            } else {
-                let title = if model.category == LogsCategory::Linux {
-                    i18n::tr!("ui-logs-linux-events")
-                } else {
-                    match model.section {
-                        LogsSection::Events => i18n::tr!("ui-logs-ux-events"),
-                        LogsSection::Files => i18n::tr!("ui-logs-log-files"),
-                        LogsSection::Incidents => i18n::tr!("ui-logs-incidents"),
-                    }
-                };
-                render_diagnostics_content_titled(
+        };
+        render_diagnostics_content_titled(
                     frame,
                     &layout.content,
                     &content,
@@ -181,15 +176,12 @@ pub fn render_logs_with_context(
                             i18n::tr!("ui-logs-select-an-event-to-inspect-its-operation-and-correlation-identifiers"),
                         )),
                 );
-            }
-            frame.render_widget(
-                Paragraph::new(model.feedback.as_deref().unwrap_or(
-                    &i18n::tr!("ui-logs-esc-back-category-tab-section-enter-o-open-read-only-r-refresh-i-e-link"),
-                ))
-                .style(theme.muted_style()),
-                layout.footer,
-            );
-            render_status(frame, status, chrome, &theme);
-        }
     }
+    frame.render_widget(
+        Paragraph::new(model.feedback.as_deref().unwrap_or(&i18n::tr!(
+            "ui-logs-esc-back-category-tab-section-enter-o-open-read-only-r-refresh-i-e-link"
+        )))
+        .style(theme.muted_style()),
+        layout.footer,
+    );
 }

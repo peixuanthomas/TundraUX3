@@ -7,11 +7,7 @@ use crate::components::{
     Button, ComponentTone, DataTable, Scrollbar, Surface, terminal_width,
     truncate_to_terminal_width,
 };
-use crate::screens::shell::{render_compact_home, render_status, render_top};
-use crate::{
-    AssetError, RenderContext, RuntimeAsciiAssets, ShellChromeViewModel, ShellLayout, TundraTheme,
-    compute_shell_layout,
-};
+use crate::{AssetError, RenderContext, RuntimeAsciiAssets, TundraTheme};
 
 const GRID_TILE_MIN_WIDTH: u16 = 20;
 const GRID_TILE_HEIGHT: u16 = 9;
@@ -696,49 +692,7 @@ fn launcher_confirmation_layout(area: Rect) -> LauncherConfirmationLayout {
     }
 }
 
-pub fn render_launcher(
-    frame: &mut Frame<'_>,
-    area: Rect,
-    chrome: &ShellChromeViewModel,
-    model: &LauncherViewModel,
-    theme: &TundraTheme,
-) {
-    let context = RenderContext::from_theme(theme, Default::default(), Default::default());
-    render_launcher_with_icons_context(frame, area, chrome, model, &context, None);
-}
-
-pub fn render_launcher_with_icons(
-    frame: &mut Frame<'_>,
-    area: Rect,
-    chrome: &ShellChromeViewModel,
-    model: &LauncherViewModel,
-    theme: &TundraTheme,
-    icons: Option<&dyn LauncherIconRenderer>,
-) {
-    let context = RenderContext::from_theme(theme, Default::default(), Default::default());
-    render_launcher_with_icons_context(frame, area, chrome, model, &context, icons);
-}
-
-pub(crate) fn render_launcher_with_icons_context(
-    frame: &mut Frame<'_>,
-    area: Rect,
-    chrome: &ShellChromeViewModel,
-    model: &LauncherViewModel,
-    context: &RenderContext,
-    icons: Option<&dyn LauncherIconRenderer>,
-) {
-    let theme = &context.compatibility_theme();
-    match compute_shell_layout(area) {
-        ShellLayout::Compact(compact) => render_compact_home(frame, compact, chrome, theme),
-        ShellLayout::Full { top, main, status } => {
-            render_top(frame, top, chrome, theme);
-            render_launcher_main(frame, main, model, context, icons);
-            render_status(frame, status, chrome, theme);
-        }
-    }
-}
-
-fn render_launcher_main(
+pub fn render_launcher_content(
     frame: &mut Frame<'_>,
     main: Rect,
     model: &LauncherViewModel,
@@ -757,7 +711,16 @@ fn render_launcher_main(
     render_launcher_toolbar(frame, &layout, model, context);
     match model.view_mode {
         LauncherViewMode::LargeIcons => render_launcher_grid(frame, &layout, model, theme, icons),
-        LauncherViewMode::Details => render_launcher_details(frame, &layout, model, context),
+        LauncherViewMode::Details => {
+            render_launcher_details(frame, &layout, model, context);
+            if let Some(icons) = icons {
+                for item_layout in &layout.items {
+                    if let Some(item) = model.items.get(item_layout.index) {
+                        icons.render_icon(&item.id, frame, item_layout.icon_area);
+                    }
+                }
+            }
+        }
     }
     if let Some(indicator) = layout.drop_indicator {
         render_launcher_drop_indicator(frame, indicator, theme);
@@ -765,9 +728,6 @@ fn render_launcher_main(
     render_launcher_footer(frame, layout.footer, model, context);
     if let Some(scrollbar) = layout.scrollbar {
         render_launcher_scrollbar(frame, scrollbar, &layout, model, context);
-    }
-    if let (Some(dialog), Some(dialog_layout)) = (&model.confirmation, layout.confirmation) {
-        render_launcher_confirmation(frame, dialog_layout, dialog, context);
     }
 }
 
@@ -1132,4 +1092,16 @@ fn contains(area: Rect, x: u16, y: u16) -> bool {
         && x < area.right()
         && y >= area.y
         && y < area.bottom()
+}
+
+pub fn render_launcher_overlay(
+    frame: &mut Frame<'_>,
+    main: Rect,
+    model: &LauncherViewModel,
+    context: &RenderContext,
+) {
+    let layout = launcher_layout(main, model);
+    if let (Some(dialog), Some(dialog_layout)) = (&model.confirmation, layout.confirmation) {
+        render_launcher_confirmation(frame, dialog_layout, dialog, context);
+    }
 }

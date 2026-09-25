@@ -490,7 +490,7 @@ impl ShellSession {
     pub(in crate::session) fn clock_entry_capacity_at(&self, now: Instant) -> usize {
         let (width, height) = self.terminal_size;
         let area = Rect::new(0, 0, width, height);
-        let ui::ShellLayout::Full { main, .. } = ui::compute_shell_layout(area) else {
+        let ui::ShellLayout::Full { main, .. } = self.shell_layout_for(area) else {
             return 1;
         };
         let snapshot = self.app.snapshot().clock;

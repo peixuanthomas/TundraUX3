@@ -10,5 +10,5 @@ pub use layout::{
 };
 pub use model::*;
 pub use render::{
-    explorer_first_entry_content_line, render_explorer, render_explorer_with_context,
+    explorer_first_entry_content_line, render_explorer_content, render_explorer_overlay,
 };

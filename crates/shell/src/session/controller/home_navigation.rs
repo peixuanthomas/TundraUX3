@@ -280,7 +280,7 @@ impl ShellSession {
 
     pub(in crate::session) fn visible_home_entry_columns(&self) -> usize {
         let area = Rect::new(0, 0, self.terminal_size.0, self.terminal_size.1);
-        let ui::ShellLayout::Full { main, .. } = ui::compute_shell_layout(area) else {
+        let ui::ShellLayout::Full { main, .. } = self.shell_layout_for(area) else {
             return 1;
         };
         let areas = ui::home_entry_tile_areas(main, self.user_home_entries().len());
@@ -296,7 +296,7 @@ impl ShellSession {
         coordinates: CellPosition,
     ) -> Option<usize> {
         let area = Rect::new(0, 0, self.terminal_size.0, self.terminal_size.1);
-        let ui::ShellLayout::Full { main, .. } = ui::compute_shell_layout(area) else {
+        let ui::ShellLayout::Full { main, .. } = self.shell_layout_for(area) else {
             return None;
         };
 

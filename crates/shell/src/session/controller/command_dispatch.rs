@@ -943,7 +943,7 @@ impl ShellSession {
             }
             ShellCommand::ExplorerToolbarShortcut(action) => {
                 let area = Rect::new(0, 0, self.terminal_size.0, self.terminal_size.1);
-                let anchor = match ui::compute_shell_layout(area) {
+                let anchor = match self.shell_layout_for(area) {
                     ui::ShellLayout::Full { main, .. } => {
                         let layout = ui::explorer_layout(main, &self.to_explorer_view_model());
                         layout

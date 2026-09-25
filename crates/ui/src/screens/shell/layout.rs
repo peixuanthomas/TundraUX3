@@ -69,3 +69,66 @@ pub(crate) fn centered_rect(area: Rect, width: u16, height: u16) -> Rect {
         height,
     )
 }
+
+/// Geometry shared by composition, hit testing and effects. Chrome stays fixed;
+/// any legacy page projection is applied only to the content rectangle.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ShellFrameLayout {
+    pub bounds: Rect,
+    pub shell: ShellLayout,
+    pub main: Rect,
+    pub status_message: Option<Rect>,
+    pub time_button: Option<Rect>,
+}
+
+impl ShellFrameLayout {
+    pub fn new(bounds: Rect, time_label: Option<&str>, context: &crate::RenderContext) -> Self {
+        let shell = compute_shell_layout(bounds);
+        let (main, status_message, time_button) = match shell {
+            ShellLayout::Compact(main) => (main, None, None),
+            ShellLayout::Full { main, status, .. } => {
+                let time = time_label
+                    .map(|label| super::status_time_button_area(status, label))
+                    .filter(|area| !area.is_empty());
+                let width = time.map_or(status.width, |button| button.x.saturating_sub(status.x));
+                (
+                    context.page_area(main),
+                    Some(Rect::new(status.x, status.y, width, status.height)),
+                    time,
+                )
+            }
+        };
+        let shell = match shell {
+            ShellLayout::Full { top, status, .. } => ShellLayout::Full { top, main, status },
+            compact => compact,
+        };
+        Self {
+            bounds,
+            shell,
+            main,
+            status_message,
+            time_button,
+        }
+    }
+
+    pub fn is_compact(self) -> bool {
+        matches!(self.shell, ShellLayout::Compact(_))
+    }
+}
+
+/// PTY and its scrollbar share the compositor's main panel geometry.
+pub fn command_line_terminal_area(area: Rect) -> Option<Rect> {
+    let layout = ShellFrameLayout::new(area, None, &crate::RenderContext::default());
+    command_line_terminal_area_in(&layout)
+}
+
+pub fn command_line_terminal_area_in(layout: &ShellFrameLayout) -> Option<Rect> {
+    (!layout.is_compact()
+        && layout.bounds.width >= crate::MIN_COMMAND_LINE_TERMINAL_WIDTH
+        && layout.bounds.height >= crate::MIN_COMMAND_LINE_TERMINAL_HEIGHT)
+        .then(|| {
+            crate::components::Surface::new()
+                .bordered(true)
+                .inner(layout.main)
+        })
+}

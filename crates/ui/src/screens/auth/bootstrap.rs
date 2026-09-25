@@ -5,24 +5,11 @@ use ratatui::text::Line;
 use super::common::render_auth_screen;
 use super::{AuthField, BootstrapAdminViewModel};
 use crate::components::{Surface, TextInput};
-use crate::screens::shell::{ShellChromeViewModel, ShellLayout, compute_shell_layout};
 use crate::{RenderContext, TundraTheme};
 
-pub fn render_bootstrap_admin(
+pub fn render_bootstrap_admin_content(
     frame: &mut Frame<'_>,
     area: Rect,
-    chrome: &ShellChromeViewModel,
-    model: &BootstrapAdminViewModel,
-    theme: &TundraTheme,
-) {
-    let context = RenderContext::from_theme(theme, Default::default(), Default::default());
-    render_bootstrap_admin_context(frame, area, chrome, model, &context);
-}
-
-pub(crate) fn render_bootstrap_admin_context(
-    frame: &mut Frame<'_>,
-    area: Rect,
-    chrome: &ShellChromeViewModel,
     model: &BootstrapAdminViewModel,
     context: &RenderContext,
 ) {
@@ -30,15 +17,12 @@ pub(crate) fn render_bootstrap_admin_context(
     render_auth_screen(
         frame,
         area,
-        chrome,
         &i18n::tr!("ui-auth-create-admin"),
         bootstrap_lines(model),
-        theme,
+        context,
     );
 
-    let ShellLayout::Full { main, .. } = compute_shell_layout(area) else {
-        return;
-    };
+    let main = area;
     let inner = Surface::new().bordered(true).inner(main);
     render_bootstrap_input(
         frame,

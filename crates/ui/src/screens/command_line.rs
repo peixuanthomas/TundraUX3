@@ -12,10 +12,7 @@ use ratatui::widgets::{Clear, Paragraph, Wrap};
 use std::sync::Arc;
 
 use crate::components::{Scrollbar, Surface};
-use crate::screens::shell::{
-    ShellLayout, compute_shell_layout, render_compact_home, render_status, render_top,
-};
-use crate::{RenderContext, ShellChromeViewModel, TundraTheme};
+use crate::{RenderContext, TundraTheme};
 
 /// Smallest outer terminal accepted by the embedded Command Line application.
 pub const MIN_COMMAND_LINE_TERMINAL_WIDTH: u16 = 108;
@@ -159,22 +156,6 @@ impl CommandLineViewModel {
     }
 }
 
-/// Returns the region available to the child PTY and its optional scrollbar.
-///
-/// Command Line uses the normal Shell title and status bars. The terminal
-/// region is the inner rectangle of the central Command Line panel, so neither
-/// the PTY nor its scrollbar can draw over global navigation, status, or the
-/// clock control. Use [`command_line_content_area`] for the exact PTY viewport.
-pub fn command_line_terminal_area(area: Rect) -> Option<Rect> {
-    (area.width >= MIN_COMMAND_LINE_TERMINAL_WIDTH
-        && area.height >= MIN_COMMAND_LINE_TERMINAL_HEIGHT)
-        .then(|| match compute_shell_layout(area) {
-            ShellLayout::Full { main, .. } => Some(panel_inner_area(main)),
-            ShellLayout::Compact(_) => None,
-        })
-        .flatten()
-}
-
 /// Returns the PTY viewport within the Command Line panel. A single right-hand
 /// cell is reserved once retained history exists so the ASCII scrollbar never
 /// covers terminal output.
@@ -235,49 +216,20 @@ pub fn command_line_scrollbar_layout(
     })
 }
 
-pub fn render_command_line(
+pub fn render_command_line_content(
     frame: &mut Frame<'_>,
-    area: Rect,
-    chrome: &ShellChromeViewModel,
-    model: &CommandLineViewModel,
-    theme: &TundraTheme,
-) {
-    let context = RenderContext::from_theme(theme, Default::default(), Default::default());
-    render_command_line_contextual(frame, area, chrome, model, &context);
-}
-
-pub fn render_command_line_contextual(
-    frame: &mut Frame<'_>,
-    area: Rect,
-    chrome: &ShellChromeViewModel,
+    main: Rect,
+    terminal_area: Option<Rect>,
     model: &CommandLineViewModel,
     context: &RenderContext,
 ) {
     let theme = &context.compatibility_theme();
-    match compute_shell_layout(area) {
-        ShellLayout::Compact(compact) => render_compact_home(frame, compact, chrome, theme),
-        ShellLayout::Full { top, main, status } => {
-            render_top(frame, top, chrome, theme);
-            render_command_line_main(frame, main, area, model, theme, context);
-            render_status(frame, status, chrome, theme);
-        }
-    }
-}
-
-fn render_command_line_main(
-    frame: &mut Frame<'_>,
-    main: Rect,
-    outer_area: Rect,
-    model: &CommandLineViewModel,
-    theme: &TundraTheme,
-    context: &RenderContext,
-) {
     Surface::new()
         .titled(i18n::tr!("ui-command-line-command-line"))
         .bordered(true)
         .render_frame(frame, main, context);
 
-    let Some(terminal_area) = command_line_terminal_area(outer_area) else {
+    let Some(terminal_area) = terminal_area else {
         render_size_blocker(frame, panel_inner_area(main), theme);
         return;
     };

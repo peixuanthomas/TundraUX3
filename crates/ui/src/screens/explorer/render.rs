@@ -12,49 +12,16 @@ use crate::components::{
     Button, ComponentTone, DataTable, List, ListItem, Panel, Scrollbar, Surface, TextInput,
     terminal_width,
 };
-use crate::screens::shell::{
-    ShellChromeViewModel, ShellLayout, compute_shell_layout, fit_cell, render_compact_home,
-    render_status, render_top,
-};
+use crate::screens::shell::fit_cell;
 use crate::{RuntimeAsciiAssets, TundraTheme};
 
-pub fn render_explorer(
-    frame: &mut Frame<'_>,
-    area: Rect,
-    chrome: &ShellChromeViewModel,
-    model: &ExplorerViewModel,
-    theme: &TundraTheme,
-) {
-    let context = crate::RenderContext::from_theme(theme, Default::default(), Default::default());
-    render_explorer_with_context(frame, area, chrome, model, &context);
-}
-
-pub fn render_explorer_with_context(
-    frame: &mut Frame<'_>,
-    area: Rect,
-    chrome: &ShellChromeViewModel,
-    model: &ExplorerViewModel,
-    context: &crate::RenderContext,
-) {
-    let theme = context.compatibility_theme();
-    match compute_shell_layout(area) {
-        ShellLayout::Compact(compact) => render_compact_home(frame, compact, chrome, &theme),
-        ShellLayout::Full { top, main, status } => {
-            render_top(frame, top, chrome, &theme);
-            render_explorer_main(frame, main, model, context, &theme);
-            render_status(frame, status, chrome, &theme);
-            render_explorer_overlay(frame, main, model, context, &theme);
-        }
-    }
-}
-
-fn render_explorer_main(
+pub fn render_explorer_content(
     frame: &mut Frame<'_>,
     area: Rect,
     model: &ExplorerViewModel,
     context: &crate::RenderContext,
-    theme: &TundraTheme,
 ) {
+    let theme = &context.compatibility_theme();
     Surface::new()
         .titled(i18n::tr!("ui-explorer-explorer"))
         .render_frame(frame, area, context);
@@ -500,7 +467,7 @@ fn render_explorer_footer(
     }
 }
 
-fn render_explorer_overlay(
+pub fn render_explorer_overlay(
     frame: &mut Frame<'_>,
     area: Rect,
     model: &ExplorerViewModel,

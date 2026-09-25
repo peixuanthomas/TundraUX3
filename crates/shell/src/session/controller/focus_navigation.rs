@@ -10,6 +10,35 @@ impl ShellSession {
         &mut self,
         motion: ui::MotionTransitions,
     ) {
+        let context = ui::RenderContext {
+            transitions: motion,
+            ..ui::RenderContext::default()
+        };
+        let bounds = Rect::new(0, 0, self.terminal_size.0, self.terminal_size.1);
+        let layout =
+            ui::ShellFrameLayout::new(bounds, self.status_time_button_label().as_deref(), &context);
+        self.refresh_hit_map_with_frame_layout(motion, layout);
+    }
+
+    pub(in crate::session) fn shell_layout_for(&self, bounds: Rect) -> ui::ShellLayout {
+        self.frame_layout
+            .filter(|layout| layout.bounds == bounds)
+            .unwrap_or_else(|| {
+                ui::ShellFrameLayout::new(
+                    bounds,
+                    self.status_time_button_label().as_deref(),
+                    &ui::RenderContext::default(),
+                )
+            })
+            .shell
+    }
+
+    pub(in crate::session) fn refresh_hit_map_with_frame_layout(
+        &mut self,
+        motion: ui::MotionTransitions,
+        layout: ui::ShellFrameLayout,
+    ) {
+        self.frame_layout = Some(layout);
         let _language = i18n::enter_snapshot(self.language.clone());
         let motion_ready = ui::RenderContext {
             transitions: motion,
@@ -31,7 +60,6 @@ impl ShellSession {
         if content_screen == ShellScreen::Login {
             self.sync_login_selection();
         }
-        let time_button_label = self.status_time_button_label();
         let notification_model = self.notification_active_modal_view_model();
         let home_model = (content_screen == ShellScreen::Home).then(|| self.to_home_view_model());
         let clock_model =
@@ -65,7 +93,7 @@ impl ShellSession {
         )
         .then(|| self.to_diagnostics_view_model());
         self.hit_map = build_shell_hit_map(
-            self.terminal_size,
+            layout,
             content_screen,
             active_screen == ShellScreen::ExitConfirm,
             self.active_popup,
@@ -73,7 +101,6 @@ impl ShellSession {
             self.language_catalog.options().len(),
             self.setup_custom_color_target.is_some(),
             self.hit_map_generation,
-            time_button_label.as_deref(),
             self.time_sync_dialog_visible,
             self.notification_active_modal_component(),
             notification_model.as_ref(),
@@ -157,7 +184,7 @@ impl ShellSession {
         }
         if self.active_screen() == ShellScreen::Login {
             let area = Rect::new(0, 0, self.terminal_size.0, self.terminal_size.1);
-            if matches!(ui::compute_shell_layout(area), ui::ShellLayout::Compact(_)) {
+            if matches!(self.shell_layout_for(area), ui::ShellLayout::Compact(_)) {
                 return vec![ShellComponent::CompactHome];
             }
             return vec![
@@ -201,7 +228,7 @@ impl ShellSession {
         }
         if self.active_screen() == ShellScreen::Clock {
             let area = Rect::new(0, 0, self.terminal_size.0, self.terminal_size.1);
-            if matches!(ui::compute_shell_layout(area), ui::ShellLayout::Compact(_)) {
+            if matches!(self.shell_layout_for(area), ui::ShellLayout::Compact(_)) {
                 return vec![ShellComponent::CompactHome];
             }
             if self.overlay_interaction_ready && self.clock_create_state.is_some() {

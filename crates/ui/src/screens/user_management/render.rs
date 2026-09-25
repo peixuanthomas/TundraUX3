@@ -13,44 +13,15 @@ use super::model::{
 };
 use crate::components::{Button, ComponentTone, DataTable, Surface, TextInput};
 use crate::screens::clock::render_clock_line;
-use crate::screens::shell::{fit_cell, render_compact_home, render_status, render_top};
-use crate::{RenderContext, ShellChromeViewModel, ShellLayout, TundraTheme, compute_shell_layout};
-pub fn render_user_management(
+use crate::screens::shell::fit_cell;
+use crate::{RenderContext, TundraTheme};
+pub fn render_user_management_content(
     frame: &mut Frame<'_>,
-    area: Rect,
-    chrome: &ShellChromeViewModel,
-    model: &UserManagementViewModel,
-    theme: &TundraTheme,
-) {
-    let context = RenderContext::from_theme(theme, Default::default(), Default::default());
-    render_user_management_contextual(frame, area, chrome, model, &context);
-}
-
-pub fn render_user_management_contextual(
-    frame: &mut Frame<'_>,
-    area: Rect,
-    chrome: &ShellChromeViewModel,
+    main: Rect,
     model: &UserManagementViewModel,
     context: &RenderContext,
 ) {
     let theme = &context.compatibility_theme();
-    match compute_shell_layout(area) {
-        ShellLayout::Compact(compact) => render_compact_home(frame, compact, chrome, theme),
-        ShellLayout::Full { top, main, status } => {
-            render_top(frame, top, chrome, theme);
-            render_user_management_main(frame, main, model, theme, context);
-            render_status(frame, status, chrome, theme);
-        }
-    }
-}
-
-fn render_user_management_main(
-    frame: &mut Frame<'_>,
-    main: Rect,
-    model: &UserManagementViewModel,
-    theme: &TundraTheme,
-    context: &RenderContext,
-) {
     let layout = user_management_layout(main, model);
     Surface::new()
         .titled(i18n::tr!("ui-user-management-user-management"))
@@ -78,10 +49,6 @@ fn render_user_management_main(
         theme.muted_style(),
         HorizontalAlignment::Left,
     );
-
-    if let (Some(form_layout), Some(form)) = (layout.form.as_ref(), model.form.as_ref()) {
-        render_user_management_form(frame, form_layout, form, theme, context);
-    }
 }
 
 fn render_user_management_table(
@@ -490,4 +457,17 @@ fn user_management_user_cells(
         .zip(widths)
         .map(|(value, width)| fit_cell(&value, usize::from(*width)))
         .collect()
+}
+
+pub fn render_user_management_overlay(
+    frame: &mut Frame<'_>,
+    main: Rect,
+    model: &UserManagementViewModel,
+    context: &RenderContext,
+) {
+    let theme = &context.compatibility_theme();
+    let layout = user_management_layout(main, model);
+    if let (Some(form_layout), Some(form)) = (layout.form.as_ref(), model.form.as_ref()) {
+        render_user_management_form(frame, form_layout, form, theme, context);
+    }
 }
