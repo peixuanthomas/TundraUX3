@@ -209,7 +209,7 @@ flowchart TD
 crates/
 ├── app/src/{application,editor,explorer,launcher,diagnostics}/
 ├── ui/src/{foundation,screens,components,assets,theme}/
-├── shell/src/session/{controller,presentation,runtime.rs,ui_state.rs}
+├── shell/src/session/{compositor,controller,presentation,runtime.rs,ui_state.rs}
 ├── i18n/
 ├── runtime-log/
 ├── identity/
@@ -257,14 +257,19 @@ AppState::snapshot() -> AppSnapshot<'_>
 
 ### ViewModel、布局与渲染
 
-Shell presentation 只从 `AppSnapshot` 加上必要的 `UiSessionState` 组装屏幕 ViewModel。随后 UI 按以下顺序工作：
+Shell presentation 只从 `AppSnapshot` 加上必要的 `UiSessionState` 组装屏幕 ViewModel。`shell::session::compositor::ScreenCompositor` 负责普通 Shell 每帧的统一合成；runtime 保留终端生命周期和事件循环。UI 通过借用 ViewModel 的 `ScreenContent` 枚举提供页面内容与页面弹层两个独立绘制阶段，不读取整个 `ShellSession`，也不在 render 中驱动领域状态转换。
 
-1. 用终端 `Rect` 计算布局；
-2. 用 ViewModel 决定文本、列表、边框与状态样式；
-3. 注册与布局一致的命中区域；
-4. 交由 Ratatui 写入当前帧。
+每帧以同一份 `ShellFrameLayout` 计算并共享布局：正常尺寸下顶栏与底部状态栏各占三行，中间为 `main`；底栏进一步划分 `status_message` 与 `time_button`。内容布局、鼠标命中、PTY 可用区域和效果边界使用这套几何信息。页面投影只影响内容区域，顶栏、底栏与时钟保持固定；Toast 限制在状态消息区域，不覆盖时钟按钮。小于最小终端尺寸时沿用紧凑布局与相应页面的尺寸提示。
 
-因此领域逻辑不依赖终端尺寸，布局/渲染也能用固定 ViewModel 和固定 `Rect` 单测。UI 不得直接读取整个 `ShellSession`，更不应在 render 中驱动领域状态转换。
+合成顺序固定为：
+
+1. 页面内容；
+2. 页面自身的弹层；
+3. Shell 顶栏、状态栏与 Toast；
+4. Shell 级模态对话框；
+5. 当前帧动画与效果。
+
+合成器集中管理原有的效果生命周期、帧缓存、减少动态效果和跳过单元格的保护逻辑；编辑器、PTY 文本及终端图片仍遵循原有保护规则。锁屏、启动画面、panic 页面和独立样式预览不进入普通 Shell 合成路径。因此领域逻辑继续与终端尺寸解耦，页面布局和合成顺序可以用固定 ViewModel、`Rect` 与测试终端验证。
 
 Home 图标由 `home_icons.toml` 同时声明 ASCII 图案和 PNG；Launcher 使用同样的图形策略。检测到 Kitty、Sixel 或 iTerm2 图形协议时，可在 **Settings → Appearance → Theme → Default theme** 选择 ASCII 或图片图标；这一选择随当前用户 Appearance 持久化。普通文本终端会禁用图片选项。PNG 缺失、损坏或无法准备时，一律自动回退到原有 ASCII 图标，且保持既有四行图标区域和等比例居中布局。
 
