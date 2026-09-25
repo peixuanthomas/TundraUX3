@@ -170,6 +170,13 @@ impl ShellMotionEffects {
         }
 
         let screen = state.content_screen();
+        if self.screen.is_some_and(|previous| previous != screen) {
+            // Outgoing closures carry old page cells. Drop them before scheduling
+            // the new page reveal, even when terminal geometry did not change.
+            self.clear();
+            self.deferred_close = None;
+            self.exiting = false;
+        }
         let has_overlay = current_overlay(state)
             .is_some_and(|overlay| overlay.kind != ui::MotionOverlayKind::Toast);
         let exit_confirmation = state.active_screen() == ShellScreen::ExitConfirm;

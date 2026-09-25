@@ -1477,3 +1477,32 @@ fn new_page_overlay_after_shell_close_still_enters() {
     assert_eq!(motion.overlay_gate, Duration::from_millis(260));
     assert!(motion.active_visual_outgoing.is_some());
 }
+
+#[test]
+fn changing_pages_cancels_old_outgoing_cells_but_keeps_new_page_entry() {
+    let (mut state, mut motion, layout) = clock_overlay_covered_by_shell_modal();
+    let theme = ui::ThemeTokens::glacier_night();
+    state.notification_dismiss_active_modal_without_response();
+    state.refresh_hit_map();
+    motion.update_layout(&state, &layout, theme, false);
+    let mut old = Buffer::filled(layout.bounds, Cell::new("P"));
+    motion.process(Duration::ZERO, &mut old, &state);
+    assert!(motion.active_visual_outgoing.is_some());
+    state.clock_create_state = None;
+    state.screen_stack = vec![ShellScreen::Editor];
+    state.refresh_hit_map();
+    motion.focus = None;
+    motion.update_layout(&state, &layout, theme, false);
+    assert!(motion.active_visual_outgoing.is_none());
+    assert!(motion.base_snapshot.is_none());
+    assert!(motion.overlay_snapshot.is_none());
+    let mut actual = Buffer::filled(layout.bounds, Cell::new("N"));
+    let mut expected = actual.clone();
+    page_effect(ShellScreen::Editor, layout.main, theme).process(
+        Duration::ZERO,
+        &mut expected,
+        layout.bounds,
+    );
+    motion.process(Duration::ZERO, &mut actual, &state);
+    assert_eq!(actual, expected);
+}
