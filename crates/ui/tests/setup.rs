@@ -1,3 +1,6 @@
+#[path = "support/composition.rs"]
+mod composition;
+use composition as ui;
 mod support;
 
 use std::collections::BTreeSet;

@@ -1,3 +1,6 @@
+#[path = "support/composition.rs"]
+mod composition;
+use composition as ui;
 mod support;
 
 use ratatui::Terminal;
@@ -448,10 +451,14 @@ fn update_commits_wrap_complete_messages_and_follow_detail_scroll() {
         .backend()
         .buffer()
         .content()
-        .iter()
-        .position(|cell| cell.symbol() == "1")
-        .expect("commit row")
-        / 80;
+        .chunks(80)
+        .position(|row| {
+            row.iter()
+                .map(|cell| cell.symbol())
+                .collect::<String>()
+                .contains("12345678")
+        })
+        .expect("commit row");
     model.scroll_offset = 1;
     terminal
         .draw(|frame| {
@@ -468,10 +475,14 @@ fn update_commits_wrap_complete_messages_and_follow_detail_scroll() {
         .backend()
         .buffer()
         .content()
-        .iter()
-        .position(|cell| cell.symbol() == "1")
-        .expect("scrolled commit row")
-        / 80;
+        .chunks(80)
+        .position(|row| {
+            row.iter()
+                .map(|cell| cell.symbol())
+                .collect::<String>()
+                .contains("12345678")
+        })
+        .expect("scrolled commit row");
     assert!(second_row < first_row);
 }
 

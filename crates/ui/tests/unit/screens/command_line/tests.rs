@@ -1,4 +1,5 @@
 use super::*;
+use crate::command_line_terminal_area;
 
 #[test]
 fn minimum_outer_size_uses_the_standard_shell_main_panel() {

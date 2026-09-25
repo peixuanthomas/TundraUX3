@@ -1,3 +1,6 @@
+#[path = "support/composition.rs"]
+mod composition;
+use composition as ui;
 mod support;
 use ratatui::{Terminal, backend::TestBackend, layout::Rect};
 use support::terminal_output;

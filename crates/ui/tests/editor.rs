@@ -12,7 +12,7 @@ use ui::{
     EditorSettingsViewModel, EditorSourceRange, EditorSourceSelection, EditorSourceWindowLine,
     EditorTableAlignment, EditorTableCell, EditorTableEdge, EditorTextPosition,
     EditorToolbarAction, EditorViewModel, NodeId, RichPosition, RichRange, TundraTheme,
-    editor_layout, render_editor,
+    editor_layout,
 };
 
 #[test]
@@ -1415,4 +1415,17 @@ fn find_text(terminal: &Terminal<TestBackend>, needle: &str) -> (u16, u16) {
         }
     }
     panic!("text not found: {needle}");
+}
+
+// Editor fixtures compose content and transient controls in production order.
+fn render_editor(
+    frame: &mut ratatui::Frame<'_>,
+    area: Rect,
+    model: &EditorViewModel,
+    theme: &TundraTheme,
+) -> ui::EditorLayout {
+    let context = ui::RenderContext::from_theme(theme, Default::default(), Default::default());
+    let layout = ui::render_editor_contextual(frame, area, model, &context);
+    ui::render_editor_overlay(frame, &layout, model, &context);
+    layout
 }
