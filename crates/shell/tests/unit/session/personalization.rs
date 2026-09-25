@@ -58,18 +58,69 @@ fn fixture(pending: bool) -> (PersonalizationTempGuard, StorageManager, AuthSess
     (PersonalizationTempGuard(root), manager, session)
 }
 
+fn copy_assets(source: &std::path::Path, destination: &std::path::Path) {
+    std::fs::create_dir_all(destination).unwrap();
+    for entry in std::fs::read_dir(source).unwrap() {
+        let entry = entry.unwrap();
+        let target = destination.join(entry.file_name());
+        if entry.file_type().unwrap().is_dir() {
+            copy_assets(&entry.path(), &target);
+        } else {
+            std::fs::copy(entry.path(), target).unwrap();
+        }
+    }
+}
+
 fn linux_state(manager: &StorageManager, images: bool) -> ShellSession {
     let mut startup = ShellStartupState::clean(
         PlatformKind::Linux,
         PlatformCapabilities::native_supported(),
     );
     startup.storage_manager = Some(manager.clone());
+    // Keep language loading and resource repair isolated from other fixtures.
+    let assets = manager
+        .layout()
+        .config_path
+        .parent()
+        .unwrap()
+        .join("test-assets");
+    copy_assets(
+        std::path::Path::new(ascii_assets::CANONICAL_ASSETS_DIR),
+        &assets,
+    );
+    let (store, _) = ui::AsciiAssetStore::load_default_with_root_and_recovery(&assets).unwrap();
     // Build an isolated UI fixture without attaching the host NSS account.
-    let mut state =
-        ShellSession::new_with_startup(ShellLaunchConfig::default(), (120, 40), startup);
+    let mut state = ShellSession::new_with_startup_and_assets(
+        ShellLaunchConfig::default(),
+        (120, 40),
+        startup,
+        ui::RuntimeAsciiAssets::from_store(store),
+    );
+    // Resource normalization can report a startup repair; acknowledge it just
+    // as the terminal user does before entering the onboarding flow.
+    if state.app.notification_center().active_modal().is_some() {
+        state.apply_input(InputEvent::from_key_label("Enter"));
+    }
     state.identity_backend = identity::IdentityBackend::Linux;
     state.set_terminal_image_support(images);
     state
+}
+
+fn advance_to_appearance(state: &mut ShellSession) {
+    assert_eq!(state.to_setup_view_model().step, ui::SetupStep::Language);
+    assert_eq!(state.focused_component(), ShellComponent::SetupLanguage);
+    state.apply_input(InputEvent::from_key_label("Down"));
+    state.apply_input(InputEvent::from_key_label("Enter"));
+    assert_eq!(state.to_setup_view_model().step, ui::SetupStep::Timezone);
+    assert_eq!(state.focused_component(), ShellComponent::SetupTimezone);
+    state.apply_input(InputEvent::from_key_label("Down"));
+    state.apply_input(InputEvent::from_key_label("Enter"));
+    assert_eq!(state.to_setup_view_model().step, ui::SetupStep::Appearance);
+    assert_eq!(
+        state.focused_component(),
+        ShellComponent::SetupAppearanceShape
+    );
+    assert!(state.auth_session().is_none());
 }
 
 fn submit(state: &mut ShellSession) {
@@ -87,12 +138,14 @@ fn submit(state: &mut ShellSession) {
 fn linux_first_login_requires_personalization_and_persists_terminal_safe_choices() {
     for images in [false, true] {
         let (_guard, manager, session) = fixture(true);
-        let original_config = manager.load_config().unwrap();
+        let mut expected_config = manager.load_config().unwrap();
         let mut state = linux_state(&manager, images);
         state.login_password = "must be cleared".into();
         state.complete_login(session.clone());
         assert_eq!(state.active_screen(), ShellScreen::FirstRunSetup);
-        assert_eq!(state.to_setup_view_model().step, ui::SetupStep::Appearance);
+        advance_to_appearance(&mut state);
+        expected_config.language = state.selected_setup_language_value();
+        expected_config.timezone = state.selected_setup_timezone_value();
         assert!(state.auth_session().is_none());
         assert!(state.app.active_appearance().is_none());
         assert!(state.login_password.is_empty());
@@ -119,7 +172,7 @@ fn linux_first_login_requires_personalization_and_persists_terminal_safe_choices
         );
         assert_eq!(state.app.active_appearance(), Some(&record.appearance));
         assert_eq!(state.graphical_icons_enabled(), images);
-        assert_eq!(manager.load_config().unwrap(), original_config);
+        assert_eq!(manager.load_config().unwrap(), expected_config);
         assert!(record.password_hash.is_empty());
         assert_eq!(record.display_name, "Peixuan");
         // Completion survives a new shell process/session.
@@ -155,6 +208,7 @@ fn save_failure_keeps_linux_personalization_pending_and_allows_retry() {
     let (_guard, manager, session) = fixture(true);
     let mut state = linux_state(&manager, false);
     state.complete_login(session);
+    advance_to_appearance(&mut state);
     let users_path = &manager.layout().users_path;
     let backup = users_path.with_extension("test-backup");
     std::fs::rename(users_path, &backup).unwrap();
@@ -169,6 +223,32 @@ fn save_failure_keeps_linux_personalization_pending_and_allows_retry() {
     assert!(manager.load_users().unwrap().users[0].personalization_pending);
     state.apply_input(InputEvent::from_key_label("Enter"));
     assert_eq!(state.active_screen(), ShellScreen::Home);
+    assert!(!manager.load_users().unwrap().users[0].personalization_pending);
+}
+
+#[test]
+fn config_save_failure_keeps_linux_setup_pending_and_allows_retry() {
+    let (_guard, manager, session) = fixture(true);
+    let mut state = linux_state(&manager, false);
+    state.complete_login(session);
+    advance_to_appearance(&mut state);
+    let config_path = &manager.layout().config_path;
+    let backup = config_path.with_extension("test-backup");
+    std::fs::rename(config_path, &backup).unwrap();
+    std::fs::create_dir(config_path).unwrap();
+    submit(&mut state);
+    assert_eq!(state.active_screen(), ShellScreen::FirstRunSetup);
+    assert!(state.auth_session().is_none());
+    assert!(state.to_setup_view_model().error.is_some());
+    assert!(manager.load_users().unwrap().users[0].personalization_pending);
+    std::fs::remove_dir(config_path).unwrap();
+    std::fs::rename(backup, config_path).unwrap();
+    state.apply_input(InputEvent::from_key_label("Enter"));
+    assert_eq!(state.active_screen(), ShellScreen::Home);
+    assert_eq!(
+        manager.load_config().unwrap().timezone,
+        state.selected_setup_timezone_value()
+    );
     assert!(!manager.load_users().unwrap().users[0].personalization_pending);
 }
 

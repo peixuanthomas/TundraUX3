@@ -257,6 +257,20 @@ def main() -> int:
             if not wait_for_output_quiet(master, output, child, quiet_period=0.2):
                 raise SystemExit("shell did not settle after the graphics warning")
 
+        # Linux onboarding reuses Language and Timezone, skipping account creation.
+        # Match page-specific controls: incremental rendering can split the
+        # step title into multiple cursor writes when letters are unchanged.
+        for next_page, marker in (("Timezone", b"Timezone"), ("Appearance", b"Frame shape")):
+            page_offset = len(output)
+            os.write(master, b"\r")
+            if not wait_for_output(master, output, marker, child, 5.0, start_offset=page_offset):
+                raise SystemExit(
+                    f"setup did not reach {next_page}; output:\n"
+                    f"{output_diagnostic(output[page_offset:])}"
+                )
+            if not wait_for_output_quiet(master, output, child, quiet_period=0.2):
+                raise SystemExit("setup page did not settle")
+
         os.write(master, b"\t\t\r")
         if not wait_for_output(master, output, b"Custom theme color", child, 5.0):
             raise SystemExit("Appearance color input did not open")

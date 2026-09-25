@@ -308,9 +308,15 @@ impl ShellSession {
                 self.sync_setup_timezone_window();
             }
             ui::SetupStep::Timezone => {
-                self.setup_step = ui::SetupStep::Admin;
-                self.setup_focused_field = ui::SetupField::AdminUsername;
-                self.focused_component = ShellComponent::SetupAdminUsername;
+                if self.pending_personalization_session.is_some() {
+                    self.setup_step = ui::SetupStep::Appearance;
+                    self.setup_focused_field = ui::SetupField::AppearanceShape;
+                    self.focused_component = ShellComponent::SetupAppearanceShape;
+                } else {
+                    self.setup_step = ui::SetupStep::Admin;
+                    self.setup_focused_field = ui::SetupField::AdminUsername;
+                    self.focused_component = ShellComponent::SetupAdminUsername;
+                }
             }
             ui::SetupStep::Admin | ui::SetupStep::Appearance => {}
         }
@@ -938,6 +944,22 @@ impl ShellSession {
         let users = UserService::with_debug_policy(storage.clone(), self.debug_policy)
             .with_backend(self.identity_backend);
         if let Some(session) = self.pending_personalization_session.clone() {
+            // Save setup preferences before marking the profile complete so a
+            // failed write leaves the onboarding flow available for retry.
+            let result = storage.load_config().and_then(|mut config| {
+                config.language = self.selected_setup_language_value();
+                config.timezone = self.selected_setup_timezone_value();
+                storage.save_config(&config)?;
+                Ok(config)
+            });
+            match result {
+                Ok(config) => self.replace_storage_config(config),
+                Err(error) => {
+                    self.error_message = Some(i18n::LocalizedText::Raw(error.to_string()));
+                    self.notify_status(i18n::msg!("account-personalization-save-failed"));
+                    return;
+                }
+            }
             let mut appearance = appearance;
             if !self.terminal_image_support {
                 appearance.icon_display_mode = storage::IconDisplayMode::Ascii;
@@ -1007,13 +1029,13 @@ impl ShellSession {
             app::AppCommand::SetActiveSystemStatusDashboard(None),
             Instant::now(),
         );
-        self.setup_step = ui::SetupStep::Appearance;
-        self.setup_focused_field = ui::SetupField::AppearanceShape;
+        self.setup_step = ui::SetupStep::Language;
+        self.setup_focused_field = ui::SetupField::LanguageList;
         self.screen_stack = vec![ShellScreen::FirstRunSetup];
-        self.focused_component = ShellComponent::SetupAppearanceShape;
+        self.focused_component = ShellComponent::SetupLanguage;
         self.active_popup = None;
         self.error_message = None;
-        self.notify_status(i18n::msg!("account-first-sign-in-appearance"));
+        self.notify_status(i18n::msg!("account-first-sign-in-setup"));
         self.refresh_hit_map();
     }
 

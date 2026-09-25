@@ -64,7 +64,7 @@ cargo build --release -p shell -p cli
 cargo run -p shell --bin tundra-shell
 ~~~
 
-Linux 在验证普通进程身份后附着当前 NSS 用户，首次完成 Appearance 后进入 Home，后续直接进入 Home。Windows/macOS 首次创建本地管理员账户，后续保留 Weathr 锁屏与本地登录流程。
+Linux 在验证普通进程身份后附着当前 NSS 用户，首次依次完成语言、时区和外观设置后进入 Home（跳过创建用户），后续直接进入 Home。Windows/macOS 首次创建本地管理员账户，后续保留 Weathr 锁屏与本地登录流程。
 
 常用 CLI 探查命令：
 
@@ -644,7 +644,7 @@ cargo test -p platform --test native_trash_smoke -- --ignored --nocapture
 python3 scripts/linux-shell-smoke.py target/debug/tundra-shell
 ```
 
-PTY smoke 使用隔离的 XDG 目录和 140 × 40 的真实 PTY 进入 Shell。它默认注入 64 个 SGR 全移动鼠标事件（可通过 `TUNDRA_PTY_MOUSE_EVENT_COUNT` 调整），随后在已有 Appearance 颜色输入框中发送单字符哨兵，在 250 毫秒门限内验证鼠标洪峰后的普通字符输入响应；Ratatui 增量绘制不保证重发完整多字符字符串。测试再取消临时颜色、完成当前 Linux 用户的 Appearance 设置并进入 Home。最后发送 `SIGTERM`，检查终端属性、raw mode、鼠标捕获、备用屏幕和光标均得到恢复。
+PTY smoke 使用隔离的 XDG 目录和 140 × 40 的真实 PTY 进入 Shell。它依次经过语言、时区页面（跳过创建用户），打开已有 Appearance 颜色输入框，默认注入 64 个 SGR 全移动鼠标事件（可通过 `TUNDRA_PTY_MOUSE_EVENT_COUNT` 调整），随后发送单字符哨兵，在 250 毫秒门限内验证鼠标洪峰后的普通字符输入响应；Ratatui 增量绘制不保证重发完整多字符字符串。测试再取消临时颜色、完成当前 Linux 用户的 Appearance 设置并进入 Home。最后发送 `SIGTERM`，检查终端属性、raw mode、鼠标捕获、备用屏幕和光标均得到恢复。
 
 root 启动确认在可丢弃的 Linux 测试环境验证；下列脚本使用临时 XDG 目录，不修改系统配置。
 第一项覆盖 Shell/CLI 的 `y` 确认、其他按键取消、终端模式恢复、管道拒绝、普通用户免确认和 set-ID 拒绝；
