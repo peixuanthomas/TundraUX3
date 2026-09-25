@@ -124,7 +124,8 @@ never authentication prompt responses. Artifacts remain under
 `package-artifacts.py` checks the actual RPM spec and DEB control using already
 built native Shell/CLI payloads. In a **separate fresh Fedora fixture container**,
 copy those programs to `/srv/tundra-package-fixture/tundra-shell` and `tundra-cli`,
-and copy the source `packaging/`, `crates/ascii-assets/assets/`,
+and copy the source `packaging/`, `docs/packaging/linux/README-LINUX.txt`,
+`crates/ascii-assets/assets/`,
 `crates/weathr/LICENSE.weathr`, and `LICENSE` under
 `/srv/tundra-package-fixture/source/`. Copy the checker into the same fixture
 folder, then execute it with container Python. The image includes rpmbuild and

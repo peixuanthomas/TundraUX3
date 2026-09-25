@@ -57,7 +57,7 @@ IDs or unsatisfied arguments yield `[message-id]`. Rendering performs no file I/
 or logging. Snapshots implement `Send + Sync`, `Debug`, and content-aware equality.
 
 English defaults are embedded from the canonical
-`../ascii-assets/assets/locales/en-US` tree. The build script watches directories
+`crates/ascii-assets/assets/locales/en-US` tree (relative to the repository root). The build script watches directories
 and files recursively and validates the embedded manifest and Fluent reference
 graph. Missing manifests, missing resource trees, and packs without any messages
 fail the build. Minimal recovery messages remain available as the last runtime tier.

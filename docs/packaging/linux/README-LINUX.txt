@@ -137,7 +137,7 @@ entering the UI. Test forged USER/HOME, missing buses, first/repeated Appearance
 file permissions, and terminal restoration as well as successful paths.
 
 The reproducible signed PackageKit fixture is documented in
-scripts/tests/README.md in the source repository. RPM writes and authorization
+docs/scripts/tests/README.md in the source repository. RPM writes and authorization
 failure tests belong in disposable, recoverable Fedora environments, never the
 test host's current Tundra installation. Containers do not substitute for all
 host desktop-session, hardware, or systemd confinement checks.

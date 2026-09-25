@@ -6,7 +6,7 @@ harness types it into system-owned prompts and checks it never appears in Shell
 output/state/logs. It is never a real user's password. Fedora /bin/login creates
 the test OS session; Tundra itself must not create one. pyte answers terminal
 cursor queries so TerminalGuard restoration can be checked with a real PTY.
-See README.md for the signed fixture and fresh-baseline requirements.
+See docs/scripts/tests/README.md for the signed fixture and fresh-baseline requirements.
 """
 from pathlib import Path
 import codecs, fcntl, os, pty, select, signal, struct, subprocess, sys, termios, time

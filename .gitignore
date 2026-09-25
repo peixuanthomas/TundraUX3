@@ -1,4 +1,6 @@
-/docs
+# Local development notes (shared documentation lives in docs/).
+/docs/Ubuntu-SSH-开发环境.md
+/docs/stage2plan.md
 /target/
 /.worktrees/
 /worktrees/

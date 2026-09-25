@@ -70,7 +70,7 @@ for locale in en-US zh-CN; do
 done
 install -Dm644 LICENSE "$stage_root/$portable_name/LICENSE"
 install -Dm644 crates/weathr/LICENSE.weathr "$stage_root/$portable_name/LICENSE.weathr"
-install -Dm644 packaging/linux/README-LINUX.txt "$stage_root/$portable_name/README-LINUX.txt"
+install -Dm644 docs/packaging/linux/README-LINUX.txt "$stage_root/$portable_name/README-LINUX.txt"
 # Explicit provenance for ordinary-user portable updates. RPM/DEB install only
 # their listed system files and must never install this marker beside /usr/bin.
 install -Dm644 packaging/linux/tundra-installation.json "$stage_root/$portable_name/tundra-installation.json"
@@ -87,7 +87,7 @@ if [[ "$build_deb" == true ]]; then
   install -Dm644 packaging/debian/tundraux3.desktop "$deb_root/usr/share/applications/tundraux3.desktop"
   install -Dm644 LICENSE "$deb_root/usr/share/doc/tundraux3/copyright"
   install -Dm644 crates/weathr/LICENSE.weathr "$deb_root/usr/share/doc/tundraux3/LICENSE.weathr"
-  install -Dm644 packaging/linux/README-LINUX.txt "$deb_root/usr/share/doc/tundraux3/README-LINUX.txt"
+  install -Dm644 docs/packaging/linux/README-LINUX.txt "$deb_root/usr/share/doc/tundraux3/README-LINUX.txt"
 
   install -d "$deb_root/DEBIAN"
   sed "s/@VERSION@/$version/g" packaging/debian/control > "$deb_root/DEBIAN/control"

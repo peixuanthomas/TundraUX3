@@ -31,7 +31,7 @@ jobs:
           test "$GITHUB_REF" = refs/heads/master
           cargo metadata --locked --no-deps --format-version 1 > metadata.json
           jq -e '[.packages[] | select(.manifest_path | contains("/crates/"))] | length == 14 and all(.[]; .version == "1.3.0")' metadata.json
-          test -s packaging/releases/v1.3.md
+          test -s docs/packaging/releases/v1.3.md
           bash -n scripts/package-linux.sh
           python3 scripts/check-localization.py
 
@@ -343,7 +343,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          cp packaging/releases/v1.3.md release-notes.md
+          cp docs/packaging/releases/v1.3.md release-notes.md
           printf '\n构建提交：`%s`。\n' "$RELEASE_REF" >> release-notes.md
       - name: Upload and verify draft before publication
         shell: bash

@@ -1,5 +1,5 @@
 # Historical v1.2 workflow: its fixed RELEASE_REF retains the former PAM model.
-# Current Linux behavior is documented in packaging/linux/README-LINUX.txt.
+# Current Linux behavior is documented in docs/packaging/linux/README-LINUX.txt.
 name: Publish v1.2 release
 
 on:

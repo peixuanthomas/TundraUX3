@@ -53,7 +53,7 @@
 - `scripts/tests/packagekit-fixture.py`：签名的固定 RPM、依赖与不相关包。
 - `scripts/tests/authorization-pty.py`：真实 Shell、系统代理与 PTY 验证。
 - `scripts/tests/package-artifacts.py`：正式包定义及已安装 RPM 验证。
-- `scripts/tests/README.md`：独立容器、操作顺序、前置依赖和复位要求。
+- `docs/scripts/tests/README.md`：独立容器、操作顺序、前置依赖和复位要求。
 - `scripts/linux-shell-smoke.py`：64 个鼠标事件后的键盘优先级及终端退出恢复。
 
 原始日志保留于测试机 `/home/x240s-test/tundra-validation`：

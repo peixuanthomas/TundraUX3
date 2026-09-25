@@ -758,4 +758,4 @@ macOS 的 Explorer Trash 可能需要 Full Disk Access，启动/诊断会提示�
 
 ## 许可证
 
-项目根目录代码按 [MIT License](LICENSE) 授权。Weathr 组件另附 [GNU GPL v3 许可文本](crates/weathr/LICENSE.weathr)；分发或再使用时，还应检查对应组件以及 `third_party` 和其他资源的许可要求。
+项目根目录代码按 [MIT License](../LICENSE) 授权。Weathr 组件另附 [GNU GPL v3 许可文本](../crates/weathr/LICENSE.weathr)；分发或再使用时，还应检查对应组件以及 `third_party` 和其他资源的许可要求。

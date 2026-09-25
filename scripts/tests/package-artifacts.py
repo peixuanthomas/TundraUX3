@@ -2,7 +2,7 @@
 """Inspect production RPM/DEB packaging with prebuilt native debug payloads.
 
 Run only in a new disposable Fedora container. Supply the source subset and
-Shell/CLI at /srv/tundra-package-fixture as documented in README.md.
+Shell/CLI at /srv/tundra-package-fixture as documented in docs/scripts/tests/README.md.
 This does not claim to run the release-profile Cargo build or a Debian runtime.
 """
 from pathlib import Path
@@ -20,7 +20,7 @@ for binary in ('tundra-shell', 'tundra-cli'):
     shutil.copy2(root / binary, stage / binary)
     subprocess.run(['strip', str(stage / binary)], check=True)
 shutil.copytree(source / 'crates/ascii-assets/assets', stage / 'assets')
-for origin, dest in [('LICENSE', 'LICENSE'), ('crates/weathr/LICENSE.weathr', 'LICENSE.weathr'), ('packaging/linux/README-LINUX.txt', 'README-LINUX.txt'), ('packaging/linux/tundra-installation.json', 'tundra-installation.json')]:
+for origin, dest in [('LICENSE', 'LICENSE'), ('crates/weathr/LICENSE.weathr', 'LICENSE.weathr'), ('docs/packaging/linux/README-LINUX.txt', 'README-LINUX.txt'), ('packaging/linux/tundra-installation.json', 'tundra-installation.json')]:
     shutil.copy2(source / origin, stage / dest)
 assert json.loads((stage / 'tundra-installation.json').read_text()) == {'format': 1, 'kind': 'portable-user'}
 archive = work / f'{name}.tar.gz'

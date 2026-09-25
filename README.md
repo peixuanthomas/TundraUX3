@@ -35,7 +35,15 @@ cargo run --locked -p cli --bin tundra-cli -- debug doctor
 
 架构、crate 分工、运行流程、平台适配、数据存储、测试和打包说明请阅读：
 
-**[TundraUX3 技术说明](README-TECHNICAL.md)**
+**[TundraUX3 技术说明](docs/README-TECHNICAL.md)**
+
+项目说明文档统一存放在 [docs](docs/)；组件说明、测试指南和发布记录保留原目录层级：
+
+- [语言资源与恢复](docs/LOCALIZATION.md)与 [i18n crate](docs/crates/i18n/README.md)
+- [Watchdog 运行与恢复约定](docs/crates/watchdog/README.md)
+- [UI 图形资源说明](docs/crates/ui/assets/README.md)
+- [PackageKit 与打包测试指南](docs/scripts/tests/README.md)
+- [Linux 验证记录](docs/packaging/linux/)与[发布记录](docs/packaging/releases/)
 
 ## 许可证
 
@@ -54,6 +62,6 @@ cargo run --locked -p cli --bin tundra-cli -- debug doctor
 Fedora RPM 安装版在设置中通过 PackageKit 检查并更新已安装的 `tundraux3` 及必要依赖；
 安装前展示事务预览。正式的用户可写便携版使用独立的用户级更新流程。
 源码构建、无法确认归属的安装，以及本阶段的 Debian 系统安装版显示更新不可用。
-依赖、数据目录和验证说明见 [Linux 运行说明](packaging/linux/README-LINUX.txt)。
+依赖、数据目录和验证说明见 [Linux 运行说明](docs/packaging/linux/README-LINUX.txt)。
 
-运行日志与诊断导出请参阅 [Logs APP 使用与存储说明](LOGS.md)。
+运行日志与诊断导出请参阅 [Logs APP 使用与存储说明](docs/LOGS.md)。
