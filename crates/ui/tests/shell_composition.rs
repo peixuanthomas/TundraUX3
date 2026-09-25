@@ -53,8 +53,8 @@ fn chrome_title_and_information_share_one_row_without_spilling_into_content() {
         assert_eq!(top.height, 3);
         let text = row(&terminal, top.y + 1);
         assert!(text.contains("TundraUX 3"));
-        assert!(text.contains("debug"));
-        if width >= 80 {
+        assert_eq!(text.contains("debug"), cfg!(debug_assertions));
+        if cfg!(debug_assertions) && width >= 80 {
             assert!(text.replace(' ', "").contains("中文"));
         }
         assert!(!row(&terminal, top.y).contains("debug"));

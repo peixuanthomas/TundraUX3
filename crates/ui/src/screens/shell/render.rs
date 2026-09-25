@@ -190,7 +190,7 @@ fn render_top(
         Rect::new(inner.x, inner.y, title_width, 1),
     );
     let info_width = inner.width.saturating_sub(title_width.saturating_add(2));
-    if info_width == 0 {
+    if !cfg!(debug_assertions) || info_width == 0 {
         return;
     }
     let stack = if chrome.screen_stack.is_empty() {
