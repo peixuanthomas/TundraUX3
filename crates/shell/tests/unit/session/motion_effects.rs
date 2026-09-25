@@ -1,5 +1,19 @@
 use super::*;
 use crate::session::runtime::dispatch_motion_aware_input;
+
+impl ShellMotionEffects {
+    // Legacy fixtures provide a completed synthetic frame. Capture its base only
+    // when no overlay is painted; phase-specific regressions call captures directly.
+    fn test_frame(&mut self, delta: Duration, buffer: &mut Buffer, state: &ShellSession) {
+        if current_overlay(state).is_none_or(|overlay| overlay.kind == ui::MotionOverlayKind::Toast)
+        {
+            self.capture_base(buffer, state);
+        }
+        self.capture_overlay(buffer, state);
+        self.process(delta, buffer, state);
+    }
+}
+
 #[test]
 fn snapshots_exclude_image_protocol_skip_cells() {
     let area = Rect::new(0, 0, 2, 1);
@@ -65,12 +79,12 @@ fn motion_dispatch_runs_login_preamble_before_deferral_and_pre_route_blocking() 
         let mut motion = ShellMotionEffects::default();
         motion.update(&state, full, full, None, theme, false);
         let mut buffer = Buffer::filled(full, Cell::new("N"));
-        motion.process(Duration::ZERO, &mut buffer, &state);
+        motion.test_frame(Duration::ZERO, &mut buffer, &state);
         state.screen_stack.push(ShellScreen::ExitConfirm);
         state.refresh_hit_map();
         motion.update(&state, full, full, None, theme, false);
         buffer = Buffer::filled(full, Cell::new("A"));
-        motion.process(Duration::ZERO, &mut buffer, &state);
+        motion.test_frame(Duration::ZERO, &mut buffer, &state);
         state.login_idle_deadline = now + Duration::from_secs(1);
         (state, motion)
     }
@@ -234,12 +248,12 @@ fn exit_confirmation_preempts_underlying_page_motion() {
     let mut motion = ShellMotionEffects::default();
     motion.update(&state, full, full, None, theme, false);
     let mut initial = Buffer::empty(full);
-    motion.process(Duration::ZERO, &mut initial, &state);
+    motion.test_frame(Duration::ZERO, &mut initial, &state);
     motion.schedule(
         MotionEffectId::Page,
         page_effect(ShellScreen::Home, main, theme),
     );
-    motion.process(Duration::ZERO, &mut initial, &state);
+    motion.test_frame(Duration::ZERO, &mut initial, &state);
 
     state.apply_input_with_platform(
         InputEvent::from_key_label("q"),
@@ -254,8 +268,8 @@ fn exit_confirmation_preempts_underlying_page_motion() {
     assert!(!exit_area.contains(corner), "{exit_area:?}");
     let mut exit_frame = Buffer::empty(full);
     exit_frame[corner].set_symbol("┌").set_fg(theme.border);
-    motion.process(Duration::ZERO, &mut exit_frame, &state);
-    motion.process(Duration::from_millis(60), &mut exit_frame, &state);
+    motion.test_frame(Duration::ZERO, &mut exit_frame, &state);
+    motion.test_frame(Duration::from_millis(60), &mut exit_frame, &state);
 
     assert_eq!(exit_frame[corner].symbol(), "┌");
     assert_eq!(exit_frame[corner].fg, theme.border);
@@ -361,7 +375,7 @@ fn reduced_cleanup_invalidates_completed_exit_before_same_id_reopens() {
     let mut motion = ShellMotionEffects::default();
     motion.update(&state, full, full, None, theme, false);
     let mut buffer = Buffer::filled(full, Cell::new("N"));
-    motion.process(Duration::ZERO, &mut buffer, &state);
+    motion.test_frame(Duration::ZERO, &mut buffer, &state);
 
     state.settings_state.as_mut().unwrap().picker = Some(theme_picker());
     state.refresh_hit_map();
@@ -412,7 +426,7 @@ fn reduced_cleanup_invalidates_completed_exit_before_same_id_reopens() {
 
     motion.update(&state, full, full, None, theme, false);
     buffer = Buffer::filled(full, Cell::new("N"));
-    motion.process(Duration::ZERO, &mut buffer, &state);
+    motion.test_frame(Duration::ZERO, &mut buffer, &state);
     state.settings_state.as_mut().unwrap().picker = Some(theme_picker());
     state.refresh_hit_map();
     motion.update(&state, full, full, None, theme, false);
@@ -567,6 +581,7 @@ fn preempted_overlay_never_retargets_deferred_cancel() {
     let mut state = ShellSession::new(ShellLaunchConfig::default(), (120, 40));
     state.apply_input(InputEvent::from_key_label("q"));
     let overlay = OverlayIdentity {
+        category: ShellOverlayCategory::ShellModal,
         kind: ui::MotionOverlayKind::Dialog,
         id: "preempted:A".into(),
         immediate: false,
@@ -703,7 +718,7 @@ fn completed_notification_exit_schedules_promoted_notification_enter() {
     let mut motion = ShellMotionEffects::default();
     motion.update(&state, full, full, None, theme, false);
     let mut natural = Buffer::filled(full, Cell::new("N"));
-    motion.process(Duration::ZERO, &mut natural, &state);
+    motion.test_frame(Duration::ZERO, &mut natural, &state);
 
     state.notify_modal("A", "First", ui::NotificationTone::Info, Vec::new());
     state.notify_modal("B", "Second", ui::NotificationTone::Info, Vec::new());
@@ -711,7 +726,7 @@ fn completed_notification_exit_schedules_promoted_notification_enter() {
     motion.update(&state, full, full, None, theme, false);
     let first = current_overlay(&state).expect("first notification");
     let mut first_frame = Buffer::filled(full, Cell::new("A"));
-    motion.process(Duration::ZERO, &mut first_frame, &state);
+    motion.test_frame(Duration::ZERO, &mut first_frame, &state);
     let cancel = state
         .clone()
         .route_input_at(InputEvent::from_key_label("Esc"), Instant::now());
@@ -719,8 +734,8 @@ fn completed_notification_exit_schedules_promoted_notification_enter() {
         motion.intercept_input(&cancel),
         MotionInputDisposition::Defer
     );
-    motion.process(Duration::from_millis(180), &mut first_frame, &state);
-    motion.process(Duration::from_millis(180), &mut first_frame, &state);
+    motion.test_frame(Duration::from_millis(180), &mut first_frame, &state);
+    motion.test_frame(Duration::from_millis(180), &mut first_frame, &state);
     let routed = motion
         .take_deferred_close(&state)
         .expect("completed cancel");
@@ -741,7 +756,7 @@ fn completed_notification_exit_schedules_promoted_notification_enter() {
         MotionInputDisposition::Block
     );
     let mut second_frame = Buffer::filled(full, Cell::new("B"));
-    motion.process(Duration::from_secs(1), &mut second_frame, &state);
+    motion.test_frame(Duration::from_secs(1), &mut second_frame, &state);
     assert!(motion.manager.is_running());
     assert_eq!(motion.overlay_gate, Duration::from_millis(90));
     assert!(motion.take_deferred_close(&state).is_none());
@@ -757,13 +772,13 @@ fn asynchronous_overlay_preserves_remaining_visual_outgoing() {
     let mut motion = ShellMotionEffects::default();
     motion.update(&state, full, full, None, theme, false);
     let mut buffer = Buffer::filled(full, Cell::new("N"));
-    motion.process(Duration::ZERO, &mut buffer, &state);
+    motion.test_frame(Duration::ZERO, &mut buffer, &state);
 
     state.notify_modal("A", "Outgoing", ui::NotificationTone::Info, Vec::new());
     state.refresh_hit_map();
     motion.update(&state, full, full, None, theme, false);
     buffer = Buffer::filled(full, Cell::new("A"));
-    motion.process(Duration::ZERO, &mut buffer, &state);
+    motion.test_frame(Duration::ZERO, &mut buffer, &state);
     assert!(state.notification_dismiss_active_modal_without_response());
     state.refresh_hit_map();
     motion.update(&state, full, full, None, theme, false);
@@ -771,8 +786,8 @@ fn asynchronous_overlay_preserves_remaining_visual_outgoing() {
         motion.active_visual_outgoing.as_ref().unwrap().remaining,
         Duration::from_millis(180)
     );
-    motion.process(Duration::from_secs(1), &mut buffer, &state);
-    motion.process(Duration::from_millis(60), &mut buffer, &state);
+    motion.test_frame(Duration::from_secs(1), &mut buffer, &state);
+    motion.test_frame(Duration::from_millis(60), &mut buffer, &state);
     assert_eq!(
         motion.active_visual_outgoing.as_ref().unwrap().remaining,
         Duration::from_millis(120)
@@ -787,9 +802,9 @@ fn asynchronous_overlay_preserves_remaining_visual_outgoing() {
     );
     assert_eq!(motion.outgoing_block_remaining, Duration::from_millis(120));
     assert_eq!(motion.overlay_gate, Duration::from_millis(210));
-    motion.process(Duration::from_secs(1), &mut buffer, &state);
+    motion.test_frame(Duration::from_secs(1), &mut buffer, &state);
     assert_eq!(motion.outgoing_block_remaining, Duration::from_millis(120));
-    motion.process(Duration::from_millis(120), &mut buffer, &state);
+    motion.test_frame(Duration::from_millis(120), &mut buffer, &state);
     assert!(motion.active_visual_outgoing.is_none());
     assert_eq!(motion.outgoing_block_remaining, Duration::ZERO);
     assert!(motion.manager.is_running());
@@ -824,7 +839,7 @@ fn generic_context_popup_is_motion_neutral_but_explorer_overlay_is_not() {
         motion.intercept_input(&generic_input),
         MotionInputDisposition::Apply
     );
-    motion.process(Duration::from_millis(16), &mut buffer, &state);
+    motion.test_frame(Duration::from_millis(16), &mut buffer, &state);
     assert_eq!(buffer, natural);
     assert!(!motion.manager.is_running());
     assert_eq!(motion.overlay_gate, Duration::ZERO);
@@ -908,6 +923,7 @@ fn replacement_missing_required_old_geometry_falls_back_without_gate() {
     let mut state = ShellSession::new(ShellLaunchConfig::default(), (120, 40));
     let mut motion = ShellMotionEffects {
         overlay: Some(OverlayIdentity {
+            category: ShellOverlayCategory::ShellModal,
             kind: ui::MotionOverlayKind::Popover,
             id: "preempted".into(),
             immediate: false,
@@ -1056,10 +1072,10 @@ fn newly_scheduled_effects_ignore_idle_delta_then_advance_normally() {
         )
         .with_area(area),
     );
-    motion.process(Duration::from_secs(1), &mut buffer, &state);
+    motion.test_frame(Duration::from_secs(1), &mut buffer, &state);
     assert!(motion.is_running());
     assert_eq!(motion.overlay_gate, Duration::from_millis(DIALOG_MS.into()));
-    motion.process(Duration::from_millis(17), &mut buffer, &state);
+    motion.test_frame(Duration::from_millis(17), &mut buffer, &state);
     assert_eq!(
         motion.overlay_gate,
         Duration::from_millis(DIALOG_MS.into()) - Duration::from_millis(17)
@@ -1074,7 +1090,7 @@ fn newly_scheduled_effects_ignore_idle_delta_then_advance_normally() {
         )
         .with_area(area),
     );
-    motion.process(Duration::from_secs(1), &mut buffer, &state);
+    motion.test_frame(Duration::from_secs(1), &mut buffer, &state);
     assert_eq!(
         motion.overlay_gate,
         Duration::from_millis(POPOVER_MS.into())
@@ -1154,13 +1170,13 @@ fn post_mutation_outgoing_blocks_second_escape_only_for_old_phase() {
     );
     let screen = state.content_screen();
     let mut natural = Buffer::filled(Rect::new(0, 0, 120, 40), Cell::new("N"));
-    motion.process(Duration::from_secs(1), &mut natural, &state);
+    motion.test_frame(Duration::from_secs(1), &mut natural, &state);
     assert_eq!(state.content_screen(), screen);
     assert_eq!(
         motion.outgoing_block_remaining,
         Duration::from_millis(POPOVER_MS.into())
     );
-    motion.process(
+    motion.test_frame(
         Duration::from_millis(POPOVER_MS.into()),
         &mut natural,
         &state,
@@ -1212,4 +1228,138 @@ fn stale_base_screen_or_bounds_falls_back_to_immediate_close() {
         MotionInputDisposition::Apply
     );
     assert!(motion.deferred_close.is_none());
+}
+
+#[test]
+fn phased_capture_reveals_current_underlay_without_rewinding_chrome() {
+    let full = Rect::new(0, 0, 120, 40);
+    let theme = ui::ThemeTokens::glacier_night();
+    let mut state = ShellSession::new(ShellLaunchConfig::default(), (120, 40));
+    while state.notification_dismiss_active_modal_without_response() {}
+    state.notify_modal("Live", "Dismiss me", ui::NotificationTone::Info, Vec::new());
+    state.refresh_hit_map();
+    let area = overlay_area(&state).unwrap();
+    let mut motion = ShellMotionEffects::default();
+    let layout = ui::ShellFrameLayout::new(full, None, &ui::RenderContext::default());
+    motion.update_layout(&state, &layout, theme, false);
+    let mut frame = Buffer::filled(full, Cell::new("B"));
+    motion.capture_base(&frame, &state);
+    for position in area.positions() {
+        frame[position].set_symbol("D");
+    }
+    motion.capture_overlay(&frame, &state);
+    motion.process(Duration::ZERO, &mut frame, &state);
+    let cancel = state
+        .clone()
+        .route_input_at(InputEvent::from_key_label("Esc"), Instant::now());
+    assert_eq!(
+        motion.intercept_input(&cancel),
+        MotionInputDisposition::Defer
+    );
+
+    // The modal remains in state during deferred close, but its base is redrawn.
+    frame = Buffer::filled(full, Cell::new("N"));
+    let clock = Position::new(full.right() - 2, full.bottom() - 2);
+    assert!(!area.contains(clock));
+    frame[clock].set_symbol("9");
+    motion.capture_base(&frame, &state);
+    for position in area.positions() {
+        frame[position].set_symbol("D");
+    }
+    motion.capture_overlay(&frame, &state);
+    motion.process(Duration::ZERO, &mut frame, &state);
+    motion.process(Duration::from_millis(180), &mut frame, &state);
+    assert!(
+        area.positions()
+            .all(|position| frame[position].symbol() == "N")
+    );
+    assert_eq!(frame[clock].symbol(), "9");
+    assert!(motion.take_deferred_close(&state).is_some());
+    assert!(motion.take_deferred_close(&state).is_none());
+}
+
+#[test]
+fn processing_effects_does_not_capture_a_composited_frame() {
+    let full = Rect::new(0, 0, 120, 40);
+    let mut state = ShellSession::new(ShellLaunchConfig::default(), (120, 40));
+    while state.notification_dismiss_active_modal_without_response() {}
+    let mut motion = ShellMotionEffects::default();
+    let mut frame = Buffer::filled(full, Cell::new("N"));
+    motion.process(Duration::ZERO, &mut frame, &state);
+    assert!(motion.base_snapshot.is_none());
+    assert!(motion.overlay_snapshot.is_none());
+}
+
+#[test]
+fn snapshot_exit_protects_wide_glyphs_overlapping_image_cells() {
+    let area = Rect::new(0, 0, 3, 1);
+    let mut old = Buffer::filled(area, Cell::new("O"));
+    old[(0, 0)].set_symbol("界");
+    let snapshot = snapshot_normal_cells(&old, area).unwrap();
+    let mut current = Buffer::filled(area, Cell::new("N"));
+    current[(1, 0)].diff_option = CellDiffOption::Skip;
+    outgoing_snapshot_effect(snapshot, None, ui::MotionOverlayKind::Dialog).process(
+        Duration::ZERO,
+        &mut current,
+        area,
+    );
+    assert_eq!(current[(0, 0)].symbol(), "N");
+    assert_eq!(current[(1, 0)].diff_option, CellDiffOption::Skip);
+    old[(1, 0)].diff_option = CellDiffOption::Skip;
+    let captured = snapshot_normal_cells(&old, area).unwrap();
+    assert!(captured.cells.iter().all(|(position, _)| position.x == 2));
+}
+
+#[test]
+fn shared_layout_main_is_used_without_a_second_chrome_inset() {
+    let full = Rect::new(0, 0, 120, 40);
+    let theme = ui::ThemeTokens::glacier_night();
+    let layout = ui::ShellFrameLayout::new(full, None, &ui::RenderContext::default());
+    let mut state = ShellSession::new_for_home_mode(
+        ShellLaunchConfig::default(),
+        (120, 40),
+        ShellHomeMode::User,
+    );
+    while state.notification_dismiss_active_modal_without_response() {}
+    let mut motion = ShellMotionEffects::default();
+    motion.update_layout(&state, &layout, theme, false);
+    state.screen_stack = vec![ShellScreen::Editor];
+    state.refresh_hit_map();
+    motion.focus = None;
+    motion.update_layout(&state, &layout, theme, false);
+    let mut actual = Buffer::filled(full, Cell::new("X"));
+    let mut expected = actual.clone();
+    page_effect(ShellScreen::Editor, layout.main, theme).process(
+        Duration::ZERO,
+        &mut expected,
+        full,
+    );
+    motion.process(Duration::ZERO, &mut actual, &state);
+    assert_eq!(actual, expected);
+}
+
+#[test]
+fn shell_modal_outgoing_keeps_its_capture_phase_until_finished() {
+    let full = Rect::new(0, 0, 120, 40);
+    let theme = ui::ThemeTokens::glacier_night();
+    let layout = ui::ShellFrameLayout::new(full, None, &ui::RenderContext::default());
+    let mut state = ShellSession::new(ShellLaunchConfig::default(), (120, 40));
+    while state.notification_dismiss_active_modal_without_response() {}
+    state.notify_modal("Modal", "Outgoing", ui::NotificationTone::Info, Vec::new());
+    state.refresh_hit_map();
+    let mut motion = ShellMotionEffects::default();
+    motion.update_layout(&state, &layout, theme, false);
+    let base = Buffer::filled(full, Cell::new("B"));
+    motion.capture_base(&base, &state);
+    let mut frame = Buffer::filled(full, Cell::new("D"));
+    motion.capture_overlay(&frame, &state);
+    assert!(motion.needs_shell_modal_base());
+    state.notification_dismiss_active_modal_without_response();
+    state.refresh_hit_map();
+    motion.update_layout(&state, &layout, theme, false);
+    assert!(current_overlay(&state).is_none());
+    assert!(motion.needs_shell_modal_base());
+    motion.process(Duration::ZERO, &mut frame, &state);
+    motion.process(Duration::from_millis(180), &mut frame, &state);
+    assert!(!motion.needs_shell_modal_base());
 }

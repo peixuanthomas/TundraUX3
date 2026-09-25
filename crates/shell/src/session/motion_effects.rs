@@ -5,6 +5,7 @@ use ratatui::{
     layout::{Margin, Position, Rect},
     style::Style,
 };
+use std::sync::{Arc, Mutex};
 use tachyonfx::{
     CellFilter, Effect, EffectManager, Interpolation, Motion, SimpleRng, fx,
     pattern::{DiagonalPattern, InstancedPattern, Pattern, RadialPattern, SweepPattern},
@@ -31,6 +32,7 @@ pub(super) enum MotionEffectId {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct OverlayIdentity {
+    category: ShellOverlayCategory,
     kind: ui::MotionOverlayKind,
     id: String,
     immediate: bool,
@@ -67,6 +69,7 @@ struct ActiveVisualOutgoing {
 
 #[derive(Debug, Clone)]
 struct ExitSnapshotState {
+    live_base: Option<Arc<Mutex<Option<BaseFrameSnapshot>>>>,
     old: Vec<(Position, Cell)>,
     underlay: Option<Vec<(Position, Cell)>>,
 }
@@ -93,6 +96,7 @@ pub(super) struct ShellMotionEffects {
     exiting: bool,
     completed_exit: Option<OverlayIdentity>,
     base_snapshot: Option<BaseFrameSnapshot>,
+    live_base: Arc<Mutex<Option<BaseFrameSnapshot>>>,
     overlay_underlay_snapshot: Option<FrozenUnderlaySnapshot>,
     effects_scheduled_since_process: bool,
     outgoing_block_remaining: Duration,
@@ -102,7 +106,44 @@ pub(super) struct ShellMotionEffects {
 }
 
 impl ShellMotionEffects {
-    pub(super) fn update(
+    pub(super) fn update_layout(
+        &mut self,
+        state: &ShellSession,
+        layout: &ui::ShellFrameLayout,
+        theme: ui::ThemeTokens,
+        reduced: bool,
+    ) {
+        self.update_areas(
+            state,
+            layout.bounds,
+            layout.main,
+            layout.status_message,
+            theme,
+            reduced,
+        );
+    }
+
+    #[cfg(test)]
+    fn update(
+        &mut self,
+        state: &ShellSession,
+        full_area: Rect,
+        page_area: Rect,
+        status_area: Option<Rect>,
+        theme: ui::ThemeTokens,
+        reduced: bool,
+    ) {
+        self.update_areas(
+            state,
+            full_area,
+            shell_main_area(page_area),
+            status_area,
+            theme,
+            reduced,
+        );
+    }
+
+    fn update_areas(
         &mut self,
         state: &ShellSession,
         full_area: Rect,
@@ -128,6 +169,8 @@ impl ShellMotionEffects {
         }
 
         let screen = state.content_screen();
+        let has_overlay = current_overlay(state)
+            .is_some_and(|overlay| overlay.kind != ui::MotionOverlayKind::Toast);
         let exit_confirmation = state.active_screen() == ShellScreen::ExitConfirm;
         let exit_confirmation_transition = self.exit_confirmation != exit_confirmation;
         if exit_confirmation && exit_confirmation_transition {
@@ -142,8 +185,8 @@ impl ShellMotionEffects {
             self.outgoing_block_remaining = Duration::ZERO;
             self.active_visual_outgoing = None;
         }
-        if !exit_confirmation && self.screen.is_some_and(|old| old != screen) {
-            let area = shell_main_area(page_area);
+        if !exit_confirmation && !has_overlay && self.screen.is_some_and(|old| old != screen) {
+            let area = page_area;
             if !area.is_empty() {
                 let fx = page_effect(screen, area, theme);
                 self.schedule(MotionEffectId::Page, fx);
@@ -162,6 +205,7 @@ impl ShellMotionEffects {
             false
         };
         if !suppress_focus
+            && !has_overlay
             && !exit_confirmation
             && !self.exit_confirmation
             && self.focus.is_some_and(|old| old != focus)
@@ -177,6 +221,19 @@ impl ShellMotionEffects {
 
         let overlay = current_overlay(state);
         if self.overlay != overlay {
+            if overlay
+                .as_ref()
+                .is_some_and(|overlay| overlay.kind != ui::MotionOverlayKind::Toast)
+                && self
+                    .overlay
+                    .as_ref()
+                    .is_none_or(|overlay| overlay.kind == ui::MotionOverlayKind::Toast)
+            {
+                // A newly raised modal must not inherit page/focus effects that
+                // would mutate its completed cells during post-composition processing.
+                self.manager = EffectManager::default();
+                self.effects_scheduled_since_process = false;
+            }
             let previous_overlay = self.overlay.clone();
             let completed_old = self.completed_exit.is_some()
                 && self.completed_exit.as_ref() == self.overlay.as_ref();
@@ -236,7 +293,7 @@ impl ShellMotionEffects {
                         let consumed = visual.total.saturating_sub(visual.remaining);
                         let linear = consumed.as_secs_f32() / visual.total.as_secs_f32();
                         let start_alpha = 1.0 - (1.0 - linear.clamp(0.0, 1.0)).powi(2);
-                        let outgoing = outgoing_snapshot_effect_from(
+                        let outgoing = self.outgoing_snapshot_effect_from(
                             visual.old.clone(),
                             Some(base.snapshot),
                             visual.identity.kind,
@@ -296,7 +353,7 @@ impl ShellMotionEffects {
                                 new_area,
                             )) = replacement
                             {
-                                let outgoing = outgoing_snapshot_effect(
+                                let outgoing = self.outgoing_snapshot_effect(
                                     old_snapshot.clone(),
                                     Some(base.snapshot),
                                     old.kind,
@@ -333,7 +390,7 @@ impl ShellMotionEffects {
                             if let Some((snapshot, underlay)) = outgoing {
                                 self.schedule(
                                     MotionEffectId::Overlay,
-                                    outgoing_snapshot_effect(
+                                    self.outgoing_snapshot_effect(
                                         snapshot.clone(),
                                         Some(underlay.snapshot.clone()),
                                         old.kind,
@@ -394,8 +451,8 @@ impl ShellMotionEffects {
             }
         }
 
-        if was_reduced && screen == ShellScreen::Settings && !exit_confirmation {
-            let area = shell_main_area(page_area);
+        if was_reduced && screen == ShellScreen::Settings && !exit_confirmation && !has_overlay {
+            let area = page_area;
             if !area.is_empty() {
                 self.schedule(
                     MotionEffectId::PreferencePreview,
@@ -406,23 +463,57 @@ impl ShellMotionEffects {
         self.remember(state, full_area);
     }
 
-    pub(super) fn process(&mut self, delta: Duration, buffer: &mut Buffer, state: &ShellSession) {
+    /// Preserve the shell-modal capture phase through its asynchronous exit.
+    pub(super) fn needs_shell_modal_base(&self) -> bool {
+        self.overlay
+            .as_ref()
+            .is_some_and(|overlay| overlay.category == ShellOverlayCategory::ShellModal)
+            || self
+                .active_visual_outgoing
+                .as_ref()
+                .is_some_and(|outgoing| {
+                    outgoing.identity.category == ShellOverlayCategory::ShellModal
+                })
+            || self
+                .deferred_close
+                .as_ref()
+                .is_some_and(|close| close.overlay.category == ShellOverlayCategory::ShellModal)
+    }
+
+    /// Capture below the animated overlay: page content, or page/chrome for shell modals.
+    pub(super) fn capture_base(&mut self, buffer: &Buffer, state: &ShellSession) {
         if self.reduced {
             return;
         }
-        let overlay = current_overlay(state);
-        if overlay
-            .as_ref()
-            .is_none_or(|overlay| overlay.kind == ui::MotionOverlayKind::Toast)
-        {
-            let snapshot = snapshot_normal_cells(buffer, buffer.area);
-            self.base_snapshot = snapshot.map(|snapshot| BaseFrameSnapshot {
+        self.base_snapshot =
+            snapshot_normal_cells(buffer, buffer.area).map(|snapshot| BaseFrameSnapshot {
                 screen: state.content_screen(),
                 bounds: buffer.area,
                 cells: snapshot.cells,
             });
-        } else if let Some(area) = overlay_area(state) {
-            self.overlay_snapshot = snapshot_normal_cells(buffer, area);
+        *self.live_base.lock().expect("motion base lock") = self.base_snapshot.clone();
+        if let Some(area) = overlay_area(state) {
+            self.overlay_underlay_snapshot =
+                self.freeze_underlay(state.content_screen(), buffer.area, area);
+        }
+    }
+
+    /// Capture completed widgets before any effect mutates their cells.
+    pub(super) fn capture_overlay(&mut self, buffer: &Buffer, state: &ShellSession) {
+        if self.reduced {
+            return;
+        }
+        if current_overlay(state)
+            .is_some_and(|overlay| overlay.kind != ui::MotionOverlayKind::Toast)
+        {
+            self.overlay_snapshot =
+                overlay_area(state).and_then(|area| snapshot_normal_cells(buffer, area));
+        }
+    }
+
+    pub(super) fn process(&mut self, delta: Duration, buffer: &mut Buffer, _state: &ShellSession) {
+        if self.reduced {
+            return;
         }
         let effective_delta = if self.effects_scheduled_since_process {
             self.effects_scheduled_since_process = false;
@@ -528,7 +619,8 @@ impl ShellMotionEffects {
             self.overlay_gate = overlay_duration(overlay.kind);
             self.outgoing_block_remaining = overlay_duration(overlay.kind);
             self.exiting = true;
-            let exit = outgoing_snapshot_effect(snapshot, Some(underlay.snapshot), overlay.kind);
+            let exit =
+                self.outgoing_snapshot_effect(snapshot, Some(underlay.snapshot), overlay.kind);
             self.schedule(MotionEffectId::Overlay, exit);
             return MotionInputDisposition::Defer;
         }
@@ -555,6 +647,33 @@ impl ShellMotionEffects {
         self.exiting = false;
         self.deferred_close = None;
         None
+    }
+
+    fn outgoing_snapshot_effect(
+        &self,
+        snapshot: CellSnapshot,
+        underlay: Option<CellSnapshot>,
+        kind: ui::MotionOverlayKind,
+    ) -> Effect {
+        self.outgoing_snapshot_effect_from(snapshot, underlay, kind, 0.0, overlay_duration(kind))
+    }
+
+    fn outgoing_snapshot_effect_from(
+        &self,
+        snapshot: CellSnapshot,
+        underlay: Option<CellSnapshot>,
+        kind: ui::MotionOverlayKind,
+        start_alpha: f32,
+        duration: Duration,
+    ) -> Effect {
+        outgoing_snapshot_effect_from(
+            snapshot,
+            underlay,
+            kind,
+            start_alpha,
+            duration,
+            Some(self.live_base.clone()),
+        )
     }
 
     fn schedule(&mut self, id: MotionEffectId, effect: Effect) {
@@ -595,10 +714,12 @@ impl ShellMotionEffects {
         self.effects_scheduled_since_process = false;
         self.outgoing_block_remaining = Duration::ZERO;
         self.base_snapshot = None;
+        *self.live_base.lock().expect("motion base lock") = None;
         self.overlay_underlay_snapshot = None;
         self.active_visual_outgoing = None;
         self.suppress_focus_after_generic_popup = false;
         self.exit_confirmation = false;
+        self.completed_exit = None;
     }
 
     fn remember(&mut self, state: &ShellSession, bounds: Rect) {
@@ -696,12 +817,13 @@ fn surface_animation_filter() -> CellFilter {
     CellFilter::AnyOf(vec![CellFilter::Text, surface_border_filter()])
 }
 
+#[cfg(test)]
 fn outgoing_snapshot_effect(
     snapshot: CellSnapshot,
     underlay: Option<CellSnapshot>,
     kind: ui::MotionOverlayKind,
 ) -> Effect {
-    outgoing_snapshot_effect_from(snapshot, underlay, kind, 0.0, overlay_duration(kind))
+    outgoing_snapshot_effect_from(snapshot, underlay, kind, 0.0, overlay_duration(kind), None)
 }
 
 fn outgoing_snapshot_effect_from(
@@ -710,6 +832,7 @@ fn outgoing_snapshot_effect_from(
     kind: ui::MotionOverlayKind,
     start_alpha: f32,
     duration: Duration,
+    live_base: Option<Arc<Mutex<Option<BaseFrameSnapshot>>>>,
 ) -> Effect {
     let duration = u32::try_from(duration.as_millis()).unwrap_or(u32::MAX);
     let area = underlay
@@ -733,18 +856,22 @@ fn outgoing_snapshot_effect_from(
                     .is_none_or(|positions| positions.contains(position))
         })
         .collect();
-    let state = ExitSnapshotState { old, underlay };
+    let state = ExitSnapshotState {
+        old,
+        underlay,
+        live_base,
+    };
     match kind {
         ui::MotionOverlayKind::Dialog => fx::effect_fn_buf(
             state.clone(),
             (duration, Interpolation::QuadOut),
             move |state, context, buffer| {
                 let alpha = start_alpha + (1.0 - start_alpha) * context.alpha();
-                let protected = protected_skip_positions(buffer);
+                let protected = exit_protected_positions(state, buffer);
                 restore_underlay(state, buffer, &protected);
                 if alpha <= 0.0 {
                     for (position, old) in &state.old {
-                        if protected.contains(position) {
+                        if cell_overlaps_protected(*position, old, &protected) {
                             continue;
                         }
                         if buffer.area.contains(*position) {
@@ -760,7 +887,7 @@ fn outgoing_snapshot_effect_from(
                     .with_transition_width(4.0)
                     .for_frame(alpha, context.area);
                 for (position, old) in &state.old {
-                    if protected.contains(position) {
+                    if cell_overlaps_protected(*position, old, &protected) {
                         continue;
                     }
                     if pattern.map_alpha(*position) < 0.5 && buffer.area.contains(*position) {
@@ -775,11 +902,11 @@ fn outgoing_snapshot_effect_from(
             (duration, Interpolation::QuadOut),
             move |state, context, buffer| {
                 let alpha = start_alpha + (1.0 - start_alpha) * context.alpha();
-                let protected = protected_skip_positions(buffer);
+                let protected = exit_protected_positions(state, buffer);
                 restore_underlay(state, buffer, &protected);
                 if alpha <= 0.0 {
                     for (position, old) in &state.old {
-                        if protected.contains(position) {
+                        if cell_overlaps_protected(*position, old, &protected) {
                             continue;
                         }
                         if buffer.area.contains(*position) {
@@ -793,7 +920,7 @@ fn outgoing_snapshot_effect_from(
                 }
                 let mut pattern = SweepPattern::down_to_up(4).for_frame(alpha, context.area);
                 for (position, old) in &state.old {
-                    if protected.contains(position) {
+                    if cell_overlaps_protected(*position, old, &protected) {
                         continue;
                     }
                     if pattern.map_alpha(*position) < 0.5 && buffer.area.contains(*position) {
@@ -807,22 +934,81 @@ fn outgoing_snapshot_effect_from(
     }
 }
 
+fn cell_overlaps_protected(position: Position, cell: &Cell, protected: &HashSet<Position>) -> bool {
+    let width = ratatui::text::Span::raw(cell.symbol()).width().max(1);
+    (0..width).any(|offset| {
+        protected.contains(&Position::new(
+            position.x.saturating_add(offset as u16),
+            position.y,
+        ))
+    })
+}
+
 fn protected_skip_positions(buffer: &Buffer) -> HashSet<Position> {
-    buffer
+    let mut protected: HashSet<_> = buffer
         .area
         .positions()
         .filter(|position| buffer[*position].diff_option == CellDiffOption::Skip)
-        .collect()
+        .collect();
+    for position in buffer.area.positions() {
+        if cell_overlaps_protected(position, &buffer[position], &protected) {
+            let width = ratatui::text::Span::raw(buffer[position].symbol())
+                .width()
+                .max(1);
+            for offset in 0..width {
+                protected.insert(Position::new(
+                    position.x.saturating_add(offset as u16),
+                    position.y,
+                ));
+            }
+        }
+    }
+    protected
+}
+
+fn exit_protected_positions(state: &ExitSnapshotState, buffer: &Buffer) -> HashSet<Position> {
+    let mut protected = protected_skip_positions(buffer);
+    if let Some(base) = state.live_base.as_ref()
+        && let Ok(base) = base.lock()
+        && let Some(base) = base.as_ref()
+    {
+        let safe: HashSet<_> = base.cells.iter().map(|(position, _)| *position).collect();
+        protected.extend(
+            buffer
+                .area
+                .positions()
+                .filter(|position| !safe.contains(position)),
+        );
+    }
+    protected
 }
 
 fn restore_underlay(state: &ExitSnapshotState, buffer: &mut Buffer, protected: &HashSet<Position>) {
+    let live = state
+        .live_base
+        .as_ref()
+        .and_then(|base| base.lock().ok()?.clone());
+    let live_cells = live.as_ref().map(|base| {
+        base.cells
+            .iter()
+            .map(|(p, c)| (*p, c))
+            .collect::<std::collections::HashMap<_, _>>()
+    });
     if let Some(underlay) = state.underlay.as_ref() {
         for (position, cell) in underlay {
             if buffer.area.contains(*position)
-                && !protected.contains(position)
+                && !cell_overlaps_protected(*position, cell, protected)
                 && cell.diff_option != CellDiffOption::Skip
             {
-                buffer[*position] = cell.clone();
+                if let Some(live) = live_cells.as_ref() {
+                    if let Some(current) = live.get(position)
+                        && !cell_overlaps_protected(*position, current, protected)
+                    {
+                        buffer[*position] = (*current).clone();
+                    }
+                } else {
+                    buffer[*position] = cell.clone();
+                }
             }
         }
     }
@@ -833,16 +1019,18 @@ fn snapshot_normal_cells(buffer: &Buffer, area: Rect) -> Option<CellSnapshot> {
         return None;
     }
     let area = area.intersection(buffer.area);
+    let protected = protected_skip_positions(buffer);
     let cells = area
         .positions()
         .filter_map(|position| {
             let cell = &buffer[position];
-            (cell.diff_option != CellDiffOption::Skip).then(|| (position, cell.clone()))
+            (!cell_overlaps_protected(position, cell, &protected)).then(|| (position, cell.clone()))
         })
         .collect();
     Some(CellSnapshot { area, cells })
 }
 
+#[cfg(test)]
 fn shell_main_area(page_area: Rect) -> Rect {
     match ui::compute_shell_layout(page_area) {
         ui::ShellLayout::Full { main, .. } | ui::ShellLayout::Compact(main) => main,
@@ -857,6 +1045,7 @@ fn current_overlay(state: &ShellSession) -> Option<OverlayIdentity> {
                 && overlay.component() == Some(ShellComponent::ContextMenu))
         })
         .map(|overlay| OverlayIdentity {
+            category: overlay.category,
             kind: overlay.kind,
             id: overlay.id,
             immediate: overlay.immediate,
