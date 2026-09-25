@@ -577,7 +577,7 @@ pub fn render_explorer_overlay(
                         let mut button =
                             Button::new(format!("explorer.options.{}", option.id), text);
                         button.set_focused(option.focused);
-                        button.state.hovered = option.focused;
+                        button.state.selected = option.focused;
                         button.set_disabled(!control.enabled);
                         button.render_borderless_frame(frame, control.area, theme);
                     }
@@ -779,7 +779,6 @@ fn render_explorer_conflict_dialog(
                 );
                 let mut button = Button::new("explorer.conflict.apply-to-remaining", label);
                 button.set_focused(selection == conflict.choices.len());
-                button.state.hovered = selection == conflict.choices.len();
                 button.state.selected = selection == conflict.choices.len();
                 button.set_disabled(!control.enabled);
                 button.render_borderless_frame(frame, control.area, theme);
@@ -842,7 +841,7 @@ fn render_explorer_button(
     let mut button = Button::new(id, label);
     button.set_disabled(!enabled);
     button.set_focused(emphasized);
-    button.state.hovered = emphasized;
+    button.state.selected = emphasized;
     button.render_borderless_frame(frame, area, theme);
 }
 
@@ -873,7 +872,7 @@ fn render_explorer_search(
     input.set_focused(search.active);
     input.state.hovered = search.active;
 
-    let mut input_theme = *theme;
+    let mut input_theme = theme.clone();
     if !search.active {
         input_theme.foreground = theme.muted;
     }

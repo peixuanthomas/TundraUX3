@@ -922,7 +922,7 @@ fn render_launcher_details(
             accent_strong: context.theme.accent,
             ..context.theme
         },
-        ..*context
+        ..context.clone()
     };
     table.render_frame(
         frame,

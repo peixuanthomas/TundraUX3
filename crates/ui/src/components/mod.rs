@@ -27,7 +27,7 @@ mod text_input;
 mod toast;
 mod update_activity;
 
-pub use button::Button;
+pub use button::{Button, ButtonFrame, ButtonRegion};
 pub use command_palette::{CommandPalette, CommandPaletteCommand};
 pub use context_menu::{ContextMenu, ContextMenuItem};
 pub use data_table::DataTable;

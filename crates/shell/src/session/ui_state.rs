@@ -517,6 +517,16 @@ pub(super) struct TimedClick {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct ButtonPointerCapture {
+    pub region: ui::components::ButtonRegion,
+    pub screen: ShellScreen,
+    pub overlay: Option<String>,
+    pub input: MouseInput,
+    pub native_release: bool,
+    pub activate_on_release: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UiSessionState {
     pub(super) language: Arc<i18n::LanguageSnapshot>,
     pub(super) language_catalog: i18n::LanguageCatalog,
@@ -661,6 +671,8 @@ pub struct UiSessionState {
     pub(super) terminal_text_sizing_support: bool,
     pub(super) pending_default_ascii_icon_fallback: bool,
     pub(super) focused_component: ShellComponent,
+    pub(super) button_regions: Vec<ui::components::ButtonRegion>,
+    pub(super) button_pointer_capture: Option<ButtonPointerCapture>,
     pub(super) hovered_component: Option<ShellComponent>,
     pub(super) active_popup: Option<ShellPopup>,
     pub(super) frame_layout: Option<ui::ShellFrameLayout>,

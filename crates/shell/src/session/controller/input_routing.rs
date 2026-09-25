@@ -1,9 +1,131 @@
 use super::super::*;
 use crate::session::queries::ResolvedExplorerOverlay;
 impl ShellSession {
+    pub(in crate::session) fn button_at(
+        &self,
+        point: CellPosition,
+    ) -> Option<ui::components::ButtonRegion> {
+        self.button_regions
+            .iter()
+            .rev()
+            .find(|button| rect_contains(button.area, point))
+            .cloned()
+    }
+
+    /// Capture shared buttons before page routing. Existing page actions receive
+    /// their press only after a matching release, while text selection and
+    /// scrollbars retain their original down/drag/up stream.
+    pub(in crate::session) fn prepare_button_input(
+        &mut self,
+        input: InputEvent,
+    ) -> Option<InputEvent> {
+        let InputEvent::Mouse(mouse) = input else {
+            if matches!(
+                input,
+                InputEvent::FocusLost
+                    | InputEvent::Resize { .. }
+                    | InputEvent::Key(_)
+                    | InputEvent::Paste(_)
+            ) {
+                self.button_pointer_capture = None;
+                self.notification_pointer_capture = None;
+            }
+            if matches!(input, InputEvent::FocusLost) {
+                self.mouse_coordinates = None;
+                self.launcher_drag = None;
+            }
+            if matches!(input, InputEvent::Resize { .. }) {
+                self.button_regions.clear();
+            }
+            return Some(input);
+        };
+        self.mouse_coordinates = Some(mouse.coordinates());
+        match mouse.kind {
+            ui::MouseEventKind::Down(PointerButton::Left) => {
+                self.button_pointer_capture = None;
+                if let Some(region) = self.button_at(mouse.coordinates()) {
+                    if region.disabled {
+                        return None;
+                    }
+                    // Notifications already validate releases; launcher cards
+                    // need the original stream to support drag and drop.
+                    let native_release = region.id.as_str().starts_with("notification.")
+                        || region.id.as_str().starts_with("launcher.item.");
+                    self.button_pointer_capture = Some(ButtonPointerCapture {
+                        region,
+                        screen: self.active_screen(),
+                        overlay: self
+                            .active_overlay_descriptor()
+                            .filter(|overlay| overlay.kind != ui::MotionOverlayKind::Toast)
+                            .map(|overlay| overlay.id),
+                        input: mouse,
+                        native_release,
+                        activate_on_release: false,
+                    });
+                    if !native_release {
+                        return None;
+                    }
+                }
+            }
+            ui::MouseEventKind::Up(PointerButton::Left) => {
+                if let Some(capture) = self.button_pointer_capture.take() {
+                    let matches_button = capture.screen == self.active_screen()
+                        && capture.overlay
+                            == self
+                                .active_overlay_descriptor()
+                                .filter(|overlay| overlay.kind != ui::MotionOverlayKind::Toast)
+                                .map(|overlay| overlay.id)
+                        && self.button_at(mouse.coordinates()).as_ref() == Some(&capture.region);
+                    if capture.native_release {
+                        if capture.activate_on_release && matches_button {
+                            return Some(InputEvent::Mouse(MouseInput {
+                                kind: ui::MouseEventKind::DoubleClick(PointerButton::Left),
+                                ..mouse
+                            }));
+                        }
+                        return Some(input);
+                    }
+                    if matches_button {
+                        return Some(InputEvent::Mouse(MouseInput {
+                            position: mouse.position,
+                            ..capture.input
+                        }));
+                    }
+                    return None;
+                }
+            }
+            ui::MouseEventKind::Down(_) => {
+                self.button_pointer_capture = None;
+                self.notification_pointer_capture = None;
+            }
+            ui::MouseEventKind::Drag(PointerButton::Left) => {
+                if self
+                    .button_pointer_capture
+                    .as_ref()
+                    .is_some_and(|capture| capture.region.id.as_str().starts_with("notification."))
+                {
+                    self.button_pointer_capture = None;
+                }
+                if let Some(capture) = &mut self.button_pointer_capture {
+                    capture.activate_on_release = false;
+                }
+                if let Some(capture) = &self.button_pointer_capture
+                    && !capture.native_release
+                {
+                    if self.button_at(mouse.coordinates()).as_ref() != Some(&capture.region) {
+                        self.button_pointer_capture = None;
+                    }
+                    return None;
+                }
+            }
+            _ => {}
+        }
+        Some(input)
+    }
+
     /// The chrome shortcut enters the same input path as a physical Escape,
     /// including overlay cancellation, motion gating and embedded PTY input.
-    /// Like the existing clock button, it activates once on left-button down
+    /// The shared pointer capture delivers this press only after release
     /// and leaves keyboard focus with the page being returned to.
     pub(in crate::session) fn normalize_shell_navigation_input(
         &self,
@@ -1747,6 +1869,9 @@ impl ShellSession {
                     received_at,
                 );
                 (target, ShellCommand::LauncherPointer(coordinates, click))
+            }
+            ui::MouseEventKind::DoubleClick(PointerButton::Left) => {
+                (target, ShellCommand::LauncherActivate)
             }
             ui::MouseEventKind::Drag(PointerButton::Left) => {
                 (target, ShellCommand::LauncherDragUpdate(coordinates))

@@ -107,7 +107,7 @@ fn compact_threshold_exposes_no_shell_hit_regions() {
 #[test]
 fn page_transition_projects_only_main_and_leaves_chrome_pixels_and_hit_regions_fixed() {
     let idle = RenderContext::default();
-    let mut moving = idle;
+    let mut moving = idle.clone();
     moving.transitions.screen = Some(MotionTransition {
         kind: MotionTransitionKind::Page,
         direction: MotionDirection::Entering,
@@ -154,7 +154,7 @@ fn back_button_uses_the_active_theme_and_hover_accent() {
             let back = layout.back_button.unwrap();
             assert_eq!(
                 terminal.backend().buffer()[(back.x + 3, back.y + 1)].fg,
-                context.theme.accent
+                context.compatibility_theme().button_hover_color()
             );
             let offset = ShellFrameLayout::new(Rect::new(5, 8, 80, 24), None, &context);
             assert_eq!(offset.back_button.unwrap(), Rect::new(78, 8, 7, 3));

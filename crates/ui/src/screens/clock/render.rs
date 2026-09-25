@@ -250,7 +250,7 @@ fn render_clock_create_input(
     input.set_focused(focused);
     input.state.hovered = focused;
 
-    let mut input_theme = *theme;
+    let mut input_theme = theme.clone();
     if input_is_empty && !focused {
         input_theme.foreground = theme.muted;
     }
@@ -311,7 +311,7 @@ fn render_clock_button(
 
     let mut button = Button::new(id, label);
     button.set_focused(focused);
-    button.state.hovered = focused;
+    button.state.selected = focused;
     button.render_borderless_frame(frame, area, theme);
 }
 

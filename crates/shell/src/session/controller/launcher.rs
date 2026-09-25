@@ -512,7 +512,11 @@ impl ShellSession {
             Some(ui::LauncherHitTarget::Item(index)) => {
                 self.select_launcher_index(index);
                 if click == ClickKind::Double {
-                    self.request_launcher_launch(platform);
+                    if let Some(capture) = &mut self.button_pointer_capture {
+                        capture.activate_on_release = true;
+                    } else {
+                        self.request_launcher_launch(platform);
+                    }
                 } else if self.launcher_view_mode == app::launcher::LauncherViewMode::LargeIcons
                     && self.can_manage_launcher()
                     && let Some(item_id) = self.selected_launcher_id()

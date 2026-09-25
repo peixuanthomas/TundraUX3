@@ -26,6 +26,9 @@ impl ShellSession {
         received_at: Instant,
     ) -> ShellAction {
         let _language = i18n::enter_snapshot(self.language.clone());
+        let Some(input) = self.prepare_button_input(input) else {
+            return ShellAction::Redraw;
+        };
         if let Some(action) = self.apply_input_preamble_at(&input, received_at) {
             return action;
         }

@@ -62,7 +62,7 @@ fn render_menu_bar(
     for item in &layout.menus {
         let active = model.open_menu == Some(item.menu)
             || (item.menu == EditorMenu::Settings && model.settings.is_some());
-        let mut item_theme = *theme;
+        let mut item_theme = theme.clone();
         if !active {
             item_theme.background = theme.muted;
             if model.focus == EditorFocus::MenuBar {
@@ -81,7 +81,7 @@ fn render_menu_bar(
     }
     for item in &layout.modes {
         let active = item.mode == model.mode;
-        let mut item_theme = *theme;
+        let mut item_theme = theme.clone();
         if !active {
             item_theme.background = theme.muted;
             item_theme.foreground = theme.muted;
@@ -407,14 +407,14 @@ fn render_canvas(
     }
     let canvas_theme = TundraTheme {
         background: context.theme.editor_canvas,
-        ..*theme
+        ..theme.clone()
     };
     let canvas_context = RenderContext {
         theme: crate::ThemeTokens {
             surface: context.theme.editor_canvas,
             ..context.theme
         },
-        ..*context
+        ..context.clone()
     };
     if layout.canvas_framed {
         let mut title = model.file_name.clone();

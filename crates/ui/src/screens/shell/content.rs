@@ -27,7 +27,7 @@ impl ScreenContent<'_> {
     pub fn render_context(self, context: &RenderContext) -> RenderContext {
         match self {
             Self::Setup(model) => setup_render_context(model, context),
-            _ => *context,
+            _ => context.clone(),
         }
     }
     pub fn render_content(

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Flood the ready Tundra shell with mouse motion, then stop it cleanly.
+"""Verify mouse flood handling and button releases, then stop the shell cleanly.
 
 This intentionally uses only the Python standard library so Ubuntu CI can verify
 keyboard priority, terminal input, and lifecycle without a desktop session or
@@ -322,6 +322,31 @@ def main() -> int:
         ):
             raise SystemExit("Appearance setup did not finish at Home")
 
+        if not wait_for_output_quiet(master, output, child, quiet_period=0.2):
+            raise SystemExit("Home did not settle before pointer regression")
+        # The 140-column frame places the shared Back button at x=133..139.
+        # SGR coordinates are one-based. Hover/hold must only repaint the button;
+        # the power dialog opens after release and a drag-out must cancel it.
+        pointer_offset = len(output)
+        os.write(master, b"\x1b[<35;137;2M")
+        read_available(master, output, 0.2)
+        os.write(master, b"\x1b[<0;137;2M")
+        read_available(master, output, 0.2)
+        if b"Exit TundraUX" in output[pointer_offset:]:
+            raise SystemExit("Back activated on mouse-down instead of release")
+        os.write(master, b"\x1b[<32;1;4M\x1b[<0;1;4m")
+        if not wait_for_output_quiet(master, output, child, quiet_period=0.2):
+            raise SystemExit("drag cancellation did not settle")
+        if b"Exit TundraUX" in output[pointer_offset:]:
+            raise SystemExit("dragging out of Back activated it")
+        os.write(master, b"\x1b[<0;137;2M")
+        read_available(master, output, 0.2)
+        if b"Exit TundraUX" in output[pointer_offset:]:
+            raise SystemExit("second press activated Back before release")
+        os.write(master, b"\x1b[<0;137;2m")
+        if not wait_for_output(master, output, b"Exit TundraUX", child, 5.0, pointer_offset):
+            raise SystemExit("releasing Back did not open the power dialog")
+
         if child.poll() is None:
             signal_process_group(child, signal.SIGTERM)
 
@@ -381,7 +406,7 @@ def main() -> int:
         shutil.rmtree(isolated, ignore_errors=True)
 
     print(
-        "Linux PTY mouse/keyboard priority smoke passed "
+        "Linux PTY button release and mouse/keyboard priority smoke passed "
         f"({MOUSE_FLOOD_EVENT_COUNT} queued mouse events before the keyboard sentinel; "
         f"input accepted in {flood_duration:.3f}s; "
         f"sentinel visible in {sentinel_latency:.3f}s)"

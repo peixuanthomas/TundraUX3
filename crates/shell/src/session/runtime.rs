@@ -990,7 +990,7 @@ pub(super) fn run_fullscreen_shell_session<W: Write>(
         language_runtime.update_from(&state);
         let _language = i18n::enter_snapshot(state.language.clone());
         let state_before_polling = state.clone();
-        let theme_before_polling = theme;
+        let theme_before_polling = theme.clone();
         drain_system_status_snapshot(&mut system_status_snapshots, &mut state);
         // logind signals are delivered by a backend worker and drained here so
         // neither D-Bus nor policy authorization can block terminal input.
@@ -1220,6 +1220,10 @@ pub(super) fn run_fullscreen_shell_session<W: Write>(
                     compositor.cancel_for_bounds_change();
                 }
                 let input = crossterm_event_to_input(terminal_event);
+                let Some(input) = state.prepare_button_input(input) else {
+                    action = Some(ShellAction::Redraw);
+                    continue;
+                };
                 let input = state.normalize_shell_navigation_input(input);
                 let command_line_captures = command_line_captures_input(&state, &input);
                 if command_line_captures {

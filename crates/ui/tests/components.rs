@@ -678,3 +678,100 @@ fn context_menu_single_click_activates_even_the_already_selected_item() {
         }
     }
 }
+
+#[test]
+fn buttons_share_hover_tint_pressed_accent_and_disabled_precedence() {
+    let area = Rect::new(0, 0, 16, 3);
+    let theme = TundraTheme::default().with_accent_color(Color::Rgb(100, 140, 180));
+    assert_eq!(theme.button_hover_color(), Color::Rgb(154, 180, 206));
+    let mut button = Button::new("save", "Save");
+    for borderless in [false, true] {
+        for (hovered, active, disabled, expected) in [
+            (false, false, false, theme.foreground),
+            (true, false, false, theme.button_hover_color()),
+            (true, true, false, theme.accent_color),
+            (true, true, true, theme.muted),
+        ] {
+            button.state.hovered = hovered;
+            button.state.active = active;
+            button.state.disabled = disabled;
+            let mut buffer = Buffer::empty(area);
+            if borderless {
+                button.render_borderless(area, &mut buffer, &theme);
+            } else {
+                button.render(area, &mut buffer, &theme);
+            }
+            assert_eq!(
+                buffer
+                    .content()
+                    .iter()
+                    .find(|cell| cell.symbol() == "S")
+                    .unwrap()
+                    .fg,
+                expected
+            );
+        }
+    }
+}
+
+#[test]
+fn button_frame_uses_exact_rendered_rectangles_and_ignores_page_focus_as_hover() {
+    use ui::components::{ButtonFrame, ButtonRegion};
+    let area = Rect::new(3, 2, 14, 3);
+    let theme = TundraTheme::default();
+    let region = ButtonRegion {
+        id: "save".into(),
+        area,
+        disabled: false,
+    };
+    let frame = ButtonFrame::new(Some(region.clone()), Some(region.clone()), &theme);
+    let mut local_theme = theme.clone().with_accent_color(Color::Red);
+    local_theme.buttons = Some(frame.clone());
+    let mut buffer = Buffer::empty(Rect::new(0, 0, 30, 8));
+    Button::new("save", "Save").render_surface(area, &mut buffer, &local_theme);
+    assert_eq!(buffer[(area.x, area.y)].fg, theme.accent_color);
+    assert_eq!(frame.regions(), vec![region]);
+
+    let frame = ButtonFrame::new(None, None, &theme);
+    local_theme.buttons = Some(frame);
+    let mut focused = Button::new("save", "Save");
+    focused.state.hovered = true; // Legacy pages used focus to set this flag.
+    focused.state.focused = true;
+    focused.render_borderless(area, &mut buffer, &local_theme);
+    assert_eq!(
+        buffer
+            .content()
+            .iter()
+            .find(|cell| cell.symbol() == "S")
+            .unwrap()
+            .fg,
+        theme.foreground
+    );
+}
+
+#[test]
+fn selected_swatch_does_not_hide_pressed_text_on_an_accent_fill() {
+    use ui::components::{ButtonFrame, ButtonRegion};
+    let base = TundraTheme::default();
+    let area = Rect::new(0, 0, 14, 1);
+    let region = ButtonRegion {
+        id: "swatch".into(),
+        area,
+        disabled: false,
+    };
+    let mut swatch_theme = base.clone();
+    swatch_theme.background = base.accent_color;
+    swatch_theme.accent_color = base.background;
+    swatch_theme.buttons = Some(ButtonFrame::new(Some(region.clone()), Some(region), &base));
+    let mut button = Button::new("swatch", "Accent");
+    button.state.selected = true;
+    let mut buffer = Buffer::empty(area);
+    button.render_borderless(area, &mut buffer, &swatch_theme);
+    let label = buffer
+        .content()
+        .iter()
+        .find(|cell| cell.symbol() == "A")
+        .unwrap();
+    assert_eq!(label.fg, base.accent_color);
+    assert_eq!(label.bg, base.background);
+}

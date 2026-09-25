@@ -171,7 +171,21 @@ impl ScreenCompositor {
         icons: Option<&LauncherIconRuntime>,
     ) -> bool {
         let bounds = frame.area();
-        let context = &prepared.context;
+        let mut frame_context = prepared.context.clone();
+        let hovered = state
+            .mouse_coordinates
+            .and_then(|point| state.button_at(point));
+        let pressed = state
+            .button_pointer_capture
+            .as_ref()
+            .map(|capture| capture.region.clone());
+        let buttons = ui::components::ButtonFrame::new(
+            hovered,
+            pressed,
+            &frame_context.compatibility_theme(),
+        );
+        frame_context.buttons = Some(buttons.clone());
+        let context = &frame_context;
         let mut chrome = prepared.chrome.clone();
         chrome.terminal_size = (bounds.width, bounds.height);
         let layout =
@@ -218,6 +232,7 @@ impl ScreenCompositor {
         } else if let Some(dialog) = &prepared.time_sync {
             ui::render_time_sync_failure_dialog_with_context(frame, bounds, dialog, context);
         }
+        state.button_regions = buttons.regions();
         self.motion.capture_overlay(frame.buffer_mut(), state);
         self.motion
             .process(context.motion.scaled_delta(), frame.buffer_mut(), state);
@@ -265,7 +280,7 @@ impl ScreenCompositor {
         let context = if state.content_screen() == ShellScreen::FirstRunSetup {
             ui::setup_render_context(&state.to_setup_view_model(), context)
         } else {
-            *context
+            context.clone()
         };
         self.synchronize_appearance(state, &context);
         let chrome = state.to_shell_chrome_view_model();

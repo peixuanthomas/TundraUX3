@@ -519,8 +519,9 @@ pub struct ComponentVisualState {
 
 /// Inputs shared by every Glacier component render. Components accept the
 /// legacy theme overloads too, so screen migration can be incremental.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RenderContext {
+    pub buttons: Option<crate::components::ButtonFrame>,
     pub theme: ThemeTokens,
     pub motion: MotionFrame,
     pub transitions: MotionTransitions,
@@ -535,6 +536,7 @@ impl RenderContext {
     ) -> Self {
         Self {
             theme: theme.tokens().for_capability(capabilities.color),
+            buttons: theme.buttons.clone(),
             motion,
             transitions: MotionTransitions::default(),
             capabilities,
@@ -555,7 +557,7 @@ impl RenderContext {
 
     /// Moves an entering page by one terminal row for the first half of its
     /// transition. The shell uses this same projection for its hit map.
-    pub fn page_area(self, area: ratatui::layout::Rect) -> ratatui::layout::Rect {
+    pub fn page_area(&self, area: ratatui::layout::Rect) -> ratatui::layout::Rect {
         let entering_page = self.transitions.screen.is_some_and(|transition| {
             transition.active
                 && !matches!(transition.direction, MotionDirection::Exiting)
@@ -583,7 +585,7 @@ impl RenderContext {
         }
     }
 
-    pub fn overlay_interaction_ready(self) -> bool {
+    pub fn overlay_interaction_ready(&self) -> bool {
         self.transitions
             .overlay
             .is_none_or(MotionTransition::interaction_ready)
@@ -646,8 +648,10 @@ impl RenderContext {
     /// Compatibility theme derived exclusively from this frame's resolved
     /// tokens. This lets legacy renderers participate in context-aware paths
     /// without losing ANSI capability resolution or user colours.
-    pub const fn compatibility_theme(self) -> TundraTheme {
+    pub fn compatibility_theme(&self) -> TundraTheme {
         TundraTheme {
+            color_capability: self.capabilities.color,
+            buttons: self.buttons.clone(),
             background: self.theme.canvas,
             foreground: self.theme.text,
             accent_color: self.theme.accent,
@@ -700,8 +704,10 @@ impl BorderShape {
 
 /// Compatibility facade for existing screen models. Its default values are
 /// Glacier Night, and all richer token roles are available through `tokens()`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TundraTheme {
+    pub color_capability: ColorCapability,
+    pub buttons: Option<crate::components::ButtonFrame>,
     pub background: Color,
     pub foreground: Color,
     /// Color used for selected items, focus affordances, and other emphasis.
@@ -716,6 +722,8 @@ impl TundraTheme {
     pub fn default_dark() -> Self {
         let tokens = ThemeTokens::glacier_night();
         Self {
+            color_capability: ColorCapability::TrueColor,
+            buttons: None,
             background: tokens.canvas,
             foreground: tokens.text,
             accent_color: tokens.accent,
@@ -782,6 +790,32 @@ impl TundraTheme {
             .fg(tokens.accent)
             .bg(tokens.canvas)
             .add_modifier(Modifier::BOLD)
+    }
+
+    /// Shared hover tint: move each RGB channel 35% toward white.
+    pub fn button_hover_color(&self) -> Color {
+        self.buttons.as_ref().map_or_else(
+            || {
+                if self.color_capability == ColorCapability::Ansi {
+                    return match lighten(self.accent_color, 35) {
+                        Color::Black => Color::DarkGray,
+                        Color::DarkGray => Color::Gray,
+                        color if color == self.accent_color => Color::White,
+                        color => color,
+                    };
+                }
+                color_rgb(self.accent_color).map_or(self.accent_color, |(r, g, b)| {
+                    lighten(Color::Rgb(r, g, b), 35)
+                })
+            },
+            |frame| frame.hover_color,
+        )
+    }
+
+    pub fn button_accent_color(&self) -> Color {
+        self.buttons
+            .as_ref()
+            .map_or(self.accent_color, |frame| frame.accent)
     }
 
     pub fn body_style(&self) -> Style {

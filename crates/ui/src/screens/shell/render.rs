@@ -86,7 +86,7 @@ pub fn render_time_sync_failure_dialog_contextual(
         .wrap(Wrap { trim: true });
 
     frame.render_widget(Clear, dialog);
-    let mut danger_context = *context;
+    let mut danger_context = context.clone();
     danger_context.theme.border = context.theme.danger;
     surface.render_frame(frame, dialog, &danger_context);
     frame.render_widget(dialog_widget, inner);

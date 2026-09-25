@@ -51,7 +51,7 @@ pub(crate) fn render_notification_overlay_context(
             border,
             ..context.theme
         },
-        ..*context
+        ..context.clone()
     };
     Surface::new()
         .titled(notification_title(model))

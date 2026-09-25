@@ -173,3 +173,170 @@ fn global_notification_is_the_only_shell_modal_visual() {
     assert!(output.contains("Keep this dialog visible"));
     assert!(!output.contains(&ui::TimeSyncDialogViewModel::new().message()));
 }
+
+#[test]
+fn rendered_chrome_buttons_hover_press_and_activate_only_on_release() {
+    let mut state = session();
+    let mut compositor = ScreenCompositor::default();
+    let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
+    let mut prepared = home_frame(&state, 0, true);
+    prepared.chrome.status.time_button_label = Some("12:00".into());
+    draw(&mut compositor, &mut terminal, &mut state, &prepared);
+    let back = state
+        .button_regions
+        .iter()
+        .find(|r| r.id.as_str() == "shell.back")
+        .unwrap()
+        .clone();
+    let point = (back.area.x + 3, back.area.y + 1);
+    let theme = prepared.context.compatibility_theme();
+    state.apply_input(InputEvent::mouse_moved(point));
+    draw(&mut compositor, &mut terminal, &mut state, &prepared);
+    assert_eq!(
+        terminal.backend().buffer()[point].fg,
+        theme.button_hover_color()
+    );
+    state.apply_input(InputEvent::mouse_down(PointerButton::Left, point));
+    assert_eq!(state.active_screen(), ShellScreen::Home);
+    draw(&mut compositor, &mut terminal, &mut state, &prepared);
+    assert_eq!(terminal.backend().buffer()[point].fg, theme.accent_color);
+    state.apply_input(InputEvent::mouse_up(PointerButton::Left, point));
+    assert_eq!(state.active_screen(), ShellScreen::ExitConfirm);
+    assert!(state.button_pointer_capture.is_none());
+}
+
+#[test]
+fn button_capture_cancels_outside_on_focus_loss_resize_and_page_change() {
+    for cancel in 0..4 {
+        let mut state = session();
+        let mut compositor = ScreenCompositor::default();
+        let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
+        let prepared = home_frame(&state, 0, true);
+        draw(&mut compositor, &mut terminal, &mut state, &prepared);
+        let back = state
+            .button_regions
+            .iter()
+            .find(|r| r.id.as_str() == "shell.back")
+            .unwrap()
+            .area;
+        let point = (back.x + 3, back.y + 1);
+        state.apply_input(InputEvent::mouse_down(PointerButton::Left, point));
+        match cancel {
+            0 => {
+                state.apply_input(InputEvent::mouse_up(PointerButton::Left, (0, 0)));
+            }
+            1 => {
+                state.apply_input(InputEvent::FocusLost);
+            }
+            2 => {
+                state.apply_input(InputEvent::Resize {
+                    width: 130,
+                    height: 42,
+                });
+            }
+            _ => {
+                state.screen_stack.push(ShellScreen::Clock);
+            }
+        }
+        state.apply_input(InputEvent::mouse_up(PointerButton::Left, point));
+        assert_ne!(state.active_screen(), ShellScreen::ExitConfirm);
+        assert!(state.button_pointer_capture.is_none());
+    }
+}
+
+#[test]
+fn page_buttons_use_pointer_hover_instead_of_keyboard_focus_and_release_opens_dialog() {
+    let mut state = session();
+    state.screen_stack.push(ShellScreen::Clock);
+    state.restore_clock_profile(Default::default());
+    state.refresh_hit_map();
+    let mut compositor = ScreenCompositor::default();
+    let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
+    let mut prepared = home_frame(&state, 0, true);
+    prepared.page = ScreenViewModel::Clock(Box::new(
+        state.to_clock_view_model_at(&state.app.snapshot().clock, Instant::now()),
+    ));
+    draw(&mut compositor, &mut terminal, &mut state, &prepared);
+    let region = state
+        .button_regions
+        .iter()
+        .find(|r| r.id.as_str() == "clock.new")
+        .unwrap()
+        .clone();
+    let point = (region.area.x + region.area.width / 2, region.area.y);
+    let theme = prepared.context.compatibility_theme();
+    assert_eq!(terminal.backend().buffer()[point].fg, theme.accent_color);
+    state.apply_input(InputEvent::mouse_moved(point));
+    draw(&mut compositor, &mut terminal, &mut state, &prepared);
+    assert_eq!(
+        terminal.backend().buffer()[point].fg,
+        theme.button_hover_color()
+    );
+    state.apply_input(InputEvent::mouse_down(PointerButton::Left, point));
+    assert!(state.clock_create_state.is_none());
+    draw(&mut compositor, &mut terminal, &mut state, &prepared);
+    assert_eq!(terminal.backend().buffer()[point].fg, theme.accent_color);
+    state.apply_input(InputEvent::mouse_up(PointerButton::Left, point));
+    assert!(state.clock_create_state.is_some());
+}
+
+#[test]
+fn launcher_card_double_click_waits_for_second_release() {
+    let mut state = session();
+    state.screen_stack.push(ShellScreen::Launcher);
+    state.refresh_hit_map();
+    let mut compositor = ScreenCompositor::default();
+    let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
+    let mut prepared = home_frame(&state, 0, true);
+    prepared.page = ScreenViewModel::Launcher(Box::new(state.to_launcher_view_model()));
+    draw(&mut compositor, &mut terminal, &mut state, &prepared);
+    let id = format!("launcher.item.{}", app::EDITOR_APPLICATION.id);
+    let area = state
+        .button_regions
+        .iter()
+        .find(|r| r.id.as_str() == id)
+        .unwrap()
+        .area;
+    let point = (area.x + 1, area.y + 1);
+    let now = Instant::now();
+    state.apply_input_at(InputEvent::mouse_down(PointerButton::Left, point), now);
+    state.apply_input_at(
+        InputEvent::mouse_up(PointerButton::Left, point),
+        now + Duration::from_millis(30),
+    );
+    state.apply_input_at(
+        InputEvent::mouse_down(PointerButton::Left, point),
+        now + Duration::from_millis(80),
+    );
+    assert_eq!(state.active_screen(), ShellScreen::Launcher);
+    state.apply_input_at(
+        InputEvent::mouse_up(PointerButton::Left, point),
+        now + Duration::from_millis(110),
+    );
+    assert_eq!(state.active_screen(), ShellScreen::Editor);
+}
+
+#[test]
+fn notification_button_release_after_focus_loss_does_not_activate() {
+    let mut state = session();
+    state.apply_input(InputEvent::key(InputKey::Escape));
+    assert_eq!(state.active_screen(), ShellScreen::ExitConfirm);
+    let mut compositor = ScreenCompositor::default();
+    let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
+    let mut prepared = home_frame(&state, 0, true);
+    prepared.notification = state.to_notification_view_model();
+    draw(&mut compositor, &mut terminal, &mut state, &prepared);
+    let area = state
+        .button_regions
+        .iter()
+        .find(|region| region.id.as_str().starts_with("notification."))
+        .unwrap()
+        .area;
+    let point = (area.x, area.y);
+    state.apply_input(InputEvent::mouse_down(PointerButton::Left, point));
+    assert!(state.notification_pointer_capture.is_some());
+    state.apply_input(InputEvent::FocusLost);
+    state.apply_input(InputEvent::mouse_up(PointerButton::Left, point));
+    assert!(!state.shutdown_requested());
+    assert_eq!(state.active_screen(), ShellScreen::ExitConfirm);
+}

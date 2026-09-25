@@ -62,7 +62,7 @@ fn setup_appearance_disables_the_accent_option_matching_the_theme_color() {
     model.theme_color_value = "cyan".to_string();
     model.accent_color = Color::Blue;
     model.accent_color_value = "blue".to_string();
-    let terminal = render_terminal(&model, 120, 34, theme);
+    let terminal = render_terminal(&model, 120, 34, theme.clone());
     let output = terminal_output(&terminal);
     let cyan_index = setup_standard_color_options()
         .iter()
@@ -87,8 +87,14 @@ fn setup_renderer_updates_selected_timezone_cells_between_shanghai_and_tokyo() {
     let theme = map_test_theme();
     let shanghai = sample_model_with_timezone(SetupStep::Timezone, "Asia/Shanghai", None);
     let tokyo = sample_model_with_timezone(SetupStep::Timezone, "Asia/Tokyo", None);
-    let shanghai_terminal = render_terminal(&shanghai, WIDE_SETUP_WIDTH, WIDE_SETUP_HEIGHT, theme);
-    let tokyo_terminal = render_terminal(&tokyo, WIDE_SETUP_WIDTH, WIDE_SETUP_HEIGHT, theme);
+    let shanghai_terminal = render_terminal(
+        &shanghai,
+        WIDE_SETUP_WIDTH,
+        WIDE_SETUP_HEIGHT,
+        theme.clone(),
+    );
+    let tokyo_terminal =
+        render_terminal(&tokyo, WIDE_SETUP_WIDTH, WIDE_SETUP_HEIGHT, theme.clone());
 
     let shanghai_selected_cells = map_cells_with_fg(&shanghai_terminal, Color::White)
         .into_iter()
@@ -242,6 +248,8 @@ fn region_has_symbol(terminal: &Terminal<TestBackend>, area: Rect, symbol: &str)
 
 fn map_test_theme() -> TundraTheme {
     TundraTheme {
+        color_capability: ui::ColorCapability::TrueColor,
+        buttons: None,
         background: Color::Black,
         foreground: Color::Blue,
         accent_color: Color::LightMagenta,

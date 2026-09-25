@@ -212,7 +212,7 @@ fn render_login_password_field(
             } else {
                 context.theme
             },
-            ..*context
+            ..context.clone()
         },
     );
     frame.render_widget(
@@ -248,7 +248,7 @@ fn render_login_password_field(
     // The controller owns the password and the outer block owns focus. Keeping
     // the borderless content renderer unfocused preserves the prior placeholder
     // styling and deliberately avoids introducing a visible component cursor.
-    let mut input_theme = *theme;
+    let mut input_theme = theme.clone();
     if focused {
         input_theme.foreground = theme.accent_color;
     }
@@ -278,8 +278,8 @@ fn render_login_button(
     let mut button = Button::new("login.password-visibility", label);
     button.set_focused(selected);
     // Inline focused actions historically use the title style. Combining the
-    // component's focused and hover affordances preserves that visual contract.
-    button.state.hovered = selected;
+    // component's focus and selection preserves that visual contract.
+    button.state.selected = selected;
     button.render_borderless_frame(frame, line, theme);
 }
 

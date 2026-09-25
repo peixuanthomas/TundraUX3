@@ -57,7 +57,7 @@ pub fn setup_render_context(model: &SetupViewModel, context: &RenderContext) -> 
     let theme = &appearance_theme;
     RenderContext {
         theme: theme.tokens().for_capability(context.capabilities.color),
-        ..*context
+        ..context.clone()
     }
 }
 
@@ -555,7 +555,7 @@ fn render_setup_color_palette(
         // Button derives its colors from a theme. Adapt a local copy so each
         // palette option retains its catalog color while selected and disabled
         // states continue to be represented by the shared component.
-        let mut option_theme = *theme;
+        let mut option_theme = theme.clone();
         if selected && !disabled {
             option_theme.background = option.color;
             option_theme.accent_color = theme.background;
@@ -715,7 +715,7 @@ fn focused_context(context: &RenderContext, focused: bool) -> RenderContext {
         } else {
             context.theme
         },
-        ..*context
+        ..context.clone()
     }
 }
 
@@ -881,7 +881,7 @@ fn render_setup_inline_button(
     };
     let mut button = Button::new(id, padded_label);
     button.set_focused(focused);
-    button.state.hovered = focused;
+    button.state.selected = focused;
     button.set_disabled(disabled);
     button.render_borderless_frame(frame, area, theme);
 }

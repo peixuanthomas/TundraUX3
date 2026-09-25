@@ -687,7 +687,7 @@ pub fn render_settings_content(
                 border_shape: preview.border_shape,
                 border_color: preview.border_color,
                 accent_color: preview.accent_color,
-                ..*theme
+                ..theme.clone()
             };
             let preview_context =
                 RenderContext::from_theme(&preview_theme, context.motion, context.capabilities);
@@ -1390,7 +1390,7 @@ fn render_controlled_text_input(
     input.set_value(value);
     input.set_focused(true);
 
-    let mut input_theme = *theme;
+    let mut input_theme = theme.clone();
     input_theme.foreground = foreground;
     input.render_borderless_frame_with_prefix(frame, area, &input_theme, prefix);
 }

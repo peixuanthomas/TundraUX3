@@ -39,7 +39,7 @@ impl<'a> MetricCard<'a> {
             .bordered(true)
             .raised(true);
         let inner = surface.inner(area);
-        let mut card_context = *context;
+        let mut card_context = context.clone();
         // The state clock redraws once a second: a four-second cycle stays slow
         // without requesting continuous animation frames or dimming the data.
         let edit_highlight =

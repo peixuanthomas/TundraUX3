@@ -658,7 +658,7 @@ pub(crate) fn render_diagnostics_repair_dialog(
         theme,
     );
 
-    let mut restart_theme = *theme;
+    let mut restart_theme = theme.clone();
     restart_theme.foreground = diagnostics_warning_style(theme)
         .fg
         .unwrap_or(theme.foreground);
@@ -693,7 +693,7 @@ fn render_diagnostics_button(
 
     let mut button = Button::new(id, label);
     button.set_focused(focused);
-    button.state.hovered = focused;
+    button.state.selected = focused;
     button.render_borderless_frame(frame, area, theme);
 }
 

@@ -167,9 +167,9 @@ fn render_user_management_actions(
         );
         button.set_disabled(!action.enabled);
         button.set_focused(focused);
-        button.state.hovered = focused;
+        button.state.selected = focused;
 
-        let mut button_theme = *theme;
+        let mut button_theme = theme.clone();
         if action.dangerous && action.enabled && !focused {
             button_theme.foreground = theme.error;
         }
@@ -309,7 +309,7 @@ fn render_user_management_input(
     input.set_value(&value);
     input.set_focused(focused);
     input.state.hovered = focused;
-    let mut input_theme = *theme;
+    let mut input_theme = theme.clone();
     input_theme.muted = theme.foreground;
 
     if area.width <= 2 {
@@ -358,7 +358,7 @@ fn render_user_management_button(
 ) {
     let mut button = Button::new(id, label);
     button.set_focused(focused);
-    button.state.hovered = focused;
+    button.state.selected = focused;
     button.render_inline_frame(frame, area, theme);
 }
 
