@@ -21,7 +21,10 @@ where
     F: FnMut(&[String]) -> i32,
 {
     let config = match Config::builder().history_ignore_dups(true) {
-        Ok(builder) => builder.build(),
+        // Emacs mode otherwise waits indefinitely after Escape and consumes
+        // the next ordinary character as an Alt binding (e.g. the e in exit).
+        // The embedded host writes complete escape sequences atomically.
+        Ok(builder) => builder.keyseq_timeout(Some(100)).build(),
         Err(error) => {
             eprintln!("ERROR: could not configure command line: {error}");
             return 1;
