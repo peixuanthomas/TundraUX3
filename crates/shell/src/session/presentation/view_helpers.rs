@@ -807,6 +807,7 @@ pub(in crate::session) fn component_message(component: ShellComponent) -> i18n::
     match component {
         ShellComponent::CompactHome => i18n::msg!("shell-component-compact-home"),
         ShellComponent::TopBar => i18n::msg!("shell-component-top-bar"),
+        ShellComponent::BackButton => i18n::msg!("shell-component-back-button"),
         ShellComponent::Home => i18n::msg!("shell-component-home"),
         ShellComponent::ClockButton => i18n::msg!("shell-component-clock-button"),
         ShellComponent::Clock => i18n::msg!("shell-component-clock"),

@@ -455,6 +455,7 @@ fn chrome_for(screen: &str) -> ShellChromeViewModel {
         build_mode: "debug".to_string(),
         display_mode: HomeDisplayMode::User,
         terminal_size: (110, 32),
+        back_button_hovered: false,
         screen_stack: vec![screen.to_string()],
         status: StatusViewModel {
             status: "Ready".to_string(),

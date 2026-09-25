@@ -48,6 +48,7 @@ fn render(
         build_mode: "debug".into(),
         display_mode: HomeDisplayMode::Auth,
         terminal_size: (width, height),
+        back_button_hovered: false,
         screen_stack: vec!["Logs".into()],
         status: StatusViewModel {
             status: "Ready".into(),

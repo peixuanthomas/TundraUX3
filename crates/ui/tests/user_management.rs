@@ -311,6 +311,7 @@ fn render(
         build_mode: "debug".to_string(),
         display_mode: HomeDisplayMode::Auth,
         terminal_size: (width, height),
+        back_button_hovered: false,
         screen_stack: vec!["UserManagement".to_string()],
         status: StatusViewModel {
             status: "Ready".to_string(),

@@ -148,7 +148,23 @@ pub fn render_shell_chrome(
     let ShellLayout::Full { top, status, .. } = layout.shell else {
         return;
     };
-    render_top(frame, top, chrome, context);
+    let title_area = Rect::new(
+        top.x,
+        top.y,
+        layout
+            .back_button
+            // Share the separator with the button instead of drawing two borders.
+            .map_or(top.width, |button| {
+                button.x.saturating_sub(top.x).saturating_add(1)
+            }),
+        top.height,
+    );
+    render_top(frame, title_area, chrome, context);
+    if let Some(area) = layout.back_button {
+        let mut button = Button::new("shell.back", crate::assets::BACK_ICON.trim());
+        button.state.hovered = chrome.back_button_hovered;
+        button.render_frame(frame, area, &context.compatibility_theme());
+    }
     render_status(frame, status, layout, chrome, context);
 }
 

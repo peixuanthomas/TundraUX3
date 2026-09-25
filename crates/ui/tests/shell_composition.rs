@@ -7,6 +7,7 @@ fn chrome(width: u16, height: u16) -> ShellChromeViewModel {
         build_mode: "debug".into(),
         display_mode: HomeDisplayMode::Auth,
         terminal_size: (width, height),
+        back_button_hovered: false,
         screen_stack: vec!["中文页面路径很长需要正确截断".repeat(8)],
         status: StatusViewModel {
             status: "系统状态消息很长但不应覆盖时钟".repeat(8),
@@ -53,7 +54,9 @@ fn chrome_title_and_information_share_one_row_without_spilling_into_content() {
         let text = row(&terminal, top.y + 1);
         assert!(text.contains("TundraUX 3"));
         assert!(text.contains("debug"));
-        assert!(text.replace(' ', "").contains("中文"));
+        if width >= 80 {
+            assert!(text.replace(' ', "").contains("中文"));
+        }
         assert!(!row(&terminal, top.y).contains("debug"));
         assert!(!row(&terminal, top.bottom() - 1).contains("debug"));
         assert!(row(&terminal, layout.main.y).contains("PAGE CONTENT"));
@@ -62,6 +65,14 @@ fn chrome_title_and_information_share_one_row_without_spilling_into_content() {
         assert!(message.right() <= time.x);
         assert_eq!(message.intersection(time).area(), 0);
         assert!(row(&terminal, time.y + 1).contains("09:30"));
+        let back = layout.back_button.unwrap();
+        assert_eq!(back.right(), top.right());
+        assert_eq!(back.height, top.height);
+        assert!(text.contains("[◀]"));
+        assert_eq!(
+            terminal.backend().buffer()[(back.x + 3, back.y + 1)].symbol(),
+            "◀"
+        );
     }
 }
 #[test]
@@ -71,6 +82,7 @@ fn long_chinese_title_is_clipped_to_top_inner_row() {
     let (terminal, layout) = render(&model, &RenderContext::default());
     assert!(row(&terminal, 1).replace(' ', "").contains("终端交互环境"));
     assert!(row(&terminal, 1).contains("..."));
+    assert!(row(&terminal, 1).contains("[◀]"));
     assert!(!row(&terminal, 2).contains('终'));
     assert!(row(&terminal, layout.main.y).contains("PAGE CONTENT"));
 }
@@ -85,6 +97,7 @@ fn compact_threshold_exposes_no_shell_hit_regions() {
         let (terminal, layout) = render(&chrome(width, height), &RenderContext::default());
         assert_eq!(layout.is_compact(), compact);
         assert_eq!(layout.time_button.is_none(), compact);
+        assert_eq!(layout.back_button.is_none(), compact);
         assert_eq!(layout.status_message.is_none(), compact);
         if compact {
             assert!(!row(&terminal, 1).contains("TundraUX"));
@@ -109,12 +122,44 @@ fn page_transition_projects_only_main_and_leaves_chrome_pixels_and_hit_regions_f
     assert_eq!(shifted.main.y, base.main.y + 1);
     assert_eq!(shifted.main.height, base.main.height - 1);
     assert_eq!(shifted.time_button, base.time_button);
+    assert_eq!(shifted.back_button, base.back_button);
     assert_eq!(shifted.status_message, base.status_message);
     for y in [0, 1, 2, 21, 22, 23] {
         assert_eq!(row(&before, y), row(&during, y));
     }
     assert!(row(&during, shifted.main.y).contains("PAGE CONTENT"));
     assert!(!row(&during, base.main.y).contains("PAGE CONTENT"));
+}
+
+#[test]
+fn back_button_uses_the_active_theme_and_hover_accent() {
+    for border_shape in [BorderShape::Rounded, BorderShape::Square] {
+        for capability in [ColorCapability::TrueColor, ColorCapability::Ansi] {
+            let theme = TundraTheme {
+                border_shape,
+                accent_color: ratatui::style::Color::Magenta,
+                ..TundraTheme::default()
+            };
+            let context = RenderContext::from_theme(
+                &theme,
+                Default::default(),
+                RenderCapabilities {
+                    color: capability,
+                    image_protocol: false,
+                },
+            );
+            let mut model = chrome(80, 24);
+            model.back_button_hovered = true;
+            let (terminal, layout) = render(&model, &context);
+            let back = layout.back_button.unwrap();
+            assert_eq!(
+                terminal.backend().buffer()[(back.x + 3, back.y + 1)].fg,
+                context.theme.accent
+            );
+            let offset = ShellFrameLayout::new(Rect::new(5, 8, 80, 24), None, &context);
+            assert_eq!(offset.back_button.unwrap(), Rect::new(78, 8, 7, 3));
+        }
+    }
 }
 
 #[test]

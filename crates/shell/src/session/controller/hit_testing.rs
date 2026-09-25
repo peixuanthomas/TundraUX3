@@ -75,6 +75,13 @@ pub(in crate::session) fn build_shell_hit_map(
                 area: top,
                 layer: ShellHitLayer::ShellChrome,
             });
+            if let Some(area) = frame_layout.back_button {
+                regions.push(ShellHitRegion {
+                    component: ShellComponent::BackButton,
+                    area,
+                    layer: ShellHitLayer::ShellChrome,
+                });
+            }
             match content_screen {
                 ShellScreen::FirstRunSetup => {
                     regions.extend(setup_hit_regions(main, setup_step, language_count));

@@ -1220,6 +1220,7 @@ pub(super) fn run_fullscreen_shell_session<W: Write>(
                     compositor.cancel_for_bounds_change();
                 }
                 let input = crossterm_event_to_input(terminal_event);
+                let input = state.normalize_shell_navigation_input(input);
                 let command_line_captures = command_line_captures_input(&state, &input);
                 if command_line_captures {
                     let (width, height) = state.terminal_size();
@@ -1379,6 +1380,7 @@ pub(super) fn dispatch_motion_aware_input(
     platform: &dyn Platform,
     received_at: Instant,
 ) -> (ShellAction, bool) {
+    let input = state.normalize_shell_navigation_input(input);
     if let Some(action) = state.apply_input_preamble_at(&input, received_at) {
         return (action, false);
     }

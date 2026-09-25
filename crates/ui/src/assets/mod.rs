@@ -1,6 +1,9 @@
 pub(crate) mod home_icons;
 pub(crate) mod setup_catalog;
 
+/// Text icon embedded so shell navigation also works without terminal image support.
+pub(crate) const BACK_ICON: &str = include_str!("../../assets/icons/back.txt");
+
 pub use home_icons::{
     AsciiAssetStore, AssetDimensions, AssetError, ClockFontAsset, DEFAULT_THEME_ID,
     DefaultThemeCheckReport, DefaultThemeFile, ExplorerIcon, HomeIcon, HomeIconCatalog,

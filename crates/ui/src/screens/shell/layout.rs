@@ -77,6 +77,7 @@ pub struct ShellFrameLayout {
     pub bounds: Rect,
     pub shell: ShellLayout,
     pub main: Rect,
+    pub back_button: Option<Rect>,
     pub status_message: Option<Rect>,
     pub time_button: Option<Rect>,
 }
@@ -84,6 +85,15 @@ pub struct ShellFrameLayout {
 impl ShellFrameLayout {
     pub fn new(bounds: Rect, time_label: Option<&str>, context: &crate::RenderContext) -> Self {
         let shell = compute_shell_layout(bounds);
+        let back_button = match shell {
+            ShellLayout::Full { top, .. } => Some(Rect::new(
+                top.right().saturating_sub(7),
+                top.y,
+                7,
+                top.height,
+            )),
+            ShellLayout::Compact(_) => None,
+        };
         let (main, status_message, time_button) = match shell {
             ShellLayout::Compact(main) => (main, None, None),
             ShellLayout::Full { main, status, .. } => {
@@ -106,6 +116,7 @@ impl ShellFrameLayout {
             bounds,
             shell,
             main,
+            back_button,
             status_message,
             time_button,
         }

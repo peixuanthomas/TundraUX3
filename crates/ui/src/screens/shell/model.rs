@@ -31,6 +31,7 @@ pub struct ShellChromeViewModel {
     pub display_mode: HomeDisplayMode,
     pub terminal_size: (u16, u16),
     pub screen_stack: Vec<String>,
+    pub back_button_hovered: bool,
     pub status: StatusViewModel,
 }
 

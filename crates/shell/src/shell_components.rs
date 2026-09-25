@@ -6,6 +6,7 @@ use ui::{HitKind, HitLayer, HitMap, HitTarget, Point, UiId};
 pub enum ShellComponent {
     CompactHome,
     TopBar,
+    BackButton,
     Home,
     ClockButton,
     Clock,
@@ -88,6 +89,7 @@ impl ShellComponent {
         match self {
             Self::CompactHome => "CompactHome",
             Self::TopBar => "TopBar",
+            Self::BackButton => "BackButton",
             Self::Home => "Home",
             Self::ClockButton => "ClockButton",
             Self::Clock => "Clock",

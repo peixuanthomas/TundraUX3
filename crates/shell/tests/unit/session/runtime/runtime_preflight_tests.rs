@@ -288,6 +288,20 @@ fn command_line_runtime_leaves_shell_chrome_mouse_input_for_the_shell() {
     state.screen_stack = vec![ShellScreen::Home, ShellScreen::CommandLine];
     state.refresh_hit_map();
 
+    let back_area = state
+        .hit_map()
+        .regions()
+        .iter()
+        .find(|region| region.component == ShellComponent::BackButton)
+        .unwrap()
+        .area;
+    let back_input = state.normalize_shell_navigation_input(InputEvent::mouse_down(
+        ui::MouseButton::Left,
+        (back_area.x, back_area.y),
+    ));
+    assert_eq!(back_input, InputEvent::key(ui::Key::Escape));
+    assert!(command_line_captures_input(&state, &back_input));
+
     let clock_area = state
         .hit_map()
         .regions()

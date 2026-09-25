@@ -559,6 +559,7 @@ shell-yes = 是
 shell-your-unsaved-widget-layout-changes-will-be-lost = 未保存的组件布局更改将丢失。
 shell-component-compact-home = 紧凑主页
 shell-component-top-bar = 顶栏
+shell-component-back-button = 返回（Esc）
 shell-component-home = 主页
 shell-component-clock-button = 时钟按钮
 shell-component-clock = 时钟

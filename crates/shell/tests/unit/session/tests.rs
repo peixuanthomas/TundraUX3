@@ -3969,6 +3969,105 @@ fn command_line_keeps_the_shell_clock_button_visible_and_clickable() {
 }
 
 #[test]
+fn back_button_routes_the_same_escape_for_every_screen() {
+    let mut state = ShellSession::new(ShellLaunchConfig::default(), (120, 40));
+    set_test_auth_role(&mut state, UserRole::Admin);
+    while state.notification_dismiss_active_modal_without_response() {}
+    for screen in [
+        ShellScreen::FirstRunSetup,
+        ShellScreen::Login,
+        ShellScreen::BootstrapAdmin,
+        ShellScreen::Home,
+        ShellScreen::Clock,
+        ShellScreen::Diagnostics,
+        ShellScreen::SystemStatus,
+        ShellScreen::Logs,
+        ShellScreen::Explorer,
+        ShellScreen::Launcher,
+        ShellScreen::Editor,
+        ShellScreen::Settings,
+        ShellScreen::UserManagement,
+        ShellScreen::ExitConfirm,
+        ShellScreen::CommandLine,
+    ] {
+        state.screen_stack = vec![ShellScreen::Home, screen];
+        state.refresh_hit_map();
+        let back = hit_region_center(&state, ShellComponent::BackButton);
+        let escape = state.route_input_at(InputEvent::key(InputKey::Escape), Instant::now());
+        let click = state.route_input_at(
+            InputEvent::mouse_down(PointerButton::Left, back),
+            Instant::now(),
+        );
+        assert_eq!(click, escape, "{screen:?}");
+    }
+}
+
+#[test]
+fn back_button_cancels_the_overlay_before_leaving_the_page_and_only_activates_once() {
+    let mut state = ShellSession::new(ShellLaunchConfig::default(), (120, 40));
+    while state.notification_dismiss_active_modal_without_response() {}
+    state.screen_stack = vec![ShellScreen::Home, ShellScreen::Clock];
+    state.clock_create_state = Some(ClockCreateState::default());
+    state.refresh_hit_map();
+    let back = hit_region_center(&state, ShellComponent::BackButton);
+    state.apply_input(InputEvent::mouse_down(PointerButton::Left, back));
+    assert!(state.clock_create_state.is_none());
+    assert_eq!(state.active_screen(), ShellScreen::Clock);
+    for input in [
+        InputEvent::mouse_up(PointerButton::Left, back),
+        InputEvent::mouse_down(PointerButton::Right, back),
+        InputEvent::mouse_moved(back),
+    ] {
+        state.apply_input(input);
+        assert_eq!(state.active_screen(), ShellScreen::Clock);
+    }
+    assert!(state.to_shell_chrome_view_model().back_button_hovered);
+    state.apply_input(InputEvent::mouse_down(PointerButton::Left, back));
+    assert_eq!(state.active_screen(), ShellScreen::Home);
+    assert_ne!(state.focused_component(), ShellComponent::BackButton);
+
+    state.notify_modal(
+        "Confirm",
+        "Back cancels the modal",
+        ui::NotificationTone::Info,
+        vec![ShellNotificationAction::new("ok", "OK")],
+    );
+    let escape = state.route_input_at(InputEvent::key(InputKey::Escape), Instant::now());
+    let click = state.route_input_at(
+        InputEvent::mouse_down(PointerButton::Left, back),
+        Instant::now(),
+    );
+    assert_eq!(click, escape);
+}
+
+#[test]
+fn back_button_hit_region_tracks_resize_and_disappears_in_compact_mode() {
+    let mut state = ShellSession::new(ShellLaunchConfig::default(), (120, 40));
+    for (width, height) in [(80, 24), (50, 12), (49, 12), (120, 40)] {
+        state.apply_input(InputEvent::Resize { width, height });
+        let layout = ui::ShellFrameLayout::new(
+            Rect::new(0, 0, width, height),
+            None,
+            &ui::RenderContext::default(),
+        );
+        let hit = state
+            .hit_map
+            .regions()
+            .iter()
+            .find(|region| region.component == ShellComponent::BackButton);
+        assert_eq!(hit.map(|region| region.area), layout.back_button);
+        if let Some(region) = hit {
+            for position in region.area.positions() {
+                assert_eq!(
+                    state.hit_map.target_at((position.x, position.y)),
+                    Some(ShellComponent::BackButton)
+                );
+            }
+        }
+    }
+}
+
+#[test]
 fn key_event_to_label_maps_requested_keys() {
     let cases = [
         (

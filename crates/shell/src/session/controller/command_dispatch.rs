@@ -69,6 +69,7 @@ impl ShellSession {
 
     pub fn route_input_at(&mut self, input: InputEvent, received_at: Instant) -> RoutedEvent {
         let _language = i18n::enter_snapshot(self.language.clone());
+        let input = self.normalize_shell_navigation_input(input);
         let (target, command) = match &input {
             InputEvent::Shutdown => (RoutedTarget::Global, ShellCommand::Shutdown),
             InputEvent::Tick => (RoutedTarget::Global, ShellCommand::Tick),

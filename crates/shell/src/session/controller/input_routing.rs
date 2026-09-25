@@ -1,6 +1,23 @@
 use super::super::*;
 use crate::session::queries::ResolvedExplorerOverlay;
 impl ShellSession {
+    /// The chrome shortcut enters the same input path as a physical Escape,
+    /// including overlay cancellation, motion gating and embedded PTY input.
+    /// Like the existing clock button, it activates once on left-button down
+    /// and leaves keyboard focus with the page being returned to.
+    pub(in crate::session) fn normalize_shell_navigation_input(
+        &self,
+        input: InputEvent,
+    ) -> InputEvent {
+        if let InputEvent::Mouse(mouse) = &input
+            && mouse.kind == ui::MouseEventKind::Down(PointerButton::Left)
+            && self.hit_map.target_at(mouse.coordinates()) == Some(ShellComponent::BackButton)
+        {
+            return InputEvent::Key(KeyInput::new(InputKey::Escape));
+        }
+        input
+    }
+
     pub(in crate::session) fn route_key_input(
         &self,
         key: &KeyInput,

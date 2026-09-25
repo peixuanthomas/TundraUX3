@@ -116,6 +116,28 @@ fn motion_dispatch_runs_login_preamble_before_deferral_and_pre_route_blocking() 
     assert_eq!(active.login_idle_deadline, now + LOGIN_IDLE_TIMEOUT);
     assert!(active_motion.deferred_close.is_some());
 
+    let (mut clicked, mut clicked_motion) = login_exit_fixture(now);
+    let back = clicked
+        .hit_map
+        .regions()
+        .iter()
+        .find(|region| region.component == ShellComponent::BackButton)
+        .unwrap()
+        .area;
+    let (_, motion_blocked) = dispatch_motion_aware_input(
+        &mut clicked,
+        &mut clicked_motion,
+        InputEvent::mouse_down(PointerButton::Left, (back.x, back.y)),
+        &platform,
+        now,
+    );
+    assert!(motion_blocked);
+    assert_eq!(clicked.login_idle_deadline, now + LOGIN_IDLE_TIMEOUT);
+    assert_eq!(
+        clicked_motion.deferred_close.as_ref().unwrap().routed,
+        active_motion.deferred_close.as_ref().unwrap().routed
+    );
+
     active_motion.deferred_close = None;
     active_motion.exiting = false;
     active_motion.outgoing_block_remaining = Duration::from_millis(50);

@@ -559,6 +559,7 @@ shell-yes = Yes
 shell-your-unsaved-widget-layout-changes-will-be-lost = Your unsaved widget layout changes will be lost.
 shell-component-compact-home = Compact home
 shell-component-top-bar = Top bar
+shell-component-back-button = Back (Esc)
 shell-component-home = Home
 shell-component-clock-button = Clock button
 shell-component-clock = Clock

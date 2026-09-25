@@ -1,4 +1,12 @@
-# Timezone map data
+# UI assets
+
+## Navigation icons
+
+`icons/back.txt` contains the solid left-pointing triangle used by the shell's
+top-right Back button. It is embedded at build time and rendered by the shared
+themed Button component, including on terminals without image protocols.
+
+## Timezone map data
 
 This directory contains timezone boundary data used by the first-run setup
 timezone map.
