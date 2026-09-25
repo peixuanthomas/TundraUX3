@@ -20,6 +20,81 @@ use ui::{
 };
 
 #[test]
+fn options_use_body_color_and_mark_non_defaults_independently_of_focus() {
+    use ratatui::style::{Color, Modifier};
+
+    for theme in [
+        TundraTheme::default_dark(),
+        TundraTheme {
+            background: Color::White,
+            foreground: Color::Black,
+            accent_color: Color::Blue,
+            ..TundraTheme::default_dark()
+        },
+    ] {
+        for focused_index in 0..=4 {
+            let mut model = sample_model();
+            model.overlay_selection = focused_index;
+            model.overlay = Some(ExplorerOverlayViewModel::Options(
+                ui::ExplorerOptionsViewModel {
+                    title: "Options".into(),
+                    options: (0..4)
+                        .map(|index| ui::ExplorerOptionViewModel {
+                            id: format!("option-{index}"),
+                            label: format!("Option {index}"),
+                            value: "On".into(),
+                            enabled: index != 3,
+                            modified: index != 0,
+                            focused: index == focused_index,
+                        })
+                        .collect(),
+                    close_label: "Close".into(),
+                },
+            ));
+            let mut terminal = Terminal::new(TestBackend::new(110, 32)).unwrap();
+            terminal
+                .draw(|frame| {
+                    render_explorer(frame, frame.area(), &chrome_for("Explorer"), &model, &theme)
+                })
+                .unwrap();
+            let output = terminal_output(&terminal);
+            assert!(output.contains("[Option 0: On]"));
+            for index in 1..4 {
+                assert!(output.contains(&format!("[* Option {index}: On]")));
+            }
+            for index in 0..4 {
+                let area = overlay_control_area(&model, &ExplorerOverlayControl::Option(index));
+                let cell = &terminal.backend().buffer()[(area.x, area.y)];
+                let expected = if index == 3 {
+                    theme.muted
+                } else if index == focused_index {
+                    theme.accent_color
+                } else {
+                    theme.foreground
+                };
+                assert_eq!(cell.fg, expected, "option {index}, focus {focused_index}");
+                assert_eq!(
+                    cell.modifier.contains(Modifier::BOLD),
+                    index == focused_index && index != 3
+                );
+                let ShellLayout::Full { main, .. } = compute_shell_layout(Rect::new(0, 0, 110, 32))
+                else {
+                    unreachable!()
+                };
+                assert_eq!(
+                    explorer_layout(main, &model).hit_test(area.x, area.y),
+                    Some(if index == 3 {
+                        ExplorerHitTarget::OverlaySurface
+                    } else {
+                        ExplorerHitTarget::Overlay(ExplorerOverlayControl::Option(index))
+                    })
+                );
+            }
+        }
+    }
+}
+
+#[test]
 fn explorer_context_path_renders_real_sizes_with_ansi_and_reduced_motion() {
     let model = sample_model();
     let chrome = chrome_for("Explorer");

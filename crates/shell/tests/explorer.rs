@@ -23,6 +23,36 @@ fn default_config() -> ShellLaunchConfig {
 }
 
 #[test]
+fn explorer_options_mark_non_defaults_and_restore_them_without_losing_focus() {
+    let fixture = FixtureRoot::new("option-default-markers");
+    let platform = mock_platform(fixture.path());
+    bootstrap_with_shell(&platform);
+    let mut state = logged_in_state(&platform);
+    for key in ["e", "o"] {
+        state.apply_input_with_platform(InputEvent::from_key_label(key), &platform);
+    }
+    let options = |state: &ShellSession| match state.to_explorer_view_model().overlay {
+        Some(ui::ExplorerOverlayViewModel::Options(options)) => options.options,
+        other => panic!("expected options, got {other:?}"),
+    };
+    assert!(options(&state).iter().all(|option| !option.modified));
+    for index in 0..options(&state).len() {
+        assert!(options(&state)[index].focused);
+        state.apply_input_with_platform(InputEvent::from_key_label("Enter"), &platform);
+        for (position, option) in options(&state).iter().enumerate() {
+            assert_eq!(option.modified, position == index, "{}", option.id);
+            assert_eq!(option.focused, position == index, "{}", option.id);
+        }
+        state.apply_input_with_platform(InputEvent::from_key_label("Enter"), &platform);
+        assert!(options(&state).iter().all(|option| !option.modified));
+        state.apply_input_with_platform(InputEvent::from_key_label("Down"), &platform);
+    }
+    assert!(options(&state).iter().all(|option| !option.focused));
+    state.apply_input_with_platform(InputEvent::from_key_label("Enter"), &platform);
+    assert!(state.to_explorer_view_model().overlay.is_none());
+}
+
+#[test]
 fn explorer_uses_authenticated_account_directories_instead_of_process_directories() {
     let fixture = FixtureRoot::new("account-directories");
     let personal = fixture.path().join("personal");

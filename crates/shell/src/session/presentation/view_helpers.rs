@@ -383,44 +383,51 @@ pub(in crate::session) fn explorer_options_view_model(
     focused_index: usize,
     enabled: bool,
 ) -> ui::ExplorerOverlayViewModel {
-    let toggle = |id: &str, label: String, value: bool| ui::ExplorerOptionViewModel {
-        id: id.to_string(),
-        label: label.to_string(),
-        value: if value {
-            i18n::tr!("shell-on")
-        } else {
-            i18n::tr!("shell-off")
-        }
-        .to_string(),
-        enabled,
-        selected: value,
-        focused: false,
-    };
+    let defaults = storage::ExplorerConfig::default();
+    let toggle =
+        |id: &str, label: String, value: bool, default: bool| ui::ExplorerOptionViewModel {
+            id: id.to_string(),
+            label: label.to_string(),
+            value: if value {
+                i18n::tr!("shell-on")
+            } else {
+                i18n::tr!("shell-off")
+            }
+            .to_string(),
+            enabled,
+            modified: value != default,
+            focused: false,
+        };
     let mut options = vec![
         toggle(
             "hidden",
             i18n::tr!("shell-show-hidden-files"),
             state.show_hidden,
+            defaults.show_hidden,
         ),
         toggle(
             "system",
             i18n::tr!("shell-show-system-files"),
             state.show_system,
+            defaults.show_system,
         ),
         toggle(
             "extensions",
             i18n::tr!("shell-show-file-extensions"),
             state.show_extensions,
+            defaults.show_extensions,
         ),
         toggle(
             "folders-first",
             i18n::tr!("shell-folders-first"),
             state.folders_first,
+            defaults.folders_first,
         ),
         toggle(
             "case-sensitive",
             i18n::tr!("shell-case-sensitive-sort"),
             state.case_sensitive_sort,
+            defaults.case_sensitive_sort,
         ),
         ui::ExplorerOptionViewModel {
             id: "size-format".to_string(),
@@ -431,7 +438,7 @@ pub(in crate::session) fn explorer_options_view_model(
             }
             .to_string(),
             enabled,
-            selected: false,
+            modified: state.size_format != defaults.size_format,
             focused: false,
         },
         ui::ExplorerOptionViewModel {
@@ -443,27 +450,29 @@ pub(in crate::session) fn explorer_options_view_model(
             }
             .to_string(),
             enabled,
-            selected: false,
+            modified: state.date_zone != defaults.date_zone,
             focused: false,
         },
         toggle(
             "confirm-delete",
             i18n::tr!("shell-confirm-delete"),
             state.confirm_delete,
+            defaults.confirm_delete,
         ),
         toggle(
             "confirm-conflicts",
             i18n::tr!("shell-confirm-name-conflicts"),
             state.confirm_name_conflicts,
+            defaults.confirm_name_conflicts,
         ),
         toggle(
             "sidebar",
             i18n::tr!("shell-show-quick-access"),
             state.show_sidebar,
+            defaults.show_sidebar,
         ),
     ];
-    let option_count = options.len();
-    if let Some(option) = options.get_mut(focused_index.min(option_count.saturating_sub(1))) {
+    if let Some(option) = options.get_mut(focused_index) {
         option.focused = true;
     }
     ui::ExplorerOverlayViewModel::Options(ui::ExplorerOptionsViewModel {

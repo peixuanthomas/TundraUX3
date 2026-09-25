@@ -419,7 +419,8 @@ pub struct ExplorerOptionViewModel {
     pub label: String,
     pub value: String,
     pub enabled: bool,
-    pub selected: bool,
+    /// Whether the value differs from the application default.
+    pub modified: bool,
     pub focused: bool,
 }
 

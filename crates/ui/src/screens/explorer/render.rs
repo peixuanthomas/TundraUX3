@@ -566,14 +566,18 @@ pub fn render_explorer_overlay(
                             continue;
                         };
                         let text = fit_cell(
-                            &format!("{}: {}", option.label, option.value),
+                            &format!(
+                                "{}{}: {}",
+                                if option.modified { "* " } else { "" },
+                                option.label,
+                                option.value
+                            ),
                             usize::from(control.area.width),
                         );
                         let mut button =
                             Button::new(format!("explorer.options.{}", option.id), text);
                         button.set_focused(option.focused);
                         button.state.hovered = option.focused;
-                        button.state.selected = option.selected;
                         button.set_disabled(!control.enabled);
                         button.render_borderless_frame(frame, control.area, theme);
                     }
