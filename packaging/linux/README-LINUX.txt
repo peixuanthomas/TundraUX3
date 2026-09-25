@@ -36,16 +36,22 @@ version. Debian/Ubuntu system package updates are unsupported in this phase.
 Ordinary Linux user session
 --------------------------
 Log in normally through Fedora, then start tundra-shell in that user's terminal.
-The shell rejects UID 0, EUID 0, mismatched real/effective UIDs, and mismatched
-real/effective GIDs before storage, recovery, watchdog, or raw-mode initialization.
+Shell and CLI reject mismatched real/effective UIDs and GIDs before storage,
+recovery, watchdog, or fullscreen terminal initialization. Root execution shows
+a warning: file operations and launched programs have root privileges and may
+modify or delete system files. Press lowercase y to continue (no Enter needed);
+any other key cancels. Both stdin and stderr must be terminals; piped input
+cannot confirm. The prompt temporarily uses raw mode and restores it afterward.
+Every root startup requires confirmation; ordinary-user startup has no prompt.
 It never retries startup through sudo or su.
 
 The current process UID is resolved directly through NSS. USER, LOGNAME, saved UX
 roles, and account enumeration do not select an identity. NSS supplies HOME and
 the login shell; valid XDG paths are honored with standard fallbacks. Explorer,
 Editor, Launcher, embedded Terminal, child processes, Trash, and personal settings
-use the current ordinary user's operating-system permissions. Permission failures
-remain permission failures. Tundra does not read or migrate old /root data.
+use the current user's operating-system permissions. Permission failures remain
+permission failures. Ordinary-user runs do not read or migrate old /root data.
+Confirmed root runs use root's NSS HOME, valid XDG paths and linux-uid-0 profile.
 
 On first use, the current UID's profile opens Appearance. After its preferences
 and completion marker are saved, Home opens. Interrupted setup resumes next time;

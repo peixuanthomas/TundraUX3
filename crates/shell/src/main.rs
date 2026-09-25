@@ -3,7 +3,7 @@ use watchdog::{ProcessWatchdog, WatchdogConfig, WatchdogRuntime};
 
 fn main() {
     #[cfg(target_os = "linux")]
-    match platform::linux::identity::LinuxUserContext::current() {
+    match shell::confirm_linux_startup() {
         Ok(user) => {
             // SAFETY: no threads or runtime have been started at executable entry.
             unsafe {

@@ -26,14 +26,10 @@ impl ProcessIdentity {
     }
 
     pub fn validate(self) -> io::Result<Self> {
-        if self.uid == 0
-            || self.effective_uid == 0
-            || self.uid != self.effective_uid
-            || self.gid != self.effective_gid
-        {
+        if self.uid != self.effective_uid || self.gid != self.effective_gid {
             return Err(io::Error::new(
                 io::ErrorKind::PermissionDenied,
-                "Tundra must run as your logged-in ordinary Linux user with matching real/effective UID and GID. Root and set-ID execution are unsupported.",
+                "Tundra requires matching real/effective UID and GID. Set-ID execution is unsupported.",
             ));
         }
         Ok(self)

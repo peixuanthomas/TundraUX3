@@ -208,6 +208,15 @@ def main() -> int:
             start_new_session=True,
         )
 
+        if os.geteuid() == 0:
+            if not wait_for_output(
+                master, output, b"any other key cancels: ", child, timeout=5.0
+            ):
+                raise SystemExit("root startup confirmation did not appear")
+            if MOUSE_CAPTURE_SEQUENCE in output or b"\x1b[?1049h" in output:
+                raise SystemExit("root entered the TUI before confirmation")
+            os.write(master, b"y")
+
         if not wait_for_output(
             master,
             output,

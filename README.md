@@ -44,7 +44,9 @@ cargo run --locked -p cli --bin tundra-cli -- debug doctor
 ### Linux 普通用户会话
 
 先通过 Fedora 正常登录，再在该用户的终端中启动 Tundra。Linux 身份唯一来源是
-当前进程 UID 和 NSS；Shell 拒绝 root、UID/EUID 不一致及 GID/EGID 不一致的启动。
+当前进程 UID 和 NSS；Shell 和 CLI 拒绝 UID/EUID 不一致及 GID/EGID 不一致的启动。
+以 root 运行时先显示权限风险警告，必须在交互终端按小写 `y` 才继续（无需回车）；
+其他按键或无交互终端均退出。建议日常使用普通用户运行。
 首次运行进入 Appearance，完成后到 Home；之后直接进入 Home。Exit 只退出 Tundra。
 账号、密码、系统登录和系统授权由 Fedora 管理，Tundra 不提供内部 Linux 登录、锁屏、
 切换用户或注销系统会话，也不自动执行 sudo。

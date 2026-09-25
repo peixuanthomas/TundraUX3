@@ -66,3 +66,8 @@ pub use session::*;
 
 #[cfg(target_os = "linux")]
 mod authorization;
+
+#[cfg(target_os = "linux")]
+mod linux_startup;
+#[cfg(target_os = "linux")]
+pub use linux_startup::confirm_linux_startup;

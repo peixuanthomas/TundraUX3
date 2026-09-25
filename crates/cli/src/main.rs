@@ -6,6 +6,20 @@ use watchdog::{
 };
 
 fn main() {
+    #[cfg(target_os = "linux")]
+    match shell::confirm_linux_startup() {
+        Ok(user) => {
+            // SAFETY: no threads or runtime have been started at executable entry.
+            unsafe {
+                user.install_environment();
+            }
+        }
+        Err(error) => {
+            eprintln!("{error}");
+            std::process::exit(1);
+        }
+    }
+
     let args = std::env::args().skip(1).collect::<Vec<_>>();
     if matches!(
         cli::parse_args(&args),

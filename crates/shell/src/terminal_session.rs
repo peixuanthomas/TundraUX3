@@ -202,12 +202,12 @@ fn map_terminal_graphics_capabilities(
     }
 }
 
-struct TemporaryRawMode {
+pub(crate) struct TemporaryRawMode {
     enabled_here: bool,
 }
 
 impl TemporaryRawMode {
-    fn enter() -> Result<Self, String> {
+    pub(crate) fn enter() -> Result<Self, String> {
         let was_enabled = is_raw_mode_enabled()
             .map_err(|error| format!("could not inspect terminal raw mode: {error}"))?;
         if !was_enabled {
@@ -219,7 +219,7 @@ impl TemporaryRawMode {
         })
     }
 
-    fn restore(&mut self) -> io::Result<()> {
+    pub(crate) fn restore(&mut self) -> io::Result<()> {
         if !self.enabled_here {
             return Ok(());
         }

@@ -131,7 +131,7 @@ folder, then execute it with container Python. The image includes rpmbuild and
 dpkg-deb. The checker refuses to overwrite its existing work directory.
 
 It builds the portable payload with its formal marker, builds and installs the
-RPM inside that container, verifies dependency/provider/ownership/root-rejection
+RPM inside that container, verifies dependency/provider/ownership/unconfirmed-root-rejection
 contracts and absence of PAM/session services or installation scripts, and
 inspects the DEB metadata and payload. It does not install the DEB on Fedora.
 These checks use stripped debug programs; release-profile builds and Debian

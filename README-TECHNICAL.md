@@ -88,7 +88,7 @@ cargo run -p cli --bin tundra-cli -- repl
 
 `tundra-shell` 的正常启动分为以下阶段：
 
-0. Linux `main` 先验证 UID/EUID 非零且相等、GID/EGID 相等，解析当前 UID 的 NSS 记录并规范化身份环境；失败时直接退出。
+0. Linux `main` 先验证 UID/EUID 相等、GID/EGID 相等；root 必须在交互终端确认警告后才能继续。随后解析当前 UID 的 NSS 记录并规范化身份环境；失败时直接退出。
 1. `main` 创建进程级 `WatchdogRuntime`，安装 `ProcessWatchdog`、终端紧急恢复函数，并检查上次未正常关闭的运行标记。
 2. 加载 `ascii-assets` 默认主题，计算共同最小终端尺寸；尺寸不够时在进入全屏前给出可操作错误。
 3. `prepare_shell_startup` 收集平台权限、存储状态和迁移/恢复结果；`storage` 创建目录、校验 schema、迁移旧用户文件，并恢复可重建的损坏文档。
@@ -352,8 +352,13 @@ Settings 的时间设置可使用平台时钟、默认 HTTP(S) 时间服务器�
 Linux 普通用户与 Fedora 更新前端的本阶段验证见 [2026-09-13 验证记录](packaging/linux/VALIDATION-2026-09-13.md)。
 
 用户先通过 Fedora 正常登录，再在该用户 Session 中启动 Tundra。Linux `main`
-在存储、更新恢复、watchdog 和 raw mode 之前拒绝 UID/EUID 为 0、UID/EUID 不一致、
-GID/EGID 不一致的启动；不修复身份、不执行 sudo/su。`platform::linux::identity`
+在存储、更新恢复、watchdog 和全屏终端初始化之前拒绝 UID/EUID 不一致、
+GID/EGID 不一致的启动；不修复身份、不执行 sudo/su。Shell 和 CLI 共用启动检查，
+以 root 运行时警告文件操作和启动的程序将拥有 root 权限，可能修改或删除系统文件。
+只有在标准输入和标准错误均连接终端时按小写 `y` 才继续，无需回车；其他按键、
+取消或输入错误均退出，管道输入不能代替确认。确认临时复用 raw mode guard，
+读取按键后恢复原终端模式；每次启动重新确认，不保存豁免。
+`platform::linux::identity`
 以当前进程 UID 直接调用 NSS 当前用户查询，不依赖用户枚举、环境用户名、UID 范围或
 Tundra 保存的角色。统一上下文包含 UID/GID、附加组、用户名、HOME、shell 与 XDG 路径。
 NSS HOME 和身份环境也用于子进程与内嵌 Terminal；有效 XDG 环境按规范处理。
@@ -375,7 +380,8 @@ Settings 中的个人外观和仪表板偏好只核对当前进程用户并读�
 
 锁定操作仅锁定密码登录，不结束已有会话，也不禁止密钥登录。当前账户不能被删除、锁定或降级，避免移除本会话的管理权限；删除其他账户始终保留主目录和文件。创建账户后若设置密码失败，会明确报告部分完成并刷新列表，用户可继续设置密码，不自动删除新账户。未安装 AccountsService、libxcrypt 或授权不可用时显示错误；不以 sudo 重启 UX，也不回退到修改 UX 本地账户。Windows/macOS 保持原有行为。
 
-不访问或迁移 `/root` 的旧 Tundra 数据。Explorer 和内嵌 Terminal 的个人目录由当前 NSS HOME
+普通用户运行时不访问或迁移 `/root` 的旧 Tundra 数据；确认以 root 运行后使用 root 的
+NSS HOME 和有效 XDG 路径，个人档案键为 `linux-uid-0`。Explorer 和内嵌 Terminal 的个人目录由当前 NSS HOME
 及有效 `user-dirs.dirs` 解析；支持显式绝对路径、中文标准目录及 HOME 禁用约定，不执行配置中的
 shell 命令。缺少 XDG_RUNTIME_DIR、logind 或用户/系统 D-Bus 不阻止本地 TUI；依赖它们的功能
 单独显示不可用。
@@ -639,6 +645,15 @@ python3 scripts/linux-shell-smoke.py target/debug/tundra-shell
 ```
 
 PTY smoke 使用隔离的 XDG 目录和 140 × 40 的真实 PTY 进入 Shell。它默认注入 64 个 SGR 全移动鼠标事件（可通过 `TUNDRA_PTY_MOUSE_EVENT_COUNT` 调整），随后在已有 Appearance 颜色输入框中发送单字符哨兵，在 250 毫秒门限内验证鼠标洪峰后的普通字符输入响应；Ratatui 增量绘制不保证重发完整多字符字符串。测试再取消临时颜色、完成当前 Linux 用户的 Appearance 设置并进入 Home。最后发送 `SIGTERM`，检查终端属性、raw mode、鼠标捕获、备用屏幕和光标均得到恢复。
+
+root 启动确认在可丢弃的 Linux 测试环境验证；下列脚本使用临时 XDG 目录，不修改系统配置。
+第一项覆盖 Shell/CLI 的 `y` 确认、其他按键取消、终端模式恢复、管道拒绝、普通用户免确认和 set-ID 拒绝；
+第二项确认警告后继续执行上述完整界面 smoke。
+
+```console
+sudo python3 scripts/tests/linux-root-startup.py target/debug/tundra-shell target/debug/tundra-cli
+sudo python3 scripts/linux-shell-smoke.py target/debug/tundra-shell
+```
 
 固定测试重点包括输入阶段/修饰键/paste/focus/双击/拖拽/滚动及高频鼠标事件合并、模态命中和焦点恢复、通知、Editor grapheme 与异步保存、Explorer/Launcher 后台操作、登录锁定与授权、时钟和 DST、storage schema/迁移/原子写入/损坏恢复，以及 watchdog 的 panic 边界、任务回收和事故报告。
 
