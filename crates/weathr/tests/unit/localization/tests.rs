@@ -27,9 +27,9 @@ fn provider(chinese: bool) -> LocalizationProvider {
             }
             .into(),
             "weathr-start-prompt" => if chinese {
-                "按空格键开始"
+                "按下任意键进入"
             } else {
-                "Press Space to start"
+                "Press any key to enter"
             }
             .into(),
             "weathr-condition-clear" => if chinese { "晴" } else { "Clear" }.into(),

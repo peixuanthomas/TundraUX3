@@ -1,5 +1,5 @@
 weathr-quit-prompt = Press Space to quit
-weathr-start-prompt = Press Space to start
+weathr-start-prompt = Press any key to enter
 weathr-loading = Loading
 weathr-north = N
 weathr-south = S

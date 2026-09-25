@@ -2,9 +2,9 @@ use super::*;
 
 #[test]
 fn centered_text_uses_display_cells_instead_of_bytes_or_scalars() {
-    assert_eq!(centered_column(20, "按空格键开始".width()), 4);
+    assert_eq!(centered_column(20, "按下任意键进入".width()), 3);
     assert_eq!(centered_column(20, "e\u{301}".width()), 9);
-    assert_eq!(centered_column(4, "按空格键开始".width()), 0);
+    assert_eq!(centered_column(4, "按下任意键进入".width()), 0);
 }
 
 #[test]

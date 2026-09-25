@@ -4,7 +4,9 @@ pub mod clock;
 use crate::error::TerminalError;
 use capabilities::TerminalCapabilities;
 use crossterm::{
-    cursor, execute, queue,
+    cursor,
+    event::{DisableMouseCapture, EnableMouseCapture},
+    execute, queue,
     style::{Color, Print, ResetColor, SetForegroundColor},
     terminal::{self, Clear, ClearType, EnterAlternateScreen, LeaveAlternateScreen},
 };
@@ -115,15 +117,26 @@ impl TerminalRenderer {
 
     pub fn init(&mut self) -> Result<(), TerminalError> {
         terminal::enable_raw_mode().map_err(TerminalError::RawModeError)?;
-        execute!(self.stdout, EnterAlternateScreen, cursor::Hide)
-            .map_err(TerminalError::InitError)?;
+        execute!(
+            self.stdout,
+            EnterAlternateScreen,
+            EnableMouseCapture,
+            cursor::Hide
+        )
+        .map_err(TerminalError::InitError)?;
         Ok(())
     }
 
     pub fn cleanup(&mut self) -> io::Result<()> {
-        execute!(self.stdout, LeaveAlternateScreen, cursor::Show, ResetColor)?;
-        terminal::disable_raw_mode()?;
-        Ok(())
+        let output_result = execute!(
+            self.stdout,
+            DisableMouseCapture,
+            LeaveAlternateScreen,
+            cursor::Show,
+            ResetColor
+        );
+        let raw_mode_result = terminal::disable_raw_mode();
+        output_result.and(raw_mode_result)
     }
 
     pub fn manual_resize(&mut self, width: u16, height: u16) -> io::Result<()> {

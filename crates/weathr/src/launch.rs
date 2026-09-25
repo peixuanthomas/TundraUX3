@@ -48,7 +48,7 @@ impl ExitSemantic {
     fn resolve(self, outcome: AppRunOutcome) -> ShellLockscreenResult {
         match outcome {
             AppRunOutcome::Cancelled => ShellLockscreenResult::Cancelled,
-            AppRunOutcome::Space => match self {
+            AppRunOutcome::Continue => match self {
                 Self::Start => ShellLockscreenResult::Started,
                 Self::Quit => ShellLockscreenResult::Quit,
             },
@@ -124,12 +124,20 @@ impl From<WeatherAssetError> for WeathrRunError {
 }
 pub fn restore_terminal_best_effort() {
     use crossterm::{
-        cursor, execute,
+        cursor,
+        event::DisableMouseCapture,
+        execute,
         style::ResetColor,
         terminal::{LeaveAlternateScreen, disable_raw_mode},
     };
     let _ = disable_raw_mode();
-    let _ = execute!(io::stdout(), LeaveAlternateScreen, cursor::Show, ResetColor);
+    let _ = execute!(
+        io::stdout(),
+        DisableMouseCapture,
+        LeaveAlternateScreen,
+        cursor::Show,
+        ResetColor
+    );
 }
 
 /// Blocks a terminal-owning caller until a snapshot-driven display session

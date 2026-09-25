@@ -8,6 +8,119 @@ use std::io;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 #[test]
+fn start_accepts_character_navigation_function_and_control_keys() {
+    use crossterm::event::KeyEvent;
+    for (code, modifiers) in [
+        (KeyCode::Char(' '), KeyModifiers::NONE),
+        (KeyCode::Char('a'), KeyModifiers::NONE),
+        (KeyCode::Char('中'), KeyModifiers::NONE),
+        (KeyCode::Enter, KeyModifiers::NONE),
+        (KeyCode::Esc, KeyModifiers::NONE),
+        (KeyCode::Tab, KeyModifiers::NONE),
+        (KeyCode::Left, KeyModifiers::NONE),
+        (KeyCode::F(1), KeyModifiers::NONE),
+        (KeyCode::Char('c'), KeyModifiers::CONTROL),
+    ] {
+        assert_eq!(
+            input_outcome(
+                Event::Key(KeyEvent::new(code, modifiers)),
+                BottomHudPrompt::Start
+            ),
+            Some(AppRunOutcome::Continue),
+            "{code:?} with {modifiers:?}"
+        );
+    }
+    for kind in [KeyEventKind::Release, KeyEventKind::Repeat] {
+        assert_eq!(
+            input_outcome(
+                Event::Key(KeyEvent::new_with_kind(
+                    KeyCode::Char('l'),
+                    KeyModifiers::NONE,
+                    kind
+                )),
+                BottomHudPrompt::Start
+            ),
+            None,
+            "held/released keys must not immediately re-enter after locking"
+        );
+    }
+}
+
+#[test]
+fn start_accepts_clicks_anywhere_but_ignores_other_mouse_events() {
+    use crossterm::event::{MouseButton, MouseEvent};
+    for button in [MouseButton::Left, MouseButton::Right, MouseButton::Middle] {
+        for (column, row) in [(0, 0), (40, 12), (119, 39)] {
+            let event = Event::Mouse(MouseEvent {
+                kind: MouseEventKind::Down(button),
+                column,
+                row,
+                modifiers: KeyModifiers::NONE,
+            });
+            assert_eq!(
+                input_outcome(event.clone(), BottomHudPrompt::Start),
+                Some(AppRunOutcome::Continue)
+            );
+            assert_eq!(input_outcome(event, BottomHudPrompt::Quit), None);
+        }
+    }
+    for kind in [
+        MouseEventKind::Moved,
+        MouseEventKind::Drag(MouseButton::Left),
+        MouseEventKind::Up(MouseButton::Left),
+        MouseEventKind::ScrollUp,
+        MouseEventKind::ScrollDown,
+    ] {
+        assert_eq!(
+            input_outcome(
+                Event::Mouse(MouseEvent {
+                    kind,
+                    column: 40,
+                    row: 12,
+                    modifiers: KeyModifiers::NONE,
+                }),
+                BottomHudPrompt::Start
+            ),
+            None
+        );
+    }
+    for event in [
+        Event::FocusGained,
+        Event::FocusLost,
+        Event::Resize(120, 40),
+        Event::Paste("text".into()),
+    ] {
+        assert_eq!(input_outcome(event, BottomHudPrompt::Start), None);
+    }
+}
+
+#[test]
+fn quit_mode_keeps_space_and_control_c_actions() {
+    use crossterm::event::KeyEvent;
+    for (code, modifiers, expected) in [
+        (
+            KeyCode::Char(' '),
+            KeyModifiers::NONE,
+            Some(AppRunOutcome::Continue),
+        ),
+        (
+            KeyCode::Char('c'),
+            KeyModifiers::CONTROL,
+            Some(AppRunOutcome::Cancelled),
+        ),
+        (KeyCode::Char('a'), KeyModifiers::NONE, None),
+    ] {
+        assert_eq!(
+            input_outcome(
+                Event::Key(KeyEvent::new(code, modifiers)),
+                BottomHudPrompt::Quit
+            ),
+            expected
+        );
+    }
+}
+
+#[test]
 fn first_frame_callback_runs_once_after_successful_flush() {
     let calls = Arc::new(AtomicUsize::new(0));
     let callback_calls = calls.clone();

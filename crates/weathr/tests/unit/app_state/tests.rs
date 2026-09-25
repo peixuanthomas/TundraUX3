@@ -87,19 +87,19 @@ fn host_localization_updates_hud_without_changing_weather_or_raw_city_data() {
         BottomHudPrompt::Start,
     );
     app.update_cached_info();
-    assert!(app.cached_weather_info.contains("Press Space to start"));
+    assert!(app.cached_weather_info.contains("Press any key to enter"));
     assert!(!app.weather_info_needs_update);
     app.localize = crate::localization::tests::chinese();
     app.update_cached_info();
     assert_eq!(
         app.cached_weather_info,
-        "位置：上海 / Shanghai（北纬31.23°，东经121.47°） | 按空格键开始"
+        "位置：上海 / Shanghai（北纬31.23°，东经121.47°） | 按下任意键进入"
     );
     assert_eq!(app.weather_summary_text().as_deref(), Some("晴  20.0°C"));
     assert_eq!(app.current_weather.as_ref().unwrap().temperature, 20.0);
     app.clear_weather_for_offline();
     app.hide_location = true;
-    assert_eq!(app.bottom_hud_text(), "离线 | 按空格键开始");
+    assert_eq!(app.bottom_hud_text(), "离线 | 按下任意键进入");
     assert_eq!(app.get_condition_text(), "加载中");
 }
 

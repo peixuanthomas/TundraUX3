@@ -11,7 +11,7 @@ use crate::scene::world::WorldScene;
 use crate::scene::{SceneContext, SceneRegistry};
 use crate::theme::ThemeRegistry;
 use chrono::Datelike;
-use crossterm::event::{self, Event, KeyCode, KeyModifiers};
+use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers, MouseEventKind};
 use std::io;
 use std::sync::Arc;
 use std::time::Duration;
@@ -24,7 +24,7 @@ const DEFAULT_THEME_ID: &str = "default";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum AppRunOutcome {
-    Space,
+    Continue,
     Cancelled,
 }
 
@@ -121,6 +121,7 @@ pub struct App {
     snapshots: tokio::sync::watch::Receiver<SystemSnapshot>,
     clock_format: ClockFormat,
     hide_hud: bool,
+    bottom_hud_prompt: BottomHudPrompt,
 }
 
 pub(crate) struct AppInput {
@@ -199,6 +200,7 @@ impl App {
             snapshots,
             clock_format,
             hide_hud,
+            bottom_hud_prompt,
         })
     }
 
@@ -441,19 +443,37 @@ impl App {
                         let (new_width, new_height) = renderer.get_size();
                         self.animations.on_resize(new_width, new_height);
                     }
-                    Event::Key(key_event) => match key_event.code {
-                        KeyCode::Char(' ') => return Ok(AppRunOutcome::Space),
-                        KeyCode::Char('c')
-                            if key_event.modifiers.contains(KeyModifiers::CONTROL) =>
-                        {
-                            return Ok(AppRunOutcome::Cancelled);
+                    event => {
+                        if let Some(outcome) = input_outcome(event, self.bottom_hud_prompt) {
+                            return Ok(outcome);
                         }
-                        _ => {}
-                    },
-                    _ => {}
+                    }
                 }
             }
         }
+    }
+}
+
+fn input_outcome(event: Event, prompt: BottomHudPrompt) -> Option<AppRunOutcome> {
+    match event {
+        Event::Key(key) if key.kind == KeyEventKind::Press => {
+            if prompt == BottomHudPrompt::Start || key.code == KeyCode::Char(' ') {
+                Some(AppRunOutcome::Continue)
+            } else if key.code == KeyCode::Char('c')
+                && key.modifiers.contains(KeyModifiers::CONTROL)
+            {
+                Some(AppRunOutcome::Cancelled)
+            } else {
+                None
+            }
+        }
+        Event::Mouse(mouse)
+            if prompt == BottomHudPrompt::Start
+                && matches!(mouse.kind, MouseEventKind::Down(_)) =>
+        {
+            Some(AppRunOutcome::Continue)
+        }
+        _ => None,
     }
 }
 
