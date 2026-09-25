@@ -1363,3 +1363,117 @@ fn shell_modal_outgoing_keeps_its_capture_phase_until_finished() {
     motion.process(Duration::from_millis(180), &mut frame, &state);
     assert!(!motion.needs_shell_modal_base());
 }
+
+fn clock_overlay_covered_by_shell_modal() -> (ShellSession, ShellMotionEffects, ui::ShellFrameLayout)
+{
+    page_overlay_covered_by_shell_modal(ShellScreen::Clock)
+}
+
+fn page_overlay_covered_by_shell_modal(
+    screen: ShellScreen,
+) -> (ShellSession, ShellMotionEffects, ui::ShellFrameLayout) {
+    let full = Rect::new(0, 0, 120, 40);
+    let layout = ui::ShellFrameLayout::new(full, None, &ui::RenderContext::default());
+    let mut state = ShellSession::new_for_home_mode(
+        ShellLaunchConfig::default(),
+        (120, 40),
+        ShellHomeMode::User,
+    );
+    while state.notification_dismiss_active_modal_without_response() {}
+    state.screen_stack = vec![screen];
+    if screen == ShellScreen::Clock {
+        state.clock_create_state = Some(ClockCreateState::default());
+    } else {
+        state.app.dispatch_at(
+            app::AppCommand::SetEditorState(Some(EditorState::untitled(
+                app::editor::DocumentKind::PlainText,
+            ))),
+            Instant::now(),
+        );
+        state.editor_open_menu = Some(ui::EditorMenu::File);
+    }
+    state.refresh_hit_map();
+    let mut motion = ShellMotionEffects::default();
+    let theme = ui::ThemeTokens::glacier_night();
+    motion.update_layout(&state, &layout, theme, false);
+    let mut frame = Buffer::filled(full, Cell::new("B"));
+    motion.capture_base(&frame, &state);
+    for position in overlay_area(&state).unwrap().positions() {
+        frame[position].set_symbol("P");
+    }
+    motion.capture_overlay(&frame, &state);
+    motion.process(Duration::ZERO, &mut frame, &state);
+    motion.process(Duration::from_millis(180), &mut frame, &state);
+    state.notify_modal(
+        "Cover",
+        "Shell overlay",
+        ui::NotificationTone::Info,
+        Vec::new(),
+    );
+    state.refresh_hit_map();
+    motion.update_layout(&state, &layout, theme, false);
+    assert_eq!(motion.overlay_gate, Duration::from_millis(90));
+    assert!(
+        motion.active_visual_outgoing.is_none(),
+        "covering does not close the page overlay"
+    );
+    motion.capture_base(&frame, &state);
+    for position in overlay_area(&state).unwrap().positions() {
+        frame[position].set_symbol("S");
+    }
+    motion.capture_overlay(&frame, &state);
+    motion.process(Duration::ZERO, &mut frame, &state);
+    motion.process(Duration::from_millis(180), &mut frame, &state);
+    (state, motion, layout)
+}
+
+#[test]
+fn closing_shell_modal_only_reveals_its_existing_page_overlay() {
+    let (mut state, mut motion, layout) = clock_overlay_covered_by_shell_modal();
+    state.notification_dismiss_active_modal_without_response();
+    state.refresh_hit_map();
+    motion.update_layout(&state, &layout, ui::ThemeTokens::glacier_night(), false);
+    assert_eq!(motion.overlay_gate, Duration::from_millis(180));
+    assert!(motion.needs_shell_modal_base());
+    let mut frame = Buffer::filled(layout.bounds, Cell::new("P"));
+    motion.capture_base(&frame, &state);
+    motion.capture_overlay(&frame, &state);
+    motion.process(Duration::ZERO, &mut frame, &state);
+    motion.process(Duration::from_millis(180), &mut frame, &state);
+    assert!(!motion.is_running(), "revealed page must not enter again");
+    assert_eq!(motion.overlay_gate, Duration::ZERO);
+}
+
+#[test]
+fn deferred_shell_modal_close_does_not_reenter_covered_page() {
+    let (mut state, mut motion, layout) = clock_overlay_covered_by_shell_modal();
+    let cancel = state
+        .clone()
+        .route_input_at(InputEvent::from_key_label("Esc"), Instant::now());
+    assert_eq!(
+        motion.intercept_input(&cancel),
+        MotionInputDisposition::Defer
+    );
+    let mut frame = Buffer::filled(layout.bounds, Cell::new("P"));
+    motion.process(Duration::ZERO, &mut frame, &state);
+    motion.process(Duration::from_millis(180), &mut frame, &state);
+    assert!(motion.take_deferred_close(&state).is_some());
+    state.notification_dismiss_active_modal_without_response();
+    state.refresh_hit_map();
+    motion.update_layout(&state, &layout, ui::ThemeTokens::glacier_night(), false);
+    assert_eq!(motion.overlay_gate, Duration::ZERO);
+    motion.process(Duration::ZERO, &mut frame, &state);
+    assert!(!motion.is_running());
+}
+
+#[test]
+fn new_page_overlay_after_shell_close_still_enters() {
+    let (mut state, mut motion, layout) = page_overlay_covered_by_shell_modal(ShellScreen::Editor);
+    state.notification_dismiss_active_modal_without_response();
+    state.editor_quick_menu_anchor = None;
+    state.editor_open_menu = Some(ui::EditorMenu::Edit);
+    state.refresh_hit_map();
+    motion.update_layout(&state, &layout, ui::ThemeTokens::glacier_night(), false);
+    assert_eq!(motion.overlay_gate, Duration::from_millis(260));
+    assert!(motion.active_visual_outgoing.is_some());
+}
