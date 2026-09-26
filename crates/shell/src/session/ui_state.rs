@@ -85,6 +85,8 @@ pub(super) enum EditorCursorDirection {
 pub(super) struct EditorCursorAccelerationState {
     pub(super) direction: EditorCursorDirection,
     pub(super) started_at: Instant,
+    pub(super) last_event_at: Instant,
+    pub(super) reports_repeat: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

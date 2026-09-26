@@ -564,7 +564,7 @@ fn held_direction_keys_accelerate_non_linearly_with_slower_vertical_shift_select
             InputModifiers::none(),
             InputPhase::Repeat,
         )),
-        started_at + Duration::from_millis(7_900),
+        started_at + Duration::from_millis(6_650),
     );
     assert_eq!(
         state
@@ -572,7 +572,23 @@ fn held_direction_keys_accelerate_non_linearly_with_slower_vertical_shift_select
             .cursor
             .map(|cursor| cursor.column),
         Some(2),
-        "the first two seconds should retain one-cell movement"
+        "movement before the activation delay should retain one-cell precision"
+    );
+    state.apply_input_at(
+        InputEvent::Key(KeyInput::with_phase(
+            InputKey::Right,
+            InputModifiers::none(),
+            InputPhase::Repeat,
+        )),
+        started_at + Duration::from_millis(6_850),
+    );
+    assert_eq!(
+        state
+            .to_editor_view_model()
+            .cursor
+            .map(|cursor| cursor.column),
+        Some(4),
+        "the quadratic curve should begin after 750 milliseconds"
     );
     state.apply_input_at(
         InputEvent::Key(KeyInput::with_phase(
@@ -581,22 +597,6 @@ fn held_direction_keys_accelerate_non_linearly_with_slower_vertical_shift_select
             InputPhase::Repeat,
         )),
         started_at + Duration::from_millis(8_100),
-    );
-    assert_eq!(
-        state
-            .to_editor_view_model()
-            .cursor
-            .map(|cursor| cursor.column),
-        Some(4),
-        "the quadratic curve should begin after two seconds"
-    );
-    state.apply_input_at(
-        InputEvent::Key(KeyInput::with_phase(
-            InputKey::Right,
-            InputModifiers::none(),
-            InputPhase::Repeat,
-        )),
-        started_at + Duration::from_millis(11_100),
     );
     assert_eq!(
         state
@@ -639,7 +639,7 @@ fn editor_settings_restore_defaults_and_persist_saved_acceleration_values() {
         .settings
         .expect("settings window");
     assert!(defaults.enabled);
-    assert_eq!(defaults.activation_delay_ms, 2_000);
+    assert_eq!(defaults.activation_delay_ms, 750);
     assert_eq!(defaults.horizontal_max_step, 8);
     assert_eq!(defaults.vertical_max_step, 3);
 
@@ -659,7 +659,7 @@ fn editor_settings_restore_defaults_and_persist_saved_acceleration_values() {
         .settings
         .expect("restored settings draft");
     assert!(restored.enabled);
-    assert_eq!(restored.activation_delay_ms, 2_000);
+    assert_eq!(restored.activation_delay_ms, 750);
 
     click_editor_setting(&mut state, &platform, EditorSettingsControl::ToggleEnabled);
     click_editor_setting(
@@ -677,8 +677,8 @@ fn editor_settings_restore_defaults_and_persist_saved_acceleration_values() {
         .expect("load persisted config")
         .editor;
     assert!(!stored.cursor_acceleration_enabled);
-    assert_eq!(stored.cursor_acceleration_delay_ms, 2_250);
-    assert_eq!(stored.cursor_acceleration_ramp_ms, 3_000);
+    assert_eq!(stored.cursor_acceleration_delay_ms, 1_000);
+    assert_eq!(stored.cursor_acceleration_ramp_ms, 1_250);
     assert!(stored.cursor_vertical_max_step < stored.cursor_horizontal_max_step);
     assert_eq!(stored.explorer_open_extensions, vec!["rs".to_string()]);
 
@@ -701,7 +701,7 @@ fn editor_settings_restore_defaults_and_persist_saved_acceleration_values() {
         .settings
         .expect("persisted settings window");
     assert!(!loaded.enabled);
-    assert_eq!(loaded.activation_delay_ms, 2_250);
+    assert_eq!(loaded.activation_delay_ms, 1_000);
     click_editor_setting(&mut reloaded, &platform, EditorSettingsControl::Cancel);
 
     type_text(&mut reloaded, &platform, "abcdefghijklmnopqrst");

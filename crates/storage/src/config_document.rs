@@ -395,8 +395,8 @@ impl Default for EditorConfig {
                 .map(|extension| (*extension).to_string())
                 .collect(),
             cursor_acceleration_enabled: true,
-            cursor_acceleration_delay_ms: 2_000,
-            cursor_acceleration_ramp_ms: 3_000,
+            cursor_acceleration_delay_ms: 750,
+            cursor_acceleration_ramp_ms: 1_250,
             cursor_horizontal_max_step: 8,
             cursor_vertical_max_step: 3,
         }

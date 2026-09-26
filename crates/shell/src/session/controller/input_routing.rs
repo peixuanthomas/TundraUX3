@@ -33,6 +33,7 @@ impl ShellSession {
             if matches!(input, InputEvent::FocusLost) {
                 self.mouse_coordinates = None;
                 self.launcher_drag = None;
+                self.editor_cursor_acceleration = None;
             }
             if matches!(input, InputEvent::Resize { .. }) {
                 self.button_regions.clear();

@@ -8,6 +8,9 @@ pub(in crate::session) const EDITOR_CURSOR_MIN_HORIZONTAL_STEP: u8 = 2;
 pub(in crate::session) const EDITOR_CURSOR_MAX_HORIZONTAL_STEP: u8 = 16;
 pub(in crate::session) const EDITOR_CURSOR_MIN_VERTICAL_STEP: u8 = 1;
 pub(in crate::session) const EDITOR_CURSOR_MAX_VERTICAL_STEP: u8 = 8;
+// Legacy terminals report auto-repeat as consecutive Press events and have no
+// release event. Only a closely spaced stream counts as a held direction key.
+const EDITOR_CURSOR_LEGACY_REPEAT_GAP: Duration = Duration::from_millis(150);
 
 pub(in crate::session) fn editor_cursor_direction(key: &KeyInput) -> Option<EditorCursorDirection> {
     if key.has_non_shift_modifier() {
@@ -1149,20 +1152,27 @@ impl ShellSession {
             self.editor_cursor_acceleration = None;
             return 1;
         }
-        if phase == InputPhase::Press
-            || self
-                .editor_cursor_acceleration
-                .is_none_or(|state| state.direction != direction)
-        {
+        let starts_new_hold = self.editor_cursor_acceleration.is_none_or(|state| {
+            state.direction != direction
+                || (phase == InputPhase::Press
+                    && (state.reports_repeat
+                        || received_at.saturating_duration_since(state.last_event_at)
+                            > EDITOR_CURSOR_LEGACY_REPEAT_GAP))
+        });
+        if starts_new_hold {
             self.editor_cursor_acceleration = Some(EditorCursorAccelerationState {
                 direction,
                 started_at: received_at,
+                last_event_at: received_at,
+                reports_repeat: phase == InputPhase::Repeat,
             });
             return 1;
         }
-        let Some(state) = self.editor_cursor_acceleration else {
+        let Some(state) = self.editor_cursor_acceleration.as_mut() else {
             return 1;
         };
+        state.last_event_at = received_at;
+        state.reports_repeat |= phase == InputPhase::Repeat;
         let held_ms = received_at
             .saturating_duration_since(state.started_at)
             .as_millis();
