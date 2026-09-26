@@ -769,25 +769,23 @@ impl ShellSession {
             self.handle_editor_effect(effect, platform);
         }
     }
-    /// Keeps the Source caret inside the horizontal text viewport after a
+    /// Keeps the Source caret inside the text viewport after a
     /// caret-moving command. Manual scrollbar and wheel scrolling deliberately
-    /// bypass this hook, so users can inspect another column until their next
+    /// bypass this hook, so users can inspect another region until their next
     /// keyboard or editing action.
     pub(in crate::session) fn reveal_source_caret(&mut self) {
-        let Some((cursor_column, mut viewport)) = self
+        let Some(((cursor_line, cursor_column), mut viewport)) = self
             .app
             .editor_state()
             .filter(|state| state.mode == app::editor::EditorMode::Source)
             .and_then(|state| {
                 state
                     .source_display_position(state.cursor.byte_offset)
-                    .map(|(_, column)| (column, state.viewport))
+                    .map(|position| (position, state.viewport))
             })
         else {
             return;
         };
-        let left_column = viewport.left_column;
-
         let area = Rect::new(0, 0, self.terminal_size.0, self.terminal_size.1);
         let editor_area = match self.shell_layout_for(area) {
             ui::ShellLayout::Compact(compact) => compact,
@@ -795,10 +793,22 @@ impl ShellSession {
         };
         let layout = ui::editor_layout(editor_area, &self.to_editor_view_model());
         let visible_width = usize::from(layout.canvas.width);
-        if visible_width == 0 {
+        let visible_height = layout.visible_capacity;
+        if visible_width == 0 || visible_height == 0 {
             return;
         }
 
+        // Use the actual rendered origin: layout may clamp a requested scroll
+        // offset when opening a log at EOF, deleting lines or growing the terminal.
+        let top_line = layout.visible_start;
+        viewport.top_line = if cursor_line < top_line {
+            cursor_line
+        } else if cursor_line >= top_line.saturating_add(visible_height) {
+            cursor_line.saturating_add(1).saturating_sub(visible_height)
+        } else {
+            top_line
+        };
+        let left_column = layout.horizontal_scroll;
         let next_left = if cursor_column < left_column {
             cursor_column
         } else if cursor_column >= left_column.saturating_add(visible_width) {

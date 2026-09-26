@@ -174,6 +174,107 @@ fn source_caret_reveals_a_long_line_and_the_horizontal_scrollbar_moves_the_viewp
 }
 
 #[test]
+fn source_caret_follows_vertical_navigation_in_editable_and_read_only_files() {
+    for name in ["notes.txt", "service.log"] {
+        let fixture = FixtureRoot::new("source-vertical-caret");
+        let platform = mock_platform(fixture.path());
+        bootstrap_with_shell(&platform);
+        // Long lines reserve a horizontal scrollbar, reducing the visible height.
+        let source = (0..100)
+            .map(|line| format!("line {line:03} {}", "x".repeat(150)))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let path = fixture.path().join("Documents").join(name);
+        fs::write(&path, &source).unwrap();
+        let mut state = logged_in_state(&platform);
+        open_only_document_in_editor(&mut state, &platform);
+        assert_eq!(
+            state.to_editor_view_model().read_only,
+            name.ends_with(".log")
+        );
+        assert!(current_editor_layout(&state).horizontal_scrollbar.is_some());
+        let initial_top = current_editor_layout(&state).visible_start;
+        state.apply_input_with_platform(InputEvent::from_key_label("Home"), &platform);
+        assert_eq!(current_editor_layout(&state).visible_start, initial_top);
+
+        // Logs start at the bottom with a requested offset clamped by layout.
+        // Cross both edges repeatedly, including Shift+Down selection.
+        for (key, shift) in [
+            (InputKey::Up, false),
+            (InputKey::Down, true),
+            (InputKey::Up, false),
+            (InputKey::Down, false),
+        ] {
+            for _ in 0..105 {
+                state.apply_input_with_platform(
+                    InputEvent::Key(KeyInput::with_phase(
+                        key.clone(),
+                        InputModifiers {
+                            shift,
+                            ..InputModifiers::none()
+                        },
+                        InputPhase::Press,
+                    )),
+                    &platform,
+                );
+                let model = state.to_editor_view_model();
+                let layout = current_editor_layout(&state);
+                let cursor = model.cursor.unwrap();
+                assert!(
+                    (layout.visible_start..layout.visible_start + layout.visible_capacity)
+                        .contains(&cursor.line),
+                    "{name}: {key:?} left caret {cursor:?} outside visible rows {}..{}",
+                    layout.visible_start,
+                    layout.visible_start + layout.visible_capacity,
+                );
+                let window = model.source_window.as_ref().unwrap();
+                assert!(
+                    window.lines[cursor.line - window.first_line]
+                        .text
+                        .starts_with(&format!("line {:03}", cursor.line))
+                );
+                if shift && cursor.line > 0 {
+                    let selection = model.selection.unwrap();
+                    assert_eq!(selection.anchor.line, 0);
+                    assert_eq!(selection.active.line, cursor.line);
+                }
+            }
+            assert_source_caret_rendered(&state);
+        }
+        // Manual wheel scrolling stays independent until the next caret action.
+        let canvas = current_editor_layout(&state).canvas;
+        let old_top = current_editor_layout(&state).visible_start;
+        state.apply_input_with_platform(
+            InputEvent::mouse_scroll(ui::ScrollDirection::Up, (canvas.x, canvas.y)),
+            &platform,
+        );
+        assert_eq!(current_editor_layout(&state).visible_start, old_top - 3);
+        assert_eq!(state.to_editor_view_model().cursor.unwrap().line, 99);
+        state.apply_input_with_platform(InputEvent::from_key_label("Down"), &platform);
+        assert_eq!(current_editor_layout(&state).visible_start, old_top);
+        assert_source_caret_rendered(&state);
+        assert!(!state.to_editor_view_model().dirty);
+        assert_eq!(fs::read_to_string(path).unwrap(), source);
+    }
+}
+
+#[test]
+fn source_caret_follows_newlines_beyond_the_bottom_edge() {
+    let fixture = FixtureRoot::new("source-vertical-edit");
+    let platform = mock_platform(fixture.path());
+    let mut state = new_user_home_state(&platform);
+    open_editor_from_home(&mut state, &platform);
+    for line in 1..70 {
+        state.apply_input_with_platform(InputEvent::from_key_label("Enter"), &platform);
+        let model = state.to_editor_view_model();
+        let layout = current_editor_layout(&state);
+        assert_eq!(model.cursor.unwrap().line, line);
+        assert!(line < layout.visible_start + layout.visible_capacity);
+    }
+    assert!(state.to_editor_view_model().dirty);
+}
+
+#[test]
 fn unicode_document_can_scroll_horizontally_past_short_lines() {
     let fixture = FixtureRoot::new("unicode-horizontal-scroll");
     let platform = mock_platform(fixture.path());
@@ -1307,6 +1408,43 @@ fn current_editor_layout(state: &ShellSession) -> ui::EditorLayout {
         ShellLayout::Full { main, .. } => main,
     };
     ui::editor_layout(editor_area, &state.to_editor_view_model())
+}
+
+fn assert_source_caret_rendered(state: &ShellSession) {
+    let model = state.to_editor_view_model();
+    let layout = current_editor_layout(state);
+    let cursor = model.cursor.unwrap();
+    let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(120, 40)).unwrap();
+    let context = ui::RenderContext::from_theme(
+        &ui::TundraTheme::default_dark(),
+        Default::default(),
+        Default::default(),
+    );
+    terminal
+        .set_cursor_position(ratatui::layout::Position::new(119, 39))
+        .unwrap();
+    terminal
+        .draw(|frame| {
+            let area = match ui::compute_shell_layout(frame.area()) {
+                ShellLayout::Compact(compact) => compact,
+                ShellLayout::Full { main, .. } => main,
+            };
+            ui::render_editor_contextual(frame, area, &model, &context);
+        })
+        .unwrap();
+    let screen_cursor = ratatui::layout::Position::new(
+        layout.canvas.x + (cursor.column - layout.horizontal_scroll) as u16,
+        layout.canvas.y + (cursor.line - layout.visible_start) as u16,
+    );
+    assert_eq!(terminal.get_cursor_position().unwrap(), screen_cursor);
+    assert_eq!(
+        layout.hit_test(screen_cursor.x, screen_cursor.y),
+        Some(EditorHitTarget::Canvas(cursor))
+    );
+    let row = (layout.canvas.x..layout.canvas.x + 8)
+        .map(|x| terminal.backend().buffer()[(x, screen_cursor.y)].symbol())
+        .collect::<String>();
+    assert_eq!(row, format!("line {:03}", cursor.line));
 }
 
 fn click_editor_setting(
