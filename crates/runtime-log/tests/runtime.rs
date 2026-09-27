@@ -325,7 +325,22 @@ fn write_failure_reports_health_without_blocking_or_recursive_events() {
     let logs = dir.path().join("logs");
     let runtime =
         RuntimeLogRuntime::start(RuntimeLogConfig::new(logs.clone(), "run".into())).unwrap();
-    fs::rename(&logs, dir.path().join("previous-logs")).unwrap();
+    // Startup cleanup briefly opens files in this directory. Windows cannot
+    // rename it until those handles close; retry only that sharing failure.
+    let deadline = Instant::now() + Duration::from_secs(3);
+    loop {
+        match fs::rename(&logs, dir.path().join("previous-logs")) {
+            Ok(()) => break,
+            Err(error)
+                if cfg!(windows)
+                    && error.kind() == std::io::ErrorKind::PermissionDenied
+                    && Instant::now() < deadline =>
+            {
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            Err(error) => panic!("could not replace the log directory: {error}"),
+        }
+    }
     fs::write(&logs, "not a directory").unwrap();
     let start = Instant::now();
     assert!(

@@ -7,10 +7,14 @@ pub(super) fn password_hash(password: &str) -> Result<String, ServiceError> {
     if password.as_bytes().is_empty() {
         return Err(ServiceError::Unsupported);
     }
-    // libcrypt.so.1 is provided by libxcrypt on the supported Linux distributions.
+    // Fedora/Arch provide libcrypt.so.2; Ubuntu provides libcrypt.so.1.
     // Loading at runtime lets the application start even when account tools are absent.
     unsafe {
-        let library = libc::dlopen(c"libcrypt.so.1".as_ptr(), libc::RTLD_NOW | libc::RTLD_LOCAL);
+        let mut library =
+            libc::dlopen(c"libcrypt.so.2".as_ptr(), libc::RTLD_NOW | libc::RTLD_LOCAL);
+        if library.is_null() {
+            library = libc::dlopen(c"libcrypt.so.1".as_ptr(), libc::RTLD_NOW | libc::RTLD_LOCAL);
+        }
         if library.is_null() {
             return Err(ServiceError::ServiceUnavailable);
         }

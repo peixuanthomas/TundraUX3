@@ -13,6 +13,7 @@ ExclusiveArch:  x86_64
 Requires:       xdg-utils
 Requires:       glib2
 Requires:       glibc
+Requires:       libxcrypt
 Requires:       PackageKit
 Requires:       polkit
 Recommends:     dbus
