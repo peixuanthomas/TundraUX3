@@ -518,17 +518,17 @@ fn deeply_nested_messages_stop_at_emergency_depth_limit() {
 }
 
 #[test]
-fn startup_fallback_preserves_english_repairs_before_selected_manifest_failure() {
+fn startup_fallback_preserves_english_repairs_before_custom_manifest_failure() {
     for missing_manifest in [true, false] {
         let fixture = Fixture::new();
         fixture.write("locales/en-US/manifest.toml", "invalid manifest");
         if !missing_manifest {
             fixture.write(
-                "locales/zh-CN/manifest.toml",
-                "format_version = 2\ncode = 'zh-CN'\nnative_name = '简体中文'\n",
+                "locales/fr-FR/manifest.toml",
+                "format_version = 2\ncode = 'fr-FR'\nnative_name = 'Français'\n",
             );
         }
-        let load = LanguageSnapshot::load_startup(&fixture.0, "zh-CN", 23);
+        let load = LanguageSnapshot::load_startup(&fixture.0, "fr-FR", 23);
         assert_eq!(load.snapshot.code(), "en-US");
         assert_eq!(load.snapshot.generation(), 23);
         let manifest_path = fixture.0.join("locales/en-US/manifest.toml");
@@ -560,7 +560,7 @@ fn startup_fallback_preserves_english_repairs_before_selected_manifest_failure()
             load.diagnostics
                 .iter()
                 .any(|diagnostic| diagnostic.kind == RepairKind::StartupFallback
-                    && diagnostic.path == fixture.0.join("locales/zh-CN/manifest.toml"))
+                    && diagnostic.path == fixture.0.join("locales/fr-FR/manifest.toml"))
         );
         assert_eq!(
             msg!("resources-recovery-title").render(&load.snapshot),
@@ -577,21 +577,27 @@ fn startup_fallback_preserves_english_repairs_before_selected_manifest_failure()
 }
 
 #[test]
-fn startup_fallback_reports_repeated_write_failures_once() {
+fn startup_keeps_chinese_in_memory_and_reports_write_failures_once() {
     let fixture = Fixture::new();
     let root = fixture.0.join("blocked-assets");
     fs::write(&root, "keep this file").unwrap();
     let load = LanguageSnapshot::load_startup(&root, "zh-CN", 25);
-    assert_eq!(load.snapshot.code(), "en-US");
+    assert_eq!(load.snapshot.code(), "zh-CN");
     assert!(
         load.diagnostics
             .iter()
             .any(|diagnostic| diagnostic.kind == RepairKind::WriteFailed)
     );
+    assert_eq!(
+        msg!("resources-recovery-title").render(&load.snapshot),
+        "资源恢复"
+    );
     assert!(
-        load.diagnostics
+        LanguageCatalog::discover(&fixture.0.join("absent"))
+            .unwrap()
+            .options()
             .iter()
-            .any(|diagnostic| diagnostic.kind == RepairKind::StartupFallback)
+            .any(|language| language.code == "zh-CN")
     );
     for (index, diagnostic) in load.diagnostics.iter().enumerate() {
         assert!(
@@ -647,6 +653,69 @@ fn diagnostic_render_ignores_disk_customization_and_active_language() {
         .join()
         .unwrap();
     assert_eq!(threaded, original_english);
+}
+
+#[test]
+fn chinese_defaults_recover_missing_corrupt_and_incomplete_files_preserving_custom_text() {
+    let fixture = Fixture::new();
+    // Even an English startup restores both selectable built-in languages.
+    let initial = LanguageSnapshot::load_startup(&fixture.0, "en-US", 1);
+    assert_eq!(initial.snapshot.code(), "en-US");
+    for (relative, _) in EMBEDDED_CHINESE_FILES {
+        assert!(fixture.0.join("locales/zh-CN").join(relative).is_file());
+    }
+    let startup = fixture.0.join("locales/zh-CN/recovery/startup.ftl");
+    for contents in [
+        None,
+        Some("broken = {\n"),
+        Some("resources-recovery-title = { unknown-message }\n"),
+    ] {
+        if let Some(contents) = contents {
+            fs::write(&startup, contents).unwrap();
+        } else {
+            fs::remove_file(&startup).unwrap();
+        }
+        fixture.write("locales/zh-CN/manifest.toml", "broken manifest");
+        let repaired = LanguageSnapshot::load(&fixture.0, "zh-Hans", 2).unwrap();
+        assert_eq!(repaired.snapshot.code(), "zh-CN");
+        assert_eq!(
+            msg!("resources-recovery-title").render(&repaired.snapshot),
+            "资源恢复"
+        );
+        assert!(
+            repaired
+                .diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.path == startup && diagnostic.repaired)
+        );
+        assert!(
+            !LanguageSnapshot::load(&fixture.0, "zh-CN", 3)
+                .unwrap()
+                .diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.repaired)
+        );
+    }
+    fs::write(&startup, [0xff, 0xfe]).unwrap();
+    assert_eq!(
+        msg!("resources-recovery-title").render(&fixture.snapshot("zh-CN", 4)),
+        "资源恢复"
+    );
+    let custom = "# Keep my text\nresources-recovery-title = 自定义恢复\n";
+    fs::write(&startup, custom).unwrap();
+    let repaired = fixture.snapshot("zh-CN", 5);
+    assert!(fs::read_to_string(&startup).unwrap().starts_with(custom));
+    assert_eq!(
+        msg!("resources-recovery-title").render(&repaired),
+        "自定义恢复"
+    );
+    assert_eq!(
+        msg!("resources-recovery-repair-restart").render(&repaired),
+        "自动修复并重启"
+    );
+    let healthy = fs::read(&startup).unwrap();
+    fixture.snapshot("zh-CN", 6);
+    assert_eq!(fs::read(&startup).unwrap(), healthy);
 }
 
 #[test]

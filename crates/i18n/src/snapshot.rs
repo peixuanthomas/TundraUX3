@@ -1,7 +1,7 @@
 use crate::{
-    DEFAULT_LANGUAGE, EMBEDDED_FILES, EMBEDDED_MANIFEST, LanguageError, LanguageErrorKind,
-    LocalizedMessage, LocalizedText, MessageArg, RepairDiagnostic, RepairKind,
-    canonical_language_code,
+    DEFAULT_LANGUAGE, EMBEDDED_CHINESE_FILES, EMBEDDED_CHINESE_MANIFEST, EMBEDDED_FILES,
+    EMBEDDED_MANIFEST, LanguageError, LanguageErrorKind, LocalizedMessage, LocalizedText,
+    MessageArg, RepairDiagnostic, RepairKind, canonical_language_code,
 };
 use crate::{
     catalog::parse_manifest,
@@ -67,7 +67,7 @@ impl LanguageSnapshot {
         self.generation
     }
 
-    /// Repair English defaults, then validate the entire requested locale before returning a candidate.
+    /// Repair built-in defaults, then validate the requested locale before returning a candidate.
     pub fn load(
         root: impl AsRef<Path>,
         code: &str,
@@ -78,7 +78,7 @@ impl LanguageSnapshot {
             match Self::load_inner(root.as_ref(), code, generation, false, &mut diagnostics) {
                 Ok(snapshot) => snapshot,
                 Err(mut error) => {
-                    // Repairing English is an independent side effect, even when the
+                    // Repairing built-in locales is an independent side effect, even when the
                     // requested language cannot become a publishable candidate.
                     diagnostics.append(&mut error.diagnostics);
                     error.diagnostics = diagnostics;
@@ -173,31 +173,70 @@ impl LanguageSnapshot {
             Path::new("<embedded>/manifest.toml"),
         )?;
         resource::validate(&embedded, None, true)?;
-        let english = repair_english(root, &embedded, diagnostics);
+        let english = repair_locale(
+            root,
+            DEFAULT_LANGUAGE,
+            EMBEDDED_MANIFEST,
+            &embedded,
+            diagnostics,
+        );
+        let chinese_embedded = sources_from_files(EMBEDDED_CHINESE_FILES);
+        let chinese = repair_locale(
+            root,
+            "zh-CN",
+            EMBEDDED_CHINESE_MANIFEST,
+            &chinese_embedded,
+            diagnostics,
+        );
         let mut current = Vec::new();
         if code != DEFAULT_LANGUAGE {
             let directory = root.join("locales").join(&code);
-            let path = directory.join("manifest.toml");
-            let manifest = fs::read_to_string(&path).map_err(|error| {
-                LanguageError::new(
-                    LanguageErrorKind::Manifest,
-                    Some(path.clone()),
-                    error.to_string(),
-                )
-            })?;
-            parse_manifest(&manifest, &code, &path)?;
-            current = if lenient {
-                let (sources, errors) = resource::read_sources_tolerant(&directory);
-                diagnostics.extend(errors.into_iter().map(|error| RepairDiagnostic {
-                    kind: RepairKind::InvalidResource,
-                    path: error.path.unwrap_or_else(|| directory.clone()),
-                    message: error.message,
-                    repaired: false,
-                }));
-                sources
+            if code == "zh-CN" {
+                if !lenient {
+                    // Built-in files have an in-memory fallback. Unreadable custom
+                    // files must still reject an explicit reload, as before.
+                    if let Some(diagnostic) = diagnostics.iter().find(|diagnostic| {
+                        diagnostic.kind == RepairKind::InvalidResource
+                            && diagnostic.path.starts_with(&directory)
+                            && diagnostic
+                                .path
+                                .extension()
+                                .is_some_and(|extension| extension == "ftl")
+                            && !chinese_embedded
+                                .iter()
+                                .any(|source| directory.join(&source.path) == diagnostic.path)
+                    }) {
+                        return Err(LanguageError::new(
+                            LanguageErrorKind::Io,
+                            Some(diagnostic.path.clone()),
+                            diagnostic.message.clone(),
+                        ));
+                    }
+                }
+                current = chinese;
             } else {
-                resource::read_sources(&directory)?
-            };
+                let path = directory.join("manifest.toml");
+                let manifest = fs::read_to_string(&path).map_err(|error| {
+                    LanguageError::new(
+                        LanguageErrorKind::Manifest,
+                        Some(path.clone()),
+                        error.to_string(),
+                    )
+                })?;
+                parse_manifest(&manifest, &code, &path)?;
+                current = if lenient {
+                    let (sources, errors) = resource::read_sources_tolerant(&directory);
+                    diagnostics.extend(errors.into_iter().map(|error| RepairDiagnostic {
+                        kind: RepairKind::InvalidResource,
+                        path: error.path.unwrap_or_else(|| directory.clone()),
+                        message: error.message,
+                        repaired: false,
+                    }));
+                    sources
+                } else {
+                    resource::read_sources(&directory)?
+                };
+            }
             loop {
                 match resource::validate(&current, Some(&english), true) {
                     Ok(_) => break,
@@ -348,7 +387,11 @@ impl LanguageSnapshot {
 }
 
 fn embedded_sources() -> Vec<Source> {
-    EMBEDDED_FILES
+    sources_from_files(EMBEDDED_FILES)
+}
+
+fn sources_from_files(files: &[(&str, &str)]) -> Vec<Source> {
+    files
         .iter()
         .map(|(path, text)| Source {
             path: PathBuf::from(path),
@@ -404,14 +447,14 @@ fn diagnostic_write(
         Ok(()) => diagnostics.push(RepairDiagnostic {
             kind,
             path: path.to_owned(),
-            message: format!("Restored English resource: {}", path.display()),
+            message: format!("Restored language resource: {}", path.display()),
             repaired: true,
         }),
         Err(error) => {
             diagnostics.push(RepairDiagnostic {
                 kind,
                 path: path.to_owned(),
-                message: "English resource restored in memory".to_owned(),
+                message: "Language resource restored in memory".to_owned(),
                 repaired: false,
             });
             diagnostics.push(RepairDiagnostic {
@@ -424,21 +467,23 @@ fn diagnostic_write(
     }
 }
 
-fn repair_english(
+fn repair_locale(
     root: &Path,
+    code: &str,
+    embedded_manifest: &str,
     embedded: &[Source],
     diagnostics: &mut Vec<RepairDiagnostic>,
 ) -> Vec<Source> {
-    let directory = root.join("locales").join(DEFAULT_LANGUAGE);
+    let directory = root.join("locales").join(code);
     let manifest = directory.join("manifest.toml");
     if fs::read_to_string(&manifest)
         .ok()
-        .and_then(|source| parse_manifest(&source, DEFAULT_LANGUAGE, &manifest).ok())
+        .and_then(|source| parse_manifest(&source, code, &manifest).ok())
         .is_none()
     {
         diagnostic_write(
             &manifest,
-            EMBEDDED_MANIFEST,
+            embedded_manifest,
             RepairKind::InvalidManifest,
             diagnostics,
         );
@@ -510,7 +555,7 @@ fn repair_english(
     for _ in 0..budget {
         match resource::validate(&sources, Some(embedded), true) {
             Ok(_) => {
-                // Ensure in-memory English remains complete after excluding a bad optional file.
+                // Ensure in-memory defaults remain complete after excluding a bad optional file.
                 let known = resource::identifiers(&sources);
                 for default in embedded {
                     let empty = Source {
@@ -543,6 +588,11 @@ fn repair_english(
                     diagnostic_write(&path, &default.text, RepairKind::CorruptFile, diagnostics);
                     sources[index].text = default.text.clone();
                 } else {
+                    // Custom translation files are validated against the loaded English
+                    // catalog by the caller, using its strict/startup policy.
+                    if code != DEFAULT_LANGUAGE {
+                        return sources;
+                    }
                     diagnostics.push(RepairDiagnostic {
                         kind: RepairKind::InvalidResource,
                         path,
@@ -557,7 +607,7 @@ fn repair_english(
     diagnostics.push(RepairDiagnostic {
         kind: RepairKind::StartupFallback,
         path: directory,
-        message: "English validation failed; using embedded defaults in memory".to_owned(),
+        message: format!("{code} validation failed; using embedded defaults in memory"),
         repaired: false,
     });
     embedded.to_vec()

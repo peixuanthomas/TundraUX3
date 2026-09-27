@@ -88,16 +88,10 @@ impl LanguageCatalog {
     }
 
     /// `root` is the asset root, shared with ascii-assets, not the locales directory.
-    /// Embedded English remains selectable even with an absent/read-only asset root.
+    /// Built-in languages remain selectable even with an absent/read-only asset root.
     pub fn discover(root: impl AsRef<Path>) -> Result<Self, LanguageError> {
         let root = root.as_ref().join("locales");
-        let mut catalog = Self {
-            options: vec![LanguageOption {
-                code: DEFAULT_LANGUAGE.to_owned(),
-                native_name: "English".to_owned(),
-            }],
-            diagnostics: Vec::new(),
-        };
+        let mut catalog = Self::built_in();
         let entries = match fs::read_dir(&root) {
             Ok(entries) => entries,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(catalog),

@@ -191,7 +191,7 @@ flowchart TD
 | `app` | `AppState`、`AppCommand`、`AppAction`、只读快照，以及可选的 Editor、Explorer、Launcher、Diagnostics、通知、认证与配置领域模型。 |
 | `ascii-assets` | 主题清单、banner、图标、天气世界、时钟字体的加载、校验和尺寸统计。 |
 | `cli` | `tundra-cli` 参数解析、诊断、路径查看、公开配置读写、存储重置、资源/动画预览与 Weathr 启动；不依赖 UI。 |
-| `i18n` | Fluent 语言目录、资源校验、默认英文修复、稳定消息与参数契约、不可变内存快照。 |
+| `i18n` | Fluent 语言目录、资源校验、内置中英文修复、稳定消息与参数契约、不可变内存快照。 |
 | `runtime-log` | 固定语言事件日志、稳定事件代码、可选消息 ID 与结构化参数、历史日志兼容。 |
 | `identity` | Linux 当前进程用户附着及 UID 偏好；Windows/macOS 本地账户、角色、密码与锁定。记录由 storage 持久化。 |
 | `platform` | Windows/macOS/Linux 的系统路径、终端能力、文件系统、启动外部程序、Trash、电脑重启、关机与系统诊断边界。 |
@@ -772,7 +772,7 @@ macOS 的 Explorer Trash 可能需要 Full Disk Access，启动/诊断会提示�
 
 ## 多语言
 
-界面与启动恢复提示支持 English（`en-US`）和简体中文（`zh-CN`）。在区域与时间设置中确认语言会重新读取语言包，包括再次选择当前语言。语言包与主题独立，默认英文及图形资源在启动时自动修复；写入失败时使用内置资源继续运行。详见[语言资源与恢复](LOCALIZATION.md)。
+界面与启动恢复提示支持 English（`en-US`）和简体中文（`zh-CN`）。在区域与时间设置中确认语言会重新读取语言包，包括再次选择当前语言。语言包与主题独立，内置中英文及默认图形资源在启动时自动修复；写入失败时使用内置资源。恢复界面仅提供“自动修复并重启”和“退出”。详见[语言资源与恢复](LOCALIZATION.md)。
 
 ## 架构约束
 

@@ -1,6 +1,9 @@
 language-reload-failed = Could not reload the language: { $reason }. The previous language is still active.
 resources-recovery-title = Resource recovery
 resources-recovery-ok = OK
+resources-recovery-repair-restart = Auto repair and restart
+resources-recovery-repair-failed = Some resources could not be repaired. Fix the problem below and try again, or exit.
+    { $reason }
 resources-repaired =
     { $count ->
         [one] A resource file was missing or damaged and has been automatically repaired.

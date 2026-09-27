@@ -87,6 +87,40 @@ fn main() {
         "pub(crate) const EMBEDDED_MANIFEST: &str = {manifest_expr};\npub(crate) const EMBEDDED_FILES: &[(&str, &str)] = &[{}];\n{public_catalog}",
         files.join(",\n")
     );
+    let chinese_root = root.parent().unwrap().join("zh-CN");
+    let mut chinese_files = Vec::new();
+    walk(&chinese_root, &chinese_root, &mut chinese_files);
+    let chinese_manifest = chinese_root.join("manifest.toml");
+    println!("cargo:rerun-if-changed={}", chinese_manifest.display());
+    let chinese_manifest_source =
+        fs::read_to_string(&chinese_manifest).expect("read embedded Chinese manifest");
+    let parsed: toml::Value = toml::from_str(&chinese_manifest_source)
+        .expect("embedded Chinese manifest must be valid TOML");
+    assert_eq!(
+        parsed
+            .get("format_version")
+            .and_then(toml::Value::as_integer),
+        Some(1)
+    );
+    assert_eq!(
+        parsed.get("code").and_then(toml::Value::as_str),
+        Some("zh-CN")
+    );
+    assert!(
+        parsed
+            .get("native_name")
+            .and_then(toml::Value::as_str)
+            .is_some_and(|name| !name.trim().is_empty())
+    );
+    let chinese_sources =
+        resource::read_sources(&chinese_root).expect("read embedded Chinese resources");
+    resource::validate(&chinese_sources, Some(&sources), true)
+        .expect("embedded Chinese resources must match English message contracts");
+    let output = format!(
+        "{output}\npub(crate) const EMBEDDED_CHINESE_MANIFEST: &str = include_str!({:?});\npub(crate) const EMBEDDED_CHINESE_FILES: &[(&str, &str)] = &[{}];\n",
+        chinese_manifest.to_str().unwrap(),
+        chinese_files.join(",\n")
+    );
     fs::write(
         Path::new(&env::var("OUT_DIR").unwrap()).join("embedded.rs"),
         output,

@@ -204,6 +204,7 @@ impl ShellSession {
                 ShellCommand::Shutdown
                     | ShellCommand::ConfirmExit
                     | ShellCommand::Restart
+                    | ShellCommand::RepairResourcesAndRestart
                     | ShellCommand::PowerOff
                     | ShellCommand::Reboot
             )
@@ -321,6 +322,13 @@ impl ShellSession {
                 self.shutdown_requested = true;
                 self.app
                     .dispatch_at(app::AppCommand::ConfirmExit, received_at)
+            }
+            ShellCommand::RepairResourcesAndRestart => {
+                if self.repair_resources_for_restart() {
+                    self.pending_notification_commands
+                        .push_back(ShellCommand::Restart);
+                }
+                ShellAction::Redraw
             }
             ShellCommand::Restart => {
                 if !self.persist_editor_recovery_now(received_at) {

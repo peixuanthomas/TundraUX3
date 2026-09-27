@@ -1,6 +1,9 @@
 language-reload-failed = 无法重载语言：{ $reason }。继续使用之前的语言。
 resources-recovery-title = 资源恢复
 resources-recovery-ok = 确定
+resources-recovery-repair-restart = 自动修复并重启
+resources-recovery-repair-failed = 部分资源修复失败。请解决以下问题后重试，或退出程序。
+    { $reason }
 resources-repaired = { $count } 个资源文件缺失或损坏，已自动修复。
     { $files }
 resources-fallback = 部分资源修复失败，已使用内置资源。

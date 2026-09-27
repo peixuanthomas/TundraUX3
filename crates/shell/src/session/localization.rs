@@ -1,6 +1,19 @@
 //! Language state belongs to the session, independently of the visual theme.
 use super::*;
 
+fn resource_recovery_actions() -> Vec<ShellNotificationAction> {
+    vec![
+        ShellNotificationAction::new(
+            "repair-restart",
+            i18n::msg!("resources-recovery-repair-restart"),
+        )
+        .with_follow_up(ShellCommand::RepairResourcesAndRestart),
+        ShellNotificationAction::new("exit", i18n::msg!("startup-exit"))
+            .cancel()
+            .with_follow_up(ShellCommand::ConfirmExit),
+    ]
+}
+
 #[derive(Debug, Clone)]
 pub(super) struct PreparedLanguage {
     pub snapshot: Arc<i18n::LanguageSnapshot>,
@@ -193,7 +206,12 @@ impl ShellSession {
             let path = diagnostic.path.display().to_string();
             if diagnostic.repaired && !self.repaired_resource_paths.contains(&path) {
                 self.repaired_resource_paths.push(path);
-            } else if failed && !self.fallback_resource_paths.contains(&path) {
+            } else if failed
+                && !diagnostics
+                    .iter()
+                    .any(|repaired| repaired.repaired && repaired.path == diagnostic.path)
+                && !self.fallback_resource_paths.contains(&path)
+            {
                 self.fallback_resource_paths.push(path);
             }
         }
@@ -238,13 +256,71 @@ impl ShellSession {
                 } else {
                     ui::NotificationTone::Warning
                 },
-                vec![
-                    ShellNotificationAction::new("ok", i18n::msg!("resources-recovery-ok"))
-                        .cancel(),
-                ],
+                resource_recovery_actions(),
             )
             .with_key("shell.resource-recovery"),
         );
+    }
+
+    pub(super) fn repair_resources_for_restart(&mut self) -> bool {
+        let root = self.ascii_assets.store().root();
+        let mut failures = Vec::new();
+        match ui::AsciiAssetStore::load_default_with_root_and_recovery(root) {
+            Ok((_, report)) => {
+                failures.extend(report.fallback.into_iter().map(|file| {
+                    format!(
+                        "{}: {}",
+                        file.path.display(),
+                        file.repair_error.unwrap_or(file.issue)
+                    )
+                }));
+            }
+            Err(error) => failures.push(error.to_string()),
+        }
+        let loaded =
+            i18n::LanguageSnapshot::load(root, self.language.code(), self.language.generation());
+        let diagnostics = match loaded {
+            Ok(loaded) => loaded.diagnostics,
+            Err(error) => {
+                failures.push(error.to_string());
+                error.diagnostics
+            }
+        };
+        // A successful later repair supersedes an earlier read failure for the same file.
+        failures.extend(
+            diagnostics
+                .iter()
+                .filter(|diagnostic| {
+                    !diagnostic.repaired
+                        && matches!(
+                            diagnostic.kind,
+                            i18n::RepairKind::WriteFailed
+                                | i18n::RepairKind::InvalidResource
+                                | i18n::RepairKind::StartupFallback
+                        )
+                        && !(diagnostic.kind == i18n::RepairKind::InvalidResource
+                            && diagnostics.iter().any(|repaired| {
+                                repaired.repaired && repaired.path == diagnostic.path
+                            }))
+                })
+                .map(|diagnostic| format!("{}: {}", diagnostic.path.display(), diagnostic.message)),
+        );
+        if failures.is_empty() {
+            return true;
+        }
+        self.notify_modal_with_options(
+            ShellNotification::modal(
+                i18n::msg!("resources-recovery-title"),
+                i18n::msg!(
+                    "resources-recovery-repair-failed",
+                    reason = failures.join("\n")
+                ),
+                ui::NotificationTone::Error,
+                resource_recovery_actions(),
+            )
+            .with_key("shell.resource-recovery"),
+        );
+        false
     }
 }
 

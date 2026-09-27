@@ -114,7 +114,7 @@ fn failed_reload_preserves_snapshot_configuration_and_user_input() {
     let snapshot = f.state.language.clone();
     let config = std::fs::read(&f.storage.layout().config_path).unwrap();
     std::fs::write(
-        f.root.join("assets/locales/zh-CN/recovery/startup.ftl"),
+        f.root.join("assets/locales/zh-CN/custom.ftl"),
         "broken = {\n",
     )
     .unwrap();
@@ -188,6 +188,9 @@ fn recovery_summary_is_updated_in_place_and_distinguishes_fallback() {
     f.state.show_resource_recovery_report();
     assert_eq!(f.state.app.notification_center().active_modal_id(), id);
     let modal = f.state.app.notification_center().active_modal().unwrap();
+    assert_eq!(modal.actions.len(), 2);
+    assert_eq!(modal.actions[0].id, "repair-restart");
+    assert_eq!(modal.actions[1].id, "exit");
     assert!(
         f.state
             .language
@@ -220,6 +223,110 @@ fn configuration_write_failure_does_not_publish_valid_candidate() {
         disk
     );
     assert_eq!(f.storage.load_config().unwrap().language, "en-US");
+}
+
+#[test]
+fn resource_repair_action_restores_chinese_and_graphics_then_requests_restart() {
+    let mut f = fixture();
+    let chinese = f.root.join("assets/locales/zh-CN/recovery/startup.ftl");
+    let image = f
+        .root
+        .join("assets/themes/default/home_icons/system_status.png");
+    std::fs::write(&chinese, "broken = {\n").unwrap();
+    std::fs::remove_file(&image).unwrap();
+    f.state
+        .fallback_resource_paths
+        .push(chinese.display().to_string());
+    f.state.show_resource_recovery_report();
+    assert_eq!(
+        f.state.apply_input(InputEvent::key(InputKey::Enter)),
+        ShellAction::Exit
+    );
+    assert!(f.state.restart_requested);
+    assert!(image.is_file());
+    assert!(
+        std::fs::read_to_string(chinese)
+            .unwrap()
+            .contains("resources-recovery-title = 资源恢复")
+    );
+}
+
+#[test]
+fn repaired_unreadable_chinese_file_is_not_reported_as_fallback() {
+    let mut f = fixture();
+    let path = f.root.join("assets/locales/zh-CN/recovery/startup.ftl");
+    std::fs::write(&path, [0xff, 0xfe]).unwrap();
+    f.state.save_region_picker_value(Some("zh-CN".into()), None);
+    assert_eq!(f.state.language_code(), "zh-CN");
+    assert!(
+        f.state
+            .repaired_resource_paths
+            .iter()
+            .any(|repaired| Path::new(repaired) == path)
+    );
+    assert!(f.state.fallback_resource_paths.is_empty());
+    let modal = f.state.app.notification_center().active_modal().unwrap();
+    assert_eq!(
+        f.state.language.render_text(&modal.actions[0].label),
+        "自动修复并重启"
+    );
+}
+
+#[test]
+fn failed_resource_repair_keeps_two_actions_and_exit_does_not_restart() {
+    let mut f = fixture();
+    let image = f
+        .root
+        .join("assets/themes/default/home_icons/system_status.png");
+    std::fs::remove_file(&image).unwrap();
+    std::fs::create_dir(&image).unwrap();
+    f.state
+        .fallback_resource_paths
+        .push(image.display().to_string());
+    f.state.show_resource_recovery_report();
+    assert_eq!(
+        f.state.apply_input(InputEvent::key(InputKey::Enter)),
+        ShellAction::Redraw
+    );
+    assert!(!f.state.restart_requested);
+    let modal = f.state.app.notification_center().active_modal().unwrap();
+    assert_eq!(modal.actions.len(), 2);
+    assert!(
+        f.state
+            .language
+            .render_text(&modal.message)
+            .contains("could not be repaired")
+    );
+    assert!(image.is_dir());
+    assert_eq!(
+        f.state.apply_input(InputEvent::key(InputKey::Escape)),
+        ShellAction::Exit
+    );
+    assert!(!f.state.restart_requested);
+}
+
+#[test]
+fn failed_resource_repair_can_retry_after_write_blocker_is_removed() {
+    let mut f = fixture();
+    let language_file = f.root.join("assets/locales/zh-CN/recovery/startup.ftl");
+    std::fs::remove_file(&language_file).unwrap();
+    std::fs::create_dir(&language_file).unwrap();
+    f.state
+        .fallback_resource_paths
+        .push(language_file.display().to_string());
+    f.state.show_resource_recovery_report();
+    assert_eq!(
+        f.state.apply_input(InputEvent::key(InputKey::Enter)),
+        ShellAction::Redraw
+    );
+    assert!(!f.state.restart_requested);
+    std::fs::remove_dir(&language_file).unwrap();
+    assert_eq!(
+        f.state.apply_input(InputEvent::key(InputKey::Enter)),
+        ShellAction::Exit
+    );
+    assert!(f.state.restart_requested);
+    assert!(language_file.is_file());
 }
 
 #[test]

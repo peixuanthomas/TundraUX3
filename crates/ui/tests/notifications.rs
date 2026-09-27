@@ -17,8 +17,8 @@ fn long_notification() -> NotificationViewModel {
             .collect::<Vec<_>>()
             .join("\n"),
         vec![
-            NotificationActionViewModel::new("continue", "继续启动").selected(true),
-            NotificationActionViewModel::new("exit", "安全退出"),
+            NotificationActionViewModel::new("repair-restart", "自动修复并重启").selected(true),
+            NotificationActionViewModel::new("exit", "退出"),
         ],
     )
 }
@@ -75,8 +75,8 @@ fn long_chinese_repair_summary_scrolls_at_50_by_12_with_fixed_actions() {
         let terminal = draw(area, &model, &theme);
         assert!(text(&terminal, first.message).contains("修复文件00"));
         assert!(!text(&terminal, first.message).contains("最后一行"));
-        assert!(text(&terminal, first.actions[0].area).contains("继续启动"));
-        assert!(text(&terminal, first.actions[1].area).contains("安全退出"));
+        assert!(text(&terminal, first.actions[0].area).contains("自动修复并重启"));
+        assert!(text(&terminal, first.actions[1].area).contains("退出"));
     }
     model.scroll_offset = usize::MAX;
     let last = layout(area, &model);
@@ -87,7 +87,7 @@ fn long_chinese_repair_summary_scrolls_at_50_by_12_with_fixed_actions() {
     let terminal = draw(area, &model, &TundraTheme::default_dark());
     assert!(text(&terminal, last.message).contains("最后一行：所有修复结果已列出"));
     assert!(!text(&terminal, last.message).contains("修复文件00"));
-    assert!(text(&terminal, last.actions[0].area).contains("继续启动"));
+    assert!(text(&terminal, last.actions[0].area).contains("自动修复并重启"));
     assert!(model.actions[0].selected);
 }
 
@@ -123,7 +123,7 @@ fn wrapped_and_stacked_actions_keep_their_own_space_while_the_message_scrolls() 
     assert_eq!(first.actions, last.actions);
     let terminal = draw(area, &model, &TundraTheme::default_dark());
     assert!(text(&terminal, last.message).contains("最后一行"));
-    assert!(text(&terminal, last.actions[1].area).contains("安全退出"));
+    assert!(text(&terminal, last.actions[1].area).contains("退出"));
 }
 
 #[test]

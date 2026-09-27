@@ -14,6 +14,7 @@ pub enum ShellCommand {
     RequestExit,
     ConfirmExit,
     Restart,
+    RepairResourcesAndRestart,
     PowerOff,
     Reboot,
     CancelExit,
