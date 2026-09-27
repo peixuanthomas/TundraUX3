@@ -37,6 +37,8 @@ ui-explorer-restore = 还原
 ui-explorer-dump-trash = 清空回收站
 ui-explorer-sort = 排序
 ui-explorer-options = 选项
+ui-explorer-invert-selection = 反选
+ui-explorer-clear-selection = 取消选择
 ui-explorer-scanning = 正在扫描
 ui-explorer-checking-conflicts = 正在检查冲突
 ui-explorer-copying = 正在复制
@@ -76,8 +78,8 @@ ui-explorer-search-query = 搜索：{ $query }{ $suffix }
 
 ui-explorer-search-matches = { " " }（{ $count } 个匹配，{ $mode }）
 
-ui-explorer-help = Enter：打开    Left/Right：后退/前进    Backspace：上级    N：文件夹    T：文本文件    F2：重命名    Del：删除    X：剪切    C：复制    V：粘贴    F5：刷新    S：排序    O：选项    /：搜索    H：隐藏文件    Tab/Shift+Tab：快速访问    Esc：返回
+ui-explorer-help = Ctrl+A：全选    空格：勾选    Shift+方向键：连续选择    Ctrl+方向键：仅移动焦点    C/X/V：复制/剪切/粘贴    Del：删除    Ctrl+I：反选    Ctrl+Shift+A：取消选择    Home/End/PageUp/PageDown：跳转（Shift：选择）    Shift+F10：菜单    Enter：打开    Backspace：上级    N/T：新文件夹/文本    F2：重命名    F5：刷新    /：搜索    S/O：排序/选项    Esc：返回
 
-ui-explorer-compact-help = Enter：打开 | Backspace：上级 | /：搜索 | 隐藏文件：{ $hidden }{ $quick }
+ui-explorer-compact-help = Ctrl+A：全选 | 空格：勾选 | C/X/V：复制/剪切/粘贴 | Del：删除 | Shift+F10：菜单 | 隐藏文件：{ $hidden }{ $quick }
 
 ui-explorer-quick-access-help = { " " }| Tab/Shift+Tab：快速访问

@@ -148,6 +148,15 @@ impl ExplorerState {
         self.selected_entry().map(|entry| entry.path.clone())
     }
 
+    /// The single selected item, which may differ from the keyboard focus.
+    pub fn single_selected_entry(&self) -> Option<&ExplorerEntry> {
+        let paths = self.effective_selected_paths();
+        if paths.len() != 1 {
+            return None;
+        }
+        self.entries.iter().find(|entry| entry.path == paths[0])
+    }
+
     pub fn effective_selected_paths(&self) -> Vec<PathBuf> {
         if self.selection_cleared {
             Vec::new()
@@ -195,7 +204,7 @@ impl ExplorerState {
                 self.selection_anchor = Some(path);
                 self.selection_cleared = self.selected_paths.is_empty();
             }
-            ExplorerSelectionMode::Range => {
+            ExplorerSelectionMode::Range | ExplorerSelectionMode::AddRange => {
                 let fallback_index = self.selected_index.min(self.entries.len() - 1);
                 let anchor_index = self
                     .selection_anchor
@@ -213,7 +222,11 @@ impl ExplorerState {
                 } else {
                     (index, anchor_index)
                 };
-                self.selected_paths.clear();
+                if mode == ExplorerSelectionMode::Range {
+                    self.selected_paths.clear();
+                } else if self.selected_paths.is_empty() && !self.selection_cleared {
+                    self.selected_paths.extend(self.selected_path());
+                }
                 self.selected_paths.extend(
                     self.entries[start..=end]
                         .iter()
@@ -221,7 +234,15 @@ impl ExplorerState {
                 );
                 self.selection_cleared = false;
             }
-            ExplorerSelectionMode::FocusOnly => {}
+            ExplorerSelectionMode::FocusOnly => {
+                // Freeze the implicit selection before moving the focus.
+                if self.selected_paths.is_empty() && !self.selection_cleared {
+                    self.selected_paths.extend(self.selected_path());
+                }
+                if self.selection_anchor.is_none() {
+                    self.selection_anchor = self.selected_path();
+                }
+            }
         }
         self.selected_index = index;
         self.viewport_follows_focus = true;
@@ -244,6 +265,17 @@ impl ExplorerState {
         self.selected_paths.clear();
         self.selection_anchor = None;
         self.selection_cleared = true;
+    }
+
+    pub fn invert_selection(&mut self) {
+        self.selected_paths = self
+            .entries
+            .iter()
+            .filter(|entry| !self.is_selected(&entry.path))
+            .map(|entry| entry.path.clone())
+            .collect();
+        self.selection_cleared = self.selected_paths.is_empty();
+        self.selection_anchor = self.selected_path();
     }
 
     pub fn apply_projection(&mut self) {
@@ -530,6 +562,7 @@ pub enum ExplorerSelectionMode {
     Replace,
     Toggle,
     Range,
+    AddRange,
     FocusOnly,
 }
 
@@ -913,6 +946,8 @@ pub enum ExplorerCommand {
     SelectIndex(usize),
     SelectIndexWithMode(usize, ExplorerSelectionMode),
     SelectAll,
+    InvertSelection,
+    ClearSelection,
     ToggleFocused,
     Search(String),
     ToggleHidden,
@@ -1104,6 +1139,14 @@ impl ExplorerController {
                 state.select_all();
                 ExplorerEffect::None
             }
+            ExplorerCommand::InvertSelection => {
+                state.invert_selection();
+                ExplorerEffect::None
+            }
+            ExplorerCommand::ClearSelection => {
+                state.clear_selection();
+                ExplorerEffect::None
+            }
             ExplorerCommand::ToggleFocused => {
                 let index = state.selected_index;
                 state.select_index(index, ExplorerSelectionMode::Toggle);
@@ -1247,7 +1290,7 @@ impl ExplorerController {
                 ExplorerEffect::None
             }
             ExplorerCommand::OpenSelected => {
-                let Some(entry) = state.selected_entry().cloned() else {
+                let Some(entry) = state.single_selected_entry().cloned() else {
                     return Ok(ExplorerEffect::None);
                 };
                 self.file_service.open_entry(

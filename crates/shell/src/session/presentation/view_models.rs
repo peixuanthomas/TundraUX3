@@ -1887,6 +1887,7 @@ impl ShellSession {
                     explorer_context_menu_view_model(ExplorerContextMenuInput {
                         anchor,
                         selected_count: model.selected_count,
+                        entry_count: state.entries.len(),
                         clipboard_available: state.clipboard.is_some(),
                         is_trash,
                         trash_has_items: !state.entries.is_empty(),

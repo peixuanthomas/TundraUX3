@@ -49,7 +49,7 @@ impl ShellSession {
                 key.is_ctrl_c()
                     && !matches!(
                         self.active_screen(),
-                        ShellScreen::Editor | ShellScreen::CommandLine
+                        ShellScreen::Editor | ShellScreen::CommandLine | ShellScreen::Explorer
                     )
             }
             _ => false,
@@ -931,6 +931,29 @@ impl ShellSession {
             }
             ShellCommand::ExplorerSelectAll => {
                 self.apply_explorer_command(ExplorerCommand::SelectAll, platform);
+                ShellAction::Redraw
+            }
+            ShellCommand::ExplorerInvertSelection => {
+                self.apply_explorer_command(ExplorerCommand::InvertSelection, platform);
+                ShellAction::Redraw
+            }
+            ShellCommand::ExplorerClearSelection => {
+                self.apply_explorer_command(ExplorerCommand::ClearSelection, platform);
+                ShellAction::Redraw
+            }
+            ShellCommand::ExplorerNavigateSelection(key, mode) => {
+                self.navigate_explorer_selection(key, mode, platform);
+                ShellAction::Redraw
+            }
+            ShellCommand::ExplorerContextMenu => {
+                self.open_explorer_keyboard_context_menu();
+                ShellAction::Redraw
+            }
+            ShellCommand::ExplorerContextItem(index) => {
+                self.activate_explorer_overlay_control(
+                    ui::ExplorerOverlayControl::ContextItem(index),
+                    platform,
+                );
                 ShellAction::Redraw
             }
             ShellCommand::ExplorerToggleFocused => {

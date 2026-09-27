@@ -424,6 +424,80 @@ fn implicit_selection_toggle_and_repeated_range_keep_expected_paths() {
 }
 
 #[test]
+fn focus_navigation_and_inversion_preserve_explicit_selection() {
+    let fixture = Fixture::new("focus-selection");
+    for name in ["a.txt", "b.txt", "c.txt", "d.txt"] {
+        fs::write(fixture.documents.join(name), name).unwrap();
+    }
+    let storage = fixture.storage();
+    let controller = ExplorerController::default();
+    let mut state = ExplorerState::new(&fixture.documents, true);
+    controller.apply(
+        &mut state,
+        ExplorerCommand::Refresh,
+        Some(&session()),
+        &fixture.platform,
+        &storage,
+    );
+    state.select_index(2, ExplorerSelectionMode::FocusOnly);
+    assert_eq!(state.selected_entry().unwrap().name, "c.txt");
+    assert_eq!(state.single_selected_entry().unwrap().name, "a.txt");
+    let effect = controller.apply(
+        &mut state,
+        ExplorerCommand::OpenSelected,
+        Some(&session()),
+        &fixture.platform,
+        &storage,
+    );
+    assert!(
+        matches!(effect, app::explorer::ExplorerEffect::OpenRequested(request)
+        if request.path == fixture.documents.join("a.txt"))
+    );
+    state.select_index(2, ExplorerSelectionMode::Toggle);
+    state.select_index(3, ExplorerSelectionMode::AddRange);
+    assert_eq!(
+        state.effective_selected_paths(),
+        ["a.txt", "c.txt", "d.txt"].map(|name| fixture.documents.join(name))
+    );
+    controller.apply(
+        &mut state,
+        ExplorerCommand::InvertSelection,
+        Some(&session()),
+        &fixture.platform,
+        &storage,
+    );
+    assert_eq!(state.single_selected_entry().unwrap().name, "b.txt");
+    controller.apply(
+        &mut state,
+        ExplorerCommand::Search("a".into()),
+        Some(&session()),
+        &fixture.platform,
+        &storage,
+    );
+    assert!(state.effective_selected_paths().is_empty());
+    controller.apply(
+        &mut state,
+        ExplorerCommand::InvertSelection,
+        Some(&session()),
+        &fixture.platform,
+        &storage,
+    );
+    assert_eq!(state.single_selected_entry().unwrap().name, "a.txt");
+    controller.apply(
+        &mut state,
+        ExplorerCommand::ClearSelection,
+        Some(&session()),
+        &fixture.platform,
+        &storage,
+    );
+    state.select_index(0, ExplorerSelectionMode::FocusOnly);
+    assert!(state.effective_selected_paths().is_empty());
+    state.invert_selection();
+    state.invert_selection();
+    assert!(state.effective_selected_paths().is_empty());
+}
+
+#[test]
 fn type_size_and_modified_sort_keep_unknown_values_last() {
     let fixture = Fixture::new("metadata-sort");
     fs::create_dir(fixture.documents.join("folder")).expect("folder fixture");

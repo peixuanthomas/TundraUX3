@@ -1,6 +1,52 @@
 use super::super::queries::ResolvedExplorerOverlay;
 use super::super::*;
 impl ShellSession {
+    pub(in crate::session) fn navigate_explorer_selection(
+        &mut self,
+        key: InputKey,
+        mode: app::explorer::ExplorerSelectionMode,
+        platform: &dyn Platform,
+    ) {
+        let model = self.to_explorer_view_model();
+        if model.entries.is_empty() {
+            return;
+        }
+        let area = Rect::new(0, 0, self.terminal_size.0, self.terminal_size.1);
+        let page_size = match self.shell_layout_for(area) {
+            ui::ShellLayout::Full { main, .. } => {
+                ui::explorer_layout(main, &model).visible_capacity.max(1)
+            }
+            _ => 1,
+        };
+        let current = model.selected_index.unwrap_or(0);
+        let last = model.entries.len() - 1;
+        let index = match key {
+            InputKey::Up => current.saturating_sub(1),
+            InputKey::Down => current.saturating_add(1).min(last),
+            InputKey::Home => 0,
+            InputKey::End => last,
+            InputKey::PageUp => current.saturating_sub(page_size),
+            InputKey::PageDown => current.saturating_add(page_size).min(last),
+            _ => return,
+        };
+        self.apply_explorer_command(ExplorerCommand::SelectIndexWithMode(index, mode), platform);
+    }
+
+    pub(in crate::session) fn open_explorer_keyboard_context_menu(&mut self) {
+        let area = Rect::new(0, 0, self.terminal_size.0, self.terminal_size.1);
+        let model = self.to_explorer_view_model();
+        let anchor = match self.shell_layout_for(area) {
+            ui::ShellLayout::Full { main, .. } => ui::explorer_layout(main, &model)
+                .rows
+                .iter()
+                .find(|row| Some(row.index) == model.selected_index)
+                .map(|row| (row.area.x, row.area.y))
+                .unwrap_or((main.x, main.y)),
+            _ => (0, 0),
+        };
+        self.open_explorer_popup(ExplorerOverlayMode::ContextMenu { anchor }, anchor);
+    }
+
     fn explorer_user_dirs(
         &self,
         platform: &dyn Platform,
@@ -497,7 +543,7 @@ impl ShellSession {
             ExplorerInputMode::Rename => self
                 .app
                 .explorer_state()
-                .and_then(|state| state.selected_entry())
+                .and_then(|state| state.single_selected_entry())
                 .map(|entry| entry.name.clone())
                 .unwrap_or_default(),
             ExplorerInputMode::Browse
@@ -581,7 +627,7 @@ impl ShellSession {
     pub(in crate::session) fn restore_selected_explorer_item(&mut self, platform: &dyn Platform) {
         let selected = self.app.explorer_state().and_then(|state| {
             (state.current_location.is_trash() && state.effective_selected_paths().len() == 1)
-                .then(|| state.selected_entry())
+                .then(|| state.single_selected_entry())
                 .flatten()
                 .map(|entry| entry.original_path.is_some())
         });
@@ -695,13 +741,16 @@ impl ShellSession {
             }
             ui::ExplorerHitTarget::OverlaySurface => return,
         };
-        let selection_mode = if modifiers.shift {
-            app::explorer::ExplorerSelectionMode::Range
-        } else if explorer_toggle_modifier(platform.kind(), modifiers) {
-            app::explorer::ExplorerSelectionMode::Toggle
-        } else {
-            app::explorer::ExplorerSelectionMode::Replace
-        };
+        let selection_mode =
+            if modifiers.shift && explorer_toggle_modifier(platform.kind(), modifiers) {
+                app::explorer::ExplorerSelectionMode::AddRange
+            } else if modifiers.shift {
+                app::explorer::ExplorerSelectionMode::Range
+            } else if explorer_toggle_modifier(platform.kind(), modifiers) {
+                app::explorer::ExplorerSelectionMode::Toggle
+            } else {
+                app::explorer::ExplorerSelectionMode::Replace
+            };
         self.apply_explorer_command(
             ExplorerCommand::SelectIndexWithMode(index, selection_mode),
             platform,
@@ -829,6 +878,12 @@ impl ShellSession {
                     "paste" => self.apply_explorer_command(ExplorerCommand::Paste, platform),
                     "select-all" => {
                         self.apply_explorer_command(ExplorerCommand::SelectAll, platform)
+                    }
+                    "invert-selection" => {
+                        self.apply_explorer_command(ExplorerCommand::InvertSelection, platform)
+                    }
+                    "clear-selection" => {
+                        self.apply_explorer_command(ExplorerCommand::ClearSelection, platform)
                     }
                     "refresh" => {
                         self.refresh_explorer_quick_locations(platform);

@@ -222,6 +222,7 @@ pub(in crate::session) fn explorer_breadcrumb_view_models(
 pub(in crate::session) struct ExplorerContextMenuInput {
     pub(in crate::session) anchor: CellPosition,
     pub(in crate::session) selected_count: usize,
+    pub(in crate::session) entry_count: usize,
     pub(in crate::session) clipboard_available: bool,
     pub(in crate::session) is_trash: bool,
     pub(in crate::session) trash_has_items: bool,
@@ -236,6 +237,7 @@ pub(in crate::session) fn explorer_context_menu_view_model(
     let ExplorerContextMenuInput {
         anchor,
         selected_count,
+        entry_count,
         clipboard_available,
         is_trash,
         trash_has_items,
@@ -247,12 +249,23 @@ pub(in crate::session) fn explorer_context_menu_view_model(
         ui::ExplorerContextMenuItemViewModel {
             id: id.to_string(),
             label: label.to_string(),
-            shortcut: None,
+            shortcut: match id {
+                "cut" => Some("X"),
+                "copy" => Some("C"),
+                "paste" => Some("V"),
+                "rename" => Some("F2"),
+                "delete" => Some("Del"),
+                "select-all" => Some("Ctrl+A"),
+                "invert-selection" => Some("Ctrl+I"),
+                "clear-selection" => Some("Ctrl+Shift+A"),
+                _ => None,
+            }
+            .map(str::to_string),
             enabled,
             dangerous,
         }
     };
-    let items = if is_trash && selected_count > 0 {
+    let mut items = if is_trash && selected_count > 0 {
         vec![
             item(
                 "restore",
@@ -324,12 +337,39 @@ pub(in crate::session) fn explorer_context_menu_view_model(
                 clipboard_available,
                 false,
             ),
-            item("select-all", i18n::tr!("shell-select-all"), true, false),
             item("refresh", i18n::tr!("shell-refresh"), true, false),
             item("sort", i18n::tr!("shell-sort"), true, false),
             item("options", i18n::tr!("shell-advanced-options"), true, false),
         ]
     };
+    if !is_trash && selected_count > 0 {
+        items.push(item(
+            "paste",
+            i18n::tr!("shell-paste"),
+            clipboard_available,
+            false,
+        ));
+    }
+    items.extend([
+        item(
+            "select-all",
+            i18n::tr!("shell-select-all"),
+            entry_count > 0,
+            false,
+        ),
+        item(
+            "invert-selection",
+            i18n::tr!("ui-explorer-invert-selection"),
+            entry_count > 0,
+            false,
+        ),
+        item(
+            "clear-selection",
+            i18n::tr!("ui-explorer-clear-selection"),
+            selected_count > 0,
+            false,
+        ),
+    ]);
     let selected_index = (!items.is_empty()).then_some(focused_index.min(items.len() - 1));
     ui::ExplorerOverlayViewModel::ContextMenu(ui::ExplorerContextMenuViewModel {
         x: anchor.0,
@@ -486,7 +526,7 @@ pub(in crate::session) fn explorer_properties_view_model(
     state: &ExplorerState,
     configured_timezone: Option<&str>,
 ) -> ui::ExplorerOverlayViewModel {
-    let Some(entry) = state.selected_entry() else {
+    let Some(entry) = state.single_selected_entry() else {
         return ui::ExplorerOverlayViewModel::Properties(ui::ExplorerPropertiesViewModel {
             title: i18n::tr!("shell-properties"),
             properties: vec![ui::ExplorerPropertyViewModel {

@@ -303,6 +303,8 @@ Explorer 维护过滤、排序、多选、历史、剪贴板、拖放、冲突�
 
 耗时文件操作会显示阶段进度，名称冲突、删除和清空回收站都先进入确认工作流。与此同时，`ExplorerFileService` 仍会在 apply 路径执行一部分平台、文件系统或存储操作，不能将其描述为所有副作用都已异步抽离。
 
+批量操作使用当前可见列表中的已选项：Ctrl/Cmd+点击或空格逐项勾选，Shift+点击/方向键连续选择，Ctrl/Cmd+Shift 扩大选择时保留原有勾选。Ctrl/Cmd+方向键只移动焦点；Home/End 和 PageUp/PageDown 跳到首尾或翻页，可配合 Shift 选择。Ctrl/Cmd+A 全选、Ctrl/Cmd+I 反选、Ctrl/Cmd+Shift+A 取消选择。C/X/V 复制、剪切和粘贴全部已选文件或文件夹，D 或 Delete 按删除确认设置将它们移入系统回收站。右键或 Shift+F10 打开菜单，提供选择操作和粘贴入口；过滤掉的条目不参与批量操作。N/T 新建文件夹/文本文件、F2 重命名单个已选项、Alt+Up 返回上级目录；Ctrl/Cmd+C/X/V 保留为兼容快捷键。文件操作单键仅在浏览列表或菜单时生效；输入路径、搜索词、新文件名和重命名时，C/X/V/D 等字母用于正常输入。
+
 Windows、macOS 和 Linux 的 Trash 实现均封装在 `platform`，APP 不拼接系统回收站路径，也不直接调用平台命令。
 
 ### Launcher 与内建应用
@@ -590,7 +592,7 @@ tundra-cli config set accent-color "#38bdf8"
 | 输入 | 行为 |
 | --- | --- |
 | Tab / Shift+Tab | 在当前焦点顺序中向前/向后移动。 |
-| Ctrl+C | 请求关闭终端会话；Editor 保留自身语义，Command Line 则转发给子 CLI。 |
+| Ctrl+C | 请求关闭终端会话；Editor 和 Explorer 用于复制，Command Line 则转发给子 CLI。 |
 | Ctrl+Shift+X（Command Line） | 紧急终止内嵌 CLI 并返回 Launcher。 |
 | q 或 Esc（主页） | 打开退出确认。 |
 | L（主页） | 注销并回到 Weathr 锁屏。 |

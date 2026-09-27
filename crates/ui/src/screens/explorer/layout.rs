@@ -647,16 +647,24 @@ fn explorer_overlay_layout(area: Rect, model: &ExplorerViewModel) -> Option<Expl
                 .min(area.y.saturating_add(area.height.saturating_sub(height)));
             let dialog = Rect::new(x, y, width.min(area.width), height);
             let content = inset_rect(dialog, 1);
+            let visible_count = usize::from(content.height);
+            let first = menu
+                .selected_index
+                .unwrap_or(0)
+                .min(menu.items.len().saturating_sub(1))
+                .saturating_sub(visible_count.saturating_sub(1));
             let controls = menu
                 .items
                 .iter()
                 .enumerate()
-                .take(usize::from(content.height))
-                .map(|(index, item)| ExplorerOverlayControlLayout {
+                .skip(first)
+                .take(visible_count)
+                .enumerate()
+                .map(|(row, (index, item))| ExplorerOverlayControlLayout {
                     control: ExplorerOverlayControl::ContextItem(index),
                     area: Rect::new(
                         content.x,
-                        content.y.saturating_add(usize_to_u16(index)),
+                        content.y.saturating_add(usize_to_u16(row)),
                         content.width,
                         1,
                     ),

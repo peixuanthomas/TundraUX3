@@ -1080,6 +1080,200 @@ fn ctrl_key(character: char) -> InputEvent {
     ))
 }
 
+fn modified_key(key: InputKey, control: bool, shift: bool) -> InputEvent {
+    InputEvent::Key(KeyInput::with_phase(
+        key,
+        InputModifiers {
+            control,
+            shift,
+            ..InputModifiers::none()
+        },
+        InputPhase::Press,
+    ))
+}
+
+#[test]
+fn keyboard_selection_supports_pages_focus_invert_and_clear() {
+    let fixture = FixtureRoot::new("keyboard-selection");
+    let platform = mock_platform(fixture.path());
+    bootstrap_with_shell(&platform);
+    for index in 0..80 {
+        fs::write(
+            fixture
+                .path()
+                .join(format!("Documents/file-{index:03}.txt")),
+            "data",
+        )
+        .unwrap();
+    }
+    let mut state = logged_in_state(&platform);
+    state.apply_input_with_platform(InputEvent::from_key_label("e"), &platform);
+    state.apply_input_with_platform(modified_key(InputKey::Down, true, false), &platform);
+    let model = state.to_explorer_view_model();
+    assert_eq!(model.selected_index, Some(1));
+    assert!(model.entries[0].selected);
+    assert!(!model.entries[1].selected);
+    state.apply_input_with_platform(InputEvent::from_key_label("F2"), &platform);
+    assert!(matches!(state.to_explorer_view_model().overlay,
+        Some(ui::ExplorerOverlayViewModel::Name(dialog)) if dialog.value == "file-000.txt"));
+    state.apply_input_with_platform(InputEvent::from_key_label("Esc"), &platform);
+    state.apply_input_with_platform(modified_key(InputKey::Char(' '), true, false), &platform);
+    assert_eq!(state.to_explorer_view_model().selected_count, 2);
+    state.apply_input_with_platform(modified_key(InputKey::End, false, true), &platform);
+    assert_eq!(state.to_explorer_view_model().selected_count, 79);
+    state.apply_input_with_platform(ctrl_key('i'), &platform);
+    assert_eq!(state.to_explorer_view_model().selected_count, 1);
+    assert!(state.to_explorer_view_model().entries[0].selected);
+    state.apply_input_with_platform(modified_key(InputKey::Char('a'), true, true), &platform);
+    assert_eq!(state.to_explorer_view_model().selected_count, 0);
+    state.apply_input_with_platform(InputEvent::from_key_label("Home"), &platform);
+    state.apply_input_with_platform(modified_key(InputKey::PageDown, false, true), &platform);
+    let model = state.to_explorer_view_model();
+    assert!(model.selected_count > 2 && model.selected_count < 80);
+    assert_eq!(model.selected_count, model.selected_index.unwrap() + 1);
+    state.apply_input_with_platform(modified_key(InputKey::PageUp, false, true), &platform);
+    assert_eq!(state.to_explorer_view_model().selected_count, 1);
+    state.apply_input_with_platform(modified_key(InputKey::F(10), false, true), &platform);
+    assert!(state.to_explorer_view_model().overlay.is_some());
+    state.apply_input_with_platform(ctrl_key('a'), &platform);
+    assert_eq!(state.to_explorer_view_model().selected_count, 80);
+    assert!(state.to_explorer_view_model().overlay.is_none());
+}
+
+#[test]
+fn batch_copy_cut_paste_and_delete_use_the_selected_files() {
+    let fixture = FixtureRoot::new("batch-file-actions");
+    let platform = mock_platform(fixture.path());
+    bootstrap_with_shell(&platform);
+    let documents = fixture.path().join("Documents");
+    let destination = documents.join("destination");
+    fs::create_dir(&destination).unwrap();
+    for name in ["alpha.txt", "beta.txt", "untouched.txt"] {
+        fs::write(documents.join(name), name).unwrap();
+    }
+    let mut state = logged_in_state(&platform);
+    state.apply_input_with_platform(InputEvent::from_key_label("e"), &platform);
+    state.apply_input_with_platform(InputEvent::from_key_label("Down"), &platform);
+    state.apply_input_with_platform(modified_key(InputKey::Down, false, true), &platform);
+    assert_eq!(state.to_explorer_view_model().selected_count, 2);
+    state.apply_input_with_platform(modified_key(InputKey::F(10), false, true), &platform);
+    state.apply_input_with_platform(InputEvent::from_key_label("c"), &platform);
+    assert!(state.to_explorer_view_model().overlay.is_none());
+    state.apply_input_with_platform(ctrl_key('c'), &platform);
+    assert_eq!(state.last_command(), Some(&ShellCommand::ExplorerCopy));
+    assert!(!state.shutdown_requested());
+    state.apply_input_with_platform(InputEvent::from_key_label("Home"), &platform);
+    state.apply_input_with_platform(InputEvent::from_key_label("Enter"), &platform);
+    state.apply_input_with_platform(InputEvent::from_key_label("v"), &platform);
+    drive_explorer_tasks_until(&mut state, &platform, |state| {
+        state.to_explorer_view_model().operation.is_none()
+    });
+    for name in ["alpha.txt", "beta.txt"] {
+        assert_eq!(fs::read_to_string(destination.join(name)).unwrap(), name);
+        assert!(documents.join(name).exists());
+    }
+    assert!(!destination.join("untouched.txt").exists());
+
+    // Move both copies into a second empty directory using the same clipboard flow.
+    let moved = documents.join("moved");
+    fs::create_dir(&moved).unwrap();
+    state.apply_input_with_platform(ctrl_key('a'), &platform);
+    state.apply_input_with_platform(InputEvent::from_key_label("x"), &platform);
+    state.apply_input_with_platform(ctrl_key('l'), &platform);
+    type_text(&mut state, &platform, &moved.to_string_lossy());
+    state.apply_input_with_platform(InputEvent::from_key_label("Enter"), &platform);
+    state.apply_input_with_platform(InputEvent::from_key_label("v"), &platform);
+    drive_explorer_tasks_until(&mut state, &platform, |state| {
+        state.to_explorer_view_model().operation.is_none()
+    });
+    for name in ["alpha.txt", "beta.txt"] {
+        assert_eq!(fs::read_to_string(moved.join(name)).unwrap(), name);
+        assert!(!destination.join(name).exists());
+    }
+    state.apply_input_with_platform(ctrl_key('a'), &platform);
+    state.apply_input_with_platform(InputEvent::from_key_label("Delete"), &platform);
+    assert!(state.to_explorer_view_model().pending_dialog.is_some());
+    state.apply_input_with_platform(InputEvent::from_key_label("n"), &platform);
+    assert!(
+        !platform
+            .calls()
+            .iter()
+            .any(|call| matches!(call, MockCall::MoveToTrash(_)))
+    );
+    state.apply_input_with_platform(InputEvent::from_key_label("Delete"), &platform);
+    state.apply_input_with_platform(InputEvent::from_key_label("y"), &platform);
+    drive_explorer_tasks_until(&mut state, &platform, |state| {
+        state.to_explorer_view_model().operation.is_none()
+    });
+    let deleted: Vec<_> = platform
+        .calls()
+        .into_iter()
+        .filter_map(|call| match call {
+            MockCall::MoveToTrash(paths) => Some(paths),
+            _ => None,
+        })
+        .flatten()
+        .collect();
+    assert_eq!(
+        deleted,
+        vec![moved.join("alpha.txt"), moved.join("beta.txt")]
+    );
+    assert!(documents.join("untouched.txt").exists());
+}
+
+#[test]
+fn file_action_letters_are_text_in_name_search_and_address_inputs() {
+    let fixture = FixtureRoot::new("action-letters-as-text");
+    let platform = mock_platform(fixture.path());
+    bootstrap_with_shell(&platform);
+    let documents = fixture.path().join("Documents");
+    fs::write(documents.join("cxvd.txt"), "keep").unwrap();
+    let mut state = logged_in_state(&platform);
+    state.apply_input_with_platform(InputEvent::from_key_label("e"), &platform);
+    // Keep a real clipboard available so an accidental V action would have an effect.
+    state.apply_input_with_platform(InputEvent::from_key_label("c"), &platform);
+    for opener in ["n", "t", "F2"] {
+        state.apply_input_with_platform(InputEvent::from_key_label(opener), &platform);
+        let initial = match state.to_explorer_view_model().overlay {
+            Some(ui::ExplorerOverlayViewModel::Name(dialog)) => dialog.value,
+            other => panic!("expected name input, got {other:?}"),
+        };
+        type_text(&mut state, &platform, "cCxXvVdDntro");
+        let model = state.to_explorer_view_model();
+        assert!(
+            matches!(model.overlay, Some(ui::ExplorerOverlayViewModel::Name(dialog))
+            if dialog.value == format!("{initial}cCxXvVdDntro"))
+        );
+        assert!(model.pending_dialog.is_none());
+        assert!(model.operation.is_none());
+        state.apply_input_with_platform(InputEvent::from_key_label("Esc"), &platform);
+    }
+    state.apply_input_with_platform(InputEvent::from_key_label("/"), &platform);
+    type_text(&mut state, &platform, "cxvd");
+    let model = state.to_explorer_view_model();
+    assert_eq!(model.search.unwrap().query, "cxvd");
+    assert_eq!(model.entries.len(), 1);
+    assert!(model.pending_dialog.is_none());
+    assert!(model.operation.is_none());
+    state.apply_input_with_platform(InputEvent::from_key_label("Esc"), &platform);
+    state.apply_input_with_platform(ctrl_key('l'), &platform);
+    type_text(&mut state, &platform, "cCxXvVdDntro");
+    let model = state.to_explorer_view_model();
+    assert!(model.address_editing);
+    assert_eq!(model.address_value, "cCxXvVdDntro");
+    assert!(model.pending_dialog.is_none());
+    assert!(model.operation.is_none());
+    assert!(!model.entry_presentations.iter().any(|entry| entry.cut));
+    assert!(!state.shutdown_requested());
+    assert_eq!(fs::read_dir(&documents).unwrap().count(), 1);
+    assert!(
+        !platform
+            .calls()
+            .iter()
+            .any(|call| matches!(call, MockCall::MoveToTrash(_)))
+    );
+}
+
 fn complete_first_run_setup(
     state: &mut ShellSession,
     platform: &MockPlatform,

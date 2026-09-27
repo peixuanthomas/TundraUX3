@@ -178,7 +178,7 @@ impl ShellSession {
             );
         }
 
-        if key.is_ctrl_c() {
+        if key.is_ctrl_c() && self.active_screen() != ShellScreen::Explorer {
             return (RoutedTarget::Global, ShellCommand::Shutdown);
         }
 
@@ -1213,6 +1213,37 @@ impl ShellSession {
             InputKey::Right if key.is_unmodified_action_key() || key.modifiers.alt => {
                 (target, ShellCommand::ExplorerOpenForward)
             }
+            InputKey::Up
+            | InputKey::Down
+            | InputKey::Home
+            | InputKey::End
+            | InputKey::PageUp
+            | InputKey::PageDown
+                if !key.modifiers.alt
+                    && (key.modifiers.control
+                        || key.modifiers.super_key
+                        || matches!(
+                            key.key,
+                            InputKey::Home | InputKey::End | InputKey::PageUp | InputKey::PageDown
+                        )) =>
+            {
+                use app::explorer::ExplorerSelectionMode;
+                let toggle = key.modifiers.control || key.modifiers.super_key;
+                let mode = match (key.modifiers.shift, toggle) {
+                    (true, true) => ExplorerSelectionMode::AddRange,
+                    (true, false) => ExplorerSelectionMode::Range,
+                    (false, true) => ExplorerSelectionMode::FocusOnly,
+                    (false, false) => ExplorerSelectionMode::Replace,
+                };
+                (
+                    target,
+                    ShellCommand::ExplorerNavigateSelection(key.key.clone(), mode),
+                )
+            }
+            InputKey::F(10) if key.modifiers.shift && !key.has_non_shift_modifier() => {
+                (target, ShellCommand::ExplorerContextMenu)
+            }
+            InputKey::Up if key.modifiers.alt => (target, ShellCommand::ExplorerOpenParent),
             InputKey::Up if key.modifiers.shift => (target, ShellCommand::ExplorerPreviousExtend),
             InputKey::Down if key.modifiers.shift => (target, ShellCommand::ExplorerNextExtend),
             InputKey::Up => (target, ShellCommand::ExplorerPrevious),
@@ -1237,6 +1268,14 @@ impl ShellSession {
                 target,
                 ShellCommand::ExplorerToolbarShortcut(ui::ExplorerToolbarAction::Options),
             ),
+            InputKey::Char('a' | 'A')
+                if key.modifiers.shift && (key.modifiers.control || key.modifiers.super_key) =>
+            {
+                (target, ShellCommand::ExplorerClearSelection)
+            }
+            InputKey::Char('i' | 'I') if key.modifiers.control || key.modifiers.super_key => {
+                (target, ShellCommand::ExplorerInvertSelection)
+            }
             InputKey::Char('a' | 'A') if key.modifiers.control || key.modifiers.super_key => {
                 (target, ShellCommand::ExplorerSelectAll)
             }
@@ -1508,6 +1547,34 @@ impl ShellSession {
 
     fn route_explorer_overlay_key(&self, key: &KeyInput) -> (RoutedTarget, ShellCommand) {
         let target = RoutedTarget::Component(ShellComponent::Explorer);
+        if key.phase == InputPhase::Press
+            && !key.modifiers.alt
+            && let Some(ui::ExplorerOverlayViewModel::ContextMenu(menu)) =
+                self.to_explorer_view_model().overlay
+        {
+            let command_modifier = key.modifiers.control || key.modifiers.super_key;
+            let id = match key.key {
+                InputKey::Char('a' | 'A') if command_modifier && key.modifiers.shift => {
+                    Some("clear-selection")
+                }
+                InputKey::Char('a' | 'A') if command_modifier => Some("select-all"),
+                InputKey::Char('i' | 'I') if command_modifier => Some("invert-selection"),
+                InputKey::Char('c' | 'C') => Some("copy"),
+                InputKey::Char('x' | 'X') => Some("cut"),
+                InputKey::Char('v' | 'V') => Some("paste"),
+                InputKey::Char('d' | 'D') if !key.has_non_shift_modifier() => Some("delete"),
+                InputKey::F(2) if key.is_unmodified_action_key() => Some("rename"),
+                InputKey::Delete if key.is_unmodified_action_key() => Some("delete"),
+                _ => None,
+            };
+            if let Some(index) = id.and_then(|id| {
+                menu.items
+                    .iter()
+                    .position(|item| item.id == id && item.enabled)
+            }) {
+                return (target, ShellCommand::ExplorerContextItem(index));
+            }
+        }
         if let Some(command) = explorer_overlay_navigation_command(key) {
             return (target, command);
         }

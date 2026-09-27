@@ -444,6 +444,39 @@ fn explorer_wide_context_labels_and_shortcuts_use_cell_width_hit_geometry() {
 }
 
 #[test]
+fn short_context_menu_keeps_last_keyboard_action_visible_and_clickable() {
+    let mut model = sample_model();
+    model.overlay = Some(ExplorerOverlayViewModel::ContextMenu(
+        ExplorerContextMenuViewModel {
+            x: 20,
+            y: 8,
+            title: "Selection".into(),
+            items: (0..12)
+                .map(|index| ExplorerContextMenuItemViewModel {
+                    id: format!("item-{index}"),
+                    label: format!("Action {index}"),
+                    shortcut: None,
+                    enabled: true,
+                    dangerous: false,
+                })
+                .collect(),
+            selected_index: Some(11),
+        },
+    ));
+    let layout = explorer_layout(Rect::new(0, 0, 80, 8), &model);
+    let overlay = layout.overlay.as_ref().unwrap();
+    let last = overlay.controls.last().unwrap();
+    assert_eq!(last.control, ExplorerOverlayControl::ContextItem(11));
+    assert_eq!(
+        layout.hit_test(last.area.x, last.area.y),
+        Some(ExplorerHitTarget::Overlay(
+            ExplorerOverlayControl::ContextItem(11)
+        ))
+    );
+    assert!(last.area.bottom() <= overlay.content.bottom());
+}
+
+#[test]
 fn explorer_name_dialog_renders_clickable_input_and_actions() {
     let mut model = sample_model();
     model.overlay = Some(ExplorerOverlayViewModel::Name(
