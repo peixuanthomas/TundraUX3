@@ -335,6 +335,8 @@ Editor 仅对 `.c`、`.h` 文件启用 C 语法高亮，区分关键字、字符
 
 ### 时钟、Settings 与 Diagnostics
 
+System Status 的进程详情使用彩色 CPU、内存用量条，以及右对齐的 PID、CPU%、内存列；名称使用剩余宽度。PID 为青色，内存为紫色，CPU 占用低于 40% 为绿色、40% 起为黄色、80% 起为红色。保留 CPU 和内存两份排行榜及其榜单标识，选中行以背景、加粗和下划线提示，数值颜色继续保留。过期和不可用数据仍明确显示对应状态。矮窗口省去内层边框，并优先保留表头和进程行。
+
 Settings 在 System 与 File Explorer 之间提供 Sound、Display、Wi-Fi、Bluetooth 四个分类，包含音量与静音、输入输出设备、亮度、无线网络列表与连接操作、蓝牙设备列表与配对操作。目前这些入口全部不可用：Linux 提示尚未接入系统服务，macOS、Windows 与其他平台提示应用暂不支持。未获取的状态不显示为零、关闭或空列表；没有演示设备、模拟成功或配置持久化。禁用项允许选择并查看说明，不执行操作，也不提供恢复默认设置。
 
 后续系统集成接口位于 `app::system_settings`：`SystemSettingsBackend` 提供缓存 `snapshot`、非阻塞 `submit` 和 `poll`；`SystemSettingsSnapshot` 按类别携带可用性及可选状态，`SystemSettingsRequest` 使用稳定设备／网络标识表达操作，`OperationStatus` 区分不可用、执行中、完成和失败。`None` 表示未获取，`Some(Vec::new())` 才表示真实查询后的空列表。Shell 当前只持有 `UnavailableSystemSettingsBackend`，在 `settings_devices` 中将原因转换成界面提示并统一拦截操作。后续适配器应通过现有受监督后台任务执行 I/O，并补齐真实设备选择、凭据／配对确认和失败恢复流程；UI 不依赖平台 API，本次不扩展 `platform::Platform` 或存储 schema。

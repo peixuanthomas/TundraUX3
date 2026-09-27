@@ -46,6 +46,7 @@ ui-system-status-sort = 排序
 ui-system-status-pid = PID
 ui-system-status-process = 进程
 ui-system-status-cpu = CPU
+ui-system-status-process-colors = CPU：绿 <40% / 黄 ≥40% / 红 ≥80% · 紫：内存 · 榜单：CPU / 内存
 ui-system-status-memory = 内存
 ui-system-status-check = 检查项
 ui-system-status-log = 日志

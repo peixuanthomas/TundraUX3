@@ -6,6 +6,104 @@ use ui::components::ComponentTone;
 use ui::*;
 
 #[test]
+fn processes_show_colored_aligned_values_and_keep_selection_and_scrolling() {
+    use ratatui::style::{Color, Modifier};
+    let mut m = model();
+    m.route = SystemStatusRoute::Detail(SystemStatusDetail::Processes);
+    let mut processes = widget(
+        SystemStatusWidgetKind::TopProcesses,
+        SystemStatusWidgetSize::Large,
+        0,
+        0,
+    );
+    processes.primary = "worker · 90.0% CPU".into();
+    processes.compact_rows = (0..25)
+        .map(|i| {
+            vec![
+                "CPU".into(),
+                (1234 + i).to_string(),
+                format!("worker-{i}"),
+                ["12.0%", "45.0%", "90.0%"][i % 3].into(),
+                "2.0 MiB".into(),
+            ]
+        })
+        .collect();
+    m.dashboard.wide_widgets.push(processes);
+    let short_layout = system_status_layout(full_main(50, 12), &m);
+    assert!(short_layout.visible_capacity > 0);
+    assert!(render(50, 12, &m).contains("worker-0"));
+    for theme in [
+        TundraTheme::default_dark(),
+        TundraTheme {
+            background: Color::White,
+            foreground: Color::Black,
+            ..TundraTheme::default_dark()
+        },
+    ] {
+        for width in [50, 100] {
+            let main = full_main(width, 24);
+            let layout = system_status_layout(main, &m);
+            let mut terminal = Terminal::new(TestBackend::new(width, 24)).unwrap();
+            terminal
+                .draw(|f| render_system_status(f, f.area(), &chrome(width, 24), &m, &theme))
+                .unwrap();
+            let buffer = terminal.backend().buffer();
+            for (i, cpu_color) in [Color::Green, Color::Yellow, Color::Red]
+                .into_iter()
+                .enumerate()
+            {
+                let row = layout.rows[i].area;
+                assert_eq!(buffer[(row.x + 5, row.y)].fg, Color::Cyan);
+                assert_eq!(buffer[(row.x + 13, row.y)].fg, cpu_color);
+                assert_eq!(buffer[(row.x + 24, row.y)].fg, Color::Magenta);
+                assert_eq!(buffer[(row.x + 32, row.y)].symbol(), "w");
+                if i == 0 {
+                    assert!(
+                        buffer[(row.x, row.y)]
+                            .modifier
+                            .contains(Modifier::UNDERLINED)
+                    );
+                }
+                assert_eq!(
+                    system_status_hit_test(&layout, (row.x, row.y)),
+                    Some(SystemStatusHitTarget::Row(i))
+                );
+            }
+        }
+    }
+    m.selected_row = 24;
+    m.scroll_offset = 24;
+    let layout = system_status_layout(full_main(100, 24), &m);
+    assert_eq!(layout.rows.last().unwrap().index, 24);
+    assert!(render(100, 24, &m).contains("worker-24"));
+}
+
+#[test]
+fn process_meter_retains_missing_and_stale_states() {
+    let mut m = model();
+    m.route = SystemStatusRoute::Detail(SystemStatusDetail::Processes);
+    let mut processes = widget(
+        SystemStatusWidgetKind::TopProcesses,
+        SystemStatusWidgetSize::Large,
+        0,
+        0,
+    );
+    processes.primary = "worker".into();
+    processes.state = SystemStatusWidgetState::Stale {
+        message: "sample delayed".into(),
+    };
+    m.dashboard.wide_widgets = vec![processes];
+    m.dashboard.narrow_widgets.clear();
+    let output = render(100, 24, &m);
+    assert!(output.contains("sample delayed"));
+    assert!(output.contains(&i18n::tr!("ui-system-status-unavailable")));
+    m.dashboard.wide_widgets[0].state = SystemStatusWidgetState::Unavailable {
+        message: "permission denied".into(),
+    };
+    assert!(render(100, 24, &m).contains("permission denied"));
+}
+
+#[test]
 fn three_sizes_have_expected_geometry_and_no_overlap() {
     let m = model();
     // Keep the original content height after the Spring shell's outer inset.

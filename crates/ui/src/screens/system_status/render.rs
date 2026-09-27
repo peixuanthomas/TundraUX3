@@ -299,10 +299,12 @@ fn render_detail(
         .style(theme.title_style()),
         l.header,
     );
-    Surface::new()
-        .titled(d.label())
-        .bordered(true)
-        .render_frame(frame, l.content_panel, context);
+    let surface = if d == SystemStatusDetail::Processes && l.content_panel.height < 4 {
+        Surface::new()
+    } else {
+        Surface::new().titled(d.label()).bordered(true)
+    };
+    surface.render_frame(frame, l.content_panel, context);
     match d {
         SystemStatusDetail::Overview => super::overview::render_overview(frame, l, model, context),
         SystemStatusDetail::Storage => render_storage(frame, l, model, context),
@@ -382,6 +384,11 @@ fn render_formatted_detail(
             return;
         }
         _ => {}
+    }
+    if vm.kind == SystemStatusWidgetKind::TopProcesses {
+        super::processes::render_processes(frame, layout, model, vm, context);
+        detail_scroll(frame, layout, model, context);
+        return;
     }
     let mut summary_lines = std::iter::once(Line::raw(vm.primary.as_str()))
         .chain(vm.secondary.iter().map(|line| Line::raw(line.as_str())))

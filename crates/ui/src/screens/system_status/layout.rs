@@ -122,7 +122,13 @@ pub fn system_status_layout(main: Rect, model: &SystemStatusViewModel) -> System
         inner.width,
         footer.y.saturating_sub(header.bottom()),
     );
-    let canvas = inset_rect(content_panel, 1);
+    let compact_processes = model.route == SystemStatusRoute::Detail(SystemStatusDetail::Processes)
+        && content_panel.height < 4;
+    let canvas = if compact_processes {
+        content_panel
+    } else {
+        inset_rect(content_panel, 1)
+    };
     let wide = content_panel.width.saturating_sub(7) / 8 >= 10;
     let profile = if wide {
         SystemStatusDashboardProfile::Wide
@@ -284,12 +290,16 @@ pub fn system_status_layout(main: Rect, model: &SystemStatusViewModel) -> System
                 | SystemStatusDetail::Incidents
         )
     });
-    let detail_summary_height = if formatted_detail {
+    let detail_summary_height = if detail == Some(SystemStatusDetail::Processes) {
+        // Keep a header and at least one process visible in short terminals.
+        canvas.height.saturating_sub(2).min(4)
+    } else if formatted_detail {
         canvas.height.min(4)
     } else {
         0
     };
     let detail_trend_height = if formatted_detail
+        && detail != Some(SystemStatusDetail::Processes)
         && detail
             .and_then(|detail| model.detail_widget(detail))
             .and_then(|widget| widget.trend.as_ref())
