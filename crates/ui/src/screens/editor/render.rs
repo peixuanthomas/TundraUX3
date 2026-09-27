@@ -447,6 +447,40 @@ fn render_canvas(
     }
 
     for line_layout in &layout.line_areas {
+        if layout.gutter.width >= 2 {
+            use app::editor::line_changes::LineChange;
+            use ratatui::style::Color;
+            let marker = model
+                .line_markers
+                .get(line_layout.document_line)
+                .copied()
+                .unwrap_or_default();
+            let color = match marker.change {
+                LineChange::Unchanged => theme.muted,
+                LineChange::Added => Color::Green,
+                LineChange::Modified => Color::Yellow,
+            };
+            let number_width = usize::from(layout.gutter.width.saturating_sub(2));
+            let number = format!("{:>number_width$}", line_layout.document_line + 1);
+            let deletion = match (marker.deleted_before > 0, marker.deleted_after > 0) {
+                (true, true) => "↕",
+                (true, false) => "▔",
+                (false, true) => "▁",
+                _ => " ",
+            };
+            frame.render_widget(
+                Paragraph::new(Line::from(vec![
+                    Span::styled(number, Style::default().fg(color)),
+                    Span::styled(
+                        deletion,
+                        Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+                    ),
+                    Span::raw(" "),
+                ]))
+                .style(canvas_theme.body_style()),
+                Rect::new(layout.gutter.x, line_layout.area.y, layout.gutter.width, 1),
+            );
+        }
         let relative_line = line_layout
             .document_line
             .saturating_sub(layout.prepared_start);

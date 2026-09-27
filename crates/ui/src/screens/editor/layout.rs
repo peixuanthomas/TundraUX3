@@ -236,7 +236,9 @@ pub struct EditorLayout {
     pub menu_bar: Rect,
     pub toolbar: Rect,
     pub canvas_panel: Rect,
-    /// Text cells only; borders and the optional scrollbar are excluded.
+    /// Fixed source line numbers and change indicators, outside the text hit area.
+    pub gutter: Rect,
+    /// Text cells only; borders, gutter and optional scrollbars are excluded.
     pub canvas: Rect,
     pub status_bar: Rect,
     pub menus: Vec<EditorMenuLayout>,
@@ -509,11 +511,25 @@ pub fn editor_layout(area: Rect, model: &EditorViewModel) -> EditorLayout {
     );
 
     let canvas_framed = canvas_panel.width >= 20 && canvas_panel.height >= 5;
-    let base_canvas = if canvas_framed {
+    let mut base_canvas = if canvas_framed {
         inset(canvas_panel, 1)
     } else {
         canvas_panel
     };
+    let gutter_width = if model.mode == EditorMode::Source {
+        (source_document_line_count(model).to_string().len() as u16 + 2)
+            .min(base_canvas.width.saturating_sub(2))
+    } else {
+        0
+    };
+    let mut gutter = Rect::new(
+        base_canvas.x,
+        base_canvas.y,
+        gutter_width,
+        base_canvas.height,
+    );
+    base_canvas.x = base_canvas.x.saturating_add(gutter_width);
+    base_canvas.width = base_canvas.width.saturating_sub(gutter_width);
     let mut canvas = base_canvas;
     let requested_horizontal_scroll = model.horizontal_scroll;
     let (document_line_count, rich_lines, horizontal_content_width) = match model.mode {
@@ -743,12 +759,14 @@ pub fn editor_layout(area: Rect, model: &EditorViewModel) -> EditorLayout {
         Vec::new()
     };
 
+    gutter.height = canvas.height;
     EditorLayout {
         mode: model.mode,
         area,
         menu_bar,
         toolbar,
         canvas_panel,
+        gutter,
         canvas,
         status_bar,
         menus,

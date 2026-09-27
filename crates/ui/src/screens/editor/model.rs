@@ -544,6 +544,8 @@ pub struct EditorViewModel {
     pub source_window: Option<EditorSourceWindow>,
     /// C-only token ranges in canonical source bytes, shared across frames.
     pub c_highlights: Arc<[app::editor::c_syntax::CToken]>,
+    /// Saved-text differences indexed by absolute source line; empty for clean files.
+    pub line_markers: Arc<[app::editor::line_changes::LineMarker]>,
     pub scroll_line: usize,
     pub horizontal_scroll: usize,
     /// Source-mode horizontal extent in terminal cells: the widest line plus
@@ -606,6 +608,7 @@ impl EditorViewModel {
             source_line_ranges: Vec::new(),
             source_window: None,
             c_highlights: Arc::from([]),
+            line_markers: Arc::from([]),
             scroll_line: 0,
             horizontal_scroll: 0,
             horizontal_content_width: 1,

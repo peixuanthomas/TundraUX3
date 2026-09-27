@@ -4,6 +4,7 @@
 //! files use the same text buffer as every other supported file.
 
 pub mod c_syntax;
+pub mod line_changes;
 pub mod markdown_codec;
 pub mod recovery;
 pub mod rich_document;
@@ -1722,6 +1723,7 @@ pub struct EditorState {
     source_session: Option<SourceSession>,
     pending_saves: Vec<SaveSnapshot>,
     rich_word_count_cache: RichWordCountCache,
+    line_change_cache: line_changes::Cache,
 }
 
 impl Default for EditorState {
@@ -1812,6 +1814,7 @@ impl EditorState {
             source_session: None,
             pending_saves: Vec::new(),
             rich_word_count_cache: RichWordCountCache::default(),
+            line_change_cache: line_changes::Cache::default(),
         }
     }
 
@@ -1825,6 +1828,41 @@ impl EditorState {
 
     pub fn is_dirty(&self) -> bool {
         self.revision != self.saved_revision
+    }
+
+    /// Compare the current source with the exact snapshot last saved successfully.
+    /// Cursor motion and scrolling reuse the cached result; clean files need no scan.
+    pub fn source_line_markers(&self) -> Arc<[line_changes::LineMarker]> {
+        let EditorBuffer::Source(buffer) = &self.buffer else {
+            return Arc::from([]);
+        };
+        if !self.is_dirty() {
+            return Arc::from([]);
+        }
+        self.line_change_cache
+            .get_or_compute((self.revision, self.saved_revision), || {
+                fn lines(rope: &Rope) -> Vec<Cow<'_, str>> {
+                    rope.lines().map(Cow::from).collect()
+                }
+                let old_rope;
+                let old = if let Some((rope, _, _)) = self.document.saved_source.rope() {
+                    rope
+                } else {
+                    old_rope = Rope::from_str(&self.document.saved_source.text());
+                    &old_rope
+                };
+                let old_lines = if old.len_bytes() == 0 {
+                    Vec::new()
+                } else {
+                    lines(old)
+                };
+                let new_lines = if buffer.text.len_bytes() == 0 {
+                    Vec::new()
+                } else {
+                    lines(&buffer.text)
+                };
+                line_changes::compare(&old_lines, &new_lines)
+            })
     }
 
     /// Source-mode text, or the last boundary Markdown snapshot in Rich mode.

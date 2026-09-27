@@ -241,6 +241,7 @@ impl ShellSession {
                     lines,
                 );
                 model.c_highlights = state.source_c_highlights();
+                model.line_markers = state.source_line_markers();
                 model.cursor = state
                     .source_display_position(state.cursor.byte_offset)
                     .map(|(line, column)| ui::EditorTextPosition::new(line, column));

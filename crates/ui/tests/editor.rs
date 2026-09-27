@@ -1,5 +1,88 @@
 mod support;
 
+#[test]
+fn source_gutter_colors_changes_and_stays_fixed_while_text_scrolls() {
+    use app::editor::line_changes::{LineChange, LineMarker};
+    let mut model = EditorViewModel::source("note.txt", "abcdefghijklmnop\nsecond\nthird");
+    model.cursor = None;
+    model.horizontal_scroll = 4;
+    model.horizontal_content_width = 100;
+    model.line_markers = vec![
+        LineMarker {
+            change: LineChange::Added,
+            ..Default::default()
+        },
+        LineMarker {
+            change: LineChange::Modified,
+            deleted_before: 2,
+            ..Default::default()
+        },
+        LineMarker {
+            deleted_after: 1,
+            ..Default::default()
+        },
+    ]
+    .into();
+    let layout = editor_layout(Rect::new(0, 0, 50, 12), &model);
+    let terminal = render(&model, 50, 12);
+    let buffer = terminal.backend().buffer();
+    for (row, color) in [(0, Color::Green), (1, Color::Yellow)] {
+        assert_eq!(buffer[(layout.gutter.x, layout.canvas.y + row)].fg, color);
+        assert_eq!(
+            buffer[(layout.gutter.x, layout.canvas.y + row)].symbol(),
+            (row + 1).to_string()
+        );
+    }
+    assert_eq!(
+        buffer[(layout.gutter.x + 1, layout.canvas.y + 1)].fg,
+        Color::Red
+    );
+    assert_eq!(
+        buffer[(layout.gutter.x + 1, layout.canvas.y + 1)].symbol(),
+        "▔"
+    );
+    assert_eq!(
+        buffer[(layout.gutter.x + 1, layout.canvas.y + 2)].symbol(),
+        "▁"
+    );
+    assert_eq!(buffer[(layout.canvas.x, layout.canvas.y)].symbol(), "e");
+    assert_eq!(
+        layout
+            .hit_test_document(layout.canvas.x, layout.canvas.y)
+            .unwrap()
+            .position,
+        EditorDocumentPosition::Source(4)
+    );
+    assert!(
+        layout
+            .hit_test_document(layout.gutter.x, layout.gutter.y)
+            .is_none()
+    );
+}
+
+#[test]
+fn line_number_width_and_scrolling_follow_document_lines() {
+    let source = (1..=120)
+        .map(|i| format!("text {i}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let mut model = EditorViewModel::source("note.txt", source);
+    model.scroll_line = 99;
+    model.cursor = None;
+    let layout = editor_layout(Rect::new(0, 0, 50, 12), &model);
+    assert_eq!(layout.gutter.width, 5);
+    let terminal = render(&model, 50, 12);
+    assert_eq!(
+        find_text(&terminal, "100"),
+        (layout.gutter.x, layout.gutter.y)
+    );
+    for width in 1..20 {
+        let layout = editor_layout(Rect::new(0, 0, width, 8), &model);
+        assert!(layout.canvas.right() <= width);
+        let _ = render(&model, width, 8);
+    }
+}
+
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use ratatui::layout::{Position, Rect};
@@ -539,16 +622,16 @@ fn rich_scrollbars_reach_a_fixed_point_without_overlapping() {
 #[test]
 fn source_scrollbars_reach_a_fixed_point_without_overlapping() {
     // Four lines require a vertical bar. That column reduces an exactly
-    // fitting 47-cell line plus its caret cell to 47 cells, which then also
+    // fitting 44-cell line plus its caret cell to 44 cells, which then also
     // requires a horizontal bar; the new bottom row must keep the vertical
     // bar necessary.
-    let source = format!("{}\na\nb\nc", "x".repeat(47));
+    let source = format!("{}\na\nb\nc", "x".repeat(44));
     let model = EditorViewModel::source("both.log", source);
     let layout = editor_layout(Rect::new(0, 0, 50, 8), &model);
     let vertical = layout.vertical_scrollbar.expect("vertical scrollbar");
     let horizontal = layout.horizontal_scrollbar.expect("horizontal scrollbar");
 
-    assert_eq!(layout.canvas.width, 47);
+    assert_eq!(layout.canvas.width, 44);
     assert_eq!(layout.canvas.height, 2);
     assert_eq!(vertical.track.height, layout.canvas.height);
     assert_eq!(horizontal.track.width, layout.canvas.width);
@@ -614,13 +697,13 @@ fn source_horizontal_layout_handles_unicode_and_tiny_areas() {
 
 #[test]
 fn end_caret_on_an_exactly_fitting_source_line_remains_visible() {
-    let mut model = EditorViewModel::source("exact.log", "x".repeat(48));
+    let mut model = EditorViewModel::source("exact.log", "x".repeat(45));
     model.horizontal_scroll = 1;
-    model.cursor = Some(EditorTextPosition::new(0, 48));
+    model.cursor = Some(EditorTextPosition::new(0, 45));
     let layout = editor_layout(Rect::new(0, 0, 50, 8), &model);
     let mut terminal = render(&model, 50, 8);
 
-    assert_eq!(model.horizontal_content_width, 49);
+    assert_eq!(model.horizontal_content_width, 46);
     assert!(layout.horizontal_scrollbar.is_some());
     assert_eq!(layout.horizontal_scroll, 1);
     assert_eq!(

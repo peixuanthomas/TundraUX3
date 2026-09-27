@@ -59,6 +59,7 @@ fn explorer_opens_c_with_cached_highlights_that_update_after_typing() {
     let mut state = logged_in_state(&platform);
     open_only_document_in_editor(&mut state, &platform);
     let model = state.to_editor_view_model();
+    assert!(model.line_markers.is_empty());
     assert!(
         model.source.is_none(),
         "the shell still sends only a viewport"
@@ -73,6 +74,10 @@ fn explorer_opens_c_with_cached_highlights_that_update_after_typing() {
     ));
     type_text(&mut state, &platform, "/*");
     let edited = state.to_editor_view_model();
+    assert_eq!(
+        edited.line_markers[0].change,
+        app::editor::line_changes::LineChange::Modified
+    );
     assert_eq!(edited.c_highlights.len(), 1);
     assert_eq!(
         edited.c_highlights[0].kind,
@@ -929,6 +934,10 @@ fn explorer_opens_markdown_and_ctrl_s_saves_the_edited_document() {
 
     open_only_document_in_editor(&mut state, &platform);
     type_text(&mut state, &platform, "edited ");
+    assert_eq!(
+        state.to_editor_view_model().line_markers[0].change,
+        app::editor::line_changes::LineChange::Modified
+    );
     state.apply_input_with_platform(ctrl('s'), &platform);
     wait_for_editor_background_tasks(&mut state, &platform);
 
@@ -949,6 +958,7 @@ fn explorer_opens_markdown_and_ctrl_s_saves_the_edited_document() {
             .as_deref()
             .is_some_and(|message| message.starts_with("Saved "))
     );
+    assert!(editor.line_markers.is_empty());
 }
 
 #[test]
@@ -1298,6 +1308,10 @@ fn failed_save_keeps_the_document_dirty() {
     assert!(!path.exists());
     let editor = state.to_editor_view_model();
     assert!(editor.dirty);
+    assert_eq!(
+        editor.line_markers[0].change,
+        app::editor::line_changes::LineChange::Modified
+    );
     assert!(editor.status_message.as_deref().is_some_and(|message| {
         message.starts_with("Could not save") || message.contains("changed outside")
     }));
