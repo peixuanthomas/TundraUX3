@@ -33,6 +33,7 @@ pub mod diagnostics;
 pub mod identity;
 pub mod installation;
 pub mod power;
+pub mod source_packages;
 pub mod updates;
 mod user_dirs;
 

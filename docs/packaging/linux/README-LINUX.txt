@@ -31,7 +31,7 @@ Fedora derivatives must satisfy its generated library dependencies; compatibilit
 with RHEL/CentOS/Rocky/AlmaLinux is not assumed. Build on the target distribution
 with `bash scripts/package-linux.sh --rpm` (requires rpm-build) when necessary.
 The Fedora RPM updater uses PackageKit and verifies the resulting installed RPM
-version. Debian/Ubuntu system package updates are unsupported in this phase.
+version. Ubuntu and Arch can build and install local system packages as described below.
 
 Ordinary Linux user session
 --------------------------
@@ -87,6 +87,23 @@ the service or environment they require is absent.
 
 Updates and system authorization
 --------------------------------
+SystemDeb / SystemArch (Ubuntu / Arch x86_64): check the GitHub default branch,
+download the selected commit and compile as the ordinary user. Ubuntu builds a
+DEB with dpkg-deb and shared-library dependencies from dpkg-shlibdeps; Arch builds
+a .pkg.tar.zst with makepkg. Install Rust and the project's build dependencies
+first, plus dpkg-dev on Ubuntu or base-devel on Arch, and sudo on either system.
+Source builds owned by the current user can also use this workflow for their
+first system installation. Their original source/build directory is unchanged.
+
+After confirmation, the terminal is handed to sudo apt-get --no-remove install
+or sudo pacman -U. The package manager displays its own confirmation; passwords
+go directly to sudo. Only installation is privileged. The package contains the
+programs and bundled assets, never personal settings or themes. Existing target
+executables must belong to tundraux3. Success requires the recorded package
+version and both program commit probes to match. Restart into /usr/bin/tundra-shell
+is explicit, after the existing unsaved-document checks. No automatic rollback
+or retry is promised after a failed/interrupted package-manager transaction.
+
 SystemRpm: the running executable must actually belong to the installed tundraux3
 RPM on Fedora. PackageKit checks configured repositories for a newer target and
 simulates its dependency changes before confirmation. Only tundraux3 and necessary

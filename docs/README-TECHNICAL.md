@@ -398,7 +398,9 @@ D-Bus 错误字符串。统一错误包括权限拒绝、授权取消、服务�
 
 安装识别以运行中 executable 的真实 RPM 归属为依据。Fedora `tundraux3` RPM 使用
 `SystemRpm`；显式带 `tundra-installation.json` 标记、当前用户拥有且可写的正式目录使用
-`PortableUser`；源码构建、归属不可靠或不支持的系统安装返回 `Unavailable`。便携更新的检查、
+`PortableUser`。Ubuntu x86_64 的 DEB 和 Arch x86_64 的 pacman 安装分别使用 `SystemDeb`、
+`SystemArch`；这两个发行版中当前用户拥有的源码构建也可通过相同流程首次安装系统包。
+其他源码构建、归属不可靠或不支持的系统安装返回 `Unavailable`。便携更新的检查、
 准备、替换和恢复分别校验安装边界，RPM 不进入 GitHub 构建或直接 executable 替换。
 
 PackageKit API 只检查、预览、更新已安装的 `tundraux3` 及求解出的必要依赖，支持后端 Cancel
@@ -417,7 +419,7 @@ controlling TTY 上启动 Fedora 的 `pkttyagent`。它绑定当前请求进程�
 焦点、粘贴、光标和重绘。Tundra 不记录密码或认证响应。logind 电源操作复用同一终端与代理交接；由 logind 选择基础、多会话或抑制器策略，只有其明确返回 `InteractiveAuthorizationRequired` 才在注册 fallback 后重试同一请求一次。拒绝、取消、超时和断线不会重放电源操作。日志读取遵守普通用户权限，不执行 root 命令回退。
 
 RPM 依赖 PackageKit 和 polkit（其中包含 pkttyagent），不安装 Tundra PAM policy 或 sudo
-运行依赖。DEB 同样使用普通用户身份，本阶段不支持系统软件包更新。Portable 不安装任何系统账户、
+运行依赖。DEB 同样使用普通用户身份；Ubuntu/Arch 的源码包更新见下文。Portable 不安装任何系统账户、
 PAM 配置或 system service。诊断仅观察 UID/GID、NSS、HOME/XDG、总线、logind、PackageKit、
 polkit、pkttyagent 及安装/RPM 归属，不自动提权。
 
@@ -446,6 +448,23 @@ Linux 文件管理器不会只凭可执行权限把文件送入 Launcher。普�
 首发范围不包括 aarch64、系统镜像、会话切换或 SteamOS 式产品化。
 
 ### 程序自更新
+
+Ubuntu/Arch 的系统包更新先检查 GitHub 默认分支，在用户缓存目录下载指定提交并用已有 Rust 工具链编译。
+Ubuntu 使用 `dpkg-shlibdeps` 计算共享库依赖、`dpkg-deb --root-owner-group` 生成 DEB；
+Arch 使用固定的 PKGBUILD 和 `makepkg` 生成 `.pkg.tar.zst`，不自动安装构建依赖。
+Ubuntu 需要 `dpkg-dev`，Arch 需要 `base-devel`，两者均需要 Rust、项目的编译依赖和 `sudo`。
+包版本包含源码版本、构建时间和 Git 提交号，因此同一源码版本的不同提交也会更新系统记录。
+
+用户确认编译安装后，界面暂停读取键盘，将终端交给 `sudo apt-get --no-remove install` 或
+`sudo pacman -U`。密码由 sudo 直接读取，包管理器保留自己的安装确认；不以 root 编译，
+不传递自动确认、强制覆盖或跳过依赖检查的安装参数，也不修改软件源。
+系统包包含两个程序、随附资源、desktop entry 和许可证，个人设置、主题和源码目录不参与替换。
+`/usr/bin` 下已有同名程序必须归 `tundraux3` 软件包所有，否则拒绝安装。
+安装结束后重新查询软件包版本，并探测两个程序的提交号；只有全部一致才显示成功。
+成功后用户可显式重启到 `/usr/bin/tundra-shell`，沿用编辑器未保存文件的恢复检查。
+安装失败或中断不承诺回滚，需检查 apt/pacman 状态；程序不会自动重试安装或杀掉正在安装的软件包进程。
+该流程也支持把 Ubuntu/Arch 上的源码构建首次安装为系统包；正式便携安装仍使用原来的便携更新方式。
+验证命令、实际安装结果及尚未覆盖的部分见 [源码包更新验证记录](packaging/linux/VALIDATION-SOURCE-UPDATES.md)。
 
 以下源码构建与二进制替换流程仅用于 Windows 的现有更新方式及已验证为 `PortableUser` 的 Linux 正式便携安装。确认后从 GitHub 下载已检查的指定提交，在本机用已有 Rust 工具链编译，再替换该便携目录中的 Shell 和 CLI；不自动安装 Rust 或使用 sudo。安装目录必须属于当前用户且可写，Linux 还需要项目构建所需的编译器和开发库。Fedora `SystemRpm` 使用前述 PackageKit 事务，其他未支持安装显示不可用。
 

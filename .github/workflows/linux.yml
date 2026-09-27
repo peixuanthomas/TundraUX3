@@ -31,6 +31,9 @@ jobs:
           cargo test --locked -p i18n -p ascii-assets
           cargo test --locked -p ui --test localization
           cargo test --locked -p shell session::localization::tests --lib
+      - name: Test source-built Ubuntu packages
+        run: |
+          cargo test --locked -p app --lib ubuntu_builds_real_deb -- --ignored
       - name: Test system metrics
         run: |
           cargo test --locked -p platform --test linux_logs
@@ -41,6 +44,22 @@ jobs:
           cargo test --locked -p platform --test system_status
           cargo test --locked -p system-services --no-default-features
           cargo test --locked -p system-services --features runtime
+
+  arch:
+    name: Arch Linux local package build
+    runs-on: ubuntu-24.04
+    container: archlinux:base-devel
+    steps:
+      - name: Install build requirements
+        run: pacman -Syu --noconfirm --needed git rust cmake pkgconf openssl
+      - uses: actions/checkout@v6
+      - name: Test as ordinary user
+        run: |
+          useradd --create-home tundra-ci
+          chown -R tundra-ci:tundra-ci "$GITHUB_WORKSPACE"
+          runuser -u tundra-ci -- cargo test --locked -p platform --lib source_packages
+          runuser -u tundra-ci -- cargo test --locked -p app --lib update::package
+          runuser -u tundra-ci -- cargo test --locked -p app --lib arch_builds_real_pacman_package -- --ignored
 
   fedora:
     name: Fedora 43 (x86_64)

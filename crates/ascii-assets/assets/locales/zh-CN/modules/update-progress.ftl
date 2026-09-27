@@ -11,3 +11,6 @@ progress-phase-staging = 正在暂存更新
 progress-phase-replacing = 正在准备替换
 progress-phase-restart = 等待重新启动
 progress-phase-failed = 更新失败
+
+progress-phase-packaging = 正在生成系统软件包
+progress-phase-installing-package = 正在通过系统包管理器安装

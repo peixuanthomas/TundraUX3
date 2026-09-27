@@ -4,8 +4,20 @@ use std::path::PathBuf;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UpdateBackend {
     SystemRpm,
+    SystemDeb,
+    SystemArch,
     PortableUser,
     Unavailable,
+}
+
+impl UpdateBackend {
+    pub fn builds_system_package(self) -> bool {
+        matches!(self, Self::SystemDeb | Self::SystemArch)
+    }
+
+    pub fn uses_source_updates(self) -> bool {
+        self == Self::PortableUser || self.builds_system_package()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

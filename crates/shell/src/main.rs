@@ -89,6 +89,19 @@ fn main() {
 
     let exit_code = match (run_result, watchdog_shutdown) {
         (Ok(shell::ShellRunOutcome::Exit), Ok(())) => 0,
+        (Ok(shell::ShellRunOutcome::RestartInstalledPackage), Ok(())) => {
+            match restart_current_executable(Ok(std::path::PathBuf::from("/usr/bin/tundra-shell")))
+            {
+                Ok(code) => code,
+                Err(error) => {
+                    eprintln!(
+                        "{}",
+                        i18n::tr!("shell-entry-restart-failed", error = error.to_string())
+                    );
+                    4
+                }
+            }
+        }
         (Ok(shell::ShellRunOutcome::RestartRequested), Ok(())) => {
             match restart_current_executable(restart_executable) {
                 Ok(code) => code,

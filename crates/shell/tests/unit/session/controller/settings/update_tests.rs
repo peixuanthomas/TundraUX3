@@ -1,5 +1,29 @@
 use super::*;
 
+#[test]
+fn installed_source_package_disables_reinstall_and_offers_restart() {
+    let state = SettingsUpdateState {
+        package_installed: true,
+        ..Default::default()
+    };
+    let cards = update_settings_cards(&app::update::current_build_identity(), &state, true, true);
+    let items: Vec<_> = cards.iter().flat_map(|card| &card.items).collect();
+    assert!(
+        !items
+            .iter()
+            .find(|item| item.field == ui::SettingsField::CheckUpdates)
+            .unwrap()
+            .enabled
+    );
+    assert!(
+        items
+            .iter()
+            .find(|item| item.field == ui::SettingsField::StartUpdate)
+            .unwrap()
+            .enabled
+    );
+}
+
 fn settings_language_snapshots() -> Vec<std::sync::Arc<i18n::LanguageSnapshot>> {
     let root = std::env::temp_dir().join(format!(
         "tux3-settings-locales-{}-{}",
@@ -137,6 +161,7 @@ fn update_cards_and_picker_labels_rerender_without_changing_action_or_color_valu
 
 fn checked_update_state(relation: app::update::UpdateRelation) -> SettingsUpdateState {
     SettingsUpdateState {
+        package_installed: false,
         rpm: None,
         activity: None,
         check_result: Some(app::update::UpdateCheckResult {

@@ -12,6 +12,10 @@ use std::{
 };
 
 enum Request {
+    Package(
+        platform::linux::source_packages::PackageInstall,
+        mpsc::Sender<Result<(), String>>,
+    ),
     Begin(mpsc::Sender<Result<(), ServiceError>>),
     Fallback(mpsc::Sender<Result<(), ServiceError>>),
     End,
@@ -22,6 +26,20 @@ struct ChannelInteraction {
     cancelled: Arc<std::sync::atomic::AtomicBool>,
 }
 impl Interaction for ChannelInteraction {
+    fn install_package(
+        &self,
+        package: platform::linux::source_packages::PackageInstall,
+    ) -> Result<(), String> {
+        let (sender, receiver) = mpsc::channel();
+        self.sender
+            .send(Request::Package(package, sender))
+            .map_err(|_| "The installation terminal is unavailable")?;
+        // Never time out or remove a package while the package manager may still be using it.
+        receiver.recv().map_err(|_| {
+            "The installation result is unknown; inspect the package manager before retrying"
+                .to_owned()
+        })?
+    }
     fn change_own_password(&self) -> Result<(), ServiceError> {
         let (sender, receiver) = mpsc::channel();
         self.sender
@@ -122,6 +140,43 @@ impl AuthorizationHost {
         let Ok(request) = self.receiver.try_recv() else {
             return Ok(false);
         };
+        if let Request::Package(package, reply) = request {
+            if stop() {
+                let _ = reply.send(Err("Installation cancelled before starting".into()));
+                return Ok(true);
+            }
+            let mut suspension = match Suspension::enter(guard) {
+                Ok(value) => value,
+                Err(error) => {
+                    let _ = reply.send(Err(error.to_string()));
+                    return Err(error);
+                }
+            };
+            let result = (|| {
+                platform::linux::source_packages::validate_targets(package.backend)?;
+                let tty = controlling_terminal().map_err(|e| e.to_string())?;
+                let status = platform::linux::source_packages::install_command(
+                    package.backend,
+                    &package.path,
+                )?
+                .stdin(tty.try_clone().map_err(|e| e.to_string())?)
+                .stdout(tty.try_clone().map_err(|e| e.to_string())?)
+                .stderr(tty)
+                .status()
+                .map_err(|e| e.to_string())?;
+                if status.success() {
+                    Ok(())
+                } else {
+                    Err(format!(
+                        "Package installation was cancelled or failed ({status}); check the package manager output. No automatic rollback was performed."
+                    ))
+                }
+            })();
+            let restored = suspension.finish();
+            let _ = reply.send(result);
+            restored?;
+            return Ok(true);
+        }
         if let Request::Password(reply) = request {
             let mut suspension = Suspension::enter(guard)?;
             let result = (|| {
@@ -197,6 +252,9 @@ impl AuthorizationHost {
                 }
                 Ok(Request::Password(reply)) => {
                     let _ = reply.send(Err(ServiceError::Busy));
+                }
+                Ok(Request::Package(_, reply)) => {
+                    let _ = reply.send(Err("Another authorization request is active".into()));
                 }
                 Ok(Request::Fallback(reply)) => {
                     let result = TextAgent::register().map(|value| agent = Some(value));

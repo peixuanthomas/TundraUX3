@@ -19,6 +19,8 @@ const API_ROOT: &str = "https://api.github.com";
 const USER_AGENT: &str = "TundraUX3-updater/1";
 #[path = "update_git.rs"]
 mod git;
+#[cfg(target_os = "linux")]
+pub mod package;
 #[path = "update_toolchain.rs"]
 mod toolchain;
 const SHELL_FILE: &str = if cfg!(windows) {
@@ -41,11 +43,11 @@ pub fn supports_updates(kind: PlatformKind) -> bool {
     matches!(kind, PlatformKind::Windows | PlatformKind::Linux)
 }
 
-fn require_current_portable_installation() -> Result<(), UpdateError> {
+fn require_current_source_installation() -> Result<(), UpdateError> {
     #[cfg(target_os = "linux")]
     {
         let installation = platform::installation::current_installation();
-        if installation.backend != platform::installation::UpdateBackend::PortableUser {
+        if !installation.backend.uses_source_updates() {
             return Err(UpdateError::new(installation.reason.unwrap_or_else(|| {
                 "System RPM installations must be updated through PackageKit".into()
             })));
@@ -100,6 +102,8 @@ pub enum UpdatePhase {
     CheckingToolchain,
     Compiling,
     Staging,
+    Packaging,
+    InstallingPackage,
     PreparingReplacement,
     WaitingForRestart,
     Failed,
@@ -227,7 +231,7 @@ struct Compare {
 }
 
 pub fn check_for_updates(identity: &BuildIdentity) -> Result<UpdateCheckResult, UpdateError> {
-    require_current_portable_installation()?;
+    require_current_source_installation()?;
     check_with_fallback(identity, API_ROOT, || git::check(identity))
 }
 
@@ -405,7 +409,7 @@ pub fn prepare_update(
     check: &UpdateCheckResult,
     progress: &mut dyn FnMut(UpdateProgress),
 ) -> Result<PreparedUpdate, UpdateError> {
-    require_current_portable_installation()?;
+    require_current_source_installation()?;
     if !supports_updates(platform.kind()) {
         return Err(UpdateError::new(
             "automatic updates are supported only on Windows and Linux",

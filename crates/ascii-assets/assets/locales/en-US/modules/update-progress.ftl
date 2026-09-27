@@ -11,3 +11,6 @@ progress-phase-staging = Staging update
 progress-phase-replacing = Preparing replacement
 progress-phase-restart = Waiting for restart
 progress-phase-failed = Update failed
+
+progress-phase-packaging = Building system package
+progress-phase-installing-package = Installing through the system package manager

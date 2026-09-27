@@ -21,6 +21,9 @@ pub fn detect_current() -> Installation {
             .parent()
             .ok_or("Executable has no installation directory")?
             .to_path_buf();
+        if let Some(installation) = super::source_packages::detect(&executable, user.process.uid)? {
+            return Ok(installation);
+        }
         classify_installation(
             &directory,
             rpm_owner(&executable),

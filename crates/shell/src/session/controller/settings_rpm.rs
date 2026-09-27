@@ -26,6 +26,13 @@ pub(in crate::session) const RPM_SETTINGS_FIELDS: &[ui::SettingsField] = &[
 ];
 
 impl ShellSession {
+    pub(in crate::session) fn builds_system_package(&self) -> bool {
+        self.settings_update_state
+            .rpm
+            .as_ref()
+            .and_then(|rpm| rpm.installation.as_ref())
+            .is_some_and(|installation| installation.backend.builds_system_package())
+    }
     pub(in crate::session) fn uses_native_linux_updates(&self) -> bool {
         self.app
             .auth_session()
@@ -35,7 +42,7 @@ impl ShellSession {
         self.settings_update_state.rpm.as_ref().is_some_and(|rpm| {
             rpm.installation
                 .as_ref()
-                .is_none_or(|installation| installation.backend != UpdateBackend::PortableUser)
+                .is_none_or(|installation| !installation.backend.uses_source_updates())
         })
     }
     pub(in crate::session) fn start_rpm_task(&mut self, task: RpmTask) {

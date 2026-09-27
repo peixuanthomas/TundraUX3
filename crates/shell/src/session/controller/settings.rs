@@ -1487,6 +1487,10 @@ impl ShellSession {
     }
 
     pub(in crate::session) fn begin_update_check(&mut self) {
+        if self.settings_update_state.package_installed {
+            self.settings_update_state.status = i18n::msg!("settings-package-installed").into();
+            return;
+        }
         self.settings_update_state.checked_once = true;
         if self.uses_native_linux_updates() {
             self.start_rpm_task(RpmTask::Check);
@@ -1518,6 +1522,19 @@ impl ShellSession {
     }
 
     pub(in crate::session) fn open_update_confirmation(&mut self) {
+        if self.settings_update_state.package_installed {
+            self.notify_modal(
+                i18n::msg!("settings-rpm-restart"),
+                i18n::msg!("settings-package-installed"),
+                ui::NotificationTone::Warning,
+                vec![
+                    ShellNotificationAction::new("restart", i18n::msg!("settings-rpm-restart"))
+                        .with_follow_up(ShellCommand::Restart),
+                    ShellNotificationAction::new("cancel", i18n::msg!("settings-cancel")).cancel(),
+                ],
+            );
+            return;
+        }
         if self.uses_rpm_settings_cards() {
             self.start_rpm_task(RpmTask::Preview);
             return;
@@ -1539,7 +1556,10 @@ impl ShellSession {
             return;
         };
         let identity = app::update::current_build_identity();
-        if matches!(check.relation, app::update::UpdateRelation::Identical) && !identity.dirty {
+        if matches!(check.relation, app::update::UpdateRelation::Identical)
+            && !identity.dirty
+            && !self.builds_system_package()
+        {
             self.settings_update_state.status = i18n::msg!("settings-update-current-build").into();
             return;
         }
@@ -1668,8 +1688,19 @@ impl ShellSession {
                     self.settings_update_state.check_result = Some(result);
                 }
                 SettingsUpdateTaskEvent::CheckCompleted(Err(error))
-                | SettingsUpdateTaskEvent::PrepareCompleted(Err(error)) => {
+                | SettingsUpdateTaskEvent::PrepareCompleted(Err(error))
+                | SettingsUpdateTaskEvent::PackageInstalled(Err(error)) => {
                     self.set_update_error(error);
+                }
+                SettingsUpdateTaskEvent::PackageInstalled(Ok(())) => {
+                    self.settings_update_state.busy = false;
+                    self.settings_update_state.package_installed = true;
+                    self.settings_update_state.phase =
+                        Some(app::update::UpdatePhase::WaitingForRestart);
+                    self.settings_update_state.error = None;
+                    self.settings_update_state.status =
+                        i18n::msg!("settings-package-installed").into();
+                    self.open_update_confirmation();
                 }
                 SettingsUpdateTaskEvent::PrepareCompleted(Ok(manifest_path)) => {
                     self.settings_update_state.busy = false;
@@ -2280,12 +2311,16 @@ impl ShellSession {
                         } else {
                             i18n::tr!("settings-install-update")
                         },
-                        body: if replacement {
+                        body: if self.builds_system_package() {
+                            i18n::tr!("settings-package-install-body")
+                        } else if replacement {
                             i18n::tr!("settings-update-replace-body")
                         } else {
                             i18n::tr!("settings-update-install-body")
                         },
-                        confirm_label: if replacement {
+                        confirm_label: if self.builds_system_package() {
+                            i18n::tr!("settings-package-build-install")
+                        } else if replacement {
                             i18n::tr!("settings-replace-restart")
                         } else {
                             i18n::tr!("settings-update-restart")
@@ -2350,9 +2385,9 @@ fn update_settings_cards(
         SettingsItemViewModel as Item,
     };
     if update.rpm.as_ref().is_some_and(|rpm| {
-        rpm.installation.as_ref().is_none_or(|value| {
-            value.backend != platform::installation::UpdateBackend::PortableUser
-        })
+        rpm.installation
+            .as_ref()
+            .is_none_or(|value| !value.backend.uses_source_updates())
     }) {
         return rpm_settings_cards(update);
     }
@@ -2404,13 +2439,25 @@ fn update_settings_cards(
                     | app::update::UpdateRelation::Unknown
             )
         });
-    let can_start = supported
-        && admin
-        && !update.busy
-        && update.check_result.as_ref().is_some_and(|result| {
-            identity.dirty || !matches!(result.relation, app::update::UpdateRelation::Identical)
-        });
-    let start_label = if update
+    let package_build = update
+        .rpm
+        .as_ref()
+        .and_then(|rpm| rpm.installation.as_ref())
+        .is_some_and(|installation| installation.backend.builds_system_package());
+    let can_start = update.package_installed
+        || (supported
+            && admin
+            && !update.busy
+            && update.check_result.as_ref().is_some_and(|result| {
+                package_build
+                    || identity.dirty
+                    || !matches!(result.relation, app::update::UpdateRelation::Identical)
+            }));
+    let start_label = if update.package_installed {
+        i18n::tr!("settings-rpm-restart")
+    } else if package_build {
+        i18n::tr!("settings-package-build-install")
+    } else if update
         .check_result
         .as_ref()
         .is_some_and(|result| matches!(result.relation, app::update::UpdateRelation::Identical))
@@ -2461,7 +2508,7 @@ fn update_settings_cards(
                     i18n::tr!("settings-check-description"),
                     Kind::Action,
                 )
-                .enabled(supported && !update.busy),
+                .enabled(supported && !update.busy && !update.package_installed),
                 Item::new(
                     Field::StartUpdate,
                     start_label,

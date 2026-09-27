@@ -14,6 +14,8 @@ pub(in crate::session) enum SettingsUpdateTaskEvent {
     Progress(app::update::UpdateProgress),
     CheckCompleted(Result<app::update::UpdateCheckResult, i18n::LocalizedText>),
     PrepareCompleted(Result<std::path::PathBuf, i18n::LocalizedText>),
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+    PackageInstalled(Result<(), i18n::LocalizedText>),
 }
 
 pub(in crate::session) struct ShellSettingsTaskShared {
@@ -246,8 +248,34 @@ impl ShellSettingsTaskRuntime {
         let task_id = TaskId::new(format!("prepare-update-{}", request_id % 64))
             .map_err(|error| format!("invalid update build task: {error}"))?;
         let events = self.shared.update_event_tx.clone();
+        #[cfg(target_os = "linux")]
+        let shared = self.shared.clone();
         let worker = task_group
             .spawn_thread(TaskSpec::one_shot(task_id), move || {
+                #[cfg(target_os = "linux")]
+                if platform::installation::current_installation().backend.builds_system_package() {
+                    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                        let interaction = shared.authorization.lock().map_err(|_| "Authorization is unavailable".to_owned())?
+                            .clone().ok_or("An interactive terminal is required for package installation")?;
+                        let mut report = |progress| { let _ = events.send(SettingsUpdateTaskEvent::Progress(progress)); };
+                        let package = app::update::package::prepare(platform.as_ref(), &check, &mut report)
+                            .map_err(|e| e.to_string())?;
+                        report(app::update::UpdateProgress {
+                            phase: app::update::UpdatePhase::InstallingPackage,
+                            message: "Waiting for the system package manager".into(),
+                            detail: app::update::UpdateProgressDetail::Status,
+                        });
+                        let result = interaction.install_package(platform::linux::source_packages::PackageInstall {
+                            backend: package.backend,
+                            path: package.path.clone(),
+                        }).and_then(|()| app::update::package::verify_installed(&package).map_err(|e| e.to_string()));
+                        let _ = platform.cleanup_temp_path(&package.work_dir);
+                        result
+                    }));
+                    let result = result.unwrap_or_else(|_| Err("Package update worker failed; inspect the package manager before retrying".into()));
+                    let _ = events.send(SettingsUpdateTaskEvent::PackageInstalled(result.map_err(Into::into)));
+                    return;
+                }
                 let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                     let mut report = |progress: app::update::UpdateProgress| {
                         let _ = events.send(SettingsUpdateTaskEvent::Progress(progress));
@@ -304,6 +332,7 @@ impl ShellSettingsTaskRuntime {
                 SettingsUpdateTaskEvent::Rpm(RpmTaskEvent::Completed(_))
                     | SettingsUpdateTaskEvent::CheckCompleted(_)
                     | SettingsUpdateTaskEvent::PrepareCompleted(_)
+                    | SettingsUpdateTaskEvent::PackageInstalled(_)
             )
         }) && let Ok(mut worker) = self.shared.update_worker.lock()
         {

@@ -26,6 +26,30 @@ fn rpm_state() -> SettingsUpdateState {
         ..Default::default()
     }
 }
+
+#[test]
+fn ubuntu_and_arch_use_source_update_cards_and_offer_explicit_restart() {
+    for backend in [UpdateBackend::SystemDeb, UpdateBackend::SystemArch] {
+        let mut session = ShellSession::new(ShellLaunchConfig::default(), (120, 40));
+        session.settings_update_state = rpm_state();
+        session
+            .settings_update_state
+            .rpm
+            .as_mut()
+            .unwrap()
+            .installation
+            .as_mut()
+            .unwrap()
+            .backend = backend;
+        assert!(!session.uses_rpm_settings_cards());
+        assert!(session.builds_system_package());
+        session.settings_update_state.package_installed = true;
+        session.open_update_confirmation();
+        assert!(!session.shutdown_requested());
+        assert!(!session.restart_requested());
+        assert!(!session.settings_update_state.confirmation_open);
+    }
+}
 fn enabled(state: &SettingsUpdateState, field: ui::SettingsField) -> bool {
     rpm_settings_cards(state)
         .iter()

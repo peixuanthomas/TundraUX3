@@ -28,6 +28,13 @@ impl Action {
 
 /// Implemented by the terminal owner. No password or prompt response crosses this interface.
 pub trait Interaction: Send + Sync {
+    /// Give the foreground terminal to sudo and the native package manager.
+    fn install_package(
+        &self,
+        _package: super::source_packages::PackageInstall,
+    ) -> Result<(), String> {
+        Err("Package installation requires an interactive terminal".into())
+    }
     fn begin(&self) -> Result<(), ServiceError>;
     fn fallback(&self) -> Result<(), ServiceError>;
     fn finish(&self);

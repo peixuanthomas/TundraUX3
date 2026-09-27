@@ -8,5 +8,5 @@ Depends: xdg-utils, libglib2.0-bin, libc-bin
 Recommends: dbus-user-session, xdg-desktop-portal, policykit-1, xwayland
 Description: Terminal desktop environment experiment
  TundraUX3 provides a full-screen terminal shell and its management CLI.
- Ordinary-user Linux operation is supported; Debian system package updates are
- managed externally and are not provided by the Fedora update frontend.
+ Ordinary-user Linux operation is supported. Ubuntu can build and install
+ updates through the system package manager with user authorization.

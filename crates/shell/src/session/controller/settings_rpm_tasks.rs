@@ -60,8 +60,9 @@ impl ShellSettingsTaskRuntime {
                     if matches!(task, RpmTask::Check) {
                         let installation = platform::installation::current_installation();
                         let backend = installation.backend;
+                        let reason = installation.reason.clone();
                         report(RpmTaskEvent::Installation(installation));
-                        if backend == UpdateBackend::PortableUser {
+                        if backend.uses_source_updates() {
                             let result = app::update::check_for_updates(
                                 &app::update::current_build_identity(),
                             )
@@ -70,7 +71,11 @@ impl ShellSettingsTaskRuntime {
                             return None;
                         }
                         if backend != UpdateBackend::SystemRpm {
-                            return Some(Err(ServiceError::Unsupported));
+                            let _ =
+                                events.send(SettingsUpdateTaskEvent::CheckCompleted(Err(reason
+                                    .unwrap_or_else(|| ServiceError::Unsupported.to_string())
+                                    .into())));
+                            return None;
                         }
                     }
                     Some((|| {
