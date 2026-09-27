@@ -21,15 +21,15 @@ Use `tundra-cli debug doctor` after installation.  It reports missing optional d
 services and gives the relevant package/service hint; a missing desktop helper
 degrades only the affected integration, never stored data.
 
-Package installation
---------------------
-Debian/Ubuntu: sudo apt install ./TundraUX3-v1.3.2-linux-amd64.deb
-Fedora: sudo dnf install ./TundraUX3-v1.3.2-fedora-x86_64.rpm
+V1.3.2 release
+--------------
+This release provides only the Linux x86_64 portable archive, built on Ubuntu
+24.04. Extract it and run ./tundra-shell from the extracted directory. Keep
+assets/ and tundra-installation.json beside the binaries. No DEB or RPM
+installer is published for V1.3.2.
 
-The release RPM is built and installation-tested on Fedora 43 x86_64. Other
-Fedora derivatives must satisfy its generated library dependencies; compatibility
-with RHEL/CentOS/Rocky/AlmaLinux is not assumed. Build on the target distribution
-with `bash scripts/package-linux.sh --rpm` (requires rpm-build) when necessary.
+For locally built system packages, use scripts/package-linux.sh on the target
+distribution (default: DEB, --rpm: RPM, --tar-only: portable archive).
 The Fedora RPM updater uses PackageKit and verifies the resulting installed RPM
 version. Ubuntu and Arch can build and install local system packages as described below.
 
