@@ -199,7 +199,6 @@ fn upgraded_home_icons(path: &Path, embedded: &[u8]) -> Option<String> {
             "explorer",
             "launcher",
             "settings",
-            "diagnostics",
             "system_status",
             "user_management",
             "user_profile",

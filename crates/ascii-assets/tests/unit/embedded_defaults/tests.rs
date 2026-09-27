@@ -17,7 +17,8 @@ fn embedded_default_theme_covers_required_ascii_assets_and_images() {
     assert_eq!(embedded.len(), EMBEDDED_DEFAULT_THEME_FILES.len());
     assert!(required.is_subset(&embedded));
     assert!(embedded.contains(&("launcher_icons/editor.png", "launcher_icons/editor.png")));
-    assert_eq!(embedded.len(), required.len() + 11);
+    assert!(!embedded.iter().any(|(key, _)| key.contains("diagnostics")));
+    assert_eq!(embedded.len(), required.len() + 10);
     assert_eq!(
         EMBEDDED_DEFAULT_THEME_FILES
             .iter()
@@ -25,7 +26,7 @@ fn embedded_default_theme_covers_required_ascii_assets_and_images() {
                 .extension()
                 .is_some_and(|extension| extension.eq_ignore_ascii_case("png")))
             .count(),
-        11
+        10
     );
     assert!(
         EMBEDDED_DEFAULT_THEME_FILES

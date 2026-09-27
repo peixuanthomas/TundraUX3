@@ -31,23 +31,13 @@ lines = [
   '-----o-',
 ]
 
-[items.diagnostics]
-label = "Diagnostics"
-image = "home_icons/diagnostics.png"
-lines = [
-  ' _____ ',
-  '| /\  |',
-  '|/  \_|',
-  '|_____|',
-]
-
 [items.system_status]
 label = "System Status"
 image = "home_icons/system_status.png"
 lines = [
   ' _____ ',
-  '| ||  |',
-  '| ||| |',
+  '| /\  |',
+  '|/  \_|',
   '|_____|',
 ]
 

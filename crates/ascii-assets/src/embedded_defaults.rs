@@ -27,7 +27,6 @@ pub(crate) const EMBEDDED_DEFAULT_THEME_FILES: &[EmbeddedDefaultThemeFile] = &[
     embedded_default_theme_file!("home_icons", "home_icons.toml"),
     embedded_default_theme_file!("launcher_icons", "launcher_icons.toml"),
     embedded_default_theme_file!("home_icons/default.png", "home_icons/default.png"),
-    embedded_default_theme_file!("home_icons/diagnostics.png", "home_icons/diagnostics.png"),
     embedded_default_theme_file!("home_icons/explorer.png", "home_icons/explorer.png"),
     embedded_default_theme_file!("home_icons/launcher.png", "home_icons/launcher.png"),
     embedded_default_theme_file!("home_icons/logs.png", "home_icons/logs.png"),

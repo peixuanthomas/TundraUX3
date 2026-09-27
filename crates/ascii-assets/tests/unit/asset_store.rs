@@ -33,6 +33,11 @@ fn default_store_loads_canonical_assets() {
         Some("home_icons/system_status.png")
     );
     assert_eq!(
+        system_status.lines(),
+        [" _____ ", "| /\\  |", "|/  \\_|", "|_____|"]
+    );
+    assert!(store.home_icon_catalog().icon("diagnostics").is_none());
+    assert_eq!(
         store
             .home_icon_catalog()
             .icon_for_label("System Status")

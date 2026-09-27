@@ -45,7 +45,6 @@ fn runtime_asset_copy_includes_valid_icon_assets() {
         "explorer",
         "launcher",
         "settings",
-        "diagnostics",
         "system_status",
         "logs",
         "user_management",
