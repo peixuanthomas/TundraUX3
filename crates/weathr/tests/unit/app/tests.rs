@@ -8,6 +8,118 @@ use std::io;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 #[test]
+fn mouse_traffic_does_not_advance_or_delay_animation_frames() {
+    use crossterm::event::MouseEvent;
+    use std::cell::Cell;
+
+    for mouse_interval in [None, Some(Duration::from_millis(1))] {
+        let start = Instant::now();
+        let now = Cell::new(start);
+        let shutdown = std::sync::atomic::AtomicBool::new(false);
+        let mut handled = 0;
+        for frame in 1..=30 {
+            let outcome = wait_for_next_frame(
+                now.get() + FRAME_DURATION,
+                &shutdown,
+                || now.get(),
+                |timeout| {
+                    let elapsed = mouse_interval.unwrap_or(timeout).min(timeout);
+                    now.set(now.get() + elapsed);
+                    Ok(mouse_interval.map(|_| {
+                        Event::Mouse(MouseEvent {
+                            kind: MouseEventKind::Moved,
+                            column: 40,
+                            row: 12,
+                            modifiers: KeyModifiers::NONE,
+                        })
+                    }))
+                },
+                |event| {
+                    handled += 1;
+                    Ok(input_outcome(event, BottomHudPrompt::Start))
+                },
+            )
+            .unwrap();
+            assert_eq!(outcome, None);
+            assert_eq!(now.get() - start, FRAME_DURATION * frame);
+        }
+        if mouse_interval.is_some() {
+            assert_eq!(handled, 990);
+        } else {
+            assert_eq!(handled, 0);
+        }
+    }
+}
+
+#[test]
+fn frame_wait_handles_resize_and_exit_without_waiting_for_deadline() {
+    use crossterm::event::KeyEvent;
+
+    let start = Instant::now();
+    let shutdown = std::sync::atomic::AtomicBool::new(false);
+    let mut events = [
+        Event::Resize(120, 40),
+        Event::Key(KeyEvent::new(KeyCode::Char(' '), KeyModifiers::NONE)),
+    ]
+    .into_iter();
+    let mut size = None;
+    let outcome = wait_for_next_frame(
+        start + FRAME_DURATION,
+        &shutdown,
+        || start,
+        |_| Ok(Some(events.next().expect("exit must stop input polling"))),
+        |event| {
+            if let Event::Resize(width, height) = event {
+                size = Some((width, height));
+            }
+            Ok(input_outcome(event, BottomHudPrompt::Quit))
+        },
+    )
+    .unwrap();
+    assert_eq!(size, Some((120, 40)));
+    assert_eq!(outcome, Some(AppRunOutcome::Continue));
+}
+
+#[test]
+fn frame_wait_checks_shutdown_between_events() {
+    let start = Instant::now();
+    let shutdown = std::sync::atomic::AtomicBool::new(false);
+    let outcome = wait_for_next_frame(
+        start + FRAME_DURATION,
+        &shutdown,
+        || start,
+        |_| {
+            assert!(!shutdown.swap(true, Ordering::SeqCst));
+            Ok(Some(Event::FocusGained))
+        },
+        |event| Ok(input_outcome(event, BottomHudPrompt::Quit)),
+    )
+    .unwrap();
+    assert_eq!(outcome, Some(AppRunOutcome::Cancelled));
+}
+
+#[test]
+fn slow_render_does_not_add_another_frame_delay() {
+    let start = Instant::now();
+    let shutdown = std::sync::atomic::AtomicBool::new(false);
+    let mut polls = 0;
+    let outcome = wait_for_next_frame(
+        start + FRAME_DURATION,
+        &shutdown,
+        || start + FRAME_DURATION * 2,
+        |timeout| {
+            assert!(timeout.is_zero());
+            polls += 1;
+            Ok(None)
+        },
+        |_| panic!("no input was read"),
+    )
+    .unwrap();
+    assert_eq!(outcome, None);
+    assert_eq!(polls, 1);
+}
+
+#[test]
 fn start_accepts_character_navigation_function_and_control_keys() {
     use crossterm::event::KeyEvent;
     for (code, modifiers) in [

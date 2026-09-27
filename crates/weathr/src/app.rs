@@ -14,12 +14,12 @@ use chrono::Datelike;
 use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers, MouseEventKind};
 use std::io;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use system_services::{SystemSnapshot, TimeState, WeatherLocation, WeatherState};
 use unicode_width::UnicodeWidthStr;
 
-const INPUT_POLL_FPS: u64 = 30;
-const FRAME_DURATION: Duration = Duration::from_millis(1000 / INPUT_POLL_FPS);
+const ANIMATION_FPS: u64 = 30;
+const FRAME_DURATION: Duration = Duration::from_millis(1000 / ANIMATION_FPS);
 const DEFAULT_THEME_ID: &str = "default";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -232,6 +232,7 @@ impl App {
             if shutdown.load(std::sync::atomic::Ordering::SeqCst) {
                 return Ok(AppRunOutcome::Cancelled);
             }
+            let next_frame = Instant::now() + FRAME_DURATION;
             let snapshot = self.snapshots.borrow_and_update().clone();
             let attribution: String;
             match snapshot.weather {
@@ -436,20 +437,55 @@ impl App {
 
             flush_and_notify_first_frame(&mut first_frame_callback, || renderer.flush())?;
 
-            if event::poll(FRAME_DURATION)? {
-                match event::read()? {
+            if let Some(outcome) = wait_for_next_frame(
+                next_frame,
+                shutdown,
+                Instant::now,
+                |timeout| {
+                    if event::poll(timeout)? {
+                        event::read().map(Some)
+                    } else {
+                        Ok(None)
+                    }
+                },
+                |event| match event {
                     Event::Resize(width, height) => {
                         renderer.manual_resize(width, height)?;
                         let (new_width, new_height) = renderer.get_size();
                         self.animations.on_resize(new_width, new_height);
+                        Ok(None)
                     }
-                    event => {
-                        if let Some(outcome) = input_outcome(event, self.bottom_hud_prompt) {
-                            return Ok(outcome);
-                        }
-                    }
-                }
+                    event => Ok(input_outcome(event, self.bottom_hud_prompt)),
+                },
+            )? {
+                return Ok(outcome);
             }
+        }
+    }
+}
+
+fn wait_for_next_frame(
+    deadline: Instant,
+    shutdown: &std::sync::atomic::AtomicBool,
+    mut now: impl FnMut() -> Instant,
+    mut read_event: impl FnMut(Duration) -> io::Result<Option<Event>>,
+    mut handle_event: impl FnMut(Event) -> io::Result<Option<AppRunOutcome>>,
+) -> io::Result<Option<AppRunOutcome>> {
+    loop {
+        if shutdown.load(std::sync::atomic::Ordering::SeqCst) {
+            return Ok(Some(AppRunOutcome::Cancelled));
+        }
+        let remaining = deadline.saturating_duration_since(now());
+        // Input may wake polling early, but only the deadline advances animation.
+        // Check time after every event so a busy input queue cannot starve frames.
+        // Poll once even after a slow render so exit and resize remain responsive.
+        if let Some(event) = read_event(remaining)?
+            && let Some(outcome) = handle_event(event)?
+        {
+            return Ok(Some(outcome));
+        }
+        if now() >= deadline {
+            return Ok(None);
         }
     }
 }
