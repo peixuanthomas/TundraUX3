@@ -284,7 +284,7 @@ jobs:
           set -euo pipefail
           export TMPDIR="$(cd "$RUNNER_TEMP/tundra-tests" && pwd -P)"
           runuser -u tundra-ci -- /home/tundra-ci/.cargo/bin/cargo test --workspace --locked --no-fail-fast
-          bash scripts/check-weathr-dependency-boundary.sh
+          runuser -u tundra-ci -- env PATH="/home/tundra-ci/.cargo/bin:$PATH" bash scripts/check-weathr-dependency-boundary.sh
       - name: Build Fedora RPM
         run: |
           set -euo pipefail
