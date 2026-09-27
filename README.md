@@ -47,7 +47,7 @@ cargo run --locked -p cli --bin tundra-cli -- debug doctor
 
 ## 许可证
 
-项目根目录代码采用 [MIT License](LICENSE)。Weathr 组件另带 [GNU GPL v3 许可文本](crates/weathr/LICENSE.weathr)；分发或再使用时请同时检查对应组件及第三方资源的许可要求。
+Copyright (c) 2026 HanPeixuan。项目自身代码采用 [GNU GPL v3](LICENSE)（仅第 3 版，`GPL-3.0-only`）。Weathr 组件保留 [GPL-3.0-or-later](crates/weathr/LICENSE.weathr)；分发或再使用时请同时检查对应组件及第三方资源的许可要求。
 
 ### Linux 普通用户会话
 

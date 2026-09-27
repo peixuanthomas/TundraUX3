@@ -73,7 +73,7 @@ Name: {name}
 Version: {version}
 Release: 1
 Summary: Disposable Tundra update integration fixture
-License: MIT
+License: GPL-3.0-only
 BuildArch: {'x86_64' if binary else 'noarch'}
 Source0: probe
 {requires}

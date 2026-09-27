@@ -269,7 +269,7 @@ fn build(
 
 fn arch_recipe(pkgver: &str) -> String {
     format!(
-        "pkgname=tundraux3\npkgver={pkgver}\npkgrel=1\npkgdesc='Terminal desktop environment'\narch=('x86_64')\nlicense=('MIT' 'GPL-3.0-only')\ndepends=('glibc' 'gcc-libs' 'zlib' 'xdg-utils' 'glib2')\noptions=('!strip' '!debug')\nPKGEXT='.pkg.tar.zst'\npackage() {{\n  cp -a \"$startdir/payload/.\" \"$pkgdir/\"\n}}\n"
+        "pkgname=tundraux3\npkgver={pkgver}\npkgrel=1\npkgdesc='Terminal desktop environment'\narch=('x86_64')\nlicense=('GPL-3.0-only' 'GPL-3.0-or-later')\ndepends=('glibc' 'gcc-libs' 'zlib' 'xdg-utils' 'glib2')\noptions=('!strip' '!debug')\nPKGEXT='.pkg.tar.zst'\npackage() {{\n  cp -a \"$startdir/payload/.\" \"$pkgdir/\"\n}}\n"
     )
 }
 

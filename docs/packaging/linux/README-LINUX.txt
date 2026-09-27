@@ -8,7 +8,7 @@ KDE, under Wayland or X11.  Run the two binaries from a real terminal:
   ./tundra-cli debug doctor
 
 The portable archive keeps `assets` next to the binaries.  Do not move the
-binaries without moving that directory too.  It includes the root MIT license
+binaries without moving that directory too.  It includes the root GNU GPL v3
 and the Weathr component license.  The Debian and RPM packages install assets under
 /usr/share/tundraux3/assets automatically.
 

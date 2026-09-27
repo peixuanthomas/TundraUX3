@@ -2,6 +2,7 @@
 name = "time"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
 
 [dependencies]
 chrono = "0.4"

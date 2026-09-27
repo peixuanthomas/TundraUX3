@@ -5,7 +5,7 @@ Name:           tundraux3
 Version:        %{tundra_version}
 Release:        1
 Summary:        Terminal desktop environment experiment
-License:        MIT AND GPL-3.0-or-later
+License:        GPL-3.0-only AND GPL-3.0-or-later
 URL:            https://github.com/peixuanthomas/TundraUX3
 Source0:        %{name}-%{version}-linux-x86_64.tar.gz
 Source1:        tundraux3.desktop
