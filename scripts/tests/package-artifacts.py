@@ -12,7 +12,7 @@ root = Path('/srv/tundra-package-fixture')
 source = root / 'source'
 work = root / 'work'
 work.mkdir(exist_ok=False)
-version = '1.3.1'
+version = '1.3.2'
 name = f'tundraux3-{version}-linux-x86_64'
 stage = work / name
 stage.mkdir()
@@ -45,7 +45,7 @@ assert not scripts.strip()
 for forbidden in ('/pam.d/', 'tundra-installation.json', '/systemd/', '/sysusers.d/', '/tmpfiles.d/'):
     assert forbidden not in files
 subprocess.run(['dnf', '-y', 'install', str(rpm)], check=True)
-assert output('rpm', '-qf', '/usr/bin/tundra-shell').startswith('tundraux3-1.3.1-1')
+assert output('rpm', '-qf', '/usr/bin/tundra-shell').startswith('tundraux3-1.3.2-1')
 assert output('rpm', '-qf', '/usr/bin/pkttyagent').startswith('polkit-')
 assert subprocess.run(['/usr/bin/tundra-shell'], stdout=subprocess.PIPE, stderr=subprocess.STDOUT).returncode != 0
 print('RPM: production spec, dependencies, installed ownership, pkttyagent provider and root guard PASS', flush=True)
@@ -58,7 +58,7 @@ shutil.copytree(stage / 'assets', deb / 'usr/share/tundraux3/assets')
 shutil.copy2(source / 'packaging/debian/tundraux3.desktop', deb / 'usr/share/applications/tundraux3.desktop')
 (deb / 'DEBIAN').mkdir()
 (deb / 'DEBIAN/control').write_text((source / 'packaging/debian/control').read_text().replace('@VERSION@', version))
-package = work / 'tundraux3_1.3.1_amd64.deb'
+package = work / 'tundraux3_1.3.2_amd64.deb'
 subprocess.run(['dpkg-deb', '--build', '--root-owner-group', str(deb), str(package)], check=True)
 control = output('dpkg-deb', '--field', str(package))
 assert 'sudo' not in control and 'libpam' not in control
