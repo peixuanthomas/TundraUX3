@@ -499,7 +499,6 @@ impl ShellSession {
     pub(in crate::session) fn activate_launcher_at(
         &mut self,
         coordinates: CellPosition,
-        click: ClickKind,
         platform: &dyn Platform,
     ) {
         self.launcher_drag = None;
@@ -511,13 +510,10 @@ impl ShellSession {
         match ui::launcher_layout(main, &model).hit_test(coordinates.0, coordinates.1) {
             Some(ui::LauncherHitTarget::Item(index)) => {
                 self.select_launcher_index(index);
-                if click == ClickKind::Double {
-                    if let Some(capture) = &mut self.button_pointer_capture {
-                        capture.activate_on_release = true;
-                    } else {
-                        self.request_launcher_launch(platform);
-                    }
-                } else if self.launcher_view_mode == app::launcher::LauncherViewMode::LargeIcons
+                if let Some(capture) = &mut self.button_pointer_capture {
+                    capture.activate_on_release = true;
+                }
+                if self.launcher_view_mode == app::launcher::LauncherViewMode::LargeIcons
                     && self.can_manage_launcher()
                     && let Some(item_id) = self.selected_launcher_id()
                 {
@@ -564,6 +560,9 @@ impl ShellSession {
         let Some(drag) = self.launcher_drag.take() else {
             return;
         };
+        if drag.target.is_none() {
+            return;
+        }
         if self.launcher_view_mode != app::launcher::LauncherViewMode::LargeIcons {
             return;
         }

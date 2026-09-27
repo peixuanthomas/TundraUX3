@@ -1,5 +1,8 @@
 use super::super::*;
 use crate::session::queries::ResolvedExplorerOverlay;
+
+const BUTTON_MAX_PRESS: Duration = Duration::from_millis(500);
+
 impl ShellSession {
     pub(in crate::session) fn button_at(
         &self,
@@ -10,6 +13,31 @@ impl ShellSession {
             .rev()
             .find(|button| rect_contains(button.area, point))
             .cloned()
+            .or_else(|| {
+                // Details rows are drawn as a table, but launch on release just
+                // like icon buttons. Use the same layout as their hit testing.
+                if self.active_screen() != ShellScreen::Launcher
+                    || self.hit_map.target_at(point) != Some(ShellComponent::Launcher)
+                {
+                    return None;
+                }
+                let area = Rect::new(0, 0, self.terminal_size.0, self.terminal_size.1);
+                let ui::ShellLayout::Full { main, .. } = self.shell_layout_for(area) else {
+                    return None;
+                };
+                let model = self.to_launcher_view_model();
+                let layout = ui::launcher_layout(main, &model);
+                let Some(ui::LauncherHitTarget::Item(index)) = layout.hit_test(point.0, point.1)
+                else {
+                    return None;
+                };
+                let item = model.items.get(index)?;
+                Some(ui::components::ButtonRegion {
+                    id: format!("launcher.item.{}", item.id).into(),
+                    area: layout.items.iter().find(|item| item.index == index)?.area,
+                    disabled: item.status != ui::LauncherItemStatus::Ready,
+                })
+            })
     }
 
     /// Capture shared buttons before page routing. Existing page actions receive
@@ -18,6 +46,7 @@ impl ShellSession {
     pub(in crate::session) fn prepare_button_input(
         &mut self,
         input: InputEvent,
+        received_at: Instant,
     ) -> Option<InputEvent> {
         let InputEvent::Mouse(mouse) = input else {
             if matches!(
@@ -60,6 +89,7 @@ impl ShellSession {
                             .filter(|overlay| overlay.kind != ui::MotionOverlayKind::Toast)
                             .map(|overlay| overlay.id),
                         input: mouse,
+                        pressed_at: received_at,
                         native_release,
                         activate_on_release: false,
                     });
@@ -70,7 +100,9 @@ impl ShellSession {
             }
             ui::MouseEventKind::Up(PointerButton::Left) => {
                 if let Some(capture) = self.button_pointer_capture.take() {
-                    let matches_button = capture.screen == self.active_screen()
+                    let held = received_at.saturating_duration_since(capture.pressed_at);
+                    let matches_button = held <= BUTTON_MAX_PRESS
+                        && capture.screen == self.active_screen()
                         && capture.overlay
                             == self
                                 .active_overlay_descriptor()
@@ -80,9 +112,12 @@ impl ShellSession {
                     if capture.native_release {
                         if capture.activate_on_release && matches_button {
                             return Some(InputEvent::Mouse(MouseInput {
-                                kind: ui::MouseEventKind::DoubleClick(PointerButton::Left),
+                                kind: ui::MouseEventKind::Click(PointerButton::Left),
                                 ..mouse
                             }));
+                        }
+                        if !matches_button {
+                            self.notification_pointer_capture = None;
                         }
                         return Some(input);
                     }
@@ -113,9 +148,7 @@ impl ShellSession {
                 if let Some(capture) = &self.button_pointer_capture
                     && !capture.native_release
                 {
-                    if self.button_at(mouse.coordinates()).as_ref() != Some(&capture.region) {
-                        self.button_pointer_capture = None;
-                    }
+                    self.button_pointer_capture = None;
                     return None;
                 }
             }
@@ -1938,7 +1971,8 @@ impl ShellSession {
                 );
                 (target, ShellCommand::LauncherPointer(coordinates, click))
             }
-            ui::MouseEventKind::DoubleClick(PointerButton::Left) => {
+            ui::MouseEventKind::Click(PointerButton::Left)
+            | ui::MouseEventKind::DoubleClick(PointerButton::Left) => {
                 (target, ShellCommand::LauncherActivate)
             }
             ui::MouseEventKind::Drag(PointerButton::Left) => {

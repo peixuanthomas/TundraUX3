@@ -207,7 +207,7 @@ fn rendered_chrome_buttons_hover_press_and_activate_only_on_release() {
 
 #[test]
 fn button_capture_cancels_outside_on_focus_loss_resize_and_page_change() {
-    for cancel in 0..4 {
+    for cancel in 0..5 {
         let mut state = session();
         let mut compositor = ScreenCompositor::default();
         let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
@@ -234,13 +234,101 @@ fn button_capture_cancels_outside_on_focus_loss_resize_and_page_change() {
                     height: 42,
                 });
             }
-            _ => {
+            3 => {
                 state.screen_stack.push(ShellScreen::Clock);
+            }
+            _ => {
+                state.apply_input(InputEvent::mouse_drag(PointerButton::Left, point));
             }
         }
         state.apply_input(InputEvent::mouse_up(PointerButton::Left, point));
         assert_ne!(state.active_screen(), ShellScreen::ExitConfirm);
         assert!(state.button_pointer_capture.is_none());
+    }
+}
+
+#[test]
+fn button_click_allows_short_presses_but_rejects_holds_over_500_ms() {
+    for kind in 0..4 {
+        for millis in [0, 1, 499, 500, 501, 2_000] {
+            let mut state = session();
+            if kind == 1 || kind == 2 {
+                state.screen_stack.push(ShellScreen::Launcher);
+                if kind == 2 {
+                    state.launcher_view_mode = ui::LauncherViewMode::Details;
+                }
+                state.refresh_hit_map();
+            } else if kind == 3 {
+                state.apply_input(InputEvent::key(InputKey::Escape));
+            }
+            let mut compositor = ScreenCompositor::default();
+            let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
+            let mut prepared = home_frame(&state, 0, true);
+            let point = if kind == 1 || kind == 2 {
+                let model = state.to_launcher_view_model();
+                let ui::ShellLayout::Full { main, .. } =
+                    state.shell_layout_for(Rect::new(0, 0, 120, 40))
+                else {
+                    panic!("full layout required");
+                };
+                let layout = ui::launcher_layout(main, &model);
+                let editor = model
+                    .items
+                    .iter()
+                    .position(|item| item.id == app::EDITOR_APPLICATION.id)
+                    .unwrap();
+                let area = layout
+                    .items
+                    .iter()
+                    .find(|item| item.index == editor)
+                    .unwrap()
+                    .area;
+                prepared.page = ScreenViewModel::Launcher(Box::new(model));
+                draw(&mut compositor, &mut terminal, &mut state, &prepared);
+                (area.x + 1, area.y)
+            } else {
+                prepared.notification = state.to_notification_view_model();
+                draw(&mut compositor, &mut terminal, &mut state, &prepared);
+                let area = state
+                    .button_regions
+                    .iter()
+                    .find(|region| {
+                        if kind == 0 {
+                            region.id.as_str() == "shell.back"
+                        } else {
+                            region.id.as_str().starts_with("notification.")
+                        }
+                    })
+                    .unwrap()
+                    .area;
+                (area.x, area.y)
+            };
+            let now = Instant::now();
+            let before = state.active_screen();
+            let modal_before = state.notification_active_modal_id();
+            state.apply_input_at(InputEvent::mouse_down(PointerButton::Left, point), now);
+            assert_eq!(state.active_screen(), before);
+            state.apply_input_at(
+                InputEvent::mouse_up(PointerButton::Left, point),
+                now + Duration::from_millis(millis),
+            );
+            let activated = match kind {
+                0 => state.active_screen() == ShellScreen::ExitConfirm,
+                1 | 2 => state.active_screen() == ShellScreen::Editor,
+                _ => state.notification_active_modal_id() != modal_before,
+            };
+            assert_eq!(activated, millis <= 500, "kind={kind}, millis={millis}");
+            assert!(state.button_pointer_capture.is_none());
+            if millis > 500 {
+                // A late extra release must not resurrect a cancelled click.
+                state.apply_input_at(
+                    InputEvent::mouse_up(PointerButton::Left, point),
+                    now + Duration::from_millis(millis + 1),
+                );
+                assert_eq!(state.active_screen(), before);
+                assert!(!state.shutdown_requested());
+            }
+        }
     }
 }
 
@@ -281,7 +369,7 @@ fn page_buttons_use_pointer_hover_instead_of_keyboard_focus_and_release_opens_di
 }
 
 #[test]
-fn launcher_card_double_click_waits_for_second_release() {
+fn launcher_card_single_click_waits_for_release() {
     let mut state = session();
     state.screen_stack.push(ShellScreen::Launcher);
     state.refresh_hit_map();
@@ -300,20 +388,112 @@ fn launcher_card_double_click_waits_for_second_release() {
     let point = (area.x + 1, area.y + 1);
     let now = Instant::now();
     state.apply_input_at(InputEvent::mouse_down(PointerButton::Left, point), now);
+    assert_eq!(state.active_screen(), ShellScreen::Launcher);
     state.apply_input_at(
         InputEvent::mouse_up(PointerButton::Left, point),
         now + Duration::from_millis(30),
     );
-    state.apply_input_at(
-        InputEvent::mouse_down(PointerButton::Left, point),
-        now + Duration::from_millis(80),
-    );
-    assert_eq!(state.active_screen(), ShellScreen::Launcher);
-    state.apply_input_at(
-        InputEvent::mouse_up(PointerButton::Left, point),
-        now + Duration::from_millis(110),
-    );
     assert_eq!(state.active_screen(), ShellScreen::Editor);
+}
+
+#[test]
+fn launcher_click_launches_only_after_matching_release_in_both_views() {
+    for view in [
+        ui::LauncherViewMode::LargeIcons,
+        ui::LauncherViewMode::Details,
+    ] {
+        for cancel in 0..5 {
+            let mut state = session();
+            state.screen_stack.push(ShellScreen::Launcher);
+            state.launcher_view_mode = view;
+            state.refresh_hit_map();
+            let mut compositor = ScreenCompositor::default();
+            let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
+            let mut prepared = home_frame(&state, 0, true);
+            let model = state.to_launcher_view_model();
+            let ui::ShellLayout::Full { main, .. } =
+                state.shell_layout_for(Rect::new(0, 0, 120, 40))
+            else {
+                panic!("full layout required");
+            };
+            let layout = ui::launcher_layout(main, &model);
+            let editor = model
+                .items
+                .iter()
+                .position(|item| item.id == app::EDITOR_APPLICATION.id)
+                .unwrap();
+            let area = layout
+                .items
+                .iter()
+                .find(|item| item.index == editor)
+                .unwrap()
+                .area;
+            let point = (area.x + 1, area.y);
+            prepared.page = ScreenViewModel::Launcher(Box::new(model));
+            draw(&mut compositor, &mut terminal, &mut state, &prepared);
+            state.apply_input(InputEvent::mouse_down(PointerButton::Left, point));
+            assert_eq!(state.active_screen(), ShellScreen::Launcher);
+            match cancel {
+                1 => {
+                    state.apply_input(InputEvent::mouse_up(PointerButton::Left, (0, 0)));
+                }
+                2 => {
+                    state.apply_input(InputEvent::FocusLost);
+                }
+                3 => {
+                    state.apply_input(InputEvent::mouse_drag(PointerButton::Left, point));
+                }
+                4 => {
+                    state.apply_input(InputEvent::Resize {
+                        width: 130,
+                        height: 42,
+                    });
+                }
+                _ => {}
+            }
+            state.apply_input(InputEvent::mouse_up(PointerButton::Left, point));
+            assert_eq!(
+                state.active_screen(),
+                if cancel == 0 {
+                    ShellScreen::Editor
+                } else {
+                    ShellScreen::Launcher
+                },
+                "view={view:?}, cancel={cancel}"
+            );
+        }
+    }
+}
+
+#[test]
+fn home_entry_single_click_opens_on_first_release() {
+    let mut state = session();
+    state.app.dispatch_at(
+        app::AppCommand::SetAuthSession(Some(AuthSession {
+            source: identity::IdentitySource::LocalAccount,
+            session_id: "click-session".into(),
+            user_id: "click-user".into(),
+            username: "click-user".into(),
+            role: UserRole::User,
+            started_at_epoch_ms: 1,
+        })),
+        Instant::now(),
+    );
+    let mut compositor = ScreenCompositor::default();
+    let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
+    let prepared = home_frame(&state, 0, true);
+    draw(&mut compositor, &mut terminal, &mut state, &prepared);
+    let area = state
+        .button_regions
+        .iter()
+        .find(|r| r.id.as_str() == "home.entry.4")
+        .unwrap()
+        .area;
+    let point = (area.x + 1, area.y + 1);
+    state.apply_input(InputEvent::mouse_down(PointerButton::Left, point));
+    assert_eq!(state.active_screen(), ShellScreen::Home);
+    state.apply_input(InputEvent::mouse_up(PointerButton::Left, point));
+    assert_eq!(state.active_screen(), ShellScreen::Logs);
 }
 
 #[test]

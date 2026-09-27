@@ -810,6 +810,38 @@ fn admin_batch_adds_launcher_targets_and_high_risk_launch_requires_confirmation(
             .collect::<Vec<_>>(),
         vec!["Command Line", "Editor", "program.exe", "script.cmd"]
     );
+    assert!(
+        !platform.calls().iter().any(|call| {
+            matches!(call, MockCall::OpenPath(path) if path == &executable || path == &script)
+        }),
+        "dragging must not launch either application"
+    );
+
+    let layout = ui::launcher_layout(main, &launcher);
+    let executable_area = layout.items[2].area;
+    let executable_point = (executable_area.x + 1, executable_area.y + 1);
+    state.apply_input_with_platform(
+        InputEvent::mouse_down(PointerButton::Left, executable_point),
+        &platform,
+    );
+    assert!(
+        !platform
+            .calls()
+            .iter()
+            .any(|call| { matches!(call, MockCall::OpenPath(path) if path == &executable) })
+    );
+    state.apply_input_with_platform(
+        InputEvent::mouse_up(PointerButton::Left, executable_point),
+        &platform,
+    );
+    assert_eq!(
+        platform
+            .calls()
+            .iter()
+            .filter(|call| { matches!(call, MockCall::OpenPath(path) if path == &executable) })
+            .count(),
+        1
+    );
     let storage = StorageManager::open(platform.app_paths().expect("app paths"))
         .expect("storage")
         .manager;
@@ -843,7 +875,19 @@ fn admin_batch_adds_launcher_targets_and_high_risk_launch_requires_confirmation(
             .map(|item| item.name.as_str()),
         Some("script.cmd")
     );
-    state.apply_input_with_platform(InputEvent::from_key_label("Enter"), &platform);
+    let model = state.to_launcher_view_model();
+    let layout = ui::launcher_layout(main, &model);
+    let script_area = layout.items.last().unwrap().area;
+    let script_point = (script_area.x + 1, script_area.y);
+    state.apply_input_with_platform(
+        InputEvent::mouse_down(PointerButton::Left, script_point),
+        &platform,
+    );
+    assert!(state.to_launcher_view_model().confirmation.is_none());
+    state.apply_input_with_platform(
+        InputEvent::mouse_up(PointerButton::Left, script_point),
+        &platform,
+    );
     assert!(state.to_launcher_view_model().confirmation.is_some());
     assert!(!platform.calls().iter().any(|call| {
         matches!(call, MockCall::OpenPath(path) if path.file_name().is_some_and(|name| name == "script.cmd"))

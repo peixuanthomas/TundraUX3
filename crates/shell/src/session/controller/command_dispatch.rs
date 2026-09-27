@@ -26,7 +26,7 @@ impl ShellSession {
         received_at: Instant,
     ) -> ShellAction {
         let _language = i18n::enter_snapshot(self.language.clone());
-        let Some(input) = self.prepare_button_input(input) else {
+        let Some(input) = self.prepare_button_input(input, received_at) else {
             return ShellAction::Redraw;
         };
         if let Some(action) = self.apply_input_preamble_at(&input, received_at) {
@@ -228,7 +228,7 @@ impl ShellSession {
             &routed.command,
             ShellCommand::RequestExit
                 | ShellCommand::ActivateSelectedHomeEntry
-                | ShellCommand::ActivateHomeEntryAt(_, ClickKind::Double)
+                | ShellCommand::ActivateHomeEntryAt(_, _)
                 | ShellCommand::Logout
                 | ShellCommand::LogoutToLockscreen
                 | ShellCommand::OpenExplorer
@@ -649,12 +649,10 @@ impl ShellSession {
                 }
                 ShellAction::Redraw
             }
-            ShellCommand::ActivateHomeEntryAt(coordinates, click) => {
+            ShellCommand::ActivateHomeEntryAt(coordinates, _) => {
                 if let Some(index) = self.home_entry_index_at(coordinates) {
                     self.select_home_entry(index);
-                    if click == ClickKind::Double {
-                        self.activate_home_entry(index, platform);
-                    }
+                    self.activate_home_entry(index, platform);
                 }
                 ShellAction::Redraw
             }
@@ -706,6 +704,7 @@ impl ShellSession {
                 ShellAction::Redraw
             }
             ShellCommand::LauncherActivate => {
+                self.launcher_drag = None;
                 self.request_launcher_launch(platform);
                 ShellAction::Redraw
             }
@@ -733,8 +732,8 @@ impl ShellSession {
                 self.launcher_pending_confirmation = None;
                 ShellAction::Redraw
             }
-            ShellCommand::LauncherPointer(coordinates, click) => {
-                self.activate_launcher_at(coordinates, click, platform);
+            ShellCommand::LauncherPointer(coordinates, _) => {
+                self.activate_launcher_at(coordinates, platform);
                 ShellAction::Redraw
             }
             ShellCommand::LauncherDragUpdate(coordinates) => {

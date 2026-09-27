@@ -1229,7 +1229,8 @@ pub(super) fn run_fullscreen_shell_session<W: Write>(
                     compositor.cancel_for_bounds_change();
                 }
                 let input = crossterm_event_to_input(terminal_event);
-                let Some(input) = state.prepare_button_input(input) else {
+                let received_at = Instant::now();
+                let Some(input) = state.prepare_button_input(input, received_at) else {
                     action = Some(ShellAction::Redraw);
                     continue;
                 };
@@ -1253,7 +1254,6 @@ pub(super) fn run_fullscreen_shell_session<W: Write>(
                     }
                     action = Some(ShellAction::Redraw);
                 } else {
-                    let received_at = Instant::now();
                     let (input_action, motion_blocked) = compositor.dispatch_input(
                         &mut state,
                         input,

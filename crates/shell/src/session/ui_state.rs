@@ -528,6 +528,7 @@ pub(super) struct ButtonPointerCapture {
     pub screen: ShellScreen,
     pub overlay: Option<String>,
     pub input: MouseInput,
+    pub pressed_at: Instant,
     pub native_release: bool,
     pub activate_on_release: bool,
 }
